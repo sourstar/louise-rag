@@ -89,6 +89,7 @@ def get_dht(session, codex, *, wait_s: float = DHT_WAIT_S, sleep: Callable[[floa
 
 
 def _get_dht(session, codex, *, wait_s, sleep, clock) -> dict[str, Any] | None:
+    from app.acquire import transport_torrent as tt
     from app.hold import certify
     pk = env.key_bytes(codex.certifier.key)
     salt = salt_of(codex)
@@ -96,7 +97,7 @@ def _get_dht(session, codex, *, wait_s, sleep, clock) -> dict[str, Any] | None:
     deadline = clock() + wait_s
     best: dict[str, Any] | None = None
     while clock() < deadline:
-        for a in session.pop_alerts():
+        for a in tt.pop_alerts(session):
             if type(a).__name__ != "dht_mutable_item_alert":
                 continue
             try:

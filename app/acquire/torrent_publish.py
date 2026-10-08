@@ -184,6 +184,17 @@ def seed(torrent_path: Path, corpus_dir: Path):
     params.ti = lt.torrent_info(str(torrent_path))
     params.save_path = str(Path(corpus_dir).parent)
     params.flags |= lt.torrent_flags.seed_mode
+    # Started at once and managed by the Seeder alone (its pause, retain and
+    # drop), never queued by libtorrent's auto-manager: `add_torrent_params`
+    # defaults to auto-managed + paused, and an auto-managed seed waits for
+    # one of `active_seeds` (5) slots, freed every `auto_manage_interval`
+    # (30 s). A peer asking for a queued member is closed after the
+    # handshake: the survivor test's calibration and validation members each
+    # waited 61 s for the seed's queue to reach them (2026-10-08) — on a node
+    # serving thousands of shards, hours. And the auto-manager resumes an
+    # auto-managed torrent the Seeder paused.
+    params.flags &= ~lt.torrent_flags.auto_managed
+    params.flags &= ~lt.torrent_flags.paused
     return get_session().add_torrent(params)
 
 

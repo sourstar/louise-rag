@@ -132,7 +132,18 @@ FEDERATION_CANDIDATE_BUDGET = int(os.getenv("FEDERATION_CANDIDATE_BUDGET", "40")
 # corpus-specific (architecture-v2.md §4, §9). REFS_SRC_DIR is unset by
 # default: sync is a no-op until an operator points it at TSV fixtures/dumps,
 # so no new required volume mount.
-REFS_DB_PATH = Path(os.getenv("REFS_DB_PATH", str(DATA_DIR / "refs.db")))
+#: an explicit refs.db (REFS_DB_PATH, or a test's own); None = beside
+#: DATA_DIR, resolved by `refs_db_path()` at CALL time. A path derived here
+#: froze the import-time DATA_DIR: a test that moved DATA_DIR still created
+#: the real /data/refs.db (2026-10-08)
+_refs_db_env = os.getenv("REFS_DB_PATH")
+REFS_DB_PATH: Path | None = Path(_refs_db_env) if _refs_db_env else None
+
+
+def refs_db_path() -> Path:
+    return REFS_DB_PATH if REFS_DB_PATH is not None else DATA_DIR / "refs.db"
+
+
 _refs_src_dir = os.getenv("REFS_SRC_DIR")
 REFS_SRC_DIR = Path(_refs_src_dir) if _refs_src_dir else None
 

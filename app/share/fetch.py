@@ -149,6 +149,7 @@ def find_dht(session, ref: str, *, now: datetime | None = None, wait_s: float = 
 
 
 def _find_dht(session, ref: str, *, now, wait_s, sleep, clock) -> list[Source]:
+    from app.acquire import transport_torrent as tt
     from app.share.seeder import _lt
     lt = _lt()
     by_key: dict[bytes, str] = {}
@@ -162,7 +163,7 @@ def _find_dht(session, ref: str, *, now, wait_s, sleep, clock) -> list[Source]:
     deadline = clock() + wait_s
     grace: float | None = None
     while clock() < deadline:
-        for a in session.pop_alerts():
+        for a in tt.pop_alerts(session):
             if type(a).__name__ != "dht_get_peers_reply_alert":
                 continue
             try:

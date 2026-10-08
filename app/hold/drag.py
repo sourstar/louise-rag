@@ -264,7 +264,34 @@ def pieces_root(data: bytes) -> str:
 
 
 def pieces_root_of(path: Path) -> str:
-    return pieces_root(path.read_bytes())
+    """`pieces_root` of a file, read a block at a time: the same root, in
+    memory bounded by the tree's height rather than by the file — a torrent
+    file is checked on disk before it is moved into place (2026-10-08), and
+    those run to tens of GB. Leaves are folded as they come (a stack of
+    complete subtrees); the padding to the next power of two is folded
+    from precomputed all-zero subtrees, never leaf by leaf."""
+    size = Path(path).stat().st_size
+    if size <= BLOCK:
+        return pieces_root(Path(path).read_bytes())
+    leaves = -(-size // BLOCK)
+    height = (leaves - 1).bit_length()          # width = 2 ** height
+    zero = [bytes(32)]
+    for _ in range(height):
+        zero.append(hashlib.sha256(zero[-1] + zero[-1]).digest())
+    stack: list[tuple[int, bytes]] = []
+
+    def push(level: int, h: bytes) -> None:
+        while stack and stack[-1][0] == level:
+            h = hashlib.sha256(stack.pop()[1] + h).digest()
+            level += 1
+        stack.append((level, h))
+
+    with open(path, "rb") as f:
+        for _ in range(leaves):
+            push(0, hashlib.sha256(f.read(BLOCK)).digest())
+    while not (len(stack) == 1 and stack[0][0] == height):
+        push(stack[-1][0], zero[stack[-1][0]])
+    return "sha256:" + stack[0][1].hex()
 
 
 @dataclass(frozen=True)

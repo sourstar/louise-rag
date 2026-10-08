@@ -335,3 +335,23 @@ def test_landed_whole_is_the_root_not_the_length(tmp_path):
     p.write_bytes(data)
     assert transport.landed_whole(p, len(data), drag_mod.pieces_root(data))
     assert not transport.landed_whole(tmp_path / "absent", len(data), drag_mod.pieces_root(data))
+
+
+
+def test_a_published_member_is_served_at_once_not_queued_by_libtorrent(node, monkeypatch):  # noqa: F811
+    """A seed added auto-managed (libtorrent's default) waits for one of
+    `active_seeds` (5) slots, handed out every `auto_manage_interval` (30 s),
+    and a peer asking for a queued member is closed after the handshake:
+    the survivor test's calibration and validation members waited 61 s each
+    (2026-10-08). Every member the seeder publishes is started at once."""
+    quiet_sessions(monkeypatch)
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    con = db.connect(c)
+    seeder.publish(c, snap, d, node / c.name / "state", con)
+    for i in range(3):                              # more torrents than the queue would start
+        seeding.tick([c], {c.name: con}, con, "running")
+    handles = list(seeding._seeder._handles.values()) if seeding._seeder else []
+    assert handles, "the members are seeded"
+    for h in handles:
+        st = h.status()
+        assert not st.auto_managed and not st.paused, "started at the add, by no queue"

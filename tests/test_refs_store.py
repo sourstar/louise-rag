@@ -84,3 +84,17 @@ def test_the_store_is_opened_once_per_thread_not_once_per_batch(tmp_path, monkey
     t = threading.Thread(target=lambda: seen.append(refs.get_store()))
     t.start(); t.join()
     assert seen and seen[0] is not first and len(opened) == 3
+
+
+def test_refs_db_follows_the_data_dir_at_call_time(tmp_path, monkeypatch):
+    """The default refs.db is beside DATA_DIR as it is WHEN asked, never as
+    it was at import: three tests that moved DATA_DIR still created the real
+    /data/refs.db (2026-10-08). An explicit REFS_DB_PATH still wins."""
+    from app import config
+    monkeypatch.setattr(config, "REFS_DB_PATH", None)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    assert config.refs_db_path() == tmp_path / "data" / "refs.db"
+    refs.get_store()
+    assert (tmp_path / "data" / "refs.db").is_file()
+    monkeypatch.setattr(config, "REFS_DB_PATH", tmp_path / "explicit.db")
+    assert config.refs_db_path() == tmp_path / "explicit.db"

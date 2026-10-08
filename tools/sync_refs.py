@@ -24,7 +24,7 @@ def main() -> None:
     p.add_argument("--src", required=True, type=Path,
                     help="directory containing (or receiving) hgnc.tsv, clinvar_mini.tsv, ...")
     p.add_argument("--db", type=Path, default=None,
-                    help="refs.db path (default: config.REFS_DB_PATH)")
+                    help="refs.db path (default: config.refs_db_path())")
     p.add_argument("--fetch", action="store_true",
                     help="download/refresh the reference dumps into --src first")
     p.add_argument("--force", action="store_true",

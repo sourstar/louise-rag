@@ -37,7 +37,7 @@ def get_store() -> RefStore:
     a connection being set up for a database that is read-mostly and usually
     empty. Measured on the node, 2026-09-22: 4.5 s of fixed cost per fts
     batch, of which this is a part (app/sizing.py fits the rest)."""
-    path = config.REFS_DB_PATH
+    path = config.refs_db_path()
     got = getattr(_local, "store", None)
     if got is not None and got[0] == str(path):
         return got[1]

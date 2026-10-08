@@ -63,15 +63,32 @@ def no_checkout_config(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_data_dir(tmp_path_factory, monkeypatch):
+    """No test resolves the real data directory: `config.DATA_DIR` is an
+    empty directory unless the test (or `isolated_config`) points it
+    elsewhere. Tests that build a collection from `tmp_path` alone ran fts,
+    whose reference store sits beside DATA_DIR, and created the real
+    /data/refs.db (2026-10-08)."""
+    from app import config
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path_factory.mktemp("no-data"))
+
+
+@pytest.fixture(autouse=True)
 def the_real_node_store_is_never_touched():
     """app/node_state.py resolves `<LOUISE_ROOT or DATA_DIR>/state/node.sqlite`
     — on a node's volume, that node's LIVE mode. Two tests without
     `isolated_config` once wrote `worker_state=running` there (review,
     2026-09-13): run with a node's /data mounted, the suite would resume a
-    paused node. Any test that creates or changes the real store fails."""
+    paused node. Any test that creates or changes the real store fails.
+
+    Nor anything else under the real data directory: three tests created
+    `/data/refs.db` through a path frozen at import (2026-10-08). Absent
+    before, it must be absent after; present (a node's volume mounted), its
+    top level and the entries in it must be unchanged — one listing and a
+    stat per entry, never a walk of a node's tree."""
     import os
-    real = Path(os.getenv("LOUISE_ROOT") or os.getenv("DATA_DIR", "/data")) \
-        / "state" / "node.sqlite"
+    data = Path(os.getenv("DATA_DIR", "/data"))
+    real = Path(os.getenv("LOUISE_ROOT") or data) / "state" / "node.sqlite"
 
     def _stamp():
         out = []
@@ -84,10 +101,28 @@ def the_real_node_store_is_never_touched():
                 out.append(None)
         return out
 
-    before = _stamp()
+    def _data_stamp():
+        try:
+            entries = sorted(data.iterdir())
+        except OSError:
+            return None
+        out = []
+        for p in [data, *entries]:
+            try:
+                out.append((p.name, p.stat().st_mtime_ns))
+            except OSError:
+                out.append((p.name, None))
+        return out
+
+    before, data_before = _stamp(), _data_stamp()
     yield
     assert _stamp() == before, \
         f"this test touched the real node store {real} — give it isolated_config"
+    data_after = _data_stamp()
+    assert data_after == data_before, \
+        f"this test created or changed something under the real {data} " \
+        f"({sorted(n for n, _ in data_after or []) if data_before is None else 'changed entries'}) " \
+        f"— give it isolated_config, or resolve the path at call time"
 
 
 @pytest.fixture(autouse=True)

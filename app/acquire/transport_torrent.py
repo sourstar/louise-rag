@@ -51,6 +51,7 @@ import time
 from pathlib import Path
 from typing import Iterator
 
+from . import torrent_landed
 from .spec import AcquisitionSpec, Endpoint, RemoteFile, TransferAborted, TransportError
 
 # A magnet carries no file list, so nothing can be planned — not even the
@@ -100,6 +101,8 @@ _handles: dict[str, object] = {}
 # immutable metadata and does not reflect rename_file(). We know what we
 # renamed because we are the ones who renamed it.
 _staged: dict[str, set[int]] = {}
+# Per torrent, the files this process wants of it (_set_wanted).
+_wanted: dict[str, set[int]] = {}
 
 
 def _platform_dht() -> bool:
@@ -134,6 +137,15 @@ def dht_alerts(session):
             session.apply_settings({"alert_mask": before})
         except Exception:   # noqa: BLE001 — a session gone
             pass
+
+
+def pop_alerts(session) -> list:
+    """The session's alerts — and the flush confirmations among them handed
+    to whichever transfer waits on them (app/acquire/torrent_landed.py).
+    Every reader of the process session pops through here: an alert popped
+    is gone for every other reader."""
+    from .torrent_landed import note_alerts
+    return note_alerts(session.pop_alerts())
 
 
 def session_settings() -> dict:
@@ -188,6 +200,7 @@ def shutdown_session() -> None:
     with _session_lock:
         _handles.clear()
         _staged.clear()
+        _wanted.clear()
         _session = None
 
 
@@ -345,6 +358,10 @@ def _add_for_download(endpoint: Endpoint, save_path: Path):
     params.save_path = str(save_path)
     # Added with nothing selected: priorities are set per file below, so a
     # torrent is never allowed to pull bytes no profile asked for.
+    # (`default_dont_download` would say it more strongly; measured against
+    # in the share transport, 2026-10-08: a torrent wanting nothing when its
+    # metadata arrives counts as finished and drops its seeds, and the file
+    # switched on afterwards took 60 s, libtorrent's reconnect delay.)
     try:
         params.flags |= lt.torrent_flags.paused
     except Exception:   # noqa: BLE001 — older bindings name flags differently
@@ -387,7 +404,7 @@ def _rename_to_parts(handle, key: str, indices=None,
     lt = _lt()
     deadline = time.monotonic() + timeout
     while wanted and time.monotonic() < deadline:
-        for alert in session.pop_alerts():
+        for alert in pop_alerts(session):
             if isinstance(alert, lt.file_renamed_alert):
                 if wanted.pop(alert.index, None) is not None:
                     done.add(alert.index)
@@ -410,6 +427,35 @@ def _index_of(info, rel_path: str) -> int:
         if name == rel_path:
             return index
     raise TransportError(f"{rel_path}: no such file in the torrent")
+
+
+def _set_wanted(handle, key: str, fs, index: int, on: bool) -> None:
+    """File `index` on or off, the vector set from every file this process
+    wants of the torrent (one entry per TORRENT file, pads included:
+    libtorrent expects the full vector). A vector of this file alone, set
+    by each fetch, turned off the file another worker was fetching from the
+    same torrent — up to `per_endpoint` of them at once — and left it
+    waiting forever (2026-10-08). A file once fetched stays wanted: it is
+    complete, and nothing more moves for it. Under the lock, so the vectors
+    reach libtorrent in the order they were computed."""
+    with _session_lock:
+        wanted = _wanted.setdefault(key, set())
+        (wanted.add if on else wanted.discard)(index)
+        handle.prioritize_files([4 if i in wanted else 0 for i in range(fs.num_files())])
+
+
+def _keep_wanted(handle, key: str, fs, index: int) -> None:
+    """Set the vector again if file `index` went off: libtorrent applies a
+    priority change through its disk thread, and one made while another is
+    in flight was seen lost (one file switched on alone beside another's
+    vector: left at 0, 1 run in 14 of the test, 2026-10-08) — so the loop
+    that waits for the file re-asserts it."""
+    try:
+        if int(handle.file_priority(index)) != 0:
+            return
+    except Exception:   # noqa: BLE001 — a binding or a handle that cannot say
+        return
+    _set_wanted(handle, key, fs, index, True)
 
 
 def _apply_rate(handle, leased_bps) -> None:
@@ -486,16 +532,13 @@ class TorrentTransport:
         # Only the requested file. The engine's unit of work is one file and
         # one manifest row; pulling the whole torrent would fetch bytes no
         # profile asked for and record none of them.
-        # One entry per TORRENT file (pads included: libtorrent expects the
-        # full vector), everything off except the one file asked for.
-        priorities = [0] * fs.num_files()
-        priorities[index] = 4
-        handle.prioritize_files(priorities)
-        handle.resume()
-
-        last_refresh = 0.0
         key = endpoint.url.strip()
         with get_manager().rsync_lease(endpoint.url) as leased_bps:
+            # the lease is the ceiling before the first byte is wanted
+            _apply_rate(handle, leased_bps)
+            last_refresh = time.monotonic()
+            _set_wanted(handle, key, fs, index, True)
+            handle.resume()
             while True:
                 done = handle.file_progress()[index]
                 _credit_download(key, handle)
@@ -517,8 +560,7 @@ class TorrentTransport:
                     # opposite of what seed-only exists to keep running.
                     # Then credit once more, for whatever landed between the
                     # loop's last credit and this check.
-                    priorities[index] = 0
-                    handle.prioritize_files(priorities)
+                    _set_wanted(handle, key, fs, index, False)
                     _credit_download(key, handle)
                     _save_resume(handle)
                     raise TransferAborted(
@@ -534,11 +576,16 @@ class TorrentTransport:
                 if now - last_refresh > _RATE_REFRESH_S:
                     _apply_rate(handle, leased_bps)
                     last_refresh = now
+                _keep_wanted(handle, key, fs, index)
                 time.sleep(_POLL_S)
 
         # Computed, never read back: torrent_file() is immutable metadata
         # and does not know about the rename.
         part = Path(handle.status().save_path) / part_name(remote.rel_path)
+        # `file_progress` says the pieces PASSED, not that they are written:
+        # the file moves into place, and is hashed by the engine, only once
+        # the disk holds what libtorrent verified (2026-10-08)
+        torrent_landed.wait_landed(get_session(), handle, info, index, part, stop=stop)
         dest.parent.mkdir(parents=True, exist_ok=True)
         if part != dest:
             os.replace(part, dest)

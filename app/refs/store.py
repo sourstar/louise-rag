@@ -1,4 +1,4 @@
-"""SQLite-backed reference store. One global file (config.REFS_DB_PATH),
+"""SQLite-backed reference store. One global file (config.refs_db_path()),
 independent of any collection: HGNC/ClinVar-mini etc. are standalone lookup
 layers a query plan consults regardless of which corpus collection is being
 searched (architecture-v2.md §4, §9).
@@ -12,7 +12,7 @@ from ..plugins.base import RefLink, RefSchema, RefSyncState, ReferenceSource
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
-    path = path or config.REFS_DB_PATH
+    path = path or config.refs_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path, timeout=30, isolation_level=None)
     con.row_factory = sqlite3.Row
