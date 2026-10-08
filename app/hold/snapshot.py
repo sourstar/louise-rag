@@ -133,6 +133,60 @@ class Delta:
                                sorted(self.tombstoned, key=lambda t: t.uid)]}
 
 
+class LazyDelta:
+    """A loaded snapshot's `delta`, read from its file only when asked.
+
+    A first snapshot's delta lists every record as added — pubmed's 2026-08
+    names 39,994,988 uids, 709 MB of JSON and about 4.3 GB as Python strings
+    — and nearly every reader (the checks, the seeder, search, the worker's
+    every evaluation of the copy) needs its shards and never its delta.
+    Loaded whole, every one of them paid the 4.3 GB (measured on the node,
+    2026-10-08). The file is immutable once written (02 §2.2), so where the
+    delta sits in it is enough; the first access parses that span alone."""
+
+    __slots__ = ("_path", "_start", "_end", "_delta")
+
+    def __init__(self, path, start: int, end: int) -> None:
+        self._path, self._start, self._end, self._delta = path, start, end, None
+
+    def _load(self) -> "Delta":
+        if self._delta is None:
+            import json
+            with open(self._path, "rb") as f:
+                f.seek(self._start)
+                d = json.loads(f.read(self._end - self._start))
+            self._delta = Delta(tuple(d["added"]), tuple(d["changed"]),
+                                tuple(Tombstone(**t) for t in d["tombstoned"]))
+        return self._delta
+
+    
+    @property
+    def added(self) -> tuple[str, ...]:
+        return self._load().added
+
+    
+    @property
+    def changed(self) -> tuple[str, ...]:
+        return self._load().changed
+
+    
+    @property
+    def tombstoned(self) -> tuple["Tombstone", ...]:
+        return self._load().tombstoned
+
+    def to_dict(self) -> dict[str, Any]:
+        return self._load().to_dict()
+
+    def __eq__(self, other) -> bool:
+        return self._load() == (other._load() if isinstance(other, LazyDelta) else other)
+
+    def __hash__(self) -> int:
+        return hash(self._load())
+
+    def __repr__(self) -> str:
+        return f"LazyDelta({self._path!s}, {self._end - self._start} bytes)"
+
+
 @dataclass(frozen=True)
 class Snapshot:
     collection_id: str
@@ -188,7 +242,11 @@ class Snapshot:
 
     @property
     def hash(self) -> str:
-        return digest(self.canonical())
+        # a snapshot loaded from its file knows its hash from the file's own
+        # bytes (they ARE the canonical form); anything built or replaced
+        # in memory computes it
+        raw = self.__dict__.get("_raw_hash")
+        return raw if raw is not None else digest(self.canonical())
 
     @property
     def slices(self) -> list[str]:
@@ -585,8 +643,65 @@ def _load(raw: bytes) -> Snapshot:
 
 
 def load(path) -> Snapshot:
+    """A snapshot from its file. A file in canonical form (every file this
+    platform writes) is read with its delta left in the file (`LazyDelta`)
+    and its hash taken from its bytes; anything else is parsed whole."""
+    import mmap
     from pathlib import Path
-    return _load(Path(path).read_bytes())
+    p = Path(path)
+    with open(p, "rb") as f:
+        if p.stat().st_size == 0:
+            return _load(b"")
+        # mapped, not read: the file's pages are the page cache's, hashed
+        # and searched in place, so a 709 MB snapshot costs no 709 MB copy
+        with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as raw:
+            lazy = _load_lazy(p, raw)
+            if lazy is not None:
+                return lazy
+            return _load(raw[:])
+
+
+def _load_lazy(path, raw) -> Snapshot | None:
+    """Canonical JSON sorts its keys, so `delta` follows `collection_id`
+    and is followed by `figures` (version 2) or `files` (version 1); its
+    span is found by those two markers, which no uid or reason can hold.
+    None when the bytes are not canonical — then the caller parses whole."""
+    import json
+    import hashlib
+    head = b'{"collection_id":'
+    if raw[:len(head)] != head or raw[-1:] != b"}" or b"\n" in raw[:4096]:
+        return None
+    i = raw.find(b',"delta":')
+    if i < 0:
+        return None
+    start = i + len(b',"delta":')
+    end = -1
+    for marker in (b',"figures":', b',"files":'):
+        end = raw.find(marker, start)
+        if end >= 0:
+            break
+    if end < 0 or raw[start:start + 1] != b"{" or raw[end - 1:end] != b"}":
+        return None
+    try:
+        d = json.loads(raw[:start] + b"{}" + raw[end:])
+    except ValueError:
+        return None
+    if d.get("kind") != SNAPSHOT_KIND:
+        raise CodexError(f"not a snapshot: kind={d.get('kind')!r}")
+    if d.get("version") not in SNAPSHOT_VERSIONS_READ:
+        raise CodexError(f"unsupported snapshot version {d.get('version')!r}")
+    snap = Snapshot(
+        collection_id=d["collection_id"], snapshot_id=d["snapshot_id"], previous=d["previous"],
+        shards=tuple(Shard(**s) for s in d["shards"]),
+        delta=LazyDelta(path, start, end),             # type: ignore[arg-type]
+        relations=tuple(RelationShard(**r) for r in d["relations"]),
+        figures=tuple(FiguresShard(**f) for f in d.get("figures") or ()),
+        files=d["files"], version=int(d["version"]))
+    h = hashlib.sha256()
+    for at in range(0, len(raw), 1 << 22):
+        h.update(raw[at:at + (1 << 22)])
+    object.__setattr__(snap, "_raw_hash", "sha256:" + h.hexdigest())
+    return snap
 
 
 def _content_hashes(drag_dir, shards) -> dict[str, str]:

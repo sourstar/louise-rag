@@ -223,7 +223,9 @@ class Ctx:
         p = self.drag / shard.path
         if not p.is_file():
             raise FileNotFoundError(str(p))
-        return list(pack_records.iter_records(p))
+        # a generator, one record at a time: a shard decoded whole into a
+        # list was the floor under every record check's memory
+        return pack_records.iter_records(p)
 
 
 def _shard_ids(codex, shards: Sequence[snap.Shard], space: str | None = None
@@ -276,8 +278,10 @@ def check_records(ctx: Ctx) -> Outcome:
         except FileNotFoundError:
             continue
         ran.append(s)
+        hashes: list[str] = []            # the root's input, kept; the records are not
         for r in records:
             seen += 1
+            hashes.append(r["content_hash"])
             sections = [tuple(x) for x in r.get("sections") or []]
             if rec.content_hash(r.get("title") or "", sections) != r["content_hash"]:
                 failed.append(r["uid"])
@@ -286,7 +290,7 @@ def check_records(ctx: Ctx) -> Outcome:
                 # permanently unverifiable against its source, which is the
                 # worst artefact we could ship.
                 failed.append(r["uid"])
-        root = rec.records_root(r["content_hash"] for r in records)
+        root = rec.records_root(hashes)
         if root != s.records_root:
             failed.append(f"{s.slice}/{s.n:05d}:records_root")
     if not ran:
@@ -603,7 +607,13 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
     """
     shards = _shards(ctx, "records-vs-origin")
     ran, seen, missing = [], 0, 0
-    lines: list[tuple[str, str, bytes]] = []      # (uid, origin, the line)
+    # TWO PASSES, NOTHING KEPT BETWEEN THEM BUT THE ORIGIN UNITS (2026-10-08):
+    # the first counts what the sampled records point into, the bound picks
+    # the units exactly as before, the second compares each chosen record
+    # and lets it go. The one-pass form held every sampled line until the
+    # bound had run — pubmed's 2 million, 13 GB, to compare a few thousand.
+    size_of: dict[str, int | None] = {}
+    sampled_records = 0
     for s in shards:
         try:
             records = ctx.records_of(s)
@@ -615,21 +625,10 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
             if not r.get("origin"):
                 missing += 1
                 continue
-            from app.pack import records as pack_records
-            # THE CODEX'S SHAPE, on both sides. `canonical_line` defaults to
-            # `record_line` 1, which drops the `figures` key — so on a
-            # plates collection this re-canonicalised a shape-2 record as
-            # shape 1 and compared it against a shape-2 re-parse. Every
-            # record differed, and the difference was this line.
-            #
-            # Caught on a six-book trial over real illustrated epubs before
-            # the 48,000-book build: `figures` PASSED, `records-vs-origin`
-            # failed 6 of 6, and the re-parse was byte-identical to the
-            # shard all along.
-            lines.append((r["uid"], r["origin"],
-                          pack_records.canonical_line(
-                              r, record_line=int(getattr(ctx.codex,
-                                                          "record_line", 1) or 1))))
+            sampled_records += 1
+            if ctx.origin_unit is not None:
+                unit, size = ctx.origin_unit(r["origin"])
+                size_of.setdefault(unit, size)
     if not ran:
         return Outcome("records-vs-origin", INCONCLUSIVE,
                        why="this peer holds none of the sampled shards")
@@ -653,8 +652,26 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                            "that passed without one would certify the copy "
                            "against itself")
 
-    sampled_records = len(lines)
-    lines, bound = _within_the_origin_bound(ctx, lines)
+    keep, bound = _origin_units_taken(ctx, size_of)
+
+    def chosen():
+        """The sampled records of the taken units, as (uid, origin, line),
+        read again from their shards one at a time."""
+        from app.pack import records as pack_records
+        shape = int(getattr(ctx.codex, "record_line", 1) or 1)
+        for s in ran:
+            for r in ctx.records_of(s):
+                if not r.get("origin"):
+                    continue
+                if keep is not None and ctx.origin_unit(r["origin"])[0] not in keep:
+                    continue
+                # THE CODEX'S SHAPE, on both sides. `canonical_line` defaults
+                # to `record_line` 1, which drops the `figures` key — so on a
+                # plates collection this re-canonicalised a shape-2 record as
+                # shape 1 and compared it against a shape-2 re-parse. Every
+                # record differed, and the difference was this line (caught on
+                # a six-book trial over real illustrated epubs).
+                yield r["uid"], r["origin"], pack_records.canonical_line(r, record_line=shape)
 
     # "DIFFERS FROM ITS ORIGIN" AND "COULD NOT BE RE-PARSED" ARE NOT THE
     # SAME FINDING, and conflating them produces the most damaging kind of
@@ -669,8 +686,9 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
     # and every OSError went onto the `failed` list. An operator reading
     # that had every reason to believe 1.6M records had drifted from
     # PubMed, and the collection's own records were perfect.
-    failed, moved, errored, unreachable = [], [], [], 0
-    for uid, locator, line in lines:
+    failed, moved, errored, unreachable, compared = [], [], [], 0, 0
+    for uid, locator, line in chosen():
+        compared += 1
         try:
             got = ctx.reparse(uid, locator)
         except FileNotFoundError:
@@ -698,28 +716,28 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
             {"records": seen, "failed": [], "errored": len(errored),
              "origin": "unreadable"},
             ctx.seed, _shard_ids(ctx.codex, ran),
-            why=f"{len(errored)} of {len(lines)} sampled record(s) could not "
+            why=f"{len(errored)} of {compared} sampled record(s) could not "
                 f"be re-parsed from the origin, and none of the rest differed "
                 f"— so nothing was proved either way. First: {errored[0]}")
-    if unreachable == len(lines):
+    if unreachable == compared:
         return Outcome("records-vs-origin", INCONCLUSIVE,
                        {"records": seen, "failed": [],
                         "origin": "unreachable"},
                        ctx.seed, _shard_ids(ctx.codex, ran),
-                       why=f"none of the {len(lines)} sampled record(s) could "
+                       why=f"none of the {compared} sampled record(s) could "
                            f"be re-fetched from the origin given")
     said = ""
     if bound:
         said = (f" — read {bound['origin_units']} of the {bound['origin_units_sampled']} "
                 f"origin file(s) the sampled shards reach into, {bound['origin_bytes'] >> 20} "
                 f"MiB of the {bound['origin_bytes_bound'] >> 20} MiB one check may read of "
-                f"the origin ({len(lines)} of {sampled_records} sampled records)")
+                f"the origin ({compared} of {sampled_records} sampled records)")
     return Outcome("records-vs-origin", FAIL if failed else PASS,
-                   {"records": seen, "compared": len(lines),
+                   {"records": seen, "compared": compared,
                     "failed": sorted(failed)[:64], "moved": sorted(moved)[:64],
                     "errored": len(errored), "origin": "reachable", **bound},
                    ctx.seed, _shard_ids(ctx.codex, ran),
-                   why=f"{len(lines) - unreachable - len(errored)} record(s) "
+                   why=f"{compared - unreachable - len(errored)} record(s) "
                        f"re-parsed from the origin, {len(failed)} differing"
                        + (f", {len(moved)} moved (their origin unit changed since the build, "
                           f"the record re-parsed from it identical but for origin_hash)"
@@ -804,6 +822,25 @@ def _moved_only(line: bytes, got: bytes) -> bool:
     a.pop("origin_hash", None)
     b.pop("origin_hash", None)
     return a == b
+
+
+def _origin_units_taken(ctx: Ctx, size_of: dict) -> tuple[set | None, dict]:
+    """The origin units this run reads — `size_of` is unit -> bytes for every
+    unit the sampled records point into — and the bound's record. None when
+    nothing bounds the run (no `origin_unit`): every sampled record is
+    compared. The ranking and the cut are `_within_the_origin_bound`'s."""
+    if ctx.origin_unit is None or not size_of:
+        return None, {}
+    taken: list[str] = []
+    used = 0
+    for unit in cx.sample(ctx.seed, len(size_of), iter(sorted(size_of))):
+        size = size_of[unit] or 0
+        if taken and used + size > ctx.origin_bytes:
+            break
+        taken.append(unit)
+        used += size
+    return set(taken), {"origin_units": len(taken), "origin_units_sampled": len(size_of),
+                        "origin_bytes": used, "origin_bytes_bound": ctx.origin_bytes}
 
 
 def _within_the_origin_bound(ctx: Ctx, lines: list) -> tuple[list, dict]:

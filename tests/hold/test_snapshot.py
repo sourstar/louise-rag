@@ -298,3 +298,27 @@ def test_a_version_1_snapshot_may_not_carry_figures():
         version=1)
     with pytest.raises(CodexError, match="version 1 snapshot carries no"):
         bad.to_dict()
+
+
+def test_a_loaded_snapshot_reads_its_delta_only_when_asked(tmp_path):
+    """A first snapshot lists every record as added (pubmed's: 39,994,988
+    uids, 4.3 GB as Python strings). `load` leaves the delta in the file
+    until something reads it, takes the hash from the file's own bytes, and
+    gives back exactly what a full parse gives (measured 2026-10-08)."""
+    full = snap(delta=sn.Delta(tuple(f"pubmed:{i}" for i in range(1000)), ("pubmed:5",),
+                               (sn.Tombstone("pubmed:7", "withdrawn"),)))
+    p = tmp_path / "2026-08.json"
+    p.write_bytes(full.canonical())
+    got = sn.load(p)
+    assert isinstance(got.delta, sn.LazyDelta) and got.delta._delta is None, "nothing parsed on load"
+    assert got.hash == full.hash and got.delta._delta is None, "the hash from the bytes, still unparsed"
+    assert got.shards == full.shards and got.files == full.files
+    whole = sn._load(full.canonical())                # what a full parse gives
+    assert got.delta.added == whole.delta.added and got.delta.changed == ("pubmed:5",)
+    assert got.delta.tombstoned == whole.delta.tombstoned and got.delta == whole.delta
+    assert got.canonical() == full.canonical(), "re-serialised, the same bytes"
+    # a file not in canonical form is parsed whole, and its hash computed
+    pretty = tmp_path / "pretty.json"
+    pretty.write_text(__import__("json").dumps(full.to_dict(), indent=1), encoding="utf-8")
+    other = sn.load(pretty)
+    assert not isinstance(other.delta, sn.LazyDelta) and other.hash == full.hash

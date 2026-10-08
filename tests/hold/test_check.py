@@ -911,3 +911,23 @@ def test_a_claim_is_reproduced_on_the_named_shard_alone(checkable, corpus_dir):
     for check in ("chunks", "records-vs-origin"):
         o = report.outcome(check)
         assert o.result == chk.PASS and [s.split("/", 1)[1] for s in o.shards] == [one], (check, o.shards, o.why)
+
+
+def test_the_origin_check_serialises_only_the_records_it_compares(checkable, corpus_dir, monkeypatch):
+    """A COST test (2026-10-08): the one-pass check held every sampled line
+    until the bound had picked its files — pubmed's 2 million, 13 GB, to
+    compare a few thousand. Now nothing is kept between the passes but the
+    origin units, and a line is made only for a record that is compared."""
+    from app import louise
+    from app.pack import records as pack_records
+    root, snapshot, codex = checkable
+    made = []
+    real = pack_records.canonical_line
+    monkeypatch.setattr(pack_records, "canonical_line", lambda r, **kw: made.append(r["uid"]) or real(r, **kw))
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+             reparse=louise._reparse_from(codex, "gutenberg", corpus_dir),
+             origin_unit=_unit_sizes(100 << 20)).outcome("records-vs-origin")
+    assert o.result == chk.PASS, o.why
+    # each compared record is serialised twice — the copy's line and the
+    # re-parse's — and a record of a file not read, never
+    assert len(made) == 2 * o.detail["compared"] and o.detail["compared"] < o.detail["records"]
