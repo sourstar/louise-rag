@@ -1774,7 +1774,9 @@ tests, and every pre-existing test stays green after each.
   endpoint serves a query and refuses a write; the gate is triggered
   once per (space, run), not once per answer; `Louise-Level` on each
   client's request; chat streams through the OpenAI shape.
-- **13f — The cut-over, then the retirements. THE CUT-OVER IS DONE
+- **13f — DONE (2026-10-08 check: no app of this step is left on the node;
+  the operator deleted the per-model apps, the governor and Ollama).**
+  **The cut-over, then the retirements. THE CUT-OVER IS DONE
   (2026-09-19 night; numbers in [`STATUS.md`](STATUS.md)); the retirements
   wait on [`legacy-to-delete.md`](legacy-to-delete.md) §7; chat moved
   to RAGE the same night.** As planned: Not "one URL at a

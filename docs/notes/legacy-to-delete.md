@@ -136,7 +136,15 @@ any reading.
 
 ---
 
-## 4. genome × 3 — STAYING legacy, never deletable on these grounds
+## 4. genome × 3 — DELETED 2026-10-08 (operator: "delete genomes but keep track in the collections for the future")
+
+Data and origins deleted (about 3.3 GB: the table below plus the origins,
+860 MB + 40 MB + 3.4 MB under `/mnt/tank/apps/louise_collections_origin/`);
+their mounts left the app first (`deploy/16f/drop_mounts.py`). The three files
+are kept as the record in `config/collections-future/` with a README: a DNA
+calibration set, then a Codex, then a fresh fetch, to bring one back. What
+follows is the section as it stood.
+
 
 | what | size | path |
 |---|---|---|

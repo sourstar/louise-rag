@@ -244,6 +244,16 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-08, ~07:20Z (UTC): the genome collections DELETED; step 13f
+found done.** At the operator's yes on the named list: genome-hg38, dm6 and
+sacCer3's data (2.2 GB, 190 MB, 19 MB) and origins (860 MB, 40 MB, 3.4 MB)
+deleted, after `deploy/16f/drop_mounts.py` took their three bind mounts out
+of the app (a missing bind source stops a container starting): app stopped,
+compose updated, started; nine collections in use after. Their files are
+kept as the record in `config/collections-future/` with a README. No app of
+step 13f remains on the node (the per-model apps, the governor and Ollama
+were deleted by the operator), so 13f is done.
+
 **2026-10-08, ~00:40Z (UTC): the pre-Codex shape REMOVED; ee86a8e DEPLOYED.**
 On the operator's four yeses of the day: trusted lists travel in the seals
 member, no text-index member, no `dev adopt`/`migrate pack` (08a4c23,
