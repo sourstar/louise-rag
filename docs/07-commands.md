@@ -108,10 +108,16 @@ louise hold
               list <collection>
   embedder    check <collection>                                       the calibration gate (§3.3) against the run the endpoint states; a pass validates it and keeps its signed statement in `state/`
               benchmark <collection>                                   tokens per second on the calibration set
-              calibrate --encoder-weights D --engine FILE [--against FILE …] [--set SHA256]
+              calibrate --encoder-weights D --engine FILE --against FILE … --ctx N [--set SHA256]
                                                                        the tolerance a space can bear, measured between the reference engine and each --against
                                                                        encoder (a file of `weights` and `[engine]`, 09 §9.3's form)
                                                                        over the calibration set: run BEFORE `collection create`, its output being the recipe's `space.tolerance`
+                                                                       (JSON: per-encoder cosines, and `tolerance` — the worst cosine minus three standard
+                                                                       deviations, rounded down to six places). Each file also names its endpoint as an
+                                                                       `[encoder]` block does (§7.8): top-level `url`, with `api` and `model` where needed;
+                                                                       `--engine`'s may omit `weights`. `--ctx` is the space's, the texts cut as the gate cuts
+                                                                       them; `--set` defaults to the platform's text set. Exit 3 when an endpoint is unreachable
+                                                                       (amended 2026-10-08: the endpoint and `--ctx` were unstated)
               rebaseline <collection> [--yes]                          a Codex below version 3 only: accept a changed backend by re-recording the probe baseline (`app/verify/backend_gate.py`); exit 2 for version 3, whose runs `check` validates
   vectors     build <collection> [--shard <slice>/<n> | --delta ID]    embed; a signed bundle about every 15,000 chunks
               import <collection> (<file> | --archive ID [--retry]) [--strict]

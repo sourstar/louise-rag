@@ -2486,11 +2486,19 @@ def cmd_embedder_benchmark(a) -> int:
 
 
 def cmd_embedder_calibrate(a) -> int:
-    _not_yet("--against",
-             "two live encoder endpoints to compare, which is the one part "
-             "of step 3 that wants the node rather than a mock (migration "
-             "plan, step 3)")
-    return 2
+    """`hold embedder calibrate` (07 §7.3, 03 §3.3): the tolerance a space
+    can bear, before `collection create`. Prints JSON; its `tolerance` is
+    the recipe's `space.tolerance`. Exit 3 when an endpoint is unreachable
+    (raised as CalibrateUnreachable), 2 for a file or set refused."""
+    from app.hold import calibrate as calib
+    if a.ctx <= 0:
+        raise CodexError(f"--ctx is the space's input window in tokens, got {a.ctx}")
+    reference = calib.read_endpoint(a.engine, weights=a.encoder_weights)
+    against = [calib.read_endpoint(f) for f in a.against]
+    set_id, texts = calib.load_set(a.set_id)
+    _print(calib.measure(reference, against, set_id=set_id, texts=texts,
+                         embed=calib.http_embed(a.ctx)))
+    return 0
 
 
 def _gate(a):
@@ -3234,10 +3242,17 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(p); p.add_argument("collection"); p.set_defaults(fn=cmd_embedder_benchmark)
 
     p = everbs.add_parser("calibrate", help="the tolerance a space can bear")
-    root_arg(p)
-    p.add_argument("--encoder-image"); p.add_argument("--encoder-weights")
-    p.add_argument("--against", nargs="*", default=[])
-    p.add_argument("--set", dest="set_id")
+    # no --root: it runs before any collection exists (03 §3.3)
+    p.add_argument("--encoder-weights", required=True,
+                   help="the reference encoder's weights digest (09 §9.3)")
+    p.add_argument("--engine", required=True, metavar="FILE",
+                   help="the reference engine: url, [engine] (09 §9.3)")
+    p.add_argument("--against", nargs="+", default=[], metavar="FILE",
+                   help="another build: url, weights, [engine]")
+    p.add_argument("--ctx", type=int, required=True,
+                   help="the space's input window in tokens; texts are cut as the gate cuts them")
+    p.add_argument("--set", dest="set_id", metavar="SHA256",
+                   help="the calibration set (default: the platform's text set)")
     p.set_defaults(fn=cmd_embedder_calibrate)
 
     p = everbs.add_parser("rebaseline",

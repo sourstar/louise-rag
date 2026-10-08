@@ -27,7 +27,8 @@ def test_the_verbs_are_in_the_tree():
     for argv in (["hold", "embedder", "check", "g"],
                  ["hold", "embedder", "check", "g", "--accept"],
                  ["hold", "embedder", "benchmark", "g"],
-                 ["hold", "embedder", "calibrate", "--encoder-image", "d"]):
+                 ["hold", "embedder", "calibrate", "--encoder-weights", "d",
+                  "--engine", "e.toml", "--against", "f.toml", "--ctx", "512"]):
         assert p.parse_args(argv).fn is not None
 
 
@@ -70,13 +71,14 @@ def test_check_defers_when_no_encoder_is_configured(tmp_path, monkeypatch, capsy
     assert "deferred" in capsys.readouterr().err
 
 
-def test_calibrate_says_what_it_needs_rather_than_pretending(tmp_path):
-    """It compares two encoder BUILDS over the set, so it wants two live
-    endpoints — the one part of step 3 a mock cannot stand in for."""
-    root = _collection(tmp_path)
-    assert louise.main(["hold", "embedder", "calibrate",
-                        "--encoder-image", "sha256:" + "aa" * 32,
-                        "--root", str(root)]) == 2
+def test_calibrate_names_the_engine_it_measures():
+    """07 §7.3: `--encoder-weights D --engine FILE`. The Codex-version-2 shape
+    (`--encoder-image`) is never stated anew (09 §9.3), so it is not a flag;
+    tests/hold/test_embedder_calibrate.py runs the command itself."""
+    with pytest.raises(SystemExit) as e:
+        louise.build_parser().parse_args(
+            ["hold", "embedder", "calibrate", "--encoder-image", "sha256:" + "aa" * 32])
+    assert e.value.code == 2
 
 
 # ---- 07 §7.6: the previous names, retired ------------------------------------
