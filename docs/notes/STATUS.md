@@ -24,6 +24,11 @@ it left open is below.
   — carryable; wikipedia by 1.5e-3, four times it (its first layer is the
   wikivec archive's engine); pubmed materially (cosine 0.958). So pubmed and
   wikipedia would be re-embedded in full, and `backend_gate` cannot go yet.
+- **The code follows the SHARD/parts vocabulary** (operator, 2026-10-08):
+  `app/pack/`, `KIND = "louise-pack"`, `drag/`, `source = "drag"`,
+  `shard_of`/`shards_of`, … — bytes already written keep their names
+  (09's opening note lists them). The specification already speaks it;
+  the dated entries below keep the words of their time (pack, drag, shard).
 - **Operator**: file [`localai-bugs.md`](localai-bugs.md) upstream (step 15).
 
 Node-specific facts — addresses, paths, ports, the live collection inventory —

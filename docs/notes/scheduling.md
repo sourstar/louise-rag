@@ -32,7 +32,7 @@ the part that prevents the seventh.
 | **stats publisher** | telemetry, the seeding table | do any pipeline work |
 | **discovery scan** (one thread per collection, on demand) | enumerating the corpus into the manifest in batches | hold the write lock across a whole scan |
 | **acquisition** (background, budgeted) | fetching corpus and archive bytes | bypass the transfer manager's budget |
-| **parse pool** (`app/parallel.py`, spawned children at `nice 10`) | fetch/parse/chunk per document, metadata, pack records, `prepare` prefetches | write ANYTHING — every writer stays in the worker |
+| **parse pool** (`app/parallel.py`, spawned children at `nice 10`) | fetch/parse/chunk per document, metadata, SHARD record lines, `prepare` prefetches | write ANYTHING — every writer stays in the worker |
 | **encoders** (separate containers) | embeddings | — |
 
 Two ownership rules follow from the table and are load-bearing:
@@ -52,7 +52,7 @@ Two ownership rules follow from the table and are load-bearing:
 | **the manifest write lock** (per collection) | rdf/fts marks, archive flush marks, discovery batches, control writes | an archive importing at 1,400 docs/s holds it in a near-continuous stream of short transactions; other writers wait |
 | **the Lance table** (per collection) | the embed step, archive flushes, the index maintainer | a build/refresh marks the collection busy and its vector writers stand down (rdf/fts continue) |
 | **the encoders** | every collection naming the endpoint, through its gate (§12) | the Arc holds eight model servers at once (25.7 of 34.2 GB, 2026-09-18), so "GPU work is serial by doctrine" and "one model server at a time" are stale. What serialised the GPU was the main loop feeding every endpoint in turn: gutenberg's encoder was idle in 233 of 300 s with 78,178 documents waiting (§12) |
-| **disk** | corpora on the HDD pool, `/data` (manifests, Lance, packs) on NVMe | a 437 MB shard read is ~6 s from the HDD; row-group reads keep it to a few MB |
+| **disk** | corpora on the HDD pool, `/data` (manifests, Lance, pubmed's container packs) on NVMe | a 437 MB archive-shard read is ~6 s from the HDD; row-group reads keep it to a few MB |
 
 ## 3. The rules — each one paid for
 
@@ -404,7 +404,7 @@ after "run everything". The suite could not have shown the first number.
   anything slow.
 - **`python -m tools.sched_report --phases <collection>`** — where an
   archive pass's time goes (read / lookups / chunking / writes),
-  read-only: it replays an already-applied shard, so nothing is written.
+  read-only: it replays an already-applied archive shard, so nothing is written.
 - **`python -m tools.sched_report --rates [--seconds 120]`** — per
   collection, documents per second through rdf, fts and embed, sampled.
 - **`python -m tools.sched_report --pool`** — parse pool health

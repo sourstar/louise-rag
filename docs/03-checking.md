@@ -1,5 +1,7 @@
 # 3. Checking
 
+*(vocabulary amended 2026-10-08: SHARD, parts)*
+
 Trust in Louise comes from reproduction. Anyone with a copy and the
 platform can recompute any part of a collection from its origin and
 compare. This document says what "compare" means for each part, which
@@ -12,7 +14,7 @@ from checks it did not run itself.
 the same toolchain image, the same record, byte for byte. Chunking is a
 pure function of the cleaned text and the layer's chunker. Hashes are
 hashes. A check on any of these either passes or is a proof of failure
-that names the shard. There is no "close".
+that names the part. There is no "close".
 
 **Vectors are within tolerance.** The same weights on different GPUs,
 drivers or batch sizes produce different floats. So a vector is correct
@@ -40,7 +42,7 @@ reproduction.
 **Three outcomes.** A check ends in one of three ways: *pass*, *fail*
 or *inconclusive*. Inconclusive means the check could not run — the
 origin unreachable, the encoder unreachable or past its bounded wait,
-the manifest locked, a sampled shard not held by this peer. It is
+the manifest locked, a sampled part not held by this peer. It is
 neither a failure nor a pass: it produces no attestation and no flag,
 it is reported with its reason, and it is retried. A check never waits
 without a bound on an origin or an encoder; past the bound it is
@@ -57,7 +59,7 @@ digest — and a collection carries a **plan** saying which checks apply
 and how much to sample. The plan is the Codex's `validation` block
 (02 §2.1): `checks` names the checks that apply, from the table below
 and nothing else, and `sample` says, per sampled check, how much is
-sampled. `validation.json` in the drag (02 §2.6) is that block written
+sampled. `validation.json` in the SHARD (02 §2.6) is that block written
 out for tools, and `hold check` refuses a copy where the two differ.
 Nothing outside the Codex decides how much is sampled: a publisher who
 wants weaker checks has to publish a different collection. A `checks`
@@ -66,16 +68,16 @@ create` and at `hold check` alike.
 
 | check | proves | needs | kind |
 |---|---|---|---|
-| `roots` | every shard's bytes have the `root` the snapshot lists — the BitTorrent v2 merkle root of the stored file (09 §9.5) | the copy | exact |
-| `records` | every sampled record's `content_hash` recomputes from its own title and sections and it carries an `origin_hash`; each sampled shard's `records_root` recomputes from its records' `content_hash` values in order (09 §9.5) | the copy | exact |
-| `records-vs-origin` | a seeded sample of shards and, within them, a seeded sample of origin units of at most 256 MiB (below), re-fetched from the origin by the locator each record carries and re-parsed with the Codex's toolchain, reproduces every sampled record line of those units byte for byte — the decompressed lines, not merely the same `records_root`. A line identical but for `origin_hash` is MOVED, not failed: its origin unit was rewritten since the build and parses to the same record; it is named in the detail (amended 2026-10-07: the mirror rewrote half of a sample of gutenberg's book folders without changing one parsed record, and a new image could not be proven equivalent) | the origin, the platform image | exact |
+| `roots` | every part's bytes have the `root` the snapshot lists — the BitTorrent v2 merkle root of the stored file (09 §9.5) | the copy | exact |
+| `records` | every sampled record's `content_hash` recomputes from its own title and sections and it carries an `origin_hash`; each sampled part's `records_root` recomputes from its records' `content_hash` values in order (09 §9.5) | the copy | exact |
+| `records-vs-origin` | a seeded sample of parts and, within them, a seeded sample of origin units of at most 256 MiB (below), re-fetched from the origin by the locator each record carries and re-parsed with the Codex's toolchain, reproduces every sampled record line of those units byte for byte — the decompressed lines, not merely the same `records_root`. A line identical but for `origin_hash` is MOVED, not failed: its origin unit was rewritten since the build and parses to the same record; it is named in the detail (amended 2026-10-07: the mirror rewrote half of a sample of gutenberg's book folders without changing one parsed record, and a new image could not be proven equivalent) | the origin, the platform image | exact |
 | `image-equivalence` | the same seeded sample re-parsed from the same origin bytes by this image and by the Codex's reference image (`--against`, written under that image by tools/reparse_lines.py) gives the same record lines, every one — a proof about the image, never planned, for §3.4 when the origin has moved since the build | the origin, the reference image's lines | exact |
-| `chunks` | recomputing chunks from the records reproduces each sampled shard's `chunks_root` and its `chunks` count (09 §9.4) — deriving each document's layer from the Codex's rules, never reading it from the record, which carries none (02 §2.3, 06 §6.3), so a wrong layer is caught rather than reproduced | the copy | exact; can be exhaustive |
-| `vectors-sample` | in a seeded sample of shards, sixteen chunks each, re-embedded with this peer's compliant encoder, reach cosine ≥ `tolerance` on the calibration quorum (§3.3) | records, a calibrated encoder | statistical |
+| `chunks` | recomputing chunks from the records reproduces each sampled part's `chunks_root` and its `chunks` count (09 §9.4) — deriving each document's layer from the Codex's rules, never reading it from the record, which carries none (02 §2.3, 06 §6.3), so a wrong layer is caught rather than reproduced | the copy | exact; can be exhaustive |
+| `vectors-sample` | in a seeded sample of parts, sixteen chunks each, re-embedded with this peer's compliant encoder, reach cosine ≥ `tolerance` on the calibration quorum (§3.3) | records, a calibrated encoder | statistical |
 | `calibration` | the calibration set's reference vectors reproduce on this peer's encoder — the gate of §3.3, run for this collection's space | an encoder | statistical |
 | `centres` | re-training from the declaration in `vectors/<space>/index.json` (02 §2.4) yields centres each within cosine ≥ `tolerance` of the published centre at that index version | the copy | statistical |
 | `labels` | every vector's stored label is its nearest published centre at the label's index version, ties to the lower centre index | the copy | exact given the published centres |
-| `figures` | every plate the sampled shards' records name is in the shard's figures container and hashes to what the record line says (09 §9.5); a plate the peer does not hold is not a failure — a figures member is fetchable or not — and is reported as not held | the copy | sampled |
+| `figures` | every plate the sampled parts' records name is in the part's figures container and hashes to what the record line says (09 §9.5); a plate the peer does not hold is not a failure — a figures member is fetchable or not — and is reported as not held | the copy | sampled |
 | `license` | the terms member `LICENSE-TERMS` hashes to the Codex's `license.terms_sha256` (09 §9.13); absent for a green collection | the copy | exact |
 | `signature` | the snapshot's sidecar carries a valid signature by the key that claims it (09 §9.4) | the copy | exact |
 | `anchor` | a certifier's key is listed, valid and unrevoked at its external anchor (§3.7) | the network | exact |
@@ -88,30 +90,30 @@ consistent: `calibration` — the gate of §3.3 on the run, and the check
 of every answer's run before its vectors are written — and
 `vectors-sample`, which it runs locally on a timer over its own stored
 vectors (02 §2.9). The rest of its plan is not required; a deposit
-collection runs none of it, having no drag for it to run on.
+collection runs none of it, having no SHARD for it to run on.
 
 **The seeded sample.** Every sampled check draws its sample by one
 rule, `sample(seed, n, universe)`: sort the universe by id in UTF-8
 byte order, score each id by HMAC-SHA256(seed, id) read as an unsigned
 64-bit integer from the first eight bytes of the digest, big-endian,
-and take the n ids with the lowest scores. The universe of a shard
-sample is the snapshot's shard list, an id being `<slice>/<n>`; the
-universe of a chunk sample is the chunk ids of the shard sampled, in
+and take the n ids with the lowest scores. The universe of a part
+sample is the snapshot's part list (its key `shards`), an id being `<slice>/<n>`; the
+universe of a chunk sample is the chunk ids of the part sampled, in
 which case n is sixteen. The seed is 32 random bytes chosen by the
 verifier from OS entropy — or given by hand as `--seed` — and published
 in the attestation; the plan fixes n or a fraction, never the seed. So
 two verifiers never draw the same sample unless they mean to, the union
 of samples grows with every verifier, and anyone can recompute from an
-attestation exactly which shards it covered. `sample` gives the
-fraction of shards per sampled check as a decimal string; the default
-is `"0.05"`, always at least one shard.
+attestation exactly which parts it covered. `sample` gives the
+fraction of parts per sampled check as a decimal string; the default
+is `"0.05"`, always at least one part.
 
-**What one origin check may read.** The shard sample does not bound what
-`records-vs-origin` costs: a record shard is cut by the collection's
+**What one origin check may read.** The part sample does not bound what
+`records-vs-origin` costs: a record part is cut by the collection's
 slices and an origin file by the origin's, so a twentieth of PubMed's
-shards — 68 of 1,358, sliced by year — reach into 474 to 651 of its
+parts — 68 of 1,358, sliced by year — reach into 474 to 651 of its
 origin files, 18 to 29 GiB to fetch for every check on every peer
-(measured 2026-09-20, two seeds). So within the sampled shards the
+(measured 2026-09-20, two seeds). So within the sampled parts the
 records are grouped by **origin unit** — the file of the origin a
 record's locator points into (09 §9.5) — the units are ranked by
 `sample(seed, n, universe)` under the same seed, an id being the unit's
@@ -126,7 +128,7 @@ read. The bound is the platform's and not the plan's, for the reason
 the plan sets no chunk count (09 §9.3): a creator who could set it could
 set it backwards. `--origin-mib` raises it for a run and cannot lower
 it (07 §7.3). This amends "nothing outside the Codex decides how much is
-sampled" in one respect only: the Codex decides how many shards, and
+sampled" in one respect only: the Codex decides how many parts, and
 the platform how much of the origin one check may read for them
 (operator, 2026-09-20).
 
@@ -151,7 +153,7 @@ window cannot see a build that is wrong only when one is full (09
 reference vectors the creator produced for it with the space's encoder
 (`space.calibration`), together with their per-dimension mean and
 standard deviation, the space's **envelope** (`space.envelope`). All
-of it is one drag member, `calibration/<set>.safetensors` (09 §9.12),
+of it is one SHARD member, `calibration/<set>.safetensors` (09 §9.12),
 and a Codex can be written before a single record exists, which is why
 creation comes first in 06 §6.6. Two collections on one encoder share
 one calibration; 08 §8.3 follows from that.
@@ -291,13 +293,13 @@ are counted by the encoder's tokenizer, truncated at the space's `ctx`,
 and divided by the wall-clock seconds of the pass; the result is an
 integer. It is signed into the calibration statement with the time of
 measurement and published with the peer's catalogue digest, and it is
-the weight 04 §4.5 uses to give large shards to peers that can finish
-them: a peer is eligible for a shard when three times the shard's
+the weight 04 §4.5 uses to give large parts to peers that can finish
+them: a peer is eligible for a part when three times the part's
 `tokens` divided by its benchmark stays within the seconds of the
 collection's work period, `work.per` (02 §2.4).
 
 **Before spending GPU.** A peer contributes vectors to a collection
-only after its own `roots` and `chunks` pass on the shards it holds and
+only after its own `roots` and `chunks` pass on the parts it holds and
 at least one `records-vs-origin` attestation — its own or another
 key's — exists for the snapshot (04 §4.5). Records are checked before
 GPU is spent; there is no vector precondition, which would be circular.
@@ -307,7 +309,7 @@ GPU is spent; there is no vector precondition, which would be circular.
 The Codex freezes a *reference* toolchain by digest. A newer platform
 image — a refactor, a security fix — is not thereby a new collection.
 `records-vs-origin` run under the new image, over the plan's sample,
-reproducing every sampled shard's `records_root`, together with
+reproducing every sampled part's `records_root`, together with
 `chunks` passing under the same image, is a deterministic proof that
 the new image is **equivalent** for this collection; the proof travels
 as an attestation whose `platform_image` is the image run, and a peer
@@ -683,7 +685,7 @@ naming both producers — 04 §4.5's "duplicates are checks".
 ## 3.6 Attestations and trust levels
 
 Every completed check yields an **attestation**: collection, snapshot,
-check, seed and sampled shards, result — `pass`, `fail`, `forgery`,
+check, seed and sampled parts, result — `pass`, `fail`, `forgery`,
 `withdraw` or `supersedes` — a detail block per check, platform image,
 encoder engine and weights for statistical checks, the verifier's key, time. Its id
 is the hash of its canonical body and its signature is under the
@@ -694,7 +696,7 @@ beside the catalogue.
 
 An attestation counts toward a level only for the snapshot it names,
 and for at most two cadences from its `time`; when a peer adopts a
-newer snapshot, an older snapshot's attestations count for the shards
+newer snapshot, an older snapshot's attestations count for the parts
 the newer one lists with the same root, which is what a snapshot
 inherits unchanged. An attestation whose `time` is more than an hour
 ahead of the receiving peer's clock is dropped.
@@ -704,7 +706,7 @@ peer holds. A level counts **independent** attestations: two
 attestations are independent when they come from distinct keys and
 carry distinct seeds where the check is a sampled one; a null seed —
 an exhaustive or deterministic check (09 §9.8) — is not compared, since
-two honest peers running `roots` over the same shards must agree, and
+two honest peers running `roots` over the same parts must agree, and
 requiring them to differ would put `checked` out of reach for ever. A
 key is counted once. The trust list
 (`hold key trust`) is a local allow/deny filter over whose attestations
@@ -721,28 +723,28 @@ What protects a peer is its own checks, and the aggregate limit of
 |---|---|
 | **unverified** | only the publisher's word — a signed snapshot, at most a calibration statement; usable, and marked as such everywhere it appears |
 | **checked** | at least three independent keys passed `roots`, `chunks` and `calibration`; at least one of them passed `records-vs-origin` on a sample; and, for every producer whose bundles the collection has, at least one key other than that producer passed `vectors-sample` on that producer's vectors |
-| **verified** | at least eight independent keys, and the union of their samples covers a quarter of shards for `records-vs-origin` and a tenth for `vectors-sample`; the covered fraction keeps rising and is shown |
-| **flagged** | a deterministic check failed — one reproduction is enough, and it names the shard; or a statistical check failed twice, from independent verifiers, the second on the chunk ids the first named (below) |
+| **verified** | at least eight independent keys, and the union of their samples covers a quarter of parts for `records-vs-origin` and a tenth for `vectors-sample`; the covered fraction keeps rising and is shown |
+| **flagged** | a deterministic check failed — one reproduction is enough, and it names the part; or a statistical check failed twice, from independent verifiers, the second on the chunk ids the first named (below) |
 
 *The same sample* for a statistical flag is exact: a failing
 `vectors-sample` or T3 attestation lists the chunk ids that missed; a
 second key re-embeds exactly those chunks with its own compliant
 encoder and reports them missing too. A deterministic flag names the
-shard; a statistical flag names the producer of those vectors, and
+part; a statistical flag names the producer of those vectors, and
 applies to that producer's vectors in that space, never to the
 records. A failing deterministic attestation flags only when the
 verifier's platform image is the Codex's or one with a passing
 equivalence attestation for the collection (§3.4); a failure under any
 other image is that image's failure. A `roots` or `chunks` failure on a
-shard this peer holds is first a local fault: the shard is excluded
+part this peer holds is first a local fault: the part is excluded
 from search and share, re-fetched from peers (04 §4.3), and re-checked;
-a flag is published only when a freshly fetched shard whose root
+a flag is published only when a freshly fetched part whose root
 matches the signed snapshot fails `chunks`, or `records-vs-origin`
 fails on it. `hold check` reports the first case as a corrupt local
-shard with the re-fetch queued, never as flagged. A flag received from
+part with the re-fetch queued, never as flagged. A flag received from
 another key is acted on after local reproduction; a peer that cannot
-reproduce it — no origin, shard not held — shows it as a claim and
-counts it as a flag once two distinct keys report the same shard or
+reproduce it — no origin, part not held — shows it as a claim and
+counts it as a flag once two distinct keys report the same part or
 the same chunks failing.
 
 A flagged collection stays searchable and is marked — except on a peer
@@ -761,7 +763,7 @@ Codex:
 ```
 replaces: {codex: <hash>,
            defect: {check, toolchain: <image under which it fails>,
-                    witnesses: [<shard or record ids>], expected, observed,
+                    witnesses: [<part or record ids>], expected, observed,
                     rationale: "<one readable sentence>"}}
 ```
 
@@ -806,7 +808,7 @@ and written nowhere:
 
 A copy leaves quarantine when, on this peer:
 
-1. `roots` and `chunks` pass on every shard held;
+1. `roots` and `chunks` pass on every part held;
 2. every vector bundle held passes T0, T1 and T2 (§3.5);
 3. the gate of §3.3 has RUN against the run its encoder states, and
    against its query encoder's in an asymmetric space. A pass validates
@@ -821,11 +823,11 @@ A copy leaves quarantine when, on this peer:
 All five are the peer's own work, against the Codex and the origin,
 needing nobody's word. They are possible because a copy carries what
 they need — the Codex with its calibration member, the signed snapshot
-with every shard's roots, the terms — which is also why a collection
+with every part's roots, the terms — which is also why a collection
 without them cannot be created (06 §6.6) and what makes one shareable:
 any peer that downloads it can test it. Tests 1 and 5 have nothing to
 run on for a never-share collection (02 §2.9): a deposit collection
-holds no shard, and its origin is the client that wrote it, so it waits
+holds no part, and its origin is the client that wrote it, so it waits
 for the gate and the licence alone and its `origin_check` reads
 `not-planned` (09 §9.3; operator, 2026-10-06). Every other collection
 is judged by all five, whatever samples its plan sets.
@@ -871,11 +873,11 @@ run this peer has not tested — a model relaunched with another flag, a
 new image, a new driver — until the gate has run, which it does at
 once; every collection of that space on the peer goes with it. And
 when this peer's own `records-vs-origin`, under the Codex's image or an
-equivalent one, FAILS on a shard whose root matches the signed
+equivalent one, FAILS on a part whose root matches the signed
 snapshot: the flag is published as above, and the copy is not used
 here until a person decides, because a copy that does not reproduce
 its origin is not one to search. A `roots` or `chunks` failure stays
-what this section already makes it, one shard's local fault. An
+what this section already makes it, one part's local fault. An
 encoder or an origin that cannot be reached is a deferral: it returns
 nothing to quarantine.
 
@@ -889,7 +891,7 @@ For a certified collection the question "where did this packet come
 from" is a chain of five links, of which the platform supplies three:
 
 ```
-external anchor → certifier key → signed snapshot → shard root → bytes
+external anchor → certifier key → signed snapshot → part root → bytes
 ```
 
 Bytes match roots (the transport already checks pieces); roots are
@@ -996,12 +998,12 @@ the Library says which of the two a reader is trusting.
 
 In a certified collection only certified content may be embedded or
 returned. The rule is enforced where it can be absolute — at the moment
-a fetched shard is promoted from staging into the copy: *a shard enters
+a fetched part is promoted from staging into the copy: *a part enters
 only if its root is in a signed snapshot of the chain* — any snapshot
 this peer holds that is signed by a certifier key valid at its
-signature time (§3.7), not only the newest, since a shard stays listed
+signature time (§3.7), not only the newest, since a part stays listed
 by every snapshot that still carries it. This is a refuse-to-start
-class rule, not a warning. A shard
+class rule, not a warning. A part
 superseded by a re-issue stays on disk under its old snapshot's name
 (02 §2.2) and is excluded from search and embedding, never deleted. A
 revoked or mismatched anchor does not lift the gate: snapshots signed
@@ -1013,14 +1015,14 @@ Everything downstream is defence for a gate that was bypassed — a folder
 populated by hand, an old snapshot left on disk:
 
 - **granularity** — a chunk is a pure function of one record, so the
-  unit of certification is the shard, the unit of discard is the record
+  unit of certification is the part, the unit of discard is the record
   and all its chunks, and the unit of halt is the collection on that
   peer;
 - **halt** — embedding stops for the whole collection and no bundle is
   published, because vectors for chunks outside the snapshot would
   poison everyone's coverage map; the peer marks the collection
   *integrity violated* until it re-fetches and re-checks: `share fetch`
-  replaces every excluded shard, `hold check` passes `roots`,
+  replaces every excluded part, `hold check` passes `roots`,
   `signature` and `anchor`, and the mark clears;
 - **search continues** over the certified subset, with the exclusion
   visible in the results — never a silent drop.
@@ -1031,8 +1033,8 @@ does not depend on good faith:
 | found | at fault | flagged | caught by |
 |---|---|---|---|
 | bytes that do not match the claimed root | the sharer served corrupt or forged data | the sharer | the transport, before anything reaches the copy |
-| a shard whose root is not in a signed snapshot of the chain | someone introduced foreign material | the local source of that shard | the promotion gate |
-| a valid, signed shard whose records do not match the origin | the certifier: a pipeline bug or a compromised key | the certifier and the snapshot; the sharer served faithfully what was signed | `records-vs-origin`, `origin-seal` |
+| a part whose root is not in a signed snapshot of the chain | someone introduced foreign material | the local source of that part | the promotion gate |
+| a valid, signed part whose records do not match the origin | the certifier: a pipeline bug or a compromised key | the certifier and the snapshot; the sharer served faithfully what was signed | `records-vs-origin`, `origin-seal` |
 
 The protocol cannot tell a bug from an attack and does not need to: the
 response is the same, and the remedy is the same — a later snapshot that

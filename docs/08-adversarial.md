@@ -1,5 +1,7 @@
 # 8. Standing up to bad actors
 
+*(vocabulary amended 2026-10-08: SHARD, parts)*
+
 There is no authority here that can stop anyone from publishing. In a
 system whose whole promise is that a collection received from a stranger
 can be checked against its origin (§3), the defence against a bad actor
@@ -62,7 +64,7 @@ It earns no place in catalogue rankings until independent parties
 reproduce a sample of its vectors on its own records (§3.5–3.6). It earns
 no stranger's GPU either, though the precondition there is on the
 records, not on the vectors: a peer contributes vectors to a collection
-only after its own `roots` and `chunks` pass on the shards it holds and
+only after its own `roots` and `chunks` pass on the parts it holds and
 at least one `records-vs-origin` attestation — its own or another key's —
 exists for the snapshot (§4.5). Records are checked before GPU is spent;
 a vector precondition would be circular, because the first vectors on any
@@ -202,12 +204,12 @@ The one block serves twice. For **holding** (§8.6; the computable rule is
 §4.7): a key holds the collection actively while its signed work on the
 collection's own records — bundles, and attestations of checks — totals
 at least `tokens` per `per`. For
-**eligibility** (§4.5): a peer is eligible for a shard when
-`3 × shard_tokens / benchmark_tokens_per_s ≤ seconds(per)` — a
-contributor must be able to finish one shard within one work period, with
-a factor of three for other load. `shard_tokens` is listed per shard in
+**eligibility** (§4.5): a peer is eligible for a part when
+`3 × part_tokens / benchmark_tokens_per_s ≤ seconds(per)` — a
+contributor must be able to finish one part within one work period, with
+a factor of three for other load. `part_tokens` is listed per part in
 the snapshot, an upper bound of chunks × `ctx`; the benchmark is the
-peer's own (§3.3). Small shards admit weak peers, large shards admit few,
+peer's own (§3.3). Small parts admit weak peers, large parts admit few,
 and the rate says who it makes sense to count — the paragraph above, made
 computable.
 
@@ -277,7 +279,7 @@ larger attack surface than the rest of the exchange put together, and the
 hash chain does not touch it.
 
 **What the hash does and does not buy.** A record names its plates by
-hash, the record line is in a shard whose root a snapshot signs, so a
+hash, the record line is in a part whose root a snapshot signs, so a
 plate SWAPPED IN TRANSIT is caught. Nothing about that catches a plate the
 producer meant to send. A figure is published, not merely relayed, and a
 hostile publisher's plate verifies perfectly. So the defences below are

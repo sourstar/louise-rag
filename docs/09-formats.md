@@ -1,15 +1,33 @@
-# 9. The DRAG format — every byte that is hashed, signed or moved
+# 9. The SHARD format — every byte that is hashed, signed or moved
 
-A collection on disk is a **drag**: *distributed RAG*, the format this
-document fixes. One directory holds one collection — its Codex, its
-snapshots, its records, its vectors and everything else a peer shares
-(02 §2.6) — and a peer that receives a drag can check every byte of it
-against the identity it claims, which is what the name is for.
+*(vocabulary amended 2026-10-08: SHARD, parts)*
+
+A collection on disk is a **SHARD**: *Self-Hosted, Attested RAG
+Distribution*, the format this document fixes. One directory holds one
+collection — its Codex, its snapshots, its records, its vectors and
+everything else a peer shares (02 §2.6) — and a peer that receives a
+SHARD can check every byte of it against the identity it claims, which
+is what the name is for.
+
+**Bytes already written keep their names.** The format was called
+*drag* (DRAG, *distributed RAG*) until 2026-10-08, and *pack* before
+that; its pieces, now **parts**, were called *shards*. Renaming a key,
+a magic or a path would change bytes that are hashed, signed or already
+on disk, so none is renamed: the Codex's `slicing.shard_records`, the
+snapshot's `shards`, the `shard` of a vector file's header, of a bundle
+header, of a `bundle` event and of a coverage row, the attestation's
+`shards`, the plan's `{"shards": …}` sample sizes, the rendezvous
+`shard_id` and the magic `LOUISE-PACK-IDX1`/`LPK1` (§9.5) all keep the
+old word, and the `drag/` directory and `source = "drag"` (07 §7.8) keep
+it until the code follows. Where this document writes *part*, a field
+named `shard` means the same thing. A `credits` entry's `ids_per_shard`
+and `shards` (§9.3) are another sense: they count a pre-embedded
+archive's own shards, which are that archive's files, not parts.
 
 This document is the byte-level reference the other eight point at. It
 fixes, for every artefact whose identity is a hash, whose authorship is
 a signature, or whose bytes cross a wire, exactly what those bytes are:
-the path in the drag or the message on the wire, the fields and their
+the path in the SHARD or the message on the wire, the fields and their
 types, the rule by which the bytes are hashed or signed, and one worked
 example on the project's own collections. Documents 02–08 say what an
 artefact is *for* and point here for what it *is*; nothing in 02–08
@@ -19,13 +37,13 @@ implementation of the section, and the two agree byte for byte.
 
 Two hash functions, two roles. `H` is SHA-256, and it is the function
 behind every identity and every signed object: `collection_id`,
-`space_id`, `lineage_id`, the snapshot hash, shard roots and
+`space_id`, `lineage_id`, the snapshot hash, part roots and
 `records_root`, bundle ids, attestation and event ids, the DHT keys and
 the rendezvous scores. Its textual form is always `sha256:` followed by
 64 lowercase hexadecimal digits. `content_hash` and `origin_hash` are
 BLAKE2b with a 16-byte digest — 32 lowercase hexadecimal digits, no
 prefix — and they are the only two places BLAKE2b appears: per-record
-fingerprints inside shards, thirty-six million of them in PubMed, where
+fingerprints inside parts, thirty-six million of them in PubMed, where
 the cost of the function and the size of the field matter and where
 neither is ever signed on its own. A reader that meets a digest can tell
 the function from its length: 71 characters with the prefix is `H`, 32
@@ -211,7 +229,7 @@ A list is a filter over whose word is counted at all, never a weight
 
 ## 9.3 The Codex file
 
-**Path.** `codex.json` at the root of the drag (02 §2.6). Its bytes are
+**Path.** `codex.json` at the root of the SHARD (02 §2.6). Its bytes are
 the canonical JSON of the object below and nothing else — no pretty
 form exists.
 
@@ -260,7 +278,7 @@ number written as a decimal string is marked *decimal*.
 | `parser` | object | yes | `{id: string, version: integer}` — the readable alias of what the platform image contains |
 | `cleaning_version` | integer | yes | the cleaner's version in the platform image (06 §6.3) |
 | `protocol_version` | integer | yes | the plugin protocol version the plugin implements (06 §6.1) |
-| `record_line` | `1` · `2` | yes | the shape of this collection's record lines (§9.5): `1` without a `figures` key, `2` with it. A collection never moves between them — one whose records gain plates is a NEW collection (02 §2.7) — and the format enforces it rather than a reviewer: this field is inside `collection_id`, so a Codex edited to change it is a different collection by construction. Carried by name and not folded into `version` above, because §9.18 versions the record line as its own schema: `version` tracks what wrote the Codex, `record_line` tracks what is in the shards, and a figureless collection created under a later format writes `version` 3 with `record_line` 1 |
+| `record_line` | `1` · `2` | yes | the shape of this collection's record lines (§9.5): `1` without a `figures` key, `2` with it. A collection never moves between them — one whose records gain plates is a NEW collection (02 §2.7) — and the format enforces it rather than a reviewer: this field is inside `collection_id`, so a Codex edited to change it is a different collection by construction. Carried by name and not folded into `version` above, because §9.18 versions the record line as its own schema: `version` tracks what wrote the Codex, `record_line` tracks what is in the parts, and a figureless collection created under a later format writes `version` 3 with `record_line` 1 |
 | `layers` | list of layer | yes | `{chunker: {id, version, params}, rule, input}`, in evaluation order; the last rule is `"default"` (06 §6.3). `params` is an object whose keys the chunker id fixes, `{}` when it takes none. `input` is the encoder's input FORM for the layer's chunks — the model's documented input format, inside `space_id` with the rest of the layer (*amended 2026-10-08*, docs/notes/input-forms.md): `{"form": "text"}`, the chunk's text as it stands; or `{"form": "pair", "split": "first-section"}`, a tokenizer text pair — the record's first section's body and the rest of its sections' bodies joined by `"\n\n"` — admitted only on a chunker that makes one chunk per record (`abstract`). Any other form or split is refused. From version 5, required on every layer; below it, absent |
 | `slicing` | object | yes | below |
 | `space` | object | yes | below |
@@ -278,11 +296,11 @@ number written as a decimal string is marked *decimal*.
 | `content` | `"manifest-only"` or null | yes | `"manifest-only"` exactly when certified |
 | `continues` | id or null | yes | daughter: the mother's `collection_id` |
 | `continues_through` | snapshot id or null | yes | daughter: the last snapshot that is the mother's — the boundary, named from the side that already exists (02 §2.7). Everything after it is the daughter's |
-| `origin_reachable_until` | snapshot id or null | yes | daughter: the last snapshot whose shards the origin still reproduces |
+| `origin_reachable_until` | snapshot id or null | yes | daughter: the last snapshot whose parts the origin still reproduces |
 | `derived_from` | id or null | yes | sister and corrective sister: the mother's `collection_id` |
 | `space_from` | id or null | yes | sister: the Codex whose `space` and `layers` were copied byte for byte. `cleaning_version` is not among them: a sister keeps her mother's in any case, since changing it would re-derive the corpus she inherits (02 §2.7) |
 | `derivation` | object or null | yes | how this space's vectors may be obtained WITHOUT an encoder, when it is a pure function of another space's: `{from: id, kind: "truncate" · "quantise", params: {…}}`, `from` being a `space_id` and never a `collection_id`. `null` where there is none. NOT part of `space_id` (02 §2.4) |
-| `replaces` | object or null | yes | corrective sister: `{codex: id, defect: {check, toolchain, witnesses, expected, observed, rationale}}` (03 §3.6); `witnesses` is a non-empty list of shard names `"<slice>/<n>"` or uids |
+| `replaces` | object or null | yes | corrective sister: `{codex: id, defect: {check, toolchain, witnesses, expected, observed, rationale}}` (03 §3.6); `witnesses` is a non-empty list of part names `"<slice>/<n>"` or uids |
 | `facets` | list of objects | yes | which record fields a search may filter on and a reader may list (05 §5.7), sorted by `field`, `[]` when none. Each is `{field: string, kind: "flat" · "tree" · "range", separator: string or null, authority: {name: string} or null}`; `separator` is non-null exactly when `kind` is `"tree"`. `field` is a top-level record field (§9.5) or `extra.<key>`. Declares structure only: the values live in the records |
 | `credits` | list of objects | yes | whom this collection's content and vectors are owed to, sorted by `(kind, archive, producer)`, never empty. Each entry has the same six keys — `{kind: "archive" · "community" · "corpus", archive: string or null, producer: string, license: string or null, attribution: string, coverage: "all" or {ids_per_shard: integer, shards: integer}}` — and `kind` fixes which of them carry meaning, below. Derived at creation from the plugin's declaration, the platform's registry and what is inherited, never composed by hand (02 §2.7); hashed, so no later build can alter or drop any of it |
 | ↳ `kind: "corpus"` | | | the corpus provider — whom the TEXT is from. Exactly one entry, on every collection including green ones: every corpus has a provider and every provider is named, whether or not a licence compels it. `archive` is null, `coverage` is `"all"`, `license` is the corpus licence (`null` only where there is none to name), `producer` and `attribution` come from the plugin (06 §6.1) |
@@ -320,14 +338,16 @@ vectors it did not compute.
 | `jurisdiction` | string or null | yes | ISO 3166-1 alpha-2, for a legal corpus; `null` otherwise |
 
 **The slicing block.** `keys` is the ordered list of slice keys; each
-key has a block; `shard_records` and `order` close the shard rule.
+key has a block; `shard_records` and `order` close the part rule
+(`shard_records` keeps the old word: bytes already written keep their
+names).
 
 | field | type | required | meaning |
 |---|---|---|---|
 | `keys` | list of strings | yes | slice keys in path order: `["year"]`, `["lang", "pages"]`, `[]` for one slice `all` |
 | `<key>` | object | one per key | for a year key: `{field, bins}` — `field` names the record field read (`date`), `bins` is the list below; for an id-range key: `{field, bin: integer}` — the record's `native_id` divided by `bin`; for a language key: `{field: "lang"}` |
 | `unknown` | string | yes | the slice a record joins when the key cannot be read: `"year=unknown"` |
-| `shard_records` | integer | yes | records per shard: 30,000 for PubMed, 2,000 for Wikipedia, 50 for Gutenberg |
+| `shard_records` | integer | yes | records per part: 30,000 for PubMed, 2,000 for Wikipedia, 50 for Gutenberg |
 | `order` | `"bytes"` · `"numeric"` | yes | how records sort within a slice: UTF-8 byte order of `native_id`, or integer order of it |
 
 The `bins` grammar, evaluated in list order over a year `Y`: `"<N"` —
@@ -424,10 +444,10 @@ hexadecimal digits of the digest.
 | field | type | required | meaning |
 |---|---|---|---|
 | `checks` | list of check names | yes | the checks that apply, from 03 §3.2's table of plan checks, in the order they run. §9.8's table is wider: it adds the results that are never planned — `merge`, `forgery`, `withdraw`, `supersedes` — which a peer produces from what it finds, not from a plan |
-| `sample` | object | yes | per sampled check, its size: `{"records": {"shards": decimal}, "chunks": {"shards": decimal}, "records-vs-origin": {"shards": decimal}, "vectors-sample": {"shards": decimal}}` — a decimal is a fraction of the snapshot's shards, `"1"` is exhaustive. The plan sets how many SHARDS a check samples and never how many chunks: `vectors-sample` draws sixteen per sampled shard and passes on the quorum `{n: 16, min_pass: 12}` of 03 §3.3, the same sixteen T3 draws by the importer's private randomness (03 §3.5). A plan-set count would need a scaling rule for the threshold that a creator could get backwards — raising the sample to strengthen the check and weakening it instead — and would drift from T3, whose randomness is deliberately unpublished |
+| `sample` | object | yes | per sampled check, its size: `{"records": {"shards": decimal}, "chunks": {"shards": decimal}, "records-vs-origin": {"shards": decimal}, "vectors-sample": {"shards": decimal}}` — a decimal is a fraction of the snapshot's parts (the key stays `shards`), `"1"` is exhaustive. The plan sets how many PARTS a check samples and never how many chunks: `vectors-sample` draws sixteen per sampled part and passes on the quorum `{n: 16, min_pass: 12}` of 03 §3.3, the same sixteen T3 draws by the importer's private randomness (03 §3.5). A plan-set count would need a scaling rule for the threshold that a creator could get backwards — raising the sample to strengthen the check and weakening it instead — and would drift from T3, whose randomness is deliberately unpublished |
 | `required` | list of check names | yes | certified collections: what must have passed before the collection is shown as certified (03 §3.7); `[]` on an open collection |
 
-`validation.json` at the drag root is this block written out in
+`validation.json` at the SHARD's root is this block written out in
 canonical JSON for tools; `hold check` reads it and refuses to run when
 its bytes differ from the block in the Codex (03 §3.2).
 
@@ -507,7 +527,7 @@ engine nowhere in it.
 **Paths.** `snapshots/<snapshot_id>.json` — the snapshot, canonical
 JSON, no signature inside; its hash is `H(bytes of the file)`.
 `snapshots/<snapshot_id>.sig.json` — the sidecar of signatures, a set
-that grows and is never hashed. Superseded record shards keep their old
+that grows and is never hashed. Superseded record parts keep their old
 bytes beside the new ones (§9.5), so every snapshot in the chain stays
 servable and checkable.
 
@@ -536,56 +556,56 @@ Codex's `cutoff_rule` enumerates at that instant (06 §6.2).
 | `collection_id` | id | yes | the Codex this snapshot applies |
 | `snapshot_id` | `YYYY-MM` or `YYYY-Www` | yes | by the cadence, below |
 | `previous` | id or null | yes | the hash of the snapshot before; `null` on a root's first; on a daughter's first, the hash of the snapshot named by the Codex's `continues_through` |
-| `shards` | list of shard | yes | every record shard the snapshot consists of, sorted by (`slice` bytes, `n`) |
-| `relations` | list of relation shard | yes | the relations shards (§9.14), same order; `[]` when the collection has none |
-| `figures` | list of figures shard | yes | the figures containers (§9.5), same order; `[]` when the collection carries no plates — which is every collection whose Codex has `record_line` 1 |
-| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`. A drag file that is neither here nor a shard a `shards`, `relations` or `figures` entry names is not a member and is not served (07 §7.8) |
+| `shards` | list of part | yes | every record part the snapshot consists of, sorted by (`slice` bytes, `n`); the key keeps the old word |
+| `relations` | list of relation part | yes | the relations parts (§9.14), same order; `[]` when the collection has none |
+| `figures` | list of figures part | yes | the figures containers (§9.5), same order; `[]` when the collection carries no plates — which is every collection whose Codex has `record_line` 1 |
+| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`. A SHARD file that is neither here nor a part that a `shards`, `relations` or `figures` entry names is not a member and is not served (07 §7.8) |
 | `delta` | object | yes | `{added: [uid…], changed: [uid…], tombstoned: [{uid, reason}…]}`, each list sorted by uid bytes; `reason` is `"retracted"` (the origin says the record should not have existed) or `"withdrawn"` (the origin no longer supplies it) |
 
-A shard entry:
+A part entry:
 
 | field | type | required | meaning |
 |---|---|---|---|
 | `slice` | string | yes | the slice name (§9.3) |
-| `n` | integer | yes | the shard number within the slice, from 1; the file is `records/<slice>/<n as five digits>.jsonl.zst` |
+| `n` | integer | yes | the part number within the slice, from 1; the file is `records/<slice>/<n as five digits>.jsonl.zst` |
 | `root` | id | yes | the BitTorrent v2 pieces root of the stored `.jsonl.zst` file (§9.5) |
-| `records_root` | id | yes | SHA-256 over the shard's `content_hash` values as raw 16-byte digests concatenated in record order |
+| `records_root` | id | yes | SHA-256 over the part's `content_hash` values as raw 16-byte digests concatenated in record order |
 | `first_id`, `last_id` | string | yes | the `native_id` of the first and last record |
-| `records` | integer | yes | records in the shard |
+| `records` | integer | yes | records in the part |
 | `chunks` | integer | yes | chunks over all its records under the Codex's layers |
 | `chunks_root` | id | yes | SHA-256 over, in chunk order, each chunk's id as UTF-8 bytes followed by the raw 16-byte BLAKE2b-128 of its text. It depends on the records and the Codex's layers alone — exactly as the `chunks` count above already does — so "the snapshot is records only" (02 §2.2) still holds, and computing it costs the chunking pass the count costs anyway |
 | `tokens` | integer | yes | `chunks × space.ctx` — the upper bound §4.5 and §4.7 use |
 | `bytes` | integer | yes | size of the stored file |
-| `toolchain` | `"own"` · `"mother"` | yes | which `platform_image` produced it: the Codex's own, or on a daughter the mother's for inherited shards |
+| `toolchain` | `"own"` · `"mother"` | yes | which `platform_image` produced it: the Codex's own, or on a daughter the mother's for inherited parts |
 
-A relations shard entry has `slice`, `n`, `root`, `edges` (integer) and
-`bytes`; it sits beside the record shard of the same slice and number.
+A relations part entry has `slice`, `n`, `root`, `edges` (integer) and
+`bytes`; it sits beside the record part of the same slice and number.
 
-A figures shard entry has `slice`, `n`, `root`, `figures` (integer) and
-`bytes`, and sits beside the record shard of the same slice and number,
-holding every plate that shard's records name (§9.5). Its `root` is here
+A figures part entry has `slice`, `n`, `root`, `figures` (integer) and
+`bytes`, and sits beside the record part of the same slice and number,
+holding every plate that part's records name (§9.5). Its `root` is here
 rather than in a sharer's digest for two reasons: the container is
-re-issued exactly when its shard is, so it costs a snapshot nothing to
+re-issued exactly when its part is, so it costs a snapshot nothing to
 carry what it is already carrying; and a peer can price the plates —
 often the larger half of a collection — before it fetches one byte. The
 entry carries no digest over the figure hashes themselves: those are on
-the record lines, whose shard `root` this snapshot already fixes and a
+the record lines, whose part `root` this snapshot already fixes and a
 certifier already signs, and a second digest over them would be a second
 answer to a question that has one.
 
-**Shards, exactly.** Within a slice, records sort by `native_id` under
-`slicing.order`; they are cut every `shard_records` records; shards are
+**Parts, exactly.** Within a slice, records sort by `native_id` under
+`slicing.order`; they are cut every `shard_records` records; parts are
 numbered from `00001` in that order. A later snapshot re-issues a
-changed record's shard under the same number with a new `root`; new
-records fill the slice's open shard — its highest-numbered, and the
+changed record's part under the same number with a new `root`; new
+records fill the slice's open part — its highest-numbered, and the
 only one that has not yet held `shard_records` records — re-issuing it
 under its number, and open a new number only once it is full. Having
 held that many closes it for good: dropping a tombstoned record at a
 later re-issue leaves it short and it is never refilled, so "open" is
-a shard that has never been full, not one that is not full now; a
+a part that has never been full, not one that is not full now; a
 tombstoned record stays in
-its closed shard until that shard is next re-issued and is excluded from
-search and embedding by the tombstone alone. The set of shards re-issued
+its closed part until that part is next re-issued and is excluded from
+search and embedding by the tombstone alone. The set of parts re-issued
 by a snapshot is the set whose `root` differs from the same `(slice, n)`
 in `previous`; nothing lists it separately.
 
@@ -594,13 +614,13 @@ period of the collection's cadence, `2026-08` then `2026-09`,
 `2026-W36` then `2026-W37`; each names
 the hash of the one before; all name one `collection_id`, except a
 daughter's first, whose `previous` belongs to the Codex named by
-`continues` and whose inherited shards carry the mother's roots and
+`continues` and whose inherited parts carry the mother's roots and
 `toolchain: "mother"`. A peer applies a snapshot only when it holds the
 one `previous` names.
 
 **Re-running `hold snapshot create`.** For an id that exists: identical
 bytes → nothing to do, exit 0; different bytes → refused, exit 2, the
-first differing shard named; while the fetch for that cutoff is
+first differing part named; while the fetch for that cutoff is
 incomplete → deferred, exit 3 (07 §7.7).
 
 **The sidecar.**
@@ -647,10 +667,10 @@ Its sidecar after two peers computed it and a third signed it later:
                {"key":"ed25519:c3…","time":"2026-09-03T11:00:19Z","sig":"…"}]}
 ```
 
-## 9.5 Record shards
+## 9.5 Record parts
 
 **Paths.** `records/<slice>/<NNNNN>.jsonl.zst` is the newest version of
-shard `n` of the slice. When a snapshot re-issues the shard, the file it
+part `n` of the slice. When a snapshot re-issues the part, the file it
 supersedes is renamed `records/<slice>/<NNNNN>.<last snapshot id>.jsonl.zst`
 — the last snapshot in which those bytes were current — and kept, so
 that snapshot can still be served and checked (01, promise 7).
@@ -669,7 +689,7 @@ carries it because the shape is fixed for a collection's LIFE — a
 collection whose records gain plates is a new collection (02 §2.7), never
 the same one amended — and the Codex is the only immutable per-collection
 object there is. A reader therefore knows which shape to expect before it
-fetches a single shard, `codex.json` being one of the three members
+fetches a single part, `codex.json` being one of the three members
 fetchable before an acknowledgement (04 §4.4).
 
 | key | type | required | meaning |
@@ -702,7 +722,7 @@ figure in would make a record `changed` in the delta (§9.4) the moment a
 plate arrived, refuse that record's rows out of every bundle already
 computed for it (§9.7's `possession.json`), and re-embed text that never
 moved. The two senses of "changed" stay apart: `delta.changed` means
-RE-EMBED, a moved shard `root` means RE-FETCH, and a plate arriving means
+RE-EMBED, a moved part `root` means RE-FETCH, and a plate arriving means
 neither for the text.
 
 **figures.** A figure is a plate, a diagram or a drawing the origin
@@ -747,22 +767,22 @@ cover, a broken reference and a refused type drop from both together or
 from neither.
 
 **The figures container.** `figures/<slice>/<NNNNN>.fig.zst`, one
-container per record shard of the same slice and number, holding every
-figure that shard's records name, each stored once and ordered by
+container per record part of the same slice and number, holding every
+figure that part's records name, each stored once and ordered by
 `hash`. A figure is addressed BY HASH INSIDE the container and never by a
 path of its own, so §9.1's "path segments from digests" rule does not
 reach here — no directory is ever named after a figure.
 
-One container per shard, and not one file per plate, because §9.16 makes
+One container per part, and not one file per plate, because §9.16 makes
 every FILE of a member its own BitTorrent v2 torrent. A corpus of
-275,000 plates over 1,591 record shards is two orders of magnitude more
+275,000 plates over 1,591 record parts is two orders of magnitude more
 swarm state under one file each, for the same bytes and the same
 integrity — the per-figure hashes on the record lines are what verify a
 plate either way.
 
-The container is re-issued exactly when its record shard is, because a
+The container is re-issued exactly when its record part is, because a
 record gaining or losing a plate rewrites its line and so moves the
-shard's own `root`. Its layout is that of the record shard above — zstd
+part's own `root`. Its layout is that of the record part above — zstd
 frames, then one skippable frame carrying the index — with the magic
 `LOUISE-FIGURES-1` and, per entry, the 32-byte `hash` and the offset and
 length of its bytes, entries ordered by `hash`.
@@ -770,7 +790,7 @@ length of its bytes, entries ordered by `hash`.
 **Chunks** are not stored: a record's chunks are recomputed from its
 `sections` by its layer's chunker (06 §6.3), and a chunk id is
 `<uid>:<seq>:<chunker version>`; the `chunks` check reproduces them and
-the snapshot carries, per shard, the count and the `chunks_root` (§9.4)
+the snapshot carries, per part, the count and the `chunks_root` (§9.4)
 it reproduces against. Without a published root the check could compare
 only a count, and a chunker that moved every boundary without changing
 the number would pass — which 03 §3.4 leans on as half its proof that a
@@ -781,7 +801,7 @@ line with `sections: []` and `extra.origin_url` set; every other field,
 `content_hash` and `origin_hash` included, is that of the full record.
 The text lives in the state directory of each peer that fetched it from
 the origin (04 §4.4) and is never a member. The `records` check
-recomputes `content_hash` only where the text is; on a pointer shard it
+recomputes `content_hash` only where the text is; on a pointer part it
 checks the presence and form of the two hashes and nothing else.
 
 **The file.** The lines are concatenated in record order and compressed
@@ -790,7 +810,7 @@ shorter), zstd 1.5.x at level 9 as pinned by the platform image, no
 dictionary, no checksum flag, content size written in each frame header.
 After the last data frame comes one zstd skippable frame carrying the
 seek index; standard zstd tooling ignores it, so `zstd -d
-shard.jsonl.zst` prints the lines. All integers little-endian:
+00001.jsonl.zst` prints the lines. All integers little-endian:
 
 ```
 skippable frame = magic u32 (0x184D2A5E) ‖ size u32 ‖ payload
@@ -798,8 +818,8 @@ payload         = "LOUISE-PACK-IDX1" (16 bytes) ‖ raw_len u32 ‖ zstd(index J
 ```
 
 The magic is `LOUISE-PACK-IDX1` and not the format's name: it was
-written into every shard built before the format was named, changing it
-would make those shards unreadable for nothing, and no reader chooses
+written into every part built before the format was named, changing it
+would make those parts unreadable for nothing, and no reader chooses
 its behaviour from it.
 
 `frame_len` is the length of the whole skippable frame (its 8-byte
@@ -849,17 +869,17 @@ never fetched as such — vectors travel only as bundles (04 §4.3).
 tensor bytes are little-endian, row-major; header metadata values are
 strings.
 
-**Per-shard vectors.** `vectors/<space>/<slice>/<NNNNN>.safetensors`:
+**Per-part vectors.** `vectors/<space>/<slice>/<NNNNN>.safetensors`:
 
 | tensor / header | type | required | meaning |
 |---|---|---|---|
-| `vectors` | `[n, dim]` in `space.dtype` | yes | one row per chunk of record shard `n`, in shard order: records in order, each record's chunks by `seq`; a row without an accepted vector is all zeros |
+| `vectors` | `[n, dim]` in `space.dtype` | yes | one row per chunk of record part `n`, in part order: records in order, each record's chunks by `seq`; a row without an accepted vector is all zeros |
 | `labels` | `[n]` u32 | yes | each row's bucket label under `index_version`; `0xFFFFFFFF` for a row with no vector |
 | `chunk_ids_sha256` | header | yes | `H(id_0 ‖ id_1 ‖ …)` over the chunk ids in row order (§9.1's concatenation) |
 | `producers` | header | yes | the canonical JSON array of the bundle ids merged, sorted |
 | `index_version` | header | yes | the index version the labels were computed against |
 | `index_min` | header | yes | the oldest index version whose centres give these labels |
-| `collection_id`, `snapshot_id`, `space_id`, `shard` | header | yes | what the file belongs to; `shard` is `"<slice>/<n>"` |
+| `collection_id`, `snapshot_id`, `space_id`, `shard` | header | yes | what the file belongs to; `shard` is `"<slice>/<n>"`, the part — the key keeps the old word |
 
 The row for a chunk is the vector from the first bundle accepted for it
 (04 §4.5); a later bundle for the same chunk is compared and not
@@ -937,18 +957,18 @@ and optional; a request for a bucket group resolves to bundles (04
 **The text index** is not a member (*amended 2026-10-08*; it was the cache
 `index-<slice>`): each peer builds its own from the records it holds, and
 nothing of it travels. The index is one per collection and language group,
-not per shard, so there was no per-slice unit to publish; the library has
+not per part, so there was no per-slice unit to publish; the library has
 no way to take in another peer's segments; and a peer rebuilds it at about
 1,200 chunks a second, once per snapshot.
 
-**Worked example.** German Wikipedia, slice `lang=de/pages=3M`, shard
+**Worked example.** German Wikipedia, slice `lang=de/pages=3M`, part
 `00042`, 2,000 pages, 11,806 chunks under a `cdc` layer:
 `vectors/41844ebbc0d19f2e/lang=de/pages=3M/00042.safetensors` with
 `vectors [11806, 1024] f16`, `labels [11806] u32`, header
 `{"chunk_ids_sha256": "sha256:…", "producers": "[\"sha256:2f…\",\"sha256:9a…\"]",
 "index_version": "2", "index_min": "1", "collection_id": "sha256:…",
 "snapshot_id": "2026-08", "space_id": "sha256:41844ebb…", "shard":
-"lang=de/pages=3M/00042"}`. Two producers, because the shard was
+"lang=de/pages=3M/00042"}`. Two producers, because the part was
 embedded by one peer up to chunk 7,400 and by its rendezvous successor
 from there; 140 rows are zeros with label `0xFFFFFFFF` because a
 bundle covering them has not yet passed this peer's ladder.
@@ -968,8 +988,8 @@ travels (03 §3.5; 08's signed block):
 
 On a peer, accepted bundles live at
 `collections/<name>/state/bundles/<space>/<slice>/<NNNNN>/<bundle_id hex>/`
-— under `state/`, never in the drag: a bundle is neither named by the
-Codex nor listed by a snapshot, so `share` would refuse a drag holding one
+— under `state/`, never in the SHARD: a bundle is neither named by the
+Codex nor listed by a snapshot, so `share` would refuse a SHARD holding one
 (07 §7.8), and §9.16 serves it from `state/bundles/`. Its four files take
 their torrent paths relative to the bundle directory, which makes the
 member root a function of the bundle alone; a bundle is a member
@@ -989,7 +1009,7 @@ uids); no floats anywhere.
 | `collection` | id | yes | the collection the producer embedded for. Provenance, never a gate: a bundle is admissible in any collection whose `space_id` it matches (03 §3.5) |
 | `space_id` | id | yes | the space, and the gate: a bundle whose `space_id` is not the importing collection's is refused at T0, before any tier runs |
 | `snapshot_id` | `YYYY-MM` or `YYYY-Www` | yes | the snapshot whose records were embedded. Provenance, never a gate: an unchanged record keeps its vectors across snapshots (02 §2.2), and `possession.json` — not this field — decides whether a row still matches the text |
-| `shard` | string | yes | `"<slice>/<n>"` — the record shard the chunks come from; one shard per bundle |
+| `shard` | string | yes | `"<slice>/<n>"` — the record part the chunks come from; one part per bundle. The key keeps the old word |
 | `uids` | list of strings | yes | the uids whose chunks the bundle covers, every chunk of each, sorted by bytes, no duplicates: the bundle's chunk range |
 | `chunk_count` | integer | yes | rows in `vectors.parquet` after the challenge rows |
 | `dim` | integer | yes | |
@@ -1065,7 +1085,7 @@ counted is the trust file's (§9.2).
 (§9.8) names bundle ids the producer retracts; peers drop them, no key
 is burned.
 
-**Worked example.** A Gutenberg bundle, slice `lang=it`, shard
+**Worked example.** A Gutenberg bundle, slice `lang=it`, part
 `00007`, the first 300 chunks a contributor embedded before its first
 partial publication:
 
@@ -1103,7 +1123,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | `snapshot_hash` | id | yes | which of two snapshots under one id was checked |
 | `check` | string | yes | the check, below |
 | `seed` | 64 hex or null | yes | the 32-byte seed of §9.1's sampler; `null` for an exhaustive or deterministic check |
-| `shards` | list of strings | yes | the shards the check ran on, as `"<collection_id>/<space>/<slice>/<n>"` for a vector check and `"<collection_id>/<slice>/<n>"` for a record check, sorted; `[]` for a check without shards |
+| `shards` | list of strings | yes | the parts the check ran on, as `"<collection_id>/<space>/<slice>/<n>"` for a vector check and `"<collection_id>/<slice>/<n>"` for a record check, sorted; `[]` for a check without parts; the key keeps the old word |
 | `result` | `"pass"` · `"fail"` · `"forgery"` · `"withdraw"` · `"supersedes"` | yes | |
 | `detail` | object | yes | per check, below; `{}` when the check has none |
 | `platform_image` | id | yes | the image the verifier ran; when it differs from the Codex's and `check` is `records-vs-origin` with `result: "pass"`, the attestation is the equivalence proof of 03 §3.4 |
@@ -1115,16 +1135,16 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 
 | check | kind | detail |
 |---|---|---|
-| `roots` | exact | `{failed: [shard…]}` |
+| `roots` | exact | `{failed: [part…]}` |
 | `records` | exact | `{records: n, failed: [uid…]}` — content and origin hashes present and, where the text is, reproduced |
 | `chunks` | exact | `{records: n, failed: [uid…]}` |
-| `records-vs-origin` | exact | `{records: n, compared: m, origin_units: k, origin_units_sampled: K, origin_bytes: b, origin_bytes_bound: B, failed: [uid…], moved: [uid…], origin: "reachable"}` — `records` the sampled shards hold, `compared` those of the `k` origin units read out of the `K` the sampled shards reach into, `b` bytes read within the bound `B` (03 §3.2); a failing entry names the first differing record; `moved` names records whose line differs in `origin_hash` alone, which do not fail the check (03 §3.2, amended 2026-10-07; a reader of an older detail treats it as absent) |
+| `records-vs-origin` | exact | `{records: n, compared: m, origin_units: k, origin_units_sampled: K, origin_bytes: b, origin_bytes_bound: B, failed: [uid…], moved: [uid…], origin: "reachable"}` — `records` the sampled parts hold, `compared` those of the `k` origin units read out of the `K` the sampled parts reach into, `b` bytes read within the bound `B` (03 §3.2); a failing entry names the first differing record; `moved` names records whose line differs in `origin_hash` alone, which do not fail the check (03 §3.2, amended 2026-10-07; a reader of an older detail treats it as absent) |
 | `image-equivalence` | exact | `{against: "reference-image", reference_image: id, records: n, compared: m, failed: [uid…], errored: k, reference_errored: j}` — `records` the reference re-parsed, `compared` those this image re-parsed, `failed` those whose line differs (03 §3.4, added 2026-10-07); never counted toward a trust level |
 | `vectors-sample` | statistical | `{chunks: n, passed: n, median: decimal, failed: [chunk id…], producers: [key…]}` — the producers whose bundles supplied the sampled vectors; two producers when the attestation compares duplicate bundles (04 §4.5) |
 | `calibration` | statistical | `{n: 16, passed: n, median: decimal}` |
 | `centres` | exact | `{index_version: n}` |
 | `labels` | exact | `{index_version: n, failed: [chunk id…]}` |
-| `figures` | sampled | `{shards: n, named: n, held: n, failed: [hash…]}` — `named` counts the plates the sampled shards' records name and `held` those this peer has; `named - held` is not a failure, and `failed` names only plates whose bytes disagree with their hash |
+| `figures` | sampled | `{shards: n, named: n, held: n, failed: [hash…]}` — `named` counts the plates the sampled parts' records name and `held` those this peer has; `named - held` is not a failure, and `failed` names only plates whose bytes disagree with their hash |
 | `license` | exact | `{}` |
 | `signature` | exact | `{keys: [key…]}` — the sidecar signatures that verified |
 | `anchor` | exact | `{state: "anchored" · "stale" · "mismatch"}` |
@@ -1145,7 +1165,7 @@ snapshot_hash, checks: [{check, result: "pass" · "fail" ·
 "inconclusive", detail, attestation: id or null}]}`; `attestation` is
 the id of the attestation the run produced, `null` when inconclusive.
 
-**Worked example.** A peer re-embeds sixteen chunks of one PubMed shard
+**Worked example.** A peer re-embeds sixteen chunks of one PubMed part
 and finds a second producer's bundle compliant with the first:
 
 ```
@@ -1199,8 +1219,8 @@ A collection entry:
 | `snapshot_id`, `snapshot_hash` | | yes | the latest snapshot held, and its hash |
 | `codex_hash` | id | yes | `H` of the bytes of the `codex.json` THIS peer holds (§9.3). A `codex.json` pulled from this peer whose bytes hash otherwise is dropped: the pull path answers with stored bytes and no signature (below), so this is what makes it self-verifying. It is per-peer and not an identity — two honest peers may hold the same `collection_id` under different titles, hence different `codex_hash` (02 §2.1) — so it is compared only against the digest that advertised it |
 | `license`, `privacy` | string | yes | the Codex's classes, so a receiver can skip what it may not take |
-| `members` | list of `{name, root, bytes}` | yes | every member offered, by name (§9.16); a record shard's root is the snapshot's, a bundle's root is its member root. A member no snapshot lists — a bundle, a text index — carries `files: [[path, root, bytes], …]` in path byte order as well, from which a fetcher computes each file's torrent (§9.16); the member root is `H` over that list. *Added 2026-10-07, migration step 9e: without it a bundle's four infohashes do not follow from the event or the entry* |
-| `coverage` | list of `{shard, bundles: [id…]}` | yes | per shard `"<collection_id>/<space>/<slice>/<n>"`, the bundle ids this peer has accepted through T0–T3, sorted |
+| `members` | list of `{name, root, bytes}` | yes | every member offered, by name (§9.16); a record part's root is the snapshot's, a bundle's root is its member root. A member no snapshot lists — a bundle, a text index — carries `files: [[path, root, bytes], …]` in path byte order as well, from which a fetcher computes each file's torrent (§9.16); the member root is `H` over that list. *Added 2026-10-07, migration step 9e: without it a bundle's four infohashes do not follow from the event or the entry* |
+| `coverage` | list of `{shard, bundles: [id…]}` | yes | per part `"<collection_id>/<space>/<slice>/<n>"`, the bundle ids this peer has accepted through T0–T3, sorted |
 
 A `restricted` collection appears only in digests sent to keys on the
 sender's allow list; a `never-share` collection appears in none.
@@ -1258,7 +1278,7 @@ and treats a mismatch as 04 §4.2 says.
 
 **Worked example.** A digest entry for the Gutenberg collection held by
 a peer that serves Italian and English and has accepted one bundle on
-shard 7:
+part 7:
 
 ```
 {"collection_id":"sha256:e5c2…","lineage_id":"sha256:e5c2…","snapshot_id":"2026-08","snapshot_hash":"sha256:70a1…",
@@ -1278,7 +1298,7 @@ bundle and is printed by `hold vectors show --json`.
 
 | field | type | meaning |
 |---|---|---|
-| `shard` | string | `"<collection_id>/<space>/<slice>/<n>"` — the rendezvous `shard_id` (04 §4.5) |
+| `shard` | string | `"<collection_id>/<space>/<slice>/<n>"` — the part, by its rendezvous `shard_id` (04 §4.5) |
 | `bundle_id` | id | |
 | `producer` | key | |
 | `uids` | `[first, last]` | the bundle's chunk range |
@@ -1288,8 +1308,8 @@ bundle and is printed by `hold vectors show --json`.
 | `source` | `"local"` · `"fetched"` · `"archive"` | who produced the vectors from this peer's view |
 | `verified_on_use` | integer | chunks of it T4 has re-embedded and confirmed |
 
-Derived from the rows, per shard: `covered` — chunks with an accepted
-row; `open` — the shard has any chunk without one; the leader and the
+Derived from the rows, per part: `covered` — chunks with an accepted
+row; `open` — the part has any chunk without one; the leader and the
 grace window of 04 §4.5. A coverage claim in a neighbour's digest is
 recorded beside these as `claimed_by: [key…]` per bundle and counts for
 nothing until the bundle is fetched and accepted here.
@@ -1304,7 +1324,7 @@ bundles and the
 attestations this peer holds (§9.8) for checks, since signed work of
 either kind counts and only one of the two is recorded here.
 
-**Worked example.** PubMed, `year=2023`, shard 11, on a peer that
+**Worked example.** PubMed, `year=2023`, part 11, on a peer that
 embedded half of it before its successor took over:
 
 ```
@@ -1392,8 +1412,8 @@ compact, `\n`-terminated, each pair's two segments non-empty, NFC, and
 free of control characters but the line feed that joins an abstract's
 sections. Its id is `H(bytes of the file)`, named by
 `space.calibration.set` like any set's. The draw is fixed by a snapshot
-of the collection alone: its shards `sample(<the snapshot hash's 32
-bytes>, 16, <the shard names "<slice>/<NNNNN>">)` (§9.1), walked in
+of the collection alone: its parts `sample(<the snapshot hash's 32
+bytes>, 16, <the part names "<slice>/<NNNNN>">)` (§9.1), walked in
 snapshot order; each of
 their records cut in the pair form of its layer — the first section's body
 and the rest joined by `"\n\n"`, as §9.3 states it — the first of any
@@ -1431,7 +1451,7 @@ none of it is still a valid set, and the requirement binds whoever
 composes one rather than whoever reads it. What a peer checks is that
 the id matches; what this paragraph fixes is what a set is FOR.
 
-**The member.** `calibration/<set>.safetensors` at the drag root,
+**The member.** `calibration/<set>.safetensors` at the SHARD's root,
 written by `hold collection create` (06 §6.6) and a member of every
 snapshot (`files`, §9.4):
 
@@ -1594,7 +1614,7 @@ domain-trained encoder names the same set and a different member.
 
 ## 9.13 Licence terms and the acknowledgement
 
-**The terms member.** `LICENSE-TERMS` at the drag root: the origin's
+**The terms member.** `LICENSE-TERMS` at the SHARD's root: the origin's
 terms text as published, byte-exact, never converted — the repository
 marks the source file binary so no checkout changes a line ending
 (06 §6.1). `license.terms_sha256` = `H(bytes of LICENSE-TERMS)`; a
@@ -1643,10 +1663,10 @@ platform ships, so a changed disclaimer asks again.
 
 ## 9.14 Relations
 
-**Path.** `relations/<slice>/<NNNNN>.jsonl.zst`, one shard beside each
-record shard of the same slice and number (05 §5.5), listed in the
+**Path.** `relations/<slice>/<NNNNN>.jsonl.zst`, one part beside each
+record part of the same slice and number (05 §5.5), listed in the
 snapshot's `relations` with its `root` (§9.4) and re-issued with its
-record shard. The file uses the framing of §9.5 with the index's `uids`
+record part. The file uses the framing of §9.5 with the index's `uids`
 map keyed by `from` (the frame and line of the first edge of each
 record).
 
@@ -1654,7 +1674,7 @@ record).
 
 | key | type | required | meaning |
 |---|---|---|---|
-| `from` | uid | yes | a record of this collection, in this shard |
+| `from` | uid | yes | a record of this collection, in this part |
 | `to` | string | yes | a uid of this collection, or a canonical id `<namespace>:<id>` left unresolved |
 | `type` | string | yes | `<plugin>:<name>`, registered by the plugin: `eli:cites`, `eli:amends`, `eli:repeals`, `pubmed:cites` |
 | `snapshot` | `YYYY-MM` or `YYYY-Www` | yes | the snapshot in which the edge was first listed |
@@ -1676,7 +1696,7 @@ resolve it against.
 
 ## 9.15 Seals
 
-**Path.** `seals/<snapshot_id>.json` at the drag root, certified
+**Path.** `seals/<snapshot_id>.json` at the SHARD's root, certified
 collections only (03 §3.7); canonical JSON; its transport root and size
 are in the snapshot's `files`, which the certifier signs, so the
 evidence is bound to the snapshot it was captured for. Beside it,
@@ -1740,9 +1760,9 @@ that `file_hash`: `{"file_hash":"4e1a…","format":"cades","signer":
 
 | name | files | root |
 |---|---|---|
-| `records-<slice>` | every `records/<slice>/<NNNNN>.jsonl.zst` of the current snapshot | per shard, in the snapshot |
-| `relations-<slice>` | `relations/<slice>/*.jsonl.zst` | per shard, in the snapshot |
-| `figures-<slice>` | `figures/<slice>/*.fig.zst` | per shard, in the snapshot |
+| `records-<slice>` | every `records/<slice>/<NNNNN>.jsonl.zst` of the current snapshot | per part, in the snapshot |
+| `relations-<slice>` | `relations/<slice>/*.jsonl.zst` | per part, in the snapshot |
+| `figures-<slice>` | `figures/<slice>/*.fig.zst` | per part, in the snapshot |
 | `bundle-<space>-<bundle_id hex>` | the four bundle files | member root, in the bundle event and the digest |
 | `vectors-<space>-<slice>`, `buckets-<space>-v<n>-g<k>` | names only: resolve to the bundles covering those chunks (04 §4.3) | — |
 | `centres-<space>-v<n>` | `vectors/<space>/centres/v<n>.safetensors` | in `index.json` |
@@ -1767,8 +1787,8 @@ path byte order; the digest lists the files.
 root alone, so two honest publishers produce one infohash. The info
 dictionary contains exactly: `meta version: 2`, `name` = the member
 name, `piece length: 16777216`, and `file tree` with the one file at its
-drag-relative path carrying `length` and `pieces root` — for a bundle,
-which deliberately rests outside the drag (§9.7), the path is relative to
+SHARD-relative path carrying `length` and `pieces root` — for a bundle,
+which deliberately rests outside the SHARD (§9.7), the path is relative to
 the bundle directory instead, so its member root is a function of the
 bundle alone; no `private`
 flag, no comment, no creation date, no creator, no announce list — the
@@ -1776,7 +1796,7 @@ swarm is found through the DHT and the peer messages. The infohash is
 SHA-256 of the bencoded info dictionary, truncated to 20 bytes where the
 DHT needs 20; the piece layers are exchanged in the swarm. A member of
 several files is that many torrents. Nothing is served from a torrent
-that is not in the drag, in `state/bundles/` (§9.7), or in the
+that is not in the SHARD, in `state/bundles/` (§9.7), or in the
 platform's encoder store (04 §4.3), and the same key that signs digests
 seeds them.
 
@@ -1920,7 +1940,7 @@ names one schema, the one its section fixes:
 | `louise-snapshot` | 2 | §9.4 |
 | `louise-snapshot-sig` | 1 | §9.4 |
 | record line | 2 | §9.5 |
-| shard index (`LOUISE-PACK-IDX1`) | 1 | §9.5 |
+| part index (`LOUISE-PACK-IDX1`) | 1 | §9.5 |
 | figures container index (`LOUISE-FIGURES-1`) | 1 | §9.5 |
 | `louise-index` | 1 | §9.6 |
 | bundle header | 2 | §9.7 |
@@ -1937,7 +1957,7 @@ Two rows above were one row each until the figures amendment, and the
 split is the point: a schema pinned beside another moves only when its
 OWN bytes move. `louise-snapshot` gained a `figures` list and
 `louise-snapshot-sig` did not; the record line gained a `figures` key
-and the shard's frame layout did not. `louise-digest` left `louise-event`
+and the part's frame layout did not. `louise-digest` left `louise-event`
 and `louise-pull` the same way, when its benchmarks began naming an
 engine rather than an image — the engine amendment, which moved the
 Codex, the bundle header, the attestation and both calibration objects

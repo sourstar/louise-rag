@@ -1,5 +1,7 @@
 # 6. Plugins
 
+*(vocabulary amended 2026-10-08: SHARD, parts)*
+
 A plugin is how a source enters Louise. It says where the source's
 files are and how to fetch them, how to turn a file into documents, and
 what may be done with the result. It does not embed, index, share or
@@ -82,7 +84,7 @@ whose encoder declares another modality than the plugin is refused at
 `create` and at boot, the same class of error as a space mismatch
 (§2.4). `erasure: erasable` requires `privacy: never-share`, and `hold
 records build` refuses the pair — erasable with any privacy that lets a
-shard travel — because sharing cannot un-publish: once a shard is
+part travel — because sharing cannot un-publish: once a part is
 served, no later snapshot reaches the peers holding it (§4.4; §1,
 promise 7). An erasable collection is built and searched like any
 other; what it may not do is leave the peer.
@@ -132,7 +134,7 @@ from the `DocRef`, and what `parse()` returns as `uid` must equal it.
 `native_id` is a **string**: the origin's own identifier, unique within
 the plugin and stable for the life of the document — a PMID, a
 Gutenberg ebook number, a Wikipedia page id, an ELI work key. The
-platform never parses it, with one exception: shards sort records by
+platform never parses it, with one exception: parts sort records by
 native_id (§2.2), and the plugin declares `native_id_order` — `numeric`
 when every id is a decimal integer and integer order is the natural one,
 `bytes` otherwise (UTF-8 byte order) — which `hold collection create`
@@ -141,7 +143,7 @@ an id, the plugin derives one by a pure function of that key, records
 the rule beside itself, refuses a collision at discovery rather than
 trusting it, and keeps the origin's own identifiers in `keys`. A plugin
 has one `source_id`, equal to the Codex's `plugin`; a collection built
-over a drag keeps the origin's `source_id`, so its uids and chunk ids
+over a SHARD keeps the origin's `source_id`, so its uids and chunk ids
 are the origin's.
 
 ### Fetch, and the error contract
@@ -239,7 +241,7 @@ A yellow or red source ships its terms as published, byte-exact, at a
 path the acquisition spec names (`terms_text_path`; the repository marks
 the file binary so no checkout converts its line endings). `hold
 collection create` hashes it into `license.terms_sha256`; `hold records
-build` copies it into the drag as `LICENSE-TERMS`; the acknowledgement
+build` copies it into the SHARD as `LICENSE-TERMS`; the acknowledgement
 of §4.4 is a timestamp and that hash (09 §9.13). A green source ships
 none and its Codex carries `terms_sha256: null`.
 
@@ -540,7 +542,7 @@ facts, never as ranked results.
 A reference source is **not a collection** in this version. It has no
 Codex, no snapshots and no members; it is a set of node-local tables
 that every peer syncs from the origin, and a query answers from what
-this peer has synced. Sharing a reference source as a drag is a later
+this peer has synced. Sharing a reference source as a SHARD is a later
 amendment.
 
 ```python
@@ -604,7 +606,7 @@ content; a resolver never returns a bare symbol.
    an asymmetric space with the query encoder too —
    writes the reference vectors' hashes into
    `space.calibration` and their envelope into `space.envelope`, and
-   stores the vectors as the drag member `calibration/<set>.safetensors`
+   stores the vectors as the SHARD member `calibration/<set>.safetensors`
    (§2.4, 09 §9.12). A pair space's set is the exception: 512 pairs drawn
    beforehand from the collection's records by a fixed rule, given to
    `create` as a file and carried in the member (09 §9.12, *amended
@@ -613,7 +615,7 @@ content; a resolver never returns a bare symbol.
    acknowledgement (§4.4). For a yellow or red collection nothing below
    runs before it.
 4. `hold records fetch` runs the acquisition spec to the cutoff; `hold
-   records build` parses, cleans, slices, shards and hashes; `hold
+   records build` parses, cleans, slices, cuts into parts and hashes; `hold
    snapshot create` freezes the first snapshot.
 5. `hold vectors build` embeds — all of it, some of it, or none; the
    collection's TOML says which (`off`, `on-demand`, `all`, §7.8), and
@@ -654,7 +656,7 @@ content; a resolver never returns a bare symbol.
    unless the collection's TOML says otherwise.
 
 From then on the platform's monthly cycle — fetch the delta by the
-cutoff rule, build the changed shards, embed the changed chunks — needs
+cutoff rule, build the changed parts, embed the changed chunks — needs
 nothing from the plugin that the first pass did not.
 
 ## 6.7 The deposit plugin

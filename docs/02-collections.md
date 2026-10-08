@@ -1,5 +1,7 @@
 # 2. Collections
 
+*(vocabulary amended 2026-10-08: SHARD, parts)*
+
 A collection is four things: a **Codex** that never changes, a chain of
 **snapshots** that grows once a month, the **records** and **vectors**
 those snapshots describe, and a **coverage map** that says which
@@ -7,7 +9,7 @@ vectors exist and who made them. The Codex, the snapshots and the
 records are content-addressed and identical on every peer. The vectors
 are correct within a tolerance, not byte for byte (03 §3.1): they travel
 as signed bundles, each naming its producer, and what a peer holds for a
-shard is its merge of the bundles it accepted (§2.4). The coverage map
+part is its merge of the bundles it accepted (§2.4). The coverage map
 is each peer's view, kept current by gossip, and never the same document
 twice.
 
@@ -35,7 +37,7 @@ codex = {
   },
   toolchain: {
     platform_image:  "sha256:…",     -- the platform build: parser, chunker, cleaner, checks, and their libraries
-    mother_platform_image: null | "sha256:…"   -- daughters: the image that produced the inherited shards (§2.7)
+    mother_platform_image: null | "sha256:…"   -- daughters: the image that produced the inherited parts (§2.7)
   },
   parser: {id: "pubmed", version: 3},           -- readable aliases of what the platform image contains
   cleaning_version: 1,                          -- the cleaner is platform code; its version is a property of the image
@@ -154,7 +156,7 @@ how content may leave: `append-only` (the Gazzetta Ufficiale: nothing
 leaves without a recorded tombstone), `retractable` (PubMed: the
 publisher may withdraw a record, and the tombstone says so), `erasable`
 (removal may be mandatory and must leave no trace, which no shared copy
-can honour — so `erasable` requires `privacy: never-share`, and a drag
+can honour — so `erasable` requires `privacy: never-share`, and a SHARD
 build refuses the pair otherwise; what "no trace" means in bytes is
 §2.9). `validation` is the plan of 03 §3.2,
 inside the hash so nothing outside the Codex decides how much is
@@ -223,7 +225,7 @@ snapshot = {kind: "louise-snapshot", version: 1,
             shards: [{slice, n, root, records_root, first_id, last_id,
                       records, chunks, tokens, bytes,
                       toolchain: "own" | "mother"}],
-            relations: [...],           -- the relations shards, same shape (05 §5.5)
+            relations: [...],           -- the relations parts, same shape (05 §5.5)
             files: {...},               -- the whole-collection members and their roots (09 §9.4)
             delta: {added: [...], changed: [...],
                     tombstoned: [{uid, reason}]}}
@@ -231,13 +233,14 @@ snapshot hash = H(canonical-json(snapshot))
 ```
 
 The snapshot is records only: no field of it depends on vectors, on
-centres or on coverage. Per shard it carries `root`, the BitTorrent v2
-merkle root of the stored `.jsonl.zst` file (SHA-256, 16 KiB leaves),
+centres or on coverage. Per part (the snapshot's key stays `shards`:
+bytes already written keep their names) it carries `root`, the
+BitTorrent v2 merkle root of the stored `.jsonl.zst` file (SHA-256, 16 KiB leaves),
 which is what the transport checks; `records_root`, SHA-256 over the
-shard's `content_hash` values concatenated in order, which is what
+part's `content_hash` values concatenated in order, which is what
 equivalence (03 §3.4), inheritance (§2.7) and `records-vs-origin`
 compare; `chunks` and `chunks_root`, the number of chunks the Codex's
-layers cut the shard into and a hash over their ids and texts, which is
+layers cut the part into and a hash over their ids and texts, which is
 what the `chunks` check reproduces (03 §3.2) — both are functions of the
 records and the layers, which is why they are here and not in a member
 that depends on an encoder; and `tokens`, the chunk count times
@@ -256,77 +259,78 @@ a certifier's signature (§2.8) both go there. Signatures on a snapshot
 are attestations — *I computed this too* — not permissions. Two
 different snapshots with the same id are the proof that one producer's
 toolchain drifted, or that one of them enumerated the origin under a
-state the cutoff rule does not name, and they name the shard where: a
+state the cutoff rule does not name, and they name the part where: a
 differing `records_root` is the records, a differing `root` alone is the
 compressor.
 
-**Shards are cut by a rule, not by judgement.** Within a slice, records
+**Parts are cut by a rule, not by judgement.** Within a slice, records
 are sorted by `native_id` — `slicing.order: bytes` is UTF-8 byte order,
 `numeric` is integer order — and cut every `slicing.shard_records`
-records; shards are numbered 00001… per slice in the order they are
-created. **A shard is closed when it is full**, and a closed shard
-never changes again except to be re-issued. The last shard of a slice
+records (the key keeps the old word: bytes already written keep their
+names); parts are numbered 00001… per slice in the order they are
+created. **A part is closed when it is full**, and a closed part
+never changes again except to be re-issued. The last part of a slice
 is open: it holds fewer than `shard_records` records, and each snapshot
 re-issues it with the records that arrived since, under its own number,
-until it fills and closes. New records go into the open shard first and
+until it fills and closes. New records go into the open part first and
 open a new number only when it is full, so a slice has at most one open
-shard at a time. This assumes what `native_id_order` (06 §6.1) must
+part at a time. This assumes what `native_id_order` (06 §6.1) must
 give: within a slice, a document published later sorts after every id
 already published there — true of PMIDs and Gutenberg numbers, not true
 of every identifier. `hold records build` REFUSES (exit 2) a record
-whose `native_id` sorts before the open shard's `first_id`, naming the
-record and the shard, rather than placing it out of order. Shard ranges
+whose `native_id` sorts before the open part's `first_id`, naming the
+record and the part, rather than placing it out of order. Part ranges
 therefore partition each SLICE's id space, compared in `native_id_order`
 (numerically for a numeric source: 1000 sorts after 999), which is what
-05 §5.5 needs to resolve a uid from a snapshot alone — to its shard in a
+05 §5.5 needs to resolve a uid from a snapshot alone — to its part in a
 collection of one slice, to one candidate per slice in a collection of
 several, among which the record's own slicing key decides (*amended
 2026-10-07*: the lookup compared ids as text and took the first slice's
-shard) — and what keeps two honest peers
-from cutting the same cutoff into different shards — one re-cutting the
+part) — and what keeps two honest peers
+from cutting the same cutoff into different parts — one re-cutting the
 slice, one appending. A source that cannot promise it needs a different
-`native_id` rule or a different slicing key, not a different shard,
-and a shard holds `shard_records` records when it
+`native_id` rule or a different slicing key, not a different part,
+and a part holds `shard_records` records when it
 closes — fewer afterwards if a tombstoned record is dropped from it at a
 re-issue, never more, and never refilled, because closed is closed. The
 cut therefore falls on the same records whatever the
 cadence: a collection updated weekly and one updated monthly close
-their shards at the same boundaries, which is what lets two sisters
+their parts at the same boundaries, which is what lets two sisters
 share members (§2.7). A record whose text changed
-re-issues its shard under the same number in the next snapshot; a
+re-issues its part under the same number in the next snapshot; a
 deleted or retracted record becomes a tombstone: it is listed in that
 snapshot's `delta.tombstoned`, it is excluded from search and from
 embedding on every peer that holds the snapshot, and its text stays in
-its closed shard — so the shard still verifies and 01's promise 7 holds
-— until that shard is next re-issued, when it is dropped from the file.
+its closed part — so the part still verifies and 01's promise 7 holds
+— until that part is next re-issued, when it is dropped from the file.
 A record whose slicing field is corrected while its text is unchanged
-stays in its shard: a slice is fixed when a record is first published,
+stays in its part: a slice is fixed when a record is first published,
 and the correction shows in the record's fields at its next re-issue.
 A record is "changed" when the hash of its cleaned text changes,
 whatever the origin's own revision fields say. Sources that never
 delete (PubMed flags retractions) need only tombstones; sources that
-edit (Wikipedia) re-issue shards, and their history is the chain of
+edit (Wikipedia) re-issue parts, and their history is the chain of
 snapshots.
 
 A daughter's first snapshot (§2.7) has `previous` = the hash of the
-mother's snapshot `continues_through`; the shards it inherits are listed
+mother's snapshot `continues_through`; the parts it inherits are listed
 with the mother's roots and `toolchain: "mother"`, its own with
 `toolchain: "own"`; the chain check accepts a `previous` that belongs to
 the Codex named by `continues`, and nowhere else.
 
 `hold snapshot create` run again for an id that exists is a no-op when
 the bytes are identical (exit 0) and is refused when they differ, naming
-the differing shard (exit 2); it cannot create a snapshot while a fetch
+the differing part (exit 2); it cannot create a snapshot while a fetch
 for that cutoff is incomplete (exit 3; the codes are 07 §7.7).
 
 ## 2.3 Records
 
 Records are the parsed text of documents and nothing else — no markup,
 no origin files, no local extras. They are sliced by declared keys
-(year, language) and sharded so that one shard is one unit of transfer,
+(year, language) and cut into parts so that one part is one unit of transfer,
 of embedding and of verification. `slicing.shard_records` is chosen per
-collection so that a shard is about 7,000 chunks — 30,000 PubMed
-abstracts, 2,000 Wikipedia articles, 50 Gutenberg books; what a shard
+collection so that a part is about 7,000 chunks — 30,000 PubMed
+abstracts, 2,000 Wikipedia articles, 50 Gutenberg books; what a part
 costs in time is not a property of any machine but of the collection's
 work parameter (§2.4). A slice is named `<key>=<value>`, joined by `/`
 in `keys` order — `year=1975-1979`, `lang=de/pages=3M`. The year bins
@@ -336,11 +340,11 @@ slice per year after that (`year=2023`). A record whose field the rule
 cannot read goes to the slice `slicing.unknown` names.
 
 ```
-records/<slice>/NNNNN.jsonl.zst                     -- the newest version of shard NNNNN: JSON Lines, zstd frames, seekable (09 §9.5)
+records/<slice>/NNNNN.jsonl.zst                     -- the newest version of part NNNNN: JSON Lines, zstd frames, seekable (09 §9.5)
 records/<slice>/NNNNN.<snapshot id>.jsonl.zst       -- a superseded version, kept; the id is the last snapshot that listed it
 ```
 
-A re-issued shard keeps its path; the version it supersedes is renamed
+A re-issued part keeps its path; the version it supersedes is renamed
 with the id of the last snapshot that listed it and kept, so an old
 snapshot can still be served and checked (01, promise 7).
 
@@ -349,7 +353,7 @@ A record is one line: the keys `uid`, `native_id`, `lang`, `title`,
 `origin`, `content_hash`, `origin_hash`, in that order, compact, UTF-8,
 `\n`-terminated — and `figures` after `sections` where the collection
 carries plates (`record_line` 2, 09 §9.3); 09 §9.5 fixes the bytes and
-the shard's frame layout.
+the part's frame layout.
 `uid` is `<plugin>:<native_id>`; `native_id` is a string, unique within
 the plugin and stable for the life of the document, which the platform
 never parses except under `slicing.order: numeric`. `sections` — pairs
@@ -363,7 +367,7 @@ document falls in is not stored: the Codex's rules decide it from the
 record's own fields (06 §6.3), so storing it would put a second answer
 beside the first with nothing to say which is right. Two consequences
 follow, and both are why the rule is worth keeping. A sister that
-changes only `layers` writes shards byte-identical to her mother's, so
+changes only `layers` writes parts byte-identical to her mother's, so
 the corpus she inherits needs no re-fetch — which is what §2.7 promises
 and would otherwise quietly fail over one integer per record. And the
 `chunks` check must derive the layer to know which chunker to run,
@@ -401,7 +405,7 @@ credited pre-embedded archive supplies is located there instead — its
 
 A corpus may be **pruned** — what is not used is dropped — but never
 altered in a way that breaks that reproduction.
-A record without an `origin_hash` is refused at build, because a drag
+A record without an `origin_hash` is refused at build, because a SHARD
 that verifies internally while being permanently unverifiable against
 its source is the worst thing a collection can ship.
 
@@ -418,18 +422,18 @@ needs the text — `chunks`, T4 — runs where the text is (03 §3.2).
 
 ## 2.4 Vectors, spaces and the index
 
-Each shard's vectors are one file: f16, one row per chunk, plus the
+Each part's vectors are one file: f16, one row per chunk, plus the
 **bucket label** of each row.
 
 ```
-vectors/<space>/<slice>/NNNNN.safetensors         -- that shard's vectors and labels (09 §9.6)
+vectors/<space>/<slice>/NNNNN.safetensors         -- that part's vectors and labels (09 §9.6)
 vectors/<space>/index.json                        -- the index: version, k, seed rule, sample rule, iterations, group_size, training record
 vectors/<space>/centres/v<n>.safetensors          -- the centre points of index version n, a few MB
 vectors/<space>/buckets/v<n>/<group>.safetensors  -- the same vectors re-sorted by bucket (optional)
 ```
 
 The file holds two tensors, `vectors` (f16, rows in the order of the
-shard's chunk ids) and `labels` (u32), and a header carrying
+part's chunk ids) and `labels` (u32), and a header carrying
 `chunk_ids_sha256` — SHA-256 over the chunk ids in row order —
 `producers`, the ids of the bundles merged into it, and `index_min`, the
 oldest index version whose centres label every row correctly. A row
@@ -440,7 +444,7 @@ the bundles it accepted: when two accepted bundles cover one chunk, the
 first accepted is the row and the second is compared, and the
 comparison is a `vectors-sample` attestation naming both producers.
 Two peers that accepted different producers hold different rows for
-the same shard, each within tolerance; the coverage map (§2.5) says
+the same part, each within tolerance; the coverage map (§2.5) says
 which.
 
 **One collection, one space.** A space is a function from cleaned text
@@ -549,11 +553,11 @@ its completed checks (04 §4.7) — as seen by the peer doing the
 counting, totals at least `tokens` per `per`; a collection with no such
 key is dormant on that peer's catalogue — still findable, no longer
 listed as active (04 §4.7, 08 §8.6). Eligibility: a peer is eligible for
-a shard when `3 × shard_tokens / benchmark_tokens_per_s ≤ seconds(per)`
-— it must be able to finish the shard within one work period, with a
-factor of three for other load — where `shard_tokens` is the shard's
+a part when `3 × part_tokens / benchmark_tokens_per_s ≤ seconds(per)`
+— it must be able to finish the part within one work period, with a
+factor of three for other load — where `part_tokens` is the part's
 `tokens` in the snapshot (§2.2) and the benchmark is 03 §3.3's; small
-shards admit weak peers, large shards admit few (04 §4.5). The tokens a
+parts admit weak peers, large parts admit few (04 §4.5). The tokens a
 key claims live in bundles whose vectors `vectors-sample` reproduces on
 the collection's own records; a declared rate that nobody meets makes
 the collection dormant, which is true information.
@@ -598,7 +602,7 @@ peer that fails may still search with what it holds. The same
 reference vectors are the probe set of 03 §3.5's T1, their first
 sixteen texts are T2's golden pairs, and their per-dimension mean and
 standard deviation are T0's envelope, whose bytes `space.envelope`
-hashes. All of it is one drag member, `calibration/<set>.safetensors`
+hashes. All of it is one SHARD member, `calibration/<set>.safetensors`
 (§2.6; 09 §9.12). A space whose layers feed the encoder text pairs is
 calibrated in that form: its set is 512 title-and-abstract pairs drawn by
 a fixed rule from the collection's own records, and the member carries it
@@ -634,15 +638,15 @@ has seen, and exchanges it with others by periodic digests (§4.2). It is
 the one part of a collection that is not content-addressed, and the
 only part that is allowed to differ between two peers for a while.
 
-The map is a set of accepted bundles per shard; every bundle names its
-chunk range, so a shard is covered by the union of the bundles that
-cover it. A shard counts as covered on a peer only when that peer has
+The map is a set of accepted bundles per part; every bundle names its
+chunk range, so a part is covered by the union of the bundles that
+cover it. A part counts as covered on a peer only when that peer has
 fetched the bundle a claim names and it has passed T0–T3 (03 §3.5); a
 claim heard in a digest is a hint about where work is happening, and
-never by itself removes a shard from the work of §4.5. The map is
+never by itself removes a part from the work of §4.5. The map is
 local, and its form is 09 §9.10.
 
-## 2.6 The drag on disk
+## 2.6 The SHARD on disk
 
 ```
 <collection>/
@@ -656,14 +660,15 @@ local, and its form is 09 §9.10.
 ├── seals/2026-08.json                   -- certified collections: origin seal evidence (§3.7)
 ├── records/<slice>/NNNNN.jsonl.zst      -- and NNNNN.<snapshot id>.jsonl.zst for superseded versions (§2.3)
 ├── relations/<slice>/NNNNN.jsonl.zst    -- typed edges between records (§5.5; 09 §9.14)
-├── figures/<slice>/NNNNN.fig.zst        -- the plates that shard's records name (09 §9.5); fetchable or not
-├── index/<slice>/NNNNN/                 -- the text index of that shard (optional to share; a cache)
+├── figures/<slice>/NNNNN.fig.zst        -- the plates that part's records name (09 §9.5); fetchable or not
+├── index/<slice>/NNNNN/                 -- the text index of that part (optional to share; a cache)
 └── vectors/<space>/…                    -- as above
 ```
 
-A collection on disk is a **drag** — *distributed RAG*, the format 09
-fixes byte for byte. The drag is the copy:
-`<LOUISE_ROOT>/collections/<name>/drag/`, exactly what a peer shares.
+A collection on disk is a **SHARD** — *Self-Hosted, Attested RAG Distribution*, the format 09
+fixes byte for byte. The SHARD is the copy:
+`<LOUISE_ROOT>/collections/<name>/drag/` (the directory keeps its old
+name until the code follows), exactly what a peer shares.
 What never travels — the manifest, cursors, the acknowledgement, the
 trust list, the working text index and the vector table a search reads
 — sits beside it (07 §7.8). The text index is never a member: each peer
@@ -737,7 +742,7 @@ refuses a daughter in which any of them differs. A toolchain change that
 is not equivalent (§3.4) and touches only the records from the
 transition on is a daughter, whatever the origin did; one that changes
 records already published is a corrective sister. If the origin moved,
-old shards may no longer verify against it; they keep verifying
+old parts may no longer verify against it; they keep verifying
 internally, their trust level freezes at what it reached, and the
 daughter says so (`origin_reachable_until`) and carries the mother's
 platform image beside its own (`toolchain.mother_platform_image`) so a
@@ -767,7 +772,7 @@ not use (08 §8.5). Everything that decides a record byte it keeps —
 refuses a sister that differs in nothing.
 
 The test is the records, not the declaration: a sister's `records_root`
-equals her mother's at every snapshot they share (§2.2), and her shards
+equals her mother's at every snapshot they share (§2.2), and her parts
 are byte-identical, because nothing a sister may change is written into
 a record — the layer is derived, not stored (§2.3). That is checkable
 by anyone holding both Codexes, which a declaration is not.
@@ -789,9 +794,9 @@ neither changes. A sister that changes only `update` produces its own
 chain,
 which meets the mother's at every cutoff the two share: at those
 instants the origin's state is one state, so the records are the same
-records, the shards are byte-identical, their roots are equal and the
+records, the parts are byte-identical, their roots are equal and the
 members are interchangeable. A weekly sister of a monthly collection
-holds every shard the monthly holds, and more snapshots naming them.
+holds every part the monthly holds, and more snapshots naming them.
 `space_from: <codex>` copies the whole `space` block and `layers` byte
 for byte, the engine and the calibration with them, and `derive`
 refuses when the resulting `space_id` differs from the source's — so
@@ -873,7 +878,7 @@ place as everyone else it stands on, and a collection that accepts none
 credits none. Nothing is declared and nothing can be dropped.
 
 The collective is the point, and the distinction it turns on is between
-a name and a roster. **Peers who embedded shards are still not listed in
+a name and a roster. **Peers who embedded parts are still not listed in
 `credits`** — they are named in the coverage map, bundle by bundle
 (§2.5), which is where an unbounded and changing list belongs, and a
 list hashed into `collection_id` would fix at creation a membership that
@@ -894,8 +899,9 @@ anything. An ARCHIVE entry carries all of it: who produced the vectors,
 under which licence, the attribution that licence requires byte-exact,
 and the coverage — which documents the archive holds vectors for, either
 `"all"` when the corpus is itself the archive or the stride and count of
-its shards. A CORPUS entry names the provider, the corpus licence and
-the credit line, with no archive and `coverage: "all"`, since a
+the archive's own shards (`ids_per_shard`, `shards`) — the archive's
+files, not parts of a SHARD. A CORPUS entry names the provider, the
+corpus licence and the credit line, with no archive and `coverage: "all"`, since a
 provider is owed for everything. A COMMUNITY entry names only the
 collective and its line: no archive, no licence — contributed vectors
 carry the collection's own terms and there is no second licence to
@@ -1005,7 +1011,7 @@ entries, which were never about the vectors it discarded.
 
 **A cleaning change is not a sister.** Cleaning output *is* the record
 (§2.3), so changing `cleaning_version` re-derives every record from the
-origin: different `content_hash`, different shards, different chunk
+origin: different `content_hash`, different parts, different chunk
 ids, nothing carried over but the origin itself. Calling that a sister
 would empty the word of the one thing it means. It is a collection of
 its own, standing beside the first over the same origin, with no
@@ -1105,9 +1111,9 @@ the anchor. Then the collection continues as an open daughter —
 the certifier's return cannot reclaim the lineage: a later certified
 daughter is a new lineage. Under `frozen` nothing continues it.
 
-**Manifest-only** means a shard enters the copy only if its root is in a
+**Manifest-only** means a part enters the copy only if its root is in a
 signed snapshot of the chain — not only the newest, so an old snapshot
-can still be served; superseded shards stay on disk (§2.3) and are
+can still be served; superseded parts stay on disk (§2.3) and are
 excluded; and the unit of halt, when the gate is found bypassed, is the
 collection on that peer.
 
@@ -1137,14 +1143,14 @@ consistent:
 
 | required | not required |
 |---|---|
-| the Codex, pinning the space; a mismatch refuses that collection at start (§2.4) | snapshots, record shards, the drag (§2.2–2.6) |
+| the Codex, pinning the space; a mismatch refuses that collection at start (§2.4) | snapshots, record parts, the SHARD (§2.2–2.6) |
 | the calibration gate on the run, and the check of every answer's run before its vectors are written (03 §3.3) | signatures, attestations, bundles (03 §3.5–3.6) |
 | deterministic cleaning and chunking, so a re-embed cuts the same chunks (06 §6.3) | `records-vs-origin` and the rest of the published plan (03 §3.2) |
 | `vectors-sample`, run locally on a timer: a few stored chunks re-embedded through today's validated run and compared with their stored vectors at `tolerance` — what catches an engine that changed after passing the gate (03 §3.2) | |
 
 A never-share collection built from a plugin's corpus MAY keep the rest
 — its records are built the same way either way — but a deposit
-collection has none of it: no snapshot, no shard, no signature. Its
+collection has none of it: no snapshot, no part, no signature. Its
 `drag/` holds exactly `codex.json` and the calibration member (09
 §9.12) — the Codex, and the reference the gate compares a run against —
 and nothing serves it.
@@ -1209,7 +1215,7 @@ and unmarked by the purge that completes it, so a crash in between is
 finished by the next write to that collection, and by the worker when it
 starts.
 
-There are no shards or snapshots to purge, and no tombstone: a
+There are no parts or snapshots to purge, and no tombstone: a
 never-share collection publishes nothing, so promise 7 has nothing to
 preserve here and §2.2's `delta.tombstoned` never arises. Emptying the
 collection is erasing every deposit, and `hold collection forget` is

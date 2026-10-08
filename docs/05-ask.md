@@ -1,5 +1,7 @@
 # 5. Asking
 
+*(vocabulary amended 2026-10-08: SHARD, parts)*
+
 A search runs over what a peer holds. It does not fetch, embed or
 verify, except T4 (§3.5), which re-embeds what a search cites,
 asynchronously; it reads indexes that Hold built and returns records
@@ -7,7 +9,7 @@ that Hold checked, and it says what it knows about each.
 
 ## 5.1 Two indexes, one answer
 
-Each collection has a **text index** — one segment per record shard,
+Each collection has a **text index** — one segment per record part,
 exact terms with language-aware stemming — and a **vector index**: the
 centres and bucket labels of §2.4, probed rather than scanned. A query
 goes to both; the two ranked lists are fused by reciprocal rank, and
@@ -17,22 +19,22 @@ what a returned result is.
 
 **What a search reads.** For each collection, a search reads the
 newest snapshot whose members the peer holds for the slices it holds.
-A shard re-issued under that snapshot is read in its newest version
+A part re-issued under that snapshot is read in its newest version
 only — the superseded file stays on disk (02 §2.2) and is out of both
 indexes — and a record listed in the snapshot's `tombstoned` is
 excluded, as promise 7 says. An older held snapshot is served and
 checked, and searched only when the caller asks for it by date. Of the
-collections a peer holds in one lineage (§2.7), the shards a daughter
-inherits by hash are the same bytes as the mother's: a shard held under
+collections a peer holds in one lineage (§2.7), the parts a daughter
+inherits by hash are the same bytes as the mother's: a part held under
 both is read once, keyed by its `records_root`, so a record never
 appears twice in one list. Such a result names the lineage and the
-collection whose snapshot first listed the shard.
+collection whose snapshot first listed the part.
 
 **As of a date.** A collection whose records change is a record of what
 was true when — for law it is the point, and *multivigenza* is the
 whole question: what did article 5 say on 12 March 2019, not what does
 it say now. That answer is already on disk, because a snapshot is a
-frozen state and a superseded shard is kept under its old snapshot's
+frozen state and a superseded part is kept under its old snapshot's
 name (02 §2.2). `--as-of <date>` names it: the search reads, per
 collection, the newest snapshot of the chain whose cutoff is at or
 before that date, instead of the newest held, and every result says
@@ -184,7 +186,7 @@ The fields, with their values:
 
 | field | value |
 |---|---|
-| `collection_id` | the Codex hash of the collection whose snapshot first listed the record's shard |
+| `collection_id` | the Codex hash of the collection whose snapshot first listed the record's part |
 | `lineage_id` | the lineage (§2.7); what a catalogue shows as the collection |
 | `snapshot_id` | the snapshot the record was read from |
 | `uid` | the record — `<plugin>:<native_id>`; the record's identity everywhere a result travels; a native id is display only |
@@ -249,10 +251,12 @@ red-class result.
 Search continues over the certified subset of a collection marked
 *integrity violated* (§3.8), and over what the licence gate admits
 (§4.4); whatever either withholds is named in the response, per
-collection, as shards withheld and why — never a silent drop. A copy in
+collection, as parts withheld and why — never a silent drop. A copy in
 quarantine (§3.6) — not yet tested on this peer — enters no list, in
 either leg, and is named the same way: `shards` is `"all"` and the
-reason is the test or the acknowledgement it waits for.
+reason is the test or the acknowledgement it waits for. The key
+`shards`, like a traversal's `needs.shard` (§5.4), keeps the old word:
+bytes already written keep their names.
 
 A copy can also be searched with ONE LEG MISSING: its encoder's run
 failed the gate, or an answer named a run this peer has not tested yet
@@ -341,14 +345,14 @@ the traversal tool follows. A relation may point outside the collection:
 a national law citing a European one carries the European norm's
 canonical id and leaves it unresolved. The asking peer says which
 collection to resolve such ids against; if it does not hold the
-relevant shard, the answer says so and names the shard, and fetching it
+relevant part, the answer says so and names the part, and fetching it
 is a separate decision. Nothing is resolved across collections without
 being asked, and nothing is fetched on a search's behalf.
 
-The member is `relations/<slice>/NNNNN.jsonl.zst`, one shard beside
-each record shard of the same slice and number, holding the edges whose
-`from` record is in that shard; it is listed in the snapshot with its
-own root like any member (02 §2.2) and re-issued with its shard. Each
+The member is `relations/<slice>/NNNNN.jsonl.zst`, one part beside
+each record part of the same slice and number, holding the edges whose
+`from` record is in that part; it is listed in the snapshot with its
+own root like any member (02 §2.2) and re-issued with its part. Each
 line is one edge, `{from, to, type, snapshot}`: `from` is a uid of this
 collection; `to` is a uid or a canonical id; `type` is a relation type
 the plugin registers, prefixed by the plugin (`eli:cites`, `eli:amends`,
@@ -358,15 +362,15 @@ indexes edges in both directions locally, so "the laws that modify
 decree 81/2008" is the inbound `eli:amends` edges of that decree. The
 bytes are 09 §9.14.
 
-Naming the shard an unresolved id lives in requires holding the target
+Naming the part an unresolved id lives in requires holding the target
 collection's Codex and a snapshot: the target's plugin maps a canonical
-id in a namespace it owns to the record's slice and uid, and the shard
+id in a namespace it owns to the record's slice and uid, and the part
 is the one whose id range in that snapshot contains the uid. When the
 peer holds neither, the answer names the collection asked for and
 leaves the id unresolved.
 
 **Repeal is metadata, not a tombstone.** A repealed act still governs
-the facts that predate its repeal; it stays in its shard, indexed and
+the facts that predate its repeal; it stays in its part, indexed and
 retrievable, carries `in_force: false` in the record's `extra` and its
 `eli:repeals` edge from the repealing act, and is labelled in results.
 Filtering by force is a query concern. A tombstone (02 §2.2) is
@@ -478,7 +482,7 @@ for no gain.
 
 **The index is local and derived.** Facet values are rebuilt from the
 records at each snapshot and live in `index/` beside the text index of
-the shards held (07 §7.8); they are not a member: they travel in no
-drag, carry no root and need no check, because anyone holding the
+the parts held (07 §7.8); they are not a member: they travel in no
+SHARD, carry no root and need no check, because anyone holding the
 records can rebuild them, and anyone who cannot hold the records cannot
 search them either.

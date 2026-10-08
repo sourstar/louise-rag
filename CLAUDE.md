@@ -96,7 +96,7 @@ are the ones that have drifted; prefer to add a test when you touch them.
    substitute. *Enforced: review.*
 6. STORAGE. /data is a local filesystem: SQLite WAL + LanceDB, no SMB/NFS
    assumptions. SQLite holds state (never travels); Lance holds vectors
-   locally — a bundle travels as Parquet (docs/09 §9.7) and a pack's
+   locally — a bundle travels as Parquet (docs/09 §9.7) and a SHARD's
    vectors member rests as safetensors (docs/09 §9.6). Implicit rowids
    are load-bearing (the catalog index, `app/catalog.py`, is
    keyed on `documents.rowid`): nothing VACUUMs a manifest, and anything
@@ -115,11 +115,11 @@ are the ones that have drifted; prefer to add a test when you touch them.
    the first byte moves from the origin. Ingestion/exchange: a yellow- or
    red-class collection without an ack is not discovered, not
    imported, not exchanged — hand-populated folders and peer copies are
-   not a bypass (observed live: a peer-copied shard was indexed and
+   not a bypass (observed live: a peer-copied part was indexed and
    imported ack-free). Terms text is byte-exact and never converted (a
    CRLF checkout would silently invalidate every recorded ack).
-   Packs carry the origin's terms byte-exact (`LICENSE-TERMS`, docs/09
-   §9.13), so one ack covers corpus, pre-embeddings and pack
+   SHARDs carry the origin's terms byte-exact (`LICENSE-TERMS`, docs/09
+   §9.13), so one ack covers corpus, pre-embeddings and SHARD
    (`app/licensing.py` is THE resolution — never re-implement the check).
    *Enforced: acquisition by
    test; ingestion by test (the worker withholds scan and archive, `pack
@@ -168,7 +168,7 @@ are the ones that have drifted; prefer to add a test when you touch them.
     (docs/02 §2.3, docs/06 §6.4), so `records-vs-origin` can re-fetch a
     sample and reproduce it. A record with no `origin_hash` is REFUSED at
     build (`hold records build`; `pack build` until the migration lands),
-    never warned about: a pack whose records all verify
+    never warned about: a SHARD whose records all verify
     internally while being permanently unverifiable against the source is
     the worst artefact we could ship, and it is published once and adopted
     by peers who cannot repair it.

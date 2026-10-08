@@ -1,5 +1,7 @@
 # 7. Commands
 
+*(vocabulary amended 2026-10-08: SHARD, parts)*
+
 The command line, the API and these documents use one vocabulary. Every
 noun below is a word from §1's table or introduced in §2–§6; every verb
 is one of a short closed set that means the same thing wherever it
@@ -93,7 +95,7 @@ louise hold
               apply [<collection>] [--set KEY=VALUE …]                 write the effective values into the files; the node applies them
   records     fetch <collection> [--slice … | --profile P] [--snapshot ID]
                                                                        run the acquisition spec to the cutoff, for these slices or the profile's (06 §6.2)
-              build <collection> [--snapshot ID]                       parse, slice, shard, hash
+              build <collection> [--snapshot ID]                       parse, slice, cut into parts, hash
               check <collection> [--origin] [--seal [--live DIR]] [--sample F]
                                                                        records against their own hashes and roots, against the origin, against the seal
               seal <collection> <snapshot> --files DIR --trusted-list FILE --lotl FILE --lotl-signers FILE
@@ -105,7 +107,7 @@ louise hold
                                                                        fetched now on the budget (added 2026-10-07: 07 named the member and no command to
                                                                        write it; the lists' signatures, XAdES and revocation the same day)
               show <collection> (<record-id> | --shard <slice>/<n>) [--raw]   with the layer and chunker derived for it (02 §2.3)
-                                                                       one record and its chunks, or a whole shard as JSON Lines
+                                                                       one record and its chunks, or a whole part as JSON Lines
   snapshot    create <collection>                                      freeze the current records as this month's snapshot
               delta <collection> <from> <to>                           what changed between two snapshots
               list <collection>
@@ -129,11 +131,11 @@ louise hold
               export <collection> [--shard <slice>/<n>] --out DIR      a signed bundle of what this peer produced — a DIRECTORY of four files (09 §9.7), not a container
               check <collection> [--drop]                              are stored vectors still what this encoder produces; --drop removes the ones that are not
               show <collection>                                        coverage, producers, verification
-  index       build <collection> [--text | --vector]                   the text index per shard; the centres and labels of the space
+  index       build <collection> [--text | --vector]                   the text index per part; the centres and labels of the space
               show <collection>
   check       <collection> [--checks …] [--sample F] [--seed HEX]      run the validation plan; print the report
               [--live DIR]                                             `origin-seal` in live mode: the sealed files under DIR re-validated now (03 §3.7)
-              [--shards S,…] [--origin DIR] [--against FILE]           --shards: these shards alone, how a received claim is reproduced (03 §3.6);
+              [--shards S,…] [--origin DIR] [--against FILE]           --shards: these parts alone, how a received claim is reproduced (03 §3.6);
                                                                        --against: image-equivalence's reference lines (03 §3.4) (both 2026-10-07)
   key         create                                                   this peer's key, at NODE_KEY_PATH
               trust <key> [--deny | --remove | --restore]              the trust list: allow, deny, forget, lift a burn
@@ -142,7 +144,7 @@ louise hold
 
 louise share
   <collection> [--slices …] [--kinds …] [--stop]                       serve what you hold — and announce it
-  fetch <collection> [--slice …] [--kinds …] [--snapshot ID]           take a part
+  fetch <collection> [--slice …] [--kinds …] [--snapshot ID]           take a portion
         [--from ADDRESS] [--dht] [--encoder URL] [--name N]            … from a peer given by hand, or found
   contribute [<collection>] [--once] [--interval S]                    vectors build, under rendezvous, shared
   attest <collection> [--checks …]                                     check, shared
@@ -263,21 +265,21 @@ reader needs at the command line:
   not built yet. A missing acknowledgement is exit 2, naming `hold
   collection ack`.
 - **`records build`.** Refuses (exit 2) a record without `origin_hash`
-  (02 §2.3), refuses one whose `native_id` sorts before the open shard's
+  (02 §2.3), refuses one whose `native_id` sorts before the open part's
   `first_id` (02 §2.2), and writes a tombstone for a document the origin
   retracted (06 §6.1). It writes `relations/<slice>/NNNNN.jsonl.zst`
-  beside each record shard from the plugin's `relations()` (06 §6.1),
+  beside each record part from the plugin's `relations()` (06 §6.1),
   sorted and framed as 09 §9.14 fixes, and nothing at all when the
   plugin does not implement it. `hold snapshot create` lists what is
   there in the snapshot's `relations`, `[]` when there is none. A re-run
   over the same origin files writes the same bytes.
 - **`records show`.** A record id is a uid, `pubmed:38112034`. `--shard`
-  streams the shard as stored (09 §9.5); `--raw` prints records without
+  streams the part as stored (09 §9.5); `--raw` prints records without
   their chunks.
 - **`snapshot create`.** Signs the snapshot's sidecar with this peer's
   key when one exists — the attestation *I computed this too* of 02 §2.2
   (09 §9.4). Re-run for an existing id: identical bytes → nothing to do,
-  exit 0; different bytes → refused, exit 2, the differing shard named;
+  exit 0; different bytes → refused, exit 2, the differing part named;
   a snapshot is not created while the fetch for its cutoff is
   incomplete — exit 3.
 - **`certify`.** Appends the certifier's signature to the sidecar and
@@ -302,7 +304,7 @@ reader needs at the command line:
 - **`vectors build`.** `--delta ID` embeds exactly `delta.added ∪
   delta.changed` of snapshot `ID` — a snapshot id, never a file. About every
   fifteen thousand chunks a bundle (09 §9.7) is signed and merged into the
-  shard's vector file (02 §2.4); the bundle is kept for `share`.
+  part's vector file (02 §2.4); the bundle is kept for `share`.
 - **`vectors import`.** A bundle binds its space and, per record, the
   content hash it embedded; its `collection` and `snapshot_id` are
   provenance and gate nothing (03 §3.5; 09 §9.7). `import` refuses at
@@ -321,7 +323,7 @@ reader needs at the command line:
 - **`vectors check`.** Is `hold check --checks vectors-sample` over this
   peer's own vectors; `--drop` turns a failing row into an empty one
   (02 §2.4) so the coverage map stops claiming it.
-- **`vectors show`.** Prints the coverage map (09 §9.10): per shard of
+- **`vectors show`.** Prints the coverage map (09 §9.10): per part of
   the current snapshot the chunks accepted here, whether it is open, and
   — among the live peers whose digests carry a benchmark for the space,
   this peer included — its leader and the end of the leader's grace
@@ -332,7 +334,7 @@ reader needs at the command line:
   bundle accepted, `fetched`), by `vectors export` (this peer's own,
   `local`, accepted once its own ladder has run over it) and by the
   claims in neighbours' digests, which count for nothing (02 §2.5).
-- **`index build`.** `--text` builds the text index of every held shard
+- **`index build`.** `--text` builds the text index of every held part
   that lacks one. `--vector` trains the centres when the space has none
   and ships them as a member (02 §2.4); when it has, it labels every
   held vector against the newest version held and never moves a centre.
@@ -360,7 +362,7 @@ reader needs at the command line:
   key the report counts on this peer alone. `records check` is `hold
   check --checks roots,records[,records-vs-origin][,origin-seal]` and
   nothing else — `records` (03 §3.2) is the only local check that proves
-  what is inside a shard rather than that the file matches the snapshot,
+  what is inside a part rather than that the file matches the snapshot,
   and leaving it out made `--sample F` on this command affect nothing
   unless `--origin` was given. `--sample F` raises the plan's sample for
   this run and cannot
@@ -389,7 +391,7 @@ reader needs at the command line:
 - **`share fetch`.** Takes `codex.json`, `snapshots/*` and
   `LICENSE-TERMS` first — the members a peer may hold before an
   acknowledgement — then the members named; pieces are checked against
-  roots and shards promoted from staging as 04 §4.3 says. What arrived
+  roots and parts promoted from staging as 04 §4.3 says. What arrived
   is what `hold collection show` then lists as held. `<collection>` is a
   collection id or a lineage id (§7.6); who is asked, in order: `--from
   ADDRESS`, a peer given by hand; the neighbours whose digest lists it;
@@ -407,12 +409,12 @@ reader needs at the command line:
   peer known is exit 2; every peer down is exit 3. `--slice` and
   `--kinds` are written into the collection's file (§7.8), joined with
   what it already says — no `--slice` means every slice, `"all"` — and
-  the node's worker fetches what the drag lacks of them at its next
+  the node's worker fetches what the SHARD lacks of them at its next
   beat, member by member: `LICENSE-TERMS` first and, for a yellow or red
   collection, nothing else until the acknowledgement is recorded
   (04 §4.4); each file by the torrent whose infohash the snapshot gives,
   into `state/staging/`, its pieces root computed and compared to the
-  snapshot's, then one rename into the drag and the holdings mark
+  snapshot's, then one rename into the SHARD and the holdings mark
   (04 §4.3). `--here` fetches the members in this process instead, for
   a node whose worker is not running; it takes the collection's lock
   (§7.7). The worker fetches without being asked, too: a `snapshot`
@@ -421,19 +423,19 @@ reader needs at the command line:
   whose digest gave its address — and the members follow at the next
   beat. *(Flags added 2026-10-06 with migration step 9d; the worker's
   pull 2026-10-07.)*
-- **`share contribute`.** Chooses shards by 04 §4.5, on a collection
-  whose `roots` and `chunks` pass on the shards this peer holds and for
+- **`share contribute`.** Chooses parts by 04 §4.5, on a collection
+  whose `roots` and `chunks` pass on the parts this peer holds and for
   whose snapshot a `records-vs-origin` attestation exists; then `hold
-  vectors build`, then `share` of the bundles. `--once` takes the shards
+  vectors build`, then `share` of the bundles. `--once` takes the parts
   this peer currently leads, builds and shares them, and exits instead
-  of looping until stopped. Exactly: the open shards of the current
+  of looping until stopped. Exactly: the open parts of the current
   snapshot are read off the coverage map (09 §9.10), the live peers off
   the digests (a benchmark for the space, this peer's own from its
   statements); the top of the ordering leads, its window running from
-  the later of the shard's first opening here and its last accepted
+  the later of the part's first opening here and its last accepted
   bundle, the next in line taking over when it runs out with no bundle,
   its own window starting there, and the top again when every window
-  has run out. Each shard led is built, exported into
+  has run out. Each part led is built, exported into
   `state/bundles/<space>/<slice>/<n>/<id>/`, passed through this peer's
   own ladder (T0–T2; T3 is for another key's encoder), accepted in the
   map as `local`, and announced with a `bundle` event; one refused by its
@@ -751,7 +753,7 @@ sensible its own behaviour looks.
 | 130 | interrupted after a clean commit (SIGTERM or SIGINT) |
 
 A command never exits 1 for a deferral and never 0 for a failure. The
-message on stderr names the unit — the shard, the document, the bundle,
+message on stderr names the unit — the part, the document, the bundle,
 the file — and for exit 2 names the rule and the command that satisfies
 it (`hold collection ack …`).
 
@@ -781,8 +783,9 @@ names none, which the response reports for that collection rather than
 answering from a later one. `<record-id>` is a uid,
 `<plugin>:<native_id>` (02 §2.3). `<key>` is `ed25519:` and 64 hex
 characters (09 §9.2). `--shard` takes `<slice>/<n>` —
-`year=1975-1979/00003` — because shard numbers restart per slice.
-`--slice` takes slice values as they appear in the drag's paths.
+`year=1975-1979/00003` — because part numbers restart per slice; the
+flag keeps the old word until the code follows.
+`--slice` takes slice values as they appear in the SHARD's paths.
 `<pack-dir>` is a filesystem path to a pre-Codex pack (§7.6); it is the
 one argument in the tree that is a path and not a name, which is why it
 says so. A
@@ -848,12 +851,12 @@ signal does not shorten that. The unit per stage:
 | stage | unit |
 |---|---|
 | `records fetch`, `share fetch` | the current file, at byte granularity — a checkpoint mid-file, the byte offset committed |
-| `records build` | the document; a shard cut short is re-cut on resume |
+| `records build` | the document; a part cut short is re-cut on resume |
 | `snapshot create` | atomic: the file is written last and is there entire or not at all |
 | `vectors build` | the batch: the chunks in flight to the encoder, each written only from an answer naming a validated run (03 §3.3) |
 | `vectors import`, `share contribute` | the bundle, marked applied in the same transaction as its last row |
-| `index build` | the shard |
-| `check`, `share attest` | the sampled shard; an attestation is written only for a completed check |
+| `index build` | the part |
+| `check`, `share attest` | the sampled part; an attestation is written only for a completed check |
 | `forget` | the member; a member is gone entire or still there |
 | `deposit add`, `deposit erase`, `source erase` | the deposit: stored or erased entire, never half |
 | a source's refresh | the source: its deposit is replaced entire or kept as it was |
@@ -960,7 +963,7 @@ share_slices = ["year=1980-1984"]              # optional: serving narrowed to t
 share_kinds  = ["records"]                     # optional: and these member kinds (`share --kinds`); terms, validation,
                                                # calibration and seals are served whatever it says (amended 2026-10-07)
 source = "origin"                              # origin | drag: where the documents are read from — the plugin's corpus, or
-                                               # the record shards held; `share fetch` writes "drag", and such a collection
+                                               # the record parts held (the value "drag" keeps its old name until the code follows); `share fetch` writes "drag", and such a collection
                                                # is never `records build`-able here (amended 2026-10-07: the key did not exist)
 
 [encoder]                                      # required: a collection names its own encoder, there is no default
@@ -1010,9 +1013,9 @@ collection is another name.
 ├── collections/
 │   ├── pubmed.toml
 │   └── pubmed/
-│       ├── drag/            the copy: exactly the tree of 02 §2.6 — what `share` serves, and nothing else; the bytes may live on other storage, mounted here
+│       ├── drag/            the copy, the SHARD (the directory keeps its old name): exactly the tree of 02 §2.6 — what `share` serves, and nothing else; the bytes may live on other storage, mounted here
 │       ├── state/           manifest.sqlite, cursor, ack.json, attestations/, bundles/, lock — this peer's alone
-│       ├── index/           the text index of the shards held, and the facet values (05 §5.7)
+│       ├── index/           the text index of the parts held, and the facet values (05 §5.7)
 │       ├── lance/           the vector table search reads
 │       └── origin/          the origin files the records are parsed from — 06 §6.2's corpus directory, kept for records-vs-origin; the bytes may live on other storage, mounted here
 ├── state/                   node.sqlite: the catalogue, coverage maps (09 §9.10), peers seen, runtime overrides; trust.json; web-sources-ack.json (09 §9.13)
@@ -1027,16 +1030,16 @@ only copy of them anywhere; `state/`, `index/` and `lance/` hold what is
 derived from them, and erasing a deposit removes it from all four.
 
 `drag/` holds only what the Codex or a snapshot names, so a member is
-hashed as it lies and `share` refuses a drag directory holding a file
+hashed as it lies and `share` refuses a SHARD directory holding a file
 that neither the Codex names, nor a snapshot of the chain lists — as a
-record shard, a relations shard, a figures container, or in its `files`
+record part, a relations part, a figures container, or in its `files`
 (09 §9.4) — nor 09 §9.6 defines as a local derived file under
 `vectors/`.
 
 The list is spelled out because it is a refusal and a refusal that
-omits a member kind does not omit a file, it refuses THE WHOLE DRAG.
+omits a member kind does not omit a file, it refuses THE WHOLE SHARD.
 Until the figures amendment this sentence said "as a shard or in its
-`files`", which named neither the relations shards nor the figures
+`files`", which named neither the relations parts nor the figures
 containers — both of which 09 §9.4 lists in their own top-level arrays
 rather than in `shards` or `files`. A collection with relations was
 unshareable and nothing said why.
@@ -1044,7 +1047,7 @@ unshareable and nothing said why.
 `index/`, `lance/`, `origin/`, the configuration files and the keys never travel,
 and neither does the state database, which holds the cursor of 06 §6.1,
 the acknowledgement of 09 §9.13 and the attestations of 09 §9.8. Two
-things it keeps DO travel, by their own routes rather than as drag
+things it keeps DO travel, by their own routes rather than as SHARD
 members: a bundle, as the member `bundle-<space>-<bundle id>` served
 from `state/bundles/` (09 §9.7, §9.16), and an attestation, as an event
 (09 §9.9). Lance holds the vectors a search reads and is a local
