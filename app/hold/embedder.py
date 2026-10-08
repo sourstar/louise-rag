@@ -134,7 +134,8 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
              collection_id: str | None = None,
              role: str = "document",
              stated: StatedRun | None = None,
-             embed_one=None, contribute=None) -> Run:
+             embed_one=None, contribute=None,
+             items: Sequence[cal.Item] | None = None) -> Run:
     """One pass: embed all 512, draw the quorum, compare.
 
     `embed(texts) -> list[list[float]]` is injected rather than imported so
@@ -157,14 +158,28 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
     settings, and a run that is not is validated for single-text work only.
     The batching fault that silently corrupted 714 books (2026-07) is a
     property of a run's settings: measured here, never assumed.
+
+    THE FORM THE PIPELINE WRITES (09 §9.12, amended 2026-10-08). `items` is
+    the space's set as its encoder is fed it (`calibration.items`): a text
+    space's texts, read from the platform when not given; a PAIR space's
+    pairs, which travel in its member, so the caller that holds the member
+    passes them. On the document side a pair is embedded as a pair — every
+    pass, the fingerprint and the batches alike — and the query side gets
+    each item as one text (`calibration.query_text`).
     """
     if role not in ("document", "query"):
         raise GateError(f"role is document or query, got {role!r}")
-    texts = cal.verify(codex.modality, codex.space.calibration.set)
+    if items is None:
+        if cal.form(codex) != "text":
+            raise GateError("a pair space's calibration set travels in its member "
+                            "(09 §9.12); the gate is given it, and was not")
+        items = cal.verify(codex.modality, codex.space.calibration.set)
+    texts = list(items)
     if role == "query":
         if codex.space.query.encoder is None:
             raise GateError("this space is symmetric: it has no query run to gate — "
                             "queries and documents come from one run (03 §3.3)")
+        texts = [cal.query_text(t) for t in texts]
         instruction = codex.space.query.instruction
         if instruction:
             texts = [f"{instruction}{t}" for t in texts]
@@ -195,7 +210,7 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
     # encoder's own count where the endpoint reports one; absent that, the
     # honest denominator is the set's own token estimate, so this is a
     # LOWER bound on throughput rather than an invented number.
-    tokens = sum(max(1, len(t) // 4) for t in texts)
+    tokens = sum(max(1, cal.item_chars(t) // 4) for t in texts)
 
     taken = invariant = None
     if embed_one is not None:

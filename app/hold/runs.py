@@ -207,16 +207,26 @@ def _others(root: Path, name: str) -> list[str]:
 # ---- the re-check of a kept statement ----------------------------------------------
 
 def recheck(codex: Codex, body: dict[str, Any], *, reference, embed,
-            role: str = "document") -> tuple[bool, int, float]:
+            role: str = "document", items=None) -> tuple[bool, int, float]:
     """(does it still pass, how many reached tolerance, their median): the
     statement's own `sampled` texts embedded again by `embed` and compared
     with `reference`, exactly as the gate compared them (03 §3.3, both
     conjuncts). A statement whose sample is not the space's quorum — a
-    malformed or planted one — does not pass. Embedding is the caller's."""
+    malformed or planted one — does not pass. Embedding is the caller's.
+
+    `items`: the space's set as its encoder is fed it (`calibration.items`);
+    a pair space's travels in its member and is given, as to the gate."""
     from . import calibration as cal
-    texts = cal.verify(codex.modality, codex.space.calibration.set)
-    if role == "query" and codex.space.query.instruction:
-        texts = [f"{codex.space.query.instruction}{t}" for t in texts]
+    if items is None:
+        if cal.form(codex) != "text":
+            raise emb.GateError("a pair space's calibration set travels in its member "
+                                "(09 §9.12); the re-check is given it, and was not")
+        items = cal.verify(codex.modality, codex.space.calibration.set)
+    texts = list(items)
+    if role == "query":
+        texts = [cal.query_text(t) for t in texts]
+        if codex.space.query.instruction:
+            texts = [f"{codex.space.query.instruction}{t}" for t in texts]
     sampled = body.get("sampled")
     if (not isinstance(sampled, list) or len(sampled) != codex.space.calibration.n
             or len(reference) != len(texts)
@@ -371,14 +381,16 @@ class Answers:
 
 def validate(root: Path, name: str, codex: Codex, *, role: str, reference,
              embed, embed_one, contribute, stated: emb.StatedRun, key,
-             now: str) -> dict[str, Any]:
+             now: str, items=None) -> dict[str, Any]:
     """Run the gate against one stated run and KEEP the statement — pass or
     fail: "a failure is kept too, so the run is not retried against the same
     set" (07 §7.3). Returns the statement's body. Embedding is the caller's:
     `embed` for the whole set, `embed_one` and `contribute` for the
-    fingerprint and batch invariance (embedder.run_gate)."""
+    fingerprint and batch invariance (embedder.run_gate). `items`: the set as
+    the space's encoder is fed it (a pair space's, from its member)."""
     run = emb.run_gate(codex, reference=reference, embed=embed, role=role,
-                       stated=stated, embed_one=embed_one, contribute=contribute)
+                       stated=stated, embed_one=embed_one, contribute=contribute,
+                       items=items)
     # THE PASS IS ABOUT ONE RUN. If the model was relaunched while the 512
     # texts were going through — another flag, another image — some answers
     # came from another run, and the numbers describe neither. 03 §3.3: "An

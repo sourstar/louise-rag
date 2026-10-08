@@ -70,6 +70,39 @@ PROBES: dict[str, str] = {
 }
 
 
+#: The same four probes in a PAIR collection's form (09 §9.3; 09 §9.12 as
+#: amended 2026-10-08): a pipeline that feeds the encoder pairs is probed
+#: with pairs, since a backend that flattened them would reproduce a text
+#: baseline perfectly while writing another function. A title-like first
+#: segment and the rest as the second, as a record's pair is cut.
+PAIR_PROBES: dict[str, tuple[str, str]] = {
+    "short-en": ("The quick brown fox",
+                 "jumps over the lazy dog near the riverbank."),
+    "long-en": ("The lighthouse keeper and the ledger", _long_probe()),
+    "non-ascii": ("Päivänä kuin äitini oli kylässä",
+                  "l'été était déjà fini, und der Herbst kam früh. "
+                  "Хлеб и соль. 春眠不覚暁。"),
+    "typography": ("_Italics_ marked the old way",
+                   "-- with underscores -- and “curly quotes” beside straight "
+                   "'ones', em—dashes, and ellipses… all of which tokenizers "
+                   "love to disagree on."),
+}
+
+
+def _probes_for(collection) -> dict:
+    """PROBES, or PAIR_PROBES for a collection whose layers feed pairs. A
+    collection that declares no layers has its plugin's one chunker, which
+    feeds text."""
+    from .. import layers as layers_mod
+    if collection is None or not layers_mod.has_pair_layer(collection):
+        return PROBES
+    try:
+        form = layers_mod.form_of(collection)
+    except layers_mod.LayerError as e:
+        raise BackendGateError(str(e)) from None
+    return PAIR_PROBES if form == "pair" else PROBES
+
+
 class BackendGateError(RuntimeError):
     """The endpoint no longer reproduces its baseline (or corrupts batches).
     Terminal until the operator intervenes — never marks documents errored."""
@@ -85,7 +118,8 @@ def _default_embed_fn(collection=None):
     from .. import embeddings
     from ..collections import recipe_for
     recipe = recipe_for(collection)
-    # the probes are not chunks: fixed texts, as text (`embed_calibration`)
+    # the probes are not chunks: fixed inputs in the collection's form — a
+    # text, or a pair sent as a pair (`embed_calibration`)
     return lambda texts: embeddings.embed_calibration(recipe, texts)
 
 
@@ -93,7 +127,11 @@ def baseline_path(collection) -> Path:
     return collection.manifest_path.parent / f"backend_baseline-{collection.name}.json"
 
 
-def _text_hash(text: str) -> str:
+def _text_hash(text) -> str:
+    """A probe's identity in the baseline: its text's hash, or a pair's —
+    over the canonical JSON of its two segments, which no text hashes to."""
+    if not isinstance(text, str):
+        text = json.dumps(list(text), ensure_ascii=False, separators=(",", ":"))
     return hashlib.blake2b(text.encode("utf-8"), digest_size=16).hexdigest()
 
 
@@ -104,7 +142,7 @@ def _cos(a: list[float], b: list[float]) -> float:
     return 0.0 if na == 0 or nb == 0 else num / (na * nb)
 
 
-def _embed_single(embed_fn, text: str) -> list[float]:
+def _embed_single(embed_fn, text) -> list[float]:
     """One text per call: the client turns this into a single-sequence
     request regardless of EMBED_BATCH, which is the shape verified safe."""
     try:
@@ -119,7 +157,7 @@ def record_baseline(collection, embed_fn=None) -> dict:
     embed_fn = embed_fn or _default_embed_fn(collection)
     recipe = recipe_for(collection)
     probes = {}
-    for name, text in PROBES.items():
+    for name, text in _probes_for(collection).items():
         vec = _embed_single(embed_fn, text)
         probes[name] = {"text_hash": _text_hash(text),
                         "vector": [round(x, 6) for x in vec]}
@@ -140,19 +178,24 @@ def record_baseline(collection, embed_fn=None) -> dict:
     return baseline
 
 
-def _check_batch_integrity(embed_fn) -> None:
+def _check_batch_integrity(embed_fn, pairs: bool = False) -> None:
     """Only meaningful when config asks for multi-text batches: nonce-fresh
     long texts embedded singly must equal the same texts embedded through the
     configured (batched) path. Caveat, stated honestly: a server-side prompt
     cache can replay the single-leg result for the batched leg and mask a
     real defect — the check is a tripwire, not a proof. The safe setting
     remains EMBED_BATCH=1 (see config.py).
+
+    `pairs`: the collection feeds the encoder pairs, and the batch is of
+    pairs — the nonce in the first segment, the long body the second.
     """
     if config.EMBED_BATCH <= 1:
         return
     nonce = secrets.token_hex(8)
     body = PROBES["long-en"][:2400]
-    texts = [f"probe-{nonce}-{i}: {body}" for i in range(min(config.EMBED_BATCH, 4))]
+    n = min(config.EMBED_BATCH, 4)
+    texts = ([(f"probe-{nonce}-{i}", body) for i in range(n)] if pairs
+             else [f"probe-{nonce}-{i}: {body}" for i in range(n)])
     singles = [_embed_single(embed_fn, t) for t in texts]
     try:
         batched = embed_fn(texts)
@@ -172,15 +215,17 @@ def check(collection, embed_fn=None) -> dict:
     BackendUnavailable (endpoint down — retry later). Returns a summary dict
     on pass; records the baseline on first use."""
     embed_fn = embed_fn or _default_embed_fn(collection)
+    probes = _probes_for(collection)
+    pairs = probes is PAIR_PROBES
     path = baseline_path(collection)
     if not path.exists():
         baseline = record_baseline(collection, embed_fn)
-        _check_batch_integrity(embed_fn)
+        _check_batch_integrity(embed_fn, pairs)
         return {"ok": True, "recorded": True, "dim": baseline["dim"]}
 
     baseline = json.loads(path.read_text(encoding="utf-8"))
     cosines = {}
-    for name, text in PROBES.items():
+    for name, text in probes.items():
         entry = baseline["probes"].get(name)
         if entry is None or entry["text_hash"] != _text_hash(text):
             raise BackendGateError(
@@ -204,7 +249,7 @@ def check(collection, embed_fn=None) -> dict:
             f"Refusing to write vectors — fix the endpoint (pin its image!) or "
             f"accept the new backend with `louise hold embedder rebaseline "
             f"{collection.name} --yes` and re-embed the collection")
-    _check_batch_integrity(embed_fn)
+    _check_batch_integrity(embed_fn, pairs)
     return {"ok": True, "recorded": False, "cosines": cosines}
 
 

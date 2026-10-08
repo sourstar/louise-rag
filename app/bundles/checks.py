@@ -276,20 +276,26 @@ def choose_sample(chunk_ids: list[str], size: int = SAMPLE_SIZE) -> list[str]:
 
 
 def check_sample_reembed(chunk_ids: list[str], vectors, texts: dict[str, str],
-                         embed_fn, sample_size: int = SAMPLE_SIZE) -> CheckResult:
+                         embed_fn, sample_size: int = SAMPLE_SIZE,
+                         inputs: dict | None = None) -> CheckResult:
     """Re-embed a random sample locally and compare against the bundle.
 
     THE ONLY GATE HERE THAT CATCHES A DIFFERENT REAL MODEL. `texts` comes from
     locally re-derived chunks — the importer has them because possession binding
     requires reading the raw document anyway.
+
+    `inputs`: what each chunk is fed to the encoder as, where that is not its
+    text — a pair layer's chunk with its `fields`, re-cut from the record
+    (09 §9.3). Absent, the text, as ever.
     """
+    fed = inputs if inputs is not None else texts
     by_id = {cid: np.asarray(v, dtype=np.float32) for cid, v in zip(chunk_ids, vectors)}
-    sample = [cid for cid in choose_sample(chunk_ids, sample_size) if cid in texts]
+    sample = [cid for cid in choose_sample(chunk_ids, sample_size) if cid in fed]
     if not sample:
         return CheckResult("sample_reembed", True,
                            "skipped: no local text available for any sampled chunk")
     try:
-        recomputed = embed_fn([texts[cid] for cid in sample])
+        recomputed = embed_fn([fed[cid] for cid in sample])
     except Exception as e:
         raise VerificationUnavailable(
             f"could not re-embed a sample for verification "
@@ -321,7 +327,8 @@ def check_sample_reembed(chunk_ids: list[str], vectors, texts: dict[str, str],
 
 def run_admission_checks(chunk_ids: list[str], vectors, dim: int, dtype: str, *,
                          uid_of, seq_of, texts: dict[str, str] | None = None,
-                         embed_fn=None, sample_size: int = SAMPLE_SIZE) -> Verdict:
+                         embed_fn=None, sample_size: int = SAMPLE_SIZE,
+                         inputs: dict | None = None) -> Verdict:
     """Run every gate. Structural failure short-circuits: the later checks
     assume finite, unit-norm vectors and would otherwise produce nonsense
     statistics on garbage input."""
@@ -334,6 +341,10 @@ def run_admission_checks(chunk_ids: list[str], vectors, dim: int, dtype: str, *,
                check_overlap(chunk_ids, vectors, uid_of, seq_of),
                check_degenerate(vectors)]
     if embed_fn is not None and texts:
-        results.append(check_sample_reembed(chunk_ids, vectors, texts, embed_fn,
-                                            sample_size))
+        if inputs is None:
+            results.append(check_sample_reembed(chunk_ids, vectors, texts, embed_fn,
+                                                sample_size))
+        else:
+            results.append(check_sample_reembed(chunk_ids, vectors, texts, embed_fn,
+                                                sample_size, inputs=inputs))
     return Verdict(passed=all(r.passed for r in results), results=results)

@@ -168,7 +168,7 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     cut = landing.cut(codex, records)
     report = adm.judge(codex, header, rows, possession, bundle_id, envelope=envelope,
                        reference=reference, mine=mine,
-                       text_of=lambda cid: (cut.get(cid) or {}).get("text"), embed=None,
+                       text_of=lambda cid: landing.input_of(cut, cid), embed=None,
                        seed=os.urandom(32))
     cov.record_from_report(con, codex, report, header, source=cov.FETCHED,
                            now=messages.time_text(now))

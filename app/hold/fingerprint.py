@@ -28,13 +28,17 @@ from .codex import digest
 COUNT = 16
 
 
-def indices(texts: Sequence[str]) -> list[int]:
+def indices(texts: Sequence) -> list[int]:
     """The positions, in the set, of the sixteen texts — in rank order, so
     the shortest first and the longest last. A text taken twice (a set far
-    smaller than 512) stays taken twice: the rule is the spec's, not ours."""
+    smaller than 512) stays taken twice: the rule is the spec's, not ours.
+
+    A pair space's items are ordered by their two segments' UTF-8 bytes
+    together (09 §9.12, amended 2026-10-08); a text's by its own, as ever."""
+    from .calibration import item_bytes
     if not texts:
         raise ValueError("an empty set has no fingerprint texts")
-    order = sorted(range(len(texts)), key=lambda i: (len(texts[i].encode("utf-8")), i))
+    order = sorted(range(len(texts)), key=lambda i: (item_bytes(texts[i]), i))
     last = len(order) - 1
     return [order[(k * last) // (COUNT - 1)] for k in range(COUNT)]
 

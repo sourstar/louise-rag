@@ -87,7 +87,10 @@ def records_for(root, name: str, snapshot: snap.Snapshot, shard: str,
 
 
 def cut(codex, records: Sequence[dict]) -> dict[str, dict]:
-    """chunk id -> `{text, seq, chapter, book_id, lang}`, this peer's own.
+    """chunk id -> `{text, seq, chapter, book_id, lang}`, this peer's own —
+    and `fields` beside them for a chunk of a PAIR layer, the two segments
+    its encoder is fed (09 §9.3), which no stored row keeps and the record
+    gives back byte for byte.
 
     Through `layers.chunks_for_document` and never a plugin's chunker
     directly (invariant 1), which is also what makes a wrong layer a
@@ -104,7 +107,20 @@ def cut(codex, records: Sequence[dict]) -> dict[str, dict]:
                 "chapter": c["chapter"] or "",
                 "book_id": int(c["book_id"]), "lang": rec.get("lang") or "und",
             }
+            if c.get("fields") is not None:
+                out[c["id"]]["fields"] = tuple(c["fields"])
     return out
+
+
+def input_of(cut_: dict[str, dict], chunk_id: str):
+    """What a check re-embeds for `chunk_id` out of a `cut`: its text, or for a
+    pair layer's chunk the entry with its `fields` (`layers.chunk_input`), so
+    the check embeds the form the pipeline writes. None where the cut has no
+    such chunk."""
+    entry = cut_.get(chunk_id)
+    if entry is None:
+        return None
+    return layers_mod.chunk_input(entry)
 
 
 def rows_to_write(codex, admitted, mine_cut: dict[str, dict],

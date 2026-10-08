@@ -106,7 +106,8 @@ def cmd_create(a) -> int:
     codex, held = create_from(a.root, a.plugin, _recipe(a.recipe),
                               platform_image=a.platform_image,
                               space_from=a.space_from, encoder=a.encoder,
-                              query_encoder=a.query_encoder, name=a.name)
+                              query_encoder=a.query_encoder, name=a.name,
+                              calibration_set=getattr(a, "calibration_set", None))
     print(f"held: {held}", file=sys.stderr)
     print(codex.collection_id)
     return 0
@@ -256,11 +257,17 @@ def preflight_create(recipe: dict, platform_image: str | None) -> str:
 
 def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None = None,
                 space_from: str | None = None, encoder: str | None = None,
-                query_encoder: str | None = None, name: str | None = None):
+                query_encoder: str | None = None, name: str | None = None,
+                calibration_set: str | None = None):
     """`hold collection create <plugin> --recipe FILE` — for the command
     line and for its route alike (07 §7.4: the web interface is a client of
     the same function, not a second implementation). Returns the Codex and
-    the collection file it wrote (07 §7.8)."""
+    the collection file it wrote (07 §7.8).
+
+    `calibration_set`: the path of a PAIR space's set (09 §9.12, amended
+    2026-10-08). With `space_from` naming a pair space it is not needed: the
+    source's member carries the set, and the copy embeds the same pairs."""
+    pairs = Path(calibration_set).read_bytes() if calibration_set else None
     # `toolchain.platform_image` is hashed into collection_id (09 §9.3), and
     # it is "the digest of the platform the command runs in unless the
     # recipe states it" (07 §7.3): the recipe's own value, else
@@ -291,6 +298,18 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
         space["calibration"].pop("query_vectors", None)     # computed here too (09 §9.12)
         recipe["space"] = space
         recipe["layers"] = [l.to_dict() for l in source.layers]
+        from app.hold import calibration as cal, drag as drag_mod
+        if pairs is None and cal.form(source) == "pair":
+            # a pair space's set is in its member (09 §9.12, amended
+            # 2026-10-08): the copy is embedded over the very same pairs
+            member = (col.drag_of(Path(root), col.name_of(root, source.collection_id))
+                      / drag_mod.calibration_paths(source.space.calibration.set)[0])
+            if not member.is_file():
+                raise CodexError(
+                    f"--space-from {space_from} is a pair space, whose calibration set "
+                    f"travels in its member, and this copy holds no member at "
+                    f"{member.name}: pass the set's file, --calibration-set FILE")
+            pairs = cal.read_pairs(member, expect=source.space.calibration.set)
 
     credits = tpl.expand_archives(recipe.get("archives") or ())
     # The creator's key: 09 Â§9.12 makes the calibration member's `key`
@@ -308,7 +327,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                                    embed_query=(_embed_for_recipe(recipe["space"], query_encoder)
                                                 if query_encoder else None),
                                    space_version=source.version if space_from else None,
-                                   credits=credits)
+                                   credits=credits, pairs=pairs)
     if space_from and (codex.space.envelope,
                        codex.space.calibration.vectors) != drifted:
         print(f"warning: --space-from {space_from} recorded reference "
@@ -1751,7 +1770,9 @@ def cmd_vectors_import(a) -> int:
 
     report = adm.judge(codex, header, rows, possession, bundle_id,
                        envelope=envelope, reference=reference, mine=mine,
-                       text_of=lambda cid: (cut.get(cid) or {}).get("text"),
+                       # T3 re-embeds what the record gives back: a pair
+                       # layer's chunk with its `fields` (09 §9.3)
+                       text_of=lambda cid: landing.input_of(cut, cid),
                        embed=embed, seed=seed,
                        strict_allow=set(a.allow) if a.strict else None)
     t3 = report.tier(adm.T3)
@@ -2021,8 +2042,8 @@ def cmd_vectors_check(a) -> int:
         return sorted(cut)
 
     def text_of(cid):
-        entry = cut.get(cid)
-        return entry["text"] if entry else None
+        # the text, or a pair layer's chunk with its `fields` (09 §9.3)
+        return landing.input_of(cut, cid)
 
     report = vck.check(
         codex, snapshot, seed=bytes.fromhex(a.seed) if a.seed else os.urandom(32),
@@ -2498,7 +2519,13 @@ def cmd_embedder_calibrate(a) -> int:
         raise CodexError(f"--ctx is the space's input window in tokens, got {a.ctx}")
     reference = calib.read_endpoint(a.engine, weights=a.encoder_weights)
     against = [calib.read_endpoint(f) for f in a.against]
-    set_id, texts = calib.load_set(a.set_id)
+    if getattr(a, "pairs", None):
+        if a.set_id:
+            raise CodexError("--pairs names the set by its file; --set is the "
+                             "platform's text set: one or the other")
+        set_id, texts = calib.load_pairs(a.pairs)
+    else:
+        set_id, texts = calib.load_set(a.set_id)
     _print(calib.measure(reference, against, set_id=set_id, texts=texts,
                          embed=calib.http_embed(a.ctx)))
     return 0
@@ -2522,10 +2549,14 @@ def _gate(a):
     reference = _read_reference(member, codex)
 
     recipe = _recipe_for(codex, name)      # raises GateDeferred if unset
+    from app.hold import calibration as cal
+    # the set as the space's encoder is fed it: a pair space's pairs, from
+    # its member (09 §9.12, amended 2026-10-08)
+    items = cal.items(codex, member)
 
     def embed(texts):
         try:
-            # the gate embeds the calibration set: text, by design
+            # the gate embeds the calibration set, in the space's form
             return embeddings.embed_calibration(recipe, texts)
         except emb.GateDeferred:
             raise
@@ -2536,7 +2567,7 @@ def _gate(a):
             raise emb.GateDeferred(
                 f"the encoder for {name} was unreachable or failed: {e}") from e
 
-    return emb.run_gate(codex, reference=reference, embed=embed), codex
+    return emb.run_gate(codex, reference=reference, embed=embed, items=items), codex
 
 
 def _read_reference(member, codex):
@@ -2978,6 +3009,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="a bi-encoder's query side (MedCPT): its endpoint. The Codex pins "
                         "its reference vectors too (09 §9.12), and the collection "
                         "file names it as query_url")
+    p.add_argument("--calibration-set", default=None, metavar="FILE",
+                   help="a PAIR space's calibration set: the 512 title-and-abstract pairs "
+                        "tools/build_pair_calibration_set.py drew from the collection's "
+                        "records, whose sha256 the recipe names as space.calibration.set "
+                        "(09 §9.12); the member carries it")
     p.set_defaults(fn=cmd_create)
 
     p = verbs.add_parser("derive", help="a sister: her mother's corpus, a new space")
@@ -3257,6 +3293,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the space's input window in tokens; texts are cut as the gate cuts them")
     p.add_argument("--set", dest="set_id", metavar="SHA256",
                    help="the calibration set (default: the platform's text set)")
+    p.add_argument("--pairs", default=None, metavar="FILE",
+                   help="a PAIR space: its calibration set, the pairs "
+                        "tools/build_pair_calibration_set.py drew, embedded as pairs "
+                        "(09 §9.12); not with --set")
     p.set_defaults(fn=cmd_embedder_calibrate)
 
     p = everbs.add_parser("rebaseline",

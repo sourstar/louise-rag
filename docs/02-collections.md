@@ -599,7 +599,10 @@ reference vectors are the probe set of 03 §3.5's T1, their first
 sixteen texts are T2's golden pairs, and their per-dimension mean and
 standard deviation are T0's envelope, whose bytes `space.envelope`
 hashes. All of it is one drag member, `calibration/<set>.safetensors`
-(§2.6; 09 §9.12).
+(§2.6; 09 §9.12). A space whose layers feed the encoder text pairs is
+calibrated in that form: its set is 512 title-and-abstract pairs drawn by
+a fixed rule from the collection's own records, and the member carries it
+(09 §9.12, *amended 2026-10-08*).
 
 The **index** is a set of centre points trained once on a corpus-wide
 sample. Every vector's label is its nearest centre, and search probes a

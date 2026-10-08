@@ -23,6 +23,20 @@ retrieval quality. It is to make any systematic difference between two
 encoder builds show up SOMEWHERE in the 512 — so it spans scripts,
 lengths, numerals, punctuation and near-duplicates, because quantisation,
 tokenisation, pooling and truncation each go wrong in their own regime.
+
+A PAIR SPACE IS THE EXCEPTION (09 §9.12 as amended 2026-10-08; operator,
+docs/notes/input-forms.md). Its encoder is fed tokenizer text pairs, and a
+gate over plain texts would pass a backend that flattens pairs — the very
+defect the pair form exists to keep out. So its set is 512 title-and-
+abstract PAIRS drawn by a fixed rule from the collection's own records
+(`draw_pairs`, run by tools/build_pair_calibration_set.py as
+tools/build_calibration_set.py drew the text set), and it travels INSIDE the
+member as the `pairs` tensor — the bytes of its file, whose `H` is
+`space.calibration.set`. Not in the platform image: those records are the
+collection's, under its licence, and the member is fetched only after the
+acknowledgement (04 §4.4). The four reasons above still hold where they can:
+the set is fixed before `create`, two collections of the space share it,
+and a newcomer gets it with the member.
 """
 from __future__ import annotations
 
@@ -30,7 +44,7 @@ import hashlib
 import json
 import unicodedata
 from pathlib import Path
-from typing import Iterator, Sequence
+from typing import Callable, Iterable, Iterator, Sequence
 
 from .codex import CodexError
 
@@ -190,6 +204,307 @@ def verify(modality: str, expected_id: str) -> list[str]:
 
 
 # --------------------------------------------------------------------------
+# a PAIR space's set (09 §9.12, amended 2026-10-08)
+
+#: An item of a calibration set as the space's encoder is fed it: a text, or
+#: in a pair space a `(first, second)` tokenizer text pair (09 §9.3).
+Item = str | tuple[str, str]
+
+#: The member's tensor that carries a pair space's set: the bytes of its
+#: file, u8, `[bytes]`. `H` over them is `space.calibration.set`.
+PAIRS = "pairs"
+
+#: The one character a pair's segment may carry that a text set refuses: the
+#: line feed that joins an abstract's sections (`chunking.chunk_abstract`),
+#: which is what the encoder is fed and so what the set must hold.
+_PAIR_ALLOWED = {"\n"}
+
+
+def form(codex) -> str:
+    """`text` or `pair`: the form the space's layers feed the encoder, and so
+    the form its calibration set is in. A space whose layers feed both has
+    no one set (`layers.form_of`) and is refused."""
+    from app import layers as layers_mod
+    try:
+        return layers_mod.form_of(codex)
+    except layers_mod.LayerError as e:
+        raise CalibrationError(str(e)) from None
+
+
+def query_text(item: Item) -> str:
+    """What the QUERY side embeds for an item. A query is one text in every
+    space (MedCPT's query encoder takes one), so a pair is given to it as the
+    abstract chunker joins a record: the first segment, a blank line, the
+    second. A text is itself."""
+    if isinstance(item, str):
+        return item
+    first, second = item
+    return f"{first}\n\n{second}"
+
+
+def item_bytes(item: Item) -> int:
+    """The UTF-8 byte length an item is ordered by (09 §9.12's fingerprint):
+    a text's, or a pair's two segments together."""
+    if isinstance(item, str):
+        return len(item.encode("utf-8"))
+    return len(item[0].encode("utf-8")) + len(item[1].encode("utf-8"))
+
+
+def item_chars(item: Item) -> int:
+    """Characters, for the benchmark's token estimate (03 §3.3)."""
+    return len(item) if isinstance(item, str) else len(item[0]) + len(item[1])
+
+
+def pair_line(i: int, first: str, second: str) -> bytes:
+    """One line of a pair set: `{"i": <0…511>, "pair": [first, second]}`,
+    compact, `\\n`-terminated (09 §9.12), keys in that order."""
+    return (json.dumps({"i": i, "pair": [first, second]}, ensure_ascii=False,
+                       separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def render_pairs(pairs: Sequence[tuple[str, str]]) -> bytes:
+    """The whole pair set file, in index order. Its bytes are its id."""
+    check_pairs(pairs)
+    return b"".join(pair_line(i, a, b) for i, (a, b) in enumerate(pairs))
+
+
+def parse_pairs(data: bytes) -> Iterator[tuple[str, str]]:
+    """A pair set read back, refusing anything `render_pairs` would not have
+    written — dense, in order, each line exactly `i` and `pair`."""
+    for want, raw in enumerate(data.split(b"\n")[:-1]):
+        obj = json.loads(raw)
+        if set(obj) != {"i", "pair"}:
+            raise CalibrationError(f"pair line {want}: keys are exactly i and pair")
+        if obj["i"] != want:
+            raise CalibrationError(
+                f"pair line {want}: index is {obj['i']}; the set is dense and in "
+                f"order (09 §9.12)")
+        pair = obj["pair"]
+        if (not isinstance(pair, list) or len(pair) != 2
+                or not all(isinstance(s, str) for s in pair)):
+            raise CalibrationError(f"pair line {want}: `pair` is two strings")
+        yield pair[0], pair[1]
+
+
+def _pair_fault(first, second) -> str | None:
+    """Why a pair cannot be a calibration item, or None. The text set's rules
+    with one difference: a segment may carry the line feed the abstract
+    chunker joins sections with."""
+    for name, s in (("first", first), ("second", second)):
+        if not isinstance(s, str) or not s.strip():
+            return f"its {name} segment is empty"
+        if unicodedata.normalize("NFC", s) != s:
+            return f"its {name} segment is not NFC-normalised"
+        for ch in s:
+            if ch not in _PAIR_ALLOWED and unicodedata.category(ch) in _FORBIDDEN:
+                return (f"its {name} segment carries {unicodedata.category(ch)} "
+                        f"character U+{ord(ch):04X}")
+    return None
+
+
+def check_pairs(pairs: Sequence[tuple[str, str]]) -> None:
+    """Refuse a pair set that could not do its job: 512, both segments of
+    each non-empty, NFC, no control character but the line feed, no two the
+    same."""
+    if len(pairs) != SIZE:
+        raise CalibrationError(f"a calibration set is {SIZE} pairs, got {len(pairs)}")
+    seen: dict[tuple[str, str], int] = {}
+    for i, p in enumerate(pairs):
+        if not isinstance(p, (tuple, list)) or len(p) != 2:
+            raise CalibrationError(f"item {i} is not a pair")
+        fault = _pair_fault(p[0], p[1])
+        if fault:
+            raise CalibrationError(f"pair {i}: {fault}")
+        key = (p[0], p[1])
+        if key in seen:
+            raise CalibrationError(f"pairs {seen[key]} and {i} are identical")
+        seen[key] = i
+
+
+def pairs_of(data: bytes, expect: str | None = None) -> list[tuple[str, str]]:
+    """The pairs of a pair set file, checked, and refused when its bytes do
+    not hash to `expect` (the Codex's `space.calibration.set`)."""
+    if expect is not None and set_id(data) != expect:
+        raise CalibrationError(
+            f"the pair set hashes to {set_id(data)}, the Codex names {expect}: "
+            f"reference vectors over other pairs compare nothing")
+    pairs = list(parse_pairs(data))
+    check_pairs(pairs)
+    return pairs
+
+
+def read_pairs(path, *, expect: str) -> bytes:
+    """The bytes of a pair space's set, from its member's `pairs` tensor,
+    refused when they do not hash to `expect` (09 §9.12)."""
+    import numpy as np
+    from safetensors.numpy import load_file
+    tensors = load_file(str(path))
+    if PAIRS not in tensors:
+        raise CalibrationError(
+            f"{path}: no `{PAIRS}` tensor, and the space's layers feed the encoder "
+            f"pairs: a pair space's set travels in its member (09 §9.12)")
+    data = np.ascontiguousarray(tensors[PAIRS], dtype=np.uint8).tobytes()
+    if set_id(data) != expect:
+        raise CalibrationError(
+            f"{path}: the `{PAIRS}` tensor hashes to {set_id(data)}, the Codex says "
+            f"{expect}")
+    return data
+
+
+def items(codex, member=None) -> list[Item]:
+    """The space's calibration set as its encoder is fed it, in set order.
+
+    A TEXT space: the platform's file, exactly as `verify` always gave it. A
+    PAIR space: the pairs its member carries (`member`, the path of
+    `calibration/<set>.safetensors`), bound by `space.calibration.set`."""
+    if form(codex) == "text":
+        return list(verify(codex.modality, codex.space.calibration.set))
+    if member is None:
+        raise CalibrationError(
+            "a pair space's calibration set travels in its member (09 §9.12): "
+            "the member's path is needed to read it")
+    want = codex.space.calibration.set
+    return list(pairs_of(read_pairs(member, expect=want), want))
+
+
+#: A pair candidate: `(key, first, second)` — the key is the record's uid.
+Candidate = tuple[str, str, str]
+
+
+def draw_pairs(candidates: Callable[[], Iterable[Candidate]],
+               n: int | None = None) -> list[Candidate]:
+    """09 §9.12's rule for a pair space's set: from the candidates in the
+    order given (the snapshot's), those whose pair is admissible
+    (`_pair_fault`), the first of any identical pairs kept; ordered by the
+    UTF-8 byte length of the two segments together, ties by the key's bytes;
+    and the ones at ranks ⌊k × (N − 1) / (n − 1)⌋ for k = 0 … n − 1 taken,
+    in that order — the shortest, the longest and the rest spaced between,
+    the whole length range up to and past any `ctx`, as the text set spans
+    it. A function of the records alone, so anyone holding them draws the
+    same set.
+
+    `candidates` is called TWICE and must give the same sequence both times:
+    the first pass keeps a small index of every candidate (its length, its
+    key, a digest of its pair) and the second fetches only the pairs drawn —
+    PubMed's shards are tens of thousands of abstracts each, and holding them
+    all at once is a node's whole memory. `n` is the set's size, `SIZE`."""
+    n = SIZE if n is None else int(n)
+    index: list[tuple[int, bytes]] = []
+    seen: set[bytes] = set()
+    for key, first, second in candidates():
+        if _pair_fault(first, second):
+            continue
+        digest = hashlib.sha256(json.dumps([first, second], ensure_ascii=False)
+                                .encode("utf-8")).digest()
+        if digest in seen:
+            continue
+        seen.add(digest)
+        index.append((item_bytes((first, second)), key.encode("utf-8")))
+    if len(index) < n:
+        raise CalibrationError(
+            f"only {len(index)} admissible pairs among the candidates; a set is "
+            f"{n}. Draw from more shards")
+    index.sort()
+    last = len(index) - 1
+    chosen = [index[(k * last) // (n - 1)][1].decode("utf-8") for k in range(n)]
+    want = set(chosen)
+    found: dict[str, Candidate] = {}
+    for key, first, second in candidates():
+        if key in want and key not in found and not _pair_fault(first, second):
+            found[key] = (key, first, second)
+    missing = [k for k in chosen if k not in found]
+    if missing:
+        raise CalibrationError(
+            f"the candidates changed between the two passes ({len(missing)} drawn "
+            f"keys absent the second time, first {missing[0]!r}); they must be the "
+            f"same sequence both times")
+    return [found[k] for k in chosen]
+
+
+#: How many of a snapshot's shards a pair set is drawn from: enough for
+#: every length an abstract comes in, few enough that the draw reads a few
+#: hundred megabytes and holds its index in a few dozen.
+PAIR_SHARDS = 16
+
+
+def pair_set_from_drag(drag_dir, codex, snapshot, *,
+                       shards: int = PAIR_SHARDS) -> tuple[bytes, dict]:
+    """`(the pair set file, its provenance)`, drawn from a collection's own
+    records (09 §9.12, amended 2026-10-08) — what
+    tools/build_pair_calibration_set.py writes.
+
+    The shards: fixed by the snapshot alone —
+    `sample(<the snapshot hash's 32 bytes>, shards, <the shard names>)`,
+    09 §9.1's draw, walked in snapshot order. The records: in shard order,
+    each cut as the PAIR form of the collection's own layers (`abstract` and
+    any other chunker a pair is admitted on, 09 §9.3) — so the set can be
+    drawn from a collection that today embeds text, before the pair Codex
+    that will name it exists. Then `draw_pairs`. Anyone holding the snapshot
+    draws the same bytes."""
+    from dataclasses import replace as _replace
+    from types import SimpleNamespace
+
+    from app import layers as layers_mod
+    from app.pack import records as pack_records
+
+    from .codex import sample
+    layers = tuple(_replace(l, input=dict(layers_mod.INPUT_PAIR))
+                   if l.chunker in layers_mod.PAIR_CHUNKERS else l
+                   for l in layers_mod.layers_for(codex))
+    if not any(l.form == "pair" for l in layers):
+        raise CalibrationError(
+            f"no layer of {getattr(codex, 'collection_id', 'this collection')} is cut "
+            f"by a chunker a pair is admitted on "
+            f"({', '.join(layers_mod.PAIR_CHUNKERS)}); its records have no pairs")
+    cutter = SimpleNamespace(name=getattr(codex, "plugin", ""), layers=layers,
+                             codex=codex, credits=getattr(codex, "credits", None))
+    names = {f"{s.slice}/{s.n:05d}": s for s in snapshot.shards}
+    seed = bytes.fromhex(snapshot.hash.split(":", 1)[1])
+    drawn = sample(seed, min(int(shards), len(names)), iter(names))
+    chosen = sorted((names[k] for k in drawn), key=lambda s: (s.slice.encode(), s.n))
+    missing = [s.path for s in chosen if not (Path(drag_dir) / s.path).is_file()]
+    if missing:
+        raise CalibrationError(
+            f"the draw needs {len(chosen)} shards and this copy lacks {len(missing)} "
+            f"(first {missing[0]}): fetch them, or draw on a peer that holds them")
+
+    def candidates() -> Iterator[Candidate]:
+        for s in chosen:
+            yield from pair_candidates(
+                cutter, pack_records.iter_records(Path(drag_dir) / s.path))
+
+    picked = draw_pairs(candidates)
+    data = render_pairs([(a, b) for _, a, b in picked])
+    provenance = {
+        "collection_id": getattr(codex, "collection_id", None),
+        "snapshot_id": snapshot.snapshot_id, "snapshot_hash": snapshot.hash,
+        "shards": [f"{s.slice}/{s.n:05d}" for s in chosen],
+        "rule": "09 §9.12 (amended 2026-10-08): the shards by sample(snapshot hash), "
+                "each record's pair by the pair form of its layer, ordered by the bytes "
+                "of both segments then uid, ranks floor(k*(N-1)/511)",
+        "set": set_id(data),
+        "uids": [k for k, _, _ in picked],
+    }
+    return data, provenance
+
+
+def pair_candidates(collection, records: Iterable[dict]) -> Iterator[Candidate]:
+    """`(uid, first, second)` for each record, as a pair layer of `collection`
+    feeds the encoder: the chunk `layers.chunks_for_document` cuts — never a
+    plugin's chunker directly (invariant 1) — and the `fields` it carries.
+    A record whose layer feeds text yields nothing."""
+    from app import layers as layers_mod
+    for rec in records:
+        uid = rec["uid"]
+        row = {"uid": uid, "native_id": rec.get("native_id", 0)}
+        sections = [tuple(s) for s in rec.get("sections") or []]
+        for c in layers_mod.chunks_for_document(collection, row, sections):
+            fields = c.get("fields")
+            if fields is not None:
+                yield uid, str(fields[0]), str(fields[1])
+
+
+# --------------------------------------------------------------------------
 # the member `hold collection create` writes (09 §9.12, 06 §6.6)
 
 VECTORS = "vectors"
@@ -343,8 +658,12 @@ def build_query_member(texts, embed_query, *, instruction: str | None,
     `space.query.instruction` prefixed". An asymmetric space's query runs
     are validated against them (03 §3.3) — a bi-encoder pair such as MedCPT's
     has two functions, and gating only the document side would leave every
-    query vector on this peer unchecked."""
-    prefixed = [f"{instruction}{t}" for t in texts] if instruction else list(texts)
+    query vector on this peer unchecked.
+
+    A pair space's items reach the query side as text (`query_text`): a
+    query is one text in every space."""
+    asked = [query_text(t) for t in texts]
+    prefixed = [f"{instruction}{t}" for t in asked] if instruction else asked
     v, _envelope, vectors_hash, _ = build_member(prefixed, embed_query,
                                                  normalise=normalise, dim=dim)
     return v, vectors_hash
@@ -383,10 +702,15 @@ def write_member(path, vectors, envelope_, *, set_id_: str,
                  encoder_weights: str, key: str,
                  encoder_image: str | None = None,
                  encoder_engine: str | None = None,
-                 query_vectors=None) -> None:
+                 query_vectors=None, pairs: bytes | None = None) -> None:
     """`calibration/<set>.safetensors` at the drag root, with 09 §9.12's
     headers. A member of every snapshot (`files`, §9.4), so its bytes
     are made deterministic before they land.
+
+    `pairs`: a PAIR space's set, the bytes of its file, stored as the `pairs`
+    tensor (09 §9.12, amended 2026-10-08) — and refused unless they hash to
+    the `set` the header names. A text space passes none, and its member is
+    byte for byte what it was before pairs existed.
 
     THE RUN THE VECTORS CAME FROM is named by `encoder_engine` — the
     `engine_id` of the Codex's `space.encoder.engine` — from Codex version 3,
@@ -411,6 +735,10 @@ def write_member(path, vectors, envelope_, *, set_id_: str,
             "the calibration member's `key` header is the creator's key and "
             "09 §9.12 marks it required; a reference with no producer named "
             "is one no peer can weigh")
+    if pairs is not None and set_id(pairs) != set_id_:
+        raise CalibrationError(
+            f"the pair set given hashes to {set_id(pairs)} and the member names set "
+            f"{set_id_}: a member carries the set its vectors were produced over")
     import tempfile
     from pathlib import Path
 
@@ -423,6 +751,9 @@ def write_member(path, vectors, envelope_, *, set_id_: str,
         tensors = {VECTORS: vectors, ENVELOPE: envelope_}
         if query_vectors is not None:
             tensors[QUERY_VECTORS] = query_vectors
+        if pairs is not None:
+            import numpy as np
+            tensors[PAIRS] = np.frombuffer(pairs, dtype=np.uint8).copy()
         run = ({"encoder_engine": encoder_engine} if encoder_engine is not None
                else {"encoder_image": encoder_image})
         save_file(tensors, str(staged),

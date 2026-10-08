@@ -535,9 +535,15 @@ def check_calibration(ctx: Ctx) -> Outcome:
         return Outcome("calibration", INCONCLUSIVE,
                        why="this peer holds no calibration member (09 §9.12), "
                            "so there is nothing to compare against")
+    from . import calibration as cal, drag as drag_mod
+    # the set as the space's encoder is fed it: a pair space's travels in its
+    # member (09 §9.12, amended 2026-10-08). One that cannot be read is a
+    # checker that could not run — `run` makes it inconclusive, as ever.
+    items = cal.items(ctx.codex, ctx.drag / drag_mod.calibration_paths(
+        ctx.codex.space.calibration.set)[0])
     try:
         run = emb.run_gate(ctx.codex, reference=ctx.reference, embed=ctx.embed,
-                           seed=ctx.seed)
+                           seed=ctx.seed, items=items)
     except emb.GateDeferred as e:
         return Outcome("calibration", INCONCLUSIVE, why=str(e))
     return Outcome("calibration", PASS if run.ok else FAIL,
@@ -564,7 +570,9 @@ def check_vectors_sample(ctx: Ctx) -> Outcome:
 
     r = vck.check(ctx.codex, ctx.snapshot, seed=ctx.seed,
                   chunk_ids_for=ids_for,
-                  text_of=lambda cid: (cut.get(cid) or {}).get("text"),
+                  # a pair layer's chunk with its `fields`, re-cut from the
+                  # record; a text layer's text, as ever
+                  text_of=lambda cid: landing.input_of(cut, cid),
                   vectors_for=ctx.vectors_for, embed=ctx.embed,
                   fraction=ctx.override)
     checked = sum(s.checked for s in r.shards)

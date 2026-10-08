@@ -60,8 +60,11 @@ one.
 
 ```
 louise hold
-  collection  create <plugin> --recipe FILE --encoder URL [--space-from CODEX]
-                                                                       write a Codex; print its id
+  collection  create <plugin> --recipe FILE --encoder URL [--space-from CODEX] [--calibration-set FILE]
+                                                                       write a Codex; print its id. A pair space (09 §9.3) names its calibration set's file,
+                                                                       the pairs `tools/build_pair_calibration_set.py` drew from the collection's records
+                                                                       (09 §9.12); `--space-from` a pair space reads it from that space's member
+                                                                       (amended 2026-10-08)
               create deposit --name N [--encoder URL] [--space-from CODEX | --space FILE]
                                                                        a deposit collection (02 §2.9): no recipe; the node's deposit encoder unless one is named
               derive <codex> [--space-from CODEX | --space FILE | --encoder-weights D --engine FILE] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
@@ -108,7 +111,7 @@ louise hold
               list <collection>
   embedder    check <collection>                                       the calibration gate (§3.3) against the run the endpoint states; a pass validates it and keeps its signed statement in `state/`
               benchmark <collection>                                   tokens per second on the calibration set
-              calibrate --encoder-weights D --engine FILE --against FILE … --ctx N [--set SHA256]
+              calibrate --encoder-weights D --engine FILE --against FILE … --ctx N [--set SHA256 | --pairs FILE]
                                                                        the tolerance a space can bear, measured between the reference engine and each --against
                                                                        encoder (a file of `weights` and `[engine]`, 09 §9.3's form)
                                                                        over the calibration set: run BEFORE `collection create`, its output being the recipe's `space.tolerance`
@@ -117,7 +120,8 @@ louise hold
                                                                        `[encoder]` block does (§7.8): top-level `url`, with `api` and `model` where needed;
                                                                        `--engine`'s may omit `weights`. `--ctx` is the space's, the texts cut as the gate cuts
                                                                        them; `--set` defaults to the platform's text set. Exit 3 when an endpoint is unreachable
-                                                                       (amended 2026-10-08: the endpoint and `--ctx` were unstated)
+                                                                       (amended 2026-10-08: the endpoint and `--ctx` were unstated). `--pairs` is a pair space's
+                                                                       set, its file, every lane embedding the pairs as pairs (09 §9.12, amended 2026-10-08)
               rebaseline <collection> [--yes]                          a Codex below version 3 only: accept a changed backend by re-recording the probe baseline (`app/verify/backend_gate.py`); exit 2 for version 3, whose runs `check` validates
   vectors     build <collection> [--shard <slice>/<n> | --delta ID]    embed; a signed bundle about every 15,000 chunks
               import <collection> (<file> | --archive ID [--retry]) [--strict]

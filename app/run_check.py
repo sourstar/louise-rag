@@ -54,10 +54,21 @@ from .hold.codex import Codex
 
 #: a text short enough to cost nothing, sent to learn which run answers
 PROBE = "louise"
+#: the same, in a PAIR space's form: the run that answers is asked in the
+#: form the pipeline writes (09 §9.12, amended 2026-10-08)
+PAIR_PROBE = ("louise", "louise")
 #: texts a request-group of the gate; `stop` is asked between two of them
 SLICE = 32
 PASS_TTL_S = 1800     # ask a validated endpoint which run answers this often
 FAIL_TTL_S = 300      # and one that is paused, this often
+
+
+def probe_for(codex, role: str = "document"):
+    """What asks which run answers: a pair on a pair space's document side,
+    the text everywhere else — a query is one text in every space."""
+    if role == "document" and cal.form(codex) == "pair":
+        return PAIR_PROBE
+    return PROBE
 
 
 # ---- the embedding client, remembering who answered ---------------------------
@@ -82,9 +93,11 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
 
     `collection`, for "normalised" on the document side only: the texts are
     that collection's CHUNKS (a check re-embedding what it holds), fed in
-    their layer's form through `embeddings.embed_chunks`. Without it they
-    are the calibration set, a probe or the gate's: text, by design
-    (`embeddings.embed_calibration`)."""
+    their layer's form through `embeddings.embed_chunks` — a pair space's
+    calibration pairs among them, as a check embeds them. Without it they
+    are the calibration set, a probe or the gate's, each already in the
+    space's form — a text, or a pair (`embeddings.embed_calibration`; 09
+    §9.12, amended 2026-10-08)."""
     def normalised(texts: list[str], seen: set) -> list[list[float]]:
         out: list[list[float]] = []
         for i in range(0, len(texts), SLICE):
@@ -137,10 +150,11 @@ def _endpoint(recipe, query: bool) -> str:
     return recipe.query_url if query and recipe.query_url else recipe.url
 
 
-def answering_run(recipe, *, query: bool = False) -> str:
-    """Which run answers at this endpoint now: one tiny request."""
+def answering_run(recipe, *, query: bool = False, probe_item=PROBE) -> str:
+    """Which run answers at this endpoint now: one tiny request, in the
+    space's form (`probe_for`)."""
     probe = answers(recipe, query=query)
-    probe([PROBE])
+    probe([probe_item])
     if len(probe.runs) != 1 or None in probe.runs:
         raise runs_mod.RunRefused(
             f"{_endpoint(recipe, query)} states no run identity (no "
@@ -151,18 +165,30 @@ def answering_run(recipe, *, query: bool = False) -> str:
     return next(iter(probe.runs))
 
 
-def stated_run(recipe, *, query: bool = False) -> emb.StatedRun:
+def stated_run(recipe, *, query: bool = False, probe_item=PROBE) -> emb.StatedRun:
     """The run that answers now AND what it stands for — the platform's own
     description, verified against the id (runs.describe)."""
-    return runs_mod.describe(_endpoint(recipe, query), answering_run(recipe, query=query),
+    return runs_mod.describe(_endpoint(recipe, query),
+                             answering_run(recipe, query=query, probe_item=probe_item),
                              get=httpx.get, fallback=config.RAGE_URL)
 
 
 # ---- the gate against the run that answers ------------------------------------
 
-def reference(root: Path, name: str, codex: Codex, role: str):
-    member = Path(root) / name / "drag" / drag.calibration_paths(
+def _member(root: Path, name: str, codex: Codex) -> Path:
+    return Path(root) / name / "drag" / drag.calibration_paths(
         codex.space.calibration.set)[0]
+
+
+def calibration_items(root: Path, name: str, codex: Codex) -> list:
+    """The space's calibration set as its encoder is fed it (09 §9.12): the
+    platform's texts, or a pair space's pairs from its member — refused (exit
+    2, a rule in the way) when the member does not carry them."""
+    return cal.items(codex, _member(root, name, codex))
+
+
+def reference(root: Path, name: str, codex: Codex, role: str):
+    member = _member(root, name, codex)
     if not member.is_file():
         raise emb.GateError(
             f"{name}: no calibration member at {member.name}. It is written by `hold "
@@ -193,19 +219,23 @@ def validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "docume
     # an unreachable encoder must not be what the operator reads instead
     reference_vectors = reference(root, name, codex, role)
     try:
-        stated = stated_run(recipe, query=query)
+        stated = stated_run(recipe, query=query, probe_item=probe_for(codex, role))
         _stopping(stop, name)
         if key is None:
             from .bundles import keys as node_keys
             key = node_keys.load_signing_key()
         kw = {"query": query, "stop": stop, "name": name}
+        # the set as the space's encoder is fed it — a pair space's from its
+        # member (09 §9.12, amended 2026-10-08) — read where the gate always
+        # read it, so a text space fails here exactly as it did
+        items = calibration_items(root, name, codex)
         body = runs_mod.validate(
             root, name, codex, role=role,
             reference=reference_vectors,
             embed=answers(recipe, **kw),
             embed_one=answers(recipe, how="one", **kw),
             contribute=answers(recipe, how="contribute", **kw),
-            stated=stated, key=key, now=now or _now())
+            stated=stated, key=key, now=now or _now(), items=items)
         _mark(codex, role, body["run"], body)      # measured now: nothing to re-check
         return body
     except (runs_mod.RunRefused, emb.GateError):
@@ -358,7 +388,8 @@ def recheck(root: Path, name: str, codex: Codex, recipe, run_id: str, *,
     embed = answers(recipe, query=role == "query", stop=stop, name=name)
     try:
         ok, passed, median = runs_mod.recheck(codex, body, reference=reference_vectors,
-                                              embed=embed, role=role)
+                                              embed=embed, role=role,
+                                              items=calibration_items(root, name, codex))
     except (runs_mod.RunRefused, emb.GateError):
         raise
     except Exception as e:                              # noqa: BLE001
@@ -453,7 +484,9 @@ def checking(root: Path, name: str, codex: Codex, recipe, *, role: str = "docume
     collection: an encoder that is not the space's says nothing about vectors
     that are. Older collections embed as they always did."""
     # the texts a check embeds are the collection's chunks (document side, in
-    # their layer's form) or its queries (the query side, text)
+    # their layer's form — a pair layer's re-cut from the records with their
+    # `fields`, or a pair space's calibration pairs) or its queries (the query
+    # side, text)
     if not runs_mod.applies(codex):
         if role == "query":
             return lambda texts: embeddings.embed_calibration(recipe, texts, query=True)
@@ -621,7 +654,7 @@ def _look(collection, stop: Callable[[], bool] | None,
     run_id = None
     try:
         recipe = collections_mod.recipe_for(collection)
-        run_id = answering_run(recipe)
+        run_id = answering_run(recipe, probe_item=probe_for(codex))
         heard(recipe, {run_id})
         who = signer()
         try:

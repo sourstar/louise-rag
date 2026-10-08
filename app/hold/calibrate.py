@@ -130,7 +130,21 @@ def load_set(set_id: str | None) -> tuple[str, list[str]]:
         f"its sha256 (09 §9.12)")
 
 
-Embed = Callable[[Endpoint, list[str]], tuple[list[list[float]], set]]
+def load_pairs(path: str | Path) -> tuple[str, list[tuple[str, str]]]:
+    """A PAIR space's calibration set, from its file (09 §9.12, amended
+    2026-10-08): the 512 title-and-abstract pairs
+    tools/build_pair_calibration_set.py drew from the collection's records,
+    checked; its id is `H` of the file. A pair space is calibrated in the form
+    its pipeline writes — every lane embeds these as pairs."""
+    p = Path(path)
+    try:
+        data = p.read_bytes()
+    except FileNotFoundError:
+        raise CodexError(f"{p}: no such pair set") from None
+    return cal.set_id(data), cal.pairs_of(data)
+
+
+Embed = Callable[[Endpoint, list], tuple[list[list[float]], set]]
 
 
 def http_embed(ctx: int) -> Embed:
@@ -141,14 +155,15 @@ def http_embed(ctx: int) -> Embed:
 
     from app import collections as collections_mod, embeddings
 
-    def embed(ep: Endpoint, texts: list[str]) -> tuple[list[list[float]], set]:
+    def embed(ep: Endpoint, texts: list) -> tuple[list[list[float]], set]:
         recipe = collections_mod.EmbedRecipe(
             url=ep.url, api=ep.api,
             model=ep.model or collections_mod.model_named_by(ep.url) or "",
             dtype="f32", ctx=ctx)
         runs: set = set()
         try:
-            # the calibration set: text, by design (input forms)
+            # the calibration set in the space's form: texts, or a pair
+            # space's pairs, sent as pairs (09 §9.12, amended 2026-10-08)
             return embeddings.embed_calibration(recipe, texts, runs=runs), runs
         except httpx.TransportError as e:
             raise CalibrateUnreachable(
@@ -173,7 +188,7 @@ def tolerance_of(tau: float) -> str:
 
 
 def measure(reference: Endpoint, against: Sequence[Endpoint], *,
-            set_id: str, texts: Sequence[str], embed: Embed,
+            set_id: str, texts: Sequence[cal.Item], embed: Embed,
             n_t3: int = 16) -> dict[str, Any]:
     """Embed the set with every endpoint, then hand the vectors to
     tools/calibrate_space.py's `calibrate` with the reference first — its

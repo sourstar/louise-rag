@@ -361,8 +361,12 @@ def _embed_texts(texts: list[Item], timeout: float = 300, *,
 # query, and the texts a calibration, a gate or a probe embeds.
 
 #: A chunk as `embed_chunks` takes it: the dict its chunker yields, or its
-#: text alone where only the text is held (a stored chunk being re-embedded).
-ChunkLike = dict | str
+#: text alone where only the text is held (a stored chunk being re-embedded),
+#: or — in a pair space only — a `(first, second)` pair already built: an
+#: item of the space's calibration set that a check embeds the way it embeds
+#: the collection's chunks (the export's challenge, `hold check calibration`;
+#: 09 §9.12, amended 2026-10-08).
+ChunkLike = dict | str | tuple
 
 
 #: `layers.chunk_input`, here too: what a caller of `embed_chunks` hands it.
@@ -396,9 +400,19 @@ def _inputs(collection, chunks: list[ChunkLike]) -> list[Item]:
     dict without them is another layer's, which is text."""
     layers = layers_mod.layers_for(collection)
     if not any(l.form == "pair" for l in layers):
+        if any(isinstance(c, tuple) for c in chunks):
+            raise InputFormError(
+                f"{getattr(collection, 'name', 'the collection')}: a text pair was "
+                f"given, and no layer of this collection feeds the encoder pairs "
+                f"(09 §9.3, input forms)")
         return [c if isinstance(c, str) else c["text"] for c in chunks]
     out: list[Item] = []
     for c in chunks:
+        if isinstance(c, tuple):
+            # a pair already built: a calibration item, not a record's chunk
+            first, second = c
+            out.append((str(first), str(second)))
+            continue
         fields = None if isinstance(c, str) else c.get("fields")
         if fields is not None:
             first, second = fields
@@ -470,18 +484,25 @@ def embed_query(collection, text: str, *,
     return _embed_texts([text], recipe=recipe, query=True, **kw)[0]
 
 
-def embed_calibration(recipe: "collections_mod.EmbedRecipe", texts: list[str], *,
+def embed_calibration(recipe: "collections_mod.EmbedRecipe", texts: list[Item], *,
                       query: bool = False, timeout: float = 300,
                       runs: set | None = None, raw: bool = False,
                       one_at_a_time: bool = False) -> list[list[float]]:
-    """Texts that are NOT a collection's chunks, by design, as text: the
-    calibration set (09 §9.12) and its query vectors, the gate's batches and
-    fingerprint, a backend's probes, a tool's sample. There is no layer to
-    read a form from — the encoder is often not yet any collection's.
+    """Inputs that are NOT a collection's chunks, by design: the calibration
+    set (09 §9.12) and its query vectors, the gate's batches and fingerprint,
+    a backend's probes, a tool's sample. There is no layer to read a form
+    from — the encoder is often not yet any collection's — so the caller hands
+    each input in the space's form: a text, or for a pair space a
+    `(first, second)` pair, sent as `input_pairs` (09 §9.12, amended
+    2026-10-08). A batch is all texts or all pairs.
 
-    `query` routes through the query side as a search does; `one_at_a_time`
-    sends each text alone and returns it as the endpoint did (the fingerprint,
+    `query` routes through the query side as a search does, and a query is
+    one text in every space: a pair is refused there. `one_at_a_time` sends
+    each input alone and returns it as the endpoint did (the fingerprint,
     09 §9.12); `raw` skips unit normalisation."""
+    if query and any(not isinstance(t, str) for t in texts):
+        raise InputFormError("the query side embeds one text in every space; a "
+                             "text pair is a document's form (09 §9.3, input forms)")
     if one_at_a_time:
         return _embed_one_at_a_time(texts, recipe=recipe, query=query,
                                     timeout=timeout, runs=runs)

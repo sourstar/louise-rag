@@ -605,7 +605,10 @@ content; a resolver never returns a bare symbol.
    writes the reference vectors' hashes into
    `space.calibration` and their envelope into `space.envelope`, and
    stores the vectors as the drag member `calibration/<set>.safetensors`
-   (§2.4, 09 §9.12). The Codex's hash is the collection's identity.
+   (§2.4, 09 §9.12). A pair space's set is the exception: 512 pairs drawn
+   beforehand from the collection's records by a fixed rule, given to
+   `create` as a file and carried in the member (09 §9.12, *amended
+   2026-10-08*). The Codex's hash is the collection's identity.
 3. `hold collection ack` prints the terms and records the
    acknowledgement (§4.4). For a yellow or red collection nothing below
    runs before it.

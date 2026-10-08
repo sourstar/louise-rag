@@ -86,6 +86,17 @@ pair spaces without touching a collection.
   use, T3/T4, bundle import, the export challenge): stored rows do not keep
   `fields`, and the records give them back byte for byte.
 
+Both implemented 2026-10-08 (09 §9.12 and 03 §3.3/§3.5 amended). The pair
+set travels in the member as the `pairs` tensor, not in the platform image
+— the records are pubmed's, red-class, and the member is fetched after the
+acknowledgement; a pair space's member signature is `louise-calibration`
+version 3, every text space's stays 2. Before the pubmed Codex is written,
+the set is drawn on the node: `tools/build_pair_calibration_set.py` over
+pubmed's current records, its sha256 into the recipe as
+`space.calibration.set`, the file to `create --calibration-set`. The export
+challenge re-embeds calibration items, not stored text: it feeds the pair
+set's first sixteen as pairs.
+
 ## Migration
 
 1. pubmed: a version-5 Codex declaring the pair form; NCBI's 35.4 M vectors

@@ -89,9 +89,14 @@ def _collection_embed_fn(collection):
 def _probe_fn(collection):
     """The liveness probe's embed: the collection's recipe, a fixed text,
     as text (`embeddings.embed_calibration`) — it asks whether the encoder
-    answers, in any layer's form."""
+    answers. In a collection whose layers feed pairs it is asked as a pair
+    (the text both segments): the form the pipeline writes, which a backend
+    that serves pairs alone may be the only one it answers (09 §9.3)."""
+    from .. import layers as layers_mod
     from ..collections import recipe_for
     recipe = recipe_for(collection)
+    if layers_mod.has_pair_layer(collection):
+        return lambda texts: embeddings.embed_calibration(recipe, [(t, t) for t in texts])
     return lambda texts: embeddings.embed_calibration(recipe, texts)
 
 
@@ -175,10 +180,17 @@ def _local_chunks(collection, row) -> dict[str, str]:
     non-null text column. It is also what makes possession structural — you
     cannot import vectors for a document whose bytes you do not hold.
     """
+    return {cid: c["text"] for cid, c in _local_cut(collection, row).items()}
+
+
+def _local_cut(collection, row) -> dict[str, dict]:
+    """The same cut, each chunk whole: chunk_id -> the chunk, with a pair
+    layer's `fields` (09 §9.3) — what the re-embed proof feeds the encoder,
+    since no stored row keeps them and the record gives them back."""
     from .. import layers as layers_mod
     plugin = collection.plugin_instance()
     chapters = plugin_io.sections(plugin, row)
-    return {c["id"]: c["text"]
+    return {c["id"]: c
             for c in layers_mod.chunks_for_document(collection, row, chapters)}
 
 
@@ -233,7 +245,8 @@ def find_space_artifact(space_id: str):
                               trusted_authors=_trusted_space_authors())
 
 
-def _run_ladder_if_possible(collection, header, chunk_ids, vectors, texts, embed_fn):
+def _run_ladder_if_possible(collection, header, chunk_ids, vectors, texts, embed_fn,
+                            inputs=None):
     """Run the calibrated ladder when this node has an artifact for the space.
 
     Returns None when no artifact is available — which is a DEGRADED state, not
@@ -249,13 +262,14 @@ def _run_ladder_if_possible(collection, header, chunk_ids, vectors, texts, embed
         space_artifact = find_space_artifact(header.space_id)
         if space_artifact is None:
             return None
+        extra = {} if inputs is None else {"inputs": inputs}
         return ladder.run_ladder(
             chunk_ids, vectors, dim=header.dim, dtype=header.dtype,
             artifact=space_artifact, header=header, texts=texts,
             embed_fn=embed_fn if embed_fn is not None else _collection_embed_fn(collection),
             uid_of=uid_of, seq_of=seq_of,
             corpus_tag=space_artifact.raw.get("reference_corpus", {}).get("tag"),
-            chunking_profile="book")
+            chunking_profile="book", **extra)
     except Exception:
         return None
 
@@ -401,8 +415,19 @@ def _import_checked(con, collection, bundle_dir: Path, *, embed_fn, strict,
     # that, and cleaning drift with it, for free.
     texts: dict[str, str] = {}
     by_uid: dict[str, list[str]] = {}
+    # A PAIR layer's chunks are re-embedded with their `fields` (09 §9.3),
+    # which the re-cut gives back beside the text; a text collection feeds
+    # the texts, exactly as before
+    from .. import layers as layers_mod
+    paired = layers_mod.has_pair_layer(collection)
+    inputs: dict | None = {} if paired else None
     for uid in covered:
-        local = _local_chunks(collection, documents[uid])
+        if paired:
+            cut = _local_cut(collection, documents[uid])
+            local = {cid: c["text"] for cid, c in cut.items()}
+            inputs.update({cid: layers_mod.chunk_input(c) for cid, c in cut.items()})
+        else:
+            local = _local_chunks(collection, documents[uid])
         bundle_side = {cid for cid in chunk_ids if uid_of(cid) == uid}
         if bundle_side != set(local):
             raise BundleFormatError(
@@ -420,8 +445,10 @@ def _import_checked(con, collection, bundle_dir: Path, *, embed_fn, strict,
     # an artifact can only ever tighten the outcome, never loosen it.
     chunk_id_list = [r[0] for r in rows]
     vector_list = [r[2] for r in rows]
-    ladder_verdict = _run_ladder_if_possible(
+    ladder_verdict = (_run_ladder_if_possible(
         collection, header, chunk_id_list, vector_list, texts, embed_fn)
+        if inputs is None else _run_ladder_if_possible(
+        collection, header, chunk_id_list, vector_list, texts, embed_fn, inputs=inputs))
     if ladder_verdict is not None and ladder_verdict.failed:
         raise BundleVerificationError(
             f"verification ladder failed — "
@@ -430,7 +457,8 @@ def _import_checked(con, collection, bundle_dir: Path, *, embed_fn, strict,
     verdict = run_admission_checks(
         chunk_id_list, vector_list, header.dim, header.dtype,
         uid_of=uid_of, seq_of=seq_of, texts=texts,
-        embed_fn=embed_fn if embed_fn is not None else _collection_embed_fn(collection))
+        embed_fn=embed_fn if embed_fn is not None else _collection_embed_fn(collection),
+        **({} if inputs is None else {"inputs": inputs}))
     verdict.raise_if_failed()
     if weak and not any(r.name == "sample_reembed" and r.passed
                         for r in verdict.results):

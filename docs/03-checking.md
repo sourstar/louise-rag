@@ -156,6 +156,18 @@ and a Codex can be written before a single record exists, which is why
 creation comes first in 06 §6.6. Two collections on one encoder share
 one calibration; 08 §8.3 follows from that.
 
+A PAIR space is the exception (*amended 2026-10-08*,
+docs/notes/input-forms.md). Its encoder is fed tokenizer text pairs (02
+§2.4, 09 §9.3), and a gate over plain texts would pass a backend that
+flattens a pair into a string — the very defect the form is declared to
+keep out. So its set is 512 title-and-abstract pairs drawn by a fixed rule
+from the collection's own records, carried inside the member rather than
+shipped with the platform (09 §9.12), and wherever this section says
+"texts" a pair space's are those pairs: the gate, its fingerprint and its
+batches, the re-check of a kept statement, T2's challenge and the probe
+that asks which run answers all embed a pair as a pair; the query side,
+whose input is one text in every space, embeds each pair as one text.
+
 **The gate.** A peer that wants to embed for a collection first passes
 the **calibration** check: it embeds the whole calibration set with its
 own encoder and must reach the tolerance on the **quorum**. The quorum
@@ -623,6 +635,15 @@ compliant encoder is available. A tier that could not run is recorded
 as not run, never as passed. The T4 mark is local state, keyed on the
 chunk id and the encoder that made it; it is never gossiped. What
 travels from T4 is a failure.
+
+What T3, T4, `vectors-sample` and a bundle's re-embed proof re-embed is
+the chunk as the pipeline feeds it. A stored row keeps a chunk's text and
+not a pair layer's two segments (02 §2.4, 09 §9.3), so for a pair layer
+the chunk is re-cut from its record through the collection's layers, and
+used only when the re-cut chunk has the stored id and the stored text;
+where the record cannot be read here, or does not give the chunk back, the
+check takes its can't-run outcome — inconclusive, or a tier not run —
+and never a pass (*amended 2026-10-08*, docs/notes/input-forms.md).
 
 A **verified failure** — a T3 fail, or a T4 miss that reproduces on a
 second recompute, on a peer whose encoder holds a current calibration

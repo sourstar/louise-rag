@@ -181,15 +181,19 @@ def parts(entries, max_chunks: int = BUNDLE_CHUNKS):
     return out
 
 
-def challenge_rows(codex, embed) -> list[tuple[str, list]]:
+def challenge_rows(codex, embed, member: Path | None = None) -> list[tuple[str, list]]:
     """The first sixteen calibration texts, embedded by this peer now.
 
     `verify` rather than `load`: a platform whose set hashes otherwise is
     not carrying the set this Codex names, and a challenge computed over
     other texts would fail every importer for a reason none of them could
     diagnose.
+
+    A PAIR space's are the first sixteen pairs its member carries (`member`),
+    handed to `embed` as pairs — the export's embed is the chunk path's,
+    which feeds a pair as a pair (09 §9.12, amended 2026-10-08).
     """
-    texts = cal.verify(codex.modality, codex.space.calibration.set)
+    texts = cal.items(codex, member)
     got = embed(list(texts[:CHALLENGE_N]))
     if len(got) != CHALLENGE_N:
         raise ExportError(
@@ -251,7 +255,8 @@ def export(root, ref: str, *, shard: str, dest, vectors_for, embed, key,
     # space's", which is a fact about the producer and not about the rows
     # beside them. Sixteen recomputes per split would also be sixteen more
     # encoder calls for nothing.
-    challenge = challenge_rows(codex, embed)
+    challenge = challenge_rows(
+        codex, embed, drag_dir / drag_mod.calibration_paths(codex.space.calibration.set)[0])
     now = int(created_at if created_at is not None else time.time())
 
     out = []

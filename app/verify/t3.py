@@ -189,13 +189,17 @@ def check_spot_recompute(chunk_ids, vectors, artifact, *, texts, embed_fn,
                          backend_fingerprint: str = "", dtype: str = "f32",
                          n: int = DEFAULT_N, n_max: int = DEFAULT_N_MAX,
                          alpha: float = DEFAULT_ALPHA, beta: float = DEFAULT_BETA,
-                         rng=None, batch: int = 8) -> TierResult:
+                         rng=None, batch: int = 8, inputs=None) -> TierResult:
+    # `inputs`: what each chunk is fed to the encoder as where that is not its
+    # text — a pair layer's chunk with its `fields`, re-cut from the record
+    # (09 §9.3). Absent, the text, as ever.
     if embed_fn is None:
         return TierResult(Tier.T3, SKIPPED, "no embed endpoint available")
     if not texts:
         return TierResult(Tier.T3, SKIPPED, "no local text to re-embed")
+    fed = inputs if inputs is not None else texts
 
-    available = [c for c in chunk_ids if c in texts]
+    available = [c for c in chunk_ids if c in fed]
     if not available:
         return TierResult(Tier.T3, SKIPPED, "no sampled chunk has local text")
 
@@ -210,7 +214,7 @@ def check_spot_recompute(chunk_ids, vectors, artifact, *, texts, embed_fn,
     for start in range(0, len(order), batch):
         window = order[start:start + batch]
         try:
-            recomputed = embed_fn([texts[c] for c in window])
+            recomputed = embed_fn([fed[c] for c in window])
         except Exception as e:
             return TierResult(Tier.T3, SKIPPED,
                               f"embed endpoint unavailable ({type(e).__name__}) — "

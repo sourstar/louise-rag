@@ -256,8 +256,15 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
                        key: Any | None = None,
                        now: str | None = None,
                        embed_query=None,
-                       space_version: int | None = None) -> Codex:
+                       space_version: int | None = None,
+                       pairs: bytes | None = None) -> Codex:
     """`hold collection create <plugin> --recipe FILE` (06 §6.6, 07 §7.3).
+
+    `pairs`: the bytes of a PAIR space's calibration set — 512 title-and-
+    abstract pairs drawn from the collection's records by
+    tools/build_pair_calibration_set.py, whose `H` the recipe names as
+    `space.calibration.set` (09 §9.12, amended 2026-10-08). Required exactly
+    when the recipe's layers feed the encoder pairs; the member carries it.
 
     Re-running with the same recipe prints the same id and exits 0: the hash
     is the identity, and writing it twice is nothing.
@@ -290,8 +297,10 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
     modality = recipe.get("modality") or template.source_for(plugin).modality.value
     # `verify` and not `load`: the recipe names a set by hash, and a
     # platform whose file for this modality is a different 512 texts would
-    # produce a reference that measures something else entirely.
-    texts = cal.verify(modality, set_id)
+    # produce a reference that measures something else entirely. A pair
+    # space's set is the one given, bound by the same hash.
+    texts, pairs = _calibration_items(modality, set_id,
+                                      _form_of_recipe(plugin, recipe), pairs)
     vectors, envelope, vectors_hash, envelope_hash = cal.build_member(
         texts, embed, normalise=bool(space.get("normalise")),
         dim=int(space["dim"]))
@@ -324,10 +333,50 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
     created = create(root, codex, name=name)
     d = drag_of(root, name_of(root, created.collection_id))
     write_calibration(d, codex, vectors, envelope, key=key, now=now,
-                      query_vectors=query_vectors)
+                      query_vectors=query_vectors, pairs=pairs)
     write_terms(d, codex, plugin,
                 terms_path=(recipe.get("license") or {}).get("terms_path"))
     return created
+
+
+def _form_of_recipe(plugin: str, recipe: dict[str, Any]) -> str:
+    """The form the recipe's layers feed the encoder (09 §9.3), read before
+    the Codex exists — its calibration hashes are what it is built with."""
+    from types import SimpleNamespace
+
+    from . import calibration as cal, template
+    if "layers" in recipe:
+        layers = tuple(template._layer(d, i) for i, d in enumerate(recipe["layers"]))
+    else:
+        layers = template.default_layers(template.source_for(plugin))
+    return cal.form(SimpleNamespace(layers=layers, name=plugin))
+
+
+def _calibration_items(modality: str, set_id: str, form: str,
+                       pairs: bytes | None) -> tuple[list, bytes | None]:
+    """`(items, pairs)`: the set a new reference is embedded over, in the
+    space's form (09 §9.12, amended 2026-10-08). A TEXT space's is the
+    platform's file, exactly as ever, and a pair set given for it is
+    refused. A PAIR space's is the pair set given — drawn from the
+    collection's records, never shipped with the platform — bound by
+    `set_id`; without one there is nothing to embed."""
+    from . import calibration as cal
+    if form == "pair":
+        if pairs is None:
+            raise CodexError(
+                "this space's layers feed the encoder text PAIRS, so its calibration "
+                "set is 512 title-and-abstract pairs drawn from the collection's own "
+                "records (09 §9.12) — draw them with "
+                "tools/build_pair_calibration_set.py and pass the file "
+                "(`--calibration-set FILE`); the recipe names its sha256 as "
+                "space.calibration.set")
+        return cal.pairs_of(pairs, set_id), pairs
+    if pairs is not None:
+        raise CodexError(
+            "a pair calibration set was given, and this space's layers feed the "
+            "encoder text: a text space's set is the one the platform ships "
+            "(09 §9.12)")
+    return cal.verify(modality, set_id), None
 
 
 def write_terms(drag_path: Path, codex: Codex, plugin: str,
@@ -382,8 +431,14 @@ def write_terms(drag_path: Path, codex: Codex, plugin: str,
 
 
 def write_calibration(drag_path: Path, codex: Codex, vectors, envelope,
-                      *, key, now: str | None, query_vectors=None) -> None:
+                      *, key, now: str | None, query_vectors=None,
+                      pairs: bytes | None = None) -> None:
     """The member and the signature beside it (09 §9.12).
+
+    `pairs`: a PAIR space's set, which its member carries (amended
+    2026-10-08) — given exactly when the space's layers feed pairs. Its
+    signature is then body version 3; a text space's member and body are
+    byte for byte what they were.
 
     BOTH, ALWAYS — which is why `key` is required. §9.12 marks the member's
     `key` header required ("the creator's key"), and 09 §9.4's `files` lists
@@ -423,17 +478,28 @@ def write_calibration(drag_path: Path, codex: Codex, vectors, envelope,
                "asymmetric space's member carries them (09 §9.12)" if pinned
                else "query reference vectors were given for a space whose Codex "
                     "pins none"))
+    paired = cal.form(codex) == "pair"
+    if paired != (pairs is not None):
+        raise CodexError(
+            f"{codex.collection_id}: "
+            + ("the space's layers feed the encoder pairs, and its member carries "
+               "the pair set its vectors were produced over (09 §9.12); none was "
+               "given" if paired
+               else "a pair set was given for a space whose layers feed text"))
     cal.write_member(drag_path / member, vectors, envelope, set_id_=set_id,
                      encoder_weights=codex.space.encoder.weights, key=key_text,
-                     query_vectors=query_vectors, **{engine_key: engine})
+                     query_vectors=query_vectors, pairs=pairs, **{engine_key: engine})
 
     # 09 §9.12's body, field for field, under ITS OWN domain. Not the
     # attestation domain: §9.2's whole point is that a signature made under
     # one domain verifies under no other, so signing this as an attestation
     # would produce a file no conformant peer can check. Version 2 names the
-    # engine; "version 1 of that body carried `encoder_image`".
+    # engine; "version 1 of that body carried `encoder_image`". Version 3 is
+    # the body of a member that carries `pairs` (amended 2026-10-08), and
+    # only of one: a text space's stays 2, so no text space's signature moves.
     body = {"kind": "louise-calibration",
-            "version": 2 if engine_key == "encoder_engine" else 1, "set": set_id,
+            "version": (3 if paired else 2) if engine_key == "encoder_engine" else 1,
+            "set": set_id,
             "space_id": codex.space_id,
             "vectors": codex.space.calibration.vectors,
             "envelope": codex.space.envelope,
@@ -454,9 +520,13 @@ def derive(root: Path, mother_id: str, *,
            credits: tuple[Credit, ...] | None = None,
            descriptive: Descriptive | None = None,
            embed=None, embed_query=None, key=None,
-           now: str | None = None) -> Codex:
+           now: str | None = None, pairs: bytes | None = None) -> Codex:
     """A sister: her mother's corpus, and at most `space`, `layers`, `update`
     and `work` changed (02 §2.7).
+
+    `pairs`: when she embeds a reference of her own in a PAIR space, the
+    bytes of its calibration set (09 §9.12, amended 2026-10-08), as for
+    `create_from_recipe`; a reference she inherits carries its set already.
 
     HER CODEX VERSION FOLLOWS HER SPACE. In her mother's space she keeps her
     mother's version: a version-2 mother's space_id has the engine's image in
@@ -583,15 +653,18 @@ def derive(root: Path, mother_id: str, *,
     if embed is not None and not any(_same_reference(sister, s) for s in sources):
         # A new build: embed, and let the new hashes into the Codex BEFORE
         # it is written, since they are Codex fields.
+        from . import calibration as cal
+        items, _ = _calibration_items(mother.modality, sister.space.calibration.set,
+                                      cal.form(sister), pairs)
         sister = _replace(sister, space=recalibrate(sister.space,
                                                     mother.modality, embed,
-                                                    embed_query))
+                                                    embed_query, items=items))
     drag_path = write(root, sister, mother)
     if any(_same_reference(sister, s) for s in sources):
         carry_calibration(root, sister, drag_path, *sources)
     else:
         _write_own_calibration(sister, drag_path, embed, mother.modality,
-                               key, now, embed_query)
+                               key, now, embed_query, pairs=pairs)
     return sister
 
 
@@ -623,7 +696,7 @@ def _query_member(space: Space, texts, embed_query):
 
 def _write_own_calibration(codex: Codex, drag_path: Path, embed,
                            modality: str, key, now: str | None,
-                           embed_query=None) -> None:
+                           embed_query=None, pairs: bytes | None = None) -> None:
     """The member and signature for a collection whose reference is its own
     and not a source's. Re-embeds rather than keeping the vectors from
     `recalibrate`, because the two hashes are already in the Codex and this
@@ -637,7 +710,8 @@ def _write_own_calibration(codex: Codex, drag_path: Path, embed,
             f"which no source it derives from holds a reference for. A new "
             f"build needs its own reference vectors, embedded at an endpoint "
             f"(06 §6.6) — pass `embed`")
-    texts = cal.verify(modality, codex.space.calibration.set)
+    texts, pairs = _calibration_items(modality, codex.space.calibration.set,
+                                      cal.form(codex), pairs)
     vectors, envelope, got_v, got_e = cal.build_member(
         texts, embed, normalise=codex.space.normalise, dim=codex.space.dim)
     if (got_v, got_e) != (codex.space.calibration.vectors, codex.space.envelope):
@@ -651,7 +725,7 @@ def _write_own_calibration(codex: Codex, drag_path: Path, embed,
             f"the query encoder produced reference vectors {got_q} and the Codex "
             f"names {codex.space.calibration.query_vectors}")
     write_calibration(drag_path, codex, vectors, envelope, key=key, now=now,
-                      query_vectors=query_vectors)
+                      query_vectors=query_vectors, pairs=pairs)
 
 
 def _same_reference(a: Codex, b: Codex) -> bool:
@@ -720,9 +794,15 @@ def carry_calibration(root: Path, child: Codex, drag_path: Path,
     if child.space.calibration.query_vectors is not None:
         cal.read_query_vectors(drag_path / member,
                                expect=child.space.calibration.query_vectors)
+    if cal.form(child) == "pair":
+        # a pair space's member carries its set (09 §9.12, amended
+        # 2026-10-08): a text space's member, however equal its hashes, is
+        # not one a pair child can be gated with
+        cal.read_pairs(drag_path / member, expect=child.space.calibration.set)
 
 
-def recalibrate(space: Space, modality: str, embed, embed_query=None) -> Space:
+def recalibrate(space: Space, modality: str, embed, embed_query=None,
+                items=None) -> Space:
     """`space` with the reference vectors THIS encoder produces.
 
     A sister in a new space has a new encoder build, and a new build needs
@@ -734,10 +814,13 @@ def recalibrate(space: Space, modality: str, embed, embed_query=None) -> Space:
 
     Neither hash is inside `space_id` (02 §2.4), so this does not move the
     sister's space; it makes her drag checkable.
+
+    `items`: the set in the space's form (`_calibration_items`); the
+    platform's texts when not given.
     """
     from . import calibration as cal
 
-    texts = cal.verify(modality, space.calibration.set)
+    texts = items if items is not None else cal.verify(modality, space.calibration.set)
     _, _, vectors, envelope = cal.build_member(
         texts, embed, normalise=space.normalise, dim=space.dim)
     _, query_vectors = _query_member(space, texts, embed_query)

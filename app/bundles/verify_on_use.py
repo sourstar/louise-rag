@@ -108,6 +108,47 @@ def _texts_and_vectors(collection, chunk_ids: list[str]) -> dict[str, tuple]:
     return out
 
 
+def _inputs_for(con, collection, targets: list[str], stored: dict[str, tuple]) -> dict:
+    """chunk id -> what it is re-embedded as.
+
+    A collection whose layers all feed text: its stored text, exactly as
+    ever. One with a PAIR layer (09 §9.3): the stored row keeps no `fields`,
+    so the chunk is RE-CUT from its record — the document's own sections,
+    through `layers.chunks_for_document` and never a plugin's chunker
+    directly (invariant 1) — and used only when the re-cut chunk has the
+    stored id and the stored text byte for byte. A chunk whose record cannot
+    be read, or does not give it back, is absent from the answer: it cannot
+    be checked here, which is inconclusive and never a pass."""
+    from .. import layers as layers_mod, plugin_io
+    from .format import uid_of
+    if not layers_mod.has_pair_layer(collection):
+        return {cid: stored[cid][0] for cid in targets}
+    by_uid: dict[str, list[str]] = {}
+    for cid in targets:
+        try:
+            by_uid.setdefault(uid_of(cid), []).append(cid)
+        except Exception:                               # noqa: BLE001 — a malformed id
+            continue
+    out: dict = {}
+    plugin = collection.plugin_instance()
+    for uid, cids in by_uid.items():
+        try:
+            row = con.execute("SELECT uid, source, native_id, path, lang FROM documents "
+                              "WHERE uid=?", (uid,)).fetchone()
+            if row is None:
+                continue
+            row = dict(row)
+            cut = {c["id"]: c for c in layers_mod.chunks_for_document(
+                collection, row, plugin_io.sections(plugin, row))}
+        except Exception:                               # noqa: BLE001 — the record is not readable here
+            continue
+        for cid in cids:
+            c = cut.get(cid)
+            if c is not None and c["text"] == stored[cid][0]:
+                out[cid] = layers_mod.chunk_input(c)
+    return out
+
+
 def pending(con, chunk_ids: list[str]) -> list[str]:
     """Which of these chunks are imported and not yet verified.
 
@@ -179,17 +220,25 @@ def verify_chunks(con, collection, chunk_ids: list[str], *, embed_fn=None,
     targets = [cid for cid in targets if cid in stored and stored[cid][0]]
     if not targets:
         return {"checked": 0, "verified": 0, "failed": 0, "inconclusive": 0, "quarantined": []}
+    # what each is re-embedded as: the stored text, or a pair layer's chunk
+    # re-cut from its record; one the record does not give back cannot be
+    # checked here — inconclusive, left imported, cited again later
+    inputs = _inputs_for(con, collection, targets, stored)
+    unchecked = [cid for cid in targets if cid not in inputs]
+    targets = [cid for cid in targets if cid in inputs]
+    if not targets:
+        return {"checked": 0, "verified": 0, "failed": 0, "inconclusive": len(unchecked),
+                "quarantined": []}
 
     if embed_fn is not None:
         embed = embed_fn
     else:
         from ..collections import recipe_for
         recipe = recipe_for(collection)
-        # stored chunk texts, in their layer's form (`embed_chunks` refuses a
-        # pair layer's: a text alone carries no `fields`)
+        # each chunk in its layer's form: a pair layer's carries its `fields`
         embed = lambda texts: embeddings.embed_chunks(collection, texts, recipe=recipe)  # noqa: E731
     try:
-        recomputed = embed([stored[cid][0] for cid in targets])
+        recomputed = embed([inputs[cid] for cid in targets])
     except Exception:
         # Transient: the endpoint is down. Leave the chunks unverified rather
         # than marking them failed — an outage is not evidence of forgery.
@@ -198,7 +247,8 @@ def verify_chunks(con, collection, chunk_ids: list[str], *, embed_fn=None,
 
     floor, floor_source = _verify_floor(con)
     states = ledger.verification_states(con, targets)
-    verified = failed = inconclusive = 0
+    verified = failed = 0
+    inconclusive = len(unchecked)
     culprits: set[str] = set()
     misses: list[tuple[str, np.ndarray, float]] = []
     for cid, fresh_raw in zip(targets, recomputed):
@@ -214,7 +264,7 @@ def verify_chunks(con, collection, chunk_ids: list[str], *, embed_fn=None,
         # proof; a miss that does not is nobody's forgery — the chunk stays
         # imported and is cited again by the next search that returns it
         try:
-            again = embed([stored[cid][0] for cid, _, _ in misses])
+            again = embed([inputs[cid] for cid, _, _ in misses])
         except Exception:   # noqa: BLE001 — the encoder went away between the two: not evidence
             inconclusive += len(misses)
             misses = []

@@ -373,6 +373,32 @@ def chunker_for_document(collection, native_id, row=None):
     return _chunk
 
 
+def has_pair_layer(collection) -> bool:
+    """Does any layer the collection DECLARES feed the encoder pairs? One
+    that declares none has its plugin's single chunker, which feeds text —
+    so this never needs the plugin, and a text collection pays nothing."""
+    if not getattr(collection, "layers", None):
+        return False
+    return any(l.form == "pair" for l in layers_for(collection))
+
+
+def form_of(collection) -> str:
+    """The ONE form the collection's layers feed the encoder — `text` or
+    `pair` (09 §9.3) — for what is measured in the space's form rather than
+    cut from a record: the calibration set, the gate, a probe (09 §9.12,
+    amended 2026-10-08). A collection whose layers declare both has no one
+    form to calibrate or probe in, and is refused here rather than measured
+    in one of them while it writes the other."""
+    forms = {l.form for l in layers_for(collection)}
+    if len(forms) > 1:
+        raise LayerError(
+            f"{getattr(collection, 'name', None) or 'the collection'}: its layers feed "
+            f"the encoder two forms ({', '.join(sorted(forms))}); one calibration set "
+            f"measures one form, so such a space cannot be calibrated, gated or probed "
+            f"(09 §9.12)")
+    return forms.pop()
+
+
 def chunk_input(chunk: dict) -> "dict | str":
     """A chunk in the least form `embeddings.embed_chunks` needs: the dict
     when it carries a pair's `fields` (only a pair layer's do,

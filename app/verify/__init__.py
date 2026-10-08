@@ -52,7 +52,8 @@ def run_ladder(chunk_ids, vectors, *, dim: int, dtype: str, artifact=None,
                header=None, texts=None, embed_fn=None, uid_of=None, seq_of=None,
                corpus_tag: str | None = None, chunking_profile: str | None = None,
                alpha_family: float = DEFAULT_ALPHA_FAMILY,
-               max_tier: Tier = Tier.T3, rng=None, now=None) -> Verdict:
+               max_tier: Tier = Tier.T3, rng=None, now=None,
+               inputs=None) -> Verdict:
     """Run the ladder, cheapest tier first, stopping at the first FAILURE.
 
     Each tier gates the next (§6: "Five tiers, cheapest first, each gating the
@@ -106,8 +107,10 @@ def run_ladder(chunk_ids, vectors, *, dim: int, dtype: str, artifact=None,
         return verdict
 
     # ── T3 ──────────────────────────────────────────────────────────────
+    # `inputs`: a pair layer's chunks as the encoder is fed them (09 §9.3)
+    extra = {} if inputs is None else {"inputs": inputs}
     verdict.add(t3.check_spot_recompute(
         chunk_ids, vectors, artifact, texts=texts, embed_fn=embed_fn,
         backend_fingerprint=getattr(header, "backend_fingerprint", ""),
-        dtype=dtype, alpha=share("t3_sprt"), rng=rng))
+        dtype=dtype, alpha=share("t3_sprt"), rng=rng, **extra))
     return verdict

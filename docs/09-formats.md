@@ -1382,6 +1382,34 @@ compact, `\n`-terminated. Its id is `H(bytes of the file)`; `<set>` in
 a path is the id's 16-digit segment. The platform ships one set per
 modality; the Codex names the one it uses in `space.calibration.set`.
 
+**A pair space's set** (*amended 2026-10-08*, docs/notes/input-forms.md).
+A space whose layers feed the encoder text pairs (§9.3's `pair` form) is
+calibrated in that form, because a gate over plain texts would pass a
+backend that flattens pairs — the defect the form exists to keep out. Its
+set is 512 title-and-abstract PAIRS drawn from the collection's own
+records: a file of lines `{"i": <0…511>, "pair": ["<first>", "<second>"]}`,
+compact, `\n`-terminated, each pair's two segments non-empty, NFC, and
+free of control characters but the line feed that joins an abstract's
+sections. Its id is `H(bytes of the file)`, named by
+`space.calibration.set` like any set's. The draw is fixed by a snapshot
+of the collection alone: its shards `sample(<the snapshot hash's 32
+bytes>, 16, <the shard names "<slice>/<NNNNN>">)` (§9.1), walked in
+snapshot order; each of
+their records cut in the pair form of its layer — the first section's body
+and the rest joined by `"\n\n"`, as §9.3 states it — the first of any
+identical pairs kept; the candidates ordered by the UTF-8 byte length of
+the two segments together, ties by the uid's bytes; and those at ranks
+⌊k × (N − 1) / 511⌋ for k = 0 … 511 taken, in that order — the shortest,
+the longest and the rest spaced between (`tools/build_pair_calibration_set.py`).
+It is not shipped with the platform, since those records are the
+collection's and under its licence: it travels inside the member, as
+`pairs` below, so it is fetched after the acknowledgement like every
+member but the three of 04 §4.4. Every use of the set embeds a pair as a
+pair on the document side; the query side, whose input is one text in
+every space, embeds each pair as `<first>\n\n<second>`, with
+`space.query.instruction` prefixed. A space whose layers feed both forms
+has no one set and is refused.
+
 **A set spans the encoder's whole input range, and that is a
 requirement.** It read "512 short texts" until 2026-09-09, and short
 texts alone cannot see the failure this gate exists to catch: a build
@@ -1410,8 +1438,9 @@ snapshot (`files`, §9.4):
 | tensor / header | type | required | meaning |
 |---|---|---|---|
 | `vectors` | `[512, dim]` f32 | yes | the reference vectors, in set order, as the creator's encoder produced them, unit-normalised when `space.normalise` |
-| `query_vectors` | `[512, dim]` f32 | when `space.query.encoder` is not null | the query encoder's reference vectors for the same texts, `space.query.instruction` prefixed: what an asymmetric space's query runs are validated against (03 §3.3) |
+| `query_vectors` | `[512, dim]` f32 | when `space.query.encoder` is not null | the query encoder's reference vectors for the same texts, `space.query.instruction` prefixed — a pair set's as `<first>\n\n<second>` (*amended 2026-10-08*): what an asymmetric space's query runs are validated against (03 §3.3) |
 | `envelope` | `[2, dim]` f32 | yes | row 0 the per-dimension mean of `vectors`, row 1 the per-dimension standard deviation |
+| `pairs` | `[bytes]` u8 | exactly when the space's layers feed pairs | the pair set, the bytes of its file (above) (*amended 2026-10-08*) |
 | `set` | header | yes | the set's id |
 | `encoder_engine`, `encoder_weights` | header | yes | the run the vectors came from: `engine_id` of `space.encoder.engine` (§9.3), and the weights |
 | `key` | header | yes | the creator's key |
@@ -1419,15 +1448,19 @@ snapshot (`files`, §9.4):
 `space.calibration.vectors` = `H` over the bytes of the `vectors`
 tensor; `space.calibration.query_vectors` = `H` over the bytes of the
 `query_vectors` tensor, `null` in a symmetric space; `space.envelope` =
-`H` over the bytes of the `envelope` tensor; a member whose tensors hash
-otherwise is refused. Beside it,
+`H` over the bytes of the `envelope` tensor; `space.calibration.set` =
+`H` over the bytes of the `pairs` tensor, in a pair space; a member whose
+tensors hash otherwise is refused. Beside it,
 `calibration/<set>.sig.json` is an envelope signed under
 `louise/calibration/v1` with body `{kind: "louise-calibration", version:
 2, set, space_id, vectors: id, envelope: id, encoder_engine,
 encoder_weights, key, time}` — who produced the reference, for
 provenance; the Codex's hashes, not the signature, are what bind it.
 Version 1 of that body carried `encoder_image`, the engine's image
-digest alone, in place of `encoder_engine`.
+digest alone, in place of `encoder_engine`. Version 3 is the same body
+signing a member that carries `pairs`, and is written for such a member
+alone: a text space's member and body are what they were, at version 2,
+so no text space's calibration moves (*amended 2026-10-08*).
 
 **Three uses, one file.** `hold embedder check` embeds the 512 texts,
 draws `quorum.n` of them by `sample(seed, n, {"0"…"511"})` with the
@@ -1435,7 +1468,8 @@ peer's own seed, and passes when at least `quorum.min_pass` reach cosine
 ≥ `tolerance` against `vectors` and the median does; the same run
 measures the benchmark in tokens per second (03 §3.3). T1's probe set is
 `vectors`; T0's envelope is `envelope`; T2's golden pairs are texts
-0–15 with their rows (§9.7). Two sisters on one encoder share one
+0–15 with their rows (§9.7) — in a pair space items 0–15, embedded as
+pairs (*amended 2026-10-08*). Two sisters on one encoder share one
 calibration member byte for byte (08 §8.3). Cosines are computed in f32
 after upcasting.
 
@@ -1494,7 +1528,9 @@ depends on: the same request gives the same answer at every level, and
 an endpoint that ignores the header loses nothing but speed.
 
 **The fingerprint.** Its sixteen texts are fixed by the set's bytes
-alone. The set is ordered by the UTF-8 byte length of `text`, ties
+alone. The set is ordered by the UTF-8 byte length of `text` — a pair
+set's by its two segments' together, and its sixteen are embedded as
+pairs (*amended 2026-10-08*) — ties
 broken by `i`, and the texts at ranks ⌊k × 511 / 15⌋ for k = 0 … 15 are
 taken: the shortest, the longest and fourteen spaced between. They are
 embedded one at a time, truncated as a chunk is. A run's fingerprint is
@@ -1892,7 +1928,7 @@ names one schema, the one its section fixes:
 | `louise-digest` | 2 | §9.9 |
 | `louise-event`, `louise-pull` | 1 | §9.9 |
 | `louise-certifier`, `louise-pointer` | 1 | §9.11 |
-| `louise-calibration` | 2 | §9.12 |
+| `louise-calibration` | 3 | §9.12 (3 since 2026-10-08: a pair space's member carries its set, `pairs`; every other member's body is still written at 2) |
 | `louise-calibration-run` | 3 | §9.12 |
 | `louise-ack`, `louise-trust` | 1 | §9.13, §9.2 |
 | `louise-seals` | 1 | §9.15 |
@@ -1909,7 +1945,12 @@ with it. The options amendment (2026-10-03) moved only the two objects
 that carry an engine WHOLE, the Codex and the peer's calibration
 statement; the bundle header, the attestation, the digest and the
 space author's calibration member carry an `engine_id` and kept their
-versions. `protocol_version` (§9.3, §9.17)
+versions. The input-forms amendment (2026-10-08) moved the Codex, for a
+layer's `input`, and the space author's calibration member of a pair
+space alone, which carries the pairs its vectors were produced over: its
+body is written at 3, every other at 2, so no text space's member or
+signature moved, and the peer's statement kept its version — its
+`space_id` already says which form was measured. `protocol_version` (§9.3, §9.17)
 is 2 and is not in this table: it versions the plugin contract, which
 is a boundary inside one platform rather than a byte on the wire.
 

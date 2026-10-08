@@ -17,17 +17,17 @@ from tests.hold.conftest import KEY, PLATFORM, fake_embed, fake_query_embed, pub
 from tests.hold.test_template import recipe as a_recipe
 
 
-def _create(tmp_path, monkeypatch, source):
+def _create(tmp_path, monkeypatch, source, *, embed=fake_embed, **kw):
     root = tmp_path / "collections"
     held = col.create(root, source, name="pubmed-dev")
     monkeypatch.setattr(node_keys, "load_signing_key", lambda: KEY)
     monkeypatch.setattr(louise, "_embed_for_recipe",
-                        lambda space, url: fake_query_embed if "query" in url else fake_embed)
+                        lambda space, url: fake_query_embed if "query" in url else embed)
     r = a_recipe(cleaning_version=source.cleaning_version)
     codex, _ = louise.create_from(root, "gutenberg", r, platform_image=PLATFORM,
                                   space_from=held.collection_id,
                                   encoder="http://enc.invalid/article",
-                                  query_encoder="http://enc.invalid/query")
+                                  query_encoder="http://enc.invalid/query", **kw)
     return held, codex
 
 
@@ -80,10 +80,22 @@ def test_a_version_4_space_copied_stays_version_4_in_the_same_space(tmp_path, mo
 
 
 def test_a_version_5_space_copied_is_version_5_with_its_form(tmp_path, monkeypatch):
+    """A pair space is calibrated on PAIRS (09 §9.12, amended 2026-10-08), so
+    the source names a pair set, and the copy — whose source holds no member
+    here — is given its file."""
+    from dataclasses import replace
     from app.hold.codex import Chunker, Layer
     from tests.hold.conftest import pubmed
+    from tests.hold.test_pair_calibration import PAIR_BYTES, PAIR_SET, pair_embed
     pair = {"form": "pair", "split": "first-section"}
+    base = pubmed()
+    space = replace(base.space, calibration=replace(base.space.calibration, set=PAIR_SET))
+    pairs_file = tmp_path / "pairs.jsonl"
+    pairs_file.write_bytes(PAIR_BYTES)
     source, codex = _create(tmp_path, monkeypatch, pubmed(
-        version=5, layers=(Layer(Chunker("abstract", 1, {}), "default", pair),)))
+        version=5, space=space, layers=(Layer(Chunker("abstract", 1, {}), "default", pair),)),
+        embed=pair_embed, calibration_set=str(pairs_file))
     assert codex.version == 5 and codex.layers[0].input == pair
     assert codex.space_id == source.space_id
+    with pytest.raises(cx.CodexError, match="--calibration-set"):
+        _create(tmp_path / "again", monkeypatch, source, embed=pair_embed)
