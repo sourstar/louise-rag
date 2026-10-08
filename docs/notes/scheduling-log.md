@@ -405,5 +405,11 @@ once (none has a scheduled check yet): pubmed (~14 min, 2 GB), gutenberg
 new snapshot or a month. The pipeline threads keep their CPU (nice 10, a
 separate process: no GIL taken).
 
-**After.** *(to complete after the deploy: the first turns' wall, peak
-RSS, the worker's own docs/s during them, and the worker RSS at ~1 h.)*
+**After (6b6e597, deployed 11:43Z).** The first round ran back to back, one
+child at a time, nice 10: gutenberg pass in 1,616 s; gutenberg-744ba8430fed
+and the three minis pass in 2 s each; pubmed pass in 739 s. Peak child RSS
+sampled every 30 s: **1.68 GB** (the 2.0 GB measured by hand is the true
+peak between samples). Worker RSS **2.26 GB at 40 min** uptime, against 4.2 GB
+at 55 min before the snapshot fix. Nothing is due again until a new snapshot
+or a month. Not measured: the pipeline's docs/s during the runs (only
+gutenberg's rdf scan had work, too little to read a difference from).

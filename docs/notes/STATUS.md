@@ -12,9 +12,6 @@ it left open is below.
 
 ## Open after the migration
 
-- **Scheduled checks** (its step 14): nothing runs `roots`, `chunks` or
-  `records-vs-origin` by itself; a quarantined copy clears only when
-  someone runs `hold check`. Being measured and built next.
 - **`hold embedder calibrate`** is a stub: it wants two builds of one model
   to compare (step 3).
 - **The Gazzetta plugin**: certified records carrying `extra.seal` — the
@@ -261,6 +258,20 @@ passed tests/deposit (111), tests/hold (715), tests/share (105). First
 minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
+
+**2026-10-08, ~12:25Z (UTC): scheduled checks LIVE (6b6e597); the plan's
+memory 18.7 GB → 2 GB (6928c2c); the loose ends fixed (ab40999).** The
+worker runs each Codex collection's plan once per snapshot or cadence, as a
+child at nice 10, one at a time (app/scheduled_checks.py; scheduling-log.md
+2026-10-08): the first round passed everywhere — gutenberg 1,616 s, pubmed
+739 s, the minis 2 s — peaking at ~2 GB. Measuring first found pubmed's
+plan at 18.7 GB: loading its first snapshot materialised a 39,994,988-uid
+delta (now read only when asked: 4.3 GB → 16 MB, and the worker went from
+4.2 to 2.3 GB), and the origin check held every sampled line (now
+streamed). Loose ends: one trust list (the bundle inbox obeys `hold key
+trust`; `hold vectors import` refused nothing a key's denial or burn said —
+fixed), `hold embedder rebaseline`, dead code gone; the migration plan
+deleted, its open items above.
 
 **2026-10-08, ~10:00Z (UTC): step 12 DONE — the old names retired; 71d8df9
 DEPLOYED.** `app/cli.py` and the deprecated aliases are gone; what was still
