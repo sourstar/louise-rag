@@ -80,6 +80,18 @@ To write when §6 passes, before the code ships:
   OCI images (`/mnt/tank/apps/localai/backends`), not from one node image.
   The engine names the backend image's digest. Every engine changes, so
   every space is re-gated once — a gate run, not a re-embedding (RULE 1).
+  **Operator, 2026-10-08 (after §10's findings): no pinning.** LocalAI
+  installs and upgrades backends as it likes, `latest-` tags included; the
+  wrapper hashes the backend's INSTALLED files at every load (never the
+  gallery's `metadata.json` digest, which is the registry's word, not the
+  bytes'), and the engine's driver is the one the backend actually loads
+  (its bundled Level Zero, not the LocalAI image's dpkg). An upgrade is
+  therefore a new run, gated before its first vector (03 §3.3). The Codex
+  cannot be updated and keeps the engine it was created with forever; later
+  engines are admitted by their own calibration statements beside it. So
+  for each Codex the backend it names is ARCHIVED on tank (as Codex platform
+  images are), for a verifier to reproduce the reference vectors after
+  upstream drops that version.
 
 ## 5. Facts, read on the node 2026-10-08
 
@@ -101,6 +113,9 @@ To write when §6 passes, before the code ships:
    must keep the encoders on the card under LocalAGI's load. RAGE's governor
    reads the card's free memory; LocalAI may not. If it falls short the fix
    goes upstream or into LocalAI's config, never a second scheduler.
+   *On the node (§11): proved for the loads tried, by the memory reclaimer
+   and `pinned`, not by `vram_budget`. Still open: LocalAI cannot see RAGE's
+   memory, and it checks nothing before a load.*
 3. **The fingerprint through the wrapper** equals the fingerprint direct
    (03 §3.3): the wrapper forwards bytes, so it must.
 4. **Throughput**: one extra small request per batch; measure tokens/s.
@@ -162,14 +177,36 @@ UNAVAILABLE (`VeGa unavailable`, which `client.is_deferral` reads); the
 weights hash 1,800 s; a stop's grace 30 s.
 
 **The run** is RAGE's identity computed by the backend's parent: `name`
-`localai/<metadata name>`, `build` the metadata's `version` (else `uri`),
-`variant` null, **`image` the backend's OCI digest from `metadata.json` —
-PENDING the 09 §9.3 amendment (§4)**; no digest, the wrapper refuses to
-start. `args` `[<real run.sh, absolute>, "--addr", "127.0.0.1:${PORT}"]`;
-`env` the load's `EnvVars`; `options` RAGE's canonical form of the
-ModelOptions received — a field the wrapper's `backend.proto` cannot name
-refuses the load; `device` read from the child's DRM clients (`vega.json`
-`cards`); `driver` as RAGE, the runtime from the LocalAI image's dpkg status.
+`localai/<metadata name>` (else the directory's), `variant` null. **`image`
+is the backend's installed files, hashed at every load (`tree_digest`; §4,
+no pinning) — PENDING the 09 §9.3 amendment.** It is `H` of the canonical
+JSON (09 §9.1) of `{<path>: <entry>}` over every entry below the backend's
+directory, walked without following links, except the top-level
+`metadata.json` (LocalAI's install record: a reinstall of the same bytes is
+the same engine). `<path>` is relative, `/`-separated, UTF-8. A file is
+`{"type":"file","exec":<any execute bit set>,"size":…,"sha256":"<hex>"}`, a
+link `{"type":"link","target":<its readlink string>}`, a directory
+`{"type":"dir"}`; anything else, or a name that is not UTF-8, states no run.
+Owners, times and the other mode bits are not in it. Written `sha256:<hex>`,
+as a weights directory is: 09 §9.3's validator, which a calibration
+statement passes, reads no other form. A file is read again only when its
+(dev, inode, size, mtime_ns, ctime_ns) at its physical path changed. Cost,
+read on the node: the SYCL backend's 1,059,780,025 bytes (45 files, 32
+links) hash in 1.02 s warm, alongside the load; cold not measured.
+`metadata.json`'s `uri` and `digest` are logged at each load, never identity
+(§10, finding 3). `build` is the metadata's declared `version`, else the
+tree digest's first 12 hex digits; never the `uri`'s moving tag. `args`
+`[<real run.sh, absolute>, "--addr", "127.0.0.1:${PORT}"]`; `env` the load's
+`EnvVars`; `options` RAGE's canonical form of the ModelOptions received — a
+field the wrapper's `backend.proto` cannot name refuses the load; `device`
+read from the child's DRM clients (`vega.json` `cards`). **`driver`** is the
+kernel and module as RAGE reads them, then the driver library the backend
+loads (§10, finding 4): `ZE_ENABLE_ALT_DRIVERS` from the backend processes'
+own `/proc/<pid>/environ` (the environment the wrapper gave, when none can be
+read), else the one its `lib/` carries (`libze_intel_gpu.so.*`), each as
+`<file name> sha256:<hex>` of the file a link names. With neither, the
+runtime is read from the LocalAI image's dpkg status, as before. An upgrade
+is therefore a new run, gated before its first vector.
 
 **Found.**
 - **f32 through JSON (§6.1), exhaustive** over all 4,278,190,080 finite
@@ -256,7 +293,7 @@ python:3.12-slim). The real backend's `metadata.json`, verbatim:
 | 3, wrapper vs direct, one engine (`vega-bge-m3` vs `vega-bge-m3-direct`: same LocalAI, backend, options, weights) | 1,975/2,048 bit-identical, cosine min 0.99999, max abs diff 7.5e-4. The engine against itself (the base64 pass vs the JSON pass of `vega-bge-m3`): 1,975/2,048, 6.5e-4 | passed: the wrapper changes no byte; the rest is the engine's own run-to-run drift (rage-over-localai §12) |
 | 3, vs RAGE's `bge-m3` | 1,975/2,048 bit-identical, cosine min 0.9999956, median 1.0, max abs diff 2.8e-4 | equivalent; the runs differ (below) |
 | 4, throughput | direct 29.4 texts/s; behind the wrapper 28.3, with the receipts read 28.2 (−4 %); one receipts read costs 1.5 ms per batch; RAGE 27.6 texts/s = 1,100 tokens/s, `vega-bge-m3` 1,069 (base64) and 1,047 (JSON) tokens/s | passed. The absolute tokens/s is far below §12's 10,700: short texts, one gRPC call each |
-| 2, eviction | as configured, LocalAI evicts nothing (below) | **not proved, open** |
+| 2, eviction | as configured, LocalAI evicts nothing (below) | **not proved, open** (→ §11) |
 | refusals | untagged → 500 `InvalidArgument … without a VeGa tag`; a non-canonical tag → 500 `InvalidArgument … not in canonical form`; neither left a receipt. For every one of 6,145 answers, the receipt was there at the first read after the HTTP answer | passed |
 
 **The two runs** (`GET /vega/runs/sha256:798e5bc8…` vs RAGE's
@@ -354,3 +391,147 @@ To remove them:
    its next start).
 3. `docker rm -f vega-proof`, then `docker rmi vega-proof:local`.
 4. Remove the directories.
+
+## 11. Eviction on the node (2026-10-08)
+
+*§6.2 on the LocalAI app (v4.11.0-gpu-intel), beside the live RAGE, which
+was only read. Scripts in `deploy/vega/proof/` (not committed):
+- `evict_snap.py` reads the card from the host, as `app/gpu_probe` does: the
+  DRM fdinfo of every process, one record per client, plus xe's TTM managers
+  in debugfs;
+- `evict_load.py` uses one model and polls `/system` and the card every
+  100 ms;
+- `evict_digests.py` computes item 5's receipts and digests;
+- `evict_spill.py` checks for spill.
+
+Settings went through `POST /api/settings`, which persists them in
+`runtime_settings.json`. `app.update` was not used.*
+
+**What LocalAI v4.11.0 has** (read in its source at the tag, 58830f7):
+- **`max_active_backends`** counts models. It evicts before a load.
+- **The memory reclaimer** evicts after the fact. Every `watchdog_interval`
+  (500 ms) it compares a usage figure with `memory_reclaimer_threshold`. If
+  the figure is above, it evicts one model:
+  - not a `pinned` model;
+  - not a busy one, unless `force_eviction_when_busy`;
+  - the least recently used one, or the largest weight file first with
+    `size_aware_eviction` (LRU breaks ties).
+- **`vram_budget`** only changes the reclaimer's figures.
+
+On Intel, LocalAI finds the card through clinfo (total 31,023 MiB). It sums
+`drm-total-vram*` over the fdinfo of the processes in its own PID namespace.
+So it sees only its own models, never RAGE's.
+
+**`vram_budget` caps figures, not allocations.** It caps both the reported
+total and the reported free memory at the budget S. In this setup:
+- used = max(0, own − (T − S)), where own is LocalAI's own memory and
+  T = 31,023 MiB;
+- the reclaimer fires when own > T − (1 − t)·S, where t is the threshold.
+
+Two readings with LocalAI holding 1,137 MiB:
+- S = 18 GiB reports used 0 of 18,432 MiB;
+- S = 30,000 MiB reports used 113 MiB.
+
+So a smaller budget makes eviction later, never sooner. At S = 18 GiB and
+t = 0.95, LocalAI would evict only above 30,101 MiB of its own: the card
+would be overcommitted first. A budget of 8 GiB or more changes no load
+option either: the parallel-slot tier is 4 slots from 8 to 32 GiB. **So the
+budget is left empty.** It would mean something only if LocalAI could see
+everything on the card.
+
+**The settings chosen**, and the arithmetic:
+- Card C = 32,656 MiB. RAGE R = 12,110 MiB: its five processes, unchanged in
+  every reading. Margin M = 2,048 MiB, for RAGE loading a small idle model,
+  compute-buffer growth, and the driver's 26 MiB not attributed to any
+  process.
+- At peak LocalAI may hold A = C − R − M = **18,498 MiB**.
+- The reclaimer acts after a load has allocated. So the peak is at most the
+  trigger X plus the largest model L, here LocalAGI's `qwen3.8-2b-q4` at
+  7,032 MiB. That gives X ≤ A − L = 11,466 MiB, so t ≤ 11,466 / 31,023 =
+  0.3696.
+
+| setting | before | now | why |
+|---|---|---|---|
+| `memory_reclaimer_enabled` | false | **true** | the only byte-aware eviction in v4.11.0 |
+| `memory_reclaimer_threshold` | 0.95 | **0.36** | X = 11,168 MiB; the bound X + L = 18,200 MiB ≤ A |
+| `size_aware_eviction` | false | **true** | one eviction frees the most, and a small utility model (granite, 211 MiB) stays |
+| `vram_budget` | "" | "" | caps figures only (above) |
+| `max_active_backends` | 0 | 0 | counts models, not bytes; models here are 0.2–7 GB |
+| `force_eviction_when_busy` | false | false | never kill a model in the middle of a request |
+| `vega-bge-m3.yaml` | — | **`"pinned": true`** | the encoder is never evicted |
+
+The pin was set with `PUT /models/toggle-pinned/vega-bge-m3/pin`. That call
+rewrites the YAML, so it was then rewritten by hand with its comments
+(`deploy/vega/proof/vega-bge-m3.yaml`). LocalAI was restarted once at the
+end. The settings read back the same after the restart, its watchdog started
+at boot, and the same 20 models were listed.
+
+**Results.** These are the card readings from the driver (debugfs
+`vram0_mm`) at 20 points, plus the lowest free memory polled during each
+load.
+
+| § | measured | verdict |
+|---|---|---|
+| 1, eviction order (t = 0.24, LRU, nothing pinned) | `vega-bge-m3`, `granite`, `filler-a` and `filler-b` were loaded (6,666 MiB). Loading `filler-c` evicted `vega-bge-m3`, `granite` and `filler-a` at +3.55, +4.28 and +4.99 s, in LRU order. That is one per 500 ms tick, while `filler-c` was still loading (its load took 44 s), until own < X. Card free was 11,586 MiB at the lowest | **passed**, with the reclaimer |
+| 1, size-aware (t = 0.25/0.36, sizes known) | granite was used first, then `filler-b`, then `filler-c`. Loading `filler-a` evicted `filler-b`: the largest file, the oldest of the equal ones. Granite stayed, although it was older | passed |
+| 1, timing | Eviction: the model is gone from `/system` < 0.1 s after the tick, and its card memory is freed at once. Reload: `vega-bge-m3` 7.9–10.0 s (the first batch, load included); a 2B chat model 44–46 s | — |
+| 2, `pinned` | `vega-bge-m3` (pid 590775) stayed resident from 20:56 to 21:08, through 7 evictions in which it was the least recently used model | **passed** |
+| 3, no overcommit, no spill | The card's peak was 24,879 of 32,656 MiB (lowest free 7,777, while `qwen3.8-2b-q4` loaded). LocalAI's peak was 12,769 MiB, under A. At every reading xe's `gtt_mm` usage equals the sum of all processes' `drm-resident-gtt` + `-system`, to the MiB (10,850–12,124 MiB). No process ever lost `vram0` while gaining host memory: the only drops are −25 MiB in a just-loaded model, with its host memory unchanged. RAGE's five processes were identical in all 20 readings | **passed** for these loads |
+| 4, LocalAGI's model | `qwen3.8-2b-q4` loaded at 7,032 MiB with t = 0.36. Its load evicted one filler, and it answered "5" to "What is 2+3?" (22+31 tokens). It was evicted later as LRU, and came back in 46 s | **passed** |
+| 5, vectors after eviction/reload | 256 texts, base64, all 8 batches receipt-verified, the same run `sha256:798e5bc8…` throughout. The engine against itself on one load: 246/256 bit-identical, max abs diff 1.7e-4. After an explicit reload: 246/256, 1.5e-4. After the reclaimer's eviction and reload: 246/256, 1.3e-4. After the LocalAI restart: 246/256, 1.2e-4. Cosine ≥ 0.9999989 everywhere | **passed**: within the engine's own variation. `pinned` is not a load option, so the run does not change |
+
+**How spill is read.** xe places a buffer object in VRAM, in TT (`gtt`) or
+in system memory. Under pressure it moves VRAM objects to TT without telling
+anyone, and fdinfo counts each object where it is now. So host memory is not
+spill in itself. A fresh `vega-bge-m3` already holds 564–910 MiB in `gtt`
+(SYCL host allocations), and RAGE's processes 114–5,126 MiB, which is why
+§10 saw three of them "pushed out" before anything was loaded. Spill is a
+process whose `vram0` falls while its `gtt` rises, with no unload. The
+card-wide check is debugfs `gtt_mm` usage against the sum of the processes'
+host figures.
+
+**Found in LocalAI** (for upstream):
+1. **`size_aware_eviction` set at runtime is saved and shown, but not
+   applied.** It has no `restartRequired` and no live setter
+   (`runtime_settings_registry.go` L208), so it waits for the next watchdog
+   restart. It was applied here by posting it together with the threshold.
+2. **A watchdog restart forgets model sizes.** `WatchDogState`
+   (`watchdog.go` L361) has no `modelSizes`. After any restart-requiring
+   settings change, the models already loaded count as size 0, so
+   size-aware eviction takes them LAST. Seen: it evicted granite (211 MiB)
+   first, because granite's was the only size known. Reloading the models,
+   or restarting LocalAI, repairs it. **After any settings change, restart
+   LocalAI.**
+3. **Models loaded while no watchdog exists are not tracked when one is
+   started.** `RestartWatchdog` restores from a nil watchdog. This was read
+   in the source, not observed: `vega-bge-m3` was reloaded before the tests.
+4. **The reclaimer evicts while a load is still in progress.** The loading
+   process grows past X and older models go before it answers. This is
+   harmless, but it is why the bound is X + L and not X.
+
+**Still open (§6.2).** LocalAI does not see RAGE. If RAGE grows by more than
+M, LocalAI will not react. RAGE does see LocalAI (rage.md §19) and gives up
+its own idle models. And there is no check before a load: a single model
+bigger than the headroom overcommits the card whatever the settings. Two
+models in this LocalAI are that big: `swift-qwen3.8-27b` (18.0 GB of
+weights) and `flux.1-krea-dev-ggml` (12.7 GB). None was loaded. Busy models
+are never evicted, so a card full of busy models is not protected either.
+The fixes are upstream: a fit check before a load, and a usage figure that
+counts every process on the card.
+
+**Created, and what is left.**
+- `vega-filler-a/-b/-c.yaml` (501 B each) were test models: LocalAGI's
+  Qwen3.8-2B-Q8_0 weights, read only, context 8192, `parallel:1`, about
+  2,650 MiB on the card each. They were removed before the restart, so
+  LocalAI has forgotten them.
+- The throwaway containers `vega-evict-dg` (from `vega-proof:local`, `--rm`)
+  are gone.
+- `granite-embedding-107m-multilingual` and `qwen3.8-2b-q4` were unloaded.
+  Loaded now: `vega-bge-m3` only (1,136 MiB), as at the start.
+- The `runtime_settings.json` backup was deleted: it holds the keys. To roll
+  back, POST `memory_reclaimer_enabled: false`,
+  `memory_reclaimer_threshold: 0.95` and `size_aware_eviction: false`, then
+  restart LocalAI.
+- To remove later: host `/tmp/vega-evict/` (6.8 MB). It holds the scripts,
+  `snaps.jsonl` (the 20 readings), the digests in `out/`, and the original
+  `vega-bge-m3.yaml.bak` (813 B).
