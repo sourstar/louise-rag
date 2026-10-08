@@ -103,6 +103,8 @@ _handles: dict[str, object] = {}
 _staged: dict[str, set[int]] = {}
 # Per torrent, the files this process wants of it (_set_wanted).
 _wanted: dict[str, set[int]] = {}
+# A magnet's metadata, resolved once per process (torrent_info).
+_metadata: dict[str, object] = {}
 
 
 def _platform_dht() -> bool:
@@ -201,6 +203,7 @@ def shutdown_session() -> None:
         _handles.clear()
         _staged.clear()
         _wanted.clear()
+        _metadata.clear()
         _session = None
 
 
@@ -255,9 +258,11 @@ def torrent_info(endpoint: Endpoint, stop=None):
     """Metadata for this endpoint, without downloading any content.
 
     A .torrent file is parsed outright. A magnet is resolved through a
-    paused torrent that is removed as soon as metadata arrives, so that
-    fetch_one can add the same infohash for real — a session rejects the
-    same torrent twice.
+    torrent in upload mode that is removed as soon as metadata arrives, so
+    that fetch_one can add the same infohash for real — a session rejects
+    the same torrent twice — and remembered for the process: the download
+    is added WITH its metadata, its file priorities set before it can move
+    a byte (_add_for_download).
     """
     lt = _lt()
     url = endpoint.url.strip()
@@ -267,6 +272,10 @@ def torrent_info(endpoint: Endpoint, stop=None):
             raise TransportError(
                 f"{url}: not a magnet URI and not a readable .torrent file")
         return lt.torrent_info(str(path))
+    with _session_lock:
+        known = _metadata.get(url)
+    if known is not None:
+        return known
 
     params = lt.parse_magnet_uri(url)
     # Nothing is written: the torrent is added paused and removed before it
@@ -277,12 +286,32 @@ def torrent_info(endpoint: Endpoint, stop=None):
     handle = session.add_torrent(params)
     try:
         _await_metadata(handle, stop)
-        return handle.torrent_file()
+        info = handle.torrent_file()
+        with _session_lock:
+            _metadata[url] = info
+        return info
     finally:
         try:
             session.remove_torrent(handle)
         except Exception:   # noqa: BLE001 — cleanup must not mask the result
             pass
+        _await_removed(handle)
+
+
+#: the removal of a resolving torrent is asynchronous, and adding the same
+#: infohash before it completes is refused
+REMOVE_WAIT_S = 10.0
+
+
+def _await_removed(handle, timeout: float = REMOVE_WAIT_S) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if not handle.is_valid():
+                return
+        except Exception:   # noqa: BLE001 — a handle that cannot say is gone
+            return
+        time.sleep(0.02)
 
 
 def _await_metadata(handle, stop=None) -> None:
@@ -350,20 +379,28 @@ def _add_for_download(endpoint: Endpoint, save_path: Path):
         return existing
 
     save_path.mkdir(parents=True, exist_ok=True)
+    # ADDED WITH ITS METADATA, EVERY FILE AT PRIORITY 0, PAUSED AND NOT
+    # AUTO-MANAGED: it moves no byte until fetch_one has staged its file as
+    # `.part`, switched that file on and resumed it. A magnet added as a
+    # magnet was started by the auto-manager (`paused` alone holds only a
+    # torrent that is not auto-managed, and auto-managed is the default) and
+    # its metadata arrived with every file at priority 4: bytes of files no
+    # profile asked for, into their final names, outside any lease, until
+    # fetch_one set priorities (2026-10-08). The metadata comes from
+    # `torrent_info`, resolved once per process in upload mode; the magnet's
+    # own trackers and peer hints stay on the download.
     if _is_magnet(key):
+        info = torrent_info(endpoint, stop=_current_stop())
         params = lt.parse_magnet_uri(key)
     else:
+        info = lt.torrent_info(key)
         params = lt.add_torrent_params()
-        params.ti = lt.torrent_info(key)
+    params.ti = info
     params.save_path = str(save_path)
-    # Added with nothing selected: priorities are set per file below, so a
-    # torrent is never allowed to pull bytes no profile asked for.
-    # (`default_dont_download` would say it more strongly; measured against
-    # in the share transport, 2026-10-08: a torrent wanting nothing when its
-    # metadata arrives counts as finished and drops its seeds, and the file
-    # switched on afterwards took 60 s, libtorrent's reconnect delay.)
+    params.file_priorities = [0] * info.files().num_files()
     try:
         params.flags |= lt.torrent_flags.paused
+        params.flags &= ~lt.torrent_flags.auto_managed
     except Exception:   # noqa: BLE001 — older bindings name flags differently
         pass
 
@@ -442,6 +479,27 @@ def _set_wanted(handle, key: str, fs, index: int, on: bool) -> None:
         wanted = _wanted.setdefault(key, set())
         (wanted.add if on else wanted.discard)(index)
         handle.prioritize_files([4 if i in wanted else 0 for i in range(fs.num_files())])
+
+
+#: how long a resume waits for the file's priority to take: a bound, never a
+#: condition — the wait loop re-asserts the priority in any case
+PRIORITY_WAIT_S = 5.0
+
+
+def _await_wanted(handle, index: int, timeout: float = PRIORITY_WAIT_S) -> None:
+    """Until libtorrent has applied file `index`'s priority (its disk thread
+    does, after the call returns). Resumed before, a torrent wanting nothing
+    yet counts as finished, connects to no seed, and the redial waited out
+    libtorrent's reconnect delay: 20 s and more in the probe, against 0.1 s
+    resumed after (2026-10-08)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if int(handle.file_priority(index)) != 0:
+                return
+        except Exception:   # noqa: BLE001 — a binding or a handle that cannot say
+            return
+        time.sleep(0.01)
 
 
 def _keep_wanted(handle, key: str, fs, index: int) -> None:
@@ -538,6 +596,7 @@ class TorrentTransport:
             _apply_rate(handle, leased_bps)
             last_refresh = time.monotonic()
             _set_wanted(handle, key, fs, index, True)
+            _await_wanted(handle, index)
             handle.resume()
             while True:
                 done = handle.file_progress()[index]

@@ -448,3 +448,21 @@ def test_a_stop_mid_download_turns_the_file_off_and_credits_it(tmp_path, monkeyp
     assert calls["priorities"][-1] == [0, 0, 0], \
         "and switched OFF before the abort, or libtorrent keeps pulling it"
     assert calls["credits"] >= 2, "credited in the loop AND once more on the way out"
+
+
+def test_a_magnet_fetches_its_one_file_and_nothing_else(swarm, tmp_path):
+    """The same through a magnet: its metadata resolved first, the download
+    added with it and every file at 0 — a magnet added as a magnet was
+    started by the auto-manager and wanted every file when its metadata
+    arrived (2026-10-08)."""
+    info = lt.torrent_info(str(swarm["torrent"]))
+    url = lt.make_magnet_uri(info) + f"&x.pe=127.0.0.1:{swarm['port']}"
+    corpus = tmp_path / "corpus_dir"
+    dest = corpus / "corpus/alpha.bin"
+    t0 = time.monotonic()
+    size = TorrentT().fetch_one(Endpoint(transport=Transport.TORRENT, url=url),
+                                RemoteFile(rel_path="corpus/alpha.bin", size=len(CONTENT["corpus/alpha.bin"])),
+                                dest, 0)
+    assert size == len(CONTENT["corpus/alpha.bin"]) and dest.read_bytes() == CONTENT["corpus/alpha.bin"]
+    assert not (corpus / "corpus/beta.bin").exists(), "the file nobody asked for was never written"
+    assert time.monotonic() - t0 < 30, "no wait on libtorrent's reconnect delay"

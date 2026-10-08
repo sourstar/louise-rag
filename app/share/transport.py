@@ -124,8 +124,8 @@ def _connect(handle, hints) -> None:
 def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hints=(),
                stop=None, log: Callable[[str], None] | None = None, poll_s: float = POLL_S,
                metadata_timeout_s: float | None = None) -> Path:
-    """One member file into `staging/<member>/<path>`, whole: the metadata
-    from the swarm, this one file on, paced by the lease, credited as it
+    """One member file into `staging/<member>/<path>`, whole: added with the
+    metadata its snapshot names, this one file on, paced by the lease, credited as it
     lands, stopped on `stop` with staging left for the next beat. The
     download handle leaves the session afterwards; serving is the seeder's,
     from the drag, when the collection's file says so."""
@@ -138,57 +138,68 @@ def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hin
     key = f"share:{torrent.infohash}"
     staging = Path(staging)
     staging.mkdir(parents=True, exist_ok=True)
-    params = lt.parse_magnet_uri(magnet(torrent))
+    # ADDED WITH ITS METADATA, this one file at priority 4 and every other at
+    # 0, paused and not auto-managed until the lease is its ceiling: the
+    # info dict is the snapshot's own (the infohash was computed from it),
+    # so nothing is asked of the swarm before the first byte is wanted. Added
+    # as a magnet, the auto-manager started it, and its metadata arrived with
+    # every file wanted, ahead of the priorities and the lease (2026-10-08).
+    info = lt.torrent_info(lt.bdecode(mem.bencode({"info": torrent.info})))
+    # libtorrent lays a file tree of ONE file at the tree's root out as a
+    # single-file torrent named after the file — `validation.json` alone,
+    # not `validation/validation.json` — while a nested path keeps
+    # `<name>/<path>`; the file is found by either spelling and staged
+    # where libtorrent puts it (the caller takes the path returned)
+    index, rel = _locate(info, member, torrent.path)
+    fs = info.files()
+    total = fs.file_size(index)
+    priorities = [0] * fs.num_files()
+    priorities[index] = 4
+    params = lt.add_torrent_params()
+    params.ti = info
     params.save_path = str(staging)
+    params.file_priorities = priorities
     try:
         params.flags |= lt.torrent_flags.paused
+        params.flags &= ~lt.torrent_flags.auto_managed
     except Exception:   # noqa: BLE001 — older bindings name flags differently
         pass
-    handle = session.add_torrent(params)
+    handle = None
     try:
-        _connect(handle, hints)
-        deadline = time.monotonic() + metadata_timeout_s
-        polls = 0
-        while not handle.status().has_metadata:
-            if stop is not None and stop.is_set():
-                raise TransferAborted(f"stopped waiting for the metadata of {rel}")
-            if time.monotonic() > deadline:
-                raise TransportError(f"{rel}: no metadata after {metadata_timeout_s:.0f}s — no "
-                                     f"peer holding it answered")
-            polls += 1
-            if polls % RECONNECT_EVERY == 0:
-                _connect(handle, hints)
-            time.sleep(poll_s)
-        info = handle.torrent_file()
-        # libtorrent lays a file tree of ONE file at the tree's root out as a
-        # single-file torrent named after the file — `validation.json` alone,
-        # not `validation/validation.json` — while a nested path keeps
-        # `<name>/<path>`; the file is found by either spelling and staged
-        # where libtorrent puts it (the caller takes the path returned)
-        index, rel = _locate(info, member, torrent.path)
-        fs = info.files()
-        total = fs.file_size(index)
-        priorities = [0] * fs.num_files()
-        priorities[index] = 4
-        handle.prioritize_files(priorities)
-        handle.resume()
-        _connect(handle, hints)
-        last_refresh = 0.0
         with get_manager().rsync_lease(None) as leased_bps:
+            handle = session.add_torrent(params)
+            tt._apply_rate(handle, leased_bps)
+            last_refresh = time.monotonic()
+            handle.resume()
+            _connect(handle, hints)
+            # no peer holding it answered: bounded as the metadata wait was,
+            # in the words the beat's backoff reads ("no metadata")
+            deadline = time.monotonic() + metadata_timeout_s
+            answered = False
+            polls = 0
             while True:
                 done = handle.file_progress()[index]
                 tt._credit_download(key, handle)
                 if done >= total:
                     break
+                st = handle.status()
                 if stop is not None and stop.is_set():
                     # the file off before leaving, so nothing lands outside the lease
                     priorities[index] = 0
                     handle.prioritize_files(priorities)
                     tt._credit_download(key, handle)
                     raise TransferAborted(f"stopped with {done}/{total} bytes of {rel}")
-                error = getattr(handle.status(), "errc", None)
+                error = getattr(st, "errc", None)
                 if error is not None and getattr(error, "value", lambda: 0)():
                     raise TransportError(f"{rel}: {error.message()}")
+                answered = answered or done > 0 or int(getattr(st, "num_peers", 0) or 0) > 0
+                if not answered:
+                    if time.monotonic() > deadline:
+                        raise TransportError(f"{rel}: no metadata after {metadata_timeout_s:.0f}s — "
+                                             f"no peer holding it answered")
+                    polls += 1
+                    if polls % RECONNECT_EVERY == 0:
+                        _connect(handle, hints)
                 now = time.monotonic()
                 if now - last_refresh > RATE_REFRESH_S:
                     tt._apply_rate(handle, leased_bps)
@@ -216,10 +227,11 @@ def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hin
             time.sleep(poll_s)
         return landed
     finally:
-        try:
-            session.remove_torrent(handle)
-        except Exception:   # noqa: BLE001 — a handle already gone
-            pass
+        if handle is not None:
+            try:
+                session.remove_torrent(handle)
+            except Exception:   # noqa: BLE001 — a handle already gone
+                pass
 
 
 def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: bool, session,
