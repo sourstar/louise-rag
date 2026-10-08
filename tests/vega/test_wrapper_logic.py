@@ -56,20 +56,265 @@ def test_a_config_that_is_not_valid_is_refused_with_its_rule(tmp_path, doc, why)
         vw.load_config(p, tmp_path)
 
 
-def test_the_real_backend_is_named_by_the_digest_its_gallery_wrote(tmp_path):
+def test_the_install_record_names_the_backend_and_its_digest_is_only_informational(tmp_path):
     b = vw.real_backend(_backend_dir(tmp_path))
-    assert (b.name, b.build, b.image) == ("fake-embed", "v4.11.0", DIGEST)
+    assert (b.name, b.version, b.uri, b.registry_digest) == \
+        ("fake-embed", "v4.11.0", "quay.io/x:y", DIGEST)
     assert b.run_sh.is_absolute() and b.run_sh.name == "run.sh"
+    assert not hasattr(b, "image"), "the image is the tree on disk, read at every load"
 
 
-@pytest.mark.parametrize("meta, why", [
-    ({"name": "x", "version": "v1"}, "no image digest"),
-    ({"name": "x", "version": "v1", "digest": "abc"}, "no image digest"),
-    ({"name": "x", "digest": DIGEST}, "neither a version nor a uri"),
-])
-def test_a_backend_installed_by_hand_states_no_run(tmp_path, meta, why):
+def test_a_backend_installed_by_hand_is_named_by_its_directory(tmp_path):
+    d = _backend_dir(tmp_path)
+    (d / "metadata.json").unlink()
+    b = vw.real_backend(d)
+    assert (b.name, b.version, b.uri, b.registry_digest) == ("fake-embed", None, None, None)
+
+
+@pytest.mark.parametrize("text, why", [("{not json", "cannot be read"), ("[1]", "not an object")])
+def test_an_install_record_that_cannot_be_read_names_nothing(tmp_path, text, why):
+    d = _backend_dir(tmp_path)
+    (d / "metadata.json").write_text(text)
     with pytest.raises(loadopts.Unstatable, match=why):
-        vw.real_backend(_backend_dir(tmp_path, meta))
+        vw.real_backend(d)
+
+
+def test_a_directory_without_run_sh_is_no_backend(tmp_path):
+    d = _backend_dir(tmp_path)
+    (d / "run.sh").unlink()
+    with pytest.raises(loadopts.Unstatable, match="no run.sh"):
+        vw.real_backend(d)
+
+
+# ---- the tree digest: the engine's image is the bytes installed --------------------------
+
+def _tree(tmp_path):
+    d = tmp_path / "tree"
+    (d / "lib").mkdir(parents=True)
+    (d / "run.sh").write_text("#!/bin/sh\nexec ./bin \"$@\"\n")
+    (d / "run.sh").chmod(0o755)
+    (d / "bin").write_bytes(b"\x7fELF binary")
+    (d / "bin").chmod(0o755)
+    (d / "lib" / "libx.so.1.2.3").write_bytes(b"library bytes")
+    (d / "lib" / "libx.so.1").symlink_to("libx.so.1.2.3")
+    (d / "metadata.json").write_text('{"digest": "sha256:' + "cd" * 32 + '"}')
+    return d
+
+
+def test_the_tree_digest_is_its_definition(tmp_path):
+    """vega.md §9 and `tree_digest`'s docstring, written out by hand."""
+    import hashlib
+    from app.hold.codex import canonical_json
+
+    d = _tree(tmp_path)
+
+    def sha(b):
+        return hashlib.sha256(b).hexdigest()
+    manifest = {
+        "bin": {"type": "file", "exec": True, "size": 11, "sha256": sha(b"\x7fELF binary")},
+        "lib": {"type": "dir"},
+        "lib/libx.so.1": {"type": "link", "target": "libx.so.1.2.3"},
+        "lib/libx.so.1.2.3": {"type": "file", "exec": False, "size": 13,
+                              "sha256": sha(b"library bytes")},
+        "run.sh": {"type": "file", "exec": True, "size": (d / "run.sh").stat().st_size,
+                   "sha256": sha((d / "run.sh").read_bytes())},
+    }
+    assert vw.tree_digest(d) == "sha256:" + sha(canonical_json(manifest))
+
+
+def test_the_tree_digest_is_deterministic_and_ignores_the_install_record(tmp_path):
+    d = _tree(tmp_path)
+    first = vw.tree_digest(d)
+    assert vw.tree_digest(d) == first == vw.tree_digest(d, vw.FileDigests())
+    (d / "metadata.json").write_text('{"installed_at": "later", "digest": "another"}')
+    assert vw.tree_digest(d) == first, "a reinstall of the same bytes is the same engine"
+    other = tmp_path / "copy"
+    import shutil
+    shutil.copytree(d, other, symlinks=True)
+    assert vw.tree_digest(other) == first, "the bytes, not where they sit"
+    (d / "lib" / "metadata.json").write_text("{}")
+    assert vw.tree_digest(d) != first, "only the top-level install record is left out"
+
+
+@pytest.mark.parametrize("change", ["content", "new file", "exec bit", "symlink target",
+                                    "empty dir", "rename"])
+def test_the_tree_digest_sees_every_change(tmp_path, change):
+    d = _tree(tmp_path)
+    before = vw.tree_digest(d)
+    if change == "content":
+        (d / "lib" / "libx.so.1.2.3").write_bytes(b"library BYTES")      # same size
+    elif change == "new file":
+        (d / "lib" / "liby.so").write_bytes(b"")
+    elif change == "exec bit":
+        (d / "lib" / "libx.so.1.2.3").chmod(0o744)
+    elif change == "symlink target":
+        (d / "lib" / "libx.so.1").unlink()
+        (d / "lib" / "libx.so.1").symlink_to("./libx.so.1.2.3")
+    elif change == "empty dir":
+        (d / "lib" / "rocblas").mkdir()
+    else:
+        (d / "bin").rename(d / "bin2")
+    assert vw.tree_digest(d) != before
+
+
+def test_the_tree_digest_ignores_owner_time_and_other_mode_bits(tmp_path):
+    import os
+    d = _tree(tmp_path)
+    before = vw.tree_digest(d)
+    (d / "bin").chmod(0o700)                         # still executable
+    os.utime(d / "lib" / "libx.so.1.2.3", ns=(1, 1))
+    assert vw.tree_digest(d) == before
+
+
+def test_a_tree_holding_a_socket_has_no_digest(tmp_path):
+    import socket
+    d = _tree(tmp_path)
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.bind(str(d / "lib" / "s.sock"))
+    try:
+        with pytest.raises(loadopts.Unstatable, match="neither a file"):
+            vw.tree_digest(d)
+    finally:
+        s.close()
+
+
+def test_unchanged_files_are_not_read_again(tmp_path):
+    import os
+    d = _tree(tmp_path)
+    files = vw.FileDigests()
+    first = vw.tree_digest(d, files)
+    assert sorted(files.reads) == sorted(os.path.realpath(d / p) for p in
+                                         ("bin", "run.sh", "lib/libx.so.1.2.3"))
+    files.reads.clear()
+    assert vw.tree_digest(d, files) == first and files.reads == [], "every file a cache hit"
+    (d / "lib" / "liby.so").write_bytes(b"new")
+    vw.tree_digest(d, files)
+    assert files.reads == [os.path.realpath(d / "lib" / "liby.so")], "only the new file read"
+
+
+def test_the_cache_holds_to_the_physical_file_not_its_name(tmp_path):
+    import hashlib
+    import os
+    d = _tree(tmp_path)
+    files = vw.FileDigests()
+    lib = d / "lib" / "libx.so.1.2.3"
+    files.read(lib)
+    files.reads.clear()
+    assert files.read(d / "lib" / "libx.so.1") == files.read(lib), "a link to it is the file"
+    assert files.reads == []
+    # an upgrade replaces the file: same name, size and mtime, another inode
+    st = lib.stat()
+    new = d / "lib" / "incoming"
+    new.write_bytes(b"LIBRARY bytes")
+    os.utime(new, ns=(st.st_atime_ns, st.st_mtime_ns))
+    os.replace(new, lib)
+    assert files.read(lib) == (13, hashlib.sha256(b"LIBRARY bytes").hexdigest())
+    assert files.reads == [os.path.realpath(lib)], "read again: not the file it read before"
+    # a write in place, its mtime set back: the ctime still moves (the
+    # kernel's clock for file times is coarse: one tick apart, not less)
+    time.sleep(0.05)
+    st = lib.stat()
+    lib.write_bytes(b"library bytez")
+    os.utime(lib, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert files.read(lib) == (13, hashlib.sha256(b"library bytez").hexdigest())
+
+
+def test_the_build_is_the_declared_version_else_the_trees_short_form():
+    assert vw.short_build("sha256:" + "ab" * 32) == "ab" * 6, "12 hex digits, no prefix"
+
+
+# ---- the driver the backend loads ---------------------------------------------------------
+
+def _proc_environ(root, pid, env):
+    p = root / str(pid)
+    p.mkdir(parents=True, exist_ok=True)
+    (p / "environ").write_bytes(b"".join(f"{k}={v}".encode() + b"\0" for k, v in env.items()))
+
+
+def _bundled(tmp_path):
+    d = tmp_path / "backend"
+    (d / "lib").mkdir(parents=True)
+    (d / "lib" / "libze_intel_gpu.so.1.15.39122").write_bytes(b"the carried driver")
+    (d / "lib" / "libze_intel_gpu.so.1").symlink_to("libze_intel_gpu.so.1.15.39122")
+    (d / "lib" / "libze_loader.so.1").write_bytes(b"the loader")
+    return d
+
+
+def test_the_driver_is_the_one_the_backends_environment_names(tmp_path):
+    import hashlib
+    d = _bundled(tmp_path)
+    proc = tmp_path / "proc"
+    named = d / "lib" / "libze_intel_gpu.so.1"
+    _proc_environ(proc, 10, {"PATH": "/bin", vw.ALT_DRIVERS_VARIABLE: str(named)})
+    libs = vw.driver_libraries(d, [10], {}, proc)
+    assert libs == [named]
+    assert vw.driver_lines(libs, vw.FileDigests()) == [
+        "libze_intel_gpu.so.1.15.39122 sha256:"
+        + hashlib.sha256(b"the carried driver").hexdigest()]
+
+
+def test_a_driver_the_operator_names_outside_the_backend_is_that_one(tmp_path):
+    d = _bundled(tmp_path)
+    host = tmp_path / "host" / "libze_intel_gpu.so.1.26.0"
+    host.parent.mkdir()
+    host.write_bytes(b"the host's driver")
+    proc = tmp_path / "proc"
+    _proc_environ(proc, 10, {})                       # run.sh, which execs …
+    _proc_environ(proc, 11, {vw.ALT_DRIVERS_VARIABLE: f"{host},"})   # … or starts it
+    assert vw.driver_libraries(d, [10, 11], {}, proc) == [host]
+
+
+def test_without_the_variable_the_carried_driver_is_the_one(tmp_path):
+    d = _bundled(tmp_path)
+    proc = tmp_path / "proc"
+    _proc_environ(proc, 10, {"PATH": "/bin"})
+    assert vw.driver_libraries(d, [10], {}, proc) == [
+        (d / "lib" / "libze_intel_gpu.so.1.15.39122").resolve()]
+
+
+def test_without_either_the_run_reads_the_driver_as_before(tmp_path):
+    d = tmp_path / "plain"
+    (d / "lib").mkdir(parents=True)
+    proc = tmp_path / "proc"
+    _proc_environ(proc, 10, {"PATH": "/bin"})
+    assert vw.driver_libraries(d, [10], {}, proc) == []
+    assert vw.driver_libraries(tmp_path / "no-lib", [10], {}, proc) == []
+
+
+def test_an_unreadable_environment_falls_back_to_the_one_given(tmp_path):
+    d = tmp_path / "plain"
+    d.mkdir()
+    given = tmp_path / "given.so.1"
+    assert vw.driver_libraries(d, [10], {vw.ALT_DRIVERS_VARIABLE: str(given)},
+                               tmp_path / "noproc") == [given]
+    proc = tmp_path / "proc"
+    _proc_environ(proc, 10, {})
+    assert vw.driver_libraries(d, [10], {vw.ALT_DRIVERS_VARIABLE: str(given)}, proc) == [], \
+        "what the backend runs with wins over what it was given"
+
+
+@pytest.mark.parametrize("setup, why", [
+    ("relative", "relative path"), ("disagree", "different drivers"), ("two carried", "several")])
+def test_a_driver_that_cannot_be_told_states_no_run(tmp_path, setup, why):
+    d = _bundled(tmp_path)
+    proc = tmp_path / "proc"
+    pids = [10]
+    if setup == "relative":
+        _proc_environ(proc, 10, {vw.ALT_DRIVERS_VARIABLE: "lib/libze_intel_gpu.so.1"})
+    elif setup == "disagree":
+        _proc_environ(proc, 10, {vw.ALT_DRIVERS_VARIABLE: "/a.so"})
+        _proc_environ(proc, 11, {vw.ALT_DRIVERS_VARIABLE: "/b.so"})
+        pids = [10, 11]
+    else:
+        _proc_environ(proc, 10, {})
+        (d / "lib" / "libze_intel_gpu.so.1.16.0").write_bytes(b"another")
+    with pytest.raises(loadopts.Unstatable, match=why):
+        vw.driver_libraries(d, pids, {}, proc)
+
+
+def test_a_named_driver_that_is_missing_states_no_run(tmp_path):
+    with pytest.raises(loadopts.Unstatable, match="cannot be read"):
+        vw.driver_lines([tmp_path / "gone.so.1"], vw.FileDigests())
 
 
 def test_the_runtime_is_read_from_dpkgs_status_without_dpkg(tmp_path):
@@ -137,19 +382,69 @@ def test_the_options_are_canonical_as_rage_writes_them():
 def test_the_run_is_what_the_wrapper_launched(tmp_path):
     backend = vw.real_backend(_backend_dir(tmp_path))
     canon = vw.canon_from_protojson(LOAD)
+    tree = vw.tree_digest(backend.directory)
     rid, run = vw.state_run(backend=backend, canon=canon,
                             environ={"NEO_CACHE_DIR": "/state/neo-cache"}, device="cpu",
-                            pci=None, weights="sha256:" + "11" * 32, runtime=[])
+                            pci=None, weights="sha256:" + "11" * 32, tree=tree, runtime=[])
     assert rid == rage_runs.run_id(run)
     assert run["driver"] == "cpu" and run["weights"] == "sha256:" + "11" * 32
     assert run["engine"] == {
-        "name": "localai/fake-embed", "build": "v4.11.0", "variant": None, "image": DIGEST,
-        "args": [str(backend.run_sh), "--addr", "127.0.0.1:${PORT}"],
+        "name": "localai/fake-embed", "build": "v4.11.0", "variant": None, "image": tree,
+        "args": ["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"],
         "env": {"NEO_CACHE_DIR": "/state/neo-cache"}, "device": "cpu",
         "options": canon.options}
+    assert tree != DIGEST, "never the registry's digest"
     with pytest.raises(loadopts.Unstatable, match="NEO_CACHE_DIR"):
         vw.state_run(backend=backend, canon=canon, environ={}, device="cpu", pci=None,
-                     weights="sha256:" + "11" * 32, runtime=[])
+                     weights="sha256:" + "11" * 32, tree=tree, runtime=[])
+
+
+def test_the_run_is_a_valid_codex_engine(tmp_path):
+    """The run's engine is signed into a calibration statement, whose
+    validator reads `image` as `sha256:<64 hex>` (app/hold/codex.py)."""
+    from app.hold.codex import _validate_engine, engine_from_dict
+    backend = vw.real_backend(_backend_dir(tmp_path))
+    _rid, run = vw.state_run(backend=backend, canon=vw.canon_from_protojson(LOAD),
+                             environ={"NEO_CACHE_DIR": "/state/neo-cache"}, device="cpu",
+                             pci=None, weights="sha256:" + "11" * 32,
+                             tree=vw.tree_digest(backend.directory), runtime=[])
+    _validate_engine(engine_from_dict(run["engine"], "engine"), "engine")
+
+
+def test_an_upgrade_is_a_new_run_and_a_reinstall_of_the_same_bytes_is_not(tmp_path):
+    d = _backend_dir(tmp_path, {"name": "fake-embed", "uri": "quay.io/x:latest-y",
+                                "digest": DIGEST})
+    backend, canon = vw.real_backend(d), vw.canon_from_protojson(LOAD)
+    env = {"NEO_CACHE_DIR": "/state/neo-cache"}
+
+    def stated():
+        tree = vw.tree_digest(d)
+        rid, run = vw.state_run(backend=backend, canon=canon, environ=env, device="cpu",
+                                pci=None, weights="sha256:" + "11" * 32, tree=tree, runtime=[])
+        return rid, run
+    rid, run = stated()
+    assert run["engine"]["build"] == vw.short_build(run["engine"]["image"]), \
+        "no declared version: the tree's short form, never the uri's moving tag"
+    (d / "metadata.json").write_text(json.dumps({"name": "fake-embed", "uri": "quay.io/x:z",
+                                                 "digest": "sha256:" + "ef" * 32}))
+    assert stated()[0] == rid
+    (d / "run.sh").write_text("#!/bin/sh\n# upgraded\n")
+    assert stated()[0] != rid
+
+
+def test_the_driver_lines_are_the_runs_runtime(tmp_path):
+    backend = vw.real_backend(_backend_dir(tmp_path))
+    sys_root, proc_root = tmp_path / "sys", tmp_path / "proc"
+    (sys_root / "module" / "xe").mkdir(parents=True)
+    (proc_root / "sys" / "kernel").mkdir(parents=True)
+    (proc_root / "sys" / "kernel" / "osrelease").write_text("6.18.0\n")
+    _rid, run = vw.state_run(backend=backend, canon=vw.canon_from_protojson(LOAD),
+                             environ={"NEO_CACHE_DIR": "/state/neo-cache"}, device="Arc",
+                             pci=None, weights="sha256:" + "11" * 32,
+                             tree=vw.tree_digest(backend.directory),
+                             runtime=["libze_intel_gpu.so.1.15.39122 sha256:" + "aa" * 32],
+                             sys_root=sys_root, proc_root=proc_root)
+    assert run["driver"] == "kernel 6.18.0; xe; libze_intel_gpu.so.1.15.39122 sha256:" + "aa" * 32
 
 
 @pytest.mark.parametrize("left, timeout", [(9.223372035063293e18, None), (None, None),

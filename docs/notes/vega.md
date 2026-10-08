@@ -216,8 +216,10 @@ read on the node: the SYCL backend's 1,059,780,025 bytes (45 files, 32
 links) hash in 1.02 s warm, alongside the load; cold not measured.
 `metadata.json`'s `uri` and `digest` are logged at each load, never identity
 (§10, finding 3). `build` is the metadata's declared `version`, else the
-tree digest's first 12 hex digits; never the `uri`'s moving tag. `args`
-`[<real run.sh, absolute>, "--addr", "127.0.0.1:${PORT}"]`; `env` the load's
+tree digest's first 12 hex digits, without `sha256:`; never the `uri`'s
+moving tag. `args` `["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"]`
+(09 §9.3, a backend engine; the child is started with the real absolute
+path); `env` the load's
 `EnvVars`; `options` RAGE's canonical form of the ModelOptions received — a
 field the wrapper's `backend.proto` cannot name refuses the load; `device`
 read from the child's DRM clients (`vega.json` `cards`). **`driver`** is the

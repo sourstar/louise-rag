@@ -26,13 +26,17 @@ against that release.
 WHAT THE WRAPPER KNOWS THAT RAGE HAD TO READ. It is the backend's parent: the
 argument vector is the one it passed, the environment the one it gave, the
 options the ones it received — no `/proc` matching, no LocalAI patch (vega.md
-§3). Only the card is read, from the child's DRM clients, as RAGE reads it.
+§3). Only the card is read, from the child's DRM clients, as RAGE reads it,
+and the environment run.sh gave the program it started (the driver it loads).
 
-THE ENGINE'S `image` IS THE BACKEND'S IMAGE: the OCI digest LocalAI's gallery
-wrote into the backend's `metadata.json` at install. PENDING THE AMENDMENT OF
-09 §9.3 (vega.md §4): today `image` names the image the platform runs in. A
-backend without a digest — installed by hand — states no run, and the wrapper
-refuses to start.
+THE ENGINE'S `image` IS THE BACKEND'S INSTALLED FILES, hashed at every load
+(`tree_digest`) — never the digest LocalAI's gallery wrote into
+`metadata.json`, which is the registry's word for a tag, not the bytes'
+(vega.md §4, operator 2026-10-08: no pinning; §10 finding 3). An upgrade is
+therefore a new run. The engine's driver is the one the backend loads: the
+driver library its environment points Level Zero at, or the one it carries
+(`driver_libraries`; §10 finding 4). PENDING THE AMENDMENT OF 09 §9.3 (vega.md
+§4): today `image` names the image the platform runs in.
 
 THE PACKAGE (what LocalAI's backends path holds as `vega-<backend>/`):
     run.sh  vega_wrapper.py  vega.json  metadata.json  venv/
@@ -48,11 +52,13 @@ standard library; the venv holds grpcio and protobuf (requirements.txt).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -62,7 +68,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from app.hold.codex import canonical_json
+from app.hold.codex import canonical_json, digest
 from app.rage import loadopts, runs
 from app.rage.model import CPU
 from app.rage.procfs import ProcFS
@@ -91,8 +97,21 @@ PAIRS_OPTION = "pairs:true"
 #: status (RAGE's list, deploy/rage/Dockerfile.localai).
 RUNTIME_PACKAGES = ("libze-intel-gpu1", "intel-opencl-icd", "libze1")
 PORT_PLACEHOLDER = "${PORT}"
+#: The backend's directory in a backend engine's `args`, whose bytes `image`
+#: names (09 §9.3, a backend engine): the vector is relative to it.
+BACKEND_PLACEHOLDER = "${BACKEND}"
 CONFIG_VARIABLE = "VEGA_CONFIG"
-_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+#: LocalAI's gallery writes it into a backend's directory at install: its
+#: record of the install (name, uri, the registry's digest, the time), not a
+#: byte the backend runs. Left out of the tree, so a reinstall of the same
+#: bytes is the same engine.
+INSTALL_RECORD = "metadata.json"
+#: Level Zero's override of driver discovery, a comma-separated list of driver
+#: libraries; LocalAI's run.sh exports it for a backend that carries its own.
+ALT_DRIVERS_VARIABLE = "ZE_ENABLE_ALT_DRIVERS"
+#: The driver library a backend carries in its `lib/`, as LocalAI's run.sh
+#: names it (backend/cpp/llama-cpp/run.sh, read on the node 2026-10-08).
+BUNDLED_DRIVER_GLOB = "libze_intel_gpu.so.*"
 _PCI = re.compile(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]")
 
 
@@ -164,40 +183,222 @@ def load_config(path: Path, backends_root: Path) -> Config:
 
 @dataclass(frozen=True)
 class RealBackend:
+    """The real backend's directory and what its install record says. The
+    record names the engine (`name`) and, when it declares one, its `build`
+    (`version`); `uri` and `registry_digest` are logged at each load and are
+    NEVER identity: the engine's image is the tree on disk (`tree_digest`)."""
     directory: Path
     run_sh: Path
     name: str
-    build: str
-    image: str
+    version: str | None = None
+    uri: str | None = None
+    registry_digest: str | None = None
+
+
+def _text(meta: Mapping[str, Any], key: str) -> str | None:
+    value = meta.get(key)
+    return value if isinstance(value, str) and value else None
 
 
 def real_backend(directory: Path) -> RealBackend:
-    """The real backend, from what LocalAI's gallery wrote at its install
-    (`metadata.json`: name, version, uri, digest — core/gallery/backend_types.go).
-    Without an image digest no run can be stated: loadopts.Unstatable."""
+    """The real backend: its directory, its run.sh, and what LocalAI's gallery
+    wrote at its install (`metadata.json`: name, version, uri, digest —
+    core/gallery/backend_types.go). A backend without that record — installed
+    by hand — is named by its directory; its identity is its bytes either way."""
     directory = Path(directory).resolve()
     run_sh = directory / "run.sh"
     if not run_sh.is_file():
         raise loadopts.Unstatable(f"{directory} holds no run.sh: not a LocalAI backend")
+    record = directory / INSTALL_RECORD
+    if not record.exists():
+        return RealBackend(directory, run_sh, directory.name)
     try:
-        meta = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
+        meta = json.loads(record.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
-        raise loadopts.Unstatable(f"{directory}/metadata.json cannot be read "
-                                  f"({type(e).__name__}): the backend's image is unknown")
+        raise loadopts.Unstatable(f"{record} cannot be read ({type(e).__name__}): the "
+                                  f"engine's name and build are unknown")
     if not isinstance(meta, dict):
-        raise loadopts.Unstatable(f"{directory}/metadata.json is not an object")
-    image = meta.get("digest")
-    if not isinstance(image, str) or not _DIGEST.fullmatch(image):
-        raise loadopts.Unstatable(
-            f"{directory}/metadata.json carries no image digest (digest={image!r}): a backend "
-            f"states a run only when LocalAI's gallery installed it from an OCI image, by "
-            f"digest (09 §9.3 as amended by docs/notes/vega.md §4)")
-    build = meta.get("version") or meta.get("uri")
-    if not isinstance(build, str) or not build:
-        raise loadopts.Unstatable(f"{directory}/metadata.json names neither a version nor "
-                                  f"a uri: the engine's build is unknown")
-    name = meta.get("name") if isinstance(meta.get("name"), str) and meta["name"] else directory.name
-    return RealBackend(directory, run_sh, name, build, image)
+        raise loadopts.Unstatable(f"{record} is not an object")
+    return RealBackend(directory, run_sh, _text(meta, "name") or directory.name,
+                       _text(meta, "version"), _text(meta, "uri"), _text(meta, "digest"))
+
+
+# ---- the backend's bytes: the tree, its driver ---------------------------------------
+
+class FileDigests:
+    """The sha256 of files, read again only when a file is not the one read
+    before. Keyed on the PHYSICAL path (`os.path.realpath`), never a name, and
+    held to the file's identity: (st_dev, st_ino, st_size, st_mtime_ns,
+    st_ctime_ns). An upgrade that replaces a file gives it a new inode; a
+    write in place moves its ctime, which no tool sets back (`tar` restores
+    mtimes, so mtime alone is not enough). A file that changes while it is
+    read is refused, never named."""
+
+    def __init__(self) -> None:
+        self._known: dict[str, tuple[tuple[int, ...], int, str]] = {}
+        self._lock = threading.Lock()
+        self.reads: list[str] = []                    # physical paths read, in order
+
+    @staticmethod
+    def _identity(st: os.stat_result) -> tuple[int, ...]:
+        return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+    def read(self, path: Path | str) -> tuple[int, str]:
+        """(size, sha256 hex) of the regular file at `path`."""
+        physical = os.path.realpath(path)
+        before = os.stat(physical)
+        if not stat.S_ISREG(before.st_mode):
+            raise loadopts.Unstatable(f"{physical} is not a regular file")
+        ident = self._identity(before)
+        with self._lock:
+            known = self._known.get(physical)
+        if known is not None and known[0] == ident:
+            return known[1], known[2]
+        h = hashlib.sha256()
+        with open(physical, "rb") as f:
+            for block in iter(lambda: f.read(runs.MIB), b""):
+                h.update(block)
+        if self._identity(os.stat(physical)) != ident:
+            raise loadopts.Unstatable(f"{physical} changed while it was hashed")
+        with self._lock:
+            self._known[physical] = (ident, before.st_size, h.hexdigest())
+            self.reads.append(physical)
+        return before.st_size, h.hexdigest()
+
+
+def tree_digest(root: Path, files: FileDigests | None = None) -> str:
+    """The digest of a backend's installed directory: a backend engine's
+    `image`, 09 §9.3's tree digest byte for byte (vega.md §4, §9).
+
+        H( canonical JSON (09 §9.1) of { <path>: <entry>, ... } )
+
+    over every entry below `root` (`root` itself excluded), walked without
+    following symbolic links, except the top-level `metadata.json`
+    (INSTALL_RECORD). <path> is relative to `root`, `/`-separated, UTF-8; a
+    name that is not UTF-8 is refused. <entry> is:
+    - a regular file: {"type": "file", "exec": <bool: any of the mode's three
+      execute bits is set>, "size": <bytes>, "sha256": "<64 lowercase hex of
+      its contents>"};
+    - a symbolic link: {"type": "link", "target": "<readlink's string>"},
+      never followed;
+    - a directory: {"type": "dir"}, an empty one included;
+    anything else (a socket, a FIFO, a device) is refused. Owners, times and
+    the other mode bits are not in it. H is sha256, written `sha256:<hex>`, as
+    the weights digest of a directory is (app/rage/runs.py) — the form 09
+    §9.3's validator reads for an image. Unchanged files are not read again
+    (`files`, a FileDigests)."""
+    files = files if files is not None else FileDigests()
+    root = Path(root)
+    manifest: dict[str, dict[str, Any]] = {}
+
+    def walk(directory: str, prefix: str) -> None:
+        with os.scandir(directory) as it:
+            entries = sorted(it, key=lambda e: e.name)
+        for e in entries:
+            if not prefix and e.name == INSTALL_RECORD:
+                continue
+            rel = prefix + e.name
+            try:
+                rel.encode("utf-8")
+            except UnicodeEncodeError:
+                raise loadopts.Unstatable(f"{e.path!r}: a name that is not UTF-8 has no "
+                                          f"canonical form") from None
+            st = e.stat(follow_symlinks=False)
+            if stat.S_ISLNK(st.st_mode):
+                manifest[rel] = {"type": "link", "target": os.readlink(e.path)}
+            elif stat.S_ISDIR(st.st_mode):
+                manifest[rel] = {"type": "dir"}
+                walk(e.path, rel + "/")
+            elif stat.S_ISREG(st.st_mode):
+                size, sha = files.read(e.path)
+                manifest[rel] = {"type": "file", "exec": bool(st.st_mode & 0o111),
+                                 "size": size, "sha256": sha}
+            else:
+                raise loadopts.Unstatable(f"{e.path} is neither a file, a directory nor a "
+                                          f"symbolic link: the backend's tree has no digest")
+
+    walk(str(root), "")
+    try:
+        return digest(canonical_json(manifest))
+    except UnicodeEncodeError:
+        raise loadopts.Unstatable(f"{root}: a link target that is not UTF-8 has no "
+                                  f"canonical form") from None
+
+
+def short_build(tree: str) -> str:
+    """The build an engine names when its install record declares no
+    version: the tree digest's first 12 hex digits, no prefix (09 §9.3, a
+    backend engine)."""
+    return tree.removeprefix("sha256:")[:12]
+
+
+def environment_of(pids: Iterable[int], proc_root: Path = Path("/proc")
+                   ) -> list[dict[str, str]]:
+    """The environment each process started with (`/proc/<pid>/environ`),
+    run.sh's exports included for the program it `exec`s or starts; the
+    processes whose environment cannot be read are left out."""
+    out: list[dict[str, str]] = []
+    for pid in pids:
+        try:
+            raw = (Path(proc_root) / str(pid) / "environ").read_bytes()
+        except OSError:
+            continue
+        env: dict[str, str] = {}
+        for item in raw.split(b"\0"):
+            key, sep, value = item.partition(b"=")
+            if sep:
+                env[key.decode("utf-8", "surrogateescape")] = value.decode("utf-8",
+                                                                           "surrogateescape")
+        out.append(env)
+    return out
+
+
+def driver_libraries(directory: Path, pids: list[int], given: Mapping[str, str],
+                     proc_root: Path = Path("/proc")) -> list[Path]:
+    """The compute driver libraries the backend loads, as it was started:
+    1. ALT_DRIVERS_VARIABLE in the environment of the backend's processes,
+       read from /proc (`given`, the environment the wrapper passed, when none
+       can be read) — what run.sh exported, or what the model's `env:` set;
+    2. otherwise the driver its own `lib/` carries (BUNDLED_DRIVER_GLOB);
+    3. otherwise none, and the run's driver is read as before (dpkg).
+    Each named path must be absolute; two processes naming different ones,
+    or a `lib/` carrying two different drivers, state no run."""
+    observed = environment_of(pids, proc_root)
+    values = {e[ALT_DRIVERS_VARIABLE] for e in observed if e.get(ALT_DRIVERS_VARIABLE)}
+    if not observed and given.get(ALT_DRIVERS_VARIABLE):
+        values = {given[ALT_DRIVERS_VARIABLE]}
+    if len(values) > 1:
+        raise loadopts.Unstatable(f"the backend's processes name different drivers in "
+                                  f"{ALT_DRIVERS_VARIABLE}: {sorted(values)}")
+    if values:
+        (value,) = values
+        paths = [p.strip() for p in value.split(",") if p.strip()]
+        relative = [p for p in paths if not p.startswith("/")]
+        if relative:
+            raise loadopts.Unstatable(f"{ALT_DRIVERS_VARIABLE} names a driver by a relative "
+                                      f"path ({relative[0]!r}): which file loads is unknown")
+        return [Path(p) for p in paths]
+    carried = {os.path.realpath(p) for p in sorted((Path(directory) / "lib")
+                                                   .glob(BUNDLED_DRIVER_GLOB))}
+    if len(carried) > 1:
+        raise loadopts.Unstatable(f"{directory}/lib carries several drivers "
+                                  f"({sorted(Path(p).name for p in carried)})")
+    return [Path(p) for p in carried]
+
+
+def driver_lines(libraries: Iterable[Path], files: FileDigests) -> list[str]:
+    """`<file name> sha256:<hex>` of each driver library, the file a symbolic
+    link names: its name carries its version (libze_intel_gpu.so.1.15.39122),
+    its bytes are what loads."""
+    lines = []
+    for lib in libraries:
+        physical = Path(os.path.realpath(lib))
+        try:
+            _size, sha = files.read(physical)
+        except OSError as e:
+            raise loadopts.Unstatable(f"the driver {lib} cannot be read: {e}") from None
+        lines.append(f"{physical.name} sha256:{sha}")
+    return lines
 
 
 def runtime_lines(packages: Iterable[str], status: Path = Path("/var/lib/dpkg/status")) -> list[str]:
@@ -314,19 +515,25 @@ def load_options(pb: Any, raw: bytes) -> loadopts.Canon:
 
 
 def state_run(*, backend: RealBackend, canon: loadopts.Canon, environ: Mapping[str, str],
-              device: str, pci: str | None, weights: str, runtime: list[str],
+              device: str, pci: str | None, weights: str, tree: str, runtime: list[str],
               sys_root: Path = Path("/sys"), proc_root: Path = Path("/proc")
               ) -> tuple[str, dict[str, Any]]:
-    """(run_id, run) of 09 §9.12, from what this wrapper launched."""
+    """(run_id, run) of 09 §9.12, from what this wrapper launched: `tree` the
+    backend's tree digest read at this load, `runtime` the driver lines
+    (`driver_lines`, or dpkg's `runtime_lines` for a backend carrying none).
+    The build is the install record's declared `version`, else the tree's
+    short form (`short_build`) — never the uri's tag, which moves."""
     missing = sorted(k for k, v in canon.env.items() if environ.get(k) != v)
     if missing:
         raise loadopts.Unstatable(f"the backend does not carry the environment it was loaded "
                                   f"with: {', '.join(missing)}")
     driver = runs.driver_string(CPU if device == CPU else "card", pci=pci, sys_root=sys_root,
                                 proc_root=proc_root, runtime_lines=runtime)
-    engine = {"name": f"localai/{backend.name}", "build": backend.build, "variant": None,
-              "image": backend.image,
-              "args": [str(backend.run_sh), "--addr", f"127.0.0.1:{PORT_PLACEHOLDER}"],
+    engine = {"name": f"localai/{backend.name}",
+              "build": backend.version or short_build(tree), "variant": None,
+              "image": tree,
+              "args": [f"{BACKEND_PLACEHOLDER}/{backend.run_sh.name}", "--addr",
+                       f"127.0.0.1:{PORT_PLACEHOLDER}"],
               "env": dict(canon.env), "device": device, "options": canon.options}
     run = runs.run_object(driver=driver, engine=engine, weights=weights)
     return runs.run_id(run), run
@@ -466,11 +673,12 @@ class Gate:
                  pb: Any, *, environ: Mapping[str, str] | None = None,
                  hash_weights: Callable[[Path], str] = runs.weights_digest,
                  procfs: ProcFS | None = None, proc_root: Path = Path("/proc"),
-                 sys_root: Path = Path("/sys"), dpkg_status: Path = Path("/var/lib/dpkg/status")
-                 ) -> None:
+                 sys_root: Path = Path("/sys"), dpkg_status: Path = Path("/var/lib/dpkg/status"),
+                 files: FileDigests | None = None) -> None:
         self.cfg, self.backend, self.child, self.receipts, self.pb = cfg, backend, child, receipts, pb
         self.environ = os.environ if environ is None else environ
         self.hash_weights = hash_weights
+        self.files = files if files is not None else FileDigests()
         self.procfs = procfs or ProcFS(proc_root)
         self.proc_root, self.sys_root, self.dpkg_status = proc_root, sys_root, dpkg_status
         self.loaded: Loaded | None = None
@@ -490,30 +698,46 @@ class Gate:
                 return self._refuse_load(e)
             hashed: dict[str, Any] = {}
 
-            def hash_them() -> None:
-                try:
-                    hashed["digest"] = self.hash_weights(Path(canon.weights_path))
-                except Exception as e:               # noqa: BLE001 — said to LocalAI
-                    hashed["error"] = e
+            def hashing(key: str, compute: Callable[[], str]) -> threading.Thread:
+                def run() -> None:
+                    try:
+                        hashed[key] = compute()
+                    except Exception as e:           # noqa: BLE001 — said to LocalAI
+                        hashed[f"{key} error"] = e
+                t = threading.Thread(target=run, name=f"vega-{key}", daemon=True)
+                t.start()
+                return t
 
-            hasher = threading.Thread(target=hash_them, name="vega-weights", daemon=True)
-            hasher.start()                           # while the backend reads the same bytes
+            # both while the backend loads: the weights it reads, the tree it runs
+            hashers = {
+                "weights": hashing("weights", lambda: self.hash_weights(Path(canon.weights_path))),
+                "tree": hashing("tree", lambda: tree_digest(self.backend.directory, self.files)),
+            }
             answer = forward(raw)
             if not self.pb.Result.FromString(answer).success:
                 return answer                        # the backend's own refusal, as it said it
-            hasher.join(WEIGHTS_TIMEOUT_S)
+            deadline = time.monotonic() + WEIGHTS_TIMEOUT_S
+            for t in hashers.values():
+                t.join(max(0.0, deadline - time.monotonic()))
             try:
-                if hasher.is_alive():
-                    raise loadopts.Unstatable(f"the weights were not hashed within "
-                                              f"{WEIGHTS_TIMEOUT_S:g} s")
-                if "error" in hashed:
-                    raise loadopts.Unstatable(f"the weights cannot be hashed: {hashed['error']}")
-                device, pci = device_of(family(self.child.pid, self.proc_root), self.cfg.cards,
-                                        self.procfs)
+                for key, t in hashers.items():
+                    if t.is_alive():
+                        raise loadopts.Unstatable(f"the {key} digest was not computed within "
+                                                  f"{WEIGHTS_TIMEOUT_S:g} s")
+                    if f"{key} error" in hashed:
+                        raise loadopts.Unstatable(f"the {key} digest cannot be computed: "
+                                                  f"{hashed[f'{key} error']}")
+                pids = family(self.child.pid, self.proc_root)
+                device, pci = device_of(pids, self.cfg.cards, self.procfs)
+                runtime: list[str] = []
+                if device != CPU:
+                    libraries = driver_libraries(self.backend.directory, pids, self.environ,
+                                                 self.proc_root)
+                    runtime = (driver_lines(libraries, self.files) if libraries else
+                               runtime_lines(self.cfg.runtime_packages, self.dpkg_status))
                 run_id, run = state_run(
                     backend=self.backend, canon=canon, environ=self.environ, device=device,
-                    pci=pci, weights=hashed["digest"],
-                    runtime=runtime_lines(self.cfg.runtime_packages, self.dpkg_status),
+                    pci=pci, weights=hashed["weights"], tree=hashed["tree"], runtime=runtime,
                     sys_root=self.sys_root, proc_root=self.proc_root)
                 if not self.child.alive():
                     raise loadopts.Unstatable("the backend exited while its run was computed")
@@ -522,7 +746,9 @@ class Gate:
             self.loaded = Loaded(run_id, run, declares_pairs(canon.options.get("Options")),
                                  self.child.pid)
             log(f"{self.backend.name}: {Path(canon.weights_path).name} loaded on {device}, "
-                f"run {run_id[:23]}…")
+                f"run {run_id[:23]}…, files {hashed['tree'][:19]}… (installed from "
+                f"{self.backend.uri or 'nowhere recorded'}, the registry's digest "
+                f"{(self.backend.registry_digest or 'none')[:19]}…: informational)")
             try:
                 self.receipts.publish(run_id, run)
             except (Unavailable, ReceiptRefused) as e:

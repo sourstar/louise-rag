@@ -139,8 +139,11 @@ def test_tagged_texts_come_back_with_receipts_and_the_run_is_what_was_launched(m
     assert run["weights"] == "sha256:" + hashlib.sha256(node.weights.read_bytes()).hexdigest()
     assert run["driver"] == "cpu"
     engine = run["engine"]
-    assert engine["image"] == DIGEST and engine["name"] == "localai/fake-embed"
-    assert engine["args"] == [str(node.real_run_sh), "--addr", "127.0.0.1:${PORT}"]
+    assert engine["image"] == vw.tree_digest(node.real_run_sh.parent) != DIGEST, \
+        "the files installed, never the registry's digest"
+    assert engine["name"] == "localai/fake-embed" and engine["build"] == "v4.11.0"
+    assert engine["args"] == ["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"], \
+        "relative to the backend, whose bytes image names (09 §9.3)"
     assert engine["env"] == {"VEGA_TEST_ENV": "on"} and engine["device"] == "cpu"
     assert engine["options"]["ModelFile"] == "${WEIGHTS}"
     assert engine["options"]["ModelPath"] == "${MODELS}"
@@ -298,6 +301,26 @@ def test_load_options_the_proto_cannot_name_are_refused(make_node):
     assert node.calls("LoadModel") == [], "refused before the backend loads anything"
 
 
+def test_an_upgraded_backend_is_a_new_run_from_its_next_load(make_node):
+    """The tree is read at every load: files changed on disk make the next
+    load another run, and only the changed files are read again."""
+    node = make_node()
+    batch, r = node.embed(["before"])
+    _vectors, (first,) = node.verify(batch, r)
+    files = node.running.gate.files
+    files.reads.clear()
+    (node.real_run_sh.parent / "lib").mkdir()
+    (node.real_run_sh.parent / "lib" / "libnew.so.1").write_bytes(b"an upgrade")
+    node.models["vega-fake"].loaded = False                # LocalAI loads the model again
+    batch, r = node.embed(["after"])
+    assert r.status_code == 200, r.text
+    _vectors, (second,) = node.verify(batch, r)
+    assert second != first
+    assert node.vega_http.get(f"/vega/runs/{second}").json()["engine"]["image"] == \
+        vw.tree_digest(node.real_run_sh.parent)
+    assert files.reads == [os.path.realpath(node.real_run_sh.parent / "lib" / "libnew.so.1")]
+
+
 def test_no_vector_before_a_stated_load(make_node):
     node = make_node()
     pb = node.stubs.pb
@@ -377,8 +400,9 @@ def test_the_wrapper_starts_as_localai_starts_it_and_stops_on_sigterm(tmp_path, 
         "the real backend stopped with its wrapper"
 
 
-def test_a_backend_without_an_image_digest_refuses_to_start(tmp_path, stubs):
+def test_a_directory_that_is_no_backend_refuses_to_start(tmp_path, stubs):
     pkg = _package(tmp_path, {"name": "fake-embed", "version": "v1"})
+    (pkg.parent / "fake-embed" / "run.sh").unlink()
     proc, _port = _start(tmp_path, stubs, pkg)
     assert proc.wait(timeout=20) == 2
-    assert "no image digest" in proc.stderr.read()
+    assert "no run.sh" in proc.stderr.read()

@@ -414,7 +414,7 @@ parent, writes them from what it launched, at every load:
 | field | a backend engine's value |
 |---|---|
 | `name` | `"localai/<name>"`, `<name>` being the `name` the runner's install record (`metadata.json` in the backend's directory) gives, or the directory's name where there is no record |
-| `build` | the `version` the install record declares; where it declares none — the case on the reference node — a short form of `image`, *whose exact bytes are not fixed yet*: docs/notes/vega.md §9 says the first 12 hexadecimal digits of the tree digest, the wrapper writes `sha256:` and those 12. Never the record's `uri`, whose tag moves |
+| `build` | the `version` the install record declares; where it declares none — the case on the reference node — the first 12 hexadecimal digits of `image`'s tree digest, without its `sha256:` prefix. Never the record's `uri`, whose tag moves |
 | `variant` | `null` |
 | `image` | the **tree digest** of the backend's directory, below — never the digest the runner's gallery wrote into the install record, which is the registry's word for a tag at install time and not a digest of the bytes on disk |
 | `args` | `["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"]`: the argument vector the wrapper started the backend with, from the backend's directory, as the runner starts one; `${BACKEND}` is the backend's directory, whose bytes `image` names, so the vector is relative to it as the options are to `${MODELS}` |
