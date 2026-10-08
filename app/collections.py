@@ -49,11 +49,16 @@ class EmbedRecipe:
     recipe (invariant 1)."""
     url: str
     api: str                     # openai | ollama
-    model: str
+    model: str                   # the file's `embed_model`: the DOCUMENT side's model
     dtype: str                   # f32 | f16
     ctx: int
     dim: int | None = None       # declared width; checked against the table
     query_url: str | None = None  # bi-encoder pairs (MedCPT); None = symmetric
+    # The file's `query_model` (07 §7.8, amended 2026-10-08): the model a
+    # QUESTION is embedded with — sent as the body's `model` on the query
+    # side (`embeddings._side`), never the document model. None only on a
+    # recipe built by hand; one read from a file always names it.
+    query_model: str | None = None
     # The Codex's `space.query.instruction` (02 §2.4, 09 §9.3), prepended to
     # QUERIES only, never to documents: one model whose query side expects a
     # lead-in ("query: " for DAR-legal-it, "Instruct: …\nQuery: " for
@@ -99,6 +104,36 @@ class NoEncoder(ValueError):
     """A collection with no encoder of its own: non-compliant, never served."""
 
 
+class ModelKeys(ValueError):
+    """A collection file whose `[encoder]` or `[reranker]` does not name its
+    models as 07 §7.8 (amended 2026-10-08) says — the old `model` key, a
+    missing `embed_model`/`query_model`/`rerank_model`, or a key that is
+    not the model its model-container URL names. Refused for THAT
+    collection (`load_all` lists it in `refusals()`), never fatal."""
+
+
+#: how to fix a file still in the old shape
+MIGRATE_HINT = ("tools/migrate_model_keys.py rewrites a file in place")
+
+
+def _named_model(raw: dict, key: str, where: str) -> str:
+    value = raw.get(key)
+    if not isinstance(value, str) or not value:
+        raise ModelKeys(f"{where}: `{key}` is required and names a model (07 §7.8, "
+                        f"amended 2026-10-08), got {value!r}; {MIGRATE_HINT}")
+    return value
+
+
+def _agrees(url: str, key: str, value: str, url_key: str, where: str) -> None:
+    """A model-container URL names its model (`…/upstream/<model>`): the
+    file's key must be that model, or the file says two things."""
+    named = model_named_by(url)
+    if named is not None and named != value:
+        raise ModelKeys(f"{where}: `{key}` = {value!r} and {url_key} {url} names "
+                        f"{named!r}. On the model container the URL says which model; "
+                        f"the key must agree with it (07 §7.8, amended 2026-10-08)")
+
+
 def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
     """An [embed]-shaped TOML table -> EmbedRecipe. None for absent/not-a-
     table, so callers can say "declared or not".
@@ -118,24 +153,37 @@ def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
                 f"instruction is the space's — `space.query.instruction` in "
                 f"the Codex (02 §2.4, 09 §9.3), inside `space_id` — and "
                 f"`hold collection create` is where it is set")
-    try:
-        return EmbedRecipe(
-            url=str(raw["url"]).rstrip("/"),
-            api=str(raw.get("api", "openai")),
-            model=str(raw["model"]),
-            dtype=str(raw.get("dtype", "f16")),
-            ctx=int(raw.get("ctx", 512)),
-            dim=int(raw["dim"]) if raw.get("dim") is not None else None,
-            query_url=(str(raw["query_url"]).rstrip("/")
-                        if raw.get("query_url") else None),
-            concurrency=max(1, int(raw.get("concurrency", 1))),
-            device=(str(raw["device"]).lower()
-                    if raw.get("device") in ("gpu", "cpu", "GPU", "CPU")
-                    else None),
-        )
-    except KeyError as missing:
-        raise ValueError(f"{where}: [embed] block requires url and model "
-                          f"(missing {missing})") from None
+    if "model" in raw:
+        # No alias (operator, 2026-10-08): one `model` named the document
+        # side and the query side guessed — the guess is what sent the
+        # article encoder's name to a query endpoint (`embeddings._side`).
+        raise ModelKeys(
+            f"{where}: `model` is not a key of [encoder] since 2026-10-08 (07 §7.8): "
+            f"name `embed_model` (documents) and `query_model` (questions) — both "
+            f"the same model when one does both; {MIGRATE_HINT}")
+    if not raw.get("url"):
+        raise ValueError(f"{where}: the block requires url (missing 'url')")
+    url = str(raw["url"]).rstrip("/")
+    query_url = str(raw["query_url"]).rstrip("/") if raw.get("query_url") else None
+    embed_model = _named_model(raw, "embed_model", where)
+    query_model = _named_model(raw, "query_model", where)
+    _agrees(url, "embed_model", embed_model, "url", where)
+    _agrees(query_url or url, "query_model", query_model,
+            "query_url" if query_url else "url", where)
+    return EmbedRecipe(
+        url=url,
+        api=str(raw.get("api", "openai")),
+        model=embed_model,
+        dtype=str(raw.get("dtype", "f16")),
+        ctx=int(raw.get("ctx", 512)),
+        dim=int(raw["dim"]) if raw.get("dim") is not None else None,
+        query_url=query_url,
+        query_model=query_model,
+        concurrency=max(1, int(raw.get("concurrency", 1))),
+        device=(str(raw["device"]).lower()
+                if raw.get("device") in ("gpu", "cpu", "GPU", "CPU")
+                else None),
+    )
 
 
 @dataclass(frozen=True)
@@ -148,7 +196,9 @@ class RerankRecipe:
     "relevance_score"}]}, what llama.cpp's /v1/rerank serves."""
     url: str
     api: str = "tei"
-    model: str | None = None        # sent where the API takes one; descriptive otherwise
+    # the file's `rerank_model` (07 §7.8, amended 2026-10-08), sent as the
+    # body's `model`; None only for RERANK_URL, which names no model
+    model: str | None = None
 
 
 RERANK_APIS = ("tei", "jina")
@@ -165,8 +215,12 @@ def parse_reranker(raw: Any, *, where: str) -> RerankRecipe | None:
     if api not in RERANK_APIS:
         raise ValueError(f"{where}: [reranker] api must be one of "
                          f"{', '.join(RERANK_APIS)}, got {api!r}")
-    return RerankRecipe(url=str(raw["url"]), api=api,
-                        model=str(raw["model"]) if raw.get("model") else None)
+    if "model" in raw:
+        raise ModelKeys(f"{where}: [reranker] `model` is now `rerank_model` (07 §7.8, "
+                        f"amended 2026-10-08); {MIGRATE_HINT}")
+    model = _named_model(raw, "rerank_model", f"{where} [reranker]")
+    _agrees(str(raw["url"]), "rerank_model", model, "url", f"{where} [reranker]")
+    return RerankRecipe(url=str(raw["url"]), api=api, model=model)
 
 
 def reranker_for(collection) -> RerankRecipe | None:
@@ -638,8 +692,10 @@ def _codex_encoder(raw: Any, codex, where: str) -> EmbedRecipe | None:
                 f"{where}: [encoder] {key} = {raw[key]!r} and the Codex's space "
                 f"says {have!r}. The space is the Codex's (02 §2.4); this "
                 f"table names only where this node reaches it (07 §7.8)")
-    recipe = parse_recipe({**raw, "model": raw.get("model") or space.encoder.label or "",
-                           "dtype": space.dtype, "ctx": space.ctx, "dim": space.dim},
+    # `embed_model` and `query_model` are the FILE's (07 §7.8, amended
+    # 2026-10-08): the Codex's `space.encoder.label` used to stand in for a
+    # missing `model`, and it named the document side only
+    recipe = parse_recipe({**raw, "dtype": space.dtype, "ctx": space.ctx, "dim": space.dim},
                           where=f"{where} [encoder]")
     # The query side of the space, from the Codex and only from it: the same
     # instruction calibration and the gate prefix with (hold/calibration.py,
@@ -767,7 +823,10 @@ def load_all(*, skip_unreadable: bool = False):
         # must not be reported the same way.
         try:
             c = _load_one(p)
-        except NotConverted as e:
+        except (NotConverted, ModelKeys) as e:
+            # a POLICY refusal, like NO_ENCODER below: a file whose
+            # [encoder]/[reranker] does not name its models as 07 §7.8 says
+            # (2026-10-08) is not served, and the node keeps its others
             refused.append(Refusal(name, p, str(e)))
             continue
         except Exception as e:                          # noqa: BLE001

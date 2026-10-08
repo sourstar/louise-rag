@@ -147,10 +147,13 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
     texts = [h.get("text") or "" for h in head]
     if recipe.api == "jina":
         body = {"query": query, "documents": texts, "top_n": len(texts)}
-        if recipe.model:
-            body["model"] = recipe.model
     else:
         body = {"query": query, "texts": texts, "truncate": True}
+    if recipe.model:
+        # the file's `rerank_model` (07 §7.8, amended 2026-10-08): a runner
+        # that picks the model from the body (LocalAI) is told which; only
+        # RERANK_URL names none
+        body["model"] = recipe.model
     try:
         with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=budget_s):
             r = httpc.post(recipe.url, json=body, timeout=budget_s,

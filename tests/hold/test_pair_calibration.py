@@ -305,10 +305,11 @@ def test_create_takes_the_pairs_from_their_file_or_from_the_space_it_copies(tmp_
     root = tmp_path / "collections"
     monkeypatch.setattr(node_keys, "load_signing_key", lambda *a, **k: KEY)
     monkeypatch.setattr(louise, "_embed_for_recipe",
-                        lambda space, url: fake_query_embed if "query" in url else pair_embed)
+                        lambda space, url, model=None: fake_query_embed if "query" in url else pair_embed)
     f = tmp_path / "pairs.jsonl"
     f.write_bytes(PAIR_BYTES)
-    urls = {"encoder": "http://enc.invalid/article", "query_encoder": "http://enc.invalid/query"}
+    urls = {"encoder": "http://enc.invalid/upstream/article",
+            "query_encoder": "http://enc.invalid/upstream/query"}
     first, _ = louise.create_from(root, "gutenberg", pair_recipe(), platform_image=PLATFORM,
                                   name="first", calibration_set=str(f), **urls)
     assert cal.items(first, member_path(root / "first" / "drag", first)) == PAIRS

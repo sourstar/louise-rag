@@ -750,10 +750,15 @@ share  = false
 [encoder]                      # REQUIRED: where this node reaches the Codex's encoder
 url = "http://…"               # (+ query_url for a bi-encoder). There is no default:
                                # a file that names none is refused (System page)
+embed_model = "…"              # REQUIRED: the model documents are embedded with
+query_model = "…"              # REQUIRED: the model questions are embedded with (the same
+                               # model named twice when one does both); on a RAGE URL
+                               # (…/upstream/&lt;model&gt;) each must be the model it names
 
 [reranker]                     # optional: this node's reranker for this collection
 url = "http://…/v1/rerank"     # the full endpoint; else RERANK_URL, else none
-api = "jina"                   # jina ({query, documents}: llama.cpp) | tei ({query, texts})</pre>
+api = "jina"                   # jina ({query, documents}: llama.cpp) | tei ({query, texts})
+rerank_model = "…"             # REQUIRED with the block: the body's model</pre>
   <p class="note">
     Each collection's results are reranked by its own reranker, then fused
     by rank (05 §5.6). A reranker that is down, refuses, or exceeds

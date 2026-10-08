@@ -234,7 +234,9 @@ def three(node, tmp_path, rage):
             embed_query=opening_query, name=name, key=KEY, now=NOW)
         (cfg / f"{name}.toml").write_text(
             f'codex = "{made[name].collection_id}"\nembed = "on-demand"\n'
-            f'[encoder]\nurl = "{url}"\nquery_url = "{QUERY_URL}"\n', encoding="utf-8")
+            f'[encoder]\nurl = "{url}"\nquery_url = "{QUERY_URL}"\n'
+            f'embed_model = "{url.rsplit("/", 1)[1]}"\nquery_model = "medcpt-query"\n',
+            encoding="utf-8")
     assert made["sister"].space_id == codex.space_id
     assert made["sister"].collection_id != codex.collection_id
     loaded = {c.name: c for c in collections_mod.load_all()}

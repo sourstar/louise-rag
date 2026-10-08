@@ -18,7 +18,7 @@ def test_apply_leaves_a_file_that_names_its_encoder_as_it_is(
         isolated_config, config_dir, capsys):
     path = config_dir / "collections" / "gutenberg.toml"
     path.write_text(path.read_text(encoding="utf-8")
-                    + '[encoder]\nurl = "http://e:1"\napi = "openai"\n', encoding="utf-8")
+                    + '[encoder]\nurl = "http://e:1"\napi = "openai"\nembed_model = "m"\nquery_model = "m"\n', encoding="utf-8")
     before = path.read_text(encoding="utf-8")
     assert louise.main(["hold", "config", "apply", "gutenberg"]) == 0
     assert json.loads(capsys.readouterr().out)["applied"][0]["name"] == "gutenberg"
@@ -41,7 +41,7 @@ def test_writer_round_trips_concurrency(isolated_config, data_dir, config_dir, t
     codex = codex_collection("c", louise_root=data_dir, config_dir=config_dir)
     space = collections_mod.by_name("c").codex.space
     recipe = collections_mod.EmbedRecipe(
-        url="http://cpu:1", api="openai", model=space.encoder.label or "",
+        url="http://cpu:1", api="openai", model="m", query_model="q",
         dtype=space.dtype, ctx=space.ctx, dim=space.dim, query_url="http://cpu:2",
         concurrency=4)
     path = config_dir / "collections" / "c.toml"

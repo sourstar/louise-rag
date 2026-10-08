@@ -77,5 +77,5 @@ def test_a_real_digest_from_the_recipe_the_flag_or_the_deploy_is_what_gets_pinne
     else:
         recipe = f'[toolchain]\nplatform_image = "{IMG}"\n\n' + recipe
     # the encoder is named: a collection names its own, there is no default
-    assert _create(tmp_path, recipe, "--encoder", "http://encoder.invalid", *extra) == 0
+    assert _create(tmp_path, recipe, "--encoder", "http://encoder.invalid/upstream/m", *extra) == 0
     assert seen["platform_image"] == IMG

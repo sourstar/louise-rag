@@ -85,6 +85,19 @@ def test_tei_format_and_every_candidate_sent_whole(monkeypatch):
     out, ok = retrieval._rerank_list("q", hits, TEI, 0.4)
     assert ok and [h["book_id"] for h in out] == [2, 1, 0]
     assert calls[0]["json"]["texts"][0] == "x" * 5000, "never cut to 2,000 characters"
+    assert "model" not in calls[0]["json"], "RERANK_URL names no model: none is sent"
+
+
+@pytest.mark.parametrize("api", ["jina", "tei"])
+def test_the_request_carries_the_files_rerank_model(monkeypatch, api):
+    """07 §7.8 (amended 2026-10-08): a `[reranker]`'s `rerank_model` is the
+    body's `model` — a runner that picks the model from the body (LocalAI's
+    /v1/rerank) is told which, whatever the wire format."""
+    calls = _server(monkeypatch)
+    rr =collections_mod.RerankRecipe(url="http://localai:8080/v1/rerank", api=api,
+                                      model="bge-reranker-v2-m3")
+    retrieval._rerank_list("q", _hits("c", 3), rr, 0.4)
+    assert calls[0]["json"]["model"] == "bge-reranker-v2-m3"
 
 
 @pytest.mark.parametrize("failure", [httpx.ReadTimeout("over budget"),
@@ -123,7 +136,7 @@ def test_the_collection_file_declares_its_reranker(isolated_config, data_dir, co
     def r(table):
         codex_collection("r", louise_root=data_dir, config_dir=config_dir,
                          toml_extra="[reranker]\n" + table)
-    r('url = "http://gpu:30447/v1/rerank"\napi = "jina"\nmodel = "bge-reranker-v2-m3"\n')
+    r('url = "http://gpu:30447/v1/rerank"\napi = "jina"\nrerank_model = "bge-reranker-v2-m3"\n')
     assert collections_mod.by_name("r").reranker == JINA
     r('url = "http://x"\napi = "cohere"\n')
     with pytest.raises(ValueError, match="api must be one of"):

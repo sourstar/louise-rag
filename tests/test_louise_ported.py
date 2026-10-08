@@ -295,6 +295,10 @@ def test_config_show_labels_each_value_with_its_tier(isolated_config, capsys):
     assert v["embed_mode"]["tier"] == "files"
     recipe = collections_mod.recipe_for(c)
     assert v["encoder.url"] == {"value": recipe.url, "tier": "files"}
+    # 07 §7.8's keys (amended 2026-10-08), both sides, no `model`
+    assert v["encoder.embed_model"] == {"value": recipe.model, "tier": "files"}
+    assert v["encoder.query_model"] == {"value": recipe.query_model, "tier": "files"}
+    assert "encoder.model" not in v
     assert v["encoder.dim"] == {"value": c.codex.space.dim, "tier": "codex"}
     assert v["share"] == {"value": c.share, "tier": "files"}
     assert got["node"]["mode"]["tier"] == "state database"

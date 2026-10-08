@@ -34,7 +34,7 @@ def _env(tmp_path: Path, corpus_dir: Path) -> dict:
     from tests.conftest import codex_collection
     (tmp_path / "data").mkdir(exist_ok=True)
     codex_collection("gutenberg", louise_root=tmp_path / "data", config_dir=tmp_path / "config",
-                     corpus_dir=corpus_dir, toml_extra='\n[encoder]\nurl = "http://127.0.0.1:9"\n')
+                     corpus_dir=corpus_dir, toml_extra='\n[encoder]\nurl = "http://127.0.0.1:9"\nembed_model = "m"\nquery_model = "m"\n')
     return {
         "PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path), "PYTHONPATH": str(ROOT),
         "DATA_DIR": str(tmp_path / "data"), "CONFIG_DIR": str(tmp_path / "config"),

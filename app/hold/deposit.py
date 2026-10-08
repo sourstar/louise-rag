@@ -235,7 +235,11 @@ def write_held_file(root: Path, codex: Codex, encoder_url: str | None) -> Path:
     has none), records and vectors, EVERY deposit embedded (a deposit is
     small and is asked for as soon as it lands), never shared."""
     from . import collection as col
+    from app.louise import model_keys
     name = col.name_of(root, codex.collection_id)
+    # 07 §7.8 (amended 2026-10-08): the file names both sides' models; a
+    # deposit's encoder is symmetric, so both are the one model
+    models = model_keys(encoder_url, None, codex.space.encoder.label) if encoder_url else None
     path = held_file(root, name)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".toml.tmp")
@@ -245,7 +249,8 @@ def write_held_file(root: Path, codex: Codex, encoder_url: str | None) -> Path:
                    'embed = "all"\n'
                    "share = false\n"
                    + (f'\n[encoder]\nurl = "{encoder_url}"\napi = "openai"\n'
-                      if encoder_url else ""),
+                      f'embed_model = "{models[0]}"\nquery_model = "{models[1]}"\n'
+                      if models else ""),
                    encoding="utf-8")
     tmp.replace(path)
     return path

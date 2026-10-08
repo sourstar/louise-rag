@@ -15,7 +15,8 @@ MEDCPT_ENCODER = """\
 [encoder]
 url = "http://nas:30440"
 api = "openai"
-model = "medcpt-article"
+embed_model = "medcpt-article"
+query_model = "medcpt-query"
 query_url = "http://nas:30441"
 """
 
@@ -31,15 +32,120 @@ def test_encoder_table_parses_into_recipe(isolated_config, data_dir, config_dir)
     r = c.embed
     space = c.codex.space
     assert r.url == "http://nas:30440" and r.model == "medcpt-article"
+    assert r.query_model == "medcpt-query"
     assert r.api == "openai" and r.query_url == "http://nas:30441"
     assert (r.dtype, r.ctx, r.dim) == (space.dtype, space.ctx, space.dim) == ("f16", 512, 768)
 
 
 def test_encoder_table_requires_url(isolated_config, data_dir, config_dir):
     codex_collection("broken", louise_root=data_dir, config_dir=config_dir,
-                     toml_extra='[encoder]\nmodel = "m"\n')
-    with pytest.raises(ValueError, match="url and model"):
+                     toml_extra='[encoder]\nembed_model = "m"\nquery_model = "m"\n')
+    with pytest.raises(ValueError, match="requires url"):
         collections_mod.load_all()
+
+
+# --------------------------------------------------------------------------
+# `embed_model` / `query_model` / `rerank_model` (07 §7.8, operator 2026-10-08)
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("encoder,why", [
+    ('url = "http://enc:1"\nmodel = "m"\n', "`model` is not a key"),
+    ('url = "http://enc:1"\nmodel = "m"\nembed_model = "m"\nquery_model = "m"\n',
+     "`model` is not a key"),
+    ('url = "http://enc:1"\nquery_model = "m"\n', "`embed_model` is required"),
+    ('url = "http://enc:1"\nembed_model = "m"\n', "`query_model` is required"),
+    ('url = "http://enc:1"\nembed_model = ""\nquery_model = "m"\n', "`embed_model` is required"),
+    # a model-container URL names its model; the key must be that model
+    ('url = "http://rage:1/upstream/bge-m3"\nembed_model = "BGE-M3"\nquery_model = "bge-m3"\n',
+     "names 'bge-m3'"),
+    ('url = "http://rage:1/upstream/bge-m3"\nembed_model = "bge-m3"\nquery_model = "other"\n',
+     "`query_model` = 'other' and url"),
+    ('url = "http://rage:1/upstream/medcpt-article"\n'
+     'query_url = "http://rage:1/upstream/medcpt-query"\n'
+     'embed_model = "medcpt-article"\nquery_model = "medcpt-article"\n',
+     "`query_model` = 'medcpt-article' and query_url"),
+])
+@pytest.mark.strict_encoder
+def test_a_file_without_its_model_keys_is_refused_for_that_collection_only(
+        isolated_config, data_dir, config_dir, encoder, why):
+    """No alias for `model`, both sides required, and a key that disagrees
+    with the URL's model: refused for THAT collection, named with its reason
+    where refusals are shown; the node keeps the others (never a raise)."""
+    codex_collection("good", louise_root=data_dir, config_dir=config_dir,
+                     toml_extra='[encoder]\nurl = "http://rage:1/upstream/bge-m3"\n'
+                                'embed_model = "bge-m3"\nquery_model = "bge-m3"\n')
+    codex_collection("old", louise_root=data_dir, config_dir=config_dir,
+                     toml_extra="[encoder]\n" + encoder)
+    served = {c.name for c in collections_mod.load_all()}
+    assert "good" in served and "old" not in served
+    refused = {r.name: r.reason for r in collections_mod.refusals()}
+    assert why in refused["old"], refused["old"]
+    # the worker's loader says the same, and serves the rest
+    served, unreadable = collections_mod.load_all(skip_unreadable=True)
+    assert "good" in {c.name for c in served} and unreadable == []
+    # and `hold config show` names it with its reason
+    from app import effective_config
+    shown = {r["name"]: r["reason"] for r in effective_config.show()["refused"]}
+    assert why in shown["old"]
+
+
+@pytest.mark.parametrize("reranker,why", [
+    ('url = "http://rr:1/v1/rerank"\napi = "jina"\nmodel = "bge-reranker"\n', "now `rerank_model`"),
+    ('url = "http://rr:1/v1/rerank"\napi = "jina"\n', "`rerank_model` is required"),
+    ('url = "http://rage:1/upstream/bge-reranker/v1/rerank"\napi = "jina"\n'
+     'rerank_model = "medcpt-rerank"\n', "names 'bge-reranker'"),
+])
+def test_a_reranker_without_its_model_key_is_refused_for_that_collection(
+        isolated_config, data_dir, config_dir, reranker, why):
+    codex_collection("rr", louise_root=data_dir, config_dir=config_dir,
+                     toml_extra="[reranker]\n" + reranker)
+    assert "rr" not in {c.name for c in collections_mod.load_all()}
+    assert why in {r.name: r.reason for r in collections_mod.refusals()}["rr"]
+
+
+def test_the_model_keys_agree_with_a_rage_url_and_load(isolated_config, data_dir, config_dir):
+    codex_collection("rage", louise_root=data_dir, config_dir=config_dir,
+                     toml_extra='[encoder]\nurl = "http://rage:1/upstream/medcpt-article"\n'
+                                'query_url = "http://rage:1/upstream/medcpt-query"\n'
+                                'embed_model = "medcpt-article"\nquery_model = "medcpt-query"\n'
+                                '[reranker]\nurl = "http://rage:1/upstream/medcpt-rerank/v1/rerank"\n'
+                                'api = "jina"\nrerank_model = "medcpt-rerank"\n')
+    c = collections_mod.by_name("rage")
+    assert (c.embed.model, c.embed.query_model) == ("medcpt-article", "medcpt-query")
+    assert c.reranker.model == "medcpt-rerank"
+
+
+def test_localai_one_url_two_models_each_side_sends_its_own(isolated_config, monkeypatch,
+                                                            data_dir, config_dir):
+    """A URL that names no model (LocalAI's /v1/embeddings) is told the
+    model in the body: documents `embed_model`, questions `query_model` —
+    never the other side's."""
+    codex_collection("localai", louise_root=data_dir, config_dir=config_dir,
+                     toml_extra='[encoder]\nurl = "http://localai:8080"\n'
+                                'embed_model = "qwen3-embedding-4b"\n'
+                                'query_model = "qwen3-embedding-4b-query"\n')
+    recipe = collections_mod.by_name("localai").embed
+    calls = _capture_posts(monkeypatch)
+    embeddings._embed_texts(["a document"], recipe=recipe)
+    embeddings._embed_texts(["a question"], recipe=recipe, query=True)
+    embeddings._embed_one_at_a_time(["another question"], recipe=recipe, query=True)
+    assert [c["url"] for c in calls] == ["http://localai:8080/v1/embeddings"] * 3
+    assert [c["json"]["model"] for c in calls] == [
+        "qwen3-embedding-4b", "qwen3-embedding-4b-query", "qwen3-embedding-4b-query"]
+
+
+def test_a_separate_query_endpoint_sends_query_model(isolated_config, monkeypatch):
+    calls = _capture_posts(monkeypatch)
+    recipe = collections_mod.EmbedRecipe(
+        url="http://article:1", api="openai", model="medcpt-article", dtype="f16", ctx=512,
+        query_url="http://query:2", query_model="medcpt-query")
+    embeddings._embed_texts(["q"], recipe=recipe, query=True)
+    assert calls[0]["url"] == "http://query:2/v1/embeddings"
+    assert calls[0]["json"]["model"] == "medcpt-query"
+    # _side is idempotent: the query side asked twice is still the query side
+    side = embeddings._side(embeddings._side(recipe, True), True)
+    assert (side.url, side.model) == ("http://query:2", "medcpt-query")
+    assert embeddings._side(recipe, False) is recipe
 
 
 def test_no_collection_named_means_the_default_collections_own(isolated_config):
@@ -394,7 +500,8 @@ def test_a_node_file_cannot_state_a_query_instruction(key):
     told to write one. Refused, not ignored: ignored, it would look set."""
     with pytest.raises(ValueError, match="not a node's to state"):
         collections_mod.parse_recipe(
-            {"url": "http://rage:30437", "model": "dar-legal-it", key: "query: "},
+            {"url": "http://rage:30437", "embed_model": "dar-legal-it",
+             "query_model": "dar-legal-it", key: "query: "},
             where="normattiva.toml")
 
 

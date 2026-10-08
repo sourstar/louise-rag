@@ -357,11 +357,23 @@ def _side(recipe: "collections_mod.EmbedRecipe", query: bool) -> "collections_mo
     endpoint that needs a name refuses rather than guessing the wrong one.
 
     Every other field is carried as it is (`replace`): a field rebuilt by
-    hand and forgotten is a field silently dropped."""
-    if not (query and recipe.query_url):
+    hand and forgotten is a field silently dropped.
+
+    SINCE 2026-10-08 THE FILE NAMES BOTH SIDES (07 §7.8): `query_model` is
+    what a question is embedded with — on the query URL when there is one,
+    and on the document URL otherwise (LocalAI picks the model from the
+    body, so one URL can serve two models). The loader holds it equal to
+    the model a model-container URL names. A recipe built by hand without
+    one keeps the old rule: the query URL's own model, else none."""
+    if not query:
         return recipe
-    return replace(recipe, url=recipe.query_url, query_url=None,
-                   model=collections_mod.model_named_by(recipe.query_url) or "")
+    if recipe.query_url:
+        model = recipe.query_model or collections_mod.model_named_by(recipe.query_url) or ""
+        return replace(recipe, url=recipe.query_url, query_url=None,
+                       model=model, query_model=model)
+    if recipe.query_model is not None and recipe.query_model != recipe.model:
+        return replace(recipe, model=recipe.query_model)
+    return recipe
 
 
 def _asked(texts: list[str], recipe: "collections_mod.EmbedRecipe",

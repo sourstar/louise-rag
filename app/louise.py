@@ -311,6 +311,12 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                     f"{member.name}: pass the set's file, --calibration-set FILE")
             pairs = cal.read_pairs(member, expect=source.space.calibration.set)
 
+    # The file's `embed_model` / `query_model` (07 §7.8, amended 2026-10-08),
+    # decided BEFORE anything is created: a query endpoint that names no
+    # model is refused here, not after the Codex exists
+    models = (model_keys(encoder, query_encoder,
+                         (recipe["space"].get("encoder") or {}).get("label") or "")
+              if encoder else (None, None))
     credits = tpl.expand_archives(recipe.get("archives") or ())
     # The creator's key: 09 Â§9.12 makes the calibration member's `key`
     # header required and Â§9.4 lists its signature among a snapshot's files
@@ -323,8 +329,10 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                                    # `--name` reached this far and stopped here until 2026-10-07:
                                    # the first certified collection came up as gutenberg-<12 hex>
                                    name=name,
-                                   embed=_embed_for_recipe(recipe["space"], encoder),
-                                   embed_query=(_embed_for_recipe(recipe["space"], query_encoder)
+                                   embed=_embed_for_recipe(recipe["space"], encoder, models[0]),
+                                   # the query side asked with ITS model, never the label
+                                   embed_query=(_embed_for_recipe(recipe["space"], query_encoder,
+                                                                  models[1])
                                                 if query_encoder else None),
                                    space_version=source.version if space_from else None,
                                    credits=credits, pairs=pairs)
@@ -337,6 +345,32 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
               f"space_id â but the two builds are not the same build.",
               file=sys.stderr)
     return codex, _write_held_file(root, codex, encoder, query_encoder)
+
+
+def model_keys(encoder: str, query_encoder: str | None, label: str) -> tuple[str, str]:
+    """(`embed_model`, `query_model`) for a file `create` writes (07 §7.8,
+    amended 2026-10-08): the model a model-container URL names
+    (`…/upstream/<model>`), else — a URL that names none — the space's
+    encoder label, the name the calibration set was asked with. The query
+    side of a symmetric encoder is the document model; a separate query
+    endpoint must name its own model, because the label names the document
+    side and sending it to the query endpoint is the wrong side's name."""
+    from app import collections as collections_mod
+    embed_model = collections_mod.model_named_by(encoder) or label
+    if not embed_model:
+        raise CodexError(
+            f"--encoder {encoder} names no model (…/upstream/<model>) and the space's "
+            f"encoder has no label: the collection file must name `embed_model` "
+            f"(07 §7.8), and there is nothing to name it with")
+    if not query_encoder:
+        return embed_model, embed_model
+    query_model = collections_mod.model_named_by(query_encoder)
+    if not query_model:
+        raise CodexError(
+            f"--query-encoder {query_encoder} names no model (…/upstream/<model>): the "
+            f"collection file must name `query_model` (07 §7.8, amended 2026-10-08), "
+            f"and the space's label names the document side, never the query's")
+    return embed_model, query_model
 
 
 def _write_held_file(root, codex, encoder: str | None = None,
@@ -374,6 +408,9 @@ def _write_held_file(root, codex, encoder: str | None = None,
             f"{path} holds {held or 'no codex'} and this is "
             f"{codex.collection_id}: a name holds one collection for its "
             f"life, and another collection is another name (07 §7.8)")
+    if encoder:
+        embed_model, query_model = model_keys(encoder, query_encoder,
+                                              codex.space.encoder.label)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".toml.tmp")
     tmp.write_text(f'codex = "{codex.collection_id}"\n'
@@ -387,6 +424,7 @@ def _write_held_file(root, codex, encoder: str | None = None,
                    + (f'\n[encoder]\nurl = "{encoder}"\napi = "openai"\n'
                       # a bi-encoder's query side, where the collection has one
                       + (f'query_url = "{query_encoder}"\n' if query_encoder else "")
+                      + f'embed_model = "{embed_model}"\nquery_model = "{query_model}"\n'
                       if encoder else ""),
                    encoding="utf-8")
     tmp.replace(path)
@@ -417,7 +455,7 @@ NO_ENCODER = (
     "can ever join")
 
 
-def _embed_for_recipe(space: dict, url: str | None):
+def _embed_for_recipe(space: dict, url: str | None, model: str | None = None):
     """The encoder `create` embeds the calibration set with (06 Â§6.6).
 
     There is no Codex yet â the two hashes this produces are Codex
@@ -433,8 +471,11 @@ def _embed_for_recipe(space: dict, url: str | None):
     if not url:
         raise CodexError(NO_ENCODER)
     enc = space.get("encoder") or {}
+    # `model`: the side's model as the file will name it (`model_keys`);
+    # a caller that gives none (a deposit) asks with the URL's, else the label
     recipe = collections_mod.EmbedRecipe(
-        url=url, api="openai", model=enc.get("label") or "",
+        url=url, api="openai",
+        model=model or collections_mod.model_named_by(url) or enc.get("label") or "",
         dtype=space["dtype"], ctx=space["ctx"], dim=space["dim"])
 
     def embed(texts):

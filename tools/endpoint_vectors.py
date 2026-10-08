@@ -73,7 +73,10 @@ def _is_dna(collection) -> bool:
 
 
 def _sides(recipe) -> list[str]:
-    return list(SIDES) if recipe.query_url else ["document"]
+    # a separate query endpoint, or one endpoint asked for two models
+    # (`query_model`, 07 §7.8 amended 2026-10-08): two sides to record
+    two = recipe.query_url or (getattr(recipe, "query_model", None) or recipe.model) != recipe.model
+    return list(SIDES) if two else ["document"]
 
 
 def _paths(out: Path, name: str, side: str) -> tuple[Path, Path]:
@@ -101,7 +104,7 @@ def record(out: Path, names: list[str], spread: int) -> int:
     for collection in _selected(names):
         recipe = collections_mod.recipe_for(collection)
         for side in _sides(recipe):
-            url = recipe.query_url if side == "query" else recipe.url
+            url = (recipe.query_url or recipe.url) if side == "query" else recipe.url
             t0 = time.monotonic()
             try:
                 vectors = embeddings.embed_calibration(
@@ -115,7 +118,8 @@ def record(out: Path, names: list[str], spread: int) -> int:
             tensor, sidecar = _paths(out, collection.name, side)
             save_file({"vectors": np.asarray(vectors, dtype="<f4")}, str(tensor))
             meta = {"collection": collection.name, "side": side, "url": url,
-                    "api": recipe.api, "model": recipe.model, "ctx": recipe.ctx,
+                    "api": recipe.api, "ctx": recipe.ctx,
+                    "model": embeddings._side(recipe, side == "query").model,
                     "set": set_id, "indices": picked,
                     "fingerprint": fingerprint.of(vectors[:fingerprint.COUNT]),
                     "dim": len(vectors[0]), "seconds": round(time.monotonic() - t0, 1),
@@ -156,7 +160,7 @@ def compare(against: Path, names: list[str], urls: dict[str, str],
             if key in urls:
                 field = "query_url" if side == "query" else "url"
                 now = dataclasses.replace(recipe, **{field: urls[key].rstrip("/")})
-            url = now.query_url if side == "query" else now.url
+            url = (now.query_url or now.url) if side == "query" else now.url
             try:
                 vectors = embeddings.embed_calibration(
                     now, [texts[i] for i in meta["indices"]], query=side == "query",

@@ -139,7 +139,7 @@ def test_the_encoder_table_names_an_endpoint_not_a_space(node):
     _, make, load = node
     cx = make()
     head = (f'codex = "{cx.collection_id}"\nslices = "all"\n\n'
-            '[encoder]\nurl = "http://enc:8080"\n')
+            '[encoder]\nurl = "http://enc:8080"\nembed_model = "m"\nquery_model = "m"\n')
     r = collections_mod.recipe_for(load(head)[1])
     assert (r.url, r.dtype, r.ctx, r.dim) == \
         ("http://enc:8080", cx.space.dtype, cx.space.ctx, cx.space.dim)
@@ -204,7 +204,7 @@ def test_the_new_shape_survives_a_rewrite(node):
     text = (f'codex = "{cx.collection_id}"\ntitle = "Gutenberg, plates"\n'
             'slices = "all"\nkinds = ["records"]\nembed = "on-demand"\n'
             'share = true\n\n[encoder]\nurl = "http://enc:8080"\n'
-            'query_url = "http://enc:8081"\n')
+            'query_url = "http://enc:8081"\nembed_model = "m"\nquery_model = "q"\n')
     path, before = load(text)
     rewrite(path, before)
     assert path.read_text(encoding="utf-8") == text
@@ -237,6 +237,32 @@ def test_a_create_in_another_root_writes_beside_its_drags(tmp_path, isolated_con
     cx = col.create_from_recipe(scratch, "gutenberg", recipe(), platform_image=PLATFORM,
                                 embed=fake_embed, embed_query=fake_query_embed, name="gutenberg", key=KEY, now=NOW)
     assert louise._write_held_file(scratch, cx) == scratch / "gutenberg.toml"
+
+
+def test_create_names_both_sides_models(node):
+    """07 §7.8 (amended 2026-10-08): the file `create` writes names
+    `embed_model` and `query_model` — each URL's own model on the model
+    container — and loads back as the node reads it."""
+    root, make, _ = node
+    cx = make()
+    held = louise._write_held_file(root / "collections", cx,
+                                   "http://rage:1/upstream/medcpt-article",
+                                   "http://rage:1/upstream/medcpt-query")
+    text = held.read_text(encoding="utf-8")
+    assert 'embed_model = "medcpt-article"\nquery_model = "medcpt-query"\n' in text
+    c = collections_mod._load_one(held)
+    assert (c.embed.model, c.embed.query_model) == ("medcpt-article", "medcpt-query")
+
+
+def test_create_model_keys_where_a_url_names_none():
+    # symmetric, a URL naming no model: the space's label, both sides
+    assert louise.model_keys("http://localai:8080", None, "MedCPT") == ("MedCPT", "MedCPT")
+    assert louise.model_keys("http://rage:1/upstream/bge-m3", None, "BGE") == ("bge-m3", "bge-m3")
+    # a separate query endpoint must name its model: the label is the document side's
+    with pytest.raises(CodexError, match="--query-encoder .* names no model"):
+        louise.model_keys("http://rage:1/upstream/a", "http://query:2", "MedCPT")
+    with pytest.raises(CodexError, match="no label"):
+        louise.model_keys("http://localai:8080", None, "")
 
 
 # ---- the two derivations ---------------------------------------------------

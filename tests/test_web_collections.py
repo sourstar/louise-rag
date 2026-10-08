@@ -198,7 +198,7 @@ def test_grow_run_declares_the_profile_and_preserves_the_whole_toml(client):
     toml_path = collections_mod.config_toml_path("gutenberg")
     toml_path.write_text(toml_path.read_text(encoding="utf-8")
                          + 'embed = "all"\n\n[encoder]\nurl = "http://enc:1"\n'
-                           'query_url = "http://enc:2"\n', encoding="utf-8")
+                           'query_url = "http://enc:2"\nembed_model = "m"\nquery_model = "q"\n', encoding="utf-8")
     before = collections_mod.by_name("gutenberg")
 
     r = client.post("/admin/library/gutenberg/grow/run", json={"profile": everything})

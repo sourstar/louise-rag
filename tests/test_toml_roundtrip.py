@@ -88,10 +88,10 @@ def codex_loaded(tmp_path, isolated_config, monkeypatch):
         '\n[encoder]\n'
         # the space's own values (tests/hold/test_template.py's recipe):
         # still accepted where they agree with the Codex, never written back
-        'url = "http://enc:8080"\napi = "openai"\nmodel = "m"\n'
+        'url = "http://enc:8080"\napi = "openai"\nembed_model = "m"\nquery_model = "m"\n'
         'dtype = "f16"\nctx = 512\ndim = 768\n'
         '\n[reranker]\nurl = "http://rr:30447/v1/rerank"\napi = "jina"\n'
-        'model = "bge-reranker-v2-m3"\n', encoding="utf-8")
+        'rerank_model = "bge-reranker-v2-m3"\n', encoding="utf-8")
 
     monkeypatch.setenv("LOUISE_ROOT", str(root))
     monkeypatch.setenv("CONFIG_DIR", str(cfg))
@@ -110,7 +110,7 @@ def origin_loaded(codex_loaded):
         'acquire_enabled = true\n'
         'extras = ["epub"]\n'
         'corpus_dir = "/corpus"\n'
-        '\n[encoder]\nurl = "http://enc:8080"\napi = "openai"\n', encoding="utf-8")
+        '\n[encoder]\nurl = "http://enc:8080"\napi = "openai"\nembed_model = "m"\nquery_model = "m"\n', encoding="utf-8")
     return path, collections_mod._load_one(path), cx
 
 

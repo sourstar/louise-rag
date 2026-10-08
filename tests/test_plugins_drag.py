@@ -93,7 +93,7 @@ def test_the_collection_file_s_source_key_makes_the_switch(tmp_path, monkeypatch
     name = col.name_of(root, codex.collection_id)
     toml = tmp_path / "louise" / "collections" / f"{name}.toml"
     toml.write_text(f'codex = "{codex.collection_id}"\nslices = []\nkinds = ["records"]\nembed = "off"\n'
-                    f'share = false\nsource = "drag"\n[encoder]\nurl = "http://e"\n', encoding="utf-8")
+                    f'share = false\nsource = "drag"\n[encoder]\nurl = "http://e"\nembed_model = "m"\nquery_model = "m"\n', encoding="utf-8")
     c = collections_mod._load_one(toml)
     assert c.source == "drag" and c.corpus_dir == root / name / "drag"
     assert isinstance(c.plugin_instance(), drag.DragSource) and c.plugin_instance().source_id == "pubmed"
@@ -150,7 +150,7 @@ def test_a_fetched_collection_is_scanned_and_cut_from_its_shards(tmp_path, monke
     pack_records.write_shard(d / "records/year=2020/00001.jsonl.zst", RECORDS)
     toml = tmp_path / "louise" / "collections" / f"{name}.toml"
     toml.write_text(f'codex = "{codex.collection_id}"\nslices = "all"\nkinds = ["records"]\nembed = "off"\n'
-                    f'share = false\nsource = "drag"\n[encoder]\nurl = "http://e"\n', encoding="utf-8")
+                    f'share = false\nsource = "drag"\n[encoder]\nurl = "http://e"\nembed_model = "m"\nquery_model = "m"\n', encoding="utf-8")
     c = collections_mod._load_one(toml)
     con = db.connect(c)
     try:
@@ -187,7 +187,7 @@ def test_a_fetched_collection_never_acquires_from_the_origin(tmp_path, monkeypat
     name = col.name_of(root, codex.collection_id)
     toml = root / f"{name}.toml"
     base = (f'codex = "{codex.collection_id}"\nslices = "all"\nkinds = ["records", "vectors"]\nembed = "off"\n'
-            f'share = false\n%s[encoder]\nurl = "http://e"\n')
+            f'share = false\n%s[encoder]\nurl = "http://e"\nembed_model = "m"\nquery_model = "m"\n')
     toml.write_text(base % "", encoding="utf-8")
     assert collections_mod._load_one(toml).acquire_enabled, "an origin-sourced file holding everything acquires"
     toml.write_text(base % 'source = "drag"\n', encoding="utf-8")

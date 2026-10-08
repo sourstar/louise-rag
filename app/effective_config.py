@@ -55,7 +55,8 @@ def _encoder(collection) -> dict[str, Any]:
     except collections_mod.NoEncoder as e:
         return {"encoder": _v(None, FILES, note=str(e))}
     return {"encoder.url": _v(r.url, FILES), "encoder.api": _v(r.api, FILES),
-            "encoder.model": _v(r.model, FILES), "encoder.query_url": _v(r.query_url, FILES),
+            "encoder.embed_model": _v(r.model, FILES), "encoder.query_url": _v(r.query_url, FILES),
+            "encoder.query_model": _v(r.query_model, FILES),
             "encoder.dtype": _v(r.dtype, CODEX), "encoder.ctx": _v(r.ctx, CODEX),
             "encoder.dim": _v(r.dim, CODEX),
             "encoder.query_instruction": _v(r.query_instruction, CODEX)}
@@ -67,7 +68,7 @@ def _reranker(collection) -> dict[str, Any]:
     if r is None:
         return _v(None, None, note="no [reranker] and no RERANK_URL: lists keep their fused order")
     tier = FILES if getattr(collection, "reranker", None) is not None else ENV
-    return _v({"url": r.url, "api": r.api, "model": r.model}, tier)
+    return _v({"url": r.url, "api": r.api, "rerank_model": r.model}, tier)
 
 
 def of(collection) -> dict[str, Any]:

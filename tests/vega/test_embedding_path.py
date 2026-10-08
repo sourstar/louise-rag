@@ -370,7 +370,7 @@ def node(tmp_path, monkeypatch, localai):
     cfg.mkdir(parents=True)
     (cfg / "gutenberg.toml").write_text(
         f'codex = "{codex.collection_id}"\nembed = "on-demand"\n'
-        f'[encoder]\nurl = "{LOCALAI}"\napi = "vega"\nmodel = "{MODEL}"\n', encoding="utf-8")
+        f'[encoder]\nurl = "{LOCALAI}"\napi = "vega"\nembed_model = "{MODEL}"\nquery_model = "{MODEL}"\n', encoding="utf-8")
     monkeypatch.setenv("LOUISE_ROOT", str(root))
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setattr(collections_mod.config, "DATA_DIR", root)

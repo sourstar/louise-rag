@@ -31,16 +31,16 @@ def client(tmp_path, isolated_config, monkeypatch):
     monkeypatch.setattr(node_keys, "load_signing_key", lambda: KEY)
     # the calibration set is embedded by the recipe's encoder; offline, the
     # hold fixtures' deterministic stand-in (tests/hold/conftest.py)
-    monkeypatch.setattr(louise, "_embed_for_recipe", lambda space, url=None: fake_embed)
+    monkeypatch.setattr(louise, "_embed_for_recipe", lambda space, url=None, model=None: fake_embed)
     with TestClient(app) as c:
         c.headers["X-Admin-Token"] = "sekrit"
         yield c
 
 
-ENC = "http://enc:8080"
+ENC = "http://rage:8080/upstream/medcpt-article"
 #: the shared test recipe is a bi-encoder space (09 §9.3's worked example), so
 #: `create` needs the query side's endpoint too
-QENC = "http://enc:8081"
+QENC = "http://rage:8080/upstream/medcpt-query"
 _REAL_EMBED_FOR_RECIPE = louise._embed_for_recipe
 
 
@@ -102,6 +102,24 @@ def test_a_refusal_is_409_names_its_rule_and_writes_nothing(client, monkeypatch)
     assert bad.status_code == 409 and "not TOML" in bad.json()["detail"]
     assert client.post(ROUTE, json={"plugin": "nope", "recipe": {}}).status_code == 409
     assert not collections_mod.config_toml_path("gutenberg").exists()
+
+
+def test_a_query_encoder_naming_no_model_is_refused_at_once(client):
+    """07 §7.8 (amended 2026-10-08): the file names `query_model`, and a
+    query endpoint whose URL names none leaves only the document side's
+    label to write — the wrong side's name. Refused before any work."""
+    r = client.post(ROUTE, json={"plugin": "gutenberg", "recipe": recipe(),
+                                 "encoder": ENC, "query_encoder": "http://enc:8081"})
+    assert r.status_code == 409 and "query_model" in r.json()["detail"]
+    assert not collections_mod.config_toml_path("gutenberg").exists()
+
+
+def test_the_file_names_both_models(client):
+    j = created(client, {"plugin": "gutenberg", "recipe": recipe(),
+                         "encoder": ENC, "query_encoder": QENC})
+    held = tomllib.loads(open(j["result"]["held"], encoding="utf-8").read())
+    assert (held["encoder"]["embed_model"], held["encoder"]["query_model"]) == \
+        ("medcpt-article", "medcpt-query")
 
 
 def test_the_librarys_form_is_this_route(client):

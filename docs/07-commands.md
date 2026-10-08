@@ -119,7 +119,7 @@ louise hold
                                                                        over the calibration set: run BEFORE `collection create`, its output being the recipe's `space.tolerance`
                                                                        (JSON: per-encoder cosines, and `tolerance` — the worst cosine minus three standard
                                                                        deviations, rounded down to six places). Each file also names its endpoint as an
-                                                                       `[encoder]` block does (§7.8): top-level `url`, with `api` and `model` where needed;
+                                                                       `[encoder]` block does (§7.8): top-level `url`, with `api` and `model` (the body's model, one side: an `[encoder]`'s `embed_model`) where needed;
                                                                        `--engine`'s may omit `weights`. `--ctx` is the space's, the texts cut as the gate cuts
                                                                        them; `--set` defaults to the platform's text set. Exit 3 when an endpoint is unreachable
                                                                        (amended 2026-10-08: the endpoint and `--ctx` were unstated). `--pairs` is a pair space's
@@ -975,13 +975,23 @@ source = "origin"                              # origin | drag: where the docume
                                                # states the run, device included, with every answer (03 §3.3)
 url = "http://nas:30450/upstream/medcpt-article"
 query_url = "http://nas:30450/upstream/medcpt-query"   # a bi-encoder's query side; absent when symmetric
+embed_model = "medcpt-article"                 # required: the model documents are embedded with
+query_model = "medcpt-query"                   # required: the model questions are embedded with; one model doing both
+                                               # is named twice. Where the URL names a model (`…/upstream/<model>`) the
+                                               # key is that model, else the file is refused; where it names none
+                                               # (LocalAI's /v1/embeddings, vega) the key is the request body's `model`,
+                                               # each side its own (amended 2026-10-08: one `model` key named the
+                                               # document side only; no alias, an old file is refused until
+                                               # tools/migrate_model_keys.py rewrites it)
 api = "openai"                                 # openai (default) · ollama · vega: LocalAI's /v1/embeddings with a `vega-` model
-                                               # and `model = "vega-…"`; every vector, a query's too, taken only with its VeGa
+                                               # named by `embed_model`/`query_model`; every vector, a query's too, taken only with its VeGa
                                                # receipt, whose run is the answer's (amended 2026-10-08, docs/notes/vega.md)
 
 [reranker]                                     # optional (05 §5.6): this node's reranker for this collection
 url = "http://nas:30447/v1/rerank"             # the full endpoint
 api = "jina"                                   # jina: {query, documents} (llama.cpp's /v1/rerank) · tei: {query, texts}
+rerank_model = "bge-reranker-v2-m3"            # required with the block: the request body's `model`; equal to the model
+                                               # a `…/upstream/<model>` URL names (amended 2026-10-08)
 
 [[sources]]                                    # a deposit collection only (06 §6.7): one per subscribed URL
 url = "https://example.org/sitemap.xml"
@@ -991,7 +1001,13 @@ interval = 60                                  # minutes
 The encoder endpoint is the collection's `[encoder]` and nothing else: a
 node has no default encoder, and a file that names none is refused
 (operator, 2026-09-18). `hold collection create` writes the endpoint it
-was given (`--encoder`) into the file it creates. The reranker resolves
+was given (`--encoder`) into the file it creates, with `embed_model` and
+`query_model`: the model each URL names, else the space's encoder label
+for a symmetric encoder; a `--query-encoder` whose URL names no model is
+refused before anything is created (amended 2026-10-08). A file whose
+`[encoder]` or `[reranker]` lacks its model keys, still has `model`, or
+names a model its URL does not is refused for that collection, its
+reason where refusals are shown; the node keeps the others. The reranker resolves
 the collection's `[reranker]`, then `RERANK_URL`; with neither, the list
 keeps its fused order and says so (05 §5.6). `embed
 = on-demand` computes vectors lazily, for the chunks a search needs; a

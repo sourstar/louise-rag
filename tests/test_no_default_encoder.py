@@ -22,7 +22,7 @@ pytestmark = pytest.mark.strict_encoder
 
 #: where this node reaches the Codex's encoder (07 §7.8); the model and the
 #: space are the Codex's
-NAMED = '[encoder]\nurl = "http://enc:8080"\napi = "openai"\n'
+NAMED = '[encoder]\nurl = "http://enc:8080"\napi = "openai"\nembed_model = "m"\nquery_model = "m"\n'
 
 
 def _named_and_bare(data_dir, config_dir):
@@ -105,8 +105,10 @@ def test_the_system_page_lists_what_was_refused(isolated_config, data_dir, confi
 # ---- what survives of the old parser tests --------------------------------
 
 def test_one_parser_for_every_encoder_table():
-    with pytest.raises(ValueError, match="requires url and model"):
+    with pytest.raises(collections_mod.ModelKeys, match="`embed_model` is required"):
         collections_mod.parse_recipe({"url": "http://x"}, where="x")
+    with pytest.raises(ValueError, match="requires url"):
+        collections_mod.parse_recipe({"embed_model": "m", "query_model": "m"}, where="x")
     assert collections_mod.parse_recipe(None, where="x") is None
     assert collections_mod.parse_recipe("not a table", where="x") is None
 

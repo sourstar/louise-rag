@@ -117,9 +117,9 @@ def test_embed_mode_names_the_processor_it_spends(client, isolated_config,
     nothing on the contended GPU, and the card said otherwise."""
     root = isolated_config.DATA_DIR
     codex_collection("gpuone", louise_root=root, config_dir=config_dir,
-                     toml_extra='\n[encoder]\nurl = "http://gpu:1"\n')
+                     toml_extra='\n[encoder]\nurl = "http://gpu:1"\nembed_model = "m"\nquery_model = "m"\n')
     codex_collection("cputwo", louise_root=root, config_dir=config_dir,
-                     toml_extra='\n[encoder]\nurl = "http://tei:2"\nconcurrency = 4\n')
+                     toml_extra='\n[encoder]\nurl = "http://tei:2"\nembed_model = "m"\nquery_model = "m"\nconcurrency = 4\n')
 
     import re
     page = re.sub(r"\s+", " ", client.get("/admin/library").text)
@@ -135,7 +135,7 @@ def test_device_can_be_declared_explicitly(isolated_config, config_dir):
     CPU encoder run serially must still be labelled CPU."""
     from app import collections as cm
     codex_collection("serialcpu", louise_root=isolated_config.DATA_DIR, config_dir=config_dir,
-                     toml_extra='\n[encoder]\nurl = "http://tei:2"\ndevice = "cpu"\n')
+                     toml_extra='\n[encoder]\nurl = "http://tei:2"\nembed_model = "m"\nquery_model = "m"\ndevice = "cpu"\n')
     c = [x for x in cm.load_all() if x.name == "serialcpu"][0]
     assert c.embed.concurrency == 1 and c.embed.spends == "cpu"
     # and the inference still applies when nothing is declared

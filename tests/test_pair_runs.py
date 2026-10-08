@@ -73,7 +73,8 @@ def node(tmp_path, monkeypatch, rage):
     cfg.mkdir(parents=True)
     (cfg / "pairs.toml").write_text(
         f'codex = "{codex.collection_id}"\nembed = "on-demand"\n'
-        f'[encoder]\nurl = "{DOC_URL}"\nquery_url = "{QUERY_URL}"\n', encoding="utf-8")
+        f'[encoder]\nurl = "{DOC_URL}"\nquery_url = "{QUERY_URL}"\n'
+        'embed_model = "medcpt-article"\nquery_model = "medcpt-query"\n', encoding="utf-8")
     monkeypatch.setenv("LOUISE_ROOT", str(root))
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setattr(collections_mod.config, "DATA_DIR", root)

@@ -302,6 +302,11 @@ def hold_collection_create(body: HoldCreateBody):
         louise.preflight_create(recipe, body.platform_image)
         if not body.encoder:
             raise CodexError(louise.NO_ENCODER)
+        # the file's model keys (07 §7.8, amended 2026-10-08), refused at
+        # once — a query endpoint naming no model is a refusal that needs
+        # no work. Only the query side here: the document side may need the
+        # space's label, which `--space-from` gives only to the job itself
+        louise.model_keys(body.encoder, body.query_encoder, "(checked by create)")
     except CodexError as e:
         raise HTTPException(409, str(e)) from None
     cli = f"louise hold collection create {body.plugin} --recipe FILE --encoder {body.encoder}"

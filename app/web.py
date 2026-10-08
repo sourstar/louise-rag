@@ -2159,8 +2159,10 @@ def _write_codex_toml(path: Path, *, codex: str, profile: str | None,
         # and a file that states one is refused (collections.parse_recipe).
         if encoder.api != "openai":
             lines.append(f"api = {_toml_scalar(encoder.api)}")
-        if encoder.model and encoder.model != cx.space.encoder.label:
-            lines.append(f"model = {_toml_scalar(encoder.model)}")
+        # both, always (07 §7.8, amended 2026-10-08): the file names the
+        # model of each side, and one model doing both is named twice
+        lines += [f"embed_model = {_toml_scalar(encoder.model)}",
+                  f"query_model = {_toml_scalar(_query_model_of(encoder))}"]
         if getattr(encoder, "concurrency", 1) > 1:
             lines.append(f"concurrency = {encoder.concurrency}")
         if getattr(encoder, "device", None):
@@ -2184,8 +2186,20 @@ def _reranker_lines(reranker) -> list[str]:
     lines = ["", "[reranker]", f"url = {_toml_scalar(reranker.url)}",
              f"api = {_toml_scalar(reranker.api)}"]
     if reranker.model:
-        lines.append(f"model = {_toml_scalar(reranker.model)}")
+        lines.append(f"rerank_model = {_toml_scalar(reranker.model)}")
     return lines
+
+
+def _query_model_of(encoder) -> str:
+    """The query side's model as the file states it: the recipe's own (every
+    recipe read from a file has one), else — a recipe built by hand — the
+    query URL's model, else the document model when the encoder is
+    symmetric. Never the document model for a separate query endpoint."""
+    if encoder.query_model:
+        return encoder.query_model
+    if encoder.query_url:
+        return collections_mod.model_named_by(encoder.query_url) or ""
+    return encoder.model
 
 
 def _write_collection_toml(path: Path, *, codex: str | None,

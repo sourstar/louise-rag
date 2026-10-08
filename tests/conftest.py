@@ -223,7 +223,9 @@ def test_collection_files_name_an_encoder(request, monkeypatch):
         if c.codex is not None:
             # a Codex file's encoder carries the Codex's space, as the real one
             embed = collections_mod._codex_encoder(
-                {"url": TEST_ENCODER.url, "api": TEST_ENCODER.api}, c.codex, str(path))
+                {"url": TEST_ENCODER.url, "api": TEST_ENCODER.api,
+                 "embed_model": TEST_ENCODER.model, "query_model": TEST_ENCODER.model},
+                c.codex, str(path))
         else:
             embed = TEST_ENCODER
         return dataclasses.replace(c, embed=embed)
