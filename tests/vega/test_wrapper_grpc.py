@@ -238,6 +238,19 @@ def test_an_unrelated_method_is_forwarded_as_bytes(make_node):
     assert e.value.code() == grpc.StatusCode.UNIMPLEMENTED, "the backend's own answer"
 
 
+def test_calls_without_a_deadline_are_served(make_node):
+    """LocalAI v4.11.0 sets no deadline on LoadModel, Embedding or Predict.
+    grpcio reports that as 9.2e18 s remaining, which passed on as a timeout
+    was a deadline already past: every load on the node failed at once
+    (docs/notes/vega.md §10)."""
+    node = make_node()
+    batch, r = node.embed(["no deadline"])         # the fake sets none, as LocalAI
+    assert r.status_code == 200, r.text
+    node.verify(batch, r)
+    stub = node.stubs.rpc.BackendStub(node.channel())
+    assert stub.Predict(node.stubs.pb.PredictOptions(Prompt="hi")).message == b"echo:hi"
+
+
 def test_the_receipt_is_held_before_the_vector_leaves(make_node, vega):
     node = make_node(receipt_timeout_s=10)
     node.embed(["warm"])                                  # loaded, the run told

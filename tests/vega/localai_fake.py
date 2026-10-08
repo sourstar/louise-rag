@@ -1,7 +1,8 @@
 """A LocalAI that does what v4.11.0 does on `/v1/embeddings`, for VeGa's tests
 (core/http/endpoints/openai/embeddings.go, core/backend/embeddings.go at
 58830f7): wait for the backend's Health, load the model once with its
-ModelOptions, then ONE gRPC `Embedding` call per input string, in order; a
+ModelOptions, then ONE gRPC `Embedding` call per input string, in order —
+both WITHOUT a deadline, as LocalAI sets none; a
 FINAL or unspecified layout passed through as the backend sent it; the floats
 written as Go writes a float32 (gofloat.py), or as base64 of their little-
 endian bytes for `encoding_format: base64`. A backend error is a 500 with Go's
@@ -69,7 +70,8 @@ def create(models: dict[str, Model], stubs: Any) -> FastAPI:
                         if time.monotonic() > deadline:
                             raise
                         time.sleep(0.1)
-                result = s.LoadModel(pb.ModelOptions(**m.options), timeout=30)
+                # NO deadline, as v4.11.0 (pkg/model/initializers.go: o.context)
+                result = s.LoadModel(pb.ModelOptions(**m.options))
                 if not result.success:
                     return JSONResponse({"error": {"code": 500, "message": result.message}}, 500)
                 m.loaded = True
@@ -77,9 +79,8 @@ def create(models: dict[str, Model], stubs: Any) -> FastAPI:
             for text in inputs:
                 if m.alter_input is not None:
                     text = m.alter_input(text)
-                res = s.Embedding(pb.PredictOptions(Embeddings=text,
-                                                    ModelIdentity=m.options.get("Model", "")),
-                                  timeout=30)
+                res = s.Embedding(pb.PredictOptions(Embeddings=text,          # no deadline
+                                                    ModelIdentity=m.options.get("Model", "")))
                 vector = list(res.embeddings)
                 if m.alter_vector is not None:
                     vector = m.alter_vector(vector)

@@ -152,6 +152,17 @@ def test_the_run_is_what_the_wrapper_launched(tmp_path):
                      weights="sha256:" + "11" * 32, runtime=[])
 
 
+@pytest.mark.parametrize("left, timeout", [(9.223372035063293e18, None), (None, None),
+                                           (30.0, 30.0), (0.0, 0.0)])
+def test_no_deadline_is_forwarded_as_none(left, timeout):
+    """grpcio says "no deadline" as 9.2e18 s left (measured on the node with
+    grpcio 1.84.0); passed on as a timeout it is a deadline already past."""
+    class Context:
+        def time_remaining(self):
+            return left
+    assert vw.remaining(Context()) == timeout
+
+
 def test_pairs_are_declared_as_rage_reads_them():
     for options in (["pairs:true"], ["device:xpu", "pairs : true"], ["pairs:false"], [], None):
         assert vw.declares_pairs(options) == pairs.declares_pairs(options)

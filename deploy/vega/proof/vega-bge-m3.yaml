@@ -1,0 +1,28 @@
+# VeGa node proof (docs/notes/vega.md §10): bge-m3 behind VeGa's wrapper in the
+# LocalAI app. Every option is RAGE's bge-m3.yaml (/mnt/ssd5/apps/louise-rage/
+# state/localai-models/bge-m3.yaml, read only), the same bytes of weights
+# copied under vega-weights/, NEO_CACHE_DIR in the vega package's own folder.
+# RAGE's YAML pins nothing (`pinned`), so neither does this one.
+{
+  "name": "vega-bge-m3",
+  "backend": "vega-llama-cpp",
+  "embeddings": true,
+  "context_size": 8192,
+  "threads": 6,
+  "gpu_layers": 999,
+  "flash_attention": "on",
+  "mmap": true,
+  "parameters": {
+    "model": "vega-weights/bge-m3-FP16.gguf",
+    "batch": 8192,
+    "seed": 0
+  },
+  "options": [
+    "parallel:1",
+    "pooling:cls",
+    "ubatch:8192"
+  ],
+  "env": {
+    "NEO_CACHE_DIR": "/backends/vega-llama-cpp/neo-cache"
+  }
+}

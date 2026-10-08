@@ -582,6 +582,20 @@ class Gate:
 
 # ---- gRPC: the two methods, and everything else as bytes --------------------------------
 
+#: Above this, grpcio's `time_remaining()` means "no deadline": it reports
+#: 9.2e18 s for a call that set none, and passed on as a timeout that overflows
+#: into a deadline already past. LocalAI v4.11.0 sets none on LoadModel or
+#: Embedding, so every load failed DEADLINE_EXCEEDED at once (the node,
+#: 2026-10-08, docs/notes/vega.md §10).
+NO_DEADLINE_S = 100 * 365 * 24 * 3600.0
+
+
+def remaining(context: Any) -> float | None:
+    """The caller's deadline as a timeout for the forwarded call; None = none."""
+    t = context.time_remaining()
+    return None if t is None or t > NO_DEADLINE_S else t
+
+
 def _forwardable(metadata: Iterable[tuple[str, Any]] | None) -> list[tuple[str, Any]]:
     return [(k, v) for k, v in (metadata or ())
             if not (k.startswith(":") or k.startswith("grpc-") or k == "user-agent")]
@@ -602,7 +616,7 @@ class Proxy:
         def behaviour(raw: bytes, context: Any) -> bytes:
             def forward(request: bytes) -> bytes:
                 response, c = call.with_call(request, metadata=_forwardable(
-                    context.invocation_metadata()), timeout=context.time_remaining())
+                    context.invocation_metadata()), timeout=remaining(context))
                 context.set_trailing_metadata(tuple(_forwardable(c.trailing_metadata())))
                 return response
             try:
@@ -623,7 +637,7 @@ class Proxy:
 
         def behaviour(requests: Any, context: Any):
             upstream = call(requests, metadata=_forwardable(context.invocation_metadata()),
-                            timeout=context.time_remaining())
+                            timeout=remaining(context))
             context.add_callback(upstream.cancel)
             try:
                 head = _forwardable(upstream.initial_metadata())

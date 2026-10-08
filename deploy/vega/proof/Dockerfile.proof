@@ -1,0 +1,10 @@
+# VeGa node proof (docs/notes/vega.md §10): the receipts service on its own,
+# `python -m app.vega`, from the repo's code, plus the proof's scripts. Throwaway:
+# the container is `vega-proof`, the image `vega-proof:local`.
+FROM python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+RUN pip install --no-cache-dir -q "fastapi>=0.115" "uvicorn>=0.30" "httpx>=0.27"
+WORKDIR /src
+COPY app /src/app
+COPY proof /proof
+ENV PYTHONPATH=/src PYTHONUNBUFFERED=1
+CMD ["python", "-m", "app.vega"]
