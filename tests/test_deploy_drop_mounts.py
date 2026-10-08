@@ -37,3 +37,11 @@ def test_a_careless_prefix_is_refused():
             dm.apply(cfg(), bad)
     with pytest.raises(ValueError, match="services"):
         dm.apply({}, G)
+
+
+def test_a_target_drops_one_mount_of_a_shared_prefix():
+    w = "/mnt/tank/louise-corpora/wikivec"
+    c = {"services": {"worker": {"volumes": [f"{w}:/corpora/wikivec", f"{w}/data:/data/collections/wikipedia/origin/data"]}}}
+    assert dm.apply(c, w, "/corpora/wikivec") == [f"worker: {w} -> /corpora/wikivec"]
+    assert c["services"]["worker"]["volumes"] == [f"{w}/data:/data/collections/wikipedia/origin/data"], \
+        "wikipedia's mount under the same prefix stays"

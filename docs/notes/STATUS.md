@@ -16,12 +16,14 @@ it left open is below.
   to compare (step 3).
 - **The Gazzetta plugin**: certified records carrying `extra.seal` — the
   certifier body's to run (step 10).
-- **A collection with plates** (Gutenberg-with-plates, decided 2026-09-08):
-  a build, the code is there (step 11).
-- **wikivec** stays parked, not served: it cannot be folded into wikipedia
-  ([`wikivec-merge-blocked.md`](wikivec-merge-blocked.md)); convert it with
-  its own Codex or retire it — the operator's.
 - **`backend_gate`** stays while any Codex is version 1 or 2 (five live).
+  Moving one to version 4 is a new collection AND a new space (09 §9.3), so
+  its vectors would be recomputed — unless RULE 1 carries them. Measured
+  2026-10-08 (32 random chunks re-embedded now vs stored, f16): gutenberg
+  differs by ≤9e-5, inside the encoder's own run-to-run variation (≤1.2e-4)
+  — carryable; wikipedia by 1.5e-3, four times it (its first layer is the
+  wikivec archive's engine); pubmed materially (cosine 0.958). So pubmed and
+  wikipedia would be re-embedded in full, and `backend_gate` cannot go yet.
 - **Operator**: file [`localai-bugs.md`](localai-bugs.md) upstream (step 15).
 
 Node-specific facts — addresses, paths, ports, the live collection inventory —

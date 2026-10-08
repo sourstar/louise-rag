@@ -25,8 +25,11 @@ def _source(volume) -> str | None:
     return None
 
 
-def apply(cfg: dict, prefix: str) -> list[str]:
+def apply(cfg: dict, prefix: str, target: str | None = None) -> list[str]:
     """Drop the matching volumes in place; return them, as `src -> dst`.
+    With `target`, only a mount at exactly that container path matches —
+    for a source that is the prefix of another mount still in use
+    (wikivec's `/corpora/wikivec` beside wikipedia's `…/wikivec/data`).
     Refuses a config it does not recognise, and a prefix too short to be
     a deliberate one."""
     if not prefix.startswith("/mnt/") or len(prefix.rstrip("/").split("/")) < 4:
@@ -42,8 +45,9 @@ def apply(cfg: dict, prefix: str) -> list[str]:
         keep = []
         for v in vols:
             src = _source(v)
-            if src and src.startswith(prefix):
-                dst = v.split(":", 2)[1] if isinstance(v, str) else v.get("target")
+            dst = (v.split(":", 2)[1] if isinstance(v, str) and ":" in v else
+                   (v.get("target") if isinstance(v, dict) else None))
+            if src and src.startswith(prefix) and (target is None or dst == target):
                 removed.append(f"{name}: {src} -> {dst}")
             else:
                 keep.append(v)
@@ -52,14 +56,15 @@ def apply(cfg: dict, prefix: str) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print(f"usage: {argv[0]} /mnt/<pool>/<dataset>/<prefix>", file=sys.stderr)
+    if len(argv) not in (2, 3):
+        print(f"usage: {argv[0]} /mnt/<pool>/<dataset>/<prefix> [<container path>]", file=sys.stderr)
         return 2
+    target = argv[2] if len(argv) == 3 else None
     from truenas_api_client import Client
     with Client() as c:
         cfg = c.call("app.config", APP)
         try:
-            removed = apply(cfg, argv[1])
+            removed = apply(cfg, argv[1], target)
         except ValueError as e:
             print(f"drop_mounts: {e}", file=sys.stderr)
             return 2
@@ -74,7 +79,7 @@ def main(argv: list[str]) -> int:
             print(f"drop_mounts: app.update failed ({type(e).__name__}); see /var/log/middlewared.log",
                   file=sys.stderr)
             return 1
-        left = apply(c.call("app.config", APP), argv[1])
+        left = apply(c.call("app.config", APP), argv[1], target)
         if left:
             print(f"drop_mounts: still mounted: {left}", file=sys.stderr)
             return 1
