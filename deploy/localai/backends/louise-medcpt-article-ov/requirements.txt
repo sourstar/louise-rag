@@ -1,0 +1,6 @@
+# louise-medcpt-article-ov's venv: louise-medcpt-rerank's, the same model code
+# (deploy/medcpt-rerank/server.py) — OpenVINO and the pair tokenizer, no torch.
+-r ../requirements-grpc.txt
+openvino==2026.3.1
+tokenizers==0.22.2
+numpy

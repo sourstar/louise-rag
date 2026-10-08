@@ -16,6 +16,11 @@ longest-first, as the card's `tokenizer(..., truncation=True, max_length=512)`.
 Its TEI /rerank server went with llama-swap at 15g (docs/notes/legacy-to-delete.md
 §8).
 
+MedCPT's ARTICLE ENCODER shares it (docs/notes/input-forms.md):
+deploy/localai/backends/louise-medcpt-article-ov encodes a (title, abstract)
+text pair with `make_encoder`, the same pair tokenizer and segment ids, and
+takes the [CLS] row of `make_cls_infer` — its IR built by convert_article.py.
+
 OpenVINO's model cache (its `CACHE_DIR`, `make_infer`'s `cache_dir`): compiling
 the model for the card is the slow part of a start, and with a cache the next
 start reads the compiled model back instead (docs/notes/rage.md §20). The
@@ -73,7 +78,7 @@ def make_encoder(tokenizer_json: str, max_tokens: int = MAX_TOKENS):
     return encode
 
 
-def make_infer(model_xml: str, device: str, cache_dir: str | None = None):
+def _compile(model_xml: str, device: str, cache_dir: str | None):
     import openvino as ov
     # CACHE_DIR: the compiled model is kept there and read back at the next
     # start; OpenVINO keys it on the model, the device and its own version
@@ -83,8 +88,28 @@ def make_infer(model_xml: str, device: str, cache_dir: str | None = None):
     if names != set(INPUTS):
         raise SystemExit(f"{model_xml}: inputs {sorted(names)}, expected {list(INPUTS)} — "
                          f"without token_type_ids MedCPT scores noise")
+    return compiled
+
+
+def make_infer(model_xml: str, device: str, cache_dir: str | None = None):
+    compiled = _compile(model_xml, device, cache_dir)
 
     def infer(inputs):
         # one request per call: concurrent calls do not share one
         return next(iter(compiled.infer_new_request(inputs).values())).reshape(-1).tolist()
+    return infer
+
+
+def make_cls_infer(model_xml: str, device: str, cache_dir: str | None = None):
+    """MedCPT's article and query encoders: the IR's output is the last
+    hidden state (batch, tokens, dim), and the vector is its [CLS] row, as
+    NCBI's own code takes `last_hidden_state[:, 0, :]`
+    (deploy/medcpt-rerank/convert_article.py builds the IR)."""
+    compiled = _compile(model_xml, device, cache_dir)
+
+    def infer(inputs):
+        hidden = next(iter(compiled.infer_new_request(inputs).values()))
+        if hidden.ndim != 3:
+            raise RuntimeError(f"the model gave shape {hidden.shape}, not (batch, tokens, dim)")
+        return [row.tolist() for row in hidden[:, 0, :]]
     return infer

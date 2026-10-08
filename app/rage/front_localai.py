@@ -29,6 +29,12 @@ under LocalAI that would have embedded a MedCPT query with the article
 encoder while the header named the query encoder's run (operator, 2026-10-03:
 "the user should not bother about choosing the right model").
 
+A TEXT PAIR IS ASKED FOR, NEVER GUESSED (docs/notes/input-forms.md; pairs.py).
+An embeddings body with `input_pairs` is passed on only to a model whose YAML
+declares `pairs:true`, each pair as one marked string; any other model, and
+any plain input carrying the marker, is a 400. An answer to a pair request
+whose run was loaded without `pairs:true` is a 502, never a vector.
+
 THE MODEL YAML IS THE DESIRED STATE (invariant 10; operator, 2026-10-03).
 `PUT` writes `<id>.yaml` into LocalAI's models directory — JSON, which is
 YAML, so no YAML library is added — with a first line that marks it as
@@ -51,6 +57,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response, Streami
 from starlette.background import BackgroundTask
 from starlette.requests import ClientDisconnect
 
+from . import pairs
 from .clock import HEADER as LEVEL_HEADER, Clock, is_interactive
 from .localai import LocalAI, LocalAIError
 from .model import _ID
@@ -83,6 +90,18 @@ def _ours(path: Path) -> bool:
             return f.readline().rstrip("\n") == MARKER
     except OSError:
         return False
+
+
+def yaml_config(path: Path) -> dict[str, Any]:
+    """A model YAML as this repo writes them — JSON after `#` comment lines,
+    RAGE's marker among them. A file in YAML proper is not read (ValueError):
+    no YAML library is added for it."""
+    body = "\n".join(line for line in path.read_text(encoding="utf-8").splitlines()
+                     if not line.lstrip().startswith("#"))
+    config = json.loads(body)
+    if not isinstance(config, dict):
+        raise ValueError("not an object")
+    return config
 
 
 def unpinned(body: dict[str, Any]) -> list[str]:
@@ -283,19 +302,51 @@ def create_localai_app(observer: Observer, client: LocalAI, clock: Clock,
 
     # ---- the models ----------------------------------------------------------------
 
-    def _named(model_id: str, raw: bytes, content_type: str) -> bytes:
-        """The body, naming the URL's model whatever it named. Passed on as it
-        came when it already does, so nothing is re-serialised for nothing."""
+    def _declares_pairs(model_id: str) -> tuple[bool | None, str]:
+        """Whether the model's YAML — what LocalAI sends as the load call's
+        `Options` — declares `pairs:true`; None and why, when it cannot be read."""
+        if not _ID.fullmatch(model_id):
+            return None, f"{model_id!r} is not a model id"
+        files = _files(model_id)
+        if not files:
+            return None, "no model YAML of this container defines it"
+        try:
+            config = yaml_config(files[0])
+        except (OSError, ValueError) as e:
+            return None, f"its YAML {files[0].name} cannot be read as JSON ({e})"
+        return pairs.declares_pairs(config.get("options")), ""
+
+    def _body(model_id: str, path: str, raw: bytes, content_type: str) -> tuple[bytes, bool]:
+        """The body, naming the URL's model whatever it named, with a pair
+        request made one LocalAI can carry (pairs.py); and whether it asks for
+        pairs. Passed on as it came when nothing changes, so nothing is
+        re-serialised for nothing."""
         if not raw.strip() or "json" not in content_type.lower():
-            return raw
+            return raw, False
         try:
             body = json.loads(raw)
         except ValueError:
-            return raw
-        if not isinstance(body, dict) or body.get("model") == model_id:
-            return raw
+            return raw, False
+        if not isinstance(body, dict):
+            return raw, False
+        paired = False
+        if path.rstrip("/").endswith("embeddings"):
+            if pairs.FIELD in body:
+                declared, why = _declares_pairs(model_id)
+                paired = pairs.translate(body, model_id, declared, why)
+            else:
+                pairs.translate(body, model_id, False)      # the marker check alone
+        elif pairs.FIELD in body:
+            raise Refused(400, f"{pairs.FIELD} is a field of an embeddings request")
+        if not paired and body.get("model") == model_id:
+            return raw, False
         body["model"] = model_id
-        return json.dumps(body, ensure_ascii=False).encode("utf-8")
+        return json.dumps(body, ensure_ascii=False).encode("utf-8"), paired
+
+    def _pairs_run(run_id: str) -> bool:
+        run = observer.store.get(run_id) or {}
+        options = (run.get("engine") or {}).get("options") or {}
+        return pairs.declares_pairs(options.get("Options"))
 
     @app.api_route("/upstream/{model_id}/{path:path}",
                    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
@@ -304,7 +355,7 @@ def create_localai_app(observer: Observer, client: LocalAI, clock: Clock,
             raw = await request.body()
         except ClientDisconnect:
             return Response(status_code=499)    # gone before it finished asking
-        content = _named(model_id, raw, request.headers.get("content-type", ""))
+        content, paired = _body(model_id, path, raw, request.headers.get("content-type", ""))
         before = observer.current(model_id)
         waiting = is_interactive(request.headers.get(LEVEL_HEADER))
         if waiting:
@@ -335,6 +386,14 @@ def create_localai_app(observer: Observer, client: LocalAI, clock: Clock,
         except BaseException:
             await finish()
             raise
+        if paired and run_id is not None and not _pairs_run(run_id):
+            # the YAML said pairs and the process answering was loaded without
+            # them (edited by hand, not reloaded): its vector is of a marked
+            # string read as text, and is never passed on
+            await finish()
+            raise Refused(502, f"{model_id}: the process that answered was loaded without "
+                               f"the option {pairs.OPTION} (run {run_id}); restart the model "
+                               f"so its YAML is loaded")
         read = answer.is_stream_consumed
         out = {k: v for k, v in answer.headers.items()
                if k.lower() not in _HOP and not (read and k.lower() == "content-encoding")}

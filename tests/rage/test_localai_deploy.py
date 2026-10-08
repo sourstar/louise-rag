@@ -113,9 +113,11 @@ def test_each_python_yaml_is_a_load_its_backend_accepts():
     """Every option a Python model's YAML gives is one its backend reads, at
     a value it takes: a misspelt one would load with a default while the run
     named the misspelling."""
-    from tests.test_localai_backends import dar_backend, lb, madlad_backend, medcpt_backend
+    from tests.test_localai_backends import (article_backend, dar_backend, lb, madlad_backend,
+                                             medcpt_backend)
     by_name = {"louise-dar-legal-it": dar_backend, "louise-madlad": madlad_backend,
-               "louise-medcpt-rerank": medcpt_backend}
+               "louise-medcpt-rerank": medcpt_backend,
+               "louise-medcpt-article-ov": article_backend}
     assert sorted(by_name) == PYTHON_BACKENDS
     served = {}
     for path in ALL:
@@ -132,6 +134,8 @@ def test_each_python_yaml_is_a_load_its_backend_accepts():
             f"{key}: LocalAI would change the prompt or the text, the JSON the batch travels in"
     assert served["louise-dar-legal-it"]["embeddings"] is True
     assert served["louise-medcpt-rerank"]["reranking"] is True
+    assert served["louise-medcpt-article-ov"]["embeddings"] is True
+    assert "pairs:true" in served["louise-medcpt-article-ov"]["options"]
 
 
 def test_each_backend_is_assembled_with_the_server_it_imports_and_stubs_it_can_run():
@@ -175,10 +179,11 @@ def test_the_yamls_are_the_models_the_node_served_before_the_cut_over():
     """Every model llama-swap served at 15f has its YAML (rage.example.toml
     listed them until 15g); DAR-legal-it's is kept, suspended. Added since:
     granite-embedding-107m-multilingual, the deposit collections' encoder
-    (02 §2.9; the operator's word, 2026-10-06, step 16f)."""
+    (02 §2.9; the operator's word, 2026-10-06, step 16f), and medcpt-article-ov,
+    the article encoder in pair form (docs/notes/input-forms.md, 2026-10-08)."""
     assert {p.stem for p in ALL} == {"bge-m3", "bge-reranker", "chat", "madlad",
                                      "medcpt-article", "medcpt-query", "medcpt-rerank",
-                                     "qwen3-embedding-4b", "dar-legal-it",
+                                     "medcpt-article-ov", "qwen3-embedding-4b", "dar-legal-it",
                                      "granite-embedding-107m-multilingual"}
     assert {p.stem for p in SUSPENDED} == {"dar-legal-it"}, "suspended: the operator's word"
 

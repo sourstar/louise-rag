@@ -117,6 +117,7 @@ COPY --from=localai-source /build/backend/python/common/grpc_auth.py \
 COPY deploy/localai/backends /src
 COPY deploy/madlad-translate/server.py /src/louise-madlad/madlad.py
 COPY deploy/medcpt-rerank/server.py    /src/louise-medcpt-rerank/medcpt.py
+COPY deploy/medcpt-rerank/server.py    /src/louise-medcpt-article-ov/medcpt.py
 COPY deploy/dar-legal-it/server.py     /src/louise-dar-legal-it/dar_legal_it.py
 RUN set -eu; mkdir /stubs /out; \
     python -m grpc_tools.protoc -I/proto --python_out=/stubs --grpc_python_out=/stubs backend.proto; \
@@ -193,8 +194,9 @@ RUN printf '%s\n' '{"name": "llama-cpp", "uri": "localai/localai-backends:sha-58
       > /var/lib/local-ai/backends/llama-cpp/metadata.json \
  && test -x /var/lib/local-ai/backends/llama-cpp/run.sh
 
-# The platform's three Python models beside it (15e-2): DAR-legal-it
-# (`Embedding`), MedCPT (`Rerank`) and MADLAD (`Predict`); DNABERT-2 is frozen
+# The platform's Python models beside it (15e-2): DAR-legal-it
+# (`Embedding`), MedCPT (`Rerank`, and its article encoder's `Embedding` of a
+# text pair — docs/notes/input-forms.md) and MADLAD (`Predict`); DNABERT-2 is frozen
 # and not served. ONE TORCH, as in deploy/rage/Dockerfile: it is tied to the
 # compute runtime, so the two torch backends see the system's through
 # --system-site-packages, each venv keeping the pins it was proven with
@@ -209,15 +211,17 @@ RUN set -eu; cd /var/lib/local-ai/backends; \
     python3 -m venv --system-site-packages louise-madlad/venv; \
     python3 -m venv --system-site-packages louise-dar-legal-it/venv; \
     python3 -m venv louise-medcpt-rerank/venv; \
+    python3 -m venv louise-medcpt-article-ov/venv; \
     ln -s /usr/local/lib louise-madlad/lib; \
     ln -s /usr/local/lib louise-dar-legal-it/lib; \
-    for b in louise-madlad louise-dar-legal-it louise-medcpt-rerank; do \
+    for b in louise-madlad louise-dar-legal-it louise-medcpt-rerank louise-medcpt-article-ov; do \
       "$b/venv/bin/pip" install --no-cache-dir -r "$b/requirements.txt"; \
       (cd "$b" && LD_LIBRARY_PATH="$PWD/lib" venv/bin/python -c "import backend"); \
     done; \
     LD_LIBRARY_PATH=/usr/local/lib louise-madlad/venv/bin/python -c "import torch, transformers; print(torch.__version__, transformers.__version__)"; \
     LD_LIBRARY_PATH=/usr/local/lib louise-dar-legal-it/venv/bin/python -c "import torch, sentence_transformers; print(sentence_transformers.__version__)"; \
-    louise-medcpt-rerank/venv/bin/python -c "import openvino, tokenizers; print(openvino.__version__)"
+    louise-medcpt-rerank/venv/bin/python -c "import openvino, tokenizers; print(openvino.__version__)"; \
+    louise-medcpt-article-ov/venv/bin/python -c "import openvino, tokenizers; print(openvino.__version__)"
 
 # The front: app/rage and the two modules it borrows — the clock, and the ONE
 # definition of canonical JSON and of the hash (as deploy/rage/Dockerfile).

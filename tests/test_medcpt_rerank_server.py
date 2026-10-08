@@ -66,3 +66,44 @@ def test_the_compiled_model_is_kept_where_the_models_yaml_says(monkeypatch):
     server.make_infer("/m/openvino_model.xml", "GPU")
     assert calls == [("/m/openvino_model.xml", "GPU", {"CACHE_DIR": "/state/ov-cache"}),
                      ("/m/openvino_model.xml", "GPU", {})]
+
+
+def test_the_article_encoders_vector_is_the_cls_row_of_the_last_hidden_state(monkeypatch):
+    """NCBI's `last_hidden_state[:, 0, :]` (louise-medcpt-article-ov)."""
+    import sys
+    import types
+
+    import numpy as np
+
+    class Input:
+        def __init__(self, name):
+            self.name = name
+
+        def get_any_name(self):
+            return self.name
+
+    hidden = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
+
+    class Request:
+        def __init__(self, inputs):
+            self.inputs = inputs
+
+        def values(self):
+            return [hidden]
+
+    class Compiled:
+        inputs = [Input(n) for n in server.INPUTS]
+
+        def infer_new_request(self, inputs):
+            return Request(inputs)
+
+    class Core:
+        def compile_model(self, xml, device, config=None):
+            return Compiled()
+
+    monkeypatch.setitem(sys.modules, "openvino", types.SimpleNamespace(Core=Core))
+    infer = server.make_cls_infer("/m/openvino_model.xml", "GPU")
+    assert infer({}) == [[0.0, 1.0, 2.0, 3.0], [12.0, 13.0, 14.0, 15.0]]
+    hidden = np.zeros((2, 4), dtype=np.float32)
+    with pytest.raises(RuntimeError, match="batch, tokens, dim"):
+        infer({})

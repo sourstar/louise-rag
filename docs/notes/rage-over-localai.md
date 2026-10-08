@@ -506,3 +506,45 @@ cut-over itself.
 the live RAGE gave up MADLAD (idle) under pressure, by design (rage.md
 §19). It comes back on the next translation, at the cost of a load.
 Nothing else changed, and the test container is removed.
+
+## 13. Text pairs: `input_pairs` and `louise-medcpt-article-ov` (2026-10-08)
+
+The RAGE half of [`input-forms.md`](input-forms.md). LocalAI's embeddings
+endpoint takes strings and hands a backend one string per call, so a
+tokenizer text pair (MedCPT's title, abstract) has no way through it.
+
+**The front** (`app/rage/pairs.py`, called by the `/upstream` proxy).
+- An embeddings body may give `input_pairs: [[first, second], …]` instead
+  of `input`. It is accepted only for a model whose YAML declares the
+  option `pairs:true`. That option goes in the load call, so it is in the
+  run's engine options and its `run_id`. Any other model: 400, naming why.
+  A pair is never flattened.
+- Each pair goes on as one marked string, `"\x1eLOUISE-PAIR\x1e" +
+  json.dumps([first, second])`. A plain `input` that carries the marker is
+  a 400 for every model.
+- After the answer: if the run that answered was loaded without
+  `pairs:true` (its YAML hand-edited and not reloaded), the answer is a 502
+  and no vector goes out. The answer still carries `Louise-Run`.
+
+**The backend**, `deploy/localai/backends/louise-medcpt-article-ov`. It
+runs MedCPT's article encoder on OpenVINO and implements `Embedding`. Its
+model code is `deploy/medcpt-rerank/server.py`, which the cross-encoder
+uses too:
+- `make_encoder`: the model's own pair tokenizer, segment ids included,
+  cut longest-first to 512 tokens, as NCBI's code;
+- `make_cls_infer`: the `[CLS]` row of the last hidden state.
+
+A marked string is decoded into a true pair. A plain string is one text.
+Options: `device:xpu|cpu` and `pairs:true`. Model YAML:
+`deploy/rage/localai-models/medcpt-article-ov.yaml`.
+
+**The weights.** The IR is built by `deploy/medcpt-rerank/convert_article.py`
+from the Hugging Face snapshot already on the node, fetching nothing. It
+writes `/mnt/ssd5/apps/medcpt-models/medcpt-article-ov`, which is mounted
+as `weights/medcpt/medcpt-article-ov`. The IR outputs the last hidden state
+with fp32 weights. The script checks that the backend's tokenizer path
+reproduces transformers' encoding exactly, and that the IR on CPU matches
+transformers at a cosine of at least 0.99999.
+
+llama.cpp keeps the plain-text spaces. If a backend on any vendor learns
+pairs later, it can serve pair spaces by declaring `pairs:true`.

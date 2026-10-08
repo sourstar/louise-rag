@@ -397,3 +397,107 @@ def test_the_platforms_client_and_the_backend_agree_on_the_one_prompt(tmp_path, 
     assert sorted(seen["batches"][-1]) == ["<2it> über", "<2la> y"], "one pass for the batch"
     assert mt.health_url() == "http://rage:8080/upstream/madlad/v1/models"
     mt.reset()
+
+
+# ---- MedCPT's article encoder: Embedding of a text pair --------------------------------------
+
+article_backend = _backend("louise-medcpt-article-ov", "medcpt", "deploy/medcpt-rerank/server.py")
+
+
+def _article(seen=None):
+    """A stand-in tokenizer that records what it is given, and a stand-in
+    model whose [CLS] vector is (len(first), len(second), segment-1 tokens)."""
+    seen = {"encoded": []} if seen is None else seen
+
+    def encoder(tokenizer_json, max_tokens):
+        seen["encoder"] = (tokenizer_json, max_tokens)
+
+        def encode(items):
+            seen["encoded"].append(list(items))
+            (item,) = items
+            first, second = item if isinstance(item, tuple) else (item, None)
+            return {"items": items, "attention_mask": [[1] * (3 if second is None else 5)],
+                    "token_type_ids": [[0, 0, 0] + ([] if second is None else [1, 1])]}
+        return encode
+
+    def infer(xml, device, cache_dir):
+        seen["infer"] = (xml, device, cache_dir)
+
+        def run(inputs):
+            (item,) = inputs["items"]
+            first, second = item if isinstance(item, tuple) else (item, "")
+            return [[float(len(first)), float(len(second)),
+                     float(sum(inputs["token_type_ids"][0]))]]
+        return run
+    return article_backend.Servicer(PB, STATUS, encoder=encoder, infer=infer)
+
+
+def _loaded_article(tmp_path, seen=None, options=("device:xpu", "pairs:true")):
+    s = _article(seen)
+    r = s.LoadModel(load_call(_medcpt_dir(tmp_path), options=options, context_size=512), None)
+    assert r.success, r.message
+    return s
+
+
+def test_article_encoder_loads_from_the_load_call_and_its_models_env(tmp_path, monkeypatch):
+    seen: dict = {"encoded": []}
+    monkeypatch.setenv("OV_CACHE_DIR", "/state/ov-cache")
+    s = _loaded_article(tmp_path, seen)
+    d = tmp_path / "medcpt-cross-ov"
+    assert seen["encoder"] == (str(d / "tokenizer.json"), 512), "NCBI's max_length"
+    assert seen["infer"] == (str(d / "openvino_model.xml"), "GPU", "/state/ov-cache")
+    assert seen["encoded"][0] == [("warm-up", "the first inference compiles its kernels")]
+    assert s.dim == 3 and s.pairs is True
+    cpu = _article(seen)
+    assert cpu.LoadModel(load_call(d, options=["device:cpu"], context_size=512), None).success
+    assert seen["infer"][1] == "CPU" and cpu.pairs is False
+
+
+@pytest.mark.parametrize("call,why", [
+    (lambda d: load_call(d / "absent", context_size=512), "absent"),
+    (lambda d: load_call(d, options=["pairs:yes"], context_size=512), "true or false"),
+    (lambda d: load_call(d, options=["pooling:mean"], context_size=512), "reads"),
+    (lambda d: load_call(d), "context_size"),
+])
+def test_article_encoder_refuses_a_load_it_cannot_honour(tmp_path, call, why):
+    r = _article().LoadModel(call(_medcpt_dir(tmp_path)), None)
+    assert not r.success and why in r.message
+
+
+def test_a_marked_string_is_encoded_as_a_true_pair(tmp_path):
+    seen: dict = {"encoded": []}
+    s = _loaded_article(tmp_path, seen)
+    marked = lb.PAIR_MARK + json.dumps(["Aspirin.", "An abstract\n\nin two parts."])
+    out = s.Embedding(SimpleNamespace(Embeddings=marked), Context())
+    assert seen["encoded"][-1] == [("Aspirin.", "An abstract\n\nin two parts.")], \
+        "the tokenizer gets the pair, never one joined text"
+    assert out.embeddings == [8.0, 26.0, 2.0] and out.dim == 3 and out.tokens == 5
+    assert out.layout == PB.EMBEDDING_LAYOUT_FINAL, "[CLS] pooled here; LocalAI pools nothing"
+
+
+def test_a_plain_string_is_one_text(tmp_path):
+    seen: dict = {"encoded": []}
+    s = _loaded_article(tmp_path, seen)
+    out = s.Embedding(SimpleNamespace(Embeddings="title\n\nabstract"), Context())
+    assert seen["encoded"][-1] == ["title\n\nabstract"]
+    assert out.embeddings == [15.0, 0.0, 0.0] and out.tokens == 3
+
+
+@pytest.mark.parametrize("text,code", [
+    (lb.PAIR_MARK + "not json", "INVALID_ARGUMENT"),
+    (lb.PAIR_MARK + '["one"]', "INVALID_ARGUMENT"),
+    ("a text " + lb.PAIR_MARK + '["a", "b"]', "INVALID_ARGUMENT"),
+    ("", "INVALID_ARGUMENT"),
+])
+def test_article_encoder_refuses_what_is_neither_a_text_nor_a_pair(tmp_path, text, code):
+    s = _loaded_article(tmp_path)
+    assert aborted(lambda: s.Embedding(SimpleNamespace(Embeddings=text), Context()))[0] == code
+
+
+def test_a_pair_to_a_model_loaded_without_pairs_is_refused(tmp_path):
+    s = _loaded_article(tmp_path, options=("device:xpu",))
+    marked = lb.PAIR_MARK + json.dumps(["a", "b"])
+    code, why = aborted(lambda: s.Embedding(SimpleNamespace(Embeddings=marked), Context()))
+    assert code == "INVALID_ARGUMENT" and "pairs:true" in why
+    assert aborted(lambda: _article().Embedding(SimpleNamespace(Embeddings="x"),
+                                                Context()))[0] == "FAILED_PRECONDITION"

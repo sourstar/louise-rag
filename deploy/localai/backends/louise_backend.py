@@ -5,6 +5,7 @@ reading of a model's load call.
     louise-dar-legal-it   Embedding   deploy/dar-legal-it/server.py
     louise-medcpt-rerank  Rerank      deploy/medcpt-rerank/server.py
     louise-madlad         Predict     deploy/madlad-translate/server.py
+    louise-medcpt-article-ov  Embedding (text pairs)  deploy/medcpt-rerank/server.py
 
 Each one wraps its server's model code, copied beside it in the image under the
 server's name, and rewrites none of it: one source per model, whether it runs
@@ -28,6 +29,7 @@ backends' logic is tested with stand-in messages (tests/test_localai_backends.py
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import sys
@@ -46,8 +48,37 @@ MAX_MESSAGE = 50 * 1024 * 1024
 GRACE_S = 30.0
 
 
+#: what RAGE's front puts before a text pair's JSON array, the one string per
+#: embedding LocalAI hands a backend (app/rage/pairs.py MARK, held equal by a
+#: test; docs/notes/input-forms.md)
+PAIR_MARK = "\x1eLOUISE-PAIR\x1e"
+
+
 class LoadError(ValueError):
     """The load call cannot be honoured; LocalAI is told `success=False`."""
+
+
+def flag(value: str) -> bool:
+    value = value.strip()
+    if value not in ("true", "false"):
+        raise ValueError("true or false")
+    return value == "true"
+
+
+def decode_pair(text: str) -> str | tuple[str, str]:
+    """A plain text as it came; a marked one as its (first, second) pair.
+    A marked string that is not a pair of strings is a ValueError."""
+    if not text.startswith(PAIR_MARK):
+        if PAIR_MARK in text:
+            raise ValueError("the pair marker inside a text")
+        return text
+    try:
+        pair = json.loads(text[len(PAIR_MARK):])
+    except ValueError:
+        raise ValueError("a marked text that is not a JSON array") from None
+    if not (isinstance(pair, list) and len(pair) == 2 and all(isinstance(s, str) for s in pair)):
+        raise ValueError("a marked text that is not a pair of strings")
+    return pair[0], pair[1]
 
 
 def device(value: str) -> str:
