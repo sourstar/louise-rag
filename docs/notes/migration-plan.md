@@ -1605,7 +1605,7 @@ genome collections, and removing it is a decision about them;
 moves before it goes. Each of those is a build or a decision before a
 delete.
 
-**Operator, 2026-10-08: the legacy shape GOES** (the frozen genome
+**Operator, 2026-10-08: the legacy shape GOES — DONE the same day (ee86a8e, deployed)** (the frozen genome
 collections then load only once rebuilt with a Codex). Measured scope:
 131 test files run on the synthesized pre-Codex default (`isolated_config`)
 and 87 build Codex-less `Collection`s by hand — porting them to Codex

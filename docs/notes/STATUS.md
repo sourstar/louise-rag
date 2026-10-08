@@ -244,6 +244,23 @@ minutes quiet: every thread up, no share, error or warning line, only
 Docker's DNS listening. Backup image `pre-d596355` alone. Step 9 is
 complete on the node; it waits for a second peer to be exercised live.
 
+**2026-10-08, ~02:40Z (UTC): the pre-Codex shape REMOVED; ee86a8e DEPLOYED.**
+On the operator's four yeses of the day: trusted lists travel in the seals
+member, no text-index member, no `dev adopt`/`migrate pack` (08a4c23,
+726b10e), and the legacy shape gone (ee86a8e): a collection file without
+`codex` is refused, no `collections/` directory means zero collections,
+the synthesized gutenberg and `codex_only` are gone, the old create route
+answers 410. Tests: every test's default collection is now a Codex
+gutenberg (`isolated_config`, `codex_collection()`); about 50 files ported,
+legacy-only tests deleted; 3,787 passed. On the node nothing changed: all
+nine served collections already named a Codex (`codex_only` was on);
+wikivec and the three genome collections stay parked and can be served
+only once rebuilt with a Codex. Between the deploys the operator
+restarted the NAS (00:50Z); it came back clean. Left of the legacy work:
+`backend_gate` keeps its probe for Codex v1/v2 (five live collections are
+v2), the codex-is-None guards for objects tests build by hand, the
+Library's preview route and ack button.
+
 **2026-10-07, ~22:00Z (UTC): the node back; gutenberg's snapshot 2026-09;
 408ac93 DEPLOYED (`41e3c9c2…`).** The node's journal stops at 19:47Z (an
 LXC machine terminated, then nothing) and resumes only at the operator's
