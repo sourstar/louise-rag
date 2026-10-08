@@ -1,0 +1,33 @@
+# louise-chat-qwen3-8b — staged in the LocalAI app (docs/notes/vega.md §12), beside
+# the live RAGE; Louise does not use it yet. Qwen3-8B, an ordinary model (no VeGa).
+# Every load option is RAGE's chat.yaml (the model's own chat template, as
+# llama-server's --jinja); the backend LocalAI's own intel-sycl-f16-llama-cpp; the
+# weights the same host file, mounted read-only. JSON, which is YAML.
+{
+  "name": "louise-chat-qwen3-8b",
+  "backend": "intel-sycl-f16-llama-cpp",
+  "template": {
+    "use_tokenizer_template": true
+  },
+  "context_size": 16384,
+  "threads": 6,
+  "gpu_layers": 999,
+  "flash_attention": "on",
+  "mmap": true,
+  "parameters": {
+    "model": "weights/chat/qwen3-8b.gguf",
+    "batch": 2048,
+    "top_k": 20,
+    "top_p": 0.95,
+    "repeat_penalty": 1.0,
+    "seed": 0
+  },
+  "options": [
+    "parallel:1",
+    "ubatch:512",
+    "use_jinja:true"
+  ],
+  "env": {
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  }
+}

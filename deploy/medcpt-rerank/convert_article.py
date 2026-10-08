@@ -76,8 +76,22 @@ else:
              ("Title only, empty abstract", ""),
              ("A long one", " ".join(["mitochondrial dysfunction in neurons"] * 200))]
 encode = server.make_encoder(f"{OUT}/tokenizer.json", MAX)
-infer = server.make_cls_infer(f"{OUT}/openvino_model.xml", "CPU")
-worst = 1.0
+# THE IR IS HELD TO THE MODEL IN f32. OpenVINO's CPU plugin infers in bf16 by
+# default on a CPU that has it (the node's Ryzen 7600: avx512_bf16), which
+# alone gave cosines of 0.99995-0.99999 against transformers' fp32 — a
+# precision the plugin chose, not the IR (node, 2026-10-08, vega.md §12). The
+# backend's own path (server.make_cls_infer, the plugin's default precision)
+# is reported beside it, never held to MIN_COSINE.
+_f32 = ov.Core().compile_model(f"{OUT}/openvino_model.xml", "CPU",
+                               {"INFERENCE_PRECISION_HINT": "f32"})
+
+
+def infer(inputs):
+    return [row for row in next(iter(_f32.infer_new_request(inputs).values()))[:, 0, :]]
+
+
+infer_default = server.make_cls_infer(f"{OUT}/openvino_model.xml", "CPU")
+worst = worst_default = 1.0
 for title, abstract in pairs:
     with torch.no_grad():
         x = tok([[title, abstract]], truncation=True, padding=True, max_length=MAX,
@@ -89,11 +103,18 @@ for title, abstract in pairs:
     vec = np.asarray(vec)
     cos = float(vec @ ref / (np.linalg.norm(vec) * np.linalg.norm(ref)))
     worst = min(worst, cos)
+    (vd,) = infer_default(mine)
+    vd = np.asarray(vd)
+    cos_default = float(vd @ ref / (np.linalg.norm(vd) * np.linalg.norm(ref)))
+    worst_default = min(worst_default, cos_default)
     print(f"{title[:40]!r}: tokens {int(mine['attention_mask'].sum())} (segment-1 "
           f"{int(mine['token_type_ids'].sum())}) | encodings identical: {same} | "
-          f"cosine IR-CPU vs transformers {cos:.6f}")
+          f"cosine IR-CPU f32 vs transformers {cos:.7f} | at the plugin's default "
+          f"precision {cos_default:.6f}")
     if not same:
         sys.exit("the backend's tokenizer path does not reproduce transformers' encoding")
+print(f"worst cosine: f32 {worst:.7f} (held to {MIN_COSINE}); the plugin's default "
+      f"precision {worst_default:.6f} (reported)")
 if worst < MIN_COSINE:
     sys.exit(f"worst cosine {worst:.6f} < {MIN_COSINE}: the IR is not the model")
 print("wrote", sorted(os.listdir(OUT)))

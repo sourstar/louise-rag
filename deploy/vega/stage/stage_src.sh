@@ -1,0 +1,31 @@
+#!/bin/sh
+# Switch-over step 3 (docs/notes/vega.md §12): the repo's files the staging
+# builds need, at a COMMIT (default HEAD) — never the working tree, which
+# another agent may be editing — plus this directory as it is on disk.
+# Run from the repo root on the dev PC; copy the tarball to the node's
+# /tmp/vega-stage/ and unpack it there as src/.
+#
+#   sh deploy/vega/stage/stage_src.sh [out.tgz] [commit]
+set -eu
+out=${1:-vega-stage-src.tgz}
+rev=${2:-HEAD}
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+git archive --format=tar "$rev" \
+  deploy/vega/run.sh deploy/vega/vega_wrapper.py deploy/vega/requirements.txt \
+  tests/fixtures/vega/backend.proto \
+  app/__init__.py app/hold/__init__.py app/hold/codex.py app/rage/__init__.py \
+  app/rage/model.py app/rage/procfs.py app/rage/runs.py app/rage/loadopts.py \
+  app/vega/__init__.py app/vega/tag.py \
+  deploy/localai/backends/run.sh deploy/localai/backends/louise_backend.py \
+  deploy/localai/backends/requirements-grpc.txt \
+  deploy/localai/backends/louise-medcpt-article-ov deploy/localai/backends/louise-medcpt-rerank \
+  deploy/localai/backends/louise-madlad \
+  deploy/madlad-translate/server.py deploy/medcpt-rerank/server.py \
+  deploy/medcpt-rerank/convert_article.py | tar -x -C "$tmp"
+git rev-parse "$rev" > "$tmp/REVISION"
+mkdir -p "$tmp/deploy/vega/stage"
+cp -r deploy/vega/stage/. "$tmp/deploy/vega/stage/"
+find "$tmp" -name __pycache__ -type d -prune -exec rm -rf {} +
+tar -czf "$out" -C "$tmp" .
+echo "$out ($(cat "$tmp/REVISION"))"

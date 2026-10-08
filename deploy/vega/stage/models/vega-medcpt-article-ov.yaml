@@ -1,0 +1,32 @@
+# vega-medcpt-article-ov — staged in the LocalAI app (docs/notes/vega.md §12), beside
+# the live RAGE; no Louise collection uses it yet. MedCPT's article encoder on
+# OpenVINO, `Embedding` of a TEXT PAIR (input-forms.md), behind VeGa: backend
+# vega-louise-medcpt-article-ov, the wrapper in front of louise-medcpt-article-ov.
+# A tagged pair reaches the backend as its pair marker only for a model loaded
+# with `pairs:true` (vega_wrapper). Options as RAGE's medcpt-article-ov.yaml
+# (deploy/rage/localai-models/; never deployed in RAGE). The weights: the IR
+# deploy/medcpt-rerank/convert_article.py wrote on the node (2026-10-08) into
+# /mnt/ssd5/apps/medcpt-models/medcpt-article-ov, mounted read-only. NOT pinned:
+# pubmed embeds nothing (embed = "off"). JSON, which is YAML.
+{
+  "name": "vega-medcpt-article-ov",
+  "backend": "vega-louise-medcpt-article-ov",
+  "embeddings": true,
+  "pinned": false,
+  "context_size": 512,
+  "threads": 6,
+  "gpu_layers": 0,
+  "parameters": {
+    "model": "weights/medcpt/medcpt-article-ov",
+    "batch": 1,
+    "seed": 0
+  },
+  "options": [
+    "device:xpu",
+    "pairs:true"
+  ],
+  "env": {
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache",
+    "OV_CACHE_DIR": "/data/louise-cache/ov-cache"
+  }
+}

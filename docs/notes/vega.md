@@ -558,3 +558,130 @@ counts every process on the card.
 - To remove later: host `/tmp/vega-evict/` (6.8 MB). It holds the scripts,
   `snaps.jsonl` (the 20 readings), the digests in `out/`, and the original
   `vega-bge-m3.yaml.bak` (813 B).
+
+## 12. Staging in the LocalAI app (2026-10-08/09)
+
+*Switch-over step 3, unattended. Every model Louise uses is staged in the
+LocalAI app beside the live RAGE (read only); no Louise collection file was
+changed. Scripts in `deploy/vega/stage/` (not committed); the packages are
+built from commit 89418c9, whose staged files are 4148d4b's bytes.*
+
+**Installed** (`/mnt/tank/apps/localai/backends`, owner 568:0; apparent size):
+
+| backend | what | size |
+|---|---|---|
+| `vega-llama-cpp` | rebuilt from HEAD (`build_vega_package.sh`), in front of `intel-sycl-f16-llama-cpp`; `run/` kept (the receipts socket, bind-mounted into `vega-proof`) | 365 MB |
+| `vega-louise-medcpt-article-ov` | the same wrapper in front of `louise-medcpt-article-ov`; the same socket | 359 MB |
+| `louise-medcpt-article-ov`, `louise-medcpt-rerank` | `build_louise_backend.sh`: Dockerfile.localai's `louise-backends` layout, portable CPython 3.12.11, OpenVINO 2026.3.1 | 663 MB each |
+| `louise-madlad` | the same, with torch 2.14.0+xpu in its own venv and `lib → venv/lib` | 7.8 GB (3.5 GB on disk) |
+
+Built on the node in throwaway `python:3.12-slim` containers: 6 s per
+wrapper, 10–19 s per OpenVINO backend, 156 s for MADLAD. The app's image
+has no system torch, so each backend carries its own Python, as LocalAI's
+own python backends do. Everything is compiled at build time. Python then
+writes nothing into a backend's tree at run time, which a hashed tree
+requires. In the app's container, as uid 568, torch sees `xpu` (the B70)
+and OpenVINO sees `GPU`.
+
+**The article encoder's IR.** `convert_article.py` wrote
+`/mnt/ssd5/apps/medcpt-models/medcpt-article-ov` (435,570,817 B of fp32
+weights, 417 MB on disk) in 48–56 s. It used torch 2.14.1+cpu and
+transformers 5.15.1 from the HF cache. The check pairs were this staging's
+64 pairs. Encodings were identical for all 64 pairs.
+- **A defect in its check, fixed:** the first run failed at a worst cosine
+  of 0.999950 < 0.99999. OpenVINO's CPU plugin infers in bf16 by default on
+  the node's Ryzen 7600 (`avx512_bf16`).
+- **The fix:** the IR is now held in f32 (`INFERENCE_PRECISION_HINT`), and
+  its worst cosine is 0.9999999. The plugin's default precision is printed
+  beside it, not held to the bound. The edit to `convert_article.py` is not
+  committed.
+
+**Mounts.** One `app.update localai` (`mounts.py`) added six read-only host
+paths without ACLs (uid 568 already reads them through their inherited
+NFSv4 entry `user:apps`). They are RAGE's own: `bge-m3-models`,
+`louise-rage/models/chat`, `granite-models`, `llama-embed`, `madlad-models`
+and `medcpt-models`, mounted at `/models/weights/{bge-m3,chat,granite,
+llama-embed,madlad,medcpt}`. So a model path is RAGE's, byte for byte.
+
+Checked against the dataset's 01:00 snapshot, leaf by leaf, the only other
+change in the user config is `ix_context.scale_version`, which TrueNAS
+rewrites at every update. The app is RUNNING, with the same 20 models plus
+the 9 new ones. The reclaimer settings read back unchanged (enabled, 0.36,
+size-aware, no budget).
+
+**The YAMLs** (`/mnt/ssd5/apps/localai/models`, sources in
+`deploy/vega/stage/models/`). Every load option is copied from RAGE's YAML.
+Only three things differ: the backend, the env (`NEO_CACHE_DIR` and
+`OV_CACHE_DIR` under `/data/louise-cache`), and `pinned`.
+- `vega-bge-m3`: updated to the mounted weights, NOT pinned (wikipedia has
+  `embed = "off"`).
+- `vega-qwen3-embedding-4b`: **pinned** (gutenberg, `embed = "all"`).
+- `vega-granite`: **pinned** (deposit-granite, `embed = "all"`, and the
+  node's default encoder; 211 MiB).
+- `vega-medcpt-query`, `vega-medcpt-article` (the GGUF of pubmed's current
+  space) and `vega-medcpt-article-ov` (the pair encoder, `pairs:true`): not
+  pinned (pubmed has `embed = "off"`).
+- `louise-rerank-bge` (`intel-sycl-f16-llama-cpp`), `louise-rerank-medcpt`,
+  `louise-translate-madlad` and `louise-chat-qwen3-8b`: ordinary models,
+  with no VeGa.
+
+The rule: pin an encoder that Louise embeds with continuously.
+
+**Verified** (`verify.py`, in `vega-proof`). Each model was loaded once,
+asked, compared, and shut down. The inputs were 64 standard-library
+docstrings (64 pairs for the pair encoder), cut to 1,000 characters for
+the 512-token models. Every vector came back with base64 and was checked
+against its receipt (64/64 for each encoder).
+
+| model | first call, load included | vs | cosine min / median | bit-identical | max abs diff |
+|---|---|---|---|---|---|
+| `vega-granite` | 9.2 s | RAGE `granite-embedding-107m-multilingual` | 1.0 / 1.0 | 64/64 | 0 |
+| `vega-bge-m3` | 11.9 s | RAGE `bge-m3` | 0.9999971 / 1.0 | 47/64 | 2.8e-4 |
+| `vega-medcpt-query` | 6.3 s | RAGE `medcpt-query` | 0.9999405 / 1.0 | 50/64 | 1.4e-3 |
+| `vega-medcpt-article` | 6.3 s | RAGE `medcpt-article` | 0.9999999 / 1.0 | 50/64 | 6.6e-5 |
+| `vega-medcpt-article-ov` (pairs, GPU) | 7.3 s | transformers fp32 CPU (RAGE has no such model) | 0.9999963 / 0.9999985 | 0/64 | 5.7e-3 |
+| `vega-qwen3-embedding-4b` | 33.7 s | RAGE `qwen3-embedding-4b` | 0.9999991 / 0.9999997 | 3/64 | 1.2e-4 |
+
+The other four models:
+- `louise-rerank-bge`: the same order as RAGE's on 9 documents, scores
+  within 1.05e-3; 8.1 s with the load.
+- `louise-rerank-medcpt`: the same order, identical scores; 4.7 s.
+- `louise-translate-madlad`: 4 sentences (it, de, fr, ja), identical to
+  RAGE's; peak 5,658 MB; 25.0 s with the load.
+- `louise-chat-qwen3-8b`: "Rome"; 9.4 s with the load.
+
+During these loads the card stayed at 18.7–19.1 of 32.6 GB used (RAGE's).
+At the end nothing is loaded and LocalAI is RUNNING.
+
+**The runs** (`GET /vega/runs/<id>`).
+- Every llama.cpp encoder:
+  - `name` `localai/intel-sycl-f16-llama-cpp`;
+  - `image` (the tree digest) `sha256:f5c07d2bed1d1b4efc633d798fc93fc2e5764e30dd6d2757eadf9f8dbcad4112`;
+  - `build` `f5c07d2bed1d` (the metadata has no `version`);
+  - `args` `["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"]`;
+  - `driver` `kernel 6.18.52-production+truenas; xe; libze_intel_gpu.so.1.15.39122 sha256:58d0b217…`,
+    the backend's bundled Level Zero driver (§10, finding 4, now applied).
+- `vega-medcpt-article-ov`:
+  - `name` `localai/louise-medcpt-article-ov`;
+  - `image` `sha256:8065a7fc670d3a43…`, `build` `8065a7fc670d`;
+  - `driver` from the app image's dpkg: `libze-intel-gpu1
+    26.05.37020.3-1~24.04~ppa3; intel-opencl-icd 26.05.37020.3-1~24.04~ppa3;
+    libze1 1.27.0-1~24.04~ppa2`. OpenVINO carries no driver.
+- `options` hold no `cache_reuse`. The app's LocalAI does not add it, while
+  RAGE's build adds `cache_reuse:256` (§10). It was recorded, not copied
+  into the YAMLs.
+- `vega-granite` and `vega-medcpt-article-ov` were loaded a second time.
+  Each stated the same run, so neither backend's tree moved between loads.
+
+**Not staged.** DAR-legal-it (not in step 3's brief; no live collection
+uses it) and DNABERT-2 (genome collections deleted).
+
+**Left on the node, ours.**
+- Host `/tmp/vega-stage/` (99 MB, tmpfs): sources, the portable Python,
+  `out/` with the reports, `pairs.json` and the reference vectors. The pip
+  cache (2.6 GB) was removed.
+- `/tmp/vega-stage-src.tgz`; `vega-proof:/tmp/stage/`.
+- `/mnt/tank/apps/localai/data/louise-cache/` (neo 9 MB, ov 391 MB).
+- The six mount points under `/mnt/ssd5/apps/localai/models/weights/`.
+- Now unused: the proof's `vega-weights/bge-m3-FP16.gguf` (1.16 GB; still
+  named by `vega-bge-m3-direct.yaml`) and `vega-llama-cpp/neo-cache/`.

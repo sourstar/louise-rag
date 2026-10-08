@@ -1,0 +1,28 @@
+# louise-rerank-bge — staged in the LocalAI app (docs/notes/vega.md §12), beside the
+# live RAGE; no Louise collection uses it yet. bge-reranker-v2-m3, an ordinary model
+# (a rerank writes no vector: no VeGa, no receipt). Every load option is RAGE's
+# bge-reranker.yaml; the backend LocalAI's own intel-sycl-f16-llama-cpp; the weights
+# the same host file, mounted read-only. JSON, which is YAML.
+{
+  "name": "louise-rerank-bge",
+  "backend": "intel-sycl-f16-llama-cpp",
+  "embeddings": true,
+  "reranking": true,
+  "context_size": 16384,
+  "threads": 6,
+  "gpu_layers": 999,
+  "flash_attention": "on",
+  "mmap": true,
+  "parameters": {
+    "model": "weights/bge-m3/bge-reranker-v2-m3-f16.gguf",
+    "batch": 8192,
+    "seed": 0
+  },
+  "options": [
+    "parallel:4",
+    "ubatch:8192"
+  ],
+  "env": {
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  }
+}
