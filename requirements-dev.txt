@@ -1,0 +1,8 @@
+# THE TEST IMAGE only (Dockerfile, stage `dev`; operator, 2026-10-08): what
+# the VeGa wrapper's end-to-end tests need (tests/vega/test_wrapper_grpc.py).
+# Louise never speaks gRPC, so the runtime image does not carry these. Pins
+# are the backends' (deploy/localai/backends/requirements-grpc.txt) and the
+# stub generator's (deploy/rage/Dockerfile.localai, GRPCIO_TOOLS_VERSION).
+grpcio==1.84.0
+protobuf==7.36.1
+grpcio-tools==1.84.0

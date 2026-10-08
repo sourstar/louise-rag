@@ -44,5 +44,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=browser-deps /opt/browser-test/node_modules /opt/browser-test/node_modules
 ENV NODE_PATH=/opt/browser-test/node_modules \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-headless-shell
+# gRPC for the VeGa wrapper's tests: the test image only (requirements-dev.txt)
+COPY requirements-dev.txt .
+RUN pip install --no-cache-dir -r requirements-dev.txt
 
 FROM base AS runtime
