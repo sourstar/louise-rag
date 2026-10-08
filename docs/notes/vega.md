@@ -106,9 +106,8 @@ To write when §6 passes, before the code ships:
 ## 7. The node
 
 - **Never delete a TrueNAS app** (operator, 2026-10-05). An app cannot be
-  renamed, so `louise-rage` stays: it hosts VeGa, slimmed to the receipts
-  service, or a new `vega` app is created and the operator stops
-  `louise-rage`. Which one is the operator's.
+  renamed. **Operator, 2026-10-08: keep the `louise-rage` app name for now**;
+  it hosts VeGa, slimmed to the receipts service.
 - The LocalAI app gains the `vega-` backends and one host-path mount (the
   receipts socket), and the model YAMLs and weight mounts of the models
   Louise uses.

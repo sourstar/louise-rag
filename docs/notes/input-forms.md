@@ -75,6 +75,17 @@ is MedCPT's article encoder on OpenVINO's GPU plugin
 plain-text spaces; a backend that later learns pairs, on any vendor, serves
 pair spaces without touching a collection.
 
+## Before any pair collection exists (found at phase 2, 2026-10-08)
+
+- **The gate measures the form the pipeline writes.** Operator, 2026-10-08
+  ("yes"): a pair space's calibration set is 512 title-and-abstract pairs
+  from the collection's own records, so the gate and every probe embed
+  pairs. A plain-text gate would pass a backend that flattens pairs — the
+  defect this note exists for.
+- **Paths that re-embed stored text re-chunk from the records** (verify-on-
+  use, T3/T4, bundle import, the export challenge): stored rows do not keep
+  `fields`, and the records give them back byte for byte.
+
 ## Migration
 
 1. pubmed: a version-5 Codex declaring the pair form; NCBI's 35.4 M vectors
