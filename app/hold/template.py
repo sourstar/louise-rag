@@ -531,7 +531,7 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
                 if "facets" in recipe else default_facets(source)),
         credits=build_credits(source, credits, _embedding),
         profile=recipe.get("profile"),
-        version=_version_for(space_version, image_shaped),
+        version=codex_mod.written_version(space, _version_for(space_version, image_shaped)),
         record_line=_record_line(recipe),
     )
     _refuse_a_loosened_class(source, codex)
@@ -546,7 +546,12 @@ def _version_for(space_version: int | None, image_shaped: bool) -> int:
     version is kept; below the input-forms amendment (09 §9.3, 2026-10-08)
     its layers carry no `input` and a version-5 copy would add one — another
     space, every vector of the source inadmissible to it — so the copy is
-    written at the last version without it."""
+    written at the last version without it.
+
+    The caller passes this through `codex.written_version`, which writes
+    version 6 for a space carrying a backend engine and only for it (09
+    §9.3, amended 2026-10-08) — a `--space-from` copy of a version-6 space
+    carries the source's backend engine, so it is 6 too (02 §2.7)."""
     if image_shaped:
         assert space_version is not None
         return space_version

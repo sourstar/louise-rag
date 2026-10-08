@@ -535,7 +535,11 @@ def derive(root: Path, mother_id: str, *,
     she is written as new Codices are — CODEX_VERSION, naming the engine her
     reference vectors are computed with. An engine carrying load options
     needs version 4 (09 §9.3) wherever she is: the engine is outside
-    `space_id`, so a sister in her mother's space may name a new one.
+    `space_id`, so a sister in her mother's space may name a new one. A
+    BACKEND engine makes her version 6, and only it (09 §9.3, amended
+    2026-10-08): a `--space-from` copy of a version-6 space is 6, of a
+    version-5 one 5 (02 §2.7), and a sister of a version-6 mother naming an
+    argv engine is 5.
 
     `embed` IS REQUIRED WHEN THE SISTER'S ENCODER DIFFERS, and ignored when
     it does not. A new build needs its own reference vectors — the mother's
@@ -606,6 +610,22 @@ def derive(root: Path, mother_id: str, *,
             version = cx.INPUT_VERSION - 1
         if new_space.has_options:
             version = max(version, cx.OPTIONS_VERSION)
+        if (new_space.has_backend and in_mothers_space
+                and mother.version < cx.INPUT_VERSION):
+            # A backend engine makes her version 6 (09 §9.3, amended
+            # 2026-10-08), whose layers carry `input` — which her mother's,
+            # below version 5, do not. So she could not keep her mother's
+            # space_id, which is what staying in it promises.
+            raise CodexError(
+                f"derive: a backend engine is admitted from Codex version "
+                f"{cx.BACKEND_VERSION}, whose layers carry `input`, and her mother is "
+                f"version {mother.version}, whose layers do not — so a sister naming "
+                f"one cannot stay in her mother's space (09 §9.3). An engine joins a "
+                f"space by passing the gate, not by a new Codex (03 §3.3): validate "
+                f"the run, or derive her in a new space")
+        # version 6 for a space carrying a backend engine, and for it alone
+        # (09 §9.3, amended 2026-10-08; 02 §2.7 for `--space-from`)
+        version = cx.written_version(new_space, version)
     elif mother.version >= cx.ENGINE_VERSION:
         raise CodexError(
             "derive: a space is written with the ENGINE its reference vectors are "
@@ -878,6 +898,10 @@ def replace(root: Path, mother_id: str, *, defect: Defect,
     base = space if space is not None else mother.space
     corrective = _replace(
         mother,
+        # her space is fresh by construction (the salted epoch), so her
+        # version is free to follow her engine: 6 with a backend engine and
+        # only with one (09 §9.3, amended 2026-10-08)
+        version=cx.written_version(base, mother.version),
         descriptive=descriptive if descriptive is not None else mother.descriptive,
         toolchain=tc,
         space=_replace(base, epoch=cx.corrective_epoch(mother.collection_id)),

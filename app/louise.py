@@ -98,7 +98,12 @@ def cmd_create(a) -> int:
         # the pre-template form: the file IS a Codex
         spec = _json(a.recipe)
         spec.setdefault("kind", cx.CODEX_KIND)
-        spec.setdefault("version", cx.CODEX_VERSION)
+        if "version" not in spec:
+            # 6 for a Codex carrying a backend engine, 5 for every other
+            # (09 §9.3, amended 2026-10-08)
+            spec["version"] = (cx.written_version(cx.space_from_dict(spec["space"]),
+                                                  cx.CODEX_VERSION)
+                               if isinstance(spec.get("space"), dict) else cx.CODEX_VERSION)
         codex = col.create(a.root, cx.from_dict(spec))
         print(f"held: {_write_held_file(a.root, codex, a.encoder)}", file=sys.stderr)
         print(codex.collection_id)

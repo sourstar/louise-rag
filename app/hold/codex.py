@@ -32,7 +32,9 @@ CODEX_KIND = "louise-codex"
 #: the Codex, `record_line` tracks what is in the shards, and a figureless
 #: collection created under a later format writes `version` 3 with
 #: `record_line` 1" — 4 since the options amendment (OPTIONS_VERSION), and 5
-#: since the input-forms amendment (INPUT_VERSION).
+#: since the input-forms amendment (INPUT_VERSION). A Codex carrying a
+#: BACKEND engine is written at BACKEND_VERSION instead, and only it
+#: (`written_version`).
 CODEX_VERSION = 5
 
 #: What this build can READ. "A Codex already written stays at its version
@@ -40,7 +42,7 @@ CODEX_VERSION = 5
 #: so inside `collection_id` — changing it does not upgrade a collection, it
 #: names a different one" (§9.3). So 1 and 2 are read forever and never
 #: rewritten.
-CODEX_VERSIONS = (1, 2, 3, 4, 5)
+CODEX_VERSIONS = (1, 2, 3, 4, 5, 6)
 
 #: THE ENGINE AMENDMENT (0d85f7f; 02 §2.4, 09 §9.3). From this version a
 #: space's encoder is `{weights, engine, label}`: the ENGINE the reference
@@ -72,6 +74,29 @@ INPUT_VERSION = 5
 #: The two forms (09 §9.3), as written into a layer.
 INPUT_TEXT: dict[str, str] = {"form": "text"}
 INPUT_PAIR: dict[str, str] = {"form": "pair", "split": "first-section"}
+
+#: THE VEGA AMENDMENT (2026-10-08; 09 §9.3 *a backend engine*, §9.18,
+#: docs/notes/vega.md §4). An engine a model runner installed from its own
+#: gallery and VeGa's wrapper launches: its program, `args[0]`, begins with
+#: `${BACKEND}/` — "which no other engine may carry" — and its `image` is
+#: the TREE DIGEST of the backend's installed files, naming no OCI image.
+#: No key was added; the engine is told by its bytes. It is admitted from
+#: this version, and this version is written for a Codex that carries one
+#: ALONE: "a Codex none of whose engines is a backend engine is written at
+#: 5, so no Codex, space, engine or `collection_id` already written moves".
+BACKEND_VERSION = 6
+#: The backend's directory, as a backend engine's `args` write it.
+BACKEND_PLACEHOLDER = "${BACKEND}"
+_BACKEND_PREFIX = BACKEND_PLACEHOLDER + "/"
+
+
+def is_backend_args(args: Any) -> bool:
+    """09 §9.3: "A backend engine is told by its bytes: its program,
+    `args[0]`, begins with `${BACKEND}/`". On the argument vector, so that
+    an engine still in its dict form (a stated run, a statement body) is
+    told the same way as an `Engine`."""
+    return (isinstance(args, (list, tuple)) and len(args) > 0
+            and isinstance(args[0], str) and args[0].startswith(_BACKEND_PREFIX))
 
 #: The engine's fields (§9.3). `options` is the one that may be absent.
 ENGINE_FIELDS = ("name", "build", "variant", "image", "args", "env", "device")
@@ -302,6 +327,12 @@ class Engine:
         return out
 
     @property
+    def is_backend(self) -> bool:
+        """A backend engine (09 §9.3, BACKEND_VERSION): `args[0]` begins
+        with `${BACKEND}/`, and `image` is then a tree digest."""
+        return is_backend_args(self.args)
+
+    @property
     def engine_id(self) -> str:
         """`H(canonical JSON of the engine object)`. It names an engine
         wherever a producer's engine is recorded: the bundle header (§9.7),
@@ -392,6 +423,14 @@ class Space:
         """Does either engine carry load options — which only a Codex of
         OPTIONS_VERSION or later can hold (09 §9.3)."""
         return any(e is not None and e.engine is not None and e.engine.options is not None
+                   for e in (self.encoder, self.query.encoder))
+
+    @property
+    def has_backend(self) -> bool:
+        """Is either engine a backend engine — which only a Codex of
+        BACKEND_VERSION can hold, and which makes a Codex that version
+        (09 §9.3, `written_version`)."""
+        return any(e is not None and e.engine is not None and e.engine.is_backend
                    for e in (self.encoder, self.query.encoder))
 
     def to_dict(self) -> dict[str, Any]:
@@ -822,6 +861,28 @@ def _layers_at(layers: Iterable[Layer], version: int) -> tuple[Layer, ...]:
     return tuple(out)
 
 
+def written_version(space: Space, version: int) -> int:
+    """The version a Codex holding `space` is WRITTEN at, given the version
+    its other rules chose (`version`: CODEX_VERSION for a new one, the
+    source's or the mother's where a space is copied or kept).
+
+    09 §9.3, amended 2026-10-08: BACKEND_VERSION "written for a Codex that
+    carries one alone — every other is written at 5". So a space with a
+    backend engine makes the Codex version 6, and a space without one never
+    leaves a Codex at 6 (a sister of a version-6 mother naming an argv
+    engine is written at 5). Below that nothing changes: a version-4 copy
+    stays 4, a version-2 copy stays 2, and no byte already written moves.
+
+    Raising a version below INPUT_VERSION to 6 would add `input` to the
+    layers and so move `space_id`; the callers that promise to keep a
+    space (`derive` in her mother's space) refuse that case themselves."""
+    if space.has_backend:
+        return BACKEND_VERSION
+    if version >= BACKEND_VERSION:
+        return BACKEND_VERSION - 1
+    return version
+
+
 def encoder_field(codex: "Codex", *, query: bool = False) -> tuple[str, str | None]:
     """How an artefact written FOR this collection names the Codex's own
     engine, beside the weights: `("encoder_engine", <engine_id>)` from Codex
@@ -959,12 +1020,29 @@ def _validate_engine(engine: Engine, where: str) -> None:
     if engine.variant is not None and (not isinstance(engine.variant, str)
                                        or not engine.variant):
         raise CodexError(f"{where}.variant is a non-empty string or null")
-    if not isinstance(engine.image, str) or not _DIGEST_RE.match(engine.image):
-        raise CodexError(f"{where}.image must be the sha256: digest of the OCI image that "
-                         f"was run — a tag is not an image — got {engine.image!r}")
     if not engine.args or not all(isinstance(a, str) and a for a in engine.args):
         raise CodexError(f"{where}.args must be the argument vector, program first: a "
                          f"non-empty list of non-empty strings")
+    backend = engine.is_backend
+    if not isinstance(engine.image, str) or not _DIGEST_RE.match(engine.image):
+        if backend:
+            # 09 §9.3: "the tree digest of the backend's directory … written
+            # `sha256:<hex>` like every `H`" — never the gallery's digest of
+            # a tag, which is not the bytes on disk
+            raise CodexError(f"{where}.image of a backend engine is the tree digest of "
+                             f"the backend's installed files, sha256:<64 lowercase hex> "
+                             f"(09 §9.3), got {engine.image!r}")
+        raise CodexError(f"{where}.image must be the sha256: digest of the OCI image that "
+                         f"was run — a tag is not an image — got {engine.image!r}")
+    # `${BACKEND}` is a backend engine's alone: "in a backend engine alone,
+    # the backend's directory `${BACKEND}`", whose program begins with
+    # `${BACKEND}/`, "which no other engine may carry" (09 §9.3). Anywhere
+    # else it would name a directory no `image` covers.
+    if not backend and any(BACKEND_PLACEHOLDER in a for a in engine.args):
+        raise CodexError(
+            f"{where}.args carries {BACKEND_PLACEHOLDER}, which only a backend engine "
+            f"may: one whose program, args[0], begins with {_BACKEND_PREFIX} and whose "
+            f"image is the tree digest of that directory (09 §9.3)")
     for placeholder in ("${WEIGHTS}", "${PORT}"):
         if sum(1 for a in engine.args if placeholder in a) > 1:
             raise CodexError(f"{where}.args carries {placeholder} more than once")
@@ -1044,6 +1122,13 @@ def _validate_encoder_shape(codex: Codex) -> None:
                     f"{OPTIONS_VERSION} field, unknown to a version {codex.version} Codex "
                     f"(09 §9.3, §9.18). A Codex already written stays at its version: "
                     f"`version` is inside `collection_id`")
+            if enc.engine.is_backend and codex.version < BACKEND_VERSION:
+                raise CodexError(
+                    f"{where}.engine is a backend engine ({_BACKEND_PREFIX} in its "
+                    f"program), admitted from Codex version {BACKEND_VERSION}; a version "
+                    f"{codex.version} Codex cannot carry one (09 §9.3, §9.18). A Codex "
+                    f"already written stays at its version: `version` is inside "
+                    f"`collection_id`")
         else:
             if enc.engine is not None:
                 raise CodexError(
@@ -1055,6 +1140,16 @@ def _validate_encoder_shape(codex: Codex) -> None:
         if not _DIGEST_RE.match(enc.weights):
             raise CodexError(f"{where}.weights must be a sha256: digest, got "
                              f"{enc.weights!r}")
+    if codex.version >= BACKEND_VERSION and not sp.has_backend:
+        # 09 §9.3, §9.18: version 6 is "written for a Codex that carries one
+        # alone — every other is written at 5". A version-6 Codex with no
+        # backend engine is an object no conforming writer produces: the
+        # same recipe at 5 is another `collection_id` for the same thing.
+        raise CodexError(
+            f"a version {codex.version} Codex carries a backend engine — {_BACKEND_PREFIX} "
+            f"in the program of space.encoder.engine or space.query.encoder.engine — "
+            f"and this one carries none; a Codex none of whose engines is a backend "
+            f"engine is written at version {BACKEND_VERSION - 1} (09 §9.3, §9.18)")
     qv = sp.calibration.query_vectors
     if codex.version >= ENGINE_VERSION and sp.query.encoder is not None:
         if not isinstance(qv, str) or not _DIGEST_RE.match(qv):

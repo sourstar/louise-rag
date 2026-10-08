@@ -28,7 +28,8 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from . import calibration as cal, envelope as env
-from .codex import ENGINE_VERSION, Codex, CodexError, engine_from_dict, sample
+from .codex import (BACKEND_PLACEHOLDER, ENGINE_VERSION, Codex, CodexError,
+                    engine_from_dict, is_backend_args, sample)
 
 #: 03 §3.1's third outcome. An unreachable encoder is not a failure: it is
 #: a deferral, and CLAUDE.md forbids waiting on it without a bound.
@@ -269,11 +270,25 @@ def statement(run: Run, codex: Codex, key, *, now: str) -> dict[str, Any]:
 #: beside version 3: its run is unchanged, and gating it again would
 #: recompute a verdict already held" — so 2 is read for ever, and 1 with it.
 STATEMENT_VERSION = 3
-STATEMENT_VERSIONS = (1, 2, 3)
+#: Version 4 is the VeGa amendment's (2026-10-08; 09 §9.12, §9.18): "a
+#: backend engine's run; every other run is stated at 3". No key was added;
+#: a backend engine is told by `${BACKEND}/` in its program (09 §9.3), and
+#: a reader of version 3 would take its tree digest for an image.
+BACKEND_STATEMENT_VERSION = 4
+STATEMENT_VERSIONS = (1, 2, 3, 4)
+
+
+def statement_version(engine: Any) -> int:
+    """The version a statement of a run with this engine is written at: 4
+    for a backend engine's run and only for it, 3 for every other — so no
+    statement, `engine_id` or run already stated moves (09 §9.12)."""
+    args = engine.get("args") if isinstance(engine, dict) else None
+    return BACKEND_STATEMENT_VERSION if is_backend_args(args) else STATEMENT_VERSION
 
 
 def _statement_run(run: Run, key, *, now: str) -> dict[str, Any]:
-    """09 §9.12's body at version 3: "this RUN, on this peer, is compliant
+    """09 §9.12's body at version 3 — at 4 for a backend engine's run
+    (`statement_version`): "this RUN, on this peer, is compliant
     with this space" (dd9bef4). A peer keeps one per run it has validated,
     and a vector is written only from an answer naming a run with a passing
     one. Version 2 is this body with an engine that cannot carry `options`;
@@ -307,7 +322,8 @@ def _statement_run(run: Run, key, *, now: str) -> dict[str, Any]:
     except CodexError as e:
         raise GateError(f"the run's engine cannot be signed into a statement: {e}") from e
     body = {
-        "kind": "louise-calibration-run", "version": STATEMENT_VERSION,
+        "kind": "louise-calibration-run",
+        "version": statement_version(run.stated.engine),
         "space_id": run.space_id,
         "collection_id": run.collection_id,
         "set": run.set_id,
@@ -351,6 +367,25 @@ def read_statement(envelope_: dict[str, Any]) -> dict[str, Any]:
     if version == 2 and isinstance(body.get("engine"), dict) and "options" in body["engine"]:
         raise GateError("a version-2 calibration statement names an engine without "
                         "`options`; one that carries them is a version-3 body (09 §9.12)")
+    if version >= 2:
+        # 09 §9.12, §9.18 (the VeGa amendment): version 4 is written for a
+        # backend engine's run ALONE, and a backend engine is admitted from
+        # it — below it `${BACKEND}` is a placeholder the schema does not know
+        engine = body.get("engine")
+        args = engine.get("args") if isinstance(engine, dict) else None
+        backend = is_backend_args(args)
+        carries = isinstance(args, list) and any(
+            isinstance(a, str) and BACKEND_PLACEHOLDER in a for a in args)
+        if version < BACKEND_STATEMENT_VERSION and carries:
+            raise GateError(
+                f"a version-{version} calibration statement names an engine carrying "
+                f"{BACKEND_PLACEHOLDER}; a backend engine's run is stated at version "
+                f"{BACKEND_STATEMENT_VERSION} (09 §9.3, §9.12)")
+        if version == BACKEND_STATEMENT_VERSION and not backend:
+            raise GateError(
+                f"a version {version} calibration statement is written for a backend "
+                f"engine's run alone ({BACKEND_PLACEHOLDER}/ in its program); every "
+                f"other run is stated at {STATEMENT_VERSION} (09 §9.12, §9.18)")
     return body
 
 
