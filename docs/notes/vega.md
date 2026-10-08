@@ -93,6 +93,27 @@ To write when §6 passes, before the code ships:
   images are), for a verifier to reproduce the reference vectors after
   upstream drops that version.
 
+**Applied 2026-10-08**, before the code follows: 01 vocabulary (engine,
+VeGa, receipt); 02 §2.4 (the engine, receipts, the archive) and §2.7
+(`space_from` of a backend engine); 03 §3.3 (no pinning, VeGa and the
+receipt, embedding and searching); 09 §9.3 (`version` 6, the `image` and
+`args` rows, *a backend engine*, the tree digest, the archive), §9.12
+(the run identity by receipt or `Louise-Run`, five bullets with
+`driver`, the tag, digests, receipt, routes, intake, reading the
+answer; the statement's version 4), §9.18 (two rows moved, one added).
+Decided in writing it, for the operator's review:
+- **Versions** move for an object carrying a backend engine alone:
+  `louise-codex` 6, `louise-calibration-run` 4; everything else is written
+  at 5 and 3, so no byte already written moves (RULE 1). No key was added;
+  a backend engine is told by `${BACKEND}/` in `args[0]`.
+- **`args`** is `["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"]`,
+  relative as the options are to `${MODELS}`. The wrapper still writes the
+  absolute path (§9): it must follow, and the codex validator must admit
+  `${BACKEND}` only there and only from version 6.
+- **Still open: `build`'s fallback bytes.** §9 says the tree digest's first
+  12 hex digits; `vega_wrapper.short_build` writes `sha256:` + 12. 09 §9.3
+  marks it unfixed until one is chosen.
+
 ## 5. Facts, read on the node 2026-10-08
 
 - The LocalAI app runs `quay.io/go-skynet/local-ai:v4.11.0-gpu-intel` with
@@ -220,7 +241,7 @@ is therefore a new run, gated before its first vector.
 
 **Louise's path (2026-10-08).** An encoder opts in with `api = "vega"` in
 its collection's `[encoder]` (it holds for `query_url` too) and `model =
-"vega-…"`; where receipts are read is node identity, `VEGA_URL` (07 §7.8,
+"vega-…"` (since the same day `embed_model` and `query_model`, 07 §7.8); where receipts are read is node identity, `VEGA_URL` (07 §7.8,
 amended). RAGE's `api = "openai"` + `Louise-Run` path is unchanged.
 `embeddings._request_vouched`, under the one entry point, so chunks,
 queries, the gate, probes and calibration all take it: every input tagged

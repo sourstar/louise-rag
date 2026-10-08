@@ -181,7 +181,13 @@ admission test, and it is per combination — a new engine, a new build,
 a new device or driver, a new quantisation is a new test. Which engine
 a peer runs is its own choice: the one the Codex freezes (02 §2.4) is
 the reference every run is measured against, not a requirement, and a
-newer build that is faster is welcome the moment it passes. A run that
+newer build that is faster is welcome the moment it passes. Nor is
+anything pinned under it (*amended 2026-10-08*, operator, docs/notes/vega.md):
+the model runner installs and upgrades its backends as it likes, and an
+upgrade changes the backend's files, so it is a new run, gated before its
+first vector is written. The Codex cannot be updated and keeps the engine
+it was created with forever; the engines after it are admitted beside it,
+each by its own calibration statement. A run that
 passes is validated for the space as it stands, with nobody having to
 accept it (operator, 2026-09-20). Its signed statement is what the
 digest publishes and what 04 §4.5 weights. A run that fails writes
@@ -201,25 +207,48 @@ writes its calibration member without calling an encoder at all.
 
 **Validate once; then every answer says which run gave it.** A pass
 validates a RUN: one engine as it was actually launched. That is the
-image by the digest that is running (never a tag), the weights, the
+engine's software by the digest of the bytes that ran — an image by the
+digest that is running (never a tag), or a runner's backend by the
+digest of its installed files (09 §9.3) — the weights, the
 exact arguments, load options and environment, the device, and the device's driver and
-compute runtime, all named by a **run identity** (09 §9.12). What keeps
+compute runtime — for a backend that carries its own driver, the one it
+loads — all named by a **run identity** (09 §9.12). What keeps
 later work honest is not a test repeated during the work. It is the
-platform that serves the models, in two parts. A model runner — LocalAI
-on this node — launches, loads, keeps and evicts the engines; what it
-decides changes when an answer comes, never what it says. RAGE, the RAG
-Engine, stands in front of the runner and does one thing: it computes
-the run identity of every answer from what was actually launched — the
-process the kernel shows, the image it runs from, the weights it holds,
-the options the runner sent it — never from what a configuration
-declares, and states it with that answer (operator, 2026-10-03).
-Together they are a trusted processing platform: a model reloaded with
-another flag, an image whose tag moved, a driver updated underneath it
-is each a different run, and says so on its next answer.
+platform that serves the models, in two parts (*amended 2026-10-08*,
+docs/notes/vega.md). A model runner — LocalAI on this node — launches,
+loads, keeps and evicts the engines, and is the only manager of the
+card's memory; what it decides changes when an answer comes, never what
+it says, and it is outside the trust path. **VeGa, the Vector Gate**,
+makes the provenance of every vector provable. Its wrapper sits between
+the runner and each real backend, as the backend's parent: it computes
+the run from what it launched — the backend's installed files, the
+weights it holds, the options the runner sent it, the driver it loads —
+never from what a configuration declares, and for every answer it
+issues a **receipt** that binds the run to the input the backend
+received and to the vector it returned, by their digests (09 §9.12).
+VeGa holds the receipt before the vector goes back, and the writer —
+Louise — reads it and checks it before the write. So a runner that
+changed an input or a vector, or sent a request to a backend without
+the wrapper, is caught by the writer and never trusted. Together they
+are a trusted processing platform: a model reloaded with another flag,
+a backend upgraded, a driver updated underneath it is each a different
+run, and says so on its next receipt. The second part was RAGE, the RAG
+Engine, until 2026-10-08: a front that computed the run from the
+process the kernel showed and stated it in a header of each answer
+(09 §9.12, `Louise-Run`; operator, 2026-10-03). It serves until VeGa
+replaces it, and an endpoint behind it is held to the rules below with
+its header in place of a receipt.
 
 - **Embedding** (`vectors build`, `share contribute`): a vector is
   written only if the answer that carried it names a run validated for
-  the space. This is checked on every answer, before the write. An
+  the space — through VeGa, only if every input of the answer has its
+  receipt, the receipt's input digest is that of what was sent and its
+  vector digest that of what came back, and the run the receipt names
+  is validated. This is checked on every answer, before the write. No
+  receipt — VeGa unreachable, a receipt not or no longer held, the
+  wrapper unable to deliver one — is a deferral, never an error on a
+  document. A receipt that does not match is a refusal: nothing from
+  that answer is written. An
   answer from a run not yet validated is not written — a deferral — and
   the gate runs against that run at once; if it passes, work resumes
   under it. Nothing unvalidated is ever stored, so stored vectors carry
@@ -230,7 +259,11 @@ is each a different run, and says so on its next answer.
   check runs under a validated run. An answer that names another makes
   the check inconclusive, and an inconclusive check yields no
   attestation (§3.6).
-- **Searching**: the same runs, validated the same way. In a symmetric
+- **Searching**: the same runs, validated the same way, and through
+  VeGa a query vector is taken only with its receipt, checked as a
+  document's is: no receipt is a deferral — the search goes on with its
+  text leg — and a receipt that does not match withholds the vector leg
+  and says why. In a symmetric
   space the queries and the documents come from one run. An asymmetric
   space's query encoder is a run of its own, validated against the
   query reference vectors (09 §9.12). A run not yet tested answers no
@@ -245,7 +278,10 @@ is each a different run, and says so on its next answer.
   deferral, and returns nothing to quarantine.
 
 An endpoint that states no run identity cannot be held to a validated
-run: a peer may search with it and writes nothing through it.
+run: a peer may search with it and writes nothing through it. An
+encoder declared behind VeGa is not such an endpoint: an answer of it
+without its receipts is deferred, and its vectors are neither written
+nor searched with.
 
 **The gate also measures what the answers depend on besides the run.**
 It embeds the sixteen fingerprint texts (09 §9.12) one at a time, then

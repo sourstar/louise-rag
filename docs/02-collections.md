@@ -493,8 +493,10 @@ that is not null; a document is embedded by `space.encoder` and never
 prefixed (05 §5.1).
 
 **Not the engine either.** The software that runs the model — its build,
-the image holding it, its arguments, the options it is loaded with and
-its environment, the device — is
+the image holding it or, for a backend a model runner installs, the
+backend's installed files (09 §9.3, *amended 2026-10-08*), its
+arguments, the options it is loaded with and its environment, the
+device — is
 how the function was computed, not the function. The Codex freezes it
 as `space.encoder.engine`: the engine the creator TESTED, the one the
 reference vectors of the calibration member came from, written out
@@ -509,6 +511,11 @@ contributes to the space once it passes, stays a distinct producer in
 provenance, and never makes a new space. Unlike two derivations, two
 engines do not produce the same numbers; they produce numbers within
 tolerance of one reference, which is all a space promises (§3.1).
+Which run produced a vector is stated by the platform that serves the
+models — VeGa, the Vector Gate, by a **receipt** for every answer, bound
+to the input and to the vector by their digests — and checked by the
+writer before the write; a query's vector too is taken only with its
+receipt (03 §3.3, 09 §9.12; *amended 2026-10-08*, docs/notes/vega.md).
 Collections meant to be searched together reach one space through
 `space_from` (§2.7), which copies the engine with the rest, so they
 share one reference. The query side is
@@ -524,7 +531,11 @@ run, is refused at creation: such a collection could be held, but never
 extended and never verified by anyone but the API's owner, which is the
 one-shot dump §1 exists to replace. `space.encoder` therefore names
 open weights by their digest, and an engine whose image is named by
-digest and obtainable the same way.
+digest and obtainable the same way. A backend the model runner fetched
+from its own gallery is named by the digest of its installed files, and
+since the gallery drops old versions, the node that creates the Codex
+keeps those files for the Codex's life, as it keeps the platform image
+(09 §9.3, *amended 2026-10-08*).
 
 Naming them by digest also makes them content-addressed, and what is
 content-addressed can travel: a peer holding an encoder's weights
@@ -808,7 +819,10 @@ because the shape of version 3 and later takes the image out of
 (`create --space-from`) keeps every vector a development collection
 already computed (operator, 2026-09-21). A version-3 source needs no
 such care: its `space` is a valid version-4 one, copied as it is
-(operator, 2026-10-03).
+(operator, 2026-10-03). Nor does a source whose engine is a runner's
+backend: the copy carries that engine, so it is written at version 6,
+as any Codex carrying one is, and a copy of a version-5 space stays at
+5 (09 §9.3, *amended 2026-10-08*).
 
 **A sister may DERIVE her vectors instead of embedding them.** Where her
 space is a pure function of another's — a quantisation of it, or a

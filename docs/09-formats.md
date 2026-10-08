@@ -270,7 +270,7 @@ number written as a decimal string is marked *decimal*.
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-codex"` | yes | |
-| `version` | `5` | yes | the Codex format version (§9.18). Version 4 is this object with no layer carrying `input` — a layer of a version-4 Codex reads as `{"form": "text"}`, but writing the key into it would change its bytes and so its `collection_id` and `space_id`, so a version-4 Codex keeps both; `space_from` copying from a Codex below version 5 writes version 4, so that the copy's `space_id` is the source's (*amended 2026-10-08*, docs/notes/input-forms.md). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
+| `version` | `6` | yes | the Codex format version (§9.18). Version 5 is this object with no backend engine (below, *the engine*), and a Codex none of whose engines is a backend engine is written at 5, so no Codex, space, engine or `collection_id` already written moves and an argv engine or one RAGE stated keeps its bytes (*amended 2026-10-08*, docs/notes/vega.md); `space_from` copies a version-5 `space` into a version-5 Codex unchanged. Version 4 is this object with no layer carrying `input` — a layer of a version-4 Codex reads as `{"form": "text"}`, but writing the key into it would change its bytes and so its `collection_id` and `space_id`, so a version-4 Codex keeps both; `space_from` copying from a Codex below version 5 writes version 4, so that the copy's `space_id` is the source's (*amended 2026-10-08*, docs/notes/input-forms.md). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
 | `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
@@ -388,8 +388,8 @@ whole so that anyone can compute them again (02 §2.4):
 | `name` | string | yes | the serving software: `"llama.cpp"`, `"text-embeddings-inference"`, the name of a server the platform ships |
 | `build` | string | yes | its build or release as the software names it — `"b10630"`, `"1.8.0"`, a commit |
 | `variant` | string or null | yes | the variant of that build where the software publishes several — `"sycl"`, `"cpu"`, `"cuda"`; `null` where there is one |
-| `image` | id | yes | the digest of the OCI image holding that build, the one that was run. It must be obtainable (02 §2.4), and it travels like weights (04 §4.3) |
-| `args` | list of strings | yes | the argument vector the engine was started with inside `image`, program first, in order. The weights file is written `${WEIGHTS}` and the listening port `${PORT}`, and nothing else in it names the host |
+| `image` | id | yes | the digest of the OCI image holding that build, the one that was run; for a backend engine, the digest of the backend's installed files (below). It must be obtainable (02 §2.4), and it travels like weights (04 §4.3) |
+| `args` | list of strings | yes | the argument vector the engine was started with inside `image`, program first, in order. The weights file is written `${WEIGHTS}`, the listening port `${PORT}` and, in a backend engine alone, the backend's directory `${BACKEND}` (below), and nothing else in it names the host |
 | `env` | object | yes | the environment variables set for the engine beyond the image's own, name → string; `{}` when none. Never a credential: the Codex is public |
 | `options` | object | no | the options the engine received when it loaded the weights, for an engine a model runner loads by a call rather than by its argument vector — a LocalAI backend's `LoadModel`. They are the runner's record of that call as the runner sent it (for LocalAI, `load_options` in `GET /system`, `deploy/localai/patches/`), with the weights file written `${WEIGHTS}`, the runner's models directory `${MODELS}`, and every number that is not an integer as its decimal string (§9.1). The variables the runner sets in the engine's environment — LocalAI's `EnvVars` — are the engine's `env` and are written there only, never again among the options (operator, 2026-10-03). An option naming any other absolute path makes the run unstatable: a run that loads a second file — a projector, a LoRA, a draft model — cannot be stated yet. ABSENT, never null, for an engine started by `args` alone, which therefore keeps the bytes and the `engine_id` it had in version 3 (operator, 2026-10-03). Never a credential |
 | `device` | string | yes | the device the reference vectors were computed on, as its driver names it — `"Intel(R) Arc(TM) Pro B70 Graphics"`, `"cpu"` |
@@ -402,6 +402,69 @@ back bit for bit. **`engine_id`** = `H(canonical JSON of the engine
 object)`. It names an engine wherever a producer's engine is recorded:
 the bundle header (§9.7), attestations (§9.8), benchmarks (§9.9) and
 calibration objects (§9.12).
+
+**A backend engine** (*amended 2026-10-08*, docs/notes/vega.md). An
+engine the model runner installed from its own gallery — a LocalAI
+backend — and launches behind VeGa's wrapper (03 §3.3) is not in any
+image the platform runs: the runner fetches it, upgrades it and moves
+its tags as it likes (operator, 2026-10-08: no pinning). Its engine
+object has the keys above, and the wrapper, which is the backend's
+parent, writes them from what it launched, at every load:
+
+| field | a backend engine's value |
+|---|---|
+| `name` | `"localai/<name>"`, `<name>` being the `name` the runner's install record (`metadata.json` in the backend's directory) gives, or the directory's name where there is no record |
+| `build` | the `version` the install record declares; where it declares none — the case on the reference node — a short form of `image`, *whose exact bytes are not fixed yet*: docs/notes/vega.md §9 says the first 12 hexadecimal digits of the tree digest, the wrapper writes `sha256:` and those 12. Never the record's `uri`, whose tag moves |
+| `variant` | `null` |
+| `image` | the **tree digest** of the backend's directory, below — never the digest the runner's gallery wrote into the install record, which is the registry's word for a tag at install time and not a digest of the bytes on disk |
+| `args` | `["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"]`: the argument vector the wrapper started the backend with, from the backend's directory, as the runner starts one; `${BACKEND}` is the backend's directory, whose bytes `image` names, so the vector is relative to it as the options are to `${MODELS}` |
+| `env` | the variables the runner set for the load — LocalAI's `EnvVars` — as for any engine the runner loads by a call; what the backend's own `run.sh` exports is inside `image` |
+| `options` | the `ModelOptions` of the `LoadModel` call exactly as the wrapper received them, read as protobuf JSON with the protocol's field names and unset fields omitted, then written as the `options` row states. A field the wrapper's copy of the runner's protocol definition cannot name refuses the load: an option missing from the engine would be a declaration where 02 §2.4 asks for what ran |
+| `device` | the card the backend's processes hold memory on, as its driver names it, read from their DRM clients; `"cpu"` when they hold none |
+
+The run's `driver` (§9.12) is the driver the backend loads, which may be
+one it carries rather than the system's.
+
+The tree digest, `image`, is
+
+```
+image = H( canonical JSON of { <path>: <entry>, … } )
+```
+
+over every entry below the backend's directory, the directory itself
+excluded, walked without following symbolic links, except the install
+record `metadata.json` at the top level — the runner's note of the
+install, not a byte the backend runs, so a reinstall of the same bytes
+is the same engine. `<path>` is relative to the directory,
+`/`-separated, UTF-8. `<entry>` is, for a regular file,
+`{"type": "file", "exec": <true when any of its three execute bits is
+set>, "size": <bytes>, "sha256": "<64 lowercase hexadecimal digits of
+SHA-256 over its contents>"}`; for a symbolic link,
+`{"type": "link", "target": "<the link's own string>"}`, never followed;
+for a directory, an empty one included, `{"type": "dir"}`. Anything else
+— a socket, a FIFO, a device — or a name or link target that is not
+UTF-8 states no run. Owners, times and the other mode bits are not in it.
+It is written `sha256:<hex>` like every `H`. It is not the weights digest
+of a directory: that one refuses links and maps a path to a digest, this
+one keeps links and execute bits, because a backend is a program and
+those are part of it.
+
+A backend engine is told by its bytes: its program, `args[0]`, begins
+with `${BACKEND}/`, which no other engine may carry, and its `image` is
+then a tree digest and names no OCI image. It is admitted from Codex
+version 6 and peer's calibration statement version 4 (§9.12, §9.18).
+
+**A backend engine is archived.** The runner's gallery drops old
+versions and moves its tags, and a verifier who wants the reference
+vectors back needs the exact files the Codex names. So the node that
+creates a Codex naming a backend engine keeps that backend's installed
+directory for the Codex's life, as it keeps the platform image every
+Codex names — on the reference node, beside those images on tank
+(`louise-platform-images/`, deploy/reference/DEPLOYMENT.md). It
+travels as an archive of the directory, whose own bytes are not the
+identity: a peer that receives one unpacks it and computes the tree
+digest, and that is the whole check. 04 §4.3's announcement and §9.16's
+DHT key use the tree digest as they use an image's.
 
 **The weights digest.** For a model held as one file — a GGUF —
 `weights` is `H(bytes of the file)`. For a model held as a directory —
@@ -1493,50 +1556,190 @@ pairs (*amended 2026-10-08*). Two sisters on one encoder share one
 calibration member byte for byte (08 §8.3). Cosines are computed in f32
 after upcasting.
 
-**The run identity** (03 §3.3). What RAGE states with every answer, for
-every engine the node's model runner launched, in the response header
-`Louise-Run`:
+**The run identity** (03 §3.3). What the platform states for every
+answer of every engine the node's model runner launched:
 
 ```
 run_id = H( canonical JSON of
   {"driver":  "<the device's kernel driver and compute runtime, with versions, as the platform reads them; \"cpu\" on a CPU>",
-   "engine":  <the engine object of §9.3, as LAUNCHED: `image` the digest of the image actually running>,
+   "engine":  <the engine object of §9.3, as LAUNCHED: `image` the digest of the image actually running, or of a backend's installed files>,
    "weights": "<the weights digest of §9.3, of the file or the directory actually loaded>"} )
 ```
 
 The platform computes it from what it launched, never from a
-declaration. It describes a run on request (`GET /louise/runs/<run_id>`
-→ that same object), which is where a statement's `engine`, `weights`
-and `driver` come from.
+declaration, and states it in one of two ways (*amended 2026-10-08*,
+docs/notes/vega.md): VeGa by a **receipt** for every input (below);
+RAGE, until it retires, in the response header `Louise-Run` of every
+answer, which stays defined as it was for the endpoints behind RAGE and
+counts for nothing on an answer through VeGa. Each describes a run on
+request — VeGa at `GET /vega/runs/<run_id>`, RAGE at
+`GET /louise/runs/<run_id>` — answering with that same object, which is
+where a statement's `engine`, `weights` and `driver` come from.
 
-Four things make "what it launched" computable, and a platform that
-states a run follows all four:
-- **`image`.** A process cannot see the digest of the image it runs in;
-  only the container runtime knows it. The platform therefore learns its
-  `image` from a deployment pinned by digest and refuses to start
+Five things make "what it launched" computable, and a platform that
+states a run follows all five:
+- **`image`.** Behind RAGE: a process cannot see the digest of the image
+  it runs in; only the container runtime knows it. RAGE therefore learns
+  its `image` from a deployment pinned by digest and refuses to start
   otherwise: a tag is not an image. A digest-pinned deployment IS the
   observation, since the runtime runs nothing else. An engine the
   runner installed after the image was built — a backend fetched at
-  run time — is not in that image, and states no run.
+  run time — is not in that image, and RAGE states no run for it.
+  Behind VeGa every engine is such a backend, and its `image` is the
+  tree digest of its installed files (§9.3), which the wrapper computes
+  at every load while the backend loads, reading again only a file whose
+  device, inode, size, modification or change time at its physical path
+  moved since it was last read.
 - **`args` and `env`.** They are the engine's as §9.3 writes them —
-  `${WEIGHTS}` and `${PORT}` unsubstituted, and only the variables set
-  for the engine — never the process's raw argument vector and
-  environment, which carry a port, a path and a container's host name
-  that change at every start and would make every restart another run.
-  The platform checks that the process serving the answer is the one it
+  `${WEIGHTS}`, `${PORT}` and `${BACKEND}` unsubstituted, and only the
+  variables set for the engine — never the process's raw argument vector
+  and environment, which carry a port, a path and a container's host
+  name that change at every start and would make every restart another
+  run. RAGE checks that the process serving the answer is the one it
   read them for — by pid and start time, before and after the answer —
   and that it matches them; a process that does not match states none.
+  VeGa's wrapper is the backend's parent: the vector is the one it
+  passed and the variables the ones it gave, and a load whose variables
+  are not in the environment the backend was started with states no run; an
+  answer given while the backend was reloaded or had exited gets no
+  receipt.
 - **`options`.** For an engine that receives its load options over its
-  own protocol, the options as the runner sent them (§9.3), read at
-  every launch from the runner's record of that load — never from its
-  configuration, which the runner completes with defaults of its own.
+  own protocol, the options as the runner sent them (§9.3) — behind
+  RAGE read at every launch from the runner's record of that load, never
+  from its configuration, which the runner completes with defaults of
+  its own; behind VeGa the load call itself, which the wrapper receives.
   The environment the runner sets for it is its `env`, not an option.
   Absent for an engine started by its argument vector alone.
-- **`weights`.** Hashed at every launch, from the bytes on disk.
+- **`weights`.** Hashed at every launch, from the bytes on disk; behind
+  VeGa while the backend reads them, and a load whose weights are not
+  hashed within half an hour states no run.
+- **`driver`.** The kernel's release and the kernel module the card is
+  bound to, with its version, as the platform reads them, then the
+  compute runtime. Behind VeGa the runtime is the driver library the
+  backend loads (*amended 2026-10-08*): the one its processes' own
+  environment directs the compute runtime to (on the reference node
+  Level Zero's `ZE_ENABLE_ALT_DRIVERS`, which LocalAI's `run.sh` exports;
+  the environment the wrapper gave, where none can be read), else the
+  one its own `lib/` carries; each written `<file name> sha256:<hex>`,
+  the file a link names, so its version is in the name and its bytes in
+  the digest. Processes naming two drivers, or a `lib/` carrying two,
+  state no run. A backend that loads no driver of its own is read as
+  before, from the runner's image's package database. Never the runner
+  image's driver for a backend that loads its own: that is a driver the
+  backend does not run.
 
 So the same engine relaunched unchanged states the same run, and a
 changed flag, a changed load option, a changed weights file, a changed
-image or a changed driver each states another.
+image or backend file or a changed driver each states another.
+
+**The tag, the receipt and the receipts route** (*amended 2026-10-08*,
+docs/notes/vega.md; operator's proposal, approved in principle, its
+bytes under review). How VeGa states the run of each answer, and how
+Louise reads it. The tag, the two digests and the receipts route are a
+**wire format**: what Louise sends through the runner, what the wrapper
+digests, and what VeGa answers. The intake between the wrapper and VeGa
+is not: both ends are this platform on one node, and it is fixed here
+so that two programs agree. The runner's own API — LocalAI's
+`/v1/embeddings` — is the runner's, and Louise fixes only the two things
+below in it.
+
+*The request.* Louise sends an embedding request to the runner, naming
+the encoder's `vega-` model, with every input TAGGED and
+`"encoding_format": "base64"`, so that the vectors come back as the
+float32 bytes the backend produced and no decimal is read at all. A
+text-pair input is sent as a tagged pair, never in another field.
+
+*The tag.* Every input is one string:
+
+```
+"\x1eVEGA/1\x1e" + canonical JSON (§9.1) of
+      {"form": "text", "id": "<id>", "text": "<the text>"}
+   or {"form": "pair", "id": "<id>", "pair": ["<first>", "<second>"]}
+```
+
+The marker is the eight characters U+001E, `VEGA/1`, U+001E — bytes
+`1e 56 45 47 41 2f 31 1e` — which canonical JSON never contains raw. `id`
+is 128 random bits as 32 lowercase hexadecimal digits, fresh for every
+input and never reused. A pair is the layer's `pair` form (§9.3). The
+wrapper refuses, and answers nothing for, an input that does not start
+with the marker or carries it elsewhere, a body that is not exactly one
+of the two objects — another key, a missing one, an id of another form,
+a number, a duplicate key, any byte the canonical form would write
+otherwise — a text carrying the pair marker of the backend's own pair
+form, which only the wrapper writes, a pair sent to a backend loaded
+without `pairs:true`, and a request that carries token ids, which no
+tag can bind. It strips the tag and forwards the bare text, or the pair
+in the form the backend reads. `VEGA/1` is the version of this protocol
+— the tag, the receipt and the routes together — and a change to any of
+them is `VEGA/2`.
+
+*The two digests.* The **input digest** is `H` of the canonical JSON of
+the tag's object without its `id` — `{"form": "text", "text": "…"}` or
+`{"form": "pair", "pair": ["…", "…"]}` — what was asked, independent of
+who asked. The **vector digest** is `H` over the vector as IEEE-754
+binary32, little-endian, its components concatenated in order: the bytes
+the backend produced. Both are written `sha256:<hex>`.
+
+*The receipt.* For every input it answers, the wrapper sends VeGa
+
+```
+{"id": "<the tag's id>", "run_id": "sha256:…", "input_digest": "sha256:…", "vector_digest": "sha256:…"}
+```
+
+and returns the vector only after VeGa acknowledges holding it. With no
+acknowledgement within two seconds it fails the call with the gRPC status
+UNAVAILABLE and a message containing `VeGa unavailable`, which the runner
+passes on and Louise reads as a deferral: never a vector without its
+receipt. An answer the runner would transform before returning it —
+per-token vectors it pools itself — gets no receipt: the wrapper refuses
+it, since no receipt could name the vector Louise would receive. The
+receipt is not signed and has no id of its own: it is read once, from
+this node's VeGa, by this node's writer.
+
+*The routes*, read-only HTTP at `VEGA_URL` (07 §7.8):
+
+| route | answer |
+|---|---|
+| `GET /vega/receipts?ids=<id>,<id>,…` | `200 {"receipts": [<receipt>, …]}` — one per id VeGa holds; an id it does not hold is simply absent. 1 to 1,024 ids, comma-separated; any other request, or an id of another form, is `400` |
+| `GET /vega/runs/<run_id>` | `200` the run object above, `{"driver", "engine", "weights"}`; `404` for a run VeGa was never told |
+
+VeGa keeps a receipt a bounded time — ten minutes, at most 100,000 —
+since it is read seconds after its answer; one gone when Louise asks is
+a deferral, and she embeds again. It keeps runs across restarts, since a
+statement may be written long after the answer that named its run. An
+id is one-time: the first receipt for it stands, the same receipt again
+is acknowledged, and another one for that id is refused.
+
+*The intake* (platform-internal). A unix socket on a dataset the
+runner's container and VeGa's both mount; one canonical-JSON line each
+way. The wrapper sends `{"kind": "run", "run_id", "run"}`, accepted only
+when `run_id` is `H` of `run`'s canonical JSON, and
+`{"kind": "receipt", "id", "run_id", "input_digest", "vector_digest"}`,
+refused with `unknown-run` when it names a run VeGa was never told; each
+connection is told its run before its first receipt. The answer is
+`{"ok": true}` or `{"ok": false, "code": "unknown-run" · "conflict" ·
+"invalid", "error": "<why>"}`. A line is at most 1 MiB.
+
+*Reading the answer.* A base64 vector is its float32 bytes, a whole
+number of four-byte components, as they are. A vector the runner writes
+as JSON numbers is read only by the exact parser (`app/vega/client.py`,
+`parse_response`), never by a general JSON reader: each number is the
+binary32 nearest its decimal, rounded directly to binary32 and never
+through a binary64 — through one, `7.038531e-26` and `-7.038531e-26`
+land on their even neighbour, and of the shortest decimals that read
+back to each finite binary32, which is what the runner (Go) writes,
+these two are the only ones that do (exhaustive over all 4,278,190,080,
+`tools/vega_f32_json.go`) — and `-0` is negative zero, which a general
+reader takes for the integer 0. A vector that is not finite is not verified: it is the
+engine's numeric failure, which the client asks again for. Louise then
+reads the receipts of the batch and takes its vectors only when every
+input has one, every input digest is the one she computed for what she
+sent, and every vector digest is `H` of the bytes she received; the
+receipts' run is the answer's run, held to 03 §3.3 before a write or a
+query (two runs in one batch: each held to it). No receipt, VeGa
+unreachable or the wrapper's `VeGa unavailable` is a deferral; a digest
+that does not match, or a receipt or body that is not well formed, is a
+refusal.
 
 **The request's level.** Every request a node makes to a model endpoint
 — an encoder, a reranker, the chat model, the translation model —
@@ -1570,7 +1773,7 @@ domain `louise/calibration/v1`, kept in `state/` and published in this
 peer's digest (§9.9), with body
 
 ```
-{kind: "louise-calibration-run", version: 3,
+{kind: "louise-calibration-run", version: 3 · 4,
  space_id, collection_id, set, role: "document" | "query",
  run: <run_id>, engine: <engine, §9.3>, encoder_weights, driver: <string>,
  fingerprint: <id>, batch_invariant: <boolean>,
@@ -1598,7 +1801,10 @@ single-text, one-at-a-time work only.
 
 A peer keeps one statement per run it has validated, and a vector is
 written only from an answer naming a run with a passing statement for
-the space (03 §3.3). Version 2 is this body with an `engine` that
+the space (03 §3.3). Version 4 is this body whose `engine` is a backend
+engine (§9.3), and is written for such a run alone: a run of any other
+engine is stated at version 3, so no statement already held moves and
+none is gated again (*amended 2026-10-08*, docs/notes/vega.md). Version 2 is this body with an `engine` that
 cannot carry `options` (§9.3). A version-2 statement stays valid as
 written and is read beside version 3: its run is unchanged, and gating
 it again would recompute a verdict already held (operator, 2026-10-03).
@@ -1936,7 +2142,7 @@ names one schema, the one its section fixes:
 
 | kind | version | section |
 |---|---|---|
-| `louise-codex` | 5 | §9.3 (5 since 2026-10-08: a layer's `input`) |
+| `louise-codex` | 6 | §9.3 (5 since 2026-10-08: a layer's `input`; 6 since 2026-10-08: a backend engine, and written for a Codex that carries one alone — every other is written at 5) |
 | `louise-snapshot` | 2 | §9.4 |
 | `louise-snapshot-sig` | 1 | §9.4 |
 | record line | 2 | §9.5 |
@@ -1949,9 +2155,10 @@ names one schema, the one its section fixes:
 | `louise-event`, `louise-pull` | 1 | §9.9 |
 | `louise-certifier`, `louise-pointer` | 1 | §9.11 |
 | `louise-calibration` | 3 | §9.12 (3 since 2026-10-08: a pair space's member carries its set, `pairs`; every other member's body is still written at 2) |
-| `louise-calibration-run` | 3 | §9.12 |
+| `louise-calibration-run` | 4 | §9.12 (4 since 2026-10-08: a backend engine's run; every other run is stated at 3) |
 | `louise-ack`, `louise-trust` | 1 | §9.13, §9.2 |
 | `louise-seals` | 1 | §9.15 |
+| VeGa tag (`\x1eVEGA/1\x1e`), receipt, receipts route | 1 | §9.12 (the version is in the tag's marker; neither the receipt nor the routes carry `kind` or `version`) |
 
 Two rows above were one row each until the figures amendment, and the
 split is the point: a schema pinned beside another moves only when its
@@ -1970,7 +2177,18 @@ layer's `input`, and the space author's calibration member of a pair
 space alone, which carries the pairs its vectors were produced over: its
 body is written at 3, every other at 2, so no text space's member or
 signature moved, and the peer's statement kept its version — its
-`space_id` already says which form was measured. `protocol_version` (§9.3, §9.17)
+`space_id` already says which form was measured. The VeGa amendment
+(2026-10-08) added no key: a backend engine has the keys every engine
+has, and is told by its bytes (`${BACKEND}` in its program, a tree
+digest in `image`). It moved the two objects that carry an engine
+WHOLE, the Codex and the peer's calibration statement, because a reader
+of the old version would take a tree digest for an image and guess, and
+writes the new version for an object carrying a backend engine alone:
+every Codex, statement, `engine_id` and run already written or stated —
+an argv engine's, one RAGE stated — keeps its bytes, and nothing is
+gated again for it. The bundle header, the attestation, the digest and
+the space author's calibration member carry an `engine_id` and kept
+their versions. `protocol_version` (§9.3, §9.17)
 is 2 and is not in this table: it versions the plugin contract, which
 is a boundary inside one platform rather than a byte on the wire.
 
