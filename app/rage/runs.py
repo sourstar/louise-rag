@@ -130,7 +130,8 @@ def card_driver(pci: str, *, sys_root: Path = Path("/sys")) -> str:
 
 def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path("/sys"),
                   proc_root: Path = Path("/proc"),
-                  runtime_versions: Path = Path("/etc/rage/runtime-versions")) -> str:
+                  runtime_versions: Path = Path("/etc/rage/runtime-versions"),
+                  runtime_lines: list[str] | None = None) -> str:
     """The device's kernel driver and compute runtime, with versions, as
     this platform reads them; `"cpu"` on a CPU (09 §9.12).
 
@@ -148,7 +149,10 @@ def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path(
     The kernel and the module are the host's, so they are read. The
     compute runtime is the image's: its package versions are written into
     the image when it is built (`deploy/rage/Dockerfile.localai`), one `name
-    version` a line, and read back here — no package manager runs at start."""
+    version` a line, and read back here — no package manager runs at start.
+    `runtime_lines` gives those lines instead, for a caller that reads them
+    elsewhere: VeGa's wrapper, in LocalAI's image, which RAGE did not build
+    (deploy/vega/vega_wrapper.py reads dpkg's status file)."""
     if device == CPU:
         return CPU
 
@@ -174,7 +178,9 @@ def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path(
                    or first_line(sys_root / "module" / module / "srcversion"))
         parts.append(f"{module} {version}" if version else module)
     try:
-        for line in runtime_versions.read_text(errors="replace").splitlines():
+        lines = (runtime_versions.read_text(errors="replace").splitlines()
+                 if runtime_lines is None else runtime_lines)
+        for line in lines:
             if line.strip():
                 parts.append(" ".join(line.split()))
     except OSError:

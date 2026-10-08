@@ -173,6 +173,14 @@ def test_a_module_with_no_version_file_is_named_alone(tmp_path):
         "kernel 6.18.0-production; xe; libfoo 1.2"
 
 
+def test_runtime_lines_given_stand_in_for_the_images_file(tmp_path):
+    """VeGa's wrapper runs in LocalAI's image, which RAGE did not build: it
+    reads the runtime from dpkg's status file and hands the lines in."""
+    host = _host(tmp_path, {ARC: "xe"}, {"xe": ("srcversion", "9F2C1A")})
+    assert runs.driver_string("xpu", pci=ARC, **host, runtime_lines=["libze1  1.21.9", ""]) == \
+        "kernel 6.18.0-production; xe 9F2C1A; libze1 1.21.9"
+
+
 def test_several_drivers_and_no_address_states_no_run_and_says_what_to_declare(tmp_path):
     host = _host(tmp_path, {ARC: "xe", RADEON: "amdgpu"},
                  {"xe": ("srcversion", "9F2C1A"), "amdgpu": ("version", "6.12")})

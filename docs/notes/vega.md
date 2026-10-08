@@ -94,7 +94,9 @@ To write when §6 passes, before the code ships:
 
 1. **f32 through JSON.** Go writes a float32 as the shortest decimal that
    reads back to it, so the digest should survive LocalAI. Prove it on the
-   real LocalAI with real vectors.
+   real LocalAI with real vectors. *Before the node (§9): exhaustive over
+   every float32, two values and negative zero needed handling, and are
+   handled; the proof on the real LocalAI is still to do.*
 2. **LocalAI's eviction on xe.** Its LRU, `pinned` and active-backend limit
    must keep the encoders on the card under LocalAGI's load. RAGE's governor
    reads the card's free memory; LocalAI may not. If it falls short the fix
@@ -122,3 +124,68 @@ To write when §6 passes, before the code ships:
 3. §6 on the node, with a `vega-` llama.cpp beside the live RAGE.
 4. The specification (§4), then the cut-over, then the pubmed migration of
    input-forms.md.
+
+## 9. What was built (2026-10-08, §8 step 2)
+
+Not deployed; nothing on the node. Not wired into `app/embeddings.py` yet.
+
+| file | what |
+|---|---|
+| `app/vega/tag.py` | the tag and the two digests — ONE module, carried into the wrapper's package |
+| `app/vega/service.py`, `__main__.py` | the receipts service: intake on a unix socket, read-only HTTP |
+| `app/vega/client.py` | Louise's side: `tag_batch`, `verify_response` → vectors and run ids, or `Refusal` / `Deferral` |
+| `deploy/vega/` | the wrapper (`vega_wrapper.py`), `run.sh`, `vega.example.json`, `requirements.txt` |
+| `app/rage/runs.py` | `driver_string(runtime_lines=…)`: the wrapper reads the runtime from dpkg's status file |
+| `tools/vega_f32_json.go` | the float32-through-JSON check, exhaustive and golden |
+| `tests/vega/` | 94 tests; the 15 gRPC ones need grpcio, protobuf and grpcio-tools |
+
+**The tag.** `"\x1eVEGA/1\x1e"` + canonical JSON (09 §9.1) of
+`{"form":"text","id":<32 hex>,"text":…}` or `{"form":"pair","id":…,"pair":[a,b]}`;
+anything else, a non-canonical byte included, is refused. `input_digest` =
+`H` of that object without `id`; `vector_digest` = `H` of the vector as
+little-endian f32. The phase-3 pair marker stays as the BACKEND's form of a
+pair (`louise-medcpt-article-ov` reads it): replacing it in RAGE's front, the
+backend and their tests is not trivial while RAGE runs.
+
+**The intake.** One canonical JSON line each way: `{"kind":"run","run_id","run"}`
+(accepted only if `run_id` = `H(run)`), `{"kind":"receipt","id","run_id",
+"input_digest","vector_digest"}`; answers `{"ok":true}` or `{"ok":false,
+"code":"unknown-run"|"conflict"|"invalid","error"}`. The wrapper tells each
+connection its run before the first receipt. An id is one-time: the same
+receipt again is acknowledged, another one refused. **HTTP:** `GET
+/vega/receipts?ids=…` (missing ones absent), `GET /vega/runs/<run_id>`.
+
+**Bounds.** Receipts: 600 s, at most 100,000 (≈65 MB), 1,024 ids a read,
+1 MiB a line. Wrapper: the receipt acknowledged within 2 s or the call fails
+UNAVAILABLE (`VeGa unavailable`, which `client.is_deferral` reads); the
+weights hash 1,800 s; a stop's grace 30 s.
+
+**The run** is RAGE's identity computed by the backend's parent: `name`
+`localai/<metadata name>`, `build` the metadata's `version` (else `uri`),
+`variant` null, **`image` the backend's OCI digest from `metadata.json` —
+PENDING the 09 §9.3 amendment (§4)**; no digest, the wrapper refuses to
+start. `args` `[<real run.sh, absolute>, "--addr", "127.0.0.1:${PORT}"]`;
+`env` the load's `EnvVars`; `options` RAGE's canonical form of the
+ModelOptions received — a field the wrapper's `backend.proto` cannot name
+refuses the load; `device` read from the child's DRM clients (`vega.json`
+`cards`); `driver` as RAGE, the runtime from the LocalAI image's dpkg status.
+
+**Found.**
+- **f32 through JSON (§6.1), exhaustive** over all 4,278,190,080 finite
+  float32 with go1.26.8: ±7.038531e-26 come back as their even neighbour
+  when Python reads Go's JSON; `tag.f32_bytes` repairs exactly those two.
+  Go writes negative zero `-0`, which Python's `json` reads as the integer
+  0: `client.parse_response` keeps it, so the body is read there, never with
+  `response.json()`. `encoding_format: "base64"` reads no decimal at all.
+- LocalAI's Go-side pooling (a per-token layout) computes a vector no
+  receipt names: the wrapper refuses such an answer.
+
+**Open.**
+- The package build (stubs from the release's `backend.proto`, LocalAI's
+  `grpc_auth.py`/`parent_watch.py`, the `app/` files, the venv) and its
+  install beside LocalAI's backends; `metadata.json`'s `digest` as the
+  gallery writes it, read on the node (§6).
+- Mounting `service.router` and an `Intake` in the louise-rage app.
+- Wiring the client: verify the raw body before normalising, NaN first.
+- `args` names the program under LocalAI's backends path; relative to the
+  backend image's root is the alternative — for the §4 amendment.

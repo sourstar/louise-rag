@@ -1,0 +1,6 @@
+{
+  "backend": "intel-sycl-f16-llama-cpp",
+  "receipts_socket": "/vega/receipts.sock",
+  "cards": {"0000:03:00.0": "Intel(R) Arc(TM) Pro B70 Graphics"},
+  "runtime_packages": ["libze-intel-gpu1", "intel-opencl-icd", "libze1"]
+}

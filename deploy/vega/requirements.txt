@@ -1,0 +1,6 @@
+# VeGa's wrapper's venv (vega_wrapper.py): gRPC and protobuf at the pins of
+# deploy/localai/backends/requirements-grpc.txt — the versions LocalAI's
+# backends are built with — held equal by tests/vega/test_wrapper_logic.py.
+# Nothing else: the wrapper's Louise modules use the standard library alone.
+grpcio==1.84.0
+protobuf==7.36.1
