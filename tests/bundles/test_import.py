@@ -240,28 +240,43 @@ def test_import_never_raises_to_the_caller(bundle, con, collection):
     assert not result["ok"]
 
 
-# ─────────────────────────── trust ───────────────────────────
+# ─────────────────────────── trust: the peer-wide list ───────────────────────────
 
-def test_untrusted_second_key_is_refused(bundle, con, collection, other_key, tmp_path):
+def test_a_second_key_is_admitted_no_first_use_pin(bundle, con, collection, other_key,
+                                                   tmp_path):
+    """03 §3.5 / 08 §8.1: admission is the checks, not who came first."""
     path, _, rows = bundle
-    _import(con, collection, path, rows)                 # first key becomes the anchor
+    assert _import(con, collection, path, rows)["ok"]
 
     other = tmp_path / "other"
     exp.export_bundle(con, collection, [UID], other, signing_key=other_key)
     result = _import(con, collection, other, rows)
-    assert not result["ok"] and result["error_class"] == "BundleUntrusted"
+    assert result["ok"] and result["admission"] == "admitted", result
 
 
-def test_quarantined_key_is_refused(bundle, con, collection, producer_key):
+def test_a_key_denied_by_hold_key_trust_is_refused(bundle, con, collection, producer_key):
+    from app.hold import node_key
     path, _, rows = bundle
-    trust.quarantine_key(con, bytes(producer_key.verify_key).hex(), "test")
+    key = "ed25519:" + bytes(producer_key.verify_key).hex()
+    node_key.trust(key, deny=True)          # the peer-wide file the inbox reads
     result = _import(con, collection, path, rows)
     assert not result["ok"] and result["error_class"] == "BundleUntrusted"
+    assert "--remove" in result["error"]
+    node_key.trust(key, remove=True)
+    assert _import(con, collection, path, rows)["ok"]
 
 
-def test_first_use_can_be_disabled(bundle, con, collection):
+def test_a_burned_key_is_refused(bundle, con, collection, producer_key):
     path, _, rows = bundle
-    result = _import(con, collection, path, rows, allow_first_use=False)
+    trust.quarantine_key(con, bytes(producer_key.verify_key).hex())
+    result = _import(con, collection, path, rows)
+    assert not result["ok"] and result["error_class"] == "BundleUntrusted"
+    assert "--restore" in result["error"]
+
+
+def test_strict_refuses_a_key_off_the_allow_list(bundle, con, collection):
+    path, _, rows = bundle
+    result = _import(con, collection, path, rows, strict=True)
     assert not result["ok"] and result["error_class"] == "BundleUntrusted"
 
 
@@ -413,7 +428,7 @@ def test_crash_between_delete_and_add_leaves_the_document_unembedded(
     with pytest.raises(Boom):
         importer._import_checked(con, collection, path,
                                  embed_fn=_local_embedder(rows),
-                                 allow_first_use=True, stop=None)
+                                 strict=False, stop=None)
 
     doc = con.execute("SELECT embed_done FROM documents WHERE uid=?", (UID,)).fetchone()
     assert doc["embed_done"] == 0, "an interrupted import must leave work to redo"

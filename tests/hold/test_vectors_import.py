@@ -324,3 +324,23 @@ def test_a_chunk_id_that_is_not_9_5s_shape_never_reaches_a_filter(importable):
             "chapter": "", "text": "x", "vector": [0.0] * codex.space.dim}]
     with pytest.raises(ValueError, match="09 §9.5"):
         embeddings.upsert_chunks(bad, collection=local, dtype="f32")
+
+
+# ---- the trust list's mute (03 §3.5) -------------------------------------
+
+@pytest.mark.parametrize("how", ["deny", "burn"])
+def test_a_denied_or_burned_producer_is_refused(importable, how, capsys):
+    """A key denied with `hold key trust --deny`, or burned by a proof of
+    forgery, is one this peer accepts no traffic from, bundles included —
+    and the refusal names the command that lifts it."""
+    from app.hold import node_key, trust_file
+    root, _, codex, dest, _ = importable
+    key = trust_file.key_text(vec.read(dest)[0]["producer_pubkey"])
+    if how == "deny":
+        node_key.trust(key, deny=True, root=Path(root).parent)
+    else:
+        trust_file.burn(key, None, root=Path(root).parent)
+    assert _import(root, dest) == 2
+    err = capsys.readouterr().err
+    assert ("--remove" if how == "deny" else "--restore") in err
+    assert _stored(root, codex) == {}

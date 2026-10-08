@@ -1,5 +1,5 @@
 """Post-F2 hardening: artifact-trust enforcement (tighten-only), calibrated
-verify-on-use, the resweep verb, and untruncated evidence.
+verify-on-use, and untruncated evidence.
 
 The security property under test throughout: an UNTRUSTED artifact — anyone
 can publish one — must never be able to LOOSEN a check. It defines what
@@ -11,8 +11,8 @@ import json
 import numpy as np
 import pytest
 
-from app import db, embeddings, platform_config
-from app.bundles import export as exp, importer, ledger, verify_on_use
+from app import db, platform_config
+from app.bundles import importer, ledger, verify_on_use
 from app.verify import t2, t3
 from tests.bundles.helpers import seed_document, unit_vectors
 
@@ -175,70 +175,6 @@ def test_verify_chunks_reports_which_floor_it_used(con, collection, monkeypatch)
         embed_fn=lambda batch, **kw: [by_text[t] for t in batch])
     assert outcome["floor"] == verify_on_use.VERIFY_FLOOR
     assert outcome["floor_source"] == "coarse-fallback"
-
-
-# ─────────────── resweep ───────────────
-
-@pytest.fixture
-def under_verified(con, collection, producer_key, monkeypatch, tmp_path):
-    """A bundle imported at tier < 3 (no artifact -> the ladder never ran)."""
-    rows = seed_document(con, collection, "gutenberg:1", 1, n_chunks=4, seed=1)
-    con.execute("UPDATE documents SET embed_done=0 WHERE uid='gutenberg:1'")
-    exp.export_bundle(con, collection, ["gutenberg:1"], tmp_path / "b",
-                      signing_key=producer_key)
-    by_text = {r["text"]: np.asarray(r["vector"], dtype=np.float32) for r in rows}
-    monkeypatch.setattr(embeddings, "embed_texts",
-                        lambda batch, **kw: [by_text[t] for t in batch])
-    result = importer.import_bundle(con, collection, tmp_path / "b")
-    assert result["ok"]
-    assert ledger.bundles_below_tier(con, 3), "premise: bundle is under-verified"
-    return con, collection, rows, by_text
-
-
-def test_resweep_promotes_a_clean_bundle_to_tier_3(under_verified, monkeypatch):
-    con, collection, rows, by_text = under_verified
-    monkeypatch.setattr(importer, "find_space_artifact", lambda space_id: None)
-    outcome = verify_on_use.resweep(
-        con, collection, embed_fn=lambda batch, **kw: [by_text[t] for t in batch])
-    assert outcome == {"swept": 1, "promoted": 1, "failed": []}
-    assert ledger.bundles_below_tier(con, 3) == []
-    states = ledger.verification_states(con, [r["id"] for r in rows])
-    assert all(s["state"] == "verified" for s in states.values())
-
-
-def test_resweep_fails_a_dirty_bundle_and_quarantines(under_verified, producer_key,
-                                                       monkeypatch):
-    con, collection, rows, by_text = under_verified
-    monkeypatch.setattr(importer, "find_space_artifact", lambda space_id: None)
-    corrupted = dict(by_text)
-    corrupted[rows[0]["text"]] = unit_vectors(1, seed=7777)[0]
-    outcome = verify_on_use.resweep(
-        con, collection, embed_fn=lambda batch: [corrupted[t] for t in batch])
-    assert outcome["failed"], "the poisoned bundle was not caught"
-    from app.bundles import trust
-    with pytest.raises(trust.BundleUntrusted):
-        trust.check_admission(con, bytes(producer_key.verify_key).hex())
-
-
-def test_resweep_leaves_endpoint_down_bundles_for_next_time(under_verified,
-                                                             monkeypatch):
-    con, collection, _, _ = under_verified
-    monkeypatch.setattr(importer, "find_space_artifact", lambda space_id: None)
-
-    def down(_batch):
-        raise ConnectionError("endpoint down")
-    outcome = verify_on_use.resweep(con, collection, embed_fn=down)
-    assert outcome["swept"] == 0 and outcome["promoted"] == 0
-    assert ledger.bundles_below_tier(con, 3), "the bundle must remain sweepable"
-
-
-def test_resweep_second_pass_is_free(under_verified, monkeypatch):
-    con, collection, _, by_text = under_verified
-    monkeypatch.setattr(importer, "find_space_artifact", lambda space_id: None)
-    embed = lambda batch: [by_text[t] for t in batch]      # noqa: E731
-    verify_on_use.resweep(con, collection, embed_fn=embed)
-    second = verify_on_use.resweep(con, collection, embed_fn=embed)
-    assert second == {"swept": 0, "promoted": 0, "failed": []}
 
 
 # ─────────────── evidence blob ───────────────

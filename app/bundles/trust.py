@@ -1,4 +1,7 @@
-"""Which producer keys may write vectors into this node's index.
+"""Which producer keys the legacy bundle inbox refuses — read off the ONE
+trust list, the peer-wide `state/trust.json` (app/hold/trust_file.py; 09
+§9.8), which `louise hold key trust <key> [--deny|--remove|--restore]`
+edits.
 
 WHAT THE SIGNATURE DOES NOT PROVE. The producer's public key sits inside the
 header the producer signs, so a valid signature proves only that whoever holds
@@ -6,22 +9,26 @@ that private key produced exactly these bytes. It is integrity, not
 authenticity: keys are free and instant to generate, so a signature alone
 establishes nothing about whether the sender should be believed.
 
-TRUST ON FIRST USE. The first producer key this collection sees is recorded and
-accepted; a different key later is refused until an operator trusts it
-explicitly. TOFU is defensible HERE — and only here — because admission does
-not rest on it: every bundle passes app/bundles/checks.py's gates regardless of
-who signed it, so a wrong-model or garbage bundle is rejected no matter how
-trusted its key is. What trust governs is the residue those checks cannot
-see — a handful of deliberately mismapped vectors inside an otherwise honest
-bundle — and that residue is what verify-on-use exists to catch.
+NO TRUST ON FIRST USE (03 §3.5; 08 §8.1). This inbox used to pin the first
+producer key a collection saw, in the manifest's `providers` table, and refuse
+every later one until an operator intervened — a list no command could change
+once `bundle trust` was retired (2026-10-08), and one that disagreed with the
+peer-wide list. Admission is the checks (app/bundles/checks.py and the ladder)
+and nothing else; the trust list's DENY side and its burns are a mute — a key
+denied or burned is one this peer accepts no traffic from, bundles included —
+and its ALLOW side is read only when the caller asks for `strict`, which
+admits nothing while the list is empty. `providers` keeps the bundle counts
+(app/bundles/ledger.py); its `trusted`/`quarantined` columns are no longer
+read or written.
 
-QUARANTINE ONLY EVER SUBTRACTS. Trust is granted in Tier-2 config or by an
-explicit operator verb; quarantine is a Tier-3 runtime override that can
-withdraw it but never grant it (CLAUDE.md invariant 10). A quarantined key
-stays quarantined until an operator clears it by name.
+A BURN IS PEER-WIDE. A verify-on-use failure burns the key in the trust file
+(`quarantine_key`), so it is refused by every collection's inbox, not only by
+the one where the forgery surfaced — and only `hold key trust <key> --restore`
+lifts it.
 """
-import time
+from pathlib import Path
 
+from ..hold import trust_file
 from .format import BundleError
 
 
@@ -31,76 +38,38 @@ class BundleUntrusted(BundleError):
 
 
 def get_provider(con, pubkey: str) -> dict | None:
+    """The key's bundle counts in this collection (the `providers` row)."""
     row = con.execute("SELECT * FROM providers WHERE pubkey=?", (pubkey,)).fetchone()
     return dict(row) if row else None
 
 
-def trusted_keys(con) -> list[str]:
-    return [r["pubkey"] for r in con.execute(
-        "SELECT pubkey FROM providers WHERE trusted=1 AND quarantined=0 "
-        "ORDER BY first_seen")]
-
-
-def trust_key(con, pubkey: str, note: str = "") -> None:
-    """Explicitly trust a key. Clears any quarantine, so this is also the
-    'un-quarantine' path — deliberately requiring the operator to name the key
-    rather than offering a blanket reset."""
-    now = int(time.time())
-    con.execute(
-        "INSERT INTO providers(pubkey,trusted,quarantined,quarantine_reason,note,"
-        "first_seen,last_seen) VALUES(?,1,0,NULL,?,?,?) "
-        "ON CONFLICT(pubkey) DO UPDATE SET trusted=1,quarantined=0,"
-        "quarantine_reason=NULL,note=excluded.note,last_seen=excluded.last_seen",
-        (pubkey, note, now, now))
-
-
-def quarantine_key(con, pubkey: str, reason: str) -> dict[str, int]:
-    """Withdraw trust and report which uids this producer had written, so the
-    caller can delete exactly those vectors (architecture-v2.md §6's
-    'quarantine the key')."""
+def quarantine_key(con, pubkey: str, *, root: Path | None = None) -> dict[str, int]:
+    """Burn the key in the peer-wide trust file (03 §3.5) and report which
+    uids this producer had written HERE, so the caller can re-embed exactly
+    those (architecture-v2.md §6's 'quarantine the key'). A key already
+    burned — the worker's proof of forgery burns first, with its
+    attestation — is left as it is."""
     from . import ledger
-    now = int(time.time())
-    con.execute(
-        "INSERT INTO providers(pubkey,trusted,quarantined,quarantine_reason,"
-        "first_seen,last_seen) VALUES(?,0,1,?,?,?) "
-        "ON CONFLICT(pubkey) DO UPDATE SET trusted=0,quarantined=1,"
-        "quarantine_reason=excluded.quarantine_reason,last_seen=excluded.last_seen",
-        (pubkey, reason[:500], now, now))
+    trust_file.burn(trust_file.key_text(pubkey) or pubkey, None, root=root)
     return ledger.uids_written_by(con, pubkey)
 
 
-def check_admission(con, pubkey: str, *, allow_first_use: bool = True) -> str:
-    """Decide whether `pubkey` may import. Returns the reason it was allowed.
+def check_admission(pubkey: str, *, strict: bool = False,
+                    root: Path | None = None) -> str:
+    """Decide whether `pubkey` may import. Returns the reason it was allowed:
+    `"listed"` (on the allow side) or `"admitted"` (any other unmuted key).
 
-    Raises BundleUntrusted otherwise. Quarantine is checked FIRST so it cannot
-    be bypassed by any later branch.
+    Raises BundleUntrusted for a key denied or burned on the trust list, and,
+    under `strict`, for one not on its allow side. The mute is checked FIRST
+    so no later branch can bypass it.
     """
-    provider = get_provider(con, pubkey)
-    if provider and provider["quarantined"]:
+    why = trust_file.refusal(pubkey, root)
+    if why is not None:
+        raise BundleUntrusted(why)
+    key = trust_file.key_text(pubkey)
+    listed = key in trust_file.as_filter(root)["allow"]
+    if strict and not listed:
         raise BundleUntrusted(
-            f"producer {pubkey[:16]}… is quarantined "
-            f"({provider['quarantine_reason'] or 'no reason recorded'}). "
-            f"Clear it deliberately in this collection's `providers` table if that "
-            f"was wrong (`bundle trust` was retired on 2026-10-08; the peer-wide "
-            f"list, `louise hold key trust`, governs what arrives by `share`).")
-    if provider and provider["trusted"]:
-        return "trusted"
-
-    existing = trusted_keys(con)
-    if existing:
-        raise BundleUntrusted(
-            f"producer {pubkey[:16]}… is not trusted by this node, which already "
-            f"trusts {len(existing)} other key(s). To accept it, mark it trusted "
-            f"in this collection's `providers` table (`bundle trust` was retired "
-            f"on 2026-10-08).")
-    if not allow_first_use:
-        raise BundleUntrusted(
-            f"producer {pubkey[:16]}… is not trusted and first-use trust is "
-            f"disabled. To accept it, mark it trusted in this collection's "
-            f"`providers` table (`bundle trust` was retired on 2026-10-08).")
-
-    # Trust on first use: nothing is trusted yet, so this key becomes the
-    # anchor. Recorded explicitly rather than implied, so the operator can see
-    # in the System page exactly whose vectors they took on.
-    trust_key(con, pubkey, note="trusted on first use")
-    return "first-use"
+            f"strict: producer {key} is not on this peer's allow list "
+            f"({trust_file.path(root)}). Add it with `louise hold key trust {key}`")
+    return "listed" if listed else "admitted"

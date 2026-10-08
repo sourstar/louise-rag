@@ -5,9 +5,9 @@ that ladder disagrees with §3.5 in substance rather than in wording — its
 T3 is a Wald SPRT over 64 chunks against a constant 0.95 where §3.5 draws
 sixteen on the Codex's `tolerance`, its T2 is a beacon-and-age protocol
 with a golden bank where §3.5 embeds the calibration set's first sixteen
-texts, and `app/bundles/trust.py` implements trust on first use and
-refuses every producer key after the first, which §3.5 and 08 §8.1 forbid
-in as many words.
+texts, and `app/bundles/trust.py` implemented trust on first use and
+refused every producer key after the first, which §3.5 and 08 §8.1 forbid
+in as many words (it now reads the peer-wide trust list, 2026-10-08).
 
 WHAT ADMITS A BUNDLE, and what merely describes it. Admissibility is
 `space_id` plus per-record `content_hash`. `collection` and `snapshot_id`

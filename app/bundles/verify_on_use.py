@@ -35,6 +35,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .. import embeddings
+from ..hold import trust_file
 from . import ledger, trust
 
 DRAIN_BATCH = 32                 # chunks per worker pass: a few seconds of encoder
@@ -54,16 +55,7 @@ class Forgery:
     cosine: float
 
 
-def key_text(producer: str | None) -> str | None:
-    """A producer as 09 §9.2 writes a key: the ledger keeps the bundle
-    header's bare hex, a proof and the trust file carry `ed25519:<hex>`."""
-    if not producer:
-        return None
-    if producer.startswith("ed25519:"):
-        return producer
-    if len(producer) == 64 and all(c in "0123456789abcdefABCDEF" for c in producer):
-        return "ed25519:" + producer.lower()
-    return producer
+key_text = trust_file.key_text      # the ledger keeps bare hex; a proof and the trust file `ed25519:<hex>`
 
 
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:
@@ -253,10 +245,9 @@ def verify_chunks(con, collection, chunk_ids: list[str], *, embed_fn=None,
     requeued: set[str] = set()
     if failed and quarantine_on_failure:
         for producer in sorted(culprits):
-            affected = trust.quarantine_key(
-                con, producer,
-                f"verify-on-use: recomputed vectors did not match at "
-                f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}")
+            # burned in the peer-wide trust file (03 §3.5): refused from
+            # here on by every collection's inbox and every attestation count
+            affected = trust.quarantine_key(con, producer)
             quarantined.append(producer)
             # F1-D1: quarantining the KEY is not enough — the producer's other
             # vectors, including whole documents the failed sample never
@@ -283,42 +274,6 @@ def _requeue_for_local_embed(con, affected: dict[str, int]) -> list[str]:
             "ON CONFLICT(uid) DO UPDATE SET priority=100, ts=excluded.ts",
             (uid, now))
     return list(affected)
-
-
-def resweep(con, collection, *, embed_fn=None) -> dict:
-    """Re-verify bundles that were admitted with less than full verification.
-
-    The ledger records tier_reached and space_weak precisely so that a bundle
-    imported while the embed endpoint was down (T3 skipped) or while the local
-    space was unconfirmed can be re-checked once conditions improve. This is
-    that check: every still-'imported' chunk of each under-verified bundle is
-    recomputed against the local model. A clean bundle is promoted to
-    tier_reached=3; a dirty one goes through the normal failure path —
-    quarantine, re-queue for local embedding.
-
-    Safe to run any time: verified chunks are skipped (verification is
-    permanent per chunk), so a second sweep costs nothing.
-    """
-    swept, promoted, failed_bundles = 0, 0, []
-    for bundle in ledger.bundles_below_tier(con, 3):
-        chunk_rows = con.execute(
-            "SELECT chunk_id FROM chunk_verification WHERE bundle_id=?",
-            (bundle["bundle_id"],)).fetchall()
-        chunk_ids = [r["chunk_id"] for r in chunk_rows]
-        if not chunk_ids:
-            continue
-        swept += 1
-        outcome = verify_chunks(con, collection, chunk_ids, embed_fn=embed_fn)
-        if outcome.get("unavailable"):
-            # the endpoint is still down; leave the bundle for the next sweep
-            swept -= 1
-            continue
-        if outcome["failed"] == 0:
-            ledger.set_tier_reached(con, bundle["bundle_id"], 3)
-            promoted += 1
-        else:
-            failed_bundles.append(bundle["bundle_id"])
-    return {"swept": swept, "promoted": promoted, "failed": failed_bundles}
 
 
 def annotate(con, hits: list[dict]) -> None:

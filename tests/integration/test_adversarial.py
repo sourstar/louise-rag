@@ -262,7 +262,7 @@ def test_worker_restart_after_crash_mid_import_recovers(two_nodes, tmp_path,
         nested.setattr(importer, "_write_rows", explode)
         with pytest.raises(Boom):
             importer._import_checked(consumer_con, consumer_col, tmp_path / "b",
-                                      embed_fn=model_embed, allow_first_use=True,
+                                      embed_fn=model_embed, strict=False,
                                       stop=None)
 
     swept = ledger.sweep_stale(consumer_con)      # what worker startup does

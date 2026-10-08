@@ -299,7 +299,7 @@ def _write_rows(collection, native_id: int, lance_rows: list[dict], header) -> N
 
 
 def import_bundle(con, collection, bundle_dir, *, embed_fn=None,
-                  allow_first_use: bool = True, stop=None) -> dict:
+                  strict: bool = False, stop=None) -> dict:
     """Verify and apply a bundle. Never raises a BundleError to the caller.
 
     Returns a summary dict with `ok`, and on failure `error` plus the class
@@ -316,7 +316,7 @@ def import_bundle(con, collection, bundle_dir, *, embed_fn=None,
     licensing.require_ack(collection, use="vectors are imported into it")
     try:
         return _import_checked(con, collection, bundle_dir, embed_fn=embed_fn,
-                               allow_first_use=allow_first_use, stop=stop)
+                               strict=strict, stop=stop)
     except (SpaceUnconfirmedError, VerificationUnavailable) as e:
         # TRANSIENT. Recorded but NOT counted as a producer rejection, and the
         # caller must not burn a retry: the endpoint being down says nothing
@@ -335,7 +335,7 @@ def import_bundle(con, collection, bundle_dir, *, embed_fn=None,
                 "error_class": type(e).__name__}
 
 
-def _import_checked(con, collection, bundle_dir: Path, *, embed_fn, allow_first_use,
+def _import_checked(con, collection, bundle_dir: Path, *, embed_fn, strict,
                     stop) -> dict:
     # ── 1. signature, over the WIRE BYTES ──────────────────────────────
     header_path = bundle_dir / HEADER_NAME
@@ -359,9 +359,8 @@ def _import_checked(con, collection, bundle_dir: Path, *, embed_fn, allow_first_
         return {"ok": True, "bundle_id": bundle_id, "skipped": "already applied",
                 "uids": 0, "chunks": 0}
 
-    # ── 2. trust ───────────────────────────────────────────────────────
-    admission = trust.check_admission(con, header.producer_pubkey,
-                                      allow_first_use=allow_first_use)
+    # ── 2. trust: the peer-wide list (app/bundles/trust.py) ────────────
+    admission = trust.check_admission(header.producer_pubkey, strict=strict)
 
     # ── 3. space ───────────────────────────────────────────────────────
     weak = _check_space(con, collection, header, embed_fn=embed_fn)

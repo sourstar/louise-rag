@@ -59,6 +59,7 @@ def other_key():
 def collection(tmp_path, monkeypatch):
     from app import config
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    monkeypatch.delenv("LOUISE_ROOT", raising=False)   # the trust file sits under DATA_DIR
     monkeypatch.setattr(config, "CORPUS_DIR", tmp_path / "corpus")
     return make_collection(tmp_path)
 

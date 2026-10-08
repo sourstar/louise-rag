@@ -3,9 +3,9 @@
 Migration plan step 4g. This is what replaces trust on first use, and the
 replacement is not a better way of deciding whom to believe — it is a
 refusal to decide at all. 08 §8.1: "no countermeasure may require knowing
-whom to trust in advance". `app/bundles/trust.py` pins the first producer
-key a collection sees and refuses every later one until an operator
-intervenes, which is a trust bootstrap wearing a small hat: the first
+whom to trust in advance". `app/bundles/trust.py` pinned the first producer
+key a collection saw and refused every later one until an operator
+intervened (until 2026-10-08), which is a trust bootstrap wearing a small hat: the first
 stranger to arrive becomes the authority, and an honest second peer is
 refused for being second.
 

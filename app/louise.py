@@ -15,6 +15,7 @@
     louise hold snapshot create <collection> [--snapshot ID]
     louise hold snapshot list <collection>
     louise hold embedder check|benchmark <collection> [--accept]
+    louise hold embedder rebaseline <collection> [--yes]
     louise hold vectors build <collection> [--snapshot ID | --delta ID] [--shard S | --slice V...]
                                     [--dry-run]
     louise hold vectors export <collection> --shard S --out DIR [--snapshot ID]
@@ -1681,6 +1682,15 @@ def cmd_vectors_import(a) -> int:
     node = adms.connect(a.root)
     header, rows, possession, bundle_id = vec.read(Path(a.bundle))
 
+    # 03 §3.5: a key this peer denied, or one a proof of forgery burned, is
+    # one it accepts no traffic from at all, bundles included — the same
+    # peer-wide list the legacy inbox reads (app/bundles/trust.py)
+    from app.hold import trust_file
+    muted = trust_file.refusal(header["producer_pubkey"], Path(a.root).parent)
+    if muted is not None:
+        print(f"louise: {muted}; nothing was written", file=sys.stderr)
+        return 2
+
     # 08 §8.2's aggregate limit. OFF unless asked for, because an operator
     # naming a path is not material "arriving from other peers": §8.2
     # governs what this peer accepts and forwards on its own initiative,
@@ -1973,7 +1983,7 @@ def cmd_vectors_check(a) -> int:
         _take_write_lock(a.root, name, "hold vectors check --drop", exit_code=2)
     local = rec.local_collection(a.root, name, codex)
     # Invariant 9: the sample's text is embedded (and --drop deletes
-    # vectors) — use of the corpus, as `bundle resweep` is
+    # vectors) — use of the corpus, as the retired `bundle resweep` was
     from app import licensing
     licensing.require_ack(local, use="its text is embedded to check its vectors")
     snapshot = _latest_snapshot(a.root, name, a.snapshot)
@@ -2548,6 +2558,53 @@ def _recipe_for(codex, name):
     recipe = collections_mod.recipe_for(collection)
     return replace(recipe, dtype=codex.space.dtype, ctx=int(codex.space.ctx),
                    dim=int(codex.space.dim))
+
+
+def cmd_embedder_rebaseline(a) -> int:
+    """`hold embedder rebaseline <collection> [--yes]` (07 §7.3): for a
+    Codex version 1 or 2 collection, re-record the backend gate's probe
+    baseline (app/verify/backend_gate.py) — the operator's explicit
+    acceptance of a CHANGED backend. Vectors embedded under the old one
+    belong to another function, so accepting means planning their re-embed.
+    What `backend rebaseline` did before app/cli.py went (2026-10-08).
+
+    Exit 0 recorded, 1 a baseline exists and `--yes` was not given, 2 for a
+    version-3 collection (held to a validated run, 03 §3.3 — `hold embedder
+    check`; no baseline is taken for it) or one with no encoder, 3 when the
+    encoder could not be reached (07 §7.7)."""
+    from app import collections as collections_mod, run_check
+    from app.hold import collection as col
+    from app.verify import backend_gate
+    name, codex = col.resolve(a.root, a.collection)
+    collection = collections_mod.by_name(name)
+    if collection is None:
+        print(f"louise: {name}: no collection of that name on this node", file=sys.stderr)
+        return 2
+    if run_check.applies(collection):
+        print(f"louise: {name} is a Codex version {codex.version} collection: its "
+              f"writes are held to a validated run (03 §3.3), not to a probe "
+              f"baseline — `louise hold embedder check {name}`", file=sys.stderr)
+        return 2
+    if getattr(collection, "embed", None) is None:
+        print(f"louise: {name}: {collections_mod.NO_ENCODER}", file=sys.stderr)
+        return 2
+    path = backend_gate.baseline_path(collection)
+    existed = path.exists()
+    if existed and not a.yes:
+        print("louise: a baseline already exists. Re-recording declares the CURRENT "
+              "endpoint authoritative; vectors embedded under the old backend "
+              "become foreign to every future query. Re-run with --yes if that "
+              "is intended (and plan a re-embed).", file=sys.stderr)
+        return 1
+    try:
+        baseline = backend_gate.record_baseline(collection)
+    except backend_gate.BackendUnavailable as e:
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
+    backend_gate.reset_cache()
+    print(f"{'re-recorded' if existed else 'recorded'} baseline "
+          f"(dim {baseline['dim']}, {len(baseline['probes'])} probes) at {path}")
+    return 0
 
 
 def _write_statement(a, run, codex):
@@ -3172,6 +3229,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--against", nargs="*", default=[])
     p.add_argument("--set", dest="set_id")
     p.set_defaults(fn=cmd_embedder_calibrate)
+
+    p = everbs.add_parser("rebaseline",
+                          help="accept a changed backend: re-record the probe baseline "
+                               "(Codex version 1 or 2 only)")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--yes", action="store_true",
+                   help="replace an existing baseline (plan a re-embed)")
+    p.set_defaults(fn=cmd_embedder_rebaseline)
 
     vecs = nouns.add_parser("vectors", help="this peer's vectors, and the bundles that carry them")
     vverbs = vecs.add_subparsers(dest="verb", required=True)

@@ -68,7 +68,7 @@ def test_changed_backend_is_refused_and_baseline_untouched(tmp_path):
     before = backend_gate.baseline_path(collection).read_bytes()
     with pytest.raises(backend_gate.BackendGateError) as e:
         backend_gate.check(collection, _make_embed_fn("model-B"))
-    assert f"removing {backend_gate.baseline_path(collection)}" in str(e.value)
+    assert "louise hold embedder rebaseline test --yes" in str(e.value)
     assert backend_gate.baseline_path(collection).read_bytes() == before
 
 
@@ -184,3 +184,67 @@ def test_next_book_skips_embed_when_gate_blocks(tmp_path):
 
     stage, row = worker._next_book(con, scope, embed_allowed=False)
     assert stage == "rdf" and row["uid"] == "gutenberg:2"
+
+
+# ---- `louise hold embedder rebaseline` (07 §7.3) -------------------------
+
+def _cli_collection(tmp_path, monkeypatch, version: int, embed=True):
+    """The command resolves a Codex and finds the node's collection; both
+    stand-ins here, so what is under test is the command's own decisions."""
+    from types import SimpleNamespace
+    from app.hold import collection as col
+    c = SimpleNamespace(name="test", manifest_path=tmp_path / "manifest.db",
+                        embed=object() if embed else None,
+                        codex=SimpleNamespace(version=version))
+    monkeypatch.setattr(col, "resolve", lambda root, ref: ("test", c.codex))
+    monkeypatch.setattr(collections_mod, "by_name", lambda name: c)
+    monkeypatch.setattr(collections_mod, "recipe_for",
+                        lambda _c: SimpleNamespace(url="http://enc", api="openai", model="m"))
+    return c
+
+
+def _rebaseline(tmp_path, *extra):
+    from app import louise
+    return louise.main(["hold", "embedder", "rebaseline", "test",
+                        "--root", str(tmp_path), *extra])
+
+
+def test_rebaseline_accepts_a_changed_backend(tmp_path, monkeypatch, capsys):
+    c = _cli_collection(tmp_path, monkeypatch, version=2)
+    backend_gate.check(c, _make_embed_fn("model-A"))
+    with pytest.raises(backend_gate.BackendGateError):
+        backend_gate.check(c, _make_embed_fn("model-B"))
+
+    monkeypatch.setattr(backend_gate, "_default_embed_fn", lambda _c: _make_embed_fn("model-B"))
+    assert _rebaseline(tmp_path) == 1, "an existing baseline is replaced only with --yes"
+    assert "--yes" in capsys.readouterr().err
+    assert _rebaseline(tmp_path, "--yes") == 0
+    assert "re-recorded baseline" in capsys.readouterr().out
+    assert backend_gate.check(c, _make_embed_fn("model-B"))["ok"], \
+        "the new backend now reproduces its baseline"
+
+
+def test_rebaseline_records_a_first_baseline_without_yes(tmp_path, monkeypatch, capsys):
+    c = _cli_collection(tmp_path, monkeypatch, version=1)
+    monkeypatch.setattr(backend_gate, "_default_embed_fn", lambda _c: _make_embed_fn("model-A"))
+    assert _rebaseline(tmp_path) == 0
+    assert backend_gate.baseline_path(c).is_file()
+
+
+def test_rebaseline_refuses_a_version_3_collection(tmp_path, monkeypatch, capsys):
+    """03 §3.3: a version-3 collection is held to a validated run; no
+    baseline is taken for it, so none is re-recorded."""
+    c = _cli_collection(tmp_path, monkeypatch, version=3)
+    assert _rebaseline(tmp_path, "--yes") == 2
+    assert "hold embedder check" in capsys.readouterr().err
+    assert not backend_gate.baseline_path(c).exists()
+
+
+def test_rebaseline_defers_when_the_encoder_is_down(tmp_path, monkeypatch, capsys):
+    _cli_collection(tmp_path, monkeypatch, version=2)
+
+    def down(_texts):
+        raise ConnectionError("no")
+    monkeypatch.setattr(backend_gate, "_default_embed_fn", lambda _c: down)
+    assert _rebaseline(tmp_path) == 3
+    assert "deferred" in capsys.readouterr().err

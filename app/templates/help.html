@@ -466,12 +466,11 @@
     <i>embedded</i> without local GPU work. Every import passes admission
     checks regardless of who signed it (structure, isotropy, chunk-overlap
     invariant, sample re-embedding, degenerate-vector detection), producer
-    keys are trusted on first use and quarantinable, and imported chunks can
-    be verified on use — each verification is permanent per chunk. The
+    keys denied or burned on the trust list (<code>louise hold key trust</code>)
+    are refused, and imported chunks can be verified on use — each verification is permanent per chunk. The
     verification ladder (T0 structural → T3 spot recompute against the
     local model) records evidence for every decision, and
-    <code>bundle resweep</code> re-checks earlier imports after a trust or
-    calibration change.
+    <code>louise hold vectors check</code> re-checks a sample of what is held.
   </p>
   <h2 style="margin-top:14px">What travels, what stays local</h2>
   <p class="note">

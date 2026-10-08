@@ -105,8 +105,8 @@ def test_a_failure_quarantines_the_producer(imported, con, collection, producer_
         embed_fn=lambda batch: [corrupted[t] for t in batch])
     producer = bytes(producer_key.verify_key).hex()
     assert summary["quarantined"] == [producer]
-    with pytest.raises(trust.BundleUntrusted, match="quarantined"):
-        trust.check_admission(con, producer)
+    with pytest.raises(trust.BundleUntrusted, match="burned"):
+        trust.check_admission(producer)          # the peer-wide trust file
 
 
 def test_the_recorded_cosine_is_the_evidence(imported, con, collection):

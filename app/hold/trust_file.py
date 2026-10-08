@@ -5,8 +5,11 @@ forgery (`quarantined`, the field keeping the name it had; 03 §3.5). A
 burn is permanent until `hold key trust <key> --restore`.
 
 Read by whoever counts attestations (app/share/levels.py takes the
-filter `as_filter` gives); written by a T4 miss that reproduced
-(app/bundles/verify_on_use.py through the worker) and by the operator.
+filter `as_filter` gives) and by every bundle door (`muted`: the legacy
+inbox, app/bundles/trust.py, and `hold vectors import`); written by a T4
+miss that reproduced (app/bundles/verify_on_use.py through the worker)
+and by the operator. It is the ONE trust list: the per-collection
+`providers` table keeps only bundle counts.
 """
 from __future__ import annotations
 
@@ -90,3 +93,44 @@ def restore(key: str, *, root: Path | None = None) -> bool:
     doc["quarantined"] = kept
     write(doc, root)
     return True
+
+
+def key_text(producer: str | None) -> str | None:
+    """A producer as 09 §9.2 writes a key: a bundle header of the legacy
+    inbox and its ledger keep bare hex, a proof and this file carry
+    `ed25519:<hex>`. One form, or a burn would never shut the key out."""
+    if not producer:
+        return None
+    if producer.startswith("ed25519:"):
+        return producer
+    if len(producer) == 64 and all(c in "0123456789abcdefABCDEF" for c in producer):
+        return "ed25519:" + producer.lower()
+    return producer
+
+
+def muted(key: str | None, root: Path | None = None) -> str | None:
+    """03 §3.5: a key this peer DENIED, or one a proof of forgery BURNED,
+    is one it accepts no traffic from at all, bundles included. `"burned"`,
+    `"denied"`, or None when the key is not muted. Either form of key."""
+    k = key_text(key)
+    if k is None:
+        return None
+    doc = read(root)
+    if k in {str(e.get("key")) for e in doc["quarantined"] if isinstance(e, dict)}:
+        return "burned"
+    if k in {str(x) for x in doc["deny"]}:
+        return "denied"
+    return None
+
+
+def refusal(key: str | None, root: Path | None = None) -> str | None:
+    """Why a bundle signed by `key` is refused by the trust list, in the
+    words that name the one command that changes it; None when it is not."""
+    why = muted(key, root)
+    if why is None:
+        return None
+    k = key_text(key)
+    lift = "--restore" if why == "burned" else "--remove"
+    return (f"producer {k} is {why} on this peer's trust list ({path(root)}); "
+            f"a muted key's bundles are refused (03 §3.5). Lift it with "
+            f"`louise hold key trust {k} {lift}`")

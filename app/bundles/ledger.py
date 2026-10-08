@@ -101,21 +101,6 @@ def get_evidence(con, bundle_id: str) -> str | None:
     return row["evidence"] if row else None
 
 
-def set_tier_reached(con, bundle_id: str, tier: int) -> None:
-    con.execute("UPDATE bundles SET tier_reached=? WHERE bundle_id=?",
-                (int(tier), bundle_id))
-
-
-def bundles_below_tier(con, tier: int) -> list[dict]:
-    """Applied bundles admitted with less verification than `tier` — the
-    resweep worklist. space_weak counts as below any tier: it means the local
-    space was unconfirmed when the bundle landed."""
-    return [dict(r) for r in con.execute(
-        "SELECT * FROM bundles WHERE state=? AND "
-        "(tier_reached IS NULL OR tier_reached < ? OR space_weak=1) "
-        "ORDER BY imported_at", (APPLIED, int(tier)))]
-
-
 def sweep_stale(con) -> list[str]:
     """Move any 'applying' row to 'aborted'. Call at worker startup.
 

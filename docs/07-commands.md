@@ -112,6 +112,7 @@ louise hold
                                                                        the tolerance a space can bear, measured between the reference engine and each --against
                                                                        encoder (a file of `weights` and `[engine]`, 09 §9.3's form)
                                                                        over the calibration set: run BEFORE `collection create`, its output being the recipe's `space.tolerance`
+              rebaseline <collection> [--yes]                          a Codex below version 3 only: accept a changed backend by re-recording the probe baseline (`app/verify/backend_gate.py`); exit 2 for version 3, whose runs `check` validates
   vectors     build <collection> [--shard <slice>/<n> | --delta ID]    embed; a signed bundle about every 15,000 chunks
               import <collection> (<file> | --archive ID [--retry]) [--strict]
                                                                        a signed bundle, or a public pre-embedded archive, through the ladder
@@ -700,7 +701,7 @@ unknown command. The table says where each went.
 | `snapshot record` / `delta` / `list` | `hold snapshot create` / `delta` / `list` |
 | `snapshot vectors` | `hold vectors build --delta` |
 | `space repin` | `hold collection derive`, then `hold collection forget <mother> --kinds vectors` when the mother's vectors are no longer wanted here. Nothing is re-pinned in place: a shared space is never destroyed under the peers that hold it |
-| `backend check` / `rebaseline` | `hold embedder check`. The probe baseline and its cosine threshold give way to validating each run once and checking the run identity on every answer (03 §3.3). The batch-integrity check becomes the gate's `batch_invariant`. A Codex below version 3 keeps the probe baseline (`app/verify/backend_gate.py`); its changed backend is accepted by removing the baseline file, which the next check records afresh (*2026-10-08*) |
+| `backend check` / `rebaseline` | `hold embedder check`, `hold embedder rebaseline`. The probe baseline and its cosine threshold give way to validating each run once and checking the run identity on every answer (03 §3.3). The batch-integrity check becomes the gate's `batch_invariant`. A Codex below version 3 keeps the probe baseline (`app/verify/backend_gate.py`); its changed backend is accepted with `hold embedder rebaseline` (*2026-10-08*) |
 | `tools/calibrate_space`, `build_space_artifact` | `hold embedder calibrate` |
 | `bundle keygen` / `trust` / `trust --quarantine` | `hold key create` / `trust` / `trust --deny` |
 | `bundle export` / `import` / `status` | `hold vectors export` / `import` / `show` |

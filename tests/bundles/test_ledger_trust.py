@@ -1,7 +1,7 @@
-"""The bundles ledger and the trust store.
+"""The bundles ledger and the inbox's reading of the peer-wide trust list.
 
 The load-bearing properties: a rejection never touches documents.error, an
-interrupted import is visible on restart, quarantine can name exactly which
+interrupted import is visible on restart, a burn can name exactly which
 rows to delete, and re-import is a no-op.
 """
 import json
@@ -130,62 +130,70 @@ def test_uids_written_by_producer_aggregates_applied_bundles_only(con):
     assert ledger.uids_written_by(con, KEY_A) == {"gutenberg:1": 2, "gutenberg:2": 4}
 
 
-# ─────────────────────────── trust on first use ───────────────────────────
+# ─────────────────────────── the one trust list ───────────────────────────
+# The inbox reads the peer-wide `state/trust.json` that `louise hold key
+# trust` edits (03 §3.5): no first-use pin, a denied or burned key refused.
 
-def test_first_key_seen_is_trusted_and_recorded(con):
-    assert trust.check_admission(con, KEY_A) == "first-use"
-    provider = trust.get_provider(con, KEY_A)
-    assert provider["trusted"] == 1
-    assert "first use" in provider["note"]
-    assert trust.check_admission(con, KEY_A) == "trusted"    # sticky
+KEY_A_TEXT = "ed25519:" + KEY_A
 
 
-def test_a_second_conflicting_key_is_refused(con):
-    trust.check_admission(con, KEY_A)
-    with pytest.raises(trust.BundleUntrusted, match="not trusted"):
-        trust.check_admission(con, KEY_B)
+def test_any_unmuted_key_is_admitted_and_nothing_is_pinned(con, tmp_path):
+    assert trust.check_admission(KEY_A, root=tmp_path) == "admitted"
+    assert trust.check_admission(KEY_B, root=tmp_path) == "admitted", \
+        "a second key is not refused for being second (08 §8.1)"
+    assert trust.get_provider(con, KEY_A) is None, "admission records no trust"
 
 
-def test_an_explicitly_trusted_second_key_is_accepted(con):
-    trust.check_admission(con, KEY_A)
-    trust.trust_key(con, KEY_B, note="operator added")
-    assert trust.check_admission(con, KEY_B) == "trusted"
-    assert set(trust.trusted_keys(con)) == {KEY_A, KEY_B}
+def test_hold_key_trust_deny_refuses_the_inbox_and_remove_lifts_it(tmp_path):
+    from app.hold import node_key
+    node_key.trust(KEY_A_TEXT, deny=True, root=tmp_path)
+    with pytest.raises(trust.BundleUntrusted, match=r"denied.*hold key trust .* --remove"):
+        trust.check_admission(KEY_A, root=tmp_path)
+    assert trust.check_admission(KEY_B, root=tmp_path) == "admitted"
+    node_key.trust(KEY_A_TEXT, remove=True, root=tmp_path)
+    assert trust.check_admission(KEY_A, root=tmp_path) == "admitted"
 
 
-def test_first_use_can_be_disabled(con):
-    with pytest.raises(trust.BundleUntrusted, match="first-use trust is disabled"):
-        trust.check_admission(con, KEY_A, allow_first_use=False)
-    assert trust.get_provider(con, KEY_A) is None    # nothing recorded on refusal
+def test_strict_reads_the_allow_side(tmp_path):
+    from app.hold import node_key
+    with pytest.raises(trust.BundleUntrusted, match="not on this peer's allow list"):
+        trust.check_admission(KEY_A, strict=True, root=tmp_path)
+    node_key.trust(KEY_A_TEXT, root=tmp_path)
+    assert trust.check_admission(KEY_A, strict=True, root=tmp_path) == "listed"
 
 
-# ─────────────────────────── quarantine ───────────────────────────
+# ─────────────────────────── quarantine = a burn ───────────────────────────
 
-def test_quarantine_refuses_and_names_the_rows_to_delete(con):
-    trust.check_admission(con, KEY_A)
+def test_quarantine_burns_peer_wide_and_names_the_rows_to_delete(con, tmp_path):
+    from app.hold import trust_file
     _applying(con, bundle_id="b1")
     ledger.record_applied(con, "b1", {"gutenberg:1": 2, "gutenberg:9": 5}, "")
 
-    affected = trust.quarantine_key(con, KEY_A, "recomputed vectors did not match")
+    affected = trust.quarantine_key(con, KEY_A, root=tmp_path)
     assert affected == {"gutenberg:1": 2, "gutenberg:9": 5}
-    with pytest.raises(trust.BundleUntrusted, match="quarantined"):
-        trust.check_admission(con, KEY_A)
+    assert trust_file.burned(tmp_path) == {KEY_A_TEXT}, "one form of key: ed25519:<hex>"
+    with pytest.raises(trust.BundleUntrusted, match=r"burned.*--restore"):
+        trust.check_admission(KEY_A, root=tmp_path)
 
 
-def test_quarantine_beats_trust_and_beats_first_use(con):
-    """Quarantine is checked before every other branch, so no path can bypass
-    it — including the first-use path on a node that trusts nothing else."""
-    trust.quarantine_key(con, KEY_A, "bad")
-    with pytest.raises(trust.BundleUntrusted, match="quarantined"):
-        trust.check_admission(con, KEY_A)
-    assert trust.trusted_keys(con) == []
+def test_a_burn_beats_the_allow_side_and_strict(tmp_path):
+    """The mute is checked before every other branch, so no path bypasses it."""
+    from app.hold import node_key, trust_file
+    node_key.trust(KEY_A_TEXT, root=tmp_path)
+    trust_file.burn(KEY_A_TEXT, None, root=tmp_path)
+    for strict in (False, True):
+        with pytest.raises(trust.BundleUntrusted, match="burned"):
+            trust.check_admission(KEY_A, strict=strict, root=tmp_path)
 
 
-def test_quarantine_is_reversible_only_by_naming_the_key(con):
-    trust.quarantine_key(con, KEY_A, "mistake")
-    trust.trust_key(con, KEY_A, note="cleared after review")
-    assert trust.check_admission(con, KEY_A) == "trusted"
-    assert trust.get_provider(con, KEY_A)["quarantined"] == 0
+def test_a_burn_ends_only_by_hold_key_trust_restore(con, tmp_path):
+    from app.hold import node_key
+    trust.quarantine_key(con, KEY_A, root=tmp_path)
+    node_key.trust(KEY_A_TEXT, remove=True, root=tmp_path)
+    with pytest.raises(trust.BundleUntrusted, match="burned"):
+        trust.check_admission(KEY_A, root=tmp_path)
+    assert node_key.trust(KEY_A_TEXT, restore=True, root=tmp_path)["restored"]
+    assert trust.check_admission(KEY_A, root=tmp_path) == "admitted"
 
 
 # ─────────────────────────── per-chunk verification ───────────────────────────

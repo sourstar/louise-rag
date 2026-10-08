@@ -21,8 +21,9 @@ alpha is deliberately NOT in the artifact. It is a rate the operator is willing
 to pay, not a property of the space, and letting an artifact set it would let a
 hostile artifact turn verification off by asking for alpha=1.
 
-TRUST IS NOT TOFU HERE. app/bundles/trust.py trusts a PRODUCER on first use,
-which is defensible because admission does not rest on it. An ARTIFACT defines
+TRUST IS NOT TOFU HERE. A bundle PRODUCER needs no trust at all (03 §3.5;
+app/bundles/trust.py only refuses a denied or burned key), which is
+defensible because admission does not rest on it. An ARTIFACT defines
 what honest means, so trusting one on sight hands an attacker the definition.
 An unsigned or unrecognised artifact is therefore ADVISORY: it may only ever
 TIGHTEN a check relative to the built-in coarse fallback, never loosen one.
