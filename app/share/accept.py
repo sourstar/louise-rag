@@ -143,8 +143,8 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     staging = root / name / "state" / holdings.STAGING
     staged_dir = staging / member.name
     for t in member.torrents():
-        if (staged_dir / t.path).is_file() and (staged_dir / t.path).stat().st_size == t.length:
-            continue
+        if transport.landed_whole(staged_dir / t.path, t.length, t.root):
+            continue                                # whole from an earlier beat; a holed one is fetched on
         landed_at = transport.fetch_file(session, torrent=t, member=member.name, staging=staging,
                                          hints=hints, stop=stop, log=log)
         if landed_at != staged_dir / t.path:            # libtorrent's layout differed: ours

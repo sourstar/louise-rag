@@ -22,6 +22,38 @@ def _wait(predicate, timeout: float = 15.0) -> bool:
     return False
 
 
+def _app_threads() -> set[threading.Thread]:
+    """The live threads running Louise's own code — the worker's, not a
+    library's (LanceDB's event loop outlives every test by design)."""
+    out = set()
+    for t in threading.enumerate():
+        target = getattr(t, "_target", None)
+        if t is not threading.current_thread() and \
+                (getattr(target, "__module__", None) or "").startswith("app."):
+            out.add(t)
+    return out
+
+
+def _stop_the_worker(loop: threading.Thread, before: set[threading.Thread]) -> list[str]:
+    """Stop run_forever AND every thread it started before `_stop` is cleared.
+    `_stop` is the process's one event: cleared while the sources thread was
+    still between ticks, that thread ran on for the rest of the suite and,
+    its test's isolated_config gone, its next tick created the REAL
+    /data/state/node.sqlite — failing whichever test was running a minute
+    later, most often a slow VeGa gRPC test (2026-10-08). Which threads
+    outlived the stop."""
+    worker._stop.set()
+    loop.join(timeout=30)
+    left = []
+    for t in _app_threads() - before:
+        t.join(timeout=30)
+        if t.is_alive():
+            left.append(t.name)
+    if loop.is_alive():
+        left.append("run_forever")
+    return left
+
+
 def test_the_main_loop_obeys_the_node_state(isolated_config, monkeypatch):
     monkeypatch.setattr(config, "WORKER_PIPELINE_THREADS", 0)
     monkeypatch.setattr(config, "WORKER_IDLE_SLEEP", 0.05)
@@ -31,6 +63,7 @@ def test_the_main_loop_obeys_the_node_state(isolated_config, monkeypatch):
     # where the web wrote the operator's click before node.sqlite
     db.set_worker_state(db.connect(), "seed-only")
 
+    before = _app_threads()
     loop = threading.Thread(target=worker.run_forever, daemon=True)
     loop.start()
     try:
@@ -45,16 +78,11 @@ def test_the_main_loop_obeys_the_node_state(isolated_config, monkeypatch):
                      and worker._acquire_only.is_set()), \
             "a change written to the node file reaches the loop"
     finally:
-        worker._stop.set()
-        loop.join(timeout=30)
-        for other in threading.enumerate():
-            if other.name in ("stats-publisher", "index-maintainer"):
-                other.join(timeout=30)
-        alive = loop.is_alive()
+        left = _stop_the_worker(loop, before)
         worker._stop.clear()
         worker._paused.clear()
         worker._acquire_only.clear()
-    assert not alive, "the loop exits on the stop"
+    assert left == [], f"the loop and every thread it started exit on the stop: {left}"
     assert not worker._main_loop_live.is_set(), "and says so, so the beat stands down"
 
 
@@ -83,6 +111,7 @@ def test_a_collection_refused_at_boot_does_not_take_the_node_down(isolated_confi
         except BaseException as e:   # noqa: BLE001 — the assertion is that none escapes
             errors.append(e)
 
+    before = _app_threads()
     loop = threading.Thread(target=_run, daemon=True)
     loop.start()
     try:
@@ -91,15 +120,12 @@ def test_a_collection_refused_at_boot_does_not_take_the_node_down(isolated_confi
         assert node_state.worker_state() == "acquire-only", \
             "moved out of the refused collection the web wrote to"
     finally:
-        worker._stop.set()
-        loop.join(timeout=30)
-        for other in threading.enumerate():
-            if other.name in ("stats-publisher", "index-maintainer"):
-                other.join(timeout=30)
+        left = _stop_the_worker(loop, before)
         worker._stop.clear()
         worker._paused.clear()
         worker._acquire_only.clear()
     assert not errors, errors
+    assert left == [], f"the loop and every thread it started exit on the stop: {left}"
 
 
 def test_a_signal_exits_130_as_07_says(monkeypatch):

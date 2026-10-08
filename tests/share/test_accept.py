@@ -47,6 +47,48 @@ def test_member_of_reads_the_event_s_file_list_and_refuses_what_does_not_hash(tm
     assert accept.member_of(short, "a" * 16) is None
 
 
+def test_a_staged_file_at_full_length_with_holes_is_fetched_on_not_refused_as_the_producer_s(tmp_path, monkeypatch):
+    """A stop or a lagging disk leaves a bundle file at its full length with
+    blocks still unwritten (libtorrent sizes files first). Taken as landed
+    by its length, it failed the root check and the bundle was REFUSED, its
+    event acted on for good — a right bundle lost to a local race
+    (2026-10-08). Only a file that hashes to its root is skipped."""
+    import types
+    d = tmp_path / "b"
+    d.mkdir()
+    for f in mem.BUNDLE_FILES:
+        (d / f).write_bytes(f.encode() * 10)
+    member = mem.bundle_member("a" * 16, d)
+    payload = {"bundle_id": "sha256:" + "b" * 64, "root": member.root, "files": member.to_dict()["files"]}
+    staged = tmp_path / "c" / "g" / "state" / holdings.STAGING / accept.member_of(payload, "a" * 16).name
+    staged.mkdir(parents=True)
+    for f in member.files:
+        (staged / f.path).write_bytes(b"\0" * f.bytes)            # full length, nothing written
+    fetched: list[str] = []
+
+    def fetch_file(session, *, torrent, member, staging, **_):
+        fetched.append(torrent.path)
+        (staging / member / torrent.path).write_bytes((d / torrent.path).read_bytes())
+        return staging / member / torrent.path
+
+    class Judged(Exception):
+        pass
+
+    def past_the_root_check(*a, **k):
+        raise Judged
+    monkeypatch.setattr(transport, "fetch_file", fetch_file)
+    monkeypatch.setattr(cov, "row", lambda con, bundle_id: None)
+    monkeypatch.setattr(contribute, "calibration_tensors", past_the_root_check)
+    codex = types.SimpleNamespace(space_segment="a" * 16)
+    with pytest.raises(Judged):
+        accept.take(tmp_path / "c", "g", codex, payload, session=None, con=None, node_con=None)
+    assert sorted(fetched) == sorted(f.path for f in member.files), "every holed file fetched on"
+    fetched.clear()
+    with pytest.raises(Judged):
+        accept.take(tmp_path / "c", "g", codex, payload, session=None, con=None, node_con=None)
+    assert fetched == [], "whole files from an earlier beat are not fetched again"
+
+
 def test_the_survivor_takes_the_announced_bundle_in_and_serves_it(ready, tmp_path, monkeypatch):
     quiet_sessions(monkeypatch)
     root, snapshot, codex, kw = ready

@@ -31,6 +31,7 @@ from app.transfer.bucket import Priority, TransferAborted
 
 POLL_S = 0.5
 METADATA_TIMEOUT_S = 120.0       # as the acquisition transport's: no peer holding it answered
+LANDED_TIMEOUT_S = 60.0          # a file received whole, until the disk holds what was verified
 RATE_REFRESH_S = 5.0
 RECONNECT_EVERY = 20             # polls between peer-hint connects while waiting for metadata
 BACKOFF_S = 15 * 60.0            # a collection nobody served waits this long before the next try
@@ -96,6 +97,20 @@ def _locate(info, member: str, path: str) -> tuple[int, str]:
         if name in want or name.endswith("/" + path):
             return index, name
     raise TransportError(f"{member}/{path}: no such file in the torrent")
+
+
+def landed_whole(path: Path, length: int, root: str) -> bool:
+    """Whether the file on disk IS the one the torrent names: its length
+    and its pieces root. Never the length alone — libtorrent sizes a file
+    before every block of it is written, so a staged file at its full
+    length can still hold holes (2026-10-08)."""
+    from app.hold import drag as drag_mod
+    try:
+        if path.stat().st_size != length:
+            return False
+        return drag_mod.pieces_root_of(path) == root
+    except OSError:
+        return False
 
 
 def _connect(handle, hints) -> None:
@@ -181,22 +196,23 @@ def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hin
                 time.sleep(poll_s)
         # `file_progress` counts pieces received, not pieces WRITTEN: the disk
         # thread is behind it, and a small file's one piece was not on disk
-        # when the first promotion looked (2026-10-07). Flush, then wait for
-        # the bytes to be there at the size the torrent says.
+        # when the first promotion looked (2026-10-07). Nor is the SIZE the
+        # sign: libtorrent sizes the file before its last blocks are written
+        # (`flush_cache` only queues the flush), so a file at its full length
+        # still held zeros where a block was due, and the promotion refused
+        # bytes the swarm had served right — the survivor test's calibration
+        # member, 2026-10-08. What libtorrent verified is the torrent's root;
+        # the wait is for the file on disk to hash to it.
         landed = staging / rel
         try:
             handle.flush_cache()
         except Exception:   # noqa: BLE001 — older bindings; the wait below still holds
             pass
-        deadline = time.monotonic() + 60.0
-        while True:
-            try:
-                if landed.stat().st_size == total:
-                    break
-            except OSError:
-                pass
+        deadline = time.monotonic() + LANDED_TIMEOUT_S
+        while not landed_whole(landed, torrent.length, torrent.root):
             if time.monotonic() > deadline:
-                raise TransportError(f"{rel}: received whole and not on disk after 60s")
+                raise TransportError(f"{rel}: received whole and not on disk as received after "
+                                     f"{LANDED_TIMEOUT_S:.0f}s")
             time.sleep(poll_s)
         return landed
     finally:

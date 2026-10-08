@@ -249,3 +249,89 @@ def test_record_shards_promoted_ask_for_a_scan_at_once(node, monkeypatch):  # no
     assert asked == [], "no record shard landed: nothing to scan"
     transport.beat([c], {c.name: con}, None, now=1015.0, **kw)
     assert asked == [c.name]
+
+
+class _LaggingDisk:
+    """A session whose disk thread is behind `file_progress`, as
+    libtorrent's is: the file stands at its full length with its last block
+    still zeros when the progress already says whole, and the block lands
+    only on a later poll — the interleaving that refused the survivor
+    test's calibration member (2026-10-08)."""
+
+    def __init__(self, torrent, member, staging, data):
+        from app.share import members as mem
+        self.info = lt.torrent_info(lt.bdecode(mem.bencode({"info": torrent.info})))
+        self.landed = staging / member / torrent.path
+        self.data, self.polls_left = data, 2
+        self.landed.parent.mkdir(parents=True, exist_ok=True)
+        self.landed.write_bytes(data[:-1] + b"\0")      # sized, one byte not yet written
+
+    def poll(self):
+        self.polls_left -= 1
+        if self.polls_left == 0:
+            self.landed.write_bytes(self.data)          # the disk thread catches up
+
+    # the session
+    def add_torrent(self, params):
+        return self
+
+    def remove_torrent(self, handle):
+        pass
+
+    # the handle
+    def status(self):
+        return type("S", (), {"has_metadata": True, "total_download": len(self.data), "errc": None})()
+
+    def torrent_file(self):
+        return self.info
+
+    def file_progress(self):
+        return [len(self.data)]
+
+    def connect_peer(self, h):
+        pass
+
+    def prioritize_files(self, p):
+        pass
+
+    def resume(self):
+        pass
+
+    def flush_cache(self):
+        pass
+
+    def set_download_limit(self, n):
+        pass
+
+
+def test_a_file_received_whole_is_returned_only_once_the_disk_holds_what_was_verified(tmp_path, monkeypatch):
+    from app.hold import drag as drag_mod
+    from app.share import members as mem
+    data = bytes(range(256)) * 300
+    root = drag_mod.pieces_root(data)
+    member = mem.Member("calibration-x", (drag_mod.MemberFile("calibration/x.safetensors", root, len(data)),))
+    t = member.torrents()[0]
+    disk = _LaggingDisk(t, member.name, tmp_path / "staging", data)
+    real_sleep = time.sleep
+    monkeypatch.setattr(transport.time, "sleep", lambda s: (disk.poll(), real_sleep(0)))
+    landed = transport.fetch_file(disk, torrent=t, member=member.name, staging=tmp_path / "staging",
+                                  poll_s=0.0)
+    assert landed == disk.landed
+    assert drag_mod.pieces_root_of(landed) == root, "returned while the last block was still due"
+    # and one that never comes right is an error, bounded — never a refusal of the bytes the swarm served
+    disk = _LaggingDisk(t, member.name, tmp_path / "staging2", data)
+    disk.polls_left = -1
+    monkeypatch.setattr(transport, "LANDED_TIMEOUT_S", 0.05)
+    with pytest.raises(transport.TransportError, match="not on disk as received"):
+        transport.fetch_file(disk, torrent=t, member=member.name, staging=tmp_path / "staging2", poll_s=0.0)
+
+
+def test_landed_whole_is_the_root_not_the_length(tmp_path):
+    from app.hold import drag as drag_mod
+    data = b"x" * 40000
+    p = tmp_path / "f"
+    p.write_bytes(b"\0" * len(data))
+    assert not transport.landed_whole(p, len(data), drag_mod.pieces_root(data)), "full length, holes inside"
+    p.write_bytes(data)
+    assert transport.landed_whole(p, len(data), drag_mod.pieces_root(data))
+    assert not transport.landed_whole(tmp_path / "absent", len(data), drag_mod.pieces_root(data))
