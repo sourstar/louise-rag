@@ -40,6 +40,19 @@ def fresh_worker_state():
 
 
 @pytest.fixture(autouse=True)
+def a_fresh_torrent_session():
+    """The process-wide libtorrent session (app/acquire/transport_torrent.py)
+    is shut down after any test that started one, so the next starts clean.
+    The single-survivor test meshes it into a private DHT with changed
+    settings and others leave torrents in it; a later test inheriting that
+    failed only in the full suite (2026-10-08)."""
+    yield
+    from app.acquire import transport_torrent as tt
+    if tt._session is not None:
+        tt.shutdown_session()
+
+
+@pytest.fixture(autouse=True)
 def no_checkout_config(tmp_path_factory, monkeypatch):
     """No test reads the checkout's own config: CONFIG_DIR is an empty
     directory unless the test (or `isolated_config`) points it elsewhere.
