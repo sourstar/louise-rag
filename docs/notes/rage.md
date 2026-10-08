@@ -566,7 +566,7 @@ deferral for Louise; the unit of work is Louise's, never RAGE's.
 
 ## 15. The order of work
 
-[`migration-plan.md`](migration-plan.md) step 13, parts a–f: Codex v3;
+`migration-plan.md` (deleted 2026-10-08) step 13, parts a–f: Codex v3;
 the servers' argv; `app/rage/` with its tests; the published image and
 §14 on the node; the clients; the retirements. Quarantine is step 14.
 `app/verify/backend_gate.py` stays for legacy collections, which have no
@@ -695,7 +695,7 @@ handler, not a mention).
   vectors are written, and a run the peer has not tested is gated at
   once through `GET /louise/runs/<id>`, whose object must hash to the id
   it was asked for (`app/run_check.py`, `app/hold/runs.py`;
-  [`migration-plan.md`](migration-plan.md) 13e). Today's collections are
+  `migration-plan.md` (deleted 2026-10-08) 13e). Today's collections are
   version 2 or legacy, so RAGE still serves today's Louise unchanged,
   behind `/upstream/<model>` URLs.
 

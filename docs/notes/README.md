@@ -31,7 +31,7 @@ What is here, and why it is kept:
 | `localai-bugs.md` | every action item for the LocalAI team in one place: the defects found while studying its scheduler (with line references and how sure each is), the patches we carry (`deploy/localai/patches/`) and the requests — for the operator to file upstream |
 | `rage-review.md` | why `rage.md` reads as it does: the review of the first proposal (four blocking gaps, seven open decisions), the solution accepted for each, and §18, the reasoning behind quarantine (03 §3.6; migration step 14) |
 | `STATUS.md`, `implementation-prompts.md` | where things stood at the last update, and the task prompts used to build them |
-| `migration-plan.md` | the ordered steps from the current code to the documented architecture; deleted when the last step lands |
+| `migration-plan.md` | DELETED 2026-10-08, the last step landed: `git show 7f84d44:docs/notes/migration-plan.md`; what it left open is in STATUS.md |
 
 Nothing here is needed to understand or use Louise. All of it explains
 why some detail is the way it is, and most of it was paid for.

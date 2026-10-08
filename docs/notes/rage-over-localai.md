@@ -263,7 +263,7 @@ compliance (§3).
    today's image by its digest.
 6. **Retirements**, through `legacy-to-delete.md`.
 
-This is migration step 15 ([`migration-plan.md`](migration-plan.md)).
+This is migration step 15 (`migration-plan.md` (deleted 2026-10-08)).
 
 ## 10. What a change of options touches (operator's question, 2026-10-03)
 

@@ -10,7 +10,7 @@
 *Outcome, the same day: the operator accepted every recommendation.
 [`rage.md`](rage.md) was rewritten to the accepted design and wins where
 the two differ; the amendments are on `main` (8bbc66a for RAGE, 98ee4dc
-for quarantine); the work is [`migration-plan.md`](migration-plan.md)
+for quarantine); the work is `migration-plan.md` (deleted 2026-10-08)
 steps 13 and 14. This note stays as the record of why. Two things in it
 were wrong when first written and are corrected in place, marked: the
 name of the third state (§18), and what a burned key is called (§18).*

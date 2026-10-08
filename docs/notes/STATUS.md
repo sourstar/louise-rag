@@ -6,8 +6,26 @@ and what is deliberately not being built. Read this before planning work.
 **The specification moved.** `docs/README.md` and the nine numbered
 documents it lists are now the design; `architecture-v2.md` and its §17
 amendments are the history that produced them and are kept for that.
-[`migration-plan.md`](migration-plan.md) says in what order the code
-reaches the documents, and the `louise` branch is where it does.
+The migration that brought the code to them is complete (2026-10-08); its
+plan is deleted (`git show 7f84d44:docs/notes/migration-plan.md`), and what
+it left open is below.
+
+## Open after the migration
+
+- **Scheduled checks** (its step 14): nothing runs `roots`, `chunks` or
+  `records-vs-origin` by itself; a quarantined copy clears only when
+  someone runs `hold check`. Being measured and built next.
+- **`hold embedder calibrate`** is a stub: it wants two builds of one model
+  to compare (step 3).
+- **The Gazzetta plugin**: certified records carrying `extra.seal` — the
+  certifier body's to run (step 10).
+- **A collection with plates** (Gutenberg-with-plates, decided 2026-09-08):
+  a build, the code is there (step 11).
+- **wikivec** stays parked, not served: it cannot be folded into wikipedia
+  ([`wikivec-merge-blocked.md`](wikivec-merge-blocked.md)); convert it with
+  its own Codex or retire it — the operator's.
+- **`backend_gate`** stays while any Codex is version 1 or 2 (five live).
+- **Operator**: file [`localai-bugs.md`](localai-bugs.md) upstream (step 15).
 
 Node-specific facts — addresses, paths, ports, the live collection inventory —
 are deliberately **not** here: they live in `deploy/reference/DEPLOYMENT.md`,
@@ -257,7 +275,7 @@ off by the operator's choice — what the old `health` said too. Left for the
 operator: the legacy bundle inbox's own trusted-key list has no command;
 `backend_gate` (Codex v1/v2) has no `rebaseline` (remove the baseline file);
 `app/snapshots.py` and `verify_on_use.resweep` look dead;
-`migration-plan.md`'s own deletion (CLAUDE.md points at it).
+`migration-plan.md`'s own deletion (done the same day).
 
 **2026-10-08, ~07:20Z (UTC): the genome collections DELETED; step 13f
 found done.** At the operator's yes on the named list: genome-hg38, dm6 and
@@ -969,7 +987,7 @@ remote, and the scratch worktree that existed to hold `main` was removed.
 What changes for the work: **specs and code are edited together.** A spec
 amendment lands in the same commit as the code it governs, or beside it —
 no forward-merging, and no "the spec says X but the branch has not caught
-up". [`migration-plan.md`](migration-plan.md) §1 keeps the old rule as
+up". `migration-plan.md` (deleted 2026-10-08) §1 keeps the old rule as
 history because its steps were written under it; `CLAUDE.md` and
 [`README.md`](README.md) no longer name a branch; the fossil
 `BRANCHING-INSTRUCTIONS.md` at the repository root — a zip-import recipe
@@ -4238,7 +4256,7 @@ teardown (test-only; fixed in 1f25e6b, ten repeats clean).
    computable, a weights digest for directories, `Louise-Level`, the
    model's URL, `RAGE_URL`) and **98ee4dc** (quarantine).
 4. [`rage.md`](rage.md) rewritten to the accepted design;
-   [`migration-plan.md`](migration-plan.md) gained **step 13** (RAGE,
+   `migration-plan.md` (deleted 2026-10-08) gained **step 13** (RAGE,
    parts a–f) and **step 14** (quarantine). Step 12 stays last.
 5. The code as it stood before RAGE is tagged **v0.1.0** (`louise`
    01a4d00; the first tag of the repository).
@@ -4316,7 +4334,7 @@ before RAGE loads, which makes 13f a cut-over and not a gradual switch
   today's servers and the protocol defaults to Ollama's.
 - **13a, Codex v3:** the engine in the Codex and out of the space, and
   every artefact that named an image moved one version while still
-  reading the old one ([`migration-plan.md`](migration-plan.md) 13a has
+  reading the old one (`migration-plan.md` (deleted 2026-10-08) 13a has
   the list). Every collection on the node is version 2 or legacy, so
   nothing live changes: their Codices load as before, their `space_id`s
   do not move, and what is written for them keeps its old shape. New

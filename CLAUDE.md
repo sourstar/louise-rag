@@ -27,11 +27,11 @@ obeyed. Name the amendment.
   the design history. Read docs/notes/STATUS.md for where things stand
   and what cost time, and the note a task names, before changing the
   code that note is about.
-- **Read docs/notes/migration-plan.md before any step of the migration.**
-  It fixes the order, the scope of each step, what existing code
-  it wraps, and the tests that prove it done. Wrap, do not rewrite; add
-  the new command beside the old one with a deprecation alias; keep every
-  pre-existing test green.
+- **The migration to the documented architecture is COMPLETE (2026-10-08).**
+  Its plan was deleted, as it said it would be; the last version is
+  `git show 7f84d44:docs/notes/migration-plan.md`. What it left open is
+  in docs/notes/STATUS.md ("Open after the migration"). Changing code
+  still means: wrap, do not rewrite; keep every pre-existing test green.
 - **Touching WHAT RUNS WHEN — the round loop, a stage's selection or
   batching, archive passes, the pools, the maintainers — read
   docs/notes/scheduling.md FIRST and follow its checklist (§6).** It is
