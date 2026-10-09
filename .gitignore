@@ -31,3 +31,4 @@ deploy/reference/
 
 # derived per-container caches (pubmed pack) — rebuilt from the archive, never committed
 .pack/
+tools/measure/out/
