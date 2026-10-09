@@ -24,5 +24,6 @@
   ],
   "env": {
     "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
-  }
+  },
+  "pinned": true
 }

@@ -11,7 +11,7 @@
   "name": "vega-medcpt-query",
   "backend": "vega-llama-cpp",
   "embeddings": true,
-  "pinned": false,
+  "pinned": true,
   "context_size": 512,
   "threads": 6,
   "gpu_layers": 999,
