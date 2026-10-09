@@ -150,6 +150,15 @@ def _endpoint(recipe, query: bool) -> str:
     return recipe.query_url if query and recipe.query_url else recipe.url
 
 
+def _who(recipe, query: bool) -> tuple[str, str]:
+    """What answers a side: its endpoint AND the model the request names.
+    One LocalAI address serves every model (VeGa, 2026-10-09): keyed on the
+    URL alone, the run deposit-granite last heard was taken for gutenberg's
+    and quarantined its embedding. CLAUDE.md: bookkeeping keys on identity."""
+    model = (getattr(recipe, "query_model", None) if query else None) or getattr(recipe, "model", "") or ""
+    return _endpoint(recipe, query), model
+
+
 def answering_run(recipe, *, query: bool = False, probe_item=PROBE) -> str:
     """Which run answers at this endpoint now: one tiny request, in the
     space's form (`probe_for`)."""
@@ -545,14 +554,14 @@ _guard = threading.Lock()
 #: ENDPOINT, never a collection's name: every collection that reaches a URL
 #: meets the same run, so a run relaunched under one of them is seen by all at
 #: once (03 §3.6: "every collection of that space on the peer goes with it").
-_answering: dict[tuple[str, str], str] = {}
+_answering: dict[tuple[tuple[str, str], str], str] = {}
 
 
 def heard(recipe, answered: set, *, role: str = "document") -> None:
     """Remember which run this endpoint's answers named."""
     named = [r for r in answered if r]
     if named:
-        _answering[(_endpoint(recipe, role == "query"), role)] = sorted(named)[-1]
+        _answering[(_who(recipe, role == "query"), role)] = sorted(named)[-1]
 
 
 def answering(collection) -> dict[str, str | None]:
@@ -564,7 +573,7 @@ def answering(collection) -> dict[str, str | None]:
         recipe = collections_mod.recipe_for(collection)
     except Exception:                                   # noqa: BLE001
         return {}
-    return {role: _answering.get((_endpoint(recipe, role == "query"), role))
+    return {role: _answering.get((_who(recipe, role == "query"), role))
             for role in runs_mod.ROLES}
 
 
@@ -573,10 +582,10 @@ def _flight(collection) -> str:
     collections of a space that reach one encoder meet the same run, and the
     second finds the first's statement instead of gating it again."""
     try:
-        url = collections_mod.recipe_for(collection).url
+        url, model = _who(collections_mod.recipe_for(collection), False)
     except Exception:                                   # noqa: BLE001
-        url = _where(collection)
-    return f"{collection.codex.space_id} {url}"
+        url, model = _where(collection), ""
+    return f"{collection.codex.space_id} {url} {model}"
 
 
 def reset_cache() -> None:

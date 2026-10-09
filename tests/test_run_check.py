@@ -728,3 +728,25 @@ def test_a_deferral_a_command_lets_through_is_exit_3_not_a_refusal(node, monkeyp
     monkeypatch.setattr(louise.col, "show", deferred)
     assert louise.main(["hold", "collection", "show", "gutenberg", "--root", str(root)]) == 3
     assert "deferred" in capsys.readouterr().err
+
+
+def test_one_runner_address_serving_two_models_keeps_their_runs_apart():
+    """VeGa, 2026-10-09: LocalAI serves every model from one address. Keyed
+    on the URL alone, the run deposit-granite last heard was taken for
+    gutenberg's document encoder and quarantined its embedding."""
+    from types import SimpleNamespace
+    from app import run_check
+    run_check.reset_cache()
+    granite = SimpleNamespace(url="http://localai:30286", query_url=None, model="vega-granite",
+                              query_model="vega-granite")
+    qwen = SimpleNamespace(url="http://localai:30286", query_url=None, model="vega-qwen3",
+                           query_model="vega-qwen3")
+    run_check.heard(granite, {"sha256:granite-run"})
+    run_check.heard(qwen, {"sha256:qwen-run"})
+    assert run_check._answering[(run_check._who(granite, False), "document")] == "sha256:granite-run"
+    assert run_check._answering[(run_check._who(qwen, False), "document")] == "sha256:qwen-run"
+    # the query side names its own model
+    medcpt = SimpleNamespace(url="http://localai:30286", query_url=None, model="vega-medcpt-article",
+                             query_model="vega-medcpt-query")
+    assert run_check._who(medcpt, True) == ("http://localai:30286", "vega-medcpt-query")
+    run_check.reset_cache()
