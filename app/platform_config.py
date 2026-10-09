@@ -122,6 +122,14 @@ class DepositConfig:
     space: Path | None = None
     space_from: str | None = None
     by_name: dict[str, str] = field(default_factory=dict)
+    # 07 §7.8 (amended 2026-10-09): the rest of the `[encoder]` block a new
+    # deposit collection's file is written with. `encoder` is the SERVER;
+    # on LocalAI (api = "vega") one address serves every model, so the URL
+    # names none and the model keys must. Absent, the model is the one a
+    # model-container URL names (`…/upstream/<model>`), else create refuses.
+    api: str = "openai"
+    embed_model: str | None = None
+    query_model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -482,17 +490,20 @@ def _load_one(path: Path) -> PlatformConfig:
 def _deposit(raw: Any, path: Path) -> DepositConfig:
     if not isinstance(raw, dict):
         raise schedule_mod.ScheduleError("[deposit] is a table (07 §7.8)")
-    known = {"encoder", "space", "space_from", "collections"}
+    known = {"encoder", "api", "embed_model", "query_model", "space", "space_from",
+             "collections"}
     unknown = sorted(set(raw) - known)
     if unknown:
         # refused, not ignored: a misspelt key would silently leave every
         # client-created collection on another encoder than the one meant
         raise schedule_mod.ScheduleError(
             f"[deposit]: unknown key(s) {', '.join(unknown)}; it takes "
-            f"encoder, space, space_from and [deposit.collections.<name>]")
-    for k in ("encoder", "space", "space_from"):
+            f"encoder, api, embed_model, query_model, space, space_from and "
+            f"[deposit.collections.<name>]")
+    for k in ("encoder", "api", "embed_model", "query_model", "space", "space_from"):
         if k in raw and not isinstance(raw[k], str):
             raise schedule_mod.ScheduleError(f"deposit.{k} is a string, got {raw[k]!r}")
+    api, embed_model, query_model = _deposit_encoder(raw)
     by_name = {}
     for name, table in (raw.get("collections") or {}).items():
         if not isinstance(table, dict) or set(table) != {"space_from"} \
@@ -505,7 +516,43 @@ def _deposit(raw: Any, path: Path) -> DepositConfig:
         encoder=raw.get("encoder") or None,
         space=((path.parent / space) if space else None),
         space_from=raw.get("space_from") or None,
-        by_name=by_name)
+        by_name=by_name,
+        api=api, embed_model=embed_model, query_model=query_model)
+
+
+def _deposit_encoder(raw: dict) -> tuple[str, str | None, str | None]:
+    """`[deposit]`'s api and model keys (07 §7.8, amended 2026-10-09), checked
+    as a collection file's `[encoder]` would check them — at load, so a
+    wrong value is the operator's to see at once, not a client's create
+    refused later, or worse a file written that cannot embed."""
+    # one set of wire formats for every encoder block (app/hold/calibrate.py)
+    from app.collections import model_named_by
+    from app.hold.calibrate import APIS
+    api = raw.get("api") or "openai"
+    if api not in APIS:
+        raise schedule_mod.ScheduleError(
+            f"deposit.api is one of {', '.join(APIS)} (07 §7.8), got {api!r}")
+    embed_model = raw.get("embed_model") or None
+    query_model = raw.get("query_model") or None
+    encoder = raw.get("encoder") or None
+    if (embed_model or query_model or "api" in raw) and not encoder:
+        raise schedule_mod.ScheduleError(
+            "[deposit]: api, embed_model and query_model describe deposit.encoder, "
+            "which is not set")
+    if api == "vega" and not (embed_model and query_model):
+        # LocalAI serves every model at one address: the URL names none, and
+        # without the keys the file would be written with no model to ask for
+        raise schedule_mod.ScheduleError(
+            "[deposit]: api = \"vega\" requires embed_model and query_model — "
+            "LocalAI's one address names no model, so the keys must (07 §7.8)")
+    named = model_named_by(encoder) if encoder else None
+    for key, value in (("embed_model", embed_model), ("query_model", query_model)):
+        if named is not None and value is not None and value != named:
+            raise schedule_mod.ScheduleError(
+                f"deposit.{key} = {value!r} and deposit.encoder {encoder} names "
+                f"{named!r}; on the model container the URL says which model, and "
+                f"the key must agree with it (07 §7.8)")
+    return api, embed_model, query_model
 
 
 def load() -> PlatformConfig:

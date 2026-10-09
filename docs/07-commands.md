@@ -945,7 +945,14 @@ variable, a file, a log line or a message.
              # of 50; a deeper list gets it in proportion (05 §5.6)
 [deposit]    encoder = "http://nas:30450/upstream/granite-embedding-107m-multilingual"
              # the encoder a deposit collection is created with when none is named (02 §2.9);
-             # granite-embedding-107m-multilingual, LocalAGI's own default, unless changed here
+             # granite-embedding-107m-multilingual, LocalAGI's own default, unless changed here.
+             # The SERVER, as [encoder]'s url; with it, the rest of the [encoder] block a new deposit
+             # collection's file is written with (amended 2026-10-09):
+             api = "openai"                     # openai (default) · ollama · vega, as [encoder]'s
+             # embed_model = "…"   query_model = "…"
+             #                                  # optional; absent, the model the URL names (…/upstream/<model>),
+             #                                  # else `create deposit` is refused — never the encoder's label.
+             #                                  # Required, both, with api = "vega" (LocalAI: one address, every model)
              space = "deposit-space.toml"       # its space block (a TOML, or a JSON file by its `.json` name), beside this file: read once, by the
                                                 # first deposit collection on it; later ones copy its space
              # or: space_from = "sha256:…"      # a Codex to copy the space from instead
@@ -1007,7 +1014,15 @@ node has no default encoder, and a file that names none is refused
 was given (`--encoder`) into the file it creates, with `embed_model` and
 `query_model`: the model each URL names, else the space's encoder label
 for a symmetric encoder; a `--query-encoder` whose URL names no model is
-refused before anything is created (amended 2026-10-08). A file whose
+refused before anything is created (amended 2026-10-08). A deposit
+collection's file (02 §2.9) takes `[deposit]`'s `encoder`, `api`,
+`embed_model` and `query_model` — the models, where `[deposit]` names
+none, from the URL; a URL that names no model is refused before anything
+is created, never answered with the encoder's label, which no server is
+asked for. `[deposit]` is checked at load as an `[encoder]` is: `api` one
+of the three, both models with `vega`, a model the URL names agreeing
+with it. A creator naming another endpoint (`--encoder`) gets the default
+`api` and the model its URL names (amended 2026-10-09). A file whose
 `[encoder]` or `[reranker]` lacks its model keys, still has `model`, or
 names a model its URL does not is refused for that collection, its
 reason where refusals are shown; the node keeps the others. The reranker resolves

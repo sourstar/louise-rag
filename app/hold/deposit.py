@@ -112,29 +112,71 @@ def held_file(root: Path, name: str) -> Path:
     return Path(root) / f"{name}.toml"
 
 
-def encoder_of(root: Path, name: str) -> str | None:
+def _encoder_block(root: Path, name: str) -> dict[str, Any]:
     import tomllib
     p = held_file(root, name)
     try:
         with open(p, "rb") as f:
             raw = tomllib.load(f)
     except (OSError, ValueError):
-        return None
+        return {}
     enc = raw.get("encoder") or {}
-    return str(enc.get("url")) if isinstance(enc, dict) and enc.get("url") else None
+    return enc if isinstance(enc, dict) else {}
 
 
-def space_source(root: Path, encoder_url: str | None) -> Codex | None:
-    """A deposit collection this root already holds on the same encoder
-    endpoint — whose space, calibration included, a new one copies whole
-    instead of embedding the calibration set again (02 §2.9; CLAUDE.md
+def encoder_of(root: Path, name: str) -> str | None:
+    enc = _encoder_block(root, name)
+    return str(enc.get("url")) if enc.get("url") else None
+
+
+def encoder_models(encoder_url: str, *, embed_model: str | None = None,
+                   query_model: str | None = None) -> tuple[str, str]:
+    """(`embed_model`, `query_model`) a new deposit collection's file names
+    (07 §7.8, amended 2026-10-09): `[deposit]`'s keys where it gives them,
+    else the model a model-container URL names (`…/upstream/<model>`).
+
+    A URL that names no model (LocalAI's one address for every model) and
+    no keys is REFUSED — never the space's encoder label in its place: the
+    label is a description ("granite … f16 (LocalAI, …)"), not a model any
+    server is asked for, and a file naming it can neither embed nor search.
+    The encoder is symmetric (02 §2.9), so the query side defaults to the
+    document side's model."""
+    from app import collections as collections_mod
+    embed = embed_model or collections_mod.model_named_by(encoder_url)
+    if not embed:
+        raise DepositError(
+            f"the deposit encoder {encoder_url} names no model (…/upstream/<model>) "
+            f"and [deposit] names none: set embed_model and query_model in "
+            f"platform.toml's [deposit] (07 §7.8). Nothing was created")
+    return embed, query_model or embed
+
+
+def space_source(root: Path, encoder_url: str | None,
+                 embed_model: str | None = None) -> Codex | None:
+    """A deposit collection this root already holds on the same encoder —
+    endpoint AND model — whose space, calibration included, a new one copies
+    whole instead of embedding the calibration set again (02 §2.9; CLAUDE.md
     RULE 1: the bytes would be identical). The oldest such, so the choice
-    is stable."""
+    is stable.
+
+    The model counts as well as the URL: on LocalAI one address serves every
+    model, and a collection on another model there is another space. Where
+    no model is known the URL alone decides, as it did before (a
+    model-container URL names its model, so the two agree)."""
     from . import collection as col
     if not encoder_url:
         return None
+    from app import collections as collections_mod
+    wanted = embed_model or collections_mod.model_named_by(encoder_url)
+
+    def same(name: str) -> bool:
+        enc = _encoder_block(root, name)
+        if str(enc.get("url") or "") != encoder_url:
+            return False
+        return wanted is None or enc.get("embed_model") in (None, wanted)
+
     found = [(name, c) for name, c in col.list_named(root)
-             if is_deposit(c) and encoder_of(root, name) == encoder_url]
+             if is_deposit(c) and same(name)]
     if not found:
         return None
     found.sort(key=lambda nc: nc[0])
@@ -142,7 +184,7 @@ def space_source(root: Path, encoder_url: str | None) -> Codex | None:
 
 
 def create(root: Path, name: str, *, platform_image: str,
-           encoder_url: str | None = None,
+           encoder_url: str | None = None, embed_model: str | None = None,
            space_from: Codex | None = None, space: dict[str, Any] | None = None,
            embed=None, key=None, now: str | None = None) -> Codex:
     """`hold collection create deposit --name N` (07 §7.3).
@@ -165,7 +207,7 @@ def create(root: Path, name: str, *, platform_image: str,
     if (Path(root) / name).exists() or held_file(root, name).exists():
         raise DepositError(f"the name {name!r} is held already; a name holds "
                            f"one collection for its life (07 §7.8)")
-    source = space_from or space_source(root, encoder_url)
+    source = space_from or space_source(root, encoder_url, embed_model)
     if source is not None:
         if source.modality != "text":
             raise DepositError(
@@ -230,26 +272,30 @@ def _origin_of(root: Path, name: str) -> Path:
     return Path(root) / name / "origin"
 
 
-def write_held_file(root: Path, codex: Codex, encoder_url: str | None) -> Path:
+def write_held_file(root: Path, codex: Codex, encoder_url: str | None, *,
+                    api: str = "openai", embed_model: str | None = None,
+                    query_model: str | None = None) -> Path:
     """07 §7.8's collection file for a deposit collection: every slice (it
     has none), records and vectors, EVERY deposit embedded (a deposit is
-    small and is asked for as soon as it lands), never shared."""
+    small and is asked for as soon as it lands), never shared — and the
+    `[encoder]` `[deposit]` describes: url, api and both sides' models
+    (amended 2026-10-09; `encoder_models` says where the models come from)."""
     from . import collection as col
-    from app.louise import model_keys
     name = col.name_of(root, codex.collection_id)
-    # 07 §7.8 (amended 2026-10-08): the file names both sides' models; a
-    # deposit's encoder is symmetric, so both are the one model
-    models = model_keys(encoder_url, None, codex.space.encoder.label) if encoder_url else None
+    models = (encoder_models(encoder_url, embed_model=embed_model, query_model=query_model)
+              if encoder_url else None)
     path = held_file(root, name)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".toml.tmp")
+    # json.dumps: a TOML basic string, quotes and backslashes escaped
     tmp.write_text(f'codex = "{codex.collection_id}"\n'
                    'slices = "all"\n'
                    'kinds = ["records", "vectors"]\n'
                    'embed = "all"\n'
                    "share = false\n"
-                   + (f'\n[encoder]\nurl = "{encoder_url}"\napi = "openai"\n'
-                      f'embed_model = "{models[0]}"\nquery_model = "{models[1]}"\n'
+                   + (f'\n[encoder]\nurl = {json.dumps(encoder_url)}\napi = {json.dumps(api)}\n'
+                      f'embed_model = {json.dumps(models[0])}\n'
+                      f'query_model = {json.dumps(models[1])}\n'
                       if models else ""),
                    encoding="utf-8")
     tmp.replace(path)

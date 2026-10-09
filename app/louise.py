@@ -130,24 +130,40 @@ def create_deposit(root, name: str, *, platform_image: str | None = None,
     from app.bundles import keys as node_keys
 
     cfg = platform_config.load().deposit
-    encoder = encoder or cfg.encoder
+    if encoder and encoder != cfg.encoder:
+        # another endpoint than [deposit]'s: its api and models are not this
+        # one's to describe — the default api, and the model the URL names
+        api, embed_model, query_model = "openai", None, None
+    else:
+        encoder = encoder or cfg.encoder
+        api, embed_model, query_model = cfg.api, cfg.embed_model, cfg.query_model
+    # the models are settled BEFORE anything is created (07 §7.8, amended
+    # 2026-10-09): a URL that names none, with no keys, is refused here
+    models = (deposit.encoder_models(encoder, embed_model=embed_model, query_model=query_model)
+              if encoder else None)
     space_from = space_from or cfg.by_name.get(name) or cfg.space_from
     source = col.read(root, space_from) if space_from else None
     block = None
-    if source is None and deposit.space_source(root, encoder) is None:
+    if source is None and deposit.space_source(root, encoder,
+                                               models[0] if models else None) is None:
         path = space or (str(cfg.space) if cfg.space else None)
         block = _recipe(path) if path else None
         if block is not None and "space" in block:
             block = block["space"]
     codex = deposit.create(
         root, name, platform_image=preflight_create({}, platform_image),
-        encoder_url=encoder, space_from=source, space=block,
-        embed=(_embed_for_recipe(block, encoder) if block is not None else None),
+        encoder_url=encoder, embed_model=models[0] if models else None,
+        space_from=source, space=block,
+        embed=(_embed_for_recipe(block, encoder, models[0] if models else None, api=api)
+               if block is not None else None),
         # the key signs the calibration member, which only the first
         # deposit collection on an encoder writes; the others copy it
         key=node_keys.load_signing_key() if block is not None else None,
         now=_utc_now())
-    return codex, deposit.write_held_file(root, codex, encoder)
+    return codex, deposit.write_held_file(
+        root, codex, encoder, api=api,
+        embed_model=models[0] if models else None,
+        query_model=models[1] if models else None)
 
 
 def cmd_create_deposit(a) -> int:
@@ -460,7 +476,8 @@ NO_ENCODER = (
     "can ever join")
 
 
-def _embed_for_recipe(space: dict, url: str | None, model: str | None = None):
+def _embed_for_recipe(space: dict, url: str | None, model: str | None = None, *,
+                      api: str = "openai"):
     """The encoder `create` embeds the calibration set with (06 Â§6.6).
 
     There is no Codex yet â the two hashes this produces are Codex
@@ -477,9 +494,10 @@ def _embed_for_recipe(space: dict, url: str | None, model: str | None = None):
         raise CodexError(NO_ENCODER)
     enc = space.get("encoder") or {}
     # `model`: the side's model as the file will name it (`model_keys`);
-    # a caller that gives none (a deposit) asks with the URL's, else the label
+    # a caller that gives none asks with the URL's, else the label. `api`:
+    # the wire the new file will name (a deposit's, from [deposit])
     recipe = collections_mod.EmbedRecipe(
-        url=url, api="openai",
+        url=url, api=api,
         model=model or collections_mod.model_named_by(url) or enc.get("label") or "",
         dtype=space["dtype"], ctx=space["ctx"], dim=space["dim"])
 

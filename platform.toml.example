@@ -101,9 +101,18 @@ segments_per_file = 1
 # The reference node (operator, 2026-10-06): granite-embedding-107m-multilingual
 # on RAGE, LocalAGI's own default, and the space file the deposit runbook wrote
 # from the run RAGE stated.
+# `encoder` is the SERVER; `api` (openai by default, ollama, vega) and the
+# models complete the [encoder] block the new collection's file is written with
+# (amended 2026-10-09). Absent, the model is the one a `…/upstream/<model>` URL
+# names, else the create is refused; with api = "vega" both are required.
 # [deposit]
 # encoder = "http://192.168.178.10:30437/upstream/granite-embedding-107m-multilingual"
 # space = "deposit-space.toml"
+# On LocalAI (one address, every model):
+# encoder = "http://192.168.178.10:30286"
+# api = "vega"
+# embed_model = "vega-granite"
+# query_model = "vega-granite"
 
 [certifier]
 # 07 §7.8; 09 §9.11: what this node says of ITS OWN key in the anchor document
