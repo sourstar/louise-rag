@@ -35,7 +35,7 @@ from pathlib import Path
 import httpx
 
 from . import (catalog, chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
-                dispatch, embeddings, entities, fts, node_state, plugin_io, refs, sched, sizing,
+                dispatch, embeddings, encoder_timeouts, entities, fts, node_state, plugin_io, refs, sched, sizing,
                 spaces, stats)
 from .dispatch import Level
 from .acquire import engine as acquire_engine
@@ -1080,16 +1080,24 @@ def _embed_candidates(con, scope, limit: int, collection=None):
     # invariant 9, as in _next_embed: embedding is use of the corpus
     if collection is not None and not _license_allows(con, collection, "embedding"):
         return []
+    # a document whose encoder timed out waits for the endpoint to answer
+    # someone else (app/encoder_timeouts.py): passed over, and the read
+    # widened by as many, so the rest still fill the call
+    place = str(collection.manifest_path) if collection is not None else ""
+    marked = encoder_timeouts.waiting(place) if place else 0
+    want = limit + marked
     rows = []
     if scope["embed_mode"] in ("lazy", "all"):
         rows += con.execute(
             _QUEUE_ELIGIBLE,
-            (config.MAX_RETRIES, config.EMBED_VERSION, limit)).fetchall()
-    if len(rows) < limit and scope["embed_mode"] == "all":
+            (config.MAX_RETRIES, config.EMBED_VERSION, want)).fetchall()
+    if len(rows) < want and scope["embed_mode"] == "all":
         seen = {r["uid"] for r in rows}
-        rows += [r for r in _backfill_rows(con, collection, limit)
-                 if r["uid"] not in seen][: limit - len(rows)]
-    return rows
+        rows += [r for r in _backfill_rows(con, collection, want)
+                 if r["uid"] not in seen][: want - len(rows)]
+    if marked:
+        rows = [r for r in rows if not encoder_timeouts.passed_over(place, r["uid"])]
+    return rows[:limit]
 
 
 def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
@@ -1144,6 +1152,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     def work(row, held):
         if _stop.is_set():
             return (row, None, "stopped", False)
+        counts = None
         try:
             # a pool thread starts with an empty context: its requests
             # declare themselves here, or they would reach the gate at the
@@ -1182,6 +1191,12 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
             _record_embedded(collection, started, counts)
             with tally_lock:
                 tally.add(counts)
+            if counts.embedded:
+                # the endpoint answered: evidence for a timed-out neighbour
+                encoder_timeouts.answered(endpoint, place, row["uid"])
+                answered_here.append(True)
+            else:
+                encoder_timeouts.forget(place, row["uid"])
             return (row, n, None, sink.holds(int(row["native_id"])))
         except embeddings.EmbedInterrupted:
             # SIGTERM between two slices of a long document: what is written
@@ -1189,6 +1204,16 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
             # an error, which would take it out of every selection
             return (row, None, DEFERRED, False)
         except Exception as e:  # noqa: BLE001 — isolated per document
+            timeout = endpoint_timed_out(e)
+            if timeout is not None:
+                if counts is not None and counts.embedded:
+                    # this attempt embedded part of it: not stuck, resumed later
+                    encoder_timeouts.forget(place, row["uid"])
+                n = encoder_timeouts.timed_out(endpoint, place, row["uid"])
+                if n >= encoder_timeouts.BLAME_AFTER:
+                    return (row, None, _timeout_blame(timeout, n), False)
+                timed_out.append(timeout)       # the hold is made on this thread's caller
+                return (row, None, DEFERRED, False)
             if transient_failure(e):
                 said = rage_refusal(e)
                 if said:
@@ -1243,6 +1268,10 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     done = deferred = 0
     refused: list[str] = []        # RAGE's own words, when it would not load the model
     wrong_endpoint: list[BaseException] = []   # 404/401/…: the collection's embedding pauses
+    timed_out: list[BaseException] = []        # read timeouts: the endpoint held as busy
+    answered_here: list[bool] = []             # a document the encoder answered
+    endpoint = encoder_timeouts.endpoint_of(recipe)
+    place = str(collection.manifest_path)
 
     def mark_done(uids) -> None:
         now = int(time.time())
@@ -1355,6 +1384,10 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
         _pause_embedding(con, collection, wrong_endpoint[-1])
     elif done:
         _endpoint_answered(con, collection)
+    if timed_out and not answered_here:
+        # timed out and answered nobody: a hung backend is sent nothing more
+        # for a while (an answer to anyone else releases it)
+        _hold_busy(con, collection, endpoint, timed_out[-1])
     if done:
         db.log_event(con, "info", "embed",
                      f"embedded {done} document(s) at concurrency "
@@ -1362,8 +1395,8 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                      f"{tally.embedded} chunks embedded, {tally.reused} reused")
     if deferred:
         db.log_event(con, "warn", "embed",
-                     f"{deferred} document(s) deferred — encoder unreachable, busy or "
-                     f"the wrong endpoint, "
+                     f"{deferred} document(s) deferred — encoder unreachable, busy, "
+                     f"timed out or the wrong endpoint, "
                      f"the store held by another writer, an answer from a run not "
                      f"yet validated (03 §3.3), or the node's mode no longer running "
                      f"this; "
@@ -2313,6 +2346,8 @@ def _embedding_allowed(con, collection) -> bool:
         return False
     if _endpoint_pause_holds(con, collection):
         return False        # a wrong endpoint (404, 401, …): asked again on a bound
+    if _endpoint_busy_holds(collection):
+        return False        # it timed out answering nobody: asked again on a bound
     if not backend_gate.embed_allowed(con, collection, stop=_stop.is_set):
         return False
     return _quarantine_allows(con, collection, "embedding")
@@ -2573,8 +2608,10 @@ def endpoint_unavailable(exc: BaseException) -> bool:
     if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
         return True
     # a connection dropped mid-answer, or an answer that is not HTTP: the
-    # endpoint's state (amended 2026-10-09). A READ TIMEOUT stays out — an
-    # oversized document can genuinely cause one.
+    # endpoint's state (amended 2026-10-09). A bare READ TIMEOUT stays out —
+    # an oversized document can genuinely cause one; the embed client's own
+    # (`EndpointTimedOut`, a ConnectionError below) is a deferral, and only
+    # `encoder_timeouts`' evidence ever puts one on a document.
     if isinstance(exc, (httpx.NetworkError, httpx.RemoteProtocolError, httpx.PoolTimeout)):
         return True
     # the embed client's own verdict on an HTTP answer (embeddings.py):
@@ -2698,6 +2735,47 @@ def _endpoint_pause_holds(con, collection) -> bool:
     return False        # one attempt; `_pause_embedding` again if it refuses
 
 
+def endpoint_timed_out(exc: BaseException | None) -> embeddings.EndpointTimedOut | None:
+    """The embed client's "the encoder took the request and did not answer
+    in time" however deep it is wrapped; None otherwise. A deferral (it is
+    an EndpointBusy) — and the one failure that COULD be a document's own,
+    so it is put on a document only by `encoder_timeouts`' evidence: the
+    same document timing out again and again while the endpoint answers
+    others. A bare httpx.ReadTimeout from elsewhere is not this."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, embeddings.EndpointTimedOut):
+            return exc
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
+def _timeout_blame(exc: BaseException, n: int) -> str:
+    """The error put on a document that kept timing out alone."""
+    return (f"EndpointTimedOut: timed out {n} times while the endpoint answered "
+            f"other documents in between — this document's own: {exc}")[:400]
+
+
+def _hold_busy(con, collection, endpoint, exc: BaseException) -> None:
+    """The encoder timed out and answered no document: hold it as busy —
+    nothing sent to it for `encoder_timeouts.hold`'s bound, doubling while it
+    stays silent, released by its first answer. No document is touched."""
+    seconds = encoder_timeouts.hold(endpoint)
+    db.log_event(con, "warn", "embed",
+                 (f"[{collection.name}] the encoder timed out and answered no "
+                  f"document ({exc}); held as busy for {int(seconds)} s — no "
+                  f"document is blamed for a hung endpoint")[:900])
+
+
+def _endpoint_busy_holds(collection) -> bool:
+    """Is this collection's encoder held as busy after a timeout?"""
+    if not encoder_timeouts.any_held():
+        return False                            # the common case: no lookup
+    return encoder_timeouts.held(
+        encoder_timeouts.endpoint_of(_recipe_or_none(collection))) > 0
+
+
 def transient_failure(exc: BaseException) -> bool:
     """The moment's fault, not the document's: the encoder away or busy,
     the manifest or the vector store held by another writer. ONE test for
@@ -2811,6 +2889,26 @@ def _execute_step(con, collection, stage, row) -> bool:
                          f"{stage} deferred — {e}; the document is untouched "
                          f"and will be retried")
             return False
+        timeout = endpoint_timed_out(e) if stage == "embed" else None
+        if timeout is not None:
+            # The encoder did not answer in time: the endpoint's, by default
+            # (2026-10-09: a hung LocalAI backend errored three gutenberg
+            # documents). Deferred and held as busy — unless THIS document
+            # keeps timing out while the endpoint answers others.
+            endpoint = encoder_timeouts.endpoint_of(_recipe_or_none(collection))
+            n = encoder_timeouts.timed_out(endpoint, str(collection.manifest_path),
+                                           row["uid"])
+            if n < encoder_timeouts.BLAME_AFTER:
+                _hold_busy(con, collection, endpoint, timeout)
+                db.log_event(con, "warn", stage,
+                             f"{stage} deferred — {timeout}", row["uid"])
+                return False
+            blame = _timeout_blame(timeout, n)
+            con.execute(
+                "UPDATE documents SET retries=retries+1, error=?, updated_at=? WHERE uid=?",
+                (f"{stage}: {blame}"[:500], int(time.time()), row["uid"]))
+            db.log_event(con, "error", stage, blame, row["uid"])
+            return True
         if endpoint_misconfigured(e):
             # The endpoint is the wrong one or refuses us (404, 401, …): the
             # same deferral, and the collection's embedding pauses with the
@@ -2846,6 +2944,10 @@ def _execute_step(con, collection, stage, row) -> bool:
         return True
     if stage == "embed":
         _endpoint_answered(con, collection)
+        if encoder_timeouts.watching():         # evidence matters only beside a timeout
+            encoder_timeouts.answered(
+                encoder_timeouts.endpoint_of(_recipe_or_none(collection)),
+                str(collection.manifest_path), row["uid"])
     dt = round(time.time() - t0, 2)
     if stage not in ("rdf", "fts") or int(row["native_id"]) % 500 == 0:
         db.log_event(con, "info", stage, f"done in {dt}s", row["uid"])
@@ -2904,6 +3006,17 @@ def _run_one_step(con, collection, last_idle_log: dict,
             # while rdf/fts work continues. embed_allowed() logged the
             # transition and caches the verdict, so this costs nothing per
             # round until the TTL expires.
+            stage, row = _next_book(con, scope, embed_allowed=False, collection=collection)
+    if stage == "embed" and row is not None and encoder_timeouts.passed_over(
+            str(collection.manifest_path), row["uid"]):
+        # it timed out and the endpoint has answered nobody since: another
+        # document is asked first (app/encoder_timeouts.py), or none
+        rows = _embed_candidates(con, scope, 1, collection)
+        if rows:
+            row = rows[0]
+        elif pipeline_active:
+            return False
+        else:
             stage, row = _next_book(con, scope, embed_allowed=False, collection=collection)
     if stage == "embed" and not _vector_writes_allowed(collection):
         return False            # index build/refresh in progress: deferred, not an error

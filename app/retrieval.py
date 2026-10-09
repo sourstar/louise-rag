@@ -436,6 +436,12 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
             # (app/model_load.py): the leg is missing, and the response
             # says why (05 §5.3) — the next search finds it loaded
             vector_leg = str(e)
+        except embeddings.EndpointTimedOut as e:
+            # the query encoder took the query and did not answer in time —
+            # a hung backend (2026-10-09): the leg is missing, the text leg
+            # goes on, and the response says why (05 §5.3: never a silent drop)
+            vector_leg = f"the query encoder did not answer in time: {e}"
+            db.log_event(con, "warn", "dense", f"dense search withheld: {e}")
         except embeddings.EndpointMisconfigured as e:
             # the query encoder's endpoint is the wrong one or refuses us
             # (404, 401, …): waiting will not bring the leg back, so the

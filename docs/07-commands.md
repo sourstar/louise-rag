@@ -1088,7 +1088,12 @@ are, until its `[encoder]` changes or the endpoint answers again (asked
 every five minutes). A busy one (408, 429, a 5xx) or an unreachable one
 defers the batch. Neither is ever an error on a document; only a 400,
 413 or 422 about one input, the batch split down to it, is (amended
-2026-10-09).
+2026-10-09). A request that times out defers too, and holds the encoder
+as busy — nothing sent to it for a minute, doubling to ten while it
+answers no one; a search withholds its vector leg and says why. A
+document is blamed for a timeout only after three, each one after the
+encoder answered other documents since the last, so a hung encoder
+blames no one (amended 2026-10-09).
 
 `hold collection create` and `share fetch` write the
 file; `hold collection forget` removes it. The name is `--name` when

@@ -179,7 +179,7 @@ def http_embed(ctx: int) -> Embed:
         except embeddings.EndpointBusy as e:
             raise CalibrateUnreachable(
                 f"{ep.file}: the encoder at {ep.url} is not serving "
-                f"(HTTP {e.status}); retry when it answers") from e
+                f"({f'HTTP {e.status}' if e.status else e}); retry when it answers") from e
         except embeddings.EndpointMisconfigured as e:
             # the file names the wrong endpoint: the operator's to fix, and
             # waiting will not — a refusal of the file, never a deferral

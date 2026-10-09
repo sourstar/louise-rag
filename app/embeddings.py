@@ -121,6 +121,29 @@ class EndpointBusy(EndpointDeferred):
     loading its weights, overloaded, a proxy that lost it."""
 
 
+class EndpointTimedOut(EndpointBusy):
+    """The encoder took the request and did not answer within its bound (a
+    read or write timeout). The ENDPOINT's state by default — seen on the node
+    2026-10-09: a LocalAI backend came back hung after a crash, and three
+    gutenberg documents were errored for it. A deferral like any busy answer;
+    the worker holds the endpoint as busy, and blames a document only when it
+    alone keeps timing out while the endpoint answers others
+    (app/encoder_timeouts.py). A search withholds its vector leg and says why."""
+
+
+def _post(recipe: "collections_mod.EmbedRecipe", url: str, *, timeout: float, **kw):
+    """One request to the encoder; a timeout reading or sending it is
+    `EndpointTimedOut`, never a bare httpx error a caller could put on a
+    document. (A connect timeout already reads as the endpoint's.)"""
+    try:
+        return httpc.post(url, timeout=timeout, **kw)
+    except (httpx.ReadTimeout, httpx.WriteTimeout) as e:
+        raise EndpointTimedOut(
+            f"the encoder at {recipe.url} did not answer within {timeout:.0f} s "
+            f"({type(e).__name__}) — held as busy; the batch is deferred and its "
+            f"documents are untouched") from e
+
+
 class EndpointMisconfigured(EndpointDeferred):
     """404, 405, 401, 403 — and any other answer that is neither the input's
     nor a busy server's (a redirect, a 200 whose body is not an embeddings
@@ -188,15 +211,15 @@ def _request_vectors(batch: list[Item], timeout: float,
         return _request_vouched(batch, timeout, recipe, runs, g, level)
     with g.admit(timeout=timeout):
         if recipe.api == "openai":
-            r = httpc.post(f"{recipe.url}/v1/embeddings", json=_body(recipe, batch),
-                           timeout=timeout, headers=level)
+            r = _post(recipe, f"{recipe.url}/v1/embeddings", json=_body(recipe, batch),
+                      timeout=timeout, headers=level)
             r.raise_for_status()
             data = _parsed(r, recipe, lambda x: sorted(x.json()["data"],
                                                        key=lambda d: d["index"]))
             _note_run(r, runs)
             return _parsed(r, recipe, lambda x: [d["embedding"] for d in data])
-        r = httpc.post(f"{recipe.url}/api/embed", json=_body(recipe, batch),
-                       timeout=timeout, headers=level)
+        r = _post(recipe, f"{recipe.url}/api/embed", json=_body(recipe, batch),
+                  timeout=timeout, headers=level)
         r.raise_for_status()
         vectors = _parsed(r, recipe, lambda x: x.json()["embeddings"])
         _note_run(r, runs)
@@ -260,8 +283,8 @@ def _request_vouched(batch: list[Item], timeout: float,
     if recipe.model:
         body["model"] = recipe.model
     with g.admit(timeout=timeout):
-        r = httpc.post(f"{recipe.url}/v1/embeddings", json=body, timeout=timeout,
-                       headers=level)
+        r = _post(recipe, f"{recipe.url}/v1/embeddings", json=body, timeout=timeout,
+                  headers=level)
     if r.status_code >= 500 and vclient.is_deferral(r.status_code, r.text):
         raise ReceiptDeferred(
             f"{recipe.url}: VeGa's wrapper could not deliver a receipt (HTTP "
@@ -369,7 +392,9 @@ def _embed_batch(batch: list[Item], timeout: float,
     the single input first; for that one input it raises `InputRefused`
     with the server's message. Every other HTTP error is the ENDPOINT's:
     `EndpointBusy` (408, 429, 5xx) or `EndpointMisconfigured` (404, 405,
-    401, 403, …) — deferrals, never an error on a document.
+    401, 403, …) — deferrals, never an error on a document. A request that
+    times out is `EndpointTimedOut`, busy too (`_post`), for the whole batch:
+    it is never split, since a hung endpoint would answer no half either.
 
     `raw`: the vectors as the endpoint returned them, not unit-normalised —
     what 09 §9.12's fingerprint is taken over (`_embed_one_at_a_time`).
