@@ -161,7 +161,7 @@ async function search(opts){
   document.getElementById('results').innerHTML='<div class="note">searching…</div>';
   const r=await fetch('/ask/query',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({query:q,collections:scopeCollections(),mode:document.getElementById('mode').value,
-                         ...counts()})});
+                         show_in:selectedLang(),...counts()})});
   document.getElementById('results').innerHTML=await r.text();
   wireHits();
   const t=applyLanguage(opts);

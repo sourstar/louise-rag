@@ -218,6 +218,10 @@ class AskQueryBody(BaseModel):
     # the question into EVERY language held, not only the main ones — only
     # when asked (operator, 2026-09-18)
     all_languages: bool = False
+    # "show results in" (an ISO code, or none for "their own language"): a
+    # work's one hit is shown in it where one of its editions in it was
+    # found (05 §5.3, amended 2026-10-09)
+    show_in: str | None = Field(None, max_length=8)
 
 
 # "show results in" — the CONTENT languages the Ask page offers. The
@@ -611,7 +615,8 @@ async def ask_query(request: Request, body: AskQueryBody):
 def _ask_result(body: AskQueryBody) -> dict:
     result = query_service.run_search(body.collections, body.query, body.limit, body.mode, True,
                                       rerank_depth=body.rerank_depth,
-                                      all_languages=body.all_languages)
+                                      all_languages=body.all_languages,
+                                      **({"show_in": body.show_in} if body.show_in else {}))
     # every hit names its COLLECTION for the reader panel: federated hits
     # carry it; a single-collection hit is resolved from its source prefix
     # (the plugin id) to the first collection of that plugin

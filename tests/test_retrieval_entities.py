@@ -43,6 +43,21 @@ def _sync_refs(tmp_path, monkeypatch):
     con.close()
 
 
+def _as_records(golden: list[dict]) -> list[dict]:
+    """The frozen baseline with the record as the unit (05 §5.1, the fusion
+    since 2026-10-09): each book once, at its first — best — chunk. The
+    golden was captured when a book took one slot per matching chunk; on
+    these fixtures every query's list is otherwise the same, in the same
+    order (checked on all 40 when the fusion changed), so the baseline
+    stays frozen and only the unit moved."""
+    seen, out = set(), []
+    for h in golden:
+        if h["book_id"] not in seen:
+            seen.add(h["book_id"])
+            out.append(h)
+    return out
+
+
 @pytest.mark.parametrize("name", ["gutenberg", "pubmed"])
 def test_degeneration(name, tmp_path, monkeypatch):
     """20 entity-free queries produce IDENTICAL hit ids/order to the
@@ -62,7 +77,8 @@ def test_degeneration(name, tmp_path, monkeypatch):
         result = retrieval.search(con, q, k=12, mode="hybrid", translate=False,
                                    collection=collection)
         got = [{"book_id": h["book_id"], "chunk_id": h["chunk_id"]} for h in result["hits"]]
-        assert got == GOLDEN[name][q], f"query {q!r} diverged from the pre-P0.3 golden baseline"
+        assert got == _as_records(GOLDEN[name][q])[:12], \
+            f"query {q!r} diverged from the pre-P0.3 golden baseline"
         assert result["facts"] == [], f"query {q!r} spuriously resolved an entity"
 
 

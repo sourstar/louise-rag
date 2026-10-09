@@ -65,6 +65,10 @@ class LanguagePlan:
     by: str = ""
     #: went out in every language held, not only the main ones (on request)
     every: bool = False
+    #: the language the query is written in, as the chat model read it with
+    #: the restriction (`llm.Reading.lang`); None when nobody said — one hit
+    #: per work shows a work in it (app/ask/works.py)
+    query_lang: str | None = None
 
     def searches(self, group: str) -> bool:
         """Whether the text index group `group` may hold a wanted record."""
@@ -104,6 +108,7 @@ class LanguagePlan:
 def reset() -> None:
     with _cache_lock:
         _cache.clear()
+    llm.reset_readings()
 
 
 def held_languages(groups) -> set[str]:
@@ -177,13 +182,15 @@ def plan(query: str, collections, translate: bool, every: bool = False) -> Langu
         found = llm.language_restriction(query_core)
         if found is None:
             status, found = "unavailable", ([], query_core)
+    query_lang = getattr(found, "lang", None)
     only, core = found
     targets = sorted(only) if only else sorted(held)
     translations, by = _translations(core, targets) if targets else ({}, "")
     if targets and not translations:
         status = "unavailable"
     result = LanguagePlan(core=core or query_core, only=tuple(only),
-                          translations=translations, status=status, by=by, every=every)
+                          translations=translations, status=status, by=by, every=every,
+                          query_lang=query_lang)
     if status == "ok":
         with _cache_lock:
             if len(_cache) >= _CACHE_MAX:

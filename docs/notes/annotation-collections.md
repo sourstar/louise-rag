@@ -182,8 +182,33 @@ would be `method: human`.
 - **Updating an annotations collection.** A second snapshot would re-check
   claims, add claims or tombstone claims, re-issuing parts. This needs a
   `hold annotations update` that writes superseded part names.
-- **Grouping in the lists.** Results may be grouped by work. Today a client
-  groups from `annotations`, and the server does not.
+- ~~**Grouping in the lists.**~~ Done 2026-10-09: the search shows each
+  work once from the `same-work` / `translation-of` claims held
+  (05 §5.3 "One hit per work", `app/ask/works.py`).
+
+## The second instance: gutenberg's works (2026-10-09)
+
+`tools/annotations_from_works.py` turns the one-language measurement's
+`records.jsonl` and `wiki_map.json` (`one-language-per-work.md` §1) into
+4,376 `same-work` claims over 6,060 books — exactly the 1,694 works that
+note measured:
+
+- 4,357 `{kind: wikidata}`: the books whose "Wikipedia page about this
+  book" lines resolve to one Wikidata item, as a star on the item's lowest
+  ebook number; a book naming several items (an anthology) claims nothing.
+  Confidence 0.96875, (30 + 1) / (30 + 2) from the 30/30 hand check.
+- 19 `{matcher, gutenberg-editions-note, 1}`: PG's own "several editions of
+  this eBook" note, where Wikidata had not already joined the pair.
+  Confidence 1. These two can be the same language: `same-work` there
+  means editions of one work, which is what grouping needs.
+
+Not created on the node yet (the operator's step): `python -m
+tools.annotations_from_works records.jsonl wiki_map.json --out
+claims.jsonl`, then `louise hold collection create annotations
+--annotates gutenberg --from-snapshot <gutenberg's current snapshot>
+--claims claims.jsonl --name gutenberg-works`. Nothing in gutenberg is
+rebuilt (RULE 1). Until it exists the search groups nothing on gutenberg
+and the fusion fixes stand alone.
 - **A target with other annotation collections.** Several annotations
   collections on one target each attach their own facts, labelled by
   collection id. Nothing merges them, deliberately.

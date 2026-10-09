@@ -18,7 +18,11 @@ def test_the_merge_keeps_each_leg_s_rank_the_text_leg_s_best_across_groups():
     text_de = [{"chunk_id": "g:2:0:1", "source": "fts:de"}]
     dense = [{"chunk_id": "g:2:0:1", "source": "dense"}, {"chunk_id": "g:3:0:1", "source": "dense"}]
     merged = {m["chunk_id"]: m for m in retrieval._merge_rrf([text_en, text_de, dense])}
-    assert merged["g:2:0:1"]["leg_ranks"] == {"text": 1, "vector": 1}, "its best text rank: first in the German group"
+    # amended 2026-10-09 (05 §5.2): the groups are variants of ONE text leg,
+    # which orders records by their best rank across them — g:2 is first in
+    # the German group, ties with g:1 at 1, and goes second by uid bytes; its
+    # rank in the leg is that position (it was 1, each group a vote of its own)
+    assert merged["g:2:0:1"]["leg_ranks"] == {"text": 2, "vector": 1}
     assert merged["g:1:0:1"]["leg_ranks"] == {"text": 1}
     assert merged["g:3:0:1"]["leg_ranks"] == {"vector": 2}
 

@@ -91,6 +91,18 @@
     {% if h.origin_url %}<a class="badge" href="{{ h.origin_url }}" target="_blank"
        rel="noopener" title="open at the source">source ↗</a>{% endif %}
   </div>
+  {# ONE HIT PER WORK (05 §5.3, amended 2026-10-09): the work's other
+     editions, from the work claims held here, listed under the one shown —
+     never dropped. A held edition opens in the reader; `rank` says where
+     it stood in the list before the grouping. #}
+  {% if h.editions %}
+  <div class="note editions">also in:
+    {% for e in h.editions %}{% set nid = e.uid.split(':', 1)[1] %}
+    <span class="edition"><span class="badge brass">{{ e.lang or '?' }}</span>
+      {% if e.held and nid.isdigit() %}<a href="/read/{{ h.source_collection or (h.chunk_id.split(':')[0]) }}/{{ nid }}{% if e.chunk_id %}?hl={{ e.chunk_id }}{% endif %}" target="_blank" rel="noopener" dir="auto">{{ e.title or ('#' ~ nid) }}</a>{% else %}<span dir="auto">{{ e.title or e.uid }}</span>{% endif %}{% if e.rank %} <span class="badge" title="its place in the list before the editions were grouped">#{{ e.rank }}</span>{% endif %}</span>{% if not loop.last %} · {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
   {# content, translatable (data-cid keys the translation cache; the
      original text stays in data-orig on the client and in the drawer).
 

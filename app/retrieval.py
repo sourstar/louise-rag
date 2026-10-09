@@ -82,21 +82,99 @@ def catalog_search(con, query: str, limit: int = 10,
     except Exception:   # noqa: BLE001 — an index problem empties the leg, never fails a search
         return []
 
-def _merge_rrf(lists: list[list[dict]]) -> list[dict]:
-    scored: dict[str, dict] = {}
-    for hits in lists:
-        for rank, h in enumerate(hits):
-            key = h["chunk_id"]
-            entry = scored.setdefault(key, {**h, "rrf": 0.0, "sources": set(), "leg_ranks": {}})
-            entry["rrf"] += 1.0 / (RRF_K + rank + 1)
-            entry["sources"].add(h["source"])
-            # 05 §5.3 `legs`: the rank in each leg that ranked it, counted from
-            # 1 — the text leg's best across its language groups
+def record_of(hit: dict) -> str:
+    """The record a chunk hit belongs to: its uid, `<plugin>:<native_id>` —
+    a chunk id is `<uid>:<seq>:<version>` (app/chunking.py), and a native
+    id may itself hold a colon, so the split is from the right."""
+    return str(hit["chunk_id"]).rsplit(":", 2)[0]
+
+
+#: 05 §5.1's leg order, for the one tie it leaves open: a record ranked
+#: equally by both legs carries the text leg's best chunk
+_LEGS = ("text", "vector")
+
+
+def _merge_rrf(lists: list[list[dict]], depth: int | None = None, *,
+               own: frozenset[int] | set[int] = frozenset(),
+               query_lang: str | None = None) -> list[dict]:
+    """05 §5.1–5.2 (amended 2026-10-09: this is what the code now does).
+
+    TWO LEGS, AND THE RECORD IS THE UNIT. `lists` are what the legs
+    returned, chunk hits in rank order: one list per text query variant
+    (a language group's translation, or one of a mixed group's), and the
+    vector leg's (`source == "dense"`). A record's rank in one list is its
+    position among that list's distinct records — the rank of its best
+    chunk there. The text lists are variants of ONE leg (§5.2: "a variant
+    is a query, not a leg"): the leg orders its records by their best rank
+    across the variants, ties by uid bytes, and a record's rank in the leg
+    is its POSITION in that one order — so the leg casts one vote per
+    rank, however many languages it went out in (counting each variant's
+    rank 1 as the leg's rank 1 would let sixteen records share it, which
+    is the flood again: R@10 0.237 against 0.388 on the same legs). The
+    vector leg is one list already. Each leg contributes its top `depth`
+    records, and a record's score is the sum over the legs that ranked it
+    of 1 / (60 + rank). Ordered by score, ties by uid bytes (one
+    collection: `collection_id` is the same for every record).
+
+    It used to fuse CHUNKS from one list per language group: a gutenberg
+    query entered RRF as 16 text lists and one vector list, so each
+    group's rank 1 — Hungarian's, Romanian's — scored like the vector
+    leg's, and a book filled several slots, one per matching chunk.
+    Measured over 451 queries (docs/notes/one-language-per-work.md): the
+    work in the fused top 10 for 14.4 % of them that way, 39.7 % fused as
+    the specification says.
+
+    Each fused entry is the record's BEST CHUNK — the one that ranked
+    highest in the leg that ranked the record highest (the text leg on a
+    tie) — with `leg_ranks` (§5.3 `legs`), `sources` (every list that
+    returned the record: `fts:<group>`, `dense`) and `rrf`.
+
+    TIES IN THE TEXT LEG (amended 2026-10-09). A book is indexed in one
+    language group only, so sixteen variants give sixteen different rank-1
+    records, and their order decides positions 1–16. By uid bytes alone it
+    was arbitrary, and title queries paid for it (R@10 0.821 → 0.615 on
+    39). Equal best ranks now go: a rank reached by the USER'S OWN WORDS
+    first — `own`, the indexes of the lists run with the query as typed —
+    then a record written in `query_lang`, the language the query is in
+    (`LanguagePlan.query_lang`), then uid bytes. Measured on the captured
+    legs (tools/measure/one_language_rescore.py): titles R@10 0.744, MRR
+    0.501 (uid alone: 0.615, 0.419); descriptive R@10 0.397, MRR 0.219
+    (0.388, 0.187). Neither key boosts: both only order records the leg
+    already ranks equal (§5.2)."""
+    query_lang = (query_lang or "").lower() or None
+    # uid -> leg -> (its tie key: rank first, its best chunk)
+    best: dict[str, dict[str, tuple[tuple, dict]]] = {}
+    sources: dict[str, set[str]] = {}
+    for li, hits in enumerate(lists):
+        seen: set[str] = set()
+        for h in hits:
+            uid = record_of(h)
+            if uid in seen:
+                continue                  # a later chunk of a record this list already ranked
+            seen.add(uid)
+            rank = len(seen)
             leg = "vector" if h["source"] == "dense" else "text"
-            entry["leg_ranks"][leg] = min(entry["leg_ranks"].get(leg, rank + 1), rank + 1)
-    merged = sorted(scored.values(), key=lambda x: -x["rrf"])
-    for m in merged:
-        m["sources"] = sorted(m["sources"])
+            key = (rank, li not in own,
+                   query_lang is None or (h.get("lang") or "").lower() != query_lang)
+            mine = best.setdefault(uid, {})
+            if leg not in mine or key < mine[leg][0]:
+                mine[leg] = (key, h)
+            sources.setdefault(uid, set()).add(h["source"])
+    scores: dict[str, float] = {}
+    rank_in: dict[str, dict[str, int]] = {}    # uid -> leg -> its rank in that ONE leg
+    for leg in _LEGS:
+        ordered = sorted((legs[leg][0], uid) for uid, legs in best.items() if leg in legs)
+        for rank, (_, uid) in enumerate(ordered if depth is None else ordered[:depth], 1):
+            scores[uid] = scores.get(uid, 0.0) + 1.0 / (RRF_K + rank)
+            rank_in.setdefault(uid, {})[leg] = rank
+    merged = []
+    for uid, score in scores.items():
+        ranks = rank_in[uid]
+        top = min(ranks, key=lambda leg: (ranks[leg], _LEGS.index(leg)))
+        entry = {**best[uid][top][1], "rrf": score, "sources": sorted(sources[uid]),
+                 "leg_ranks": {leg: ranks[leg] for leg in _LEGS if leg in ranks}}
+        merged.append(entry)
+    merged.sort(key=lambda m: (-m["rrf"], record_of(m)))
     return merged
 
 #: 05 §5.6: the reranker re-orders the top 50 of ONE ranked list — the
@@ -332,7 +410,9 @@ def _enqueue_lazy_embed(con, book_ids: list[int], collection):
 def _best_rank(lists: list[list[dict]], limit: int) -> list[dict]:
     """Several variants of one query against one group, as ONE ranked list:
     a record's rank is its best across the variants (docs/05 §5.2 — a
-    variant is a query, not a leg, so three CJK variants cast one vote)."""
+    variant is a query, not a leg, so three CJK variants cast one vote).
+    The search no longer calls it (2026-10-09): every variant's list goes
+    to `_merge_rrf`, which ranks a record by its best across all of them."""
     if len(lists) == 1:
         return lists[0]
     best: dict[str, tuple[int, dict]] = {}
@@ -382,6 +462,7 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
     timings["catalog"] = round((time.time() - t0) * 1000, 1)
 
     lists: list[list[dict]] = []
+    own: set[int] = set()              # the lists run with the query as typed
     limit = max(k, depth, 20)
     if mode in ("hybrid", "fts"):
         t0 = time.time()
@@ -390,11 +471,16 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                 continue
             cancel.checkpoint()            # one group per language: a query can fan out wide
             held = fts.group_languages(group, collection)
-            hits = _best_rank([fts.search(group, q, limit=limit, collection=collection,
-                                          langs=plan.lang_filter(group), **restrict)
-                               for q in plan.variants(group, held)], limit)
-            if hits:
-                lists.append(hits)
+            # every variant's list goes to the fusion as it is: they are
+            # variants of the ONE text leg, and `_merge_rrf` ranks a record
+            # by its best rank across all of them (05 §5.2)
+            for q in plan.variants(group, held):
+                hits = fts.search(group, q, limit=limit, collection=collection,
+                                  langs=plan.lang_filter(group), **restrict)
+                if hits:
+                    if q == core:
+                        own.add(len(lists))      # the user's own words: first on a tie
+                    lists.append(hits)
         timings["fts"] = round((time.time() - t0) * 1000, 1)
 
     if mode in ("hybrid", "dense"):
@@ -452,13 +538,13 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
             db.log_event(con, "warn", "dense", f"dense search failed: {e}")
         timings["dense"] = round((time.time() - t0) * 1000, 1)
 
-    merged = _merge_rrf(lists)
+    merged = _merge_rrf(lists, limit, own=own, query_lang=getattr(plan, "query_lang", None))
     tagged = _tagged_among(con, collection, entity_ids, [m["book_id"] for m in merged])
     if tagged:
         for m in merged:
             if m["book_id"] in tagged:
                 m["rrf"] += ENTITY_BOOST
-        merged.sort(key=lambda x: -x["rrf"])
+        merged.sort(key=lambda x: (-x["rrf"], record_of(x)))
 
     return {"catalog": catalog_hits, "merged": merged, "translations": plan.translations,
             "timings": timings, "scope": scope, "vector_leg": vector_leg,
@@ -513,6 +599,13 @@ def _attach_work_fields(con, collection, hits: list[dict], query: str) -> list[d
     """Give each hit what `work_dedup` needs, then drop the translations
     that compete with something better.
 
+    NO LONGER ON THE SEARCH PATH (2026-10-09). Dropping an edition lost
+    the work the reader wanted on 21 of 451 measured queries and found it
+    on 2 (docs/notes/one-language-per-work.md); a search now groups a
+    work's editions after the reranker instead (app/ask/works.py), from
+    claims rather than the (author, LCSH) guess. Kept, with its tests,
+    until the operator retires `work_dedup` and `documents.work`.
+
     BEFORE THE RERANK, deliberately. Dedup after the top-k cut would
     return a short page — twelve hits asked for, seven delivered, and the
     five slots spent on suppressed translations rather than refilled. Run
@@ -558,13 +651,26 @@ def _attach_work_fields(con, collection, hits: list[dict], query: str) -> list[d
     return work_dedup.prefer_originals(hits, query=query)
 
 
+def _one_hit_per_work(hits: list[dict], collection, plan: LanguagePlan,
+                      show_in: str | None) -> list[dict]:
+    """05 §5.3 (amended 2026-10-09): each work once, after the reranker and
+    before the cut to `k`, shown in the reader's language where one of its
+    editions in it was found (app/ask/works.py). Grouping that cannot run
+    returns the list as ranked."""
+    from .ask import works
+    return works.one_hit_per_work(hits, collection,
+                                  works.preference(show_in, plan.query_lang))
+
+
 def search(con, query: str, k: int = 12, mode: str = "hybrid",
            translate: bool = True, collection=None,
            rerank_depth: int = RERANK_TOP_N, all_languages: bool = False,
-           book_ids: set[int] | None = None) -> dict:
+           book_ids: set[int] | None = None, show_in: str | None = None) -> dict:
     """mode: hybrid | fts | dense | catalog. Single collection — unchanged
     behavior/signature from pre-P0.5. See federated_search() for N&gt;1.
-    `k` results after the reranker, which orders the top `rerank_depth`."""
+    `k` results after the reranker, which orders the top `rerank_depth`;
+    a work's editions are one of them (`show_in`: the language the reader
+    asked results in, the Ask page's "show results in")."""
     collection = collection or collections_mod.default_collection()
     t_total = time.time()
 
@@ -586,12 +692,15 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
 
     cancel.checkpoint()
     t0 = time.time()
-    candidates = _attach_work_fields(
-        con, collection, partial["merged"][: max(k * 4, rerank_depth)], plan.core)
+    # Every record competes: the edition-dropping rule that ran here
+    # (`_attach_work_fields`) lost the work the reader wanted on 21 of 451
+    # queries and found it on 2 (docs/notes/one-language-per-work.md) —
+    # editions are grouped after the reranker instead, never dropped.
+    candidates = partial["merged"][: max(k * 4, rerank_depth)]
     ranked, reranked, rerank_why = _reranked(plan.core, candidates,
                                              collections_mod.reranker_for(collection),
                                              _rerank_budget_s(rerank_depth), rerank_depth)
-    final = ranked[:k]
+    final = _one_hit_per_work(ranked, collection, plan, show_in)[:k]
     timings["rerank"] = round((time.time() - t0) * 1000, 1)
 
     # This one WRITES (the lazy-embed queue): a search nobody is waiting for
@@ -601,7 +710,7 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
 
     timings["total"] = round((time.time() - t_total) * 1000, 1)
     result = {"query": query, "mode": mode, "translations": partial["translations"],
-              "language": plan.summary(),
+              "language": plan.summary(), "query_lang": plan.query_lang,
               "catalog": partial["catalog"], "hits": final,
               "facts": [asdict(f) for f in facts], "facts_withheld": facts_withheld,
               "timings": timings, "reranked": reranked}
@@ -638,7 +747,8 @@ def _merge_rrf_federated(lists: list[list[dict]]) -> list[dict]:
 
 def federated_search(collections: list, query: str, k: int = 12, mode: str = "hybrid",
                       translate: bool = True, rerank_depth: int = RERANK_TOP_N,
-                      all_languages: bool = False, book_ids_for=None) -> dict:
+                      all_languages: bool = False, book_ids_for=None,
+                      show_in: str | None = None) -> dict:
     """Query-time federation across N collections (architecture-v2.md §3/§4).
     Entity resolution/PinnedFacts happen ONCE, collection-agnostic — never
     multiplied per collection (CLAUDE.md invariant 4). Each collection's
@@ -729,24 +839,22 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     # collection's reranker — two spaces are never put on one score scale —
     # and only then fused, by rank. This used to fuse first and rerank the
     # merged list once, with the node's one RERANK_URL: every collection
-    # scored by the same model, on one scale. Work dedup runs first and per
-    # collection (`work` lives in each collection's own manifest, and
-    # `book_id` alone is ambiguous across them), so the reranker draws from
-    # the survivors. The lists rerank in parallel: one slow reranker costs
-    # the query its own time, not the sum.
+    # scored by the same model, on one scale. A work's editions are grouped
+    # after it, per collection (work claims name one collection's records,
+    # and `book_id` alone is ambiguous across them; 05 §5.3). The lists
+    # rerank in parallel: one slow reranker costs the query its own time,
+    # not the sum.
     budget_s = _rerank_budget_s(rerank_depth)
 
     def _rerank_one(item):
         collection, merged = item
         candidates = merged[: max(k * 4, rerank_depth)]
-        try:
-            candidates = _attach_work_fields(cancel.watch(db.connect(collection)), collection,
-                                             candidates, plan.core)
-        except Exception:   # noqa: BLE001 — a dedup that cannot run returns
-            pass            # every hit, never none
-        return _reranked(plan.core, candidates,
-                         collections_mod.reranker_for(collection), budget_s,
-                         rerank_depth)
+        ranked, ok, why = _reranked(plan.core, candidates,
+                                    collections_mod.reranker_for(collection), budget_s,
+                                    rerank_depth)
+        # each work once, per collection (work claims are about one
+        # collection's records), before the fuse cuts to k
+        return _one_hit_per_work(ranked, collection, plan, show_in), ok, why
 
     with ThreadPoolExecutor(max_workers=max(1, len(per_collection))) as ex:
         ranked = list(ex.map(cancel.carry(_rerank_one), per_collection))
@@ -780,7 +888,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     timings["total"] = round((time.time() - t_total) * 1000, 1)
 
     result = {"query": query, "mode": mode, "translations": translations,
-              "language": plan.summary(),
+              "language": plan.summary(), "query_lang": plan.query_lang,
               "catalog": catalog, "hits": final, "facts": [asdict(f) for f in facts],
               "facts_withheld": facts_withheld,
               "timings": timings, "reranked": reranked}

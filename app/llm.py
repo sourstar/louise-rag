@@ -87,15 +87,19 @@ def _delta(line: str) -> tuple[str, bool]:
 
 
 def chat(messages: list[dict], temperature: float = 0.3, max_tokens: int = 1500,
-         num_ctx: int = 16384, *, level: Level = Level.CHAT) -> str:
+         num_ctx: int = 16384, *, level: Level = Level.CHAT,
+         timeout: float | None = None) -> str:
     """`level`: CHAT, or TRANSLATE when the chat model stands in for the
     translation model — the two meet at CHAT_URL's gate, where chat goes
-    first (docs/notes/scheduling.md §12)."""
+    first (docs/notes/scheduling.md §12). `timeout`: the answer's bound,
+    `LLM_TIMEOUT` unless the caller sits on a search's path and needs a
+    shorter one (a cold model's load is bounded apart, by `warm`)."""
     warm(level)
+    timeout = config.LLM_TIMEOUT if timeout is None else timeout
     url, body = _request(messages, stream=False, temperature=temperature,
                          max_tokens=max_tokens, num_ctx=num_ctx)
-    with dispatch.call(config.CHAT_URL, level, timeout=config.LLM_TIMEOUT), \
-            httpx.Client(timeout=config.LLM_TIMEOUT) as client:
+    with dispatch.call(config.CHAT_URL, level, timeout=timeout), \
+            httpx.Client(timeout=timeout) as client:
         r = client.post(url, json=body, headers=dispatch.level_headers())
         r.raise_for_status()
         got = r.json()
@@ -230,18 +234,72 @@ _RESTRICT_SYSTEM = (
     "fonti in francese'. A language, nation or people that is the TOPIC of the search "
     "is not such an instruction ('Russian novels', 'German history', 'Latin grammar' "
     "are topics), and neither is the language the query itself is written in, nor the "
-    "language of the answer. "
+    "language of the answer. Also name the language the query itself is written in. "
     'Reply with ONLY JSON: {"phrase": "<the instruction copied verbatim from the query, '
-    'or empty>", "only": [<ISO 639-1 codes it names>]}.')
+    'or empty>", "only": [<ISO 639-1 codes it names>], "lang": "<ISO 639-1 code of the '
+    'language the query is written in>"}.'
+    # QWEN3'S OWN SWITCH, in the prompt. The node's chat model (Qwen3-8B on
+    # LocalAI, 2026-10-09) ignores `chat_template_kwargs.enable_thinking`,
+    # thinks first, and spent this call's whole token budget doing it: the
+    # answer's `content` was "" with `finish_reason: length` and the
+    # thinking in `reasoning` — on all 451 queries of
+    # docs/notes/one-language-per-work.md, so no restriction was ever
+    # honoured and no plan was ever cached. With "/no_think" the same
+    # request answered the JSON in 25 tokens (measured on the node).
+    " /no_think")
 _RESTRICT_SHOTS = (
-    ("German history of whaling", {"phrase": "", "only": []}),
+    ("German history of whaling", {"phrase": "", "only": [], "lang": "en"}),
     ("whaling history, only sources in German",
-     {"phrase": "only sources in German", "only": ["de"]}),
-    ("romanzi russi sulla guerra", {"phrase": "", "only": []}),
+     {"phrase": "only sources in German", "only": ["de"], "lang": "en"}),
+    ("romanzi russi sulla guerra", {"phrase": "", "only": [], "lang": "it"}),
     ("poesia dell'Ottocento, solo testi in francese o spagnolo",
-     {"phrase": "solo testi in francese o spagnolo", "only": ["fr", "es"]}),
-    ("explain the causes of scurvy, answer in Italian", {"phrase": "", "only": []}),
+     {"phrase": "solo testi in francese o spagnolo", "only": ["fr", "es"], "lang": "it"}),
+    ("explain the causes of scurvy, answer in Italian", {"phrase": "", "only": [], "lang": "en"}),
 )
+#: room for the JSON (≈ 30 tokens) and for a short thought where a model
+#: thinks anyway; 120 was all thought on the node
+RESTRICT_MAX_TOKENS = 400
+#: the call sits on every translated search's path, before any leg runs:
+#: its own bound, not LLM_TIMEOUT's 300 s (a cold load is bounded apart)
+RESTRICT_TIMEOUT_S = 30.0
+_readings: dict[str, "Reading"] = {}
+_READINGS_MAX = 512
+
+
+class Reading(tuple):
+    """`(codes, core)` — what `language_restriction` has always returned,
+    and equal to that pair — plus `lang`, the language the query is
+    written in (an ISO 639-1 code), or None when the model did not say."""
+    lang: str | None
+
+    def __new__(cls, codes: list[str], core: str, lang: str | None = None) -> "Reading":
+        obj = super().__new__(cls, (codes, core))
+        obj.lang = lang
+        return obj
+
+
+def reset_readings() -> None:
+    _readings.clear()
+
+
+def _last_json_object(raw: str) -> dict | None:
+    """The LAST parseable JSON object in `raw`: a reply may carry a thought
+    before its answer (`<think>` left unclosed by a cut, or prose with
+    braces in it), and the answer is what comes last."""
+    raw = strip_think(raw)
+    if "<think>" in raw:
+        raw = raw[:raw.index("<think>")]          # a thought cut off by the budget
+    end = raw.rfind("}")
+    start = raw.rfind("{", 0, end + 1)
+    while start != -1 and end != -1:
+        try:
+            obj = json.loads(raw[start:end + 1])
+            if isinstance(obj, dict):
+                return obj
+        except ValueError:
+            pass
+        start = raw.rfind("{", 0, start)
+    return None
 _LANG_CODE = re.compile(r"[a-z]{2,3}")
 #: what is left around a removed instruction: "whales, only in German" -> "whales"
 _JOIN_EDGES = " \t\n,;:.-–—/|，、。；："
@@ -252,36 +310,52 @@ def strip_instruction(query: str, start: int, end: int) -> str:
     return re.sub(r"\s+", " ", query[:start] + " " + query[end:]).strip(_JOIN_EDGES)
 
 
-def language_restriction(query: str) -> tuple[list[str], str] | None:
+def language_restriction(query: str) -> Reading | None:
     """(codes, the query without the instruction) when `query` limits its
     results to documents written in those languages; ([], query) when it
     does not; None when the model could not be asked or answered nothing
-    parseable — the caller searches every language and says so."""
+    parseable — the caller searches every language and says so. The pair
+    is a `Reading`, whose `lang` is the language the query is written in
+    (one hit per work shows a work in it, app/ask/works.py).
+
+    Thinking off by the model's own switch (`/no_think`, above), room for
+    a thought anyway, the last JSON object of the reply read, its own
+    timeout, and every answer remembered per query text (a failure is not:
+    the next search asks again)."""
+    hit = _readings.get(query)
+    if hit is not None:
+        return hit
     messages = [{"role": "system", "content": _RESTRICT_SYSTEM}]
     for q, a in _RESTRICT_SHOTS:
         messages += [{"role": "user", "content": q},
                      {"role": "assistant", "content": json.dumps(a, ensure_ascii=False)}]
     messages.append({"role": "user", "content": query})
     try:
-        raw = chat(messages, temperature=0.0, max_tokens=120, num_ctx=4096)
-        obj = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
-        if not isinstance(obj, dict):
-            return None
+        raw = chat(messages, temperature=0.0, max_tokens=RESTRICT_MAX_TOKENS, num_ctx=4096,
+                   timeout=RESTRICT_TIMEOUT_S)
+        obj = _last_json_object(raw)
     except Exception:
+        return None
+    if obj is None:
         return None
     phrase = obj.get("phrase") if isinstance(obj.get("phrase"), str) else ""
     only = obj.get("only") if isinstance(obj.get("only"), list) else []
+    lang = obj.get("lang").strip().lower() if isinstance(obj.get("lang"), str) else ""
+    lang = lang if _LANG_CODE.fullmatch(lang) else None
     codes = sorted({c.strip().lower() for c in only if isinstance(c, str)
                     and _LANG_CODE.fullmatch(c.strip().lower())})
     phrase = phrase.strip()
     found = re.search(re.escape(phrase), query, re.I) if phrase else None
     if not codes or found is None:
-        return [], query
-    core = strip_instruction(query, found.start(), found.end())
-    if not core:
+        reading = Reading([], query, lang)
+    else:
+        core = strip_instruction(query, found.start(), found.end())
         # the whole query called an instruction: the topic, misread
-        return [], query
-    return codes, core
+        reading = Reading(codes, core, lang) if core else Reading([], query, lang)
+    if len(_readings) >= _READINGS_MAX:
+        _readings.clear()
+    _readings[query] = reading
+    return reading
 
 
 # NAME THE LANGUAGE, NEVER JUST THE CODE. Asked to translate "into the

@@ -136,13 +136,16 @@ def run_search(collection_names: list[str] | None, query: str, k: int, mode: str
                translate: bool, verify: bool = False,
                rerank_depth: int = retrieval.RERANK_TOP_N,
                all_languages: bool = False, private: bool = False,
-               filters: dict | None = None) -> dict:
+               filters: dict | None = None, show_in: str | None = None) -> dict:
     """`verify` opts this query into blocking verify-on-use: every imported
     chunk among the results is recomputed locally before the answer is given
     (architecture-v2.md §6 T4). Off by default — it costs an embed call per
     unverified chunk, and verified state is permanent, so the hot set settles
     quickly and cold chunks never cost anything. `filters` restricts the legs
-    to the records the collections' facets admit (05 §5.2)."""
+    to the records the collections' facets admit (05 §5.2). `show_in`: the
+    language the reader asked results in (the Ask page's "show results
+    in"), which a work's one hit is shown in where it can be (05 §5.3)."""
+    shown = {"show_in": show_in} if show_in else {}
     participants = resolve_collections(collection_names, private=private)
     withheld = withheld_from(collection_names, private=private)
     # resolved here, before any leg runs: a filter the collection cannot
@@ -164,7 +167,7 @@ def run_search(collection_names: list[str] | None, query: str, k: int, mode: str
         result = retrieval.search(con, query, k=k, mode=mode, translate=translate,
                                    collection=participants[0], rerank_depth=rerank_depth,
                                    all_languages=all_languages,
-                                   book_ids=admitted.get(participants[0].name))
+                                   book_ids=admitted.get(participants[0].name), **shown)
         if verify:
             cancel.checkpoint()            # an embed call per unverified chunk
             result["verification"] = _verify_hits(con, participants[0], result["hits"])
@@ -174,7 +177,8 @@ def run_search(collection_names: list[str] | None, query: str, k: int, mode: str
     result = retrieval.federated_search(participants, query, k=k, mode=mode,
                                          translate=translate, rerank_depth=rerank_depth,
                                          all_languages=all_languages,
-                                         book_ids_for=(lambda c: admitted.get(c.name)) if restrict else None)
+                                         book_ids_for=(lambda c: admitted.get(c.name)) if restrict else None,
+                                         **shown)
     if withheld:
         result["withheld"] = withheld
     if verify:

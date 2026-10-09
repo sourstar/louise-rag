@@ -599,7 +599,10 @@ async def chat_completions(body: ChatBody, request: Request):
         result = await cancel.while_connected(
             request, _run_search, body.collections, query, body.limit, "hybrid", True,
             verify=body.verify, rerank_depth=body.rerank_depth,
-            all_languages=body.all_languages)
+            all_languages=body.all_languages,
+            # the page's own "show results in", so a work's one hit is the
+            # same edition in the answer's [n] as on the page
+            **({"show_in": body.answer_lang} if body.answer_lang else {}))
     except cancel.Cancelled:
         return Response(status_code=CLIENT_GONE)
     return await run_in_threadpool(_chat_answer, body, query, result, t0)

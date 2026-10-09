@@ -138,6 +138,10 @@ def result_of(collection, ctx: dict[str, Any], hit: dict[str, Any], rank: int, *
         out["origin_url"] = _origin_url(collection, hit) or hit.get("origin_url")
     else:
         out["text"] = hit.get("text")
+    if hit.get("editions"):
+        # 05 §5.3 (amended 2026-10-09): the work's other editions, grouped
+        # under its one hit (app/ask/works.py)
+        out["editions"] = hit["editions"]
     return out
 
 

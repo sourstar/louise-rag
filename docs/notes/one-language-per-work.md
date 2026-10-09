@@ -422,3 +422,53 @@ From the repo root (Git Bash; Docker for Python):
 5. `python tools/measure/one_language_score.py --out tools/measure/out/onelang`
    (`--queries …titles.tsv --name score_titles` for the supplement), then
    `one_language_summary.py score.json`.
+
+## Fixed (2026-10-09)
+
+The three defects, in the code, scored by
+`tools/measure/one_language_rescore.py`: the PRODUCT fusion and grouping
+run on the captured legs (today's fusion recomputed from them still
+reproduces the live fused order, 451/451). Pre-rerank — the legs carry no
+text, so the reranker is not replayed; it orders the top 50 of whichever
+list it is given, so R@50 is its pool.
+
+| 451 descriptive queries | MRR | R@1 | R@10 | R@50 | distinct works top 10 |
+|---|---:|---:|---:|---:|---:|
+| before (16 text lists + vector, chunks) | 0.082 | 0.047 | 0.144 | 0.381 | 9.82 |
+| one text leg, records, ties by uid | 0.187 | 0.086 | 0.388 | 0.590 | 9.80 |
+| … ties: own words, then query language (shipped) | 0.219 | 0.129 | 0.397 | 0.594 | 9.81 |
+| … + one hit per work (query lang, else en) | 0.219 | 0.129 | 0.397 | 0.594 | 10.00 |
+
+- Fusion (shipped): 217 queries better, 29 worse (sign test p < 10⁻⁴).
+- The leg's rank is the record's POSITION in the merged text leg. Letting
+  each variant's rank 1 count as rank 1 (sixteen records sharing it) gives
+  R@10 0.237: the flood again.
+- One hit per work: 4 better, 0 worse; the work shown in the query's
+  language, where it has a book in it, 71.8 % → 88.7 % of found queries.
+  The rest: that edition was not among the candidates, so the best-ranked
+  one is shown and the query-language edition is listed first under it.
+- **39 title queries, pre-rerank.** Ties by uid: R@10 0.821 → 0.615.
+  With the shipped tie-break (own words, then the query's language):
+  MRR 0.344 → 0.501, R@1 0.154 → 0.359, R@5 0.564 → 0.641, R@10 0.821 →
+  0.744 (0.769 grouped), R@50 0.923 → 0.872; 17 better, 12 worse
+  (p = 0.46).
+  - Why R@10 cannot come back to 0.821 without breaking §5.2: the three
+    queries still lost (Don Quixote, Les Misérables, Robinson Crusoe,
+    asked in English) have NO English edition among the English group's
+    hits. The old fusion won them with 2–3 editions in the top 10, each
+    rank 1 in ITS language group and each scoring like the vector leg's
+    rank 1: several votes for one work. Now those editions sit at text
+    positions 6–19 behind the other groups' rank-1s. Only knowing which
+    records are one work could lift them, and work claims may not enter
+    ranking (invariant 4, 05 §5.3); per-hit BM25 scores were not captured
+    and are not comparable across language indexes anyway. An oracle that
+    knows the answer reaches 0.846, the bound of any tie-break.
+  - What the reader saw was never 0.821: the live (reranked) list had
+    title R@10 0.615, 0.692 grouped (§5). Post-rerank needs a live re-run.
+- Language reading: `llm.language_restriction` now sends Qwen3's
+  `/no_think` (LocalAI ignores `enable_thinking`; verified on the node:
+  120 tokens of `reasoning`, `content` "", versus the JSON in 25 tokens),
+  400 tokens, a 30 s bound, reads the last JSON object, caches per query,
+  and returns the query's language.
+- Work groups: an annotations collection (`tools/annotations_from_works.py`,
+  4,376 claims = the 1,694 works of §1), not yet created on the node.

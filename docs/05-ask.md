@@ -46,7 +46,11 @@ later one — a wrong date is worse than no answer here. Without
 **The fusion unit is the record.** Each leg — the text index, the
 vector index — ranks chunks; chunks of every layer compete as chunks,
 with no per-layer normalisation. A record's rank in a leg is the rank
-of its best chunk there, and the leg contributes its top records to
+of its best chunk there, counted among the leg's distinct records — a
+leg is ONE ranked list of records, so it casts one vote per rank
+(*amended 2026-10-09*: the text leg's variants, §5.2, merge into that
+one list before fusion; the code had fused one list per language group,
+and chunks rather than records). The leg contributes its top records to
 the depth the request needs: the larger of `limit` and `rerank_depth`
 (§5.4), and never fewer than 20 — so 50 by default, at most 300.
 Fusion is reciprocal-rank fusion with `k = 60`: a record's score is the
@@ -153,6 +157,16 @@ asks for every language, into every language they hold; it runs the
 text leg once per variant; the record's rank in the leg is its best
 rank across the variants. A variant is a query, not a leg: a collection
 indexed in five languages casts no more votes than one indexed in one.
+Concretely (*amended 2026-10-09*): the leg orders its records by their
+best rank across the variants, and a record's rank in the leg is its
+position in that order — sixteen variants each ranking a different
+record first give the leg ranks 1 to 16, not sixteen ranks 1. Equal
+best ranks go first to a rank the query AS TYPED reached (the variant
+that is the reader's own words), then to a record written in the
+language the query is in, then by uid bytes; these order ties and never
+move a record past a better rank. Measured on 451 gutenberg queries
+(`docs/notes/one-language-per-work.md`): the work in the fused top 10
+for 14.4 % of them with one list per language group, 39.7 % this way.
 The peer translates with its translation model (`TRANSLATE_URL`, 07
 §7.8) where it has one, and with its chat model where it has not; the
 response lists the translations used and which model made them. It is
@@ -165,7 +179,13 @@ the query.
 `lang:de,fr`) in the query, or an instruction the peer reads in it ("only
 texts in German"), restricts every leg to records written in those
 languages. It is a filter like any other: it narrows, never boosts, and
-the response names it.
+the response names it. The same reading names the language the query is
+written in, which a work's one hit is shown in (§5.3); a peer that reads
+it with a chat model turns the model's thinking off for the call and
+bounds it by its own timeout, and a reading that fails is said
+(`status: unavailable`) and asked again next time, never cached
+(*amended 2026-10-09*: the node's chat model thought through its whole
+budget and answered nothing, on every query measured).
 
 ## 5.3 What a result carries
 
@@ -201,6 +221,7 @@ The fields, with their values:
 | `text` or `origin_url` | the chunk's text; for a red-class collection the origin's page and never the text |
 | `figures` | the plates whose `[Illustration…]` markers fall inside this chunk, in order: `{hash, media_type, caption, state}` — NEVER the bytes. `null` where the collection carries no figures at all, `[]` where this chunk has none. `state` is `held` · `not-held` · `not-carried`, below |
 | `annotations` | the claims an annotations collection held here makes about this record (02 §2.10; *amended 2026-10-09*), `[]` where none does. Each entry is `{collection_id, snapshot_id, claim, type, relation, role, record: {uid, title, lang, held}, subject_lang, object_lang, method, confidence, contributor, state, trust_level}`. `record` is the record at the claim's other end, as the target holds it, and `role` is this record's end, `subject` or `object`. `state` is `current`, `stale` or `unknown`, below |
+| `editions` | present only on a work's one hit (below; *amended 2026-10-09*): the work's other records, `{uid, title, lang, held, rank, chunk_id}` — `rank` and `chunk_id` where the record was in the list before the grouping, `null` where it was not |
 | `freshness` | present only on request: `current` · `newer-at-source` · `unreachable` · `unavailable` — the last when the plugin has no per-record current form for this record (one read from a static archive, a copy built before records carried a content hash), said rather than guessed (*amended 2026-10-07*) |
 | `reranked` | whether the list's order is the reranker's (§5.6) or the fused order |
 
@@ -245,8 +266,24 @@ annotations collection's claim, for example "this Latin book and that
 English one are the same work" (02 §2.10), is a fact about a returned
 record, of the kind a reference source's row and a figure are. It sits
 beside the result and never enters a list: it is never scored, never fused
-and never a leg (invariant 4), and the lists keep their order and
-membership. A client may group a work's versions by these facts.
+and never a leg (invariant 4): no score, rank or reranker input depends
+on it.
+
+**One hit per work** (*amended 2026-10-09*). After the reranker and
+before the cut to `limit`, a list shows each work once: the records that
+a held, usable annotations collection's `same-work` or `translation-of`
+claims join (transitively) are one work, which keeps the position of its
+best-ranked record. The record shown is the best-ranked of the work's
+records in the reader's language — the language asked for results in
+(the Ask page's "show results in"), else the language the query is
+written in (§5.2), else English — or, when none of the work's records in
+those languages is in the list, its best-ranked record; the others are
+listed under it as `editions`, so nothing is dropped. A record no claim
+names is shown as it ranked. Keeping one language per work instead lost
+the work the reader wanted on 57–83 of 451 measured queries; grouping
+was better on 50 and worse on none (`docs/notes/one-language-per-work.md`).
+Nothing asks Wikidata or any other source at search time: the groups are
+the claims the peer holds.
 
 Which claims apply:
 
