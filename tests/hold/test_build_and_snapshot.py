@@ -386,9 +386,13 @@ def test_the_commands_build_and_freeze_only_under_the_reference_image(
         isolated_config, tmp_path, corpus_dir, monkeypatch, capsys):
     """03 §3.4, through the command line, where the peer's image is known."""
     from app import louise
+    from app.hold import equivalence
     root = _collection(tmp_path)
     args = ["hold", "records", "build", "gutenberg", "--root", str(root),
             "--corpus", str(corpus_dir), "--shard-records", "2"]
+    # an image whose versions differ from the Codex's (one with the Codex's
+    # versions is equivalent by invariant 3: 03 §3.4 amended 2026-10-09)
+    monkeypatch.setattr(equivalence, "equivalent_by_versions", lambda c: False)
     monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", "sha256:" + "2e" * 32)
     assert louise.main(args) == 2
     assert "03 §3.4" in capsys.readouterr().err
