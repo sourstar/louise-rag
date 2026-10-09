@@ -254,8 +254,22 @@ def check(collection, embed_fn=None) -> dict:
     return {"ok": True, "recorded": False, "cosines": cosines}
 
 
-# in-process verdict cache: collection name -> (allowed, reason, expires_at)
-_cache: dict[str, tuple[bool, str, float]] = {}
+# in-process verdict cache: collection name -> (allowed, reason, expires_at,
+# the endpoint the verdict is about). A verdict holds only for the endpoint it
+# was reached on: 2026-10-09, gutenberg's [encoder] moved from RAGE to LocalAI
+# and the pass RAGE had earned covered LocalAI's vectors for up to 30 min.
+_cache: dict[str, tuple[bool, str, float, tuple]] = {}
+
+
+def _endpoint(collection) -> tuple:
+    """What a verdict is about: the collection's encoder as its file states it
+    now (url, api, model). No recipe: a key no verdict can match."""
+    try:
+        from ..collections import recipe_for
+        r = recipe_for(collection)
+        return (r.url, r.api, r.model, getattr(r, "query_model", None))
+    except Exception:   # noqa: BLE001 — unknown endpoint: never a cached pass
+        return (object(),)
 
 # The verdict above lives in the WORKER process. The web process has no
 # access to it, so a gate pause was indistinguishable from a stalled
@@ -296,8 +310,9 @@ def embed_allowed(con, collection, embed_fn=None, *, stop=None) -> bool:
     if config.BACKEND_GATE == "off":
         return True
     now = time.time()
+    endpoint = _endpoint(collection)
     cached = _cache.get(collection.name)
-    if cached and cached[2] > now:
+    if cached and cached[2] > now and cached[3] == endpoint:
         return cached[0]
     was_allowed = cached[0] if cached else None
     try:
@@ -308,8 +323,8 @@ def embed_allowed(con, collection, embed_fn=None, *, stop=None) -> bool:
         allowed, ttl, reason = False, FAIL_TTL_S, str(e)
     except BackendGateError as e:
         allowed, ttl, reason = False, FAIL_TTL_S, str(e)
-    _cache[collection.name] = (allowed, reason, now + ttl)
-    if allowed != was_allowed:
+    _cache[collection.name] = (allowed, reason, now + ttl, endpoint)
+    if allowed != was_allowed or (cached and cached[3] != endpoint):
         level = "info" if allowed else "error"
         db.log_event(con, level, "backend-gate",
                      (f"[{collection.name}] embedding "
