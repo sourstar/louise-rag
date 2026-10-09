@@ -685,3 +685,59 @@ uses it) and DNABERT-2 (genome collections deleted).
 - The six mount points under `/mnt/ssd5/apps/localai/models/weights/`.
 - Now unused: the proof's `vega-weights/bge-m3-FP16.gguf` (1.16 GB; still
   named by `vega-bge-m3-direct.yaml`) and `vega-llama-cpp/neo-cache/`.
+
+## 13. The switch-over (2026-10-09)
+
+Done by hand, step by step, after the operator's "Proceed with 1".
+
+- **Receipts service, permanent.** A `vega` service in the `louise-rage`
+  app (the app keeps its name until after the migration, operator):
+  image `vega:bb9bf61` (the Louise image of that commit, tagged), socket
+  `/mnt/tank/apps/localai/backends/vega-llama-cpp/run`, state
+  `/mnt/ssd5/apps/louise-rage/state/vega`, port 30439. `vega-proof` removed.
+- **Louise env:** `VEGA_URL=http://192.168.178.10:30439`;
+  `CHAT_URL`/`TRANSLATE_URL` = LocalAI with `CHAT_MODEL=louise-chat-qwen3-8b`,
+  `TRANSLATE_MODEL=louise-translate-madlad` (new key, 36ae15e); `RAGE_URL`
+  removed. `[deposit]` in platform.toml: LocalAI, `api = "vega"`,
+  `vega-granite` (3c27212); `platform.toml.pre-vega` kept.
+- **Collections** (`deploy/vega/switch/switch_collection.py`; previous files
+  in `config/collections.pre-vega/`): deposit-granite and the two granite
+  minis → `vega-granite`; gutenberg-mini-certified, gutenberg-744ba8430fed,
+  gutenberg → `vega-qwen3-embedding-4b`; wikipedia → `vega-bge-m3`; pubmed →
+  `vega-medcpt-article` / `vega-medcpt-query` (its current GGUF space);
+  rerankers → `louise-rerank-bge` / `louise-rerank-medcpt`. louise-stop (a
+  test collection) deleted, operator.
+- **Checks:** the granite run gated (16/16, median 1.000000); gutenberg's
+  backend gate on the VeGa endpoint: "baseline reproduced"; searches with
+  vector hits through receipts on gutenberg-744ba8430fed and pubmed (pubmed
+  reranked by MedCPT on LocalAI); wikipedia answers exactly as it did under
+  RAGE (text hits only: its vector leg and reranker exceed their budgets —
+  an older problem, open); chat "Rome", translation correct.
+- **Second peer** (dev PC): new code, its four files migrated and switched,
+  env to LocalAI/VeGa; a search answers with vector hits (238 ms dense).
+- **RAGE retired:** the `rage` service removed from `louise-rage`
+  (definition kept in `/mnt/ssd5/apps/louise-rage/rage-service-retired-2026-10-09.json`,
+  mode 600); nothing points at :30437.
+- **Reclaimer:** with RAGE gone LocalAI holds everything on the card (9,521
+  MiB used = vega-qwen3 9,363 + vega-granite 134). C = 32,656, margin 2,048,
+  largest model ≈ 9,500 (vega-qwen3) → trigger X ≤ 21,108 MiB → threshold
+  **0.68** of the 31,023 MiB LocalAI sees; LocalAI restarted (§11 lesson).
+
+**Incidents, all fixed before going on:**
+1. The switch script first wrote the encoder `url` WITH `/v1/embeddings`,
+   which the client appends: LocalAI answered 404 and the worker wrote
+   `embed: RuntimeError: embed server HTTP 404` on **4,295 gutenberg
+   documents** (reverted within minutes). Fixed: the url is the server;
+   and an endpoint answer that is not about the input never writes a
+   document error any more — wrong endpoint pauses with its reason, busy
+   defers (295eb1e). The 4,295 errors wait for the operator's "clear errors
+   & retry".
+2. The script read a `[[sources]]` table after `[encoder]` as part of it
+   (louise-stop's source url rewritten); fixed in it and in
+   align_model_names.py (3078c83).
+3. The backend gate's 30-minute pass was keyed on the collection name, so
+   RAGE's pass covered VeGa's vectors until it expired; keyed on the
+   endpoint now (89b8ebf).
+4. New deposit collections and `hold collection create` named the model
+   from the encoder LABEL when the URL named none; both now take explicit
+   `api`/`embed_model`/`query_model` and refuse otherwise (3c27212, d7a4997).
