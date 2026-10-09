@@ -487,3 +487,18 @@ def test_a_collection_that_is_not_a_record_twin_is_refused(pair):
                           snapshot=old_snap)
     why = check._record_twin(ctx, {"collection_id": old.collection_id, "snapshot_hash": old_snap.hash})
     assert why and "not a record twin" in why and "record_line" in why
+
+
+def test_keeping_only_an_archives_vectors_lets_the_weights_differ(pair):
+    """A1b (2026-10-10, pubmed): the kept rows are the archive producer's, made
+    by neither Codex's encoder file, so the weights check does not apply when
+    `--keep producer:<archive>` is given; the dim/dtype/... checks still do,
+    and vectors-sample at the target's tolerance proves the rows before use."""
+    root, old, _new = pair
+    other = _create(root, "other", over={"space": {**SPACE, "encoder": {
+        **SPACE["encoder"], "weights": "sha256:" + "5e" * 32}}})
+    with pytest.raises(CodexError) as e:            # past the weights, stopped by the parts
+        carry.carry(root, "old", "other", apply=False, keep="genesis:medcpt-pubmed", log=quiet)
+    assert "encoder.weights" not in str(e.value) and "snapshot" in str(e.value)
+    with pytest.raises(CodexError, match="encoder.weights"):
+        carry.carry(root, "old", "other", apply=False, log=quiet)

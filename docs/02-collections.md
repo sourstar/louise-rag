@@ -600,7 +600,13 @@ names the source's parts — and "only by engine" leaves the weights, `dim`,
 `dtype`, `ctx`, `pooling`, `normalise`, the query side and the epoch equal:
 a version-2 space, whose `space_id` holds its engine's image, crosses into
 its version-5 or -6 successor, and a table embedded in pair form into a
-space declaring that form. The table is re-pinned to the target's Codex
+space declaring that form. *Amendment A1b (RULE 1, 2026-10-10):* when only
+an archive's vectors are kept (`--keep producer:<archive>`), the weights —
+the document side's and the query side's — may differ too: the kept rows
+were made by the archive's producer, by neither Codex's encoder file (pubmed:
+NCBI's MedCPT, carried from a space naming its GGUF conversion into one
+naming its OpenVINO conversion), and `vectors-sample` at the target's
+tolerance is what proves them before use. The table is re-pinned to the target's Codex
 (`louise dev carry`, 07 §7.3); nothing is fused, the source keeps no claim
 on the rows, and a table produced in another form than the target declares
 does not qualify — its rows are dropped and embedded again. RULE 1 is the

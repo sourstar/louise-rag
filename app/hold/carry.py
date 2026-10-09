@@ -182,8 +182,18 @@ def _checkpoint(manifest: Path) -> None:
 
 # ---- G1 --------------------------------------------------------------------
 
+#: A1b (RULE 1, 2026-10-10, pubmed): with `--keep producer:<archive>` the rows
+#: that stay were made by the ARCHIVE'S producer (NCBI's MedCPT), by neither
+#: Codex's encoder file, so the two Codexes' encoder weights may differ — the
+#: old space named the GGUF conversion, the new the OpenVINO one, of the same
+#: model. What proves the kept rows is `vectors-sample` at the target's
+#: tolerance before use (03 §3.5), as for any carry. Query vectors are never
+#: stored, so the query side's weights do not reach the table either.
+WEIGHTS_WITH_KEEP = frozenset({"encoder.weights", "query.encoder.weights"})
+
+
 def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool = False,
-          log: Callable[[str], None] = print) -> dict[str, Any]:
+          keep: str | None = None, log: Callable[[str], None] = print) -> dict[str, Any]:
     """Carry `from_ref`'s manifest, text index and vector table into `to_ref`
     (G1). `apply=False` checks everything and writes nothing."""
     from . import collection as col
@@ -194,6 +204,8 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
     to_name, to = col.resolve(root, to_ref)
     refuse_unless_same_records(src, to, "carry")
     diff = space_differences(src, to)
+    if keep:
+        diff = [d for d in diff if d not in WEIGHTS_WITH_KEEP]
     if diff:
         raise CodexError(
             f"carry: the spaces differ in {', '.join(diff)}. Amendment A1 lets a vector "

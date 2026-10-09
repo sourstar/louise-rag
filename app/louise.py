@@ -1025,7 +1025,7 @@ def cmd_dev_carry(a) -> int:
             _take_write_lock(a.root, name, "louise dev carry", exit_code=2)
     say = lambda m: print(m, file=sys.stderr)              # noqa: E731
     out = {"carry": carry_mod.carry(a.root, from_name, to_name, copy=a.copy,
-                                    apply=a.yes, log=say)}
+                                    apply=a.yes, keep=producer, log=say)}
     if producer and a.yes:
         out["keep"] = carry_mod.keep_producer(a.root, to_name, producer, log=say)
     elif producer:
