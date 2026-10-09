@@ -779,8 +779,10 @@ def check_image_equivalence(ctx: Ctx) -> Outcome:
                        why="needs `--origin DIR` and `--against FILE`: the reference image's "
                            "re-parse of a sample (tools/reparse_lines.py run under the Codex's image)")
     if ref.get("collection_id") != ctx.codex.collection_id or ref.get("snapshot_hash") != ctx.snapshot.hash:
-        return Outcome("image-equivalence", INCONCLUSIVE,
-                       why="the reference lines are about another collection or snapshot")
+        twin_why = _record_twin(ctx, ref)
+        if twin_why:
+            return Outcome("image-equivalence", INCONCLUSIVE,
+                           why=f"the reference lines are about another collection or snapshot ({twin_why})")
     reference = ctx.codex.toolchain.platform_image
     if ref.get("image") != reference:
         return Outcome("image-equivalence", INCONCLUSIVE,
@@ -816,6 +818,41 @@ def check_image_equivalence(ctx: Ctx) -> Outcome:
     return Outcome("image-equivalence", PASS, detail, ctx.seed, shards,
                    why=f"{compared} record(s) re-parsed byte for byte as the reference image "
                        f"{reference[:19]}… re-parsed them from the same origin bytes")
+
+
+def _record_twin(ctx: Ctx, ref: dict) -> str | None:
+    """None when `ref` was made for a RECORD TWIN of this collection — a
+    collection held here whose record-deciding fields (seed.record_differences:
+    02 §2.7's list, record_line, facets, the layers' chunkers and rules, and
+    the reference image) agree with this Codex, at a snapshot whose parts are
+    this snapshot's, part for part. Its records are these records and the
+    re-parse is of the same origin bytes, so its reference lines are this
+    collection's (RULE 1, 2026-10-09: the reference image cannot read a newer
+    Codex — gutenberg6, version 6 — but reads its twin's). Otherwise why not."""
+    from . import collection as col, seed
+    try:
+        twin_name, twin = col.resolve(ctx.root, str(ref.get("collection_id") or ""))
+    except Exception as e:                                  # noqa: BLE001
+        return f"no collection here is {str(ref.get('collection_id'))[:19]}…: {e}"[:200]
+    diffs = seed.record_differences(twin, ctx.codex)
+    if diffs:
+        return f"{twin_name} is not a record twin: {', '.join(diffs)}"
+    try:
+        twin_snap = next(s for s in _snapshots_of(ctx.root, twin_name)
+                         if s.hash == ref.get("snapshot_hash"))
+    except StopIteration:
+        return f"{twin_name} holds no snapshot {str(ref.get('snapshot_hash'))[:19]}…"
+    parts = lambda s: sorted((x.slice, x.n, x.root, x.records_root) for x in s.shards)  # noqa: E731
+    if parts(twin_snap) != parts(ctx.snapshot):
+        return f"{twin_name}'s snapshot {twin_snap.snapshot_id} holds other parts than this one"
+    return None
+
+
+def _snapshots_of(root: Path, name: str):
+    d = Path(root) / name / "drag" / "snapshots"
+    for p in sorted(d.glob("*.json")) if d.is_dir() else []:
+        if not p.name.endswith(".sig.json"):
+            yield snap.load(p)
 
 
 def _moved_only(line: bytes, got: bytes) -> bool:

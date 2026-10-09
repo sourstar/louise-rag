@@ -391,6 +391,13 @@ on one condition checked at once — every part's `records_root`,
 snapshot's; otherwise the snapshot is withdrawn. (The equivalence proof
 needs a snapshot to draw from; a new collection carrying its records had
 none.)
+*Amended 2026-10-09 (RULE 1), record twins:* a collection seeded so is its
+source's RECORD TWIN — same record-deciding fields, same reference image,
+snapshots holding the same parts. `image-equivalence` accepts reference
+lines made for the twin (the reference image may not read the newer Codex),
+and the twin's copy state carries: a copy listed in use before quarantine
+lists its twin too (`[node] quarantine_in_use_before`), since nothing about
+its records differs. gutenberg6 was the first (docs/notes/v5-migration.md).
 
 For encoders the word is **compliant**, not equivalent, because the
 statement is statistical: an engine that passes calibration may

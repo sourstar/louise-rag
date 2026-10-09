@@ -450,3 +450,37 @@ def test_a_seeded_snapshot_whose_chunks_differ_is_withdrawn(pair, monkeypatch, c
                         "--shards-from", "old:2026-08"]) == 1
     assert "withdrawn" in capsys.readouterr().err
     assert not (root / "new" / "drag" / "snapshots" / "2026-08.json").exists()
+
+
+# ---- image-equivalence across record twins (RULE 1, 2026-10-09) --------------
+
+def test_a_reference_made_for_a_record_twin_is_this_collections(pair):
+    """The reference image cannot read a newer Codex (gutenberg6, version 6),
+    but reads its twin's; the twin's lines are this collection's when the
+    record fields agree and the snapshots hold the same parts."""
+    from types import SimpleNamespace
+    from app.hold import check
+    root, old, new = pair
+    _out, new_snap = _seeded(root)
+    old_snap = sn.load(root / "old" / "drag" / "snapshots" / "2026-08.json")
+    ctx = SimpleNamespace(root=root, codex=new, snapshot=new_snap)
+    assert check._record_twin(ctx, {"collection_id": old.collection_id,
+                                    "snapshot_hash": old_snap.hash}) is None
+    # another snapshot hash than the twin holds: not accepted
+    why = check._record_twin(ctx, {"collection_id": old.collection_id, "snapshot_hash": "sha256:" + "0" * 64})
+    assert why and "holds no snapshot" in why
+    # an unknown collection: not accepted
+    assert check._record_twin(ctx, {"collection_id": "sha256:" + "1" * 64, "snapshot_hash": old_snap.hash})
+
+
+def test_a_collection_that_is_not_a_record_twin_is_refused(pair):
+    from types import SimpleNamespace
+    from app.hold import check
+    root, old, _new = pair
+    old_snap = sn.load(root / "old" / "drag" / "snapshots" / "2026-08.json")
+    # a codex differing in a record field (record_line) is not a twin
+    from dataclasses import replace
+    ctx = SimpleNamespace(root=root, codex=replace(old, record_line=(old.record_line or 1) + 1),
+                          snapshot=old_snap)
+    why = check._record_twin(ctx, {"collection_id": old.collection_id, "snapshot_hash": old_snap.hash})
+    assert why and "not a record twin" in why and "record_line" in why
