@@ -300,8 +300,11 @@ def test_the_parallel_embed_path_is_measured_too(isolated_config, tmp_path,
 
     monkeypatch.setattr(worker, "_load_chunks",
                         lambda row, c: [{"text": "x" * 100, "tokens": 25}] * 3)
-    monkeypatch.setattr(worker.embeddings, "upsert_book",
-                        lambda *a, **k: 3)
+    def upsert(*a, counts=None, **k):
+        # what the real write reports: three chunks through the encoder
+        counts.add(worker.embeddings.EmbedCounts(embedded=3, chars=300))
+        return 3
+    monkeypatch.setattr(worker.embeddings, "upsert_book", upsert)
     stats.recorder().reset()
 
     assert worker._embed_parallel(con, col, recipe) is True

@@ -857,11 +857,26 @@ def _written_chunks(db, book_id: int) -> dict[str, dict]:
         return {}
     try:
         tbl = db.open_table(TABLE)
-        return {r["id"]: {"text": r["text"], "vector": r["vector"]} for r in
-                tbl.search().where(_book_filter(book_id))
-                   .select(["id", "text", "vector"]).limit(_RESUME_SCAN_MAX).to_list()}
+        at = (tbl.search().where(_book_filter(book_id))
+              .select(["id", "text", "vector"]).limit(_RESUME_SCAN_MAX).to_arrow())
+        return {i: {"text": t, "vector": v} for i, t, v in _held_columns(at)}
     except Exception:   # noqa: BLE001 — a resume is an optimisation
         return {}
+
+
+def _held_columns(at: "pa.Table"):
+    """(id, text, vector) per row of a read, the vector a numpy row of the
+    table's own type — never a Python list. Measured on 128 documents of 130
+    chunks at dim 1024 (2026-10-09): `to_list()` took 4,485 ms, nearly all
+    of it boxing 17 million floats one by one; the same read without the
+    vector column, 27 ms. A kept vector's bytes are the stored bytes either
+    way (`_rows_for` casts it to the table's dtype)."""
+    if at.num_rows == 0:
+        return zip((), (), ())
+    col = at.column("vector").combine_chunks()
+    vectors = col.flatten().to_numpy(zero_copy_only=False).reshape(
+        at.num_rows, col.type.list_size)
+    return zip(at.column("id").to_pylist(), at.column("text").to_pylist(), vectors)
 
 
 def vectors_by_chunk_id(chunk_ids, collection=None) -> dict[str, list]:
@@ -923,9 +938,52 @@ def vectors_by_chunk_id(chunk_ids, collection=None) -> dict[str, list]:
 BOOK_COLUMN_NAME = "book_id"
 
 
+@dataclass
+class EmbedCounts:
+    """What one write took from the encoder and what it kept (RULE 1).
+    `embedded` chunks went to the encoder; `reused` kept a stored vector —
+    by (id, text) or, on a recut, by text hash (06 §6.3); `chars` are the
+    embedded chunks' only, so a throughput figure never counts a reused
+    chunk as encoder work (the reason `stats.record_fetch` skips adopted
+    files)."""
+    embedded: int = 0
+    reused: int = 0
+    chars: int = 0
+
+    def add(self, other: "EmbedCounts") -> None:
+        self.embedded += other.embedded
+        self.reused += other.reused
+        self.chars += other.chars
+
+
+def may_reuse(row) -> bool:
+    """May this document keep the vectors it already holds? Only when they
+    were made at the CURRENT `EMBED_VERSION`: a document last embedded at
+    another version is selected precisely so that its vectors are made
+    again, and reusing them by (id, text) would mark it current having
+    computed nothing. 0 is a document never completed — what it holds is an
+    interrupted embedding's slices, which the resume exists to keep. A row
+    that does not carry the column cannot show its version: no reuse."""
+    try:
+        version = row["embed_version"]
+    except (KeyError, IndexError):
+        return False
+    return not version or int(version) == config.EMBED_VERSION
+
+
+def _reusable(chunk: dict) -> bool:
+    """Can a stored row stand for this chunk? Only a TEXT-form chunk: the
+    stored row keeps its text, and a pair layer's vector is made from its
+    `fields`, which the row does not keep and the text does not determine —
+    `chunk_abstract` joins the sections' bodies, so ("A", "B\\n\\nC") and
+    ("A\\n\\nB", "C") cut to one text and two pairs (09 §9.3)."""
+    return chunk.get("fields") is None
+
+
 def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
                 lock_con=None, stop=None, *, held: "HeldRead | None" = None,
-                sink: "PendingWrites | None" = None) -> int:
+                sink: "PendingWrites | None" = None, reuse: bool = True,
+                counts: "EmbedCounts | None" = None) -> int:
     """Write one document's vectors, delete-then-insert (invariant 2),
     INCREMENTALLY and resumably.
 
@@ -970,6 +1028,15 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
     with `sink`, a document that fits one slice leaves its rows there and
     the caller commits a batch of them at once (`write_pending`), marking
     them done only after. A longer document still writes its own slices.
+
+    REUSE (RULE 1). A document whose file changed and whose chunks did not
+    — Project Gutenberg regenerates its files: 23,718 books reset on
+    2026-10-09 — finds every chunk here by (id, text) and returns without
+    an encoder call or a write. `reuse=False` (the caller's `may_reuse`:
+    the stored vectors are another EMBED_VERSION's) keeps nothing: the
+    stored rows go and every chunk is embedded. A pair layer's chunk is
+    never reused (`_reusable`). `counts`, when given, is told how many
+    chunks were embedded and how many kept.
     """
     if not chunks:
         return 0
@@ -987,7 +1054,7 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
         dtype = held.dtype if held.dtype is not None else _np_dtype_of_recipe(recipe)
         seen = held.seen
         have = held.of(book_id)
-    wanted = {c["id"]: c["text"] for c in chunks}
+    wanted = ({c["id"]: c["text"] for c in chunks if _reusable(c)} if reuse else {})
     done = {i for i, r in have.items() if wanted.get(i) == r["text"]}
     # Anything stored that is not a byte-exact chunk of the CURRENT document
     # means the document changed under us: the stored rows are positional and
@@ -1010,15 +1077,19 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
         # paragraph left 70 texts byte-identical and 0 (id, text) pairs
         # intact, so every chunk was re-embedded to learn what it already
         # knew — 73 encoder calls where 3 were needed.
-        carry = {chunk_text_hash(r["text"]): r["vector"] for r in have.values()}
+        if reuse:
+            carry = {chunk_text_hash(r["text"]): r["vector"] for r in have.values()}
         done = set()
     todo = [c for c in chunks if c["id"] not in done]
+    if counts is not None:
+        counts.reused += len(done)
     if not todo:
         return len(chunks)          # already complete; nothing to embed
     if sink is not None and len(todo) <= config.EMBED_SLICE_CHUNKS:
         # one slice: embedded here, committed with the rest of its batch
         sink.put(PendingDoc(int(book_id),
-                            _rows_for(book_id, lang, todo, recipe, carry, dtype, collection),
+                            _rows_for(book_id, lang, todo, recipe, carry, dtype,
+                                      collection, counts),
                             purge=rebuild, seen=seen))
         return len(todo) + len(done)
 
@@ -1026,7 +1097,7 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
     purge = rebuild
     for start in range(0, len(todo), config.EMBED_SLICE_CHUNKS):
         part = todo[start:start + config.EMBED_SLICE_CHUNKS]
-        rows = _rows_for(book_id, lang, part, recipe, carry, dtype, collection)
+        rows = _rows_for(book_id, lang, part, recipe, carry, dtype, collection, counts)
 
         with _write_lock(lock_con):
             # existence re-checked INSIDE the lock: the pre-lock check picked
@@ -1096,7 +1167,7 @@ def _by_run(collection) -> bool:
 
 
 def _rows_for(book_id: int, lang: str, part: list[dict], recipe, carry: dict,
-              dtype, collection=None) -> list[dict]:
+              dtype, collection=None, counts: "EmbedCounts | None" = None) -> list[dict]:
     """One slice's rows. Embedding happens OUTSIDE the lock: it is the slow
     part, it touches the network, and holding a cross-process write lock
     across it would serialize every writer on the slowest endpoint call.
@@ -1109,7 +1180,9 @@ def _rows_for(book_id: int, lang: str, part: list[dict], recipe, carry: dict,
     a small one left in the sink — is made of rows built here, so there is
     no second path to forget. The check is a lookup, inside no lock and no
     transaction; it raises, and the caller defers the document untouched."""
-    fresh = [c for c in part if chunk_text_hash(c["text"]) not in carry]
+    # a pair chunk is never carried: its vector is its fields', not its text's
+    fresh = [c for c in part
+             if not _reusable(c) or chunk_text_hash(c["text"]) not in carry]
     if fresh and _by_run(collection):
         from . import run_check                  # it imports this module
         seen: set = set()
@@ -1124,6 +1197,10 @@ def _rows_for(book_id: int, lang: str, part: list[dict], recipe, carry: dict,
     else:
         vectors = embed_chunks(collection, fresh, recipe=recipe) if fresh else []
     embedded = {c["id"]: vectors[j] for j, c in enumerate(fresh)}
+    if counts is not None:                   # after the answers, never before
+        counts.embedded += len(fresh)
+        counts.reused += len(part) - len(fresh)
+        counts.chars += sum(len(c["text"]) for c in fresh)
     return [{
         "id": c["id"], "book_id": book_id, "lang": lang or "und",
         "seq": c["seq"], "chapter": c["chapter"] or "",
@@ -1166,15 +1243,15 @@ def held_chunks(collection, book_ids) -> HeldRead:
     ids = sorted({int(b) for b in book_ids})
     for i in range(0, len(ids), 500):
         part = ",".join(str(b) for b in ids[i:i + 500])
-        rows = (tbl.search().where(f"{BOOK_COLUMN_NAME} IN ({part})", prefilter=True)
-                .select(["id", "book_id", "text", "vector"])
-                .limit(_RESUME_SCAN_MAX).to_list())
-        if len(rows) >= _RESUME_SCAN_MAX:
-            raise RuntimeError(f"{len(rows)} stored rows for {len(ids[i:i + 500])} "
+        at = (tbl.search().where(f"{BOOK_COLUMN_NAME} IN ({part})", prefilter=True)
+              .select(["id", "book_id", "text", "vector"])
+              .limit(_RESUME_SCAN_MAX).to_arrow())
+        if at.num_rows >= _RESUME_SCAN_MAX:
+            raise RuntimeError(f"{at.num_rows} stored rows for {len(ids[i:i + 500])} "
                                f"documents: more than one read returns")
-        for r in rows:
-            by_book.setdefault(int(r["book_id"]), {})[r["id"]] = {
-                "text": r["text"], "vector": r["vector"]}
+        books = at.column("book_id").to_pylist() if at.num_rows else []
+        for book, (cid, text, vector) in zip(books, _held_columns(at)):
+            by_book.setdefault(int(book), {})[cid] = {"text": text, "vector": vector}
     return HeldRead(by_book, seen, _np_dtype_of_table(tbl))
 
 

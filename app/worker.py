@@ -447,28 +447,38 @@ def stage_embed(con, row, collection) -> None:
     # import in another process (app/bundles/writer_lock.py). Passing it here
     # is what makes the importer's lock mean anything.
     started = time.time()
+    counts = embeddings.EmbedCounts()
     stats.recorder().set_in_flight(collection.name, 1)
     try:
         # `stop` bounds SIGTERM to one slice: a 5,335-chunk document is
         # 5.3 h of encoder time, and "finish the current unit" has to mean
         # something shorter than that (invariant 2 — smaller where a
         # document is not possible). What is written stays written.
-        n = embeddings.upsert_book(int(row["native_id"]), row["lang"], chunks,
-                                    collection, lock_con=con, stop=_embed_stop)
+        embeddings.upsert_book(int(row["native_id"]), row["lang"], chunks,
+                               collection, lock_con=con, stop=_embed_stop,
+                               reuse=embeddings.may_reuse(row), counts=counts)
     finally:
         stats.recorder().set_in_flight(collection.name, 0)
     # Timed around the encoder call only — not around _load_chunks, and not
     # around the manifest write below — so the figure on the Stats page is
     # the endpoint's throughput and nothing else. Comparing a CPU encoder
-    # with a GPU one is the whole point of measuring it.
-    stats.recorder().record_embed(
-        collection.name, seconds=time.time() - started, docs=1, chunks=n,
-        chars=sum(len(c.get("text") or "") for c in chunks))
+    # with a GPU one is the whole point of measuring it. A document whose
+    # every vector was kept is not encoder work, and is not recorded.
+    _record_embedded(collection, started, counts)
     bundle_ledger.clear_verification(con, row["uid"])   # no longer imported provenance
     con.execute(
         "UPDATE documents SET embed_done=1,embed_version=?,updated_at=? WHERE uid=?",
         (config.EMBED_VERSION, int(time.time()), row["uid"]))
-    db.log_event(con, "info", "embed", f"embedded {n} chunks", row["uid"])
+    db.log_event(con, "info", "embed",
+                 f"embedded {counts.embedded} chunks, reused {counts.reused}", row["uid"])
+
+
+def _record_embedded(collection, started: float, counts) -> None:
+    """The Stats page's encoder throughput: only what reached the encoder."""
+    if counts.embedded:
+        stats.recorder().record_embed(
+            collection.name, seconds=time.time() - started, docs=1,
+            chunks=counts.embedded, chars=counts.chars)
 
 # The lazy queue's eligibility predicate and its cleanup, shared by every
 # selector that serves the queue (_next_book, _next_embed, _embed_candidates)
@@ -1127,6 +1137,9 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     if not rows:
         return False
     sink = embeddings.PendingWrites()
+    # chunks embedded vs kept, for the call's log line (RULE 1's numbers)
+    tally = embeddings.EmbedCounts()
+    tally_lock = threading.Lock()
 
     def work(row, held):
         if _stop.is_set():
@@ -1145,13 +1158,16 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                             if _stop.is_set():
                                 return (row, None, "stopped", False)
                     started = time.time()
+                    counts = embeddings.EmbedCounts()
                     try:
                         # `stop` bounds SIGTERM to one slice of a long
                         # document (stage_embed's reason: gutenberg 4656 is
                         # 5,335 chunks); the rest resumes from what is written
                         n = embeddings.upsert_book(int(row["native_id"]), row["lang"],
                                                     chunks, collection, lock_con=tcon,
-                                                    stop=_embed_stop, held=held, sink=sink)
+                                                    stop=_embed_stop, held=held, sink=sink,
+                                                    reuse=embeddings.may_reuse(row),
+                                                    counts=counts)
                     finally:
                         if submitted is not None:
                             submitted.release()
@@ -1163,9 +1179,9 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
             # page permanently blank for exactly the encoders it exists to
             # compare. The recorder is lock-guarded, so several document
             # threads reporting at once is fine.
-            stats.recorder().record_embed(
-                collection.name, seconds=time.time() - started, docs=1, chunks=n,
-                chars=sum(len(c.get("text") or "") for c in chunks))
+            _record_embedded(collection, started, counts)
+            with tally_lock:
+                tally.add(counts)
             return (row, n, None, sink.holds(int(row["native_id"])))
         except embeddings.EmbedInterrupted:
             # SIGTERM between two slices of a long document: what is written
@@ -1342,7 +1358,8 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     if done:
         db.log_event(con, "info", "embed",
                      f"embedded {done} document(s) at concurrency "
-                     f"{recipe.concurrency if slots is None else slots}")
+                     f"{recipe.concurrency if slots is None else slots}: "
+                     f"{tally.embedded} chunks embedded, {tally.reused} reused")
     if deferred:
         db.log_event(con, "warn", "embed",
                      f"{deferred} document(s) deferred — encoder unreachable, busy or "

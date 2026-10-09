@@ -64,7 +64,8 @@ def _ensure_embedded(con, collection, uids: list[str], *, stop=None) -> list[str
         if stop is not None and stop.is_set():
             break
         row = con.execute(
-            "SELECT uid, native_id, path, lang, embed_done FROM documents WHERE uid=?",
+            "SELECT uid, native_id, path, lang, embed_done, embed_version "
+            "FROM documents WHERE uid=?",
             (uid,)).fetchone()
         if row is None:
             continue
@@ -80,7 +81,7 @@ def _ensure_embedded(con, collection, uids: list[str], *, stop=None) -> list[str
             if not chunks:
                 continue
             embeddings.upsert_book(native_id, row["lang"], chunks, collection,
-                                   lock_con=con)
+                                   lock_con=con, reuse=embeddings.may_reuse(row))
             con.execute(
                 "UPDATE documents SET embed_done=1, embed_version=?, updated_at=? "
                 "WHERE uid=?", (config.EMBED_VERSION, int(time.time()), uid))

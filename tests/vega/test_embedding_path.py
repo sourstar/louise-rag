@@ -472,6 +472,53 @@ def test_the_worker_defers_the_document_and_marks_nothing(node, localai, vega, m
         assert "not the one the backend produced" in backend_gate.gate_state(con)["reason"]
 
 
+def test_a_reused_chunk_asks_nothing_and_an_embedded_one_still_needs_its_receipt(
+        node, localai, vega):
+    """RULE 1's reuse (`upsert_book`): a chunk whose id and text are stored
+    keeps its vector and reaches no endpoint, so it needs no receipt; the
+    one chunk whose text changed is embedded, and its receipt is verified
+    before anything of the document is written."""
+    root, collection, codex = node
+    con = db.connect(collection)
+    assert backend_gate.embed_allowed(con, collection) is True
+    embeddings.upsert_book(7, "en", chunks(3), collection)
+    posted = len(localai.bodies)
+
+    vega.down = True
+    assert embeddings.upsert_book(7, "en", chunks(3), collection) == 3
+    assert len(localai.bodies) == posted, "every chunk kept: no request at all"
+    vega.down = False
+
+    changed = chunks(3)
+    changed[1] = dict(changed[1], text="a new middle")
+    localai.alter_vector = lambda v: [v[0] + 2 ** -10] + v[1:]
+    with pytest.raises(embeddings.ReceiptRefused):
+        embeddings.upsert_book(7, "en", changed, collection)
+    table = embeddings._conn(collection).open_table(embeddings.TABLE)
+    assert sorted(r["text"] for r in table.to_arrow().to_pylist()) == \
+        ["chunk 0 of 7", "chunk 1 of 7", "chunk 2 of 7"], "a refused answer wrote nothing"
+
+
+def test_a_partly_reused_document_reads_the_receipt_of_what_it_embedded(
+        node, localai, vega):
+    root, collection, codex = node
+    con = db.connect(collection)
+    assert backend_gate.embed_allowed(con, collection) is True
+    embeddings.upsert_book(7, "en", chunks(3), collection)
+    reads = vega.reads
+
+    changed = chunks(3)
+    changed[1] = dict(changed[1], text="a new middle")
+    counts = embeddings.EmbedCounts()
+    embeddings.upsert_book(7, "en", changed, collection, counts=counts)
+    assert (counts.embedded, counts.reused) == (1, 2)
+    assert parsed(localai.bodies[-1]) == [("text", "a new middle")]
+    assert vega.reads > reads, "the embedded chunk's receipt was read"
+    table = embeddings._conn(collection).open_table(embeddings.TABLE)
+    assert sorted(r["text"] for r in table.to_arrow().to_pylist()) == \
+        ["a new middle", "chunk 0 of 7", "chunk 2 of 7"]
+
+
 def test_a_query_needs_a_receipt_too(node, localai, vega):
     from app import retrieval
     root, collection, codex = node
