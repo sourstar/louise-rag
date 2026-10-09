@@ -391,6 +391,16 @@ on one condition checked at once — every part's `records_root`,
 snapshot's; otherwise the snapshot is withdrawn. (The equivalence proof
 needs a snapshot to draw from; a new collection carrying its records had
 none.)
+*Amended 2026-10-09 (RULE 1), equivalence by version:* an image that runs
+the Codex's parser at its parser version and every layer's chunker at its
+chunker version IS equivalent — invariant 3 makes any change to parsing,
+cleaning or chunking bump the version of what changed, so the same versions
+make the same records and chunks. The per-image proof above was being
+re-demanded at every deploy (each names its image honestly since
+2026-10-07), recomputing a result invariant 3 already keeps; it remains the
+way for an image whose versions differ. `chunks` and `records-vs-origin`
+keep running in the plan, so a parse changed without its bump is still
+caught.
 *Amended 2026-10-09 (RULE 1), record twins:* a collection seeded so is its
 source's RECORD TWIN — same record-deciding fields, same reference image,
 snapshots holding the same parts. `image-equivalence` accepts reference

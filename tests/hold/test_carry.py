@@ -426,7 +426,10 @@ def test_seeding_needs_no_equivalence_proof_of_this_image(pair, monkeypatch):
 
 def test_without_seeding_the_image_must_still_be_the_reference(pair, monkeypatch):
     from app import louise
+    from app.hold import equivalence
     root, _old_codex, _new = pair
+    # an image whose versions differ (one with the Codex's versions is equivalent)
+    monkeypatch.setattr(equivalence, "equivalent_by_versions", lambda c: False)
     monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", "sha256:" + "e" * 64)
     assert louise.main(["hold", "snapshot", "create", "old", "--root", str(root),
                         "--snapshot", "2026-09"]) != 0

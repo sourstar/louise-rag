@@ -52,12 +52,47 @@ def running_image() -> str | None:
     return value if value and value != _PLACEHOLDER else None
 
 
+def equivalent_by_versions(codex: Codex) -> bool:
+    """Does the running code parse and cut this collection's records exactly
+    as its reference did, by the project's own guarantee? Invariant 3: any
+    change to parsing, cleaning or chunking bumps the version of what
+    changed, explicitly. So an image running the Codex's parser at the
+    Codex's parser version, and every layer's chunker at the Codex's chunker
+    version, makes the same records and chunks as the reference image.
+
+    03 §3.4, amended 2026-10-09 under RULE 1 (operator: "READ RULE 1"): the
+    per-image proof (records-vs-origin + chunks, or image-equivalence) was
+    re-demanded at every deploy, since the deploy names its image honestly
+    (2026-10-07) — a recomputation of a result invariant 3 already keeps.
+    It is still how an image whose versions DIFFER, or a peer that wants the
+    proof, shows equivalence; and `chunks` and records-vs-origin keep
+    running in the plan, so a parse that changed without its bump is caught
+    there, as before."""
+    from app import chunking, collections as collections_mod
+    plugin = collections_mod.PLUGIN_REGISTRY.get(codex.plugin)
+    if plugin is None or getattr(plugin, "PARSER_VERSION", None) != codex.parser.version:
+        return False
+    if getattr(plugin, "source_id", codex.parser.id) != codex.parser.id:
+        return False
+    for layer in codex.layers:
+        try:
+            if chunking.chunk_version_for(layer.chunker.id) != layer.chunker.version:
+                return False
+        except Exception:   # noqa: BLE001 — a chunker this image lacks: not equivalent
+            return False
+    return True
+
+
 def reference_images(bodies, key: str | None, codex: Codex) -> set[str]:
     """The images whose verdicts count for this collection on this peer: the
-    Codex's own, and each image under which this peer's own
+    Codex's own, the running image when its versions are the Codex's
+    (`equivalent_by_versions`), and each image under which this peer's own
     `records-vs-origin` and `chunks` have both passed. `bodies` is
     `copy_state.attestations(...)`; `key` this peer's."""
     images = {codex.toolchain.platform_image}
+    ran = running_image()
+    if ran is not None and equivalent_by_versions(codex):
+        images.add(ran)
     if key is None:
         return images
     origin = bodies.by_image(key, "records-vs-origin")
@@ -84,6 +119,8 @@ def require_reference(root, name: str, codex: Codex, *, use: str) -> str:
             f"show that it is {codex.toolchain.platform_image[:19]}…, the "
             f"reference its Codex names, or an image equivalent to it (03 §3.4). "
             f"Nothing to {use}")
+    if image == codex.toolchain.platform_image or equivalent_by_versions(codex):
+        return image                    # the reference, or equivalent by invariant 3
     key = copy_state.own_key()
     allowed = reference_images(copy_state.attestations(root, name, codex), key, codex)
     if image in allowed:

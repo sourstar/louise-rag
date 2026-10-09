@@ -725,6 +725,9 @@ def test_records_are_built_only_by_the_reference_or_an_equivalent_image(node, ra
     had been pruned and a build under the next one ran unrefused."""
     from app.hold import equivalence
     root, collection, codex = node
+    # the PROOF path: an image whose versions differ from the Codex's (an image
+    # with the same versions is equivalent by invariant 3 — the test below)
+    monkeypatch.setattr(equivalence, "equivalent_by_versions", lambda c: False)
     monkeypatch.delenv("LOUISE_PLATFORM_IMAGE", raising=False)
     with pytest.raises(equivalence.NotEquivalent, match="does not know the image"):
         equivalence.require_reference(root, "gutenberg", codex, use="build its records")
@@ -751,13 +754,33 @@ def test_the_empty_bytes_placeholder_names_no_image(monkeypatch):
     assert equivalence.running_image() is None
 
 
+def test_an_image_running_the_codexs_versions_is_equivalent_by_invariant_3(node, rage, monkeypatch):
+    """03 §3.4, amended 2026-10-09 (RULE 1): the Codex's parser at its parser
+    version and every layer's chunker at its version make the same records
+    and chunks (invariant 3), so such an image needs no per-image proof; an
+    image whose parser version differs still does."""
+    from app import collections as collections_mod
+    from app.hold import equivalence
+    root, collection, codex = node
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", NEWER)
+    assert equivalence.equivalent_by_versions(codex)
+    assert equivalence.require_reference(root, "gutenberg", codex, use="build its records") == NEWER
+    plugin = collections_mod.PLUGIN_REGISTRY[codex.plugin]
+    monkeypatch.setattr(plugin, "PARSER_VERSION", codex.parser.version + 1)
+    assert not equivalence.equivalent_by_versions(codex)
+    with pytest.raises(equivalence.NotEquivalent, match="03 §3.4"):
+        equivalence.require_reference(root, "gutenberg", codex, use="build its records")
+
+
 def test_under_an_image_that_is_not_the_reference_the_origin_check_cannot_run(
         node, rage, monkeypatch):
     """03 §3.6: the fifth test CANNOT RUN when "this peer's platform image is
     neither the Codex's nor equivalent (§3.4), so that its failure would say
     nothing about the collection" — and the operator decides, with `hold
     collection ack --origin-unchecked`."""
+    from app.hold import equivalence
     root, collection, codex = node
+    monkeypatch.setattr(equivalence, "equivalent_by_versions", lambda c: False)  # versions differ
     all_but_the_origin(root, collection, codex)
     monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", NEWER)
     s = state_of(collection)
