@@ -74,6 +74,10 @@ louise hold
               derive <codex> [--space-from CODEX | --space FILE | --encoder-weights D --engine FILE] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
                                                                        a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
                                                                        Prints what would be inherited — vectors, coverage, credits — and waits for --accept;
+              derive … [--encoder URL [--query-encoder URL] [--api A] [--embed-model M] [--query-model M]] [--calibration-set FILE] [--name N]
+                                                                       a sister in a new space embeds her own reference at --encoder (her calibration, once,
+                                                                       signed with the node's key) and her file names it; in a space a held collection is in,
+                                                                       she inherits its member and its file's [encoder] (amended 2026-10-09)
                                                                        without it, with no terminal, exit 2. To inherit nothing, change the space (02 §2.7)
               continue <codex> --platform-image D --through ID [--origin FILE] [--origin-reachable-until ID]
                                                                        a daughter: new toolchain, same space
@@ -111,6 +115,12 @@ louise hold
               show <collection> (<record-id> | --shard <slice>/<n>) [--raw]   with the layer and chunker derived for it (02 §2.3)
                                                                        one record and its chunks, or a whole part as JSON Lines
   snapshot    create <collection>                                      freeze the current records as this month's snapshot
+              create <to> --shards-from <from>[:<snapshot>] [--snapshot ID]
+                                                                       seed the parts from another collection's byte-identical ones — refused unless every field
+                                                                       that decides a record (02 §2.7), record_line, facets and the layers' chunkers agree — each
+                                                                       linked (a copy across devices) and checked against the source snapshot's root, the staging
+                                                                       claim and build database written as a build would leave them; then the ordinary create, of
+                                                                       the source snapshot's period unless --snapshot names one (added 2026-10-09)
               delta <collection> <from> <to>                           what changed between two snapshots
               list <collection>
   embedder    check <collection>                                       the calibration gate (§3.3) against the run the endpoint states; a pass validates it and keeps its signed statement in `state/`
@@ -127,6 +137,10 @@ louise hold
                                                                        (amended 2026-10-08: the endpoint and `--ctx` were unstated). `--pairs` is a pair space's
                                                                        set, its file, every lane embedding the pairs as pairs (09 §9.12, amended 2026-10-08)
               rebaseline <collection> [--yes]                          a Codex below version 3 only: accept a changed backend by re-recording the probe baseline (`app/verify/backend_gate.py`); exit 2 for version 3, whose runs `check` validates
+              run --encoder URL [--api A] [--model M] [--query] [--pair]   the run the endpoint states now — run id, engine, weights, driver — as JSON, for writing a
+                                                                       recipe's `space.encoder`; exit 3 when unreachable. `create` (and `derive`) hold the runs that
+                                                                       embedded a new reference at an `api = "vega"` endpoint to the recipe's engine and weights,
+                                                                       and refuse a mismatch before anything is written (added 2026-10-09)
   vectors     build <collection> [--shard <slice>/<n> | --delta ID]    embed; a signed bundle about every 15,000 chunks
               import <collection> (<file> | --archive ID [--retry]) [--strict]
                                                                        a signed bundle, or a public pre-embedded archive, through the ladder
@@ -184,6 +198,17 @@ louise dev                                                             operator 
   refs-sync            reference tables from their origins; writes
   genesis recheck <collection>                                         reopen final archive shards that still have documents the archive could serve; writes
   genesis recount <collection> [--yes]                                 an archive ledger's docs and chunks recounted from chunk_verification; writes only with --yes (added 2026-10-08)
+  carry <from> <to> [--copy] [--keep producer:<archive>] [--yes]        amendment A1 (02 §2.4): the manifest (after a TRUNCATE checkpoint), index/ and lance/ moved
+                                                                       — or copied, reflinked where it can — into a collection with the same records whose space
+                                                                       differs only by engine or input form, both write locks held; refused unless the agreement of
+                                                                       `snapshot create --shards-from` holds, the space's function (weights, dim, dtype, ctx,
+                                                                       pooling, normalise, query, epoch) is equal, the target's latest snapshot names the source's
+                                                                       parts, and the target is empty; re-pins the space row to the target's Codex and clears the
+                                                                       source's coverage rows. --keep: then only the rows that archive produced (chunk_verification
+                                                                       imported or verified) stay; every other is deleted and its document embedded again, a window
+                                                                       at a time, resumable, the table's row count checked against the kept count (exit 1 if it
+                                                                       differs). Before use, `hold check <to> --checks vectors-sample`. A dry run without --yes;
+                                                                       writes (added 2026-10-09)
 ```
 
 `--dry-run`, `--json` and `--yes` are not shown per line; §7.7 says which

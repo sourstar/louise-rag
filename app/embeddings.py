@@ -1471,6 +1471,26 @@ def delete_chunks(chunk_ids, collection=None, lock_con=None) -> int:
     return gone
 
 
+def chunk_ids_of_books(book_ids, collection=None) -> list[str]:
+    """The chunk ids the vector table holds for these documents, one id per
+    row (a duplicated row appears twice). Narrowed on `book_id`, the indexed
+    column, as `delete_chunks` is; counted first, so a long document is never
+    cut at a read limit. `hold.carry.keep_producer` walks a manifest with it."""
+    books = sorted({int(b) for b in book_ids})
+    db = _conn(collection)
+    if not books or TABLE not in db.table_names():
+        return []
+    tbl = db.open_table(TABLE)
+    out: list[str] = []
+    for i in range(0, len(books), 500):
+        where = f"{BOOK_COLUMN_NAME} IN ({','.join(str(b) for b in books[i:i + 500])})"
+        n = tbl.count_rows(where)
+        if n:
+            out += [x["id"] for x in tbl.search().where(where, prefilter=True)
+                    .select(["id"]).limit(n).to_list()]
+    return out
+
+
 @contextmanager
 def _write_lock(lock_con):
     """No-op when no manifest connection is supplied, so callers that predate

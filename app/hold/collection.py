@@ -430,6 +430,22 @@ def write_terms(drag_path: Path, codex: Codex, plugin: str,
     (drag_path / "LICENSE-TERMS").write_bytes(body)
 
 
+def require_signer(key, now: str | None) -> None:
+    """What signing a calibration reference needs, refused before any work."""
+    if key is None:
+        raise CodexError(
+            "creating a collection needs the node's signing key: 09 §9.12 "
+            "makes the calibration member's `key` header required and §9.4 "
+            "lists its signature among a snapshot's files without allowing "
+            "null. The reference records WHO produced it (invariant 8: the "
+            "key is referenced by path, NODE_KEY_PATH)")
+    if not now:
+        raise CodexError(
+            "signing the calibration reference needs the time to sign it "
+            "at; nothing under `hold` reads the clock (the snapshots do the "
+            "same), so a caller supplies it")
+
+
 def write_calibration(drag_path: Path, codex: Codex, vectors, envelope,
                       *, key, now: str | None, query_vectors=None,
                       pairs: bytes | None = None) -> None:
@@ -450,18 +466,7 @@ def write_calibration(drag_path: Path, codex: Codex, vectors, envelope,
     """
     from . import calibration as cal, drag as drag_mod, envelope as env
 
-    if key is None:
-        raise CodexError(
-            "creating a collection needs the node's signing key: 09 §9.12 "
-            "makes the calibration member's `key` header required and §9.4 "
-            "lists its signature among a snapshot's files without allowing "
-            "null. The reference records WHO produced it (invariant 8: the "
-            "key is referenced by path, NODE_KEY_PATH)")
-    if not now:
-        raise CodexError(
-            "signing the calibration reference needs the time to sign it "
-            "at; nothing under `hold` reads the clock (the snapshots do the "
-            "same), so a caller supplies it")
+    require_signer(key, now)
 
     set_id = codex.space.calibration.set
     member, sig_path = drag_mod.calibration_paths(set_id)
@@ -520,7 +525,8 @@ def derive(root: Path, mother_id: str, *,
            credits: tuple[Credit, ...] | None = None,
            descriptive: Descriptive | None = None,
            embed=None, embed_query=None, key=None,
-           now: str | None = None, pairs: bytes | None = None) -> Codex:
+           now: str | None = None, pairs: bytes | None = None,
+           name: str | None = None) -> Codex:
     """A sister: her mother's corpus, and at most `space`, `layers`, `update`
     and `work` changed (02 §2.7).
 
@@ -670,18 +676,31 @@ def derive(root: Path, mother_id: str, *,
         sister = _replace(sister, credits=_merge_credits(kept, ()))
 
     sources = (mother,) if space_from is None else (mother, space_from)
+    own = None
     if embed is not None and not any(_same_reference(sister, s) for s in sources):
-        # A new build: embed, and let the new hashes into the Codex BEFORE
-        # it is written, since they are Codex fields.
+        # A new build: embed ONCE, as `create` does, and let the new hashes
+        # into the Codex BEFORE it is written, since they are Codex fields;
+        # the member is written from these very vectors (2026-10-09: it
+        # embedded the set a second time and required the same bytes back,
+        # which an engine whose runs differ in the last bit could never give)
         from . import calibration as cal
-        items, _ = _calibration_items(mother.modality, sister.space.calibration.set,
-                                      cal.form(sister), pairs)
-        sister = _replace(sister, space=recalibrate(sister.space,
-                                                    mother.modality, embed,
-                                                    embed_query, items=items))
-    drag_path = write(root, sister, mother)
+        require_signer(key, now)          # before the embedding, before the Codex
+        items, pairs = _calibration_items(mother.modality, sister.space.calibration.set,
+                                          cal.form(sister), pairs)
+        vectors, envelope, got_v, got_e = cal.build_member(
+            items, embed, normalise=sister.space.normalise, dim=sister.space.dim)
+        query_vectors, got_q = _query_member(sister.space, items, embed_query)
+        sister = _replace(sister, space=_replace(
+            sister.space, envelope=got_e,
+            calibration=_replace(sister.space.calibration, vectors=got_v,
+                                 query_vectors=got_q)))
+        own = (vectors, envelope, query_vectors)
+    drag_path = write(root, sister, mother, name=name)
     if any(_same_reference(sister, s) for s in sources):
         carry_calibration(root, sister, drag_path, *sources)
+    elif own is not None:
+        write_calibration(drag_path, sister, own[0], own[1], key=key, now=now,
+                          query_vectors=own[2], pairs=pairs)
     else:
         _write_own_calibration(sister, drag_path, embed, mother.modality,
                                key, now, embed_query, pairs=pairs)

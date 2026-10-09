@@ -170,7 +170,15 @@ def stated_run(recipe, *, query: bool = False, probe_item=PROBE) -> emb.StatedRu
     description, verified against the id (runs.describe). An encoder declared
     `api = "vega"` has its runs described by VeGa, where its receipts are
     read: `<VEGA_URL>/vega/runs/<run_id>` (docs/notes/vega.md §9)."""
-    run_id = answering_run(recipe, query=query, probe_item=probe_item)
+    return describe_run(recipe, answering_run(recipe, query=query, probe_item=probe_item),
+                        query=query)
+
+
+def describe_run(recipe, run_id: str, *, query: bool = False) -> emb.StatedRun:
+    """What a run id the endpoint stated stands for, verified against the id:
+    VeGa's description for an `api = "vega"` encoder, the platform's otherwise
+    (`hold collection create` holds the runs that embedded its reference to
+    the recipe's engine with it, docs/notes/v5-migration.md G5)."""
     if getattr(recipe, "api", None) == embeddings.VEGA:
         return runs_mod.describe(_endpoint(recipe, query), run_id, get=httpx.get,
                                  at=f"{config.VEGA_URL}/vega/runs/{run_id}")

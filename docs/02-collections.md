@@ -587,6 +587,25 @@ never a warning. The refusal is per collection: the node keeps running
 its other collections, the refused one is not served, and `hold
 collection show` names the reason (07 §7.8).
 
+**One crossing is allowed, and it is a carry, not a mix** (amendment A1,
+*amended 2026-10-09*, docs/notes/v5-migration.md). A vector table crosses
+into a collection with the same records whose space differs only by
+engine, or by a declared input form equal to the one its vectors were
+produced in, once `vectors-sample` under a validated run passes at the
+target's tolerance before use. "The same records" is §2.7's test — every
+field that decides a record byte, `record_line`, `facets` and the layers'
+chunkers, parameters and rules agree, and the target's latest snapshot
+names the source's parts — and "only by engine" leaves the weights, `dim`,
+`dtype`, `ctx`, `pooling`, `normalise`, the query side and the epoch equal:
+a version-2 space, whose `space_id` holds its engine's image, crosses into
+its version-5 or -6 successor, and a table embedded in pair form into a
+space declaring that form. The table is re-pinned to the target's Codex
+(`louise dev carry`, 07 §7.3); nothing is fused, the source keeps no claim
+on the rows, and a table produced in another form than the target declares
+does not qualify — its rows are dropped and embedded again. RULE 1 is the
+reason: a by-the-book build of the target computes the same vectors, and
+`vectors-sample` is what shows it.
+
 The **calibration** block is the contract for anyone who wants to
 contribute vectors. The calibration set is corpus-independent: a fixed
 file of 512 texts shipped with the platform, spanning the encoder's
@@ -793,7 +812,17 @@ else: **a sister whose `space_id` equals its mother's shares the
 mother's vectors; one whose `space_id` differs starts from zero.** A
 sister that changes the encoder or the layers changes `space_id` (§2.4)
 and so starts empty — no vector crosses a space boundary, and that
-includes a sister that only removes a layer. A
+includes a sister that only removes a layer. The one crossing is §2.4's
+carry (amendment A1, *amended 2026-10-09*): into a collection with the
+same records whose space differs only by engine or by a declared input
+form equal to the one the vectors were produced in, after `vectors-sample`
+under a validated run passes at the target's tolerance; a sister who
+changes the weights, the layers' chunkers or anything else in the
+function starts from zero as before. Her parts are byte-identical, so
+they need not be built again either:
+`hold snapshot create --shards-from` links them, each checked against its
+source snapshot's `root`, and the snapshot it freezes is the one her own
+build would write. A
 sister that changes only `update` leaves `space_id` untouched, so every
 bundle either of them produces is admissible to the other (03 §3.5) and
 the two are searched as one list (05 §5.1).

@@ -3,7 +3,10 @@
     louise hold collection create <plugin> --recipe FILE [--space-from CODEX]
                                     [--platform-image D] [--root DIR]
     louise hold collection derive <codex> (--space-from CODEX | --space FILE)
-                                    [--layers FILE] [--update FILE] [--work FILE] --accept
+                                    [--layers FILE] [--update FILE] [--work FILE]
+                                    [--encoder URL [--query-encoder URL] [--api A]
+                                     [--embed-model M] [--query-model M]]
+                                    [--calibration-set FILE] [--name N] --accept
     louise hold collection continue <codex> --platform-image D --continues-through <snapshot>
                                     [--origin FILE] [--origin-reachable-until <snapshot>]
     louise hold collection replace <codex> --defect FILE [--platform-image D] [--space FILE]
@@ -12,9 +15,10 @@
     louise hold records build <collection> [--corpus DIR] [--snapshot ID]
     louise hold records fetch <collection> [--profile P] [--dry-run]
     louise hold records validation <collection>
-    louise hold snapshot create <collection> [--snapshot ID]
+    louise hold snapshot create <collection> [--snapshot ID] [--shards-from FROM[:SNAPSHOT]]
     louise hold snapshot list <collection>
     louise hold embedder check|benchmark <collection> [--accept]
+    louise hold embedder run --encoder URL [--api A] [--model M] [--query] [--pair]
     louise hold embedder rebaseline <collection> [--yes]
     louise hold vectors build <collection> [--snapshot ID | --delta ID] [--shard S | --slice V...]
                                     [--dry-run]
@@ -30,6 +34,7 @@
     louise hold config show|apply [<collection>]
     louise node health [<collection>] [--errors]
     louise dev genesis recheck <collection> | recount <collection> [--yes]
+    louise dev carry <from> <to> [--copy] [--keep producer:ARCHIVE] [--yes]
 
 The previous tree (`python -m app.cli`, 07 §7.6) is retired (2026-10-08):
 every name it had that is still useful is one of these.
@@ -381,7 +386,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                                    embed=_embed_for_recipe(recipe["space"], encoder, models[0],
                                                            api=api),
                                    embed_query=(_embed_for_recipe(recipe["space"], query_encoder,
-                                                                  models[1], api=api)
+                                                                  models[1], api=api, query=True)
                                                 if query_encoder else None),
                                    space_version=source.version if space_from else None,
                                    credits=credits, pairs=pairs)
@@ -483,12 +488,7 @@ def _write_held_file(root, codex, encoder: str | None = None,
     A name holds one collection for its life: a file already naming this
     Codex is left alone, and one naming another is refused.
     """
-    from app import collections as collections_mod
-    name = col.name_of(root, codex.collection_id)
-    node_root = collections_mod.louise_root() / "collections"
-    path = (collections_mod.config_toml_path(name)
-            if Path(root).resolve() == node_root.resolve()
-            else Path(root) / f"{name}.toml")
+    path = _held_file(root, col.name_of(root, codex.collection_id))
     if path.exists():
         with open(path, "rb") as f:
             held = str(tomllib.load(f).get("codex") or "")
@@ -548,8 +548,59 @@ NO_ENCODER = (
     "can ever join")
 
 
+def _expected_run(space: dict, query: bool) -> tuple[str | None, str | None]:
+    """(`engine_id`, weights) the recipe says its reference is computed with
+    — the query side's where it has its own encoder; a query encoder that
+    names no engine runs on the document side's (09 §9.3). `engine_id` is
+    None for a space that names an image, not an engine."""
+    enc = space.get("encoder") or {}
+    q = (space.get("query") or {}).get("encoder") if query else None
+    side = q if isinstance(q, dict) else enc
+    raw = side.get("engine") or enc.get("engine")
+    engine_id = None
+    if isinstance(raw, dict):
+        engine_id = cx.engine_from_dict(tpl._engine_from_recipe(raw, "space.encoder.engine"),
+                                        "space.encoder.engine").engine_id
+    return engine_id, side.get("weights")
+
+
+def check_reference_runs(space: dict, recipe, runs: set, *, query: bool = False) -> None:
+    """G5 (docs/notes/v5-migration.md): the runs that embedded a new
+    reference ARE the engine and the weights the recipe writes into the Codex,
+    or nothing is created. A reference computed by another engine than the
+    one the Codex names is a Codex whose `space.encoder.engine` is false — the
+    one field written so anyone can reproduce those vectors (02 §2.4)."""
+    from app import run_check
+    want_engine, want_weights = _expected_run(space, query)
+    if not runs or None in runs:
+        raise CodexError(f"the encoder at {recipe.url} stated no run for the calibration set "
+                         f"(no receipt names one): nothing ties the reference to the engine "
+                         f"the recipe names. Nothing was created")
+    for run_id in sorted(runs):
+        try:
+            stated = run_check.describe_run(recipe, run_id)
+        except CodexError:
+            raise
+        except Exception as e:                          # noqa: BLE001
+            raise CodexError(f"the run {run_id[:23]}… that embedded the calibration set "
+                             f"could not be described: {e}. Nothing was created") from e
+        got_engine = cx.engine_from_dict(stated.engine, "engine").engine_id
+        bad = []
+        if want_engine is not None and got_engine != want_engine:
+            bad.append(f"engine {got_engine[:23]}… (the recipe's is {want_engine[:23]}…)")
+        if want_weights and stated.weights != want_weights:
+            bad.append(f"weights {stated.weights[:23]}… (the recipe's are {want_weights[:23]}…)")
+        if bad:
+            raise CodexError(
+                f"the run {run_id[:23]}… that embedded the calibration set has "
+                f"{' and '.join(bad)}. The Codex names the engine and the weights its "
+                f"reference was computed with (02 §2.4, 09 §9.3): write the recipe from "
+                f"`louise hold embedder run`, or point --encoder at the run it names. "
+                f"Nothing was created")
+
+
 def _embed_for_recipe(space: dict, url: str | None, model: str | None = None, *,
-                      api: str = "openai"):
+                      api: str = "openai", query: bool = False):
     """The encoder `create` embeds the calibration set with (06 Â§6.6).
 
     There is no Codex yet â the two hashes this produces are Codex
@@ -576,15 +627,23 @@ def _embed_for_recipe(space: dict, url: str | None, model: str | None = None, *,
     recipe = collections_mod.EmbedRecipe(
         url=url, api=api, model=model,
         dtype=space["dtype"], ctx=space["ctx"], dim=space["dim"])
+    # G5: an endpoint that states its runs — VeGa's receipts — is held to
+    # the engine and weights the recipe names, checked before the Codex exists
+    vouched = api == embeddings.VEGA
 
     def embed(texts):
+        runs: set = set()
         try:
             # the calibration set is no collection's chunks: text, by design
-            return embeddings.embed_calibration(recipe, texts)
+            out = (embeddings.embed_calibration(recipe, texts, runs=runs) if vouched
+                   else embeddings.embed_calibration(recipe, texts))
         except Exception as e:                      # noqa: BLE001
             raise CodexError(
                 f"the encoder at {url} could not embed the calibration "
                 f"set: {e}. Nothing was created") from e
+        if vouched:
+            check_reference_runs(space, recipe, runs, query=query)
+        return out
 
     return embed
 
@@ -602,13 +661,77 @@ def cmd_derive(a) -> int:
               if a.layers else None)
     update = Update(**_json(a.update)) if a.update else None
     work = Work(**_json(a.work)) if a.work else None
+    pairs = Path(a.calibration_set).read_bytes() if getattr(a, "calibration_set", None) else None
 
+    # Her encoder, as `create`'s (G4, docs/notes/v5-migration.md): a sister in
+    # a NEW space embeds her own reference at this endpoint, signed with the
+    # node's key at the one clock; one in a space a source holds inherits its
+    # member and needs neither. The file's [encoder] is settled BEFORE
+    # anything is written, as `create` settles it (07 §7.8).
+    encoder = getattr(a, "encoder", None)
+    query_encoder = getattr(a, "query_encoder", None)
+    api = check_api(getattr(a, "api", None))
+    models = (model_keys(encoder, query_encoder, embed_model=getattr(a, "embed_model", None),
+                         query_model=getattr(a, "query_model", None))
+              if encoder else (None, None))
+    block = (space or (space_from.space if space_from else mother.space)).to_dict()
+    key = None
+    if encoder:
+        from app.bundles import keys as node_keys
+        key = node_keys.load_signing_key()
     sister = col.derive(a.root, a.codex_id, space=space, space_from=space_from,
                         layers=layers, update=update, work=work,
-                        credits=tpl.expand_archives(a.archives) if a.archives else None)
+                        credits=tpl.expand_archives(a.archives) if a.archives else None,
+                        embed=_embed_for_recipe(block, encoder, models[0], api=api)
+                        if encoder else None,
+                        embed_query=_embed_for_recipe(block, query_encoder, models[1],
+                                                      api=api, query=True)
+                        if query_encoder else None,
+                        key=key, now=_utc_now(), pairs=pairs,
+                        name=getattr(a, "name", None))
     _acceptance(mother, sister)
+    if encoder:
+        held = _write_held_file(a.root, sister, encoder, query_encoder, api=api,
+                                embed_model=models[0], query_model=models[1])
+    else:
+        held = _write_held_file(a.root, sister, **_inherited_encoder(a.root, sister, mother,
+                                                                     space_from))
+    print(f"held: {held}", file=sys.stderr)
     print(sister.collection_id)
     return 0
+
+
+def _held_file(root, name: str) -> Path:
+    """Where `name`'s collection file is (07 §7.8): `<root>/<name>.toml`, or
+    the node's CONFIG_DIR for a collection in the node's own root."""
+    from app import collections as collections_mod
+    node_root = collections_mod.louise_root() / "collections"
+    return (collections_mod.config_toml_path(name)
+            if Path(root).resolve() == node_root.resolve()
+            else Path(root) / f"{name}.toml")
+
+
+def _inherited_encoder(root, sister: cx.Codex, mother: cx.Codex,
+                       space_from: cx.Codex | None) -> dict:
+    """A sister derived with no --encoder: the [encoder] of the collection
+    whose SPACE she is in — her mother's, or the `--space-from` source's —
+    from its file; that endpoint already serves her space. `{}` when she is
+    in neither's (the file then names none, and says so)."""
+    for source in (mother, space_from):
+        if source is None or source.space_id != sister.space_id:
+            continue
+        path = _held_file(root, col.name_of(root, source.collection_id))
+        if not path.is_file():
+            continue
+        enc = tomllib.loads(path.read_text(encoding="utf-8")).get("encoder") or {}
+        if enc.get("url"):
+            return {"encoder": enc["url"], "query_encoder": enc.get("query_url"),
+                    "api": enc.get("api") or "openai", "embed_model": enc.get("embed_model"),
+                    "query_model": enc.get("query_model")}
+    print(f"note: {sister.collection_id[:23]}… is in a space no collection held here "
+          f"serves, and no --encoder was given: its file names no [encoder] and is "
+          f"refused until one is added (07 §7.8)", file=sys.stderr)
+    return {}
 
 
 def _acceptance(mother: cx.Codex, sister: cx.Codex) -> None:
@@ -625,7 +748,10 @@ def _acceptance(mother: cx.Codex, sister: cx.Codex) -> None:
           file=sys.stderr)
     print(f"  {consequence}", file=sys.stderr)
     if sister.credits:
-        print("  credits inherited: " + ", ".join(c.archive for c in sister.credits),
+        # every credit names itself: an archive by its id, the corpus and the
+        # community entries (whose `archive` is null, 02 §2.7) by their kind
+        print("  credits inherited: " + ", ".join(c.archive or f"{c.kind} ({c.producer})"
+                                                  for c in sister.credits),
               file=sys.stderr)
     else:
         print("  credits: none â she owes nothing and starts from zero",
@@ -844,6 +970,64 @@ def cmd_dev_migrate_schema(a) -> int:
     for c in targets:
         out[c.name] = migrate_manifest.run(Path(c.manifest_path), c.plugin, a.dry_run, not a.no_backup)
     _print(out)
+    return 0
+
+
+def cmd_dev_carry(a) -> int:
+    """`louise dev carry <from> <to> [--copy] [--keep producer:<archive>] --yes`
+    (07 §7.3; docs/notes/v5-migration.md G1, G2; amendment A1): the source's
+    manifest, text index and vector table into a new collection with the same
+    records, with both collections' write locks held. A dry run without --yes.
+    Writes; never runs on its own."""
+    from app.hold import carry as carry_mod
+    from_name, _ = col.resolve(a.root, a.source)
+    to_name, _ = col.resolve(a.root, a.target)
+    producer = carry_mod.producer_of(a.keep) if a.keep else None
+    if a.yes:
+        # one writer per collection (07 §7.7), both of them, in name order
+        for name in sorted({from_name, to_name}):
+            _take_write_lock(a.root, name, "louise dev carry", exit_code=2)
+    say = lambda m: print(m, file=sys.stderr)              # noqa: E731
+    out = {"carry": carry_mod.carry(a.root, from_name, to_name, copy=a.copy,
+                                    apply=a.yes, log=say)}
+    if producer and a.yes:
+        out["keep"] = carry_mod.keep_producer(a.root, to_name, producer, log=say)
+    elif producer:
+        say(f"[carry] then: keep only {producer}'s vectors in {to_name} (--yes)")
+    _print(out)
+    return 0
+
+
+def cmd_embedder_run(a) -> int:
+    """`hold embedder run --encoder URL [--api A] [--model M] [--query] [--pair]`
+    (07 §7.3; docs/notes/v5-migration.md G5): the run the endpoint states now
+    — its id and what it stands for (engine, weights, driver), verified
+    against the id — as JSON, for writing a recipe's `space.encoder`."""
+    import httpx
+
+    from app import collections as collections_mod, run_check
+    model = a.model or collections_mod.model_named_by(a.encoder)
+    if not model:
+        raise CodexError(f"--encoder {a.encoder} names no model (…/upstream/<model>): name "
+                         f"it with --model (07 §7.8)")
+    if a.query and a.pair:
+        raise CodexError("--query and --pair: a query is one text in every space; a text "
+                         "pair is a document's form (09 §9.3)")
+    recipe = collections_mod.EmbedRecipe(url=a.encoder, api=check_api(a.api), model=model,
+                                         dtype="f32", ctx=8192, query_model=model)
+    try:
+        stated = run_check.stated_run(recipe, query=a.query,
+                                      probe_item=run_check.PAIR_PROBE if a.pair
+                                      else run_check.PROBE)
+    except CodexError:
+        raise
+    except (ConnectionError, httpx.TransportError) as e:
+        print(f"louise: deferred: {a.encoder}: {e}", file=sys.stderr)
+        return 3
+    except Exception as e:                              # noqa: BLE001
+        raise CodexError(f"{a.encoder}: {type(e).__name__}: {e}") from e
+    _print({"run": stated.run_id, "engine": stated.engine, "weights": stated.weights,
+            "driver": stated.driver})
     return 0
 
 
@@ -1485,7 +1669,18 @@ def cmd_snapshot_create(a) -> int:
     _take_write_lock(a.root, ref_name, "hold snapshot create")
     equivalence.require_reference(a.root, ref_name, ref_codex,
                                   use="create its snapshots")
-    snap = sn.create(a.root, a.collection, snapshot_id=a.snapshot_id)
+    snapshot_id = a.snapshot_id
+    if getattr(a, "shards_from", None):
+        # G3 (docs/notes/v5-migration.md): the parts are another collection's
+        # byte-identical ones, linked and checked, its staging written as a
+        # build would leave it; the snapshot below is the ordinary one, of the
+        # source snapshot's period unless --snapshot names another
+        from app.hold import seed
+        source, source_snapshot = seed.split_ref(a.shards_from)
+        seeded = seed.seed_shards(a.root, ref_name, source, from_snapshot=source_snapshot,
+                                  log=lambda m: print(m, file=sys.stderr))
+        snapshot_id = snapshot_id or seeded["snapshot_id"]
+    snap = sn.create(a.root, a.collection, snapshot_id=snapshot_id)
     print(snap.hash)
     # 09 §9.4's sidecar, and 02 §2.2's meaning: "a signature says *I
     # computed this too*" — so it is written where the snapshot was
@@ -3173,6 +3368,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--work", help="JSON file: tokens, per")
     p.add_argument("--archives", nargs="*", default=None,
                    help="archive ids a sister in a new space draws on")
+    p.add_argument("--encoder", default=None, metavar="URL",
+                   help="this node's endpoint for her encoder: a sister in a new space embeds "
+                        "her own reference there, and her file names it (default: the "
+                        "[encoder] of the collection whose space she is in)")
+    p.add_argument("--query-encoder", default=None, metavar="URL",
+                   help="a bi-encoder's query side: its endpoint (09 §9.12)")
+    _encoder_key_args(p)
+    p.add_argument("--calibration-set", default=None, metavar="FILE",
+                   help="a PAIR space's calibration set, when she embeds a reference of her "
+                        "own in one (09 §9.12)")
+    p.add_argument("--name", default=None, help="her local name (default: the plugin's, 07 §7.8)")
     p.add_argument("--accept", action="store_true", required=True,
                    help="creating a sister is an acceptance (02 Â§2.7)")
     p.set_defaults(fn=cmd_derive)
@@ -3381,6 +3587,12 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--snapshot", dest="snapshot_id",
                        help="the id; by default the period that closed, "
                             "from the Codex's clock")
+        p.add_argument("--shards-from", dest="shards_from", default=None,
+                       metavar="FROM[:SNAPSHOT]",
+                       help="seed the parts from another collection's byte-identical ones "
+                            "(its latest snapshot, or the one named), linked and checked; "
+                            "refused unless every record-deciding field agrees. The "
+                            "snapshot is then the source's period unless --snapshot names one")
 
     def args_collection(p):
         root_arg(p); p.add_argument("collection")
@@ -3445,6 +3657,15 @@ def build_parser() -> argparse.ArgumentParser:
                         "tools/build_pair_calibration_set.py drew, embedded as pairs "
                         "(09 §9.12); not with --set")
     p.set_defaults(fn=cmd_embedder_calibrate)
+
+    p = everbs.add_parser("run", help="the run an endpoint states now — engine, weights, driver, "
+                                      "run id — as JSON, for writing a recipe")
+    p.add_argument("--encoder", required=True, metavar="URL")
+    p.add_argument("--api", default=None, choices=("openai", "ollama", "vega"))
+    p.add_argument("--model", default=None, help="the model asked (required where the URL names none)")
+    p.add_argument("--query", action="store_true", help="the query side's run")
+    p.add_argument("--pair", action="store_true", help="probe in the pair form (09 §9.3)")
+    p.set_defaults(fn=cmd_embedder_run)
 
     p = everbs.add_parser("rebaseline",
                           help="accept a changed backend: re-record the probe baseline "
@@ -3631,6 +3852,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", dest="dry_run", help="report the changes, write nothing")
     p.add_argument("--no-backup", action="store_true", dest="no_backup", help="no .bak copy of the file first")
     p.set_defaults(fn=cmd_dev_migrate_schema)
+    p = dverbs.add_parser("carry", help="a collection's manifest, text index and vector table into a new "
+                                        "collection with the same records (amendment A1); writes "
+                                        "only with --yes (both collections' locks)")
+    root_arg(p)
+    p.add_argument("source", metavar="from"); p.add_argument("target", metavar="to")
+    p.add_argument("--copy", action="store_true",
+                   help="copy (a reflink where the filesystem has one) instead of moving")
+    p.add_argument("--keep", default=None, metavar="producer:ARCHIVE",
+                   help="then keep only the vectors that archive produced; the rest are "
+                        "dropped and their documents embedded again")
+    p.add_argument("--yes", action="store_true", help="do it; without it, the checks and the plan")
+    p.set_defaults(fn=cmd_dev_carry)
     p = dverbs.add_parser("genesis", help="one-shot repairs of an archive's ledger; writes")
     gverbs = p.add_subparsers(dest="what", required=True)
     p = gverbs.add_parser("recheck", help="reopen final shards that still have documents the archive "

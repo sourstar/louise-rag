@@ -410,6 +410,19 @@ re-issued since — with the refusal recorded, never counted as a
 failure. The `collection_id` and `snapshot_id` in the header are
 provenance: they say where the work was done, and gate nothing.
 
+A vector table CARRIED is not a bundle, and none of this ladder runs on
+it (amendment A1, *amended 2026-10-09*, docs/notes/v5-migration.md;
+02 §2.4). This peer's own table crosses into a collection with the same
+records whose space differs only by engine, or by a declared input form
+equal to the one its vectors were produced in, and it is used only once
+`vectors-sample` (§3.2) under a validated run (§3.3) passes at the
+TARGET's tolerance. That attestation is the proof the ladder's T3 would
+give a stranger's bundle, over the whole table's sample rather than one
+bundle's: the vectors reproduce under the target's function. Rows that
+another producer contributed keep their provenance (`chunk_verification`)
+and verify-on-use applies to them as before; rows whose form the target
+does not declare are dropped, not carried (`louise dev carry --keep`).
+
 One further refusal, and it is about attribution rather than
 correctness. A collection declares at creation which pre-embedded
 archives it draws on, in `credits` (02 §2.7). The refusal is on the
