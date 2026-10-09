@@ -81,7 +81,7 @@ docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv $LIVE_MOUNTS 
 from app import collections as c
 names = sorted(x.name for x in c.load_all())
 print('load_all:', names)
-print('refusals:', {k: str(v)[:160] for k, v in c.refusals().items()})
+print('refusals:', [str(r)[:200] for r in c.refusals()])
 # the three the node has held since September, at least — a deposit
 # collection (16f) is a fourth, and LocalAGI's agents will add more
 assert {'gutenberg', 'pubmed', 'wikipedia'} <= set(names), names
