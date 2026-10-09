@@ -237,3 +237,23 @@ def test_each_mixed_group_is_searched_in_every_language_it_holds(isolated_config
     retrieval._search_one_collection(db.connect(c), c, "balena lang:all", 5, "fts", True,
                                      set())
     assert sorted(ran) == ["eo:balena", "la:balena"]
+
+
+@pytest.mark.parametrize("model", ["louise-translate-madlad", ""])
+def test_the_completion_names_translate_model_only_when_set(monkeypatch, model):
+    """VeGa switch-over (2026-10-09): LocalAI serves many models from one
+    address and picks the one in the body, so TRANSLATE_MODEL is sent when
+    set; unset, no model is named (a URL that names its model, RAGE's)."""
+    seen = {}
+
+    def post(url, json=None, timeout=None, headers=None):
+        seen["url"], seen["body"] = url, json
+        return _Resp({"choices": [{"text": _json.dumps({"ok": True})}]})
+
+    monkeypatch.setattr(config, "TRANSLATE_URL", "http://runner")
+    monkeypatch.setattr(config, "TRANSLATE_MODEL", model)
+    monkeypatch.setattr(mt.httpx, "post", post)
+    assert mt._completion({"languages": True}, 1.0) == {"ok": True}
+    assert seen["url"] == "http://runner/v1/completions"
+    assert seen["body"].get("model") == (model or None)
+    assert ("model" in seen["body"]) == bool(model)

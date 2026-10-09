@@ -68,6 +68,11 @@ VEGA_URL = os.getenv("VEGA_URL", "").rstrip("/")
 # every query translation and every translation on the Ask page. Unset, the
 # chat model translates, slowly (operator, 2026-09-18).
 TRANSLATE_URL = os.getenv("TRANSLATE_URL", "").rstrip("/")
+# The model TRANSLATE_URL's server is asked for, in the request body: a runner
+# that serves many models from one address (LocalAI) picks it from there
+# (VeGa switch-over, 2026-10-09; as CHAT_MODEL for CHAT_URL). Unset, no model
+# is named — a server whose URL names the model (RAGE's /upstream/madlad).
+TRANSLATE_MODEL = os.getenv("TRANSLATE_MODEL", "")
 # The GPU probe (app/gpu_probe.py, the `gpu-probe` service): the System
 # page's GPU panel asks it for each card's memory and every process's
 # share. Unset, the panel says so and nothing else changes.

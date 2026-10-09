@@ -26,13 +26,18 @@ _KEY = re.compile(r'^(\s*)([A-Za-z_]+)(\s*=\s*)("[^"]*")(.*)$')
 
 def switch(text: str, embed: str, query: str, rerank: str | None) -> tuple[str, list[str]]:
     want = {
-        "encoder": {"url": f"{LOCALAI}/v1/embeddings", "api": "vega",
+        # the encoder's url is the SERVER: the client appends /v1/embeddings
+        # (2026-10-09: written with the path, every request 404'd and 4,295
+        # gutenberg documents took an error). The reranker's url is the endpoint.
+        "encoder": {"url": LOCALAI, "api": "vega",
                     "embed_model": embed, "query_model": query},
         "reranker": ({"url": f"{LOCALAI}/v1/rerank", "api": "jina", "rerank_model": rerank}
                      if rerank else {}),
     }
     out, changed, block = [], [], ""
     seen: dict[str, set[str]] = {"encoder": set(), "reranker": set()}
+    url_at: dict[str, int] = {}        # where a missing key goes: after the block's url
+    eol = "\r\n" if "\r\n" in text else "\n"
     for line in text.splitlines(keepends=True):
         h = _HEADER.match(line)
         if h:
@@ -51,11 +56,22 @@ def switch(text: str, embed: str, query: str, rerank: str | None) -> tuple[str, 
                 if new != k.group(4):
                     changed.append(f"[{block}] {key} {k.group(4)} -> {new}")
                 line = f"{k.group(1)}{key}{k.group(3)}{new}{k.group(5)}{end}"
+                if key == "url":
+                    url_at[block] = len(out)
         out.append(line)
-    for b, keys in want.items():
-        missing = set(keys) - seen[b]
-        if missing:
-            raise SystemExit(f"[{b}] lacks {sorted(missing)}: not switched")
+    # a key the file leaves to its default (`api` is "openai" when absent) is
+    # written after the block's url; a block with no url is not switched
+    for b in ("reranker", "encoder"):                  # later block first: indices hold
+        missing = [k for k in want[b] if k not in seen[b]]
+        if not missing:
+            continue
+        if b not in url_at:
+            raise SystemExit(f"[{b}] has no url line: not switched")
+        at = url_at[b] + 1
+        for key in missing:
+            out.insert(at, f'{key} = "{want[b][key]}"{eol}')
+            changed.append(f"[{b}] {key} added: {want[b][key]!r}")
+            at += 1
     return "".join(out), changed
 
 

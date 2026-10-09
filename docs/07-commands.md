@@ -872,7 +872,7 @@ one home.
 
 | tier | carries | changes by |
 |---|---|---|
-| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `NODE_PUBLIC_KEY_PATH`, `ADMIN_TOKEN_FILE`, `DEPOSIT_TOKEN_FILE`, `GIT_PRIVATE_KEY_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL`, `VEGA_URL` | restart |
+| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `NODE_PUBLIC_KEY_PATH`, `ADMIN_TOKEN_FILE`, `DEPOSIT_TOKEN_FILE`, `GIT_PRIVATE_KEY_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `TRANSLATE_MODEL` (the model TRANSLATE_URL's server is asked for, as `CHAT_MODEL` is for chat; amended 2026-10-09), `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL`, `VEGA_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
 | **state database** — runtime overrides | the node's mode — `node pause`, `--seed-only`, `--acquire-only` — in force until `resume` | the commands; a restart keeps them |
 

@@ -55,8 +55,10 @@ def health_url() -> str:
 def _completion(request: dict, timeout: float, headers: dict[str, str] | None = None):
     """One request in the completion shape: `request` as the prompt, the
     answer read back from the completion's text."""
-    r = httpx.post(f"{config.TRANSLATE_URL}/v1/completions",
-                   json={"prompt": json.dumps(request, ensure_ascii=False)},
+    body = {"prompt": json.dumps(request, ensure_ascii=False)}
+    if config.TRANSLATE_MODEL:
+        body["model"] = config.TRANSLATE_MODEL
+    r = httpx.post(f"{config.TRANSLATE_URL}/v1/completions", json=body,
                    timeout=timeout, headers=headers or {})
     r.raise_for_status()
     return json.loads(r.json()["choices"][0]["text"])
