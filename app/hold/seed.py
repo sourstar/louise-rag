@@ -260,3 +260,37 @@ def seed_shards(root, to_ref: str, from_ref: str, *, from_snapshot: str | None =
         f"{counts['linked']} linked, {counts['copied']} copied, "
         f"{counts['present']} already in place; build database {db}")
     return out
+
+
+#: what a seeded part must reproduce of its source part, beyond its bytes
+SAME = ("root", "records_root", "first_id", "last_id", "records", "chunks", "chunks_root",
+        "tokens", "bytes")
+
+
+def same_parts_or_withdraw(root, to_name: str, snap, from_ref: str,
+                           from_snapshot: str | None = None) -> list[str]:
+    """After `snapshot create --shards-from`: every part of the new snapshot
+    must equal the source snapshot's (03 §3.4, amended 2026-10-09 — seeding
+    builds nothing, so what this image computed over the parts must be what
+    the reference computed). Returns the differences; when there are any,
+    the new snapshot's files are removed, so nothing names a cut this image
+    alone produced."""
+    from . import collection as col, drag
+    root = Path(root)
+    from_name, _ = col.resolve(root, from_ref)
+    src = latest_snapshot(root, from_name, from_snapshot or snap.snapshot_id)
+    have = {(s.slice, s.n): s for s in snap.shards}
+    want = {(s.slice, s.n): s for s in src.shards}
+    bad = [f"{k[0]}/{k[1]}: {'missing' if k not in have else 'extra'}"
+           for k in sorted(set(have) ^ set(want))]
+    for k in sorted(set(have) & set(want)):
+        for f in SAME:
+            if getattr(have[k], f) != getattr(want[k], f):
+                bad.append(f"{k[0]}/{k[1]}: {f} {getattr(have[k], f)!r} != {getattr(want[k], f)!r}")
+    if bad:
+        d = col.drag_of(root, to_name)
+        for p in (d / drag.snapshot_path(snap.snapshot_id),
+                  (d / drag.snapshot_path(snap.snapshot_id)).with_suffix(".sig.json")):
+            if p.is_file():
+                p.unlink()
+    return bad

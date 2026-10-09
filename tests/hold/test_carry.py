@@ -404,3 +404,49 @@ def test_the_command_carries_then_keeps(pair, capsys):
                         "--keep", "producer:medcpt-pubmed"]) == 0
     printed = json.loads(capsys.readouterr().out)
     assert printed["keep"]["kept"] == 1 and printed["keep"]["verified"] is True
+
+
+# ---- 03 §3.4 amended 2026-10-09: seeding builds no record --------------------
+
+def test_seeding_needs_no_equivalence_proof_of_this_image(pair, monkeypatch):
+    """Live, gutenberg6: the equivalence proof needs a snapshot, and the
+    snapshot needed the proof. A seeded snapshot is the reference's parts,
+    so an image that is neither the reference nor proven equivalent may
+    freeze it — and what it computes must equal the source's parts."""
+    from app import louise
+    root, _old_codex, new = pair
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", "sha256:" + "e" * 64)   # another image
+    assert louise.main(["hold", "snapshot", "create", "new", "--root", str(root),
+                        "--shards-from", "old:2026-08"]) == 0
+    snap = sn.load(root / "new" / "drag" / "snapshots" / "2026-08.json")
+    old_snap = sn.load(root / "old" / "drag" / "snapshots" / "2026-08.json")
+    assert [(s.slice, s.n, s.root, s.chunks_root) for s in snap.shards] == \
+        [(s.slice, s.n, s.root, s.chunks_root) for s in old_snap.shards]
+
+
+def test_without_seeding_the_image_must_still_be_the_reference(pair, monkeypatch):
+    from app import louise
+    root, _old_codex, _new = pair
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", "sha256:" + "e" * 64)
+    assert louise.main(["hold", "snapshot", "create", "old", "--root", str(root),
+                        "--snapshot", "2026-09"]) != 0
+    assert not (root / "old" / "drag" / "snapshots" / "2026-09.json").exists()
+
+
+def test_a_seeded_snapshot_whose_chunks_differ_is_withdrawn(pair, monkeypatch, capsys):
+    """An image that cuts the chunks otherwise computes another chunks_root:
+    the snapshot it froze is removed and the command fails."""
+    from dataclasses import replace
+    from app import louise
+    root, _old_codex, _new = pair
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", "sha256:" + "e" * 64)
+    real = sn.create
+
+    def other_cut(*a, **k):
+        s = real(*a, **k)
+        return replace(s, shards=tuple(replace(x, chunks_root="sha256:" + "0" * 64) for x in s.shards))
+    monkeypatch.setattr(sn, "create", other_cut)
+    assert louise.main(["hold", "snapshot", "create", "new", "--root", str(root),
+                        "--shards-from", "old:2026-08"]) == 1
+    assert "withdrawn" in capsys.readouterr().err
+    assert not (root / "new" / "drag" / "snapshots" / "2026-08.json").exists()

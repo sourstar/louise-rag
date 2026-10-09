@@ -1667,10 +1667,20 @@ def cmd_snapshot_create(a) -> int:
     from app.hold import collection as c, equivalence, snapshot as sn
     ref_name, ref_codex = c.resolve(a.root, a.collection)
     _take_write_lock(a.root, ref_name, "hold snapshot create")
-    equivalence.require_reference(a.root, ref_name, ref_codex,
-                                  use="create its snapshots")
+    seeding = bool(getattr(a, "shards_from", None))
+    if not seeding:
+        equivalence.require_reference(a.root, ref_name, ref_codex,
+                                      use="create its snapshots")
+    # SEEDING BUILDS NO RECORD (03 §3.4, amended 2026-10-09): the parts are
+    # the source's own, byte for byte (pieces roots checked), and the source
+    # names the SAME reference image (`refuse_unless_same_records`), so they
+    # are that image's work, not this one's. What this image does compute —
+    # each part's records_root and chunks_root — must then equal the source
+    # snapshot's, or the snapshot is withdrawn: an image that cuts the chunks
+    # differently is caught here, where the equivalence proof would have
+    # caught it. (Live: gutenberg6, whose check needs a snapshot first.)
     snapshot_id = a.snapshot_id
-    if getattr(a, "shards_from", None):
+    if seeding:
         # G3 (docs/notes/v5-migration.md): the parts are another collection's
         # byte-identical ones, linked and checked, its staging written as a
         # build would leave it; the snapshot below is the ordinary one, of the
@@ -1681,6 +1691,13 @@ def cmd_snapshot_create(a) -> int:
                                   log=lambda m: print(m, file=sys.stderr))
         snapshot_id = snapshot_id or seeded["snapshot_id"]
     snap = sn.create(a.root, a.collection, snapshot_id=snapshot_id)
+    if seeding:
+        bad = seed.same_parts_or_withdraw(a.root, ref_name, snap, source, source_snapshot)
+        if bad:
+            print(f"louise: {ref_name}: the seeded snapshot does not reproduce "
+                  f"{source}'s parts under this image, so it is withdrawn: "
+                  + "; ".join(bad[:5]), file=sys.stderr)
+            return 1
     print(snap.hash)
     # 09 §9.4's sidecar, and 02 §2.2's meaning: "a signature says *I
     # computed this too*" — so it is written where the snapshot was

@@ -382,6 +382,15 @@ peer searches and shares that collection and does not
 build its records, create its snapshots or contribute vectors to it
 until its own `records-vs-origin` and `chunks` pass under the image it
 runs; `hold collection show` says so and names the check to run.
+*Amended 2026-10-09 (RULE 1):* a snapshot SEEDED from another collection's
+byte-identical parts (`hold snapshot create --shards-from`), whose Codex
+names the same reference image and the same record-deciding fields, builds
+no record: the parts are the reference's work. Such a peer may freeze it,
+on one condition checked at once — every part's `records_root`,
+`chunks_root` and counts as this image computes them equal the source
+snapshot's; otherwise the snapshot is withdrawn. (The equivalence proof
+needs a snapshot to draw from; a new collection carrying its records had
+none.)
 
 For encoders the word is **compliant**, not equivalent, because the
 statement is statistical: an engine that passes calibration may
