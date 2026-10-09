@@ -19,7 +19,9 @@ import re
 import sys
 from pathlib import Path
 
-_HEADER = re.compile(r"^\s*\[([^\]]+)\]\s*(#.*)?$")
+# [name] and [[name]] alike: an array of tables is a block of its own
+# (switch_collection.py, 2026-10-09, read `[[sources]]` as part of [encoder])
+_HEADER = re.compile(r"^\s*(\[\[|\[)([^\[\]]+)(\]\]|\])\s*(#.*)?$")
 _KEY = re.compile(r'^(\s*)(url|model)(\s*=\s*)"([^"]*)"(.*)$')
 
 
@@ -35,7 +37,7 @@ def align(text: str) -> tuple[str, list[str]]:
     for i, line in enumerate(lines):
         h = _HEADER.match(line)
         if h:
-            block = h.group(1).strip()
+            block = ("[]" if h.group(1) == "[[" else "") + h.group(2).strip()
         blocks[i] = block
     urls: dict[str, str] = {}
     for i, line in enumerate(lines):
