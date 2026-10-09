@@ -241,7 +241,7 @@ def test_create_space_from_a_version_6_source(tmp_path, monkeypatch):
     source = col.create(root, _with(BACKEND, version=6), name="pubmed-vega")
     monkeypatch.setattr(node_keys, "load_signing_key", lambda: KEY)
     monkeypatch.setattr(louise, "_embed_for_recipe",
-                        lambda space, url, model=None:
+                        lambda space, url, model=None, **kw:
                         fake_query_embed if "query" in url else fake_embed)
     codex, _ = louise.create_from(root, "gutenberg",
                                   recipe(cleaning_version=source.cleaning_version),

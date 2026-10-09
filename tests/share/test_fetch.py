@@ -322,3 +322,33 @@ def test_sidecars_merge_by_union_and_a_bad_signature_is_dropped():
     assert fetch.merge_sidecars(a, {**b, "snapshot": "sha256:" + "8" * 64}, h)["signatures"] == a["signatures"], \
         "a sidecar of another snapshot has nothing to say about this one"
     assert fetch.merge_sidecars(None, None, h)["signatures"] == []
+
+
+def test_an_encoder_naming_no_model_is_refused_before_anything_is_pulled(node, fetcher, monkeypatch, capsys):  # noqa: F811
+    """07 §7.8 (amended 2026-10-09): `--encoder` on LocalAI names no model,
+    so `--embed-model` must; never the space's label in its place. Refused
+    before a peer is asked; given, the keys reach the file."""
+    from app import louise
+    asked = []
+    monkeypatch.setattr(fetch, "fetch", lambda root, ref, **kw: asked.append(kw) or {})
+    assert louise.main(["share", "fetch", CID_A, "--root", str(fetcher), "--from", SHARER,
+                        "--encoder", "http://localai:8080"]) == 2
+    assert "--embed-model" in capsys.readouterr().err and asked == []
+    monkeypatch.undo()
+    from app.hold.codex import CodexError
+    with pytest.raises(CodexError, match="--embed-model"):
+        fetch.fetch(fetcher, CID_A, encoder="http://localai:8080", key=KEY, own_key=OUR_KEY)
+
+
+def test_the_held_file_of_a_fetch_carries_the_encoder_keys(node, fetcher):  # noqa: F811
+    import tomllib
+    from app import louise
+    from tests.hold.conftest import a_root, pubmed
+    codex = a_root(fetcher, pubmed())
+    held = louise._write_held_file(fetcher, codex, "http://localai:8080", source="drag",
+                                   api="vega", embed_model="vega-medcpt-article",
+                                   query_model="vega-medcpt-query")
+    with open(held, "rb") as f:
+        enc = tomllib.load(f)["encoder"]
+    assert enc == {"url": "http://localai:8080", "api": "vega",
+                   "embed_model": "vega-medcpt-article", "query_model": "vega-medcpt-query"}

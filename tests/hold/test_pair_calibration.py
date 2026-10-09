@@ -305,7 +305,7 @@ def test_create_takes_the_pairs_from_their_file_or_from_the_space_it_copies(tmp_
     root = tmp_path / "collections"
     monkeypatch.setattr(node_keys, "load_signing_key", lambda *a, **k: KEY)
     monkeypatch.setattr(louise, "_embed_for_recipe",
-                        lambda space, url, model=None: fake_query_embed if "query" in url else pair_embed)
+                        lambda space, url, model=None, **kw: fake_query_embed if "query" in url else pair_embed)
     f = tmp_path / "pairs.jsonl"
     f.write_bytes(PAIR_BYTES)
     urls = {"encoder": "http://enc.invalid/upstream/article",

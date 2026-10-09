@@ -62,12 +62,14 @@ one.
 
 ```
 louise hold
-  collection  create <plugin> --recipe FILE --encoder URL [--space-from CODEX] [--calibration-set FILE]
+  collection  create <plugin> --recipe FILE --encoder URL [--query-encoder URL] [--api A] [--embed-model M] [--query-model M]
+              [--space-from CODEX] [--calibration-set FILE]
+                                                                       the model flags: required where a URL names no model (§7.8, amended 2026-10-09)
                                                                        write a Codex; print its id. A pair space (09 §9.3) names its calibration set's file,
                                                                        the pairs `tools/build_pair_calibration_set.py` drew from the collection's records
                                                                        (09 §9.12); `--space-from` a pair space reads it from that space's member
                                                                        (amended 2026-10-08)
-              create deposit --name N [--encoder URL] [--space-from CODEX | --space FILE]
+              create deposit --name N [--encoder URL [--api A] [--embed-model M] [--query-model M]] [--space-from CODEX | --space FILE]
                                                                        a deposit collection (02 §2.9): no recipe; the node's deposit encoder unless one is named
               derive <codex> [--space-from CODEX | --space FILE | --encoder-weights D --engine FILE] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
                                                                        a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
@@ -146,6 +148,7 @@ louise share
   <collection> [--slices …] [--kinds …] [--stop]                       serve what you hold — and announce it
   fetch <collection> [--slice …] [--kinds …] [--snapshot ID]           take a portion
         [--from ADDRESS] [--dht] [--encoder URL] [--name N]            … from a peer given by hand, or found
+        [--api A] [--embed-model M] [--query-model M]                  … the rest of the file's [encoder] (§7.8, amended 2026-10-09)
   contribute [<collection>] [--once] [--interval S]                    vectors build, under rendezvous, shared
   attest <collection> [--checks …]                                     check, shared
   peers show                                                           who this peer knows, what they hold
@@ -1011,18 +1014,27 @@ interval = 60                                  # minutes
 The encoder endpoint is the collection's `[encoder]` and nothing else: a
 node has no default encoder, and a file that names none is refused
 (operator, 2026-09-18). `hold collection create` writes the endpoint it
-was given (`--encoder`) into the file it creates, with `embed_model` and
-`query_model`: the model each URL names, else the space's encoder label
-for a symmetric encoder; a `--query-encoder` whose URL names no model is
-refused before anything is created (amended 2026-10-08). A deposit
+was given (`--encoder`, `--query-encoder`) into the file it creates, with
+`api` (`--api`, openai unless given) and `embed_model` and `query_model`:
+the model each side is given (`--embed-model`, `--query-model`), else the
+model its URL names; a symmetric encoder's query side is the document
+side's model. A URL that names no model (LocalAI's one address, `vega`)
+and no flag naming it is refused before anything is created — never
+answered with the space's encoder label, which names no model any server
+is asked for — and so is a flag that is not the model its URL names. The
+calibration set is embedded on that `api` with those models. The flags
+are node-local, beside `--encoder`, and never in the recipe, whose
+`space` block is hashed into the Codex; the Library's create route takes
+them as `api`, `embed_model` and `query_model`, and `share fetch
+--encoder` takes the same three flags (amended 2026-10-09; 2026-10-08
+fell back to the label). A deposit
 collection's file (02 §2.9) takes `[deposit]`'s `encoder`, `api`,
 `embed_model` and `query_model` — the models, where `[deposit]` names
-none, from the URL; a URL that names no model is refused before anything
-is created, never answered with the encoder's label, which no server is
-asked for. `[deposit]` is checked at load as an `[encoder]` is: `api` one
-of the three, both models with `vega`, a model the URL names agreeing
-with it. A creator naming another endpoint (`--encoder`) gets the default
-`api` and the model its URL names (amended 2026-10-09). A file whose
+none, from the URL, under the same refusal. `[deposit]` is checked at
+load as an `[encoder]` is: `api` one of the three, both models with
+`vega`, a model the URL names agreeing with it. A creator naming another
+endpoint (`--encoder`) names its `--api` and models with the flags, else
+gets the default `api` and the model its URL names (amended 2026-10-09). A file whose
 `[encoder]` or `[reranker]` lacks its model keys, still has `model`, or
 names a model its URL does not is refused for that collection, its
 reason where refusals are shown; the node keeps the others. The reranker resolves

@@ -426,7 +426,8 @@ def held_snapshots(root: Path, collection_id: str) -> dict[str, str]:
 
 
 def hold(root: Path, chain: list[tuple[cx.Codex, bytes]], pulled: list[Pulled], *,
-         name: str | None = None, encoder: str | None = None) -> dict[str, Any]:
+         name: str | None = None, encoder: str | None = None,
+         encoder_keys: dict[str, Any] | None = None) -> dict[str, Any]:
     """The Codex into the drag (validated against its mother from the
     chain), the chain's other Codexes under state/chain/, every signed
     snapshot into the drag with its sidecar merged by union, an unsigned
@@ -475,7 +476,8 @@ def hold(root: Path, chain: list[tuple[cx.Codex, bytes]], pulled: list[Pulled], 
         if not sig_target.is_file() or sig_target.read_bytes() != data:
             _write_whole(sig_target, data)
     from app import louise
-    held_file = louise._write_held_file(root, head, encoder, source="drag")
+    held_file = louise._write_held_file(root, head, encoder, source="drag",
+                                        **(encoder_keys or {}))
     newest = pulled[0]
     return {
         "collection_id": head.collection_id, "name": cname, "chain": len(chain),
@@ -490,14 +492,21 @@ def hold(root: Path, chain: list[tuple[cx.Codex, bytes]], pulled: list[Pulled], 
 
 def fetch(root: Path, ref: str, *, snapshot_id: str | None = None,
           from_address: str | None = None, encoder: str | None = None,
+          encoder_keys: dict[str, Any] | None = None,
           name: str | None = None, client=None, stop=None, session=None,
           now: float | None = None, log: Callable[[str], None] | None = None,
           key=None, own_key: str | None = None) -> dict[str, Any]:
     """`share fetch <collection>` as far as the first brick goes: the
     pre-acknowledgement set — codex.json and snapshots/* — pulled from the
     first peer that answers honestly, and the collection held. `ref` is a
-    collection id or a lineage id."""
+    collection id or a lineage id. `encoder_keys`: the file's `[encoder]`
+    api, embed_model and query_model beside `encoder` (07 §7.8, amended
+    2026-10-09), checked before anything is pulled."""
     now = time.time() if now is None else now
+    if encoder:
+        from app import louise
+        louise.model_keys(encoder, embed_model=(encoder_keys or {}).get("embed_model"),
+                          query_model=(encoder_keys or {}).get("query_model"))
     if key is None or own_key is None:
         from app import identity
         from app.bundles import keys as node_keys
@@ -544,7 +553,8 @@ def fetch(root: Path, ref: str, *, snapshot_id: str | None = None,
                 if log and not isinstance(e, NotHeld):
                     log(f"share fetch: {e}"[:500])
                 continue
-            out = hold(root, chain, pulled, name=name, encoder=encoder)
+            out = hold(root, chain, pulled, name=name, encoder=encoder,
+                       encoder_keys=encoder_keys)
             out["from"] = source.address
             out["tried"] = tried
             out["pre_ack"] = True

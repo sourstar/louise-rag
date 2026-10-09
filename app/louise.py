@@ -104,15 +104,25 @@ def cmd_create(a) -> int:
             spec["version"] = (cx.written_version(cx.space_from_dict(spec["space"]),
                                                   cx.CODEX_VERSION)
                                if isinstance(spec.get("space"), dict) else cx.CODEX_VERSION)
+        keys = {"api": check_api(getattr(a, "api", None)),
+                "embed_model": getattr(a, "embed_model", None),
+                "query_model": getattr(a, "query_model", None)}
+        if a.encoder:                      # refused before anything is created
+            model_keys(a.encoder, embed_model=keys["embed_model"],
+                       query_model=keys["query_model"])
         codex = col.create(a.root, cx.from_dict(spec))
-        print(f"held: {_write_held_file(a.root, codex, a.encoder)}", file=sys.stderr)
+        print(f"held: {_write_held_file(a.root, codex, a.encoder, **keys)}",
+              file=sys.stderr)
         print(codex.collection_id)
         return 0
     codex, held = create_from(a.root, a.plugin, _recipe(a.recipe),
                               platform_image=a.platform_image,
                               space_from=a.space_from, encoder=a.encoder,
                               query_encoder=a.query_encoder, name=a.name,
-                              calibration_set=getattr(a, "calibration_set", None))
+                              calibration_set=getattr(a, "calibration_set", None),
+                              api=getattr(a, "api", None),
+                              embed_model=getattr(a, "embed_model", None),
+                              query_model=getattr(a, "query_model", None))
     print(f"held: {held}", file=sys.stderr)
     print(codex.collection_id)
     return 0
@@ -120,11 +130,13 @@ def cmd_create(a) -> int:
 
 def create_deposit(root, name: str, *, platform_image: str | None = None,
                    encoder: str | None = None, space_from: str | None = None,
-                   space: str | None = None):
+                   space: str | None = None, api: str | None = None,
+                   embed_model: str | None = None, query_model: str | None = None):
     """`hold collection create deposit --name N` (07 §7.3; 02 §2.9) — for the
     command line and for the LocalAGI route alike. Whatever the creator does
-    not name comes from `platform.toml`'s `[deposit]`. Returns the Codex and
-    the collection file it wrote."""
+    not name comes from `platform.toml`'s `[deposit]`; `--api`,
+    `--embed-model` and `--query-model` name what `[deposit]` would. Returns
+    the Codex and the collection file it wrote."""
     from app import platform_config
     from app.hold import deposit
     from app.bundles import keys as node_keys
@@ -133,10 +145,15 @@ def create_deposit(root, name: str, *, platform_image: str | None = None,
     if encoder and encoder != cfg.encoder:
         # another endpoint than [deposit]'s: its api and models are not this
         # one's to describe — the default api, and the model the URL names
-        api, embed_model, query_model = "openai", None, None
+        base = ("openai", None, None)
     else:
         encoder = encoder or cfg.encoder
-        api, embed_model, query_model = cfg.api, cfg.embed_model, cfg.query_model
+        base = (cfg.api, cfg.embed_model, cfg.query_model)
+    api = check_api(api or base[0])
+    embed_model, query_model = embed_model or base[1], query_model or base[2]
+    if encoder and (embed_model or query_model):
+        # a key that is not the model its URL names: the file would say two things
+        model_keys(encoder, embed_model=embed_model, query_model=query_model)
     # the models are settled BEFORE anything is created (07 §7.8, amended
     # 2026-10-09): a URL that names none, with no keys, is refused here
     models = (deposit.encoder_models(encoder, embed_model=embed_model, query_model=query_model)
@@ -172,7 +189,9 @@ def cmd_create_deposit(a) -> int:
                          "named by whoever creates it (07 §7.3)")
     codex, held = create_deposit(a.root, a.name, platform_image=a.platform_image,
                                  encoder=a.encoder, space_from=a.space_from,
-                                 space=a.space)
+                                 space=a.space, api=getattr(a, "api", None),
+                                 embed_model=getattr(a, "embed_model", None),
+                                 query_model=getattr(a, "query_model", None))
     print(f"held: {held}", file=sys.stderr)
     print(codex.collection_id)
     return 0
@@ -279,11 +298,17 @@ def preflight_create(recipe: dict, platform_image: str | None) -> str:
 def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None = None,
                 space_from: str | None = None, encoder: str | None = None,
                 query_encoder: str | None = None, name: str | None = None,
-                calibration_set: str | None = None):
+                calibration_set: str | None = None, api: str | None = None,
+                embed_model: str | None = None, query_model: str | None = None):
     """`hold collection create <plugin> --recipe FILE` — for the command
     line and for its route alike (07 §7.4: the web interface is a client of
     the same function, not a second implementation). Returns the Codex and
     the collection file it wrote (07 §7.8).
+
+    `api`, `embed_model`, `query_model`: the rest of the file's `[encoder]`
+    (07 §7.8, amended 2026-10-09) — node-local, so flags beside `--encoder`
+    and never the recipe, whose `space` block is hashed into the Codex.
+    A model is required where its URL names none (`model_keys`).
 
     `calibration_set`: the path of a PAIR space's set (09 §9.12, amended
     2026-10-08). With `space_from` naming a pair space it is not needed: the
@@ -332,11 +357,13 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                     f"{member.name}: pass the set's file, --calibration-set FILE")
             pairs = cal.read_pairs(member, expect=source.space.calibration.set)
 
-    # The file's `embed_model` / `query_model` (07 §7.8, amended 2026-10-08),
-    # decided BEFORE anything is created: a query endpoint that names no
-    # model is refused here, not after the Codex exists
-    models = (model_keys(encoder, query_encoder,
-                         (recipe["space"].get("encoder") or {}).get("label") or "")
+    # The file's `api`, `embed_model` / `query_model` (07 §7.8, amended
+    # 2026-10-09), decided BEFORE anything is created: an endpoint that names
+    # no model, and no key naming it, is refused here, not after the Codex
+    # exists — and never answered with the space's label
+    api = check_api(api)
+    models = (model_keys(encoder, query_encoder, embed_model=embed_model,
+                         query_model=query_model)
               if encoder else (None, None))
     credits = tpl.expand_archives(recipe.get("archives") or ())
     # The creator's key: 09 Â§9.12 makes the calibration member's `key`
@@ -350,10 +377,11 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                                    # `--name` reached this far and stopped here until 2026-10-07:
                                    # the first certified collection came up as gutenberg-<12 hex>
                                    name=name,
-                                   embed=_embed_for_recipe(recipe["space"], encoder, models[0]),
-                                   # the query side asked with ITS model, never the label
+                                   # each side asked on the file's wire with ITS model
+                                   embed=_embed_for_recipe(recipe["space"], encoder, models[0],
+                                                           api=api),
                                    embed_query=(_embed_for_recipe(recipe["space"], query_encoder,
-                                                                  models[1])
+                                                                  models[1], api=api)
                                                 if query_encoder else None),
                                    space_version=source.version if space_from else None,
                                    credits=credits, pairs=pairs)
@@ -365,37 +393,78 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
               f"in space {codex.space_id} â calibration is not inside "
               f"space_id â but the two builds are not the same build.",
               file=sys.stderr)
-    return codex, _write_held_file(root, codex, encoder, query_encoder)
+    return codex, _write_held_file(root, codex, encoder, query_encoder, api=api,
+                                   embed_model=models[0], query_model=models[1])
 
 
-def model_keys(encoder: str, query_encoder: str | None, label: str) -> tuple[str, str]:
-    """(`embed_model`, `query_model`) for a file `create` writes (07 §7.8,
-    amended 2026-10-08): the model a model-container URL names
-    (`…/upstream/<model>`), else — a URL that names none — the space's
-    encoder label, the name the calibration set was asked with. The query
-    side of a symmetric encoder is the document model; a separate query
-    endpoint must name its own model, because the label names the document
-    side and sending it to the query endpoint is the wrong side's name."""
+def _encoder_key_args(p) -> None:
+    """The rest of the collection file's `[encoder]`, beside `--encoder`
+    (07 §7.8, amended 2026-10-09)."""
+    p.add_argument("--api", default=None, choices=("openai", "ollama", "vega"),
+                   help="the encoder's wire format, into the file's [encoder] api "
+                        "(default openai; vega: LocalAI with VeGa's receipts)")
+    p.add_argument("--embed-model", default=None, metavar="MODEL",
+                   help="the model documents are embedded with — required when the "
+                        "--encoder URL names none (LocalAI); else the one it names")
+    p.add_argument("--query-model", default=None, metavar="MODEL",
+                   help="the model questions are embedded with — required when a "
+                        "--query-encoder URL names none; default: --embed-model's")
+
+
+def check_api(api: str | None) -> str:
+    """An `[encoder]`'s wire format, as `--api` gives it (07 §7.8): one set
+    for every encoder block (app/hold/calibrate.py's)."""
+    from app.hold.calibrate import APIS
+    api = api or "openai"
+    if api not in APIS:
+        raise CodexError(f"--api is one of {', '.join(APIS)} (07 §7.8), got {api!r}")
+    return api
+
+
+def model_keys(encoder: str, query_encoder: str | None = None, *,
+               embed_model: str | None = None,
+               query_model: str | None = None) -> tuple[str, str]:
+    """(`embed_model`, `query_model`) for a file `create` or `share fetch`
+    writes (07 §7.8, amended 2026-10-09): the model each side is given
+    (`--embed-model`, `--query-model`), else the model its model-container
+    URL names (`…/upstream/<model>`). Settled BEFORE anything is created.
+
+    A URL that names no model (LocalAI's one address for every model,
+    api = "vega") with no key is REFUSED — never answered with the space's
+    encoder label: the label is a description, not a model any server is
+    asked for, and a file naming it can neither embed nor search. A key that
+    differs from the model its URL names is refused too: the file would say
+    two things, and the collection would be refused at load. The query side
+    of a symmetric encoder is the document side's model unless named."""
     from app import collections as collections_mod
-    embed_model = collections_mod.model_named_by(encoder) or label
-    if not embed_model:
-        raise CodexError(
-            f"--encoder {encoder} names no model (…/upstream/<model>) and the space's "
-            f"encoder has no label: the collection file must name `embed_model` "
-            f"(07 §7.8), and there is nothing to name it with")
-    if not query_encoder:
-        return embed_model, embed_model
-    query_model = collections_mod.model_named_by(query_encoder)
-    if not query_model:
-        raise CodexError(
-            f"--query-encoder {query_encoder} names no model (…/upstream/<model>): the "
-            f"collection file must name `query_model` (07 §7.8, amended 2026-10-08), "
-            f"and the space's label names the document side, never the query's")
-    return embed_model, query_model
+
+    def side(url: str, given: str | None, flag: str, key_flag: str) -> str:
+        named = collections_mod.model_named_by(url)
+        if given and named and given != named:
+            raise CodexError(
+                f"{key_flag} {given} and {flag} {url} names {named!r}: on the model "
+                f"container the URL says which model, and the key must agree (07 §7.8)")
+        model = given or named
+        if not model:
+            raise CodexError(
+                f"{flag} {url} names no model (…/upstream/<model>): name it with "
+                f"{key_flag} — the collection file's `{key_flag[2:].replace('-', '_')}` is "
+                f"the model the server is asked for, and the space's label is no "
+                f"model's name (07 §7.8, amended 2026-10-09). Nothing was created")
+        return model
+
+    embed = side(encoder, embed_model, "--encoder", "--embed-model")
+    if query_encoder:
+        return embed, side(query_encoder, query_model, "--query-encoder", "--query-model")
+    # symmetric: one URL; a query key, where given, must agree with it too
+    return embed, (side(encoder, query_model, "--encoder", "--query-model")
+                   if query_model else embed)
 
 
 def _write_held_file(root, codex, encoder: str | None = None,
-                     query_encoder: str | None = None, *, source: str | None = None) -> Path:
+                     query_encoder: str | None = None, *, source: str | None = None,
+                     api: str = "openai", embed_model: str | None = None,
+                     query_model: str | None = None) -> Path:
     """07 §7.8: `hold collection create` writes `collections/<name>.toml`,
     and the file existing is the collection being held.
 
@@ -430,8 +499,11 @@ def _write_held_file(root, codex, encoder: str | None = None,
             f"{codex.collection_id}: a name holds one collection for its "
             f"life, and another collection is another name (07 §7.8)")
     if encoder:
+        api = check_api(api)
         embed_model, query_model = model_keys(encoder, query_encoder,
-                                              codex.space.encoder.label)
+                                              embed_model=embed_model,
+                                              query_model=query_model)
+    q = json.dumps                 # a TOML basic string, quotes and backslashes escaped
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".toml.tmp")
     tmp.write_text(f'codex = "{codex.collection_id}"\n'
@@ -442,10 +514,10 @@ def _write_held_file(root, codex, encoder: str | None = None,
                    # 07 §7.8 `source`: a fetched collection reads its documents
                    # from the shards it holds (app/plugins/drag.py)
                    + (f'source = "{source}"\n' if source else "")
-                   + (f'\n[encoder]\nurl = "{encoder}"\napi = "openai"\n'
+                   + (f'\n[encoder]\nurl = {q(encoder)}\napi = {q(api)}\n'
                       # a bi-encoder's query side, where the collection has one
-                      + (f'query_url = "{query_encoder}"\n' if query_encoder else "")
-                      + f'embed_model = "{embed_model}"\nquery_model = "{query_model}"\n'
+                      + (f'query_url = {q(query_encoder)}\n' if query_encoder else "")
+                      + f'embed_model = {q(embed_model)}\nquery_model = {q(query_model)}\n'
                       if encoder else ""),
                    encoding="utf-8")
     tmp.replace(path)
@@ -492,13 +564,17 @@ def _embed_for_recipe(space: dict, url: str | None, model: str | None = None, *,
 
     if not url:
         raise CodexError(NO_ENCODER)
-    enc = space.get("encoder") or {}
-    # `model`: the side's model as the file will name it (`model_keys`);
-    # a caller that gives none asks with the URL's, else the label. `api`:
-    # the wire the new file will name (a deposit's, from [deposit])
+    # `model`: the side's model as the file will name it (`model_keys`); a
+    # caller that gives none asks with the URL's, and never with the space's
+    # label, which names no model (amended 2026-10-09). `api`: the wire the
+    # new file will name
+    model = model or collections_mod.model_named_by(url)
+    if not model:
+        raise CodexError(f"the encoder at {url} names no model (…/upstream/<model>) and "
+                         f"none was given: name it (--embed-model, 07 §7.8). Nothing "
+                         f"was created")
     recipe = collections_mod.EmbedRecipe(
-        url=url, api=api,
-        model=model or collections_mod.model_named_by(url) or enc.get("label") or "",
+        url=url, api=api, model=model,
         dtype=space["dtype"], ctx=space["ctx"], dim=space["dim"])
 
     def embed(texts):
@@ -907,8 +983,14 @@ def cmd_share_fetch(a) -> int:
         session = _tt.get_session()
     slices = "all" if a.slice is None else tuple(a.slice)
     kinds = tuple(k for k in (a.kinds or "records").split(",") if k)
+    encoder_keys = {"api": check_api(getattr(a, "api", None)),
+                    "embed_model": getattr(a, "embed_model", None),
+                    "query_model": getattr(a, "query_model", None)}
+    if a.encoder:          # refused before anything is pulled (07 §7.8, amended 2026-10-09)
+        model_keys(a.encoder, embed_model=encoder_keys["embed_model"],
+                   query_model=encoder_keys["query_model"])
     out = fetch_mod.fetch(a.root, ref, snapshot_id=a.snapshot, from_address=getattr(a, "from_", None),
-                          encoder=a.encoder, name=a.name, session=session,
+                          encoder=a.encoder, encoder_keys=encoder_keys, name=a.name, session=session,
                           log=lambda m: print(m, file=sys.stderr))
     out["selection"] = _set_held_selection(out["file"], slices, kinds)
     if a.here:
@@ -3073,6 +3155,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="a bi-encoder's query side (MedCPT): its endpoint. The Codex pins "
                         "its reference vectors too (09 §9.12), and the collection "
                         "file names it as query_url")
+    _encoder_key_args(p)
     p.add_argument("--calibration-set", default=None, metavar="FILE",
                    help="a PAIR space's calibration set: the 512 title-and-abstract pairs "
                         "tools/build_pair_calibration_set.py drew from the collection's "
@@ -3584,6 +3667,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="probe the DHT under the collection and lineage keys when no peer is known")
     p.add_argument("--encoder", default=None, metavar="URL",
                    help="where this node reaches the Codex's encoder, into the collection's file")
+    _encoder_key_args(p)
     p.add_argument("--name", default=None, help="the local name; default: the plugin's")
     p.set_defaults(fn=cmd_share_fetch)
     p = shverbs.add_parser("contribute", help="the shards this peer leads: vectors build under rendezvous, "

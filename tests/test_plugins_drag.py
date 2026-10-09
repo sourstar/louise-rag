@@ -123,10 +123,10 @@ def test_a_fetched_collection_s_file_says_its_documents_come_from_the_drag(tmp_p
     monkeypatch.setattr(collections_mod, "louise_root", lambda: tmp_path / "louise")
     codex = pubmed()
     a_root(root, codex)
-    p = louise._write_held_file(root, codex, "http://e", source="drag")
+    p = louise._write_held_file(root, codex, "http://e/upstream/m", source="drag")
     text = p.read_text(encoding="utf-8")
     assert 'source = "drag"' in text and 'embed = "off"' in text
-    p2 = louise._write_held_file(root, pubmed(), "http://e", source="drag")
+    p2 = louise._write_held_file(root, pubmed(), "http://e/upstream/m", source="drag")
     assert p2 == p, "a name holds one collection for its life: writing it again is nothing to do"
 
 

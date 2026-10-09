@@ -527,8 +527,8 @@ def test_create_passes_the_name_given_to_the_collection(tmp_path, monkeypatch):
         return SimpleNamespace(collection_id="sha256:" + "ab" * 32)
     monkeypatch.setattr(col, "create_from_recipe", fake_create)
     monkeypatch.setattr(louise, "_write_held_file", lambda *a, **k: tmp_path / "x.toml")
-    monkeypatch.setattr(louise, "_embed_for_recipe", lambda space, url, model=None: None)
+    monkeypatch.setattr(louise, "_embed_for_recipe", lambda space, url, model=None, **kw: None)
     monkeypatch.setattr("app.bundles.keys.load_signing_key", lambda *a, **k: KEY)
     louise.create_from(tmp_path, "gutenberg", recipe(), platform_image=PLATFORM, name="mini-certified",
-                       encoder="http://e")
+                       encoder="http://e/upstream/m")
     assert seen["name"] == "mini-certified"

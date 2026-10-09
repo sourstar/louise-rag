@@ -31,7 +31,7 @@ def client(tmp_path, isolated_config, monkeypatch):
     monkeypatch.setattr(node_keys, "load_signing_key", lambda: KEY)
     # the calibration set is embedded by the recipe's encoder; offline, the
     # hold fixtures' deterministic stand-in (tests/hold/conftest.py)
-    monkeypatch.setattr(louise, "_embed_for_recipe", lambda space, url=None, model=None: fake_embed)
+    monkeypatch.setattr(louise, "_embed_for_recipe", lambda space, url=None, model=None, **kw: fake_embed)
     with TestClient(app) as c:
         c.headers["X-Admin-Token"] = "sekrit"
         yield c
@@ -162,3 +162,49 @@ def test_the_name_given_is_the_name_held(client):
     assert d["held"] == str(collections_mod.config_toml_path("gutenberg-mini"))
     assert d["cli"].endswith(f"--query-encoder {QENC} --name gutenberg-mini")
     assert collections_mod.by_name("gutenberg-mini").codex.collection_id == d["collection_id"]
+
+
+# ---- a URL that names no model (LocalAI, api = "vega"; amended 2026-10-09) ----
+
+LOCALAI = "http://192.168.178.10:30286"
+
+
+def test_a_url_naming_no_model_without_its_key_is_refused_at_once(client):
+    """Never the space's label in its place: the label names no model any
+    server is asked for, and a file naming it can neither embed nor search."""
+    r = client.post(ROUTE, json={"plugin": "gutenberg", "recipe": recipe(),
+                                 "encoder": LOCALAI, "query_encoder": LOCALAI})
+    assert r.status_code == 409 and "--embed-model" in r.json()["detail"]
+    r = client.post(ROUTE, json={"plugin": "gutenberg", "recipe": recipe(),
+                                 "encoder": LOCALAI, "query_encoder": LOCALAI,
+                                 "api": "vega", "embed_model": "vega-medcpt-article"})
+    assert r.status_code == 409 and "--query-model" in r.json()["detail"]
+    r = client.post(ROUTE, json={"plugin": "gutenberg", "recipe": recipe(), "encoder": ENC,
+                                 "query_encoder": QENC, "api": "grpc"})
+    assert r.status_code == 409 and "--api" in r.json()["detail"]
+    assert not collections_mod.config_toml_path("gutenberg").exists()
+
+
+def test_a_vega_create_names_api_and_models_and_calibrates_with_them(client, monkeypatch):
+    asked = []
+    monkeypatch.setattr(louise, "_embed_for_recipe",
+                        lambda space, url, model=None, **kw:
+                        asked.append((model, kw.get("api"))) or fake_embed)
+    j = created(client, {"plugin": "gutenberg", "recipe": recipe(), "encoder": LOCALAI,
+                         "query_encoder": LOCALAI, "api": "vega",
+                         "embed_model": "vega-medcpt-article",
+                         "query_model": "vega-medcpt-query"})
+    assert j["state"] == "done", j
+    assert asked == [("vega-medcpt-article", "vega"), ("vega-medcpt-query", "vega")]
+    held = tomllib.loads(open(j["result"]["held"], encoding="utf-8").read())["encoder"]
+    assert held == {"url": LOCALAI, "api": "vega", "query_url": LOCALAI,
+                    "embed_model": "vega-medcpt-article", "query_model": "vega-medcpt-query"}
+    assert ("--api vega --embed-model vega-medcpt-article --query-model vega-medcpt-query"
+            in j["result"]["cli"])
+    assert collections_mod.by_name("gutenberg").embed.api == "vega"
+
+
+def test_the_librarys_form_carries_the_model_keys(client):
+    page = client.get("/admin/library").text
+    assert 'id="nc_embed_model"' in page and 'id="nc_query_model"' in page
+    assert 'id="nc_api"' in page and "embed_model,query_model" in page

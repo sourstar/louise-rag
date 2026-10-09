@@ -601,7 +601,11 @@ content; a resolver never returns a bare symbol.
    them could phrase them away. The
    calibration comes first and needs no record: the calibration set is
    a corpus-independent file shipped with the platform, `create` embeds
-   it with the named encoder — running the engine the recipe declares,
+   it with the named encoder — at the endpoint `--encoder` gives, on its
+   `--api`, asking for the model its URL names or `--embed-model` names
+   (`--query-model` for the query side), never the space's label, and
+   refused before anything is written where neither names one (07 §7.8,
+   *amended 2026-10-09*) — running the engine the recipe declares,
    which the Codex freezes beside the vectors it produced (§2.4), and in
    an asymmetric space with the query encoder too —
    writes the reference vectors' hashes into

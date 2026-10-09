@@ -272,6 +272,11 @@ class HoldCreateBody(BaseModel):
     # a bi-encoder's query side (MedCPT): its endpoint. The Codex pins its
     # reference vectors too (09 §9.12), so `create` embeds the set with it
     query_encoder: str | None = None
+    # the rest of the file's [encoder] (07 §7.8, amended 2026-10-09): the
+    # wire, and each side's model — required where its URL names none
+    api: str | None = None
+    embed_model: str | None = None
+    query_model: str | None = None
     name: str | None = None      # the local name; default: the plugin's (07 §7.8)
 
 
@@ -302,16 +307,21 @@ def hold_collection_create(body: HoldCreateBody):
         louise.preflight_create(recipe, body.platform_image)
         if not body.encoder:
             raise CodexError(louise.NO_ENCODER)
-        # the file's model keys (07 §7.8, amended 2026-10-08), refused at
-        # once — a query endpoint naming no model is a refusal that needs
-        # no work. Only the query side here: the document side may need the
-        # space's label, which `--space-from` gives only to the job itself
-        louise.model_keys(body.encoder, body.query_encoder, "(checked by create)")
+        # the file's api and model keys (07 §7.8, amended 2026-10-09), refused
+        # at once: an endpoint naming no model, with no key naming it, is a
+        # refusal that needs no work — and never answered with the label
+        louise.check_api(body.api)
+        louise.model_keys(body.encoder, body.query_encoder, embed_model=body.embed_model,
+                          query_model=body.query_model)
     except CodexError as e:
         raise HTTPException(409, str(e)) from None
     cli = f"louise hold collection create {body.plugin} --recipe FILE --encoder {body.encoder}"
     if body.query_encoder:
         cli += f" --query-encoder {body.query_encoder}"
+    for flag, value in (("--api", body.api), ("--embed-model", body.embed_model),
+                        ("--query-model", body.query_model)):
+        if value:
+            cli += f" {flag} {value}"
     if body.space_from:
         cli += f" --space-from {body.space_from}"
     if body.name:
@@ -320,7 +330,9 @@ def hold_collection_create(body: HoldCreateBody):
         # the text as sent: a TOML date is not JSON, and the job parses it
         "plugin": body.plugin, "recipe": body.recipe, "space_from": body.space_from,
         "platform_image": body.platform_image, "encoder": body.encoder,
-        "query_encoder": body.query_encoder, "name": body.name, "cli": cli})
+        "query_encoder": body.query_encoder, "api": body.api,
+        "embed_model": body.embed_model, "query_model": body.query_model,
+        "name": body.name, "cli": cli})
     return JSONResponse(status_code=202, content=jobs.view(jobs.get(job_id)))
 
 

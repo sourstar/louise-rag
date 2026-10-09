@@ -305,13 +305,21 @@
        (operator, 2026-09-18) — and the file it gets names this one #}
     <div><label>Encoder (this node's endpoint)</label>
       <input id="nc_encoder" placeholder="http://nas:30437"></div>
+    {# the rest of the file's [encoder] (07 §7.8, amended 2026-10-09): a URL
+       that names no model (LocalAI, api vega) needs the model named here #}
+    <div><label>API</label>
+      <select id="nc_api"><option value="">openai</option><option>ollama</option><option>vega</option></select></div>
+    <div><label>Embed model (when the URL names none)</label>
+      <input id="nc_embed_model" placeholder="vega-medcpt-article"></div>
+    <div><label>Query model (optional)</label>
+      <input id="nc_query_model" placeholder="default: the embed model"></div>
   </div>
   <label>Recipe (TOML)</label>
   <textarea id="nc_recipe" rows="10" style="width:100%" placeholder="[space]&#10;…&#10;&#10;[work]&#10;…"></textarea>
   <div class="actions">
     <button class="primary" onclick="createCollection()">Create on this node</button>
   </div>
-  <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE --encoder URL [--space-from &lt;collection&gt;]</pre>
+  <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE --encoder URL [--api A] [--embed-model M] [--query-model M] [--space-from &lt;collection&gt;]</pre>
   <div id="nc_result"></div>
 </div>
 {% endblock %}
@@ -479,12 +487,15 @@ async function createCollection(){
   const recipe=document.getElementById('nc_recipe').value;
   const space_from=document.getElementById('nc_space_from').value.trim()||null;
   const encoder=document.getElementById('nc_encoder').value.trim();
+  const api=document.getElementById('nc_api').value||null;
+  const embed_model=document.getElementById('nc_embed_model').value.trim()||null;
+  const query_model=document.getElementById('nc_query_model').value.trim()||null;
   const box=document.getElementById('nc_result');
   if(!recipe.trim()){toast('paste the recipe');return}
   if(!encoder){toast('name the encoder: a collection names its own');return}
   box.innerHTML='<div class="note">queued — the worker embeds the calibration set, then signs…</div>';
   try{
-    const q=await postJSON('/api/hold/collection/create',{plugin,recipe,space_from,encoder});
+    const q=await postJSON('/api/hold/collection/create',{plugin,recipe,space_from,encoder,api,embed_model,query_model});
     const j=await waitForJob(q.id,s=>{box.innerHTML='<div class="note">'+esc(s)+'</div>'});
     const d=j.result;
     box.innerHTML=`<div class="note">Created <b>${esc(d.name)}</b>: <code>${esc(d.collection_id)}</code><br>

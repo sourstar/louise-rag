@@ -106,3 +106,19 @@ def test_another_model_at_the_same_address_is_another_space(node):
     deposit.write_held_file(node, a, LOCALAI, api="vega", embed_model="vega-granite")
     assert deposit.space_source(node, LOCALAI, "vega-granite").collection_id == a.collection_id
     assert deposit.space_source(node, LOCALAI, "vega-bge-m3") is None
+
+
+def test_the_command_line_names_another_endpoint_s_api_and_model(node, capsys):
+    first = first_on(node, "alice", LOCALAI, "vega-bge-m3")
+    assert louise.main(["hold", "collection", "create", "deposit", "--name", "bob",
+                        "--root", str(node), "--space-from", first.collection_id,
+                        "--encoder", LOCALAI, "--api", "vega", "--embed-model", "vega-bge-m3",
+                        "--platform-image", PLATFORM]) == 0
+    assert encoder_block(node, "bob") == {"url": LOCALAI, "api": "vega",
+                                          "embed_model": "vega-bge-m3",
+                                          "query_model": "vega-bge-m3"}
+    assert louise.main(["hold", "collection", "create", "deposit", "--name", "carol",
+                        "--root", str(node), "--space-from", first.collection_id,
+                        "--encoder", LOCALAI, "--platform-image", PLATFORM]) == 2
+    assert "names no model" in capsys.readouterr().err
+    assert not (node / "carol").exists()

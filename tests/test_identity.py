@@ -159,7 +159,8 @@ def test_the_web_routes_that_sign_queue_and_never_read_the_seed(
     with TestClient(app) as c:
         c.headers["X-Admin-Token"] = "sekrit"
         r = c.post("/api/hold/collection/create",
-                   json={"plugin": "gutenberg", "recipe": recipe(), "encoder": "http://e"})
+                   json={"plugin": "gutenberg", "recipe": recipe(),
+                         "encoder": "http://e/upstream/m"})
         assert r.status_code == 202 and r.json()["state"] == "queued"
         r = c.post("/admin/library/gutenberg/bundle/export", json={"uids": ["gutenberg:1"]})
         assert r.status_code == 202 and r.json()["state"] == "queued"

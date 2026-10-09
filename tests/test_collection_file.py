@@ -255,14 +255,44 @@ def test_create_names_both_sides_models(node):
 
 
 def test_create_model_keys_where_a_url_names_none():
-    # symmetric, a URL naming no model: the space's label, both sides
-    assert louise.model_keys("http://localai:8080", None, "MedCPT") == ("MedCPT", "MedCPT")
-    assert louise.model_keys("http://rage:1/upstream/bge-m3", None, "BGE") == ("bge-m3", "bge-m3")
-    # a separate query endpoint must name its model: the label is the document side's
-    with pytest.raises(CodexError, match="--query-encoder .* names no model"):
-        louise.model_keys("http://rage:1/upstream/a", "http://query:2", "MedCPT")
-    with pytest.raises(CodexError, match="no label"):
-        louise.model_keys("http://localai:8080", None, "")
+    """07 §7.8 (amended 2026-10-09): a URL naming no model takes the model
+    from its key, and without one is refused — never the space's label."""
+    with pytest.raises(CodexError, match="--encoder .* names no model.*--embed-model"):
+        louise.model_keys("http://localai:8080")
+    assert louise.model_keys("http://localai:8080", embed_model="vega-medcpt") == \
+        ("vega-medcpt", "vega-medcpt")
+    assert louise.model_keys("http://localai:8080", embed_model="vega-a",
+                             query_model="vega-q") == ("vega-a", "vega-q")
+    assert louise.model_keys("http://rage:1/upstream/bge-m3") == ("bge-m3", "bge-m3")
+    # a separate query endpoint naming no model needs --query-model
+    with pytest.raises(CodexError, match="--query-encoder .* names no model.*--query-model"):
+        louise.model_keys("http://rage:1/upstream/a", "http://query:2")
+    assert louise.model_keys("http://rage:1/upstream/a", "http://query:2",
+                             query_model="vega-q") == ("a", "vega-q")
+    # a key that is not the model its URL names: the file would say two things
+    with pytest.raises(CodexError, match="must agree"):
+        louise.model_keys("http://rage:1/upstream/a", embed_model="b")
+    with pytest.raises(CodexError, match="--api is one of"):
+        louise.check_api("grpc")
+
+
+def test_the_file_carries_api_and_the_named_models(node):
+    root, make, _ = node
+    cx = make()
+    held = louise._write_held_file(root / "collections", cx, "http://localai:8080",
+                                   api="vega", embed_model="vega-medcpt-article",
+                                   query_model="vega-medcpt-query")
+    c = collections_mod._load_one(held)
+    assert (c.embed.url, c.embed.api, c.embed.model, c.embed.query_model) == (
+        "http://localai:8080", "vega", "vega-medcpt-article", "vega-medcpt-query")
+
+
+def test_the_file_never_names_the_label_as_a_model(node):
+    root, make, _ = node
+    cx = make()
+    with pytest.raises(CodexError, match="names no model"):
+        louise._write_held_file(root / "collections", cx, "http://localai:8080")
+    assert not collections_mod.config_toml_path("gutenberg").exists()
 
 
 # ---- the two derivations ---------------------------------------------------
@@ -283,3 +313,24 @@ def test_the_dump_is_the_one_the_codex_pins():
         acquire_spec.pinned_snapshot(WIKIPEDIA_SPEC, {"files": files[:3]})
     assert acquire_spec.pinned_snapshot(ACQUIRE_REGISTRY["gutenberg"],
                                         {"files": files}) is None
+
+
+def test_the_command_line_refuses_a_url_naming_no_model_before_creating(
+        tmp_path, isolated_config, monkeypatch, capsys):
+    """`hold collection create --encoder URL` where the URL names no model:
+    refused, exit 2, nothing created — `--embed-model` names it."""
+    import json as _json
+    root = tmp_path / "scratch" / "collections"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("LOUISE_ROOT", str(tmp_path / "node"))
+    f = tmp_path / "recipe.json"
+    f.write_text(_json.dumps(recipe()), encoding="utf-8")
+    base = ["hold", "collection", "create", "gutenberg", "--recipe", str(f), "--root", str(root),
+            "--platform-image", PLATFORM, "--encoder", "http://localai:8080",
+            "--query-encoder", "http://localai:8080"]
+    assert louise.main(base) == 2
+    assert "--embed-model" in capsys.readouterr().err
+    assert not any(root.iterdir())
+    assert louise.main(base + ["--api", "vega", "--embed-model", "vega-a"]) == 2
+    assert "--query-model" in capsys.readouterr().err
+    assert not any(root.iterdir())

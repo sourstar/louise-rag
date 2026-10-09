@@ -22,7 +22,7 @@ def _create(tmp_path, monkeypatch, source, *, embed=fake_embed, **kw):
     held = col.create(root, source, name="pubmed-dev")
     monkeypatch.setattr(node_keys, "load_signing_key", lambda: KEY)
     monkeypatch.setattr(louise, "_embed_for_recipe",
-                        lambda space, url, model=None: fake_query_embed if "query" in url else embed)
+                        lambda space, url, model=None, **kw: fake_query_embed if "query" in url else embed)
     r = a_recipe(cleaning_version=source.cleaning_version)
     codex, _ = louise.create_from(root, "gutenberg", r, platform_image=PLATFORM,
                                   space_from=held.collection_id,
