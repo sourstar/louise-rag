@@ -270,7 +270,7 @@ number written as a decimal string is marked *decimal*.
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-codex"` | yes | |
-| `version` | `6` | yes | the Codex format version (§9.18). Version 5 is this object with no backend engine (below, *the engine*), and a Codex none of whose engines is a backend engine is written at 5, so no Codex, space, engine or `collection_id` already written moves and an argv engine or one RAGE stated keeps its bytes (*amended 2026-10-08*, docs/notes/vega.md); `space_from` copies a version-5 `space` into a version-5 Codex unchanged. Version 4 is this object with no layer carrying `input` — a layer of a version-4 Codex reads as `{"form": "text"}`, but writing the key into it would change its bytes and so its `collection_id` and `space_id`, so a version-4 Codex keeps both; `space_from` copying from a Codex below version 5 writes version 4, so that the copy's `space_id` is the source's (*amended 2026-10-08*, docs/notes/input-forms.md). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
+| `version` | `6` · `7` | yes | the Codex format version (§9.18). Version 7 is written for an ANNOTATIONS Codex alone (02 §2.10; *amended 2026-10-09*, docs/notes/annotation-collections.md): it is this object with `annotates`, `space` and `work` null and `layers` `[]`, and no other Codex is ever written at 7, so no Codex, space or `collection_id` already written moves. Version 5 is this object with no backend engine (below, *the engine*), and a Codex none of whose engines is a backend engine is written at 5, so no Codex, space, engine or `collection_id` already written moves and an argv engine or one RAGE stated keeps its bytes (*amended 2026-10-08*, docs/notes/vega.md); `space_from` copies a version-5 `space` into a version-5 Codex unchanged. Version 4 is this object with no layer carrying `input` — a layer of a version-4 Codex reads as `{"form": "text"}`, but writing the key into it would change its bytes and so its `collection_id` and `space_id`, so a version-4 Codex keeps both; `space_from` copying from a Codex below version 5 writes version 4, so that the copy's `space_id` is the source's (*amended 2026-10-08*, docs/notes/input-forms.md). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
 | `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
@@ -279,10 +279,10 @@ number written as a decimal string is marked *decimal*.
 | `cleaning_version` | integer | yes | the cleaner's version in the platform image (06 §6.3) |
 | `protocol_version` | integer | yes | the plugin protocol version the plugin implements (06 §6.1) |
 | `record_line` | `1` · `2` | yes | the shape of this collection's record lines (§9.5): `1` without a `figures` key, `2` with it. A collection never moves between them — one whose records gain plates is a NEW collection (02 §2.7) — and the format enforces it rather than a reviewer: this field is inside `collection_id`, so a Codex edited to change it is a different collection by construction. Carried by name and not folded into `version` above, because §9.18 versions the record line as its own schema: `version` tracks what wrote the Codex, `record_line` tracks what is in the parts, and a figureless collection created under a later format writes `version` 3 with `record_line` 1 |
-| `layers` | list of layer | yes | `{chunker: {id, version, params}, rule, input}`, in evaluation order; the last rule is `"default"` (06 §6.3). `params` is an object whose keys the chunker id fixes, `{}` when it takes none. `input` is the encoder's input FORM for the layer's chunks — the model's documented input format, inside `space_id` with the rest of the layer (*amended 2026-10-08*, docs/notes/input-forms.md): `{"form": "text"}`, the chunk's text as it stands; or `{"form": "pair", "split": "first-section"}`, a tokenizer text pair — the record's first section's body and the rest of its sections' bodies joined by `"\n\n"` — admitted only on a chunker that makes one chunk per record (`abstract`). Any other form or split is refused. From version 5, required on every layer; below it, absent |
+| `layers` | list of layer | yes | `{chunker: {id, version, params}, rule, input}`, in evaluation order; the last rule is `"default"` (06 §6.3). `params` is an object whose keys the chunker id fixes, `{}` when it takes none. `input` is the encoder's input FORM for the layer's chunks — the model's documented input format, inside `space_id` with the rest of the layer (*amended 2026-10-08*, docs/notes/input-forms.md): `{"form": "text"}`, the chunk's text as it stands; or `{"form": "pair", "split": "first-section"}`, a tokenizer text pair — the record's first section's body and the rest of its sections' bodies joined by `"\n\n"` — admitted only on a chunker that makes one chunk per record (`abstract`). Any other form or split is refused. From version 5, required on every layer; below it, absent. `[]` on an annotations Codex (version 7), which cuts nothing |
 | `slicing` | object | yes | below |
-| `space` | object | yes | below |
-| `work` | object | yes | `{tokens: integer, per: duration}` — the work parameter (02 §2.4): tokens of the encoder's tokenizer per `per`; `per` defaults to the update cadence when the recipe omits it, and is always written out |
+| `space` | object or null | yes | below; `null` exactly on an annotations Codex (version 7), which has no space: nothing pins it, it is in no ranked list and no vector is admissible to it (02 §2.10) |
+| `work` | object | yes | `{tokens: integer, per: duration}` — the work parameter (02 §2.4): tokens of the encoder's tokenizer per `per`; `per` defaults to the update cadence when the recipe omits it, and is always written out; `null` exactly on an annotations Codex (version 7) |
 | `modality` | `"text"` · `"dna"` | yes | what the bytes are; decides encoder and reranker eligibility (06 §6.1) |
 | `erasure` | `"append-only"` · `"retractable"` · `"erasable"` | yes | how content may leave (04 §4.4) |
 | `validation` | object | yes | the plan (03 §3.2), below |
@@ -307,6 +307,7 @@ number written as a decimal string is marked *decimal*.
 | ↳ `kind: "archive"` | | | a pre-embedded archive whose vectors this collection carries — zero or more, one per archive, `archive` naming it. Expanded from the platform's registry by the recipe's `archives`. `coverage` is load-bearing and not merely compliance: 06 §6.3's `archive:<id>` layer rule reads it to decide which layer a document falls in, and NO OTHER KIND is read there. The archive's SIGNING KEYS are deliberately NOT here: they are in the registry (06 §6.6), because a key is a changeable local fact — lost, rotated, or issued years after a collection was created (§9.2, "a lost key is a new key") — and freezing one into `collection_id` would fork the identity every time one moved, while blocking a collection from ever adopting an archive that started signing after it was written |
 | ↳ `kind: "community"` | | | the peers who embed for this collection, as ONE collective and never as a roster. At most one entry, present exactly when `embedding` is `"open"` or `"endorsed"` and absent when it is `"certifier-only"` — so it is derived from a field already in the Codex rather than declared, and a collection that accepts no community vectors credits none. `archive` and `license` are null, `coverage` is `"all"` |
 | `profile` | object or null | yes | plugin-defined descriptor, opaque and hashed (an ELI profile: `{eli: {jurisdiction, work_pattern, …}}`) |
+| `annotates` | object | version 7 only | `{collection_id: id, from_snapshot: snapshot id}` — the TARGET collection an annotations collection makes claims about, and the target snapshot the claims were checked against and hold from (02 §2.10; *amended 2026-10-09*). Required and non-null at version 7; ABSENT, never null, below it — like an engine's `options`, so that every Codex already written keeps its bytes. An annotations Codex is also fixed in the rest: `plugin` `"annotations"`; `origin.spec` `{source_id: "annotations", nonce: <32 hex digits>}`, `unit` `"file"`, `cutoff_rule` `"record-date"`; `record_line` 1; `modality` `"text"`; `erasure` `append-only` or `retractable`; `privacy` `public` or `restricted`; `publication` and `embedding` `"open"`; `facets` `[]`; `credits` exactly one `corpus` entry, the annotator; every lineage field, `derivation`, `certifier`, `content` and `profile` null; and `validation.checks` drawn from `roots`, `records`, `license`, `signature`. Anything else is refused |
 
 The relations are exclusive in this way: a daughter has `continues` and
 `continues_through`; a sister has `derived_from` and, when it was made with
@@ -539,7 +540,11 @@ refused (07 §7.8). `origin_check` is `"not-planned"` for a never-share
 collection — a deposit collection (02 §2.9), whose origin is the client
 that wrote it, so no `records-vs-origin` can run (operator, 2026-10-06).
 Until 2026-09-19 this object carried `refused: string or null` in their
-place.
+place. *Amended 2026-10-09*: it also carries `annotates`. For an annotations
+collection (02 §2.10) it is `{collection_id, from_snapshot, target}`, where
+`target` is the annotated collection's local name when this peer holds it
+and null otherwise; for every other collection it is null. An annotations
+collection's `space_id` is null.
 
 **Worked example.** The PubMed collection's Codex, abbreviated to the
 fields that carry its choices (every other field is present in the file):
@@ -622,7 +627,7 @@ Codex's `cutoff_rule` enumerates at that instant (06 §6.2).
 | `shards` | list of part | yes | every record part the snapshot consists of, sorted by (`slice` bytes, `n`); the key keeps the old word |
 | `relations` | list of relation part | yes | the relations parts (§9.14), same order; `[]` when the collection has none |
 | `figures` | list of figures part | yes | the figures containers (§9.5), same order; `[]` when the collection carries no plates — which is every collection whose Codex has `record_line` 1 |
-| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`. A SHARD file that is neither here nor a part that a `shards`, `relations` or `figures` entry names is not a member and is not served (07 §7.8) |
+| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`. A SHARD file that is neither here nor a part that a `shards`, `relations` or `figures` entry names is not a member and is not served (07 §7.8). An annotations collection (02 §2.10) has no space, so its `files` carries no calibration entries: `validation.json`, `LICENSE-TERMS` and the seals file, the last two null when it is green and open (*amended 2026-10-09*) |
 | `delta` | object | yes | `{added: [uid…], changed: [uid…], tombstoned: [{uid, reason}…]}`, each list sorted by uid bytes; `reason` is `"retracted"` (the origin says the record should not have existed) or `"withdrawn"` (the origin no longer supplies it) |
 
 A part entry:
@@ -858,6 +863,40 @@ it reproduces against. Without a published root the check could compare
 only a count, and a chunker that moved every boundary without changing
 the number would pass — which 03 §3.4 leans on as half its proof that a
 new platform image is equivalent.
+
+**Claim records** (*amended 2026-10-09*; 02 §2.10). An annotations
+collection's record is one CLAIM about records of the collection it
+annotates, in the line above:
+
+- `uid` is `annotations:<n>`. `native_id` `<n>` numbers the claims from 1
+  in (`subject`, `object`, `type`) byte order, under `slicing.order`
+  `numeric`, in the one slice `all` (`slicing` `{keys: [], unknown: "all",
+  shard_records: 50000, order: "numeric"}`).
+- `lang` is `"und"`. `title` is `""`. `creators`, `subjects` and `keys`
+  are `[]`, `date` is null and `extra` is `{}`.
+- `sections` is exactly one section, `["claim", <the claim's canonical JSON,
+  §9.1>]`. The claim is there and not in `extra` so that `content_hash`,
+  `records_root` and the `records` check cover all of it.
+- `origin` is `claims.jsonl#<line>`: the claims file as the annotator
+  submitted it, which the collection keeps beside its SHARD as its origin.
+  `origin_hash` is BLAKE2b-128 of that line's bytes, without its line end.
+
+The claim, an object with exactly these keys:
+
+| key | type | meaning |
+|---|---|---|
+| `type` | `"same-work"` · `"translation-of"` | `same-work`: the two records are versions of one work in different languages, and neither is said to be the other's source; `translation-of`: the subject translates the object |
+| `subject`, `object` | uid | records of the annotated collection, different from each other |
+| `subject_lang`, `object_lang` | string | ISO 639 or `"und"`: the languages of the two versions. For `translation-of`, `object_lang` is the source language and `subject_lang` the target language |
+| `method` | object | `{kind: "matcher", id: string, version: integer}`, `{kind: "wikidata"}` or `{kind: "human"}` — how the claim was made |
+| `evidence` | object | what the method matched on; method-defined, no floats |
+| `confidence` | decimal | its maker's confidence, `0` to `1` |
+| `contributor` | string | who makes the claim |
+| `subject_hash`, `object_hash` | BLAKE2b-128 | the two records' `content_hash` in `target_snapshot`, read from the parts that snapshot lists when the claim is written. A claim about a record that snapshot does not hold is refused |
+| `target_snapshot` | snapshot id | the annotated collection's snapshot the claim was checked against; the first is the Codex's `annotates.from_snapshot` |
+
+One claim per pair and type. A `same-work` pair is the same claim either
+way round.
 
 **Pointer records.** A red-class collection's records member is the same
 line with `sections: []` and `extra.origin_url` set; every other field,
@@ -1885,6 +1924,14 @@ record).
 | `type` | string | yes | `<plugin>:<name>`, registered by the plugin: `eli:cites`, `eli:amends`, `eli:repeals`, `pubmed:cites` |
 | `snapshot` | `YYYY-MM` or `YYYY-Www` | yes | the snapshot in which the edge was first listed |
 
+**An annotations collection's edges** (*amended 2026-10-09*; 02 §2.10,
+05 §5.5) are its claims, one per claim record, `from` = the claim's
+`subject`, `to` = its `object`, `type` = `annotations:<claim type>`
+(`annotations:same-work`, `annotations:translation-of`). Both ends are
+uids of the collection the Codex's `annotates` names, so `from` is a record
+of THAT collection and the part is the one holding the claim. The edge is
+the annotator's explicit statement, which is what 05 §5.5 asks of an edge.
+
 Edges are sorted by (`from` bytes, `type` bytes, `to` bytes); the
 direction is from → to as the source states it.
 
@@ -2142,7 +2189,7 @@ names one schema, the one its section fixes:
 
 | kind | version | section |
 |---|---|---|
-| `louise-codex` | 6 | §9.3 (5 since 2026-10-08: a layer's `input`; 6 since 2026-10-08: a backend engine, and written for a Codex that carries one alone — every other is written at 5) |
+| `louise-codex` | 7 | §9.3 (5 since 2026-10-08: a layer's `input`; 6 since 2026-10-08: a backend engine, and written for a Codex that carries one alone — every other is written at 5; 7 since 2026-10-09: `annotates`, written for an annotations Codex alone, 02 §2.10) |
 | `louise-snapshot` | 2 | §9.4 |
 | `louise-snapshot-sig` | 1 | §9.4 |
 | record line | 2 | §9.5 |

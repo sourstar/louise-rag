@@ -96,6 +96,8 @@ def _recipe(path: str) -> dict:
 def cmd_create(a) -> int:
     if a.plugin == "deposit":
         return cmd_create_deposit(a)
+    if a.plugin == "annotations":
+        return cmd_create_annotations(a)
     if not a.recipe:
         raise CodexError("--recipe is required: a collection is a plugin and a "
                          "recipe (06 §6.6); only `create deposit` needs none")
@@ -186,6 +188,38 @@ def create_deposit(root, name: str, *, platform_image: str | None = None,
         root, codex, encoder, api=api,
         embed_model=models[0] if models else None,
         query_model=models[1] if models else None)
+
+
+def cmd_create_annotations(a) -> int:
+    """`hold collection create annotations --annotates C --from-snapshot S
+    --claims FILE --name N` (07 §7.3; 02 §2.10): an annotations collection
+    from a claims file — its Codex, the record and relations parts, the
+    first snapshot (signed with the node key when there is one) and its
+    collection file. Prints the new collection's id."""
+    from app.hold import annotations as ann
+    missing = [f for f, v in (("--annotates", a.annotates), ("--from-snapshot", a.from_snapshot),
+                              ("--claims", a.claims), ("--name", a.name)) if not v]
+    if missing:
+        raise CodexError(f"create annotations takes {', '.join(missing)}: the collection it "
+                         f"annotates, the target snapshot the claims hold from, the claims "
+                         f"file and the new collection's name (02 §2.10)")
+    if a.recipe:
+        raise CodexError("create annotations takes no --recipe: its Codex is fixed by 02 §2.10 "
+                         "and named by the flags")
+    key = None
+    try:
+        from app.bundles import keys as node_keys
+        key = node_keys.load_signing_key()
+    except Exception:   # noqa: BLE001 — no key: the snapshot is held unsigned (09 §9.4)
+        print("no node key: the snapshot is written unsigned, and `signature` stays "
+              "inconclusive until a key signs it", file=sys.stderr)
+    codex, snap = ann.create(
+        a.root, a.name, target_ref=a.annotates, from_snapshot=a.from_snapshot,
+        claims=Path(a.claims).read_bytes(), platform_image=preflight_create({}, a.platform_image),
+        title=a.title, summary=a.summary, annotator=a.annotator, snapshot_id=a.snapshot,
+        key=key, now=_utc_now(), log=lambda m: print(m, file=sys.stderr))
+    print(codex.collection_id)
+    return 0
 
 
 def cmd_create_deposit(a) -> int:
@@ -508,8 +542,10 @@ def _write_held_file(root, codex, encoder: str | None = None,
     tmp = path.with_suffix(".toml.tmp")
     tmp.write_text(f'codex = "{codex.collection_id}"\n'
                    "slices = []\n"
-                   'kinds = ["records", "vectors"]\n'
-                   'embed = "off"\n'
+                   # an annotations collection has relations and no vectors (02 §2.10)
+                   + ('kinds = ["records", "relations"]\n' if cx.is_annotations(codex)
+                      else 'kinds = ["records", "vectors"]\n')
+                   + 'embed = "off"\n'
                    "share = false\n"
                    # 07 §7.8 `source`: a fetched collection reads its documents
                    # from the shards it holds (app/plugins/drag.py)
@@ -2475,16 +2511,18 @@ def run_check(a):
     snapshot = _latest_snapshot(a.root, name, a.snapshot)
     seed = bytes.fromhex(a.seed) if a.seed else os.urandom(32)
 
-    member = a.root / name / "drag" / \
-        drag.calibration_paths(codex.space.calibration.set)[0]
-    reference = _read_member(member)[0] if member.is_file() else None
-
-    embed = None
-    try:
-        recipe = _recipe_for(codex, name)
-        embed = _checking_embed(a.root, name, codex, recipe)
-    except emb.GateDeferred:
-        pass
+    reference = embed = None
+    if codex.space is not None:
+        # an annotations collection (02 §2.10) has no space: no reference,
+        # nothing to embed, and its plan names no check that would
+        member = a.root / name / "drag" / \
+            drag.calibration_paths(codex.space.calibration.set)[0]
+        reference = _read_member(member)[0] if member.is_file() else None
+        try:
+            recipe = _recipe_for(codex, name)
+            embed = _checking_embed(a.root, name, codex, recipe)
+        except emb.GateDeferred:
+            pass
 
     report = chk.run(
         a.root, name, codex, snapshot, seed=seed,
@@ -3373,6 +3411,23 @@ def build_parser() -> argparse.ArgumentParser:
                         "tools/build_pair_calibration_set.py drew from the collection's "
                         "records, whose sha256 the recipe names as space.calibration.set "
                         "(09 §9.12); the member carries it")
+    # `create annotations` (02 §2.10): claims about another collection's records
+    p.add_argument("--annotates", default=None, metavar="COLLECTION",
+                   help="create annotations: the collection the claims are about (id, prefix or name)")
+    p.add_argument("--from-snapshot", default=None, dest="from_snapshot", metavar="ID",
+                   help="create annotations: the target snapshot the claims are checked against "
+                        "and hold from (the Codex's annotates.from_snapshot)")
+    p.add_argument("--claims", default=None, metavar="FILE",
+                   help="create annotations: JSON Lines, one claim per line (09 §9.5, amended "
+                        "2026-10-09)")
+    p.add_argument("--title", default=None, help="create annotations: the Codex's title")
+    p.add_argument("--summary", default=None, help="create annotations: the Codex's summary")
+    p.add_argument("--annotator", default=None,
+                   help="create annotations: whom the Codex credits (default: the claims' one "
+                        "contributor)")
+    p.add_argument("--snapshot", default=None, metavar="ID",
+                   help="create annotations: this collection's first snapshot id (default: the "
+                        "period that closed last, by its monthly cadence)")
     p.set_defaults(fn=cmd_create)
 
     p = verbs.add_parser("derive", help="a sister: her mother's corpus, a new space")

@@ -215,6 +215,21 @@ def walk(con, codex, snapshot, start: str, *, relation: str | None = None, depth
     return out
 
 
+def _target_of(root: Path, codex) -> tuple[str, Any] | None:
+    """(name, Codex) of the collection an annotations Codex annotates, held here."""
+    from app.hold import collection as col
+    want = getattr(getattr(codex, "annotates", None), "collection_id", None)
+    if want is None:
+        return None
+    return next(((n, c) for n, c in col.list_named(root) if c.collection_id == want), None)
+
+
+def _annotates_plugin(root: Path, codex) -> str | None:
+    """The plugin whose uids an annotations collection's edges join."""
+    t = _target_of(root, codex)
+    return t[1].plugin if t else None
+
+
 def traverse(id_: str, *, relation: str | None = None, depth: int = 1, collection: str | None = None,
              root: Path | None = None, resolve_in: list[str] | None = None) -> dict[str, Any]:
     """05 §5.4's `louise_traverse`: `{edges: [{from, to, type, snapshot,
@@ -234,7 +249,7 @@ def traverse(id_: str, *, relation: str | None = None, depth: int = 1, collectio
         targets = [(name, codex)]
     else:
         targets = [(n, c) for n, c in col.list_named(root)]
-        owned = [(n, c) for n, c in targets if c.plugin == prefix]
+        owned = [(n, c) for n, c in targets if c.plugin == prefix or _annotates_plugin(root, c) == prefix]
         targets = owned or targets
     edges: list[dict[str, Any]] = []
     searched = []
@@ -248,12 +263,23 @@ def traverse(id_: str, *, relation: str | None = None, depth: int = 1, collectio
         for name, codex in targets:
             drag = col.drag_of(root, name)
             snapshot = seeder.current_snapshot(drag)
-            if not (root / name / "state" / "manifest.sqlite").is_file():
+            annotations = getattr(codex, "annotates", None) is not None
+            if not (root / name / "state" / "manifest.sqlite").is_file() and not annotations:
                 continue
             with closing(cov.manifest(root, name)) as con:
                 index_edges(con, drag, snapshot)
-                edges.extend(walk(con, codex, snapshot, id_, relation=relation, depth=depth,
-                                  elsewhere=elsewhere))
+                if annotations:
+                    # 02 §2.10: an annotations collection's edges join records
+                    # of the collection it annotates, so they are resolved
+                    # against it — asked for by holding the annotations
+                    target = _target_of(root, codex)
+                    with Elsewhere(root, held + ([target] if target else []),
+                                   tuple(unheld)) as against:
+                        edges.extend(walk(con, codex, snapshot, id_, relation=relation,
+                                          depth=depth, elsewhere=against))
+                else:
+                    edges.extend(walk(con, codex, snapshot, id_, relation=relation, depth=depth,
+                                      elsewhere=elsewhere))
             searched.append(codex.collection_id)
     return {"id": id_, "relation": relation, "depth": max(1, min(int(depth), MAX_DEPTH)),
             "collections": searched, "resolve_in": [c.collection_id for _, c in held] + unheld, "edges": edges}

@@ -416,6 +416,9 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
             f"its life (07 §7.8); this one is not served, shared or searched "
             f"until they agree")
 
+    if cx.is_annotations(codex):
+        return _annotations_collection(path, raw, name, codex, d)
+
     # 07 §7.8's file is `codex`, `title`, `slices`, `kinds`, `embed`,
     # `share` and `[encoder]`. Everything else a Codex file used to say is
     # an answer the Codex or the tree already gives — the archive is in
@@ -538,6 +541,66 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
         share_kinds=share_kinds,
         source=source,
     )
+
+
+def _annotations_collection(path: Path, raw: dict[str, Any], name: str, codex,
+                            d: Path) -> Collection:
+    """An ANNOTATIONS collection (02 §2.10) as the node holds it: a SHARD and
+    a collection file like any other, and NOTHING for the worker to run —
+    no origin to acquire, no text to index, no space to embed into, so no
+    `[encoder]`. `load_all` (what the worker ingests and a search ranks)
+    leaves it out; `load_annotations` lists it, and sharing, `hold
+    collection show` and the facts a search attaches read it from there."""
+    where = str(path)
+    for key in ("encoder", "embed_recipe", "reranker"):
+        if raw.get(key):
+            raise ValueError(f"{where}: [{key}] in an annotations collection's file: it has no "
+                             f"space and nothing is embedded or ranked for it (02 §2.10)")
+    title = raw.get("title")
+    if title is not None and not isinstance(title, str):
+        raise ValueError(f"{where}: title is a string (07 §7.8), got {title!r}")
+    share = raw.get("share", False)
+    if not isinstance(share, bool):
+        raise ValueError(f"{where}: share is true or false (07 §7.8), got {share!r}")
+    share_slices = _parse_share_list(raw.get("share_slices"), "share_slices", where)
+    share_kinds = _parse_share_list(raw.get("share_kinds"), "share_kinds", where)
+    kinds = _parse_kinds(raw.get("kinds", ["records", "relations"]), where)
+    slices = _parse_slices(raw["slices"], where) if "slices" in raw else "all"
+    return Collection(
+        name=name, plugin=codex.plugin, profile=None, embed_mode_default="off",
+        corpus_dir=d / "drag", manifest_path=d / "state" / "manifest.sqlite",
+        fts_dir=d / "index", lance_dir=d / "lance", acquire_enabled=False,
+        license_ack=_codex_ack(codex, d / "state"), embed=None, codex=codex,
+        title=title, slices=slices, kinds=kinds, share=share,
+        share_slices=share_slices, share_kinds=share_kinds,
+        source="drag")
+
+
+def is_annotations(collection) -> bool:
+    """An annotations collection (02 §2.10): held, checked and shared like any
+    collection, and never ingested, embedded or ranked."""
+    from .hold import codex as cx
+    return cx.is_annotations(getattr(collection, "codex", None))
+
+
+def load_annotations() -> list:
+    """The annotations collections this node holds: the files in
+    `collections/` whose Codex annotates another collection. One that
+    cannot load is left out here and named by `load_all`'s caller the way
+    any unreadable file is — this listing never raises, because it runs
+    beside every search and every seeding beat."""
+    cfg_dir = collections_dir()
+    out: list[Collection] = []
+    if not cfg_dir.is_dir():
+        return out
+    for p in sorted(cfg_dir.glob("*.toml")):
+        try:
+            c = _load_one(p)
+        except Exception:                               # noqa: BLE001
+            continue
+        if is_annotations(c):
+            out.append(c)
+    return out
 
 
 #: 07 §7.8 spells the middle mode `on-demand`; the code has always called
@@ -683,7 +746,8 @@ def _codex_encoder(raw: Any, codex, where: str) -> EmbedRecipe | None:
     encoder (07 §7.8), never what the space is. `dtype`, `ctx` and `dim`
     are the space's (02 §2.4): a file that still states one must state the
     Codex's, or it is a second answer and the collection is refused."""
-    if not isinstance(raw, dict):
+    if not isinstance(raw, dict) or codex.space is None:
+        # no space (an annotations Codex, 02 §2.10): nothing to reach
         return None
     space = codex.space
     for key, have in (("dtype", space.dtype), ("ctx", space.ctx), ("dim", space.dim)):
@@ -833,6 +897,10 @@ def load_all(*, skip_unreadable: bool = False):
             if not skip_unreadable:
                 raise
             unreadable.append((name, f"{type(e).__name__}: {e}"))
+            continue
+        if is_annotations(c):
+            # 02 §2.10: held, and nothing for the worker or a ranked list —
+            # `load_annotations` is where it is listed
             continue
         if c.embed is None:
             # NON-COMPLIANT, and said so where the operator looks (the

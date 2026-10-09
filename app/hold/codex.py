@@ -42,7 +42,7 @@ CODEX_VERSION = 5
 #: so inside `collection_id` — changing it does not upgrade a collection, it
 #: names a different one" (§9.3). So 1 and 2 are read forever and never
 #: rewritten.
-CODEX_VERSIONS = (1, 2, 3, 4, 5, 6)
+CODEX_VERSIONS = (1, 2, 3, 4, 5, 6, 7)
 
 #: THE ENGINE AMENDMENT (0d85f7f; 02 §2.4, 09 §9.3). From this version a
 #: space's encoder is `{weights, engine, label}`: the ENGINE the reference
@@ -85,6 +85,21 @@ INPUT_PAIR: dict[str, str] = {"form": "pair", "split": "first-section"}
 #: ALONE: "a Codex none of whose engines is a backend engine is written at
 #: 5, so no Codex, space, engine or `collection_id` already written moves".
 BACKEND_VERSION = 6
+
+#: THE ANNOTATIONS AMENDMENT (operator, 2026-10-09; 02 §2.10, 09 §9.3,
+#: docs/notes/annotation-collections.md). An ANNOTATIONS collection holds
+#: claims about another collection's records — "this book and that one are
+#: the same work" — made by its annotator and not stated by the target's
+#: origin, so they cannot be the target's relations (05 §5.5). Its Codex
+#: carries `annotates: {collection_id, from_snapshot}` and has no text to
+#: cut and nothing to embed: `space` and `work` are null, `layers` is `[]`.
+#: Written for an annotations Codex ALONE, so no Codex, space or
+#: `collection_id` already written moves: below this version `annotates`
+#: is an unknown key, and from it the key is required and non-null.
+ANNOTATIONS_VERSION = 7
+#: The plugin (uid prefix) of every annotations collection, as `deposit` is
+#: of every deposit collection; its relation types are `annotations:<type>`.
+ANNOTATIONS_PLUGIN = "annotations"
 #: The backend's directory, as a backend engine's `args` write it.
 BACKEND_PLACEHOLDER = "${BACKEND}"
 _BACKEND_PREFIX = BACKEND_PLACEHOLDER + "/"
@@ -133,6 +148,9 @@ _DECIMAL_RE = re.compile(r"^-?(0|[1-9][0-9]*)(\.[0-9]+)?$")
 _ANCHOR_RE = re.compile(r"^https://[^\s/]+/.+$")
 _DURATION_RE = re.compile(r"^P(?!$)(\d+Y)?(\d+M)?(\d+W)?(\d+D)?"
                           r"(T(?!$)(\d+H)?(\d+M)?(\d+S)?)?$")
+#: 09 §9.4's two snapshot-id forms: `YYYY-MM` (monthly), `YYYY-Www` (weekly).
+_SNAPSHOT_ID_RE = re.compile(r"^[0-9]{4}-([0-9]{2}|W[0-9]{2})$")
+_HEX32_RE = re.compile(r"^[0-9a-f]{32}$")
 
 # The checks a plan may name (03 §3.2). §9.8's table is wider: it adds the
 # results a peer produces from what it finds rather than from a plan.
@@ -560,6 +578,22 @@ class Facet:
                 "separator": self.separator, "authority": self.authority}
 
 
+@dataclass(frozen=True)
+class Annotates:
+    """09 §9.3's `annotates` (ANNOTATIONS_VERSION): the TARGET collection an
+    annotations collection makes claims about, and the target snapshot from
+    which they hold. "An annotation fits a collection from a snapshot date
+    onwards, by design" (operator, 2026-10-09): a claim was checked against
+    the target as that snapshot holds it, and is attached to no answer read
+    from an earlier one."""
+    collection_id: str       # the target's `collection_id`
+    from_snapshot: str       # a target snapshot id, `YYYY-MM` or `YYYY-Www`
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"collection_id": self.collection_id,
+                "from_snapshot": self.from_snapshot}
+
+
 #: 09 §9.3's three kinds of debt, in the order they sort.
 CORPUS, ARCHIVE, COMMUNITY = "corpus", "archive", "community"
 CREDIT_KINDS = (ARCHIVE, COMMUNITY, CORPUS)          # sorted, as the list is
@@ -643,8 +677,10 @@ class Codex:
     protocol_version: int
     layers: tuple[Layer, ...]
     slicing: dict[str, Any]
-    space: Space
-    work: Work
+    #: None exactly on an annotations Codex (ANNOTATIONS_VERSION): it has no
+    #: text to cut and nothing to embed, so no space and no work parameter.
+    space: Space | None
+    work: Work | None
     modality: str            # "text" | "dna"
     erasure: str             # "append-only" | "retractable" | "erasable"
     validation: Validation
@@ -685,6 +721,10 @@ class Codex:
     #: `None` exactly when `version` is 1 — §9.3: "Version 1 is this
     #: object without `record_line`".
     record_line: int | None = None
+    #: 09 §9.3's `annotates` — present (and non-null) exactly at
+    #: ANNOTATIONS_VERSION, ABSENT from the object below it, so that no
+    #: Codex already written changes a byte.
+    annotates: Annotates | None = None
 
     def __post_init__(self) -> None:
         """`record_line` follows `version`, so no construction has to spell
@@ -727,8 +767,8 @@ class Codex:
             "protocol_version": self.protocol_version,
             "layers": [l.to_dict() for l in self.layers],
             "slicing": self.slicing,
-            "space": self.space.to_dict(),
-            "work": self.work.to_dict(),
+            "space": None if self.space is None else self.space.to_dict(),
+            "work": None if self.work is None else self.work.to_dict(),
             "modality": self.modality,
             "erasure": self.erasure,
             "validation": self.validation.to_dict(),
@@ -757,6 +797,10 @@ class Codex:
             # unknown key — so a version-1 Codex carrying it, even as
             # null, is a different object that no reader accepts.
             out["record_line"] = self.record_line
+        if self.version >= ANNOTATIONS_VERSION:
+            # ABSENT below it, never null: an older Codex carrying the key
+            # would be an object nobody else hashes the same (09 §9.18)
+            out["annotates"] = None if self.annotates is None else self.annotates.to_dict()
         return out
 
     def identity_dict(self) -> dict[str, Any]:
@@ -800,8 +844,13 @@ class Codex:
 
         BELOW VERSION 3 the engine's image digest is inside: those bytes are
         what version-2 collections were identified by, and a Codex already
-        written cannot be moved."""
+        written cannot be moved.
+
+        NONE for an annotations Codex, which has no space: nothing pins it,
+        and it is in no space's ranked list (02 §2.10)."""
         sp = self.space
+        if sp is None:
+            return None                                 # type: ignore[return-value]
         if self.version >= ENGINE_VERSION:
             encoder: dict[str, Any] = {"weights": sp.encoder.weights}
             query = sp.query.to_dict()
@@ -822,8 +871,9 @@ class Codex:
     @property
     def space_segment(self) -> str:
         """The `<space>` segment of a path or a member name: the first 16
-        hexadecimal digits of `space_id` (§9.3)."""
-        return self.space_id.split(":", 1)[1][:16]
+        hexadecimal digits of `space_id` (§9.3); None without a space."""
+        sid = self.space_id
+        return None if sid is None else sid.split(":", 1)[1][:16]  # type: ignore[return-value]
 
     @property
     def relation(self) -> str:
@@ -893,6 +943,8 @@ def encoder_field(codex: "Codex", *, query: bool = False) -> tuple[str, str | No
     (§9.9), both calibration objects (§9.12) — to the engine's id, each by
     one version. An artefact of a version-2 collection keeps the image and
     its old version: those bytes are what its peers already hold."""
+    if codex.space is None:                 # an annotations Codex: no encoder at all
+        return "encoder_engine", None
     enc = codex.space.query.encoder if query else codex.space.encoder
     if enc is None:
         return ("encoder_engine" if codex.version >= ENGINE_VERSION
@@ -900,6 +952,11 @@ def encoder_field(codex: "Codex", *, query: bool = False) -> tuple[str, str | No
     if codex.version >= ENGINE_VERSION:
         return "encoder_engine", enc.engine.engine_id
     return "encoder_image", enc.image
+
+
+def is_annotations(codex: Any) -> bool:
+    """An annotations Codex (02 §2.10): it names the collection it annotates."""
+    return getattr(codex, "annotates", None) is not None
 
 
 def corrective_epoch(replaced_codex_id: str) -> str:
@@ -951,6 +1008,10 @@ def validate(codex: Codex, mother: Codex | None = None) -> None:
         raise CodexError("origin.form records which origin form was taken and why "
                          "(06 §6.4); it is not optional")
 
+    if codex.version == ANNOTATIONS_VERSION or codex.annotates is not None:
+        _validate_annotations(codex)
+        return
+
     _validate_layers(codex)
     _validate_space(codex)
 
@@ -976,6 +1037,91 @@ def validate(codex: Codex, mother: Codex | None = None) -> None:
 
     if mother is not None:
         _validate_against_mother(codex, mother)
+
+
+#: The plan checks an annotations collection may name: what its parts and
+#: its snapshot can be checked by. There are no chunks, no vectors and no
+#: origin to re-fetch — its origin is the annotator (02 §2.10).
+ANNOTATIONS_CHECKS = ("roots", "records", "license", "signature")
+
+
+def _validate_annotations(codex: Codex) -> None:
+    """02 §2.10's rules for an annotations Codex (09 §9.3, amended 2026-10-09).
+
+    Every field present, as for any Codex; what differs is fixed here, so
+    that two annotators writing the same recipe write the same bytes and no
+    annotations Codex can pretend to a space, a lineage or a plan it cannot
+    have."""
+    if codex.version != ANNOTATIONS_VERSION or codex.annotates is None:
+        raise CodexError(
+            f"`annotates` is carried exactly at Codex version {ANNOTATIONS_VERSION}, and a "
+            f"version {ANNOTATIONS_VERSION} Codex is an annotations Codex (09 §9.3)")
+    a = codex.annotates
+    if not _DIGEST_RE.match(a.collection_id or ""):
+        raise CodexError("annotates.collection_id is the target's collection_id, "
+                         f"sha256:<64 hex>; got {a.collection_id!r}")
+    if not _SNAPSHOT_ID_RE.match(a.from_snapshot or ""):
+        raise CodexError("annotates.from_snapshot is a target snapshot id, YYYY-MM or "
+                         f"YYYY-Www (09 §9.4); got {a.from_snapshot!r}")
+    if codex.plugin != ANNOTATIONS_PLUGIN:
+        raise CodexError(f"an annotations Codex's plugin is {ANNOTATIONS_PLUGIN!r}: its "
+                         f"uids and its relation types are `annotations:` (02 §2.10)")
+    spec = codex.origin.spec
+    if not (isinstance(spec, dict) and set(spec) == {"source_id", "nonce"}
+            and spec.get("source_id") == ANNOTATIONS_PLUGIN
+            and isinstance(spec.get("nonce"), str) and _HEX32_RE.match(spec["nonce"])):
+        raise CodexError(
+            'origin.spec of an annotations Codex is {"source_id": "annotations", "nonce": '
+            '<32 hex digits>} (02 §2.10): its origin is the annotator, and the nonce keeps '
+            "two annotators' collections from being one")
+    if codex.origin.cutoff_rule != "record-date" or codex.origin.unit != "file":
+        raise CodexError('an annotations Codex\'s origin is unit "file", cutoff_rule '
+                         '"record-date" (02 §2.10)')
+    if codex.space is not None or codex.work is not None or codex.layers:
+        raise CodexError("an annotations Codex has no space, no work parameter and no "
+                         "layers — `space` and `work` are null, `layers` is [] — because "
+                         "a claim is attached to results, never cut or embed (02 §2.10)")
+    if codex.modality != "text":
+        raise CodexError("an annotations Codex's modality is \"text\"")
+    if codex.erasure not in ("append-only", "retractable"):
+        raise CodexError("an annotations collection is shared: erasure is append-only or "
+                         "retractable, never erasable (04 §4.4)")
+    if codex.privacy not in ("public", "restricted"):
+        raise CodexError("an annotations collection is shared like any collection: "
+                         "privacy is public or restricted (02 §2.10)")
+    if codex.record_line != 1:
+        raise CodexError("an annotations Codex's record_line is 1: a claim carries no plates")
+    _validate_license(codex)
+    _validate_update(codex)
+    _validate_validation(codex)
+    outside = [c for c in codex.validation.checks if c not in ANNOTATIONS_CHECKS]
+    if outside:
+        raise CodexError(f"validation.checks: {', '.join(outside)} cannot run on an "
+                         f"annotations collection, which has no chunks, no vectors and no "
+                         f"origin to re-fetch; its plan names only "
+                         f"{', '.join(ANNOTATIONS_CHECKS)} (02 §2.10)")
+    _validate_publication(codex)
+    if codex.publication != "open":
+        raise CodexError("an annotations collection is open (02 §2.10)")
+    _validate_facets(codex)
+    if codex.facets:
+        raise CodexError("an annotations Codex declares no facets: its records are "
+                         "attached to other records, never listed by a search")
+    if [c.kind for c in codex.credits] != [CORPUS]:
+        raise CodexError(
+            "an annotations Codex credits exactly one kind=\"corpus\" entry — the "
+            "annotator, whose claims the records are — and no archive or community: "
+            "nothing is embedded for it (02 §2.10)")
+    c = codex.credits[0]
+    if not c.producer or not c.attribution or c.archive is not None or c.coverage != "all":
+        raise CodexError("credits[corpus] names the annotator and its attribution, "
+                         "archive null, coverage \"all\"")
+    if any(v is not None for v in (codex.continues, codex.continues_through,
+                                   codex.origin_reachable_until, codex.derived_from,
+                                   codex.space_from, codex.derivation, codex.replaces,
+                                   codex.certifier, codex.content, codex.profile)):
+        raise CodexError("an annotations Codex is a root with no lineage, derivation, "
+                         "certifier or profile: each of those is null (02 §2.10)")
 
 
 def _validate_layers(codex: Codex) -> None:
@@ -1543,6 +1689,9 @@ _TOP = ("kind", "version", "descriptive", "plugin", "origin", "toolchain",
 
 #: 09 §9.3: "Version 1 is this object without `record_line`."
 _TOP_V1 = tuple(k for k in _TOP if k != "record_line")
+#: 09 §9.3, amended 2026-10-09: an annotations Codex (version 7) is this
+#: object WITH `annotates`.
+_TOP_V7 = _TOP + ("annotates",)
 
 
 def from_dict(d: dict[str, Any]) -> Codex:
@@ -1563,7 +1712,12 @@ def from_dict(d: dict[str, Any]) -> Codex:
             "§9.3). A Codex already written stays 1 and cannot be moved: "
             "`version` is inside `collection_id`, so adding the key does not "
             "upgrade a collection, it names a different one")
-    _only(d, _TOP if version >= 2 else _TOP_V1, "codex")
+    _only(d, _TOP_V7 if version >= ANNOTATIONS_VERSION else _TOP if version >= 2 else _TOP_V1,
+          "codex")
+    annotations = version >= ANNOTATIONS_VERSION
+    if (d["space"] is None or d["work"] is None) and not annotations:
+        raise CodexError(f"space and work are null only on an annotations Codex "
+                         f"(version {ANNOTATIONS_VERSION}, 09 §9.3)")
 
     record_line = d.get("record_line")
     if version >= 2 and record_line not in RECORD_LINES:
@@ -1576,20 +1730,28 @@ def from_dict(d: dict[str, Any]) -> Codex:
                              "jurisdiction"), "origin")
     tc = _only(d["toolchain"], ("platform_image", "mother_platform_image"), "toolchain")
     pa = _only(d["parser"], ("id", "version"), "parser")
-    sp = _only(d["space"], ("encoder", "dim", "dtype", "ctx", "pooling",
-                            "normalise", "query", "tolerance", "calibration",
-                            "envelope", "epoch", "evaluation"), "space")
-    # THE SHAPE FOLLOWS THE VERSION, checked where the file is read and not
-    # only in `validate`: 09 §9.3 defines version 2 as "this object with
-    # `space.encoder` … as `{image, weights, label}`", so a version-2 file
-    # that carries an engine is not a version-2 Codex at all.
-    has_engine = isinstance(sp["encoder"], dict) and "engine" in sp["encoder"]
-    if has_engine != (version >= ENGINE_VERSION):
-        raise CodexError(
-            f"a version {version} Codex names its encoder by "
-            f"{'its ENGINE — {weights, engine, label}' if version >= ENGINE_VERSION else 'its IMAGE — {image, weights, label}'}"
-            f" (09 §9.3); this one carries the other shape")
-    wk = _only(d["work"], ("tokens", "per"), "work")
+    sp = None
+    if d["space"] is not None:
+        sp = _only(d["space"], ("encoder", "dim", "dtype", "ctx", "pooling",
+                                "normalise", "query", "tolerance", "calibration",
+                                "envelope", "epoch", "evaluation"), "space")
+        # THE SHAPE FOLLOWS THE VERSION, checked where the file is read and not
+        # only in `validate`: 09 §9.3 defines version 2 as "this object with
+        # `space.encoder` … as `{image, weights, label}`", so a version-2 file
+        # that carries an engine is not a version-2 Codex at all.
+        has_engine = isinstance(sp["encoder"], dict) and "engine" in sp["encoder"]
+        if has_engine != (version >= ENGINE_VERSION):
+            raise CodexError(
+                f"a version {version} Codex names its encoder by "
+                f"{'its ENGINE — {weights, engine, label}' if version >= ENGINE_VERSION else 'its IMAGE — {image, weights, label}'}"
+                f" (09 §9.3); this one carries the other shape")
+    wk = None if d["work"] is None else _only(d["work"], ("tokens", "per"), "work")
+    an = None
+    if annotations:
+        if not isinstance(d["annotates"], dict):
+            raise CodexError(f"a version {ANNOTATIONS_VERSION} Codex is an annotations Codex "
+                             f"and names what it annotates (09 §9.3)")
+        an = _only(d["annotates"], ("collection_id", "from_snapshot"), "annotates")
     va = _only(d["validation"], ("checks", "sample", "required"), "validation")
     li = _only(d["license"], ("class", "terms_sha256"), "license")
     up = _only(d["update"], ("cadence", "day", "grace_days"), "update")
@@ -1605,8 +1767,8 @@ def from_dict(d: dict[str, Any]) -> Codex:
         protocol_version=d["protocol_version"],
         layers=tuple(_layer(l, i, version) for i, l in enumerate(d["layers"])),
         slicing=d["slicing"],
-        space=_space(sp),
-        work=Work(wk["tokens"], wk["per"]),
+        space=None if sp is None else _space(sp),
+        work=None if wk is None else Work(wk["tokens"], wk["per"]),
         modality=d["modality"],
         erasure=d["erasure"],
         validation=Validation(tuple(va["checks"]), va["sample"],
@@ -1631,6 +1793,7 @@ def from_dict(d: dict[str, Any]) -> Codex:
         profile=d["profile"],
         version=version,
         record_line=record_line,
+        annotates=None if an is None else Annotates(an["collection_id"], an["from_snapshot"]),
     )
 
 

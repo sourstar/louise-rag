@@ -200,6 +200,7 @@ The fields, with their values:
 | `producer_key` | the key that signed the chunk's vector — this peer's own key for `local` |
 | `text` or `origin_url` | the chunk's text; for a red-class collection the origin's page and never the text |
 | `figures` | the plates whose `[Illustration…]` markers fall inside this chunk, in order: `{hash, media_type, caption, state}` — NEVER the bytes. `null` where the collection carries no figures at all, `[]` where this chunk has none. `state` is `held` · `not-held` · `not-carried`, below |
+| `annotations` | the claims an annotations collection held here makes about this record (02 §2.10; *amended 2026-10-09*), `[]` where none does. Each entry is `{collection_id, snapshot_id, claim, type, relation, role, record: {uid, title, lang, held}, subject_lang, object_lang, method, confidence, contributor, state, trust_level}`. `record` is the record at the claim's other end, as the target holds it, and `role` is this record's end, `subject` or `object`. `state` is `current`, `stale` or `unknown`, below |
 | `freshness` | present only on request: `current` · `newer-at-source` · `unreachable` · `unavailable` — the last when the plugin has no per-record current form for this record (one read from a static archive, a copy built before records carried a content hash), said rather than guessed (*amended 2026-10-07*) |
 | `reranked` | whether the list's order is the reranker's (§5.6) or the fused order |
 
@@ -238,6 +239,34 @@ illustrated the book is, and a TEXT MODEL NEVER SEES THE PICTURE — what
 reaches its context is the caption, already in `text`. The plate is for
 the person reading the answer, not for the model composing it, unless a
 multimodal client fetches it and passes it on.
+
+**Annotations are placed, never ranked** (*amended 2026-10-09*). An
+annotations collection's claim, for example "this Latin book and that
+English one are the same work" (02 §2.10), is a fact about a returned
+record, of the kind a reference source's row and a figure are. It sits
+beside the result and never enters a list: it is never scored, never fused
+and never a leg (invariant 4), and the lists keep their order and
+membership. A client may group a work's versions by these facts.
+
+Which claims apply:
+
+- **Collection.** The claim belongs to an annotations collection that this
+  peer holds and may use, and whose `annotates.collection_id` is the
+  result's collection.
+- **Snapshot.** The result was read from a target snapshot at or after
+  `annotates.from_snapshot`.
+
+The state of a claim:
+
+- `current` while both records' content hashes equal the ones the claim was
+  checked against;
+- `stale` when one of them differs. A stale claim is still attached,
+  labelled;
+- `unknown` where this peer holds no hash to compare.
+
+An annotations copy in quarantine, or one whose licence is not
+acknowledged, attaches nothing. It is named under `withheld` as any copy
+is.
 
 The chunk's text is what the peer holds. For a red-class collection
 the peer's own copy of the text — fetched from the origin, never from a
@@ -361,6 +390,26 @@ listed. The direction is from → to, as the source states it; the peer
 indexes edges in both directions locally, so "the laws that modify
 decree 81/2008" is the inbound `eli:amends` edges of that decree. The
 bytes are 09 §9.14.
+
+**Links the source does not state are annotations** (*amended
+2026-10-09*). A link that someone other than the origin finds — a matcher,
+Wikidata, a person — is not a relation of the target collection, however
+sure it is. Two books being the same work is an example. Such links are
+claims, and they live in an **annotations collection** (02 §2.10), whose
+source IS the annotator.
+
+Its relations member carries each claim as an edge `subject → object`
+typed `annotations:<type>`, for example `annotations:same-work` or
+`annotations:translation-of`. Both ends are uids of the collection it
+annotates, so `from` there is a record of the TARGET, not of the
+annotations collection; its part is the part holding the claim. This
+section's rule holds unchanged: the edges are explicit in their
+collection's source.
+
+`louise_traverse` follows them like any edge and resolves them against the
+target held here: holding the annotations collection is asking for it. They
+are also placed beside search results (§5.3). Nothing in the target
+collection changes.
 
 Naming the part an unresolved id lives in requires holding the target
 collection's Codex and a snapshot: the target's plugin maps a canonical

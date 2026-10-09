@@ -248,6 +248,11 @@ def tick(collections, cons: dict, control_con, worker_state: str) -> None:
     state, account uploads, publish the table. Never raises."""
     seeder = get_seeder()
     try:
+        # the annotations collections held are served like any (02 §2.10):
+        # left out here, `retain` below would stop what `share.seeder.sync`
+        # just published for them
+        from app.share import seeder as share_seeder
+        collections, cons = share_seeder.with_annotations(collections, cons)
         seeder.set_paused(worker_state not in SEEDING_STATES)
         # Stop serving what this node no longer holds, BEFORE starting what
         # it does. `collections` is the live list, so a collection whose

@@ -103,9 +103,17 @@ def entries(root: Path, collections) -> list[dict[str, Any]]:
     """The digest's collection entries: every Codex collection held, with
     its members listed when this node shares it (04 §4.3) and empty
     otherwise; a never-share collection appears in no digest (09 §9.9)."""
+    from app import collections as collections_mod
     from app.hold.codex import lineage_id
     out = []
     resolve = col.resolver(root)
+    # the annotations collections held are listed like any (02 §2.10)
+    names = {c.name for c in collections}
+    try:
+        collections = list(collections) + [a for a in collections_mod.load_annotations()
+                                           if a.name not in names]
+    except Exception:   # noqa: BLE001 — a listing that fails: the rest is still said
+        collections = list(collections)
     for c in collections:
         codex = getattr(c, "codex", None)
         if codex is None or codex.privacy != "public":
@@ -119,7 +127,7 @@ def entries(root: Path, collections) -> list[dict[str, Any]]:
         shared = seeder.wants_serving(c) and snap is not None
         members = list(mem.members_of(snap, drag_dir=drag)) if shared else []
         members = [m for m in members if all((drag / f.path).is_file() for f in m.files)]
-        if shared:
+        if shared and codex.space is not None:
             # the bundles this peer holds for the space, served from state/
             # (09 §9.7, §9.16): offered beside the snapshot's members
             members += mem.bundle_members(root / c.name / "state", codex.space_segment)

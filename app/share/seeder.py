@@ -132,9 +132,10 @@ def publish(collection, snapshot: sn.Snapshot, drag_dir: Path, state_dir: Path, 
     refused: list[str] = []
     members = list(mem.members_of(snapshot, drag_dir=drag_dir))
     codex = getattr(collection, "codex", None)
-    if codex is not None:
+    if codex is not None and codex.space is not None:
         # the bundles this peer holds for the space (09 §9.7, §9.16): served
-        # from state/bundles/, never from the drag
+        # from state/bundles/, never from the drag. An annotations collection
+        # has no space and so no bundles (02 §2.10)
         members += mem.bundle_members(Path(state_dir), codex.space_segment)
     for member in members:
         if not serves(collection, member.name):
@@ -288,15 +289,57 @@ def wants_serving(collection) -> bool:
     return copy_state.of(collection).in_use
 
 
+#: (thread, manifest path) -> the connection this thread keeps for an
+#: annotations collection. The worker's seeding thread opens a connection
+#: per collection of `load_all()` and passes them in; an annotations
+#: collection is not in that list (02 §2.10: nothing for the worker to run),
+#: so its connection is kept here — by PATH, never by name (CLAUDE.md), and
+#: per thread, since SQLite connections are thread-affine.
+_annotation_cons: dict[tuple[int, str], Any] = {}
+
+
+def with_annotations(collections, cons: dict) -> tuple[list, dict]:
+    """The worker's collections plus the annotations collections this node
+    holds, and a connection map covering both: what is shared is every
+    collection the node holds, and an annotations collection is shared like
+    any (02 §2.10). The worker's own map is not changed."""
+    import threading
+    from app import collections as collections_mod, db
+    names = {c.name for c in collections}
+    try:
+        extra = [a for a in collections_mod.load_annotations() if a.name not in names]
+    except Exception:   # noqa: BLE001 — a listing that fails shares what it can
+        extra = []
+    tid = threading.get_ident()
+    live, merged = set(), dict(cons)
+    for a in extra:
+        k = (tid, str(a.manifest_path))
+        live.add(k)
+        if k not in _annotation_cons:
+            try:
+                _annotation_cons[k] = db.connect(a)
+            except Exception:   # noqa: BLE001 — one manifest, not the beat
+                continue
+        merged[a.name] = _annotation_cons[k]
+    for k in [k for k in _annotation_cons if k[0] == tid and k not in live]:
+        try:
+            _annotation_cons.pop(k).close()
+        except Exception:   # noqa: BLE001
+            _annotation_cons.pop(k, None)
+    return list(collections) + extra, merged
+
+
 def sync(collections, cons: dict, control_con, worker_state: str, *,
          session=None, port: int | None = None, now: float | None = None,
          log: Callable[[str], None] | None = None) -> dict[str, Any]:
     """One beat of the worker's seeding thread, before app/acquire/seeding
     ticks: publish the current snapshot of every collection that wants
     serving and is not yet published at that snapshot; unpublish one that
-    stopped wanting it; announce the served keys when the mode seeds."""
+    stopped wanting it; announce the served keys when the mode seeds. The
+    annotations collections held are among them (`with_annotations`)."""
     from app import collections as collections_mod, node_state
     from app.hold import collection as col
+    collections, cons = with_annotations(collections, cons)
     root = collections_mod.louise_root() / "collections"
     out: dict[str, Any] = {"published": [], "unpublished": [], "announced": 0, "pointers": 0}
     seeds = node_state.runs(worker_state, node_state.SEED)

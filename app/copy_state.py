@@ -570,6 +570,9 @@ def evaluate(root: Path, name: str, codex: Codex | None, *, licence: str,
     if codex is None:
         return ALWAYS_IN_USE
     bodies = attestations(root, name, codex)
+    if getattr(codex, "annotates", None) is not None:
+        return _annotations_state(root, name, codex, bodies, licence=licence, key=key,
+                                  before=before)
     gate, leg, why = _gate(root, name, codex, answering or {})
     # 03 §3.6's tests 1 and 5 have nothing to run on for a NEVER-SHARE
     # collection (02 §2.9): a deposit collection holds no shard for roots and
@@ -599,6 +602,41 @@ def evaluate(root: Path, name: str, codex: Codex | None, *, licence: str,
                         if t.status == IN_USE_BEFORE)
     return CopyState(QUARANTINE if waiting else IN_USE, reasons, origin_check,
                      leg, tests, why)
+
+
+def _roots(bodies, key: str | None, name: str) -> Test:
+    """`roots` alone: an annotations collection's parts cut no chunks."""
+    clears = f"`louise hold check {name} --checks roots,records`"
+    if key is None:
+        return Test("roots", OPEN, "this peer has no key, so its checks leave no attestation "
+                    "to read", "set NODE_KEY_PATH (07 §7.8)")
+    if _own_ever_passed(bodies, key, "roots"):
+        return Test("roots", PASSED, "this peer's own roots passed")
+    if _own_latest(bodies, key, "roots") is not None:
+        return Test("roots", FAILED, "roots failed here and never passed: a part's local fault "
+                    "is re-fetched and re-checked (03 §3.6)", clears)
+    return Test("roots", OPEN, "roots not yet run on this peer", clears)
+
+
+def _annotations_state(root: Path, name: str, codex: Codex, bodies, *, licence: str,
+                       key: str | None, before: bool) -> CopyState:
+    """03 §3.6's tests for an ANNOTATIONS collection (02 §2.10): its parts'
+    roots, and its licence. There is no space, so no gate and no vector leg;
+    no chunks; and its origin is the annotator, so no records-vs-origin can
+    re-fetch it — those are said, never waited for."""
+    tests = (_roots(bodies, key, name),
+             Test("bundles", NOT_REQUIRED, "an annotations collection holds no vectors"),
+             Test("gate", NOT_REQUIRED, "an annotations collection has no space to gate"),
+             _licence(licence, name),
+             Test("origin", NOT_REQUIRED, "an annotations collection's origin is its annotator, "
+                                          "so no records-vs-origin can re-fetch it (02 §2.10)"))
+    if before:
+        tests = tuple(_decided(t) for t in tests)
+    waiting = [t for t in tests if t.status in (OPEN, FAILED, CANNOT_RUN)]
+    reasons = tuple(f"{t.detail} — cleared by {t.clears}" if t.clears else t.detail
+                    for t in waiting)
+    return CopyState(QUARANTINE if waiting else IN_USE, reasons, ORIGIN_NOT_PLANNED, False,
+                     tests, "an annotations collection has no vector leg")
 
 
 #: place -> (state, fresh until)

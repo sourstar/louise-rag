@@ -38,6 +38,29 @@ VERIFIED_KEYS = 8
 ORIGIN_SHARE, SAMPLE_SHARE = 0.25, 0.10
 
 
+def _annotations_level(out: dict[str, Any], bodies) -> dict[str, Any]:
+    """An ANNOTATIONS collection (02 §2.10) has no chunks, no space and no
+    origin to re-fetch, so what strangers can say of it is that its parts
+    are the snapshot's (`roots`) and its claims are the ones its records
+    hash to (`records`): `checked` at three independent keys for both,
+    `verified` at eight. Whether to believe the CLAIMS is the adopting
+    peer's call — holding the collection — and each claim says how it was
+    made and how sure its maker is."""
+    passed = {c: independent(bodies, c) for c in ("roots", "records")}
+    keys = {str(b.get("key")) for c in passed for b in passed[c]}
+    out["passed"].update({c: len(v) for c, v in passed.items()})
+    out["keys"] = len(keys)
+    need = [f"{c}: {len(passed[c])} of {CHECKED_KEYS} independent keys"
+            for c in passed if len(passed[c]) < CHECKED_KEYS]
+    if need:
+        out.update(level=UNVERIFIED, why=need)
+        return out
+    few = min(len(v) for v in passed.values())
+    out.update(level=VERIFIED if few >= VERIFIED_KEYS else CHECKED,
+               why=[] if few >= VERIFIED_KEYS else [f"{few} of {VERIFIED_KEYS} independent keys"])
+    return out
+
+
 def cadence_seconds(codex) -> float:
     return cov.period_seconds({"monthly": "P1M", "weekly": "P1W"}.get(codex.update.cadence, "P1M"))
 
@@ -173,6 +196,8 @@ def level(codex, snapshot: sn.Snapshot | None, attestations: Iterable[dict[str, 
     if flagged:
         out.update(level=FLAGGED, why=[flagged])
         return out
+    if getattr(codex, "annotates", None) is not None:
+        return _annotations_level(out, bodies)
     why = []
     for c in ("roots", "chunks", "calibration"):
         if len(passed[c]) < CHECKED_KEYS:

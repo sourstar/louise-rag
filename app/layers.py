@@ -203,6 +203,9 @@ def layers_for(collection) -> tuple[Layer, ...]:
     declared = getattr(collection, "layers", None)
     if declared:
         return tuple(_normalise(l) for l in declared)
+    codex = collection if hasattr(collection, "annotates") else getattr(collection, "codex", None)
+    if getattr(codex, "annotates", None) is not None:
+        return ()       # an annotations collection cuts nothing (02 §2.10): no implicit layer
     name, version = chunking.chunker_version_for_collection(collection)
     return (Layer(chunker=name, version=version, rule="default"),)
 

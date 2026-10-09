@@ -961,8 +961,21 @@ def show(root: Path, ref: str) -> dict[str, Any]:
                      "producer": c.producer, "attribution": c.attribution}
                     for c in codex.credits],
         "refused": None,
+        # 02 §2.10: what an annotations collection makes claims about, and the
+        # target snapshot they hold from; null on every other collection
+        "annotates": (None if codex.annotates is None else
+                      {**codex.annotates.to_dict(), "target": _target_name(root, codex)}),
         "codex": json.loads(codex.canonical()),
     }
+
+
+def _target_name(root: Path, codex: Codex) -> str | None:
+    """The local name of the collection an annotations Codex annotates, when
+    this peer holds it."""
+    for name, held in _held(root):
+        if held.collection_id == codex.annotates.collection_id:
+            return name
+    return None
 
 
 def migrate(root: Path, name: str, *, apply: bool = False) -> dict:

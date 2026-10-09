@@ -302,6 +302,16 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
             h["rank"] = i
         lists.append({"space_id": sid, "question": "relevance", "hits": hits})
     _place_figures(lists, source_of, contexts, root)
+    # 05 §5.3 (amended 2026-10-09): the claims an annotations collection held
+    # here makes about a result's record, placed beside it as facts — never
+    # in a list's order (invariant 4; app/ask/annotations.py)
+    from app.ask import annotations as annotation_facts
+    try:
+        withheld_annotations = annotation_facts.attach(
+            lists, source_of, contexts, root=Path(root) if root is not None else _root())
+    except Exception as e:   # noqa: BLE001 — a fact that cannot be placed is said, never fatal
+        withheld_annotations = [{"collection": None, "collection_id": None, "shards": "all",
+                                 "reason": f"annotations not attached: {type(e).__name__}: {e}"[:300]}]
     facts = [_plain(f) for f in result.get("facts", [])]
     fresh_summary: dict[str, Any] | None = None
     if freshness:
@@ -331,7 +341,8 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         "lists": lists,
         "facts": facts,
         "unresolved": [str(u) for u in result.get("unresolved", [])],
-        "withheld": list(result.get("withheld", [])) + withheld_as_of + withheld_integrity,
+        "withheld": (list(result.get("withheld", [])) + withheld_as_of + withheld_integrity
+                     + withheld_annotations),
         "legs_withheld": result.get("legs_withheld", []),
         "translations": result.get("translations", {}),
         "facts_withheld": result.get("facts_withheld", []),

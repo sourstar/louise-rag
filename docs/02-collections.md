@@ -93,6 +93,7 @@ codex = {
                                      -- vectors obtainable from another space without an encoder (§2.7)
   replaces: null | {codex: "<collection_id>", defect: {...}},   -- the defect block is 03 §3.6
   profile: null | {...}                                -- plugin-defined and hashed like every other field: an ELI profile
+  annotates: {collection_id, from_snapshot}            -- an annotations Codex only, and absent from every other (§2.10; amended 2026-10-09)
 }
 collection_id = H(canonical-json(codex without "descriptive"))   -- the identity
 codex_hash    = H(bytes of codex.json)                          -- these bytes
@@ -1263,3 +1264,102 @@ never-share collection publishes nothing, so promise 7 has nothing to
 preserve here and §2.2's `delta.tombstoned` never arises. Emptying the
 collection is erasing every deposit, and `hold collection forget` is
 that followed by removing the collection's directory.
+
+## 2.10 Annotations collections: claims about another collection's records
+
+*Operator, 2026-10-09 (amended 2026-10-09); the design and its reasons
+are `notes/annotation-collections.md`.*
+
+Some links between records come from the origin, and some do not. A statute
+that amends another says so, and that link is a relation of its collection
+(05 §5.5). Project Gutenberg never says "this book is a translation of that
+one", so when a matcher, Wikidata or a person finds that two books are the
+same work, the link is a **claim made by us**, not by the origin. It cannot
+be a relation of the target, and nothing in the target may change to hold it
+(promise 9).
+
+An **annotations collection** holds such claims. It is a third kind, beside
+a collection built from a plugin's corpus and a deposit collection (§2.9).
+Like either, it has its own Codex, snapshots, parts and checks. Like the
+first, and unlike a deposit collection, it is shared, fetched and adopted.
+
+What it does **not** have:
+
+- **No text to cut and no space.** Its records are attached to results as
+  facts (05 §5.3) and never ranked. So no worker stage runs for it: nothing
+  is acquired, indexed or embedded.
+- **No origin to re-fetch.** Its origin is its annotator.
+
+**Its Codex** carries every field, as any Codex does (09 §9.3), at version
+7. What differs is fixed:
+
+- `annotates: {collection_id, from_snapshot}` names the TARGET collection
+  and the target snapshot the claims were checked against.
+  - "An annotation fits a collection from a snapshot date onwards, by
+    design": a claim is attached to no answer read from an earlier target
+    snapshot.
+- `plugin` is `annotations`: the claims' uids are `annotations:<n>` and
+  their relation types are `annotations:<type>`.
+- `origin.spec` is `{source_id: "annotations", nonce}`, the deposit rule
+  and for the deposit reason. No public origin reproduces a set of claims,
+  so two annotators' collections must never be one.
+  - `origin.form` names the claims file.
+  - `unit` is `file`, `clock` is `UTC` and `cutoff_rule` is `record-date`.
+- `space` and `work` are null and `layers` is `[]`. `record_line` is 1.
+- `license` is the claims' own. `privacy` is `public` or `restricted`, and
+  `erasure` is `append-only` or `retractable`.
+- `publication` is `open`, `embedding` is `open`, and `facets` is `[]`.
+- `credits` holds exactly one `corpus` entry: the annotator. There is no
+  community entry, because nothing is embedded.
+- The plan names only `roots`, `records`, `license` and `signature`.
+- It is a root: no lineage, derivation, certifier or profile.
+
+**Its records are claims** (09 §9.5):
+
+```
+claim = {type: "same-work" | "translation-of", subject, object,
+         subject_lang, object_lang, method, evidence, confidence,
+         contributor, subject_hash, object_hash, target_snapshot}
+```
+
+- `same-work`: two records are versions of one work in different
+  languages, and neither is said to be the other's source.
+- `translation-of`: the subject translates the object. The source language
+  is `object_lang` and the target language is `subject_lang`.
+- `method` says how the claim was made: a matcher with its id and version,
+  Wikidata, or a person. `evidence` is what the method matched on, and
+  `confidence` is the maker's.
+- `subject_hash` and `object_hash` are the two target records'
+  `content_hash` in `target_snapshot`. `hold collection create annotations`
+  reads them from the parts that snapshot lists, and refuses a claim about a
+  record the snapshot does not hold.
+
+**Its relations member** carries each claim as its edge `subject → object`.
+Here §5.5 holds as written, because in this collection the source is the
+annotator and the edges are its explicit statements.
+
+**When the target moves on.** A claim read against a later target snapshot
+is `current` while the two records' content hashes equal the ones it was
+checked against. It is `stale` once one differs. A stale claim is still
+shown, labelled, and never silently dropped, because the claim was made
+about other text.
+
+A deterministic method re-checks by running again and publishing the
+annotations collection's next snapshot with new hashes. A reading peer
+compares hashes and never re-runs a method.
+
+**Holding it.** Its collection file (07 §7.8) names no `[encoder]` and
+holds `kinds = ["records", "relations"]`. Its copy leaves quarantine
+(03 §3.6) when this peer's own `roots` have passed and its licence is
+acknowledged where the class needs it.
+
+- The gate and the vector leg do not apply: there is no space.
+- `records-vs-origin` does not apply either: its `origin_check` is
+  `not-planned`.
+
+**Its trust level.**
+
+- It is `checked` at three independent keys that passed `roots` and
+  `records`, and `verified` at eight.
+- Believing the claims is the adopting peer's decision: a peer that holds
+  the collection adopts them, and one that does not, does not.

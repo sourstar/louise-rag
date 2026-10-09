@@ -426,7 +426,11 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
     if node_con is not None and not (stop is not None and stop.is_set()):
         from app.share import accept
         try:
-            taken = accept.beat(collections, cons, node_con, session_factory=session_factory,
+            # bundles, flags and forgeries are about vectors: an annotations
+            # collection has none (02 §2.10)
+            vectored = [c for c in collections
+                        if getattr(getattr(c, "codex", None), "annotates", None) is None]
+            taken = accept.beat(vectored, cons, node_con, session_factory=session_factory,
                                 root=root, stop=stop, now=now, log=log)
             if any(taken.get(k) for k in ("accepted", "refused", "ignored", "held")):
                 out["bundles"] = taken
@@ -447,6 +451,8 @@ def loop(stop, *, beat_s: float = BEAT_S, log: Callable[[str], None] = print,
     while not stop.wait(beat_s):
         try:
             collections = [c for c in collections_mod.load_all() if getattr(c, "codex", None) is not None]
+            # an annotations collection is fetched like any (02 §2.10)
+            collections += collections_mod.load_annotations()
             live = {c.name for c in collections}
             for stale in [n for n in cons if n not in live]:
                 try:
