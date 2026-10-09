@@ -727,7 +727,7 @@ NODE_CONTROL_KEYS = (WORKER_STATE_KEY, BANDWIDTH_OVERRIDE_KEY)
 
 #: stages whose lines are about the NODE, not about the collection whose
 #: manifest stores them — see `log_event`'s `node` below
-NODE_STAGES = frozenset({"sched", "share"})   # share: the seeder and gossip lines cover every collection and name theirs in the message
+NODE_STAGES = frozenset({"sched", "share", "models"})   # share: the seeder and gossip lines cover every collection and name theirs in the message; models: a cold start (app/model_load.py) is the node's
 
 
 def log_event(con, level, stage, message, doc_uid=None):

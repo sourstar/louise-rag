@@ -73,7 +73,8 @@ def compact(name: str, result: Any) -> Any:
                 hits.append(hit)
             lists.append({"space_id": lst.get("space_id"), "hits": hits})
         out: dict[str, Any] = {"lists": lists}
-        for k in ("facts", "unresolved", "withheld", "legs_withheld", "as_of", "filtered"):
+        for k in ("facts", "unresolved", "withheld", "legs_withheld", "rerank_withheld",
+                  "as_of", "filtered"):
             v = result.get(k)
             if v:
                 out[k] = v

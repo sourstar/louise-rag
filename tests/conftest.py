@@ -40,6 +40,21 @@ def fresh_worker_state():
 
 
 @pytest.fixture(autouse=True)
+def no_runner_says_what_it_holds(monkeypatch):
+    """app/model_load.py asks a model's runner (`GET <server>/system`) whether
+    the model is loaded before a request. No test's fake encoder, reranker or
+    chat server has that route, and the hosts they name do not exist: every
+    test runs as against a runner that cannot say — exactly the behaviour
+    before the warm existed — unless it fakes a runner itself
+    (tests/test_model_load.py)."""
+    from app import model_load
+    model_load.reset()
+    monkeypatch.setattr(model_load, "_fetch_system", lambda server: None)
+    yield
+    model_load.reset()
+
+
+@pytest.fixture(autouse=True)
 def a_fresh_torrent_session():
     """The process-wide libtorrent session (app/acquire/transport_torrent.py)
     is shut down after any test that started one, so the next starts clean.

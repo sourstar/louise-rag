@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 
 import httpx
-from . import config, dispatch
+from . import config, dispatch, model_load
 from .dispatch import Level
 
 _THINK = re.compile(r"<think>.*?</think>\s*", re.S)
@@ -44,6 +44,26 @@ def _request(messages: list[dict], *, stream: bool, temperature: float,
     return f"{config.CHAT_URL}/api/chat", {
         "model": config.CHAT_MODEL, "messages": messages, "stream": stream,
         "think": False, "keep_alive": config.LLM_KEEP_ALIVE, "options": options}
+
+
+def warm(level: Level = Level.CHAT) -> None:
+    """Load the chat model before a request when CHAT_URL's runner says it is
+    not loaded (app/model_load.py; operator, 2026-10-09: "Timeouts shall not
+    include cold start"): a one-token answer, bounded by the model's load
+    bound, so LLM_TIMEOUT is the answer's alone. Only the OpenAI dialect
+    (LocalAI) — Ollama's runner has no `/system`. A load past its bound
+    raises `model_load.LoadTimeout`, which says so."""
+    if config.CHAT_API != "openai" or not config.CHAT_URL or not config.CHAT_MODEL:
+        return
+    url, body = _request([{"role": "user", "content": "OK"}], stream=False,
+                         temperature=0.0, max_tokens=1, num_ctx=0)
+
+    def send(bound_s: float) -> None:
+        with dispatch.interactive(level):
+            httpx.post(url, json=body, timeout=bound_s, headers=dispatch.level_headers())
+
+    model_load.ensure_loaded(config.CHAT_URL, config.CHAT_MODEL, send,
+                             caller=level.name.lower())
 
 
 def _delta(line: str) -> tuple[str, bool]:
@@ -71,6 +91,7 @@ def chat(messages: list[dict], temperature: float = 0.3, max_tokens: int = 1500,
     """`level`: CHAT, or TRANSLATE when the chat model stands in for the
     translation model — the two meet at CHAT_URL's gate, where chat goes
     first (docs/notes/scheduling.md §12)."""
+    warm(level)
     url, body = _request(messages, stream=False, temperature=temperature,
                          max_tokens=max_tokens, num_ctx=num_ctx)
     with dispatch.call(config.CHAT_URL, level, timeout=config.LLM_TIMEOUT), \
@@ -110,6 +131,7 @@ def chat_tools(messages: list[dict], tools: list[dict] | None, temperature: floa
     `(content, calls, assistant_message)` — the assistant message as the
     protocol wants it appended before the tool messages. `tools` None
     declares none, and the model must answer."""
+    warm(level)
     url, body = _request(messages, stream=False, temperature=temperature,
                          max_tokens=max_tokens, num_ctx=num_ctx)
     if tools:
@@ -142,6 +164,7 @@ def chat_stream(messages: list[dict], temperature: float = 0.3,
                 level: Level = Level.CHAT):
     """Yield content deltas. The claim and the gate are held for the whole
     stream: the model is working until the last token."""
+    warm(level)
     url, body = _request(messages, stream=True, temperature=temperature,
                          max_tokens=max_tokens, num_ctx=num_ctx)
     with dispatch.call(config.CHAT_URL, level, timeout=config.LLM_TIMEOUT), \

@@ -409,6 +409,18 @@ records — cannot rerank it and returns the fused order the same way.
 The fallback is always visible in the result, never silent, so two
 answers to one query that differ in order also say why.
 
+**The budget is the rerank's, never the model's load** (*amended
+2026-10-09*). A reranker whose runner reports it as not loaded is
+loaded first, by a minimal request bounded by the model's load bound
+(07 §7.8, `[models] load_timeout_s`), and the latency budget starts
+after it; the same holds for the query encoder, the translation model
+and the chat model, each under its own timeout. A load that outlasts
+its bound leaves the fused order with `reranked: false` and, beside the
+lists, `rerank_withheld: [{collection, reason}]` with the reason "model
+loading took longer than N s"; a query encoder's does the same to the
+vector leg, in `legs_withheld`. A runner that cannot say what it holds
+is asked as before, and its load counts against the budget.
+
 ## 5.7 Facets: the categories, and what is in them
 
 A filter nobody can enumerate is close to useless — nobody guesses

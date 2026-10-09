@@ -25,6 +25,7 @@ federation is P0.5's job. Search hits keep their pre-refactor int `book_id`
 shape (native_id) — chunk/document identity internally is `uid`-keyed, but the
 public API surface is unchanged.
 """
+import contextvars
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -32,7 +33,7 @@ from dataclasses import asdict, dataclass
 
 import httpx
 from . import (cancel, catalog, collections as collections_mod, config, copy_state, db,
-               dispatch, embeddings,
+               dispatch, embeddings, model_load,
                fts, httpc, language_plan, refs, work_dedup)
 from .language_plan import LanguagePlan
 from .bundles import verify_on_use
@@ -140,7 +141,13 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
     512-token model's own server truncates at its limit (TEI's `truncate`);
     the platform does not. Unreachable, refusing, over the node's budget or
     answering for only some candidates: the fused order stands and the
-    second value says False — the fallback is visible, never silent."""
+    second value says False — the fallback is visible, never silent.
+
+    THE BUDGET IS THE RERANK'S, NOT THE MODEL'S LOAD (amended 2026-10-09,
+    05 §5.6): a reranker its runner reports as not loaded is warmed first
+    under its LOAD bound (app/model_load.py), and the budget starts after.
+    A load past that bound is the fused order, its reason among
+    the reasons `_reranked` collects ("model loading took longer than N s")."""
     if recipe is None or not hits:
         return hits, False
     head, tail = hits[:depth], hits[depth:]
@@ -154,6 +161,13 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
         # that picks the model from the body (LocalAI) is told which; only
         # RERANK_URL names none
         body["model"] = recipe.model
+    try:
+        _warm_reranker(recipe)
+    except model_load.LoadTimeout as e:
+        why = _rerank_why.get()
+        if why is not None:
+            why.append(str(e))
+        return hits, False
     try:
         with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=budget_s):
             r = httpc.post(recipe.url, json=body, timeout=budget_s,
@@ -173,6 +187,51 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
         h["rerank_score"] = scores[i]
         ranked.append(h)
     return ranked + tail, True
+
+#: Where `_rerank_list` says WHY a list kept its fused order, when it knows:
+#: set by `_reranked` around one call (a context variable, so a test's
+#: stand-in for `_rerank_list` keeps the arguments it always took).
+_rerank_why: contextvars.ContextVar[list[str] | None] = \
+    contextvars.ContextVar("louise_rerank_why", default=None)
+
+
+def _reranked(query: str, hits: list[dict], recipe, budget_s: float,
+              depth: int) -> tuple[list[dict], bool, str | None]:
+    """`_rerank_list`, and the reason its list kept the fused order when one
+    is known (05 §5.6: the fallback is visible, never silent)."""
+    why: list[str] = []
+    token = _rerank_why.set(why)
+    try:
+        ranked, ok = _rerank_list(query, hits, recipe, budget_s, depth)
+    finally:
+        _rerank_why.reset(token)
+    return ranked, ok, (why[0] if why and not ok else None)
+
+
+def _rerank_withheld(collection, reason: str) -> dict:
+    """05 §5.6's reason beside `reranked: false`, for one list."""
+    return {"collection": collection.name, "reason": reason}
+
+
+def _warm_reranker(recipe) -> None:
+    """One minimal rerank, in the list's own body shape, when the runner
+    says the reranker is not loaded — bounded by its load bound, outside the
+    rerank budget (app/model_load.py)."""
+    if not recipe.model:
+        return
+    if recipe.api == "jina":
+        body: dict = {"query": "warm", "documents": ["warm"], "top_n": 1}
+    else:
+        body = {"query": "warm", "texts": ["warm"], "truncate": True}
+    body["model"] = recipe.model
+
+    def warm(bound_s: float) -> None:
+        with dispatch.interactive(dispatch.Level.RERANK):
+            httpc.post(recipe.url, json=body, timeout=bound_s,
+                       headers=dispatch.level_headers())
+
+    model_load.ensure_loaded(recipe.url, recipe.model, warm, caller="rerank")
+
 
 #: docs/05's one hop, bounded: at most this many facts per declared link from
 #: each entity the query names. A person reads pinned facts as cards above
@@ -372,6 +431,11 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
             # vector is discarded, and the response says so (05 §5.3: never
             # a silent drop)
             vector_leg = str(e)
+        except model_load.LoadTimeout as e:
+            # the query encoder was cold and its load outlasted the bound
+            # (app/model_load.py): the leg is missing, and the response
+            # says why (05 §5.3) — the next search finds it loaded
+            vector_leg = str(e)
         except embeddings.EndpointMisconfigured as e:
             # the query encoder's endpoint is the wrong one or refuses us
             # (404, 401, …): waiting will not bring the leg back, so the
@@ -518,9 +582,9 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     t0 = time.time()
     candidates = _attach_work_fields(
         con, collection, partial["merged"][: max(k * 4, rerank_depth)], plan.core)
-    ranked, reranked = _rerank_list(plan.core, candidates,
-                                    collections_mod.reranker_for(collection),
-                                    _rerank_budget_s(rerank_depth), rerank_depth)
+    ranked, reranked, rerank_why = _reranked(plan.core, candidates,
+                                             collections_mod.reranker_for(collection),
+                                             _rerank_budget_s(rerank_depth), rerank_depth)
     final = ranked[:k]
     timings["rerank"] = round((time.time() - t0) * 1000, 1)
 
@@ -537,6 +601,8 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
               "timings": timings, "reranked": reranked}
     if partial.get("vector_leg"):
         result["legs_withheld"] = [_leg_withheld(collection, partial["vector_leg"])]
+    if rerank_why:
+        result["rerank_withheld"] = [_rerank_withheld(collection, rerank_why)]
     if partial.get("filtered") is not None:
         result["filtered"] = {collection.name: partial["filtered"]}
     return result
@@ -672,14 +738,16 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
                                              candidates, plan.core)
         except Exception:   # noqa: BLE001 — a dedup that cannot run returns
             pass            # every hit, never none
-        return _rerank_list(plan.core, candidates,
-                            collections_mod.reranker_for(collection), budget_s,
-                            rerank_depth)
+        return _reranked(plan.core, candidates,
+                         collections_mod.reranker_for(collection), budget_s,
+                         rerank_depth)
 
     with ThreadPoolExecutor(max_workers=max(1, len(per_collection))) as ex:
         ranked = list(ex.map(cancel.carry(_rerank_one), per_collection))
-    reranked = {c.name: ok for (c, _), (_, ok) in zip(per_collection, ranked)}
-    final = _merge_rrf_federated([hits for hits, _ in ranked])[:k]
+    reranked = {c.name: ok for (c, _), (_, ok, _) in zip(per_collection, ranked)}
+    rerank_withheld = [_rerank_withheld(c, why)
+                       for (c, _), (_, _, why) in zip(per_collection, ranked) if why]
+    final = _merge_rrf_federated([hits for hits, _, _ in ranked])[:k]
     rerank_ms = round((time.time() - t0) * 1000, 1)
 
     # metadata attach + lazy-embed enqueue, grouped by source_collection
@@ -712,6 +780,8 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
               "timings": timings, "reranked": reranked}
     if legs_withheld:
         result["legs_withheld"] = legs_withheld
+    if rerank_withheld:
+        result["rerank_withheld"] = rerank_withheld
     if filtered:
         result["filtered"] = filtered
     return result

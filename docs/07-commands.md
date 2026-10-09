@@ -941,6 +941,12 @@ variable, a file, a log line or a message.
              # 08 §8.2: what this peer accepts per hour from keys whose work it has not seen
              # reproduced. Local, never negotiated; 0 accepts nothing from strangers
 [ask]        latency_budget_ms = 8000                   # the reranker's bound at the default depth
+[models]     load_timeout_s = 120                       # the bound on LOADING a model its runner reports as not
+             # loaded (LocalAI's GET /system): Louise warms it with a minimal request first, so no request's
+             # budget or timeout holds a cold start; a model measured on the node has its own bound
+             # (app/model_loads.json, docs/notes/model-profile.md), this is every other's. A load past it is a
+             # deferral (embedding) or a fallback that says "model loading took longer than N s" (05 §5.6)
+             # (added 2026-10-09)
 [certifier]  valid_from = "2026-10-07T00:00:00Z"        # this node as a certifier (09 §9.11): from when its own key certifies, and
              # revoked_at = "…"                          # when it was revoked — the anchor document it serves at
                                                         # /.well-known/louise-certifier.json says so; the collections listed there are

@@ -110,6 +110,20 @@ class AskConfig:
 
 
 @dataclass(frozen=True)
+class ModelsConfig:
+    """`[models]` (07 §7.8, added 2026-10-09): `load_timeout_s` bounds the
+    LOAD of a model a runner reports as not loaded — the warm request
+    app/model_load.py sends before the real one, so that no request's
+    budget holds a cold start (operator, 2026-10-09). A model measured on
+    the node has its own bound (app/model_loads.json, from
+    docs/notes/model-profile.md); this is the bound of every other. 120 s:
+    the slowest load measured is LocalAGI's 2B chat model at 44–46 s
+    (docs/notes/vega.md §11), and a load can be slowed by the card's other
+    work."""
+    load_timeout_s: int = 120
+
+
+@dataclass(frozen=True)
 class DepositConfig:
     """`[deposit]` (07 §7.8; 02 §2.9): what a deposit collection is created
     with when the creator names nothing — a client's create carries no
@@ -182,6 +196,7 @@ class PlatformConfig:
     trust: TrustConfig = TrustConfig()
     admission: AdmissionConfig = AdmissionConfig()
     ask: AskConfig = AskConfig()
+    models: ModelsConfig = ModelsConfig()
     certifier: CertifierConfig = CertifierConfig()
     deposit: DepositConfig = DepositConfig()
     peers: PeersConfig = PeersConfig()
@@ -409,6 +424,12 @@ def _load_one(path: Path) -> PlatformConfig:
     ask = AskConfig(latency_budget_ms=_positive_int(
         ask_raw, "latency_budget_ms", AskConfig().latency_budget_ms))
 
+    models_raw = raw.get("models", {}) or {}
+    if not isinstance(models_raw, dict):
+        raise schedule_mod.ScheduleError("models must be a table (07 §7.8)")
+    models = ModelsConfig(load_timeout_s=_positive_int(
+        models_raw, "load_timeout_s", ModelsConfig().load_timeout_s))
+
     cert_raw = raw.get("certifier", {}) or {}
     if not isinstance(cert_raw, dict):
         raise schedule_mod.ScheduleError("certifier must be a table (07 §7.8)")
@@ -479,6 +500,7 @@ def _load_one(path: Path) -> PlatformConfig:
                           trust=TrustConfig(space_authors=tuple(authors)),
                           admission=admission,
                           ask=ask,
+                          models=models,
                           certifier=certifier,
                           embed_defaults=embed_raw,
                           codex_only=codex_only_raw,

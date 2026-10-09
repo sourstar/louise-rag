@@ -22,7 +22,7 @@ import numpy as np
 import pyarrow as pa
 
 from . import collections as collections_mod
-from . import config, dispatch, httpc
+from . import config, dispatch, httpc, model_load
 from . import layers as layers_mod
 from .hold import runs as hold_runs
 from .vega import client as vclient
@@ -181,6 +181,9 @@ def _request_vectors(batch: list[Item], timeout: float,
     # the caller's level, for the model container's clock (09 §9.12): CORPUS
     # from the worker, QUERY from a search — whatever this thread works as
     level = dispatch.level_headers()
+    # the model's LOAD is not this request's: warmed first, under its own
+    # bound, when the runner says it is not loaded (app/model_load.py)
+    _warm_first(batch, recipe, level)
     if recipe.api == VEGA:
         return _request_vouched(batch, timeout, recipe, runs, g, level)
     with g.admit(timeout=timeout):
@@ -198,6 +201,32 @@ def _request_vectors(batch: list[Item], timeout: float,
         vectors = _parsed(r, recipe, lambda x: x.json()["embeddings"])
         _note_run(r, runs)
         return vectors
+
+
+def _warm_first(batch: list[Item], recipe: "collections_mod.EmbedRecipe",
+                level: dict) -> None:
+    """Load the side's model before the request when the runner says it is
+    not loaded (operator, 2026-10-09: "Timeouts shall not include cold
+    start"). The warm is ONE input of the batch's form — a text, or a pair
+    for a pair layer — tagged on a `vega` endpoint (the wrapper refuses an
+    untagged one); its vector is thrown away and its receipt never read.
+    A load past its bound raises `model_load.LoadTimeout`, a deferral."""
+    if recipe.api not in PAIR_APIS or not recipe.model:
+        return
+    pair = bool(batch) and not isinstance(batch[0], str)
+
+    def warm(bound_s: float) -> None:
+        probe: list[Item] = [("warm", "warm")] if pair else ["warm"]
+        if recipe.api == VEGA:
+            body: dict = {"input": list(vclient.tag_batch(probe).inputs),
+                          "encoding_format": "base64", "model": recipe.model}
+        else:
+            body = _body(recipe, probe)
+        httpc.post(f"{recipe.url}/v1/embeddings", json=body, timeout=bound_s, headers=level)
+
+    lvl, plugin = dispatch.current()
+    model_load.ensure_loaded(recipe.url, recipe.model, warm,
+                             caller=f"{lvl.name.lower()} embedding" + (f" ({plugin})" if plugin else ""))
 
 
 def _request_vouched(batch: list[Item], timeout: float,

@@ -30,7 +30,7 @@ import time
 
 import httpx
 
-from . import config, dispatch
+from . import config, dispatch, model_load
 
 #: one request's bound. Twelve whole entries in one call measured 33.6 s
 #: on the node's GPU (batch 32), a query into 51 languages 1.5 s.
@@ -64,6 +64,23 @@ def _completion(request: dict, timeout: float, headers: dict[str, str] | None = 
     return json.loads(r.json()["choices"][0]["text"])
 
 
+def warm() -> None:
+    """Load the translation model before a request when TRANSLATE_URL's
+    runner says it is not loaded (app/model_load.py; operator, 2026-10-09:
+    "Timeouts shall not include cold start"): one item, bounded by the
+    model's load bound, so TIMEOUT_S — and the language list's 10 s, which a
+    25 s load used to spend whole — is the request's alone. A load past its
+    bound raises `model_load.LoadTimeout`; every caller here turns that into
+    its usual empty answer."""
+    if not config.TRANSLATE_MODEL:
+        return
+    model_load.ensure_loaded(
+        config.TRANSLATE_URL, config.TRANSLATE_MODEL,
+        lambda bound_s: _completion({"items": [{"text": "OK", "to": "it"}]}, bound_s,
+                                    {dispatch.LEVEL_HEADER: "translate"}),
+        caller="translation")
+
+
 def languages() -> frozenset[str]:
     """The target codes the server knows; empty when it cannot be asked."""
     global _languages
@@ -74,6 +91,7 @@ def languages() -> frozenset[str]:
     if cached is not None and time.monotonic() - cached[0] < _LANGUAGES_TTL_S:
         return cached[1]
     try:
+        warm()
         answer = _completion({"languages": True}, 10.0)
         got = frozenset(str(c) for c in answer.get("languages", []))
     except Exception:   # noqa: BLE001 — unreachable is "no languages", not an error
@@ -96,6 +114,7 @@ def translate(items: list[tuple[str, str]]) -> list[str | None]:
         return []
     request = {"items": [{"text": t, "to": to} for t, to in items]}
     try:
+        warm()
         with dispatch.call(config.TRANSLATE_URL, dispatch.Level.TRANSLATE,
                            timeout=TIMEOUT_S):
             answer = _completion(request, TIMEOUT_S, dispatch.level_headers())

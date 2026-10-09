@@ -1,0 +1,50 @@
+{
+ "source": "deploy/vega/profile/2026-10-09.json",
+ "rule": "load_timeout_s = max(30, 3 x cold_max_s), rounded up to 5 s; cold_max_s = the slowest of this profile's cold starts and the first load from disk in docs/notes/vega.md \u00a711-\u00a712",
+ "models": {
+  "louise-chat-qwen3-8b": {
+   "cold_max_s": 9.4,
+   "load_timeout_s": 30
+  },
+  "louise-rerank-bge": {
+   "cold_max_s": 8.1,
+   "load_timeout_s": 30
+  },
+  "louise-rerank-medcpt": {
+   "cold_max_s": 5.6,
+   "load_timeout_s": 30
+  },
+  "louise-translate-madlad": {
+   "cold_max_s": 38.0,
+   "load_timeout_s": 115
+  },
+  "qwen3.8-2b-q4": {
+   "cold_max_s": 47.1,
+   "load_timeout_s": 145
+  },
+  "vega-bge-m3": {
+   "cold_max_s": 11.9,
+   "load_timeout_s": 40
+  },
+  "vega-granite": {
+   "cold_max_s": 9.2,
+   "load_timeout_s": 30
+  },
+  "vega-medcpt-article": {
+   "cold_max_s": 6.3,
+   "load_timeout_s": 30
+  },
+  "vega-medcpt-article-ov": {
+   "cold_max_s": 21.1,
+   "load_timeout_s": 65
+  },
+  "vega-medcpt-query": {
+   "cold_max_s": 6.4,
+   "load_timeout_s": 30
+  },
+  "vega-qwen3-embedding-4b": {
+   "cold_max_s": 33.7,
+   "load_timeout_s": 105
+  }
+ }
+}

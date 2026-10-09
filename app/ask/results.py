@@ -327,7 +327,7 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
                 fresh_summary["checked"] += got["checked"]
                 for k, v in got["states"].items():
                     fresh_summary["states"][k] = fresh_summary["states"].get(k, 0) + v
-    return {
+    out = {
         "lists": lists,
         "facts": facts,
         "unresolved": [str(u) for u in result.get("unresolved", [])],
@@ -342,3 +342,8 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         "freshness": fresh_summary,
         "timings": result.get("timings", {}),
     }
+    if result.get("rerank_withheld"):
+        # 05 §5.6: why a list kept its fused order, when that is known (a
+        # reranker whose load outlasted its bound, app/model_load.py)
+        out["rerank_withheld"] = result["rerank_withheld"]
+    return out
