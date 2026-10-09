@@ -176,6 +176,14 @@ def http_embed(ctx: int) -> Embed:
             # away or VEGA_URL unset — so nothing measured (docs/notes/vega.md)
             raise CalibrateUnreachable(
                 f"{ep.file}: {e}; nothing was measured, retry when it answers") from e
+        except embeddings.EndpointBusy as e:
+            raise CalibrateUnreachable(
+                f"{ep.file}: the encoder at {ep.url} is not serving "
+                f"(HTTP {e.status}); retry when it answers") from e
+        except embeddings.EndpointMisconfigured as e:
+            # the file names the wrong endpoint: the operator's to fix, and
+            # waiting will not — a refusal of the file, never a deferral
+            raise CalibrateFailed(f"{ep.file}: the encoder at {ep.url}: {e}") from e
         except RuntimeError as e:
             status = getattr(getattr(e.__cause__, "response", None), "status_code", 0)
             if status in (502, 503, 504):

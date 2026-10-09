@@ -353,7 +353,8 @@ def test_localais_500_over_the_context_shrinks_the_budget_too(isolated_config, m
 def test_any_other_500_is_still_an_error(isolated_config, monkeypatch):
     """Only the over-budget refusal shrinks the cut: a server that fails for
     any other reason must say so, not have its input quietly shortened ten
-    times over."""
+    times over. (Since 2026-10-09 it says so as `EndpointBusy`, a deferral:
+    tests/test_endpoint_classification.py.)"""
     _refusing_server(monkeypatch, 500, '{"error":"CUDA error: out of memory"}',
                      limit=0)
     recipe = collections_mod.EmbedRecipe(

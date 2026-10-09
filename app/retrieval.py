@@ -372,6 +372,12 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
             # vector is discarded, and the response says so (05 §5.3: never
             # a silent drop)
             vector_leg = str(e)
+        except embeddings.EndpointMisconfigured as e:
+            # the query encoder's endpoint is the wrong one or refuses us
+            # (404, 401, …): waiting will not bring the leg back, so the
+            # response says why it is missing (05 §5.3: never a silent drop)
+            vector_leg = f"the query encoder's endpoint refused the query: {e}"
+            db.log_event(con, "warn", "dense", f"dense search withheld: {e}")
         except Exception as e:
             db.log_event(con, "warn", "dense", f"dense search failed: {e}")
         timings["dense"] = round((time.time() - t0) * 1000, 1)

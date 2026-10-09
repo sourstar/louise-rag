@@ -973,8 +973,10 @@ source = "origin"                              # origin | drag: where the docume
                                                # the endpoint that serves the Codex's encoder: a MODEL on the node's model
                                                # container RAGE, never a device — RAGE places the model on a device, and
                                                # states the run, device included, with every answer (03 §3.3)
-url = "http://nas:30450/upstream/medcpt-article"
-query_url = "http://nas:30450/upstream/medcpt-query"   # a bi-encoder's query side; absent when symmetric
+url = "http://nas:30450/upstream/medcpt-article"   # the SERVER, never the endpoint: the client appends
+                                               # /v1/embeddings (openai, vega) or /api/embed (ollama) — a url that
+                                               # already ends in either is wrong (amended 2026-10-09)
+query_url = "http://nas:30450/upstream/medcpt-query"   # a bi-encoder's query side, a server too; absent when symmetric
 embed_model = "medcpt-article"                 # required: the model documents are embedded with
 query_model = "medcpt-query"                   # required: the model questions are embedded with; one model doing both
                                                # is named twice. Where the URL names a model (`…/upstream/<model>`) the
@@ -988,7 +990,8 @@ api = "openai"                                 # openai (default) · ollama · v
                                                # receipt, whose run is the answer's (amended 2026-10-08, docs/notes/vega.md)
 
 [reranker]                                     # optional (05 §5.6): this node's reranker for this collection
-url = "http://nas:30447/v1/rerank"             # the full endpoint
+url = "http://nas:30447/v1/rerank"             # the full endpoint, path included — unlike [encoder]'s url
+                                               # (amended 2026-10-09)
 api = "jina"                                   # jina: {query, documents} (llama.cpp's /v1/rerank) · tei: {query, texts}
 rerank_model = "bge-reranker-v2-m3"            # required with the block: the request body's `model`; equal to the model
                                                # a `…/upstream/<model>` URL names (amended 2026-10-08)
@@ -1019,6 +1022,15 @@ runs is the model container's placement, and a change of device is a
 change of run, which the gate tests by itself (03 §3.3): nothing in a
 collection's file has to follow it. Every request the node makes to a
 model endpoint carries the request header `Louise-Level` (09 §9.12).
+
+An encoder that answers as a wrong endpoint would — 404, 405, 401, 403,
+a redirect, a body that is not embeddings — pauses that collection's
+embedding with the answer as its reason, shown where the gate's pauses
+are, until its `[encoder]` changes or the endpoint answers again (asked
+every five minutes). A busy one (408, 429, a 5xx) or an unreachable one
+defers the batch. Neither is ever an error on a document; only a 400,
+413 or 422 about one input, the batch split down to it, is (amended
+2026-10-09).
 
 `hold collection create` and `share fetch` write the
 file; `hold collection forget` removes it. The name is `--name` when

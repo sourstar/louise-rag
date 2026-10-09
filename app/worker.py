@@ -19,6 +19,7 @@ this, only collections[0] was ever discovered/ingested at all — a second
 configured collection was silently, permanently never touched.
 """
 import errno
+import json
 import os
 import signal
 import sqlite3
@@ -1176,6 +1177,8 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                 said = rage_refusal(e)
                 if said:
                     refused.append(said)        # list.append: safe across threads
+                if endpoint_misconfigured(e):
+                    wrong_endpoint.append(e)    # the pause is made on this thread's caller
                 return (row, None, DEFERRED, False)
             return (row, None, f"{type(e).__name__}: {e}"[:400], False)
 
@@ -1223,6 +1226,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     waiting_since = 0.0
     done = deferred = 0
     refused: list[str] = []        # RAGE's own words, when it would not load the model
+    wrong_endpoint: list[BaseException] = []   # 404/401/…: the collection's embedding pauses
 
     def mark_done(uids) -> None:
         now = int(time.time())
@@ -1331,13 +1335,18 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
         flush()         # what was embedded is written, SIGTERM included
     finally:
         stats.recorder().set_in_flight(collection.name, 0)
+    if wrong_endpoint:
+        _pause_embedding(con, collection, wrong_endpoint[-1])
+    elif done:
+        _endpoint_answered(con, collection)
     if done:
         db.log_event(con, "info", "embed",
                      f"embedded {done} document(s) at concurrency "
                      f"{recipe.concurrency if slots is None else slots}")
     if deferred:
         db.log_event(con, "warn", "embed",
-                     f"{deferred} document(s) deferred — encoder unreachable or busy, "
+                     f"{deferred} document(s) deferred — encoder unreachable, busy or "
+                     f"the wrong endpoint, "
                      f"the store held by another writer, an answer from a run not "
                      f"yet validated (03 §3.3), or the node's mode no longer running "
                      f"this; "
@@ -2285,6 +2294,8 @@ def _embedding_allowed(con, collection) -> bool:
     untested for ever."""
     if _integrity_halts(con, collection):
         return False
+    if _endpoint_pause_holds(con, collection):
+        return False        # a wrong endpoint (404, 401, …): asked again on a bound
     if not backend_gate.embed_allowed(con, collection, stop=_stop.is_set):
         return False
     return _quarantine_allows(con, collection, "embedding")
@@ -2544,11 +2555,130 @@ def endpoint_unavailable(exc: BaseException) -> bool:
     """
     if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
         return True
+    # a connection dropped mid-answer, or an answer that is not HTTP: the
+    # endpoint's state (amended 2026-10-09). A READ TIMEOUT stays out — an
+    # oversized document can genuinely cause one.
+    if isinstance(exc, (httpx.NetworkError, httpx.RemoteProtocolError, httpx.PoolTimeout)):
+        return True
+    # the embed client's own verdict on an HTTP answer (embeddings.py):
+    # EndpointBusy and EndpointMisconfigured are ConnectionErrors, below
     if isinstance(exc, ConnectionError):      # ConnectionRefusedError et al
         return True
     if _http_status(exc) in _ENDPOINT_BUSY_STATUS:
         return True
     return isinstance(exc, OSError) and exc.errno in _ENDPOINT_DOWN_ERRNOS
+
+
+def endpoint_misconfigured(exc: BaseException | None) -> embeddings.EndpointMisconfigured | None:
+    """The embed client's "this endpoint is the wrong one, or refuses us"
+    (404, 405, 401, 403, …) however deep it is wrapped; None otherwise. A
+    deferral like any other — and one that waiting does not heal, so the
+    collection's embedding PAUSES with it as the reason (`_pause_embedding`)."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, embeddings.EndpointMisconfigured):
+            return exc
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
+#: How often a collection paused for a wrong endpoint asks it again: one
+#: attempt with real work, then paused again if it still refuses. Bounded,
+#: never a hot loop; a change to the collection's [encoder] retries at once.
+ENDPOINT_RETRY_S = 300.0
+#: collection place (its manifest's path, never its name) ->
+#: (the recipe the pause is about, the reason, the next attempt at)
+_endpoint_paused: dict[str, tuple[object, str, float]] = {}
+_endpoint_paused_lock = threading.Lock()
+#: who wrote the embed_gate state: only a pause of ours is lifted by us
+_ENDPOINT_BY = "endpoint"
+
+
+def _recipe_or_none(collection):
+    try:
+        return collections_mod.recipe_for(collection)
+    except Exception:   # noqa: BLE001 — no recipe: nothing to compare
+        return None
+
+
+def _set_gate_state(con, allowed: bool, reason: str, *, only_ours: bool = False) -> None:
+    """The surface the backend gate and the run check write their pauses to
+    (`backend_gate.GATE_STATE_KEY`): the Library card and `hold collection
+    show` read it. Never breaks the caller."""
+    try:
+        if only_ours:
+            current = backend_gate.gate_state(con) or {}
+            if current.get("by") != _ENDPOINT_BY:
+                return
+        db.set_control(con, backend_gate.GATE_STATE_KEY, json.dumps(
+            {"allowed": allowed, "reason": reason[:400], "ts": int(time.time()),
+             "by": _ENDPOINT_BY}))
+    except Exception:   # noqa: BLE001 — a status write must never break the stage
+        pass
+
+
+def _pause_embedding(con, collection, exc: BaseException) -> None:
+    """The endpoint refused as a wrong one would: embedding for this
+    collection pauses, with the reason in its log and on the gate's surface,
+    until its [encoder] changes or the endpoint answers again. No document
+    is touched. Logged on a change of reason only, so a retry every
+    ENDPOINT_RETRY_S that meets the same refusal says nothing new."""
+    reason = str(endpoint_misconfigured(exc) or exc)[:400]
+    place = str(collection.manifest_path)
+    with _endpoint_paused_lock:
+        before = _endpoint_paused.get(place)
+        _endpoint_paused[place] = (_recipe_or_none(collection), reason,
+                                   time.time() + ENDPOINT_RETRY_S)
+    if before is None or before[1] != reason:
+        db.log_event(con, "error", "embed",
+                     (f"[{collection.name}] embedding PAUSED: {reason} — asked again "
+                      f"every {int(ENDPOINT_RETRY_S)} s, and at once when the "
+                      f"collection's [encoder] changes")[:900])
+        _set_gate_state(con, False, reason)
+
+
+def _endpoint_answered(con, collection) -> None:
+    """An embed succeeded: a pause for a wrong endpoint, if any, is over."""
+    place = str(collection.manifest_path)
+    if place not in _endpoint_paused:          # the common case: one lookup
+        return
+    with _endpoint_paused_lock:
+        if _endpoint_paused.pop(place, None) is None:
+            return
+    db.log_event(con, "info", "embed",
+                 f"[{collection.name}] embedding enabled: the endpoint answers again")
+    _set_gate_state(con, True, "the endpoint answers again", only_ours=True)
+
+
+def _endpoint_pause_holds(con, collection) -> bool:
+    """Is this collection's embedding paused for a wrong endpoint? A change
+    to its [encoder] lifts the pause at once (and has the gate look at the
+    new endpoint afresh); otherwise one attempt is let through every
+    ENDPOINT_RETRY_S, and a refusal pauses it again."""
+    place = str(collection.manifest_path)
+    entry = _endpoint_paused.get(place)
+    if entry is None:
+        return False
+    recipe, _, retry_at = entry
+    now_recipe = _recipe_or_none(collection)
+    if now_recipe != recipe:
+        with _endpoint_paused_lock:
+            _endpoint_paused.pop(place, None)
+        from . import run_check
+        run_check.forget(collection)
+        backend_gate._cache.pop(collection.name, None)
+        db.log_event(con, "info", "embed",
+                     f"[{collection.name}] embedding enabled: the collection's [encoder] "
+                     f"changed; the endpoint is asked again")
+        _set_gate_state(con, True, "the collection's [encoder] changed", only_ours=True)
+        return False
+    now = time.time()
+    if now < retry_at:
+        return True
+    with _endpoint_paused_lock:
+        _endpoint_paused[place] = (recipe, entry[1], now + ENDPOINT_RETRY_S)
+    return False        # one attempt; `_pause_embedding` again if it refuses
 
 
 def transient_failure(exc: BaseException) -> bool:
@@ -2664,6 +2794,14 @@ def _execute_step(con, collection, stage, row) -> bool:
                          f"{stage} deferred — {e}; the document is untouched "
                          f"and will be retried")
             return False
+        if endpoint_misconfigured(e):
+            # The endpoint is the wrong one or refuses us (404, 401, …): the
+            # same deferral, and the collection's embedding pauses with the
+            # reason until its [encoder] changes or the endpoint answers
+            # (2026-10-09: 4,295 gutenberg documents errored for a doubled
+            # `/v1/embeddings` in the url).
+            _pause_embedding(con, collection, e)
+            return False
         if endpoint_unavailable(e):
             # Nothing is wrong with this document, so nothing is written to
             # it: no error, no retry increment. The backend gate owns the
@@ -2689,6 +2827,8 @@ def _execute_step(con, collection, stage, row) -> bool:
             (f"{stage}: {e}"[:500], int(time.time()), row["uid"]))
         db.log_event(con, "error", stage, f"{type(e).__name__}: {e}", row["uid"])
         return True
+    if stage == "embed":
+        _endpoint_answered(con, collection)
     dt = round(time.time() - t0, 2)
     if stage not in ("rdf", "fts") or int(row["native_id"]) % 500 == 0:
         db.log_event(con, "info", stage, f"done in {dt}s", row["uid"])

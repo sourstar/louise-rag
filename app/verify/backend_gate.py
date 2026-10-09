@@ -149,7 +149,8 @@ def _embed_single(embed_fn, text) -> list[float]:
         return [float(x) for x in embed_fn([text])[0]]
     except Exception as e:
         raise BackendUnavailable(
-            f"embed endpoint unreachable or failing ({type(e).__name__})") from e
+            f"embed endpoint unreachable or failing ({type(e).__name__}: "
+            f"{str(e)[:300]})") from e
 
 
 def record_baseline(collection, embed_fn=None) -> dict:

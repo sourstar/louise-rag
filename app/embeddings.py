@@ -97,6 +97,80 @@ class ReceiptRefused(vclient.Refusal, hold_runs.RunRefused):
     why."""
 
 
+class EndpointDeferred(ConnectionError, RuntimeError):
+    """The encoder ENDPOINT answered in a way that says nothing about the
+    input: the batch is not taken, and nothing is wrong with its documents.
+    A ConnectionError, so every path that reads an unreachable encoder as
+    "not now" (`worker.endpoint_unavailable`, a search's dense leg) reads
+    this one the same way; still a RuntimeError, as the client's HTTP
+    failures always were, for a caller that only reports them. Never an
+    error on a document, which would take
+    it out of every selection (CLAUDE.md: deferral is not failure). Seen on
+    the node 2026-10-09: gutenberg's `url` named `…/v1/embeddings`, the
+    client appended it again, LocalAI answered 404 to every request, and
+    4,295 documents were errored for the endpoint's fault."""
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+class EndpointBusy(EndpointDeferred):
+    """408, 429, a 5xx that is not one of the input's own refusals
+    (`_over_budget`, `_numeric_failure`): the endpoint heals by waiting —
+    loading its weights, overloaded, a proxy that lost it."""
+
+
+class EndpointMisconfigured(EndpointDeferred):
+    """404, 405, 401, 403 — and any other answer that is neither the input's
+    nor a busy server's (a redirect, a 200 whose body is not an embeddings
+    list): the endpoint is the WRONG one, or refuses us, and waiting does not
+    heal it. The worker pauses the collection's embedding with this as its
+    reason until the collection's `[encoder]` changes or the endpoint answers
+    again (`worker._pause_embedding`); a search withholds its vector leg and
+    says why."""
+
+
+class InputRefused(RuntimeError):
+    """400, 413, 422 for ONE input, after the batch was split down to it and
+    an over-long one cut to the floor: the input's own fault, recorded on its
+    document as it always was."""
+
+
+#: Statuses that can be about the INPUT. Everything else is the endpoint's.
+INPUT_STATUS = frozenset({400, 413, 422})
+#: Statuses that heal by waiting (and every 5xx, `_endpoint_error`).
+BUSY_STATUS = frozenset({408, 429})
+
+
+def _endpoint_error(recipe: "collections_mod.EmbedRecipe", response) -> EndpointDeferred:
+    status = response.status_code
+    detail = (getattr(response, "text", "") or "")[:200].replace("\n", " ")
+    if status in BUSY_STATUS or status >= 500:
+        return EndpointBusy(
+            f"embed server HTTP {status}: {detail} — the endpoint {recipe.url} is "
+            f"busy or failing; the batch is deferred, its documents untouched", status)
+    return EndpointMisconfigured(
+        f"embed server HTTP {status}: {detail} — the endpoint {recipe.url} is wrong "
+        f"or refuses us (its `url` is the SERVER: the client appends "
+        f"{'/api/embed' if recipe.api == 'ollama' else '/v1/embeddings'}); "
+        f"nothing is written and no document is at fault", status)
+
+
+def _parsed(response, recipe: "collections_mod.EmbedRecipe", read):
+    """The answer's vectors, or `EndpointMisconfigured` when a 2xx body is
+    not an embeddings response — a web page, another API's JSON: the URL
+    names something that is not an encoder."""
+    try:
+        return read(response)
+    except (ValueError, KeyError, TypeError, IndexError) as e:
+        detail = (getattr(response, "text", "") or "")[:200].replace("\n", " ")
+        raise EndpointMisconfigured(
+            f"{recipe.url} answered HTTP {getattr(response, 'status_code', '?')} with a "
+            f"body that is not an embeddings response ({type(e).__name__}: {detail}); "
+            f"nothing is written and no document is at fault") from e
+
+
 def _request_vectors(batch: list[Item], timeout: float,
                      recipe: "collections_mod.EmbedRecipe",
                      runs: set | None = None) -> list[list[float]]:
@@ -114,14 +188,16 @@ def _request_vectors(batch: list[Item], timeout: float,
             r = httpc.post(f"{recipe.url}/v1/embeddings", json=_body(recipe, batch),
                            timeout=timeout, headers=level)
             r.raise_for_status()
+            data = _parsed(r, recipe, lambda x: sorted(x.json()["data"],
+                                                       key=lambda d: d["index"]))
             _note_run(r, runs)
-            data = sorted(r.json()["data"], key=lambda d: d["index"])
-            return [d["embedding"] for d in data]
+            return _parsed(r, recipe, lambda x: [d["embedding"] for d in data])
         r = httpc.post(f"{recipe.url}/api/embed", json=_body(recipe, batch),
                        timeout=timeout, headers=level)
         r.raise_for_status()
+        vectors = _parsed(r, recipe, lambda x: x.json()["embeddings"])
         _note_run(r, runs)
-        return r.json()["embeddings"]
+        return vectors
 
 
 def _request_vouched(batch: list[Item], timeout: float,
@@ -258,9 +334,13 @@ def _embed_batch(batch: list[Item], timeout: float,
     - null/NaN vectors (intermittent SYCL corruption) -> plain retry; also
       when the server could not send them at all (`_numeric_failure`, LocalAI)
     - HTTP 400 (sequence exceeds the server's per-slot budget; char-based
-      truncation underestimates tokens for CJK/dense scripts) -> halve the
+      truncation underestimates tokens for CJK/dense scripts) -> shrink the
       char budget and retry until it fits.
-    Other HTTP errors surface with the server's actual message.
+    An answer that can be about the input (400, 413, 422) is split down to
+    the single input first; for that one input it raises `InputRefused`
+    with the server's message. Every other HTTP error is the ENDPOINT's:
+    `EndpointBusy` (408, 429, 5xx) or `EndpointMisconfigured` (404, 405,
+    401, 403, …) — deferrals, never an error on a document.
 
     `raw`: the vectors as the endpoint returned them, not unit-normalised —
     what 09 §9.12's fingerprint is taken over (`_embed_one_at_a_time`).
@@ -287,6 +367,7 @@ def _embed_batch(batch: list[Item], timeout: float,
     if dense and chars:
         per_char = (dense / 1.0 + (chars - dense) / 4.0) / chars
         budget = max(256, int(recipe.ctx / per_char))
+    still_refused: httpx.HTTPStatusError | None = None
     for attempt in range(10):
         cut = [_cut(t, budget) for t in batch]
         try:
@@ -302,16 +383,33 @@ def _embed_batch(batch: list[Item], timeout: float,
             # PubMed abstract for a 5 % overshoot (measured on the MedCPT
             # tokenizer: 3.8–6.2 chars/token, so ctx*4 chars is 410–530
             # tokens; the dense tail case needs ~10 % less, not 50 %).
+            #
+            # AN ANSWER THAT CAN BE ABOUT THE INPUT (400, 413, 422, a 500 that
+            # says "too large") is first SPLIT down to the one input it is
+            # about (amended 2026-10-09): neighbours never share a refusal or
+            # a cut, so one bad input errors only its own document and every
+            # input is cut as if it had been sent alone.
+            refused_input = _over_budget(e.response) or \
+                e.response.status_code in INPUT_STATUS
+            if refused_input and len(batch) > 1:
+                return _split(batch, timeout, recipe, raw=raw, runs=runs)
             if _over_budget(e.response) and budget > 256:
                 budget = max(256, int(budget * 0.8))
+                still_refused = e
                 continue
             if _numeric_failure(e.response):
                 n_bad = len(batch)
+                still_refused = None
                 time.sleep(0.3 * (attempt + 1))
                 continue
-            detail = e.response.text[:200].replace("\n", " ")
-            raise RuntimeError(
-                f"embed server HTTP {e.response.status_code}: {detail}") from e
+            if refused_input:
+                detail = e.response.text[:200].replace("\n", " ")
+                raise InputRefused(
+                    f"embed server HTTP {e.response.status_code}: {detail}") from e
+            # anything else is the ENDPOINT's: busy (a deferral) or wrong (a
+            # deferral that pauses the collection's embedding) — never the
+            # documents' (CLAUDE.md: deferral is not failure)
+            raise _endpoint_error(recipe, e.response) from e
         n_bad = sum(1 for v in vecs if _invalid(v))
         if n_bad == 0 and len(vecs) == len(batch):
             if raw:
@@ -321,10 +419,30 @@ def _embed_batch(batch: list[Item], timeout: float,
                 n = math.sqrt(sum(x * x for x in v)) or 1.0
                 out.append([x / n for x in v])
             return out
+        still_refused = None
         time.sleep(0.3 * (attempt + 1))
+    if still_refused is not None:
+        # the attempts ran out while the input was still refused as too long:
+        # the input's own refusal, said as such (it read as "null/NaN vectors")
+        detail = still_refused.response.text[:200].replace("\n", " ")
+        raise InputRefused(
+            f"embed server HTTP {still_refused.response.status_code}: {detail} "
+            f"(still refused at a {budget}-character cut)") from still_refused
     raise RuntimeError(
         f"embedding server returned {n_bad} null/NaN vectors even after "
         f"retries (upstream numeric failure — check backend flags)")
+
+def _split(batch: list[Item], timeout: float, recipe: "collections_mod.EmbedRecipe",
+           *, raw: bool, runs: set | None) -> list[list[float]]:
+    """A refused batch in two halves, each asked on its own (and split again
+    if refused again), so the refusal lands on the one input it is about."""
+    mid = len(batch) // 2
+    if raw or runs is not None:
+        return (_embed_batch(batch[:mid], timeout, recipe, raw=raw, runs=runs)
+                + _embed_batch(batch[mid:], timeout, recipe, raw=raw, runs=runs))
+    return (_embed_batch(batch[:mid], timeout, recipe)
+            + _embed_batch(batch[mid:], timeout, recipe))
+
 
 def _body(recipe: "collections_mod.EmbedRecipe", batch: list[Item]) -> dict:
     """The request: the texts, and the model's name where the side has one.
