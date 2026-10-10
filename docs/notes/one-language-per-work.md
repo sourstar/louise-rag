@@ -472,3 +472,164 @@ list it is given, so R@50 is its pool.
   and returns the query's language.
 - Work groups: an annotations collection (`tools/annotations_from_works.py`,
   4,376 claims = the 1,694 works of §1), not yet created on the node.
+
+## Live re-check (2026-10-10)
+
+*The node at 906f06b; read-only, same throwaway container as §3.
+Scripts: `tools/measure/one_language_live_search.py`,
+`one_language_live_score.py`; raw data in `tools/measure/out/onelang_live/`
+(not committed).*
+
+**What ran.** All 451 descriptive and 39 title queries, one at a time,
+through `retrieval.search` as the Ask page calls it by default
+(translate on, every language off, "show results in" = their own language,
+so `show_in` None; rerank depth 50; reranker `louise-rerank-bge`). k = 50
+for MRR past 10; the Ask page's own top 10 (k = 10 reranks the same 50) was
+recomputed exactly and gives the same R@1/5/10. Scored at the work level
+on `works.json`, as above.
+
+**The language reading was not called.** It needs louise-chat-qwen3-8b,
+which was not resident: LocalAI's watchdog evicted it 37 s after its last
+load (GPU 73 % > 68 % threshold). Calling it per query would have reloaded
+an 8B model on the card gutenberg is embedding on. So each query ran twice
+on the same translations and vector leg:
+- **read**: the reading as if the model answered right
+  (`query_lang` = the query set's label);
+- **unread**: the reading unavailable (`query_lang` None, plan
+  `status: unavailable`).
+
+How often the live chat model sets `query_lang` is therefore **not
+measured**.
+
+### Results
+
+| 451 descriptive | MRR | R@1 | R@5 | R@10 | distinct works top 10 | slots repeating a book |
+|---|---:|---:|---:|---:|---:|---:|
+| old live, no collapsing (§5) | 0.231 | 0.182 | 0.299 | 0.330 | 7.35 | 25.3 % |
+| old live, W-C simulated | 0.236 | 0.182 | 0.313 | 0.335 | 10.00 | 0 |
+| **live 906f06b (read)** | **0.259** | **0.169** | **0.366** | **0.463** | **10.00** | **0** |
+| live 906f06b (unread) | 0.260 | 0.171 | 0.366 | 0.463 | 10.00 | 0 |
+
+- Against the old live list: 130 queries better, 76 worse (p = 0.0002).
+  Against the old W-C: 115 better, 88 worse (p = 0.07).
+- R@10 rises a lot (0.330 → 0.463). R@1 falls slightly (0.182 → 0.169).
+- By query language (MRR, old → new): en 0.184 → 0.201, fr 0.212 → 0.251,
+  it 0.187 → 0.310, es 0.229 → 0.337, la 0.173 → 0.427. de (0.237 → 0.225),
+  fi, el and nl are flat or slightly down.
+
+| 39 titles | MRR | R@1 | R@5 | R@10 |
+|---|---:|---:|---:|---:|
+| old live, no collapsing | 0.366 | 0.231 | 0.487 | 0.615 |
+| old live, W-C simulated | 0.398 | 0.231 | 0.615 | 0.692 |
+| **live 906f06b (read)** | **0.328** | **0.179** | **0.564** | **0.692** |
+
+- **Title queries regress** against the grouped list the change was
+  expected to give: 6 better, 19 worse against W-C (p = 0.015). Against no
+  collapsing they tie (12 better, 13 worse).
+- In 18 of those 19 losses, a record whose best chunk is under 100
+  characters ranks above the target. Examples:
+  - "Hamlet Shakespeare": King Henry VIII, Sonnets and Twelfth Night lead
+    with the same 22-character chunk and the same reranker score (5.59).
+    Hamlet comes at 16, as a Portuguese edition whose best chunk has 7
+    characters.
+  - "Romeo and Juliet": rank 1 is a 21-character chunk of *The Canadian
+    Elocutionist* (reranker 7.91).
+  - "Huckleberry Finn": the target's own best chunk is 80 characters, and
+    the reranker scores it −6.74.
+
+**The edition shown** (top 10, where the work was found and has a book in
+the query's language):
+
+| | descriptive | titles |
+|---|---:|---:|
+| old live list | 0.717 | – |
+| W-C simulated (§5) | 0.991 | – |
+| live, read | 0.850 (n = 160) | 0.667 (27) |
+| live, unread | 0.588 | 0.556 |
+
+- Without the reading, the reader sees the query's language **less often
+  than before the change** (0.588 against 0.717). The edition-shown
+  benefit depends on the chat model answering.
+- Where the work lacks the query's language (n = 49), the edition shown
+  is English 78 % and the original 14 %.
+- In ranking, the query-language tie-break barely matters, and slightly
+  against: read beats unread on 1 descriptive query and loses on 8
+  (p = 0.04); on titles, 0 against 3.
+
+**Work groups and annotations are attached.**
+- Every top-10 hit whose work has ≥ 2 books in `works.json` carries
+  `editions`: 673/673 descriptive, 72/72 titles. That is 15 % of all
+  top-10 hits.
+- Both annotations collections are usable: no error, nothing withheld.
+- 05 §5.3 `annotations` (computed as an API answer would): 0.27 per
+  top-10 hit, ≥ 1 on 15.1 % of them, all `same-work`.
+- The Ask page itself (`web._ask_result`) shows `editions` but never
+  calls `annotations.attach`, so only the API path carries
+  `annotations`.
+
+**Reranker.**
+- 4 of 980 searches kept the fused order (`reranked: false`). One
+  timed out at 8.07 s against the 8 s budget; the other three answered
+  in 3.4–4.5 s.
+- None of the four carried `rerank_withheld`: `_rerank_list`'s generic
+  `except` returns no reason. A vector leg was never withheld.
+
+**Leg depth.** Each list asks for 50 CHUNKS, not 50 records.
+- A text variant brings a median of 11 distinct records (p10 3, p90 19).
+- The vector leg brings 38 (p10 22, p90 46), not the "top records to
+  the depth the request needs" (50) of 05 §5.1.
+- For the text leg this is harmless, because its top 50 are ranks 1–3
+  of the ~16 variants. For the vector leg it is a spec ≠ code gap.
+
+**Timings, per search** (read; the reading's model call not included):
+
+| step | median | p90 |
+|---|---:|---:|
+| total | 9.0 s | 11.2 s |
+| plan, MADLAD into 19 languages | 4.1 s | |
+| text leg | 0.12 s | |
+| vector leg | 0.66 s | |
+| reranker | 3.9 s | 5.2 s |
+
+The old run took ≈ 57 s a query on a busier card.
+
+**Short chunks.** A best chunk under 100 characters (a heading or a byline)
+fills 29 % of the descriptive top-10 slots and is rank 1 on 25 % of the
+queries. On titles: 49 % of the slots, rank 1 on 54 %. Both the vector leg
+and the reranker score such strings above passages. The old run did not
+capture chunk text, so this is not compared.
+
+### "the wrath of Achilles and the siege of Troy"
+
+Live (read and unread alike): 1 *Two Dramatizations from Vergil*,
+2 *The Motor Scout*, 3 *The Story of Troy*, …, **9 *The Iliad*** (Pope,
+grouped with 12 editions, 3 same-work annotations). The operator saw
+the Iliad at 6, from another run or scope.
+- **Ranks 1–2 are headings.** Each record's best chunk is one heading:
+  "The Fall of Troy" (16 characters) and "A SIEGE AND A SORTIE"
+  (20 characters). The vector leg ranks them 1 and 5, and the reranker
+  gives them the list's top scores, 2.85 and 2.70.
+- **The Iliad never reaches the text leg.** The English variant's 50
+  chunk hits fall in only 8 books, *The Story of Troy*'s chunks among
+  them. The leg's top 50 are ranks 1–3 of each of 16 variants anyway.
+- **It enters through the vector leg alone**, at 15. Its best chunk is
+  Book I's quarrel (3,578 characters, the wrath of Achilles itself), and
+  the reranker scores it −1.51.
+
+The record is represented by one chunk chosen by the leg, and a heading
+of the right words beats the passage that is the answer.
+
+### Reading
+
+- Descriptive retrieval improves live, as the rescore predicted:
+  R@10 +40 %, MRR +12 %, no repeated books.
+- Titles regress against the grouped baseline.
+- Two causes show in the data:
+  1. headings and bylines under 100 characters, embedded and indexed as
+     chunks, win both the vector leg and the reranker;
+  2. the reranker sees only the leg's best chunk of each record, where
+     before it could pick the best of several chunks of the target.
+- The edition-shown gain needs the chat model's reading. On this card
+  that reading means reloading an 8B model per search, or keeping it
+  resident.
+- Not fixed here (read-only task).
