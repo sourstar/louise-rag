@@ -163,6 +163,44 @@ def group_sizes(collection=None) -> dict[str, int]:
     return sizes
 
 
+#: (meta.json path, its mtime_ns) -> the documents that index holds
+_group_docs: dict[tuple[str, int], int] = {}
+
+
+def group_documents(collection=None) -> dict[str, int]:
+    """DOCUMENTS indexed per language group — what a query's main languages
+    are counted in (05 §5.2, amended 2026-10-10; `language_plan.main_of`).
+    The distinct `book_id`s of each index, by tantivy's cardinality over the
+    fast field: an estimate (HyperLogLog, exact for small indexes, 1.6 % off
+    on 2M chunks of 50k books) in 46 ms for 2M chunks, measured. Cached on
+    the index's own meta.json, path and mtime, as `group_languages` is. A
+    group with no index on disk, or one that cannot be read, holds 0 —
+    never created by asking."""
+    if collection is None:
+        collection = collections_mod.default_collection()
+    out: dict[str, int] = {}
+    for group in existing_groups(collection):
+        meta = collection.fts_dir / group / "meta.json"
+        try:
+            key = (str(meta), meta.stat().st_mtime_ns)
+        except OSError:
+            out[group] = 0
+            continue
+        hit = _group_docs.get(key)
+        if hit is None:
+            try:
+                idx = get_index(group, collection)
+                idx.reload()
+                hit = int(idx.searcher().cardinality(tantivy.Query.all_query(), "book_id"))
+            except Exception:   # noqa: BLE001 — an unreadable group counts as empty
+                hit = 0
+            if len(_group_docs) > 1024:
+                _group_docs.clear()
+            _group_docs[key] = hit
+        out[group] = hit
+    return out
+
+
 def _add_one(writer, algorithm, lang: str, book_id: int, chunks: list[dict]):
     writer.delete_documents("book_id", book_id)
     for c in chunks:

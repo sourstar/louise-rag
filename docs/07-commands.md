@@ -970,6 +970,10 @@ variable, a file, a log line or a message.
              # 08 §8.2: what this peer accepts per hour from keys whose work it has not seen
              # reproduced. Local, never negotiated; 0 accepts nothing from strangers
 [ask]        latency_budget_ms = 8000                   # the reranker's bound at the default depth
+             translate_share = 0.90                     # a translated query goes out only into each collection's
+             # MAIN languages: its one-language text indexes, largest first by documents, until they hold this
+             # share of the collection (0 < share <= 1; 1.0 is every one of them). The others are searched by
+             # the vector leg, and by text only in the query's own language (05 §5.2; amended 2026-10-10)
 [models]     load_timeout_s = 120                       # the bound on LOADING a model its runner reports as not
              # loaded (LocalAI's GET /system): Louise warms it with a minimal request first, so no request's
              # budget or timeout holds a cold start; a model measured on the node has its own bound

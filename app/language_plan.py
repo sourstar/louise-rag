@@ -16,11 +16,21 @@ some of them.
   variant per language they hold (`fts.group_languages`) and a record
   ranks by its best (§5.2: a variant is a query, not a leg).
 - **The main languages by default, all of them on request** (operator,
-  2026-09-18). A search goes out in the MAIN languages — those with an
-  index of their own, and CJK's three — and "other" is searched as typed.
-  Every language held, "other"'s forty-odd too, only when asked: the Ask
-  page's "all languages", `all_languages` on the API, `lang:all` in the
-  question.
+  2026-09-18; amended 2026-10-10). A search goes out in each collection's
+  MAIN languages — its one-language index groups, largest first, until
+  they hold `[ask] translate_share` of its documents (`main_of`), plus
+  CJK's three — and "other" is searched as typed. The other one-language
+  groups are not searched by the text leg at all, unless the query is
+  written in their language (as typed, below): the vector leg covers them.
+  Measured offline (docs/notes/one-language-per-work.md, "Do we need query
+  translation?"): translating into gutenberg's en, fr, fi, de alone beat
+  all nineteen — this rule, re-scored: descriptive MRR 0.231 → 0.245,
+  R@50 0.605 → 0.630 (+74/−33), titles R@10 0.769 → 0.821, R@50 0.897 →
+  0.949 — and an index searched as typed in
+  place of a translation always lost. Every language held, "other"'s
+  forty-odd too, only when asked: the Ask page's "all languages",
+  `all_languages` on the API, `lang:all` in the question. A restriction
+  (`lang:hu`) translates into what it names, main or not.
 - **By the faster model.** The translation model (TRANSLATE_URL,
   app/translate.py: MADLAD-400 on the GPU) whenever the node has one; the
   chat model otherwise, or when it fails. Measured on the node for the 19
@@ -37,6 +47,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 
 from . import config, fts, llm, query_language
@@ -48,6 +59,14 @@ _EXPLICIT = re.compile(r"(?<!\S)lang:([a-z]{2,3}(?:,[a-z]{2,3})*)(?!\S)", re.I)
 _cache: dict[tuple, "LanguagePlan"] = {}
 _cache_lock = threading.Lock()
 _CACHE_MAX = 256
+
+#: the mixed text index groups: many languages each, never a main language
+MIXED = ("cjk", "other")
+#: (fts_dir, groups, share) -> (computed at, meta mtimes, main languages)
+_main_cache: dict[tuple, tuple[float, tuple, tuple[str, ...]]] = {}
+#: a GROWING index (the worker committing) is recounted at most this often;
+#: an index that has not changed is never recounted
+_MAIN_TTL_S = 300.0
 
 
 @dataclass
@@ -73,6 +92,19 @@ class LanguagePlan:
     #: app/query_language.py, when the reading is unavailable or names none)
     #: · "" (nobody)
     query_lang_by: str = ""
+    #: the main languages translated into (05 §5.2, amended 2026-10-10),
+    #: largest first, the union over the search's collections; () when the
+    #: search is not narrowed to them (translation off, a restriction, every
+    #: language asked for)
+    main: tuple[str, ...] = ()
+    #: str(collection.fts_dir) -> that collection's main languages; a
+    #: collection absent here has its every index searched, as before
+    main_by: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def main_for(self, collection) -> tuple[str, ...] | None:
+        """The one-language groups the text leg searches in `collection`
+        besides the query's own; None = every one of them."""
+        return self.main_by.get(str(collection.fts_dir))
 
     def searches(self, group: str) -> bool:
         """Whether the text index group `group` may hold a wanted record."""
@@ -85,10 +117,17 @@ class LanguagePlan:
             return None
         return [c for c in self.only if fts.group_for(c) == group]
 
-    def variants(self, group: str, held: list[str] | None = None) -> list[str]:
+    def variants(self, group: str, held: list[str] | None = None,
+                 main: tuple[str, ...] | None = None) -> list[str]:
         """The query texts to run against `group`, one per language —
         `held` being the languages that group's index holds. A mixed group
         with a language no translation reached is also searched as typed.
+
+        `main` (`main_for`): a one-language group that is neither main nor
+        the query's own language gets NO variant — the text leg does not
+        search it (05 §5.2, amended 2026-10-10: searched as typed it brought
+        another stemmer's noise into the leg's top positions, and its
+        translation the same). The mixed groups are searched as before.
 
         THE QUERY'S OWN LANGUAGE IS SEARCHED AS TYPED (amended 2026-10-10,
         05 §5.2): its group gets the reader's words, never a translation
@@ -97,8 +136,10 @@ class LanguagePlan:
         diamond necklace scandal…" → "The Diamond Necklace Scandal at the
         Court of Louis XVI…"). A mixed group gets it the same way, its
         language having no translation."""
-        if self.query_lang and group == self.query_lang and group not in ("cjk", "other"):
+        if self.query_lang and group == self.query_lang and group not in MIXED:
             return [self.core]
+        if main is not None and group not in MIXED and group not in main:
+            return []
         if group in ("cjk", "other"):
             pool = self.only or held or (sorted(config.CJK_LANGS) if group == "cjk" else [])
             langs = [c for c in pool if fts.group_for(c) == group]
@@ -122,7 +163,73 @@ class LanguagePlan:
 def reset() -> None:
     with _cache_lock:
         _cache.clear()
+        _main_cache.clear()
     llm.reset_readings()
+
+
+def main_of(counts: dict[str, int], share: float) -> tuple[str, ...]:
+    """05 §5.2 (amended 2026-10-10): a collection's MAIN languages — walking
+    its text index groups largest first (ties by name), the one-language
+    groups of the shortest walk that holds `share` of its documents. A mixed
+    group counts in the walk (its documents are the collection's) and is
+    never named: it is searched as before. With no count at all, every
+    one-language group — nothing is narrowed on a guess."""
+    total = sum(max(0, n) for n in counts.values())
+    if total <= 0:
+        return tuple(sorted(g for g in counts if g not in MIXED))
+    out: list[str] = []
+    acc = 0
+    for g, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
+        if n <= 0 or acc / total >= share - 1e-12:
+            break
+        acc += n
+        if g not in MIXED:
+            out.append(g)
+    return tuple(out)
+
+
+def translate_share() -> float:
+    """`[ask] translate_share` (07 §7.8), re-read like every Tier-2 key; a
+    broken platform.toml leaves the default rather than failing a search."""
+    from . import platform_config
+    default = platform_config.AskConfig().translate_share
+    try:
+        return float(getattr(platform_config.load().ask, "translate_share", default))
+    except Exception:   # noqa: BLE001
+        return default
+
+
+def main_languages(collection, share: float | None = None) -> tuple[str, ...]:
+    """`main_of` for one collection, counted from its own indexes
+    (`fts.group_documents`: the distinct documents of each) — never a scan
+    of the manifest. Cached on the indexes' path and meta.json mtimes; a
+    changed index is recounted at most every `_MAIN_TTL_S`, so a search does
+    not recount an index the worker is still writing on every query."""
+    share = translate_share() if share is None else share
+    groups = tuple(fts.existing_groups(collection))
+    key = (str(collection.fts_dir), groups, share)
+    mtimes = []
+    for g in groups:
+        try:
+            mtimes.append((collection.fts_dir / g / "meta.json").stat().st_mtime_ns)
+        except OSError:
+            mtimes.append(0)
+    stamp = tuple(mtimes)
+    now = time.monotonic()
+    with _cache_lock:
+        hit = _main_cache.get(key)
+    if hit is not None and (hit[1] == stamp or now - hit[0] < _MAIN_TTL_S):
+        return hit[2]
+    try:
+        counts = fts.group_documents(collection)
+    except Exception:   # noqa: BLE001 — no count narrows nothing
+        counts = {}
+    main = main_of({g: counts.get(g, 0) for g in groups}, share)
+    with _cache_lock:
+        if len(_main_cache) >= _CACHE_MAX:
+            _main_cache.clear()
+        _main_cache[key] = (now, stamp, main)
+    return main
 
 
 def held_languages(groups) -> set[str]:
@@ -199,7 +306,7 @@ def plan(query: str, collections, translate: bool, every: bool = False) -> Langu
     (query, languages), so the Ask page's second search — the answer's —
     costs no model call and cannot restrict differently from the first.
     `every` (or `lang:all` in the query) goes out in every language held,
-    not only the main ones."""
+    not only the main ones (`main_languages`)."""
     if not translate:
         lang, by = _query_lang(None, query, collections, set())
         return LanguagePlan(core=query, query_lang=lang, query_lang_by=by)
@@ -209,11 +316,19 @@ def plan(query: str, collections, translate: bool, every: bool = False) -> Langu
     else:
         query_core = query
     held: set[str] = set()
+    main_by: dict[str, tuple[str, ...]] = {}
+    share = None if every else translate_share()
     for c in collections:
-        held |= held_languages(fts.existing_groups(c))
+        groups = fts.existing_groups(c)
         if every:
-            held |= held_everywhere(c)
-    key = (query, every, tuple(sorted(held)))
+            held |= held_languages(groups) | held_everywhere(c)
+            continue
+        # 05 §5.2 (amended 2026-10-10): its main languages, and CJK's three
+        m = main_languages(c, share)
+        path = str(c.fts_dir)
+        main_by[path] = tuple(dict.fromkeys(main_by.get(path, ()) + m))
+        held |= set(m) | held_languages(g for g in groups if g == "cjk")
+    key = (query, every, tuple(sorted(held)), tuple(sorted(main_by.items())))
     with _cache_lock:
         hit = _cache.get(key)
     if hit is not None:
@@ -226,6 +341,10 @@ def plan(query: str, collections, translate: bool, every: bool = False) -> Langu
             status, found = "unavailable", ([], query_core)
     only, core = found
     query_lang, query_lang_by = _query_lang(found, core or query_core, collections, held)
+    if only:
+        # a restriction names its languages, main or not, and alone narrows
+        main_by = {}
+    main = tuple(dict.fromkeys(lang for m in main_by.values() for lang in m))
     targets = sorted(only) if only else sorted(held)
     # the query's own language is searched as typed, never translated into
     # (05 §5.2, amended 2026-10-10; `LanguagePlan.variants`)
@@ -235,7 +354,8 @@ def plan(query: str, collections, translate: bool, every: bool = False) -> Langu
         status = "unavailable"
     result = LanguagePlan(core=core or query_core, only=tuple(only),
                           translations=translations, status=status, by=by, every=every,
-                          query_lang=query_lang, query_lang_by=query_lang_by)
+                          query_lang=query_lang, query_lang_by=query_lang_by,
+                          main=main, main_by=main_by)
     if status == "ok":
         with _cache_lock:
             if len(_cache) >= _CACHE_MAX:

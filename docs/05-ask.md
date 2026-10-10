@@ -159,11 +159,29 @@ have. An identifier that resolves to no reference row and no record is
 returned as *unresolved*; it never produces an empty fact.
 
 **Translation is an expand step, off by default.** When it is on, the
-peer translates the query into the MAIN languages its text indexes
-hold — each language with an index of its own — and, when the request
-asks for every language, into every language they hold; it runs the
-text leg once per variant; the record's rank in the leg is its best
-rank across the variants. A variant is a query, not a leg: a collection
+peer translates the query into each collection's MAIN languages and,
+when the request asks for every language, into every language its text
+indexes hold; it runs the text leg once per variant; the record's rank
+in the leg is its best rank across the variants. The main languages
+(*amended 2026-10-10*) are the collection's one-language text indexes,
+taken largest first by the documents each holds, until they hold the
+node's declared share of the collection's documents (`[ask]
+translate_share`, 07 §7.8; 0.90 unless set). The peer counts them from
+its indexes, never by reading the corpus per search. A mixed index (the
+catch-all, CJK) counts toward the share and is searched as before:
+CJK with a variant per language it holds, the catch-all as typed. The
+other one-language indexes are not searched by the text leg, unless the
+query is written in their language (below); the vector leg still covers
+them. A query limited to some languages (below) is translated into
+those, main or not. Measured offline on the captured gutenberg legs
+(`docs/notes/one-language-per-work.md`, "Do we need query translation?"):
+at 0.90 the main languages are en, fr, fi, de (92 % of the books), and
+against translating into all nineteen, fused before the reranker, 451
+descriptive queries went MRR 0.231 → 0.245, R@50 0.605 → 0.630 (74
+better, 33 worse), and 39 title queries R@10 0.769 → 0.821, R@50
+0.897 → 0.949. An index searched with the query as typed in place of
+a translation lost in every arrangement measured. The response names
+the main languages used (`main_languages`). A variant is a query, not a leg: a collection
 indexed in five languages casts no more votes than one indexed in one.
 Concretely (*amended 2026-10-09*): the leg orders its records by their
 best rank across the variants, and a record's rank in the leg is its

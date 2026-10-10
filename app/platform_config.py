@@ -105,8 +105,17 @@ class AskConfig:
     the reranker cannot order inside it keeps its fused order and says
     `reranked: false`. 8000 by the operator's decision (2026-09-15): at
     the spec's former 400 every list fell back, and the GPU reranker takes
-    0.3–0.7 s on pubmed and wikipedia and 3–6 s on gutenberg's long chunks."""
+    0.3–0.7 s on pubmed and wikipedia and 3–6 s on gutenberg's long chunks.
+
+    `translate_share` (added 2026-10-10, 05 §5.2): a translated query goes
+    out only into a collection's MAIN languages — its text index groups,
+    largest first, until they hold this share of its documents. 0.90 is
+    gutenberg's en, fr, fi, de (92 % of the books); measured offline,
+    translating into those alone beat all nineteen (descriptive MRR 0.231
+    → 0.245, R@50 0.605 → 0.630; docs/notes/one-language-per-work.md).
+    1.0 is every language with an index of its own, as before."""
     latency_budget_ms: int = 8000
+    translate_share: float = 0.90
 
 
 @dataclass(frozen=True)
@@ -421,8 +430,13 @@ def _load_one(path: Path) -> PlatformConfig:
     ask_raw = raw.get("ask", {}) or {}
     if not isinstance(ask_raw, dict):
         raise schedule_mod.ScheduleError("ask must be a table")
+    share = ask_raw.get("translate_share", AskConfig().translate_share)
+    if isinstance(share, bool) or not isinstance(share, (int, float)) or not 0 < share <= 1:
+        raise schedule_mod.ScheduleError(
+            f"ask.translate_share: a share of documents, 0 < share <= 1, got {share!r} (07 §7.8)")
     ask = AskConfig(latency_budget_ms=_positive_int(
-        ask_raw, "latency_budget_ms", AskConfig().latency_budget_ms))
+        ask_raw, "latency_budget_ms", AskConfig().latency_budget_ms),
+        translate_share=float(share))
 
     models_raw = raw.get("models", {}) or {}
     if not isinstance(models_raw, dict):

@@ -21,10 +21,17 @@ the live re-check's captured vector leg, at the work level:
                mixed groups typed; the other one-language groups skipped
                (rest=skip) or searched as typed (rest=typed, what the
                product's variants() would do with no translation for them)
+  rule:X       THE SHIPPED RULE (05 §5.2, amended 2026-10-10), by the product's
+               own code: `language_plan.main_of` over the collection's books
+               per text index group (--books, gutenberg_books.tsv) at the
+               default `[ask] translate_share`, and `LanguagePlan.variants`
+               deciding which captured list runs (cjk keeps its translations,
+               as the product does; few:* drop them)
 
 Usage: python one_language_notr_score.py --old tools/measure/out/onelang
          --live tools/measure/out/onelang_live
          --own tools/measure/out/onelang_live/own_all.jsonl
+         [--books tools/measure/out/gutenberg_books.tsv]
 """
 from __future__ import annotations
 
@@ -34,7 +41,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from app import query_language  # noqa: E402
+from app import config, fts, language_plan, query_language  # noqa: E402
+from app.platform_config import AskConfig  # noqa: E402
 from app.retrieval import _merge_rrf  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -51,6 +59,8 @@ def main() -> None:
     ap.add_argument("--live", type=Path, required=True)
     ap.add_argument("--own", type=Path, required=True)
     ap.add_argument("--json", type=Path)
+    ap.add_argument("--books", type=Path,
+                    help="gutenberg_books.tsv (book id, lang): the shipped rule's counts")
     a = ap.parse_args()
     lang_of = {}
     for line in (a.old / "records.jsonl").open(encoding="utf-8"):
@@ -108,6 +118,30 @@ def main() -> None:
             return rest_typed and L["typed"]
         return use
 
+    main = None
+    if a.books:
+        counts: dict[str, int] = {}
+        for line in a.books.open(encoding="utf-8"):
+            lang = (line.rstrip("\n").split("\t") + [""])[1]
+            counts[fts.group_for(lang)] = counts.get(fts.group_for(lang), 0) + 1
+        main = language_plan.main_of(counts, AskConfig().translate_share)
+        print(f"main languages at translate_share {AskConfig().translate_share}: "
+              f"{', '.join(main)}")
+
+    CORE = "\0typed"
+
+    def rule(ql, cjk=True):
+        # the plan the product makes for this query: translations into the
+        # main languages and CJK's three, never the query's own
+        targets = (set(main) | (config.CJK_LANGS if cjk else set())) - {ql}
+        plan = language_plan.LanguagePlan(core=CORE, translations={t: f"\0tr:{t}" for t in targets},
+                                          status="ok", query_lang=ql)
+
+        def use(L):
+            vs = plan.variants(L["group"], L["langs"], main)
+            return (L["typed"] and CORE in vs) or (L["tr"] and any(v != CORE for v in vs))
+        return use
+
     per: dict = {}
     for r in own:
         if r["qid"].startswith("SAMPLE"):
@@ -135,6 +169,11 @@ def main() -> None:
             "few:big7/skip": (lab, few(BIG7, lab, False), True, True),
             "few:big7/typed": (lab, few(BIG7, lab, True), True, True),
         }
+        if main is not None:
+            strat["rule:label"] = (lab, rule(lab), True, True)
+            strat["rule:guess"] = (g, rule(g), True, True)
+            # the same without cjk's translations: must equal few:big4/skip exactly
+            strat["rule-nocjk:label"] = (lab, rule(lab, cjk=False), True, True)
         row = {"set": "titles" if "#T" in r["qid"] else "descriptive",
                "en": lab == "en", "has": has, "lang": lab}
         for name, (ql, use, t, v) in strat.items():
@@ -148,6 +187,9 @@ def main() -> None:
                     rank = len(seen)
             row[name] = rank
         per[r["qid"]] = row
+    if main is not None and set(main) == BIG4:
+        differ = sum(v["rule-nocjk:label"] != v["few:big4/skip"] for v in per.values())
+        print(f"rule-nocjk:label vs few:big4/skip: {differ} of {len(per)} queries rank differently")
     if a.json:
         a.json.write_text(json.dumps(per, indent=0), encoding="utf-8")
     names = list(next(iter(per.values())).keys())[4:]

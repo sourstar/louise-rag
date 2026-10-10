@@ -890,3 +890,35 @@ That is 45 % of the search.
 Whether MADLAD is the right translator for four languages is a separate
 question. This measurement says only that the variants into the big
 languages help and those into the small ones hurt.
+
+### Implemented (2026-10-10)
+
+Recommendation 1, as 05 §5.2 now says it. The main languages are each
+collection's one-language indexes, largest first by documents, up to
+`[ask] translate_share` (07 §7.8, default 0.90). Documents are counted from
+the indexes themselves (`fts.group_documents`: tantivy's cardinality of
+`book_id`, 46 ms for 2M chunks), cached on each index's meta.json and
+recounted at most every 5 min while an index grows
+(`language_plan.main_languages`). The response's `main_languages` names
+them; `translations` lists only what was translated.
+
+- **Gutenberg at 0.90:** en, fr, fi, de (en+fr+fi hold 89.3 % of the
+  books, de takes it to 92.4 %). The sets were not tuned on the queries.
+- **Mixed groups as before** (the brief): cjk keeps its translations, so
+  the shipped rule is not exactly few:big4/skip, which drops them.
+- **Re-scored** with the product's own `main_of` and `LanguagePlan.variants`
+  (`one_language_notr_score.py --books out/gutenberg_books.tsv`, rows
+  `rule:*`). Without cjk's translations the rule ranks all 490 queries
+  exactly as few:big4/skip.
+
+| fused, before the reranker | descriptive MRR | R@10 | R@50 | vs today | titles MRR | R@10 | R@50 | vs today |
+|---|---:|---:|---:|---|---:|---:|---:|---|
+| today (label) | 0.231 | 0.421 | 0.605 | | 0.485 | 0.769 | 0.897 | |
+| few:big4/skip | 0.247 | 0.441 | 0.627 | +77/−34 | 0.481 | 0.795 | 0.949 | +12/−7 |
+| **rule (label)**, shipped | 0.245 | 0.441 | 0.630 | +74/−33, p 10⁻⁴ | 0.485 | 0.821 | 0.949 | +13/−7 |
+| **rule (guess)**, chat model evicted | 0.242 | 0.439 | 0.627 | +75/−39 | 0.494 | 0.821 | 0.949 | +15/−8 |
+
+Still open from recommendation 4: the live run with the reranker and one
+timing of MADLAD with 4 + 3 (CJK) targets on the node. `translate=False`
+is unchanged: it still searches every index as typed (recommendation 3
+says it should not; not part of this change).

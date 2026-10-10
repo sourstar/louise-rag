@@ -581,6 +581,9 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
     limit = max(k, depth, 20)
     if mode in ("hybrid", "fts"):
         t0 = time.time()
+        # 05 §5.2 (amended 2026-10-10): the main languages, the query's own,
+        # the mixed groups — the other one-language indexes get no variant
+        main = plan.main_for(collection) if hasattr(plan, "main_for") else None
         for group in fts.existing_groups(collection):
             if not plan.searches(group):
                 continue
@@ -589,7 +592,8 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
             # every variant's list goes to the fusion as it is: they are
             # variants of the ONE text leg, and `_merge_rrf` ranks a record
             # by its best rank across all of them (05 §5.2)
-            for q in plan.variants(group, held):
+            for q in (plan.variants(group, held, main) if main is not None
+                      else plan.variants(group, held)):
                 # deep enough to hold `limit` RECORDS, not chunks (05 §5.1,
                 # amended 2026-10-10: app/leg_depth.py)
                 hits = fts.search_records(group, q, limit, collection=collection,
@@ -835,6 +839,7 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     result = {"query": query, "mode": mode, "translations": partial["translations"],
               "language": plan.summary(), "query_lang": plan.query_lang,
               "query_lang_by": getattr(plan, "query_lang_by", ""),
+              "main_languages": list(getattr(plan, "main", ())),
               "catalog": partial["catalog"], "hits": final,
               "facts": [asdict(f) for f in facts], "facts_withheld": facts_withheld,
               "timings": timings, "reranked": reranked}
@@ -1014,6 +1019,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     result = {"query": query, "mode": mode, "translations": translations,
               "language": plan.summary(), "query_lang": plan.query_lang,
               "query_lang_by": getattr(plan, "query_lang_by", ""),
+              "main_languages": list(getattr(plan, "main", ())),
               "catalog": catalog, "hits": final, "facts": [asdict(f) for f in facts],
               "facts_withheld": facts_withheld,
               "timings": timings, "reranked": reranked}

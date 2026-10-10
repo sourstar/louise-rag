@@ -2867,6 +2867,7 @@ def _effective_config() -> dict:
         "transfer.per_endpoint": pc.transfer.per_endpoint,
         "transfer.segments_per_file": pc.transfer.segments_per_file,
         "ask.latency_budget_ms": pc.ask.latency_budget_ms,
+        "ask.translate_share": f"{pc.ask.translate_share:.0%}",
     }
     if pc.embed_defaults:
         # still parsed, so an older platform.toml loads — and said to be
