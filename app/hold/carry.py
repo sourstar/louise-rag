@@ -330,6 +330,7 @@ def producer_of(keep: str) -> str:
 
 
 def keep_producer(root, to_ref: str, producer: str, *, window: int = WINDOW,
+                  skip_marked: bool = False,
                   log: Callable[[str], None] = print) -> dict[str, Any]:
     """Keep only the vectors `producer` produced (G2). Resumable from its
     cursor in the manifest's `control` table."""
@@ -362,14 +363,35 @@ def keep_producer(root, to_ref: str, producer: str, *, window: int = WINDOW,
                     f"{rows[0]['rowid']}–{last}; the vector table keys rows on numeric "
                     f"book ids (embeddings.delete_chunks), so this collection's rows "
                     f"cannot be dropped by chunk here") from None
-            present = set(embeddings.chunk_ids_of_books(books, collection=coll))
             uids = [r["uid"] for r in rows]
             marks = ",".join("?" * len(uids))
             kept = {r[0] for r in con.execute(
                 f"SELECT chunk_id FROM chunk_verification WHERE uid IN ({marks}) "
                 f"AND producer=? AND state IN ({','.join('?' * len(KEPT_STATES))})",
                 (*uids, producer, *KEPT_STATES))}
-            drop = sorted(present - kept)
+            # `skip_marked`: ONLY THE DOCUMENTS THAT CAN HOLD A ROW TO DROP are read from the
+            # vector table: one whose every chunk carries the archive's mark has
+            # nothing the keep removes. Live 2026-10-10, pubmed (40M documents):
+            # reading every window's books from the table cost ~17 s per 10,000
+            # documents — ~16 h — for windows that dropped nothing. A stray
+            # duplicate row of a kept chunk is still caught: the end requires
+            # the table to hold exactly the kept count (CarryMismatch).
+            marked: dict[str, int] = {}
+            for c in kept:
+                u = c.rsplit(":", 2)[0]
+                marked[u] = marked.get(u, 0) + 1
+            chunks_of = {r[0]: r[1] for r in con.execute(
+                f"SELECT uid, chunks FROM documents WHERE uid IN ({marks})", uids)}
+            short = ({u for u in uids
+                      if chunks_of.get(u) is None or marked.get(u, 0) < int(chunks_of[u] or 0)}
+                     if skip_marked else set(uids))
+            if short:
+                short_books = sorted({int(r["native_id"]) for r in rows if r["uid"] in short})
+                present_short = set(embeddings.chunk_ids_of_books(short_books, collection=coll))
+            else:
+                present_short = set()
+            present = present_short | {c for c in kept if c.rsplit(":", 2)[0] not in short}
+            drop = sorted(present_short - kept)
             pending = state.get("pending") or {}
             if pending.get("rowid") != last:
                 # step 1: the documents marked not done FIRST, with the count

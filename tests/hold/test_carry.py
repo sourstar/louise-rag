@@ -502,3 +502,16 @@ def test_keeping_only_an_archives_vectors_lets_the_weights_differ(pair):
     assert "encoder.weights" not in str(e.value) and "snapshot" in str(e.value)
     with pytest.raises(CodexError, match="encoder.weights"):
         carry.carry(root, "old", "other", apply=False, log=quiet)
+
+
+def test_skip_marked_reads_only_short_documents_and_its_net_holds(pair):
+    """skip_marked (2026-10-10, pubmed): a document whose every chunk carries
+    the archive's mark is not read from the vector table. Where the table holds
+    more rows than the manifest's chunk count says (this fixture: 3 rows a
+    document), the end's count check refuses — the net the shortcut relies on."""
+    root, old, _new = pair
+    _seeded(root)
+    _vectors(root, old)
+    carry.carry(root, "old", "new", apply=True, log=quiet)
+    with pytest.raises(carry.CarryMismatch):
+        carry.keep_producer(root, "new", "genesis:medcpt-pubmed", skip_marked=True, log=quiet)
