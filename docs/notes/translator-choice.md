@@ -1,0 +1,213 @@
+# Which translator: MADLAD or a newer model? (2026-10-10)
+
+*Operator, 2026-10-10: "Do not reinvent the wheel: if there is already a better
+model for translations let's use that: search in LocalAI, our first choice, then
+in Hugging Face." Measured on the node, read-only for Louise; no product code or
+config changed. Scripts: `tools/measure/translator_choice_{build,search,score,reading}.py`;
+node side `/root/xlate-choice/` (`xlate.py`, `run2.sh`/`run3.sh`, `go*.sh`, `out/`).
+Local copies and raw outputs: `tools/measure/out/xlate_choice/`.*
+
+**Incomplete:** the operator's GPU pause (13:55, still on at 15:40) stopped the
+run before Index-Translate-9B and TranslateGemma-12B translated anything. Both
+are installed and their prompt shapes work out (below); `go4.sh` resumes them.
+
+## Answer
+
+- **Queries: keep MADLAD.** No candidate moves retrieval. Every one is within
+  ±0.005 MRR of MADLAD on the 451 descriptive queries (paired sign tests
+  p ≥ 0.68), and within one or two of the 39 titles. MADLAD is also the
+  fastest (3.2 s per query against 3.3 s for Hy-MT2-1.8B and about 6.5 s
+  for the 7–9B models). Unlike Hy-MT2, it covers Finnish, one of gutenberg's
+  four main languages.
+- **Reading, modern languages: keep MADLAD.** German and Finnish into English:
+  MADLAD chrF 57.0 / 51.7, EuroLLM-9B 57.2 / 52.4, Hy-MT2-7B 56.0 / 49.7.
+  MADLAD takes 5.8 s per passage; the others take 33–39 s.
+- **Reading, Latin: every LLM beats MADLAD.** EuroLLM-9B scores 50.4 and
+  Hy-MT2-7B 48.4, against 34.4 for MADLAD. That equals Qwen3-30B (50.4) at
+  about a third of the VRAM; Gemma 3 27B stays best (52.5). On Ancient and
+  Modern Greek the gap is smaller (EuroLLM 49.3 / 46.5, MADLAD 47.3 / 43.5).
+- **MADLAD cannot be retired on what was measured.** Nothing beats it for
+  queries or modern reading, and no candidate is as cheap: 3B, one batched
+  call. A Latin reading model would sit beside it, not replace it.
+
+## Candidates
+
+| model | where | file | languages (card) | how it is asked |
+|---|---|---|---|---|
+| MADLAD-400-3B-MT (today) | `louise-translate-madlad` | bf16, torch XPU | 400+ | one `/v1/completions` per batch, the JSON `{"items": [...]}` (app/translate.py) |
+| Hy-MT2-1.8B | LocalAI gallery `hy-mt2-1.8b-q8` | Q8_0, 1.9 GB | 33, **no Finnish** | chat: "Translate the following text into {lang}. Note that you should only output the translated result without any additional explanation:\n\n{text}" |
+| Hy-MT2-7B | gallery `hy-mt2-7b-q4`, which **resolves to the Q8_0 file** | Q8_0, 8.0 GB | 33, no Finnish | the same |
+| EuroLLM-9B-Instruct | gallery `eurollm-9b-instruct` | Q4_K_M, 5.6 GB | EU 24 + zh, ja, ko, … | chat: "Translate the following {src} source text to {tgt}:\n{src}: {text} \n{tgt}: " |
+| Index-Translate-9B | gallery `index-translate-9b` | Q8_0, 9.8 GB | 150 | `/v1/completions`: a Qwen3.5 turn ending in an EMPTY think block, with the card's prompt "请将以下文本翻译为{语言}，直接输出翻译结果，不要进行任何解释。\n\n{text}" |
+| TranslateGemma-12B | **Hugging Face**, not in the gallery: `mradermacher/translategemma-12b-it-GGUF` | Q4_K_M, 7.3 GB, sha256 `b7aac4b4…a528` | 55, Latin included | `/v1/completions`, the GGUF's own template rendered by the caller: "You are a professional {src} ({code}) to {tgt} ({code}) translator. …" (the template wants a structured content item that LocalAI cannot pass) |
+
+**Not run:**
+- From the gallery:
+  - `yanoljanext-rosetta-12b/27b` (Gemma 3 translation fine-tunes);
+  - `index-translate-35b-a3b`: about 20 GB, it does not fit beside Louise's
+    models;
+  - the `-q4`/`-q6` variants of Hy-MT2.
+- From Hugging Face: TranslateGemma 4B and 27B.
+
+**Conditions:**
+- Greedy decoding everywhere (temperature 0, top_k 1, seed 0).
+- Each candidate was alone on the card, beside Louise's pinned models and
+  gutenberg's live embedding.
+- Each load was checked from the driver: the model plus 2 GiB free.
+- Every request was guarded by `/root/GPU_PAUSE` and `out/STOP`.
+
+## Query translation (search)
+
+**What ran:**
+- The live re-check's queries: 451 descriptive and 39 titles.
+- Each query was translated into the main languages and CJK (en, fr, fi, de,
+  zh, ja, ko), minus its own language. All targets of one query were in flight
+  at once, as a search sends them.
+- Text leg: HEAD's plan, i.e. `LanguagePlan.variants` with gutenberg's main
+  languages and the query's own language searched as typed.
+- Vector leg: the re-check's, the same for every translator, since it embeds
+  the query as typed.
+- Fusion: `retrieval._merge_rrf`, scored at the work level, before the
+  reranker.
+
+**Check:** `madlad-recheck` (the translations the re-check captured) reproduces
+the shipped "rule (label)" row of one-language-per-work.md (0.245 / 0.441 /
+0.630; titles 0.484 / 0.821 / 0.949). The harness is therefore the product's.
+
+| translator | descriptive MRR | R@10 | R@50 | vs MADLAD | titles MRR | R@10 | R@50 | vs MADLAD | s / query median (p90) |
+|---|---:|---:|---:|---|---:|---:|---:|---|---|
+| MADLAD | 0.245 | 0.441 | 0.630 | | 0.483 | 0.821 | 0.923 | | 3.21 (4.70) |
+| Hy-MT2-1.8B | 0.250 | 0.457 | 0.639 | +41/−39 | 0.481 | 0.769 | 0.923 | +6/−6 | 3.34 (4.71) |
+| Hy-MT2-7B | 0.247 | 0.455 | 0.641 | +35/−35 | 0.485 | 0.769 | 0.949 | +5/−7 | 6.57 (9.64) |
+| EuroLLM-9B | 0.247 | 0.448 | 0.630 | +31/−29 | 0.489 | 0.821 | 0.923 | +5/−2 | 6.47 (8.52) |
+| Index-Translate-9B | — | | | | | | | | not run (pause) |
+| TranslateGemma-12B | — | | | | | | | | not run (pause) |
+
+- **Where translation matters most, no candidate helps.** The subset is
+  non-English queries whose work has no edition in their language (110).
+  - MADLAD: 0.191 / R@50 0.591.
+  - Hy-MT2-1.8B: 0.193 / 0.600.
+  - EuroLLM: 0.184 / 0.609.
+  - Hy-MT2-7B: 0.177 / 0.600. It loses, +7/−18 (p 0.04), the only
+    significant difference in the table.
+- **Why nobody wins.** The vector leg carries most of the cross-language
+  recall. The text leg needs only the content words in the four main
+  languages, and every translator gets those right.
+- **Hy-MT2 does not know Finnish.** The product would ask it nothing for `fi`
+  and search the Finnish index as typed, which is what the harness did.
+- **EuroLLM runs on.** In 21 of its 490 queries (4.3 %), one translation is
+  more than 3× the query's length: an appended "Note: …", an explanation or
+  a repetition. Hy-MT2 and MADLAD each have 2.
+- **Time.**
+  - MADLAD's median was measured in the previous run (08:50–09:10), under
+    the same conditions: gutenberg embedding, other candidates unloaded.
+  - The four targets plus CJK take 3.2 s, against 4.0 s for the old 19
+    (one-language-per-work.md, "Time"), so that open timing is now done.
+
+## Reading (Ask page: entries, answers)
+
+**Sets:**
+- Classical: classical-translation.md's eval set.
+- Modern: `evalset_modern.json`, German and Finnish passages with
+  public-domain English references.
+- Each candidate ran every other passage (the "half" subset). MADLAD,
+  Hy-MT2-1.8B and the LLMs of 2026-10-09 are scored on the same half.
+
+Scores are chrF (sacrebleu 2.4.3, corpus level), each passage into English:
+
+| model | la (10) | grc (10) | el (5) | de (10) | fi (10) | s / passage (classical · modern) | tok/s |
+|---|---:|---:|---:|---:|---:|---|---:|
+| MADLAD | 34.4 | 47.3 | 43.5 | 57.0 | 51.7 | 2.7 · 5.8 | |
+| Hy-MT2-1.8B | 39.4 | 35.7 | 38.7 | 48.2 | 40.4 | 20.7 · 17.7 | 16 |
+| Hy-MT2-7B | 48.4 | 49.4 | 45.6 | 56.0 | 49.7 | 52.0 · 38.5 | 7 |
+| EuroLLM-9B | **50.4** | 49.3 | 46.5 | **57.2** | **52.4** | 41.9 · 32.6 | 10 |
+| Qwen3-30B-A3B (2026-10-09) | 50.4 | 52.9 | 50.3 | | | 94.2 | 4.5 |
+| Gemma 3 27B (2026-10-09) | **52.5** | 52.0 | 48.6 | | | 37.5 | 11 |
+| Index-Translate-9B, TranslateGemma-12B | not run (pause) | | | | | | |
+
+BLEU follows chrF; it is in `reading_scores.out`. On the full sets, MADLAD
+scores la 35.8, de 58.6, fi 51.3, and Hy-MT2-1.8B 39.5 / 48.5 / 41.0.
+
+## Footprint
+
+| model | VRAM (driver) | host RSS | cold, from disk / from page cache | warm, one short request |
+|---|---|---|---|---|
+| MADLAD (model-profile.md) | 6,394 → 7,160 MiB | 3,561 MiB | 16.7–38.0 s | a 1-item batch 7.1 s beside the worker |
+| Hy-MT2-1.8B | 2,622 MiB | 924 MiB at load, **9,215 MiB after its hour** | 32–37 s (first load of the day) | 0.19–0.36 s |
+| Hy-MT2-7B (Q8) | 8,621–8,639 MiB | 1,010–1,221 MiB | 37–48 s / 8.6–10.0 s | 0.5–0.6 s |
+| EuroLLM-9B (Q4_K_M) | 6,185–6,197 MiB | 718–735 MiB | 16.5 s / 7.0 s | 0.38–0.47 s |
+| Index-Translate-9B (Q8) | 10,601 MiB, 12,363 under load | 1,637–1,882 MiB | 61.1 s / 9.8 s | — |
+| TranslateGemma-12B | not loaded | | | |
+
+The 9 GB RSS of Hy-MT2-1.8B appeared once, over 490 queries and 90 passages,
+with `cache_ram:0`. Neither the 7B (1.0 GB) nor EuroLLM (0.7 GB) showed it.
+
+## What went wrong on the way
+
+1. **EuroLLM's backend went to garbage and kept answering 200 OK.**
+   - After about 1 h 10 min (query 290 of 490), every translation became
+     random multilingual text, and each query took 30–50 s instead of 7 s.
+   - A restart fixed it. The garbled lines (kept in
+     `out/q_eurollm-9b-instruct.garbled-1300.jsonl`) were dropped and
+     re-run.
+   - A llama.cpp SYCL translator in the product would need an output sanity
+     check (length ratio, script). MADLAD did not show this here.
+2. **Index-Translate ignored "no thinking".**
+   - LocalAI v4.11 drops the gallery YAML's `chat_template_kwargs:
+     enable_thinking: false`, and the request's as well. The model reasoned,
+     and answered "" with `finish_reason: length`.
+   - The workaround: `/v1/completions` with the GGUF's template rendered with
+     `enable_thinking=false`, i.e. an empty `<think>\n\n</think>` block.
+   - It is in `xlate.py`. It was untested when the pause began.
+3. **Gallery names do not mean what they say.** `hy-mt2-7b-q4` installs the
+   Q8_0 file (`resolved_variant: hy-mt2-7b-q8`).
+4. **The previous runner kept loading models after its agent stopped.** The
+   runners now:
+   - check `GPU_PAUSE` and `STOP` before every request;
+   - run a watcher that kills the run and unloads the model when either
+     appears, when the card's free memory falls under 1 GiB, or when host
+     MemAvailable plus reclaimable ARC falls under 4 GiB;
+   - evict no one else's model.
+
+## Recommendation
+
+1. **Keep MADLAD as TRANSLATE_URL's model** for queries and for the Ask page.
+   Nothing measured beats it in either job at its cost.
+2. **Do not adopt Hy-MT2.** It has no Finnish, and its 1.8B reads worse than
+   MADLAD everywhere except Latin.
+3. **If Latin reading matters**, EuroLLM-9B (gallery, Q4_K_M, 6.2 GB) is the
+   cheapest model at Qwen3-30B's Latin quality. It would be a second, reading-
+   only model, used where the source is `la`. Decide after TranslateGemma-12B
+   (55 languages, Latin included) and Index-Translate run: either may do the
+   same in less time.
+4. **Code changes if an LLM translator is ever used** (none now):
+   - `app/translate.py` speaks the louise-madlad batch shape. An llama.cpp
+     translator needs one request per item in that model's prompt shape (the
+     table above), the items of a batch sent concurrently up to the slot
+     count, and the language list from config, since `{"languages": true}`
+     is MADLAD's backend's own.
+   - Index-Translate and TranslateGemma need `/v1/completions` with their
+     templates rendered by the client.
+   - EuroLLM needs its answer cut at the first line or note.
+   - Every one needs the sanity check of item 1 above.
+   - A new `[translate] model / shape` config key: ask first.
+5. **To finish this note:** run `/root/xlate-choice/go4.sh` once the GPU is
+   free (≈ 2 h per model: reading first, then the 490 queries). Then rebuild
+   and score as below.
+
+## Reproduce
+
+**On the node, in `/root/xlate-choice`:**
+- `setsid nohup ./go4.sh > out/go4.log 2>&1 &` runs each model through
+  `run3.sh MODEL NEED_MIB COLD CMD`. That does the fit check, the cold and
+  warm timings, and starts the watcher; then `xlate.py reading|queries`
+  runs, resumable.
+- `touch out/STOP` ends everything at once and unloads the model.
+
+**Locally, from the repo root (Docker, `louise-rag:dev`):**
+- `python tools/measure/translator_choice_build.py tools/measure/out/onelang_live/live_results.jsonl tools/measure/out/xlate_choice tools/measure/translator_choice_search.py OUT.py madlad hy-mt2-1.8b-q8 …`
+- `sh tools/measure/one_language_rep_run.sh OUT.py > search.jsonl`: read-only
+  container on the node, text index only, about 2 min.
+- `python tools/measure/translator_choice_score.py --old tools/measure/out/onelang --live tools/measure/out/onelang_live --results search.jsonl --times tools/measure/out/xlate_choice`
+- Reading: `python tools/measure/translator_choice_reading.py tools/measure/out/xlate_choice/reading/old tools/measure/out/xlate_choice/reading`
+  (python:3.12-slim + sacrebleu 2.4.3).
