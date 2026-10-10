@@ -627,6 +627,16 @@ Only three things differ: the backend, the env (`NEO_CACHE_DIR` and
 
 The rule: pin an encoder that Louise embeds with continuously.
 
+**Pin through the API, never by editing the YAML.** `PUT
+/models/toggle-pinned/<name>/pin` reaches the watchdog at once;
+`"pinned": true` written into the YAML plus `POST /models/reload` does
+not, until LocalAI restarts. Observed 2026-10-10: `vega-medcpt-article-ov`,
+pinned by an edit and a reload at 11:49, was evicted twice at 11:54, once
+in the middle of its load, while a translation model filled the card to
+80%. Pubmed's pair gate failed with "connection refused". The API call
+rewrites the YAML without its comments, so put the commented file back
+afterwards (`pinned` reads the same).
+
 **Verified** (`verify.py`, in `vega-proof`). Each model was loaded once,
 asked, compared, and shut down. The inputs were 64 standard-library
 docstrings (64 pairs for the pair encoder), cut to 1,000 characters for
