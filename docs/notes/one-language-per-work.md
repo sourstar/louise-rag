@@ -719,3 +719,174 @@ strategy):
   today's plan, where the as-typed text goes to the mixed groups only.
 - Titles mostly have no guess, so the guess leaves them as they were.
 - After the reranker: not measured (no new long live run).
+
+## Do we need query translation? (2026-10-10)
+
+*Offline: no node, no model. Script `tools/measure/one_language_notr_score.py`
+on the captured lists of `one_language_own_search.py` (each text index group
+searched with every MADLAD variant AND with the query as typed, 50 records
+deep; `out/onelang_live/own_all.jsonl`) and the live re-check's vector leg,
+fused by `retrieval._merge_rrf` at HEAD. Work level, before the reranker.
+Output: `out/onelang_live/notr_score.out`, `notr_per_query.json`. "Today"
+reproduces the figures of "Fixed (2026-10-10)" §6 exactly (0.231 / 0.421;
+guess 0.226 / 0.419).*
+
+The operator: "MADLAD is a pretty bad translator, do we need it?"
+
+**Answer: not into 19 languages. Into the few largest, yes.**
+
+- **No translation at all** ties today on descriptive queries but loses on
+  titles and on the one case translation exists for: a non-English query
+  for a work with no edition in that language.
+- **Translating into en, fr, fi and de only** (92 % of the books), and not
+  searching the other one-language indexes by text, beats today. Their
+  records still come in through the vector leg, and the query's own index
+  is still searched as typed.
+- **The vector leg alone has the best MRR on descriptive queries**, but its
+  pool is smaller (R@50 0.557) and it fails on titles (MRR 0.196).
+
+### Strategies
+
+- **today**: the shipped plan. The query's own group is searched as typed,
+  every other one-language group with its MADLAD translation, "other" as
+  typed and cjk with its translations.
+- **none-own**: no translation. The query as typed in its own group and in
+  the mixed groups, nothing else. The guess's version falls back to
+  none-all when there is no guess.
+- **none-all**: no translation, the query as typed in EVERY group. This is
+  what `translate=False` does today (`variants()` falls back to the core).
+- **few:S/skip**: translations into S only. Own group and mixed groups as
+  typed. The other one-language groups are not searched (a code change:
+  today `variants()` would search them as typed).
+- **few:S/typed**: the same, with those other groups searched as typed.
+- S = {en}; big4 = {en, fr, fi, de}; big7 = big4 + {nl, it, es} (96 % of
+  the books). The sets are chosen by book count, not tuned on the queries.
+
+### Results
+
+| fused, before the reranker | descriptive (451) MRR | R@1 | R@10 | R@50 | vs today | titles (39) MRR | R@10 | R@50 | vs today |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---|
+| today (label) | 0.231 | 0.133 | 0.421 | 0.605 | | 0.485 | 0.769 | 0.897 | |
+| today (guess) | 0.226 | 0.129 | 0.419 | 0.603 | +0/−5 | 0.453 | 0.769 | 0.897 | +5/−6 |
+| none-own (label) | 0.227 | 0.129 | 0.435 | 0.608 | +81/−90, p 0.54 | 0.409 | 0.667 | 0.821 | +7/−17, p 0.06 |
+| none-own (guess) | 0.220 | 0.122 | 0.435 | 0.605 | +81/−90 | 0.361 | 0.692 | 0.897 | +9/−16 |
+| none-all (guess ties) | 0.210 | 0.111 | 0.410 | 0.601 | +53/−65 | 0.348 | 0.615 | 0.846 | +6/−18, p 0.02 |
+| vector leg only | 0.247 | 0.166 | 0.419 | 0.557 | +184/−67 | 0.196 | 0.256 | 0.385 | +2/−28 |
+| few:en/skip (= none-own for en queries) | 0.240 | 0.146 | 0.443 | 0.623 | +74/−80 | 0.414 | 0.667 | 0.897 | +9/−16 |
+| few:en/typed | 0.220 | 0.122 | 0.412 | 0.605 | +38/−44 | 0.444 | 0.641 | 0.872 | +7/−12 |
+| **few:big4/skip** | **0.247** | **0.151** | **0.441** | **0.627** | **+77/−34, p 10⁻⁴** | 0.481 | 0.795 | 0.949 | +12/−7, p 0.36 |
+| few:big4/typed | 0.231 | 0.133 | 0.419 | 0.605 | +37/−33 | 0.464 | 0.667 | 0.923 | +6/−12 |
+| **few:big7/skip** | 0.242 | 0.144 | 0.426 | 0.616 | **+67/−16, p < 10⁻⁴** | **0.500** | **0.821** | **0.949** | **+12/−3, p 0.035** |
+| few:big7/typed | 0.229 | 0.129 | 0.415 | 0.603 | +35/−29 | 0.498 | 0.692 | 0.949 | +6/−10 |
+
+- **Searching an untranslated index as typed always hurts** (every
+  "/typed" row against its "/skip" row, and none-all against none-own). A
+  French query run through the Hungarian stemmer brings Hungarian noise
+  into the leg's top positions.
+- **What the small languages' translations add is the same noise.** big4/skip
+  against today differs only in dropping the variants for da, el, es, hu,
+  it, nl, no, pt, ro, ru, sv, ar and cjk. Each of them puts its rank-1
+  record into the leg's positions 1–16.
+- **What translating into the big languages adds**, against none-own:
+  - descriptive: big4 +96/−77 (p 0.17);
+  - titles: big4 +18/−3 (p 0.0015), big7 +18/−4;
+  - non-English queries whose work has no edition in the query's
+    language: +31/−17 (p 0.06).
+
+### By query language and edition (descriptive, MRR / R@10 / R@50)
+
+| subset | n | today | none-own | few:big4/skip | vector |
+|---|---:|---|---|---|---|
+| English query, work has an English edition | 132 | 0.208 / 0.402 / 0.568 | 0.236 / 0.432 / 0.576 | 0.226 / 0.417 / 0.576 | 0.232 / 0.386 / 0.576 |
+| English query, no English edition | 18 | 0.136 / 0.167 / 0.333 | 0.101 / 0.222 / 0.278 | 0.142 / 0.222 / 0.333 | 0.065 / 0.111 / 0.167 |
+| other language, work has an edition in it | 191 | 0.292 / 0.518 / 0.686 | 0.297 / 0.545 / 0.723 | 0.305 / 0.529 / 0.712 | 0.304 / 0.476 / 0.597 |
+| other language, no edition in it | 110 | 0.169 / 0.318 / 0.555 | 0.117 / 0.282 / 0.500 | 0.191 / 0.355 / 0.591 | 0.195 / 0.409 / 0.527 |
+
+- **For English queries, translating into other languages costs a little**
+  (none-own 0.236 against today 0.208 where the work has an English edition).
+- **Translation earns its place in the last row:** without it, MRR falls
+  0.169 → 0.117 and R@50 0.555 → 0.500. big4 alone recovers all of that
+  (0.191 / 0.591).
+- **Queries in a language outside big7** (55: el, eo, hu, la, no, pl, pt,
+  ru, sv, tl, zh): today 0.301, none-own 0.291, big4/skip 0.330, big7/skip
+  0.341.
+
+### What the captured legs cannot say
+
+- **Books held only outside big4** cannot be judged. The works were drawn
+  from cross-language works (§2), so only 12 descriptive targets have no
+  en/fr/fi/de edition. On them big4/skip ties today (MRR 0.117 against
+  0.121, R@50 0.333 both). Under "skip", such a book is reached by text only
+  through a query in its own language; otherwise only the vector leg finds
+  it.
+- **The vector leg is the re-check's** (50 chunks, ≈ 38 records). The
+  product now asks for 100. Vector-only R@50 is therefore a lower bound, and
+  so, slightly, is every fused row.
+- **Mixed groups.** "other" was searched as typed only, so the rows
+  reproduce that exactly. The cjk translations are dropped in every few:*
+  row: they cannot be told apart by language in the capture.
+- **The reading's label stands in for a right chat reading.** The guess rows
+  are what the node does when the chat model is evicted.
+
+### The reranker
+
+It cannot be replayed (the legs carry no text). It orders the top 50
+records, each judged on its two best matched chunks under its title (05
+§5.6), so R@50 is its pool, and R@10 after it tracks R@50 more than the
+fused order does. Live, it lifted descriptive R@10 0.421 → 0.463.
+
+- **On the pool:** big4/skip 0.627 and big7/skip 0.616 against today
+  0.605 (descriptive), and 0.949 against 0.897 (titles). The order of the
+  table should hold, or widen, after it.
+- **none-own** keeps the descriptive pool (0.608) but loses the titles' pool
+  (0.821). Some of its descriptive tie may survive the reranker; its title
+  loss will not.
+- **vector only** has the smallest pool (0.557). The reranker cannot make
+  up the 5 points.
+- **One effect is unmeasured:** a translated variant can bring a chunk in
+  another language as a record's matched chunk. The reranker then compares
+  the typed query with that chunk across languages.
+
+### Time
+
+The plan step (MADLAD into 19 languages) measured a median of **4.0 s**
+(p10 2.4 s, p90 5.6 s) of 8.8 s per search over the 491 captured searches.
+That is 45 % of the search.
+
+- **Dropping translation** saves all of it, and leaves MADLAD on the card
+  only for the Ask page's own translation of titles, entries and answers
+  (`app/translate.py`). Query translation is not its only job.
+- **Four targets instead of 18** saves less than in proportion. The backend
+  translates a batch in one pass: idle, 51 languages took 1.5 s
+  (`app/translate.py`). The 4 s is mostly waiting on a shared card. How
+  much 4 targets save was not measured. It needs one live timing.
+
+### Recommendation
+
+1. **Keep a translator, but translate only into the largest languages:**
+   en, fr, fi, de (big4), or big7 if titles matter more.
+   - Do not search the other one-language indexes with anything but the
+     query's own language as typed.
+   - Against today: descriptive MRR 0.231 → 0.247, R@10 0.421 → 0.441,
+     R@50 0.605 → 0.627 (+77/−34, p 10⁻⁴); titles tie (big4) or improve
+     (big7: MRR 0.500, R@10 0.821, +12/−3).
+   - This is a spec change to 05 §5.2, which says "the MAIN languages its
+     text indexes hold — each language with an index of its own". The
+     amendment: the main languages become the indexes holding most of the
+     collection, by a declared share (e.g. ≥ 90 % of records, largest
+     first). The rest are reached by the vector leg, and by text only in
+     the query's own language.
+2. **Do not drop translation outright.** It ties on descriptive queries but
+   loses titles (R@10 0.769 → 0.667, pool 0.897 → 0.821). It also loses
+   the cross-language case translation is for: MRR 0.169 → 0.117 for
+   non-English queries whose work lacks their language.
+3. **Never search an untranslated index as typed** in place of a
+   translation. This is today's `translate=False` and the "/typed" rows,
+   and it loses every time.
+4. **Before shipping,** a live run with the reranker (40 queries suffice to
+   see the pool effect) and one timing of MADLAD with 3–4 targets on the
+   node.
+
+Whether MADLAD is the right translator for four languages is a separate
+question. This measurement says only that the variants into the big
+languages help and those into the small ones hurt.
