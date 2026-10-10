@@ -385,3 +385,14 @@ def search(group: str, query: str, limit: int = 20, collection=None,
         return out
     except Exception:
         return []
+
+
+def search_records(group: str, query: str, depth: int, collection=None,
+                   langs: list[str] | None = None, **restrict) -> list[dict]:
+    """`search`, deep enough to hold the list's top `depth` RECORDS (05 §5.1,
+    amended 2026-10-10; app/leg_depth.py): it starts at `depth` chunks and
+    doubles while a book's many chunks crowd the list, bounded."""
+    from . import leg_depth
+    return leg_depth.to_records(
+        lambda n: search(group, query, limit=n, collection=collection, langs=langs, **restrict),
+        depth)

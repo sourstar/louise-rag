@@ -58,9 +58,12 @@ def test_the_query_goes_out_in_every_language_the_indexes_hold(isolated_config, 
 
     retrieval._search_one_collection(db.connect(c), c, "caccia alla balena", 5, "fts",
                                      True, set())
-    assert asked == [["ar", "de", "en", "fr", "it", "ja", "ko", "zh"]], \
+    # Italian is the query's own language (guessed, the reading naming none):
+    # searched as typed, never translated into (05 §5.2, amended 2026-10-10)
+    assert asked == [["ar", "de", "en", "fr", "ja", "ko", "zh"]], \
         "English included, CJK as its three languages, 'other' not a language"
     assert ("en", "en:caccia alla balena", None) in ran
+    assert ("it", "caccia alla balena", None) in ran
     assert sorted(q for g, q, _ in ran if g == "cjk") == \
         ["ja:caccia alla balena", "ko:caccia alla balena", "zh:caccia alla balena"]
     assert [q for g, q, _ in ran if g == "other"] == ["caccia alla balena"], \

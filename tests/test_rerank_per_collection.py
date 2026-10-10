@@ -250,7 +250,10 @@ def test_every_leg_goes_as_deep_as_the_reranker_needs(isolated_config, monkeypat
                         asked.append(("dense", k)) or [])
     retrieval._search_one_collection(db.connect(c), c, "q", 10, "hybrid", False, set(),
                                      None, 70)
-    assert asked == [("fts", 70), ("dense", 70)]
+    # 05 §5.1 (amended 2026-10-10): the depth is in RECORDS — the text leg
+    # starts at 70 chunks, the vector leg at twice that (app/leg_depth.py);
+    # each deepens while a book's chunks crowd its list
+    assert asked == [("fts", 70), ("dense", 140)]
 
 
 def test_a_long_result_list_never_overflows_the_answers_context():

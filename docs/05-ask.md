@@ -53,12 +53,20 @@ one list before fusion; the code had fused one list per language group,
 and chunks rather than records). The leg contributes its top records to
 the depth the request needs: the larger of `limit` and `rerank_depth`
 (§5.4), and never fewer than 20 — so 50 by default, at most 300.
+That depth is in RECORDS (*amended 2026-10-10*): a list asks its index
+for chunks until they hold that many records — the vector leg starting
+at twice the depth, a text variant at the depth, each doubling while
+the list is short and the index has more — and never past eight times
+the depth in chunks. Asking for 50 chunks had given the vector leg a
+median 43 records on gutenberg, and changed the text leg's top 50 on 51
+of 118 measured queries.
 Fusion is reciprocal-rank fusion with `k = 60`: a record's score is the
 sum over the legs that ranked it of `1 / (60 + rank)`, rank counted
 from 1; records are ordered by score descending, ties by the bytes of
 `(collection_id, uid)` ascending. The result carries the record's
 best chunk — the one that ranked highest in the leg that ranked the
-record highest. Two peers holding the same members return the same
+record highest — or, where the reranker ordered the list, the chunk
+that scored the record there (§5.6, *amended 2026-10-10*). Two peers holding the same members return the same
 fused list for the same query.
 
 **One ranked list per space.** Collections in the same space (same
@@ -185,7 +193,29 @@ it with a chat model turns the model's thinking off for the call and
 bounds it by its own timeout, and a reading that fails is said
 (`status: unavailable`) and asked again next time, never cached
 (*amended 2026-10-09*: the node's chat model thought through its whole
-budget and answered nothing, on every query measured).
+budget and answered nothing, on every query measured). Where the reading
+is unavailable or names no language, the peer guesses it without a
+model (*amended 2026-10-10*): a script only one held language writes
+(Greek, Cyrillic, kana, Hangul, Han) names it; otherwise the query's
+frequent function words and letters only some languages write are
+counted against short word lists the platform ships, among the
+languages the collection's text indexes hold, and a clear winner is the
+query's language — no clear winner, no language. The response says who
+named it (`query_lang_by`: `reading` · `guess`). The language the
+query is written in is never translated into: its index is searched
+with the query as typed, the reader's own words (*amended 2026-10-10*:
+the translation model "translated" 292 of 472 measured queries into
+their own language, rewriting them, and that rewrite was what their
+language's index saw; fused before the reranker, 451 descriptive
+queries MRR 0.219 → 0.231, R@10 0.404 → 0.421). When nobody names the
+language, the plan is as before; searching the query as typed in every
+index as well was measured and lost (MRR 0.212 → 0.187, 49 better, 79
+worse). The guess is
+deterministic and only does what the reading does: it orders ties and
+picks the edition shown, and never restricts. Measured on 490 labelled
+queries: 86.9 % right, 0.8 % wrong, the rest (bare titles, mostly)
+unnamed; the work shown in the query's language for 0.79 of found
+queries, against 0.57 with no language and 0.83 with the reading.
 
 ## 5.3 What a result carries
 
@@ -210,7 +240,7 @@ The fields, with their values:
 | `lineage_id` | the lineage (§2.7); what a catalogue shows as the collection |
 | `snapshot_id` | the snapshot the record was read from |
 | `uid` | the record — `<plugin>:<native_id>`; the record's identity everywhere a result travels; a native id is display only |
-| `chunk_id` | the record's best chunk (§5.1) |
+| `chunk_id` | the record's best chunk (§5.1); in a reranked list, the chunk that scored the record (§5.6, *amended 2026-10-10*) |
 | `layer` | the layer that cut the chunk, derived from the Codex (02 §2.3) |
 | `rank` | the record's position in the list as presented |
 | `legs` | `{text, vector}` — the record's rank in each leg that ranked it, `null` in a leg that did not |
@@ -267,7 +297,9 @@ English one are the same work" (02 §2.10), is a fact about a returned
 record, of the kind a reference source's row and a figure are. It sits
 beside the result and never enters a list: it is never scored, never fused
 and never a leg (invariant 4): no score, rank or reranker input depends
-on it.
+on it. Every way a peer shows results carries them — the Ask page beside
+each hit ("also: …, matched by …") as the API does (*amended
+2026-10-10*: the page had shown `editions` and never the claims).
 
 **One hit per work** (*amended 2026-10-09*). After the reranker and
 before the cut to `limit`, a list shows each work once: the records that
@@ -480,8 +512,20 @@ depth is the caller's, like `limit`: the reranker is the asking peer's
 own and so is the time it spends, and the latency budget below still
 bounds it. It never runs over facts, and never across lists — each list of
 §5.1 is reranked on its own, so two spaces or two questions are never
-put on one score scale. A candidate is sent whole: the text of the
-record's best chunk, never truncated. The reranker's modality must be
+put on one score scale. A candidate is the RECORD (*amended
+2026-10-10*): its two best matched chunks — its best chunk (§5.1), then
+the one placed highest in any list — each sent whole, never truncated,
+under one line naming the record, its title and authors (at most 300
+characters); the record takes the better of the two scores, and the
+result carries that chunk. The reranker had read the leg's one best
+chunk, bare, and a byline or a heading of the right words beat the
+passage that was the answer: "Hamlet Shakespeare" put eleven plays
+first on the same 22 characters, "by William Shakespeare". Measured
+live on gutenberg (`docs/notes/one-language-per-work.md`): 39 title
+queries MRR 0.342 → 0.660, R@10 0.718 → 0.872 (26 better, 0 worse); 40
+descriptive ones MRR 0.121 → 0.223, R@10 0.375 → 0.425. Three chunks
+scored no better than two. The latency budget grows with the texts sent
+as it grows with the depth. The reranker's modality must be
 the collection's (`modality` in the Codex, §2.1): a text cross-encoder
 scoring DNA is a category error, refused at boot, not a quality knob.
 
@@ -493,7 +537,13 @@ the fused order stands and the list is returned with
 true`. A peer that holds no text for a candidate — vectors without
 records — cannot rerank it and returns the fused order the same way.
 The fallback is always visible in the result, never silent, so two
-answers to one query that differ in order also say why.
+answers to one query that differ in order also say why: every fallback
+names its reason under `rerank_withheld` — over the budget, busy with
+other work for the whole budget, refused with its status, unreachable,
+an answer that could not be read, an answer for only some candidates,
+or a load past its bound (below) (*amended 2026-10-10*: 4 of 980 live
+fallbacks had said nothing). A peer that runs no reranker has no
+fallback to explain.
 
 **The budget is the rerank's, never the model's load** (*amended
 2026-10-09*). A reranker whose runner reports it as not loaded is

@@ -1,0 +1,27 @@
+# tl: frequent function words (general knowledge, not drawn from any query set); app/query_language.py
+ang
+ng
+sa
+mga
+at
+na
+si
+ni
+ay
+kay
+para
+may
+hindi
+ito
+iyon
+siya
+sila
+kanilang
+kaniyang
+nang
+pag
+isang
+tungkol
+buhay
+kuwento
+aklat

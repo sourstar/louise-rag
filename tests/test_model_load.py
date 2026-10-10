@@ -343,7 +343,9 @@ def test_an_unreachable_system_changes_nothing(runner, monkeypatch):
         raise httpx.ConnectError("refused", request=httpx.Request("GET", url))
     monkeypatch.setattr(model_load.httpc, "get", down)
     ranked, ok, why = retrieval._reranked("q", [{"text": "t"}], RERANKER, 0.1, 50)
-    assert (ok, why) == (False, None), "the load spent the budget, as it always did"
+    # the load spent the budget, as it always did — and the fallback says so
+    # (05 §5.6, amended 2026-10-10: every fallback carries its reason)
+    assert (ok, why) == (False, "the reranker did not answer within 0.1 s")
     assert runner.warms() == []
 
 

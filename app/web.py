@@ -642,6 +642,7 @@ def _ask_result(body: AskQueryBody) -> dict:
                                             "title": h.get("title")})
                 except Exception:      # noqa: BLE001 — a missing field is not a 500
                     h["origin_url"] = None
+    _attach_annotations(result)
     con = db.connect()   # query_log lives in the default collection's manifest regardless
     # .get, not [...]: when every collection is withheld `run_search`
     # returns {hits, withheld} with no `timings` at all, and a KeyError
@@ -650,6 +651,51 @@ def _ask_result(body: AskQueryBody) -> dict:
     db.log_query(con, "ask", body.query, body.mode, body.limit, result.get("timings") or {},
                  len(result["hits"]), query_service.source_qualified_ids(result["hits"]))
     return result
+
+
+def _attach_annotations(result: dict) -> None:
+    """05 §5.3 `annotations` on the Ask page's hits, as the API path attaches
+    them (app/ask/results.py): the claims an annotations collection held
+    here makes about each hit's record, placed beside it and never in the
+    order (invariant 4). Found 2026-10-10: the page showed `editions` and
+    never called `annotations.attach`, so only API callers saw the claims.
+
+    Each hit's collection gives the claim's target and the snapshot read —
+    the two things `attach` asks of a context, and nothing heavier (no
+    trust level: the page does not show one per hit). A copy withheld is
+    named under `withheld`; a failure is said there too, never fatal."""
+    hits = result.get("hits") or []
+    if not hits:
+        return
+    from app.ask import annotations as annotation_facts
+    from app.ask import results as ask_results
+    from app.hold import collection as hold_col
+    from app.share import seeder
+    root = ask_results._root()
+    by_name = {c.name: c for c in collections_mod.load_all()}
+    source_of: dict[int, object] = {}
+    contexts: dict[str, dict] = {}
+    for h in hits:
+        c = by_name.get(h.get("source_collection") or "")
+        codex = getattr(c, "codex", None)
+        if codex is None or not h.get("chunk_id"):
+            continue
+        h["uid"] = retrieval.record_of(h)
+        source_of[id(h)] = c
+        if c.name not in contexts:
+            try:
+                snap = seeder.current_snapshot(hold_col.drag_of(root, c.name))
+            except Exception:   # noqa: BLE001 — no snapshot named: no claim applies (05 §5.3)
+                snap = None
+            contexts[c.name] = {"collection_id": codex.collection_id,
+                                "snapshot_id": snap.snapshot_id if snap else None}
+    try:
+        withheld = annotation_facts.attach([{"hits": hits}], source_of, contexts, root=root)
+    except Exception as e:   # noqa: BLE001 — a fact that cannot be placed is said, never fatal
+        withheld = [{"collection": None, "collection_id": None, "shards": "all",
+                     "reason": f"annotations not attached: {type(e).__name__}: {e}"[:300]}]
+    if withheld:
+        result["withheld"] = list(result.get("withheld") or []) + withheld
 
 
 # ---------------- admin login (outside admin_router — must be reachable

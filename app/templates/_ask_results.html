@@ -103,6 +103,19 @@
     {% endfor %}
   </div>
   {% endif %}
+  {# ANNOTATIONS (05 §5.3, amended 2026-10-09; on this page since
+     2026-10-10): the claims an annotations collection held here makes
+     about this record — the record at the claim's other end, the claim's
+     relation and how it was matched. Placed beside the hit, never ranked. #}
+  {% if h.annotations %}
+  <div class="note annotations">also:
+    {% for a in h.annotations %}{% set nid = a.record.uid.split(':', 1)[1] %}
+    <span class="annotation">{% if a.record.held and nid.isdigit() %}<a href="/read/{{ h.source_collection or (h.chunk_id.split(':')[0]) }}/{{ nid }}" target="_blank" rel="noopener" dir="auto">{{ a.record.title or ('#' ~ nid) }}</a>{% else %}<span dir="auto">{{ a.record.title or a.record.uid }}</span>{% endif %}
+      <span class="badge brass">{{ a.record.lang or '?' }}</span>
+      <span class="badge" title="claim {{ a.claim }} · {{ a.relation }} · {{ a.state }}">{{ a.type }}</span>, matched by {{ a.method.id if a.method is mapping else (a.method or '?') }}{% if a.state == 'stale' %} <span class="badge err" title="one record changed since the claim was checked">stale</span>{% endif %}</span>{% if not loop.last %} · {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
   {# content, translatable (data-cid keys the translation cache; the
      original text stays in data-orig on the client and in the drawer).
 

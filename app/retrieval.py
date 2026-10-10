@@ -145,10 +145,16 @@ def _merge_rrf(lists: list[list[dict]], depth: int | None = None, *,
     # uid -> leg -> (its tie key: rank first, its best chunk)
     best: dict[str, dict[str, tuple[tuple, dict]]] = {}
     sources: dict[str, set[str]] = {}
+    # uid -> chunk id -> (its best position in any list, the hit): the
+    # record's MATCHED chunks, which the reranker judges (05 §5.6)
+    matched: dict[str, dict[str, tuple[int, dict]]] = {}
     for li, hits in enumerate(lists):
         seen: set[str] = set()
-        for h in hits:
+        for i, h in enumerate(hits):
             uid = record_of(h)
+            mc = matched.setdefault(uid, {})
+            if h["chunk_id"] not in mc or i < mc[h["chunk_id"]][0]:
+                mc[h["chunk_id"]] = (i, h)
             if uid in seen:
                 continue                  # a later chunk of a record this list already ranked
             seen.add(uid)
@@ -173,9 +179,62 @@ def _merge_rrf(lists: list[list[dict]], depth: int | None = None, *,
         top = min(ranks, key=lambda leg: (ranks[leg], _LEGS.index(leg)))
         entry = {**best[uid][top][1], "rrf": score, "sources": sorted(sources[uid]),
                  "leg_ranks": {leg: ranks[leg] for leg in _LEGS if leg in ranks}}
+        entry[MATCHED] = _matched_chunks(best[uid][top][1], matched[uid])
         merged.append(entry)
     merged.sort(key=lambda m: (-m["rrf"], record_of(m)))
     return merged
+
+
+#: 05 §5.6 (amended 2026-10-10): how many of a record's matched chunks the
+#: reranker judges — its best chunk and the next best-placed — the record
+#: taking the best score. Measured live (79 queries, docs/notes/
+#: one-language-per-work.md): with the record's title over each, title
+#: queries MRR 0.635 (one chunk) → 0.660 (two), descriptive 0.169 → 0.223;
+#: three chunks scored no better (0.629, 0.238) and send ~25 % more text.
+JUDGED_CHUNKS = 2
+#: the fused entry's key holding those chunks; never leaves the search
+MATCHED = "_matched"
+#: the fused entry's key holding its record's title and authors, which the
+#: reranker reads above each chunk (05 §5.6); never leaves the search
+HEAD = "_head"
+#: at most this many characters of title and authors above a chunk: a
+#: 512-token reranker reads the head first, and a paper with forty authors
+#: must not spend the chunk's tokens on names
+HEAD_CHARS = 300
+
+
+def _attach_heads(con, collection, hits: list[dict]) -> None:
+    """Each hit's record title and authors as one line, `title — authors`,
+    under `HEAD`: what the reranker reads above the chunk, so that a byline
+    or a heading is judged as part of its book (05 §5.6, amended
+    2026-10-10). One indexed manifest query over the candidates — the shape
+    `_attach_metadata_and_enqueue` runs on the final list. A manifest that
+    cannot answer leaves the chunks bare: the rerank goes on as before."""
+    ids = sorted({str(h["book_id"]) for h in hits if h.get("book_id") is not None})
+    if not ids or con is None:
+        return
+    marks = ",".join("?" for _ in ids)
+    try:
+        rows = con.execute(f"SELECT native_id,title,authors FROM documents "
+                           f"WHERE source=? AND native_id IN ({marks})",
+                           [collection.plugin] + ids).fetchall()
+    except Exception:   # noqa: BLE001 — no heads is the old, bare rerank
+        return
+    line = {str(r["native_id"]): " — ".join(x for x in (r["title"], r["authors"]) if x)
+            for r in rows}
+    for h in hits:
+        got = line.get(str(h.get("book_id")))
+        if got:
+            h[HEAD] = got[:HEAD_CHARS]
+
+
+def _matched_chunks(best: dict, chunks: dict[str, tuple[int, dict]]) -> list[dict]:
+    """The record's chunks the legs matched, its best chunk first, then by
+    their best position in any list (ties by chunk id), `JUDGED_CHUNKS` of
+    them."""
+    rest = sorted((pos, cid) for cid, (pos, _) in chunks.items() if cid != best["chunk_id"])
+    out = [best] + [chunks[cid][1] for _, cid in rest]
+    return out[:JUDGED_CHUNKS]
 
 #: 05 §5.6: the reranker re-orders the top 50 of ONE ranked list — the
 #: default of a per-request `rerank_depth` (operator, 2026-09-18: "set the
@@ -214,12 +273,26 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
     """05 §5.6 for ONE ranked list: the reranker re-orders its top `depth`
     (50 unless the request says otherwise) and the rest keep the fused
     order below them. Each candidate goes whole —
-    its best chunk's text; this used to cut every one to 2,000 characters,
+    its chunk's text; this used to cut every one to 2,000 characters,
     so a long chunk was judged on a prefix the model never saw alone. A
     512-token model's own server truncates at its limit (TEI's `truncate`);
     the platform does not. Unreachable, refusing, over the node's budget or
     answering for only some candidates: the fused order stands and the
-    second value says False — the fallback is visible, never silent.
+    second value says False — the fallback is visible, never silent, and
+    its reason is noted for `_reranked` (amended 2026-10-10: 4 of 980 live
+    fallbacks said nothing).
+
+    THE RECORD IS JUDGED, NOT ONE CHUNK OF IT (amended 2026-10-10, 05
+    §5.6). Each record sends its `JUDGED_CHUNKS` best matched chunks
+    (`_merge_rrf`'s `MATCHED`), each under the record's own title and
+    authors (`HEAD`, `_attach_heads`), and takes the best score; the
+    result carries the chunk that scored it. The reranker read only the
+    leg's best chunk, bare, and a byline ("by William Shakespeare", 22
+    characters) or a heading won it: measured live on 39 title queries,
+    MRR 0.342 → 0.660 and R@10 0.718 → 0.872 (26 better, 0 worse), and
+    on 40 descriptive ones MRR 0.121 → 0.223
+    (docs/notes/one-language-per-work.md). The budget grows with the
+    texts sent, as it grows with the depth.
 
     THE BUDGET IS THE RERANK'S, NOT THE MODEL'S LOAD (amended 2026-10-09,
     05 §5.6): a reranker its runner reports as not loaded is warmed first
@@ -229,7 +302,15 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
     if recipe is None or not hits:
         return hits, False
     head, tail = hits[:depth], hits[depth:]
-    texts = [h.get("text") or "" for h in head]
+    texts: list[str] = []
+    owner: list[tuple[int, dict]] = []        # text index -> (its record's index, the chunk)
+    for i, h in enumerate(head):
+        title = h.get(HEAD) or ""
+        for c in (h.get(MATCHED) or [h])[:JUDGED_CHUNKS]:
+            body_text = c.get("text") or ""
+            texts.append(f"{title}\n\n{body_text}" if title else body_text)
+            owner.append((i, c))
+    budget_s = budget_s * max(1.0, len(texts) / max(1, len(head)))
     if recipe.api == "jina":
         body = {"query": query, "documents": texts, "top_n": len(texts)}
     else:
@@ -242,10 +323,7 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
     try:
         _warm_reranker(recipe)
     except model_load.LoadTimeout as e:
-        why = _rerank_why.get()
-        if why is not None:
-            why.append(str(e))
-        return hits, False
+        return _fused_order(hits, str(e))
     try:
         with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=budget_s):
             r = httpc.post(recipe.url, json=body, timeout=budget_s,
@@ -255,14 +333,24 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
         rows = data["results"] if isinstance(data, dict) else data
         scores = {int(o["index"]): float(o["relevance_score"] if "relevance_score" in o
                                          else o["score"]) for o in rows}
-    except Exception:   # noqa: BLE001 — any failure is the fused order, said so
-        return hits, False
-    if sorted(scores) != list(range(len(head))):
-        return hits, False
+    except Exception as e:   # noqa: BLE001 — any failure is the fused order, said so
+        return _fused_order(hits, rerank_failure(e, budget_s))
+    if sorted(scores) != list(range(len(texts))):
+        return _fused_order(hits, f"the reranker answered for "
+                                  f"{sum(1 for i in scores if 0 <= i < len(texts))} of "
+                                  f"{len(texts)} candidates")
+    best: dict[int, tuple[float, dict]] = {}
+    for t, (i, c) in enumerate(owner):
+        if i not in best or scores[t] > best[i][0]:
+            best[i] = (scores[t], c)
     ranked = []
-    for i in sorted(scores, key=lambda i: -scores[i]):
+    for i in sorted(best, key=lambda i: (-best[i][0], i)):
+        score, c = best[i]
         h = dict(head[i])
-        h["rerank_score"] = scores[i]
+        if c.get("chunk_id") != h.get("chunk_id"):
+            # the chunk that scored the record is the one the result shows
+            h.update({f: c[f] for f in ("chunk_id", "text", "chapter") if f in c})
+        h["rerank_score"] = score
         ranked.append(h)
     return ranked + tail, True
 
@@ -271,6 +359,33 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
 #: stand-in for `_rerank_list` keeps the arguments it always took).
 _rerank_why: contextvars.ContextVar[list[str] | None] = \
     contextvars.ContextVar("louise_rerank_why", default=None)
+
+
+def _fused_order(hits: list[dict], reason: str) -> tuple[list[dict], bool]:
+    """The fused order, its reason noted where `_reranked` collects it."""
+    why = _rerank_why.get()
+    if why is not None:
+        why.append(reason)
+    return hits, False
+
+
+def rerank_failure(e: BaseException, budget_s: float) -> str:
+    """Why a rerank request failed, in a reader's words (05 §5.6: every
+    fallback carries its reason — measured 2026-10-10, 4 of 980 live
+    searches kept the fused order and none said why): over the budget,
+    refused with a status, unreachable, or an answer that could not be
+    read. Never the request's body or headers."""
+    if isinstance(e, dispatch.GateTimeout):
+        return f"the reranker was busy with other work for the whole {budget_s:g} s budget"
+    if isinstance(e, httpx.TimeoutException) and not isinstance(e, httpx.ConnectTimeout):
+        return f"the reranker did not answer within {budget_s:g} s"
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"the reranker refused the request (HTTP {e.response.status_code})"
+    if isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):
+        return "the reranker could not be reached"
+    if isinstance(e, (KeyError, IndexError, TypeError, ValueError)):
+        return f"the reranker's answer could not be read ({type(e).__name__})"
+    return f"the reranker failed ({type(e).__name__})"
 
 
 def _reranked(query: str, hits: list[dict], recipe, budget_s: float,
@@ -475,8 +590,10 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
             # variants of the ONE text leg, and `_merge_rrf` ranks a record
             # by its best rank across all of them (05 §5.2)
             for q in plan.variants(group, held):
-                hits = fts.search(group, q, limit=limit, collection=collection,
-                                  langs=plan.lang_filter(group), **restrict)
+                # deep enough to hold `limit` RECORDS, not chunks (05 §5.1,
+                # amended 2026-10-10: app/leg_depth.py)
+                hits = fts.search_records(group, q, limit, collection=collection,
+                                          langs=plan.lang_filter(group), **restrict)
                 if hits:
                     if q == core:
                         own.add(len(lists))      # the user's own words: first on a tie
@@ -509,8 +626,9 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                 # s at most, on wikipedia); a post-filter would return an
                 # empty leg whenever the top k were in other languages
                 if vector_leg is None:
-                    lists.append(embeddings.search(core, k=limit, collection=collection,
-                                                   langs=list(plan.only) or None, **restrict))
+                    lists.append(embeddings.search_records(core, limit, collection=collection,
+                                                           langs=list(plan.only) or None,
+                                                           **restrict))
         except (hold_runs.RunUnvalidated, hold_runs.RunRefused) as e:
             # the answer named a run not yet tested, or one that failed — or
             # VeGa's receipt did not fit it (embeddings.ReceiptRefused): its
@@ -539,6 +657,9 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
         timings["dense"] = round((time.time() - t0) * 1000, 1)
 
     merged = _merge_rrf(lists, limit, own=own, query_lang=getattr(plan, "query_lang", None))
+    # what the reranker will read above each candidate's chunks (05 §5.6)
+    if collections_mod.reranker_for(collection) is not None:
+        _attach_heads(con, collection, merged[:limit])
     tagged = _tagged_among(con, collection, entity_ids, [m["book_id"] for m in merged])
     if tagged:
         for m in merged:
@@ -579,6 +700,8 @@ def _attach_metadata_and_enqueue(con, collection, hits: list[dict]) -> None:
     for h in hits:
         h.update(meta.get(h["book_id"], {}))
         h.pop("rrf", None)
+        h.pop(MATCHED, None)        # the search's own bookkeeping, never a field
+        h.pop(HEAD, None)
     # Provenance badge per hit: locally embedded, or imported from a producer
     # and possibly verified (architecture-v2.md §6 T4). Replaces P0.6's
     # hardcoded 'local ✓' placeholder in the Ask provenance drawer.
@@ -711,6 +834,7 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     timings["total"] = round((time.time() - t_total) * 1000, 1)
     result = {"query": query, "mode": mode, "translations": partial["translations"],
               "language": plan.summary(), "query_lang": plan.query_lang,
+              "query_lang_by": getattr(plan, "query_lang_by", ""),
               "catalog": partial["catalog"], "hits": final,
               "facts": [asdict(f) for f in facts], "facts_withheld": facts_withheld,
               "timings": timings, "reranked": reranked}
@@ -889,6 +1013,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
 
     result = {"query": query, "mode": mode, "translations": translations,
               "language": plan.summary(), "query_lang": plan.query_lang,
+              "query_lang_by": getattr(plan, "query_lang_by", ""),
               "catalog": catalog, "hits": final, "facts": [asdict(f) for f in facts],
               "facts_withheld": facts_withheld,
               "timings": timings, "reranked": reranked}

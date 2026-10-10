@@ -1661,6 +1661,19 @@ def search(query: str, k: int = 20, langs: list[str] | None = None, collection=N
         })
     return out
 
+def search_records(query: str, depth: int, langs: list[str] | None = None, collection=None,
+                   **restrict) -> list[dict]:
+    """`search`, deep enough to hold the leg's top `depth` RECORDS (05 §5.1,
+    amended 2026-10-10; app/leg_depth.py). It asks for twice the depth in
+    chunks, which held 50 records on every query measured (a median 59
+    chunks needed, at most 82), so the query is embedded once; a list still
+    short asks again at twice that, bounded."""
+    from . import leg_depth
+    return leg_depth.to_records(
+        lambda n: search(query, k=n, langs=langs, collection=collection, **restrict),
+        depth, first=2 * depth)
+
+
 def stats(collection=None) -> dict:
     db = _conn(collection)
     if TABLE not in db.table_names():

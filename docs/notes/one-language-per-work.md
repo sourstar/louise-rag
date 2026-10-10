@@ -633,3 +633,89 @@ of the right words beats the passage that is the answer.
   that reading means reloading an 8B model per search, or keeping it
   resident.
 - Not fixed here (read-only task).
+
+## Fixed (2026-10-10)
+
+*Live, read-only, same throwaway container as §3, nothing copied to the
+node (`one_language_rep_run.sh` sends the script on stdin). Scripts:
+`one_language_rep_search.py` (legs deep, reranker over every candidate
+record's matched chunks, bare and under the record's title),
+`one_language_rep_score.py`, `one_language_guess.py`. The 39 title
+queries and a seeded sample of 40 descriptive ones (seed 20261010), in
+batches of ≤ 20: a ~2 h run over all 490 was not allowed on the shared
+node. Before and after come from ONE run each, so they share the index
+state — the live index had moved since the re-check (gutenberg
+embeds), and the captured legs no longer reproduce. No model was
+loaded: captured translations, the resident encoder and reranker.*
+
+**1. The reranker judges the record** (05 §5.6). Each record sends its
+two best matched chunks, each under `title — authors`; the record takes
+the better score and shows that chunk.
+
+| | titles (39) MRR | R@1 | R@10 | descriptive (40) MRR | R@1 | R@10 | top-10 slots < 100 chars |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 906f06b (one bare chunk, 50-chunk legs) | 0.342 | 0.179 | 0.718 | 0.121 | 0.050 | 0.375 | 48 % / 26 % |
+| bare, 2 chunks, record-deep legs | 0.359 | 0.205 | 0.744 | 0.172 | 0.100 | 0.325 | |
+| titled, 1 chunk | 0.635 | 0.462 | 0.872 | 0.169 | 0.075 | 0.375 | |
+| **titled, 2 chunks (shipped)** | **0.660** | **0.513** | **0.872** | **0.223** | **0.150** | **0.425** | **19 % / 12 %** |
+| titled, 3 chunks | 0.629 | 0.462 | 0.846 | 0.238 | 0.175 | 0.425 | |
+
+- Against 906f06b: titles 26 better, 0 worse; descriptive 10 better, 5
+  worse (p = 0.30). The old live W-C titles were 0.398 / R@10 0.692.
+- "Hamlet Shakespeare" 16 → 2, "Romeo and Juliet" 8 → 2, "Adventures of
+  Huckleberry Finn" 10 → 1, "Don Quixote Cervantes" 2 → 1.
+- Dropping chunks under 50–400 characters while a record has a longer
+  one added nothing once the title is there (0.660 → 0.664 at most), so
+  there is no such rule. Three chunks send ~25 % more text for no gain.
+- Cost: a median 73 texts per search instead of 50 (p90 80); the
+  reranker's budget grows in proportion.
+
+**2. Legs to their depth in records** (05 §5.1). Vector: 50 chunks
+hold a median 43 records (p10 34); 50 records need a median 59 chunks
+(p90 72, max 82), so the leg asks for 100 and almost never again. Lance
+search, median: 491 ms at 50, 546 at 100, 661 at 200, 833 at 400.
+Text: the leg's top 50 records changed on 51 of 118 queries once each
+variant went deep; all variants together 54 → 164 ms median (300
+chunks). Each list doubles while short, capped at 8× the depth.
+
+**3. Query language without the chat model** (05 §5.2):
+`app/query_language.py`, word lists in `app/lang_words/` (written from
+general knowledge; six omissions — French "à", the elided "l'", … —
+added after a first pass). On all 490 labelled queries: right 86.9 %,
+wrong 0.8 % (4), no guess 12.2 % (60, bare titles mostly). Edition shown
+in the query's language (re-check's reranked lists, collapsed by
+works.json): no language 0.569, the guess 0.787, the reading 0.830.
+
+**4. Rerank fallbacks** all carry a reason (timeout, busy, HTTP status,
+unreachable, unreadable, partial). **5. The Ask page** attaches
+`annotations` and shows them beside the hit.
+
+**6. The query's own language as typed** (05 §5.2). MADLAD
+"translated" 292 of the 472 queries whose language has an index into
+that language, rewriting them ("Dumas novel about the diamond necklace
+scandal…" → "The Diamond Necklace Scandal at the Court of Louis
+XVI…"), and the rewrite was what that index saw: the reader's words
+reached only the mixed group. Now the query's language (the reading's,
+else the guess) is not sent to the translator and its group is searched
+as typed. Scored on all 490 queries before the reranker
+(`one_language_own_search.py`, text index only, no model, 2 min;
+`one_language_own_score.py`, the re-check's vector leg for every
+strategy):
+
+| fused, before the reranker | descriptive (451) MRR | R@10 | titles (39) MRR | R@10 |
+|---|---:|---:|---:|---:|
+| today, query language unknown | 0.212 | 0.395 | 0.462 | 0.769 |
+| today, query language for ties only | 0.219 | 0.404 | 0.497 | 0.769 |
+| **own language as typed, the reading's** | **0.231** | **0.421** | 0.485 | 0.769 |
+| own language as typed, the guess's | 0.226 | 0.419 | 0.453 | 0.769 |
+| as typed in EVERY group too | 0.187 | 0.386 | 0.373 | 0.641 |
+| … without first place on ties | 0.214 | 0.388 | 0.463 | 0.769 |
+
+- Own language, the reading's, against ties only: descriptive +12 %
+  MRR. Against today: 35 better, 29 worse.
+- As typed in every group (asked for when the language is unknown) loses:
+  49 better, 79 worse (p = 0.01); 35/56 (p = 0.04) even without the
+  "own words" tie priority. It is not done: an unknown language keeps
+  today's plan, where the as-typed text goes to the mixed groups only.
+- Titles mostly have no guess, so the guess leaves them as they were.
+- After the reranker: not measured (no new long live run).

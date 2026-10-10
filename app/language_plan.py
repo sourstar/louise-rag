@@ -39,7 +39,7 @@ import re
 import threading
 from dataclasses import dataclass, field
 
-from . import config, fts, llm
+from . import config, fts, llm, query_language
 from . import translate as mt
 
 #: `lang:de` / `lang:de,fr` — the form that cannot be misread
@@ -69,6 +69,10 @@ class LanguagePlan:
     #: the restriction (`llm.Reading.lang`); None when nobody said — one hit
     #: per work shows a work in it (app/ask/works.py)
     query_lang: str | None = None
+    #: who named `query_lang`: "reading" (the chat model) · "guess" (no model,
+    #: app/query_language.py, when the reading is unavailable or names none)
+    #: · "" (nobody)
+    query_lang_by: str = ""
 
     def searches(self, group: str) -> bool:
         """Whether the text index group `group` may hold a wanted record."""
@@ -84,7 +88,17 @@ class LanguagePlan:
     def variants(self, group: str, held: list[str] | None = None) -> list[str]:
         """The query texts to run against `group`, one per language —
         `held` being the languages that group's index holds. A mixed group
-        with a language no translation reached is also searched as typed."""
+        with a language no translation reached is also searched as typed.
+
+        THE QUERY'S OWN LANGUAGE IS SEARCHED AS TYPED (amended 2026-10-10,
+        05 §5.2): its group gets the reader's words, never a translation
+        into the language they are already in — MADLAD rewrote 292 of 472
+        measured queries into their own language ("Dumas novel about the
+        diamond necklace scandal…" → "The Diamond Necklace Scandal at the
+        Court of Louis XVI…"). A mixed group gets it the same way, its
+        language having no translation."""
+        if self.query_lang and group == self.query_lang and group not in ("cjk", "other"):
+            return [self.core]
         if group in ("cjk", "other"):
             pool = self.only or held or (sorted(config.CJK_LANGS) if group == "cjk" else [])
             langs = [c for c in pool if fts.group_for(c) == group]
@@ -132,6 +146,33 @@ def held_everywhere(collection) -> set[str]:
     return out
 
 
+def _guess_pool(collections, held: set[str]) -> set[str]:
+    """The languages a query-language guess may name: every language the
+    collections' text indexes hold, the mixed groups' included. An index
+    that cannot say leaves the ones known by name."""
+    pool = set(held)
+    for c in collections:
+        try:
+            pool |= held_languages(fts.existing_groups(c)) | held_everywhere(c)
+        except Exception:   # noqa: BLE001 — a guess is never worth a failed search
+            pass
+    return pool
+
+
+def _query_lang(reading, text: str, collections, held: set[str]) -> tuple[str | None, str]:
+    """05 §5.2 (amended 2026-10-10): the language the query is written in —
+    the reading's when it names one, else the deterministic guess (the
+    reading needs the chat model, which the node's runner evicts: without
+    it the work was shown in the query's language for 0.59 of found
+    queries, 0.79 with the guess, 0.83 with the reading;
+    docs/notes/one-language-per-work.md)."""
+    lang = getattr(reading, "lang", None)
+    if lang:
+        return lang, "reading"
+    lang = query_language.guess(text, _guess_pool(collections, held))
+    return lang, ("guess" if lang else "")
+
+
 def _translations(core: str, targets: list[str]) -> tuple[dict[str, str], str]:
     """`core` in each target language: the translation model, every one it
     knows in one batch; the chat model if that fails or is not there."""
@@ -160,7 +201,8 @@ def plan(query: str, collections, translate: bool, every: bool = False) -> Langu
     `every` (or `lang:all` in the query) goes out in every language held,
     not only the main ones."""
     if not translate:
-        return LanguagePlan(core=query)
+        lang, by = _query_lang(None, query, collections, set())
+        return LanguagePlan(core=query, query_lang=lang, query_lang_by=by)
     found = explicit(query)
     if found is not None and found[0] == ["all"]:
         every, query_core, found = True, found[1], None
@@ -182,15 +224,18 @@ def plan(query: str, collections, translate: bool, every: bool = False) -> Langu
         found = llm.language_restriction(query_core)
         if found is None:
             status, found = "unavailable", ([], query_core)
-    query_lang = getattr(found, "lang", None)
     only, core = found
+    query_lang, query_lang_by = _query_lang(found, core or query_core, collections, held)
     targets = sorted(only) if only else sorted(held)
-    translations, by = _translations(core, targets) if targets else ({}, "")
-    if targets and not translations:
+    # the query's own language is searched as typed, never translated into
+    # (05 §5.2, amended 2026-10-10; `LanguagePlan.variants`)
+    ask = [t for t in targets if t != query_lang]
+    translations, by = _translations(core, ask) if ask else ({}, "")
+    if ask and not translations:
         status = "unavailable"
     result = LanguagePlan(core=core or query_core, only=tuple(only),
                           translations=translations, status=status, by=by, every=every,
-                          query_lang=query_lang)
+                          query_lang=query_lang, query_lang_by=query_lang_by)
     if status == "ok":
         with _cache_lock:
             if len(_cache) >= _CACHE_MAX:
