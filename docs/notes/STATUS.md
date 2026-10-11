@@ -38,12 +38,19 @@ it left open is below.
   read, so a catalogue revision was invisible: records-vs-origin read it as
   a parser fault, and the record was never rebuilt. Fixed for gutenberg
   (parser 9, `dc22c26`); check 03 §3.2 amended (`b7b6ec2`: a record revised
-  at the origin is "changed", not failed). NOT audited: pubmed, wikipedia,
-  normattiva, deposit — any plugin that reads a second file beside its unit
-  has the same exposure. **To do after the drag→shard deploy (operator's
-  yes):** a guard test per plugin that records every file `parse()` opens
-  and fails unless each is covered by `origin_hash` and by discovery's
-  signature. Related, by design and worth knowing: a catalogue-only revision
+  at the origin is "changed", not failed). **Guarded since 2026-10-11**
+  (operator's yes): `tests/origin_coverage.py` records every file `parse()`
+  opens (Python's `open` and pyarrow's Parquet readers) and fails unless
+  `fetch()` read it too, and unless a change to it moves discovery's
+  signature; each plugin's test module runs it over its fixture, and
+  `tests/test_origin_coverage.py` fails when a registered plugin is neither
+  covered nor exempt with a reason. Audit result: pubmed, wikipedia,
+  normattiva and embedded parse only the bytes fetch hashed; deposit reads
+  its `.deposit.json` beside the file — exempt (Louise writes it once, and a
+  deposit collection publishes no record). Proven not vacuous: parser 8's
+  `origin_files` put back, the gutenberg test names `pg<id>.rdf`. Its limit:
+  a file opened by C code other than pyarrow (lxml's own parser on a path,
+  a native reader) is not seen. Related, by design and worth knowing: a catalogue-only revision
   does not re-issue a part (02 §2.3: "changed" is the cleaned text's hash);
   it shows at the part's next re-issue. And the origin folder is a mirror,
   overwritten in place, with no periodic snapshot of its dataset: a record

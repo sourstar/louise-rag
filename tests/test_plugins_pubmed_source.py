@@ -296,3 +296,23 @@ def test_revision_overwrites_across_separate_sync_runs(tmp_path):
     stats3 = discovery.sync_collection(con, collection)
     assert stats3["added"] == 0
     assert stats3["changed"] == 0
+
+
+def test_origin_coverage(tmp_path):
+    """tests/origin_coverage.py: an article is parsed from the element fetch
+    hashed, and a changed container is rediscovered. The `.md5` is read only
+    to check the container."""
+    import shutil
+    from tests.origin_coverage import assert_covered
+    corpus = tmp_path / "corpus"
+    shutil.copytree(FIXTURE_CORPUS, corpus)
+    refs = [r for r in SOURCE.discover(DiscoverState(corpus_root=corpus))
+            if r.extra.get("kind") == "article"]
+    seen = set()
+    for ref in refs:
+        container = split_locator(ref.locator)[0].name
+        if container in seen:
+            continue
+        seen.add(container)
+        assert_covered(SOURCE, ref, corpus, verify_only=(".md5",))
+    assert len(seen) >= 2

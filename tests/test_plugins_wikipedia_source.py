@@ -227,3 +227,19 @@ def test_a_page_is_serialised_only_when_it_is_asked_for(corpus, monkeypatch):
     assert serialised == [], "parsing a stream serialises nothing"
     SOURCE.fetch(refs[nid(1)])
     assert len(serialised) == 1, "one fetch, one page serialised"
+
+
+def test_origin_coverage(corpus):
+    """tests/origin_coverage.py: a page is parsed from the bytes fetch
+    hashed, and a changed dump is rediscovered."""
+    from app.plugins.wikipedia import source as wsrc
+    from tests.origin_coverage import assert_covered
+    root = corpus.parent.parent
+    refs = [r for r in SOURCE.discover(DiscoverState(corpus_root=root)) if r.scope == "document"
+            and r.error is None]
+    assert refs
+    wsrc._stream_cache.clear()        # discovery filled it: fetch must read the dump
+    read = set()
+    for ref in refs[:2]:
+        read |= assert_covered(SOURCE, ref, root)
+    assert read, "fetch read the dump"

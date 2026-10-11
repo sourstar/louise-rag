@@ -322,3 +322,25 @@ def test_a_catalogue_only_book_hashes_its_one_file_plainly(tmp_path):
     data = (book / "pg7.rdf").read_bytes()
     assert SOURCE.fetch(ref).raw_hash == hashlib.blake2b(data, digest_size=16).hexdigest()
     assert ref.size == len(data)
+
+
+def test_origin_coverage(tmp_path):
+    """tests/origin_coverage.py over every form the rule reads: the epub, the
+    plain text and the catalogue entry alone."""
+    import shutil
+    from tests.origin_coverage import assert_covered
+    corpus = tmp_path / "corpus"
+    shutil.copytree(FIXTURE_CORPUS, corpus)
+    rdf_only = corpus / "99998"
+    rdf_only.mkdir()
+    _rdf(rdf_only, 99998)
+    epub_book = corpus / "99997"
+    epub_book.mkdir()
+    _epub(epub_book / "pg99997-images-3.epub")
+    _rdf(epub_book, 99997)
+    refs = [r for r in SOURCE.discover(DiscoverState(corpus_root=corpus)) if r.scope == "document"]
+    forms = set()
+    for ref in refs:
+        forms.add(ref.extra["form"])
+        assert_covered(SOURCE, ref, corpus)
+    assert forms == {"epub", "txt", "rdf"}, forms

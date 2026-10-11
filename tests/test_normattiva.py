@@ -271,3 +271,16 @@ def test_worker_stages_run_end_to_end(tmp_path, corpus, isolated_config):
     chunks = worker._load_chunks(row, collection)
     assert len(chunks) == 27, "25 articles and 2 annexes"
     assert chunks[0]["chapter"].startswith("CAPO I") and chunks[0]["text"].startswith("Art. 1.")
+
+
+def test_origin_coverage(corpus):
+    """tests/origin_coverage.py: an act is parsed from the member fetch
+    hashed, and a changed zip is rediscovered."""
+    from tests.origin_coverage import assert_covered
+    refs = [r for r in _refs(corpus) if r.scope == "document" and r.error is None]
+    assert refs
+    nsrc._zip_cache.clear()           # discovery opened the zips: fetch must read them
+    read = set()
+    for ref in refs:
+        read |= assert_covered(SOURCE, ref, corpus)
+    assert read, "fetch read the zips"

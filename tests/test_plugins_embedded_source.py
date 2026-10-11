@@ -194,3 +194,18 @@ def test_chunker_dispatch_default_is_unchanged():
     assert list(chunking.chunker_for("abstract")("u:1", 1, sections)) == \
         list(chunking.chunk_abstract("u:1", 1, sections, chunking.ABSTRACT_CHUNK_VERSION))
 
+
+
+def test_origin_coverage(corpus):
+    """tests/origin_coverage.py: an article is parsed from the rows fetch
+    hashed — the straddler included, whose rows are in two shards."""
+    from tests.origin_coverage import assert_covered
+    src = EmbeddedSource()
+    from app.plugins.wikipedia import archive
+    refs = [r for r in src.discover(DiscoverState(corpus_root=corpus)) if r.error is None]
+    assert refs
+    archive._layouts.clear(); archive._groups.clear()     # discovery filled them
+    read = set()
+    for ref in refs:
+        read |= assert_covered(src, ref, corpus)
+    assert read, "fetch read the shards"
