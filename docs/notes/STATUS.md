@@ -34,13 +34,18 @@ it left open is below.
   [v5-migration.md](v5-migration.md) "PubMed's re-embed, as it ran"). Twice
   an OpenVINO `infer_new_request` in `louise-medcpt-article-ov` never
   returned and PubMed embedded nothing (7 h, then 25 min); gutenberg's
-  llama.cpp encoder stalled 20 min after the second. **Cause: the host's fan
-  script waking the GPU through debugfs `forcewake_all`** in the middle of
-  the work: both hangs began within seconds of a `gpu_wake` (22:27:07 and
-  06:08:50 UTC). Its check reads `gtidle/idle_status` once, and the card
-  passes through gt-c6 between requests while embedding. NOT concurrency:
-  `f880ce0` serialized inference (kept; harmless, ~40 docs/s either way) and
-  the second hang had one thread in `infer`, three waiting on the lock.
+  llama.cpp encoder stalled 20 min after the second. The first two hangs
+  began within seconds of the host fan script's `gpu_wake` (debugfs
+  `forcewake_all`; 22:27:07 and 06:08:50 UTC), whose check read
+  `gtidle/idle_status` once and so caught the card in gt-c6 between requests.
+  **A third hang (2026-10-11 ~12:07 UTC) came with NO wake** (none since the
+  patched script started at 11:22 local), while three encoders shared the
+  card (pubmed's OpenVINO, gutenberg's and wikipedia's llama.cpp). So the
+  wake is at most one trigger; the cause is unknown — the xe driver, Level
+  Zero under two runtimes on one card, or OpenVINO's GPU plugin. NOT
+  concurrency inside the backend: `f880ce0` serialized inference (kept;
+  harmless, ~40 docs/s either way) and the second and third hangs had one
+  thread in `infer`, three waiting on the lock.
   Mitigated 2026-10-11 (operator's choice; the script is the operator's,
   `/mnt/ssd5/scripts/fancontrol/fancontrol.py`, original kept as
   `fancontrol.py.bak-2026-10-11`): a wake now needs `gtidle/idle_residency_ms`
@@ -54,8 +59,8 @@ it left open is below.
     submission, or one taken while the GT leaves c6), so the window cannot be
     argued closed, only made narrow.
   Still open:
-  - **the robust layer is a watchdog, whatever the cause, and LocalAI has
-    one**: the busy watchdog (`watchdog_busy_enabled`, OFF on the node;
+  - **the robust layer is a watchdog, whatever the cause — now needed, since
+    the cause is not the wake alone — and LocalAI has one**: the busy watchdog (`watchdog_busy_enabled`, OFF on the node;
     `watchdog_busy_timeout`, 5m). It times each backend from its OLDEST
     in-flight request, covers every backend (VeGa or not, pinned or not),
     and force-kills (SIGTERM, SIGKILL after the grace period); the next call
