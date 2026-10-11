@@ -66,6 +66,31 @@ torrent from the old file's matching leaves downloads only what differs.
 but a Codex field — a new collection — and more torrents, more snapshot
 entries and more files per peer. It shrinks the waste, never removes it.
 
+**D. A patch packed on request, by any peer holding the new part
+(operator, 2026-10-11).** The peer holding the old version asks a peer that
+holds the new one — the producer or anyone else serving it — with a signed
+pull, the family of 09 §9.9: `pull patch(collection_id, snapshot_id, part,
+have)`, where `have` is the hash of each line of the version it holds (50
+hashes for a gutenberg part, a few KB). The answering peer decompresses its
+new part, compares line hashes, and returns the lines the asker lacks and
+the uids to drop. The asker merges them in `native_id` order, writes the
+part with the platform's writer, and promotes it only if it hashes to the
+root the signed snapshot lists (the direction is the chain's: §"What any
+delta must keep").
+- Cost: the changed lines; the answering peer needs only the NEW part (no
+  old version, no stored patches), so any holder can answer and the load
+  spreads like the swarm's.
+- Any gap: a peer two snapshots behind sends the same `have` and gets one
+  patch to the latest version, never a chain of patches.
+- A wrong answer is caught by the root, as a wrong piece is. A miss is
+  ambiguous (a lying peer, or a writer built differently), so it costs the
+  asker the full part from the swarm and never bans anyone on its own; a
+  peer whose patches miss for others too can be scored down (§4.5).
+- Same catch as A: the rebuilt bytes must be the writer's, so the writer
+  (zstd library, level, frame layout of 09 §9.5) is pinned.
+- Spec: one new pull message and its answer (09 §9.9); no new member, no
+  new snapshot field. Ask first (wire format).
+
 **Plates.** Whatever is chosen for records, a plate container should be
 rebuilt byte-identically when its plates did not change, so its root
 stays and nothing moves; a test should pin that before anything else.
@@ -74,7 +99,10 @@ stays and nothing moves; a test should pin that before anything else.
 
 1. First, a test that a re-issued part's plate container is byte-identical
    when no plate changed (cheap; it may already hold).
-2. Then A, behind a flag, as a pure optimisation: the full part remains the
-   path every peer can always take, and the patch only ever saves bytes.
+2. Then D (it supersedes A: nothing stored, any holder answers, any gap in
+   one step), behind a flag, as a pure optimisation: the full part remains
+   the path every peer can always take, and the patch only ever saves bytes.
+   The same request works for a plate container, by plate hash instead of
+   line hash.
 3. Measure on gutenberg's next snapshot (2026-10): parts re-issued, bytes a
    follower moves with and without patches.
