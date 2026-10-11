@@ -91,6 +91,29 @@ delta must keep").
 - Spec: one new pull message and its answer (09 §9.9); no new member, no
   new snapshot field. Ask first (wire format).
 
+**D′. The same request, answered in compressed frames (operator,
+2026-10-11).** A part already carries its seek index (09 §9.5: every
+frame's offset, compressed and raw size, line count, first uid). So the
+answer need not be lines: for each frame of the new part it is either
+"copy your frame k" (the asker sends a hash per frame it holds) or that
+frame's compressed bytes, verbatim, plus the new index frame. The asker
+concatenates and gets the new part's exact bytes; the root decides as
+before.
+- Nothing is recompressed on the asker's side, so the writer need not be
+  pinned for the patch to land (the producer's unchanged frames are the
+  same bytes because the producer's own writer wrote both versions).
+- The cost is per frame, and frames hold 1,000 records today. Measured:
+  pubmed `year=2020/00001` is 51 MB in 30 frames, so one changed article
+  costs one frame (~1.7 MB) instead of 51 MB; gutenberg `lang=en/00001` is
+  9.5 MB in ONE frame of 50 books, so a gutenberg patch is the whole part.
+- For gutenberg it needs frames of one book (books are 100 KB–1 MB, so a
+  frame each costs little compression): a writer rule or a Codex field
+  (`slicing.frame_records`), i.e. new part bytes — a new collection.
+- Frame boundaries are counted from the part's start: an edited or an
+  appended record moves only its frame, but a record dropped mid-part
+  shifts every frame after it. Content-defined boundaries (a frame ends
+  after a record whose uid hash meets a mask) would keep drops cheap too.
+
 **Plates.** Whatever is chosen for records, a plate container should be
 rebuilt byte-identically when its plates did not change, so its root
 stays and nothing moves; a test should pin that before anything else.
