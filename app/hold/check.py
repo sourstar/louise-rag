@@ -694,7 +694,7 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
     # and every OSError went onto the `failed` list. An operator reading
     # that had every reason to believe 1.6M records had drifted from
     # PubMed, and the collection's own records were perfect.
-    failed, moved, errored, unreachable, compared = [], [], [], 0, 0
+    failed, moved, changed, errored, unreachable, compared = [], [], [], [], 0, 0
     for uid, locator, line in chosen():
         compared += 1
         try:
@@ -714,9 +714,20 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                 # changing one parsed record, and every one of them failed.
                 moved.append(uid)
                 continue
+            if _origin_changed(line, got):
+                # CHANGED AT THE ORIGIN, not failed (03 §3.2, amended
+                # 2026-10-11): the origin unit is no longer the bytes the
+                # record was parsed from, so the record cannot be reproduced
+                # from it — and it is no evidence against the record either.
+                # Gutenberg revises texts and catalogue entries upstream; 17
+                # of 4,055 sampled records were such on 2026-10-11, and the
+                # check failed for every image, the Codex's own included.
+                changed.append(uid)
+                continue
             # The FIRST differing record, named — §9.8's detail asks for
             # exactly that, because a list of every difference between two
-            # parsers is a diff and not a finding.
+            # parsers is a diff and not a finding. Only a record whose origin
+            # unit is the very bytes it was parsed from can fail.
             failed.append(uid)
     if errored and not failed:
         return Outcome(
@@ -734,6 +745,23 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                        ctx.seed, _shard_ids(ctx.codex, ran),
                        why=f"none of the {compared} sampled record(s) could "
                            f"be re-fetched from the origin given")
+    reproduced = compared - unreachable - len(errored) - len(changed)
+    if not failed and changed and (reproduced <= 0
+                                   or len(changed) > CHANGED_AT_ORIGIN_SHARE * (reproduced + len(changed))):
+        # TOO MUCH CHANGED TO SAY. A record whose `origin_hash` no longer
+        # matches its origin is either one the origin revised or one written
+        # with a hash that never matched — the check cannot tell which. A few
+        # in a sample is what a live origin looks like; a large share proves
+        # nothing about the copy, so the check passes nothing.
+        return Outcome(
+            "records-vs-origin", INCONCLUSIVE,
+            {"records": seen, "compared": compared, "failed": [],
+             "changed": sorted(changed)[:64], "moved": sorted(moved)[:64],
+             "errored": len(errored), "origin": "changed", **bound},
+            ctx.seed, _shard_ids(ctx.codex, ran),
+            why=f"{len(changed)} of {compared} sampled record(s) changed at the origin "
+                f"since the build (more than {CHANGED_AT_ORIGIN_SHARE:.0%} of those "
+                f"re-parsed), so the sample proves nothing either way")
     said = ""
     if bound:
         said = (f" — read {bound['origin_units']} of the {bound['origin_units_sampled']} "
@@ -743,6 +771,7 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
     return Outcome("records-vs-origin", FAIL if failed else PASS,
                    {"records": seen, "compared": compared,
                     "failed": sorted(failed)[:64], "moved": sorted(moved)[:64],
+                    "changed": sorted(changed)[:64],
                     "errored": len(errored), "origin": "reachable", **bound},
                    ctx.seed, _shard_ids(ctx.codex, ran),
                    why=f"{compared - unreachable - len(errored)} record(s) "
@@ -750,6 +779,9 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                        + (f", {len(moved)} moved (their origin unit changed since the build, "
                           f"the record re-parsed from it identical but for origin_hash)"
                           if moved else "")
+                       + (f", {len(changed)} changed at the origin (their origin unit "
+                          f"revised since the build: not reproducible, no evidence against "
+                          f"them)" if changed else "")
                        + (f", {unreachable} not there" if unreachable else "")
                        # named, never folded into the count above: a record
                        # that could not be read is not a record that agreed
@@ -853,6 +885,24 @@ def _snapshots_of(root: Path, name: str):
     for p in sorted(d.glob("*.json")) if d.is_dir() else []:
         if not p.name.endswith(".sig.json"):
             yield snap.load(p)
+
+
+#: the most records of a sample that may have changed at the origin for the
+#: check still to say anything (03 §3.2, amended 2026-10-11). Gutenberg's
+#: live share was 0.4% (17 of 4,055).
+CHANGED_AT_ORIGIN_SHARE = 0.10
+
+
+def _origin_changed(line: bytes, got: bytes) -> bool:
+    """The record and its re-parse name different `origin_hash` values: the
+    origin unit is no longer the bytes the record was parsed from."""
+    try:
+        a, b = json.loads(line), json.loads(got)
+    except ValueError:
+        return False
+    return (isinstance(a, dict) and isinstance(b, dict)
+            and bool(a.get("origin_hash")) and bool(b.get("origin_hash"))
+            and a["origin_hash"] != b["origin_hash"])
 
 
 def _moved_only(line: bytes, got: bytes) -> bool:

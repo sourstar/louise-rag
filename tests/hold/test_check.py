@@ -506,21 +506,86 @@ def test_records_vs_origin_reparses_the_origin_byte_for_byte(checkable,
     assert o.detail["records"] > 0
 
 
-def test_a_record_the_origin_no_longer_reproduces_FAILS(checkable, corpus_dir):
-    """And it names the record, which is what §9.8's detail asks for."""
+def _drifted(real, victim_uid):
+    """A re-parse that differs from the record while the origin bytes are
+    the ones it was parsed from (`origin_hash` unchanged): what a parser
+    that no longer reproduces its own records looks like."""
+    import json as _json
+
+    def reparse(uid, locator):
+        line = real(uid, locator)
+        if uid != victim_uid:
+            return line
+        r = _json.loads(line)
+        r["title"] = (r.get("title") or "") + " (drifted)"
+        return _json.dumps(r, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    return reparse
+
+
+def test_a_record_its_own_origin_bytes_no_longer_reproduce_FAILS(checkable, corpus_dir):
+    """And it names the record, which is what §9.8's detail asks for. The
+    origin unit is the very bytes the record was parsed from (same
+    `origin_hash`), so the difference is the record's or the parser's."""
     from app import louise
     root, snapshot, codex = checkable
     victim = next(iter(_records_of(root, snapshot)))
-    # the origin's text moved under us
-    p = corpus_dir / str(victim["native_id"])
-    txt = next(p.glob("*.txt*"))
-    _change_the_text(txt)
+    real = louise._reparse_from(codex, "gutenberg", corpus_dir)
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+             reparse=_drifted(real, victim["uid"])).outcome("records-vs-origin")
+    assert o.result == chk.FAIL, o.why
+    assert victim["uid"] in o.detail["failed"] and o.detail["changed"] == []
 
+
+def test_a_record_whose_origin_was_revised_is_changed_at_the_origin_not_failed(
+        checkable, corpus_dir):
+    """03 §3.2, amended 2026-10-11 (operator's yes): the origin's text was
+    revised after the build, so the record cannot be reproduced from it and
+    is no evidence against the record either (gutenberg: 17 of 4,055 sampled
+    records, which failed the check under every image, the Codex's own
+    included). Named as changed; a large share says nothing (below)."""
+    from app import louise
+    root, snapshot, codex = checkable
+    records = _all_records(root, snapshot)
+    victim = records[0]
+    txt = next((corpus_dir / str(victim["native_id"])).glob("*.txt*"))
+    _change_the_text(txt)
     o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
              reparse=louise._reparse_from(codex, "gutenberg", corpus_dir)
              ).outcome("records-vs-origin")
-    assert o.result == chk.FAIL, o.why
-    assert victim["uid"] in o.detail["failed"]
+    assert victim["uid"] in o.detail["changed"] and o.detail["failed"] == [], o.why
+    one_in = len({r["uid"] for r in records})
+    if 1 > chk.CHANGED_AT_ORIGIN_SHARE * one_in:
+        assert o.result == chk.INCONCLUSIVE and "proves nothing" in o.why
+    else:
+        assert o.result == chk.PASS and "1 changed at the origin" in o.why
+
+
+def test_too_many_records_changed_at_the_origin_is_inconclusive(checkable, corpus_dir, monkeypatch):
+    """A record whose `origin_hash` no longer matches is either revised
+    upstream or written with a hash that never matched; past a share of the
+    sample the check cannot tell, so it passes nothing — and a few pass."""
+    import json as _json
+    from app import louise
+    root, snapshot, codex = checkable
+    real = louise._reparse_from(codex, "gutenberg", corpus_dir)
+    uids = sorted({r["uid"] for r in _all_records(root, snapshot)})
+
+    def revised(chosen):
+        def reparse(uid, locator):
+            line = real(uid, locator)
+            if uid not in chosen:
+                return line
+            r = _json.loads(line)
+            r["origin_hash"], r["title"] = "ee" * 16, (r.get("title") or "") + " (rev.)"
+            return _json.dumps(r, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        return reparse
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+             reparse=revised(set(uids))).outcome("records-vs-origin")
+    assert o.result == chk.INCONCLUSIVE and o.detail["origin"] == "changed", o.why
+    monkeypatch.setattr(chk, "CHANGED_AT_ORIGIN_SHARE", 1.0)
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+             reparse=revised({uids[0]})).outcome("records-vs-origin")
+    assert o.result == chk.PASS and o.detail["changed"] == [uids[0]], o.why
 
 
 def test_an_origin_that_is_not_there_is_inconclusive(checkable, tmp_path):
@@ -777,10 +842,9 @@ def test_a_difference_in_a_file_that_is_read_still_fails(checkable, corpus_dir):
     units = sorted({r["origin"].partition("#")[0] for r in records})
     first = cx.sample(SEED, 1, iter(units))[0]
     victim = next(r for r in records if r["origin"].partition("#")[0] == first)
-    txt = next((corpus_dir / str(victim["native_id"])).glob("*.txt*"))
-    _change_the_text(txt)
+    real = louise._reparse_from(codex, "gutenberg", corpus_dir)
     o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
-             reparse=louise._reparse_from(codex, "gutenberg", corpus_dir),
+             reparse=_drifted(real, victim["uid"]),
              origin_unit=_unit_sizes(200 << 20)).outcome("records-vs-origin")
     assert o.result == chk.FAIL and victim["uid"] in o.detail["failed"], o.why
 
@@ -859,7 +923,8 @@ def test_a_record_whose_origin_unit_moved_and_parses_the_same_is_named_moved_not
     record unchanged, and every one of them failed — so the new image could
     not be proven equivalent, though it reproduced each record's content.
     A line identical but for `origin_hash` is MOVED: named, not failed. A
-    line that differs anywhere else still fails."""
+    line that differs anywhere else as well is CHANGED AT THE ORIGIN (amended
+    2026-10-11), never moved."""
     import json as _json
     from app import louise
     root, snapshot, codex = checkable
@@ -886,7 +951,8 @@ def test_a_record_whose_origin_unit_moved_and_parses_the_same_is_named_moved_not
         r["origin_hash"], r["title"] = "ff" * 16, (r.get("title") or "") + " (rev.)"
         return _json.dumps(r, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1", reparse=altered).outcome("records-vs-origin")
-    assert o.result == chk.FAIL and o.detail["failed"] == [victim] and o.detail["moved"] == []
+    assert o.detail["changed"] == [victim] and o.detail["moved"] == [] and o.detail["failed"] == []
+    assert o.result != chk.FAIL, o.why
 
 
 def _change_the_text(txt):

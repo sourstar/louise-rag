@@ -70,7 +70,7 @@ create` and at `hold check` alike.
 |---|---|---|---|
 | `roots` | every part's bytes have the `root` the snapshot lists — the BitTorrent v2 merkle root of the stored file (09 §9.5) | the copy | exact |
 | `records` | every sampled record's `content_hash` recomputes from its own title and sections and it carries an `origin_hash`; each sampled part's `records_root` recomputes from its records' `content_hash` values in order (09 §9.5) | the copy | exact |
-| `records-vs-origin` | a seeded sample of parts and, within them, a seeded sample of origin units of at most 256 MiB (below), re-fetched from the origin by the locator each record carries and re-parsed with the Codex's toolchain, reproduces every sampled record line of those units byte for byte — the decompressed lines, not merely the same `records_root`. A line identical but for `origin_hash` is MOVED, not failed: its origin unit was rewritten since the build and parses to the same record; it is named in the detail (amended 2026-10-07: the mirror rewrote half of a sample of gutenberg's book folders without changing one parsed record, and a new image could not be proven equivalent) | the origin, the platform image | exact |
+| `records-vs-origin` | a seeded sample of parts and, within them, a seeded sample of origin units of at most 256 MiB (below), re-fetched from the origin by the locator each record carries and re-parsed with the Codex's toolchain, reproduces every sampled record line of those units byte for byte — the decompressed lines, not merely the same `records_root`. A line identical but for `origin_hash` is MOVED, not failed: its origin unit was rewritten since the build and parses to the same record; it is named in the detail (amended 2026-10-07: the mirror rewrote half of a sample of gutenberg's book folders without changing one parsed record, and a new image could not be proven equivalent). A line that differs elsewhere too, from an origin unit whose `origin_hash` is no longer the record's, is CHANGED AT THE ORIGIN, not failed: the origin revised it since the build, so it can be neither reproduced nor held against the record; it is named in the detail. Only a line whose origin unit is still the bytes it was parsed from can fail. When more than a tenth of the records re-parsed changed at the origin, or none reproduced, the check is inconclusive: a revised origin and a hash that never matched look the same (amended 2026-10-11, operator's yes: 17 of 4,055 sampled gutenberg records were revised upstream, and the check failed under every image, the Codex's own included) | the origin, the platform image | exact |
 | `image-equivalence` | the same seeded sample re-parsed from the same origin bytes by this image and by the Codex's reference image (`--against`, written under that image by tools/reparse_lines.py) gives the same record lines, every one — a proof about the image, never planned, for §3.4 when the origin has moved since the build | the origin, the reference image's lines | exact |
 | `chunks` | recomputing chunks from the records reproduces each sampled part's `chunks_root` and its `chunks` count (09 §9.4) — deriving each document's layer from the Codex's rules, never reading it from the record, which carries none (02 §2.3, 06 §6.3), so a wrong layer is caught rather than reproduced | the copy | exact; can be exhaustive |
 | `vectors-sample` | in a seeded sample of parts, sixteen chunks each, re-embedded with this peer's compliant encoder, reach cosine ≥ `tolerance` on the calibration quorum (§3.3) | records, a calibrated encoder | statistical |
@@ -355,9 +355,11 @@ does not move. An equivalence holds for one image on one collection;
 another collection is another proof.
 
 Where the origin has changed in content since the build — texts
-corrected, catalogue entries revised upstream — `records-vs-origin` fails
-under every image, the reference included, and can show none equivalent.
-The proof is then `image-equivalence`: a seeded sample re-parsed from the
+corrected, catalogue entries revised upstream — those records are changed
+at the origin (§3.2, amended 2026-10-11): named, neither passed nor
+failed, and the rest of the sample decides. Where so much changed that the
+check is inconclusive under every image, the reference included, it can
+show none equivalent. The proof is then `image-equivalence`: a seeded sample re-parsed from the
 same origin bytes by the Codex's reference image and by the new one, line
 by line, with not one line differing; with `chunks` passing under the new
 image it makes the image equivalent exactly as above. What is compared is
