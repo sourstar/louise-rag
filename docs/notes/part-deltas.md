@@ -132,6 +132,20 @@ before.
 rebuilt byte-identically when its plates did not change, so its root
 stays and nothing moves; a test should pin that before anything else.
 
+## Operator, 2026-10-11: no frame split
+
+"We will not split data in different frames." So D′ gains nothing for
+gutenberg (its part is one frame) and the frame-size change is dropped.
+D works as it is: the answer is the changed lines (a revised gutenberg book
+is ~275 KB raw, ~90 KB zstd on the wire), the asker recompresses the whole
+part at level 9 (about a second) and rebuilds the index frame, and the root
+decides. The one condition is byte-identical recompression, which 09 §9.5
+already demands ("zstd 1.5.x at level 9 as pinned by the platform image"):
+peers on the same image always land the patch, a peer on another zstd
+build may miss and fetch the full part. Worth adding: the writer's zstd
+version beside the part (index frame or snapshot entry), so a peer knows
+before asking whether its rebuild can match.
+
 ## Recommendation
 
 1. First, a test that a re-issued part's plate container is byte-identical
