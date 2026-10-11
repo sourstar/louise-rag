@@ -30,6 +30,7 @@ backend passes OV_CACHE_DIR, set in the model's YAML and so part of its run
 from __future__ import annotations
 
 import math
+import threading
 
 MAX_TOKENS = 512
 INPUTS = ("input_ids", "attention_mask", "token_type_ids")
@@ -91,12 +92,26 @@ def _compile(model_xml: str, device: str, cache_dir: str | None):
     return compiled
 
 
+def _serial(compiled):
+    """`compiled.infer_new_request`, one call at a time. Concurrent requests
+    on OpenVINO's GPU plugin deadlocked on the node (2026-10-10, pubmed's
+    re-embedding at concurrency 4): four gRPC threads stuck in `infer` for
+    seven hours, one of them spinning a core, and the encoder answered
+    nobody. One forward pass on the card at a time, as louise-dar-legal-it
+    does; the tokenizer still runs in parallel."""
+    lock = threading.Lock()
+
+    def run(inputs):
+        with lock:
+            return next(iter(compiled.infer_new_request(inputs).values()))
+    return run
+
+
 def make_infer(model_xml: str, device: str, cache_dir: str | None = None):
-    compiled = _compile(model_xml, device, cache_dir)
+    run = _serial(_compile(model_xml, device, cache_dir))
 
     def infer(inputs):
-        # one request per call: concurrent calls do not share one
-        return next(iter(compiled.infer_new_request(inputs).values())).reshape(-1).tolist()
+        return run(inputs).reshape(-1).tolist()
     return infer
 
 
@@ -105,10 +120,10 @@ def make_cls_infer(model_xml: str, device: str, cache_dir: str | None = None):
     hidden state (batch, tokens, dim), and the vector is its [CLS] row, as
     NCBI's own code takes `last_hidden_state[:, 0, :]`
     (deploy/medcpt-rerank/convert_article.py builds the IR)."""
-    compiled = _compile(model_xml, device, cache_dir)
+    run = _serial(_compile(model_xml, device, cache_dir))
 
     def infer(inputs):
-        hidden = next(iter(compiled.infer_new_request(inputs).values()))
+        hidden = run(inputs)
         if hidden.ndim != 3:
             raise RuntimeError(f"the model gave shape {hidden.shape}, not (batch, tokens, dim)")
         return [row.tolist() for row in hidden[:, 0, :]]

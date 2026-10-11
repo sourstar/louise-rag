@@ -107,3 +107,55 @@ def test_the_article_encoders_vector_is_the_cls_row_of_the_last_hidden_state(mon
     hidden = np.zeros((2, 4), dtype=np.float32)
     with pytest.raises(RuntimeError, match="batch, tokens, dim"):
         infer({})
+
+
+@pytest.mark.parametrize("make", ["make_infer", "make_cls_infer"])
+def test_one_forward_pass_on_the_card_at_a_time(monkeypatch, make):
+    """Concurrent requests on OpenVINO's GPU plugin deadlocked the article
+    encoder on the node (2026-10-10): every inference of one compiled model
+    runs alone, however many gRPC threads call it."""
+    import sys
+    import threading
+    import time
+    import types
+
+    import numpy as np
+
+    class Input:
+        def __init__(self, name):
+            self.name = name
+
+        def get_any_name(self):
+            return self.name
+
+    inside, most = [0], [0]
+    guard = threading.Lock()
+
+    class Request:
+        def values(self):
+            return [np.zeros((1, 2, 3), dtype=np.float32)]
+
+    class Compiled:
+        inputs = [Input(n) for n in server.INPUTS]
+
+        def infer_new_request(self, inputs):
+            with guard:
+                inside[0] += 1
+                most[0] = max(most[0], inside[0])
+            time.sleep(0.02)
+            with guard:
+                inside[0] -= 1
+            return Request()
+
+    class Core:
+        def compile_model(self, xml, device, config=None):
+            return Compiled()
+
+    monkeypatch.setitem(sys.modules, "openvino", types.SimpleNamespace(Core=Core))
+    infer = getattr(server, make)("/m/openvino_model.xml", "GPU")
+    threads = [threading.Thread(target=infer, args=({},)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert most[0] == 1
