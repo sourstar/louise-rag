@@ -102,3 +102,31 @@ Followers: none left (the gutenberg minis were deleted 2026-10-09).
   requests. Gutenberg's llama.cpp encoder stalled too (06:28). Both backends
   killed by pid and reloaded (06:35); the warm-up inference completed.
   STATUS.md "Open after the migration" holds the rest.
+
+## Gutenberg to parser 9, as it ran (2026-10-11)
+
+records-vs-origin failed on the live gutenberg (18 of 4,055 differing: 17
+revised upstream, 1 a catalogue edit `origin_hash` could not see). Fixed by
+parser 9 (`dc22c26`) and the check's "changed at the origin" (`b7b6ec2`);
+the new collection came by A1c (02), RULE 1:
+- `create` (recipe of 2026-10-09, image `848589f4…`, saved on tank as
+  `louise-rag-848589f4….tar.zst`, tag `louise-rag:codex-gutenberg9`) →
+  `sha256:7340dde6…`. `create` refuses an existing SHARD directory, so it
+  ran without the tank mount and its two files were moved onto tank.
+- `dev carry --rebuilt --copy` with gutenberg paused (13 s, reflinks), then
+  gutenberg kept paused until the switch, so nothing it embedded would be
+  embedded twice.
+- `records build --corpus <gutenberg's origin>` (the carried manifest's
+  paths): 79,583 records, 1,637 parts, ~1 h at nice 19; `snapshot create`
+  2026-09.
+- `--reconcile`: 79,326 documents kept their vectors, 290 reset (revised or
+  new), 79,387 `txt_hash` set to the record's `origin_hash`.
+- `hold check`: every check passed — records-vs-origin 3,999 of 3,999
+  reproduced, vectors-sample 1,061 chunks at 0.95 (the A1c proof).
+- Switch (app stopped ~1 min): tank and ssd4 `gutenberg` → `gutenberg-p8`,
+  `gutenberg9` → `gutenberg`; the collection file's `codex` replaced (the
+  old one in `collections.retired/gutenberg-p8.toml`). Copy state: in use,
+  every test passed — the "tests open" badge is gone.
+- The two annotation collections name their target by collection id, so
+  they were re-created for the new one (same names, titles, claims; the old
+  ones retired as `*-p8`), checked, and attach to search results again.
