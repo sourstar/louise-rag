@@ -49,8 +49,8 @@ def main(argv: list[str]) -> int:
         return 2
     root = Path(os.environ.get("LOUISE_ROOT") or os.environ.get("DATA_DIR") or "/data") / "collections"
     name, codex = col.resolve(root, a.collection)
-    drag = root / name / "drag"
-    snaps = sorted(q for q in (drag / "snapshots").glob("*.json") if not q.name.endswith(".sig.json"))
+    shard_tree = root / name / "shard"
+    snaps = sorted(q for q in (shard_tree / "snapshots").glob("*.json") if not q.name.endswith(".sig.json"))
     if not snaps:
         print(f"reparse_lines: {name} holds no snapshot", file=sys.stderr)
         return 2
@@ -61,7 +61,7 @@ def main(argv: list[str]) -> int:
     lines: dict[str, list[str]] = {}
     errors: dict[str, str] = {}
     for s in shards:
-        shard = drag / "records" / s.slice / f"{s.n:05d}.jsonl.zst"
+        shard = shard_tree / "records" / s.slice / f"{s.n:05d}.jsonl.zst"
         for record in pack_records.iter_records(shard):
             uid, origin = record.get("uid"), record.get("origin")
             if not uid or not origin:

@@ -5,9 +5,9 @@ What goes: the held file (`collections/<name>.toml`, 07 §7.8 — the node
 stops serving the collection at its next round and starts no thread for
 it); then, for a never-share collection, every deposit erased leaving no
 trace (02 §2.9: "erasing every deposit followed by removing the
-collection's directory"); then the directory whole — drag, state, indexes,
+collection's directory"); then the directory whole — SHARD, state, indexes,
 vector table, origin. With `--kinds vectors` only the vector-side members
-of the drag and the vector table go, and the collection stays held. The
+of the SHARD and the vector table go, and the collection stays held. The
 Codex as published, this peer's attestations as published and what other
 peers hold are untouched: a peer may stop holding (01, promise 7 is about
 the network). Nothing is announced yet, so nothing is withdrawn.
@@ -26,7 +26,7 @@ from typing import Any, Callable
 
 from .codex import CodexError
 
-#: 09 §9.16's vector-side members of a drag, by their prefixes
+#: 09 §9.16's vector-side members of a SHARD, by their prefixes
 VECTOR_MEMBER_PREFIXES = ("vectors-", "buckets-", "bundle-", "centres-")
 #: the `--kinds` taken apart today; everything else goes with the copy whole
 KINDS = ("vectors",)
@@ -38,7 +38,7 @@ def forget(root: Path, name: str, *, kinds=None, dry_run: bool = False,
     `kinds`, only those members — and say what went. `retire` is the
     worker's hook that stops the collection's threads before anything under
     its directory is removed; None outside the worker."""
-    from . import collection as col, deposit, drag as drag_mod
+    from . import collection as col, deposit, shard as shard_mod
     root = Path(root)
     base = root / name
     held = deposit.held_file(root, name)
@@ -55,8 +55,8 @@ def forget(root: Path, name: str, *, kinds=None, dry_run: bool = False,
     except (CodexError, FileNotFoundError, OSError):
         codex = None                        # half gone already: finish the job
     if kinds:
-        drag = drag_mod.drag_dir(base)
-        plan = [p for p in (sorted(drag.iterdir()) if drag.is_dir() else [])
+        shard_tree = shard_mod.shard_dir(base)
+        plan = [p for p in (sorted(shard_tree.iterdir()) if shard_tree.is_dir() else [])
                 if p.name.startswith(VECTOR_MEMBER_PREFIXES)]
         if (base / "lance").exists():
             plan.append(base / "lance")

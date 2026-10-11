@@ -13,7 +13,7 @@ from app.ask import asof, results
 from app.hold import collection as col, snapshot as sn
 from app.hold.codex import Update
 from tests.deposit.test_deposit_identity import node  # noqa: F401
-from tests.share.test_messages import a_drag
+from tests.share.test_messages import a_shard
 
 NO_DELTA = sn.Delta((), (), ())
 
@@ -45,7 +45,7 @@ def chain(codex, d):
 
 
 def test_the_date_is_read_in_the_origin_s_clock_against_the_cutoff(node):  # noqa: F811
-    codex, *_ = a_drag(node)                        # pubmed: America/New_York, monthly, day 1
+    codex, *_ = a_shard(node)                        # pubmed: America/New_York, monthly, day 1
     assert codex.update.cadence == "monthly" and codex.update.day == 1
     assert asof.target_id(codex, date(2026, 9, 15)) == "2026-08"
     assert asof.target_id(codex, date(2026, 9, 1)) == "2026-08", "the cutoff itself is 'at or before'"
@@ -65,7 +65,7 @@ def test_the_date_is_read_in_the_origin_s_clock_against_the_cutoff(node):  # noq
 
 
 def test_the_held_snapshot_that_answers_and_what_it_cannot(node):  # noqa: F811
-    codex, name, d, _ = a_drag(node)
+    codex, name, d, _ = a_shard(node)
     s6, s7, s8 = chain(codex, d)
     r = asof.resolve(codex, d, date(2026, 9, 2))
     assert r.snapshot.hash == s8.hash and r.same_as_current and r.changed == set() and r.shards == []
@@ -84,7 +84,7 @@ def test_the_held_snapshot_that_answers_and_what_it_cannot(node):  # noqa: F811
 
 
 def test_a_gap_in_the_chain_withholds_and_too_much_change_is_refused(node, monkeypatch):  # noqa: F811
-    codex, name, d, _ = a_drag(node)
+    codex, name, d, _ = a_shard(node)
     chain(codex, d)
     monkeypatch.setattr(asof, "MAX_CHANGED", 2)
     with pytest.raises(asof.TooFarBack) as e:
@@ -98,7 +98,7 @@ def test_a_gap_in_the_chain_withholds_and_too_much_change_is_refused(node, monke
 
 
 def test_the_search_answers_from_the_snapshot_asked_for_and_names_the_rest(node, monkeypatch):  # noqa: F811
-    codex, name, d, _ = a_drag(node)
+    codex, name, d, _ = a_shard(node)
     chain(codex, d)
     red = SimpleNamespace(name=name, plugin="pubmed", codex=codex)
     legacy = SimpleNamespace(name="gutenberg", plugin="gutenberg", codex=None)

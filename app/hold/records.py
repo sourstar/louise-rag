@@ -234,7 +234,7 @@ def chunks_root_of(blob: bytes) -> str:
 #
 # Everything above this line is a pure function over bytes. Below it is the
 # one thing that touches disk: driving the existing pack builder into a
-# collection's drag. It is a WRAPPER — the shard cutting, the parse pool,
+# collection's SHARD. It is a WRAPPER — the shard cutting, the parse pool,
 # the resumability and the cutoff rule all stay in `app/pack/build.py`,
 # which has been carrying real corpora for months.
 
@@ -245,7 +245,7 @@ BUILD = "build"
 def _paths(root, name: str):
     from pathlib import Path
     base = Path(root) / name
-    return base / "drag", base / STATE, base / STATE / BUILD
+    return base / "shard", base / STATE, base / STATE / BUILD
 
 
 def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
@@ -253,17 +253,17 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
     """`louise hold records build <collection>` — parse, slice, shard, hash.
 
     The build runs into a STAGING directory under the collection's state,
-    and its records are promoted into the drag in one step. That is how a
+    and its records are promoted into the SHARD in one step. That is how a
     fetch already works (04 §4.3, "Fetched shards land in staging and are
-    promoted into the copy in one step"), and it is what keeps the drag
+    promoted into the copy in one step"), and it is what keeps the SHARD
     holding only what the Codex or a snapshot names (07 §7.8) — the legacy
     builder also writes a `manifest.json`, a `TERMS.txt` and a
-    `validation.json` of its own shape, none of which are drag members
+    `validation.json` of its own shape, none of which are SHARD members
     under a Codex.
 
     Returns the underlying `BuildResult`. The shard entries 09 §9.4 needs
     are in the staging build database, where `hold snapshot create` reads
-    them; nothing is written to the drag but the record shards themselves.
+    them; nothing is written to the SHARD but the record shards themselves.
     """
     from dataclasses import replace as _dc_replace
     from pathlib import Path
@@ -274,15 +274,15 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
     from . import collection as col
 
     name, codex = col.resolve(Path(root), ref)
-    drag_dir, state_dir, staging = _paths(root, name)
+    shard_dir, state_dir, staging = _paths(root, name)
     state_dir.mkdir(parents=True, exist_ok=True)
 
     held = collections_mod.by_name(name) if Path(root).resolve() == (collections_mod.louise_root()
                                                                     / "collections").resolve() else None
-    if held is not None and getattr(held, "source", "origin") == "drag":
+    if held is not None and getattr(held, "source", "origin") == "shard":
         raise RecordsError(
             f"{name}: its records are HELD, not built — this peer reads them from the shards "
-            f"`share fetch` landed (source = \"drag\", 07 §7.8); the producer builds, a fetcher does not")
+            f"`share fetch` landed (source = \"shard\", 07 §7.8); the producer builds, a fetcher does not")
 
     if corpus_dir is None:
         raise RecordsError(
@@ -312,15 +312,15 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
     if result.interrupted:
         # A stopped build promotes NOTHING: what it cut stays in staging,
         # recorded, and the next run resumes it. Promoting the finished part
-        # put a partial record set into the drag, beside a snapshot that
+        # put a partial record set into the SHARD, beside a snapshot that
         # names the whole (found 2026-09-21).
         log(f"[records build] {name}: stopped after {result.shards} shard(s); "
             f"staged, not promoted — the next run resumes")
         return result
 
-    promoted = _promote_records(staging, drag_dir)
+    promoted = _promote_records(staging, shard_dir)
     log(f"[records build] {name}: {result.records} records in {result.shards} "
-        f"shard(s), {promoted} promoted into the drag")
+        f"shard(s), {promoted} promoted into the SHARD")
     return result
 
 
@@ -380,7 +380,7 @@ def _local_collection(root, name: str, codex, *, corpus_dir=None):
 
     A Codex says what a collection IS; the manifest, the text index and the
     vector table are what this peer keeps about it, and they live beside
-    the drag rather than in it — `collections/<name>/state/`, `/index/`,
+    the SHARD rather than in it — `collections/<name>/state/`, `/index/`,
     `/lance/`, none of which `share` serves.
 
     Every stage that needs them builds this the same way, from here, and
@@ -438,54 +438,54 @@ def _ack_of(codex, state_dir):
     return f"{ack['time']}/{ack['terms_sha256'].replace('sha256:', '')}"
 
 
-#: What a build produces that belongs in the drag: the directory and the
+#: What a build produces that belongs in the SHARD: the directory and the
 #: suffix its files carry. `figures` joined it with the plates amendment —
 #: a container is written beside its shard by `pack build` and is useless
 #: in staging, where nothing serves or checks it. The two are promoted in
 #: ONE pass and containers first, so a crash between them leaves a
 #: container with no shard (inert: nothing names it) rather than a shard
 #: whose plates are still in staging (published records naming plates the
-#: drag does not hold).
+#: SHARD does not hold).
 _PROMOTED = (("figures", "*.fig.zst"), ("records", "*.jsonl.zst"))
 
 
-def _promote_records(staging, drag_dir) -> int:
-    """Move what the build produced into the drag, atomically per file.
+def _promote_records(staging, shard_dir) -> int:
+    """Move what the build produced into the SHARD, atomically per file.
 
     Returns the RECORD shards promoted — the number the log reports — not
     the containers beside them.
     """
     from pathlib import Path
 
-    from . import drag as drag_mod
+    from . import shard as shard_mod
     n = 0
     for kind, suffix in _PROMOTED:
         src = Path(staging) / kind
         if not src.is_dir():
             continue
-        dst = Path(drag_dir) / kind
+        dst = Path(shard_dir) / kind
         for f in sorted(src.rglob(suffix)):
             target = dst / f.relative_to(src)
             target.parent.mkdir(parents=True, exist_ok=True)
-            drag_mod.promote(f, target)
+            shard_mod.promote(f, target)
             if kind == "records":
                 n += 1
     return n
 
 
 def write_validation(root, ref: str) -> int:
-    """`validation.json` at the drag root is the Codex's `validation` block
+    """`validation.json` at the SHARD root is the Codex's `validation` block
     written out in canonical JSON for tools; `hold check` reads it and
     refuses to run when its bytes differ from the block in the Codex
     (02 §2.6, 09 §9.3). It is a member like any other and waits for the
     acknowledgement with the rest."""
     from pathlib import Path
     from .codex import canonical_json
-    from . import collection as col, drag as drag_mod
+    from . import collection as col, shard as shard_mod
 
     name, codex = col.resolve(Path(root), ref)
-    drag = Path(root) / name / "drag"
-    drag.mkdir(parents=True, exist_ok=True)
+    shard_tree = Path(root) / name / "shard"
+    shard_tree.mkdir(parents=True, exist_ok=True)
     raw = canonical_json(codex.validation.to_dict())
-    (drag / drag_mod.VALIDATION_PATH).write_bytes(raw)
+    (shard_tree / shard_mod.VALIDATION_PATH).write_bytes(raw)
     return len(raw)

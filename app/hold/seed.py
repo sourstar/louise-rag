@@ -4,7 +4,7 @@
 docs/notes/v5-migration.md G3). RULE 1: a new collection whose records are, by
 its Codex, the records another collection already holds does not parse its
 origin again. Its parts are the source snapshot's parts, linked (a hard link
-where the two drags share a filesystem, a copy where they do not), each one
+where the two SHARDs share a filesystem, a copy where they do not), each one
 checked against the source snapshot's own `root` before it is put in place;
 its staging claim and build database are written as a build of it would have
 left them; and the snapshot that follows is the normal `snapshot create`.
@@ -88,11 +88,11 @@ def refuse_unless_same_records(src: Codex, dst: Codex, what: str) -> None:
 
 
 def latest_snapshot(root: Path, name: str, snapshot_id: str | None = None):
-    """The named snapshot of `name`'s drag, or its latest."""
-    from . import collection as col, drag, snapshot as sn
-    d = col.drag_of(Path(root), name)
+    """The named snapshot of `name`'s SHARD, or its latest."""
+    from . import collection as col, shard as shard_mod, snapshot as sn
+    d = col.shard_dir_of(Path(root), name)
     if snapshot_id:
-        p = d / drag.snapshot_path(snapshot_id)
+        p = d / shard_mod.snapshot_path(snapshot_id)
         if not p.is_file():
             raise CodexError(f"{name} holds no snapshot {snapshot_id!r}")
         return sn.load(p)
@@ -114,16 +114,16 @@ def parts_of(snap) -> list[tuple[str, int, str]]:
 def _link(src: Path, dst: Path, root: str) -> str:
     """`dst` as `src`'s bytes, checked against `root` before it appears:
     "linked", "copied", or "present" when it already was."""
-    from . import drag
+    from . import shard as shard_mod
     if dst.exists():
-        if drag.pieces_root_of(dst) == root:
+        if shard_mod.pieces_root_of(dst) == root:
             return "present"
         raise CodexError(
             f"{dst} exists and its pieces root is not the source snapshot's "
             f"{root[:23]}…; a part is never overwritten here — move it aside")
     if not src.is_file():
         raise CodexError(f"{src}: the source snapshot names this part and the source "
-                         f"drag does not hold it")
+                         f"SHARD does not hold it")
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_name(f".{dst.name}.seed")
     tmp.unlink(missing_ok=True)
@@ -134,11 +134,11 @@ def _link(src: Path, dst: Path, root: str) -> str:
         shutil.copyfile(src, tmp)
         how = "copied"
     try:
-        got = drag.pieces_root_of(tmp)
+        got = shard_mod.pieces_root_of(tmp)
         if got != root:
             raise CodexError(
                 f"{src}: its pieces root is {got[:23]}… and the source snapshot "
-                f"names {root[:23]}… — the source drag no longer holds that "
+                f"names {root[:23]}… — the source SHARD no longer holds that "
                 f"snapshot's part (re-issued since?); nothing is seeded from it")
         os.replace(tmp, dst)
     finally:
@@ -172,7 +172,7 @@ def _write_build_db(src_db: Path, dst_db: Path, snap) -> str:
     it (plan, cursor, meta — a later `records build` of the target resumes
     exactly where the source's would), its shard rows those of the
     snapshot. Rows the source cut after the snapshot are left out: those
-    parts are not in the target's drag, and its next build cuts them."""
+    parts are not in the target's SHARD, and its next build cuts them."""
     if dst_db.is_file():
         con = sqlite3.connect(dst_db)
         try:
@@ -222,7 +222,7 @@ def _write_build_db(src_db: Path, dst_db: Path, snap) -> str:
 
 def seed_shards(root, to_ref: str, from_ref: str, *, from_snapshot: str | None = None,
                 log: Callable[[str], None] = print) -> dict[str, Any]:
-    """Seed `to_ref`'s drag and staging from `from_ref`'s snapshot (G3). The
+    """Seed `to_ref`'s SHARD and staging from `from_ref`'s snapshot (G3). The
     caller holds `to_ref`'s write lock; `snapshot create` follows."""
     from . import collection as col, records as rec
     from app.pack import build as pack_build
@@ -245,10 +245,10 @@ def seed_shards(root, to_ref: str, from_ref: str, *, from_snapshot: str | None =
     # holding another build is refused here as `records build` refuses it
     rec._claim_staging(staging, to)
 
-    src_drag, dst_drag = col.drag_of(root, from_name), col.drag_of(root, to_name)
+    src_shard, dst_shard = col.shard_dir_of(root, from_name), col.shard_dir_of(root, to_name)
     counts = {"linked": 0, "copied": 0, "present": 0}
     for path, _bytes, part_root in parts_of(snap):
-        counts[_link(src_drag / path, dst_drag / path, part_root)] += 1
+        counts[_link(src_shard / path, dst_shard / path, part_root)] += 1
 
     db = _write_build_db(root / from_name / rec.STATE / rec.BUILD / pack_build.BUILD_DIR
                          / pack_build.BUILD_DB,
@@ -275,7 +275,7 @@ def same_parts_or_withdraw(root, to_name: str, snap, from_ref: str,
     the reference computed). Returns the differences; when there are any,
     the new snapshot's files are removed, so nothing names a cut this image
     alone produced."""
-    from . import collection as col, drag
+    from . import collection as col, shard as shard_mod
     root = Path(root)
     from_name, _ = col.resolve(root, from_ref)
     src = latest_snapshot(root, from_name, from_snapshot or snap.snapshot_id)
@@ -288,9 +288,9 @@ def same_parts_or_withdraw(root, to_name: str, snap, from_ref: str,
             if getattr(have[k], f) != getattr(want[k], f):
                 bad.append(f"{k[0]}/{k[1]}: {f} {getattr(have[k], f)!r} != {getattr(want[k], f)!r}")
     if bad:
-        d = col.drag_of(root, to_name)
-        for p in (d / drag.snapshot_path(snap.snapshot_id),
-                  (d / drag.snapshot_path(snap.snapshot_id)).with_suffix(".sig.json")):
+        d = col.shard_dir_of(root, to_name)
+        for p in (d / shard_mod.snapshot_path(snap.snapshot_id),
+                  (d / shard_mod.snapshot_path(snap.snapshot_id)).with_suffix(".sig.json")):
             if p.is_file():
                 p.unlink()
     return bad

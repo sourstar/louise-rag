@@ -76,11 +76,11 @@ def license_class_for(collection, spec=None) -> str:
 
 
 def terms_path_for(collection, spec=None) -> Path | None:
-    """The byte-exact terms text: a Codex collection's drag LICENSE-TERMS,
+    """The byte-exact terms text: a Codex collection's SHARD LICENSE-TERMS,
     the spec's file, or the pack's TERMS.txt."""
     lic = _codex_license(collection)
     if lic is not None and getattr(lic, "terms_sha256", None):
-        p = Path(collection.manifest_path).parent.parent / "drag" / "LICENSE-TERMS"
+        p = Path(collection.manifest_path).parent.parent / "shard" / "LICENSE-TERMS"
         if p.is_file():
             return p
     s = _spec_for(collection, spec)

@@ -10,9 +10,9 @@ import sqlite3
 import httpx
 import pytest
 
-from app.hold import anchor, drag as drag_mod, envelope as env, snapshot as sn, collection as col
+from app.hold import anchor, shard as shard_mod, envelope as env, snapshot as sn, collection as col
 from app.hold.codex import Certifier, canonical_json
-from app.hold.drag import MemberFile
+from app.hold.shard import MemberFile
 from app.share import holdings
 from tests.deposit.test_deposit_identity import node  # noqa: F401
 from tests.hold.conftest import KEY, NOW, a_root, pubmed
@@ -33,14 +33,14 @@ def a_document(codex, *, key=CERT_KEY, valid_from="2026-01-01T00:00:00Z", revoke
             "collections": [codex.collection_id] if collections is None else collections}
 
 
-def a_signed_drag(node, codex):
-    """A held drag with one shard and a snapshot the certifier (KEY) signed at NOW."""
+def a_signed_shard(node, codex):
+    """A held SHARD with one shard and a snapshot the certifier (KEY) signed at NOW."""
     name = col.name_of(node, codex.collection_id)
-    d = col.drag_of(node, name)
+    d = col.shard_dir_of(node, name)
     data = b"r" * 20_000
     (d / "records/year=2023").mkdir(parents=True)
     (d / "records/year=2023/00001.jsonl.zst").write_bytes(data)
-    shard = sn.Shard(slice="year=2023", n=1, root=drag_mod.pieces_root(data), records_root="sha256:" + "11" * 32,
+    shard = sn.Shard(slice="year=2023", n=1, root=shard_mod.pieces_root(data), records_root="sha256:" + "11" * 32,
                      first_id="a", last_id="z", records=2, chunks=4, chunks_root="sha256:" + "22" * 32,
                      tokens=2048, bytes=len(data))
     snap = sn.Snapshot(collection_id=codex.collection_id, snapshot_id="2026-08", previous=None, shards=(shard,),
@@ -120,7 +120,7 @@ def test_fetched_kept_and_judged(node, monkeypatch):  # noqa: F811
 def test_which_signatures_certify_and_what_a_result_carries(node):  # noqa: F811
     codex = certified()
     a_root(node, codex)
-    name, d, snap, _ = a_signed_drag(node, codex)
+    name, d, snap, _ = a_signed_shard(node, codex)
     # no anchor document yet: the Codex's key alone counts
     assert [s["key"] for s in anchor.certifier_signatures(node, name, codex, snap)] == [CERT_KEY]
     assert anchor.certification(node, name, codex, snap, now=T0) == {"certified_by": CERT_KEY, "anchor_state": "unknown"}
@@ -142,7 +142,7 @@ def test_which_signatures_certify_and_what_a_result_carries(node):  # noqa: F811
 def test_the_manifest_only_gate_admits_only_roots_a_certifier_signed(node):  # noqa: F811
     codex = certified()
     a_root(node, codex)
-    name, d, snap, data = a_signed_drag(node, codex)
+    name, d, snap, data = a_signed_shard(node, codex)
     roots = anchor.signed_roots(node, name, codex)
     assert snap.shards[0].root in roots and len(roots) >= 1
     (d / "snapshots/2026-08.sig.json").unlink()
@@ -152,7 +152,7 @@ def test_the_manifest_only_gate_admits_only_roots_a_certifier_signed(node):  # n
     con.row_factory = sqlite3.Row
     staging = node / name / "state" / holdings.STAGING
     foreign = b"f" * 20_000
-    f = MemberFile("records/year=2023/00002.jsonl.zst", drag_mod.pieces_root(foreign), len(foreign))
+    f = MemberFile("records/year=2023/00002.jsonl.zst", shard_mod.pieces_root(foreign), len(foreign))
     staged = staging / "records-year=2023" / f.path
     staged.parent.mkdir(parents=True)
     staged.write_bytes(foreign)

@@ -15,7 +15,7 @@ from tests.hold.conftest import KEY, NOW, a_root, pubmed
 def test_the_maintainer_builds_once_per_snapshot_and_facets_read_the_cache(node, monkeypatch):  # noqa: F811
     codex = a_root(node, pubmed(facets=(Facet("lang", "flat"), Facet("subjects", "tree", "/"))))
     name = col.name_of(node, codex.collection_id)
-    d = col.drag_of(node, name)
+    d = col.shard_dir_of(node, name)
     snap = sn.Snapshot(collection_id=codex.collection_id, snapshot_id="2026-08", previous=None, shards=(),
                        delta=sn.Delta((), (), ()), files={})
     (d / "snapshots").mkdir(exist_ok=True)

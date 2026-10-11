@@ -716,8 +716,8 @@ local, and its form is 09 §9.10.
 
 A collection on disk is a **SHARD** — *Self-Hosted, Attested RAG Distribution*, the format 09
 fixes byte for byte. The SHARD is the copy:
-`<LOUISE_ROOT>/collections/<name>/drag/` (the directory keeps its old
-name until the code follows), exactly what a peer shares.
+`<LOUISE_ROOT>/collections/<name>/shard/` (named `drag/` until
+2026-10-11), exactly what a peer shares.
 What never travels — the manifest, cursors, the acknowledgement, the
 trust list, the working text index and the vector table a search reads
 — sits beside it (07 §7.8). The text index is never a member: each peer
@@ -1213,7 +1213,7 @@ consistent:
 A never-share collection built from a plugin's corpus MAY keep the rest
 — its records are built the same way either way — but a deposit
 collection has none of it: no snapshot, no part, no signature. Its
-`drag/` holds exactly `codex.json` and the calibration member (09
+`shard/` holds exactly `codex.json` and the calibration member (09
 §9.12) — the Codex, and the reference the gate compares a run against —
 and nothing serves it.
 

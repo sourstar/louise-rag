@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from nacl import signing
 
 from app.bundles import verify_on_use
-from app.hold import envelope as env, drag as drag_mod
+from app.hold import envelope as env, shard as shard_mod
 from app.hold.codex import canonical_json
 from app.share import accept
 from tests.deposit.test_deposit_identity import node  # noqa: F401
@@ -44,10 +44,10 @@ def a_proof(codex, key, *, chunk_id, producer=PRODUCER, time="2026-10-01T00:00:0
 
 
 def keep(node, codex, name, doc):
-    d = node / name / "state" / "attestations" / drag_mod._hex(codex.collection_id)
+    d = node / name / "state" / "attestations" / shard_mod._hex(codex.collection_id)
     d.mkdir(parents=True, exist_ok=True)
     aid = env.body_id(doc["body"])
-    (d / f"{drag_mod._hex(aid)}.json").write_bytes(canonical_json(doc))
+    (d / f"{shard_mod._hex(aid)}.json").write_bytes(canonical_json(doc))
     return aid
 
 

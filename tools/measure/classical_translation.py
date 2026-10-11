@@ -18,7 +18,7 @@ Phases, each checkpointed under OUT (a re-run resumes):
   score                 -> results.json         chrF / BLEU, throughput, retrieval, projection
 M is a LocalAI model name, or `madlad` (Louise's translate.translate).
 
-Usage: python classical_translation.py --drag /data/collections/gutenberg/drag --out /out PHASE
+Usage: python classical_translation.py --SHARD /data/collections/gutenberg/shard --out /out PHASE
 """
 from __future__ import annotations
 
@@ -127,7 +127,7 @@ def phase_eval(out: Path, model: str) -> None:
 
 # ---- retrieval ------------------------------------------------------------------
 
-def phase_sample(drag: Path, out: Path) -> dict:
+def phase_sample(shard_tree: Path, out: Path) -> dict:
     """Up to 20 books each of la and el that coverage.json found NO human English translation
     for, sampled as translate_before_embed.sample does (one document passage, one query
     passage, never overlapping), plus its 500 English distractors (the same seeded draw)."""
@@ -138,7 +138,7 @@ def phase_sample(drag: Path, out: Path) -> dict:
     uncovered = {b["uid"] for b in cov["books"] if not b["covered"]}
     rc = out / "recall_check.json"               # books the hand check found covered after all
     excluded = set(json.loads(rc.read_text())["covered_after_check"]) if rc.exists() else set()
-    shards = tbe.shards_by_lang(drag)
+    shards = tbe.shards_by_lang(shard_tree)
     books, skipped = [], {}
     for lang in ("la", "el"):
         uids = [(p, u) for p in shards.get(lang, []) for u in tbe.pack_records.read_index(p).uids
@@ -334,7 +334,7 @@ def score_retrieval(out: Path, vec: dict) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--drag", type=Path, default=Path("/data/collections/gutenberg/drag"))
+    ap.add_argument("--SHARD", type=Path, default=Path("/data/collections/gutenberg/shard"))
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--model")
     ap.add_argument("phase", choices=["eval", "sample", "retrieval", "embed", "score"])
@@ -344,7 +344,7 @@ def main() -> int:
     if a.phase == "eval":
         phase_eval(a.out, a.model)
     elif a.phase == "sample":
-        phase_sample(a.drag, a.out)
+        phase_sample(a.shard_tree, a.out)
     elif a.phase == "retrieval":
         phase_retrieval(a.out, a.model)
     elif a.phase == "embed":

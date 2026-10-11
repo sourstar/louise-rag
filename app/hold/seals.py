@@ -4,7 +4,7 @@ Official Journal's PAdES seal — and the certifier captures, when it
 produces the snapshot, the evidence that validates them: the envelope,
 the digest it commits to, the signer, the certificate chain, the
 revocation responses of that moment, a timestamp, the trusted list the
-chain validated against. `seals/<snapshot_id>.json` at the drag root, its
+chain validated against. `seals/<snapshot_id>.json` at the SHARD root, its
 root and size in the snapshot's `files`, which the certifier signs.
 Migration step 10 (operator's yes on the libraries, 2026-10-07).
 
@@ -12,7 +12,7 @@ Two modes of `origin-seal` (03 §3.7). ARCHIVAL, offline: the signature in
 `seal` verified over `content_sha256`, the certificate path validated at
 the captured moment against the captured `chain`, `revocation` and the
 trusted list whose hash the entry names — a list this peer holds under
-`seals/lists/<sha256>.xml` in the drag — they travel in the snapshot's
+`seals/lists/<sha256>.xml` in the SHARD — they travel in the snapshot's
 `seals-<id>` member (09 §9.16, amended 2026-10-08), so a peer that fetched
 the seals can judge them; nothing fetched here, so it still works
 when the origin is gone. LIVE (`validate_live`): the sealed file in hand,
@@ -44,12 +44,12 @@ from pathlib import Path
 from typing import Any, Iterable
 from xml.etree import ElementTree as ET
 
-from app.hold import drag as drag_mod
+from app.hold import shard as shard_mod
 from app.hold.codex import CodexError, canonical_json
 
 KIND, VERSION = "louise-seals", 1
 FORMATS = ("cades", "pades", "xades")
-TRUSTED_LISTS = "seals/lists"              # in the drag: they travel with the seals
+TRUSTED_LISTS = "seals/lists"              # in the SHARD: they travel with the seals
 TL_NS = "http://uri.etsi.org/02231/v2#"
 TL_GRANTED = ("http://uri.etsi.org/TrstSvc/TrstLSL/Svcstatus/granted",
               "http://uri.etsi.org/TrstSvc/TrstLSL/Svcstatus/recognisedatnationallevel")
@@ -63,8 +63,8 @@ class SealError(CodexError):
 
 # ---- the file ------------------------------------------------------------------------
 
-def seals_path(drag_dir: Path, snapshot_id: str) -> Path:
-    return Path(drag_dir) / drag_mod.seals_path(snapshot_id)
+def seals_path(shard_dir: Path, snapshot_id: str) -> Path:
+    return Path(shard_dir) / shard_mod.seals_path(snapshot_id)
 
 
 def file_hash(path: Path) -> str:
@@ -147,9 +147,9 @@ def validate_entry(e: Any) -> dict[str, Any]:
     return e
 
 
-def read(drag_dir: Path, snapshot_id: str) -> dict[str, Any] | None:
+def read(shard_dir: Path, snapshot_id: str) -> dict[str, Any] | None:
     """The seals member held for the snapshot, validated; None when not held."""
-    p = seals_path(drag_dir, snapshot_id)
+    p = seals_path(shard_dir, snapshot_id)
     if not p.is_file():
         return None
     try:
@@ -159,11 +159,11 @@ def read(drag_dir: Path, snapshot_id: str) -> dict[str, Any] | None:
     return validate_doc(doc)
 
 
-def write(drag_dir: Path, codex, snapshot_id: str, entries: Iterable[dict[str, Any]]) -> Path:
+def write(shard_dir: Path, codex, snapshot_id: str, entries: Iterable[dict[str, Any]]) -> Path:
     doc = {"kind": KIND, "version": VERSION, "collection_id": codex.collection_id, "snapshot_id": snapshot_id,
            "entries": sorted(entries, key=lambda e: e["file_hash"])}
     validate_doc(doc)
-    p = seals_path(drag_dir, snapshot_id)
+    p = seals_path(shard_dir, snapshot_id)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(f".{p.name}.tmp")
     tmp.write_bytes(canonical_json(doc))
@@ -174,9 +174,9 @@ def write(drag_dir: Path, codex, snapshot_id: str, entries: Iterable[dict[str, A
 # ---- the trusted list ----------------------------------------------------------------
 
 def trusted_list_dir(root: Path, name: str) -> Path:
-    """`<drag>/seals/lists/`: the lists the seals were validated against,
+    """`<SHARD>/seals/lists/`: the lists the seals were validated against,
     by their hash, travelling in the `seals-<id>` member (09 §9.16)."""
-    return Path(root) / name / "drag" / TRUSTED_LISTS
+    return Path(root) / name / "shard" / TRUSTED_LISTS
 
 
 def keep_trusted_list(root: Path, name: str, data: bytes) -> tuple[str, Path]:

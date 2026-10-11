@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import config, db, layers as layers_mod, parallel, plugin_io
-from ..hold import drag, records as hold_records
+from ..hold import shard as shard_mod, records as hold_records
 from ..plugins.base import UnindexableDocument
 from . import cutoff as cutoff_mod, manifest as manifest_mod, records, slicing
 
@@ -379,7 +379,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
             # compare, and does not; `chunks_root` is what the `chunks`
             # check reproduces, and without it that check could compare only
             # a count (09 §9.5).
-            root = drag.pieces_root_of(pack_dir / rel)
+            root = shard_mod.pieces_root_of(pack_dir / rel)
             records_root = hold_records.records_root(r["content_hash"] for r in buf)
             chunks_root = hold_records.chunks_root_of(b"".join(chunk_blobs))
             con_build.execute("BEGIN IMMEDIATE")

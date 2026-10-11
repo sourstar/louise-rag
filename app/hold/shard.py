@@ -1,12 +1,12 @@
-"""The drag on disk — what a peer fetches and shares.
+"""The SHARD on disk — what a peer fetches and shares.
 
 docs/02-collections.md §2.6 gives the tree; docs/09-formats.md §9.16 fixes
 the member names, the roots and the torrents. Pure functions over names and
 bytes: nothing here reads a manifest, a cursor or an acknowledgement, all of
-which sit BESIDE the drag and never travel (07 §7.8).
+which sit BESIDE the SHARD and never travel (07 §7.8).
 
-A collection on disk is a drag — *distributed RAG*. The drag is the copy:
-`<LOUISE_ROOT>/collections/<name>/drag/`, exactly what a peer shares.
+A collection on disk is a SHARD — *distributed RAG*. The SHARD is the copy:
+`<LOUISE_ROOT>/collections/<name>/shard/`, exactly what a peer shares.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from typing import Iterable, Sequence
 
 from .codex import Codex, CodexError, canonical_json, digest
 
-DRAG = "drag"
+SHARD_DIR = "shard"
 
 #: The kinds are closed (02 §2.6); `--kinds` takes these names (07 §7.3).
 MEMBER_KINDS = ("records", "vectors", "buckets", "index", "relations",
@@ -39,7 +39,7 @@ _SPACE_SHAPED = re.compile(r"^[0-9a-f]{16}$")
 _SPACE_RE = _SPACE_SHAPED
 
 
-class DragError(CodexError):
+class ShardError(CodexError):
     """A name, a path or a member that the format does not allow."""
 
 
@@ -57,10 +57,10 @@ def check_slice(name: str) -> str:
     source needs one.
     """
     if not _SLICE_RE.match(name):
-        raise DragError(f"{name!r} is not a slice name (09 §9.3)")
+        raise ShardError(f"{name!r} is not a slice name (09 §9.3)")
     for seg in name.split("/"):
         if _SPACE_SHAPED.match(seg):
-            raise DragError(
+            raise ShardError(
                 f"slice segment {seg!r} is sixteen lowercase hex characters, "
                 f"which is the shape of a <space> segment; `index-{name}` "
                 f"would collide with a vector index's member name (09 §9.16)")
@@ -70,7 +70,7 @@ def check_slice(name: str) -> str:
 def check_space(space: str) -> str:
     """The `<space>` segment: the first 16 hex digits of `space_id` (09 §9.3)."""
     if not _SPACE_RE.match(space):
-        raise DragError(f"{space!r} is not a <space> segment: sixteen "
+        raise ShardError(f"{space!r} is not a <space> segment: sixteen "
                         f"lowercase hexadecimal characters")
     return space
 
@@ -136,8 +136,8 @@ def _segment(identity: str) -> str:
 # --------------------------------------------------------------------------
 # paths
 
-def drag_dir(collection_dir: Path) -> Path:
-    return collection_dir / DRAG
+def shard_dir(collection_dir: Path) -> Path:
+    return collection_dir / SHARD_DIR
 
 
 def shard_path(slice_: str, n: int, superseded_by: str | None = None) -> str:
@@ -296,7 +296,7 @@ def pieces_root_of(path: Path) -> str:
 
 @dataclass(frozen=True)
 class MemberFile:
-    path: str          # drag-relative
+    path: str          # SHARD-relative
     root: str          # sha256:…
     bytes: int
 
@@ -309,19 +309,19 @@ def member_root(files: Sequence[MemberFile]) -> str:
     of several has `H` over the canonical JSON of `[[path, root, bytes], …]`
     in path byte order (09 §9.16)."""
     if not files:
-        raise DragError("a member has at least one file")
+        raise ShardError("a member has at least one file")
     if len(files) == 1:
         return files[0].root
     ordered = sorted(files, key=lambda f: f.path.encode("utf-8"))
     return digest(canonical_json([f.to_list() for f in ordered]))
 
 
-def member_files(drag: Path, paths: Iterable[str]) -> tuple[MemberFile, ...]:
+def member_files(shard_tree: Path, paths: Iterable[str]) -> tuple[MemberFile, ...]:
     out = []
     for p in paths:
-        f = drag / p
+        f = shard_tree / p
         if not f.is_file():
-            raise DragError(f"{p}: not in the drag at {drag}")
+            raise ShardError(f"{p}: not in the SHARD at {shard_tree}")
         b = f.read_bytes()
         out.append(MemberFile(p, pieces_root(b), len(b)))
     return tuple(out)
@@ -354,21 +354,21 @@ TREE = ("snapshots", "calibration", "seals", "records", "relations",
         "vectors")
 
 
-def scaffold(drag: Path) -> Path:
-    """Make the drag's directories. Files arrive with the steps that write
+def scaffold(shard_tree: Path) -> Path:
+    """Make the SHARD's directories. Files arrive with the steps that write
     them; a directory that stays empty is not a member and is not served."""
-    drag.mkdir(parents=True, exist_ok=True)
+    shard_tree.mkdir(parents=True, exist_ok=True)
     for d in TREE:
-        (drag / d).mkdir(exist_ok=True)
-    return drag
+        (shard_tree / d).mkdir(exist_ok=True)
+    return shard_tree
 
 
 def promote(src: Path, target: Path) -> None:
-    """Move one finished file into the drag; `target` only ever appears
+    """Move one finished file into the SHARD; `target` only ever appears
     whole.
 
     A rename where `src` and `target` share a filesystem. Where they do not
-    — the drag's bytes on other storage, mounted at `drag/` as `origin/`'s
+    — the SHARD's bytes on other storage, mounted at `shard/` as `origin/`'s
     are (07 §7.8), while a build stages under `state/` — a rename cannot
     cross, so the bytes are copied to a hidden name beside `target`, synced,
     and renamed over it: the same all-or-nothing, as one sequential write.

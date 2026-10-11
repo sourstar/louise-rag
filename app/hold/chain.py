@@ -20,12 +20,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import collection as col, drag as drag_mod, snapshot as snap
+from . import collection as col, shard as shard_mod, snapshot as snap
 from .codex import CodexError
 
 
 def _load(root: Path, name: str, snapshot_id: str) -> snap.Snapshot | None:
-    p = col.drag_of(Path(root), name) / drag_mod.snapshot_path(snapshot_id)
+    p = col.shard_dir_of(Path(root), name) / shard_mod.snapshot_path(snapshot_id)
     return snap.load(p) if p.is_file() else None
 
 

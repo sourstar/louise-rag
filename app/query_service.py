@@ -119,8 +119,8 @@ def book_ids_for(filters: dict | None):
             return set()
         root = collections_mod.louise_root() / "collections"
         try:
-            snap = seeder.current_snapshot(col.drag_of(root, collection.name))
-        except Exception:   # noqa: BLE001 — a drag that cannot be read names no snapshot
+            snap = seeder.current_snapshot(col.shard_dir_of(root, collection.name))
+        except Exception:   # noqa: BLE001 — a SHARD that cannot be read names no snapshot
             snap = None
 
         def all_ids() -> list[int]:

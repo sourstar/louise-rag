@@ -9,7 +9,7 @@ conversion script for gutenberg, pubmed, wikipedia (and the pre-embedded
 It discovers the corpus into a build-local manifest (`<out>/.build/`), so
 the plugin's own dedup/tombstone logic applies (a revised PubMed record,
 a DeleteCitation), then runs `pack build`. Resumable: re-run to continue.
-A held collection is built into its drag instead with
+A held collection is built into its SHARD instead with
 `louise hold records build <collection>`.
 
 Only the useful data is packed: parsed text and metadata. Nothing else

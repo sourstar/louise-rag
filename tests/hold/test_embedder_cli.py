@@ -43,8 +43,8 @@ def test_check_without_a_calibration_member_is_refused_not_deferred(tmp_path, mo
     and the command read "deferred" (2026-09-19). The member comes first."""
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "no-config-here"))
     root = _collection(tmp_path)
-    # `create` wrote it; a drag that lost it is the case under test.
-    member, = (root / "gutenberg" / "drag" / "calibration").glob("*.safetensors")
+    # `create` wrote it; a SHARD that lost it is the case under test.
+    member, = (root / "gutenberg" / "shard" / "calibration").glob("*.safetensors")
     member.unlink()
     assert louise.main(["hold", "embedder", "check", "gutenberg",
                         "--root", str(root)]) == 2
@@ -61,7 +61,7 @@ def test_check_defers_when_no_encoder_is_configured(tmp_path, monkeypatch, capsy
     from app.hold import calibration as cal, collection as col
     import numpy as np
     codex = col.read(root, "gutenberg")
-    d = root / "gutenberg" / "drag" / "calibration"
+    d = root / "gutenberg" / "shard" / "calibration"
     d.mkdir(parents=True, exist_ok=True)
     v = np.zeros((cal.SIZE, codex.space.dim), dtype="float32")
     save_file({"vectors": v, "envelope": np.zeros((2, codex.space.dim), "float32")},

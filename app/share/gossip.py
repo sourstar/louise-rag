@@ -118,15 +118,15 @@ def entries(root: Path, collections) -> list[dict[str, Any]]:
         codex = getattr(c, "codex", None)
         if codex is None or codex.privacy != "public":
             continue
-        drag = col.drag_of(root, c.name)
+        shard_tree = col.shard_dir_of(root, c.name)
         try:
-            codex_bytes = (drag / "codex.json").read_bytes()
+            codex_bytes = (shard_tree / "codex.json").read_bytes()
         except OSError:
             continue
-        snap = seeder.current_snapshot(drag)
+        snap = seeder.current_snapshot(shard_tree)
         shared = seeder.wants_serving(c) and snap is not None
-        members = list(mem.members_of(snap, drag_dir=drag)) if shared else []
-        members = [m for m in members if all((drag / f.path).is_file() for f in m.files)]
+        members = list(mem.members_of(snap, shard_dir=shard_tree)) if shared else []
+        members = [m for m in members if all((shard_tree / f.path).is_file() for f in m.files)]
         if shared and codex.space is not None:
             # the bundles this peer holds for the space, served from state/
             # (09 §9.7, §9.16): offered beside the snapshot's members

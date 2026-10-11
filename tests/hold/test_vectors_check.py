@@ -15,7 +15,7 @@ from app.hold import collection as col, land, vectors_check as vck
 from app.hold.vectors_check import VectorsCheckError
 from tests.hold.test_admit import (chunk_texts, made,  # noqa: F401
                                    reference_and_envelope, space_embed)
-from tests.hold.test_vectors_export import build_drag, first_shard
+from tests.hold.test_vectors_export import build_shard, first_shard
 from tests.hold.test_vectors_import import _member, _stored, importable  # noqa: F401
 
 SEED = b"\x01" * 32

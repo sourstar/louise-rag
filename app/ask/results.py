@@ -66,9 +66,9 @@ def context_for(collection, *, root: Path | None = None, now: float | None = Non
     root = Path(root) if root is not None else _root()
     name = collection.name
     try:
-        drag = col.drag_of(root, name)
-        snap = seeder.current_snapshot(drag)
-    except Exception:   # noqa: BLE001 — a drag that cannot be read: no snapshot named
+        shard_tree = col.shard_dir_of(root, name)
+        snap = seeder.current_snapshot(shard_tree)
+    except Exception:   # noqa: BLE001 — a SHARD that cannot be read: no snapshot named
         snap = None
     try:
         lid = lineage_id(codex, col.resolver(root))
@@ -166,17 +166,17 @@ def _place_figures(lists, source_of, contexts, root) -> None:
     for name, hits in by_coll.items():
         c = source_of[id(hits[0])]
         root_ = Path(root) if root is not None else _root()
-        drag = col.drag_of(root_, name)
+        shard_tree = col.shard_dir_of(root_, name)
         try:
-            snap = seeder.current_snapshot(drag)
+            snap = seeder.current_snapshot(shard_tree)
         except Exception:   # noqa: BLE001 — no snapshot: nothing to place from
             continue
-        figures_mod.place(c, contexts[name]["codex"], drag, snap, hits, red=contexts[name]["red"])
+        figures_mod.place(c, contexts[name]["codex"], shard_tree, snap, hits, red=contexts[name]["red"])
 
 
 def _from_shard(c, hit) -> str | None:
-    """The drag-relative shard a hit's record was read from: a fetched
-    collection's locator is `<shard path>#<uid>` (app/plugins/drag.py)."""
+    """The SHARD-relative shard a hit's record was read from: a fetched
+    collection's locator is `<shard path>#<uid>` (app/plugins/shard.py)."""
     from contextlib import closing
     from app import db
     try:
@@ -236,7 +236,7 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
                                        "reason": f"as of {day.isoformat()}: a collection without a Codex has "
                                                  f"no dated snapshots"})
                 continue
-            r = asof_mod.resolve(codex, col.drag_of(root_, c.name), day)
+            r = asof_mod.resolve(codex, col.shard_dir_of(root_, c.name), day)
             if r.snapshot is None:
                 withheld_as_of.append(asof_mod.withheld_entry(c, codex, r, day))
                 continue
@@ -264,9 +264,9 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
     from app.hold import integrity
     bad: dict[str, set[str]] = {}
     for c in named:
-        drag = Path(c.corpus_dir) if getattr(c, "source", "origin") == "drag" else None
-        if drag is not None and integrity.applies(getattr(c, "codex", None)):
-            found = integrity.violations(drag.parent.parent, drag.parent.name, c.codex)
+        shard_tree = Path(c.corpus_dir) if getattr(c, "source", "origin") == "shard" else None
+        if shard_tree is not None and integrity.applies(getattr(c, "codex", None)):
+            found = integrity.violations(shard_tree.parent.parent, shard_tree.parent.name, c.codex)
             if found:
                 bad[c.name] = set(found)
     dropped: dict[str, int] = {}

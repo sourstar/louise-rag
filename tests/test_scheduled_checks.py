@@ -31,7 +31,7 @@ def test_the_origin_goes_with_the_check_when_there_is_one(tmp_path):
     corpus.mkdir()
     argv = sc.argv_for(SimpleNamespace(name="gutenberg", corpus_dir=corpus, source="origin"))
     assert argv[1:6] == ["-m", "app.louise", "hold", "check", "gutenberg"] and argv[-2:] == ["--origin", str(corpus)]
-    fetched = sc.argv_for(SimpleNamespace(name="g", corpus_dir=corpus, source="drag"))
+    fetched = sc.argv_for(SimpleNamespace(name="g", corpus_dir=corpus, source="shard"))
     assert "--origin" not in fetched, "a fetched copy has no origin here: its check says so"
 
 
@@ -82,4 +82,4 @@ def test_a_turn_runs_one_due_collection_only_in_a_mode_that_parses(isolated_conf
 def test_the_worker_starts_the_runner_and_show_reports_the_last():
     from app import louise, worker
     assert "scheduled_checks.loop" in inspect.getsource(worker)
-    assert "scheduled_check" in inspect.getsource(louise._show_drag)
+    assert "scheduled_check" in inspect.getsource(louise._show_shard)

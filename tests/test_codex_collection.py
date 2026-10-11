@@ -8,7 +8,7 @@ legacy TOML's `[paths]` block, and `app/collections.py` had never heard
 of a Codex.
 
 07 §7.8 specifies the bridge — a `codex = "sha256:…"` key in
-`collections/<name>.toml`, and the collection's tree beside its drag —
+`collections/<name>.toml`, and the collection's tree beside its SHARD —
 and nothing implemented it.
 """
 import json
@@ -55,7 +55,7 @@ def test_a_toml_naming_a_codex_is_loaded_from_it(node):
 
 
 def test_it_takes_7_8s_tree_and_not_a_paths_block(node):
-    """`state/manifest.sqlite`, `index/`, `lance/` beside the drag — the
+    """`state/manifest.sqlite`, `index/`, `lance/` beside the SHARD — the
     same three `records.local_collection` builds, so a stage cannot write
     to a directory another stage never reads."""
     root, cfg, codex = node
@@ -87,9 +87,9 @@ def test_a_codex_whose_hash_is_not_the_files_is_refused(node):
         collections_mod.load_all()
 
 
-def test_a_missing_drag_says_so(node):
+def test_a_missing_shard_says_so(node):
     root, cfg, codex = node
-    (root / "collections" / "gutenberg" / "drag" / "codex.json").unlink()
+    (root / "collections" / "gutenberg" / "shard" / "codex.json").unlink()
     with pytest.raises(ValueError, match="no .*codex.json"):
         collections_mod.load_all()
 

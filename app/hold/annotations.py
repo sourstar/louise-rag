@@ -206,9 +206,9 @@ def read_claims(data: bytes, *, target_plugin: str | None = None) -> list[Submit
 # --------------------------------------------------------------------------
 # the target, as the snapshot the claims are checked against holds it
 
-def _target_snapshot(drag: Path, snapshot_id: str):
-    from . import drag as drag_mod, snapshot as sn
-    p = Path(drag) / drag_mod.snapshot_path(snapshot_id)
+def _target_snapshot(shard_tree: Path, snapshot_id: str):
+    from . import shard as shard_mod, snapshot as sn
+    p = Path(shard_tree) / shard_mod.snapshot_path(snapshot_id)
     if not p.is_file():
         raise AnnotationsError(
             f"the target holds no snapshot {snapshot_id} ({p}): a claim is checked against "
@@ -216,22 +216,22 @@ def _target_snapshot(drag: Path, snapshot_id: str):
     return sn.load(p)
 
 
-def _part_file(drag: Path, shard, current_id: str | None, snapshot_id: str) -> Path | None:
+def _part_file(shard_tree: Path, shard, current_id: str | None, snapshot_id: str) -> Path | None:
     """The file holding `shard` as `snapshot_id` lists it: the part's own
     path when that snapshot is the current one, else whichever version —
     current or superseded (09 §9.5) — has the listed root."""
-    from . import drag as drag_mod
-    newest = Path(drag) / shard.path
+    from . import shard as shard_mod
+    newest = Path(shard_tree) / shard.path
     if current_id == snapshot_id:
         return newest if newest.is_file() else None
     cands = [newest] + sorted(newest.parent.glob(f"{shard.n:05d}.*.jsonl.zst"))
     for p in cands:
-        if p.is_file() and drag_mod.pieces_root_of(p) == shard.root:
+        if p.is_file() and shard_mod.pieces_root_of(p) == shard.root:
             return p
     return None
 
 
-def target_records(drag: Path, target: Codex, snapshot_id: str,
+def target_records(shard_tree: Path, target: Codex, snapshot_id: str,
                    uids: Iterable[str]) -> dict[str, dict[str, Any]]:
     """uid -> {content_hash, lang} for every uid the target snapshot holds.
     Each part is read once and only the frames that hold a wanted uid are
@@ -239,8 +239,8 @@ def target_records(drag: Path, target: Codex, snapshot_id: str,
     target's size."""
     from app.pack import records as pack_records
     from app.share import seeder
-    snap = _target_snapshot(drag, snapshot_id)
-    current = seeder.current_snapshot(Path(drag))
+    snap = _target_snapshot(shard_tree, snapshot_id)
+    current = seeder.current_snapshot(Path(shard_tree))
     current_id = current.snapshot_id if current is not None else None
     order = (target.slicing or {}).get("order", "bytes")
     by_part: dict[tuple[str, int], tuple[Any, list[str]]] = {}
@@ -249,7 +249,7 @@ def target_records(drag: Path, target: Codex, snapshot_id: str,
             by_part.setdefault((s.slice, s.n), (s, []))[1].append(uid)
     out: dict[str, dict[str, Any]] = {}
     for (_, _), (shard, wanted) in sorted(by_part.items()):
-        path = _part_file(Path(drag), shard, current_id, snapshot_id)
+        path = _part_file(Path(shard_tree), shard, current_id, snapshot_id)
         if path is None:
             continue
         index = pack_records.read_index(path)
@@ -390,56 +390,56 @@ def build_codex(target: Codex, from_snapshot: str, *, title: str, summary: str,
 # --------------------------------------------------------------------------
 # the SHARD
 
-def write_parts(drag: Path, records: Sequence[dict[str, Any]], snapshot_id: str):
+def write_parts(shard_tree: Path, records: Sequence[dict[str, Any]], snapshot_id: str):
     """Record parts and their relations parts, `SHARD_RECORDS` per part,
     and the snapshot entries for both."""
     from app.pack import records as pack_records
-    from . import drag as drag_mod, records as rec, snapshot as sn
+    from . import shard as shard_mod, records as rec, snapshot as sn
     shards, relations = [], []
     for n, start in enumerate(range(0, len(records), SHARD_RECORDS), 1):
         part = records[start:start + SHARD_RECORDS]
-        p = Path(drag) / drag_mod.shard_path(SLICE, n)
+        p = Path(shard_tree) / shard_mod.shard_path(SLICE, n)
         pack_records.write_shard(p, part, record_line=1)
         raw = p.read_bytes()
         shards.append(sn.Shard(
-            slice=SLICE, n=n, root=drag_mod.pieces_root(raw),
+            slice=SLICE, n=n, root=shard_mod.pieces_root(raw),
             records_root=rec.records_root(r["content_hash"] for r in part),
             first_id=part[0]["native_id"], last_id=part[-1]["native_id"],
             records=len(part), chunks=0, chunks_root=rec.chunks_root([]), tokens=0,
             bytes=len(raw), toolchain="own"))
         lines = edge_lines(part, snapshot_id)
-        rp = Path(drag) / drag_mod.relations_path(SLICE, n)
+        rp = Path(shard_tree) / shard_mod.relations_path(SLICE, n)
         pack_records.write_lines(rp, lines, key_of=lambda line: json.loads(line)["from"])
         rraw = rp.read_bytes()
-        relations.append(sn.RelationShard(slice=SLICE, n=n, root=drag_mod.pieces_root(rraw),
+        relations.append(sn.RelationShard(slice=SLICE, n=n, root=shard_mod.pieces_root(rraw),
                                           edges=len(lines), bytes=len(rraw)))
     return tuple(shards), tuple(relations)
 
 
-def files_of(drag: Path, snapshot_id: str) -> dict[str, Any]:
+def files_of(shard_tree: Path, snapshot_id: str) -> dict[str, Any]:
     """09 §9.4's `files` for an annotations collection: `validation.json`,
     `LICENSE-TERMS` (null: green) and the seals file (null: open). It has
     no calibration member — no space (09 §9.4, amended 2026-10-09)."""
-    from . import drag as drag_mod
+    from . import shard as shard_mod
     out: dict[str, Any] = {}
-    for name, required in ((drag_mod.VALIDATION_PATH, True), (drag_mod.TERMS_PATH, False),
-                           (drag_mod.seals_path(snapshot_id), False)):
-        p = Path(drag) / name
+    for name, required in ((shard_mod.VALIDATION_PATH, True), (shard_mod.TERMS_PATH, False),
+                           (shard_mod.seals_path(snapshot_id), False)):
+        p = Path(shard_tree) / name
         if p.is_file():
             raw = p.read_bytes()
-            out[name] = {"root": drag_mod.pieces_root(raw), "bytes": len(raw)}
+            out[name] = {"root": shard_mod.pieces_root(raw), "bytes": len(raw)}
         elif required:
-            raise AnnotationsError(f"{name} is missing from the drag")
+            raise AnnotationsError(f"{name} is missing from the SHARD")
         else:
             out[name] = None
     return out
 
 
-def write_snapshot(drag: Path, staging: Path, codex: Codex,
+def write_snapshot(shard_tree: Path, staging: Path, codex: Codex,
                    records: Sequence[dict[str, Any]], snapshot_id: str):
     """The parts, `validation.json` and the FIRST snapshot.
 
-    The parts are cut in `staging` and promoted into the drag only when the
+    The parts are cut in `staging` and promoted into the SHARD only when the
     snapshot is new, so nothing a snapshot already lists is ever
     overwritten: run again with the same claims it computes the same bytes
     and is a no-op; a snapshot that exists with other bytes is refused, as
@@ -447,15 +447,15 @@ def write_snapshot(drag: Path, staging: Path, codex: Codex,
     re-checked, re-issuing parts under 09 §9.5's superseded names — is not
     built here yet, and is refused rather than half-done."""
     import os
-    from . import drag as drag_mod, snapshot as sn
-    drag, staging = Path(drag), Path(staging)
-    out = drag / drag_mod.snapshot_path(snapshot_id)
-    previous, _ = sn._previous(drag, snapshot_id)
+    from . import shard as shard_mod, snapshot as sn
+    shard_tree, staging = Path(shard_tree), Path(staging)
+    out = shard_tree / shard_mod.snapshot_path(snapshot_id)
+    previous, _ = sn._previous(shard_tree, snapshot_id)
     if previous is not None:
         raise AnnotationsError(
             f"this collection already has snapshot {previous.snapshot_id}: a later snapshot "
             f"re-issues its parts (09 §9.5), which `create` does not do — it makes the first")
-    (drag / drag_mod.VALIDATION_PATH).write_bytes(cx.canonical_json(codex.validation.to_dict()))
+    (shard_tree / shard_mod.VALIDATION_PATH).write_bytes(cx.canonical_json(codex.validation.to_dict()))
     if staging.exists():
         shutil.rmtree(staging)
     shards, relations = write_parts(staging, records, snapshot_id)
@@ -463,7 +463,7 @@ def write_snapshot(drag: Path, staging: Path, codex: Codex,
         collection_id=codex.collection_id, snapshot_id=snapshot_id, previous=None,
         shards=shards,
         delta=sn.compute_delta(None, {r["uid"]: r["content_hash"] for r in records}),
-        relations=relations, figures=(), files=files_of(drag, snapshot_id))
+        relations=relations, figures=(), files=files_of(shard_tree, snapshot_id))
     if out.is_file():
         shutil.rmtree(staging)
         if out.read_bytes() == snap.canonical():
@@ -471,7 +471,7 @@ def write_snapshot(drag: Path, staging: Path, codex: Codex,
         raise AnnotationsError(f"snapshot {snapshot_id} exists with different bytes; a snapshot "
                                f"is written once (09 §9.4)")
     for entry in list(shards) + list(relations):
-        dst = drag / entry.path
+        dst = shard_tree / entry.path
         dst.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staging / entry.path, dst)
     shutil.rmtree(staging)
@@ -532,8 +532,8 @@ def create(root: Path, name: str, *, target_ref: str, from_snapshot: str, claims
         raise AnnotationsError(f"{tname} is itself an annotations collection; annotations are "
                                f"about a collection's records (02 §2.10)")
     submitted = read_claims(claims, target_plugin=target.plugin)
-    tdrag = col.drag_of(root, tname)
-    held = target_records(tdrag, target, from_snapshot,
+    tshard = col.shard_dir_of(root, tname)
+    held = target_records(tshard, target, from_snapshot,
                           {u for s in submitted for u in (s.claim["subject"], s.claim["object"])})
     pinned = pin(submitted, held, from_snapshot)
     contributors = sorted({c["contributor"] for c in pinned})
@@ -543,7 +543,7 @@ def create(root: Path, name: str, *, target_ref: str, from_snapshot: str, claims
                                f"annotator the Codex credits with --annotator")
 
     existing = None
-    p = col.drag_of(root, name) / col.CODEX_FILE
+    p = col.shard_dir_of(root, name) / col.CODEX_FILE
     if p.is_file():
         existing = cx.loads(p.read_bytes())
         if not (is_annotations(existing) and existing.annotates
@@ -562,15 +562,15 @@ def create(root: Path, name: str, *, target_ref: str, from_snapshot: str, claims
                                 f"attached to its search results as facts, never ranked."),
             annotator=annotator, platform_image=platform_image, nonce=nonce)
         col.create(root, codex, name=name)
-    drag = col.drag_of(root, name)
+    shard_tree = col.shard_dir_of(root, name)
     if snapshot_id is None:
         snapshot_id = sn.snapshot_id_for(datetime.now(ZoneInfo(codex.origin.clock)),
                                          codex.update.cadence)
     records = records_of(pinned, submitted)
-    snap = write_snapshot(drag, root / name / "state" / "annotations-build", codex, records,
+    snap = write_snapshot(shard_tree, root / name / "state" / "annotations-build", codex, records,
                           snapshot_id)
     # the claims as submitted: this collection's origin (02 §2.10), what each
-    # record's `origin` locates and `origin_hash` covers. Beside the drag,
+    # record's `origin` locates and `origin_hash` covers. Beside the SHARD,
     # never in it — an origin is not a member (07 §7.8)
     origin = root / name / "origin"
     origin.mkdir(parents=True, exist_ok=True)
@@ -607,32 +607,32 @@ class ClaimIndex:
                 self.by_target.setdefault(c.claim[k], []).append(c)
 
 
-#: drag path -> (snapshot hash, its index). Keyed on the PATH (CLAUDE.md).
+#: SHARD path -> (snapshot hash, its index). Keyed on the PATH (CLAUDE.md).
 _indexes: dict[str, tuple[str, ClaimIndex]] = {}
 
 
-def index_of(drag: Path) -> ClaimIndex:
+def index_of(shard_tree: Path) -> ClaimIndex:
     """The claims of the held copy's current snapshot; a tombstoned claim
     is not among them (02 §2.2)."""
     from app.pack import records as pack_records
     from app.share import seeder
-    snap = seeder.current_snapshot(Path(drag))
+    snap = seeder.current_snapshot(Path(shard_tree))
     if snap is None:
         return ClaimIndex(None, ())
-    hit = _indexes.get(str(drag))
+    hit = _indexes.get(str(shard_tree))
     if hit is not None and hit[0] == snap.hash:
         return hit[1]
     gone = {t.uid for t in snap.delta.tombstoned}
     claims = []
     for s in snap.shards:
-        p = Path(drag) / s.path
+        p = Path(shard_tree) / s.path
         if not p.is_file():
             continue                     # a part this peer does not hold: its claims are not here
         for r in pack_records.iter_records(p):
             if r["uid"] not in gone:
                 claims.append(Claim(r["uid"], claim_of(r)))
     idx = ClaimIndex(snap.snapshot_id, claims)
-    _indexes[str(drag)] = (snap.hash, idx)
+    _indexes[str(shard_tree)] = (snap.hash, idx)
     return idx
 
 

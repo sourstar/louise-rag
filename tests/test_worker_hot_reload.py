@@ -217,7 +217,7 @@ def test_one_malformed_toml_refuses_its_own_collection_not_the_round(
     to the other way a collection can be unrunnable.
 
     Observed live 2026-09-12 while re-minting gutenberg: its TOML named a
-    Codex whose drag had been moved aside for the re-mint, `load_all`
+    Codex whose SHARD had been moved aside for the re-mint, `load_all`
     raised (correctly — a typo must not silently become the default), and
     the round loop logged a traceback every five seconds and served
     NOTHING. pubmed's archive import stopped with it.

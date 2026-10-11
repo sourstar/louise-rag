@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from app.hold import collection as col, drag as drag_mod, envelope as env
+from app.hold import collection as col, shard as shard_mod, envelope as env
 from app.hold.codex import CodexError, canonical_json
 from app.share import messages, peers
 
@@ -46,8 +46,8 @@ def ensure_schema(con: sqlite3.Connection) -> sqlite3.Connection:
 
 
 def attestation_path(root: Path, name: str, codex, attestation_id: str) -> Path:
-    return (Path(root) / name / "state" / "attestations" / drag_mod._hex(codex.collection_id)
-            / f"{drag_mod._hex(attestation_id)}.json")
+    return (Path(root) / name / "state" / "attestations" / shard_mod._hex(codex.collection_id)
+            / f"{shard_mod._hex(attestation_id)}.json")
 
 
 def published(con) -> dict[str, str]:

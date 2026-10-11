@@ -9,7 +9,7 @@ import time
 import pytest
 from nacl import signing
 
-from app.hold import collection as col, drag, envelope as env, snapshot as sn
+from app.hold import collection as col, shard as shard_mod, envelope as env, snapshot as sn
 from app.hold.codex import canonical_json
 from app.share import members as mem, messages, peers
 from tests.deposit.test_deposit_identity import node  # noqa: F401
@@ -19,15 +19,15 @@ PEER = signing.SigningKey(b"\x07" * 32)
 PEER_KEY = env.key_text(PEER.verify_key)
 
 
-def a_drag(node):  # noqa: F811
+def a_shard(node):  # noqa: F811
     """A held collection with one shard, a signed snapshot and one attestation."""
     codex = a_root(node, pubmed())
     name = col.name_of(node, codex.collection_id)
-    d = col.drag_of(node, name)
+    d = col.shard_dir_of(node, name)
     data = b"r" * 20_000
     (d / "records/year=2023").mkdir(parents=True)
     (d / "records/year=2023/00001.jsonl.zst").write_bytes(data)
-    shard = sn.Shard(slice="year=2023", n=1, root=drag.pieces_root(data),
+    shard = sn.Shard(slice="year=2023", n=1, root=shard_mod.pieces_root(data),
                      records_root="sha256:" + "11" * 32, first_id="a", last_id="z", records=2,
                      chunks=4, chunks_root="sha256:" + "22" * 32, tokens=2048, bytes=len(data))
     snap = sn.Snapshot(collection_id=codex.collection_id, snapshot_id="2026-08", previous=None,
@@ -36,7 +36,7 @@ def a_drag(node):  # noqa: F811
     (d / "snapshots/2026-08.json").write_bytes(snap.canonical())
     side = sn.sidecar_add(None, snap.hash, KEY, now=NOW)
     (d / "snapshots/2026-08.sig.json").write_bytes(canonical_json(side))
-    att_dir = node / name / "state" / "attestations" / drag._hex(codex.collection_id)
+    att_dir = node / name / "state" / "attestations" / shard_mod._hex(codex.collection_id)
     att_dir.mkdir(parents=True)
     for i, t in enumerate(("2026-10-01T00:00:00Z", "2026-10-05T00:00:00Z")):
         body = {"kind": "louise-attestation", "version": 1, "key": PEER_KEY, "time": t,
@@ -99,12 +99,12 @@ def test_a_pull_names_what_it_wants():
 # ---- pulls answered with the exact bytes ------------------------------------------------
 
 def test_pulls_answer_the_exact_stored_bytes_and_items_verify(node):  # noqa: F811
-    codex, name, d, snap = a_drag(node)
+    codex, name, d, snap = a_shard(node)
     cid = codex.collection_id
     got = messages.answer_pull(node, messages.pull_body(key=PEER_KEY, what="codex",
                                                         collection_id=cid))
     (path, data), = messages.verify_items(got["items"])
-    assert path == f"codex/{drag._hex(cid)}.json" and data == (d / "codex.json").read_bytes()
+    assert path == f"codex/{shard_mod._hex(cid)}.json" and data == (d / "codex.json").read_bytes()
     got = messages.answer_pull(node, messages.pull_body(key=PEER_KEY, what="snapshot",
                                                         collection_id=cid))
     items = dict(messages.verify_items(got["items"]))
@@ -128,8 +128,8 @@ def test_pulls_answer_the_exact_stored_bytes_and_items_verify(node):  # noqa: F8
 
 
 def test_a_collection_entry_is_9_9_s_shape(node):  # noqa: F811
-    codex, name, d, snap = a_drag(node)
-    members = mem.members_of(snap, drag_dir=d)
+    codex, name, d, snap = a_shard(node)
+    members = mem.members_of(snap, shard_dir=d)
     entry = messages.collection_entry(codex, snap, members, codex_bytes=(d / "codex.json").read_bytes(),
                                       lineage_id=codex.collection_id)
     assert set(entry) == {"collection_id", "lineage_id", "title", "snapshot_id", "snapshot_hash",

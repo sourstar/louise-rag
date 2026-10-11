@@ -425,7 +425,7 @@ def test_a_cursor_that_outlived_its_manifest_is_cleared(corpus, tmp_path):
     Found live on the migrated pubmed collection: 150 containers of 30,000
     documents each — 4,500,000 documents, a round number because it is 150
     whole files — present in the cursor and in neither the manifest nor any
-    error log. The records build then produced a drag that verified
+    error log. The records build then produced a SHARD that verified
     internally while being 11% short.
     """
     c = _collection(tmp_path)

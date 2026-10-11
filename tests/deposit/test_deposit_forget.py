@@ -56,7 +56,7 @@ def test_forget_removes_a_curated_collection_whole(node):  # noqa: F811
     name = col.name_of(node, codex.collection_id)
     louise._write_held_file(node, codex, ENCODER_URL)
     held = deposit.held_file(node, name)
-    assert held.exists() and (node / name / "drag" / "codex.json").exists()
+    assert held.exists() and (node / name / "shard" / "codex.json").exists()
     out = forget_mod.forget(node, name)
     assert out["erased_deposits"] == 0 and len(out["removed"]) == 2
     assert not held.exists() and not (node / name).exists()
@@ -81,16 +81,16 @@ def test_forgetting_what_is_not_held_is_nothing_to_do(node):  # noqa: F811
 
 def test_kinds_vectors_takes_the_vector_side_only(node):  # noqa: F811
     codex = held_with_deposits(node)
-    drag = node / "alice" / "drag"
-    (drag / "vectors-0123456789abcdef-all").mkdir()
-    (drag / "vectors-0123456789abcdef-all" / "x.parquet").write_bytes(b"v")
-    (drag / "records-all").mkdir()
-    (drag / "records-all" / "r.jsonl").write_bytes(b"r")
+    shard_tree = node / "alice" / "shard"
+    (shard_tree / "vectors-0123456789abcdef-all").mkdir()
+    (shard_tree / "vectors-0123456789abcdef-all" / "x.parquet").write_bytes(b"v")
+    (shard_tree / "records-all").mkdir()
+    (shard_tree / "records-all" / "r.jsonl").write_bytes(b"r")
     assert (node / "alice" / "lance").is_dir()
     out = forget_mod.forget(node, "alice", kinds=("vectors",))
-    assert not (drag / "vectors-0123456789abcdef-all").exists()
+    assert not (shard_tree / "vectors-0123456789abcdef-all").exists()
     assert not (node / "alice" / "lance").exists()
-    assert (drag / "records-all").exists() and (drag / "codex.json").exists()
+    assert (shard_tree / "records-all").exists() and (shard_tree / "codex.json").exists()
     assert deposit.held_file(node, "alice").exists()
     assert col.read(node, "alice").collection_id == codex.collection_id
     assert sorted(Path(p).name for p in out["removed"]) == \

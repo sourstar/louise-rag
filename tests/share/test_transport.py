@@ -53,7 +53,7 @@ def test_two_peers_on_localhost_the_members_follow_the_snapshot(node, fetcher, m
                       key=OURS, own_key=OUR_KEY)
     assert got["snapshots"]["promoted"] == ["2026-08"]
     fname = got["name"]
-    fd = col.drag_of(fetcher, fname)
+    fd = col.shard_dir_of(fetcher, fname)
     fcon = manifest(fetcher / fname / "state" / "manifest.sqlite")
     said: list[str] = []
     gated = transport.fetch_members(fetcher, fname, codex, slices="all", kinds=("records",),
@@ -144,9 +144,9 @@ def test_a_beat_on_a_complete_collection_costs_a_listing_not_a_stat_per_shard(no
     calls: list[int] = []
     real = holdings.missing
 
-    def counted(drag_dir, members):
+    def counted(shard_dir, members):
         calls.append(1)
-        return real(drag_dir, members)
+        return real(shard_dir, members)
     monkeypatch.setattr(holdings, "missing", counted)
     con = db.connect(c)
     opened: list[int] = []
@@ -305,11 +305,11 @@ class _LaggingDisk:
 
 
 def test_a_file_received_whole_is_returned_only_once_the_disk_holds_what_was_verified(tmp_path, monkeypatch):
-    from app.hold import drag as drag_mod
+    from app.hold import shard as shard_mod
     from app.share import members as mem
     data = bytes(range(256)) * 300
-    root = drag_mod.pieces_root(data)
-    member = mem.Member("calibration-x", (drag_mod.MemberFile("calibration/x.safetensors", root, len(data)),))
+    root = shard_mod.pieces_root(data)
+    member = mem.Member("calibration-x", (shard_mod.MemberFile("calibration/x.safetensors", root, len(data)),))
     t = member.torrents()[0]
     disk = _LaggingDisk(t, member.name, tmp_path / "staging", data)
     real_sleep = time.sleep
@@ -317,7 +317,7 @@ def test_a_file_received_whole_is_returned_only_once_the_disk_holds_what_was_ver
     landed = transport.fetch_file(disk, torrent=t, member=member.name, staging=tmp_path / "staging",
                                   poll_s=0.0)
     assert landed == disk.landed
-    assert drag_mod.pieces_root_of(landed) == root, "returned while the last block was still due"
+    assert shard_mod.pieces_root_of(landed) == root, "returned while the last block was still due"
     # and one that never comes right is an error, bounded — never a refusal of the bytes the swarm served
     disk = _LaggingDisk(t, member.name, tmp_path / "staging2", data)
     disk.polls_left = -1
@@ -327,14 +327,14 @@ def test_a_file_received_whole_is_returned_only_once_the_disk_holds_what_was_ver
 
 
 def test_landed_whole_is_the_root_not_the_length(tmp_path):
-    from app.hold import drag as drag_mod
+    from app.hold import shard as shard_mod
     data = b"x" * 40000
     p = tmp_path / "f"
     p.write_bytes(b"\0" * len(data))
-    assert not transport.landed_whole(p, len(data), drag_mod.pieces_root(data)), "full length, holes inside"
+    assert not transport.landed_whole(p, len(data), shard_mod.pieces_root(data)), "full length, holes inside"
     p.write_bytes(data)
-    assert transport.landed_whole(p, len(data), drag_mod.pieces_root(data))
-    assert not transport.landed_whole(tmp_path / "absent", len(data), drag_mod.pieces_root(data))
+    assert transport.landed_whole(p, len(data), shard_mod.pieces_root(data))
+    assert not transport.landed_whole(tmp_path / "absent", len(data), shard_mod.pieces_root(data))
 
 
 

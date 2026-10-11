@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # deploy-louise-vega.sh — deploy-louise-3edbabb.sh plus the explicit model keys
-# (operator, 2026-10-08): the code of 2026-10-08/09 (input forms, Codex 5/6,
+# (operator, 2026-10-08) and, since 2026-10-11, the SHARD directory rename
+# (5c): the code of 2026-10-08/09 (input forms, Codex 5/6,
 # VeGa's receipts path beside RAGE, SHARD vocabulary, the torrent landing
 # fixes) REFUSES a collection file that still says `model =`, so the node's
 # files are migrated in the stop window (5a), after a dry run on a copy (3a).
@@ -59,13 +60,22 @@ docker run --rm louise-rag:staged python -c "import pypdfium2; print('pypdfium2 
 # config must load every collection, and the two directories the merge
 # touched most run in the staged image — one directory per invocation.
 say "3a. the live config loads every collection"
-# The live web container's mounts, as it has them (the drag lives on tank since
+# The live web container's mounts, as it has them (the SHARD lives on tank since
 # 2026-09-21, so $ROOT/data alone holds no codex.json — found 2026-10-06), with
 # /config read-only. Mounts only: the container's env carries the admin token
 # and is never dumped.
 LIVE_MOUNTS=$(docker inspect ix-louise-rag-web-1 \
   --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}}{{if eq .Destination "/config"}}:ro{{else if not .RW}}:ro{{end}} {{end}}')
 echo "live mounts: $LIVE_MOUNTS"
+# The staged code reads `shard/` (5c renames the live ones later): the same
+# bytes, mounted where it looks — the tank mounts' targets and every
+# collection's local drag/ on ssd4.
+LIVE_MOUNTS=$(echo "$LIVE_MOUNTS" | sed -E 's#(:/data/collections/[^ :]*)/drag#\1/shard#g')
+for d in "$ROOT"/data/collections/*/drag; do
+  [ -d "$d" ] && [ -n "$(ls -A "$d")" ] || continue
+  n=$(basename "$(dirname "$d")")
+  LIVE_MOUNTS="$LIVE_MOUNTS -v $d:/data/collections/$n/shard:ro"
+done
 # The model keys, on a COPY of the live config (the live files are migrated in 5a,
 # with the app stopped): align each `model` line to its RAGE URL, then migrate.
 CHECK=/tmp/louise-cfg-check
@@ -171,13 +181,32 @@ python3 "$ROOT/src/tools/migrate_model_keys.py" "$ROOT/config/collections"
 if grep -l '^model *=' "$ROOT"/config/collections/*.toml; then
   echo "a file above still says model =: NOT starting; restore config/collections.pre-$COMMIT"; exit 1
 fi
+# 5c. The SHARD's directory follows its name (2026-10-11; 09's opening note):
+# `drag/` -> `shard/` in every collection, `tank/apps/louise-drag` ->
+# `louise-shard`, and the mounts in 5b's same update. Each step skips what is
+# already done, so a rerun after a stop finishes it.
+say "5c. drag/ -> shard/ on disk"
+if zfs list -H -o name tank/apps/louise-drag >/dev/null 2>&1; then
+  zfs rename tank/apps/louise-drag tank/apps/louise-shard
+fi
+zfs list -H -o name,mountpoint tank/apps/louise-shard
+for d in "$ROOT"/data/collections/*/drag; do
+  [ -d "$d" ] || continue
+  t="$(dirname "$d")/shard"
+  if [ -e "$t" ]; then
+    rmdir "$t" 2>/dev/null || { echo "$t exists and is not empty beside $d: look"; exit 1; }
+  fi
+  mv "$d" "$t" && echo "moved $d -> $t"
+done
+if ls -d "$ROOT"/data/collections/*/drag 2>/dev/null; then echo "a drag/ is left"; exit 1; fi
 # 5b. LOUISE_PLATFORM_IMAGE = the image web and worker will start in (07 §7.3;
 # STATUS 2026-09-14). This runbook did not set it, and from 2026-09-21 to
 # 2026-10-07 the node declared pubmed's Codex image while running every later
 # build. Through TrueNAS's API client: the app config carries the admin token
 # and never reaches a command line or this log. `app.update` may start the
 # app itself, so the start below only runs when it did not.
-python3 "$ROOT/src/deploy/16f/set_platform_image.py" "$NEW_ID"
+python3 "$ROOT/src/deploy/16f/set_platform_image.py" "$NEW_ID" \
+  /mnt/tank/apps/louise-drag/ /mnt/tank/apps/louise-shard/ drag shard
 s=$(midclt call app.query '[["name","=","louise-rag"]]' | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['state'])")
 echo "state after the update: $s"
 [ "$s" = "RUNNING" ] || midclt call app.start louise-rag >/dev/null
@@ -215,4 +244,8 @@ echo "(each kept validation is re-embedded once at start — a few seconds per r
 #   docker tag louise-rag:pre-<COMMIT> louise-rag:local
 #   rm -rf config/collections && mv config/collections.pre-<COMMIT> config/collections   # the old keys, for the old code
 #   midclt call app.start louise-rag         # poll app.query for RUNNING
-# The app definition (env, volumes) was not touched by this deploy.
+# Since 2026-10-11 the app definition's volumes ARE touched (5c/5b): before the
+# old code starts again, undo them —
+#   python3 src/deploy/16f/rename_mounts.py /mnt/tank/apps/louise-shard/ /mnt/tank/apps/louise-drag/ shard drag
+#   zfs rename tank/apps/louise-shard tank/apps/louise-drag
+#   for d in data/collections/*/shard; do mv "$d" "$(dirname "$d")/drag"; done

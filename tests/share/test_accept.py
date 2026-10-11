@@ -14,7 +14,7 @@ lt = pytest.importorskip("libtorrent")
 
 from app import copy_state, db, embeddings, licensing  # noqa: E402
 from app.acquire import seeding, transport_torrent as tt  # noqa: E402
-from app.hold import collection as col, drag as drag_mod, records as rec  # noqa: E402
+from app.hold import collection as col, shard as shard_mod, records as rec  # noqa: E402
 from app.share import accept, attest, contribute, coverage as cov, holdings, members as mem, peers, \
     rendezvous, seeder, transport  # noqa: E402
 from tests.deposit.test_deposit_identity import node  # noqa: F401, E402
@@ -94,19 +94,19 @@ def test_the_survivor_takes_the_announced_bundle_in_and_serves_it(ready, tmp_pat
     root, snapshot, codex, kw = ready
     for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
         attested(root, codex, snapshot, check=check, key=key)
-    sdrag = col.drag_of(root, "gutenberg")
-    member_path = drag_mod.calibration_paths(codex.space.calibration.set)[0]
-    assert drag_mod.pieces_root_of(sdrag / member_path) == snapshot.files[member_path]["root"], \
+    sshard = col.shard_dir_of(root, "gutenberg")
+    member_path = shard_mod.calibration_paths(codex.space.calibration.set)[0]
+    assert shard_mod.pieces_root_of(sshard / member_path) == snapshot.files[member_path]["root"], \
         "the fixture's snapshot names the member as it lies"
     # the sharer contributes, then serves records and bundles
     out = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)], **kw)
     assert out["accepted"], "the sharer's own bundles"
-    assert drag_mod.pieces_root_of(sdrag / member_path) == snapshot.files[member_path]["root"], \
+    assert shard_mod.pieces_root_of(sshard / member_path) == snapshot.files[member_path]["root"], \
         "contributing rewrote the calibration member"
     c = C("gutenberg", codex)
     monkeypatch.setattr(copy_state, "of", lambda collection: copy_state.ALWAYS_IN_USE)
     monkeypatch.setattr(licensing, "state_for", lambda collection, *a, **k: licensing.NOT_REQUIRED)
-    entries = seeder.publish(c, snapshot, col.drag_of(root, "gutenberg"), root / "gutenberg" / "state", kw["con"])
+    entries = seeder.publish(c, snapshot, col.shard_dir_of(root, "gutenberg"), root / "gutenberg" / "state", kw["con"])
     assert any(e["member"].startswith("bundle-") for e in entries)
     seeding.tick([c], {c.name: kw["con"]}, kw["con"], "running")
     seed_port = tt.get_session().listen_port()
@@ -114,10 +114,10 @@ def test_the_survivor_takes_the_announced_bundle_in_and_serves_it(ready, tmp_pat
     fetcher = tmp_path / "fetcher" / "collections"
     fetcher.mkdir(parents=True)
     col.write(fetcher, codex)
-    fdrag = col.drag_of(fetcher, "gutenberg")
-    (fdrag / "snapshots").mkdir(exist_ok=True)
-    for p in (col.drag_of(root, "gutenberg") / "snapshots").glob("*.json"):
-        shutil.copy(p, fdrag / "snapshots" / p.name)
+    fshard = col.shard_dir_of(fetcher, "gutenberg")
+    (fshard / "snapshots").mkdir(exist_ok=True)
+    for p in (col.shard_dir_of(root, "gutenberg") / "snapshots").glob("*.json"):
+        shutil.copy(p, fshard / "snapshots" / p.name)
     flocal = rec.local_collection(fetcher, "gutenberg", codex)
     fcon = db.connect(flocal)
     leech = leech_session()
@@ -125,7 +125,7 @@ def test_the_survivor_takes_the_announced_bundle_in_and_serves_it(ready, tmp_pat
                                   ack_missing=False, session=leech, con=fcon,
                                   hints=[("127.0.0.1", seed_port)])
     assert got["errors"] == [] and got["refused"] == [] and got["promoted"], got
-    assert all(holdings.held(fdrag, m) for m in holdings.wanted(snapshot, slices="all", kinds=("records",)))
+    assert all(holdings.held(fshard, m) for m in holdings.wanted(snapshot, slices="all", kinds=("records",)))
     # the events the sharer announced reach the fetcher (one node.sqlite here: re-opened as received),
     # and the sharer's digest names the port its swarm listens on (09 §9.9 peer_port)
     node_con = kw["node_con"]
@@ -163,7 +163,7 @@ def test_the_survivor_takes_the_announced_bundle_in_and_serves_it(ready, tmp_pat
     assert not any((fetcher / "gutenberg" / "state" / holdings.STAGING).rglob("header.json")), "staging is empty"
     assert any("accepted" in s and "served from here now" in s for s in said)
     # the survivor serves the bundles it took in
-    served = seeder.publish(fc, snapshot, fdrag, fetcher / "gutenberg" / "state", fcon)
+    served = seeder.publish(fc, snapshot, fshard, fetcher / "gutenberg" / "state", fcon)
     assert {e["member"] for e in served if e["member"].startswith("bundle-")} == {b["member"] for b in out["bundles"]}
     # a second beat has nothing to do; the same event again is held, not fetched twice
     for eid in ids:
@@ -181,8 +181,8 @@ def test_a_newer_snapshot_announced_is_pulled_from_its_announcer(node, fetcher, 
     from app.share import fetch, messages
     from tests.hold.conftest import KEY, NOW
     from tests.share.test_fetch import SHARER, second_snapshot
-    from tests.share.test_messages import a_drag
-    codex, name, d, first = a_drag(node)
+    from tests.share.test_messages import a_shard
+    codex, name, d, first = a_shard(node)
     client = TestClient(api.app)
     got = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=client, key=OURS, own_key=OUR_KEY)
     assert got["snapshots"]["promoted"] == ["2026-08"]
@@ -204,8 +204,8 @@ def test_a_newer_snapshot_announced_is_pulled_from_its_announcer(node, fetcher, 
     said: list[str] = []
     out = accept.beat([fc], {fc.name: None}, node_con, log=said.append, **kw)
     assert out["snapshots"]["pulled"] == 1 and accept.pending(node_con, "snapshot") == []
-    fdrag = col.drag_of(fetcher, fc.name)
-    assert (fdrag / "snapshots/2026-09.json").read_bytes() == second.canonical()
+    fshard = col.shard_dir_of(fetcher, fc.name)
+    assert (fshard / "snapshots/2026-09.json").read_bytes() == second.canonical()
     assert any("snapshot 2026-09 pulled" in s for s in said)
     # announced again, or an older one: known, nothing pulled
     for sid, h in (("2026-09", second.hash), ("2026-08", first.hash)):
@@ -256,8 +256,8 @@ def test_a_flag_received_has_its_attestations_pulled_and_is_a_claim_until_second
     from app.share import fetch, levels, messages
     from tests.hold.conftest import PLATFORM
     from tests.share.test_fetch import SHARER
-    from tests.share.test_messages import a_drag
-    codex, name, d, snap = a_drag(node)
+    from tests.share.test_messages import a_shard
+    codex, name, d, snap = a_shard(node)
     client = TestClient(api.app)
     got = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=client, key=OURS, own_key=OUR_KEY)
     now = time.time()
@@ -312,7 +312,7 @@ def test_a_second_bundle_over_held_chunks_is_compared_attested_and_not_stored(re
     second = exp.export(root, "gutenberg", shard=sid, dest=root.parent / "second", vectors_for=kw["vectors_for"],
                         embed=kw["embed"], key=PEER, snapshot_id=snapshot.snapshot_id)
     b2 = second["bundles"][0]
-    named = root.parent / drag_mod._hex(b2["bundle_id"])          # 09 §9.7: the directory is the id
+    named = root.parent / shard_mod._hex(b2["bundle_id"])          # 09 §9.7: the directory is the id
     shutil.move(b2["path"], named)
     member = mem.bundle_member(codex.space_segment, named)
     staged = root / "gutenberg" / "state" / holdings.STAGING / member.name

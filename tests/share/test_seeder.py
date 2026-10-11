@@ -13,7 +13,7 @@ lt = pytest.importorskip("libtorrent")
 
 from app import collections as collections_mod, copy_state, db, licensing, louise  # noqa: E402
 from app.acquire import seeding, transport_torrent as tt  # noqa: E402
-from app.hold import collection as col, drag, snapshot as sn  # noqa: E402
+from app.hold import collection as col, shard as shard_mod, snapshot as sn  # noqa: E402
 from app.share import members as mem, seeder  # noqa: E402
 from tests.deposit.test_deposit_identity import node  # noqa: F401, E402
 from tests.hold.conftest import a_root, pubmed  # noqa: E402
@@ -22,11 +22,11 @@ SLICE = "year=2023"
 
 
 def a_shared_collection(node, monkeypatch):  # noqa: F811
-    """A held, public, in-use collection with two record shards in its drag
+    """A held, public, in-use collection with two record shards in its SHARD
     and a snapshot naming them, `share = true` in its file."""
     codex = a_root(node, pubmed())
     name = col.name_of(node, codex.collection_id)
-    d = col.drag_of(node, name)
+    d = col.shard_dir_of(node, name)
     files = []
     for n, size in ((1, 40_000), (2, 70_000)):
         data = bytes([n]) * size
@@ -34,7 +34,7 @@ def a_shared_collection(node, monkeypatch):  # noqa: F811
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(data)
         files.append((n, data))
-    shards = tuple(sn.Shard(slice=SLICE, n=n, root=drag.pieces_root(data),
+    shards = tuple(sn.Shard(slice=SLICE, n=n, root=shard_mod.pieces_root(data),
                             records_root="sha256:" + "11" * 32, first_id=f"{n}a",
                             last_id=f"{n}z", records=2, chunks=4,
                             chunks_root="sha256:" + "22" * 32, tokens=2048, bytes=len(data))
@@ -99,7 +99,7 @@ def test_a_peer_fetches_a_member_by_the_infohash_it_computed_itself(node, monkey
     """04 §4.3 end to end on localhost: the worker's seeder serves the
     members; a leecher that knows only the infohash (from the snapshot, not
     from us) gets the metadata, the piece layers and the bytes from our
-    swarm, and ends with the drag's file."""
+    swarm, and ends with the SHARD's file."""
     quiet_sessions(monkeypatch)
     c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
     con = db.connect(c)
@@ -112,7 +112,7 @@ def test_a_peer_fetches_a_member_by_the_infohash_it_computed_itself(node, monkey
     member = f"records-{SLICE}"
     path = f"records/{SLICE}/00002.jsonl.zst"
     infohash = mem.infohash(mem.info_dict(member, path, len(files[2]),
-                                         drag.pieces_root(files[2])))
+                                         shard_mod.pieces_root(files[2])))
     leech = lt.session({"listen_interfaces": "127.0.0.1:0", "enable_dht": False,
                         "enable_lsd": False, "enable_upnp": False, "enable_natpmp": False,
                         "alert_mask": 0})

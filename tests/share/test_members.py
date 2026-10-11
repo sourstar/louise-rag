@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from app.hold import drag, snapshot as sn
+from app.hold import shard as shard_mod, snapshot as sn
 from app.hold.codex import canonical_json
 from app.share import members as m
 
@@ -72,7 +72,7 @@ def test_libtorrent_computes_the_same_infohash_from_the_file(tmp_path):
     f = tmp_path / member / rel
     f.parent.mkdir(parents=True)
     f.write_bytes(data)
-    ours = m.info_dict(member, rel, len(data), drag.pieces_root(data))
+    ours = m.info_dict(member, rel, len(data), shard_mod.pieces_root(data))
     fs = lt.file_storage()
     lt.add_files(fs, str(tmp_path / member))
     t = lt.create_torrent(fs, m.PIECE_LENGTH, flags=lt.create_torrent_flags_t.v2_only)
@@ -135,7 +135,7 @@ def test_a_snapshot_implies_its_members_with_their_files_and_roots():
     r = got["records-year=1975-1979"]
     assert [f.path for f in r.files] == ["records/year=1975-1979/00001.jsonl.zst",
                                          "records/year=1975-1979/00002.jsonl.zst"]
-    assert r.root == drag.member_root(r.files) and r.bytes == 30
+    assert r.root == shard_mod.member_root(r.files) and r.bytes == 30
     assert got["records-year=2023"].root == ROOT, "one file: the file's pieces root"
     assert got["relations-year=2023"].files[0].path == "relations/year=2023/00001.jsonl.zst"
     assert got["figures-year=2023"].files[0].path == "figures/year=2023/00001.fig.zst"
@@ -156,12 +156,12 @@ def test_the_terms_member_exists_for_a_gated_class():
     assert got["terms"].files[0].path == "LICENSE-TERMS" and got["terms"].bytes == 50
 
 
-def test_no_text_index_member_comes_from_the_drag(tmp_path):
+def test_no_text_index_member_comes_from_the_shard(tmp_path):
     """09 §9.16, amended 2026-10-08: the text index is no member — each peer
     builds its own — so segments on disk publish nothing."""
-    d = tmp_path / "drag"
+    d = tmp_path / "shard"
     seg = d / "index" / "year=2023" / "00001"
     seg.mkdir(parents=True)
     (seg / "seg.bin").write_bytes(bytes(40000))
-    got = {x.name for x in m.members_of(a_snapshot(), drag_dir=d)}
+    got = {x.name for x in m.members_of(a_snapshot(), shard_dir=d)}
     assert not any(n.startswith("index-year") for n in got)

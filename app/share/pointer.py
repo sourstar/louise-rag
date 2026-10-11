@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
-from app.hold import drag as drag_mod, envelope as env
+from app.hold import shard as shard_mod, envelope as env
 from app.hold.codex import CodexError, canonical_json
 
 DHT_WAIT_S = 20.0
@@ -32,13 +32,13 @@ TIMEOUT_S = 20.0
 
 def salt_of(codex) -> bytes:
     """`salt` = the 32 raw bytes of `collection_id` (09 §9.11)."""
-    return bytes.fromhex(drag_mod._hex(codex.collection_id))
+    return bytes.fromhex(shard_mod._hex(codex.collection_id))
 
 
 def well_known_url(codex) -> str:
     """`/.well-known/louise-pointer/<collection_id hex>.json` on the anchor's domain."""
     parts = urlsplit(codex.certifier.anchor)
-    return urlunsplit((parts.scheme, parts.netloc, f"/.well-known/louise-pointer/{drag_mod._hex(codex.collection_id)}.json",
+    return urlunsplit((parts.scheme, parts.netloc, f"/.well-known/louise-pointer/{shard_mod._hex(codex.collection_id)}.json",
                        "", ""))
 
 

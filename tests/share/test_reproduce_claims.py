@@ -19,8 +19,8 @@ def test_each_claim_is_run_once_on_its_shard_and_its_outcome_recorded(tmp_path, 
     from app import copy_state
     from app.hold import equivalence
     shard_path = "records/lang=en/00001.jsonl.zst"
-    (tmp_path / "g" / "drag" / "records" / "lang=en").mkdir(parents=True)
-    (tmp_path / "g" / "drag" / shard_path).write_bytes(b"x")
+    (tmp_path / "g" / "shard" / "records" / "lang=en").mkdir(parents=True)
+    (tmp_path / "g" / "shard" / shard_path).write_bytes(b"x")
     codex = SimpleNamespace(collection_id="sha256:" + "c" * 64)
     c = SimpleNamespace(name="g", codex=codex, corpus_dir=tmp_path / "origin", source="origin")
     (tmp_path / "origin").mkdir()

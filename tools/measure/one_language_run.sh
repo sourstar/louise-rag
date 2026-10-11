@@ -11,9 +11,9 @@ docker run --rm --name onelang-search --network container:ix-louise-rag-web-1 \
   --env-file /dev/stdin \
   -v /mnt/ssd4/apps/louise-rag/data:/data:ro \
   -v /mnt/ssd4/apps/louise-rag/config:/config:ro \
-  -v /mnt/tank/apps/louise-drag/gutenberg:/data/collections/gutenberg/drag:ro \
-  -v /mnt/tank/apps/louise-drag/pubmed:/data/collections/pubmed/drag:ro \
-  -v /mnt/tank/apps/louise-drag/wikipedia:/data/collections/wikipedia/drag:ro \
+  -v /mnt/tank/apps/louise-shard/gutenberg:/data/collections/gutenberg/shard:ro \
+  -v /mnt/tank/apps/louise-shard/pubmed:/data/collections/pubmed/shard:ro \
+  -v /mnt/tank/apps/louise-shard/wikipedia:/data/collections/wikipedia/shard:ro \
   -v /root/onelang:/onelang:ro \
   --tmpfs /fts:rw,size=512m -e PYTHONPATH=/srv "$IMG" nice -n 10 python /onelang/${SCRIPT:-one_language_search.py} /onelang/queries.jsonl \
   <<ENV

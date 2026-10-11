@@ -233,7 +233,7 @@ def _shard_rows(pack_dir):
 def test_a_build_records_the_three_roots_of_9_4(isolated_config, tmp_path, corpus_dir):
     """`root`, `records_root` and `chunks_root` each answer a different
     question, and a snapshot carries all three (09 §9.4)."""
-    from app.hold import drag, records as hold_records
+    from app.hold import shard as shard_mod, records as hold_records
     from app.pack import records as pack_records
 
     origin = _discovered(tmp_path, "gutenberg", "gutenberg", corpus_dir)
@@ -251,8 +251,8 @@ def test_a_build_records_the_three_roots_of_9_4(isolated_config, tmp_path, corpu
         # most one 16 KiB block, because BEP 52 makes such a file its own
         # single leaf; these fixture shards are that small, and the next
         # assertion is what separates them in general.
-        assert row["root"] == drag.pieces_root_of(path)
-        assert (path.stat().st_size <= drag.BLOCK) == \
+        assert row["root"] == shard_mod.pieces_root_of(path)
+        assert (path.stat().st_size <= shard_mod.BLOCK) == \
             (row["root"] == "sha256:" + row["sha256"])
         # `records_root` is over the content hashes in record order, and is
         # reproducible from the shard's own bytes.

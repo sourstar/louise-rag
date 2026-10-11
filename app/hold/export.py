@@ -27,7 +27,7 @@ are easy to get subtly wrong:
     produced, and a peer that has embedded half a shard says so by
     carrying half a shard.
   * `possession` maps each of those uids to the record's `content_hash`
-    as the drag holds it. That is what makes a bundle admissible against
+    as the SHARD holds it. That is what makes a bundle admissible against
     a peer's own copy (03 §3.5: admissibility is `space_id` plus
     per-record `content_hash`), and it is read from the shard rather than
     recomputed, because the shard is what the snapshot's roots cover.
@@ -46,7 +46,7 @@ from .. import layers as layers_mod
 from . import bundle as bd
 from . import calibration as cal
 from . import collection as col
-from . import drag as drag_mod
+from . import shard as shard_mod
 from . import snapshot as snap
 from . import vectors as vec
 from .codex import CodexError, encoder_field
@@ -91,12 +91,12 @@ def _shard_of(snapshot: snap.Snapshot, shard: str) -> snap.Shard:
         f"{len(snapshot.shards)} ({have}{'…' if len(snapshot.shards) > 6 else ''})")
 
 
-def _records(drag_dir: Path, shard: snap.Shard) -> list[dict]:
+def _records(shard_dir: Path, shard: snap.Shard) -> list[dict]:
     from app.pack import records as pack_records
-    path = Path(drag_dir) / shard.path
+    path = Path(shard_dir) / shard.path
     if not path.is_file():
         raise ExportError(
-            f"{path} is not in this copy; a bundle is exported from the drag, "
+            f"{path} is not in this copy; a bundle is exported from the SHARD, "
             f"and this peer does not hold that shard's records")
     return list(pack_records.iter_records(path))
 
@@ -220,28 +220,28 @@ def export(root, ref: str, *, shard: str, dest, vectors_for, embed, key,
     see the module docstring.
     """
     name, codex = col.resolve(root, ref)
-    drag_dir = col.drag_of(root, name)
+    shard_dir = col.shard_dir_of(root, name)
 
     if snapshot_id:
-        path = drag_dir / drag_mod.snapshot_path(snapshot_id)
+        path = shard_dir / shard_mod.snapshot_path(snapshot_id)
         if not path.is_file():
             raise ExportError(f"no snapshot {snapshot_id!r} in this copy")
     else:
         # Snapshot ids sort chronologically by construction (09 §9.4:
         # "2026-08", "2026-W32"), so the last name IS the latest — no need
         # to open every file to find out.
-        d = drag_dir / "snapshots"
+        d = shard_dir / "snapshots"
         ids = sorted(p.stem for p in d.glob("*.json")
                      if not p.name.endswith(".sig.json")) if d.is_dir() else []
         if not ids:
             raise ExportError(
-                f"{drag_dir} holds no snapshot; a bundle names the snapshot "
+                f"{shard_dir} holds no snapshot; a bundle names the snapshot "
                 f"its records come from (09 §9.7) and there is not one yet")
         path = d / f"{ids[-1]}.json"
     snapshot = snap.load(path)
 
     entry = _shard_of(snapshot, shard)
-    records = _records(drag_dir, entry)
+    records = _records(shard_dir, entry)
     entries = grouped(codex, records, vectors_for)
     if not entries:
         raise ExportError(
@@ -256,7 +256,7 @@ def export(root, ref: str, *, shard: str, dest, vectors_for, embed, key,
     # beside them. Sixteen recomputes per split would also be sixteen more
     # encoder calls for nothing.
     challenge = challenge_rows(
-        codex, embed, drag_dir / drag_mod.calibration_paths(codex.space.calibration.set)[0])
+        codex, embed, shard_dir / shard_mod.calibration_paths(codex.space.calibration.set)[0])
     now = int(created_at if created_at is not None else time.time())
 
     out = []

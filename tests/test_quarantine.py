@@ -28,7 +28,7 @@ from fastapi import HTTPException
 
 from app import (collections as collections_mod, copy_state, db, embeddings, health,
                  louise, platform_config, query_service, run_check, worker)
-from app.hold import collection as col, drag as drag_mod, envelope as env, runs as hold_runs
+from app.hold import collection as col, shard as shard_mod, envelope as env, runs as hold_runs
 from app.hold.codex import canonical_json
 from app.verify import backend_gate
 from tests.hold.conftest import KEY, NOW, PLATFORM
@@ -68,9 +68,9 @@ def attest(root, codex, check: str, result: str = "pass", *, name: str = "gutenb
             "shards": list(shards), "result": result, "detail": {},
             "platform_image": image, "encoder_engine": None, "encoder_weights": None,
             "key": env.key_text(key.verify_key), "time": time}
-    d = root / name / "state" / "attestations" / drag_mod._hex(codex.collection_id)
+    d = root / name / "state" / "attestations" / shard_mod._hex(codex.collection_id)
     d.mkdir(parents=True, exist_ok=True)
-    out = d / f"{drag_mod._hex(env.body_id(body))}.json"
+    out = d / f"{shard_mod._hex(env.body_id(body))}.json"
     out.write_bytes(canonical_json(env.sign(env.ATTESTATION, body, key)))
     return out
 
@@ -190,7 +190,7 @@ def test_an_evaluation_is_a_lookup_until_the_holdings_change(node, rage, monkeyp
     fully_tested(root, collection, codex)
     for i in range(60):
         attest(root, codex, "roots", time=f"2026-08-01T00:{i:02d}:00Z")
-    held = root / "gutenberg" / "state" / "attestations" / drag_mod._hex(codex.collection_id)
+    held = root / "gutenberg" / "state" / "attestations" / shard_mod._hex(codex.collection_id)
     long_ago = held.stat().st_mtime - 60
     os.utime(held, (long_ago, long_ago))     # not a directory still being written to
     state_of(collection)

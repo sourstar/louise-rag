@@ -12,7 +12,7 @@ from app.hold import anchor, certify, envelope as env, snapshot as sn
 from app.hold.codex import Certifier
 from tests.deposit.test_deposit_identity import node  # noqa: F401
 from tests.hold.conftest import KEY, a_root, pubmed
-from tests.hold.test_anchor import CERT_KEY, T0, a_signed_drag, certified
+from tests.hold.test_anchor import CERT_KEY, T0, a_signed_shard, certified
 
 OTHER = signing.SigningKey(b"\x09" * 32)
 
@@ -20,7 +20,7 @@ OTHER = signing.SigningKey(b"\x09" * 32)
 def test_certify_signs_the_sidecar_and_writes_the_next_pointer(node):  # noqa: F811
     codex = certified()
     a_root(node, codex)
-    name, d, snap, _ = a_signed_drag(node, codex)
+    name, d, snap, _ = a_signed_shard(node, codex)
     (d / "snapshots/2026-08.sig.json").unlink()                 # start unsigned
     out = certify.certify(node, name, codex, "2026-08", KEY, now=T0)
     assert (out["snapshot_id"], out["snapshot_hash"], out["seq"], out["signatures"]) == ("2026-08", snap.hash, 1, 1)
@@ -41,7 +41,7 @@ def test_certify_signs_the_sidecar_and_writes_the_next_pointer(node):  # noqa: F
 def test_the_refusals(node):  # noqa: F811
     codex = certified()
     a_root(node, codex)
-    name, d, snap, _ = a_signed_drag(node, codex)
+    name, d, snap, _ = a_signed_shard(node, codex)
     with pytest.raises(certify.CertifyError, match="not the Codex's certifier.key") as e:
         certify.certify(node, name, codex, "2026-08", OTHER, now=T0)
     assert e.value.exit_code == 2
@@ -65,14 +65,14 @@ def test_the_pointer_is_served_at_the_well_known_path(node, monkeypatch):  # noq
     from types import SimpleNamespace
     from fastapi.testclient import TestClient
     from app import api, collections as collections_mod
-    from app.hold import drag as drag_mod
+    from app.hold import shard as shard_mod
     codex = certified()
     a_root(node, codex)
-    name, d, snap, _ = a_signed_drag(node, codex)
+    name, d, snap, _ = a_signed_shard(node, codex)
     monkeypatch.setattr(collections_mod, "louise_root", lambda: node.parent)
     monkeypatch.setattr(collections_mod, "load_all", lambda **kw: ([SimpleNamespace(name=name, codex=codex)], []))
     client = TestClient(api.app)
-    hexid = drag_mod._hex(codex.collection_id)
+    hexid = shard_mod._hex(codex.collection_id)
     assert client.get(f"/.well-known/louise-pointer/{hexid}.json").status_code == 404, "not certified yet"
     certify.certify(node, name, codex, "2026-08", KEY, now=T0)
     r = client.get(f"/.well-known/louise-pointer/{hexid}.json")
@@ -87,7 +87,7 @@ def test_the_worker_refreshes_a_certified_collection_s_anchor_when_due(node, mon
     from app.hold import anchor
     codex = certified()
     a_root(node, codex)
-    name, d, snap, _ = a_signed_drag(node, codex)
+    name, d, snap, _ = a_signed_shard(node, codex)
     con = sqlite3.connect(":memory:")
     con.row_factory = sqlite3.Row
     con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, ts INTEGER, level TEXT, stage TEXT, message TEXT, "
@@ -113,7 +113,7 @@ def test_the_anchor_document_is_served_for_this_node_as_certifier(node, monkeypa
     from tests.hold.conftest import pubmed
     codex = certified()                                   # certifier = KEY
     a_root(node, codex)
-    name, d, snap, _ = a_signed_drag(node, codex)
+    name, d, snap, _ = a_signed_shard(node, codex)
     other = pubmed(publication="certified", content="manifest-only",
                    certifier=Certifier("ed25519:" + "ab" * 32, "https://else.example/.well-known/louise-certifier.json"),
                    descriptive=pubmed().descriptive)

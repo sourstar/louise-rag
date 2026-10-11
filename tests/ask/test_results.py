@@ -10,7 +10,7 @@ import pytest
 from app import query_service, retrieval
 from app.ask import results
 from tests.deposit.test_deposit_identity import node  # noqa: F401
-from tests.share.test_messages import a_drag
+from tests.share.test_messages import a_shard
 
 
 def test_the_merge_keeps_each_leg_s_rank_the_text_leg_s_best_across_groups():
@@ -28,7 +28,7 @@ def test_the_merge_keeps_each_leg_s_rank_the_text_leg_s_best_across_groups():
 
 
 def test_the_lists_are_per_space_and_a_result_carries_what_5_3_says(node, monkeypatch):  # noqa: F811
-    codex, name, d, snap = a_drag(node)                      # pubmed: red, snapshot 2026-08
+    codex, name, d, snap = a_shard(node)                      # pubmed: red, snapshot 2026-08
     red = SimpleNamespace(name=name, plugin="pubmed", codex=codex)
     legacy = SimpleNamespace(name="gutenberg", plugin="gutenberg", codex=None)
     monkeypatch.setattr(query_service, "resolve_collections", lambda names, **kw: [red, legacy])

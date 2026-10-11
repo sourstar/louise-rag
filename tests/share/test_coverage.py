@@ -14,7 +14,7 @@ from app.hold.codex import Work
 from app.share import coverage as cov, messages, rendezvous
 from tests.deposit.test_deposit_identity import node  # noqa: F401
 from tests.hold.conftest import pubmed
-from tests.share.test_messages import PEER_KEY, a_drag
+from tests.share.test_messages import PEER_KEY, a_shard
 
 OTHER_KEY = "ed25519:" + "9" * 64
 NOW = 1_800_000_000.0                    # 2027-01-15T08:00:00Z
@@ -196,7 +196,7 @@ def test_vitality_is_any_one_key_s_signed_work_in_the_trailing_period():
 
 def test_hold_vectors_show_prints_the_map(node, capsys):  # noqa: F811
     from app import louise
-    codex, name, d, snap = a_drag(node)
+    codex, name, d, snap = a_shard(node)
     con = cov.manifest(node, name)       # red, unacknowledged: show reads all the same
     sid = cov.shard_id(codex, "year=2023/00001")
     cov.record(con, bundle_id="sha256:" + "2f" * 32, shard=sid, producer=PEER_KEY, uids=["a", "z"],

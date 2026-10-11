@@ -33,7 +33,7 @@ from .codex import (Codex, CodexError, Credit, Defect, Descriptive, Layer,
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 CODEX_FILE = "codex.json"
-DRAG = "drag"
+SHARD_DIR = "shard"
 
 
 def check_name(name: str) -> str:
@@ -45,16 +45,16 @@ def check_name(name: str) -> str:
 
 def dir_of(root: Path, name: str) -> Path:
     """`<LOUISE_ROOT>/collections/<name>/` — the collection's whole
-    directory: the drag, the state, the index and the vector table."""
+    directory: the SHARD, the state, the index and the vector table."""
     return root / check_name(name)
 
 
-def drag_of(root: Path, name: str) -> Path:
-    """`<name>/drag/` — the copy, exactly the tree of 02 §2.6, which is
+def shard_dir_of(root: Path, name: str) -> Path:
+    """`<name>/shard/` — the copy, exactly the tree of 02 §2.6, which is
     what `share` serves and nothing else (07 §7.8). `codex.json` is the
     first line of that tree, so it lives HERE and not a level up: it is a
     member, and one of the three fetchable before an acknowledgement."""
-    return dir_of(root, name) / DRAG
+    return dir_of(root, name) / SHARD_DIR
 
 
 def default_name(root: Path, codex: Codex) -> str:
@@ -79,9 +79,9 @@ def write(root: Path, codex: Codex, mother: Codex | None = None, *,
                 raise CodexError(
                     f"{codex.collection_id} is already held here as "
                     f"{held_name!r}; a collection has one local name")
-            return drag_of(root, held_name)
+            return shard_dir_of(root, held_name)
     name = check_name(name) if name else default_name(root, codex)
-    d = drag_of(root, name)
+    d = shard_dir_of(root, name)
     p = d / CODEX_FILE
     if p.exists():
         # Idempotent, but only for the SAME collection: a name holds one
@@ -117,7 +117,7 @@ def _held(root: Path) -> list[tuple[str, Codex]]:
     ONE UNREADABLE CODEX REFUSES ITSELF, NOT EVERY COMMAND — invariant
     1's doctrine ("the node keeps running its others"), which this
     function did not follow. It called `cx.loads` on every
-    `<name>/drag/codex.json` under the root and let the exception out, so
+    `<name>/shard/codex.json` under the root and let the exception out, so
     a single bad file took down `list`, `show`, `resolve` and `create`
     alike.
 
@@ -138,7 +138,7 @@ def _held(root: Path) -> list[tuple[str, Codex]]:
     out = []
     _UNREADABLE.clear()
     for d in sorted(root.iterdir()) if root.exists() else []:
-        p = d / DRAG / CODEX_FILE
+        p = d / SHARD_DIR / CODEX_FILE
         if not p.is_file():
             continue
         try:
@@ -160,7 +160,7 @@ def resolve(root: Path, ref: str) -> tuple[str, Codex]:
     here. Ambiguity is exit 2, naming the candidates.
 
     Returns `(name, codex)` — the caller almost always needs both, since
-    the name is where the drag and the state directory live.
+    the name is where the SHARD and the state directory live.
     """
     held = _held(root)
     if not held:
@@ -273,7 +273,7 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
     needs no record: the calibration set is a corpus-independent file
     shipped with the platform, `create` embeds it with the named encoder,
     writes the reference vectors' hash into `space.calibration` and their
-    envelope into `space.envelope`, and stores the vectors as the drag
+    envelope into `space.envelope`, and stores the vectors as the SHARD
     member `calibration/<set>.safetensors`". So `embed` is required and has
     no offline default: those two hashes are what every peer's gate and
     every T0 admission are decided against, and a collection created with
@@ -283,7 +283,7 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
     an encoder that cannot answer means no collection, not a collection
     with a hole in it.
     """
-    from . import calibration as cal, drag, envelope as env, template
+    from . import calibration as cal, shard as shard_mod, envelope as env, template
 
     space = recipe.get("space")
     if not isinstance(space, dict):
@@ -313,7 +313,7 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
     query_vectors = query_hash = None
     # a version-2 space copied whole (`space_version`) pins no query reference:
     # its calibration is {set, vectors, quorum} (09 §9.12 before the engine
-    # amendment), and a member no field names would be a stray drag file
+    # amendment), and a member no field names would be a stray SHARD file
     image_shaped = (space_version is not None and space_version < cx.ENGINE_VERSION
                     and "image" in (space.get("encoder") or {}))
     if query.get("encoder") and not image_shaped:
@@ -331,7 +331,7 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
                                  calibration=(vectors_hash, envelope_hash, query_hash),
                                  credits=credits, space_version=space_version)
     created = create(root, codex, name=name)
-    d = drag_of(root, name_of(root, created.collection_id))
+    d = shard_dir_of(root, name_of(root, created.collection_id))
     write_calibration(d, codex, vectors, envelope, key=key, now=now,
                       query_vectors=query_vectors, pairs=pairs)
     write_terms(d, codex, plugin,
@@ -379,9 +379,9 @@ def _calibration_items(modality: str, set_id: str, form: str,
     return cal.verify(modality, set_id), None
 
 
-def write_terms(drag_path: Path, codex: Codex, plugin: str,
+def write_terms(shard_dir_path: Path, codex: Codex, plugin: str,
                 terms_path: Any = None) -> None:
-    """`LICENSE-TERMS` at the drag root — the origin's terms text, byte
+    """`LICENSE-TERMS` at the SHARD root — the origin's terms text, byte
     for byte (09 §9.13).
 
     A yellow or red collection's Codex PINS `license.terms_sha256`, and
@@ -427,7 +427,7 @@ def write_terms(drag_path: Path, codex: Codex, plugin: str,
             f"the recipe pins license.terms_sha256 {want[:23]}… and "
             f"{Path(src).name} hashes to {got[:23]}…. Terms are byte-exact "
             f"and never converted (09 §9.13); nothing is written")
-    (drag_path / "LICENSE-TERMS").write_bytes(body)
+    (shard_dir_path / "LICENSE-TERMS").write_bytes(body)
 
 
 def require_signer(key, now: str | None) -> None:
@@ -446,7 +446,7 @@ def require_signer(key, now: str | None) -> None:
             "same), so a caller supplies it")
 
 
-def write_calibration(drag_path: Path, codex: Codex, vectors, envelope,
+def write_calibration(shard_dir_path: Path, codex: Codex, vectors, envelope,
                       *, key, now: str | None, query_vectors=None,
                       pairs: bytes | None = None) -> None:
     """The member and the signature beside it (09 §9.12).
@@ -461,15 +461,15 @@ def write_calibration(drag_path: Path, codex: Codex, vectors, envelope,
     `calibration/<set>.sig.json` without the "or null" it gives LICENSE-TERMS
     and seals. So a collection whose creator signed nothing has a member
     with an empty required header and a snapshot that cannot list what §9.4
-    says it lists — and 07 §7.8 then refuses the whole drag, since `share`
-    refuses a drag holding a file no snapshot names.
+    says it lists — and 07 §7.8 then refuses the whole SHARD, since `share`
+    refuses a SHARD holding a file no snapshot names.
     """
-    from . import calibration as cal, drag as drag_mod, envelope as env
+    from . import calibration as cal, shard as shard_mod, envelope as env
 
     require_signer(key, now)
 
     set_id = codex.space.calibration.set
-    member, sig_path = drag_mod.calibration_paths(set_id)
+    member, sig_path = shard_mod.calibration_paths(set_id)
     key_text = env.key_text(key.verify_key)
     # The run the vectors came from: the engine, by its id, from Codex
     # version 3; the engine's image alone below it (09 §9.12).
@@ -491,7 +491,7 @@ def write_calibration(drag_path: Path, codex: Codex, vectors, envelope,
                "the pair set its vectors were produced over (09 §9.12); none was "
                "given" if paired
                else "a pair set was given for a space whose layers feed text"))
-    cal.write_member(drag_path / member, vectors, envelope, set_id_=set_id,
+    cal.write_member(shard_dir_path / member, vectors, envelope, set_id_=set_id,
                      encoder_weights=codex.space.encoder.weights, key=key_text,
                      query_vectors=query_vectors, pairs=pairs, **{engine_key: engine})
 
@@ -511,7 +511,7 @@ def write_calibration(drag_path: Path, codex: Codex, vectors, envelope,
             engine_key: engine,
             "encoder_weights": codex.space.encoder.weights,
             "key": key_text, "time": now}
-    (drag_path / sig_path).write_text(
+    (shard_dir_path / sig_path).write_text(
         json.dumps(env.sign(env.CALIBRATION, body, key),
                    ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -695,14 +695,14 @@ def derive(root: Path, mother_id: str, *,
             calibration=_replace(sister.space.calibration, vectors=got_v,
                                  query_vectors=got_q)))
         own = (vectors, envelope, query_vectors)
-    drag_path = write(root, sister, mother, name=name)
+    shard_dir_path = write(root, sister, mother, name=name)
     if any(_same_reference(sister, s) for s in sources):
-        carry_calibration(root, sister, drag_path, *sources)
+        carry_calibration(root, sister, shard_dir_path, *sources)
     elif own is not None:
-        write_calibration(drag_path, sister, own[0], own[1], key=key, now=now,
+        write_calibration(shard_dir_path, sister, own[0], own[1], key=key, now=now,
                           query_vectors=own[2], pairs=pairs)
     else:
-        _write_own_calibration(sister, drag_path, embed, mother.modality,
+        _write_own_calibration(sister, shard_dir_path, embed, mother.modality,
                                key, now, embed_query, pairs=pairs)
     return sister
 
@@ -733,7 +733,7 @@ def _query_member(space: Space, texts, embed_query):
                                   normalise=space.normalise, dim=space.dim)
 
 
-def _write_own_calibration(codex: Codex, drag_path: Path, embed,
+def _write_own_calibration(codex: Codex, shard_dir_path: Path, embed,
                            modality: str, key, now: str | None,
                            embed_query=None, pairs: bytes | None = None) -> None:
     """The member and signature for a collection whose reference is its own
@@ -763,7 +763,7 @@ def _write_own_calibration(codex: Codex, drag_path: Path, embed,
         raise CodexError(
             f"the query encoder produced reference vectors {got_q} and the Codex "
             f"names {codex.space.calibration.query_vectors}")
-    write_calibration(drag_path, codex, vectors, envelope, key=key, now=now,
+    write_calibration(shard_dir_path, codex, vectors, envelope, key=key, now=now,
                       query_vectors=query_vectors, pairs=pairs)
 
 
@@ -781,7 +781,7 @@ def _same_reference(a: Codex, b: Codex) -> bool:
     return reference(a) == reference(b)
 
 
-def carry_calibration(root: Path, child: Codex, drag_path: Path,
+def carry_calibration(root: Path, child: Codex, shard_dir_path: Path,
                       *sources: Codex) -> None:
     """Copy a derived collection's calibration member from whichever source
     holds the same reference.
@@ -798,7 +798,7 @@ def carry_calibration(root: Path, child: Codex, drag_path: Path,
     Codex that supplied the space — whose member is the one the sister's
     hashes name, since her space was copied from it byte for byte.
     """
-    from . import calibration as cal, drag as drag_mod
+    from . import calibration as cal, shard as shard_mod
 
     src = next((s for s in sources if _same_reference(child, s)), None)
     if src is None:
@@ -809,9 +809,9 @@ def carry_calibration(root: Path, child: Codex, drag_path: Path,
             f"needs its own reference vectors, which means embedding the set "
             f"at an endpoint (06 §6.6) — pass `embed`")
 
-    src_drag = drag_of(root, name_of(root, src.collection_id))
-    for name in drag_mod.calibration_paths(src.space.calibration.set):
-        origin = src_drag / name
+    src_shard = shard_dir_of(root, name_of(root, src.collection_id))
+    for name in shard_mod.calibration_paths(src.space.calibration.set):
+        origin = src_shard / name
         if not origin.is_file():
             if name.endswith(".sig.json"):
                 continue                # optional: the hashes bind, not it
@@ -819,25 +819,25 @@ def carry_calibration(root: Path, child: Codex, drag_path: Path,
                 f"{src.collection_id} has no calibration member at {name}. "
                 f"It is written by `hold collection create` (09 §9.12); a "
                 f"collection derived from one that lacks it would inherit a "
-                f"drag nothing can check")
-        dst = drag_path / name
+                f"SHARD nothing can check")
+        dst = shard_dir_path / name
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(origin.read_bytes())
 
     # The Codex's hashes bind the member (09 §9.12), so what was copied is
     # checked against the CHILD's Codex and not assumed from the source's.
-    member, _ = drag_mod.calibration_paths(child.space.calibration.set)
-    cal.read_member(drag_path / member,
+    member, _ = shard_mod.calibration_paths(child.space.calibration.set)
+    cal.read_member(shard_dir_path / member,
                     expect_vectors=child.space.calibration.vectors,
                     expect_envelope=child.space.envelope)
     if child.space.calibration.query_vectors is not None:
-        cal.read_query_vectors(drag_path / member,
+        cal.read_query_vectors(shard_dir_path / member,
                                expect=child.space.calibration.query_vectors)
     if cal.form(child) == "pair":
         # a pair space's member carries its set (09 §9.12, amended
         # 2026-10-08): a text space's member, however equal its hashes, is
         # not one a pair child can be gated with
-        cal.read_pairs(drag_path / member, expect=child.space.calibration.set)
+        cal.read_pairs(shard_dir_path / member, expect=child.space.calibration.set)
 
 
 def recalibrate(space: Space, modality: str, embed, embed_query=None,
@@ -852,7 +852,7 @@ def recalibrate(space: Space, modality: str, embed, embed_query=None,
     fields is replaced, never trusted.
 
     Neither hash is inside `space_id` (02 §2.4), so this does not move the
-    sister's space; it makes her drag checkable.
+    sister's space; it makes her SHARD checkable.
 
     `items`: the set in the space's form (`_calibration_items`); the
     platform's texts when not given.
@@ -940,7 +940,7 @@ def replace(root: Path, mother_id: str, *, defect: Defect,
 
 def show(root: Path, ref: str) -> dict[str, Any]:
     """What `hold collection show --json` prints (09 §9.3). The parts that
-    need the drag on disk — snapshots, holdings, trust_level — arrive with
+    need the SHARD on disk — snapshots, holdings, trust_level — arrive with
     the members they read; `refused` is the reason the collection is not
     served when refuse-to-start applies to it (07 §7.8)."""
     name, codex = resolve(root, ref)
@@ -996,7 +996,7 @@ def migrate(root: Path, name: str, *, apply: bool = False) -> dict:
     already computed stays admissible; records, chunks and snapshots,
     which are keyed on their own hashes and not on the collection's.
     """
-    path = drag_of(root, name) / CODEX_FILE
+    path = shard_dir_of(root, name) / CODEX_FILE
     raw = json.loads(path.read_bytes())
     before = cx.digest(cx.canonical_json(
         {k: v for k, v in raw.items() if k != "descriptive"}))
@@ -1015,15 +1015,15 @@ def migrate(root: Path, name: str, *, apply: bool = False) -> dict:
     return result
 
 
-def _carries_old_id(drag: Path) -> list[str]:
-    """Drag members that name the collection by its CURRENT id, and so
+def _carries_old_id(shard_tree: Path) -> list[str]:
+    """SHARD members that name the collection by its CURRENT id, and so
     will refer to the old one after a migration.
 
     Not a reason to refuse — the identity change is the point, and the
     §9.3 field is missing whatever these say — but an operator who is
     told "collection_id moves" deserves to know WHAT ELSE says it.
 
-    Two on the live pubmed drag:
+    Two on the live pubmed SHARD:
 
       - `snapshots/*.json` carry `collection_id`. The chain check
         (`snapshot.verify_chain`) compares snapshot to snapshot, so one
@@ -1038,12 +1038,12 @@ def _carries_old_id(drag: Path) -> list[str]:
     identity means.
     """
     out: list[str] = []
-    snaps = sorted((drag / "snapshots").glob("*.json")) if drag.is_dir() else []
+    snaps = sorted((shard_tree / "snapshots").glob("*.json")) if shard_tree.is_dir() else []
     real = [p for p in snaps if not p.name.endswith(".sig.json")]
     if real:
         out.append(f"{len(real)} snapshot(s) — the chain restarts, because "
                    f"`verify_chain` refuses a collection that changes mid-chain")
-    if (drag / "validation.json").is_file():
+    if (shard_tree / "validation.json").is_file():
         out.append("signed attestations name witnesses "
                    "`<collection_id>/<slice>/<n>` — re-run `hold check`")
     return out

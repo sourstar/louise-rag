@@ -1,7 +1,7 @@
 """`share fetch` (07 §7.3; 04 §4.2, §4.3), first brick of migration step
 9d: FIND the peers that hold a collection, PULL its Codex chain and its
 snapshot chain, VERIFY them, HOLD the collection — codex.json and
-snapshots/* in the drag, the collection's file beside it (07 §7.8). That
+snapshots/* in the SHARD, the collection's file beside it (07 §7.8). That
 is the pre-acknowledgement set but for LICENSE-TERMS, a member that
 arrives by torrent with the other members (second brick).
 
@@ -19,7 +19,7 @@ digest advertised, and its chain links by hash back to the root's first
 — or to the mother's snapshot a daughter continues through, or to one
 this peer holds — with consecutive ids (09 §9.4). A snapshot with no
 verified signature waits in staging and is not promoted (09 §9.4); the
-rest go into the drag whole, their sidecars merged by union.
+rest go into the SHARD whole, their sidecars merged by union.
 
 The pulls run in the calling process — kilobytes, signed with the node
 key — and their bytes are accounted to that process's budget; the
@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from app.hold import codex as cx, collection as col, drag as drag_mod, envelope as env, snapshot as sn
+from app.hold import codex as cx, collection as col, shard as shard_mod, envelope as env, snapshot as sn
 from app.hold.codex import CodexError, canonical_json
 from app.share import gossip, members as mem, messages, peers
 from app.transfer.bucket import TransferAborted
@@ -266,7 +266,7 @@ def pull_codex(p: Puller, source: Source, collection_id: str) -> list[tuple[cx.C
             codex = cx.loads(data)
         except (CodexError, ValueError, KeyError, TypeError) as e:
             raise FetchError(f"{source.address}: {path}: {e}") from None
-        if path != f"codex/{drag_mod._hex(codex.collection_id)}.json":
+        if path != f"codex/{shard_mod._hex(codex.collection_id)}.json":
             raise FetchError(f"{source.address}: {path} holds {codex.collection_id}, another id")
         chain.append((codex, data))
     head, head_bytes = chain[0]
@@ -327,7 +327,7 @@ def pull_snapshots(p: Puller, source: Source, codex: cx.Codex, *,
         except (CodexError, KeyError, TypeError, ValueError) as e:
             raise FetchError(f"{source.address}: {paths[0]}: {e}") from None
         if snap.collection_id != codex.collection_id \
-                or paths[0] != drag_mod.snapshot_path(snap.snapshot_id) \
+                or paths[0] != shard_mod.snapshot_path(snap.snapshot_id) \
                 or (sid is not None and snap.snapshot_id != sid):
             raise FetchError(f"{source.address}: {paths[0]} is not the snapshot asked for")
         if expect is not None and snap.hash != expect:
@@ -341,7 +341,7 @@ def pull_snapshots(p: Puller, source: Source, codex: cx.Codex, *,
                               f"advertised (09 §9.9)")
                 raise FetchError(f"{source.address}: snapshot {snap.snapshot_id} hashes "
                                  f"otherwise than its digest advertised — a lie, dropped")
-        raw_sig = items.get(drag_mod.snapshot_sig_path(snap.snapshot_id))
+        raw_sig = items.get(shard_mod.snapshot_sig_path(snap.snapshot_id))
         sidecar: dict[str, Any] | None = None
         if raw_sig is not None:
             try:
@@ -407,13 +407,13 @@ def _write_whole(target: Path, data: bytes) -> None:
 
 
 def held_snapshots(root: Path, collection_id: str) -> dict[str, str]:
-    """`{snapshot_id: hash}` of the snapshots this peer's drag holds for the
+    """`{snapshot_id: hash}` of the snapshots this peer's SHARD holds for the
     collection; empty when it is not held."""
     try:
         name = col.name_of(Path(root), collection_id)
     except (CodexError, FileNotFoundError, OSError):
         return {}
-    d = col.drag_of(Path(root), name) / "snapshots"
+    d = col.shard_dir_of(Path(root), name) / "snapshots"
     out: dict[str, str] = {}
     for p in sorted(d.glob("*.json")) if d.is_dir() else []:
         if p.name.endswith(".sig.json"):
@@ -428,32 +428,32 @@ def held_snapshots(root: Path, collection_id: str) -> dict[str, str]:
 def hold(root: Path, chain: list[tuple[cx.Codex, bytes]], pulled: list[Pulled], *,
          name: str | None = None, encoder: str | None = None,
          encoder_keys: dict[str, Any] | None = None) -> dict[str, Any]:
-    """The Codex into the drag (validated against its mother from the
+    """The Codex into the SHARD (validated against its mother from the
     chain), the chain's other Codexes under state/chain/, every signed
-    snapshot into the drag with its sidecar merged by union, an unsigned
+    snapshot into the SHARD with its sidecar merged by union, an unsigned
     one into state/staging/, and the collection's file written (07 §7.8)."""
     root = Path(root)
     head, head_bytes = chain[0]
     by_id = {c.collection_id: c for c, _ in chain}
     mother = next((by_id[r] for r in _parents(head) if r in by_id), None)
-    drag_dir = col.write(root, head, mother, name=name)
+    shard_dir = col.write(root, head, mother, name=name)
     cname = col.name_of(root, head.collection_id)
     state = root / cname / "state"
     for c, data in chain[1:]:
-        _write_whole(state / CHAIN / f"{drag_mod._hex(c.collection_id)}.json", data)
+        _write_whole(state / CHAIN / f"{shard_mod._hex(c.collection_id)}.json", data)
     promoted: list[str] = []
     kept: list[str] = []
     staged: list[str] = []
     for pl in pulled:
-        rel = drag_mod.snapshot_path(pl.snapshot.snapshot_id)
-        rel_sig = drag_mod.snapshot_sig_path(pl.snapshot.snapshot_id)
+        rel = shard_mod.snapshot_path(pl.snapshot.snapshot_id)
+        rel_sig = shard_mod.snapshot_sig_path(pl.snapshot.snapshot_id)
         if not pl.signed:
             _write_whole(state / STAGING / rel, pl.data)
             if pl.sidecar is not None:
                 _write_whole(state / STAGING / rel_sig, canonical_json(pl.sidecar))
             staged.append(pl.snapshot.snapshot_id)
             continue
-        target = drag_dir / rel
+        target = shard_dir / rel
         if target.is_file():
             if target.read_bytes() != pl.data:
                 raise FetchError(
@@ -464,7 +464,7 @@ def hold(root: Path, chain: list[tuple[cx.Codex, bytes]], pulled: list[Pulled], 
         else:
             _write_whole(target, pl.data)
             promoted.append(pl.snapshot.snapshot_id)
-        sig_target = drag_dir / rel_sig
+        sig_target = shard_dir / rel_sig
         existing = None
         if sig_target.is_file():
             try:
@@ -476,7 +476,7 @@ def hold(root: Path, chain: list[tuple[cx.Codex, bytes]], pulled: list[Pulled], 
         if not sig_target.is_file() or sig_target.read_bytes() != data:
             _write_whole(sig_target, data)
     from app import louise
-    held_file = louise._write_held_file(root, head, encoder, source="drag",
+    held_file = louise._write_held_file(root, head, encoder, source="shard",
                                         **(encoder_keys or {}))
     newest = pulled[0]
     return {
@@ -484,7 +484,7 @@ def hold(root: Path, chain: list[tuple[cx.Codex, bytes]], pulled: list[Pulled], 
         "snapshot_id": newest.snapshot.snapshot_id, "snapshot_hash": newest.snapshot.hash,
         "signatures": len(newest.keys), "unsigned_because": newest.complaints if not newest.signed else [],
         "snapshots": {"promoted": promoted, "kept": kept, "staged": staged},
-        "file": str(held_file), "drag": str(drag_dir),
+        "file": str(held_file), "shard": str(shard_dir),
     }
 
 

@@ -1,12 +1,12 @@
-"""The drag as a corpus (07 §7.3 `index build`; 02 §2.3): a peer that holds
+"""The SHARD as a corpus (07 §7.3 `index build`; 02 §2.3): a peer that holds
 a collection's record shards and not its origin reads its documents FROM
 THE SHARDS — the same `discover`, `fetch`, `parse` the pipeline runs over
 an origin, so the rdf, fts and embed stages, the catalogue, the facets and
 `ask` work unchanged over what `share fetch` landed. Migration step 9f.
 
-`DragSource` wraps the Codex's own plugin: every attribute the pipeline
+`ShardSource` wraps the Codex's own plugin: every attribute the pipeline
 reads — licence class, provider, defaults, erasure, the chunking profile
-— is the plugin's, and the three methods read the drag instead. A record
+— is the plugin's, and the three methods read the SHARD instead. A record
 is one 09 §9.5 line: `fetch` returns it as the raw bytes with the
 record's own `origin_hash` (the origin unit's hash, as the producer saw
 it), `parse` gives it back as the canonical document the producer parsed
@@ -28,13 +28,13 @@ from app.plugins import cursor
 from app.plugins.base import CanonicalDoc, DiscoverState, DocRef, RawDoc
 
 SEP = "#"                      # <shard path>#<uid>; 09 §9.5's own member separator
-SOURCE = "drag"                # the collection file's `source` value (07 §7.8, amended 2026-10-07)
+SOURCE = "shard"                # the collection file's `source` value (07 §7.8, amended 2026-10-07)
 
 
-def shard_files(drag_dir: Path) -> list[Path]:
+def shard_files(shard_dir: Path) -> list[Path]:
     """Every current record shard held, in slice and number order; a
     superseded version (a second dot in its name) is not one."""
-    d = Path(drag_dir) / "records"
+    d = Path(shard_dir) / "records"
     if not d.is_dir():
         return []
     out = []
@@ -49,18 +49,18 @@ def shard_files(drag_dir: Path) -> list[Path]:
 def split_locator(locator: str) -> tuple[Path, str]:
     path, _, uid = str(locator).rpartition(SEP)
     if not path or not uid:
-        raise ValueError(f"a drag locator is <shard path>#<uid>, got {locator!r}")
+        raise ValueError(f"a SHARD locator is <shard path>#<uid>, got {locator!r}")
     return Path(path), uid
 
 
-class DragSource:
+class ShardSource:
     """The Codex's plugin, reading the records this peer holds."""
 
-    def __init__(self, inner, drag_dir: Path, skip: frozenset = frozenset()) -> None:
+    def __init__(self, inner, shard_dir: Path, skip: frozenset = frozenset()) -> None:
         self._inner = inner
-        self.drag_dir = Path(drag_dir)
+        self.shard_dir = Path(shard_dir)
         self.source_id = inner.source_id
-        #: drag-relative shard paths not to read: 03 §3.8's integrity
+        #: SHARD-relative shard paths not to read: 03 §3.8's integrity
         #: violations of a certified manifest-only copy (app/hold/integrity.py)
         self.skip = frozenset(skip)
 
@@ -76,21 +76,21 @@ class DragSource:
                                 "prepare", "prepare_key", "current"})
 
     def __getattr__(self, name: str):
-        if name in DragSource.CORPUS_READERS:
+        if name in ShardSource.CORPUS_READERS:
             raise AttributeError(f"{name}: a fetched collection reads its records, not the origin's corpus")
         return getattr(self.__dict__["_inner"], name)
 
     def __reduce__(self):
         # the parse pool rebuilds the plugin in its children from the
-        # collection; a DragSource travels as what makes it
-        return (DragSource, (self._inner, self.drag_dir, self.skip))
+        # collection; a ShardSource travels as what makes it
+        return (ShardSource, (self._inner, self.shard_dir, self.skip))
 
     # ---- the three methods --------------------------------------------------
 
     def discover(self, state: DiscoverState) -> Iterator[DocRef]:
-        progress = cursor.Progress(state, self.source_id + "@drag")
-        for shard in shard_files(self.drag_dir):
-            if self.skip and shard.relative_to(self.drag_dir).as_posix() in self.skip:
+        progress = cursor.Progress(state, self.source_id + "@shard")
+        for shard in shard_files(self.shard_dir):
+            if self.skip and shard.relative_to(self.shard_dir).as_posix() in self.skip:
                 continue                   # listed by no signed snapshot: never read (03 §3.8)
             if progress.unchanged(shard):
                 continue

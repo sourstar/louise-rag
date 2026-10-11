@@ -54,7 +54,7 @@ def test_a_real_digest_from_the_recipe_the_flag_or_the_deploy_is_what_gets_pinne
         tmp_path, monkeypatch, where):
     """The digest reaches the Codex builder unchanged, from whichever of the
     three states it. The signing key and the Codex builder are stubbed:
-    this is about the value `create` pins, not about writing a drag."""
+    this is about the value `create` pins, not about writing a SHARD."""
     from types import SimpleNamespace
 
     from app.bundles import keys as node_keys

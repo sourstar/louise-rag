@@ -383,12 +383,12 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
         space["calibration"].pop("query_vectors", None)     # computed here too (09 §9.12)
         recipe["space"] = space
         recipe["layers"] = [l.to_dict() for l in source.layers]
-        from app.hold import calibration as cal, drag as drag_mod
+        from app.hold import calibration as cal, shard as shard_mod
         if pairs is None and cal.form(source) == "pair":
             # a pair space's set is in its member (09 §9.12, amended
             # 2026-10-08): the copy is embedded over the very same pairs
-            member = (col.drag_of(Path(root), col.name_of(root, source.collection_id))
-                      / drag_mod.calibration_paths(source.space.calibration.set)[0])
+            member = (col.shard_dir_of(Path(root), col.name_of(root, source.collection_id))
+                      / shard_mod.calibration_paths(source.space.calibration.set)[0])
             if not member.is_file():
                 raise CodexError(
                     f"--space-from {space_from} is a pair space, whose calibration set "
@@ -548,7 +548,7 @@ def _write_held_file(root, codex, encoder: str | None = None,
                    + 'embed = "off"\n'
                    "share = false\n"
                    # 07 §7.8 `source`: a fetched collection reads its documents
-                   # from the shards it holds (app/plugins/drag.py)
+                   # from the shards it holds (app/plugins/shard.py)
                    + (f'source = "{source}"\n' if source else "")
                    + (f'\n[encoder]\nurl = {q(encoder)}\napi = {q(api)}\n'
                       # a bi-encoder's query side, where the collection has one
@@ -772,7 +772,7 @@ def _inherited_encoder(root, sister: cx.Codex, mother: cx.Codex,
 
 def _acceptance(mother: cx.Codex, sister: cx.Codex) -> None:
     """Creating a sister is an acceptance, of the space and of what follows
-    from it (02 Â§2.7). What can be said without the drag on disk is said
+    from it (02 Â§2.7). What can be said without the SHARD on disk is said
     here; how many chunks are already covered arrives with the coverage map."""
     same = sister.space_id == mother.space_id
     verdict = "matches" if same else "DIFFERS FROM"
@@ -1155,7 +1155,7 @@ def cmd_share(a) -> int:
 def _set_held_selection(path, slices, kinds) -> dict:
     """07 §7.8: the file's `slices` and `kinds` — what `share fetch` was asked
     for, joined with what the file already said (`"all"` wins); the worker
-    fetches what the drag lacks of it. Returns what the file says now."""
+    fetches what the SHARD lacks of it. Returns what the file says now."""
     import json
     import re
     path = Path(path)
@@ -1568,20 +1568,20 @@ def cmd_show(a) -> int:
     # carried `refused: string or null` until 2026-09-19
     out.pop("refused", None)
     out.update(_copy_state(a.root, name, codex).to_json())
-    out.update(_show_drag(a.root, name))
+    out.update(_show_shard(a.root, name))
     _print(out)
     return 0
 
 
-def _show_drag(root, name: str) -> dict:
-    """09 §9.3's `snapshots` and `holdings`, read off the drag: every
+def _show_shard(root, name: str) -> dict:
+    """09 §9.3's `snapshots` and `holdings`, read off the SHARD: every
     snapshot in the chain with its verified signatures and whether its
-    record members are all held; what the drag holds of the current one."""
+    record members are all held; what the SHARD holds of the current one."""
     import json
     from app.hold import snapshot as sn
     from app.share import holdings, members as mem, seeder
-    drag_dir = col.drag_of(Path(root), name)
-    sdir = drag_dir / "snapshots"
+    shard_dir = col.shard_dir_of(Path(root), name)
+    sdir = shard_dir / "snapshots"
     snaps = []
     for p in sorted(sdir.glob("*.json")) if sdir.is_dir() else []:
         if p.name.endswith(".sig.json"):
@@ -1599,11 +1599,11 @@ def _show_drag(root, name: str) -> dict:
                 n = 0
         records = [m for m in mem.members_of(snap) if holdings.kind_of(m.name) == "records"]
         snaps.append({"snapshot_id": snap.snapshot_id, "hash": snap.hash, "signatures": n,
-                      "held": bool(records) and all(holdings.held(drag_dir, m) for m in records)})
-    current = seeder.current_snapshot(drag_dir)
+                      "held": bool(records) and all(holdings.held(shard_dir, m) for m in records)})
+    current = seeder.current_snapshot(shard_dir)
     from app.hold import anchor
     codex = col.read(Path(root), name)
-    return {"snapshots": snaps, "holdings": holdings.summary(drag_dir, current),
+    return {"snapshots": snaps, "holdings": holdings.summary(shard_dir, current),
             **_trust_level(root, name, current),
             # 05 §5.3, 03 §3.8: certification beside the trust level — two axes
             "certification": anchor.certification(Path(root), name, codex, current),
@@ -1909,7 +1909,7 @@ def cmd_collection_ack(a) -> int:
     """
     import json
 
-    from app.hold import collection as col, drag as drag_mod
+    from app.hold import collection as col, shard as shard_mod
 
     if getattr(a, "web_sources", False):
         return _ack_web_sources(a)
@@ -1924,11 +1924,11 @@ def cmd_collection_ack(a) -> int:
               f"there is nothing to acknowledge (09 §9.13)")
         return 0
 
-    terms = a.root / name / "drag" / "LICENSE-TERMS"
+    terms = a.root / name / "shard" / "LICENSE-TERMS"
     if not terms.is_file():
         raise CodexError(
             f"{name}: the Codex pins terms {want[:23]}… and this copy has no "
-            f"drag/LICENSE-TERMS. It is one of the three members fetchable "
+            f"shard/LICENSE-TERMS. It is one of the three members fetchable "
             f"BEFORE an acknowledgement (04 §4.4), so a copy without it "
             f"cannot be acknowledged — fetch it first")
 
@@ -1936,7 +1936,7 @@ def cmd_collection_ack(a) -> int:
     got = "sha256:" + hashlib.sha256(terms.read_bytes()).hexdigest()
     if got != want:
         raise CodexError(
-            f"{name}: drag/LICENSE-TERMS hashes to {got[:23]}… and the Codex "
+            f"{name}: shard/LICENSE-TERMS hashes to {got[:23]}… and the Codex "
             f"pins {want[:23]}…. Terms are byte-exact and never converted — a "
             f"CRLF checkout silently invalidates every recorded ack (09 §9.13). "
             f"Nothing is recorded")
@@ -2079,7 +2079,7 @@ def cmd_vectors_import(a) -> int:
 
     from app import embeddings, licensing
     from app.hold import admission as adms, admit as adm, collection as col, \
-        drag, embedder as emb, land as landing, records as rec, vectors as vec
+        shard as shard_mod, embedder as emb, land as landing, records as rec, vectors as vec
 
     if getattr(a, "retry", False):
         if not getattr(a, "archive", None):
@@ -2102,8 +2102,8 @@ def cmd_vectors_import(a) -> int:
     copy_state.require_in_use(a.root, name, codex, local,
                               use="importing a peer's vectors into it")
 
-    member = a.root / name / "drag" / \
-        drag.calibration_paths(codex.space.calibration.set)[0]
+    member = a.root / name / "shard" / \
+        shard_mod.calibration_paths(codex.space.calibration.set)[0]
     if not member.is_file():
         raise CodexError(
             f"{name}: no calibration member at {member.name}. T0's envelope "
@@ -2392,7 +2392,7 @@ def _snapshot_before(root, name, snapshot_id):
     name comparison and not a chain walk.
     """
     from app.hold import collection as col, snapshot as snap
-    d = col.drag_of(Path(root), name) / "snapshots"
+    d = col.shard_dir_of(Path(root), name) / "snapshots"
     ids = sorted(p.stem for p in d.glob("*.json")
                  if not p.name.endswith(".sig.json")) if d.is_dir() else []
     earlier = [i for i in ids if i < snapshot_id]
@@ -2483,10 +2483,10 @@ def _latest_snapshot(root, name, snapshot_id=None):
     Snapshot ids sort chronologically by construction (09 §9.4), so the
     last name IS the latest — no need to open every file to find out.
     """
-    from app.hold import collection as col, drag as drag_mod, snapshot as snap
-    d = col.drag_of(Path(root), name) / "snapshots"
+    from app.hold import collection as col, shard as shard_mod, snapshot as snap
+    d = col.shard_dir_of(Path(root), name) / "snapshots"
     if snapshot_id:
-        p = col.drag_of(Path(root), name) / drag_mod.snapshot_path(snapshot_id)
+        p = col.shard_dir_of(Path(root), name) / shard_mod.snapshot_path(snapshot_id)
         if not p.is_file():
             raise CodexError(f"no snapshot {snapshot_id!r} in this copy")
         return snap.load(p)
@@ -2506,7 +2506,7 @@ def run_check(a):
     import os
 
     from app import embeddings
-    from app.hold import check as chk, collection as col, drag, \
+    from app.hold import check as chk, collection as col, shard as shard_mod, \
         embedder as emb, records as rec
 
     name, codex = col.resolve(a.root, a.collection)
@@ -2522,8 +2522,8 @@ def run_check(a):
     if codex.space is not None:
         # an annotations collection (02 §2.10) has no space: no reference,
         # nothing to embed, and its plan names no check that would
-        member = a.root / name / "drag" / \
-            drag.calibration_paths(codex.space.calibration.set)[0]
+        member = a.root / name / "shard" / \
+            shard_mod.calibration_paths(codex.space.calibration.set)[0]
         reference = _read_member(member)[0] if member.is_file() else None
         try:
             recipe = _recipe_for(codex, name)
@@ -2768,7 +2768,7 @@ def cmd_records_seal(a) -> int:
         entries.append(e)
     if refused:
         raise CodexError("seals not written — " + "; ".join(refused)[:1500])
-    path = seals.write(col.drag_of(root, name), codex, a.snapshot, entries)
+    path = seals.write(col.shard_dir_of(root, name), codex, a.snapshot, entries)
     _print({"collection_id": codex.collection_id, "snapshot_id": a.snapshot, "entries": len(entries),
             "trusted_list": tl_digest, "lotl": lotl_digest, "trusted_list_signed_by": tl_said["signer"],
             "lotl_signed_by": lotl_said["signer"],
@@ -2859,7 +2859,7 @@ def _embedder_check_runs(a, name, codex) -> int:
     # THE MEMBER FIRST, before the encoder is even looked for: without it
     # there is nothing to compare against, which is a rule in the way (exit
     # 2) and never a deferral. Asked in the other order, a node with no
-    # encoder configured read "deferred" for a drag that had lost its member
+    # encoder configured read "deferred" for a SHARD that had lost its member
     # — found on the reference node, where the test that holds this ran with
     # no collection file beside it (2026-09-19).
     for role in roles:
@@ -2939,11 +2939,11 @@ def _gate(a):
     resolves one: the collection's own endpoint, and nothing else — there
     is no default encoder (operator, 2026-09-18)."""
     from app import embeddings
-    from app.hold import collection as col, drag, embedder as emb
+    from app.hold import collection as col, shard as shard_mod, embedder as emb
 
     name, codex = col.resolve(a.root, a.collection)
-    member = a.root / name / "drag" / \
-        drag.calibration_paths(codex.space.calibration.set)[0]
+    member = a.root / name / "shard" / \
+        shard_mod.calibration_paths(codex.space.calibration.set)[0]
     if not member.is_file():
         raise CodexError(
             f"{name}: no calibration member at {member.name}. It is written "
@@ -3083,7 +3083,7 @@ def _write_statement(a, run, codex):
 def cmd_snapshot_list(a) -> int:
     from app.hold import collection as c, snapshot as sn
     name, _ = c.resolve(a.root, a.collection)
-    d = a.root / name / "drag" / "snapshots"
+    d = a.root / name / "shard" / "snapshots"
     for f in sorted(d.glob("*.json")) if d.is_dir() else []:
         if f.name.endswith(".sig.json"):
             continue
@@ -3115,14 +3115,14 @@ def cmd_records_show(a) -> int:
     dump`."""
     from app import layers as layers_mod
     from app.ask import figures
-    from app.hold import drag as drag_mod, export as exp
+    from app.hold import shard as shard_mod, export as exp
     from app.pack import records as pack_records
     name, codex = col.resolve(a.root, a.collection)
     snapshot = _latest_snapshot(a.root, name)
-    drag_dir = col.drag_of(Path(a.root), name)
+    shard_dir = col.shard_dir_of(Path(a.root), name)
     if a.shard:
         entry = exp._shard_of(snapshot, a.shard)
-        path = drag_dir / entry.path
+        path = shard_dir / entry.path
         if not path.is_file():
             raise CodexError(f"{entry.path} is in snapshot {snapshot.snapshot_id} "
                              f"but not in this copy")
@@ -3134,7 +3134,7 @@ def cmd_records_show(a) -> int:
     if not a.record_id:
         raise CodexError("name a record id (e.g. pubmed:38112034) or --shard <slice>/<n>")
     order = (getattr(codex, "slicing", None) or {}).get("order", "bytes")
-    got = figures.record_of(drag_dir, snapshot, a.record_id, order)
+    got = figures.record_of(shard_dir, snapshot, a.record_id, order)
     if got is None:
         print(f"louise: {a.record_id}: in no shard of snapshot "
               f"{snapshot.snapshot_id} this copy holds", file=sys.stderr)
@@ -3148,7 +3148,7 @@ def cmd_records_show(a) -> int:
     layer = layers_mod.layers_for(codex)[i]
     sections = [tuple(s) for s in record.get("sections") or []]
     _print({"snapshot": snapshot.snapshot_id,
-            "shard": drag_mod.shard_path(shard.slice, shard.n),
+            "shard": shard_mod.shard_path(shard.slice, shard.n),
             "layer": {"index": i, **layer.as_manifest()},
             "record": record,
             "chunks": layers_mod.chunks_for_document(codex, row, sections)})

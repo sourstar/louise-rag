@@ -153,11 +153,11 @@ def work_groups(collection, uids: Sequence[str], *, root: Path | None = None,
     from app.ask.results import _root
     root = Path(root) if root is not None else _root()
     try:
-        snap = seeder.current_snapshot(col.drag_of(root, collection.name))
+        snap = seeder.current_snapshot(col.shard_dir_of(root, collection.name))
     except Exception:   # noqa: BLE001 — no snapshot named: no claim applies (05 §5.3)
         snap = None
     read = snap.snapshot_id if snap is not None else None
-    indexes = [ann.index_of(col.drag_of(root, a.name)) for a in usable
+    indexes = [ann.index_of(col.shard_dir_of(root, a.name)) for a in usable
                if ann.applies_from(a.codex.annotates.from_snapshot, read)]
     if not indexes:
         return {}, {}

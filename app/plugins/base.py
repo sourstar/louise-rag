@@ -70,7 +70,7 @@ class Erasure(str, Enum):
 
     Sharing cannot un-publish: once a shard is served, no later snapshot
     reaches the peers who hold it. So ERASABLE requires
-    `privacy: never-share`, and a drag build refuses the pair otherwise.
+    `privacy: never-share`, and a SHARD build refuses the pair otherwise.
     Every collection that travels is APPEND_ONLY or RETRACTABLE.
     """
     APPEND_ONLY = "append-only"

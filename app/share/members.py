@@ -6,7 +6,7 @@ and every DHT key from the snapshot and the Codex alone, so two honest
 publishers of one file land in one swarm and a newcomer months later finds
 a collection by computing its key, not by asking anyone.
 
-- A file's torrent is a function of its drag-relative path, its length and
+- A file's torrent is a function of its SHARD-relative path, its length and
   its pieces root, and of nothing else: the info dictionary holds exactly
   `meta version`, `name` (the member), `piece length` (16 MiB) and the
   `file tree` with that one file. The infohash is SHA-256 of its bencoding.
@@ -22,11 +22,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.hold import drag
+from app.hold import shard as shard_mod
 from app.hold.codex import CodexError, canonical_json
-from app.hold.drag import MemberFile, member_root
+from app.hold.shard import MemberFile, member_root
 
-PIECE_LENGTH = drag.PIECE_LENGTH          # 16 MiB (09 §9.16)
+PIECE_LENGTH = shard_mod.PIECE_LENGTH          # 16 MiB (09 §9.16)
 META_VERSION = 2
 DHT_KEY_BYTES = 20
 
@@ -76,12 +76,12 @@ def raw_digest(identity: str) -> bytes:
 def info_dict(member: str, path: str, length: int, root: str) -> dict[str, Any]:
     """Exactly 09 §9.16's info dictionary for one file of a member: `meta
     version: 2`, `name` = the member, `piece length`, and a `file tree` with
-    the one file at its drag-relative path carrying `length` and `pieces
+    the one file at its SHARD-relative path carrying `length` and `pieces
     root`. Nothing else — no private flag, no comment, no date, no creator,
     no announce — so the infohash is a function of (path, length, root)."""
     parts = path.split("/")
     if not path or any(p in ("", ".", "..") for p in parts) or path.startswith("/"):
-        raise MemberError(f"a member file's path is drag-relative and plain, got {path!r}")
+        raise MemberError(f"a member file's path is SHARD-relative and plain, got {path!r}")
     if not isinstance(length, int) or isinstance(length, bool) or length < 0:
         raise MemberError(f"{path}: length is a non-negative integer, got {length!r}")
     tree: dict[str, Any] = {"": {"length": length, "pieces root": raw_digest(root)}}
@@ -140,7 +140,7 @@ def image_key(image: str) -> bytes:
 
 @dataclass(frozen=True)
 class Torrent:
-    path: str                  # drag-relative
+    path: str                  # SHARD-relative
     length: int
     root: str
     info: dict[str, Any]
@@ -151,9 +151,9 @@ class Torrent:
 class Member:
     """One unit a peer fetches or shares (02 §2.6): a name of 09 §9.16's
     table and the files it is made of. Its root is the file's pieces root,
-    or `H` over `[[path, root, bytes], …]` for several (drag.member_root).
+    or `H` over `[[path, root, bytes], …]` for several (shard_mod.member_root).
     `base` is the directory the files' paths are relative to when it is not
-    the drag: a bundle's own directory (09 §9.7, §9.16)."""
+    the SHARD: a bundle's own directory (09 §9.7, §9.16)."""
     name: str
     files: tuple[MemberFile, ...]
     base: Path | None = None
@@ -195,7 +195,7 @@ def _whole_collection_members(files: dict[str, Any]) -> list[Member]:
     snapshot's `files` (09 §9.4); a null entry (a green collection's terms)
     is no member."""
     out: list[Member] = []
-    plain = {drag.VALIDATION_PATH: "validation", drag.TERMS_PATH: "terms"}
+    plain = {shard_mod.VALIDATION_PATH: "validation", shard_mod.TERMS_PATH: "terms"}
     calibration: dict[str, list[MemberFile]] = {}
     seals: dict[str, list[MemberFile]] = {}
     lists: list[MemberFile] = []
@@ -212,7 +212,7 @@ def _whole_collection_members(files: dict[str, Any]) -> list[Member]:
         elif path.startswith("seals/lists/") and path.endswith(".xml"):
             lists.append(mf)                  # the trusted lists travel with the seals (09 §9.16)
         elif path.startswith("seals/") and path.endswith(".json"):
-            seals.setdefault(drag.seals_member(Path(path).stem), []).append(mf)
+            seals.setdefault(shard_mod.seals_member(Path(path).stem), []).append(mf)
         else:
             raise MemberError(f"{path}: not a whole-collection member 09 §9.16 names")
     for name in sorted(calibration):
@@ -232,9 +232,9 @@ def bundle_member(space: str, bundle_dir: Path) -> Member:
     paths relative to the bundle directory, so the member root is a function
     of the bundle alone."""
     bundle_dir = Path(bundle_dir)
-    files = tuple(MemberFile(f, drag.pieces_root_of(bundle_dir / f), (bundle_dir / f).stat().st_size)
+    files = tuple(MemberFile(f, shard_mod.pieces_root_of(bundle_dir / f), (bundle_dir / f).stat().st_size)
                   for f in BUNDLE_FILES)
-    return Member(f"bundle-{drag.check_space(space)}-{bundle_dir.name}", files, base=bundle_dir)
+    return Member(f"bundle-{shard_mod.check_space(space)}-{bundle_dir.name}", files, base=bundle_dir)
 
 
 def bundle_members(state_dir: Path, space: str) -> list[Member]:
@@ -251,11 +251,11 @@ def bundle_members(state_dir: Path, space: str) -> list[Member]:
     return out
 
 
-def members_of(snapshot, *, drag_dir: Path | None = None) -> tuple[Member, ...]:
+def members_of(snapshot, *, shard_dir: Path | None = None) -> tuple[Member, ...]:
     """The members a snapshot implies, with their files, roots and sizes —
     what a sharer serves and announces and a fetcher asks for: the record
     shards per slice, the relations and figures shards per slice, the
-    whole-collection members, and — from the drag on disk, when given — the
+    whole-collection members, and — from the SHARD on disk, when given — the
     text-index members. Vectors are not here: they reach a peer only as
     bundles (04 §4.3)."""
     out: list[Member] = []
@@ -263,16 +263,16 @@ def members_of(snapshot, *, drag_dir: Path | None = None) -> tuple[Member, ...]:
     for s in snapshot.shards:
         by_slice.setdefault(s.slice, []).append(MemberFile(s.path, s.root, s.bytes))
     for sl in sorted(by_slice, key=lambda s: s.encode("utf-8")):
-        out.append(Member(drag.records_member(sl), tuple(by_slice[sl])))
+        out.append(Member(shard_mod.records_member(sl), tuple(by_slice[sl])))
     rel: dict[str, list[MemberFile]] = {}
     for r in snapshot.relations:
         rel.setdefault(r.slice, []).append(MemberFile(r.path, r.root, r.bytes))
     for sl in sorted(rel, key=lambda s: s.encode("utf-8")):
-        out.append(Member(drag.relations_member(sl), tuple(rel[sl])))
+        out.append(Member(shard_mod.relations_member(sl), tuple(rel[sl])))
     fig: dict[str, list[MemberFile]] = {}
     for f in snapshot.figures:
         fig.setdefault(f.slice, []).append(MemberFile(f.path, f.root, f.bytes))
     for sl in sorted(fig, key=lambda s: s.encode("utf-8")):
-        out.append(Member(f"figures-{drag.check_slice(sl)}", tuple(fig[sl])))
+        out.append(Member(f"figures-{shard_mod.check_slice(sl)}", tuple(fig[sl])))
     out += _whole_collection_members(snapshot.files or {})
     return tuple(out)

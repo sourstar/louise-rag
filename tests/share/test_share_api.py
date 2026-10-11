@@ -16,7 +16,7 @@ from app.hold import envelope as env
 from app.share import gossip, messages, peers
 from tests.deposit.test_deposit_identity import node  # noqa: F401
 from tests.hold.conftest import KEY
-from tests.share.test_messages import PEER, PEER_KEY, a_drag
+from tests.share.test_messages import PEER, PEER_KEY, a_shard
 
 OURS = KEY
 OUR_KEY = env.key_text(OURS.verify_key)
@@ -78,7 +78,7 @@ def test_a_banned_peer_is_not_heard(client):
 
 
 def test_pulls_answer_exact_bytes_and_a_route_answers_its_own_kind(client, node):  # noqa: F811
-    codex, name, d, snap = a_drag(node)
+    codex, name, d, snap = a_shard(node)
     pull = env.sign(env.EVENT, messages.pull_body(key=PEER_KEY, what="codex",
                                                   collection_id=codex.collection_id), PEER)
     r = client.post("/api/share/codex/fetch", json=pull)
@@ -119,7 +119,7 @@ class FakeClient:
 
 
 def test_the_beat_sends_this_nodes_digest_signed_to_every_recipient(node, monkeypatch):  # noqa: F811
-    codex, name, d, snap = a_drag(node)
+    codex, name, d, snap = a_shard(node)
     monkeypatch.setattr(node_keys, "load_signing_key", lambda path=None: OURS)
     monkeypatch.setattr(identity, "own", lambda: OUR_KEY)
     monkeypatch.setattr(gossip, "_last_digest_at", 0.0)

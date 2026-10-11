@@ -18,7 +18,7 @@ lt = pytest.importorskip("libtorrent")
 
 from app.acquire import engine, torrent_landed, transport_torrent as tt  # noqa: E402
 from app.acquire.spec import Endpoint, RemoteFile, Transport, TransportError  # noqa: E402
-from app.hold import drag as drag_mod  # noqa: E402
+from app.hold import shard as shard_mod  # noqa: E402
 
 PIECE = 16 * 1024
 ALPHA = bytes(range(251)) * 400                   # 100,400 bytes: ends inside a piece
@@ -217,12 +217,12 @@ def test_check_pieces_names_the_bad_and_the_shared_pieces(tmp_path):
 
 
 def test_the_streamed_pieces_root_is_the_in_memory_one(tmp_path):
-    B = drag_mod.BLOCK
+    B = shard_mod.BLOCK
     for n in (0, 1, B, B + 1, 2 * B, 3 * B - 7, 5 * B, 17 * B + 3, 64 * B):
         data = bytes((i * 7 + n) % 256 for i in range(n))
         p = tmp_path / f"f{n}"
         p.write_bytes(data)
-        assert drag_mod.pieces_root_of(p) == drag_mod.pieces_root(data), n
+        assert shard_mod.pieces_root_of(p) == shard_mod.pieces_root(data), n
 
 
 def test_a_lost_flush_alert_never_holds_back_the_next(monkeypatch):

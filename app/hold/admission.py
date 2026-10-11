@@ -105,7 +105,7 @@ def state_dir(root) -> Path:
 
     `root` is the collections directory every `hold` command takes, so
     the node's own state is its sibling — never inside it, because
-    `collections/<name>/` is the drag a peer serves and this is exactly
+    `collections/<name>/` is the SHARD a peer serves and this is exactly
     what no peer sees.
     """
     return Path(root).parent / "state"

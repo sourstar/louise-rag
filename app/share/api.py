@@ -3,7 +3,7 @@ the web process. Migration step 9c.
 
 The web verifies a message with the SENDER's key, written in the body, so
 it needs no key of its own; what it answers to a pull is self-verifying
-bytes from the drag and the state directory, read only. What it learns —
+bytes from the SHARD and the state directory, read only. What it learns —
 a peer's digest, an event — goes into the node's state database
 (app/share/peers.py); the WORKER, which holds this node's key, sends this
 node's digests, forwards events and acts on what arrived (app/share/gossip.py).

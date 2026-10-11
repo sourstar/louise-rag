@@ -1,6 +1,6 @@
 """`collections.by_name` looks up ONE collection: another file's fault is not
 its fault (found 2026-09-21 — `hold check pubmed` died on gutenberg's
-missing drag before checking anything), and its own fault still raises."""
+missing SHARD before checking anything), and its own fault still raises."""
 import pytest
 
 from app import collections as collections_mod

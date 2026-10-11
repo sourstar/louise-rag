@@ -12,7 +12,7 @@ from app.hold import integrity
 from app.share import contribute
 from tests.deposit.test_deposit_identity import node  # noqa: F401
 from tests.hold.conftest import a_root, pubmed
-from tests.hold.test_anchor import a_signed_drag, certified
+from tests.hold.test_anchor import a_signed_shard, certified
 
 SIGNED = "records/year=2023/00001.jsonl.zst"
 FOREIGN = "records/year=2023/00002.jsonl.zst"
@@ -21,7 +21,7 @@ FOREIGN = "records/year=2023/00002.jsonl.zst"
 def a_violated_copy(node):  # noqa: F811
     codex = certified()
     a_root(node, codex)
-    name, d, snap, data = a_signed_drag(node, codex)
+    name, d, snap, data = a_signed_shard(node, codex)
     return codex, name, d, snap, data
 
 
@@ -65,11 +65,11 @@ def test_the_listing_is_cached_by_its_stat_and_redone_on_a_clock(node, monkeypat
 def test_the_shard_is_never_read(tmp_path):
     from app import collections as collections_mod
     from app.plugins.base import DiscoverState
-    from app.plugins.drag import DragSource
-    from tests.test_plugins_drag import a_drag
-    d = a_drag(tmp_path)
+    from app.plugins.shard import ShardSource
+    from tests.test_plugins_shard import a_shard
+    d = a_shard(tmp_path)
     (tmp_path / "state").mkdir()
-    src = DragSource(collections_mod.PLUGIN_REGISTRY["pubmed"], d, frozenset({"records/year=2021/00001.jsonl.zst"}))
+    src = ShardSource(collections_mod.PLUGIN_REGISTRY["pubmed"], d, frozenset({"records/year=2021/00001.jsonl.zst"}))
     refs = list(src.discover(DiscoverState(corpus_root=d, state_dir=tmp_path / "state")))
     assert [r.native_id for r in refs] == ["1", "2"], "none of the violating shard's records enters the manifest"
 
@@ -80,7 +80,7 @@ def test_embedding_and_contribution_stop_and_show_names_it(node, monkeypatch):  
     events = []
     monkeypatch.setattr(worker.db, "log_event", lambda con, level, stage, msg, doc_uid=None:
                         events.append((level, stage, msg)))
-    c = SimpleNamespace(name=name, codex=codex, source="drag", corpus_dir=d, manifest_path=d / "m.sqlite")
+    c = SimpleNamespace(name=name, codex=codex, source="shard", corpus_dir=d, manifest_path=d / "m.sqlite")
     con = sqlite3.connect(":memory:")
     assert worker._integrity_halts(con, c) is False and events == []
     (d / FOREIGN).write_bytes(b"f" * 100)
@@ -100,7 +100,7 @@ def test_search_answers_from_the_certified_rest_and_says_so(node, monkeypatch): 
     codex, name, d, snap, _ = a_violated_copy(node)
     monkeypatch.setattr(integrity, "RECHECK_S", 0.0)
     (d / FOREIGN).write_bytes(b"f" * 100)
-    c = SimpleNamespace(name=name, plugin="pubmed", codex=codex, source="drag", corpus_dir=d)
+    c = SimpleNamespace(name=name, plugin="pubmed", codex=codex, source="shard", corpus_dir=d)
     monkeypatch.setattr(query_service, "resolve_collections", lambda names, **kw: [c])
     monkeypatch.setattr(results, "_layer", lambda c, h: "abstract")
     shard_of = {"pubmed:1:0:1": SIGNED, "pubmed:2:0:1": FOREIGN}
@@ -120,13 +120,13 @@ def test_search_answers_from_the_certified_rest_and_says_so(node, monkeypatch): 
 def test_a_hit_is_traced_to_the_shard_its_record_was_read_from(tmp_path):
     from contextlib import closing
     from app import db
-    d = tmp_path / "drag"
+    d = tmp_path / "shard"
     c = SimpleNamespace(name="p", plugin="pubmed", corpus_dir=d, manifest_path=tmp_path / "m.db",
                         fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance")
     with closing(db.connect(c)) as con:
         con.execute("INSERT INTO documents(uid, source, native_id, path) VALUES "
                     "('pubmed:2', 'pubmed', '2', ?), ('pubmed:3', 'pubmed', '3', '/elsewhere/x.xml')",
                     (f"{d / FOREIGN}#pubmed:2",))
-    assert results._from_shard(c, {"book_id": 2}) == FOREIGN, "the locator's shard, drag-relative"
-    assert results._from_shard(c, {"book_id": 3}) is None, "not a drag locator"
+    assert results._from_shard(c, {"book_id": 2}) == FOREIGN, "the locator's shard, SHARD-relative"
+    assert results._from_shard(c, {"book_id": 3}) is None, "not a SHARD locator"
     assert results._from_shard(c, {"book_id": 9}) is None, "no such document"

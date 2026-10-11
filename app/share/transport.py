@@ -2,7 +2,7 @@
 second brick: every file of every wanted member this peer lacks, fetched
 by its torrent — the infohash computed from the snapshot alone, so no one
 is asked what to fetch — into `state/staging/`, verified against its root
-and promoted into the drag (app/share/holdings.py).
+and promoted into the SHARD (app/share/holdings.py).
 
 Run by the WORKER in a thread of its own (`loop`), on the session it
 already runs for seeding, under the budget: the DOWN bucket, DELTA class
@@ -104,11 +104,11 @@ def landed_whole(path: Path, length: int, root: str) -> bool:
     and its pieces root. Never the length alone — libtorrent sizes a file
     before every block of it is written, so a staged file at its full
     length can still hold holes (2026-10-08)."""
-    from app.hold import drag as drag_mod
+    from app.hold import shard as shard_mod
     try:
         if path.stat().st_size != length:
             return False
-        return drag_mod.pieces_root_of(path) == root
+        return shard_mod.pieces_root_of(path) == root
     except OSError:
         return False
 
@@ -128,7 +128,7 @@ def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hin
     metadata its snapshot names, this one file on, paced by the lease, credited as it
     lands, stopped on `stop` with staging left for the next beat. The
     download handle leaves the session afterwards; serving is the seeder's,
-    from the drag, when the collection's file says so."""
+    from the SHARD, when the collection's file says so."""
     from app.acquire import transport_torrent as tt
     from app.transfer.manager import get_manager
     lt = seeder._lt()
@@ -241,12 +241,12 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
     member of the current snapshot, terms first; with no acknowledgement,
     terms alone (04 §4.4). What moved, and why nothing did."""
     root = Path(root)
-    drag_dir = col.drag_of(root, name)
+    shard_dir = col.shard_dir_of(root, name)
     state = root / name / "state"
     staging = state / holdings.STAGING
     out: dict[str, Any] = {"snapshot_id": None, "promoted": [], "refused": [], "errors": [],
                            "waiting": None, "stopped": False, "wanted": 0, "missing": 0}
-    snap = seeder.current_snapshot(drag_dir)
+    snap = seeder.current_snapshot(shard_dir)
     if snap is None:
         return out
     out["snapshot_id"] = snap.snapshot_id
@@ -255,8 +255,8 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
     if ack_missing and any(m.name != "terms" for m in want):
         want = [m for m in want if m.name == "terms"]
         out["waiting"] = "acknowledgement: `hold collection ack` first (04 §4.4)"
-    holdings.sweep_marks(con, drag_dir)
-    todo = holdings.missing(drag_dir, want)
+    holdings.sweep_marks(con, shard_dir)
+    todo = holdings.missing(shard_dir, want)
     out["missing"] = len(todo)
     if not todo:
         return out
@@ -287,7 +287,7 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
             try:
                 staged = fetch_file(session, torrent=t, member=m.name, staging=staging,
                                     hints=hints, stop=stop, log=log)
-                holdings.promote(con, staged, drag_dir, snapshot_id=snap.snapshot_id,
+                holdings.promote(con, staged, shard_dir, snapshot_id=snap.snapshot_id,
                                  member=m.name, f=f, now=now, allowed_roots=allowed)
                 out["promoted"].append(f.path)
                 if log:
@@ -325,10 +325,10 @@ _complete: dict[str, tuple[tuple, float]] = {}
 RECHECK_S = 3600.0
 
 
-def _snapshot_key(drag_dir: Path) -> tuple | None:
+def _snapshot_key(shard_dir: Path) -> tuple | None:
     """The newest snapshot file's identity — (id, mtime, size) — without
-    reading it; None when the drag has none."""
-    d = Path(drag_dir) / "snapshots"
+    reading it; None when the SHARD has none."""
+    d = Path(shard_dir) / "snapshots"
     if not d.is_dir():
         return None
     ids = sorted(p.name[:-5] for p in d.glob("*.json") if not p.name.endswith(".sig.json"))
@@ -380,8 +380,8 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
             ack_missing = licensing.state_for(c) == licensing.MISSING
         except Exception:   # noqa: BLE001 — a gate error withholds, never fetches
             ack_missing = True
-        drag_dir = col.drag_of(root, c.name)
-        skey = _snapshot_key(drag_dir)
+        shard_dir = col.shard_dir_of(root, c.name)
+        skey = _snapshot_key(shard_dir)
         if skey is None:
             continue
         selection = (skey, c.slices if c.slices == "all" else tuple(c.slices or ()),
@@ -389,13 +389,13 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
         done = _complete.get(c.name)
         if done is not None and done[0] == selection and now - done[1] < RECHECK_S:
             continue                      # complete at this snapshot and selection: nothing to stat
-        snap = seeder.current_snapshot(drag_dir)
+        snap = seeder.current_snapshot(shard_dir)
         if snap is None:
             continue
         want = holdings.wanted(snap, slices=c.slices, kinds=c.kinds)
         if ack_missing:
             want = [m for m in want if m.name == "terms"]
-        if not holdings.missing(drag_dir, want):
+        if not holdings.missing(shard_dir, want):
             _complete[c.name] = (selection, now)
             continue                      # the session is opened only for a byte to fetch
         _complete.pop(c.name, None)
@@ -415,7 +415,7 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
             pass
         out[c.name] = got
         if on_promoted is not None and any(str(p).startswith("records/") for p in got.get("promoted", ())):
-            # 9f: a fetched collection reads its shards (app/plugins/drag.py),
+            # 9f: a fetched collection reads its shards (app/plugins/shard.py),
             # and the shards that just landed wait for no six-hour interval
             # — the second peer held its records with an empty manifest
             # until a restart (2026-10-07)

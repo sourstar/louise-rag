@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from app.hold import drag as drag_mod, snapshot as sn
+from app.hold import shard as shard_mod, snapshot as sn
 from app.hold.codex import CodexError
 
 KIND, VERSION = "louise-certifier", 1
@@ -96,7 +96,7 @@ def valid_keys_at(doc: dict[str, Any], time_text: str) -> set[str]:
 # ---- the state kept ------------------------------------------------------------------
 
 def state_path(root: Path, name: str, codex) -> Path:
-    return Path(root) / name / "state" / "anchor" / f"{drag_mod._hex(codex.collection_id)}.json"
+    return Path(root) / name / "state" / "anchor" / f"{shard_mod._hex(codex.collection_id)}.json"
 
 
 def read_state(root: Path, name: str, codex) -> dict[str, Any] | None:
@@ -231,8 +231,8 @@ def certifier_signatures(root: Path, name: str, codex, snapshot) -> list[dict[st
     document is held, else the Codex's `certifier.key` alone."""
     if codex.publication != "certified" or codex.certifier is None or snapshot is None:
         return []
-    drag = Path(root) / name / "drag"
-    p = drag / drag_mod.snapshot_sig_path(snapshot.snapshot_id)
+    shard_tree = Path(root) / name / "shard"
+    p = shard_tree / shard_mod.snapshot_sig_path(snapshot.snapshot_id)
     if not p.is_file():
         return []
     try:
@@ -272,8 +272,8 @@ def signed_roots(root: Path, name: str, codex) -> set[str]:
     not only the newest, since a shard stays listed by every snapshot that
     still carries it."""
     from app.share import members as mem
-    drag = Path(root) / name / "drag"
-    d = drag / "snapshots"
+    shard_tree = Path(root) / name / "shard"
+    d = shard_tree / "snapshots"
     out: set[str] = set()
     if not d.is_dir():
         return out
@@ -286,7 +286,7 @@ def signed_roots(root: Path, name: str, codex) -> set[str]:
             continue
         if not certifier_signatures(root, name, codex, snapshot):
             continue
-        for m in mem.members_of(snapshot, drag_dir=drag):
+        for m in mem.members_of(snapshot, shard_dir=shard_tree):
             for f in m.files:
                 out.add(f.root)
     return out

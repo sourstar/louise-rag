@@ -52,7 +52,7 @@ from .codex import CodexError
 SIZE = 512
 
 #: One set per modality (09 §9.12). The file lives in the platform image,
-#: not in a drag: it is not a member, and a peer that cannot find the set a
+#: not in a SHARD: it is not a member, and a peer that cannot find the set a
 #: Codex names is running a platform build that does not carry it.
 SETS_DIR = Path(__file__).resolve().parent.parent.parent / "calibration"
 
@@ -427,7 +427,7 @@ def draw_pairs(candidates: Callable[[], Iterable[Candidate]],
 PAIR_SHARDS = 16
 
 
-def pair_set_from_drag(drag_dir, codex, snapshot, *,
+def pair_set_from_shard(shard_dir, codex, snapshot, *,
                        shards: int = PAIR_SHARDS) -> tuple[bytes, dict]:
     """`(the pair set file, its provenance)`, drawn from a collection's own
     records (09 §9.12, amended 2026-10-08) — what
@@ -462,7 +462,7 @@ def pair_set_from_drag(drag_dir, codex, snapshot, *,
     seed = bytes.fromhex(snapshot.hash.split(":", 1)[1])
     drawn = sample(seed, min(int(shards), len(names)), iter(names))
     chosen = sorted((names[k] for k in drawn), key=lambda s: (s.slice.encode(), s.n))
-    missing = [s.path for s in chosen if not (Path(drag_dir) / s.path).is_file()]
+    missing = [s.path for s in chosen if not (Path(shard_dir) / s.path).is_file()]
     if missing:
         raise CalibrationError(
             f"the draw needs {len(chosen)} shards and this copy lacks {len(missing)} "
@@ -471,7 +471,7 @@ def pair_set_from_drag(drag_dir, codex, snapshot, *,
     def candidates() -> Iterator[Candidate]:
         for s in chosen:
             yield from pair_candidates(
-                cutter, pack_records.iter_records(Path(drag_dir) / s.path))
+                cutter, pack_records.iter_records(Path(shard_dir) / s.path))
 
     picked = draw_pairs(candidates)
     data = render_pairs([(a, b) for _, a, b in picked])
@@ -627,7 +627,7 @@ def build_member(texts, embed, *, normalise: bool, dim: int):
     06 §6.6: "the calibration comes first and needs no record … `create`
     embeds it with the named encoder, writes the reference vectors' hash
     into `space.calibration` and their envelope into `space.envelope`, and
-    stores the vectors as the drag member". So these two hashes are OUTPUTS
+    stores the vectors as the SHARD member". So these two hashes are OUTPUTS
     of `create`, never inputs a recipe supplies — a recipe carrying them
     would be asserting the result of a computation it did not do.
     """
@@ -677,7 +677,7 @@ def canonical_safetensors(raw: bytes) -> bytes:
     so `__metadata__`'s key order varies from write to write. The tensors
     and their offsets are identical; only the header's byte order moves.
 
-    That is fatal for a drag member. A member's transport root is a BitTorrent
+    That is fatal for a SHARD member. A member's transport root is a BitTorrent
     v2 pieces root over the FILE (09 §9.4, §9.16), so a header that reorders
     itself gives the same collection a different root on every write — two
     honest nodes with the same encoder would publish snapshots that disagree,
@@ -703,7 +703,7 @@ def write_member(path, vectors, envelope_, *, set_id_: str,
                  encoder_image: str | None = None,
                  encoder_engine: str | None = None,
                  query_vectors=None, pairs: bytes | None = None) -> None:
-    """`calibration/<set>.safetensors` at the drag root, with 09 §9.12's
+    """`calibration/<set>.safetensors` at the SHARD root, with 09 §9.12's
     headers. A member of every snapshot (`files`, §9.4), so its bytes
     are made deterministic before they land.
 

@@ -34,7 +34,7 @@ def _toml(cfg, name, body):
 @pytest.fixture
 def node(tmp_path, monkeypatch):
     """A config dir with one unconverted collection; the Codex one is added
-    by whichever test needs it (building a real drag is not free)."""
+    by whichever test needs it (building a real SHARD is not free)."""
     cfg = tmp_path / "node-config"
     _toml(cfg, "wikivec",
           'plugin = "embedded"\nembed_mode = "off"\n'

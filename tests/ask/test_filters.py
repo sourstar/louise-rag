@@ -101,8 +101,8 @@ def test_a_filtered_federation_is_restricted_per_collection_and_says_how_many(mo
     from app.share import seeder
     monkeypatch.setattr(filters, "book_ids_for",
                         lambda codex, index_dir, f, *, snapshot_id, all_ids=None: {3, 4})
-    monkeypatch.setattr(seeder, "current_snapshot", lambda drag: None)
-    monkeypatch.setattr(col, "drag_of", lambda root, name: None)
+    monkeypatch.setattr(seeder, "current_snapshot", lambda shard_tree: None)
+    monkeypatch.setattr(col, "shard_dir_of", lambda root, name: None)
     query_service.run_search(None, "q", 5, "hybrid", False, filters={"lang": "en"})
     assert seen == {"a": {3, 4}, "b": set()}, "a collection without a Codex has no facets: it admits nothing"
 

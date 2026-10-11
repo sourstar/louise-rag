@@ -7,7 +7,7 @@ refused such a shard at promotion, and nothing noticed one that arrived
 another way.
 
 What follows from a violation, each where it is enforced:
-  - the shard is never read: `DragSource.discover` skips it, so none of its
+  - the shard is never read: `ShardSource.discover` skips it, so none of its
     records or chunks enters the manifest (the unit of discard is the record
     and all its chunks);
   - embedding stops for the whole collection and no bundle is published
@@ -33,7 +33,7 @@ import os
 import time
 from pathlib import Path
 
-#: drag directory -> (stat signature of the listing, when listed, violations)
+#: SHARD directory -> (stat signature of the listing, when listed, violations)
 _cache: dict[str, tuple[tuple, float, tuple[str, ...]]] = {}
 RECHECK_S = 600.0
 
@@ -43,11 +43,11 @@ def applies(codex) -> bool:
             and getattr(codex, "content", None) == "manifest-only" and codex.certifier is not None)
 
 
-def _signature(drag: Path) -> tuple:
+def _signature(shard_tree: Path) -> tuple:
     """The stats that change when a shard or a snapshot is added, removed or
     replaced: the snapshots directory and every slice directory of records."""
     parts = []
-    for d in [drag / "snapshots", drag / "records"] + sorted((drag / "records").glob("*")):
+    for d in [shard_tree / "snapshots", shard_tree / "records"] + sorted((shard_tree / "records").glob("*")):
         try:
             st = os.stat(d)
             parts.append((str(d), st.st_mtime_ns, st.st_size))
@@ -61,9 +61,9 @@ def _listed(root: Path, name: str, codex) -> dict[str, int]:
     lists (any of them: a shard stays listed by every snapshot carrying it)."""
     from app.hold import anchor, snapshot as sn
     from app.share import members as mem
-    drag = Path(root) / name / "drag"
+    shard_tree = Path(root) / name / "shard"
     out: dict[str, int] = {}
-    d = drag / "snapshots"
+    d = shard_tree / "snapshots"
     for p in sorted(d.glob("*.json")) if d.is_dir() else []:
         if p.name.endswith(".sig.json"):
             continue
@@ -73,32 +73,32 @@ def _listed(root: Path, name: str, codex) -> dict[str, int]:
             continue
         if not anchor.certifier_signatures(root, name, codex, snapshot):
             continue
-        for m in mem.members_of(snapshot, drag_dir=drag):
+        for m in mem.members_of(snapshot, shard_dir=shard_tree):
             for f in m.files:
                 out[f.path] = f.bytes
     return out
 
 
 def violations(root, name: str, codex) -> tuple[str, ...]:
-    """The record shards on disk (`records/<slice>/<NNNNN>.jsonl.zst`, drag-
+    """The record shards on disk (`records/<slice>/<NNNNN>.jsonl.zst`, SHARD-
     relative) that no certifier-signed snapshot lists at that size. A
     superseded version (`NNNNN.<snapshot id>.jsonl.zst`, 02 §2.2) is not
     read and not counted. Empty where the rule does not apply."""
     if not applies(codex):
         return ()
-    drag = Path(root) / name / "drag"
-    if not (drag / "records").is_dir():
+    shard_tree = Path(root) / name / "shard"
+    if not (shard_tree / "records").is_dir():
         return ()
-    sig = _signature(drag)
-    cached = _cache.get(str(drag))
+    sig = _signature(shard_tree)
+    cached = _cache.get(str(shard_tree))
     if cached is not None and cached[0] == sig and time.monotonic() - cached[1] < RECHECK_S:
         return cached[2]
     listed = _listed(root, name, codex)
     out = []
-    for p in sorted((drag / "records").glob("*/*.jsonl.zst")):
+    for p in sorted((shard_tree / "records").glob("*/*.jsonl.zst")):
         if "." in p.name[: -len(".jsonl.zst")]:
             continue
-        rel = p.relative_to(drag).as_posix()
+        rel = p.relative_to(shard_tree).as_posix()
         try:
             size = p.stat().st_size
         except OSError:
@@ -106,5 +106,5 @@ def violations(root, name: str, codex) -> tuple[str, ...]:
         if listed.get(rel) != size:
             out.append(rel)
     result = tuple(out)
-    _cache[str(drag)] = (sig, time.monotonic(), result)
+    _cache[str(shard_tree)] = (sig, time.monotonic(), result)
     return result

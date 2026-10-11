@@ -13,7 +13,7 @@ import pytest
 
 from app import louise
 from app.bundles import keys as node_keys
-from app.hold import calibration as cal, collection as col, drag
+from app.hold import calibration as cal, collection as col, shard as shard_mod
 from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed, fake_query_embed
 from tests.hold.test_template import recipe
 
@@ -70,7 +70,7 @@ def test_a_sister_in_a_new_space_embeds_her_own_reference_and_is_held(node, tmp_
     assert sister.space_id != mother.space_id
     assert sorted(calls) == [(QUERY_URL, True), (SISTER_URL, False)], \
         "each side embedded the set once (RULE 1: the member is written from those vectors)"
-    member = col.drag_of(root, "sister") / drag.calibration_paths(sister.space.calibration.set)[0]
+    member = col.shard_dir_of(root, "sister") / shard_mod.calibration_paths(sister.space.calibration.set)[0]
     cal.read_member(member, expect_vectors=sister.space.calibration.vectors,
                     expect_envelope=sister.space.envelope)
     assert sister.space.calibration.vectors != mother.space.calibration.vectors
@@ -88,8 +88,8 @@ def test_a_sister_in_her_mothers_space_inherits_the_member_and_the_encoder(node,
     cid = capsys.readouterr().out.strip().splitlines()[-1]
     sister = col.read(root, cid)
     assert sister.space_id == mother.space_id and calls == [], "nothing embedded"
-    a = col.drag_of(root, "mother") / drag.calibration_paths(mother.space.calibration.set)[0]
-    b = col.drag_of(root, "weekly") / drag.calibration_paths(sister.space.calibration.set)[0]
+    a = col.shard_dir_of(root, "mother") / shard_mod.calibration_paths(mother.space.calibration.set)[0]
+    b = col.shard_dir_of(root, "weekly") / shard_mod.calibration_paths(sister.space.calibration.set)[0]
     assert a.read_bytes() == b.read_bytes()
     held = tomllib.loads((root / "weekly.toml").read_text(encoding="utf-8"))
     assert held["encoder"]["url"] == MOTHER_URL, "her mother's endpoint serves her space"

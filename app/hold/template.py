@@ -11,7 +11,7 @@ without `space` or `work`, and every default a recipe tightens is tightened
 explicitly.
 
 This module is the only place in `app/hold/` that knows a plugin exists.
-It imports the registry lazily so `codex`, `collection`, `drag` and
+It imports the registry lazily so `codex`, `collection`, `SHARD` and
 `snapshot` stay importable on their own — they are pure functions over
 bytes, and a peer checking a Codex needs none of the corpus machinery.
 """
@@ -23,7 +23,7 @@ from . import codex as codex_mod
 from .codex import (Certifier, Chunker, Codex, CodexError, Credit, Descriptive, Facet,
                     Layer, License, Origin, Parser, Toolchain, Update,
                     Validation, Work, default_per, space_from_dict)
-from .drag import check_slice
+from .shard import check_slice
 
 #: Fields a recipe must carry: the plugin cannot know them and the platform
 #: must not guess them (06 §6.6).

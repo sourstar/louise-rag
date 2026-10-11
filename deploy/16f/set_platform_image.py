@@ -48,21 +48,37 @@ def apply(cfg: dict, want: str) -> dict[str, str | None]:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print(f"usage: {argv[0]} sha256:<image id>", file=sys.stderr)
+    """`set_platform_image.py sha256:<id> [OLD_HOST NEW_HOST OLD_DIR NEW_DIR]`:
+    with the four, rename_mounts.py's change rides in the SAME `app.update`
+    (2026-10-11, `drag/` → `shard/`): an update may start the app, and two
+    of them would start it once with half the change."""
+    if len(argv) not in (2, 6):
+        print(f"usage: {argv[0]} sha256:<image id> [OLD_HOST NEW_HOST OLD_DIR NEW_DIR]",
+              file=sys.stderr)
         return 2
     want = argv[1]
+    renamed: list[str] = []
     from truenas_api_client import Client
     with Client() as c:
         cfg = c.call("app.config", APP)
         try:
             before = apply(cfg, want)
+            if len(argv) == 6:
+                import importlib.util
+                from pathlib import Path
+                spec = importlib.util.spec_from_file_location(
+                    "rename_mounts", Path(__file__).with_name("rename_mounts.py"))
+                rm = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(rm)
+                renamed = rm.apply(cfg, *argv[2:6])
         except ValueError as e:
             print(f"set_platform_image: {e}", file=sys.stderr)
             return 2
         for name in SERVICES:
             print(f"{name:7} {KEY} {before[name]} -> {want}")
-        if all(v == want for v in before.values()):
+        for line in renamed:
+            print(f"rename {line}")
+        if all(v == want for v in before.values()) and not renamed:
             print("unchanged")
             return 0
         try:

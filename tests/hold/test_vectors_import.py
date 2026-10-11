@@ -20,7 +20,7 @@ from app.hold.land import LandError
 from tests.hold.conftest import KEY
 from tests.hold.test_admit import (chunk_texts, made, mine_of,  # noqa: F401
                                    reference_and_envelope, space_embed)
-from tests.hold.test_vectors_export import build_drag, first_shard
+from tests.hold.test_vectors_export import build_shard, first_shard
 
 
 
@@ -39,9 +39,9 @@ def _member(root, codex, ref, env):
     the test's.
     """
     from safetensors.numpy import save_file
-    from app.hold import drag
-    p = Path(root) / "gutenberg" / "drag" / \
-        drag.calibration_paths(codex.space.calibration.set)[0]
+    from app.hold import shard as shard_mod
+    p = Path(root) / "gutenberg" / "shard" / \
+        shard_mod.calibration_paths(codex.space.calibration.set)[0]
     p.parent.mkdir(parents=True, exist_ok=True)
     save_file({"vectors": np.asarray(ref, dtype="float32"),
                "envelope": np.asarray(env, dtype="float32")}, str(p))
@@ -282,9 +282,9 @@ def test_land_refuses_to_write_a_report_the_ladder_failed(importable):
 def _records(root, snapshot, codex):
     from app.hold import export as exp
     from app.pack import records as pack_records
-    drag = col.drag_of(root, "gutenberg")
+    shard_tree = col.shard_dir_of(root, "gutenberg")
     entry = exp._shard_of(snapshot, first_shard(snapshot))
-    return pack_records.iter_records(drag / entry.path)
+    return pack_records.iter_records(shard_tree / entry.path)
 
 
 # ---- the chunk-id write --------------------------------------------------

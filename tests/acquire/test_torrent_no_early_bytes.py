@@ -153,10 +153,10 @@ def test_an_acquired_torrent_requests_only_the_file_asked_for(tmp_path, monkeypa
 
 
 def test_a_member_torrent_requests_nothing_before_its_lease(tmp_path, monkeypatch):
-    from app.hold import drag as drag_mod
+    from app.hold import shard as shard_mod
     from app.share import members as mem, transport
     data = b"m" * 40_000
-    member = mem.Member("records-x", (drag_mod.MemberFile("records/x/1.jsonl.zst", drag_mod.pieces_root(data), len(data)),))
+    member = mem.Member("records-x", (shard_mod.MemberFile("records/x/1.jsonl.zst", shard_mod.pieces_root(data), len(data)),))
     t = member.torrents()[0]
     ti = lt.torrent_info(lt.bdecode(mem.bencode({"info": t.info})))
     session = _Session(ti)

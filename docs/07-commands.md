@@ -578,7 +578,7 @@ app/plugins/  base.py  <source>/
 
 These are the modules the command tree names, one per noun, and the
 listing is that surface rather than a directory listing: a module that
-backs no command sits beside them (`hold/drag.py`, the member names and
+backs no command sits beside them (`hold/shard.py`, the member names and
 roots of 09 §9.16, which `records`, `snapshot`, `check`, `serve` and
 `fetch` all read) and is free to exist, but it never becomes the place a
 command's behaviour lives.
@@ -1008,7 +1008,7 @@ variable, a file, a log line or a message.
 is the collection being held:
 
 ```toml
-codex  = "sha256:…"                            # the collection_id this name holds; drag/codex.json's inner hash must equal it (09 §9.3)
+codex  = "sha256:…"                            # the collection_id this name holds; shard/codex.json's inner hash must equal it (09 §9.3)
 title  = "PubMed"                              # optional: overrides descriptive.title for this peer's own listing; never published
 slices = ["year=1975-1979", "year=1980-1984"]  # or "all"; a list is PART of the collection, held by `share fetch --slice` (§7.3)
 kinds  = ["records", "vectors"]
@@ -1017,8 +1017,8 @@ share  = true
 share_slices = ["year=1980-1984"]              # optional: serving narrowed to these slices (`share --slices`); absent = all held
 share_kinds  = ["records"]                     # optional: and these member kinds (`share --kinds`); terms, validation,
                                                # calibration and seals are served whatever it says (amended 2026-10-07)
-source = "origin"                              # origin | drag: where the documents are read from — the plugin's corpus, or
-                                               # the record parts held (the value "drag" keeps its old name until the code follows); `share fetch` writes "drag", and such a collection
+source = "origin"                              # origin | shard: where the documents are read from — the plugin's corpus, or
+                                               # the record parts held (the value was "drag" until 2026-10-11); `share fetch` writes "shard", and such a collection
                                                # is never `records build`-able here (amended 2026-10-07: the key did not exist)
 
 [encoder]                                      # required: a collection names its own encoder, there is no default
@@ -1121,7 +1121,7 @@ collection is another name.
 ├── collections/
 │   ├── pubmed.toml
 │   └── pubmed/
-│       ├── drag/            the copy, the SHARD (the directory keeps its old name): exactly the tree of 02 §2.6 — what `share` serves, and nothing else; the bytes may live on other storage, mounted here
+│       ├── shard/           the copy, the SHARD (`drag/` until 2026-10-11): exactly the tree of 02 §2.6 — what `share` serves, and nothing else; the bytes may live on other storage, mounted here
 │       ├── state/           manifest.sqlite, cursor, ack.json, attestations/, bundles/, lock — this peer's alone
 │       ├── index/           the text index of the parts held, and the facet values (05 §5.7)
 │       ├── lance/           the vector table search reads
@@ -1130,14 +1130,14 @@ collection is another name.
 └── keys/                    the peer key, at NODE_KEY_PATH
 ```
 
-A deposit collection (02 §2.9) has the same tree, and its `drag/` holds
+A deposit collection (02 §2.9) has the same tree, and its `shard/` holds
 only `codex.json` and the calibration member. Its `origin/` holds the
 deposits, byte-exact — one directory per deposit, named by its deposit
 number, with the file under the name the client gave it — and is the
 only copy of them anywhere; `state/`, `index/` and `lance/` hold what is
 derived from them, and erasing a deposit removes it from all four.
 
-`drag/` holds only what the Codex or a snapshot names, so a member is
+`shard/` holds only what the Codex or a snapshot names, so a member is
 hashed as it lies and `share` refuses a SHARD directory holding a file
 that neither the Codex names, nor a snapshot of the chain lists — as a
 record part, a relations part, a figures container, or in its `files`
@@ -1177,7 +1177,7 @@ in *quarantine* or *in use* (03 §3.6): computed at start and between
 rounds from what the peer holds, and stored nowhere.
 
 *Refused* — refuse-to-start — is a collection whose
-`drag/codex.json` has an inner hash other than its file's `codex`
+`shard/codex.json` has an inner hash other than its file's `codex`
 (09 §9.3), whose vector table's space or width
 is not its Codex's (02 §2.4), or whose state database carries a schema
 other than this platform's. Only a person clears it.

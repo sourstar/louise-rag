@@ -19,7 +19,7 @@ from app.hold import admit, calibration as cal, collection as col, \
     vectors as vec
 from app.hold.admit import AdmitError
 from tests.hold.conftest import KEY
-from tests.hold.test_vectors_export import build_drag, first_shard
+from tests.hold.test_vectors_export import build_shard, first_shard
 
 OTHER_KEY = signing.SigningKey(b"\x77" * 32)
 
@@ -67,10 +67,10 @@ def chunk_texts(root, snapshot, codex, shard) -> dict[str, str]:
     from app import layers as layers_mod
     from app.hold import export as exp
     from app.pack import records as pack_records
-    drag = col.drag_of(root, "gutenberg")
+    shard_tree = col.shard_dir_of(root, "gutenberg")
     entry = exp._shard_of(snapshot, shard)
     out = {}
-    for rec in pack_records.iter_records(drag / entry.path):
+    for rec in pack_records.iter_records(shard_tree / entry.path):
         row = {"uid": rec["uid"], "native_id": rec.get("native_id", 0)}
         for c in layers_mod.chunks_for_document(
                 codex, row, [tuple(s) for s in rec.get("sections") or []]):
@@ -80,7 +80,7 @@ def chunk_texts(root, snapshot, codex, shard) -> dict[str, str]:
 
 @pytest.fixture
 def made(isolated_config, tmp_path, corpus_dir):
-    """A drag, a shard, and a bundle of it — written by the exporter, by a
+    """A SHARD, a shard, and a bundle of it — written by the exporter, by a
     TRUTHFUL producer.
 
     The vectors are this encoder's own output for the chunk text, so the
@@ -90,7 +90,7 @@ def made(isolated_config, tmp_path, corpus_dir):
     the only way to know a refusal means what it says.
     """
     from app.hold import export as exp
-    root, snapshot = build_drag(tmp_path, corpus_dir, records_per_shard=2)
+    root, snapshot = build_shard(tmp_path, corpus_dir, records_per_shard=2)
     codex = col.read(root, "gutenberg")
     shard = first_shard(snapshot)
     texts = chunk_texts(root, snapshot, codex, shard)
@@ -119,10 +119,10 @@ def reference_and_envelope(codex):
 def mine_of(root, snapshot, shard):
     from app.pack import records as pack_records
     from app.hold import export as exp
-    drag = col.drag_of(root, "gutenberg")
+    shard_tree = col.shard_dir_of(root, "gutenberg")
     entry = exp._shard_of(snapshot, shard)
     return {r["uid"]: r["content_hash"]
-            for r in pack_records.iter_records(drag / entry.path)}
+            for r in pack_records.iter_records(shard_tree / entry.path)}
 
 
 def run(made, **over):
@@ -376,9 +376,9 @@ def test_T3_recomputes_and_passes_on_the_producers_own_vectors(made):
     from app.pack import records as pack_records
     from app import layers as layers_mod
     from app.hold import export as exp
-    drag = col.drag_of(root, "gutenberg")
+    shard_tree = col.shard_dir_of(root, "gutenberg")
     entry = exp._shard_of(snapshot, first_shard(snapshot))
-    for rec in pack_records.iter_records(drag / entry.path):
+    for rec in pack_records.iter_records(shard_tree / entry.path):
         row = {"uid": rec["uid"], "native_id": rec.get("native_id", 0)}
         for c in layers_mod.chunks_for_document(
                 codex, row, [tuple(s) for s in rec.get("sections") or []]):

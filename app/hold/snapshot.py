@@ -268,12 +268,12 @@ class Snapshot:
     def members(self, space: str | None = None) -> list[str]:
         """What a peer can fetch or share: slice × kind (02 §2.6). `space` is
         the 16-hex `<space>` segment, not the whole `space_id`."""
-        from . import drag
-        out = [drag.records_member(sl) for sl in self.slices]
-        out += [drag.relations_member(sl)
+        from . import shard as shard_mod
+        out = [shard_mod.records_member(sl) for sl in self.slices]
+        out += [shard_mod.relations_member(sl)
                 for sl in sorted({r.slice for r in self.relations})]
         if space:
-            out += [drag.vectors_member(space, sl) for sl in self.slices]
+            out += [shard_mod.vectors_member(space, sl) for sl in self.slices]
         return out
 
     def shards_of(self, native_id: str, order: str = "bytes") -> list[Shard]:
@@ -410,12 +410,12 @@ def reissued(previous: Snapshot | None, current: Snapshot) -> list[Shard]:
 
 def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snapshot:
     """`louise hold snapshot create <collection>` — freeze the records the
-    drag now holds as this period's snapshot.
+    SHARD now holds as this period's snapshot.
 
     The shard entries come from the staging build database, where step 2c's
     `close_shard` put them: `root`, `records_root`, `chunks_root` and the
     native-id range are computed where the shards are cut, because two of
-    the three cannot be recomputed from the drag alone without re-chunking
+    the three cannot be recomputed from the SHARD alone without re-chunking
     the corpus.
 
     Re-running for an id that exists: identical bytes is nothing to do and
@@ -429,15 +429,15 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
     from pathlib import Path
     from zoneinfo import ZoneInfo
 
-    from . import collection as col, drag as drag_mod, records as rec
+    from . import collection as col, shard as shard_mod, records as rec
 
     name, codex = col.resolve(Path(root), ref)
-    # invariant 9: a snapshot is signed and published with the DRAG. Its
+    # invariant 9: a snapshot is signed and published with the SHARD. Its
     # input exists only after a gated build, but the terms can change in
     # between — built through the gate like every other stage (audit)
     rec.local_collection(Path(root), name, codex)
     base = Path(root) / name
-    drag_dir, staging = base / "drag", base / rec.STATE / rec.BUILD
+    shard_dir, staging = base / "shard", base / rec.STATE / rec.BUILD
 
     db_path = staging / ".build" / "build.db"
     if not db_path.is_file():
@@ -475,19 +475,19 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
               bytes=r["bytes"], toolchain="own")
         for r in rows)
 
-    previous, prev_hashes = _previous(drag_dir, snapshot_id)
-    current = _content_hashes(drag_dir, shards)
+    previous, prev_hashes = _previous(shard_dir, snapshot_id)
+    current = _content_hashes(shard_dir, shards)
     snap = Snapshot(
         collection_id=codex.collection_id, snapshot_id=snapshot_id,
         previous=previous.hash if previous else None,
         shards=shards,
         delta=compute_delta(prev_hashes, current),
-        relations=_relation_shards(drag_dir, shards),
-        figures=_figures_shards(drag_dir, codex, shards),
-        files=_files(drag_dir, codex, snapshot_id),
+        relations=_relation_shards(shard_dir, shards),
+        figures=_figures_shards(shard_dir, codex, shards),
+        files=_files(shard_dir, codex, snapshot_id),
     )
 
-    out = drag_dir / drag_mod.snapshot_path(snapshot_id)
+    out = shard_dir / shard_mod.snapshot_path(snapshot_id)
     out.parent.mkdir(parents=True, exist_ok=True)
     if out.is_file():
         if out.read_bytes() == snap.canonical():
@@ -589,9 +589,9 @@ def sign_snapshot(root, name: str, snapshot: "Snapshot", key, *,
     import json
     from pathlib import Path
 
-    from . import drag as drag_mod
+    from . import shard as shard_mod
     from .codex import canonical_json
-    p = Path(root) / name / "drag" / drag_mod.snapshot_sig_path(snapshot.snapshot_id)
+    p = Path(root) / name / "shard" / shard_mod.snapshot_sig_path(snapshot.snapshot_id)
     existing = None
     if p.is_file():
         try:
@@ -604,12 +604,12 @@ def sign_snapshot(root, name: str, snapshot: "Snapshot", key, *,
     return doc
 
 
-def _previous(drag_dir, snapshot_id: str):
+def _previous(shard_dir, snapshot_id: str):
     """The snapshot before this one in the chain, and its uid → content_hash
     map. `None` when this is the first."""
     from pathlib import Path
-    from . import drag as drag_mod
-    d = Path(drag_dir) / "snapshots"
+    from . import shard as shard_mod
+    d = Path(shard_dir) / "snapshots"
     if not d.is_dir():
         return None, None
     ids = sorted(p.stem for p in d.glob("*.json")
@@ -618,7 +618,7 @@ def _previous(drag_dir, snapshot_id: str):
         return None, None
     raw = (d / f"{ids[-1]}.json").read_bytes()
     prev = _load(raw)
-    return prev, _content_hashes(drag_dir, prev.shards)
+    return prev, _content_hashes(shard_dir, prev.shards)
 
 
 def _load(raw: bytes) -> Snapshot:
@@ -704,13 +704,13 @@ def _load_lazy(path, raw) -> Snapshot | None:
     return snap
 
 
-def _content_hashes(drag_dir, shards) -> dict[str, str]:
-    """uid → content_hash over the shards named, read from the drag."""
+def _content_hashes(shard_dir, shards) -> dict[str, str]:
+    """uid → content_hash over the shards named, read from the SHARD."""
     from pathlib import Path
     from app.pack import records as pack_records
     out = {}
     for s in shards:
-        p = Path(drag_dir) / s.path
+        p = Path(shard_dir) / s.path
         if not p.is_file():
             continue
         for r in pack_records.iter_records(p):
@@ -718,19 +718,19 @@ def _content_hashes(drag_dir, shards) -> dict[str, str]:
     return out
 
 
-def _relation_shards(drag_dir, shards) -> tuple[RelationShard, ...]:
+def _relation_shards(shard_dir, shards) -> tuple[RelationShard, ...]:
     """One beside each record shard of the same slice and number, where the
     plugin wrote any (09 §9.14). `()` when the collection has none."""
     from pathlib import Path
-    from . import drag as drag_mod
+    from . import shard as shard_mod
     out = []
     for s in shards:
-        p = Path(drag_dir) / drag_mod.relations_path(s.slice, s.n)
+        p = Path(shard_dir) / shard_mod.relations_path(s.slice, s.n)
         if not p.is_file():
             continue
         raw = p.read_bytes()
         out.append(RelationShard(slice=s.slice, n=s.n,
-                                 root=drag_mod.pieces_root(raw),
+                                 root=shard_mod.pieces_root(raw),
                                  edges=_count_edges(p), bytes=len(raw)))
     return tuple(out)
 
@@ -740,7 +740,7 @@ def _count_edges(path) -> int:
     return sum(1 for _ in pack_records.iter_records(path))
 
 
-def _figures_shards(drag_dir, codex, shards) -> tuple[FiguresShard, ...]:
+def _figures_shards(shard_dir, codex, shards) -> tuple[FiguresShard, ...]:
     """One beside each record shard of the same slice and number (09 §9.5).
     `()` for a `record_line` 1 collection, which has no plates by
     definition and must not be made to look as though it might.
@@ -753,27 +753,27 @@ def _figures_shards(drag_dir, codex, shards) -> tuple[FiguresShard, ...]:
     not served" makes unrecoverable.
     """
     from pathlib import Path
-    from . import drag as drag_mod, figures as figures_mod
+    from . import shard as shard_mod, figures as figures_mod
 
     if int(getattr(codex, "record_line", 1) or 1) != 2:
         return ()
     out = []
     for s in shards:
-        p = Path(drag_dir) / drag_mod.figures_path(s.slice, s.n)
+        p = Path(shard_dir) / shard_mod.figures_path(s.slice, s.n)
         if not p.is_file():
             # A shard whose every record has `figures: []` — a slice of
             # books published without plates — writes no container, and
             # that is the one absence that is not a fault.
-            if _names_no_figures(Path(drag_dir) / s.path):
+            if _names_no_figures(Path(shard_dir) / s.path):
                 continue
             raise CodexError(
                 f"{s.slice}/{s.n:05d}: the shard's records name plates and "
-                f"{drag_mod.figures_path(s.slice, s.n)} is missing. A "
+                f"{shard_mod.figures_path(s.slice, s.n)} is missing. A "
                 f"container is written with its shard (09 §9.5); rebuild "
                 f"rather than publish records naming plates nothing holds")
         raw = p.read_bytes()
         out.append(FiguresShard(slice=s.slice, n=s.n,
-                                root=drag_mod.pieces_root(raw),
+                                root=shard_mod.pieces_root(raw),
                                 figures=len(figures_mod.read_index(p)),
                                 bytes=len(raw)))
     return tuple(out)
@@ -787,14 +787,14 @@ def _names_no_figures(shard_path) -> bool:
     return all(not r.get("figures") for r in pack_records.iter_records(shard_path))
 
 
-def _seal_lists(drag_dir, snapshot_id: str) -> list[str]:
+def _seal_lists(shard_dir, snapshot_id: str) -> list[str]:
     """The trusted lists the snapshot's seals name (`seals/lists/<sha256>.xml`):
     they travel in its seals member, so a peer can judge the seals offline
     (09 §9.15, §9.16, amended 2026-10-08). Required once the seals file
     names them — a seals member without its lists is unverifiable."""
     import json
-    from . import drag as drag_mod
-    p = drag_dir / drag_mod.seals_path(snapshot_id)
+    from . import shard as shard_mod
+    p = shard_dir / shard_mod.seals_path(snapshot_id)
     if not p.is_file():
         return []
     try:
@@ -806,47 +806,47 @@ def _seal_lists(drag_dir, snapshot_id: str) -> list[str]:
         tl = e.get("trusted_list") or {}
         for k in ("tl_sha256", "lotl_sha256"):
             if isinstance(tl.get(k), str) and tl[k].startswith("sha256:"):
-                out.add(drag_mod.trusted_list_path(tl[k]))
+                out.add(shard_mod.trusted_list_path(tl[k]))
     return sorted(out)
 
 
-def _files(drag_dir, codex, snapshot_id: str | None = None) -> dict:
+def _files(shard_dir, codex, snapshot_id: str | None = None) -> dict:
     """Every whole-collection member with its transport root (09 §9.4).
 
     ALL FIVE of §9.4's entries, and the reason is 07 §7.8: "`share` refuses
-    a drag directory holding a file that neither the Codex names, nor a
+    a SHARD directory holding a file that neither the Codex names, nor a
     snapshot of the chain lists — as a shard or in its `files` (09 §9.4)".
     So a member left out here does not merely go unserved; it makes the
-    whole drag unshareable. That became live the day `create` started
+    whole SHARD unshareable. That became live the day `create` started
     writing `calibration/<set>.safetensors`, which is why the two
     calibration entries are here and are not nullable — §9.4 gives "or
     null" to LICENSE-TERMS and to seals, and to nothing else.
     """
     from pathlib import Path
-    from . import drag as drag_mod
+    from . import shard as shard_mod
 
-    member, sig = drag_mod.calibration_paths(codex.space.calibration.set)
-    required = [drag_mod.VALIDATION_PATH, member, sig]
-    nullable = [drag_mod.TERMS_PATH]
+    member, sig = shard_mod.calibration_paths(codex.space.calibration.set)
+    required = [shard_mod.VALIDATION_PATH, member, sig]
+    nullable = [shard_mod.TERMS_PATH]
     if snapshot_id is not None:
-        nullable.append(drag_mod.seals_path(snapshot_id))
-        required += _seal_lists(Path(drag_dir), snapshot_id)
+        nullable.append(shard_mod.seals_path(snapshot_id))
+        required += _seal_lists(Path(shard_dir), snapshot_id)
 
-    hint = {drag_mod.VALIDATION_PATH: " — run `hold records validation`"}
+    hint = {shard_mod.VALIDATION_PATH: " — run `hold records validation`"}
 
     out: dict = {}
     for name in required + nullable:
-        p = Path(drag_dir) / name
+        p = Path(shard_dir) / name
         if p.is_file():
             raw = p.read_bytes()
-            out[name] = {"root": drag_mod.pieces_root(raw), "bytes": len(raw)}
+            out[name] = {"root": shard_mod.pieces_root(raw), "bytes": len(raw)}
         elif name in nullable:
             out[name] = None            # green: no terms; unsealed: no seal
         else:
             raise CodexError(
-                f"{name} is missing from the drag and 09 §9.4 lists it in "
+                f"{name} is missing from the SHARD and 09 §9.4 lists it in "
                 f"every snapshot's `files` without allowing null"
                 f"{hint.get(name, '')}. A snapshot that omits it makes the "
-                f"drag unshareable (07 §7.8), and one that named a file that "
+                f"SHARD unshareable (07 §7.8), and one that named a file that "
                 f"is not there would be worse")
     return out

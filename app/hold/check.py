@@ -15,7 +15,7 @@ skipped silently: a plan naming `centres` on a peer with no vector index
 must say so, not quietly shrink to the checks that happen to be built.
 
 `validation.json` IS CHECKED AGAINST THE CODEX, not read instead of it.
-02 §2.6 puts the block in the drag for tools; the Codex is the plan, and
+02 §2.6 puts the block in the SHARD for tools; the Codex is the plan, and
 a copy where the two differ is refused before any check runs. Otherwise
 the file is a place to publish a weaker plan than the one the identity
 covers.
@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from . import codex as cx
-from . import drag as drag_mod
+from . import shard as shard_mod
 from . import envelope as env
 from . import records as rec
 from . import snapshot as snap
@@ -110,19 +110,19 @@ class Report:
 def plan_of(root, name: str, codex) -> tuple[str, ...]:
     """The checks this collection's plan names, `validation.json` agreeing.
 
-    03 §3.2: "`validation.json` in the drag (02 §2.6) is that block
+    03 §3.2: "`validation.json` in the SHARD (02 §2.6) is that block
     written out for tools, and `hold check` refuses a copy where the two
     differ". The Codex is the plan; the file is a convenience, and a
     convenience that could disagree with the identity would be a place to
     publish a weaker plan than the one the identity covers.
     """
     want = cx.canonical_json(codex.validation.to_dict())
-    p = Path(root) / name / "drag" / drag_mod.VALIDATION_PATH
+    p = Path(root) / name / "shard" / shard_mod.VALIDATION_PATH
     if p.is_file():
         got = p.read_bytes()
         if got != want:
             raise CheckError(
-                f"{name}: drag/{drag_mod.VALIDATION_PATH} differs from the "
+                f"{name}: shard/{shard_mod.VALIDATION_PATH} differs from the "
                 f"Codex's `validation` block. The Codex is the plan and the "
                 f"file is a copy of it for tools (03 §3.2); a copy that may "
                 f"differ is a place to publish a weaker plan than the "
@@ -215,12 +215,12 @@ class Ctx:
     live: Path | None = None
 
     @property
-    def drag(self) -> Path:
-        return self.root / self.name / "drag"
+    def shard_tree(self) -> Path:
+        return self.root / self.name / "shard"
 
     def records_of(self, shard: snap.Shard) -> list[dict]:
         from app.pack import records as pack_records
-        p = self.drag / shard.path
+        p = self.shard_tree / shard.path
         if not p.is_file():
             raise FileNotFoundError(str(p))
         # a generator, one record at a time: a shard decoded whole into a
@@ -250,11 +250,11 @@ def check_roots(ctx: Ctx) -> Outcome:
     """
     failed, held = [], []
     for s in _shards(ctx, "roots", every=True):
-        p = ctx.drag / s.path
+        p = ctx.shard_tree / s.path
         if not p.is_file():
             continue
         held.append(s)
-        if drag_mod.pieces_root_of(p) != s.root:
+        if shard_mod.pieces_root_of(p) != s.root:
             failed.append(f"{s.slice}/{s.n:05d}")
     if not held:
         return Outcome("roots", INCONCLUSIVE,
@@ -348,11 +348,11 @@ def check_license(ctx: Ctx) -> Outcome:
     """"the terms member `LICENSE-TERMS` hashes to the Codex's
     `license.terms_sha256` (09 §9.13); absent for a green collection\"."""
     want = getattr(ctx.codex.license, "terms_sha256", None)
-    p = ctx.drag / "LICENSE-TERMS"
+    p = ctx.shard_tree / "LICENSE-TERMS"
     if not want:
         if p.is_file():
             return Outcome("license", FAIL, {},
-                           why="the Codex records no terms hash and the drag "
+                           why="the Codex records no terms hash and the SHARD "
                                "carries a LICENSE-TERMS: one of the two is "
                                "wrong, and a terms text nothing pins is a "
                                "terms text anyone may replace")
@@ -360,7 +360,7 @@ def check_license(ctx: Ctx) -> Outcome:
                        why="green: the Codex records no terms text")
     if not p.is_file():
         return Outcome("license", FAIL, {},
-                       why=f"the Codex pins terms {want[:16]}… and the drag "
+                       why=f"the Codex pins terms {want[:16]}… and the SHARD "
                            f"carries no LICENSE-TERMS")
     # 09 §9.2's id form, which is what the Codex stores and what
     # `collection.write_terms` compares against — `"sha256:" + hexdigest`.
@@ -390,7 +390,7 @@ def check_signature(ctx: Ctx) -> Outcome:
     invalidating the ones already there.
     """
     import json
-    p = ctx.drag / drag_mod.snapshot_sig_path(ctx.snapshot.snapshot_id)
+    p = ctx.shard_tree / shard_mod.snapshot_sig_path(ctx.snapshot.snapshot_id)
     if not p.is_file():
         return Outcome("signature", INCONCLUSIVE,
                        why=f"no sidecar at {p.name}: this copy carries the "
@@ -448,7 +448,7 @@ def check_origin_seal(ctx: Ctx) -> Outcome:
         return Outcome("origin-seal", INCONCLUSIVE, why="an open collection carries no seals (09 §9.15)")
     mode = "live" if ctx.live is not None else "archival"
     try:
-        doc = seals_mod.read(ctx.drag, ctx.snapshot.snapshot_id)
+        doc = seals_mod.read(ctx.shard_tree, ctx.snapshot.snapshot_id)
     except seals_mod.SealError as e:
         return Outcome("origin-seal", FAIL, {"mode": mode, "entries": 0, "failed": []},
                        why=f"the seals member does not read: {e}")
@@ -535,11 +535,11 @@ def check_calibration(ctx: Ctx) -> Outcome:
         return Outcome("calibration", INCONCLUSIVE,
                        why="this peer holds no calibration member (09 §9.12), "
                            "so there is nothing to compare against")
-    from . import calibration as cal, drag as drag_mod
+    from . import calibration as cal, shard as shard_mod
     # the set as the space's encoder is fed it: a pair space's travels in its
     # member (09 §9.12, amended 2026-10-08). One that cannot be read is a
     # checker that could not run — `run` makes it inconclusive, as ever.
-    items = cal.items(ctx.codex, ctx.drag / drag_mod.calibration_paths(
+    items = cal.items(ctx.codex, ctx.shard_tree / shard_mod.calibration_paths(
         ctx.codex.space.calibration.set)[0])
     try:
         run = emb.run_gate(ctx.codex, reference=ctx.reference, embed=ctx.embed,
@@ -582,7 +582,7 @@ def check_vectors_sample(ctx: Ctx) -> Outcome:
               "median": f"{sorted(medians)[len(medians) // 2]:.6f}" if medians
                         else None,
               "failed": list(r.failing), "producers": []}
-    space = drag_mod._segment(ctx.codex.space_id)
+    space = shard_mod._segment(ctx.codex.space_id)
     return Outcome("vectors-sample", r.verdict, detail, ctx.seed,
                    tuple(sorted(f"{ctx.codex.collection_id}/{space}/{s.shard}"
                                 for s in r.shards)),
@@ -881,7 +881,7 @@ def _record_twin(ctx: Ctx, ref: dict) -> str | None:
 
 
 def _snapshots_of(root: Path, name: str):
-    d = Path(root) / name / "drag" / "snapshots"
+    d = Path(root) / name / "shard" / "snapshots"
     for p in sorted(d.glob("*.json")) if d.is_dir() else []:
         if not p.name.endswith(".sig.json"):
             yield snap.load(p)
@@ -1015,7 +1015,7 @@ def check_figures(ctx: Ctx) -> Outcome:
                     continue
                 want.add(figures_mod.bare(f["hash"]))
         named += len(want)
-        container = ctx.drag / drag_mod.figures_path(s.slice, s.n)
+        container = ctx.shard_tree / shard_mod.figures_path(s.slice, s.n)
         if not container.is_file():
             continue
         try:
@@ -1185,7 +1185,7 @@ def write_attestations(root, name: str, report: Report, codex,
     """
     out: dict[str, str] = {}
     d = (Path(root) / name / "state" / "attestations" /
-         drag_mod._hex(codex.collection_id))
+         shard_mod._hex(codex.collection_id))
     for o in report.outcomes:
         if not o.attestable:
             continue
@@ -1193,6 +1193,6 @@ def write_attestations(root, name: str, report: Report, codex,
                           now=now)
         aid = env.body_id(doc["body"])
         d.mkdir(parents=True, exist_ok=True)
-        (d / f"{drag_mod._hex(aid)}.json").write_bytes(cx.canonical_json(doc))
+        (d / f"{shard_mod._hex(aid)}.json").write_bytes(cx.canonical_json(doc))
         out[o.check] = aid
     return out

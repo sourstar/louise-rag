@@ -116,4 +116,4 @@ def test_a_newcomer_that_knows_no_one_finds_the_survivor_by_the_key_and_takes_th
     assert sorted(members["promoted"]) == [f"records/{SLICE}/00001.jsonl.zst", f"records/{SLICE}/00002.jsonl.zst"], \
         members
     for k, data in files.items():
-        assert (col.drag_of(fetcher, fname) / f"records/{SLICE}/{k:05d}.jsonl.zst").read_bytes() == data
+        assert (col.shard_dir_of(fetcher, fname) / f"records/{SLICE}/{k:05d}.jsonl.zst").read_bytes() == data

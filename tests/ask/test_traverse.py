@@ -7,7 +7,7 @@ import sqlite3
 
 from app.ask import traverse
 from app.hold import records as rec, snapshot as sn
-from app.hold.drag import pieces_root_of
+from app.hold.shard import pieces_root_of
 from app.pack import records as pack_records
 from tests.hold.conftest import pubmed
 
@@ -17,10 +17,10 @@ def edges_shard(path, edges, snapshot_id="2026-08"):
     return pack_records.write_lines(path, lines, key_of=lambda line: __import__("json").loads(line)["from"])
 
 
-def a_drag_with_edges(tmp_path):
+def a_shard_with_edges(tmp_path):
     codex = pubmed()
-    drag = tmp_path / "drag"
-    p = drag / "relations/year=2023/00001.jsonl.zst"
+    shard_tree = tmp_path / "shard"
+    p = shard_tree / "relations/year=2023/00001.jsonl.zst"
     info = edges_shard(p, [
         ("pubmed:1", "pubmed:2", "pubmed:cites"), ("pubmed:1", "pubmed:3", "pubmed:cites"),
         ("pubmed:2", "pubmed:3", "pubmed:cites"), ("pubmed:3", "pubmed:9", "pubmed:cites"),
@@ -35,15 +35,15 @@ def a_drag_with_edges(tmp_path):
     con.row_factory = sqlite3.Row
     con.execute("CREATE TABLE documents (uid TEXT PRIMARY KEY)")
     con.executemany("INSERT INTO documents(uid) VALUES(?)", [("pubmed:1",), ("pubmed:2",), ("pubmed:3",)])
-    return codex, drag, snap, con, p
+    return codex, shard_tree, snap, con, p
 
 
 def test_edge_lines_round_trip_through_the_framing_and_are_indexed_once_per_root(tmp_path):
-    codex, drag, snap, con, p = a_drag_with_edges(tmp_path)
+    codex, shard_tree, snap, con, p = a_shard_with_edges(tmp_path)
     assert [e["from"] for e in pack_records.iter_records(p)][:2] == ["pubmed:1", "pubmed:1"]
     assert pack_records.read_index(p).uids["pubmed:3"] == [0, 3], "the index keyed by `from`: frame and line"
-    assert traverse.index_edges(con, drag, snap) == {"shards": 1, "edges": 6, "skipped": 0}
-    assert traverse.index_edges(con, drag, snap) == {"shards": 0, "edges": 0, "skipped": 1}, "the same root: skipped"
+    assert traverse.index_edges(con, shard_tree, snap) == {"shards": 1, "edges": 6, "skipped": 0}
+    assert traverse.index_edges(con, shard_tree, snap) == {"shards": 0, "edges": 0, "skipped": 1}, "the same root: skipped"
     assert con.execute("SELECT COUNT(*) FROM relations").fetchone()[0] == 6
     # re-issued: replaced whole
     edges_shard(p, [("pubmed:1", "pubmed:2", "pubmed:cites")])
@@ -51,14 +51,14 @@ def test_edge_lines_round_trip_through_the_framing_and_are_indexed_once_per_root
                         shards=snap.shards, relations=(sn.RelationShard(slice="year=2023", n=1, root=pieces_root_of(p),
                                                                         edges=1, bytes=p.stat().st_size),),
                         delta=sn.Delta((), (), ()), files={})
-    assert traverse.index_edges(con, drag, snap2)["edges"] == 1
+    assert traverse.index_edges(con, shard_tree, snap2)["edges"] == 1
     assert con.execute("SELECT COUNT(*) FROM relations").fetchone()[0] == 1
-    assert traverse.index_edges(con, drag, None) == {"shards": 0, "edges": 0, "skipped": 0}
+    assert traverse.index_edges(con, shard_tree, None) == {"shards": 0, "edges": 0, "skipped": 0}
 
 
 def test_the_walk_goes_both_ways_depth_hops_and_names_what_is_unresolved(tmp_path):
-    codex, drag, snap, con, p = a_drag_with_edges(tmp_path)
-    traverse.index_edges(con, drag, snap)
+    codex, shard_tree, snap, con, p = a_shard_with_edges(tmp_path)
+    traverse.index_edges(con, shard_tree, snap)
     one = traverse.walk(con, codex, snap, "pubmed:2", depth=1)
     assert sorted((e["from"], e["to"]) for e in one) == [("pubmed:1", "pubmed:2"), ("pubmed:2", "pubmed:1"),
                                                          ("pubmed:2", "pubmed:3")], "inbound and outbound"
@@ -79,14 +79,14 @@ def test_the_walk_goes_both_ways_depth_hops_and_names_what_is_unresolved(tmp_pat
 
 def test_an_edge_into_another_collection_held_here_resolves_or_names_its_shard(tmp_path):
     from types import SimpleNamespace
-    codex, drag, snap, con, p = a_drag_with_edges(tmp_path)
+    codex, shard_tree, snap, con, p = a_shard_with_edges(tmp_path)
     edges_shard(p, [("pubmed:1", "wikipedia:Aspirin", "pubmed:mentions"),
                     ("pubmed:1", "wikipedia:Zebra", "pubmed:mentions"),
                     ("pubmed:1", "mesh:D001241", "pubmed:mentions")])
     snap = sn.Snapshot(collection_id=codex.collection_id, snapshot_id="2026-09", previous=None, shards=snap.shards,
                        relations=(sn.RelationShard(slice="year=2023", n=1, root=pieces_root_of(p), edges=3,
                                                    bytes=p.stat().st_size),), delta=sn.Delta((), (), ()), files={})
-    traverse.index_edges(con, drag, snap)
+    traverse.index_edges(con, shard_tree, snap)
     root = tmp_path / "collections"
     other = SimpleNamespace(plugin="wikipedia", collection_id="sha256:" + "77" * 32, slicing={"order": "bytes"})
     (root / "wiki" / "state").mkdir(parents=True)
@@ -100,8 +100,8 @@ def test_an_edge_into_another_collection_held_here_resolves_or_names_its_shard(t
                       tokens=1, bytes=1)
     wsnap = sn.Snapshot(collection_id=other.collection_id, snapshot_id="2026-09", previous=None, shards=(wshard,),
                         delta=sn.Delta((), (), ()), files={})
-    (root / "wiki" / "drag" / "snapshots").mkdir(parents=True)
-    (root / "wiki" / "drag" / "snapshots" / "2026-09.json").write_bytes(wsnap.canonical())
+    (root / "wiki" / "shard" / "snapshots").mkdir(parents=True)
+    (root / "wiki" / "shard" / "snapshots" / "2026-09.json").write_bytes(wsnap.canonical())
     with traverse.Elsewhere(root, [("wiki", other)]) as elsewhere:
         by_to = {e["to"]: e for e in traverse.walk(con, codex, snap, "pubmed:1", elsewhere=elsewhere)}
     assert by_to["wikipedia:Aspirin"]["resolved"] is True and by_to["wikipedia:Aspirin"]["needs"] is None

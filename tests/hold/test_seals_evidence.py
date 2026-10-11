@@ -208,15 +208,15 @@ def test_archival_verifies_the_list_s_signature_against_the_lotl_held(checkable,
     sealed.write_bytes(a_p7m(pki))
     e = seals.capture(sealed, trusted_list={"lotl_sha256": lotl_digest, "tl_sha256": tl_digest, "url": ""},
                       now=CAPTURED.timestamp())
-    drag = root / "gutenberg" / "drag"
-    seals.write(drag, certified, snapshot.snapshot_id, [e])
+    shard_tree = root / "gutenberg" / "shard"
+    seals.write(shard_tree, certified, snapshot.snapshot_id, [e])
     o = chk.run(root, "gutenberg", certified, snapshot, seed=SEED, checks=["origin-seal"]).outcome("origin-seal")
     assert o.result == chk.PASS, o.why
     assert "TL Signer" in o.detail["trusted_list_signature"][tl_digest]
     # a list held by its hash but signed by a key the LOTL does not name fails, naming why
     rogue_digest, _ = seals.keep_trusted_list(root, "gutenberg", lists["rogue_tl"].read_bytes())
     e2 = dict(e, trusted_list={"lotl_sha256": lotl_digest, "tl_sha256": rogue_digest, "url": ""})
-    seals.write(drag, certified, snapshot.snapshot_id, [e2])
+    seals.write(shard_tree, certified, snapshot.snapshot_id, [e2])
     o = chk.run(root, "gutenberg", certified, snapshot, seed=SEED, checks=["origin-seal"]).outcome("origin-seal")
     assert o.result == chk.FAIL and "signed by a certificate its pointer does not name" in o.why
 
@@ -278,7 +278,7 @@ def test_the_trusted_lists_travel_with_the_seals(pki, tmp_path):
     """09 §9.16, amended 2026-10-08: the lists a snapshot's seals name are in
     its `files` and in its `seals-<id>` member, so the peer that fetches the
     seals holds what archival mode judges them against."""
-    from app.hold import drag as drag_mod, snapshot as snap_mod
+    from app.hold import shard as shard_mod, snapshot as snap_mod
     from app.share import members
     from tests.hold.conftest import a_root, pubmed
     root = tmp_path / "collections"
@@ -286,22 +286,22 @@ def test_the_trusted_lists_travel_with_the_seals(pki, tmp_path):
     a_root(root, codex)
     from app.hold import collection as col
     name = col.name_of(root, codex.collection_id)
-    d = col.drag_of(root, name)
+    d = col.shard_dir_of(root, name)
     lists = signed_lists(pki, tmp_path)
     tl, p_tl = seals.keep_trusted_list(root, name, lists["tl"].read_bytes())
     lotl, _ = seals.keep_trusted_list(root, name, lists["lotl"].read_bytes())
-    assert p_tl == d / drag_mod.trusted_list_path(tl), "in the drag, by its hash"
+    assert p_tl == d / shard_mod.trusted_list_path(tl), "in the SHARD, by its hash"
     sealed = tmp_path / "issue.p7m"
     sealed.write_bytes(a_p7m(pki))
     e = seals.capture(sealed, trusted_list={"lotl_sha256": lotl, "tl_sha256": tl, "url": ""},
                       now=CAPTURED.timestamp())
     seals.write(d, codex, "2026-08", [e])
-    (d / drag_mod.VALIDATION_PATH).write_bytes(b"{}")      # the other required member, as `records validation` writes it
+    (d / shard_mod.VALIDATION_PATH).write_bytes(b"{}")      # the other required member, as `records validation` writes it
     files = snap_mod._files(d, codex, "2026-08")
-    assert drag_mod.trusted_list_path(tl) in files and drag_mod.trusted_list_path(lotl) in files
+    assert shard_mod.trusted_list_path(tl) in files and shard_mod.trusted_list_path(lotl) in files
     (m,) = [m for m in members._whole_collection_members(files) if m.name == "seals-2026-08"]
-    assert [f.path for f in m.files] == sorted([drag_mod.seals_path("2026-08"), drag_mod.trusted_list_path(tl),
-                                                drag_mod.trusted_list_path(lotl)], key=lambda p: p.encode())
-    (d / drag_mod.trusted_list_path(tl)).unlink()
-    with pytest.raises(Exception, match="missing from the drag"):
+    assert [f.path for f in m.files] == sorted([shard_mod.seals_path("2026-08"), shard_mod.trusted_list_path(tl),
+                                                shard_mod.trusted_list_path(lotl)], key=lambda p: p.encode())
+    (d / shard_mod.trusted_list_path(tl)).unlink()
+    with pytest.raises(Exception, match="missing from the SHARD"):
         snap_mod._files(d, codex, "2026-08")

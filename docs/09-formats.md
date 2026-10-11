@@ -18,8 +18,9 @@ snapshot's `shards`, the `shard` of a vector file's header, of a bundle
 header, of a `bundle` event and of a coverage row, the attestation's
 `shards`, the plan's `{"shards": …}` sample sizes, the rendezvous
 `shard_id` and the magic `LOUISE-PACK-IDX1`/`LPK1` (§9.5) all keep the
-old word, and the `drag/` directory and `source = "drag"` (07 §7.8) keep
-it until the code follows. Where this document writes *part*, a field
+old word. The `drag/` directory and `source = "drag"` (07 §7.8), which
+no hash or signature covers, followed on 2026-10-11: `shard/` and
+`source = "shard"`. Where this document writes *part*, a field
 named `shard` means the same thing. A `credits` entry's `ids_per_shard`
 and `shards` (§9.3) are another sense: they count a pre-embedded
 archive's own shards, which are that archive's files, not parts.

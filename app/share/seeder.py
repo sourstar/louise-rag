@@ -1,4 +1,4 @@
-"""Serving a collection's members from the drag (04 §4.3; 09 §9.16) —
+"""Serving a collection's members from the SHARD (04 §4.3; 09 §9.16) —
 migration step 9b.
 
 The worker serves and announces every member of the current snapshot of
@@ -7,7 +7,7 @@ every public collection it holds IN USE whose file says `share = true`
 through the seeder it already runs for published corpora
 (app/acquire/seeding.py). One torrent per member file, laid out as
 libtorrent wants it — `state/share/<snapshot>/<member>/<path>`, a hard
-link to the drag's file (the drag is immutable once promoted) — and built
+link to the SHARD's file (the SHARD is immutable once promoted) — and built
 by libtorrent from the file; it is REFUSED when the infohash libtorrent
 computes differs from the one 09 §9.16's info dictionary gives for the
 snapshot's (path, length, root): a file that is not what the snapshot says
@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app import db
-from app.hold import drag, snapshot as sn
+from app.hold import shard as shard_mod, snapshot as sn
 from app.hold.codex import lineage_id as _lineage_id
 from app.share import members as mem
 
@@ -39,10 +39,10 @@ ANNOUNCE_EVERY_S = 15 * 60            # a DHT announcement lives about that long
 _last_announce: dict[bytes, float] = {}
 
 
-def current_snapshot(drag_dir: Path) -> sn.Snapshot | None:
-    """The newest snapshot in the drag's chain, by id — `YYYY-MM` and
+def current_snapshot(shard_dir: Path) -> sn.Snapshot | None:
+    """The newest snapshot in the SHARD's chain, by id — `YYYY-MM` and
     `YYYY-Www` each sort as text within their cadence (02 §2.2)."""
-    d = Path(drag_dir) / "snapshots"
+    d = Path(shard_dir) / "snapshots"
     if not d.is_dir():
         return None
     ids = sorted(p.name[:-5] for p in d.glob("*.json") if not p.name.endswith(".sig.json"))
@@ -57,7 +57,7 @@ def _lt():
 def _place(share_root: Path, snapshot_id: str, member: str, rel_path: str,
            target: Path) -> Path:
     """`<state>/share/<snapshot>/<member>/<rel_path>`, a hard link to the
-    drag's file (a symbolic link when the two cannot share one)."""
+    SHARD's file (a symbolic link when the two cannot share one)."""
     link = share_root / snapshot_id / member / rel_path
     link.parent.mkdir(parents=True, exist_ok=True)
     if link.exists() or link.is_symlink():
@@ -118,9 +118,9 @@ def serves(collection, member_name: str) -> bool:
     return True
 
 
-def publish(collection, snapshot: sn.Snapshot, drag_dir: Path, state_dir: Path, con,
+def publish(collection, snapshot: sn.Snapshot, shard_dir: Path, state_dir: Path, con,
             log: Callable[[str], None] | None = None) -> list[dict[str, Any]]:
-    """Every member of `snapshot` whose files the drag holds, as the
+    """Every member of `snapshot` whose files the SHARD holds, as the
     entries the worker's seeder serves (app/acquire/seeding.py
     `record_published`'s shape, plus the member, its path, the snapshot).
     The list REPLACES what an earlier snapshot published, and the earlier
@@ -130,17 +130,17 @@ def publish(collection, snapshot: sn.Snapshot, drag_dir: Path, state_dir: Path, 
     torrents_dir = share_root / TORRENTS_DIR
     entries: list[dict[str, Any]] = []
     refused: list[str] = []
-    members = list(mem.members_of(snapshot, drag_dir=drag_dir))
+    members = list(mem.members_of(snapshot, shard_dir=shard_dir))
     codex = getattr(collection, "codex", None)
     if codex is not None and codex.space is not None:
         # the bundles this peer holds for the space (09 §9.7, §9.16): served
-        # from state/bundles/, never from the drag. An annotations collection
+        # from state/bundles/, never from the SHARD. An annotations collection
         # has no space and so no bundles (02 §2.10)
         members += mem.bundle_members(Path(state_dir), codex.space_segment)
     for member in members:
         if not serves(collection, member.name):
             continue                                     # narrowed out (`share --slices/--kinds`)
-        base = Path(member.base) if member.base is not None else Path(drag_dir)
+        base = Path(member.base) if member.base is not None else Path(shard_dir)
         if not all((base / f.path).is_file() for f in member.files):
             continue                                     # a slice this copy does not hold
         for t in member.torrents():
@@ -353,15 +353,15 @@ def sync(collections, cons: dict, control_con, worker_state: str, *,
                 unpublish(c, state_dir, con, log)
                 out["unpublished"].append(c.name)
             continue
-        drag_dir = col.drag_of(root, c.name)
-        snap = current_snapshot(drag_dir)
+        shard_dir = col.shard_dir_of(root, c.name)
+        snap = current_snapshot(shard_dir)
         if snap is None:
             continue
         now_served = served(con)
         if now_served is None or now_served.get("snapshot_id") != snap.snapshot_id \
                 or now_served.get("selection", selection(c)) != selection(c):
             # a narrowing changed while the snapshot did not: served again
-            publish(c, snap, drag_dir, state_dir, con, log)
+            publish(c, snap, shard_dir, state_dir, con, log)
             out["published"].append(c.name)
         if seeds and session is not None and port:
             keys = keys_for(c.codex, snap, col.resolver(root))

@@ -27,9 +27,9 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from app.hold import collection as col, drag as drag_mod, envelope as env, snapshot as sn
+from app.hold import collection as col, shard as shard_mod, envelope as env, snapshot as sn
 from app.hold.codex import CodexError, canonical_json
-from app.hold.drag import MemberFile
+from app.hold.shard import MemberFile
 from app.share import attest, contribute, coverage as cov, holdings, members as mem, messages, \
     transport
 
@@ -68,7 +68,7 @@ def newer_snapshots(root: Path, collections, node_con, *, client=None, key=None,
             out["ignored"] += 1
             attest.mark_acted(node_con, ev["id"])
             continue
-        current = seeder.current_snapshot(col.drag_of(Path(root), c.name))
+        current = seeder.current_snapshot(col.shard_dir_of(Path(root), c.name))
         if current is not None and (sid <= current.snapshot_id or sid in fetch_mod.held_snapshots(Path(root), cid)):
             out["known"] += 1
             attest.mark_acted(node_con, ev["id"])
@@ -116,7 +116,7 @@ def member_of(payload: dict[str, Any], space: str) -> mem.Member | None:
     bundle_id = str(payload.get("bundle_id") or "")
     if not bundle_id.startswith("sha256:"):
         return None
-    member = mem.Member(f"bundle-{space}-{drag_mod._hex(bundle_id)}", mfs)
+    member = mem.Member(f"bundle-{space}-{shard_mod._hex(bundle_id)}", mfs)
     if payload.get("root") != member.root:
         return None                                 # the list does not hash to the root claimed
     return member
@@ -151,7 +151,7 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
             (staged_dir / t.path).parent.mkdir(parents=True, exist_ok=True)
             landed_at.replace(staged_dir / t.path)
     for f in member.files:
-        got = drag_mod.pieces_root_of(staged_dir / f.path)
+        got = shard_mod.pieces_root_of(staged_dir / f.path)
         if got != f.root:
             holdings._set_aside(staged_dir / f.path)
             return {"outcome": "refused", "bundle_id": bundle_id,
@@ -489,14 +489,14 @@ def reproduce_claims(root: Path, collections, node_con, *, own_key: str | None =
             if node_con.execute("SELECT 1 FROM claims_acted WHERE attestation_id=?", (aid,)).fetchone():
                 continue
             check = claim["check"]
-            # an attestation names `<collection_id>/slice/NNNNN`; the drag knows `slice/NNNNN`
+            # an attestation names `<collection_id>/slice/NNNNN`; the SHARD knows `slice/NNNNN`
             shard = "/".join(str(claim["shard"]).split("/")[-2:]) if claim["shard"] else None
             origin = None
             if check == "records-vs-origin":
                 d = getattr(c, "corpus_dir", None)
-                origin = str(d) if d and getattr(c, "source", "origin") != "drag" and Path(d).is_dir() else None
+                origin = str(d) if d and getattr(c, "source", "origin") != "shard" and Path(d).is_dir() else None
             held = shard is not None and any(
-                f"{s.slice}/{s.n:05d}" == shard and (Path(root) / c.name / "drag" / s.path).is_file()
+                f"{s.slice}/{s.n:05d}" == shard and (Path(root) / c.name / "shard" / s.path).is_file()
                 for s in _current_snapshot_shards(root, c.name))
             if not held or (check == "records-vs-origin" and origin is None):
                 outcome = "cannot: " + ("no shard named" if shard is None else "shard not held here"
@@ -527,7 +527,7 @@ def reproduce_claims(root: Path, collections, node_con, *, own_key: str | None =
 
 
 def _current_snapshot_shards(root: Path, name: str):
-    d = Path(root) / name / "drag" / "snapshots"
+    d = Path(root) / name / "shard" / "snapshots"
     ids = sorted(p for p in d.glob("*.json") if not p.name.endswith(".sig.json")) if d.is_dir() else []
     return sn.load(ids[-1]).shards if ids else ()
 

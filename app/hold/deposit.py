@@ -227,7 +227,7 @@ def create(root: Path, name: str, *, platform_image: str,
                          source.space.calibration.query_vectors),
             space_version=source.version)
         created = col.create(root, codex, name=name)
-        d = col.drag_of(root, name)
+        d = col.shard_dir_of(root, name)
         col.carry_calibration(root, created, d, source)
         _origin_of(root, name).mkdir(parents=True, exist_ok=True)
         _init_manifest(root, name, created)

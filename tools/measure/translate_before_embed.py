@@ -15,7 +15,7 @@ Phases, each checkpointed to OUT (a re-run resumes):
   embed     -> vectors.npz
   score     -> results.json       recall@1/5/10, MRR, per language, RAW vs TRANSLATED
 
-Usage: python translate_before_embed.py --drag /data/collections/gutenberg/drag --out /out
+Usage: python translate_before_embed.py --SHARD /data/collections/gutenberg/shard --out /out
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ import numpy as np
 from app import collections as collections_mod
 from app import dispatch, embeddings, translate
 from app.pack import records as pack_records
-from app.plugins import drag as drag_plugin
+from app.plugins import shard as shard_plugin
 
 SEED = "xlate-measure-2026-10-08"
 #: not in Qwen3's 119-language list (qwenlm.github.io/blog/qwen3, the list
@@ -72,9 +72,9 @@ def rng_for(*parts: str) -> random.Random:
 
 # ---- sampling ---------------------------------------------------------------
 
-def shards_by_lang(drag: Path) -> dict[str, list[Path]]:
+def shards_by_lang(shard_tree: Path) -> dict[str, list[Path]]:
     out: dict[str, list[Path]] = {}
-    for p in drag_plugin.shard_files(drag):
+    for p in shard_plugin.shard_files(shard_tree):
         lang = p.parent.name.split("=", 1)[1]
         out.setdefault(lang, []).append(p)
     return out
@@ -131,11 +131,11 @@ def sample_book(rec: dict) -> dict | None:
             "body_chars": len(body), "en_share": en_share(doc)}
 
 
-def sample(drag: Path, out: Path) -> dict:
+def sample(shard_tree: Path, out: Path) -> dict:
     path = out / "sample.json"
     if path.exists():
         return json.loads(path.read_text())
-    shards = shards_by_lang(drag)
+    shards = shards_by_lang(shard_tree)
     books: list[dict] = []
     skipped: dict[str, int] = {}
     for lang in RARE + CONTROLS:
@@ -373,7 +373,7 @@ def examples(data: dict, tr: dict, out: Path, n: int = 2) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--drag", type=Path, required=True)
+    ap.add_argument("--SHARD", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--phase", default="all", choices=["sample", "translate", "embed", "all"])
     a = ap.parse_args()
@@ -383,7 +383,7 @@ def main() -> int:
     if g is None:
         print("no gutenberg collection", file=sys.stderr)
         return 2
-    data = sample(a.drag, a.out)
+    data = sample(a.shard_tree, a.out)
     if a.phase == "sample":
         return 0
     tr = translate_all(data, a.out)

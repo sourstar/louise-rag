@@ -17,7 +17,7 @@ the result's collection, read from a target snapshot at or after
 `annotates.from_snapshot`.
 
 COST: the claims of a copy are indexed once per snapshot
-(`annotations.index_of`, keyed on the drag's path); per search, one manifest
+(`annotations.index_of`, keyed on the SHARD's path); per search, one manifest
 query per target collection over the uids the attached claims name. It
 scales with the results and their claims, never with either collection.
 """
@@ -62,7 +62,7 @@ def _trust(root: Path, a) -> str:
     except Exception:   # noqa: BLE001
         own = None
     try:
-        snap = seeder.current_snapshot(col.drag_of(root, a.name))
+        snap = seeder.current_snapshot(col.shard_dir_of(root, a.name))
         bodies = copy_state.attestations(root, a.name, a.codex)
         return levels.level(a.codex, snap, bodies, (), own_key=own,
                             trust=trust_file.as_filter(root.parent),
@@ -125,7 +125,7 @@ def attach(lists: list[dict[str, Any]], source_of: dict[int, Any], contexts: dic
             continue
         found = []
         for a in mine:
-            idx = ann.index_of(col.drag_of(root, a.name))
+            idx = ann.index_of(col.shard_dir_of(root, a.name))
             trust = None
             for h in hits:
                 for cl in idx.by_target.get(h["uid"], ()):

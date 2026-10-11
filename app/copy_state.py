@@ -74,7 +74,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from .hold import drag as drag_mod, embedder as emb, envelope as env, runs as runs_mod
+from .hold import shard as shard_mod, embedder as emb, envelope as env, runs as runs_mod
 from .hold.codex import Codex, CodexError, canonical_json
 
 REFUSED, QUARANTINE, IN_USE = "refused", "quarantine", "in-use"
@@ -266,7 +266,7 @@ _SETTLE_S = 2.0
 def attestations(root: Path, name: str, codex: Codex) -> Attested:
     """Every attestation held for this collection, VERIFIED. A file that does
     not verify is not one."""
-    d = Path(root) / name / "state" / "attestations" / drag_mod._hex(codex.collection_id)
+    d = Path(root) / name / "state" / "attestations" / shard_mod._hex(codex.collection_id)
     try:
         mtime = d.stat().st_mtime_ns
     except OSError:

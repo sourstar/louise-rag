@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from app.hold import drag as drag_mod, envelope as env, snapshot as sn
+from app.hold import shard as shard_mod, envelope as env, snapshot as sn
 from app.hold.codex import CodexError, canonical_json
 from app.share import peers
 
@@ -199,34 +199,34 @@ def answer_pull(root: Path, body: dict[str, Any]) -> dict[str, Any]:
         codex = col.read(root, name)
     except (CodexError, FileNotFoundError, OSError):
         return {"items": []}
-    drag = col.drag_of(root, name)
+    shard_tree = col.shard_dir_of(root, name)
     what = body["what"]
     if what == "codex":
         items = []
         for c in _chain(root, codex, col.resolver(root)):
             try:
                 cname = col.name_of(root, c.collection_id)
-                data = (col.drag_of(root, cname) / drag_mod.CODEX_PATH).read_bytes()
+                data = (col.shard_dir_of(root, cname) / shard_mod.CODEX_PATH).read_bytes()
             except (CodexError, FileNotFoundError, OSError):
                 data = canonical_json(c.to_dict())
-            items.append(item(f"codex/{drag_mod._hex(c.collection_id)}.json", data))
+            items.append(item(f"codex/{shard_mod._hex(c.collection_id)}.json", data))
         return {"items": items}
     if what == "snapshot":
         sid = body.get("snapshot_id")
         if sid is None:
             from app.share import seeder
-            snap = seeder.current_snapshot(drag)
+            snap = seeder.current_snapshot(shard_tree)
             sid = snap.snapshot_id if snap else None
         if not sid:
             return {"items": []}
         items = []
-        for rel in (drag_mod.snapshot_path(sid), drag_mod.snapshot_sig_path(sid)):
-            p = drag / rel
+        for rel in (shard_mod.snapshot_path(sid), shard_mod.snapshot_sig_path(sid)):
+            p = shard_tree / rel
             if p.is_file():
                 items.append(item(rel, p.read_bytes()))
         return {"items": items}
     since = parse_time(body["since"]) if body.get("since") else None
-    d = root / name / "state" / "attestations" / drag_mod._hex(codex.collection_id)
+    d = root / name / "state" / "attestations" / shard_mod._hex(codex.collection_id)
     items = []
     for p in sorted(d.glob("*.json")) if d.is_dir() else []:
         data = p.read_bytes()

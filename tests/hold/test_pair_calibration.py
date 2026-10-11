@@ -26,7 +26,7 @@ from safetensors.numpy import load_file
 
 from app import layers as layers_mod
 from app.hold import (calibrate as calib, calibration as cal, check as chk, codex as cx,
-                      collection as col, drag, embedder as emb, export as exp,
+                      collection as col, shard as shard_mod, embedder as emb, export as exp,
                       fingerprint as fp, runs as hold_runs)
 from app.hold.calibration import CalibrationError
 from app.hold.codex import CodexError
@@ -90,11 +90,11 @@ def created_pairs(root: Path, *, embed=pair_embed, **kw):
     codex = col.create_from_recipe(root, "gutenberg", pair_recipe(), platform_image=PLATFORM,
                                    embed=embed, embed_query=fake_query_embed, key=KEY,
                                    now=NOW, pairs=PAIR_BYTES, name="pairs", **kw)
-    return codex, root / "pairs" / "drag"
+    return codex, root / "pairs" / "shard"
 
 
-def member_path(drag_dir: Path, codex) -> Path:
-    return drag_dir / drag.calibration_paths(codex.space.calibration.set)[0]
+def member_path(shard_dir: Path, codex) -> Path:
+    return shard_dir / shard_mod.calibration_paths(codex.space.calibration.set)[0]
 
 
 # ---- text spaces keep their bytes (pins computed by 838c005's code) ---------------
@@ -110,7 +110,7 @@ TEXT_CHALLENGE = "5042dec0f196d857a01c1daef46467d5df033e6c9669425e812b99d793af9d
 
 def test_a_text_space_create_writes_the_same_member_and_signature(tmp_path):
     codex, d = created(tmp_path)
-    member, sig = drag.calibration_paths(codex.space.calibration.set)
+    member, sig = shard_mod.calibration_paths(codex.space.calibration.set)
     assert hashlib.sha256((d / member).read_bytes()).hexdigest() == TEXT_MEMBER
     assert hashlib.sha256((d / sig).read_bytes()).hexdigest() == TEXT_SIG
     # collection_id moved with gutenberg's parser 9 (2026-10-11), which a
@@ -254,7 +254,7 @@ def test_create_embeds_the_pairs_as_pairs_and_the_member_carries_them(tmp_path):
     assert codex.layers[0].input == PAIR and codex.space.calibration.set == PAIR_SET
     assert seen["doc"] == PAIRS, "every item embedded as a pair, in set order"
     assert seen["query"] == [f"{a}\n\n{b}" for a, b in PAIRS], "a query is one text"
-    member = member_path(tmp_path / "pairs" / "drag", codex)
+    member = member_path(tmp_path / "pairs" / "shard", codex)
     tensors = load_file(str(member))
     assert tensors[cal.PAIRS].dtype == np.uint8 and tensors[cal.PAIRS].tobytes() == PAIR_BYTES
     assert cal.items(codex, member) == PAIRS
@@ -314,13 +314,13 @@ def test_create_takes_the_pairs_from_their_file_or_from_the_space_it_copies(tmp_
             "query_encoder": "http://enc.invalid/upstream/query"}
     first, _ = louise.create_from(root, "gutenberg", pair_recipe(), platform_image=PLATFORM,
                                   name="first", calibration_set=str(f), **urls)
-    assert cal.items(first, member_path(root / "first" / "drag", first)) == PAIRS
+    assert cal.items(first, member_path(root / "first" / "shard", first)) == PAIRS
     second, _ = louise.create_from(root, "gutenberg", recipe(work={"tokens": 6_000_000}),
                                    platform_image=PLATFORM, name="second",
                                    space_from=first.collection_id, **urls)
     assert second.collection_id != first.collection_id
     assert second.space_id == first.space_id and cal.form(second) == "pair"
-    assert cal.items(second, member_path(root / "second" / "drag", second)) == PAIRS
+    assert cal.items(second, member_path(root / "second" / "shard", second)) == PAIRS
 
 
 def test_a_sister_in_the_same_pair_space_carries_the_member_and_its_pairs(tmp_path):
@@ -328,7 +328,7 @@ def test_a_sister_in_the_same_pair_space_carries_the_member_and_its_pairs(tmp_pa
     codex, d = created_pairs(tmp_path)
     sister = col.derive(tmp_path, codex.collection_id, update=Update("weekly", 3, 7))
     assert sister.space_id == codex.space_id
-    member = member_path(tmp_path / col.name_of(tmp_path, sister.collection_id) / "drag", sister)
+    member = member_path(tmp_path / col.name_of(tmp_path, sister.collection_id) / "shard", sister)
     assert cal.items(sister, member) == PAIRS
 
 

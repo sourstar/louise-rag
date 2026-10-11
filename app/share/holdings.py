@@ -6,8 +6,8 @@ migration step 9d, second brick.
   whole-collection members always: `terms` before anything else (04 §4.4),
   `validation`, `calibration-<set>`, `seals-<id>`. Text-index members are
   a cache a peer rebuilds, never fetched.
-- HELD: a member whose files lie in the drag at the snapshot's size. The
-  drag is what is served and what `roots` checks (03 §3.2); a file that
+- HELD: a member whose files lie in the SHARD at the snapshot's size. The
+  SHARD is what is served and what `roots` checks (03 §3.2); a file that
   got there was verified against its root in staging before the rename,
   or was built here.
 - THE MARK: `held_members` in the manifest, written after the rename —
@@ -15,7 +15,7 @@ migration step 9d, second brick.
   records provenance: which snapshot named the member, its root, when
   it was promoted. A mark whose file is gone is cleared.
 - PROMOTION: the file's pieces root computed in staging and compared to
-  the snapshot's; equal → one rename into the drag (`drag.promote`), then
+  the snapshot's; equal → one rename into the SHARD (`SHARD.promote`), then
   the mark; otherwise the file is refused and left aside under
   `state/staging/refused/` for a look, never promoted.
 """
@@ -26,8 +26,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from app.hold import drag as drag_mod
-from app.hold.drag import MemberFile
+from app.hold import shard as shard_mod
+from app.hold.shard import MemberFile
 from app.share import members as mem
 
 STAGING = "staging"          # under the collection's state/
@@ -95,21 +95,21 @@ def wanted(snapshot, *, slices, kinds) -> list[mem.Member]:
     return out
 
 
-def file_held(drag_dir: Path, f: MemberFile) -> bool:
-    p = Path(drag_dir) / f.path
+def file_held(shard_dir: Path, f: MemberFile) -> bool:
+    p = Path(shard_dir) / f.path
     try:
         return p.is_file() and p.stat().st_size == f.bytes
     except OSError:
         return False
 
 
-def held(drag_dir: Path, member: mem.Member) -> bool:
-    return all(file_held(drag_dir, f) for f in member.files)
+def held(shard_dir: Path, member: mem.Member) -> bool:
+    return all(file_held(shard_dir, f) for f in member.files)
 
 
-def missing(drag_dir: Path, members) -> list[tuple[mem.Member, MemberFile]]:
-    """Every file of every wanted member that is not in the drag."""
-    return [(m, f) for m in members for f in m.files if not file_held(drag_dir, f)]
+def missing(shard_dir: Path, members) -> list[tuple[mem.Member, MemberFile]]:
+    """Every file of every wanted member that is not in the SHARD."""
+    return [(m, f) for m in members for f in m.files if not file_held(shard_dir, f)]
 
 
 # ---- the mark -------------------------------------------------------------------------
@@ -134,9 +134,9 @@ def unmark(con, path: str) -> None:
     con.execute("DELETE FROM held_members WHERE path=?", (path,))
 
 
-def sweep_marks(con, drag_dir: Path) -> list[str]:
+def sweep_marks(con, shard_dir: Path) -> list[str]:
     """Marks whose file is gone are cleared; the paths cleared."""
-    gone = [p for p in marks(con) if not (Path(drag_dir) / p).is_file()]
+    gone = [p for p in marks(con) if not (Path(shard_dir) / p).is_file()]
     for p in gone:
         unmark(con, p)
     return gone
@@ -144,24 +144,24 @@ def sweep_marks(con, drag_dir: Path) -> list[str]:
 
 # ---- promotion ----------------------------------------------------------------------
 
-class Refused(drag_mod.DragError):
+class Refused(shard_mod.ShardError):
     """A staged file that does not hash to the snapshot's root."""
 
 
-def promote(con, staged: Path, drag_dir: Path, *, snapshot_id: str, member: str,
+def promote(con, staged: Path, shard_dir: Path, *, snapshot_id: str, member: str,
             f: MemberFile, now: float | None = None, allowed_roots: set[str] | None = None) -> Path:
     """Verify, rename, mark (04 §4.3). The staged file's pieces root must be
-    the snapshot's; then one rename into the drag, then the mark.
+    the snapshot's; then one rename into the SHARD, then the mark.
     `allowed_roots` is 03 §3.8's manifest-only gate for a certified
     collection: the roots listed by a held snapshot a certifier key signed
     (app/hold/anchor.py `signed_roots`); a file whose root is not among
     them is set aside, whatever snapshot names it."""
-    staged, drag_dir = Path(staged), Path(drag_dir)
+    staged, shard_dir = Path(staged), Path(shard_dir)
     got_size = staged.stat().st_size
     if got_size != f.bytes:
         _set_aside(staged)
         raise Refused(f"{f.path}: {got_size} bytes staged, the snapshot says {f.bytes}; set aside")
-    got = drag_mod.pieces_root_of(staged)
+    got = shard_mod.pieces_root_of(staged)
     if got != f.root:
         _set_aside(staged)
         raise Refused(f"{f.path}: pieces root {got[:23]}…, the snapshot says {f.root[:23]}…; "
@@ -170,9 +170,9 @@ def promote(con, staged: Path, drag_dir: Path, *, snapshot_id: str, member: str,
         _set_aside(staged)
         raise Refused(f"{f.path}: root {got[:23]}… is not listed by any snapshot of the chain a certifier "
                       f"key signed; set aside, not promoted — manifest-only (03 §3.8)")
-    target = drag_dir / f.path
+    target = shard_dir / f.path
     target.parent.mkdir(parents=True, exist_ok=True)
-    drag_mod.promote(staged, target)
+    shard_mod.promote(staged, target)
     mark(con, snapshot_id=snapshot_id, member=member, f=f, now=now)
     return target
 
@@ -193,16 +193,16 @@ def _set_aside(staged: Path) -> None:
 
 # ---- what show lists ----------------------------------------------------------------
 
-def summary(drag_dir: Path, snapshot) -> dict[str, Any]:
-    """09 §9.3's `holdings`: `{slices, kinds, members}` — what the drag holds
+def summary(shard_dir: Path, snapshot) -> dict[str, Any]:
+    """09 §9.3's `holdings`: `{slices, kinds, members}` — what the SHARD holds
     of the snapshot's members, by presence."""
     if snapshot is None:
         return {"slices": [], "kinds": [], "members": 0}
     slices: set[str] = set()
     kinds: set[str] = set()
     n = 0
-    for m in mem.members_of(snapshot, drag_dir=drag_dir):
-        if not held(drag_dir, m):
+    for m in mem.members_of(snapshot, shard_dir=shard_dir):
+        if not held(shard_dir, m):
             continue
         n += 1
         kinds.add(kind_of(m.name))

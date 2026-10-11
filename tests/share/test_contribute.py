@@ -40,7 +40,7 @@ def ready(isolated_config, tmp_path, corpus_dir, monkeypatch):
     chunks passed, another key's records-vs-origin exists, the calibration
     statement is there, and the calibration member is this encoder's."""
     monkeypatch.delenv("EMBED_URL", raising=False)
-    # build_drag's three commands, with this encoder's calibration member
+    # build_shard's three commands, with this encoder's calibration member
     # written BEFORE the snapshot lists it — so the member the sharer serves
     # is the one the snapshot names, and the one a fetcher judges with
     from app.hold import snapshot as sn
@@ -90,7 +90,7 @@ def test_the_preconditions_refuse_before_any_gpu_is_spent(ready):
     else:
         assert any("calibration statement" in r for r in reasons)
     assert contribute.preconditions(root, "gutenberg", codex, None, own_key=OUR_KEY) == \
-        ["no snapshot in the drag: nothing to embed for"]
+        ["no snapshot in the SHARD: nothing to embed for"]
     assert "no key" in " ".join(contribute.preconditions(root, "gutenberg", codex, snapshot, own_key=None))
 
 
@@ -133,7 +133,7 @@ def test_alone_a_peer_takes_every_open_shard_builds_bundles_accepts_and_announce
         name, codex_ = "gutenberg", codex
     c = C()
     c.codex = codex
-    entries = seeder.publish(c, snapshot, col.drag_of(root, "gutenberg"),
+    entries = seeder.publish(c, snapshot, col.shard_dir_of(root, "gutenberg"),
                              root / "gutenberg" / "state", kw["con"])
     served = {e["member"] for e in entries if e["member"].startswith("bundle-")}
     assert served == {b["member"] for b in out["bundles"]}

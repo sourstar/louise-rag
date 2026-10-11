@@ -49,7 +49,7 @@ import httpx
 
 from . import collections as collections_mod
 from . import config, embeddings
-from .hold import calibration as cal, drag, embedder as emb, runs as runs_mod
+from .hold import calibration as cal, shard as shard_mod, embedder as emb, runs as runs_mod
 from .hold.codex import Codex
 
 #: a text short enough to cost nothing, sent to learn which run answers
@@ -198,7 +198,7 @@ def describe_run(recipe, run_id: str, *, query: bool = False) -> emb.StatedRun:
 # ---- the gate against the run that answers ------------------------------------
 
 def _member(root: Path, name: str, codex: Codex) -> Path:
-    return Path(root) / name / "drag" / drag.calibration_paths(
+    return Path(root) / name / "shard" / shard_mod.calibration_paths(
         codex.space.calibration.set)[0]
 
 

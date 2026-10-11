@@ -329,7 +329,7 @@ def _content_of(root: Path, name: str) -> dict[str, tuple[str, str | None]]:
     from app.pack import records as pack_records
     from . import collection as col
     snap = latest_snapshot(root, name)
-    d = col.drag_of(root, name)
+    d = col.shard_dir_of(root, name)
     out: dict[str, tuple[str, str | None]] = {}
     for s in snap.shards:
         for r in pack_records.iter_records(d / s.path):

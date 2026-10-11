@@ -13,9 +13,9 @@ docker run --rm -i --name onelang-rep --network container:ix-louise-rag-web-1 \
   --env-file <(docker inspect ix-louise-rag-web-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -v -E '^(ADMIN_TOKEN|DEPOSIT_TOKEN_FILE)=' | grep .) \
   -v /mnt/ssd4/apps/louise-rag/data:/data:ro \
   -v /mnt/ssd4/apps/louise-rag/config:/config:ro \
-  -v /mnt/tank/apps/louise-drag/gutenberg:/data/collections/gutenberg/drag:ro \
-  -v /mnt/tank/apps/louise-drag/pubmed:/data/collections/pubmed/drag:ro \
-  -v /mnt/tank/apps/louise-drag/wikipedia:/data/collections/wikipedia/drag:ro \
+  -v /mnt/tank/apps/louise-shard/gutenberg:/data/collections/gutenberg/shard:ro \
+  -v /mnt/tank/apps/louise-shard/pubmed:/data/collections/pubmed/shard:ro \
+  -v /mnt/tank/apps/louise-shard/wikipedia:/data/collections/wikipedia/shard:ro \
   --tmpfs /fts:rw,size=512m -e PYTHONPATH=/srv "$IMG" nice -n 10 python -
 RSH
 )

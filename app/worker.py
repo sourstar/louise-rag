@@ -1816,8 +1816,8 @@ def _maintain_ask_indexes(con, collection) -> bool:
     from .hold import collection as col
     from .share import seeder
     root = collections_mod.louise_root() / "collections"
-    drag = col.drag_of(root, collection.name)
-    snap = seeder.current_snapshot(drag)
+    shard_tree = col.shard_dir_of(root, collection.name)
+    snap = seeder.current_snapshot(shard_tree)
     if snap is None:
         return False
     key = (snap.snapshot_id, snap.hash)
@@ -1825,7 +1825,7 @@ def _maintain_ask_indexes(con, collection) -> bool:
         return False
     did = False
     try:
-        got = ask_traverse.index_edges(con, drag, snap)
+        got = ask_traverse.index_edges(con, shard_tree, snap)
         did = did or bool(got["shards"])
     except Exception as e:   # noqa: BLE001 — one index, not the maintainer
         db.log_event(con, "warn", "ask", f"edges: {type(e).__name__}: {e}"[:300])
@@ -1926,7 +1926,7 @@ def _forgery_found(con, collection, f) -> None:
         try:
             from . import identity
             from .bundles import keys as node_keys
-            snap = seeder.current_snapshot(col.drag_of(root / "collections", collection.name))
+            snap = seeder.current_snapshot(col.shard_dir_of(root / "collections", collection.name))
             image = equivalence.running_image()
             key = node_keys.load_signing_key()
             own = identity.own()
@@ -2366,9 +2366,9 @@ def _integrity_halts(con, collection) -> bool:
     codex = getattr(collection, "codex", None)
     if not integrity.applies(codex):
         return False
-    drag = Path(collection.corpus_dir) if getattr(collection, "source", "origin") == "drag" else \
-        collections_mod.louise_root() / "collections" / collection.name / "drag"
-    found = integrity.violations(drag.parent.parent, drag.parent.name, codex)
+    shard_tree = Path(collection.corpus_dir) if getattr(collection, "source", "origin") == "shard" else \
+        collections_mod.louise_root() / "collections" / collection.name / "shard"
+    found = integrity.violations(shard_tree.parent.parent, shard_tree.parent.name, codex)
     key = str(collection.manifest_path)
     if _integrity_said.get(key, ()) != found:          # first sight of a clean copy: nothing to say
         _integrity_said[key] = found
@@ -3633,7 +3633,7 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
     # stopped every collection, pubmed's archive import included.
     #
     # Observed live 2026-09-12, while re-minting gutenberg: its file named
-    # a Codex whose drag had been moved aside for the re-mint, and the
+    # a Codex whose SHARD had been moved aside for the re-mint, and the
     # round loop logged a traceback every five seconds and served nothing.
     try:
         current = collections_mod.load_all()
@@ -4245,7 +4245,7 @@ def run_forever():
     threading.Thread(target=sources_mod.serve, args=(_stop,),
                      kwargs={"log": lambda m: print(m, flush=True)},
                      name="sources", daemon=True).start()
-    # the members a collection's file asks for and the drag lacks, by
+    # the members a collection's file asks for and the SHARD lacks, by
     # torrent from the peers that serve them (04 §4.3; app/share/transport.py):
     # its own thread, since a metadata wait is bounded by minutes
     # the runs of collections that hold vectors and do not embed here,

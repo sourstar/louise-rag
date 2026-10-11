@@ -16,7 +16,7 @@ from app.hold.codex import canonical_json
 from app.share import fetch, members as mem, messages, peers
 from tests.deposit.test_deposit_identity import node  # noqa: F401
 from tests.hold.conftest import KEY, NOW
-from tests.share.test_messages import PEER, PEER_KEY, a_drag
+from tests.share.test_messages import PEER, PEER_KEY, a_shard
 from tests.share.test_share_api import OURS, OUR_KEY
 
 OTHER = signing.SigningKey(b"\x0c" * 32)
@@ -147,7 +147,7 @@ def test_find_dht_probes_both_keys_of_twelve_ids_and_takes_the_newest_answered()
 # ---- pulling and holding -------------------------------------------------------------------
 
 def test_fetch_holds_the_codex_and_the_signed_snapshot_from_a_peer_given_by_hand(node, fetcher):  # noqa: F811
-    codex, name, d, snap = a_drag(node)
+    codex, name, d, snap = a_shard(node)
     client = TestClient(api.app)
     out = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=client,
                       key=OURS, own_key=OUR_KEY, encoder="http://rage:1/upstream/x")
@@ -155,7 +155,7 @@ def test_fetch_holds_the_codex_and_the_signed_snapshot_from_a_peer_given_by_hand
     assert out["snapshots"] == {"promoted": ["2026-08"], "kept": [], "staged": []}
     assert out["snapshot_id"] == "2026-08" and out["snapshot_hash"] == snap.hash and out["signatures"] == 1
     fname = col.name_of(fetcher, codex.collection_id)
-    fd = col.drag_of(fetcher, fname)
+    fd = col.shard_dir_of(fetcher, fname)
     assert (fd / "codex.json").read_bytes() == (d / "codex.json").read_bytes(), "byte for byte"
     assert (fd / "snapshots/2026-08.json").read_bytes() == snap.canonical()
     side = json.loads((fd / "snapshots/2026-08.sig.json").read_bytes())
@@ -172,7 +172,7 @@ def test_fetch_holds_the_codex_and_the_signed_snapshot_from_a_peer_given_by_hand
 
 
 def test_the_chain_is_walked_back_and_an_unsigned_snapshot_is_staged_not_promoted(node, fetcher):  # noqa: F811
-    codex, name, d, first = a_drag(node)
+    codex, name, d, first = a_shard(node)
     second = second_snapshot(d, first, signed=False)
     out = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=TestClient(api.app),
                       key=OURS, own_key=OUR_KEY)
@@ -180,7 +180,7 @@ def test_the_chain_is_walked_back_and_an_unsigned_snapshot_is_staged_not_promote
     assert out["snapshot_id"] == "2026-09" and out["signatures"] == 0 \
         and out["unsigned_because"] == ["no sidecar came with it: unsigned"]
     fname = col.name_of(fetcher, codex.collection_id)
-    fd = col.drag_of(fetcher, fname)
+    fd = col.shard_dir_of(fetcher, fname)
     assert (fd / "snapshots/2026-08.json").is_file() and not (fd / "snapshots/2026-09.json").exists()
     staged = fetcher / fname / "state" / fetch.STAGING / "snapshots/2026-09.json"
     assert staged.read_bytes() == second.canonical()
@@ -196,7 +196,7 @@ def test_the_chain_is_walked_back_and_an_unsigned_snapshot_is_staged_not_promote
 
 
 def test_a_chain_that_does_not_link_is_refused_and_nothing_is_written(node, fetcher):  # noqa: F811
-    codex, name, d, first = a_drag(node)
+    codex, name, d, first = a_shard(node)
     second_snapshot(d, first, previous="sha256:" + "9" * 64, signed=True)
     with pytest.raises(fetch.FetchError, match="does not link") as e:
         fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=TestClient(api.app),
@@ -205,7 +205,7 @@ def test_a_chain_that_does_not_link_is_refused_and_nothing_is_written(node, fetc
 
 
 def test_a_lie_bans_the_sender_and_the_next_source_is_tried(node, fetcher, monkeypatch):  # noqa: F811
-    codex, name, d, snap = a_drag(node)
+    codex, name, d, snap = a_shard(node)
     now = time.time()
     lie = messages.collection_entry(codex, snap, (), codex_bytes=b"not the bytes",
                                     lineage_id=codex.collection_id)
@@ -224,7 +224,7 @@ def test_a_lie_bans_the_sender_and_the_next_source_is_tried(node, fetcher, monke
 
 
 def test_tampered_bytes_are_a_lie_and_a_bad_hash_claim_is_refused(node, fetcher, monkeypatch):  # noqa: F811
-    codex, name, d, snap = a_drag(node)
+    codex, name, d, snap = a_shard(node)
     real = messages.answer_pull
 
     def tampered(root, body):
@@ -299,7 +299,7 @@ def test_the_command_writes_the_slices_and_kinds_asked_for_into_the_file(node, f
 
 def test_show_lists_the_snapshots_and_the_holdings(node, fetcher, capsys):  # noqa: F811
     from app import louise
-    codex, name, d, snap = a_drag(node)
+    codex, name, d, snap = a_shard(node)
     out = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=TestClient(api.app),
                       key=OURS, own_key=OUR_KEY)
     assert louise.main(["hold", "collection", "show", out["name"], "--root", str(fetcher)]) == 0
@@ -345,7 +345,7 @@ def test_the_held_file_of_a_fetch_carries_the_encoder_keys(node, fetcher):  # no
     from app import louise
     from tests.hold.conftest import a_root, pubmed
     codex = a_root(fetcher, pubmed())
-    held = louise._write_held_file(fetcher, codex, "http://localai:8080", source="drag",
+    held = louise._write_held_file(fetcher, codex, "http://localai:8080", source="shard",
                                    api="vega", embed_model="vega-medcpt-article",
                                    query_model="vega-medcpt-query")
     with open(held, "rb") as f:

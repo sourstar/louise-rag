@@ -28,7 +28,7 @@ def yellow(isolated_config, tmp_path):
     root = tmp_path / "collections"
     codex = pubmed()
     col.create(root, codex)
-    terms = root / "pubmed" / "drag" / "LICENSE-TERMS"
+    terms = root / "pubmed" / "shard" / "LICENSE-TERMS"
     terms.parent.mkdir(parents=True, exist_ok=True)
     return root, codex, terms
 
@@ -63,7 +63,7 @@ def test_without_the_terms_member_it_refuses(yellow, capsys):
     root, codex, terms = yellow
     assert louise.main(["hold", "collection", "ack", "pubmed",
                         "--root", str(root), "--yes"]) == 2
-    assert "no drag/LICENSE-TERMS" in capsys.readouterr().err
+    assert "no shard/LICENSE-TERMS" in capsys.readouterr().err
 
 
 def test_terms_that_do_not_hash_to_the_codexs_are_refused(yellow, capsys):
@@ -87,7 +87,7 @@ def test_it_records_9_13s_object(isolated_config, tmp_path):
     digest = "sha256:" + hashlib.sha256(body).hexdigest()
     codex = replace(pubmed(), license=cx.License("red", digest))
     col.create(root, codex)
-    terms = root / "pubmed" / "drag" / "LICENSE-TERMS"
+    terms = root / "pubmed" / "shard" / "LICENSE-TERMS"
     terms.parent.mkdir(parents=True, exist_ok=True)
     terms.write_bytes(body)
 
@@ -115,7 +115,7 @@ def test_the_ack_is_what_records_build_looks_for(isolated_config, tmp_path):
     codex = replace(pubmed(), license=cx.License("red", digest))
     col.create(root, codex)
     state = root / "pubmed" / "state"
-    terms = root / "pubmed" / "drag" / "LICENSE-TERMS"
+    terms = root / "pubmed" / "shard" / "LICENSE-TERMS"
     terms.parent.mkdir(parents=True, exist_ok=True)
     terms.write_bytes(body)
 
@@ -133,7 +133,7 @@ def test_the_ack_is_what_records_build_looks_for(isolated_config, tmp_path):
 
 def test_create_writes_LICENSE_TERMS_for_a_non_green_collection(isolated_config,
                                                                 tmp_path):
-    """09 §9.13 puts the terms text at the drag root and 02 §2.6 lists it
+    """09 §9.13 puts the terms text at the SHARD root and 02 §2.6 lists it
     as a member. Nothing wrote it until 2026-09-10, so `create` produced a
     yellow collection that could never be acknowledged and therefore never
     built — found taking `pubmed` through step 8.
@@ -153,7 +153,7 @@ def test_create_writes_LICENSE_TERMS_for_a_non_green_collection(isolated_config,
     }
     col.create_from_recipe(root, "pubmed", recipe, platform_image=PLATFORM,
                            embed=fake_embed, embed_query=fake_query_embed, name="pubmed", key=KEY, now=NOW)
-    terms = root / "pubmed" / "drag" / "LICENSE-TERMS"
+    terms = root / "pubmed" / "shard" / "LICENSE-TERMS"
     assert terms.is_file(), "no LICENSE-TERMS: the collection cannot be acked"
     assert terms.read_bytes() == body, "byte-exact, never converted"
 
@@ -170,7 +170,7 @@ def test_a_green_collection_gets_no_terms_member(isolated_config, tmp_path):
     root = tmp_path / "collections"
     col.create_from_recipe(root, "gutenberg", recipe(), platform_image=PLATFORM,
                            embed=fake_embed, embed_query=fake_query_embed, name="gutenberg", key=KEY, now=NOW)
-    assert not (root / "gutenberg" / "drag" / "LICENSE-TERMS").exists()
+    assert not (root / "gutenberg" / "shard" / "LICENSE-TERMS").exists()
 
 
 def test_a_recipe_pinning_the_wrong_terms_hash_is_refused(isolated_config,

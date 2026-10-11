@@ -67,7 +67,7 @@ ENGINE = Engine(
           "-c", "512", "-ngl", "99", "--port", "${PORT}"),
     env={}, device="Intel(R) Arc(TM) Pro B70 Graphics")
 #: The REAL hash of the terms text the pubmed plugin ships, not a made-up
-#: digest. `collection.write_terms` copies that file into the drag as
+#: digest. `collection.write_terms` copies that file into the SHARD as
 #: `LICENSE-TERMS` and refuses when its bytes do not hash to what the
 #: Codex pins (09 §9.13, "byte-exact and never converted") — so a fixture
 #: with an invented digest describes a collection that cannot be created,
@@ -264,7 +264,7 @@ def a_root(root, codex, **kw):
     out = _col.create(root, codex, **kw)
     v, e, _, _ = _cal.build_member(CAL_TEXTS, fake_embed, normalise=True,
                                    dim=codex.space.dim)
-    d = _col.drag_of(root, _col.name_of(root, out.collection_id))
+    d = _col.shard_dir_of(root, _col.name_of(root, out.collection_id))
     q = None
     if codex.space.calibration.query_vectors is not None:
         # an asymmetric space's member carries the query side's reference too

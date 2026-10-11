@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from app.hold import collection as col, drag as drag_mod, envelope as env, export as exp, \
+from app.hold import collection as col, shard as shard_mod, envelope as env, export as exp, \
     land as landing, snapshot as sn, vectors_build as vb
 from app.hold.codex import CodexError
 from app.share import coverage as cov, members as mem, messages, peers, rendezvous, seeder
@@ -51,7 +51,7 @@ def preconditions(root: Path, name: str, codex, snapshot: sn.Snapshot | None, *,
     from app.hold import runs
     reasons: list[str] = []
     if snapshot is None:
-        return ["no snapshot in the drag: nothing to embed for"]
+        return ["no snapshot in the SHARD: nothing to embed for"]
     if own_key is None:
         reasons.append("this peer has no key, so it cannot sign bundles (07 §7.8)")
     bodies = copy_state.attestations(root, name, codex)
@@ -132,14 +132,14 @@ def shards_i_lead(codex, snapshot: sn.Snapshot, con, *, me: str,
 def bundle_dir(root: Path, name: str, codex, shard: str, bundle_id: str) -> Path:
     """09 §9.7: `state/bundles/<space>/<slice>/<NNNNN>/<bundle_id hex>/`."""
     return (Path(root) / name / "state" / "bundles" / codex.space_segment / shard
-            / drag_mod._hex(bundle_id))
+            / shard_mod._hex(bundle_id))
 
 
 def calibration_tensors(root: Path, name: str, codex):
     """`(reference, envelope)` — 09 §9.12's two tensors of the calibration
     member this peer holds, what T0 and T2 are judged against."""
     from safetensors.numpy import load_file
-    member = Path(root) / name / "drag" / drag_mod.calibration_paths(codex.space.calibration.set)[0]
+    member = Path(root) / name / "shard" / shard_mod.calibration_paths(codex.space.calibration.set)[0]
     tensors = load_file(str(member))
     return tensors["vectors"].tolist(), tensors["envelope"]
 
@@ -187,8 +187,8 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
     root = Path(root)
     now = time.time() if now is None else now
     say = log or (lambda *_a: None)
-    drag_dir = col.drag_of(root, name)
-    snapshot = seeder.current_snapshot(drag_dir)
+    shard_dir = col.shard_dir_of(root, name)
+    snapshot = seeder.current_snapshot(shard_dir)
     reasons = preconditions(root, name, codex, snapshot, own_key=own_key)
     if reasons:
         raise ContributeRefused(f"{name}: not contributing yet — " + "; ".join(reasons))

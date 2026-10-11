@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app.hold import (annotations as ann, check, codex as cx, collection as col, drag as drag_mod,
+from app.hold import (annotations as ann, check, codex as cx, collection as col, shard as shard_mod,
                       records as rec, snapshot as sn)
 from app.hold.codex import CodexError, License
 from app.pack import records as pack_records
@@ -22,7 +22,7 @@ TARGET_SNAPSHOT = "2026-08"
 def a_target(root: Path, name: str = "pubmed", texts=("one", "two", "three", "four")):
     """A held target: a green Codex, one record part, a snapshot."""
     target = col.create(root, pubmed(license=License("green", None)), name=name)
-    d = col.drag_of(root, name)
+    d = col.shard_dir_of(root, name)
     records = []
     for i, t in enumerate(texts, 1):
         sections = [["Abstract", t]]
@@ -31,10 +31,10 @@ def a_target(root: Path, name: str = "pubmed", texts=("one", "two", "three", "fo
                         "sections": sections, "extra": {}, "origin": f"x.xml#{i}",
                         "content_hash": rec.content_hash(f"T{i}", [tuple(s) for s in sections]),
                         "origin_hash": "ab" * 16})
-    p = d / drag_mod.shard_path("year=2023", 1)
+    p = d / shard_mod.shard_path("year=2023", 1)
     pack_records.write_shard(p, records)
     raw = p.read_bytes()
-    shard = sn.Shard(slice="year=2023", n=1, root=drag_mod.pieces_root(raw),
+    shard = sn.Shard(slice="year=2023", n=1, root=shard_mod.pieces_root(raw),
                      records_root=rec.records_root(r["content_hash"] for r in records),
                      first_id="1", last_id=str(len(records)), records=len(records),
                      chunks=len(records), chunks_root="sha256:" + "22" * 32, tokens=512 * len(records),
@@ -42,7 +42,7 @@ def a_target(root: Path, name: str = "pubmed", texts=("one", "two", "three", "fo
     snap = sn.Snapshot(collection_id=target.collection_id, snapshot_id=TARGET_SNAPSHOT, previous=None,
                        shards=(shard,), delta=sn.Delta(tuple(r["uid"] for r in records), (), ()), files={})
     (d / "snapshots").mkdir(exist_ok=True)
-    (d / drag_mod.snapshot_path(TARGET_SNAPSHOT)).write_bytes(snap.canonical())
+    (d / shard_mod.snapshot_path(TARGET_SNAPSHOT)).write_bytes(snap.canonical())
     return target, {r["uid"]: r["content_hash"] for r in records}
 
 
@@ -151,11 +151,11 @@ def make(root, name="pubmed-same-work", claims=None, **kw):
 def test_create_writes_the_claims_their_edges_and_the_first_snapshot(tmp_path):
     target, hashes = a_target(tmp_path)
     codex, snap = make(tmp_path)
-    d = col.drag_of(tmp_path, "pubmed-same-work")
+    d = col.shard_dir_of(tmp_path, "pubmed-same-work")
     assert col.read(tmp_path, "pubmed-same-work") == codex
     (shard,), (rel,) = snap.shards, snap.relations
     assert (shard.slice, shard.n, shard.records, shard.chunks, shard.tokens) == ("all", 1, 2, 0, 0)
-    assert drag_mod.pieces_root_of(d / shard.path) == shard.root
+    assert shard_mod.pieces_root_of(d / shard.path) == shard.root
     lines = list(pack_records.iter_records(d / shard.path))
     assert [r["uid"] for r in lines] == ["annotations:1", "annotations:2"], "numbered in (subject, object) order"
     first = lines[0]
@@ -187,7 +187,7 @@ def test_create_writes_the_claims_their_edges_and_the_first_snapshot(tmp_path):
         "roots": "pass", "records": "pass", "license": "pass", "signature": "pass"}
     # nothing in the target moved
     assert col.read(tmp_path, "pubmed") == target
-    assert sorted(p.name for p in (col.drag_of(tmp_path, "pubmed") / "snapshots").iterdir()) == ["2026-08.json"]
+    assert sorted(p.name for p in (col.shard_dir_of(tmp_path, "pubmed") / "snapshots").iterdir()) == ["2026-08.json"]
 
 
 def test_create_again_is_a_no_op_and_a_name_held_by_another_is_refused(tmp_path):
@@ -277,7 +277,7 @@ def test_the_node_holds_it_apart_from_what_the_worker_runs_and_shares_its_member
     assert held.name == "pubmed-same-work" and held.codex == codex and held.embed is None
     assert collections_mod.is_annotations(held) and held.kinds == ("records", "relations")
     with db.connect(held) as con:
-        entries = seeder.publish(held, snap, col.drag_of(root, held.name), root / held.name / "state", con)
+        entries = seeder.publish(held, snap, col.shard_dir_of(root, held.name), root / held.name / "state", con)
     assert sorted({e["member"] for e in entries}) == ["records-all", "relations-all", "validation"]
     merged, cons = seeder.with_annotations([], {})
     assert [c.name for c in merged] == ["pubmed-same-work"] and "pubmed-same-work" in cons

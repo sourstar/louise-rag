@@ -515,7 +515,7 @@ def ensure_dirs():
 
 def louise_root() -> Path:
     """`<LOUISE_ROOT>` — the ONE directory of 07 §7.8, whose
-    `collections/<name>/` holds each Codex collection's drag, state, index
+    `collections/<name>/` holds each Codex collection's SHARD, state, index
     and vector table.
 
     Here rather than in app/collections.py because app/louise.py needs the

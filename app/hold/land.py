@@ -45,7 +45,7 @@ class LandError(CodexError):
 
 
 def snapshot_named(root, name: str, snapshot_id: str) -> snap.Snapshot:
-    """The named snapshot from this peer's own drag.
+    """The named snapshot from this peer's own SHARD.
 
     A bundle NAMES its snapshot, and `snapshot_id` is provenance (03
     §3.5): it says where the producer's records came from and gates
@@ -53,8 +53,8 @@ def snapshot_named(root, name: str, snapshot_id: str) -> snap.Snapshot:
     looking at a bad bundle — it is looking at work from a round it never
     took — and the message says so rather than blaming the sender.
     """
-    from . import drag as drag_mod
-    path = Path(col.drag_of(Path(root), name)) / drag_mod.snapshot_path(snapshot_id)
+    from . import shard as shard_mod
+    path = Path(col.shard_dir_of(Path(root), name)) / shard_mod.snapshot_path(snapshot_id)
     if not path.is_file():
         raise LandError(
             f"this peer holds no snapshot {snapshot_id!r} of {name}. The "
@@ -79,10 +79,10 @@ def records_for(root, name: str, snapshot: snap.Snapshot, shard: str,
     bundle there to name a subset.
     """
     want = None if uids is None else set(uids)
-    drag = col.drag_of(Path(root), name)
+    shard_tree = col.shard_dir_of(Path(root), name)
     entry = exp._shard_of(snapshot, shard)
     from app.pack import records as pack_records
-    return [r for r in pack_records.iter_records(drag / entry.path)
+    return [r for r in pack_records.iter_records(shard_tree / entry.path)
             if want is None or r["uid"] in want]
 
 

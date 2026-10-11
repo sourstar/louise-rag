@@ -16,7 +16,7 @@ from app.hold.vectors_build import BuildRefused
 from tests.hold.conftest import a_stated_run  # noqa: E402
 from tests.hold.conftest import KEY, NOW
 from tests.hold.test_admit import made, space_embed  # noqa: F401
-from tests.hold.test_vectors_export import build_drag, first_shard
+from tests.hold.test_vectors_export import build_shard, first_shard
 from tests.hold.test_vectors_import import _stored  # noqa: F401
 
 SEED = b"\x03" * 32
@@ -55,9 +55,9 @@ def _statement(root, codex, *, passed=None, space_id=None):
 
 @pytest.fixture
 def buildable(isolated_config, tmp_path, corpus_dir, monkeypatch):
-    """A drag with records and a snapshot, and NO vectors."""
+    """A SHARD with records and a snapshot, and NO vectors."""
     monkeypatch.delenv("EMBED_URL", raising=False)
-    root, snapshot = build_drag(tmp_path, corpus_dir, records_per_shard=2)
+    root, snapshot = build_shard(tmp_path, corpus_dir, records_per_shard=2)
     codex = col.read(root, "gutenberg")
     _statement(root, codex)
     return root, snapshot, codex

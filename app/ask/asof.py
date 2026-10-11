@@ -80,15 +80,15 @@ class Resolved:
             and self.snapshot.hash == self.current.hash
 
 
-def held_ids(drag_dir: Path) -> list[str]:
-    d = Path(drag_dir) / "snapshots"
+def held_ids(shard_dir: Path) -> list[str]:
+    d = Path(shard_dir) / "snapshots"
     if not d.is_dir():
         return []
     return sorted(p.name[:-5] for p in d.glob("*.json") if not p.name.endswith(".sig.json"))
 
 
-def _load(drag_dir: Path, snapshot_id: str) -> sn.Snapshot:
-    return sn.load(Path(drag_dir) / "snapshots" / f"{snapshot_id}.json")
+def _load(shard_dir: Path, snapshot_id: str) -> sn.Snapshot:
+    return sn.load(Path(shard_dir) / "snapshots" / f"{snapshot_id}.json")
 
 
 def _holds(path: Path, uid: str) -> bool:
@@ -99,18 +99,18 @@ def _holds(path: Path, uid: str) -> bool:
         return True
 
 
-def resolve(codex, drag_dir: Path, day: date) -> Resolved:
+def resolve(codex, shard_dir: Path, day: date) -> Resolved:
     """Which held snapshot answers for `day`, and what it cannot answer."""
     target = target_id(codex, day)
-    ids = held_ids(drag_dir)
+    ids = held_ids(shard_dir)
     if not ids:
         return Resolved(None, None, reason="no snapshot is held")
-    current = _load(drag_dir, ids[-1])
+    current = _load(shard_dir, ids[-1])
     before = [i for i in ids if i <= target]       # one cadence per chain: text order is time order
     if not before:
         return Resolved(None, current, reason=f"no snapshot of this chain has a cutoff at or before "
                                                f"{day.isoformat()}; the first held is {ids[0]}")
-    chosen = _load(drag_dir, before[-1])
+    chosen = _load(shard_dir, before[-1])
     if chosen.hash == current.hash:
         return Resolved(chosen, current)
     changed: set[str] = set()
@@ -118,7 +118,7 @@ def resolve(codex, drag_dir: Path, day: date) -> Resolved:
     for sid in ids:
         if sid <= chosen.snapshot_id:
             continue
-        s = _load(drag_dir, sid)
+        s = _load(shard_dir, sid)
         if s.previous != previous.hash:
             return Resolved(None, current, reason=f"the chain between {chosen.snapshot_id} and "
                                                    f"{current.snapshot_id} is not held whole here: "
@@ -137,11 +137,11 @@ def resolve(codex, drag_dir: Path, day: date) -> Resolved:
         for s in chosen.shards_of(native, order):
             # one candidate per slice: a held shard says whether it holds
             # the record; one not held is named, since it may
-            if (Path(drag_dir) / s.path).is_file() and not _holds(Path(drag_dir) / s.path, uid):
+            if (Path(shard_dir) / s.path).is_file() and not _holds(Path(shard_dir) / s.path, uid):
                 continue
             shards.add(f"{s.slice}/{s.n}")
     by_key = {f"{s.slice}/{s.n}": s for s in chosen.shards}
-    held = sum(1 for k in shards if (Path(drag_dir) / by_key[k].path).is_file())
+    held = sum(1 for k in shards if (Path(shard_dir) / by_key[k].path).is_file())
     return Resolved(chosen, current, changed, sorted(shards), held)
 
 

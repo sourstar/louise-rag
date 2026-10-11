@@ -109,11 +109,11 @@ def test_dev_genesis_recount_over_a_real_empty_ledger(isolated_config, capsys):
     assert "0 ledger row(s) already match" in capsys.readouterr().out
 
 
-# ---- a built drag: records show, snapshot delta -----------------------------
+# ---- a built SHARD: records show, snapshot delta -----------------------------
 
 @pytest.fixture
 def built(isolated_config, corpus_dir):
-    """gutenberg's drag built and frozen as 2026-08: 3 records, 2 shards."""
+    """gutenberg's SHARD built and frozen as 2026-08: 3 records, 2 shards."""
     from app.hold import records as rec, snapshot as sn
     root = Path(isolated_config.DATA_DIR) / "collections"
     rec.build(root, "gutenberg", corpus_dir=corpus_dir, records_per_shard=2, log=lambda *_: None)
@@ -124,8 +124,8 @@ def built(isolated_config, corpus_dir):
 
 def _uids(root, snapshot):
     from app.pack import records as pack_records
-    drag = root / "gutenberg" / "drag"
-    return [r["uid"] for s in snapshot.shards for r in pack_records.iter_records(drag / s.path)]
+    shard_tree = root / "gutenberg" / "shard"
+    return [r["uid"] for s in snapshot.shards for r in pack_records.iter_records(shard_tree / s.path)]
 
 
 def test_records_show_prints_the_record_its_layer_and_its_chunks(built, capsys):
@@ -163,7 +163,7 @@ def test_records_show_shard_streams_it_as_json_lines(built, capsysbinary):
 
 
 def _write(root, snapshot):
-    p = root / "gutenberg" / "drag" / "snapshots" / f"{snapshot.snapshot_id}.json"
+    p = root / "gutenberg" / "shard" / "snapshots" / f"{snapshot.snapshot_id}.json"
     p.write_bytes(snapshot.canonical())
 
 

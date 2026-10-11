@@ -205,7 +205,7 @@ _CODEX_TEMPLATE: dict = {}
 
 def _codex_template():
     """gutenberg from the test recipe, created ONCE per session (a Codex,
-    its calibration member, its drag) and copied wherever a test wants a
+    its calibration member, its SHARD) and copied wherever a test wants a
     Codex collection: the tree is content-addressed, so every copy is the
     same collection."""
     import tempfile

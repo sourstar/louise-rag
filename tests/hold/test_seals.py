@@ -182,7 +182,7 @@ def test_the_member_s_shape(pki, tmp_path):
     e1 = seals.capture(sealed, trusted_list=TL, now=T0.timestamp())
     e2 = dict(e1, file_hash="0" * 32)
     codex = pubmed()
-    d = tmp_path / "drag"
+    d = tmp_path / "shard"
     p = seals.write(d, codex, "2026-08", [e1, e2])
     doc = json.loads(p.read_bytes())
     assert [e["file_hash"] for e in doc["entries"]] == sorted([e1["file_hash"], "0" * 32]) and doc["kind"] == "louise-seals"
@@ -208,8 +208,8 @@ def test_origin_seal_through_hold_check(checkable, pki):  # noqa: F811
     xml = a_trusted_list(pki["ca"])
     tl = {**TL, "tl_sha256": "sha256:" + hashlib.sha256(xml).hexdigest()}
     entry = seals.capture(sealed, trusted_list=tl, now=(T0 + timedelta(days=31)).timestamp())
-    drag = root / "gutenberg" / "drag"
-    seals.write(drag, certified, snapshot.snapshot_id, [entry])
+    shard_tree = root / "gutenberg" / "shard"
+    seals.write(shard_tree, certified, snapshot.snapshot_id, [entry])
     o = run()
     assert o.result == chk.INCONCLUSIVE and "trusted list" in o.why and "not held" in o.why
     seals.keep_trusted_list(root, "gutenberg", xml)
@@ -218,11 +218,11 @@ def test_origin_seal_through_hold_check(checkable, pki):  # noqa: F811
     assert (o.detail["mode"], o.detail["entries"], o.detail["failed"]) == ("archival", 1, []) and o.shards
     assert "LOTL is not held" in o.detail["trusted_list_signature"][tl["tl_sha256"]]
     # a tampered entry fails, naming it
-    seals.write(drag, certified, snapshot.snapshot_id, [dict(entry, content_sha256="sha256:" + "ab" * 32)])
+    seals.write(shard_tree, certified, snapshot.snapshot_id, [dict(entry, content_sha256="sha256:" + "ab" * 32)])
     o = run()
     assert o.result == chk.FAIL and o.detail["failed"] == [entry["file_hash"]] and "message digest" in o.why
     # a member that does not read fails too
-    seals.seals_path(drag, snapshot.snapshot_id).write_bytes(b"{")
+    seals.seals_path(shard_tree, snapshot.snapshot_id).write_bytes(b"{")
     assert run().result == chk.FAIL
 
 
@@ -273,7 +273,7 @@ def test_records_seal_captures_validates_and_writes_the_member(pki, tmp_path, mo
     out = json.loads(capsys.readouterr().out)
     assert out["entries"] == 2 and out["snapshot_id"] == "2026-08"
     assert "CN=TL Signer" in out["trusted_list_signed_by"] and "CN=LOTL Signer" in out["lotl_signed_by"]
-    doc = seals.read(col.drag_of(root, name), "2026-08")
+    doc = seals.read(col.shard_dir_of(root, name), "2026-08")
     assert len(doc["entries"]) == 2 and doc["entries"][0]["trusted_list"]["url"].endswith("TSL-IT.xml")
     tl_digest = doc["entries"][0]["trusted_list"]["tl_sha256"]
     lotl_digest = doc["entries"][0]["trusted_list"]["lotl_sha256"]
@@ -286,13 +286,13 @@ def test_records_seal_captures_validates_and_writes_the_member(pki, tmp_path, mo
         assert louise.main(["hold", "records", "seal", name, "2026-10", "--root", str(root), "--files", str(files),
                             "--trusted-list"] + bad_flags) == 2
         assert why in capsys.readouterr().err
-    assert seals.read(col.drag_of(root, name), "2026-10") is None
+    assert seals.read(col.shard_dir_of(root, name), "2026-10") is None
     # a seal the list does not anchor is refused, and nothing is written for that snapshot
     foreign = lists["foreign_tl"]
     assert louise.main(["hold", "records", "seal", name, "2026-09", "--root", str(root), "--files", str(files),
                         "--trusted-list", str(foreign)] + flags) == 2
     assert "not written" in capsys.readouterr().err
-    assert seals.read(col.drag_of(root, name), "2026-09") is None
+    assert seals.read(col.shard_dir_of(root, name), "2026-09") is None
     # an open collection carries none
     open_codex = pubmed()
     a_root(root, open_codex)

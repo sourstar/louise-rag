@@ -684,7 +684,7 @@ def _attach_annotations(result: dict) -> None:
         source_of[id(h)] = c
         if c.name not in contexts:
             try:
-                snap = seeder.current_snapshot(hold_col.drag_of(root, c.name))
+                snap = seeder.current_snapshot(hold_col.shard_dir_of(root, c.name))
             except Exception:   # noqa: BLE001 — no snapshot named: no claim applies (05 §5.3)
                 snap = None
             contexts[c.name] = {"collection_id": codex.collection_id,

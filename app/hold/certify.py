@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.hold import drag as drag_mod, envelope as env, snapshot as sn
+from app.hold import shard as shard_mod, envelope as env, snapshot as sn
 from app.hold.codex import CodexError, canonical_json
 
 KIND, VERSION = "louise-pointer", 1
@@ -27,7 +27,7 @@ class CertifyError(CodexError):
 
 
 def pointer_path(root: Path, name: str, codex) -> Path:
-    return Path(root) / name / "state" / "pointer" / f"{drag_mod._hex(codex.collection_id)}.json"
+    return Path(root) / name / "state" / "pointer" / f"{shard_mod._hex(codex.collection_id)}.json"
 
 
 def read_pointer(root: Path, name: str, codex) -> dict[str, Any] | None:
@@ -69,9 +69,9 @@ def certify(root: Path, name: str, codex, snapshot_id: str, key, *, now: float) 
     own = env.key_text(key.verify_key)
     if own != codex.certifier.key:
         raise CertifyError("this peer's key is not the Codex's certifier.key: it cannot certify (07 §7.3)")
-    p = root / name / "drag" / "snapshots" / f"{snapshot_id}.json"
+    p = root / name / "shard" / "snapshots" / f"{snapshot_id}.json"
     if not p.is_file():
-        raise CertifyError(f"no snapshot {snapshot_id} in the drag")
+        raise CertifyError(f"no snapshot {snapshot_id} in the SHARD")
     snapshot = sn.load(p)
     time_text = messages.time_text(now)
     sidecar = sn.sign_snapshot(root, name, snapshot, key, now=time_text)

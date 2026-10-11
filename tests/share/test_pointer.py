@@ -18,7 +18,7 @@ from app.hold.codex import canonical_json
 from app.share import pointer, seeder
 from tests.deposit.test_deposit_identity import node  # noqa: F401
 from tests.hold.conftest import KEY, a_root
-from tests.hold.test_anchor import CERT_KEY, T0, a_signed_drag, certified
+from tests.hold.test_anchor import CERT_KEY, T0, a_signed_shard, certified
 
 OTHER = signing.SigningKey(b"\x0d" * 32)
 
@@ -59,16 +59,16 @@ class FakeClient:
         return SimpleNamespace(status_code=self.status, content=self.body)
 
 
-def a_certified_drag(node, codex):
+def a_certified_shard(node, codex):
     a_root(node, codex)
-    name, d, snap, _ = a_signed_drag(node, codex)
+    name, d, snap, _ = a_signed_shard(node, codex)
     certify.certify(node, name, codex, "2026-08", KEY, now=T0)
     return name, snap, certify.read_pointer(node, name, codex)
 
 
 def test_put_under_the_key_with_the_raw_id_as_salt(node):  # noqa: F811
     codex = certified()
-    name, snap, doc = a_certified_drag(node, codex)
+    name, snap, doc = a_certified_shard(node, codex)
     session = FakeSession()
     data = pointer.put(session, codex, doc, KEY)
     (pk, sk, put_data, salt), = session.puts
@@ -83,7 +83,7 @@ def test_put_under_the_key_with_the_raw_id_as_salt(node):  # noqa: F811
 
 def test_read_from_the_dht_verified_and_the_highest_seq_kept(node):  # noqa: F811
     codex = certified()
-    name, snap, doc1 = a_certified_drag(node, codex)
+    name, snap, doc1 = a_certified_shard(node, codex)
     certify.certify(node, name, codex, "2026-08", KEY, now=T0 + 1)
     doc2 = certify.read_pointer(node, name, codex)
     assert doc2["body"]["seq"] == 2
@@ -105,7 +105,7 @@ def test_read_from_the_dht_verified_and_the_highest_seq_kept(node):  # noqa: F81
 
 def test_the_well_known_path_when_the_dht_gives_nothing(node):  # noqa: F811
     codex = certified()
-    name, snap, doc = a_certified_drag(node, codex)
+    name, snap, doc = a_certified_shard(node, codex)
     node_con = sqlite3.connect(":memory:")
     client = FakeClient(200, canonical_json(doc))
     said = []
@@ -123,7 +123,7 @@ def test_the_well_known_path_when_the_dht_gives_nothing(node):  # noqa: F811
 
 def test_the_seeder_puts_this_peer_s_own_certified_pointer_once_per_interval(node, monkeypatch):  # noqa: F811
     codex = certified()
-    name, snap, doc = a_certified_drag(node, codex)
+    name, snap, doc = a_certified_shard(node, codex)
     monkeypatch.setattr(collections_mod, "louise_root", lambda: node.parent)
     monkeypatch.setattr(seeder, "_last_pointer_put", {})
     session = FakeSession()
@@ -144,7 +144,7 @@ def test_the_seeder_puts_this_peer_s_own_certified_pointer_once_per_interval(nod
 def test_a_put_that_fails_waits_the_interval_not_the_next_beat(node, monkeypatch):  # noqa: F811
     """Live, 2026-10-07: the failing put was retried, and logged, every beat."""
     codex = certified()
-    name, snap, doc = a_certified_drag(node, codex)
+    name, snap, doc = a_certified_shard(node, codex)
     monkeypatch.setattr(collections_mod, "louise_root", lambda: node.parent)
     monkeypatch.setattr(seeder, "_last_pointer_put", {})
     c = SimpleNamespace(name=name, codex=codex)

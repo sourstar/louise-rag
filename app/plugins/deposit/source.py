@@ -187,7 +187,7 @@ class DepositSource:
     # The window depends on the encoder's context, so `create` writes the
     # layer (`fixed_layer`); this is the shape with the default's context.
     default_layers: list = [fixed_layer(512)]
-    # Nothing is ever cut into shards (02 §2.9: no drag, no snapshot), but
+    # Nothing is ever cut into shards (02 §2.9: no SHARD, no snapshot), but
     # the Codex carries every field (09 §9.3).
     default_slicing: dict = {"keys": [], "unknown": "all",
                              "shard_records": 30000, "order": "numeric"}

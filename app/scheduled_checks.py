@@ -16,7 +16,7 @@ gutenberg's 25.5 min and 2.6 GB. So:
     no GIL from the pipeline threads — a 25-minute check inside the worker
     would have been the long CPU job §1 forbids every shared thread;
   - ONE AT A TIME on the node, so the peak is one check's;
-  - only in a mode that PARSES (`node_state.runs`): a check reads the drag
+  - only in a mode that PARSES (`node_state.runs`): a check reads the SHARD
     and the origin; a paused or download-only node runs none;
   - DUE when the collection has a snapshot and either the last scheduled
     check was of another snapshot or one cadence has passed since it;
@@ -71,11 +71,11 @@ def due(root: Path, name: str, codex, snapshot_id: str | None, *, now: float) ->
 
 def argv_for(collection) -> list[str]:
     """`hold check` with the collection's origin when it has one here: a
-    fetched copy (`source = "drag"`) has none, and its `records-vs-origin`
+    fetched copy (`source = "shard"`) has none, and its `records-vs-origin`
     says so (inconclusive, never a pass)."""
     argv = [sys.executable, "-m", "app.louise", "hold", "check", collection.name, "--json"]
     corpus = Path(collection.corpus_dir)
-    if getattr(collection, "source", "origin") != "drag" and corpus.is_dir():
+    if getattr(collection, "source", "origin") != "shard" and corpus.is_dir():
         argv += ["--origin", str(corpus)]
     return argv
 
@@ -151,8 +151,8 @@ def turn(*, stop: Callable[[], bool], log: Callable[[str], None], now: float | N
         if codex is None:
             continue
         try:
-            snap = seeder.current_snapshot(root / c.name / "drag")
-        except Exception:   # noqa: BLE001 — a drag that does not read is not checked this beat
+            snap = seeder.current_snapshot(root / c.name / "shard")
+        except Exception:   # noqa: BLE001 — a SHARD that does not read is not checked this beat
             continue
         sid = snap.snapshot_id if snap else None
         t = time.time() if now is None else now

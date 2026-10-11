@@ -4,7 +4,7 @@ docs/06-plugins.md §6.6 step 2: "the calibration comes first and needs no
 record: the calibration set is a corpus-independent file shipped with the
 platform, `create` embeds it with the named encoder, writes the reference
 vectors' hash into `space.calibration` and their envelope into
-`space.envelope`, and stores the vectors as the drag member
+`space.envelope`, and stores the vectors as the SHARD member
 `calibration/<set>.safetensors`". docs/09-formats.md §9.12 fixes the member.
 
 These exist because the two hashes in a Codex's space block are the only
@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from nacl import signing
 
-from app.hold import (calibration as cal, collection as col, drag,
+from app.hold import (calibration as cal, collection as col, shard as shard_mod,
                       envelope as env, template)
 from app.hold.calibration import CalibrationError
 from app.hold.codex import CodexError
@@ -31,19 +31,19 @@ A_HASH = "sha256:" + "aa" * 32
 
 
 def created(root: Path, **kw):
-    """The Codex and its drag, with the member `create` wrote in it."""
+    """The Codex and its SHARD, with the member `create` wrote in it."""
     codex = col.create_from_recipe(root, "gutenberg", recipe(),
                                    platform_image=PLATFORM, embed=fake_embed, embed_query=fake_query_embed,
                                    key=KEY, now=NOW, **kw)
-    return codex, root / "gutenberg" / "drag"
+    return codex, root / "gutenberg" / "shard"
 
 
 def paths(codex):
-    return drag.calibration_paths(codex.space.calibration.set)
+    return shard_mod.calibration_paths(codex.space.calibration.set)
 
 
-def member_of(drag_dir: Path, codex):
-    return cal.read_member(drag_dir / paths(codex)[0],
+def member_of(shard_dir: Path, codex):
+    return cal.read_member(shard_dir / paths(codex)[0],
                            expect_vectors=codex.space.calibration.vectors,
                            expect_envelope=codex.space.envelope)
 
@@ -187,13 +187,13 @@ def test_normalise_is_applied_here_and_not_left_to_the_endpoint(tmp_path: Path):
     def scaled(texts):
         return [[x * 7.0 for x in v] for v in fake_embed(texts)]
 
-    plain, plain_drag = created(tmp_path / "a")
+    plain, plain_shard = created(tmp_path / "a")
     other = tmp_path / "b"
     codex = col.create_from_recipe(other, "gutenberg", recipe(),
                                    platform_image=PLATFORM, embed=scaled,
                                    embed_query=fake_query_embed, key=KEY, now=NOW)
-    a, _ = member_of(plain_drag, plain)
-    b, _ = member_of(other / "gutenberg" / "drag", codex)
+    a, _ = member_of(plain_shard, plain)
+    b, _ = member_of(other / "gutenberg" / "shard", codex)
     assert np.allclose(np.linalg.norm(b, axis=1), 1.0, atol=1e-5), "unit"
     assert np.allclose((a * b).sum(axis=1), 1.0, atol=1e-5), "the same directions"
 
@@ -274,7 +274,7 @@ def test_there_is_no_such_thing_as_an_unsigned_collection(tmp_path: Path):
     `calibration/<set>.sig.json` among a snapshot's files WITHOUT the "or
     null" it gives LICENSE-TERMS and seals. So `create` refuses rather than
     writing a member with an empty required header — which would also make
-    the drag unshareable, since `share` refuses a drag holding a file no
+    the SHARD unshareable, since `share` refuses a SHARD holding a file no
     snapshot names (07 §7.8)."""
     codex, d = created(tmp_path)
     assert (d / paths(codex)[1]).is_file(), "always written"

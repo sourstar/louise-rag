@@ -201,8 +201,8 @@ def wait_landed(session, handle, info, index: int, path: Path, *, stop=None,
         except OSError:
             right_size = False
         if root is not None:
-            from app.hold import drag as drag_mod
-            ok = right_size and drag_mod.pieces_root_of(path) == root
+            from app.hold import shard as shard_mod
+            ok = right_size and shard_mod.pieces_root_of(path) == root
             foreign: set[int] = set()
         else:
             bad, foreign = check_pieces(info, index, path, todo) if right_size else (todo, set())

@@ -52,7 +52,7 @@ def an_illustrated_copy(node, *, cls="green"):  # noqa: F811
     codex = pubmed(record_line=2, layers=FIXED, license=License(cls, None if cls == "green" else TERMS))
     a_root(node, codex)
     name = col.name_of(node, codex.collection_id)
-    d = col.drag_of(node, name)
+    d = col.shard_dir_of(node, name)
     (d / "records/year=2023").mkdir(parents=True, exist_ok=True)
     # numeric order: "10" is in the SECOND shard, though as text it sorts before "9"
     pack_records.write_shard(d / "records/year=2023/00001.jsonl.zst", [_record("2", [], "Nothing here.")],

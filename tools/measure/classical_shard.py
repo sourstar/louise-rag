@@ -14,15 +14,15 @@ import sys
 from pathlib import Path
 
 from app.pack import records as R
-from app.plugins import drag as D
+from app.plugins import shard as D
 
-DRAG = Path("/data/collections/gutenberg/drag")
+SHARD_DIR = Path("/data/collections/gutenberg/shard")
 
 
 def catalog(path: str) -> None:
     n = 0
     with open(path, "w") as out:
-        for p in D.shard_files(DRAG):
+        for p in D.shard_files(SHARD_DIR):
             lang = p.parent.name.split("=", 1)[1]
             for rec in R.iter_records(p):
                 ex = rec.get("extra") or {}
@@ -45,7 +45,7 @@ def dump(uids: list[str]) -> None:
     want = set(uids)
     out = Path("/out/texts")
     out.mkdir(exist_ok=True)
-    for p in D.shard_files(DRAG):
+    for p in D.shard_files(SHARD_DIR):
         for u in R.read_index(p).uids:
             if u in want:
                 rec = R.read_record(p, u)

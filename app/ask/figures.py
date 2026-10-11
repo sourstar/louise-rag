@@ -42,16 +42,16 @@ class FigureNotServed(CodexError):
         self.status = status
 
 
-def record_of(drag: Path, snapshot, uid: str, order: str = "bytes") -> tuple[dict[str, Any], Any] | None:
+def record_of(shard_tree: Path, snapshot, uid: str, order: str = "bytes") -> tuple[dict[str, Any], Any] | None:
     """The record line and its shard: the snapshot's ranges give one
     candidate shard per slice (05 §5.5), and the one held that holds the
     uid is it. None when no shard held holds it."""
-    from app.hold import drag as drag_mod
+    from app.hold import shard as shard_mod
     from app.pack import records as pack_records
     if snapshot is None or ":" not in uid:
         return None
     for shard in snapshot.shards_of(uid.split(":", 1)[1], order):
-        path = Path(drag) / drag_mod.shard_path(shard.slice, shard.n)
+        path = Path(shard_tree) / shard_mod.shard_path(shard.slice, shard.n)
         if not path.is_file():
             continue
         try:
@@ -111,10 +111,10 @@ def _captions(sections: Iterable) -> list[str]:
     return out
 
 
-def held_hashes(drag: Path, shard) -> set[str]:
+def held_hashes(shard_tree: Path, shard) -> set[str]:
     """The figure hashes (bare hex) this peer holds for the record's shard."""
     from app.hold import figures as fig
-    path = fig.path_for(Path(drag), shard.slice, shard.n)
+    path = fig.path_for(Path(shard_tree), shard.slice, shard.n)
     if not path.is_file():
         return set()
     try:
@@ -152,7 +152,7 @@ def for_record(collection, record: dict[str, Any], held: set[str], *, red: bool 
     return out
 
 
-def place(collection, codex, drag: Path, snapshot, hits: list[dict[str, Any]], *,
+def place(collection, codex, shard_tree: Path, snapshot, hits: list[dict[str, Any]], *,
           red: bool = False) -> None:
     """Fill `figures` on each result of a collection with plates, one
     record read and re-chunked per uid."""
@@ -160,12 +160,12 @@ def place(collection, codex, drag: Path, snapshot, hits: list[dict[str, Any]], *
     for h in hits:
         by_uid.setdefault(h["uid"], []).append(h)
     for uid, hs in by_uid.items():
-        got = record_of(drag, snapshot, uid, _order(codex))
+        got = record_of(shard_tree, snapshot, uid, _order(codex))
         if got is None:
             continue                          # not held as a record here: `[]`, as before
         record, shard = got
         try:
-            per_seq = for_record(collection, record, held_hashes(drag, shard), red=red)
+            per_seq = for_record(collection, record, held_hashes(shard_tree, shard), red=red)
         except Exception:   # noqa: BLE001 — a record that will not re-chunk places nothing
             continue
         for h in hs:
@@ -192,8 +192,8 @@ def figure_bytes(collection: str, uid: str, hash_: str, *, root: Path | None = N
     held = collections_mod.by_name(name)
     if held is not None and licensing.state_for(held) == licensing.MISSING:
         raise FigureNotServed(403, f"{name}: its terms are not acknowledged; nothing of it is used (04 §4.4)")
-    drag = col.drag_of(root, name)
-    got = record_of(drag, seeder.current_snapshot(drag), uid, _order(codex))
+    shard_tree = col.shard_dir_of(root, name)
+    got = record_of(shard_tree, seeder.current_snapshot(shard_tree), uid, _order(codex))
     if got is None:
         raise FigureNotServed(404, f"{uid}: no record held")
     record, shard = got
@@ -203,7 +203,7 @@ def figure_bytes(collection: str, uid: str, hash_: str, *, root: Path | None = N
         raise FigureNotServed(404, f"{uid} names no figure {want[:12]}…")
     if not entry.get("carried", True):
         raise FigureNotServed(404, f"{want[:12]}… is not carried by this collection: asking again never works")
-    path = fig.path_for(drag, shard.slice, shard.n)
+    path = fig.path_for(shard_tree, shard.slice, shard.n)
     try:
         data = fig.read_figure(path, want)
     except (fig.FigureError, OSError):

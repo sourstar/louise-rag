@@ -31,14 +31,14 @@ def written(tmp_path, monkeypatch):
     from tests.hold.conftest import pubmed as a_codex
     codex = a_codex()
     root = tmp_path / "hold"
-    drag = col.write(root, codex)
-    path = drag / col.CODEX_FILE
+    shard_tree = col.write(root, codex)
+    path = shard_tree / col.CODEX_FILE
     raw = json.loads(path.read_bytes())
     del raw["derivation"]
     path.write_bytes(cx.canonical_json(raw))
     # the NAME `write` chose, not `default_name` recomputed: once the
     # directory exists, `default_name` returns the suffixed variant
-    return root, drag.parent.name, path, codex
+    return root, shard_tree.parent.name, path, codex
 
 
 def test_the_unmigrated_file_does_not_load(written):
@@ -112,8 +112,8 @@ def test_migrating_twice_is_a_no_op(written):
 def test_a_current_codex_needs_nothing(tmp_path):
     from tests.hold.conftest import pubmed as a_codex
     root = tmp_path / "hold"
-    drag = col.write(root, a_codex())
-    got = col.migrate(root, drag.parent.name)
+    shard_tree = col.write(root, a_codex())
+    got = col.migrate(root, shard_tree.parent.name)
     assert got["added"] == [] and got["written"] is False
 
 
@@ -179,7 +179,7 @@ def test_migrate_names_the_attestations(written):
     assert any("hold check" in c for c in got["carries_old_id"]), got
 
 
-def test_a_drag_with_neither_says_nothing(written):
+def test_a_shard_with_neither_says_nothing(written):
     """No snapshots, no attestations — nothing to warn about, and a
     warning nobody needs is how real ones stop being read."""
     root, name, _, _ = written

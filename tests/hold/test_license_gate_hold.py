@@ -121,7 +121,7 @@ def test_a_codex_that_tightens_its_plugin_is_judged_by_its_codex(isolated_config
 
 def test_a_snapshot_is_not_signed_for_a_collection_whose_ack_went_stale(isolated_config,
                                                                          tmp_path):
-    """`hold snapshot create` signs what is published with the DRAG; its
+    """`hold snapshot create` signs what is published with the SHARD; its
     input exists only after a gated build, but the terms can change in
     between (audit, 2026-09-13) — the gate is asked again."""
     import hashlib

@@ -25,11 +25,30 @@ it left open is below.
   wikivec archive's engine); pubmed materially (cosine 0.958). So pubmed and
   wikipedia would be re-embedded in full, and `backend_gate` cannot go yet.
 - **The code follows the SHARD/parts vocabulary** (operator, 2026-10-08):
-  `app/pack/`, `KIND = "louise-pack"`, `drag/`, `source = "drag"`,
-  `shard_of`/`shards_of`, … — bytes already written keep their names
+  `app/pack/`, `KIND = "louise-pack"`, `shard_of`/`shards_of`, … — bytes
+  already written keep their names. *drag* is done (2026-10-11): code,
+  `shard/`, `source = "shard"`, the node's mounts and folders
   (09's opening note lists them). The specification already speaks it;
   the dated entries below keep the words of their time (pack, drag, shard).
 - **Operator**: file [`localai-bugs.md`](localai-bugs.md) upstream (step 15).
+- **A record parsed from bytes its `origin_hash` does not cover** (found
+  2026-10-11, operator: "note this issue for the future"). Gutenberg's
+  records took creators, dates and subjects from `pg<id>.rdf` while
+  `origin_hash` — and discovery's change signature — covered only the form
+  read, so a catalogue revision was invisible: records-vs-origin read it as
+  a parser fault, and the record was never rebuilt. Fixed for gutenberg
+  (parser 9, `dc22c26`); check 03 §3.2 amended (`b7b6ec2`: a record revised
+  at the origin is "changed", not failed). NOT audited: pubmed, wikipedia,
+  normattiva, deposit — any plugin that reads a second file beside its unit
+  has the same exposure. **To do after the drag→shard deploy (operator's
+  yes):** a guard test per plugin that records every file `parse()` opens
+  and fails unless each is covered by `origin_hash` and by discovery's
+  signature. Related, by design and worth knowing: a catalogue-only revision
+  does not re-issue a part (02 §2.3: "changed" is the cleaned text's hash);
+  it shows at the part's next re-issue. And the origin folder is a mirror,
+  overwritten in place, with no periodic snapshot of its dataset: a record
+  "changed at the origin" can never be re-verified against the bytes it was
+  built from.
 - **A GPU inference that never returns** (2026-10-10/11,
   [v5-migration.md](v5-migration.md) "PubMed's re-embed, as it ran"). Twice
   an OpenVINO `infer_new_request` in `louise-medcpt-article-ov` never

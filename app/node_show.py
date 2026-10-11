@@ -94,8 +94,8 @@ def _row(collection, report, refusal: str | None, paused: set[str]) -> dict[str,
     violated: list[str] = []
     if codex is not None and integrity.applies(codex):
         from pathlib import Path
-        drag = Path(collection.corpus_dir)
-        violated = list(integrity.violations(drag.parent.parent, drag.parent.name, codex))
+        shard_tree = Path(collection.corpus_dir)
+        violated = list(integrity.violations(shard_tree.parent.parent, shard_tree.parent.name, codex))
     stages = [{"stage": s.name, "state": s.state, "waiting": s.waiting, "reason": s.reason}
               for s in (report.stages if report else []) if s.state != "idle" or s.waiting]
     doing = next((s["stage"] for s in stages if s["state"] == "running"), None)

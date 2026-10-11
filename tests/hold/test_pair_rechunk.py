@@ -7,7 +7,7 @@ text (`land.cut`), and hand the encoder the chunk (`land.input_of`), so a pair
 layer is checked in the form it was written in. The legacy ladder's T3 and the
 admission re-embed take the same as `inputs`. Text layers hand over their
 text exactly as before. And the pair calibration set is drawn from a real
-drag's records (`calibration.pair_set_from_drag`).
+SHARD's records (`calibration.pair_set_from_shard`).
 """
 from pathlib import Path
 
@@ -114,10 +114,10 @@ def test_embed_chunks_feeds_a_re_cut_entry_as_a_pair(monkeypatch):
                     ("Title 3", "Abstract 3.\n\nMethods 3.")]
 
 
-# ---- against a real drag: `hold check vectors-sample`, and drawing the set ------------
+# ---- against a real SHARD: `hold check vectors-sample`, and drawing the set ------------
 
 @pytest.fixture
-def pair_drag(isolated_config, tmp_path, corpus_dir):
+def pair_shard(isolated_config, tmp_path, corpus_dir):
     root = tmp_path / "collections"
     codex = col.create_from_recipe(root, "gutenberg", pair_recipe(), platform_image=PLATFORM,
                                    embed=pair_embed, embed_query=fake_query_embed, name="pairs",
@@ -128,8 +128,8 @@ def pair_drag(isolated_config, tmp_path, corpus_dir):
     return root, codex, snapshot
 
 
-def test_vectors_sample_re_embeds_a_pair_layer_s_chunks_as_pairs(pair_drag):
-    root, codex, snapshot = pair_drag
+def test_vectors_sample_re_embeds_a_pair_layer_s_chunks_as_pairs(pair_shard):
+    root, codex, snapshot = pair_shard
     cut = {}
     for s in snapshot.shards:
         cut.update(landing.cut(codex, landing.records_for(
@@ -143,11 +143,11 @@ def test_vectors_sample_re_embeds_a_pair_layer_s_chunks_as_pairs(pair_drag):
         assert chk.check_vectors_sample(ctx).result == want
 
 
-def test_the_pair_set_is_drawn_from_the_collection_s_own_records(pair_drag, monkeypatch):
-    """`tools/build_pair_calibration_set.py`'s rule over a real drag: fixed by
+def test_the_pair_set_is_drawn_from_the_collection_s_own_records(pair_shard, monkeypatch):
+    """`tools/build_pair_calibration_set.py`'s rule over a real SHARD: fixed by
     the snapshot, cut through the layers, the same bytes twice."""
-    root, codex, snapshot = pair_drag
-    drag_dir = col.drag_of(root, "pairs")
+    root, codex, snapshot = pair_shard
+    shard_dir = col.shard_dir_of(root, "pairs")
     records = [r for s in snapshot.shards
                for r in landing.records_for(root, "pairs", snapshot,
                                             f"{s.slice}/{s.n:05d}", None)]
@@ -155,19 +155,19 @@ def test_the_pair_set_is_drawn_from_the_collection_s_own_records(pair_drag, monk
     admissible = [c for c in candidates if not cal._pair_fault(c[1], c[2])]
     assert len(admissible) >= 2, "the fixture corpus holds pairs to draw"
     monkeypatch.setattr(cal, "SIZE", 2)
-    data, provenance = cal.pair_set_from_drag(drag_dir, codex, snapshot)
-    assert cal.pair_set_from_drag(drag_dir, codex, snapshot)[0] == data
+    data, provenance = cal.pair_set_from_shard(shard_dir, codex, snapshot)
+    assert cal.pair_set_from_shard(shard_dir, codex, snapshot)[0] == data
     pairs = cal.pairs_of(data, provenance["set"])
     assert len(pairs) == 2 and set(provenance["uids"]) <= {c[0] for c in admissible}
     assert provenance["snapshot_hash"] == snapshot.hash
     assert all(p in {(a, b) for _, a, b in admissible} for p in pairs)
 
 
-def test_the_tool_writes_the_set_and_its_provenance(pair_drag, tmp_path, monkeypatch, capsys):
+def test_the_tool_writes_the_set_and_its_provenance(pair_shard, tmp_path, monkeypatch, capsys):
     import json
 
     from tools import build_pair_calibration_set as tool
-    root, codex, snapshot = pair_drag
+    root, codex, snapshot = pair_shard
     monkeypatch.setattr(cal, "SIZE", 2)
     out, prov = tmp_path / "pairs.jsonl", tmp_path / "pairs.sources.json"
     assert tool.main([str(root), "pairs", "--out", str(out), "--provenance", str(prov)]) == 0
@@ -175,7 +175,7 @@ def test_the_tool_writes_the_set_and_its_provenance(pair_drag, tmp_path, monkeyp
     sources = json.loads(prov.read_text(encoding="utf-8"))
     assert sources["set"] == cal.set_id(data) and sources["snapshot_id"] == snapshot.snapshot_id
     assert cal.set_id(data) in capsys.readouterr().out
-    assert data == cal.pair_set_from_drag(col.drag_of(root, "pairs"), codex, snapshot)[0]
+    assert data == cal.pair_set_from_shard(col.shard_dir_of(root, "pairs"), codex, snapshot)[0]
 
 
 def test_the_pair_set_may_be_drawn_from_a_text_collection_s_records(isolated_config, tmp_path,
@@ -193,10 +193,10 @@ def test_the_pair_set_may_be_drawn_from_a_text_collection_s_records(isolated_con
     snapshot = snap.create(root, "texts", log=lambda *_: None)
     monkeypatch.setattr(cal, "SIZE", 2)
     texts = col.read(root, "texts")
-    data, provenance = cal.pair_set_from_drag(col.drag_of(root, "texts"), texts, snapshot)
+    data, provenance = cal.pair_set_from_shard(col.shard_dir_of(root, "texts"), texts, snapshot)
     assert len(cal.pairs_of(data)) == 2
     assert provenance["collection_id"] == texts.collection_id
     # a collection cut by a chunker no pair is admitted on has no pairs to draw
     with pytest.raises(cal.CalibrationError, match="no layer"):
-        cal.pair_set_from_drag(col.drag_of(root, "texts"),
+        cal.pair_set_from_shard(col.shard_dir_of(root, "texts"),
                                pubmed(layers=(Layer(Chunker("book", 1, {})),)), snapshot)

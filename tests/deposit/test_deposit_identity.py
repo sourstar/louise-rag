@@ -72,10 +72,10 @@ def test_the_second_collection_on_an_encoder_copies_the_calibration(node):
     assert calls == []
     assert second.space.calibration.vectors == first.space.calibration.vectors
     member = "calibration"
-    a = sorted(p.relative_to(col.drag_of(node, "alice")) for p in
-               col.drag_of(node, "alice").rglob("*") if member in str(p))
-    b = sorted(p.relative_to(col.drag_of(node, "bob")) for p in
-               col.drag_of(node, "bob").rglob("*") if member in str(p))
+    a = sorted(p.relative_to(col.shard_dir_of(node, "alice")) for p in
+               col.shard_dir_of(node, "alice").rglob("*") if member in str(p))
+    b = sorted(p.relative_to(col.shard_dir_of(node, "bob")) for p in
+               col.shard_dir_of(node, "bob").rglob("*") if member in str(p))
     assert a == b and a
 
 

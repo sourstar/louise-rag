@@ -11,7 +11,7 @@ the pipeline writes: a plain-text gate would pass a backend that flattens
 pairs, which is the defect the pair form exists to keep out.
 
 Run once; the OUTPUT is the artefact, as for the text set. The rule is
-`calibration.pair_set_from_drag`'s and depends on the snapshot alone, so
+`calibration.pair_set_from_shard`'s and depends on the snapshot alone, so
 anyone holding it re-runs this and gets the same bytes; `--provenance`
 records the snapshot, the shards and the uid of every pair.
 
@@ -37,18 +37,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.hold import calibration as cal                 # noqa: E402
 from app.hold import collection as col                   # noqa: E402
-from app.hold import drag as drag_mod                    # noqa: E402
+from app.hold import shard as shard_mod                    # noqa: E402
 from app.hold import snapshot as snap                    # noqa: E402
 
 
-def _snapshot(drag_dir: Path, snapshot_id: str | None):
+def _snapshot(shard_dir: Path, snapshot_id: str | None):
     if snapshot_id:
-        return snap.load(drag_dir / drag_mod.snapshot_path(snapshot_id))
-    d = drag_dir / "snapshots"
+        return snap.load(shard_dir / shard_mod.snapshot_path(snapshot_id))
+    d = shard_dir / "snapshots"
     ids = sorted(p.stem for p in d.glob("*.json")
                  if not p.name.endswith(".sig.json")) if d.is_dir() else []
     if not ids:
-        raise SystemExit(f"{drag_dir} holds no snapshot to draw from")
+        raise SystemExit(f"{shard_dir} holds no snapshot to draw from")
     return snap.load(d / f"{ids[-1]}.json")
 
 
@@ -64,9 +64,9 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     name, codex = col.resolve(a.root, a.collection)
-    drag_dir = col.drag_of(a.root, name)
-    snapshot = _snapshot(drag_dir, a.snapshot)
-    data, provenance = cal.pair_set_from_drag(drag_dir, codex, snapshot, shards=a.shards)
+    shard_dir = col.shard_dir_of(a.root, name)
+    snapshot = _snapshot(shard_dir, a.snapshot)
+    data, provenance = cal.pair_set_from_shard(shard_dir, codex, snapshot, shards=a.shards)
 
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_bytes(data)

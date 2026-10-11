@@ -4,7 +4,7 @@
 The files on disk were written before §7.8 spelled the file out, and they
 carried a second answer to five questions the Codex already answers: which
 archive (its `credits`), which dump (its `origin.spec.files`), the space's
-window (its `space`), where the origin lives (beside the drag, operator
+window (its `space`), where the origin lives (beside the SHARD, operator
 2026-09-15) and whether to fetch (the file's own `slices`). Each of those
 is now DERIVED; the old keys are still read, so no deployed collection
 changes on upgrade, and a rewrite keeps one only where the derivation
@@ -229,7 +229,7 @@ def test_create_writes_where_the_node_reads(node):
         louise._write_held_file(root / "collections", cx)
 
 
-def test_a_create_in_another_root_writes_beside_its_drags(tmp_path, isolated_config,
+def test_a_create_in_another_root_writes_beside_its_shards(tmp_path, isolated_config,
                                                           monkeypatch):
     scratch = tmp_path / "scratch" / "collections"
     scratch.mkdir(parents=True)

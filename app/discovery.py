@@ -29,7 +29,7 @@ def _clear_cursor_if_manifest_is_new(con, collection) -> bool:
     30,000 documents each — 4,500,000 documents, an exact round number
     because it is 150 whole files — were in the cursor and in neither the
     manifest nor any error log. The records build then ran against the
-    short manifest and produced a drag that verified internally while
+    short manifest and produced a SHARD that verified internally while
     being 11% incomplete, which is precisely the artefact docs/01 promise 8
     is about.
 

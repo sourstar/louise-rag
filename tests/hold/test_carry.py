@@ -68,13 +68,13 @@ def _seeded(root):
 def test_the_parts_are_the_sources_linked_and_the_snapshot_names_the_same_parts(pair):
     root, old, new = pair
     out, snap = _seeded(root)
-    src = sn.load(root / "old" / "drag" / "snapshots" / "2026-08.json")
+    src = sn.load(root / "old" / "shard" / "snapshots" / "2026-08.json")
     assert out["snapshot_id"] == snap.snapshot_id == "2026-08"
     assert [s.to_dict() for s in snap.shards] == [s.to_dict() for s in src.shards]
     assert snap.collection_id == new.collection_id and snap.previous is None
     assert out["parts"] == {"linked": len(src.shards), "copied": 0, "present": 0}
     for s in snap.shards:
-        a, b = root / "old" / "drag" / s.path, root / "new" / "drag" / s.path
+        a, b = root / "old" / "shard" / s.path, root / "new" / "shard" / s.path
         assert os.stat(a).st_ino == os.stat(b).st_ino, "a hard link: one inode on tank"
     claim = json.loads((root / "new" / "state" / "build" / rec.STAGING_CLAIM).read_text())
     assert claim["collection_id"] == new.collection_id
@@ -115,8 +115,8 @@ def test_seeding_again_is_nothing_to_do(pair):
 
 def test_a_part_already_in_the_target_with_other_bytes_is_never_overwritten(pair):
     root, _old_codex, _new = pair
-    src = sn.load(root / "old" / "drag" / "snapshots" / "2026-08.json")
-    stray = root / "new" / "drag" / src.shards[0].path
+    src = sn.load(root / "old" / "shard" / "snapshots" / "2026-08.json")
+    stray = root / "new" / "shard" / src.shards[0].path
     stray.parent.mkdir(parents=True)
     stray.write_bytes(b"not the part")
     with pytest.raises(CodexError, match="never overwritten"):
@@ -126,12 +126,12 @@ def test_a_part_already_in_the_target_with_other_bytes_is_never_overwritten(pair
 
 def test_a_source_part_re_issued_since_its_snapshot_is_refused(pair):
     root, _old_codex, _new = pair
-    src = sn.load(root / "old" / "drag" / "snapshots" / "2026-08.json")
-    p = root / "old" / "drag" / src.shards[0].path
+    src = sn.load(root / "old" / "shard" / "snapshots" / "2026-08.json")
+    p = root / "old" / "shard" / src.shards[0].path
     p.write_bytes(p.read_bytes() + b"\0")
     with pytest.raises(CodexError, match="no longer holds"):
         seed.seed_shards(root, "new", "old", log=quiet)
-    assert not (root / "new" / "drag" / src.shards[0].path).exists()
+    assert not (root / "new" / "shard" / src.shards[0].path).exists()
 
 
 def test_a_record_deciding_difference_is_refused_before_anything_moves(pair):
@@ -158,7 +158,7 @@ def test_the_command_seeds_then_freezes(pair, monkeypatch):
     monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", PLATFORM)
     assert louise.main(["hold", "snapshot", "create", "new", "--root", str(root),
                         "--shards-from", "old:2026-08"]) == 0
-    snap = sn.load(root / "new" / "drag" / "snapshots" / "2026-08.json")
+    snap = sn.load(root / "new" / "shard" / "snapshots" / "2026-08.json")
     assert snap.collection_id == new.collection_id and snap.records == 3
 
 
@@ -418,8 +418,8 @@ def test_seeding_needs_no_equivalence_proof_of_this_image(pair, monkeypatch):
     monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", "sha256:" + "e" * 64)   # another image
     assert louise.main(["hold", "snapshot", "create", "new", "--root", str(root),
                         "--shards-from", "old:2026-08"]) == 0
-    snap = sn.load(root / "new" / "drag" / "snapshots" / "2026-08.json")
-    old_snap = sn.load(root / "old" / "drag" / "snapshots" / "2026-08.json")
+    snap = sn.load(root / "new" / "shard" / "snapshots" / "2026-08.json")
+    old_snap = sn.load(root / "old" / "shard" / "snapshots" / "2026-08.json")
     assert [(s.slice, s.n, s.root, s.chunks_root) for s in snap.shards] == \
         [(s.slice, s.n, s.root, s.chunks_root) for s in old_snap.shards]
 
@@ -433,7 +433,7 @@ def test_without_seeding_the_image_must_still_be_the_reference(pair, monkeypatch
     monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", "sha256:" + "e" * 64)
     assert louise.main(["hold", "snapshot", "create", "old", "--root", str(root),
                         "--snapshot", "2026-09"]) != 0
-    assert not (root / "old" / "drag" / "snapshots" / "2026-09.json").exists()
+    assert not (root / "old" / "shard" / "snapshots" / "2026-09.json").exists()
 
 
 def test_a_seeded_snapshot_whose_chunks_differ_is_withdrawn(pair, monkeypatch, capsys):
@@ -452,7 +452,7 @@ def test_a_seeded_snapshot_whose_chunks_differ_is_withdrawn(pair, monkeypatch, c
     assert louise.main(["hold", "snapshot", "create", "new", "--root", str(root),
                         "--shards-from", "old:2026-08"]) == 1
     assert "withdrawn" in capsys.readouterr().err
-    assert not (root / "new" / "drag" / "snapshots" / "2026-08.json").exists()
+    assert not (root / "new" / "shard" / "snapshots" / "2026-08.json").exists()
 
 
 # ---- image-equivalence across record twins (RULE 1, 2026-10-09) --------------
@@ -465,7 +465,7 @@ def test_a_reference_made_for_a_record_twin_is_this_collections(pair):
     from app.hold import check
     root, old, new = pair
     _out, new_snap = _seeded(root)
-    old_snap = sn.load(root / "old" / "drag" / "snapshots" / "2026-08.json")
+    old_snap = sn.load(root / "old" / "shard" / "snapshots" / "2026-08.json")
     ctx = SimpleNamespace(root=root, codex=new, snapshot=new_snap)
     assert check._record_twin(ctx, {"collection_id": old.collection_id,
                                     "snapshot_hash": old_snap.hash}) is None
@@ -480,7 +480,7 @@ def test_a_collection_that_is_not_a_record_twin_is_refused(pair):
     from types import SimpleNamespace
     from app.hold import check
     root, old, _new = pair
-    old_snap = sn.load(root / "old" / "drag" / "snapshots" / "2026-08.json")
+    old_snap = sn.load(root / "old" / "shard" / "snapshots" / "2026-08.json")
     # a codex differing in a record field (record_line) is not a twin
     from dataclasses import replace
     ctx = SimpleNamespace(root=root, codex=replace(old, record_line=(old.record_line or 1) + 1),
@@ -526,7 +526,7 @@ def _rebuilt_pair(pair):
     import shutil
     re_ = col.create(root, replace(old, parser=Parser("gutenberg", 99)), name="re")
     # the same space, so the same calibration member a snapshot names
-    shutil.copytree(root / "old" / "drag" / "calibration", root / "re" / "drag" / "calibration",
+    shutil.copytree(root / "old" / "shard" / "calibration", root / "re" / "shard" / "calibration",
                     dirs_exist_ok=True)
     rec.write_validation(root, "re")
     uids, ids = _vectors(root, old)

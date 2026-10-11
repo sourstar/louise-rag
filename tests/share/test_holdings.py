@@ -1,19 +1,19 @@
 """tests/share/test_holdings.py — holdings (04 §4.3; 09 §9.3): what a
-collection's file wants, what the drag holds, the mark after the rename,
+collection's file wants, what the SHARD holds, the mark after the rename,
 promotion that verifies the root first and sets a wrong file aside."""
 import sqlite3
 
 import pytest
 
-from app.hold import drag, snapshot as sn
-from app.hold.drag import MemberFile
+from app.hold import shard as shard_mod, snapshot as sn
+from app.hold.shard import MemberFile
 from app.share import holdings, members as mem
 
 CID = "sha256:" + "0" * 64
 
 
 def a_snapshot(tmp_path, *, slices=("year=2023", "year=2024"), terms=True):
-    d = tmp_path / "drag"
+    d = tmp_path / "shard"
     files = {}
     shards = []
     data = {}
@@ -22,21 +22,21 @@ def a_snapshot(tmp_path, *, slices=("year=2023", "year=2024"), terms=True):
             b = bytes([i * 10 + n]) * (20_000 * n)
             path = f"records/{sl}/{n:05d}.jsonl.zst"
             data[path] = b
-            shards.append(sn.Shard(slice=sl, n=n, root=drag.pieces_root(b), records_root="sha256:" + "11" * 32,
+            shards.append(sn.Shard(slice=sl, n=n, root=shard_mod.pieces_root(b), records_root="sha256:" + "11" * 32,
                                    first_id="a", last_id="z", records=2, chunks=4,
                                    chunks_root="sha256:" + "22" * 32, tokens=2048, bytes=len(b)))
     val = b'{"checks": []}'
     data["validation.json"] = val
-    files["validation.json"] = {"root": drag.pieces_root(val), "bytes": len(val)}
+    files["validation.json"] = {"root": shard_mod.pieces_root(val), "bytes": len(val)}
     if terms:
         t = b"the terms\n"
         data["LICENSE-TERMS"] = t
-        files["LICENSE-TERMS"] = {"root": drag.pieces_root(t), "bytes": len(t)}
+        files["LICENSE-TERMS"] = {"root": shard_mod.pieces_root(t), "bytes": len(t)}
     else:
         files["LICENSE-TERMS"] = None
     cal = b"c" * 100
     data["calibration/abc.safetensors"] = cal
-    files["calibration/abc.safetensors"] = {"root": drag.pieces_root(cal), "bytes": len(cal)}
+    files["calibration/abc.safetensors"] = {"root": shard_mod.pieces_root(cal), "bytes": len(cal)}
     snap = sn.Snapshot(collection_id=CID, snapshot_id="2026-08", previous=None, shards=tuple(shards),
                        delta=sn.Delta((), (), ()), files=files)
     return d, snap, data
@@ -105,7 +105,7 @@ def test_promotion_verifies_the_root_renames_then_marks_and_sets_a_wrong_file_as
     assert target == d / path and target.read_bytes() == data[path] and not staged.exists()
     assert holdings.marks(con) == {path: {"path": path, "member": member, "snapshot_id": "2026-08",
                                           "root": f.root, "bytes": f.bytes, "promoted": 5.0}}
-    # a file that is not what the snapshot says: set aside, nothing in the drag, no mark
+    # a file that is not what the snapshot says: set aside, nothing in the SHARD, no mark
     path2 = "records/year=2023/00002.jsonl.zst"
     f2 = MemberFile(path2, snap.shards[1].root, snap.shards[1].bytes)
     bad = staging / member / path2

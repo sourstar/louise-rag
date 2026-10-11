@@ -1,10 +1,10 @@
-"""Promoting a built file into the drag when the drag is on other storage.
+"""Promoting a built file into the SHARD when the SHARD is on other storage.
 
-The drag's bytes may sit on bulk storage mounted at `drag/`, as `origin/`'s
+The SHARD's bytes may sit on bulk storage mounted at `shard/`, as `origin/`'s
 do (operator, 2026-09-21), while `records build` stages under `state/` on
 the fast pool. A rename cannot cross two filesystems (EXDEV), and the
 promote used to be a bare `os.replace` — the first build into a mounted
-drag would have died on its first shard.
+SHARD would have died on its first shard.
 """
 import errno
 import os
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from app.hold import drag as drag_mod
+from app.hold import shard as shard_mod
 from app.hold import records as rec
 
 
@@ -35,28 +35,28 @@ def test_same_filesystem_is_a_rename(tmp_path):
     src.parent.mkdir()
     target.parent.mkdir()
     src.write_bytes(b"shard")
-    drag_mod.promote(src, target)
+    shard_mod.promote(src, target)
     assert target.read_bytes() == b"shard"
     assert not src.exists()
 
 
 def test_across_filesystems_the_bytes_arrive_whole(tmp_path, monkeypatch):
     _exdev_on_cross_dir(monkeypatch)
-    src, target = tmp_path / "state" / "x.bin", tmp_path / "drag" / "x.bin"
+    src, target = tmp_path / "state" / "x.bin", tmp_path / "shard" / "x.bin"
     src.parent.mkdir()
     target.parent.mkdir()
     payload = os.urandom(3 << 20)
     src.write_bytes(payload)
-    drag_mod.promote(src, target)
+    shard_mod.promote(src, target)
     assert target.read_bytes() == payload
     assert not src.exists()
     assert sorted(p.name for p in target.parent.iterdir()) == ["x.bin"], \
-        "no temporary left in the drag"
+        "no temporary left in the SHARD"
 
 
 def test_a_failed_copy_leaves_no_partial_file_and_keeps_the_source(tmp_path, monkeypatch):
     _exdev_on_cross_dir(monkeypatch)
-    src, target = tmp_path / "state" / "x.bin", tmp_path / "drag" / "x.bin"
+    src, target = tmp_path / "state" / "x.bin", tmp_path / "shard" / "x.bin"
     src.parent.mkdir()
     target.parent.mkdir()
     src.write_bytes(b"shard")
@@ -65,7 +65,7 @@ def test_a_failed_copy_leaves_no_partial_file_and_keeps_the_source(tmp_path, mon
         raise OSError(errno.ENOSPC, "No space left on device")
     monkeypatch.setattr(shutil, "copyfileobj", full)
     with pytest.raises(OSError) as e:
-        drag_mod.promote(src, target)
+        shard_mod.promote(src, target)
     assert e.value.errno == errno.ENOSPC
     assert list(target.parent.iterdir()) == []
     assert src.read_bytes() == b"shard"
@@ -73,21 +73,21 @@ def test_a_failed_copy_leaves_no_partial_file_and_keeps_the_source(tmp_path, mon
 
 def test_other_errors_are_not_mistaken_for_a_crossing(tmp_path):
     with pytest.raises(FileNotFoundError):
-        drag_mod.promote(tmp_path / "missing", tmp_path / "x")
+        shard_mod.promote(tmp_path / "missing", tmp_path / "x")
 
 
-def test_records_build_promotes_into_a_drag_on_another_filesystem(tmp_path, monkeypatch):
+def test_records_build_promotes_into_a_shard_on_another_filesystem(tmp_path, monkeypatch):
     _exdev_on_cross_dir(monkeypatch)
-    staging, drag = tmp_path / "state" / "build", tmp_path / "drag"
+    staging, shard_tree = tmp_path / "state" / "build", tmp_path / "shard"
     (staging / "records" / "en").mkdir(parents=True)
     (staging / "figures" / "en").mkdir(parents=True)
     (staging / "records" / "en" / "00000.jsonl.zst").write_bytes(b"r0")
     (staging / "records" / "en" / "00001.jsonl.zst").write_bytes(b"r1")
     (staging / "figures" / "en" / "00000.fig.zst").write_bytes(b"f0")
-    assert rec._promote_records(staging, drag) == 2
-    assert (drag / "records" / "en" / "00000.jsonl.zst").read_bytes() == b"r0"
-    assert (drag / "records" / "en" / "00001.jsonl.zst").read_bytes() == b"r1"
-    assert (drag / "figures" / "en" / "00000.fig.zst").read_bytes() == b"f0"
+    assert rec._promote_records(staging, shard_tree) == 2
+    assert (shard_tree / "records" / "en" / "00000.jsonl.zst").read_bytes() == b"r0"
+    assert (shard_tree / "records" / "en" / "00001.jsonl.zst").read_bytes() == b"r1"
+    assert (shard_tree / "figures" / "en" / "00000.fig.zst").read_bytes() == b"f0"
     assert not list((staging / "records").rglob("*.zst"))
 
 
@@ -106,7 +106,7 @@ def test_a_real_second_filesystem_when_the_host_has_one(tmp_path):
         with pytest.raises(OSError) as e:
             os.replace(src, target)
         assert e.value.errno == errno.EXDEV, "the premise: a rename cannot cross"
-        drag_mod.promote(src, target)
+        shard_mod.promote(src, target)
         assert target.read_bytes() == b"across"
         assert not src.exists()
     finally:

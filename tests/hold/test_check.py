@@ -1,6 +1,6 @@
 """tests/hold/test_check.py — 03 §3.2's plan, run and attested.
 
-Migration plan step 5. Every check here runs against a REAL drag built by
+Migration plan step 5. Every check here runs against a REAL SHARD built by
 `hold records build` and `hold snapshot create`, because a check that
 passed on a hand-built fixture would prove that the fixture agrees with
 the checker and nothing about the collection.
@@ -11,11 +11,11 @@ from dataclasses import replace
 import pytest
 
 from app.hold import check as chk, codex as cx, collection as col, \
-    drag as drag_mod, envelope as env, records as rec, snapshot as snap
+    shard as shard_mod, envelope as env, records as rec, snapshot as snap
 from app.hold.check import CheckError
 from tests.hold.conftest import KEY, NOW, PLATFORM
 from tests.hold.test_admit import made, space_embed  # noqa: F401
-from tests.hold.test_vectors_export import build_drag, first_shard
+from tests.hold.test_vectors_export import build_shard, first_shard
 
 SEED = b"\x05" * 32
 
@@ -23,7 +23,7 @@ SEED = b"\x05" * 32
 @pytest.fixture
 def checkable(isolated_config, tmp_path, corpus_dir, monkeypatch):
     monkeypatch.delenv("EMBED_URL", raising=False)
-    root, snapshot = build_drag(tmp_path, corpus_dir, records_per_shard=2)
+    root, snapshot = build_shard(tmp_path, corpus_dir, records_per_shard=2)
     codex = col.read(root, "gutenberg")
     return root, snapshot, codex
 
@@ -40,7 +40,7 @@ def test_validation_json_must_agree_with_the_codex(checkable):
     Codex is the plan; a copy that may differ is a place to publish a
     weaker plan than the identity covers."""
     root, snapshot, codex = checkable
-    p = root / "gutenberg" / "drag" / drag_mod.VALIDATION_PATH
+    p = root / "gutenberg" / "shard" / shard_mod.VALIDATION_PATH
     assert p.is_file(), "records build writes it"
     assert chk.plan_of(root, "gutenberg", codex) == codex.validation.checks
 
@@ -56,7 +56,7 @@ def test_a_plan_naming_an_unknown_check_is_refused(checkable):
     root, snapshot, codex = checkable
     bad = replace(codex, validation=replace(
         codex.validation, checks=("roots", "vibes")))
-    (root / "gutenberg" / "drag" / drag_mod.VALIDATION_PATH).write_bytes(
+    (root / "gutenberg" / "shard" / shard_mod.VALIDATION_PATH).write_bytes(
         cx.canonical_json(bad.validation.to_dict()))
     with pytest.raises(CheckError, match="no row of"):
         chk.plan_of(root, "gutenberg", bad)
@@ -101,7 +101,7 @@ def test_a_plan_without_an_entry_gets_3_2s_default(checkable):
 
 # ---- roots ---------------------------------------------------------------
 
-def test_roots_passes_on_an_untouched_drag(checkable):
+def test_roots_passes_on_an_untouched_shard(checkable):
     root, snapshot, codex = checkable
     o = _run(root, codex, snapshot, ["roots"]).outcome("roots")
     assert o.result == chk.PASS, o.why
@@ -112,7 +112,7 @@ def test_roots_passes_on_an_untouched_drag(checkable):
 
 def test_roots_catches_a_shard_whose_bytes_moved(checkable):
     root, snapshot, codex = checkable
-    p = root / "gutenberg" / "drag" / snapshot.shards[0].path
+    p = root / "gutenberg" / "shard" / snapshot.shards[0].path
     p.write_bytes(p.read_bytes() + b"\x00")
     o = _run(root, codex, snapshot, ["roots"]).outcome("roots")
     assert o.result == chk.FAIL
@@ -176,7 +176,7 @@ def test_a_terms_file_nothing_pins_is_a_failure(checkable):
     """One of the two is wrong, and a terms text nothing pins is a terms
     text anyone may replace."""
     root, snapshot, codex = checkable
-    (root / "gutenberg" / "drag" / "LICENSE-TERMS").write_bytes(b"anything")
+    (root / "gutenberg" / "shard" / "LICENSE-TERMS").write_bytes(b"anything")
     o = _run(root, codex, snapshot, ["license"]).outcome("license")
     assert o.result == chk.FAIL and "records no terms hash" in o.why
 
@@ -206,8 +206,8 @@ def test_a_sidecar_covering_another_snapshot_is_dropped_not_failed_silently(
     snapshot then carries none."""
     root, snapshot, codex = checkable
     snap.sign_snapshot(root, "gutenberg", snapshot, KEY, now=NOW)
-    p = root / "gutenberg" / "drag" / \
-        drag_mod.snapshot_sig_path(snapshot.snapshot_id)
+    p = root / "gutenberg" / "shard" / \
+        shard_mod.snapshot_sig_path(snapshot.snapshot_id)
     doc = dict(json.loads(p.read_bytes()), snapshot="sha256:" + "ab" * 32)
     p.write_bytes(cx.canonical_json(doc))
     o = _run(root, codex, snapshot, ["signature"]).outcome("signature")
@@ -217,8 +217,8 @@ def test_a_sidecar_covering_another_snapshot_is_dropped_not_failed_silently(
 def test_a_forged_signature_fails(checkable):
     root, snapshot, codex = checkable
     snap.sign_snapshot(root, "gutenberg", snapshot, KEY, now=NOW)
-    p = root / "gutenberg" / "drag" / \
-        drag_mod.snapshot_sig_path(snapshot.snapshot_id)
+    p = root / "gutenberg" / "shard" / \
+        shard_mod.snapshot_sig_path(snapshot.snapshot_id)
     doc = json.loads(p.read_bytes())
     doc["signatures"][0]["sig"] = "ab" * 64
     p.write_bytes(cx.canonical_json(doc))
@@ -286,7 +286,7 @@ def test_an_inconclusive_check_writes_no_attestation(checkable):
                                      now=NOW)
     assert set(written) == {"roots"}
     d = (root / "gutenberg" / "state" / "attestations" /
-         drag_mod._hex(codex.collection_id))
+         shard_mod._hex(codex.collection_id))
     assert len(list(d.glob("*.json"))) == 1
 
 
@@ -295,7 +295,7 @@ def test_one_attestation_per_completed_check_and_never_per_run(checkable):
     a peer that could only attest whole runs would publish nothing
     whenever one check was inconclusive."""
     root, snapshot, codex = checkable
-    p = root / "gutenberg" / "drag" / "LICENSE-TERMS"
+    p = root / "gutenberg" / "shard" / "LICENSE-TERMS"
     p.write_bytes(b"anything")                       # makes `license` FAIL
     report = _run(root, codex, snapshot, ["roots", "license", "centres"])
     assert not report.ok
@@ -381,7 +381,7 @@ def test_the_command_exits_1_when_a_check_failed(checkable, capsys, monkeypatch)
     from app import louise
     root, snapshot, codex = checkable
     monkeypatch.setattr("app.bundles.keys.load_signing_key", lambda *a, **k: KEY)
-    (root / "gutenberg" / "drag" / "LICENSE-TERMS").write_bytes(b"anything")
+    (root / "gutenberg" / "shard" / "LICENSE-TERMS").write_bytes(b"anything")
     assert louise.main(["hold", "check", "gutenberg", "--root", str(root),
                         "--checks", "license", "--seed", SEED.hex()]) == 1
 
@@ -399,7 +399,7 @@ def test_the_command_writes_one_attestation_per_completed_check(
     by = {c["check"]: c for c in doc["checks"]}
     assert by["roots"]["attestation"] and by["centres"]["attestation"] is None
     d = (root / "gutenberg" / "state" / "attestations" /
-         drag_mod._hex(codex.collection_id))
+         shard_mod._hex(codex.collection_id))
     assert len(list(d.glob("*.json"))) == 1
 
 
@@ -415,7 +415,7 @@ def test_an_attestation_names_the_image_that_ran_it(checkable, monkeypatch, caps
     assert louise.main(["hold", "check", "gutenberg", "--root", str(root),
                         "--checks", "roots", "--seed", SEED.hex()]) == 0
     d = (root / "gutenberg" / "state" / "attestations" /
-         drag_mod._hex(codex.collection_id))
+         shard_mod._hex(codex.collection_id))
     body, = [json.loads(p.read_bytes()) for p in d.glob("*.json")]
     body = body.get("body", body)
     assert body["platform_image"] == ran != codex.toolchain.platform_image
@@ -430,7 +430,7 @@ def test_a_process_that_cannot_name_its_image_attests_nothing(checkable, monkeyp
                         "--checks", "roots", "--seed", SEED.hex()]) == 0
     assert "unattested" in capsys.readouterr().err
     d = (root / "gutenberg" / "state" / "attestations" /
-         drag_mod._hex(codex.collection_id))
+         shard_mod._hex(codex.collection_id))
     assert not list(d.glob("*.json")) if d.exists() else True
 
 
@@ -465,7 +465,7 @@ def test_every_record_now_carries_its_origin_locator(checkable):
     root, snapshot, codex = checkable
     assert "origin" in pack_records.RECORD_KEYS
     for r in pack_records.iter_records(
-            root / "gutenberg" / "drag" / snapshot.shards[0].path):
+            root / "gutenberg" / "shard" / snapshot.shards[0].path):
         o = r["origin"]
         assert o and not o.startswith("/") and ":\\" not in o
         assert "\\" not in o, "09 §9.5's locator is a posix path"
@@ -605,7 +605,7 @@ def test_an_origin_that_is_not_there_is_inconclusive(checkable, tmp_path):
 def _records_of(root, snapshot):
     from app.pack import records as pack_records
     return list(pack_records.iter_records(
-        root / "gutenberg" / "drag" / snapshot.shards[0].path))
+        root / "gutenberg" / "shard" / snapshot.shards[0].path))
 
 
 
@@ -667,7 +667,7 @@ def test_license_passes_when_the_terms_are_the_codexs(checkable):
     from dataclasses import replace
     root, snapshot, codex = checkable
     body = b"The terms of the origin, byte for byte.\n"
-    (root / "gutenberg" / "drag" / "LICENSE-TERMS").write_bytes(body)
+    (root / "gutenberg" / "shard" / "LICENSE-TERMS").write_bytes(body)
     yellow = replace(codex, license=replace(
         codex.license, cls="yellow",
         terms_sha256="sha256:" + hashlib.sha256(body).hexdigest()))
@@ -676,7 +676,7 @@ def test_license_passes_when_the_terms_are_the_codexs(checkable):
     assert o.result == chk.PASS, o.why
 
     # and a byte that moved is still caught
-    (root / "gutenberg" / "drag" / "LICENSE-TERMS").write_bytes(body + b" ")
+    (root / "gutenberg" / "shard" / "LICENSE-TERMS").write_bytes(body + b" ")
     o = _run(root, yellow, snapshot, ["license"]).outcome("license")
     assert o.result == chk.FAIL and "byte-exact" in o.why
 
@@ -764,7 +764,7 @@ def test_a_broken_plan_is_still_raised_not_reported_as_a_check(checkable):
 def _all_records(root, snapshot) -> list[dict]:
     from app.pack import records as pack_records
     return [r for s in snapshot.shards for r in pack_records.iter_records(
-        root / "gutenberg" / "drag" / s.path)]
+        root / "gutenberg" / "shard" / s.path)]
 
 
 def _unit_sizes(size: int):

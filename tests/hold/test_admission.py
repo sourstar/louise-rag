@@ -30,7 +30,7 @@ def _offer(con, key, n, *, at, limits=None, ref="sha256:00"):
 
 def test_the_node_state_is_beside_the_collections_never_inside_one(tmp_path):
     """07 §7.8: `state/` is a sibling of `collections/`. Inside one it
-    would sit in the drag a peer serves, and this is exactly what no peer
+    would sit in the SHARD a peer serves, and this is exactly what no peer
     sees."""
     root = tmp_path / "collections"
     assert adm.state_dir(root) == tmp_path / "state"

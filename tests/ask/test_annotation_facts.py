@@ -20,7 +20,7 @@ def setup(tmp_path):
         a_claim(), a_claim("pubmed:3", "pubmed:1", confidence="0.73", type="translation-of")))
     tcoll = collections_mod.Collection(
         name="pubmed", plugin="pubmed", profile=None, embed_mode_default=None,
-        corpus_dir=tmp_path / "pubmed" / "drag", manifest_path=tmp_path / "pubmed" / "state" / "manifest.sqlite",
+        corpus_dir=tmp_path / "pubmed" / "shard", manifest_path=tmp_path / "pubmed" / "state" / "manifest.sqlite",
         fts_dir=tmp_path / "pubmed" / "index", lance_dir=tmp_path / "pubmed" / "lance", codex=target)
     with db.connect(tcoll) as con:
         for i in (1, 2, 3, 4):

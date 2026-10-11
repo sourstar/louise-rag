@@ -401,7 +401,7 @@ def test_record_line_is_inside_the_identity(codex):
 def test_record_line_2_is_now_writable_and_1_is_still_the_default(codex):
     """`record_line` 2 was refused at create until 2026-09-11 because the
     figures containers, the member kind and the plugin side were unbuilt.
-    They are built now (app/hold/figures.py, drag.MEMBER_KINDS, base.Figure,
+    They are built now (app/hold/figures.py, SHARD.MEMBER_KINDS, base.Figure,
     pack/build._record_of, plugins/gutenberg/epub_source.py), so a recipe
     may ASK for plates.
 

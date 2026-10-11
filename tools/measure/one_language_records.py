@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 from app.pack import records
-from app.plugins import drag
+from app.plugins import shard as shard_mod
 
 WIKI = re.compile(r"Wikipedia page about this book:\s*(https?://\S+)")
 EDITIONS = re.compile(r"Project Gutenberg has several editions of this eBook")
@@ -44,7 +44,7 @@ def lit(v):
 
 
 def main() -> None:
-    files = drag.shard_files(Path("/data/collections/gutenberg/drag"))
+    files = shard_mod.shard_files(Path("/data/collections/gutenberg/shard"))
     n = 0
     for p in files:
         for r in records.iter_records(p):

@@ -137,7 +137,7 @@ RECORD_LINES = (1, 2)
 RECORD_LINE_BUILT = 1
 #: What the code can WRITE, which is the separate question. 2 since
 #: 2026-09-11: `base.Figure` and `CanonicalDoc.figures`,
-#: `drag.MEMBER_KINDS`'s `figures`, `app/hold/figures.py`'s containers, the
+#: `SHARD.MEMBER_KINDS`'s `figures`, `app/hold/figures.py`'s containers, the
 #: `figures` key in `pack/build._record_of`, and a plugin that yields
 #: plates (`gutenberg-epub`).
 RECORD_LINES_WRITABLE = (1, 2)

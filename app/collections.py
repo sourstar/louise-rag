@@ -293,9 +293,9 @@ class Collection:
     # peer_source = "magnet:?xt=...&x.pe=host:port".
     peer_source: str | None = None
     # WHERE THE DOCUMENTS ARE READ FROM (07 §7.8 `source`, amended
-    # 2026-10-07): "origin" — the plugin's corpus, as always; "drag" — the
+    # 2026-10-07): "origin" — the plugin's corpus, as always; "shard" — the
     # record shards this peer holds and did not build (`share fetch`), read
-    # by app/plugins/drag.py through the same discover/fetch/parse.
+    # by app/plugins/shard.py through the same discover/fetch/parse.
     source: str = "origin"
     # WHICH dated snapshot of the origin this collection holds, for sources
     # that publish them (Wikipedia dumps, a PubMed baseline year).
@@ -333,12 +333,12 @@ class Collection:
 
     def plugin_instance(self) -> CorpusSource:
         inner = PLUGIN_REGISTRY[self.plugin]
-        if self.source == "drag":
-            from .plugins.drag import DragSource
+        if self.source == "shard":
+            from .plugins.shard import ShardSource
             from .hold import integrity
-            drag = Path(self.corpus_dir)
-            skip = integrity.violations(drag.parent.parent, drag.parent.name, self.codex)
-            return DragSource(inner, self.corpus_dir, frozenset(skip))
+            shard_tree = Path(self.corpus_dir)
+            skip = integrity.violations(shard_tree.parent.parent, shard_tree.parent.name, self.codex)
+            return ShardSource(inner, self.corpus_dir, frozenset(skip))
         return inner
 
 
@@ -367,7 +367,7 @@ def _config_dir() -> Path:
 
 def louise_root() -> Path:
     """`<LOUISE_ROOT>` — the one directory of 07 §7.8, whose
-    `collections/<name>/` holds a Codex collection's drag, state, index
+    `collections/<name>/` holds a Codex collection's SHARD, state, index
     and vector table. Defaults to `DATA_DIR` so a node that never sets it
     behaves exactly as before."""
     import os
@@ -386,13 +386,13 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
     `[paths]` block.
 
     A TOML that names `codex` gets §7.8's tree instead — `state/`,
-    `index/`, `lance/` beside the drag — and its plugin, layers and
+    `index/`, `lance/` beside the SHARD — and its plugin, layers and
     corpus come from the Codex rather than from the file, because the
     Codex is the identity and a file that could disagree with it would be
     a second answer to the same question.
 
     THE HASH IS CHECKED, not trusted. §7.8: a collection whose
-    `drag/codex.json` has an inner hash other than its file's `codex` "is
+    `shard/codex.json` has an inner hash other than its file's `codex` "is
     not served, not shared and not searched". That is a per-collection
     refusal, so it is raised here and the caller keeps its other
     collections.
@@ -402,11 +402,11 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
     want = str(raw["codex"])
     want = want if want.startswith("sha256:") else "sha256:" + want
     d = louise_root() / "collections" / name
-    p = d / "drag" / "codex.json"
+    p = d / "shard" / "codex.json"
     if not p.is_file():
         raise ValueError(
             f"{path}: names codex {want[:23]}… and there is no {p}. A "
-            f"collection's Codex is the first line of its drag (07 §7.8); "
+            f"collection's Codex is the first line of its SHARD (07 §7.8); "
             f"without it there is nothing to run")
     codex = cx.loads(p.read_bytes())
     if codex.collection_id != want:
@@ -423,7 +423,7 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
     # `share` and `[encoder]`. Everything else a Codex file used to say is
     # an answer the Codex or the tree already gives — the archive is in
     # `credits`, the dump in `origin.spec`, the space in `space`, the origin
-    # beside the drag — so those keys are still READ (the files on disk
+    # beside the SHARD — so those keys are still READ (the files on disk
     # predate the shape) but derived when absent (`codex_defaults`).
     #
     # A file in the OLD shape keeps the old defaults for what it leaves
@@ -456,8 +456,8 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
                 f"keep one")
         slices = _parse_slices(raw["slices"], where)
     source = str(raw.get("source") or "origin")
-    if source not in ("origin", "drag"):
-        raise ValueError(f"{where}: source is \"origin\" or \"drag\" (07 §7.8), got {raw.get('source')!r}")
+    if source not in ("origin", "shard"):
+        raise ValueError(f"{where}: source is \"origin\" or \"shard\" (07 §7.8), got {raw.get('source')!r}")
     defaults = codex_defaults(codex, name, slices, kinds, source)
     if slices is None and raw.get("profile") and raw["profile"] == defaults["everything"]:
         # the profile that selects every slice IS `slices = "all"`
@@ -469,9 +469,9 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
         acquire = bool(raw["acquire_enabled"])
     else:
         acquire = defaults["acquire_enabled"] if new_shape else False
-    if acquire and source == "drag":
+    if acquire and source == "shard":
         raise ValueError(
-            f"{where}: acquire_enabled = true with source = \"drag\": the drag IS this "
+            f"{where}: acquire_enabled = true with source = \"shard\": the SHARD IS this "
             f"collection's corpus, and acquiring from the origin would write the "
             f"origin's files into it. A fetched collection is held, not acquired "
             f"(07 §7.8)")
@@ -499,10 +499,10 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
                 f"(07 §7.8)")
         snapshot = stated
 
-    if source == "drag":
-        # the documents are the record shards held: the drag is the corpus
-        # (app/plugins/drag.py), and the scan cursor keys on it
-        corpus = d / "drag"
+    if source == "shard":
+        # the documents are the record shards held: the SHARD is the corpus
+        # (app/plugins/shard.py), and the scan cursor keys on it
+        corpus = d / "shard"
     elif raw.get("corpus_dir"):
         corpus = Path(raw["corpus_dir"])
     else:
@@ -568,12 +568,12 @@ def _annotations_collection(path: Path, raw: dict[str, Any], name: str, codex,
     slices = _parse_slices(raw["slices"], where) if "slices" in raw else "all"
     return Collection(
         name=name, plugin=codex.plugin, profile=None, embed_mode_default="off",
-        corpus_dir=d / "drag", manifest_path=d / "state" / "manifest.sqlite",
+        corpus_dir=d / "shard", manifest_path=d / "state" / "manifest.sqlite",
         fts_dir=d / "index", lance_dir=d / "lance", acquire_enabled=False,
         license_ack=_codex_ack(codex, d / "state"), embed=None, codex=codex,
         title=title, slices=slices, kinds=kinds, share=share,
         share_slices=share_slices, share_kinds=share_kinds,
-        source="drag")
+        source="shard")
 
 
 def is_annotations(collection) -> bool:
@@ -653,7 +653,7 @@ def origin_dir(name: str) -> Path:
     """`<LOUISE_ROOT>/collections/<name>/origin/` — the origin files a
     collection's records are parsed from: what acquisition fetched (06
     §6.2's corpus directory), kept after the records are written so they
-    can be re-fetched and checked (invariant 11). Beside `drag/`, `state/`,
+    can be re-fetched and checked (invariant 11). Beside `shard/`, `state/`,
     `index/` and `lance/`, so one root holds everything about a collection
     (operator, 2026-09-15). The bytes may live anywhere: on the reference
     node this path is a mount of the dataset that holds them."""
@@ -661,9 +661,9 @@ def origin_dir(name: str) -> Path:
 
 
 def codex_at(name: str):
-    """The Codex a held name's drag carries."""
+    """The Codex a held name's SHARD carries."""
     from .hold import codex as cx
-    return cx.loads((louise_root() / "collections" / name / "drag"
+    return cx.loads((louise_root() / "collections" / name / "shard"
                      / "codex.json").read_bytes())
 
 
@@ -683,14 +683,14 @@ def codex_defaults(codex, name: str, slices, kinds, source: str = "origin") -> d
       file names the selection.
     - `acquire_enabled`: the node fetches what the file holds — every
       slice, records among the kinds — from an origin the plugin can fetch.
-      Never when `source = "drag"`: the drag is the corpus, and a fetched
+      Never when `source = "shard"`: the SHARD is the corpus, and a fetched
       collection acquiring from the origin would write the origin's files
       into it — the second peer's worker started an rsync of the whole
       Gutenberg mirror for three fetched books (2026-10-07).
     - `genesis_archive`: the archive `credits` names (03 §3.5 admits no
       other), when this peer holds vectors.
     - `snapshot`: the dump the Codex pins in `origin.spec.files`.
-    - `corpus_dir`: `origin_dir(name)`; the drag for `source = "drag"`.
+    - `corpus_dir`: `origin_dir(name)`; the SHARD for `source = "shard"`.
     """
     from .acquire import spec as acquire_spec
     from .acquire.specs import ACQUIRE_REGISTRY
@@ -700,11 +700,11 @@ def codex_defaults(codex, name: str, slices, kinds, source: str = "origin") -> d
     return {
         "everything": everything,
         "profile": everything if slices == "all" else None,
-        "acquire_enabled": bool(everything and slices == "all" and "records" in kinds and source != "drag"),
+        "acquire_enabled": bool(everything and slices == "all" and "records" in kinds and source != "shard"),
         "genesis_archive": credited[0] if credited and "vectors" in kinds else None,
         "snapshot": (acquire_spec.pinned_snapshot(spec, codex.origin.spec)
                      if spec is not None else None),
-        "corpus_dir": origin_dir(name).parent / "drag" if source == "drag" else origin_dir(name),
+        "corpus_dir": origin_dir(name).parent / "shard" if source == "shard" else origin_dir(name),
     }
 
 
@@ -714,11 +714,11 @@ def _parse_slices(value: Any, where: str):
     if isinstance(value, list) and all(isinstance(v, str) and v for v in value):
         # a list is PART of the collection, held by `share fetch --slice`
         # (07 §7.3, migration step 9d); each value a slice name of 09 §9.3
-        from .hold import drag as drag_mod
+        from .hold import shard as shard_mod
         out: list[str] = []
         for v in value:
             try:
-                drag_mod.check_slice(v)
+                shard_mod.check_slice(v)
             except Exception as e:   # noqa: BLE001 — the loader's errors are ValueErrors
                 raise ValueError(f"{where}: slices = {value!r}: {e}") from None
             if v not in out:
@@ -824,7 +824,7 @@ def collections_dir() -> Path:
     """`$CONFIG_DIR/collections` — the TOML files.
 
     NOT `louise_root()/"collections"`, which is a DIFFERENT directory
-    holding each Codex collection's `drag/state/index/lance` tree. Both
+    holding each Codex collection's `shard/state/index/lance` tree. Both
     are called "collections" and on this deployment they are `/config/
     collections` and `/data/collections`. Retiring a file means moving it
     out of THIS one.
@@ -963,7 +963,7 @@ def by_name(name: str) -> Collection | None:
 
     ANOTHER collection's fault is not this one's. A lookup by name used to
     raise when any other file could not load — so on 2026-09-21 `hold check
-    pubmed` died on gutenberg's missing drag before it checked anything.
+    pubmed` died on gutenberg's missing SHARD before it checked anything.
     The named collection's own fault still raises, with its own reason: a
     typo in THIS file must not read as "no such collection"."""
     served, unreadable = load_all(skip_unreadable=True)

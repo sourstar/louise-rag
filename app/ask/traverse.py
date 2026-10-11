@@ -52,8 +52,8 @@ def ensure_schema(con: sqlite3.Connection) -> sqlite3.Connection:
     return con
 
 
-def index_edges(con, drag_dir: Path, snapshot: sn.Snapshot | None) -> dict[str, int]:
-    """Every relation shard the snapshot lists and the drag holds, indexed
+def index_edges(con, shard_dir: Path, snapshot: sn.Snapshot | None) -> dict[str, int]:
+    """Every relation shard the snapshot lists and the SHARD holds, indexed
     once per root: a shard already indexed at that root is skipped, one
     re-issued is replaced whole (delete-then-insert on the shard)."""
     from app.pack import records as pack_records
@@ -63,7 +63,7 @@ def index_edges(con, drag_dir: Path, snapshot: sn.Snapshot | None) -> dict[str, 
         return out
     done = {r["shard"]: r["root"] for r in con.execute("SELECT * FROM relations_indexed").fetchall()}
     for r in snapshot.relations:
-        p = Path(drag_dir) / r.path
+        p = Path(shard_dir) / r.path
         if not p.is_file():
             continue
         if done.get(r.path) == r.root:
@@ -157,7 +157,7 @@ class Elsewhere:
         if any(self._holds(name, uid) for name, _ in cands):
             return True, None
         name, codex = cands[0]
-        snapshot = seeder.current_snapshot(col.drag_of(self.root, name))
+        snapshot = seeder.current_snapshot(col.shard_dir_of(self.root, name))
         return False, {"collection_id": codex.collection_id,
                        "shard": _shard_of(snapshot, uid, (codex.slicing or {}).get("order", "bytes"))}
 
@@ -261,13 +261,13 @@ def traverse(id_: str, *, relation: str | None = None, depth: int = 1, collectio
             unheld.append(asked)
     with Elsewhere(root, held, tuple(unheld)) as elsewhere:
         for name, codex in targets:
-            drag = col.drag_of(root, name)
-            snapshot = seeder.current_snapshot(drag)
+            shard_tree = col.shard_dir_of(root, name)
+            snapshot = seeder.current_snapshot(shard_tree)
             annotations = getattr(codex, "annotates", None) is not None
             if not (root / name / "state" / "manifest.sqlite").is_file() and not annotations:
                 continue
             with closing(cov.manifest(root, name)) as con:
-                index_edges(con, drag, snapshot)
+                index_edges(con, shard_tree, snapshot)
                 if annotations:
                     # 02 §2.10: an annotations collection's edges join records
                     # of the collection it annotates, so they are resolved

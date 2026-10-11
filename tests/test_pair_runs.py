@@ -16,7 +16,7 @@ import json
 import pytest
 
 from app import collections as collections_mod, db, embeddings, run_check
-from app.hold import calibration as cal, collection as col, drag, export as exp, \
+from app.hold import calibration as cal, collection as col, shard as shard_mod, export as exp, \
     runs as hold_runs
 from app.verify import backend_gate
 from tests.hold.conftest import KEY, NOW, PLATFORM
@@ -152,7 +152,7 @@ def test_a_check_s_challenge_goes_out_as_pairs_under_a_validated_run(node, rage)
     root, collection, codex = node
     recipe = collections_mod.recipe_for(collection)
     embed = run_check.checking(root, "pairs", codex, recipe, key=KEY)
-    member = root / "pairs" / "drag" / drag.calibration_paths(codex.space.calibration.set)[0]
+    member = root / "pairs" / "shard" / shard_mod.calibration_paths(codex.space.calibration.set)[0]
     before = len(rage.bodies)
     rows = exp.challenge_rows(codex, embed, member)
     assert len(rows) == 16

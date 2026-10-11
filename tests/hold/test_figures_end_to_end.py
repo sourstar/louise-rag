@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from app.hold import check as chk, codex as cx, collection as col, \
-    drag as drag_mod, records as rec, snapshot as snap
+    shard as shard_mod, records as rec, snapshot as snap
 from app.hold import figures as fig
 from app.pack import records as pack_records
 from tests.hold.conftest import fake_query_embed  # noqa: E402,F811
@@ -77,7 +77,7 @@ def _recipe_2() -> dict:
 
 
 @pytest.fixture
-def plates_drag(isolated_config, tmp_path, plates_corpus, monkeypatch):
+def plates_shard(isolated_config, tmp_path, plates_corpus, monkeypatch):
     monkeypatch.delenv("EMBED_URL", raising=False)
     root = tmp_path / "collections"
     col.create_from_recipe(root, "gutenberg", _recipe_2(),
@@ -92,14 +92,14 @@ def plates_drag(isolated_config, tmp_path, plates_corpus, monkeypatch):
 
 # ---- what the build produced ---------------------------------------------
 
-def test_the_records_carry_figures_and_the_container_holds_them(plates_drag):
-    root, snapshot, codex = plates_drag
+def test_the_records_carry_figures_and_the_container_holds_them(plates_shard):
+    root, snapshot, codex = plates_shard
     assert codex.record_line == 2
-    drag = root / "plates" / "drag"
+    shard_tree = root / "plates" / "shard"
 
     named, by_uid = set(), {}
     for s in snapshot.shards:
-        for r in pack_records.iter_records(drag / s.path):
+        for r in pack_records.iter_records(shard_tree / s.path):
             assert "figures" in r, "shape 2 writes the key on every line"
             by_uid[r["uid"]] = r["figures"]
             named |= {fig.bare(f["hash"]) for f in r["figures"]}
@@ -112,32 +112,32 @@ def test_the_records_carry_figures_and_the_container_holds_them(plates_drag):
 
     held = set()
     for s in snapshot.shards:
-        p = drag / drag_mod.figures_path(s.slice, s.n)
+        p = shard_tree / shard_mod.figures_path(s.slice, s.n)
         assert p.is_file(), "a container is written with its shard"
         held |= set(fig.read_index(p))
     assert held == named, "stored once each, and every named plate is there"
     assert len(held) == 3
 
 
-def test_a_plate_reads_back_as_the_origin_shipped_it(plates_drag):
-    root, snapshot, _codex = plates_drag
-    drag = root / "plates" / "drag"
+def test_a_plate_reads_back_as_the_origin_shipped_it(plates_shard):
+    root, snapshot, _codex = plates_shard
+    shard_tree = root / "plates" / "shard"
     want = {hashlib.sha256(b).hexdigest(): b for b in PLATES.values()}
     got = {}
     for s in snapshot.shards:
-        for h, data in fig.walk(drag / drag_mod.figures_path(s.slice, s.n)):
+        for h, data in fig.walk(shard_tree / shard_mod.figures_path(s.slice, s.n)):
             got[h] = data
     assert got == want
 
 
-def test_content_hash_never_covers_a_plate(plates_drag):
+def test_content_hash_never_covers_a_plate(plates_shard):
     """09 §9.5's rule, and the reason a collection that gains plates keeps
     every text vector it had: `content_hash` is over title and sections,
     and the caption is in sections like any other text."""
-    root, snapshot, _codex = plates_drag
-    drag = root / "plates" / "drag"
+    root, snapshot, _codex = plates_shard
+    shard_tree = root / "plates" / "shard"
     for s in snapshot.shards:
-        for r in pack_records.iter_records(drag / s.path):
+        for r in pack_records.iter_records(shard_tree / s.path):
             sections = [tuple(x) for x in r["sections"]]
             assert rec.content_hash(r["title"], sections) == r["content_hash"]
             assert "Plate 1" in json.dumps(r["sections"]) or \
@@ -146,29 +146,29 @@ def test_content_hash_never_covers_a_plate(plates_drag):
 
 # ---- the snapshot ---------------------------------------------------------
 
-def test_the_snapshot_prices_the_plates_before_a_byte_moves(plates_drag):
-    root, snapshot, _codex = plates_drag
+def test_the_snapshot_prices_the_plates_before_a_byte_moves(plates_shard):
+    root, snapshot, _codex = plates_shard
     assert snapshot.figures, "a plates collection's snapshot carries them"
     by_shard = {(f.slice, f.n): f for f in snapshot.figures}
     assert set(by_shard) == {(s.slice, s.n) for s in snapshot.shards}
-    drag = root / "plates" / "drag"
+    shard_tree = root / "plates" / "shard"
     for (slice_, n), entry in by_shard.items():
-        p = drag / drag_mod.figures_path(slice_, n)
+        p = shard_tree / shard_mod.figures_path(slice_, n)
         assert entry.bytes == p.stat().st_size
-        assert entry.root == drag_mod.pieces_root(p.read_bytes())
+        assert entry.root == shard_mod.pieces_root(p.read_bytes())
         assert entry.figures == len(fig.read_index(p))
 
-    doc = json.loads((drag / drag_mod.snapshot_path(snapshot.snapshot_id)).read_bytes())
+    doc = json.loads((shard_tree / shard_mod.snapshot_path(snapshot.snapshot_id)).read_bytes())
     assert doc["version"] == 2
     assert doc["figures"] == [f.to_dict() for f in
                               sorted(snapshot.figures,
                                      key=lambda f: (f.slice.encode(), f.n))]
 
 
-def test_a_version_1_snapshot_still_loads(plates_drag):
+def test_a_version_1_snapshot_still_loads(plates_shard):
     """"snapshots already written stay 1, and a chain links by `previous`
     hash rather than by version, so nothing is re-issued" (09 §9.4)."""
-    root, snapshot, _codex = plates_drag
+    root, snapshot, _codex = plates_shard
     doc = json.loads(snapshot.canonical())
     doc["version"] = 1
     del doc["figures"]
@@ -183,30 +183,30 @@ def _ctx(root, codex, snapshot):
                    seed=SEED)
 
 
-def test_the_figures_check_passes_on_what_the_build_wrote(plates_drag):
-    root, snapshot, codex = plates_drag
+def test_the_figures_check_passes_on_what_the_build_wrote(plates_shard):
+    root, snapshot, codex = plates_shard
     out = chk.check_figures(_ctx(root, codex, snapshot))
     assert out.result == chk.PASS, out.why
     assert out.detail["named"] == out.detail["held"] == 3
     assert out.detail["failed"] == []
 
 
-def test_not_holding_the_plates_is_not_a_failure(plates_drag):
+def test_not_holding_the_plates_is_not_a_failure(plates_shard):
     """The containers are a member like any other: 04 §4.4 lets a peer ask
     to be spared 51 GB of images and still hold the records."""
-    root, snapshot, codex = plates_drag
+    root, snapshot, codex = plates_shard
     for s in snapshot.shards:
-        (root / "plates" / "drag" / drag_mod.figures_path(s.slice, s.n)).unlink()
+        (root / "plates" / "shard" / shard_mod.figures_path(s.slice, s.n)).unlink()
     out = chk.check_figures(_ctx(root, codex, snapshot))
     assert out.result == chk.PASS, out.why
     assert out.detail["named"] == 3 and out.detail["held"] == 0
     assert out.detail["failed"] == []
 
 
-def test_a_plate_whose_bytes_moved_FAILS(plates_drag):
-    root, snapshot, codex = plates_drag
+def test_a_plate_whose_bytes_moved_FAILS(plates_shard):
+    root, snapshot, codex = plates_shard
     s = snapshot.shards[0]
-    p = root / "plates" / "drag" / drag_mod.figures_path(s.slice, s.n)
+    p = root / "plates" / "shard" / shard_mod.figures_path(s.slice, s.n)
     entry = next(iter(fig.read_index(p).values()))
     raw = bytearray(p.read_bytes())
     raw[entry.offset + entry.frame_bytes - 1] ^= 0xFF
@@ -217,9 +217,9 @@ def test_a_plate_whose_bytes_moved_FAILS(plates_drag):
     assert out.detail["failed"]
 
 
-def test_a_record_line_1_collection_has_nothing_to_check(plates_drag):
+def test_a_record_line_1_collection_has_nothing_to_check(plates_shard):
     from dataclasses import replace
-    root, snapshot, codex = plates_drag
+    root, snapshot, codex = plates_shard
     out = chk.check_figures(_ctx(root, replace(codex, record_line=1), snapshot))
     assert out.result == chk.INCONCLUSIVE
     assert "record_line" in out.why
@@ -240,7 +240,7 @@ def test_a_plates_collection_must_plan_the_figures_check(isolated_config, tmp_pa
                                name="nope", key=KEY, now=NOW)
 
 
-def test_such_a_codex_still_PARSES_wherever_it_already_exists(plates_drag):
+def test_such_a_codex_still_PARSES_wherever_it_already_exists(plates_shard):
     """The refusal is on the CREATE path and must stay there. A Codex with
     this shape may already exist — this node made one before the rule did —
     and refusing it at `loads` makes a peer's collection unreadable rather
@@ -252,7 +252,7 @@ def test_such_a_codex_still_PARSES_wherever_it_already_exists(plates_drag):
     attempt's error, about a collection nobody had asked about.
     """
     from dataclasses import replace
-    _root, _snapshot, codex = plates_drag
+    _root, _snapshot, codex = plates_shard
     weaker = replace(codex, validation=replace(
         codex.validation,
         checks=tuple(c for c in codex.validation.checks if c != "figures"),
@@ -300,7 +300,7 @@ def test_a_book_is_opened_once_for_all_of_its_plates(plates_corpus, monkeypatch)
         f"one open to choose the form and one to read, got {opens}"
 
 
-def test_records_vs_origin_compares_the_codexs_shape_on_both_sides(plates_drag):
+def test_records_vs_origin_compares_the_codexs_shape_on_both_sides(plates_shard):
     """`canonical_line` defaults to `record_line` 1, which drops the
     `figures` key. The check re-canonicalised the shard's own record at
     that default and compared it against a shape-2 re-parse, so EVERY
@@ -312,7 +312,7 @@ def test_records_vs_origin_compares_the_codexs_shape_on_both_sides(plates_drag):
     and the re-parse was byte-identical to the shard all along.
     """
     from app.louise import _reparse_from
-    root, snapshot, codex = plates_drag
+    root, snapshot, codex = plates_shard
     corpus = None
     for p in (root.parent / "plates-corpus",):
         if p.is_dir():
