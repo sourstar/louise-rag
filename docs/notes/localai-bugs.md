@@ -262,12 +262,22 @@ said `GRPC Model not responding … Deleting the process in order to recreate
 it`. The process was never ended: the same pid ran on, `/system` kept
 listing the model as loaded, `/backend/shutdown` hung past 30 s, and every
 `/v1/embeddings` waited until the client's timeout. Ending it by hand
-(SIGTERM, then SIGKILL) and loading again worked; LocalAI then logged
-`failed to send signal terminated to process 318: no such process`, so it
-had been signalling a pid that was not the backend's. Suggested: signal the
-backend's process group (or the pid it actually started, run.sh's child),
-escalate to SIGKILL after a grace period, and drop the model from the loaded
-list only once the process is gone.
+(SIGTERM, then SIGKILL) and loading again worked.
+
+Why, from the source (`pkg/model/loader.go`, `checkIsLoaded`, master
+2026-10-11): after the warning, a LOCAL process is deleted only
+`if !process.IsAlive()`. A live, wedged backend is logged as "deleting" and
+left alone, every time. Suggested: when the health check fails and the
+process is alive, force-delete it after N consecutive failures (the busy
+watchdog's `ShutdownModelForce` already does the killing), or at least do not
+log "Deleting" when nothing is deleted.
+
+**What already covers it:** the busy watchdog (`watchdog_busy_enabled`,
+`watchdog_busy_timeout`, default 5m; OFF on the node). It times each
+backend from its oldest in-flight request, ignores pinning, and kills with
+`ShutdownModelForce` (go-processmanager: SIGTERM, then SIGKILL after the
+graceful timeout). STATUS.md "Open after the migration" weighs turning it
+on.
 
 ---
 

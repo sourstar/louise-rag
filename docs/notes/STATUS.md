@@ -54,15 +54,18 @@ it left open is below.
     submission, or one taken while the GT leaves c6), so the window cannot be
     argued closed, only made narrow.
   Still open:
-  - **the robust layer is a watchdog, whatever the cause**: VeGa's wrapper
-    owns the inner backend process (`deploy/vega/vega_wrapper.py`, which
-    already terminates and kills it), so an `Embedding` that outlives a
-    bound (its own measured p99 × k, well under the worker's 300 s) can end
-    the inner backend and exit, and LocalAI loads it again at the next call.
-    A hang then costs a minute, not hours. It changes the wrapper's files, so
-    every vega model states a new run and is gated once (minutes each);
-    non-VeGa backends (rerankers, MADLAD, chat) need the same from LocalAI
-    (B10);
+  - **the robust layer is a watchdog, whatever the cause, and LocalAI has
+    one**: the busy watchdog (`watchdog_busy_enabled`, OFF on the node;
+    `watchdog_busy_timeout`, 5m). It times each backend from its OLDEST
+    in-flight request, covers every backend (VeGa or not, pinned or not),
+    and force-kills (SIGTERM, SIGKILL after the grace period); the next call
+    loads the model again. 5 m matches the worker, which abandons a call at
+    300 s anyway. The cost: one global timeout, so a legitimate call longer
+    than it (a long chat answer, a big batch) is killed too; measure the
+    longest real calls first. Writing our own in VeGa's wrapper
+    (`deploy/vega/vega_wrapper.py` owns the inner process) would allow a
+    per-model bound but changes the wrapper's files, i.e. a new run for
+    every vega model, and leaves the non-VeGa backends uncovered;
   - the stuck fan the wake works around is the card's firmware; a firmware or
     xe update that keeps the temperature fresh in gt-c6 retires the wake;
   - throughput the OpenVINO way: true batching (several items per
