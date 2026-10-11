@@ -281,3 +281,44 @@ def test_clean_title_normalises_whitespace_and_leaves_prose_alone():
     assert clean_title("Pride and Prejudice") == "Pride and Prejudice"
     # a bare '$' that is not a marker survives
     assert clean_title("Dollars $ and Sense") == "Dollars $ and Sense"
+
+
+def test_a_catalogue_revision_moves_the_origin_hash_and_the_change_signature(tmp_path):
+    """Parser 9 (2026-10-11): PG revised pg23054.rdf — a translator's dates —
+    without touching its epub. A hash over the text alone could not see it:
+    records-vs-origin read the revision as a parser fault, and discovery,
+    keyed on the text file's mtime and size, never rebuilt the record. The
+    catalogue entry is now part of both."""
+    import os
+    book = tmp_path / "42"
+    book.mkdir()
+    (book / "pg42.txt").write_text("*** START OF THE PROJECT GUTENBERG EBOOK X ***\n\nText.\n\n"
+                                   "*** END OF THE PROJECT GUTENBERG EBOOK X ***\n", encoding="utf-8")
+    _rdf(book, 42)
+
+    def ref_and_hash():
+        ref = next(r for r in SOURCE.discover(DiscoverState(corpus_root=tmp_path))
+                   if r.native_id == "42")
+        return ref, SOURCE.fetch(ref).raw_hash
+    ref1, hash1 = ref_and_hash()
+    rdf_file = book / "pg42.rdf"
+    rdf_file.write_text(rdf_file.read_text(encoding="utf-8").replace("Book 42", "Book 42, revised"),
+                        encoding="utf-8")
+    later = ref1.mtime + 10
+    os.utime(rdf_file, (later, later))
+    ref2, hash2 = ref_and_hash()
+    assert hash2 != hash1, "a catalogue revision is an origin revision"
+    assert (ref2.mtime, ref2.size) != (ref1.mtime, ref1.size), "discovery sees it"
+
+
+def test_a_catalogue_only_book_hashes_its_one_file_plainly(tmp_path):
+    """With one origin file the hash is that file's blake2b-128, as parsers
+    before 9 wrote — the RDF is not counted twice."""
+    import hashlib
+    book = tmp_path / "7"
+    book.mkdir()
+    _rdf(book, 7)
+    ref = next(r for r in SOURCE.discover(DiscoverState(corpus_root=tmp_path)) if r.native_id == "7")
+    data = (book / "pg7.rdf").read_bytes()
+    assert SOURCE.fetch(ref).raw_hash == hashlib.blake2b(data, digest_size=16).hexdigest()
+    assert ref.size == len(data)

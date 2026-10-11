@@ -202,7 +202,7 @@ louise dev                                                             operator 
   refs-sync            reference tables from their origins; writes
   genesis recheck <collection>                                         reopen final archive shards that still have documents the archive could serve; writes
   genesis recount <collection> [--yes]                                 an archive ledger's docs and chunks recounted from chunk_verification; writes only with --yes (added 2026-10-08)
-  carry <from> <to> [--copy] [--keep producer:<archive>] [--yes]        amendment A1 (02 §2.4): the manifest (after a TRUNCATE checkpoint), index/ and lance/ moved
+  carry <from> <to> [--copy] [--keep producer:<archive>] [--rebuilt|--reconcile] [--yes]  amendment A1 (02 §2.4): the manifest (after a TRUNCATE checkpoint), index/ and lance/ moved
                                                                        — or copied, reflinked where it can — into a collection with the same records whose space
                                                                        differs only by engine or input form, both write locks held; refused unless the agreement of
                                                                        `snapshot create --shards-from` holds, the space's function (weights, dim, dtype, ctx,
@@ -212,7 +212,10 @@ louise dev                                                             operator 
                                                                        imported or verified) stay; every other is deleted and its document embedded again, a window
                                                                        at a time, resumable, the table's row count checked against the kept count (exit 1 if it
                                                                        differs). Before use, `hold check <to> --checks vectors-sample`. A dry run without --yes;
-                                                                       writes (added 2026-10-09)
+                                                                       writes (added 2026-10-09). --rebuilt (A1c, 2026-10-11): only the parser and its image may
+                                                                       differ; no snapshot is compared and the target builds its own records; --reconcile, after
+                                                                       that build and snapshot, keeps the vectors of every document whose content_hash did not move,
+                                                                       resets the rest to embed again and sets each txt_hash to its record's origin_hash
 ```
 
 `--dry-run`, `--json` and `--yes` are not shown per line; §7.7 says which

@@ -30,6 +30,29 @@ from . import pg_text, rdf
 FORMS = ("epub", "txt", "rdf")
 
 
+def origin_files(book_dir: Path, book_id: int, path: Path) -> list[Path]:
+    """The origin bytes ONE record is parsed from: the form the rule read
+    and, beside it, the book's catalogue entry — `pg<id>.rdf` gives the
+    record its creators, dates, subjects and every `extra` field the RDF
+    carries (parser 9). Once when the form IS the catalogue entry."""
+    rdf_path = book_dir / f"pg{book_id}.rdf"
+    return [path] + ([rdf_path] if rdf_path != path and rdf_path.is_file() else [])
+
+
+def origin_hash(files: list[Path]) -> str:
+    """blake2b-128 over the files of `origin_files` in order, the catalogue
+    entry after a separator and its length. With one file it is the plain
+    hash of that file, as parsers before 9 wrote."""
+    h = hashlib.blake2b(digest_size=16)
+    for i, p in enumerate(files):
+        if i:
+            h.update(b"\0pg-rdf\0" + p.stat().st_size.to_bytes(8, "big"))
+        with open(p, "rb") as f:
+            for block in iter(lambda: f.read(1 << 20), b""):
+                h.update(block)
+    return h.hexdigest()
+
+
 def pick_form(book_dir: Path, book_id: int) -> tuple[str | None, Path | None, bool]:
     """(form, path, is_stub) — which edition of this book to read.
 
@@ -173,7 +196,15 @@ class GutenbergSource:
     #: in `extra.issued`; and ITALICS are kept, `_…_`, in the epub text as
     #: the plain text already had them — which moves the text, so, like 7,
     #: it reaches records through a new collection (cleaning_version 3).
-    PARSER_VERSION = 8
+    #: 9 since 2026-10-11 (operator's yes): `origin_hash` covers the book's
+    #: catalogue entry as well as the form read (`origin_files`), and so does
+    #: discovery's change signature. PG revised pg23054.rdf (a translator's
+    #: dates) without touching its epub; the record's hash could not see it,
+    #: records-vs-origin read a catalogue revision as a parser fault, and
+    #: discovery never rebuilt the record. The text, sections and chunks do
+    #: not move — every `origin_hash` does, so the records are new and the
+    #: vectors carry (02 A1).
+    PARSER_VERSION = 9
     modality = Modality.TEXT
     # PG does withdraw a text on a copyright claim, and the tombstone
     # stays: a removal is never silent (04 §4.4).
@@ -239,7 +270,11 @@ class GutenbergSource:
                              error="no epub, txt or rdf")
                 progress.stage(entry)
                 continue
-            st = path.stat()
+            # THE BOOK AND ITS CATALOGUE ENTRY (parser 9): PG revises a
+            # pg<id>.rdf without touching the text — authors' dates, aliases,
+            # links — and a signature over the text alone never saw it, so
+            # the record was never rebuilt (records-vs-origin, 2026-10-11).
+            stats = [p.stat() for p in origin_files(entry, book_id, path)]
             # THE LANGUAGE, HERE, because `slicing.slice_hint` reads it from
             # the manifest and gutenberg slices by it. Without it the
             # planning pass of `records build` has no hint and parses every
@@ -253,7 +288,8 @@ class GutenbergSource:
             # skips the rest. A parse that would otherwise happen once per
             # book in a serial pass happens once per NEW book in the scan.
             yield DocRef(source_id=self.source_id, native_id=str(book_id),
-                         locator=str(entry), mtime=int(st.st_mtime), size=st.st_size,
+                         locator=str(entry), mtime=int(max(s.st_mtime for s in stats)),
+                         size=sum(s.st_size for s in stats),
                          extra={"txt_name": path.name, "form": form,
                                 "lang": rdf.parse(entry, book_id)["lang"]})
             progress.stage(entry)
@@ -276,11 +312,8 @@ class GutenbergSource:
         if form is None:
             raise UnindexableDocument(
                 f"no epub, txt or rdf for book {ref.native_id}")
-        h = hashlib.blake2b(digest_size=16)
-        with open(path, "rb") as f:
-            for block in iter(lambda: f.read(1 << 20), b""):
-                h.update(block)
-        return RawDoc(ref=ref, raw_hash=h.hexdigest(), path=path)
+        return RawDoc(ref=ref, path=path, raw_hash=origin_hash(
+            origin_files(Path(ref.locator), int(ref.native_id), path)))
 
     CURRENT_URL = "https://www.gutenberg.org/cache/epub/{id}/{name}"
 
@@ -313,12 +346,9 @@ class GutenbergSource:
         if path_now is None or path_now.name != path.name:
             raise RuntimeError(f"the origin no longer serves book {book_id} in the form this copy holds "
                                f"({path.name}; the rule now reads {path_now.name if path_now else 'nothing'})")
-        h = hashlib.blake2b(digest_size=16)
-        with open(path_now, "rb") as f:
-            for block in iter(lambda: f.read(1 << 20), b""):
-                h.update(block)
         return RawDoc(ref=DocRef(ref.source_id, ref.native_id, str(book_dir), extra=dict(ref.extra)),
-                      raw_hash=h.hexdigest(), path=path_now)
+                      raw_hash=origin_hash(origin_files(book_dir, book_id, path_now)),
+                      path=path_now)
 
     def parse(self, raw: RawDoc) -> CanonicalDoc:
         native_id = int(raw.ref.native_id)

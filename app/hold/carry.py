@@ -192,17 +192,43 @@ def _checkpoint(manifest: Path) -> None:
 WEIGHTS_WITH_KEEP = frozenset({"encoder.weights", "query.encoder.weights"})
 
 
+#: what may differ under `--rebuilt` (A1c): the parser and the image that runs
+#: it. Cleaning, layers, chunkers, slicing and the rest still agree, so a
+#: document's chunks are a function of its title and sections alone
+#: (invariant 3) — `content_hash` decides, per document, at `reconcile`.
+RECORDS_REBUILT = frozenset({"parser", "toolchain.platform_image"})
+
+
 def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool = False,
-          keep: str | None = None, log: Callable[[str], None] = print) -> dict[str, Any]:
+          keep: str | None = None, rebuilt: bool = False,
+          log: Callable[[str], None] = print) -> dict[str, Any]:
     """Carry `from_ref`'s manifest, text index and vector table into `to_ref`
-    (G1). `apply=False` checks everything and writes nothing."""
+    (G1). `apply=False` checks everything and writes nothing.
+
+    `rebuilt` (A1c, 2026-10-11): the target's records are BUILT, not seeded —
+    its parser moved without moving cleaning or chunking (gutenberg's parser
+    9: `origin_hash` over the catalogue entry too). The parser and the
+    platform image may differ, no snapshot is compared here, and the carried
+    state is unusable until `reconcile` has compared every document's
+    `content_hash` in the two snapshots."""
     from . import collection as col
+    from .seed import record_differences
     from app import spaces
 
     root = Path(root)
     from_name, src = col.resolve(root, from_ref)
     to_name, to = col.resolve(root, to_ref)
-    refuse_unless_same_records(src, to, "carry")
+    if rebuilt:
+        if src.collection_id == to.collection_id:
+            raise CodexError("carry: the source and the target are one collection")
+        other = [d for d in record_differences(src, to) if d not in RECORDS_REBUILT]
+        if other:
+            raise CodexError(
+                f"carry --rebuilt: {to.collection_id} and {src.collection_id} differ in "
+                f"{', '.join(other)} — only the parser and its image may differ (A1c); "
+                f"anything else moves chunks, and nothing is carried")
+    else:
+        refuse_unless_same_records(src, to, "carry")
     diff = space_differences(src, to)
     if keep:
         diff = [d for d in diff if d not in WEIGHTS_WITH_KEEP]
@@ -212,17 +238,20 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
             f"table cross into a space that differs only by ENGINE or by a declared input "
             f"form (02 §2.4, 03 §3.5); any other difference is another function, and its "
             f"vectors are embedded again, never carried")
-    a, b = latest_snapshot(root, from_name), latest_snapshot(root, to_name)
-    if _part_entries(a) != _part_entries(b):
-        raise CodexError(
-            f"carry: {to_name}'s latest snapshot ({b.snapshot_id}) does not name the parts "
-            f"{from_name}'s ({a.snapshot_id}) names — seed it first "
-            f"(`hold snapshot create {to_name} --shards-from {from_name}`)")
+    if not rebuilt:
+        a, b = latest_snapshot(root, from_name), latest_snapshot(root, to_name)
+        if _part_entries(a) != _part_entries(b):
+            raise CodexError(
+                f"carry: {to_name}'s latest snapshot ({b.snapshot_id}) does not name the parts "
+                f"{from_name}'s ({a.snapshot_id}) names — seed it first "
+                f"(`hold snapshot create {to_name} --shards-from {from_name}`)")
 
     sp, tp = _paths(root, from_name), _paths(root, to_name)
     marker = tp["state"] / MARKER
     claim = {"from": src.collection_id, "to": to.collection_id,
              "mode": "copy" if copy else "move"}
+    if rebuilt:
+        claim["rebuilt"] = True
     held = json.loads(marker.read_text(encoding="utf-8")) if marker.is_file() else None
     if held is not None and {k: held.get(k) for k in claim} != claim:
         raise CodexError(f"{marker} records another carry ({held}); this one is {claim}")
@@ -283,8 +312,115 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
     log(f"[carry] {from_name} → {to_name}: manifest {done['manifest']}, index/ "
         f"{done['index']}, lance/ {done['lance']}; space re-pinned to "
         f"{to.space_id[:23]}…; {cleared} coverage row(s) of {from_name} cleared. Before "
-        f"use: `hold check {to_name} --checks vectors-sample` (amendment A1)")
+        + (f"use: `hold records build {to_name}`, `hold snapshot create {to_name}`, then "
+           f"`dev carry {from_name} {to_name} --reconcile` (A1c)" if rebuilt else
+           f"use: `hold check {to_name} --checks vectors-sample` (amendment A1)"))
     return plan
+
+
+# ---- A1c: reconcile a rebuilt target --------------------------------------
+
+RECONCILE_KEY = "carry_reconcile"
+
+
+def _content_of(root: Path, name: str) -> dict[str, tuple[str, str | None]]:
+    """uid → (content_hash, origin_hash) over the latest snapshot's records.
+    One entry per record: 79k for gutenberg, a few MB."""
+    from app.pack import records as pack_records
+    from . import collection as col
+    snap = latest_snapshot(root, name)
+    d = col.drag_of(root, name)
+    out: dict[str, tuple[str, str | None]] = {}
+    for s in snap.shards:
+        for r in pack_records.iter_records(d / s.path):
+            out[r["uid"]] = (r.get("content_hash"), r.get("origin_hash"))
+    return out
+
+
+def reconcile(root, from_ref: str, to_ref: str, *, window: int = WINDOW,
+              log: Callable[[str], None] = print) -> dict[str, Any]:
+    """After `carry --rebuilt` and the target's own build and snapshot: every
+    document whose `content_hash` is the source snapshot's keeps its vectors
+    (its chunks are the same chunks, invariant 3); every other one — revised
+    upstream, new, or gone from the target — loses them and is marked to embed
+    again. The manifest's `txt_hash` becomes the target record's
+    `origin_hash`, so the next scan compares like with like. A window of
+    documents at a time, each in keep_producer's three repeatable steps;
+    resumable from its cursor."""
+    from . import collection as col, records as rec
+    from app import db, embeddings
+
+    root = Path(root)
+    from_name, src = col.resolve(root, from_ref)
+    to_name, to = col.resolve(root, to_ref)
+    marker = _paths(root, to_name)["state"] / MARKER
+    held = json.loads(marker.read_text(encoding="utf-8")) if marker.is_file() else {}
+    if not (held.get("rebuilt") and held.get("done") and held.get("from") == src.collection_id
+            and held.get("to") == to.collection_id):
+        raise CodexError(f"reconcile: {to_name} records no finished `carry --rebuilt` from "
+                         f"{from_name} ({marker})")
+    before, after = _content_of(root, from_name), _content_of(root, to_name)
+    coll = rec.local_collection(root, to_name, codex=to)
+    con = db.connect(coll)
+    try:
+        state = json.loads(db.get_control(con, RECONCILE_KEY) or "{}") or \
+            {"rowid": 0, "kept": 0, "reset": 0, "rehashed": 0, "done": False}
+        while not state.get("done"):
+            rows = con.execute("SELECT rowid, uid, native_id, txt_hash FROM documents "
+                               "WHERE rowid > ? ORDER BY rowid LIMIT ?",
+                               (state["rowid"], window)).fetchall()
+            if not rows:
+                state["done"] = True
+                con.execute("BEGIN IMMEDIATE")
+                db.set_control(con, RECONCILE_KEY, json.dumps(state, sort_keys=True))
+                con.execute("COMMIT")
+                break
+            last = int(rows[-1]["rowid"])
+            same = {r["uid"] for r in rows
+                    if r["uid"] in after and r["uid"] in before
+                    and after[r["uid"]][0] == before[r["uid"]][0]}
+            stale = [r for r in rows if r["uid"] not in same]
+            rehash = [(after[r["uid"]][1], r["uid"]) for r in rows
+                      if r["uid"] in after and after[r["uid"]][1]
+                      and r["txt_hash"] != after[r["uid"]][1]]
+            pending = state.get("pending") or {}
+            if pending.get("rowid") != last:
+                # step 1: marked not done (and rehashed) FIRST — a document
+                # marked whose vectors still exist is embedded again, never lost
+                con.execute("BEGIN IMMEDIATE")
+                for i in range(0, len(stale), 500):
+                    part = [r["uid"] for r in stale[i:i + 500]]
+                    marks = ",".join("?" * len(part))
+                    con.execute(f"UPDATE documents SET embed_done=0 WHERE uid IN ({marks})", part)
+                    con.execute(f"DELETE FROM chunk_verification WHERE uid IN ({marks})", part)
+                con.executemany("UPDATE documents SET txt_hash=? WHERE uid=?", rehash)
+                pending = {"rowid": last, "reset": len(stale), "rehashed": len(rehash)}
+                db.set_control(con, RECONCILE_KEY,
+                               json.dumps({**state, "pending": pending}, sort_keys=True))
+                con.execute("COMMIT")
+            # step 2: their rows, under the vector write lock
+            if stale:
+                books = sorted({int(r["native_id"]) for r in stale})
+                gone = [c for c in embeddings.chunk_ids_of_books(books, collection=coll)
+                        if c.rsplit(":", 2)[0] in {r["uid"] for r in stale}]
+                embeddings.delete_chunks(gone, collection=coll, lock_con=con)
+            # step 3: the cursor
+            state = {"rowid": last, "kept": state["kept"] + len(same),
+                     "reset": state["reset"] + pending["reset"],
+                     "rehashed": state["rehashed"] + pending["rehashed"], "done": False}
+            con.execute("BEGIN IMMEDIATE")
+            db.set_control(con, RECONCILE_KEY, json.dumps(state, sort_keys=True))
+            con.execute("COMMIT")
+    finally:
+        con.close()
+    out = {"collection": to_name, "kept": state["kept"], "reset": state["reset"],
+           "rehashed": state["rehashed"], "records_before": len(before),
+           "records_after": len(after)}
+    log(f"[carry] {to_name}: {state['kept']} document(s) keep their vectors (same "
+        f"content_hash as {from_name}), {state['reset']} to embed again, "
+        f"{state['rehashed']} txt_hash(es) set to their record's origin_hash. Before use: "
+        f"`hold check {to_name} --checks vectors-sample` (A1c)")
+    return out
 
 
 def _repin(manifest: Path, src: Codex, to: Codex) -> int:

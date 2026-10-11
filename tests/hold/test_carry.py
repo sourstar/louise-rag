@@ -515,3 +515,77 @@ def test_skip_marked_reads_only_short_documents_and_its_net_holds(pair):
     carry.carry(root, "old", "new", apply=True, log=quiet)
     with pytest.raises(carry.CarryMismatch):
         carry.keep_producer(root, "new", "genesis:medcpt-pubmed", skip_marked=True, log=quiet)
+
+
+# ---- A1c: a parser that moved without moving chunks -------------------------
+
+def _rebuilt_pair(pair):
+    """`re`: `old`'s Codex with another parser (gutenberg's 9, 2026-10-11), and
+    `old`'s vectors in place."""
+    root, old, _new = pair
+    import shutil
+    re_ = col.create(root, replace(old, parser=Parser("gutenberg", 99)), name="re")
+    # the same space, so the same calibration member a snapshot names
+    shutil.copytree(root / "old" / "drag" / "calibration", root / "re" / "drag" / "calibration",
+                    dirs_exist_ok=True)
+    rec.write_validation(root, "re")
+    uids, ids = _vectors(root, old)
+    return root, old, re_, uids, ids
+
+
+def _build_and_freeze(root, name, corpus_dir):
+    rec.build(root, name, corpus_dir=corpus_dir, records_per_shard=2, log=quiet)
+    sn.create(root, name, snapshot_id="2026-09", log=quiet)
+
+
+def test_rebuilt_carries_across_the_parser_and_refuses_anything_else(pair):
+    root, old, re_, _uids, _ids = _rebuilt_pair(pair)
+    with pytest.raises(CodexError, match="parser"):
+        carry.carry(root, "old", "re", apply=True, log=quiet)
+    other = col.create(root, replace(old, parser=Parser("gutenberg", 99), cleaning_version=9),
+                       name="other")
+    with pytest.raises(CodexError, match="cleaning_version"):
+        carry.carry(root, "old", "other", rebuilt=True, apply=True, log=quiet)
+    out = carry.carry(root, "old", "re", rebuilt=True, copy=True, apply=True, log=quiet)
+    assert out["done"]["manifest"] == "copied" and out["rebuilt"] is True
+    assert json.loads((root / "re" / "state" / carry.MARKER).read_text())["rebuilt"] is True
+
+
+def test_reconcile_keeps_the_vectors_of_every_unchanged_document_and_resets_the_rest(
+        pair, corpus_dir):
+    """A book revised at the origin between the two builds: its content_hash
+    moved, its vectors go and it is embedded again; every other book keeps
+    its vectors, and every txt_hash becomes its record's origin_hash."""
+    root, old, re_, uids, ids = _rebuilt_pair(pair)
+    with pytest.raises(CodexError, match="carry --rebuilt"):
+        carry.reconcile(root, "old", "re", log=quiet)
+    carry.carry(root, "old", "re", rebuilt=True, copy=True, apply=True, log=quiet)
+    victim = uids[0]
+    book = corpus_dir / victim.split(":")[1]
+    txt = next(book.glob("*.txt*"))
+    data = txt.read_bytes()
+    i = data.index(b"*** END OF")
+    txt.write_bytes(data[:i] + b"A paragraph revised upstream.\n\n" + data[i:])
+    coll = _local(root, "re")
+    con = db.connect(coll)
+    try:      # the scan that would have seen it: the build reads the manifest
+        con.execute("UPDATE documents SET mtime=mtime+1 WHERE uid=?", (victim,))
+        con.commit()
+    finally:
+        con.close()
+    _build_and_freeze(root, "re", corpus_dir)
+
+    out = carry.reconcile(root, "old", "re", window=1, log=quiet)
+    assert out["reset"] == 1 and out["kept"] == len(uids) - 1, out
+    left = set(embeddings.chunk_ids_of_books([int(u.split(":")[1]) for u in uids], collection=coll))
+    assert left == {c for c in ids if not c.startswith(victim + ":")}
+    con = db.connect(coll)
+    try:
+        assert con.execute("SELECT embed_done FROM documents WHERE uid=?", (victim,)).fetchone()[0] == 0
+        hashes = dict(con.execute("SELECT uid, txt_hash FROM documents").fetchall())
+    finally:
+        con.close()
+    after = carry._content_of(root, "re")
+    assert all(hashes[u] == after[u][1] for u in after), "txt_hash is the record's origin_hash"
+    again = carry.reconcile(root, "old", "re", log=quiet)
+    assert (again["kept"], again["reset"]) == (out["kept"], out["reset"]), "resumed, not redone"

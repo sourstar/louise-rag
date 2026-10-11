@@ -34,7 +34,7 @@
     louise hold config show|apply [<collection>]
     louise node health [<collection>] [--errors]
     louise dev genesis recheck <collection> | recount <collection> [--yes]
-    louise dev carry <from> <to> [--copy] [--keep producer:ARCHIVE] [--yes]
+    louise dev carry <from> <to> [--copy] [--keep producer:ARCHIVE] [--rebuilt|--reconcile] [--yes]
 
 The previous tree (`python -m app.cli`, 07 §7.6) is retired (2026-10-08):
 every name it had that is still useful is one of these.
@@ -1024,8 +1024,15 @@ def cmd_dev_carry(a) -> int:
         for name in sorted({from_name, to_name}):
             _take_write_lock(a.root, name, "louise dev carry", exit_code=2)
     say = lambda m: print(m, file=sys.stderr)              # noqa: E731
+    if getattr(a, "reconcile", False):
+        if not a.yes:
+            say(f"[carry] would reconcile {to_name} against {from_name} (--yes)")
+            return 0
+        _print({"reconcile": carry_mod.reconcile(a.root, from_name, to_name, log=say)})
+        return 0
     out = {"carry": carry_mod.carry(a.root, from_name, to_name, copy=a.copy,
-                                    apply=a.yes, keep=producer, log=say)}
+                                    apply=a.yes, keep=producer,
+                                    rebuilt=getattr(a, "rebuilt", False), log=say)}
     if producer and a.yes:
         out["keep"] = carry_mod.keep_producer(a.root, to_name, producer, log=say)
     elif producer:
@@ -3934,6 +3941,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--keep", default=None, metavar="producer:ARCHIVE",
                    help="then keep only the vectors that archive produced; the rest are "
                         "dropped and their documents embedded again")
+    p.add_argument("--rebuilt", action="store_true",
+                   help="the target's records are built, not seeded: only its parser and image "
+                        "differ (A1c); then `--reconcile` after its build and snapshot")
+    p.add_argument("--reconcile", action="store_true",
+                   help="after `--rebuilt`, the build and the snapshot: keep the vectors of "
+                        "every document whose content_hash did not move, embed the rest again")
     p.add_argument("--yes", action="store_true", help="do it; without it, the checks and the plan")
     p.set_defaults(fn=cmd_dev_carry)
     p = dverbs.add_parser("genesis", help="one-shot repairs of an archive's ledger; writes")

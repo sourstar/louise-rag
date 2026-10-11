@@ -53,8 +53,12 @@ def _pin_fixture_mtimes(corpus_dir: Path) -> None:
     is deterministic, and the comparison tests the pipeline, not the clone."""
     import os
     for book in GOLDEN["books"]:
-        txt = corpus_dir / str(book["id"]) / book["txt_name"]
-        os.utime(txt, (book["mtime"], book["mtime"]))
+        d = corpus_dir / str(book["id"])
+        # parser 9: discovery's signature is the book file AND its catalogue
+        # entry (the newer mtime, the summed size) — both pinned
+        for f in (d / book["txt_name"], d / f"pg{book['id']}.rdf"):
+            if f.exists():
+                os.utime(f, (book["mtime"], book["mtime"]))
 
 
 def test_golden_gutenberg_mini(isolated_config):
@@ -85,7 +89,12 @@ def test_golden_gutenberg_mini(isolated_config):
         native_id = int(row["native_id"])
         assert row["uid"] == f"gutenberg:{native_id}"
         assert row["source"] == "gutenberg"
-        expected = golden_books[native_id]
+        expected = dict(golden_books[native_id])
+        # the approved deviation of parser 9 (2026-10-11): `size` adds the
+        # catalogue entry's bytes to the text's
+        rdf_file = collection.corpus_dir / str(native_id) / f"pg{native_id}.rdf"
+        if rdf_file.exists():
+            expected["size"] += rdf_file.stat().st_size
         for col in SHARED_COLUMNS:
             assert row[col] == expected[col], f"book {native_id} column {col}"
 

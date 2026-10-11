@@ -611,7 +611,19 @@ tolerance is what proves them before use. The table is re-pinned to the target's
 on the rows, and a table produced in another form than the target declares
 does not qualify — its rows are dropped and embedded again. RULE 1 is the
 reason: a by-the-book build of the target computes the same vectors, and
-`vectors-sample` is what shows it.
+`vectors-sample` is what shows it. *Amendment A1c (RULE 1, 2026-10-11,
+operator's yes):* when only the parser and the platform image that runs
+it differ — cleaning, the layers' chunkers, parameters and rules, slicing
+and every other record-deciding field agree, and so does the space — the
+target's records are BUILT, not seeded, and the table is carried before
+the build (`louise dev carry --rebuilt`). Once the target's snapshot is
+frozen, every document whose `content_hash` is the source snapshot's keeps
+its vectors, its chunks being a function of its title and sections alone
+(invariant 3); every other one — revised at the origin, new, or gone —
+loses them and is embedded again (`--reconcile`); and `vectors-sample`
+passes before use, as for any carry. Gutenberg's parser 9 is the case:
+`origin_hash` now covers the book's catalogue entry, so every record's
+bytes moved and not one chunk did.
 
 The **calibration** block is the contract for anyone who wants to
 contribute vectors. The calibration set is corpus-independent: a fixed

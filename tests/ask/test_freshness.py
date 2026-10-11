@@ -139,7 +139,11 @@ def test_gutenberg_fetches_the_form_the_copy_holds_from_the_cache(tmp_path):
     client = _Client(served)
     raw = plugin.current(DocRef("gutenberg", "1", str(book_dir)), client=client, workdir=tmp_path / "w")
     assert raw.path == tmp_path / "w" / "1" / "pg1.txt" and raw.ref.locator == str(tmp_path / "w" / "1")
-    assert raw.raw_hash == hashlib.blake2b(text, digest_size=16).hexdigest()
+    # parser 9: the form read AND its catalogue entry, as the copy's own hash
+    from app.plugins.gutenberg.source import origin_files, origin_hash
+    w = tmp_path / "w" / "1"
+    assert raw.raw_hash == origin_hash(origin_files(w, 1, w / "pg1.txt"))
+    assert raw.raw_hash != hashlib.blake2b(text, digest_size=16).hexdigest()
     assert sorted(u for u, _ in client.calls) == sorted(served), "the text in the copy's form, and the catalogue entry"
     doc = plugin.parse(raw)
     assert "Ishmael" in " ".join(b for _, b in doc.sections)
