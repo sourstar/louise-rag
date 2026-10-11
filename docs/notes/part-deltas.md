@@ -146,6 +146,47 @@ build may miss and fetch the full part. Worth adding: the writer's zstd
 version beside the part (index frame or snapshot entry), so a peer knows
 before asking whether its rebuild can match.
 
+## The exchange, step by step (option D, one frame per part)
+
+Peer B holds `lang=en/00001` of 2026-09; peer A holds it in 2026-10.
+
+**B asks**
+1. B decompresses its part and hashes each of its 50 lines.
+2. B sends A a signed pull: the part (`lang=en/00001`), the snapshot it wants
+   (2026-10), and its 50 uids with their line hashes — a few KB.
+
+**A packs the patch**
+3. A decompresses the frame of its new part: 50 lines.
+4. A hashes each line and compares with B's list.
+5. The patch: the lines B lacks (revised or new books), the uids B holds
+   that the new version dropped, and the new version's uids in order.
+6. A compresses the patch for the wire (any level: it is packaging), signs
+   it and sends it — ~90 KB for one revised gutenberg book.
+
+A cannot send the book "as compressed in the part": inside a zstd frame a
+book is encoded largely as references back to the books before it in the
+same frame, so its compressed bytes have no boundary of their own and
+cannot be decoded alone. Only a frame per book would allow that, and the
+operator ruled it out.
+
+**B rebuilds**
+7. B checks the signature, unpacks the patch and assembles the new 50 lines:
+   its unchanged ones plus A's, in A's order.
+8. B writes the part exactly as the producer's writer does (09 §9.5): one
+   zstd frame at level 9, then the index frame (offsets, sizes, uids) —
+   about half a second for a typical 18 MB part, a few seconds for the
+   largest (144 MB raw).
+9. B computes the part's root and compares it with the root in the signed
+   2026-10 snapshot.
+10. Equal: the part is promoted (the old version stays beside it as
+    `00001.2026-09.jsonl.zst`) and B serves it like any part. Different: the
+    result is discarded and B fetches the whole part by torrent.
+
+Only B recompresses; A only decompresses (~20 ms for an 18 MB frame).
+Frame sizes measured 2026-10-11 from the parts' indexes: gutenberg (one
+frame per part) median 5.6 MB compressed / 17.9 MB raw, max 44.7 / 143.9;
+pubmed (1,000 articles a frame) median 0.8 / 5.2 MB.
+
 ## Recommendation
 
 1. First, a test that a re-issued part's plate container is byte-identical
