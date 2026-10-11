@@ -30,6 +30,23 @@ it left open is below.
   (09's opening note lists them). The specification already speaks it;
   the dated entries below keep the words of their time (pack, drag, shard).
 - **Operator**: file [`localai-bugs.md`](localai-bugs.md) upstream (step 15).
+- **OpenVINO deadlocks under concurrent requests on the GPU** (2026-10-10,
+  [v5-migration.md](v5-migration.md) "PubMed's re-embed, as it ran"). Four
+  concurrent `infer_new_request` calls on one compiled model hung forever in
+  `louise-medcpt-article-ov`; PubMed embedded nothing for 7 h. Worked around
+  in `f880ce0`: one inference per compiled model at a time (a lock in
+  `deploy/medcpt-rerank/server.py`), at no measured cost (~40 docs/s either
+  way). Still open:
+  - the root cause: not reproduced, no OpenVINO issue found; a stress test
+    (N threads, one compiled model, until it hangs) would tell whether a
+    newer OpenVINO or the GPU plugin's `NUM_STREAMS` fixes it;
+  - throughput the OpenVINO way: true batching (several items per
+    `infer`) or an `AsyncInferQueue` with the plugin's own streams, instead
+    of one item per gRPC call;
+  - a wedged backend is invisible until the worker's 300 s timeout, and
+    LocalAI's recovery does not kill it (localai-bugs.md). A watchdog that
+    ends a backend whose call outlives its bound would turn 7 h into
+    minutes.
 
 Node-specific facts — addresses, paths, ports, the live collection inventory —
 are deliberately **not** here: they live in `deploy/reference/DEPLOYMENT.md`,

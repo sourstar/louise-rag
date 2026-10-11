@@ -251,6 +251,24 @@ for non-finite values before encoding, and either answer an error naming
 the input's index, or retry that input once in the backend. Either way the
 client learns which text failed rather than losing the batch.
 
+### B10. A wedged backend is "deleted to recreate it" and keeps running
+
+*Seen on the node with stock v4.11.0-gpu-intel, 2026-10-10/11: a Python
+backend (louise-medcpt-article-ov) whose four gRPC worker threads were
+deadlocked inside OpenVINO.*
+
+The health check failed every 5 minutes for 7 hours, and each time the log
+said `GRPC Model not responding … Deleting the process in order to recreate
+it`. The process was never ended: the same pid ran on, `/system` kept
+listing the model as loaded, `/backend/shutdown` hung past 30 s, and every
+`/v1/embeddings` waited until the client's timeout. Ending it by hand
+(SIGTERM, then SIGKILL) and loading again worked; LocalAI then logged
+`failed to send signal terminated to process 318: no such process`, so it
+had been signalling a pid that was not the backend's. Suggested: signal the
+backend's process group (or the pid it actually started, run.sh's child),
+escalate to SIGKILL after a grace period, and drop the model from the loaded
+list only once the process is gone.
+
 ---
 
 ## Patches we carry
