@@ -41,9 +41,30 @@ it left open is below.
   passes through gt-c6 between requests while embedding. NOT concurrency:
   `f880ce0` serialized inference (kept; harmless, ~40 docs/s either way) and
   the second hang had one thread in `infer`, three waiting on the lock.
+  Mitigated 2026-10-11 (operator's choice; the script is the operator's,
+  `/mnt/ssd5/scripts/fancontrol/fancontrol.py`, original kept as
+  `fancontrol.py.bak-2026-10-11`): a wake now needs `gtidle/idle_residency_ms`
+  to have grown by ≥ 98 % of the 10 s check interval, i.e. a GPU that did no
+  work at all since the last check. Measured under Louise's load: 260–474 ms
+  idle per 10 s (3–5 %), so a serving card is never woken. **Not robust:**
+  - a job that starts during the 1 s hold, or between the residency read and
+    the wake, still meets a forcewake (a query encoding, a batch resuming
+    after a pause, the worker's 5-minute retry);
+  - which overlap hangs the work is not known (a forcewake held over a
+    submission, or one taken while the GT leaves c6), so the window cannot be
+    argued closed, only made narrow.
   Still open:
-  - the fan script must wake only a GPU that has been idle for its whole
-    check interval (operator's script, `/mnt/ssd5/scripts/fancontrol`);
+  - **the robust layer is a watchdog, whatever the cause**: VeGa's wrapper
+    owns the inner backend process (`deploy/vega/vega_wrapper.py`, which
+    already terminates and kills it), so an `Embedding` that outlives a
+    bound (its own measured p99 × k, well under the worker's 300 s) can end
+    the inner backend and exit, and LocalAI loads it again at the next call.
+    A hang then costs a minute, not hours. It changes the wrapper's files, so
+    every vega model states a new run and is gated once (minutes each);
+    non-VeGa backends (rerankers, MADLAD, chat) need the same from LocalAI
+    (B10);
+  - the stuck fan the wake works around is the card's firmware; a firmware or
+    xe update that keeps the temperature fresh in gt-c6 retires the wake;
   - throughput the OpenVINO way: true batching (several items per
     `infer`) or an `AsyncInferQueue` with the plugin's own streams, instead
     of one item per gRPC call;
