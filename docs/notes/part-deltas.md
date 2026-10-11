@@ -106,9 +106,23 @@ before.
   pubmed `year=2020/00001` is 51 MB in 30 frames, so one changed article
   costs one frame (~1.7 MB) instead of 51 MB; gutenberg `lang=en/00001` is
   9.5 MB in ONE frame of 50 books, so a gutenberg patch is the whole part.
-- For gutenberg it needs frames of one book (books are 100 KB–1 MB, so a
-  frame each costs little compression): a writer rule or a Codex field
+- For gutenberg it needs frames of one book: a writer rule or a Codex field
   (`slicing.frame_records`), i.e. new part bytes — a new collection.
+  Measured 2026-10-11 on 24 random gutenberg parts (1,200 books, 431 MB raw;
+  a book's raw line p10 52 KB, median 275 KB, p90 753 KB, max 6.6 MB),
+  zstd level 9 as the writer:
+
+  | frames | size | vs today | one revised book's patch |
+  |---|---|---|---|
+  | one per part (today) | 131.2 MB | — | the part, 5–9.5 MB |
+  | one per 5 books | 135.8 MB | +3.5 % | ~450 KB |
+  | one per book | 142.8 MB | +8.9 % | ~90 KB (median book) |
+
+  One frame per book is the recommendation: +0.7 GB on gutenberg's 7.9 GB,
+  a patch the size of the book, and a dropped book removes only its own
+  frame, so nothing shifts (the content-defined boundaries below become
+  unnecessary). A shared zstd dictionary would win most of the 8.9 % back
+  but must travel and be pinned, and 09 §9.5 says no dictionary.
 - Frame boundaries are counted from the part's start: an edited or an
   appended record moves only its frame, but a record dropped mid-part
   shifts every frame after it. Content-defined boundaries (a frame ends
