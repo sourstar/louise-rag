@@ -31,6 +31,11 @@ it left open is below.
   (09's opening note lists them). The specification already speaks it;
   the dated entries below keep the words of their time (pack, drag, shard).
 - **Operator**: file [`localai-bugs.md`](localai-bugs.md) upstream (step 15).
+- **Part deltas** (operator, 2026-10-11): a re-issued part is downloaded
+  whole, so one revised book costs its part (gutenberg: ~5 MB, plus up to
+  ~100 MB of plates if their container's bytes change). Options and a
+  recommendation (a patch member rebuilt by the platform's writer, the root
+  still the proof) in [part-deltas.md](part-deltas.md). Not decided.
 - **A record parsed from bytes its `origin_hash` does not cover** (found
   2026-10-11, operator: "note this issue for the future"). Gutenberg's
   records took creators, dates and subjects from `pg<id>.rdf` while
