@@ -79,3 +79,18 @@ form.
    `vega-medcpt-article-ov` pinned for the run.
 
 Followers: none left (the gutenberg minis were deleted 2026-10-09).
+
+## PubMed's re-embed, as it ran (2026-10-10/11)
+
+- Started 2026-10-10 11:59 UTC on run `fec33531…`; paused for the
+  translator benchmark and the room's heat; resumed 22:23 UTC.
+- **Hung 22:37 UTC for 7 h.** `louise-medcpt-article-ov` had four gRPC threads
+  stuck in OpenVINO's `infer_new_request` (py-spy), one spinning a core; each
+  of the worker's 5-minute retries timed out at 300 s, and LocalAI's "deleting
+  the process to recreate it" never killed it (killed by pid). Fixed in
+  `f880ce0`: one inference per compiled model at a time (both MedCPT
+  backends). The new backend is another engine: run `165bac06…` passed the
+  gate by itself (16/16, batch-invariant True, which the old run was not) and
+  is archived (`louise-platform-images/backends/90f77652….tar.zst`).
+  Throughput unchanged: ~40 docs/s at concurrency 4, i.e. ~31 h for the
+  4.5 M left.
