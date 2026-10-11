@@ -94,3 +94,11 @@ Followers: none left (the gutenberg minis were deleted 2026-10-09).
   is archived (`louise-platform-images/backends/90f77652….tar.zst`).
   Throughput unchanged: ~40 docs/s at concurrency 4, i.e. ~31 h for the
   4.5 M left.
+- **Hung again 06:08 UTC, and the lock was not the fix.** One thread in
+  `infer`, three waiting on the lock: a single inference never returned.
+  Both hangs began within seconds of the host fan script's `gpu_wake`
+  (debugfs `forcewake_all`, 22:27:07 and 06:08:50 UTC), which samples
+  `gtidle/idle_status` once and so catches the card in gt-c6 between two
+  requests. Gutenberg's llama.cpp encoder stalled too (06:28). Both backends
+  killed by pid and reloaded (06:35); the warm-up inference completed.
+  STATUS.md "Open after the migration" holds the rest.

@@ -30,16 +30,20 @@ it left open is below.
   (09's opening note lists them). The specification already speaks it;
   the dated entries below keep the words of their time (pack, drag, shard).
 - **Operator**: file [`localai-bugs.md`](localai-bugs.md) upstream (step 15).
-- **OpenVINO deadlocks under concurrent requests on the GPU** (2026-10-10,
-  [v5-migration.md](v5-migration.md) "PubMed's re-embed, as it ran"). Four
-  concurrent `infer_new_request` calls on one compiled model hung forever in
-  `louise-medcpt-article-ov`; PubMed embedded nothing for 7 h. Worked around
-  in `f880ce0`: one inference per compiled model at a time (a lock in
-  `deploy/medcpt-rerank/server.py`), at no measured cost (~40 docs/s either
-  way). Still open:
-  - the root cause: not reproduced, no OpenVINO issue found; a stress test
-    (N threads, one compiled model, until it hangs) would tell whether a
-    newer OpenVINO or the GPU plugin's `NUM_STREAMS` fixes it;
+- **A GPU inference that never returns** (2026-10-10/11,
+  [v5-migration.md](v5-migration.md) "PubMed's re-embed, as it ran"). Twice
+  an OpenVINO `infer_new_request` in `louise-medcpt-article-ov` never
+  returned and PubMed embedded nothing (7 h, then 25 min); gutenberg's
+  llama.cpp encoder stalled 20 min after the second. **Cause: the host's fan
+  script waking the GPU through debugfs `forcewake_all`** in the middle of
+  the work: both hangs began within seconds of a `gpu_wake` (22:27:07 and
+  06:08:50 UTC). Its check reads `gtidle/idle_status` once, and the card
+  passes through gt-c6 between requests while embedding. NOT concurrency:
+  `f880ce0` serialized inference (kept; harmless, ~40 docs/s either way) and
+  the second hang had one thread in `infer`, three waiting on the lock.
+  Still open:
+  - the fan script must wake only a GPU that has been idle for its whole
+    check interval (operator's script, `/mnt/ssd5/scripts/fancontrol`);
   - throughput the OpenVINO way: true batching (several items per
     `infer`) or an `AsyncInferQueue` with the plugin's own streams, instead
     of one item per gRPC call;
