@@ -306,6 +306,15 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
         con.close()
 
     _claim_staging(staging, codex)
+    frozen = _frozen_into(staging)
+    if frozen:
+        # A FINISHED BUILD IS NOT RESUMED: its snapshot froze it, and resuming
+        # its plan re-promoted the same parts month after month (found
+        # 2026-10-12: nothing ever cleared it). A new plan from the manifest:
+        # an unchanged part comes out byte-identical, a changed one is
+        # re-issued (and its old version kept, shard.promote).
+        log(f"[records build] {name}: the last build was frozen into {frozen}; planning afresh")
+        pack_build.clean_build_state(staging)
     result = pack_build.build(
         src, staging, snapshot=snapshot_id, name=name, sign=False,
         records_per_shard=records_per_shard, log=log, stop=stop)
@@ -322,6 +331,24 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
     log(f"[records build] {name}: {result.records} records in {result.shards} "
         f"shard(s), {promoted} promoted into the SHARD")
     return result
+
+
+def _frozen_into(staging) -> str | None:
+    """The snapshot that froze the build in `staging`, or None."""
+    import sqlite3
+    from pathlib import Path
+    from . import snapshot as sn
+    db_path = Path(staging) / ".build" / "build.db"
+    if not db_path.is_file():
+        return None
+    con = sqlite3.connect(db_path)
+    try:
+        row = con.execute("SELECT value FROM meta WHERE key=?", (sn.FROZEN_KEY,)).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        con.close()
+    return row[0] if row else None
 
 
 #: What a staging build was started FOR, beside its build database. `pack

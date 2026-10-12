@@ -493,15 +493,36 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
         if out.read_bytes() == snap.canonical():
             log(f"[snapshot create] {name}: {snapshot_id} already frozen, "
                 f"identical bytes")
+            mark_frozen(db_path, snapshot_id)
             return snap
         raise CodexError(
             f"{name}: {snapshot_id} exists with different bytes. A snapshot is "
             f"content-addressed and is written once; two under one id is a "
             f"dispute between peers (04 §4.3), not something to overwrite here")
     out.write_bytes(snap.canonical())
+    mark_frozen(db_path, snapshot_id)
     log(f"[snapshot create] {name}: {snapshot_id} — {snap.records} records, "
         f"{snap.chunks} chunks, {len(shards)} shard(s), hash {snap.hash[:23]}…")
     return snap
+
+
+FROZEN_KEY = "frozen_into"
+
+
+def mark_frozen(db_path, snapshot_id: str) -> None:
+    """The build this snapshot froze is done: the next `records build`
+    plans afresh (records.build). Without the mark, nothing ever cleared a
+    finished build's plan, and every later build resumed it — re-promoting
+    the same parts, so no revised or new record reached a later snapshot
+    (found 2026-10-12)."""
+    import sqlite3
+    con = sqlite3.connect(db_path)
+    try:
+        con.execute("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (FROZEN_KEY, snapshot_id))
+        con.commit()
+    finally:
+        con.close()
 
 
 # --------------------------------------------------------------------------

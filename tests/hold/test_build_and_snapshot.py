@@ -467,3 +467,46 @@ def test_a_re_issued_part_keeps_the_version_it_supersedes(isolated_config, tmp_p
     shard_mod.promote(other, stray, shard_dir=shard_dir)
     assert stray.read_bytes() == b"new" and not list(stray.parent.glob("00099.*.jsonl.zst")), \
         "bytes no snapshot lists are nobody's version: replaced"
+
+
+def test_next_months_build_re_issues_a_changed_part_and_keeps_the_old_one(
+        isolated_config, tmp_path, corpus_dir):
+    """The monthly update, end to end. Until 2026-10-12 a finished build's
+    plan was never cleared, so the next build resumed it and re-promoted the
+    same parts: no revised or new record ever reached a later snapshot."""
+    import os
+    from pathlib import Path
+    from app import db, discovery
+    from app.pack import records as pack_records
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    shard_dir = col.shard_dir_of(root, "gutenberg")
+    before = {s.path: (shard_dir / s.path).read_bytes() for s in snap.shards}
+    first = snap.shards[0]
+    uid = next(iter(pack_records.iter_records(shard_dir / first.path)))["uid"]
+    book = corpus_dir / uid.split(":")[1]
+    txt = next(book.glob("*.txt*"))
+    data = txt.read_bytes()
+    i = data.index(b"*** END OF")
+    txt.write_bytes(data[:i] + b"A paragraph revised upstream.\n\n" + data[i:])
+    os.utime(txt, (2_000_000_000, 2_000_000_000))
+    os.utime(book, (2_000_000_000, 2_000_000_000))       # rsync lands by rename: the folder moves too
+    coll = rec._local_collection(root, "gutenberg", col.read(root, "gutenberg"), corpus_dir=corpus_dir)
+    con = db.connect(coll)
+    try:
+        assert discovery.sync_collection(con, coll)["changed"] == 1
+    finally:
+        con.close()
+    said = []
+    rec.build(root, "gutenberg", corpus_dir=corpus_dir, records_per_shard=2, log=said.append)
+    assert any("planning afresh" in s for s in said)
+    assert (shard_dir / first.path).read_bytes() != before[first.path], "the changed part is re-issued"
+    kept = shard_dir / shard_mod.superseded_name(Path(first.path), "2026-08")
+    assert kept.read_bytes() == before[first.path], "and its 2026-08 version kept"
+    for path, old in before.items():
+        if path != first.path:
+            assert (shard_dir / path).read_bytes() == old, "an unchanged part comes out byte-identical"
+            assert not (shard_dir / shard_mod.superseded_name(Path(path), "2026-08")).exists()
+    snap2 = sn.create(root, "gutenberg", snapshot_id="2026-09", log=lambda *_: None)
+    assert snap2.shards[0].root != first.root and snap2.shards[0].path == first.path
