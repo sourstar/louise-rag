@@ -5,7 +5,7 @@ only be interpreted against the law in force at the time, so the corpus
 must answer "what did this article say in January 1980", and results not
 in force then must be excluded. Written for review before any code moves.
 
-**Status: proposal. Nothing implemented.** The acquisition today is
+**Reviewed 2026-10-12 — [`normattiva-multivigenza-review.md`](normattiva-multivigenza-review.md): the chain design of §1 and §4 is withdrawn there, with measurements (37 % of the codes' version transitions are shorter than a month; `as_of` withholds exactly the amended acts), and replaced by one record per Expression with validity resolved by key. This note stands as the record of the proposal. Status: proposal, superseded. Nothing implemented.** The acquisition today is
 `VIGENTE` where offered (`app/acquire/specs.py` `_NORMATTIVA`), which
 cannot answer the question at all.
 
