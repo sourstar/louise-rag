@@ -1074,6 +1074,29 @@ def cmd_embedder_run(a) -> int:
     return 0
 
 
+def cmd_embedder_tree_diff(a) -> int:
+    """`hold embedder tree-diff BEFORE AFTER [--json]` (vega.md §12): the
+    per-file lists two engine images are the digests of — read from VeGa
+    (`<VEGA_URL>/vega/trees/<image>`) for a digest, from a JSON file
+    otherwise — and what differs between them, path by path. Exit 0 when the
+    two are the same list, 1 when they differ, 2 when one cannot be read."""
+    from app import config
+    from app.vega import trees
+    try:
+        before = trees.read(a.before, vega_url=config.VEGA_URL)
+        after = trees.read(a.after, vega_url=config.VEGA_URL)
+    except (OSError, ValueError) as e:
+        print(f"louise: {e}", file=sys.stderr)
+        return 2
+    d = trees.diff(before, after)
+    if a.as_json:
+        _print(d)
+    else:
+        for line in trees.lines(d):
+            print(line)
+    return 0 if not (d["added"] or d["removed"] or d["changed"]) else 1
+
+
 def cmd_node_show(a) -> int:
     """`node show` (07 §7.3): state per collection, the current stage, the
     last round's cost, the overrides in force, the verbs running under the
@@ -3792,6 +3815,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--query", action="store_true", help="the query side's run")
     p.add_argument("--pair", action="store_true", help="probe in the pair form (09 §9.3)")
     p.set_defaults(fn=cmd_embedder_run)
+
+    p = everbs.add_parser("tree-diff",
+                          help="what differs between two backend trees — the per-file lists "
+                               "two engine images are the digests of, read from VeGa or from "
+                               "files — path by path (vega.md §12)")
+    p.add_argument("before", help="an engine image digest (read from VEGA_URL) or a JSON file")
+    p.add_argument("after", help="the other, the same way")
+    p.add_argument("--json", action="store_true", dest="as_json",
+                   help="the whole diff as JSON, entries included, instead of one line a path")
+    p.set_defaults(fn=cmd_embedder_tree_diff)
 
     p = everbs.add_parser("rebaseline",
                           help="accept a changed backend: re-record the probe baseline "

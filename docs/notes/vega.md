@@ -45,7 +45,12 @@ Louise ──POST /v1/embeddings (model vega-xyz, tagged inputs)──► LocalA
 - **The wrapper** refuses an input without a tag, strips it, forwards the
   bare text or pair to the real backend, and writes the receipt: the id,
   the run, the digest of the input it received and the digest of the
-  vector it returns (f32 little-endian). Then it returns the vector.
+  vector it returns (f32 little-endian). Then it returns the vector. At
+  each load it states the run and, beside it, the backend's **per-file
+  list** — what the engine's `image` is the digest of (`tree_manifest`) —
+  which VeGa keeps under that digest (`GET /vega/trees/<image>`) and
+  `hold embedder tree-diff` reads two of back, so a digest that moved names
+  its byte (§12, 2026-10-12).
 - **Louise** recomputes the vector digest from what LocalAI returned, reads
   the receipts of the batch from VeGa, and writes nothing unless every id
   has a receipt, the digests match, and the run is validated (03 §3.3). No
@@ -718,6 +723,24 @@ be diffed. Today's list is kept for the next one:
 `/root/dar-legal-it-tree-7b5d557e.json` on the node (8.7 MB, sha256
 59ee8039…). Worth adding: the wrapper writing that list beside each new run
 it states, so a drift names its byte the day it happens.
+
+**Built the same night (operator's "do it").** The wrapper's `tree_digest`
+is now H of `tree_manifest`, the list kept: after it publishes a run, the
+wrapper tells VeGa `{"kind": "tree", "image", "tree"}` once per tree and
+process (`ReceiptClient.publish_tree`, 30 s, megabytes over the socket —
+`MAX_LINE` is 64 MiB now), a failure logged and never a refusal of the
+load. VeGa takes a tree only under its own digest — `image` must be H of
+the list's canonical JSON, as a run must be H of its object — keeps it in
+its own file (`trees`, one row per distinct tree, INSERT OR IGNORE) and
+serves it read-only at `GET /vega/trees/<image>`. `hold embedder tree-diff
+BEFORE AFTER` (digests read from `VEGA_URL`, or JSON files such as the one
+above) prints the paths added, removed and changed, one line each, and
+exits 1 when they differ. An older VeGa refuses the message as an unknown
+kind, which the wrapper logs once; the run stands without the list. To
+land on the node: the receipts service (the `vega` service's image, its
+state file grows the table on start) BEFORE the wrappers, which are
+rebuilt and reinstalled (`build_vega_package.sh`), then each backend's
+next load tells its tree.
 
 **Left on the node, ours.**
 - Host `/tmp/vega-stage/` (99 MB, tmpfs): sources, the portable Python,

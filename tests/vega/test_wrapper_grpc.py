@@ -319,6 +319,14 @@ def test_an_upgraded_backend_is_a_new_run_from_its_next_load(make_node):
     assert node.vega_http.get(f"/vega/runs/{second}").json()["engine"]["image"] == \
         vw.tree_digest(node.real_run_sh.parent)
     assert files.reads == [os.path.realpath(node.real_run_sh.parent / "lib" / "libnew.so.1")]
+    # the per-file lists behind both runs are kept by VeGa, and their diff names the byte
+    from app.vega import trees
+    before = node.vega_http.get(f"/vega/runs/{first}").json()["engine"]["image"]
+    after = node.vega_http.get(f"/vega/runs/{second}").json()["engine"]["image"]
+    a, b = (node.vega_http.get(f"/vega/trees/{i}").json() for i in (before, after))
+    d = trees.diff(a, b)
+    assert set(d["added"]) == {"lib", "lib/libnew.so.1"} and not d["removed"] and not d["changed"]
+    assert d["added"]["lib/libnew.so.1"]["size"] == len(b"an upgrade")
 
 
 def test_no_vector_before_a_stated_load(make_node):

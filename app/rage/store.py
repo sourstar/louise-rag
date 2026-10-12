@@ -27,6 +27,13 @@ from typing import Any, Mapping
 
 _SCHEMA = ("CREATE TABLE IF NOT EXISTS runs ("
            "run_id TEXT PRIMARY KEY, object TEXT NOT NULL, first_stated INTEGER NOT NULL)")
+#: The per-file list a backend engine's `image` is the digest of, as the
+#: wrapper walked it (deploy/vega/vega_wrapper.py tree_manifest), keyed by that
+#: digest: canonical JSON bytes, megabytes each, one row per distinct tree — so
+#: a digest that moved is diffed file by file (vega.md §12). Same discipline as
+#: runs: the bytes are fixed by their digest, INSERT OR IGNORE, no read first.
+_TREES = ("CREATE TABLE IF NOT EXISTS trees ("
+          "image TEXT PRIMARY KEY, manifest BLOB NOT NULL, first_told INTEGER NOT NULL)")
 
 
 class RunStore:
@@ -35,6 +42,7 @@ class RunStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as con:
             con.execute(_SCHEMA)
+            con.execute(_TREES)
             con.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -52,3 +60,15 @@ class RunStore:
         with closing(self._connect()) as con:
             row = con.execute("SELECT object FROM runs WHERE run_id=?", (run_id,)).fetchone()
         return json.loads(row[0]) if row else None
+
+    def put_tree(self, image: str, manifest: bytes) -> None:
+        """The canonical JSON of the per-file list `image` names, as given."""
+        with closing(self._connect()) as con:
+            con.execute("INSERT OR IGNORE INTO trees VALUES (?,?,?)",
+                        (image, bytes(manifest), int(time.time())))
+            con.commit()
+
+    def get_tree(self, image: str) -> bytes | None:
+        with closing(self._connect()) as con:
+            row = con.execute("SELECT manifest FROM trees WHERE image=?", (image,)).fetchone()
+        return bytes(row[0]) if row else None

@@ -81,6 +81,11 @@ EMBED = "/backend.Backend/Embedding"
 #: seconds is a hung or absent service, and the call then fails UNAVAILABLE —
 #: a deferral to Louise, never a vector without its receipt.
 RECEIPT_TIMEOUT_S = 2.0
+#: The per-file list a tree digest hashes is told to the receipts service once
+#: per tree, after the run (vega.md §12: a drift names its byte the day it
+#: happens). Tens of thousands of entries, megabytes over a unix socket:
+#: seconds, not the receipt's two.
+TREE_TIMEOUT_S = 30.0
 #: The weights are hashed while the backend loads them; the load waits at most
 #: this long for the hash. 8 GB hash in about 5 s from a warm SSD (rage-over-
 #: localai §8.3); half an hour is a disk that is failing.
@@ -266,11 +271,13 @@ class FileDigests:
         return before.st_size, h.hexdigest()
 
 
-def tree_digest(root: Path, files: FileDigests | None = None) -> str:
-    """The digest of a backend's installed directory: a backend engine's
-    `image`, 09 §9.3's tree digest byte for byte (vega.md §4, §9).
+def tree_manifest(root: Path, files: FileDigests | None = None) -> dict[str, dict[str, Any]]:
+    """The per-file list a backend engine's `image` is the digest of — what
+    `tree_digest` hashes, kept so that a digest that moved can be diffed file
+    by file (vega.md §12: the wrapper tells it to the receipts service beside
+    each run it states; `hold embedder tree-diff` reads two of them back):
 
-        H( canonical JSON (09 §9.1) of { <path>: <entry>, ... } )
+        { <path>: <entry>, ... }
 
     over every entry below `root` (`root` itself excluded), walked without
     following symbolic links, except the top-level `metadata.json`
@@ -283,9 +290,7 @@ def tree_digest(root: Path, files: FileDigests | None = None) -> str:
       never followed;
     - a directory: {"type": "dir"}, an empty one included;
     anything else (a socket, a FIFO, a device) is refused. Owners, times and
-    the other mode bits are not in it. H is sha256, written `sha256:<hex>`, as
-    the weights digest of a directory is (app/rage/runs.py) — the form 09
-    §9.3's validator reads for an image. Unchanged files are not read again
+    the other mode bits are not in it. Unchanged files are not read again
     (`files`, a FileDigests)."""
     files = files if files is not None else FileDigests()
     root = Path(root)
@@ -318,11 +323,27 @@ def tree_digest(root: Path, files: FileDigests | None = None) -> str:
                                           f"symbolic link: the backend's tree has no digest")
 
     walk(str(root), "")
+    return manifest
+
+
+def manifest_digest(manifest: Mapping[str, Any], root: Path | str = "") -> str:
+    """`tree_digest` of a manifest already walked."""
     try:
-        return digest(canonical_json(manifest))
+        return digest(canonical_json(dict(manifest)))
     except UnicodeEncodeError:
         raise loadopts.Unstatable(f"{root}: a link target that is not UTF-8 has no "
                                   f"canonical form") from None
+
+
+def tree_digest(root: Path, files: FileDigests | None = None) -> str:
+    """The digest of a backend's installed directory: a backend engine's
+    `image`, 09 §9.3's tree digest byte for byte (vega.md §4, §9).
+
+        H( canonical JSON (09 §9.1) of <the tree_manifest> )
+
+    H is sha256, written `sha256:<hex>`, as the weights digest of a directory
+    is (app/rage/runs.py) — the form 09 §9.3's validator reads for an image."""
+    return manifest_digest(tree_manifest(root, files), root)
 
 
 def short_build(tree: str) -> str:
@@ -551,6 +572,7 @@ class ReceiptClient:
         self._sock: socket.socket | None = None
         self._reader: Any = None
         self._told: str | None = None
+        self._trees_told: set[str] = set()
         self._lock = threading.Lock()
 
     def close(self) -> None:
@@ -616,6 +638,34 @@ class ReceiptClient:
     def deliver(self, receipt: Mapping[str, str], run_id: str, run: Mapping[str, Any]) -> None:
         with self._lock:
             self._send({"kind": "receipt", **receipt}, run_id, run)
+
+    def publish_tree(self, image: str, manifest: Mapping[str, Any],
+                     timeout_s: float = TREE_TIMEOUT_S) -> None:
+        """The per-file list `image` is the digest of (`tree_manifest`), told
+        once per tree and process; the service keeps it under that digest and
+        verifies it is the list the digest names. A service that does not know
+        the message (an older one) refuses it: said once in the log, never
+        retried — the run stands on its own, the list is what makes a drift
+        diffable."""
+        with self._lock:
+            if image in self._trees_told:
+                return
+            deadline = time.monotonic() + timeout_s
+            last: BaseException | None = None
+            while time.monotonic() < deadline:
+                try:
+                    reply = self._exchange({"kind": "tree", "image": image,
+                                            "tree": dict(manifest)}, deadline)
+                    if not reply["ok"]:
+                        raise ReceiptRefused(str(reply.get("error")))
+                    self._trees_told.add(image)
+                    return
+                except (OSError, ValueError) as e:
+                    last = e
+                    self.close()
+                    time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+            why = f"{type(last).__name__}: {last}" if last else "no time left"
+            raise Unavailable(f"the tree was not acknowledged within {timeout_s:g} s ({why})")
 
 
 # ---- the child: the real backend --------------------------------------------------------
@@ -708,10 +758,17 @@ class Gate:
                 t.start()
                 return t
 
+            def tree() -> str:
+                # the list is kept beside the digest: told to the receipts
+                # service once the run is, so a digest that moved can be diffed
+                manifest = tree_manifest(self.backend.directory, self.files)
+                hashed["manifest"] = manifest
+                return manifest_digest(manifest, self.backend.directory)
+
             # both while the backend loads: the weights it reads, the tree it runs
             hashers = {
                 "weights": hashing("weights", lambda: self.hash_weights(Path(canon.weights_path))),
-                "tree": hashing("tree", lambda: tree_digest(self.backend.directory, self.files)),
+                "tree": hashing("tree", tree),
             }
             answer = forward(raw)
             if not self.pb.Result.FromString(answer).success:
@@ -752,8 +809,15 @@ class Gate:
             try:
                 self.receipts.publish(run_id, run)
             except (Unavailable, ReceiptRefused) as e:
-                # told again before the first receipt of every connection
+                # told again before the first receipt of every connection; the
+                # tree rides behind the run, so it waits for the next load too
                 log(f"{self.backend.name}: the run is not published yet: {e}")
+            else:
+                try:
+                    self.receipts.publish_tree(hashed["tree"], hashed["manifest"])
+                except (Unavailable, ReceiptRefused) as e:
+                    # the run stands without it; the next load tells it again
+                    log(f"{self.backend.name}: the tree's file list is not kept by VeGa: {e}")
             return answer
 
     def embedding(self, raw: bytes, forward: Callable[[bytes], bytes]) -> bytes:

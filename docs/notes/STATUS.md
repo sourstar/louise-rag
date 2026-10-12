@@ -266,6 +266,20 @@ before the write), the recipe names the engine served now. The wrapper
 build left its stdlib uncompiled, fixed in 24b9faf. `vega-dar-legal-it`
 is not pinned yet.
 
+**VeGa keeps the tree behind a run (the same night, operator's "do it").**
+The drift could not be diagnosed after the fact because VeGa held a run's
+tree digest and not the list it hashed. Now the wrapper's `tree_digest` is H
+of `tree_manifest`, and after it publishes a run it tells VeGa the list once
+per tree (`publish_tree`; vega.md §2, §12); VeGa takes it only under its own
+digest, keeps it in its file (`trees`) and serves `GET /vega/trees/<image>`;
+`hold embedder tree-diff BEFORE AFTER` names the paths added, removed and
+changed (07 §7.3). Tests: tests/vega (service, wrapper logic, trees).
+NOT ON THE NODE YET: the receipts service (the `vega` service's image, a
+Louise image tag) goes first, then the wrappers are rebuilt and reinstalled
+with `deploy/vega/stage/build_vega_package.sh` (`vega-llama-cpp`,
+`vega-louise-medcpt-article-ov`, `vega-louise-dar-legal-it`), and each
+backend's next load tells its tree — the operator's, as every deploy is.
+
 
 ### 2026-10-05: the side branches merged into main
 

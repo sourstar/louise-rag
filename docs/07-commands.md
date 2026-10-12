@@ -128,6 +128,7 @@ louise hold
               delta <collection> <from> <to>                           what changed between two snapshots
               list <collection>
   embedder    check <collection>                                       the calibration gate (§3.3) against the run the endpoint states; a pass validates it and keeps its signed statement in `state/`
+  embedder    tree-diff <before> <after>                               what differs between two backend trees, path by path: digests read from VEGA_URL or JSON files (vega.md §12); exit 1 when they differ
               benchmark <collection>                                   tokens per second on the calibration set
               calibrate --encoder-weights D --engine FILE --against FILE … --ctx N [--set SHA256 | --pairs FILE]
                                                                        the tolerance a space can bear, measured between the reference engine and each --against

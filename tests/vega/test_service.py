@@ -160,3 +160,51 @@ def test_the_http_api_reads_receipts_and_runs(tmp_path):
     many = ",".join(f"{i:032x}" for i in range(service.MAX_IDS + 1))
     assert http.get("/vega/receipts", params={"ids": many}).status_code == 400
     assert http.post("/vega/receipts").status_code == 405, "read-only"
+
+
+# ---- the trees: a backend's per-file list under its own digest (vega.md §12) ----
+
+TREE = {"run.sh": {"type": "file", "exec": True, "size": 10, "sha256": "ab" * 32},
+        "lib": {"type": "dir"},
+        "lib/libx.so.1": {"type": "link", "target": "libx.so.1.2.3"}}
+IMAGE = "sha256:" + __import__("hashlib").sha256(canonical_json(TREE)).hexdigest()
+
+
+def test_a_tree_is_kept_under_its_own_digest_and_read_back(tmp_path):
+    """`image` must be H of the list's canonical JSON — the wrapper's
+    `tree_digest` — or the list is not the one that digest names."""
+    runs = Runs(RunStore(tmp_path / "runs.sqlite"))
+    with pytest.raises(Refused, match="not H of the tree"):
+        runs.put_tree("sha256:" + "00" * 32, TREE)
+    with pytest.raises(Refused, match="non-empty object"):
+        runs.put_tree(IMAGE, {})
+    with pytest.raises(Refused, match="type is one of"):
+        runs.put_tree(IMAGE, {"x": {"type": "socket"}})
+    with pytest.raises(Refused, match="is a digest"):
+        runs.put_tree("not-a-digest", TREE)
+    runs.put_tree(IMAGE, TREE)
+    assert runs.get_tree(IMAGE) == TREE
+    assert runs.get_tree("sha256:" + "00" * 32) is None
+    again = Runs(RunStore(tmp_path / "runs.sqlite"))
+    assert again.get_tree(IMAGE) == TREE, "kept across a restart, like a run"
+    runs.put_tree(IMAGE, TREE)
+    assert again.get_tree(IMAGE) == TREE, "the same bytes again are the same row"
+
+
+def test_the_intake_takes_a_tree_message_and_the_http_api_serves_it(tmp_path):
+    receipts, runs = ReceiptStore(), Runs(RunStore(tmp_path / "r.sqlite"))
+    assert service.handle(canonical_json({"kind": "tree", "image": IMAGE, "tree": TREE}),
+                          receipts, runs) == {"ok": True}
+    bad = service.handle(canonical_json({"kind": "tree", "image": IMAGE, "tree": TREE, "x": 1}),
+                         receipts, runs)
+    assert bad["ok"] is False and bad["code"] == service.INVALID
+    wrong = service.handle(canonical_json({"kind": "tree", "image": "sha256:" + "00" * 32,
+                                           "tree": TREE}), receipts, runs)
+    assert wrong["ok"] is False and "not H of the tree" in wrong["error"]
+    app = FastAPI()
+    app.include_router(service.router(receipts, runs))
+    http = TestClient(app)
+    assert http.get(f"/vega/trees/{IMAGE}").json() == TREE
+    assert http.get("/vega/trees/sha256:" + "00" * 32).status_code == 404
+    assert http.get("/vega/trees/nope").status_code == 404
+    assert service.MAX_LINE >= 16 << 20, "a tree's list is megabytes: the line limit takes it"

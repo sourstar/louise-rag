@@ -532,3 +532,51 @@ def test_a_service_that_hangs_is_unavailable_within_the_bound(tmp_path):
         c.deliver(_receipt(1), RUN_ID, RUN)
     assert time.monotonic() - t0 < 1.5
     server.close()
+
+
+# ---- the tree's per-file list, told to VeGa beside the run (vega.md §12) --------------
+
+def test_the_tree_manifest_is_what_the_digest_hashes(tmp_path):
+    """`tree_digest` is H of `tree_manifest`'s canonical JSON, byte for byte,
+    so the list VeGa keeps under an image is the list that image names."""
+    from app.hold.codex import canonical_json, digest
+    d = _tree(tmp_path)
+    manifest = vw.tree_manifest(d)
+    assert set(manifest) == {"bin", "lib", "lib/libx.so.1", "lib/libx.so.1.2.3", "run.sh"}
+    assert manifest["lib"] == {"type": "dir"}
+    assert manifest["lib/libx.so.1"] == {"type": "link", "target": "libx.so.1.2.3"}
+    assert manifest["bin"]["type"] == "file" and manifest["bin"]["exec"] is True
+    assert digest(canonical_json(manifest)) == vw.tree_digest(d) == vw.manifest_digest(manifest)
+    (d / "lib" / "libnew.so").write_bytes(b"an upgrade")
+    after = vw.tree_manifest(d)
+    assert set(after) - set(manifest) == {"lib/libnew.so"}
+    assert vw.manifest_digest(after) != vw.manifest_digest(manifest)
+
+
+def test_the_receipts_client_tells_vega_the_tree_once_and_vega_keeps_it(tmp_path, vega):
+    """`publish_tree` against the real intake: kept under its digest, readable
+    back; told once per tree and process; a list that is not what the digest
+    names is refused, never kept."""
+    d = _tree(tmp_path)
+    manifest = vw.tree_manifest(d)
+    image = vw.manifest_digest(manifest)
+    c = vw.ReceiptClient(vega.socket)
+    c.publish_tree(image, manifest)
+    assert vega.runs.get_tree(image) == manifest
+    sent = []
+    original = c._exchange
+    c._exchange = lambda msg, deadline: sent.append(msg) or original(msg, deadline)
+    c.publish_tree(image, manifest)
+    assert sent == [], "the same tree again is not sent again"
+    with pytest.raises(vw.ReceiptRefused, match="not H of the tree"):
+        c.publish_tree("sha256:" + "00" * 32, manifest)
+    assert vega.runs.get_tree("sha256:" + "00" * 32) is None
+    c.close()
+
+
+def test_without_a_receipts_service_the_tree_is_a_deferral_of_its_own(tmp_path):
+    d = _tree(tmp_path)
+    manifest = vw.tree_manifest(d)
+    c = vw.ReceiptClient(tmp_path / "nobody.sock")
+    with pytest.raises(vw.Unavailable, match="tree was not acknowledged"):
+        c.publish_tree(vw.manifest_digest(manifest), manifest, timeout_s=0.3)

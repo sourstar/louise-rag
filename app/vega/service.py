@@ -6,6 +6,7 @@ descriptions from the wrappers, and Louise reads them.
              One JSON object a line each way, canonical JSON (09 §9.1):
                → {"kind": "run", "run_id": …, "run": {driver, engine, weights}}
                → {"kind": "receipt", "id", "run_id", "input_digest", "vector_digest"}
+               → {"kind": "tree", "image": …, "tree": {<path>: <entry>, …}}
                ← {"ok": true}  or  {"ok": false, "code": …, "error": …}
              A receipt is acknowledged only once it is stored: the wrapper
              returns its vector only after that answer.
@@ -13,6 +14,8 @@ descriptions from the wrappers, and Louise reads them.
                GET /vega/receipts?ids=a,b,…   the receipts found; a missing
                                               one is simply absent
                GET /vega/runs/<run_id>        09 §9.12's run object
+               GET /vega/trees/<image>        the per-file list that engine
+                                              image is the digest of
 
 A RUN IS ACCEPTED ONLY UNDER ITS OWN NAME: `run_id` must be `H` of the
 description's canonical JSON (app/rage/runs.py, the one definition), so a run
@@ -21,6 +24,14 @@ read here is the run a receipt names. Runs are kept across restarts
 written long after the answer that named its run (09 §9.12). A receipt naming
 a run this service has never been told is refused with `unknown-run`; the
 wrapper tells it the run and sends the receipt again.
+
+A TREE IS KEPT UNDER ITS OWN DIGEST, THE SAME WAY: `image` must be `H` of the
+list's canonical JSON — the wrapper's `tree_manifest`, what a backend
+engine's `image` hashes (09 §9.3) — so the list read back is the one the run
+names, and two runs whose `image` differs can be diffed file by file
+(vega.md §12: a tree digest once moved with no file changed, and the list it
+was computed from no longer existed). One row per distinct tree, megabytes
+each, told once per tree by a wrapper; `MAX_LINE` is sized for it.
 
 RECEIPTS ARE KEPT A BOUNDED TIME IN A BOUNDED STORE (`RECEIPT_TTL_S`,
 `MAX_RECEIPTS`), in memory: a receipt is read once, seconds after its answer.
@@ -48,7 +59,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 
-from ..hold.codex import CodexError, canonical_json
+from ..hold.codex import CodexError, canonical_json, digest
 from ..rage import runs as rage_runs
 from ..rage.store import RunStore
 from .tag import DIGEST
@@ -63,8 +74,12 @@ RECEIPT_TTL_S = 600.0
 #: second (bge-m3 on the card, 10,700 tokens/s, rage-over-localai §12), about
 #: 21,000 in ten minutes: five times that headroom.
 MAX_RECEIPTS = 100_000
-#: Longest intake line: a run description is about 2 KB, a receipt 300 bytes.
-MAX_LINE = 1 << 20
+#: Longest intake line: a run description is about 2 KB, a receipt 300 bytes,
+#: a tree's per-file list megabytes (DAR-legal-it's backend: 44,710 entries,
+#: 8.7 MB on 2026-10-12). The socket is the dataset's two containers' alone.
+MAX_LINE = 64 << 20
+#: What a tree's entry may be (deploy/vega/vega_wrapper.py tree_manifest).
+TREE_TYPES = ("file", "dir", "link")
 #: Most ids one read may ask for: a batch is at most a few hundred inputs.
 MAX_IDS = 1024
 #: The socket's mode. The access control is the dataset: only LocalAI's
@@ -176,6 +191,31 @@ class Runs:
     def get(self, run_id: str) -> dict[str, Any] | None:
         return self.store.get(run_id)
 
+    def put_tree(self, image: Any, tree: Any) -> None:
+        """The per-file list `image` is the digest of, taken only under its own
+        digest: `image` must be `H` of the list's canonical JSON, the one
+        definition the wrapper's `tree_digest` uses (09 §9.3)."""
+        if not isinstance(image, str) or not DIGEST.fullmatch(image):
+            raise Refused(INVALID, "a tree's image is a digest, sha256:<64 hex>")
+        if not isinstance(tree, dict) or not tree:
+            raise Refused(INVALID, "a tree is a non-empty object of path: entry")
+        for path, entry in tree.items():
+            if not isinstance(entry, dict) or entry.get("type") not in TREE_TYPES:
+                raise Refused(INVALID, f"a tree entry is an object whose type is one of "
+                                       f"{', '.join(TREE_TYPES)} ({path!r} is not)")
+        try:
+            computed = digest(canonical_json(tree))
+        except (CodexError, UnicodeEncodeError, TypeError) as e:
+            raise Refused(INVALID, f"the tree has no canonical form: {e}") from None
+        if image != computed:
+            raise Refused(INVALID, "image is not H of the tree's canonical JSON: this is not "
+                                   "the list that digest names (09 §9.3)")
+        self.store.put_tree(computed, canonical_json(tree))
+
+    def get_tree(self, image: str) -> dict[str, Any] | None:
+        raw = self.store.get_tree(image)
+        return json.loads(raw) if raw is not None else None
+
 
 # ---- the intake -----------------------------------------------------------------
 
@@ -229,8 +269,12 @@ def handle(line: bytes, receipts: ReceiptStore, runs: Runs) -> dict[str, Any]:
                 raise Refused(UNKNOWN_RUN, "the receipt names a run this service was never "
                                            "told: send the run first")
             receipts.put(r)
+        elif kind == "tree":
+            if set(msg) != {"kind", "image", "tree"}:
+                raise Refused(INVALID, "a tree message is exactly kind, image, tree")
+            runs.put_tree(msg["image"], msg["tree"])
         else:
-            raise Refused(INVALID, "a message's kind is run or receipt")
+            raise Refused(INVALID, "a message's kind is run, receipt or tree")
     except Refused as e:
         return {"ok": False, "code": e.code, "error": str(e)}
     return {"ok": True}
@@ -322,6 +366,13 @@ def router(receipts: ReceiptStore, runs: Runs) -> APIRouter:
         if run is None:
             raise HTTPException(404, "VeGa was never told this run")
         return run
+
+    @api.get("/vega/trees/{image}")
+    def read_tree(image: str) -> dict[str, Any]:
+        tree = runs.get_tree(image) if DIGEST.fullmatch(image) else None
+        if tree is None:
+            raise HTTPException(404, "VeGa was never told this tree's file list")
+        return tree
 
     return api
 
