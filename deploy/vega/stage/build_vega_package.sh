@@ -60,7 +60,13 @@ import grpc, google.protobuf, backend_pb2, backend_pb2_grpc, grpc_auth, parent_w
 import vega_wrapper
 print('imports ok: grpcio', grpc.__version__, 'protobuf', google.protobuf.__version__)"
 find "$P" -name __pycache__ -type d -prune -exec rm -rf {} +
-# compiled once here, so nothing is written into the package at run time
-"$P/venv/bin/python" -m compileall -q -j 0 "$P" -x '/(python|venv)/' >/dev/null
+# compiled once here, so nothing is written into the package at run time —
+# EVERYTHING, the portable stdlib and the venv included, as
+# build_louise_backend.sh does. Excluding them (until 2026-10-12) let Python
+# write their .pyc files at the first loads, so a new wrapper's tree — and
+# the engine identity hashed from it — moved under the first Codex pinned to
+# it (vega-louise-dar-legal-it: run 85b9fa1a… became 651c4ec0…). A few
+# stdlib test files do not compile, as everywhere.
+"$P/venv/bin/python" -m compileall -q -j 0 "$P" >/dev/null 2>&1 || true
 find "$P" -path "$P/run" -prune -o -exec chown 568:0 {} +
 du -sh "$P"
