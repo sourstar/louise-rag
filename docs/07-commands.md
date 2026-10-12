@@ -815,7 +815,11 @@ and the search takes, per collection, the newest snapshot of the chain
 whose cutoff is at or before it (05 §5.1) — a date after every cutoff
 therefore names the chain's newest snapshot, and one before every cutoff
 names none, which the response reports for that collection rather than
-answering from a later one. `<record-id>` is a uid,
+answering from a later one. For a collection whose Codex `profile`
+declares a validity axis (09 §9.3; *amended 2026-10-12*) the date selects
+instead, in the newest held snapshot, the version of each Work whose
+validity covers it — the start on the record, the end derived as the next
+version's start, the day a version takes force belonging to it (05 §5.1). `<record-id>` is a uid,
 `<plugin>:<native_id>` (02 §2.3). `<key>` is `ed25519:` and 64 hex
 characters (09 §9.2). `--shard` takes `<slice>/<n>` —
 `year=1975-1979/00003` — because part numbers restart per slice; the

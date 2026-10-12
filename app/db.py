@@ -245,6 +245,26 @@ CREATE TABLE IF NOT EXISTS fetch_files (
   PRIMARY KEY (source_id, rel_path)
 );
 CREATE INDEX IF NOT EXISTS idx_fetch_files_pending ON fetch_files(source_id, fetch_done);
+-- One record per Expression (app/validity.py; 05 §5.1 amended 2026-10-12):
+-- the version table of a collection whose Codex profile declares a
+-- validity axis. `valid_to` is DERIVED — the next version's start — and
+-- lives here and in the index columns, never in a record (02 §2.3);
+-- `shown` marks the Work's latest version that has text; `synced` = 0 marks
+-- a row whose index columns may lag what is here.
+CREATE TABLE IF NOT EXISTS validity (
+  uid TEXT PRIMARY KEY,
+  native_id INTEGER NOT NULL,
+  work TEXT NOT NULL,
+  valid_from INTEGER NOT NULL,
+  valid_to INTEGER,
+  has_text INTEGER NOT NULL DEFAULT 0,
+  in_force INTEGER,
+  shown INTEGER NOT NULL DEFAULT 0,
+  synced INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_validity_work ON validity(work, valid_from, native_id);
+CREATE INDEX IF NOT EXISTS idx_validity_native ON validity(native_id);
+CREATE INDEX IF NOT EXISTS idx_validity_unsynced ON validity(synced, native_id);
 """
 
 class ManifestConnection(sqlite3.Connection):

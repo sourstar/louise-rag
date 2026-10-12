@@ -108,6 +108,12 @@ def _rdf_one(con, row, collection, plugin, now: int, meta: dict | None = None) -
         "work=?,rdf_done=1,updated_at=? WHERE uid=?",
         (meta["title"], meta["authors"], meta["lang"], meta["subjects"],
          meta["bookshelves"], plugin_io.work_identity(meta), now, row["uid"]))
+    if meta.get("validity"):
+        # one record per Expression (app/validity.py): this version joins its
+        # Work's chain; a neighbour whose end or `shown` moved has its stage
+        # marks reset here, in this transaction, so its index rows follow
+        from app import validity
+        validity.record(con, row["uid"], int(row["native_id"]), meta["validity"])
     # The catalog index's row (app/catalog.py), keyed on the document's
     # rowid and written by the caller before the marks commit. (The SQLite
     # FTS5 catalog it replaced was written here until 2026-09-19.)
@@ -395,8 +401,12 @@ def stage_fts(con, row, collection) -> None:
         batch.append((peer, peer_chunks))
         n_chunks += len(peer_chunks)
 
-    fts.index_books(((r["lang"], int(r["native_id"]), ch) for r, ch in batch),
-                     collection)
+    # the validity columns of a versioned collection (app/validity.py), read
+    # before the lock like every other load; `{}` for every other collection
+    from app import validity
+    cols = validity.columns_for(con, collection, [int(r["native_id"]) for r, _ in batch])
+    fts.index_books(((r["lang"], int(r["native_id"]), ch, cols.get(int(r["native_id"])))
+                     for r, ch in batch), collection)
 
     # the tantivy commit landed; only the tags and marks remain — SQLite
     # writes, seconds for a batch. THIS is where the write lock begins
@@ -454,9 +464,17 @@ def stage_embed(con, row, collection) -> None:
         # 5.3 h of encoder time, and "finish the current unit" has to mean
         # something shorter than that (invariant 2 — smaller where a
         # document is not possible). What is written stays written.
+        from app import validity
+        cols = validity.columns_for(con, collection, [int(row["native_id"])]).get(int(row["native_id"]))
         embeddings.upsert_book(int(row["native_id"]), row["lang"], chunks,
                                collection, lock_con=con, stop=_embed_stop,
-                               reuse=embeddings.may_reuse(row), counts=counts)
+                               reuse=embeddings.may_reuse(row), counts=counts,
+                               columns=cols)
+        if cols:
+            # a document whose every vector was kept rewrote no row: the two
+            # columns follow the version table in place (app/validity.py)
+            embeddings.sync_columns(int(row["native_id"]), cols, collection, lock_con=con)
+            validity.mark_synced(con, [int(row["native_id"])])
     finally:
         stats.recorder().set_in_flight(collection.name, 0)
     # Timed around the encoder call only — not around _load_chunks, and not
@@ -1837,6 +1855,14 @@ def _maintain_ask_indexes(con, collection) -> bool:
                                  stop=_stop.is_set,
                                  log=lambda m: db.log_event(con, "warn", "ask", m[:400]))
         did = did or bool(built)
+        try:
+            # app/validity.py: the vector table's validity columns of rows the
+            # embed stage did not rewrite (embed off, an import-only copy)
+            from app import validity
+            synced = validity.sync_vectors(con, collection, lock_con=con)
+            did = did or bool(synced)
+        except Exception as e:   # noqa: BLE001 — one index, not the maintainer
+            db.log_event(con, "warn", "ask", f"validity columns: {type(e).__name__}: {e}"[:300])
         if built:
             db.log_event(con, "info", "ask", f"facets counted for snapshot {snap.snapshot_id}: {', '.join(built)}")
     except Exception as e:   # noqa: BLE001

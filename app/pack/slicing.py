@@ -89,6 +89,28 @@ def single_slice(doc: CanonicalDoc, native_id: int) -> str:
     return "all"
 
 
+_SLICE_TOKEN = re.compile(r"[^A-Za-z0-9_\-]+")
+
+
+def _normattiva_type(member_dir: str) -> str:
+    """`LEGGE COSTITUZIONALE_19480226_3` → `LEGGE_COSTITUZIONALE`: the act
+    type the origin files the member under, as a safe slice segment."""
+    from ..plugins.normattiva.source import member_dir_type
+    tok = _SLICE_TOKEN.sub("_", member_dir_type(member_dir)).strip("_")
+    return tok or "unknown"
+
+
+def normattiva_slice(doc: CanonicalDoc, native_id: int) -> str:
+    """normattiva-multivigenza-review.md §3.7: the act type the origin files
+    the member under, and the year the version came into force — the id's
+    high digits (02 §2.2's monotonic prefix), so `slice_hint` answers from
+    the manifest row alone and agrees with this by construction."""
+    x = doc.extra or {}
+    year = str(x.get("vigenza_from") or "")[:4]
+    return (f"type={_normattiva_type(str(x.get('member_dir') or ''))}"
+            f"/vig={year if year.isdigit() else 'unknown'}")
+
+
 SCHEMES: dict[str, SliceScheme] = {
     "pubmed": SliceScheme(
         keys=("year",), records_per_shard=30_000,
@@ -106,6 +128,16 @@ SCHEMES: dict[str, SliceScheme] = {
         keys=("lang",), records_per_shard=50,
         describe={"keys": ["lang"]},
         slice_of=gutenberg_slice),
+    # one record per Expression, parts of about 50 versions: the codes run
+    # to 400 articles a version and a royal decree to four, so the 7,000-chunk
+    # target of 02 §2.3 is met in the middle and missed at both ends — one
+    # `shard_records` per collection is the format's (review §3.7, §7)
+    "normattiva": SliceScheme(
+        keys=("type", "vig"), records_per_shard=50,
+        describe={"keys": ["type", "vig"],
+                  "type": {"field": "extra.member_dir", "rule": "the act type the origin files the member under"},
+                  "vig": {"field": "extra.vigenza_from", "bin": "year"}},
+        slice_of=normattiva_slice),
 }
 
 DEFAULT_SCHEME = SliceScheme(keys=(), records_per_shard=10_000,
@@ -129,6 +161,11 @@ def slice_hint(plugin_name: str, row) -> str | None:
         if plugin_name == "gutenberg":
             lang = row["lang"] if "lang" in row.keys() else None
             return f"lang={lang}" if lang else None
+        if plugin_name == "normattiva":
+            from ..plugins.normattiva.source import split_locator
+            _, member = split_locator(row["path"])
+            year = int(row["native_id"]) // 10**9 // 10000
+            return f"type={_normattiva_type(member.split('/', 1)[0])}/vig={year:04d}"
         if plugin_name == "pubmed":
             from ..plugins.pubmed import pack as pubmed_pack
             from ..plugins.pubmed.source import split_locator

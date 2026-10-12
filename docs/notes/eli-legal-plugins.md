@@ -3,7 +3,13 @@
 **Status: §6's rules BUILT 2026-09-14 as `app/plugins/eli.py`, with
 Normattiva the first plugin on it (operator's instruction); the manifest
 block of §5.3 is not built (a wire-format change). See
-[`STATUS.md`](STATUS.md), "Normattiva on a generic ELI layer".** Originally:
+[`STATUS.md`](STATUS.md), "Normattiva on a generic ELI layer".**
+**Amended 2026-10-12 (operator's decision, normattiva-multivigenza-review.md
+§3–§4): the RECORD pins the Expression, not the snapshot — one record per
+version of an act, its id sorted by the start of validity, the validity
+resolved by key; the snapshot keeps 02 §2.2's meaning, when the origin's
+state was held. §5.1's resolution and §6's rule 2 are amended below;
+rule 7's key is `in_force`, as 09 §9.5 names it.** Originally:
 PROPOSAL for evaluation.
 Written 2026-08-26 on the operator's instruction to treat **ELI** (European
 Legislation Identifier) as the general shape for legal plugins covering EU
@@ -165,6 +171,16 @@ versions of one article into the same RRF list (`gazzetta-plugin.md` §6's
 rejected option (b)). Making it the Work URI and letting content drift is
 what the current design does — and it is unreproducible, which is the open
 question that document recorded as §12.7.
+
+**Amended 2026-10-12:** the resolution below was measured against the
+multivigente archive and withdrawn — a snapshot chain holds the state at
+its cutoffs only, and 6.7 % of all version transitions (37 % in the codes)
+are shorter than a month (normattiva-multivigenza-review.md §1–§2). The
+record pins the Expression: `uid` names one version of one Work, the Work
+URI stays in `extra.eli_work` (and in `keys` once registered), and `--as-of`
+selects by validity. The paragraphs below stand as the record of the
+earlier reasoning; what survives of it is rule 2 — the Expression is read
+back from what the origin returned.
 
 **The resolution, and it is a genuinely good one:** `uid` is the **Work**
 URI, and the collection's **`snapshot` pins the Expression**. The pack
@@ -386,10 +402,13 @@ when all of the following hold:
    implementation designates as guaranteeing uniqueness, not a
    human-readable alias that may resolve to several acts (§3). Record the
    alias, URN:NIR and any local id in `keys`.
-2. **The Expression is pinned by the collection, not by the calendar**, and
-   **read back from the response**: the snapshot names the requested
-   point-in-time, the recorded Expression is the `version` +
-   `version_date` the origin returns (§5.1).
+2. **The Expression is pinned by the record** (*amended 2026-10-12*), one
+   record per version of a Work, its id sorted by the start of validity,
+   and **read back from the response**: the recorded Expression is the
+   origin's own identifier of the version (`ORIGINAL`, `CONSOLIDATED/<date>`),
+   never a request parameter and never an `FRBRExpression` date, which the
+   origin leaves stale. The snapshot pins when the versions were held
+   (02 §2.2), and `--as-of` selects by validity (05 §5.1, amended).
 3. **`native_id` is derived from the unique Work key** — hashed where that
    key is not numeric — **and collision-checked at discovery**, never
    trusted (§5.2). Type codes come from the origin's published SKOS
@@ -400,7 +419,9 @@ when all of the following hold:
 5. **The ELI date set and type/number go into `extra` under fixed keys**
    (§5.5).
 6. **Relations are `RefLink`s named after ELI properties** (§5.4).
-7. **Force-status is metadata, never a tombstone** (§5.7).
+7. **Force-status is metadata, never a tombstone** (§5.7), under the key
+   09 §9.5 names, `in_force` (*amended 2026-10-12*: the plugin wrote
+   `eli_in_force`).
 8. **The manifest declares its ELI profile** — jurisdiction, URI template,
    ontology version, pinned expression (§5.3).
 

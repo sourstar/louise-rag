@@ -136,7 +136,8 @@ def run_search(collection_names: list[str] | None, query: str, k: int, mode: str
                translate: bool, verify: bool = False,
                rerank_depth: int = retrieval.RERANK_TOP_N,
                all_languages: bool = False, private: bool = False,
-               filters: dict | None = None, show_in: str | None = None) -> dict:
+               filters: dict | None = None, show_in: str | None = None,
+               as_of: int | None = None) -> dict:
     """`verify` opts this query into blocking verify-on-use: every imported
     chunk among the results is recomputed locally before the answer is given
     (architecture-v2.md §6 T4). Off by default — it costs an embed call per
@@ -167,7 +168,7 @@ def run_search(collection_names: list[str] | None, query: str, k: int, mode: str
         result = retrieval.search(con, query, k=k, mode=mode, translate=translate,
                                    collection=participants[0], rerank_depth=rerank_depth,
                                    all_languages=all_languages,
-                                   book_ids=admitted.get(participants[0].name), **shown)
+                                   book_ids=admitted.get(participants[0].name), **shown, **({"as_of": as_of} if as_of is not None else {}))
         if verify:
             cancel.checkpoint()            # an embed call per unverified chunk
             result["verification"] = _verify_hits(con, participants[0], result["hits"])
@@ -178,7 +179,7 @@ def run_search(collection_names: list[str] | None, query: str, k: int, mode: str
                                          translate=translate, rerank_depth=rerank_depth,
                                          all_languages=all_languages,
                                          book_ids_for=(lambda c: admitted.get(c.name)) if restrict else None,
-                                         **shown)
+                                         **shown, **({"as_of": as_of} if as_of is not None else {}))
     if withheld:
         result["withheld"] = withheld
     if verify:

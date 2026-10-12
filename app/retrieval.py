@@ -542,7 +542,8 @@ def _best_rank(lists: list[list[dict]], limit: int) -> list[dict]:
 
 def _search_one_collection(con, collection, query: str, k: int, mode: str, translate: bool,
                             entity_ids: list[str], plan: LanguagePlan | None = None,
-                            depth: int = 0, book_ids: set[int] | None = None) -> dict:
+                            depth: int = 0, book_ids: set[int] | None = None,
+                            as_of: int | None = None) -> dict:
     """catalog + fts fan-out + dense + intra-collection RRF + entity boost —
     the per-collection core, extracted so search() (one collection) and
     federated_search() (N collections) share identical logic. `plan` is the
@@ -566,6 +567,14 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
     # the restriction reaches a leg only when there is one: an unfiltered
     # search calls the legs exactly as before
     restrict = {"book_ids": sorted(book_ids)} if book_ids else {}
+    # 05 §5.1 (amended 2026-10-12), app/validity.py: a versioned collection's
+    # legs see one version per Work — the latest text, or the version in
+    # force as of `as_of` — by a column range; every other collection sees
+    # no window at all
+    from app import validity as validity_mod
+    window = validity_mod.window(collection, as_of)
+    if window:
+        restrict = dict(restrict, validity=window)
 
     # A leg starts only while the caller is still there (app/cancel.py).
     cancel.checkpoint()
@@ -574,6 +583,11 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                     if mode in ("hybrid", "catalog") else [])
     if book_ids:
         catalog_hits = [h for h in catalog_hits if int(h.get("book_id", -1)) in book_ids]
+    if window and catalog_hits:
+        # the catalog index carries no validity columns: its hits are
+        # admitted by the version table, bounded by the leg's own count
+        allowed = validity_mod.admit(con, window, [int(h.get("book_id", -1)) for h in catalog_hits])
+        catalog_hits = [h for h in catalog_hits if int(h.get("book_id", -1)) in allowed]
     timings["catalog"] = round((time.time() - t0) * 1000, 1)
 
     lists: list[list[dict]] = []
@@ -655,6 +669,11 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
             # (404, 401, …): waiting will not bring the leg back, so the
             # response says why it is missing (05 §5.3: never a silent drop)
             vector_leg = f"the query encoder's endpoint refused the query: {e}"
+            db.log_event(con, "warn", "dense", f"dense search withheld: {e}")
+        except embeddings.ValidityColumnsMissing as e:
+            # the table predates the collection's validity columns: the
+            # text leg answers by validity, this one says why it cannot
+            vector_leg = str(e)
             db.log_event(con, "warn", "dense", f"dense search withheld: {e}")
         except Exception as e:
             db.log_event(con, "warn", "dense", f"dense search failed: {e}")
@@ -792,7 +811,8 @@ def _one_hit_per_work(hits: list[dict], collection, plan: LanguagePlan,
 def search(con, query: str, k: int = 12, mode: str = "hybrid",
            translate: bool = True, collection=None,
            rerank_depth: int = RERANK_TOP_N, all_languages: bool = False,
-           book_ids: set[int] | None = None, show_in: str | None = None) -> dict:
+           book_ids: set[int] | None = None, show_in: str | None = None,
+           as_of: int | None = None) -> dict:
     """mode: hybrid | fts | dense | catalog. Single collection — unchanged
     behavior/signature from pre-P0.5. See federated_search() for N&gt;1.
     `k` results after the reranker, which orders the top `rerank_depth`;
@@ -814,7 +834,8 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     plan_ms = round((time.time() - t0) * 1000, 1)
     partial = _search_one_collection(con, collection, query, k, mode, translate,
                                      [e.entity_id for e in resolved], plan, rerank_depth,
-                                     **({"book_ids": book_ids} if book_ids is not None else {}))
+                                     **({"book_ids": book_ids} if book_ids is not None else {}),
+                                     **({"as_of": as_of} if as_of is not None else {}))
     timings = {"languages": plan_ms, **partial["timings"]}
 
     cancel.checkpoint()
@@ -877,7 +898,7 @@ def _merge_rrf_federated(lists: list[list[dict]]) -> list[dict]:
 def federated_search(collections: list, query: str, k: int = 12, mode: str = "hybrid",
                       translate: bool = True, rerank_depth: int = RERANK_TOP_N,
                       all_languages: bool = False, book_ids_for=None,
-                      show_in: str | None = None) -> dict:
+                      show_in: str | None = None, as_of: int | None = None) -> dict:
     """Query-time federation across N collections (architecture-v2.md §3/§4).
     Entity resolution/PinnedFacts happen ONCE, collection-agnostic — never
     multiplied per collection (CLAUDE.md invariant 4). Each collection's
@@ -914,7 +935,8 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
             admitted = book_ids_for(collection) if book_ids_for else None
             partial = _search_one_collection(con, collection, query, k, mode, translate,
                                               entity_ids, plan, rerank_depth,
-                                              **({"book_ids": admitted} if admitted is not None else {}))
+                                              **({"book_ids": admitted} if admitted is not None else {}),
+                                              **({"as_of": as_of} if as_of is not None else {}))
             for h in partial["merged"]:
                 h["source_collection"] = collection.name
             return collection, partial, None

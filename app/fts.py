@@ -31,13 +31,19 @@ def pystem_algorithm(group: str) -> str | None:
         return config.STEMMER_LANGS[group]
     return None
 
-def _schema(group: str) -> tantivy.Schema:
+def _schema(group: str, validity: bool = False) -> tantivy.Schema:
     """Per GROUP, deliberately: adding a field changes the schema, and
     tantivy refuses to open an index whose on-disk schema differs. Scoping
     body_stem to the groups that use it means adopting PyStemmer for one
-    language rebuilds ONE index instead of every index on the node."""
+    language rebuilds ONE index instead of every index on the node.
+    `validity`: a versioned collection's two columns (app/validity.py),
+    fast fields a search ranges over; only such a collection's indexes
+    carry them, so every other index keeps its schema."""
     b = tantivy.SchemaBuilder()
     b.add_integer_field("book_id", stored=True, indexed=True, fast=True)
+    if validity:
+        b.add_integer_field("valid_to", stored=True, indexed=True, fast=True)
+        b.add_integer_field("shown", stored=True, indexed=True, fast=True)
     b.add_text_field("chunk_id", stored=True, tokenizer_name="raw")
     b.add_text_field("chapter", stored=True, tokenizer_name="default")
     b.add_text_field("lang", stored=True, tokenizer_name="raw")
@@ -81,8 +87,10 @@ def get_index(group: str, collection=None) -> tantivy.Index:
             return _indexes[key]
         path = collection.fts_dir / group
         path.mkdir(parents=True, exist_ok=True)
+        from app import validity as validity_mod
+        with_validity = validity_mod.declared(collection) is not None
         try:
-            idx = tantivy.Index(_schema(group), path=str(path))
+            idx = tantivy.Index(_schema(group, with_validity), path=str(path))
         except Exception as e:
             # An index built under a different schema cannot be opened.
             # Say what to do about it: search() swallows exceptions, so
@@ -201,12 +209,15 @@ def group_documents(collection=None) -> dict[str, int]:
     return out
 
 
-def _add_one(writer, algorithm, lang: str, book_id: int, chunks: list[dict]):
+def _add_one(writer, algorithm, lang: str, book_id: int, chunks: list[dict],
+             extra: dict | None = None):
     writer.delete_documents("book_id", book_id)
     for c in chunks:
         fields = dict(book_id=book_id, chunk_id=c["id"],
                       chapter=c["chapter"] or "", lang=lang or "und",
                       body=c["text"])
+        if extra:
+            fields.update(extra)          # a versioned collection's columns
         if algorithm:
             fields["body_stem"] = stemming.stem_text(algorithm, c["text"])
         writer.add_document(tantivy.Document(**fields))
@@ -269,8 +280,10 @@ def index_books(entries, collection=None) -> None:
     that mark simply re-indexes them, which is a no-op by construction.
     """
     by_group: dict[str, list] = {}
-    for lang, book_id, chunks in entries:
-        by_group.setdefault(group_for(lang), []).append((lang, book_id, chunks))
+    for entry in entries:
+        lang, book_id, chunks = entry[0], entry[1], entry[2]
+        extra = entry[3] if len(entry) > 3 else None     # app/validity.py's columns
+        by_group.setdefault(group_for(lang), []).append((lang, book_id, chunks, extra))
     for group, items in by_group.items():
         idx = get_index(group, collection)
         algorithm = pystem_algorithm(group)
@@ -278,8 +291,8 @@ def index_books(entries, collection=None) -> None:
                                      else collections_mod.default_collection().fts_dir),
                                 group), idx)
         with lock:
-            for lang, book_id, chunks in items:
-                _add_one(writer, algorithm, lang, book_id, chunks)
+            for lang, book_id, chunks, extra in items:
+                _add_one(writer, algorithm, lang, book_id, chunks, extra)
             writer.commit()
         # NOT wait_merging_threads(): the merges run on the writer's own
         # threads and the writer is kept, so nothing here waits for them —
@@ -335,6 +348,9 @@ def rewrite_without(group: str, collection=None) -> int:
             fields = dict(book_id=int(d["book_id"][0]), chunk_id=d["chunk_id"][0],
                           chapter=(d.get("chapter") or [""])[0],
                           lang=(d.get("lang") or ["und"])[0], body=body)
+            for col in ("valid_to", "shown"):           # a versioned collection's columns
+                if d.get(col):
+                    fields[col] = int(d[col][0])
             if algorithm:
                 fields["body_stem"] = stemming.stem_text(algorithm, body)
             writer.add_document(tantivy.Document(**fields))
@@ -367,7 +383,8 @@ def book_chunks(group: str, book_id: int, collection=None) -> list[dict]:
 _QUERY_STRIP = re.compile(r'[\^\[\]{}~/\\:!()"*]')
 
 def search(group: str, query: str, limit: int = 20, collection=None,
-           book_ids: list[int] | None = None, langs: list[str] | None = None) -> list[dict]:
+           book_ids: list[int] | None = None, langs: list[str] | None = None,
+           validity: dict | None = None) -> list[dict]:
     """book_ids, when given, is a hard prefilter (Tantivy term-set query
     ANDed with the text query) — not used by retrieval.search()'s default
     entity-boost wiring (a soft score bonus instead), but a real, directly
@@ -401,6 +418,12 @@ def search(group: str, query: str, limit: int = 20, collection=None,
         if langs:
             lang_filter = tantivy.Query.term_set_query(idx.schema, "lang", list(langs))
             q = tantivy.Query.boolean_query([(tantivy.Occur.Must, q), (tantivy.Occur.Must, lang_filter)])
+        if validity:
+            # one version per Work, by key (app/validity.py): a range on the
+            # id's validity prefix and on the derived end, both fast fields
+            from app import validity as validity_mod
+            for f in validity_mod.fts_filters(idx.schema, validity):
+                q = tantivy.Query.boolean_query([(tantivy.Occur.Must, q), (tantivy.Occur.Must, f)])
         searcher = idx.searcher()
         hits = searcher.search(q, limit).hits
         out = []

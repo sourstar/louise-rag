@@ -1,0 +1,871 @@
+<?xml version="1.0" encoding="UTF-8"?><akomaNtoso xmlns="http://docs.oasis-open.org/legaldocml/ns/akn/3.0" xmlns:eli="http://data.europa.eu/eli/ontology#" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:gu="http://www.gazzettaufficiale.it/eli/" xmlns:html="http://www.w3.org/1999/xhtml" xmlns:na="http://www.normattiva.it/eli/" xmlns:nakn="http://normattiva.it/akn/vocabulary" xmlns:nrdfa="http://www.normattiva.it/rdfa/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:rdfa="http://www.w3.org/1999/xhtml#">
+    <act name="monovigente">
+        <meta>
+            <identification source="">
+                <FRBRWork>
+                    <FRBRthis value="/akn/it/act/legge_costituzionale/stato/1948-02-26/3/!main"/>
+                    <FRBRuri value="/akn/it/act/legge_costituzionale/stato/1948-02-26/3"/>
+                    <FRBRalias name="urn:nir" value="urn:nir:stato:legge.costituzionale:1948-02-26;3"/>
+                    <FRBRalias name="eli" value="eli/id/1948/03/09/048C0003/ORIGINAL"/>
+                    <FRBRdate date="1948-02-26" name=""/>
+                    <FRBRauthor as="#author" href=""/>
+                    <preservation>
+                        <nrdfa:eli about="na:id/1948/03/09/048C0003/ORIGINAL" aknrelname="eli/id/1948/03/09/048C0003/ORIGINAL">
+                            <nrdfa:span property="rdf:type" resource="eli:LegalResource"/>
+                            <nrdfa:span content="Statuto speciale per la Sardegna. " lang="it" property="eli:title" xml:lang="it"/>
+                            <nrdfa:span content="http://www.normattiva.it/eli/id/{yyyy}/{mm}/{dd}/{codiceRedazionale}/{tipoVersione}" property="eli:uri_schema"/>
+                            <nrdfa:span content="048C0003" property="eli:id_local"/>
+                            <nrdfa:span property="eli:type_document" resource="gu:tables/resource-type#LEGGE COSTITUZIONALE"/>
+                            <nrdfa:span content="1948-02-26" datatype="xsd:date" property="eli:date_document"/>
+                            <nrdfa:span property="eli:version" resource="gu:tables/versions#ORIGINAL"/>
+                        </nrdfa:eli>
+                    </preservation>
+                    <FRBRcountry value="it"/>
+                </FRBRWork>
+                <FRBRExpression>
+                    <FRBRthis value="/akn/it/act/legge_costituzionale/stato/1948-02-26/3/ita@1948-03-10/!main"/>
+                    <FRBRuri value="/akn/it/act/legge_costituzionale/stato/1948-02-26/3/ita@1948-03-10"/>
+                    <FRBRdate date="1948-03-10" name=""/>
+                    <FRBRauthor as="#author" href=""/>
+                    <preservation>
+                        <nrdfa:eli about="na:id/1948/03/09/048C0003/ORIGINAL/ita">
+                            <nrdfa:span property="rdf:type" resource="eli:LegalExpression"/>
+                            <nrdfa:span property="eli:realizes" resource="na:id/1948/03/09/048C0003/ORIGINAL"/>
+                            <nrdfa:span property="eli:is_embodied_by" resource="na:id/1948/03/09/048C0003/ORIGINAL/ita/akn"/>
+                            <nrdfa:span property="eli:language" resource="http://publications.europa.eu/resource/authority/language/ITA"/>
+                            <nrdfa:span property="eli:publisher_agent" resource="http://www.ipzs.it"/>
+                        </nrdfa:eli>
+                    </preservation>
+                    <FRBRlanguage language="ita"/>
+                </FRBRExpression>
+                <FRBRManifestation>
+                    <FRBRthis value="/akn/it/act/legge_costituzionale/stato/1948-02-26/3/ita@1948-03-10/!main.xml"/>
+                    <FRBRuri value="/akn/it/act/legge_costituzionale/stato/1948-02-26/3/ita@1948-03-10.xml"/>
+                    <FRBRdate date="1948-02-26" name=""/>
+                    <FRBRauthor as="#author" href=""/>
+                    <preservation>
+                        <nrdfa:eli about="na:id/1948/03/09/048C0003/ORIGINAL/ita/akn">
+                            <nrdfa:span property="rdf:type" resource="eli:Format"/>
+                            <nrdfa:span property="eli:format" resource="http://www.iana.org/assignments/media-types/xml"/>
+                        </nrdfa:eli>
+                    </preservation>
+                </FRBRManifestation>
+            </identification>
+            <publication date="1948-03-09" name="" number="58" showAs=""/>
+            <lifecycle source="">
+                <eventRef date="1948-03-09" eId="eventRef_0" source="ro1"/>
+            </lifecycle>
+            <workflow source="">
+                <step by="#senato" date="1948-02-26" refersTo="#N.62"/>
+            </workflow>
+            <analysis source=""/>
+            <references source="">
+                <original eId="ro1" href="/akn/it/act/LEGGE_COSTITUZIONALE/stato/1948-02-26/3/!main" showAs=""/>
+                <passiveRef eId="N.62" href="/akn/it/camera-it:parlamento:scheda.progetto.legge:camera;costituente.legislatura;62" showAs=""/>
+            </references>
+            <proprietary source="">
+                <rdf:RDF>
+                    <rdf:Description rdf:about="na:id/1948/03/09/048C0003/ORIGINAL">
+                        <rdf:type rdf:resource="eli:LegalResource"/>
+                        <eli:title xml:lang="it">Statuto speciale per la Sardegna. </eli:title>
+                        <eli:uri_schema>http://www.normattiva.it/eli/id/{yyyy}/{mm}/{dd}/{codiceRedazionale}/{tipoVersione}</eli:uri_schema>
+                        <eli:id_local>048C0003</eli:id_local>
+                        <eli:type_document rdf:resource="gu:tables/resource-type#LEGGE COSTITUZIONALE"/>
+                        <eli:date_document rdf:datatype="xsd:date">1948-02-26</eli:date_document>
+                        <eli:version rdf:resource="gu:tables/versions#ORIGINAL"/>
+                    </rdf:Description>
+                    <rdf:Description rdf:about="na:id/1948/03/09/048C0003/ORIGINAL/ita">
+                        <rdf:type rdf:resource="eli:LegalExpression"/>
+                        <eli:realizes rdf:resource="na:id/1948/03/09/048C0003/ORIGINAL"/>
+                        <eli:is_embodied_by rdf:resource="na:id/1948/03/09/048C0003/ORIGINAL/ita/akn"/>
+                        <eli:language rdf:resource="http://publications.europa.eu/resource/authority/language/ITA"/>
+                        <eli:publisher_agent rdf:resource="http://www.ipzs.it"/>
+                    </rdf:Description>
+                    <rdf:Description rdf:about="na:id/1948/03/09/048C0003/ORIGINAL/ita/akn">
+                        <rdf:type rdf:resource="eli:format"/>
+                        <eli:format rdf:resource="http://www.iana.org/assignments/media-types/xml"/>
+                    </rdf:Description>
+                </rdf:RDF>
+            </proprietary>
+        </meta>
+        <preface>
+            <p>
+                <docType>LEGGE COSTITUZIONALE</docType>
+                <docDate date="1948-02-26">26 febbraio 1948</docDate>
+                <docNumber>3</docNumber>
+                <docTitle>Statuto speciale per la Sardegna.
+</docTitle>
+            </p>
+        </preface>
+        <preamble>
+            <formula name="formulaInizialePreambolo">
+                <p>IL PRESIDENTE DELLA REPUBBLICA</p>
+            </formula>
+            <citations eId="cits_1">
+                <citation eId="cits_1__cit_1">
+                    <p>Visti il primo comma della XVII disposizione transitoria e l'<ref eId="ref_1" href="/akn/it/act/costituzione/stato/1947-12-27/const/!main#art_116">art. 116 della Costituzione</ref>;</p>
+                </citation>
+            </citations>
+            <formula name="formulaFinalePreambolo">
+                <p>PROMULGA la seguente legge costituzionale, approvata dall'Assemblea Costituente il 31 gennaio 1948:</p>
+            </formula>
+        </preamble>
+        <body>
+            <chapter eId="chp_I">
+                <num>TITOLO I</num>
+                <heading>COSTITUZIONE DELLA REGIONE</heading>
+                <article eId="art_1">
+                    <num>Art. 1.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ La Sardegna con le sue isole e' costituita in Regione autonoma fornita di personalita' giuridica entro l'unita' politica della Repubblica italiana, una e indivisibile, sulla base dei principi della Costituzione e secondo il presente Statuto.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_2">
+                    <num>Art. 2.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ La Regione autonoma della Sardegna ha per capoluogo Cagliari.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+            </chapter>
+            <chapter eId="chp_II">
+                <num>TITOLO II</num>
+                <heading>FUNZIONI DELLA REGIONE</heading>
+                <article eId="art_3">
+                    <num>Art. 3.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ In armonia con la Costituzione e i principi dell'ordinamento giuridico dello Stato e col rispetto degli obblighi internazionali e degli interessi nazionali, nonche' delle norme fondamentali delle riforme economico-sociali della Repubblica, la Regione ha potesta' legislativa nelle seguenti materie:
+ a) ordinamento degli uffici e degli enti amministrativi della Regione e stato giuridico ed economico del personale;
+ b) circoscrizioni comunali;
+ c) polizia locale urbana e rurale;
+ d) agricoltura e foreste: piccole bonifiche e opere di miglioramento agrario e fondiario;
+ e) lavori pubblici di esclusivo interesse della Regione;
+ f) edilizia ed urbanistica;
+ g) trasporti su linee automobilistiche e tranviarie;
+ h) acque minerali e termali;
+ i) caccia e pesca;
+ l) esercizio dei diritti demaniali della Regione sulle acque pubbliche;
+ m) esercizio dei diritti demaniali e patrimoniali della Regione relativi alle miniere, cave e saline;
+ n) usi civici;
+ o) artigianato;
+ p) turismo, industria alberghiera;
+ q) biblioteche e musei di enti locali.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_4">
+                    <num>Art. 4.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Nei limiti del precedente articolo e dei principi stabiliti dalle leggi dello Stato, la Regione emana norme legislative sulle seguenti materie:
+ a) industria, commercio ed esercizio industriale delle miniere, cave e saline;
+ b) istituzione ed ordinamento degli enti di credito fondiario ed agrario, delle casse di risparmio, delle casse rurali, dei monti frumentari e di pegno e delle altre aziende di credito di carattere regionale; relative autorizzazioni;
+ c) opere di grande e media bonifica e di trasformazione fondiaria;
+ d) espropriazione per pubblica utilita' non riguardante opere a carico dello Stato;
+ e) produzione e distribuzione dell'energia elettrica;
+ f) linee marittime ed aeree di cabotaggio fra i porti e gli scali della Regione;
+ g) assunzione di pubblici servizi;
+ h) assistenza e beneficenza pubblica;
+ i) igiene e sanita' pubblica;
+ l) disciplina annonaria;
+ m) pubblici spettacoli.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_5">
+                    <num>Art. 5.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Salva la competenza, prevista nei due precedenti articoli, la Regione ha facolta' di adattare alle sue particolari esigenze le disposizioni delle leggi della Repubblica, emanando norme di integrazione ed attuazione, sulle seguenti materie:
+ a) istruzione di ogni ordine e grado, ordinamento degli studi
+ b) lavoro; previdenza ed assistenza sociale;
+ c) antichita' e belle arti;
+ d) nelle altre materie previste da leggi dello Stato.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_6">
+                    <num>Art. 6.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Le Regione esercita le funzioni amministrative nelle materie nelle quali ha potesta' legislativa a norma degli articoli 3 e 4, salvo quelle attribuite agli enti locali dalle leggi della Repubblica. Essa esercita altresi' le funzioni amministrative che le siano delegate dallo Stato.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+            </chapter>
+            <chapter eId="chp_III">
+                <num>TITOLO III</num>
+                <heading>FINANZE - DEMANIO E PATRIMONIO</heading>
+                <article eId="art_7">
+                    <num>Art. 7.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ La Regione ha una propria finanza, coordinata con quella dello Stato, in armonia con i principi della solidarieta' nazionale, nei modi stabiliti dagli articoli seguenti.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_8">
+                    <num>Art. 8.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Le entrate della Regione sono costituite:
+ dai nove decimi del gettito delle imposte erariali sui terreni e sui fabbricati situati nei territorio della Regione e dell'imposta sui redditi agrari dei terreni situati nello stesso territorio;
+ dai nove decimi dell'imposta di ricchezza mobile riscossa nel territorio della Regione;
+ dai nove decimi del gettito delle tasse di bollo, sulla manomorta, in surrogazione del registro e del bollo, sulle concessioni governative, dell'imposta ipotecaria, dell'imposta di fabbricazione del gas e dell'energia elettrica, percette nel territorio della Regione;
+ dai nove decimi della quota fiscale dell'imposta erariale di consumo relativa ai prodotti dei monopoli dei tabacchi consumati nella Regione;
+ da una quota dell'imposta generale sull'entrata di competenza dello Stato, riscossa nella Regione, da determinarsi preventivamente per ciascun anno finanziario d'accordo fra lo Stato e la Regione, in relazione alle spese necessarie ad adempiere le funzioni normali della Regione;
+ da canoni per le concessioni idroelettriche;
+ da contributi di miglioria ed a spese per opere determinate, da imposte e tasse sul turismo e da altri tributi propri, che la legione ha facolta' di istituire con legge, in armonia coi principi del sistema tributario dello Stato;
+ da redditi patrimoniali;
+ da contributi straordinari dello Stato per particolari piani di opere pubbliche e di trasformazioni fondiarie.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_9">
+                    <num>Art. 9.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ La Regione puo' affidare agli organi dello Stato l'accertamento e la, riscossione dei propri tributi.
+ Le operazioni di accertamento relative ai tributi erariali vengono effettuate con la collaborazione di rappresentanze locali.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_10">
+                    <num>Art. 10.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ 
+ La Regione, al fine di favorire lo sviluppo economico dell'Isola, puo' disporre, nei limiti della propria competenza tributaria, esenzioni e agevolazioni fiscali per nuove imprese. 
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_11">
+                    <num>Art. 11.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ La Regione ha facolta' di emettere prestiti interni da essa esclusivamente garantiti, per provvedere ad investimenti in opere di carattere permanente, per una cifra annuale non superiore alle entrate ordinarie.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_12">
+                    <num>Art. 12.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il regime doganale della Regione e' di esclusiva competenza dello Stato.
+ Saranno istituiti nella Regione punti franchi.
+ Sono esenti, per venti anni, da ogni dazio doganale le macchine, gli attrezzi di lavoro ed i materiali la costruzione destinati sul luogo alla produzione ed alla trasformazione dei prodotti agricoli della Regione ed al suo sviluppo industriale.
+ Su richiesta della Regione potranno essere concesse esenzioni doganali per merci ritenute indispensabili al miglioramento igienico e sanitario dell'Isola.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_13">
+                    <num>Art. 13.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Lo Stato col concorso della Regione dispone un piano organico per favorire la rinascita economica e sociale dell'Isola.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_14">
+                    <num>Art. 14.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ La Regione, nell'ambito del suo territorio, succede nei beni e diritti patrimoniali dello Stato di natura immobiliare e in quelli demaniali, escluso il demanio marittimo.
+ I beni e diritti connessi a servizi di competenza statale ed a monopoli fiscali restano allo Stato, finche' duri tale condizione.
+ I beni immobili situati nella Regione, che non sono di proprieta' di alcuno, spettano al patrimonio della Regione.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+            </chapter>
+            <chapter eId="chp_IV">
+                <num>TITOLO IV</num>
+                <heading>ORGANI DELLA REGIONE</heading>
+                <article eId="art_15">
+                    <num>Art. 15.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Sono organi della Regione: il Consiglio regionale, la Giunta regionale ed il suo Presidente.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_16">
+                    <num>Art. 16.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Consiglio regionale e' composto di consiglieri eletti, in ragione di uno ogni ventimila abitanti, a suffragio universale, diretto, uguale e segreto e con sistema proporzionale, secondo le norme stabilite con legge regionale.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_17">
+                    <num>Art. 17.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ E' elettore ed eleggibile ai Consiglio regionale chi e' iscritto nelle liste elettorali della Regione.
+ L'ufficio di consigliere regionale e' incompatibile con quello di membro di una delle Camere o di un altro Consiglio regionale o di un sindaco di un Comune con popolazione superiore a diecimila abitanti.
+ I casi di ineleggibilita' e gli altri casi di incompatibilita' sono stabiliti con legge dello Stato.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_18">
+                    <num>Art. 18.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Consiglio regionale e' eletto per quattro anni.
+ Le elezioni sono indette dal Presidente della Giunta regionale entro quindici giorni dalla fine del precedente Consiglio e hanno luogo non oltre il sessantesimo giorno.
+ Il nuovo Consiglio e' convocato entro venti giorni dalle elezioni.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_19">
+                    <num>Art. 19.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Consiglio regionale elegge, fra i suoi componenti: il Presidente, l'Ufficio di presidenza e Commissioni, in Conformita' al regolamento interno, che esso adotta a maggioranza assoluta dei suoi componenti.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_20">
+                    <num>Art. 20.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Consiglio si riunisce di diritto il primo giorno non festivo di febbraio e di ottobre.
+ Esso si riunisce in via straordinaria per iniziativa del suo Presidente o sui richiesta del Presidente della Giunta regionale o di un quarto dei suoi componenti.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_21">
+                    <num>Art. 21.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Le deliberazioni del Consiglio regionale non sono valide se non e' presente la maggioranza dei suoi componenti e se non sono adottate a maggioranza dei presenti, salvo che sia prescritta una maggioranza speciale.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_22">
+                    <num>Art. 22.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Le sedute del Consiglio regionale sono pubbliche.
+ Il Consiglio tuttavia puo' deliberare di riunirsi in seduta segreta.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_23">
+                    <num>Art. 23.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ I consiglieri regionali, prima di essere ammessi all'esercizio delle loro funzioni, prestano giuramento di essere fedeli alla Repubblica e di esercitare il loro uffici al solo scopo del bene inseparabile dello Stato e della Regione autonomia della Sardegna.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_24">
+                    <num>Art. 24.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ I consiglieri regionali rappresentano l'intera Regione.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_25">
+                    <num>Art. 25.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ I consiglieri regionali non possono essere perseguiti Per le opinioni espresse e i voti dati nell'esercizio delle loro funzioni.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_26">
+                    <num>Art. 26.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ I consiglieri regionali ricevono una indennita' fissata con legge regionale.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_27">
+                    <num>Art. 27.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Consiglio regionale esercita le funzioni legislative e regolamentari attribuite alla Regione.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_28">
+                    <num>Art. 28.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ L'iniziativa delle leggi spetta alla Giunta regionale ai membri del Consiglio ed al popolo sardo.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_29">
+                    <num>Art. 29.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ L'iniziativa, popolare si esercita mediante la presentazione di un disegno di legge da parte di almeno diecimila elettori.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_30">
+                    <num>Art. 30.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Ogni disegno di legge deve essere previamente esaminate da una Commissione, ed approvato dal Consiglio, articolo per articolo, con votazione finale.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_31">
+                    <num>Art. 31.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Consiglio regionale approva ogni anno il bilancio e il rendimento consuntivo presentati dalla Giunta.
+ L'esercizio finanziario della Regione ha la decorrenza dell'anno solare.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_32">
+                    <num>Art. 32.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Un disegno di legge adottato dal Consiglio regionale e' sottoposto al referendum popolare su deliberazione della Giunta o quando ne sia fatta domanda da almeno un terzo dei consiglieri o da diecimila elettori.
+ Il referendum non e' valido se non Vi partecipa almeno un terzo degli elettori.
+ La maggioranza, nelle materie sottoposte a referendum, si calcola in base ai voti validamente espressi.
+ Non e' ammesso il referendum per le leggi tributarie e di approvazione di bilanci.
+ Le modalita' di attuazione del referendum sono stabilite con le e regionale.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_33">
+                    <num>Art. 33.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Ogni legge approvata dal Consiglio regionale e' comunicata al Governo della Repubblica e promulgata trenta giorni dopo la comunicazione, salvo che il Governo non la rinvii al Consiglio regionale col rilievo che eccede la competenza della Regione o contrasta con gli interessi nazionali.
+ Ove il Consiglio regionale l'approvi di nuovo a maggioranza assoluta dei suoi componenti, e', promulgata se, entro quindici giorni dalla nuova comunicazione, il Governo della. Repubblica non promuove la questione di legittimita' davanti alla Corte costituzionale o quella di merito per contrasto di interessi davanti alle Camere.
+ Qualora una legge sia dichiarata urgente dal Consiglio regionale a maggioranza a assoluta dei suoi componenti, la promulgazione e l'entrata in vigore, se il GOverno della Repubblica consente, non sono subordinati ai termini sopraindicati Ove il Governo non consenta, si applica il secondo comma dei presente articolo Le leggi sono promulgate dal Presidente della Giunta regionale ed entrano in vigore il quindicesimo giorno successivo a quello della loro pubblicazione nel Bollettino Ufficiale della Regione, salvo che esse stabiliscano un termine diverso.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_34">
+                    <num>Art. 34.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Presidente della Giunta regionale, la Giunta ed i suoi componenti sono organi esecutivi della Regione.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_35">
+                    <num>Art. 35.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Presidente della Giunta regionale e' il rappresentante della Regione autonoma della Sardegna.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_36">
+                    <num>Art. 36.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Presidente della Giunta regionale e' eletto dal Consiglio regionale fra i suoi componenti subito dopo la nomina del Presidente del Consiglio e dell'Ufficio di rielezione ha luogo per scrutinato segreto a maggioranza assoluta e, dopo il secondo scrutinio, a maggioranza relativa.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_37">
+                    <num>Art. 37.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ I componenti della Giunta regionale, preposti al singoli rami dell'amministrazione sono nominati dai Consiglio, si proposta del Presidente della Giunta.
+ La Giunta regionale e' responsabile di fronte al Consiglio. Il voto di sfiducia del Consiglio determina le dimissioni della Giunta.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_38">
+                    <num>Art. 38.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ I membri della Giunta regionale hanno diritto di assistere alle sedute del Consiglio, anche se non ne facciano parte.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_39">
+                    <num>Art. 39.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ L'ufficio di Presidente della Giunta regionale e di membro della Giunta e' incompatibile con qualsiasi altro ufficio pubblico.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_40">
+                    <num>Art. 40.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ I dipendenti di una pubblica amministrazione che siano nominati membri della Giunta regionale sono messi a disposizione della Regione senza assegni, ma conservano gli altri diritti di carriera e di anzianita'.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_41">
+                    <num>Art. 41.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Contro i provvedimenti dei membri della Giunta regionale preposti ai singoli rami dell'amministrazione e dato ricorso alla Giunta, che decide con decreto del suo Presidente.
+ Tale decreto costituisce provvedimento definitivo.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_42">
+                    <num>Art. 42.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Consiglio regionale ha facolta' di istituire organi di consulenza tecnica.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+            </chapter>
+            <chapter eId="chp_V">
+                <num>TITOLO V</num>
+                <heading>ENTI LOCALI</heading>
+                <article eId="art_43">
+                    <num>Art. 43.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Le province di Cagliari, Nuoro e Sassari conservano l'attuale struttura di enti territoriali.
+ Con legge regionale possono essere modificate circoscrizioni e le funzioni delle province, in conformita' alla volonta' delle popolazioni di ciascuna delle province interessate espressa con referendum.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_44">
+                    <num>Art. 44.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ La Regione esercita normalmente le sue funzioni amministrative delegandole agli enti locali o valendosi dei loro uffici.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_45">
+                    <num>Art. 45.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ La, Regione, sentite le popolazioni interessate, puo' con legge istituire nel proprio territorio nuovi comuni e modificare le loro circoscrizioni e denominazioni.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_46">
+                    <num>Art. 46.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il controllo sugli atti degli enti locali e' esercitato da organi della Regione nei nodi e nei limiti stabiliti con legge regionale in armonia coi principi delle leggi dello Stato.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+            </chapter>
+            <chapter eId="chp_VI">
+                <num>TITOLO VI</num>
+                <heading>RAPPORTI FRA LO STATO E REGIONE</heading>
+                <article eId="art_47">
+                    <num>Art. 47.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Presidente della Giunta regionale dirige le funzioni amministrative delegate dallo Stato alla Regione, conformandosi alle istruzioni del Governo Egli interviene alle sedute del Consiglio dei Ministri, quando si trattano questioni che riguardano particolarmente la Regione.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_48">
+                    <num>Art. 48.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Un Rappresentante del Governo sovraintende alle funzioni amministrative dello Stato non delegate e le coordina con quelle esercitate dalla Regione.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_49">
+                    <num>Art. 49.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Governo della Repubblica puo' delegare alla Regione le funzioni di tutela dell'ordine pubblico. Queste saranno esercitate, nell'ambito delle direttive fissate dal Governo, dal Presidente della Giunta regionale, che a a tale scopo, potra' richiedere l'impiego delle forze armate.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_50">
+                    <num>Art. 50.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Consiglio regionale puo' essere sciolto quando compia atti contrari alla Costituzione o al presente Statuto o gravi violazioni di legge o quando nonostante la segnalazione fatta dal Governo della Repubblica, non proceda alla sostituzione della Giunta regionale o del Presidente che abbiano compiuto analoghi atti o violazioni.
+ Puo' altresi' essere sciolto per ragioni di sicurezza nazionale o quando, per dimissioni ed altra causa, non sia in grado di funzionare.
+ Lo scioglimento e' disposto con decreto motivato dei Presidente della Repubblica previa deliberazione del Consiglio dei Ministri, sentita la Commissione parlamentare per le questioni regionali.
+ Col decreto di scioglimento e' nominata una. Commissione di tre cittadini eleggibili al Consiglio regionale che provvede all'ordinaria amministrazione di competenza della Giunta ed agli atti improrogabili, da sottoporre alla ratifica del nuovo Consiglio. Essa indice le elezioni, che debbono aver luogo entro tre mesi dallo scioglimento.
+ Il nuovo Consiglio e' convocato dalla Commissione entro venti giorni dalle elezioni.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_51">
+                    <num>Art. 51.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Il Consiglio regionale puo' presentare alle Camere voti e proposte di legge su materie che interessano la Regione.
+ La Giunta regionale, quando constati che l'applicazione di una legge o di un provvedimento dello Stato in materia economica o finanziaria risulti manifestamente dannosa all'Isola, puo' chiederne la sospensione al Governo della Repubblica il quale, constatata la necessita' e' l'urgenza, puo' provvedere, ove occorra, a norma dell'art. 77 della Costituzione.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_52">
+                    <num>Art. 52.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ La Regione e' rappresentata nella elaborazione dei progetti dei trattati di commercio che il Governo intenda stipulare con stati esteri in quanto riguardino scambi di specifico interesse della.
+Sardegna.
+ La Regione e' sentita in materia di legislazione doganale per quanto concerne i prodotti tipici di suo specifico interesse,
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_53">
+                    <num>Art. 53.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ La Regione e' rappresentata nella elaborazione delle tariffe ferroviarie e della regolamentazione dei servizi nazionali di comunicazione e trasporti terrestri, marittimi ed aerei che possano direttamente interessata.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+            </chapter>
+            <chapter eId="chp_VII">
+                <num>TITOLO VII</num>
+                <heading>REVISIONE DELLO STATUTO</heading>
+                <article eId="art_54">
+                    <num>Art. 54.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ L'iniziativa di modificazione del presente Statuto puo' essere esercitata dal Consiglio regionale o da almeno ventimila elettori.
+ I progetti di modificazione del presente Statuito di iniziativa governativa o parlamentare sono comunicati dal Governo della.
+Repubblica al Consiglio regionale, che esprime il suo parere entro un mese.
+ Qualora un progetto di modifica sia stato approvato in prima a deliberazione una delle Camere ed il parere del Consiglio regionale sia contrario, il Presidente della Giunta regionale puo' indire un referendum, consultivo prima del compimento del termine previsto dalla Costituzione per la seconda deliberazione.
+ Le disposizioni del Titolo III del presente Statuto possono essere modificate con leggi ordinarie della Repubblica proposta del Governo o della Regione, in ogni caso sentita la Regione.
+ Lei disposizioni concernenti le materie indicate nell'<ref eId="content__ref_2" href="/akn/it/act/costituzione/stato/1947-12-27/const/!main#art_123">art. 123 della Costituzione</ref> della Repubblica possono essere modificate con le forme prevedute nello stesso articolo.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+            </chapter>
+            <chapter eId="chp_VIII">
+                <num>TITOLO VIII</num>
+                <heading>NORME TRANSITORIE E FINALI</heading>
+                <article eId="art_55">
+                    <num>Art. 55.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Le funzioni dell'Alto Commissariato della Consulta regionale sarda durano fino alla prima elezione del Consiglio regionale, che sara' indetta dal Governo della Repubblica entro dieci mesi dall'entrata in vigore del presente Statuto.
+ La prima elezione del Consiglio regionale avra' luogo in conformita' all'art. 16 dello statuto ed alla legge per l'elezione della Camera dei deputati secondo le norme che saranno stabilite con decreto legislativo, sentiti l'Alto Commissario e la Consulta regionale.
+ Le circoscrizioni elettorali sono determinate in corrispondenza delle attuali province.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_56">
+                    <num>Art. 56.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Una Commissione paritetica di quattro membri, nominati dal Governo della Repubblica, e dall'Alto Commissario per la Sardegna sentita la Consulta regionale, proporra' le norme relative al passaggio degli uffici e del personale dallo Strato alla Regione, nonche' le norme di attuazione del presente statuto.
+ Tali norme saranno sottoposte al parere della Consulta o del Consiglio regionale e saranno emanate con decreto legislativo.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_57">
+                    <num>Art. 57.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ Nelle materie attribuite alla competenza della Regione fino a quando non sia diversamente disposto con leggi regionali, si applicano le leggi dello Stato.
+</p>
+                        </content>
+                    </paragraph>
+                </article>
+                <article eId="art_58">
+                    <num>Art. 58.</num>
+                    <heading/>
+                    <paragraph>
+                        <content>
+                            <p>
+ La presente legge costituzionale entra, in vigore il giorno successivo a quello della sua, pubblicazione nella Gazzetta Ufficiale della Repubblica.
+
+ </p>
+                        </content>
+                    </paragraph>
+                </article>
+            </chapter>
+        </body>
+        <conclusions>
+            <formula name="formulaFinaleConclusioni">
+                <p>La presente legge, munita del sigillo dello Stato, sara' inserta nella Raccolta ufficiale delle leggi e dei decreti della Repubblica italiana. E' fatto obbligo a chiunque e spetti di osservarla e di farla osservare come legge dello Stato.</p>
+            </formula>
+            <p> Data a Roma, addi' 26 febbraio 1948</p>
+            <p>DE NICOLA DE GASPERI Visto, il Guardasigilli: GRASSI</p>
+        </conclusions>
+    </act>
+</akomaNtoso>

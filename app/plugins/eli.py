@@ -17,7 +17,8 @@ identity rules and the same `extra` keys as the Italian one:
           `native_id`, `CollisionGuard`;
   rule 5  the ELI date set, type and number go into `extra` under FIXED
           keys — `EXTRA_KEYS`;
-  rule 7  force status is metadata, never a tombstone — `eli_in_force`.
+  rule 7  force status is metadata, never a tombstone — `in_force`, the
+          key 09 §9.5 and 06 §6.1 name on every legal source (`IN_FORCE`).
 
 `uid` stays `<source>:<native_id>` like every plugin's: the platform reads
 the native id back out of it (discovery, the reparse), so the ELI lives in
@@ -45,9 +46,15 @@ EXTRA_KEYS = (
     "eli_id_local",
     "eli_title",
     "eli_uri_schema",
-    "eli_in_force",           # False only on the origin's word; absent = not stated
     "eli_cites",              # the act's outgoing references, in reading order
 )
+
+#: 09 §9.5's `in_force`, the one force-status key every legal source writes:
+#: False only on the origin's word (a repeal state, the repealed-acts
+#: collection), absent where the origin does not say. Never a tombstone
+#: (06 §6.1). Written without the `eli_` prefix because the ask layer and
+#: every later legal plugin read ONE key (operator, 2026-10-12).
+IN_FORCE = "in_force"
 
 
 @dataclass(frozen=True)
@@ -89,6 +96,25 @@ def native_id(date_iso: str, local_id: str) -> int:
     if len(ymd) != 8 or not ymd.isdigit():
         raise ValueError(f"not an ISO date: {date_iso!r}")
     digest = hashlib.blake2b(local_id.encode("utf-8"), digest_size=8).digest()
+    return int(ymd) * _HASH_SPACE + int.from_bytes(digest, "big") % _HASH_SPACE
+
+
+def expression_native_id(valid_from_iso: str, work_key: tuple[str, ...],
+                         expression: str) -> int:
+    """One record per Expression (normattiva-multivigenza-review.md §3.1):
+    `YYYYMMDD of the start of validity * 10**9 + blake2b(work key ‖
+    expression) mod 10**9`. Sorting by the start of validity is what keeps
+    arrival monotonic (02 §2.2): a version the origin publishes next month
+    starts next month, so it sorts after every id already in its slice.
+    `expression` is the origin's own identifier of the version (`ORIGINAL`,
+    `CONSOLIDATED/20010201`), so an original and a consolidation dated the
+    same day are two ids. Collision-checked by the caller like `native_id`,
+    on (work key, expression)."""
+    ymd = valid_from_iso.replace("-", "")
+    if len(ymd) != 8 or not ymd.isdigit():
+        raise ValueError(f"not an ISO date: {valid_from_iso!r}")
+    key = "".join((*work_key, expression)).encode("utf-8")
+    digest = hashlib.blake2b(key, digest_size=8).digest()
     return int(ymd) * _HASH_SPACE + int.from_bytes(digest, "big") % _HASH_SPACE
 
 

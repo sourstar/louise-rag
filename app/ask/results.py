@@ -145,6 +145,39 @@ def result_of(collection, ctx: dict[str, Any], hit: dict[str, Any], rank: int, *
     return out
 
 
+def _attach_validity(per_space, source_of, by_validity: set[str]) -> None:
+    """05 §5.3 (amended 2026-10-12): a versioned collection's result says
+    which version it is — when it came into force, when the next one did,
+    the origin's force status — read from the version table, bounded by the
+    hits (app/validity.py)."""
+    from contextlib import closing
+    from app import db, validity as validity_mod
+    by_coll: dict[str, list[dict[str, Any]]] = {}
+    for hits in per_space.values():
+        for h in hits:
+            c = source_of.get(id(h))
+            if c is not None and c.name in by_validity:
+                by_coll.setdefault(c.name, []).append(h)
+    for name, hits in by_coll.items():
+        c = source_of[id(hits[0])]
+        ids = []
+        for h in hits:
+            try:
+                ids.append(int(str(h["uid"]).split(":", 1)[1]))
+            except (ValueError, IndexError):
+                continue
+        try:
+            with closing(db.connect(c)) as con:
+                got = validity_mod.describe(con, ids)
+        except Exception:   # noqa: BLE001 — a fact that cannot be read is absent, never fatal
+            got = {}
+        for h in hits:
+            try:
+                h["validity"] = got.get(int(str(h["uid"]).split(":", 1)[1]))
+            except (ValueError, IndexError):
+                h["validity"] = None
+
+
 def _plain(obj: Any) -> Any:
     if is_dataclass(obj) and not isinstance(obj, type):
         return asdict(obj)
@@ -225,12 +258,21 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
     # or the collection withheld whole and said so (app/ask/asof.py)
     dated: dict[str, Any] = {}
     withheld_as_of: list[dict[str, Any]] = []
+    # 05 §5.1 (amended 2026-10-12), app/validity.py: a collection that
+    # declares a validity axis answers a date BY VALIDITY — the version of
+    # each Work in force on it, from the newest held snapshot — never by the
+    # chain, which is when the origin's state was held
+    from app import validity as validity_mod
+    by_validity = {c.name for c in named if validity_mod.declared(c) is not None}
     if day is not None:
         from app.hold import collection as col
         root_ = Path(root) if root is not None else _root()
         kept = []
         for c in named:
             codex = getattr(c, "codex", None)
+            if c.name in by_validity:
+                kept.append(c)
+                continue
             if codex is None:
                 withheld_as_of.append({"collection": c.name, "collection_id": None, "shards": "all",
                                        "reason": f"as of {day.isoformat()}: a collection without a Codex has "
@@ -246,7 +288,8 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
     names = [c.name for c in named]
     if named:
         result = run(names, query, limit, "hybrid", translate, rerank_depth=rerank_depth,
-                     all_languages=all_languages, filters=filters or None)
+                     all_languages=all_languages, filters=filters or None,
+                     **({"as_of": validity_mod.day_int(day)} if day is not None and by_validity else {}))
     else:
         # nothing to search — everything withheld, or no collection dated as
         # asked: said so, never a request for "no collections" one layer down
@@ -291,6 +334,8 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         r = result_of(c, ctx, hit, 0, own_key=own_key, reranked=reranked)
         source_of[id(r)] = c
         per_space.setdefault(ctx["space_id"], []).append(r)
+    if by_validity:
+        _attach_validity(per_space, source_of, by_validity)
     for n, r in dated.items():
         if r.shards or excluded.get(n):
             withheld_as_of.append(asof_mod.withheld_entry(by_name[n], by_name[n].codex, r, day))
@@ -353,7 +398,8 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
         "filters": filters or {},
         "filtered": result.get("filtered"),
         "as_of": ({"date": day.isoformat(), "snapshots": {n: r.snapshot.snapshot_id for n, r in dated.items()},
-                   "excluded": excluded} if day is not None else None),
+                   "excluded": excluded,
+                   **({"by_validity": sorted(by_validity)} if by_validity else {})} if day is not None else None),
         "freshness": fresh_summary,
         "timings": result.get("timings", {}),
     }

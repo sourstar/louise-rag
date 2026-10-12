@@ -43,6 +43,28 @@ members for a slice says so and names them rather than answering from a
 later one — a wrong date is worse than no answer here. Without
 `--as-of` a search reads the newest held snapshot, as above.
 
+**A versioned collection answers a date by validity, not by the chain**
+(*amended 2026-10-12*, docs/notes/normattiva-multivigenza-review.md §3).
+A collection whose Codex `profile` declares a validity axis (09 §9.3)
+holds every version of every Work as its own record — the law, one
+record per act at each consolidation — and the chain cannot answer its
+question: a snapshot holds the state at its cutoffs only, and 6.7 % of
+the Italian archive's versions (37 % in the codes) last less than a
+month, so a regular chain never holds them; what did change since the
+as-of snapshot is exactly what the question is about. For such a
+collection `--as-of D` selects, in the NEWEST held snapshot, the records
+whose validity covers D: the record carries the START of its validity
+(the origin's own statement), the END is derived locally as the next
+version's start (02 §2.3: a record carries nothing computable from it)
+and kept in the index beside the text and the vectors, never in a
+record; versions of one Work are contiguous, so exactly one is admitted
+per Work and no two versions ever meet in a leg (invariant 4). Without
+`--as-of` such a collection shows one record per Work, its latest
+version that has text — so a repealed act is shown in the last text it
+had, labelled (§5.5). The result says which version it is (§5.3,
+`validity`). The snapshot chain keeps its own meaning for it — when the
+origin's state was held — and is not what a date asks of it.
+
 **The fusion unit is the record.** Each leg — the text index, the
 vector index — ranks chunks; chunks of every layer compete as chunks,
 with no per-layer normalisation. A record's rank in a leg is the rank

@@ -144,9 +144,18 @@ def metadata(plugin, row) -> dict:
     if hasattr(plugin, "read_metadata"):
         return plugin.read_metadata(Path(row["path"]), int(row["native_id"]))
     doc = canonical_doc(plugin, row)
-    return {"title": doc.title, "authors": "; ".join(doc.creators),
+    meta = {"title": doc.title, "authors": "; ".join(doc.creators),
             "lang": doc.language, "subjects": "|".join(doc.subjects),
             "bookshelves": str(doc.extra.get("bookshelves", ""))}
+    # one record per Expression (app/validity.py): the start of validity,
+    # the Work and whether the version has text, for the rdf stage to record
+    from app import validity
+    v = validity.from_plugin(plugin)
+    if v is not None:
+        got = validity.of_doc(doc, v)
+        if got is not None:
+            meta["validity"] = got
+    return meta
 
 
 def work_identity(meta: dict) -> str:

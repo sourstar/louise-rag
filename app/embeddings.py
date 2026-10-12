@@ -834,18 +834,70 @@ def _np_dtype_of_table(tbl):
 def _np_dtype_of_recipe(recipe):
     return np.float16 if recipe.dtype == "f16" else np.float32
 
+#: a versioned collection's two columns (app/validity.py), int64 beside the
+#: vectors: `valid_to` (YYYYMMDD, OPEN while in force) and `shown`
+VALIDITY_COLUMNS = ("valid_to", "shown")
+
+
+class ValidityColumnsMissing(RuntimeError):
+    """The vector table was written before the collection's validity
+    columns existed: it cannot be filtered by validity until rebuilt."""
+
+
 def _create_table(db, rows):
     """The vector table, created with its first rows; the vector type and
-    width are the rows' own."""
+    width are the rows' own. A versioned collection's rows carry its two
+    columns, and the table is created with them."""
     dim = len(rows[0]["vector"])
     vt = pa.float16() if rows[0]["vector"].dtype == np.float16 else pa.float32()
-    schema = pa.schema([
+    fields = [
         pa.field("id", pa.string()), pa.field("book_id", pa.int64()),
         pa.field("lang", pa.string()), pa.field("seq", pa.int64()),
         pa.field("chapter", pa.string()), pa.field("text", pa.string()),
         pa.field("vector", pa.list_(vt, dim)),
-    ])
-    return db.create_table(TABLE, data=rows, schema=schema)
+    ]
+    if all(c in rows[0] for c in VALIDITY_COLUMNS):
+        fields += [pa.field(c, pa.int64()) for c in VALIDITY_COLUMNS]
+    return db.create_table(TABLE, data=rows, schema=pa.schema(fields))
+
+
+def _conform(tbl, rows: list[dict]) -> list[dict]:
+    """Rows shaped for THIS table: a column the table lacks is dropped (a
+    table written before its collection declared validity — a search asking
+    for the filter is told so), a column the table has and a row lacks is
+    filled as "current" until synced (app/validity.py)."""
+    names = set(tbl.schema.names)
+    have = set(rows[0]) if rows else set()
+    if have <= names and all(c in have for c in VALIDITY_COLUMNS if c in names):
+        return rows
+    from app import validity as validity_mod
+    defaults = {"valid_to": validity_mod.OPEN, "shown": 1}
+    out = []
+    for r in rows:
+        r2 = {k: v for k, v in r.items() if k in names}
+        for c in VALIDITY_COLUMNS:
+            if c in names and c not in r2:
+                r2[c] = defaults[c]
+        out.append(r2)
+    return out
+
+
+def sync_columns(book_id: int, columns: dict, collection=None, lock_con=None) -> bool:
+    """A document's validity columns updated IN PLACE (app/validity.py): the
+    embed stage calls it for a document whose every vector was reused and
+    so rewrote no row, the maintainer for rows no stage rewrites. False
+    when there is no table, or one without the columns."""
+    db = _conn(collection)
+    if TABLE not in db.table_names():
+        return False
+    with _write_lock(lock_con):
+        tbl = db.open_table(TABLE)
+        if not set(columns) <= set(tbl.schema.names):
+            return False
+        before = tbl.version
+        tbl.update(where=_book_filter(book_id), values={k: int(v) for k, v in columns.items()})
+        _note_own_versions(db.uri, before + 1, tbl.version, book_id)
+    return True
 
 def _book_filter(book_id) -> str:
     """Build a Lance filter for one document.
@@ -1008,7 +1060,7 @@ def _reusable(chunk: dict) -> bool:
 def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
                 lock_con=None, stop=None, *, held: "HeldRead | None" = None,
                 sink: "PendingWrites | None" = None, reuse: bool = True,
-                counts: "EmbedCounts | None" = None) -> int:
+                counts: "EmbedCounts | None" = None, columns: dict | None = None) -> int:
     """Write one document's vectors, delete-then-insert (invariant 2),
     INCREMENTALLY and resumably.
 
@@ -1114,7 +1166,7 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
         # one slice: embedded here, committed with the rest of its batch
         sink.put(PendingDoc(int(book_id),
                             _rows_for(book_id, lang, todo, recipe, carry, dtype,
-                                      collection, counts),
+                                      collection, counts, columns),
                             purge=rebuild, seen=seen))
         return len(todo) + len(done)
 
@@ -1122,7 +1174,7 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
     purge = rebuild
     for start in range(0, len(todo), config.EMBED_SLICE_CHUNKS):
         part = todo[start:start + config.EMBED_SLICE_CHUNKS]
-        rows = _rows_for(book_id, lang, part, recipe, carry, dtype, collection, counts)
+        rows = _rows_for(book_id, lang, part, recipe, carry, dtype, collection, counts, columns)
 
         with _write_lock(lock_con):
             # existence re-checked INSIDE the lock: the pre-lock check picked
@@ -1143,7 +1195,7 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
                     # the read above is stale: something this process cannot
                     # account for may have written this document since
                     _drop_clashing(tbl, book_id, [r["id"] for r in rows])
-                tbl.add(rows)
+                tbl.add(_conform(tbl, rows))
                 seen = tbl.version
                 _note_own_versions(db.uri, before + 1, seen, book_id)
             else:
@@ -1163,7 +1215,7 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
                         purge = False
                     else:
                         _drop_clashing(tbl, book_id, [r["id"] for r in rows])
-                    tbl.add(rows)
+                    tbl.add(_conform(tbl, rows))
                 seen = tbl.version
                 _note_own_versions(db.uri, before + 1, seen, book_id)
         written += len(rows)
@@ -1192,7 +1244,8 @@ def _by_run(collection) -> bool:
 
 
 def _rows_for(book_id: int, lang: str, part: list[dict], recipe, carry: dict,
-              dtype, collection=None, counts: "EmbedCounts | None" = None) -> list[dict]:
+              dtype, collection=None, counts: "EmbedCounts | None" = None,
+              columns: dict | None = None) -> list[dict]:
     """One slice's rows. Embedding happens OUTSIDE the lock: it is the slow
     part, it touches the network, and holding a cross-process write lock
     across it would serialize every writer on the slowest endpoint call.
@@ -1233,6 +1286,7 @@ def _rows_for(book_id: int, lang: str, part: list[dict], recipe, carry: dict,
         "vector": np.asarray(
             embedded[c["id"]] if c["id"] in embedded
             else carry[chunk_text_hash(c["text"])], dtype=dtype),
+        **({k: int(v) for k, v in columns.items()} if columns else {}),
     } for c in part]
 
 
@@ -1340,7 +1394,7 @@ def write_pending(docs: list[PendingDoc], collection=None, lock_con=None,
                      if not d.purge and _unexplained_since(db.uri, d.seen, before, d.book_id)}
             if stale:
                 _drop_clashing_many(tbl, stale)
-            tbl.add(rows)
+            tbl.add(_conform(tbl, rows))
         else:
             try:
                 tbl = _create_table(db, rows)
@@ -1354,7 +1408,7 @@ def write_pending(docs: list[PendingDoc], collection=None, lock_con=None,
                 _purge_books(tbl, purge)
                 _drop_clashing_many(tbl, {d.book_id: [r["id"] for r in d.rows]
                                           for d in docs if not d.purge})
-                tbl.add(rows)
+                tbl.add(_conform(tbl, rows))
         _note_own_versions(db.uri, before + 1, tbl.version, [d.book_id for d in docs])
         if on_written is not None:
             on_written()
@@ -1523,16 +1577,14 @@ def upsert_chunks(rows: list[dict], collection=None, lock_con=None, *,
                     quoted = ",".join(f"'{c}'" for c in have[j:j + 500])
                     tbl.delete(f"{BOOK_COLUMN_NAME} IN ({part}) AND "
                                f"id IN ({quoted})")
-            tbl.add(out)
+            tbl.add(_conform(tbl, out))
         else:
-            dim = len(out[0]["vector"])
-            vt = pa.float16() if np_dtype is np.float16 else pa.float32()
-            db.create_table(TABLE, data=out, schema=pa.schema([
-                pa.field("id", pa.string()), pa.field("book_id", pa.int64()),
-                pa.field("lang", pa.string()), pa.field("seq", pa.int64()),
-                pa.field("chapter", pa.string()), pa.field("text", pa.string()),
-                pa.field("vector", pa.list_(vt, dim)),
-            ]))
+            from app import validity as validity_mod
+            if validity_mod.declared(collection) is not None:
+                # imported vectors of a versioned collection: the columns are
+                # "current" until the maintainer syncs them (app/validity.py)
+                out = [dict(r, valid_to=validity_mod.OPEN, shown=1) for r in out]
+            _create_table(db, out)
     return len(out)
 
 
@@ -1611,7 +1663,7 @@ def delete_book(book_id: int, collection=None, lock_con=None):
             db.open_table(TABLE).delete(_book_filter(book_id))
 
 def search(query: str, k: int = 20, langs: list[str] | None = None, collection=None,
-           book_ids: list[int] | None = None) -> list[dict]:
+           book_ids: list[int] | None = None, validity: dict | None = None) -> list[dict]:
     """book_ids, when given, is a hard prefilter — see fts.search()'s
     docstring for the same note on why retrieval.search() doesn't use it by
     default."""
@@ -1648,6 +1700,15 @@ def search(query: str, k: int = 20, langs: list[str] | None = None, collection=N
     if book_ids:
         ids = ",".join(str(int(i)) for i in book_ids)
         q = q.where(f"book_id IN ({ids})", prefilter=True)
+    if validity:
+        # one version per Work, by key (app/validity.py): a column range,
+        # never an id list; a table without the columns says so
+        if not set(VALIDITY_COLUMNS) <= set(tbl.schema.names):
+            raise ValidityColumnsMissing(
+                "the vector table carries no validity columns (written before the "
+                "collection declared validity): rebuild it to search as of a date")
+        from app import validity as validity_mod
+        q = q.where(validity_mod.lance_where(validity), prefilter=True)
     out = []
     for row in q.to_list():
         out.append({

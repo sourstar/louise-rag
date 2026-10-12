@@ -1,35 +1,66 @@
 """NormattivaSource — CorpusSource over Normattiva's precompiled Akoma Ntoso
 collections (dati.normattiva.it), on the generic ELI layer (../eli.py).
 
+ONE RECORD PER EXPRESSION (docs/notes/normattiva-multivigenza-review.md §3,
+operator's decision 2026-10-12). Every member of the multivigente zips is a
+record: the act as originally published (`ORIGINALE`) and each consolidated
+text (`VIGENZA_<date>`). A question about the law in force on a date is
+answered by validity — `vigenza_from` on the record, its end derived from
+the next version's start by the version table the index keeps — never by
+similarity between versions (invariant 4) and never by the snapshot chain,
+which stays what 02 §2.2 says it is: when we held what the origin had
+published.
+
 THE ORIGIN FORM, and why — invariant 11 wants it recorded beside the
 plugin, because a verifier needs it to reproduce our records:
 
   * AKN, not XML-NIR, JSON, HTML, PDF or the "URI" export. It is the only
     form that carries the structure (partitions, articles, commi, lettere,
     annexes) and the metadata (FRBR identifiers, URN:NIR, ELI, lifecycle,
-    modifications, references) together; the portal publishes the profile
-    it adopted the standard by.
-  * VIGENTE where the origin offers it: what the law says now, one
-    Expression per act (gazzetta-plugin.md §6 option (c)). Multivigente
-    would put every version of an article into the same ranked list.
-    ORIGINALE only for the collections the origin publishes in no other
-    form — among them the 124,043 repealed acts, kept because repeal is
-    metadata, not deletion (eli-legal-plugins.md §5.7). An act present in
-    several collections is held ONCE: vigente before originale, then the
-    latest vigenza, then the first path (discovery is deterministic).
-  * The precompiled zip, not the per-article API: one GET per collection
-    instead of one request per article of 10^5 acts.
+    modifications, references) together. The JSON export was measured
+    (review §1): it adds `abrogato: si|no` and nothing on validity ends.
+  * MULTIVIGENTE wherever the origin serves it — 22 of its 23 collections,
+    7.3 GB, 331,449 members on 2026-10-12 — because it holds every version
+    and includes every act's ORIGINALE. ORIGINALE only for the repealed
+    acts (`Atti normativi abrogati`), which the origin publishes in no
+    other form: a repealed act has no consolidation to produce. Repeal is
+    metadata, never deletion (eli-legal-plugins.md §5.7).
+  * The precompiled zip, not the per-article API: one GET per collection.
 
-THE EXPRESSION is read from the member, never from the request (ELI rule
-2): a precompiled vigente zip takes no date, so the point in time is the
-one the origin built it at — the member's name says it (`…_VIGENZA_<date>`)
-and the act's own ELI alias says which consolidation that is
-(`…/CONSOLIDATED/20230701`). Both are in the record.
+THE VERSION KEY is the origin's own identifier of the Expression, read from
+the member name and agreeing with the member's ELI alias (`…/ORIGINAL`,
+`…/CONSOLIDATED/20010201`) — NOT its `FRBRExpression` date, which the
+review found stale on a real member (`ita@1993-10-10` on the 2001-02-01
+version), and never the member's `V<n>`, a per-zip sequence. The id sorts
+by the START OF VALIDITY, which is what keeps arrival monotonic (02 §2.2):
+a version the origin publishes next month starts next month. An
+ORIGINALE's validity starts at its publication date for the id (the member
+name carries no other date); the entry into force the origin states in the
+preface note is kept beside it as `entry_into_force`.
+
+A REPEAL STATE is a version like any other: the origin's last word on a
+repealed act, every article reading "((PROVVEDIMENTO ABROGATO DAL …))",
+dated the day the repeal took effect. It yields no chunk, closes the
+version before it, and carries `in_force: false` and the repealing act's
+words. 87,798 members of the archive are repeal states (review §1).
+
+THE FLOOR (operator: "from the Constitution onwards"): a version whose
+validity ended on or before `VALIDITY_FLOOR` — the next version of the same
+act starts on or before it — is not discovered. The 1942 civil code is kept;
+a decree repealed in 1935 is dropped; a royal decree repealed by the 2010
+taglia-leggi is kept in the text it had until then. Declared pruning
+(invariant 11), reproducible from the member list alone, pinned by
+PARSER_VERSION; the recipe's `origin.form` names it.
+
+ONE COPY PER EXPRESSION: the repealed acts' originals sit in their own zip
+and in `Regi decreti`'s (79,922 acts), and 4,142 acts sit in two live
+collections. The copy is chosen deterministically — the M zip before V
+before O, then path, then member — and `origin` names the one taken.
 
 Normattiva's own notice, surfaced rather than buried: its texts are NOT
 OFFICIAL — the printed Gazzetta Ufficiale prevails (TERMS.txt).
 
-Locator: `<zip>::<member>` — one member is one act. `origin` is therefore
+Locator: `<zip>::<member>` — one member is one record. `origin` is therefore
 `<zip>#<member>` (plugin_io.origin_locator); the member's bytes as stored
 are what `origin_hash` covers, base64 included.
 """
@@ -50,12 +81,22 @@ _LOCATOR_SEP = "::"
 
 #: `<TIPO>_<YYYYMMDD>_<N>/<dataGU>_<codiceRedazionale>_<VIGENZA_<date>|ORIGINALE>_V<n>.xml`
 #: — the (publication date, codice redazionale) pair is the act's unique
-#: key (ELI Italy p.9: codice alone repeats across dates, p.8).
+#: key (ELI Italy p.9: codice alone repeats across dates, p.8); the form and
+#: the date name the Expression; `V<n>` is a per-zip sequence and is not used.
 _MEMBER = re.compile(
     r"^(?P<dir>[^/]+)/(?P<gu>\d{4}-\d{2}-\d{2})_(?P<codice>[^_/]+)_"
     r"(?P<form>VIGENZA|ORIGINALE)(?:_(?P<vig>\d{4}-\d{2}-\d{2}))?_V(?P<v>\d+)\.xml$")
 _FORMS = {"VIGENZA": "vigente", "ORIGINALE": "originale"}
-_FORM_RANK = {"VIGENZA": 1, "ORIGINALE": 0}
+#: which zip's copy of one Expression is held: the zip's form is the
+#: directory the acquisition spec lands it in (`akn/<M|V|O>/…`)
+_ZIP_FORM_RANK = {"M": 0, "V": 1, "O": 2}
+
+#: A version whose validity ends on or before this day is not discovered.
+VALIDITY_FLOOR = "1948-01-01"
+
+#: "Entrata in vigore del provvedimento: 17/03/1861" — the preface note the
+#: origin writes on most acts; kept as `entry_into_force`.
+_ENTRY_INTO_FORCE = re.compile(r"Entrata in vigore[^:]*:\s*(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})")
 
 #: Italy's ELI implementation (ELI_implementation_in_Italy.pdf, 2018): the
 #: by-id form is the unique one, the by-type form an alias.
@@ -71,9 +112,33 @@ def split_locator(locator: str) -> tuple[Path, str]:
     return Path(path), member
 
 
+def version_key(form: str, vig: str | None) -> str:
+    """The origin's identifier of the Expression, from the member name: the
+    tail of its ELI alias — `ORIGINAL`, or `CONSOLIDATED/<yyyymmdd>`."""
+    if form == "ORIGINALE" or not vig:
+        return "ORIGINAL"
+    return f"CONSOLIDATED/{vig.replace('-', '')}"
+
+
+def member_dir_type(member_dir: str) -> str:
+    """`LEGGE COSTITUZIONALE_19480226_3` → `LEGGE COSTITUZIONALE`: the act
+    type the origin files the member under (the slice's type, pack/slicing)."""
+    parts = member_dir.split("_")
+    return "_".join(parts[:-2]).strip() if len(parts) >= 3 else member_dir.strip()
+
+
+def _entry_into_force(notes: list[str]) -> str | None:
+    for note in notes:
+        m = _ENTRY_INTO_FORCE.search(note)
+        if m:
+            d, mo, y = m.groups()
+            return f"{y}-{int(mo):02d}-{int(d):02d}"
+    return None
+
+
 # Open zips, by physical identity. A fetch in native-id order (date order)
 # walks acts across every collection, so a one-slot cache would reopen a
-# 476 MB central directory per document; there are ~24 zips in all.
+# 1.7 GB central directory per document; there are ~23 zips in all.
 _zip_lock = threading.Lock()
 _zip_cache: dict[tuple, zipfile.ZipFile] = {}
 
@@ -94,10 +159,24 @@ def _member_mtime(info: zipfile.ZipInfo) -> int:
     return calendar.timegm(tuple(info.date_time) + (0, 0, 0))
 
 
+def _zip_rank(zpath: Path) -> int:
+    return _ZIP_FORM_RANK.get(zpath.parent.name, len(_ZIP_FORM_RANK))
+
+
 class NormattivaSource:
     source_id = "normattiva"
     LOCATOR_SEP = _LOCATOR_SEP
     ELI_PROFILE = PROFILE
+    VALIDITY_FLOOR = VALIDITY_FLOOR
+    #: 09 §9.3's `profile`, copied into the Codex at `create`: the ELI
+    #: implementation (eli-legal-plugins.md §5.3) and the validity axis of
+    #: one record per Expression (app/validity.py; review §4.2)
+    default_profile = {
+        "eli": {"jurisdiction": PROFILE.jurisdiction, "authority": PROFILE.authority,
+                "uri_template": PROFILE.uri_template, "work_key": list(PROFILE.work_key)},
+        "validity": {"kind": "versions-per-work", "from": "extra.vigenza_from",
+                     "work": "extra.eli_work"},
+    }
     license_class = LicenseClass.YELLOW    # CC BY 4.0, and an NC window before it (TERMS.txt)
     corpus_provider = ("Normattiva — Presidenza del Consiglio dei Ministri and "
                        "Istituto Poligrafico e Zecca dello Stato")
@@ -106,27 +185,32 @@ class NormattivaSource:
                           "ufficiale: fa fede la Gazzetta Ufficiale")
     privacy_class = PrivacyClass.PUBLIC
     chunking_profile = "akn_article"
-    # Consolidated text is revised in place with every amendment.
+    # The origin revises a published version in place when it corrects it.
     mutability = Mutability.MUTABLE
     protocol_version = PROTOCOL_VERSION
     #: 1 since 2026-09-14. 2 the same evening: `keys` empty — 1 wrote
-    #: unregistered `eli:`/`urn:` ids, which 05 §5.2 forbids. Free: no
-    #: collection was ever created from 1.
-    PARSER_VERSION = 2
+    #: unregistered `eli:`/`urn:` ids, which 05 §5.2 forbids. 3 on
+    #: 2026-10-12: one record per Expression (the id, `vigenza_from`,
+    #: `version_key`, `member_dir`, the repeal state, `entry_into_force`),
+    #: and `in_force` where 2 wrote `eli_in_force` (09 §9.5's key). Free: no
+    #: collection was ever created from 1 or 2.
+    PARSER_VERSION = 3
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE          # an act withdrawn from the database
-    native_id_order = "numeric"            # eli.native_id: publication date first
+    native_id_order = "numeric"            # eli.expression_native_id: start of validity first
     default_facets: list = []
 
     def discover(self, state: DiscoverState):
         """Every zip is enumerated in full each scan — a central directory
-        is cheap to read, and the choice between two copies of one act
-        needs all of them at once. Refs come out in native-id order."""
+        is cheap to read, and both the choice between two copies of one
+        Expression and the floor need every member of an act at once. Refs
+        come out in native-id order, which is validity order."""
         root = state.corpus_root
         if not root.is_dir():
             return
         guard = eli.CollisionGuard()
-        best: dict[int, tuple] = {}
+        held: dict[int, tuple] = {}            # nid -> (rank, zpath, member, mtime, size)
+        by_act: dict[tuple[str, str], list[tuple]] = {}   # (gu, codice) -> [(from, form order, nid)]
         for zpath in sorted(root.rglob("*.zip")):
             try:
                 with zipfile.ZipFile(zpath) as zf:
@@ -137,6 +221,7 @@ class NormattivaSource:
                              error=f"unreadable zip {zpath.name}: "
                                    f"{type(e).__name__}: {e}"[:200])
                 continue
+            zrank = _zip_rank(zpath)
             for info in infos:
                 if info.is_dir():
                     continue
@@ -149,8 +234,11 @@ class NormattivaSource:
                                      error=(f"{zpath.name}: member name not in the "
                                             f"origin's pattern: {info.filename}")[:200])
                     continue
-                nid = eli.native_id(m["gu"], m["codice"])
-                other = guard.check(nid, (m["gu"], m["codice"]))
+                gu, codice, form, vig = m["gu"], m["codice"], m["form"], m["vig"]
+                valid_from = vig or gu
+                expr = version_key(form, vig)
+                nid = eli.expression_native_id(valid_from, (gu, codice), expr)
+                other = guard.check(nid, (gu, codice, expr))
                 if other is not None:
                     # eli-legal-plugins.md §5.2: fail loudly, never trust
                     # the arithmetic. The first holder keeps the id.
@@ -158,16 +246,28 @@ class NormattivaSource:
                                  locator=f"{zpath}{_LOCATOR_SEP}{info.filename}",
                                  scope="container",
                                  error=(f"native id {nid} collides: {other[0]} "
-                                        f"{other[1]} and {m['gu']} {m['codice']}"))
+                                        f"{other[1]} {other[2]} and {gu} {codice} {expr}"))
                     continue
-                rank = (_FORM_RANK[m["form"]], m["vig"] or "", int(m["v"]))
+                rank = (zrank, str(zpath), info.filename)
                 cand = (rank, str(zpath), info.filename, _member_mtime(info), info.file_size)
-                held = best.get(nid)
-                if held is None or rank > held[0] or (
-                        rank == held[0] and (cand[1], cand[2]) < (held[1], held[2])):
-                    best[nid] = cand
-        for nid in sorted(best):
-            _rank, zpath, member, mtime, size = best[nid]
+                prior = held.get(nid)
+                if prior is None:
+                    by_act.setdefault((gu, codice), []).append(
+                        (valid_from, 0 if form == "ORIGINALE" else 1, nid))
+                if prior is None or rank < prior[0]:
+                    held[nid] = cand
+        # the floor: a version whose successor starts on or before it ended
+        # before the Republic; the last version of an act is open and stays
+        dropped: set[int] = set()
+        for versions in by_act.values():
+            versions.sort()
+            for (_, _, nid), (nxt, _, _) in zip(versions, versions[1:]):
+                if nxt <= VALIDITY_FLOOR:
+                    dropped.add(nid)
+        for nid in sorted(held):
+            if nid in dropped:
+                continue
+            _rank, zpath, member, mtime, size = held[nid]
             yield DocRef(source_id=self.source_id, native_id=str(nid),
                          locator=f"{zpath}{_LOCATOR_SEP}{member}",
                          mtime=mtime, size=size)
@@ -194,7 +294,7 @@ class NormattivaSource:
         except akn.AknError as e:
             raise UnindexableDocument(f"{member}: {e}") from e
 
-        gu, codice = m["gu"], m["codice"]
+        gu, codice, form, vig = m["gu"], m["codice"], m["form"], m["vig"]
         by_id = f"id/{gu[:4]}/{gu[5:7]}/{gu[8:]}/{codice}"
         aliases = act.frbr.get("work", {}).get("aliases", {})
         returned = aliases.get("eli", "")
@@ -203,6 +303,17 @@ class NormattivaSource:
         type_resource = spans.get("eli:type_document", "")
         urn = aliases.get("urn:nir", "")
         denomination = rendition.denomination(act)
+
+        # the repeal state: every article that has text is a repeal statement,
+        # and no annex has text — the origin's last word on a repealed act
+        with_text = [a for a in act.articles if any(b.text.strip() for b in a.blocks)]
+        repealed_in_full = bool(with_text) and all(rendition.is_repealed(a) for a in with_text) \
+            and not any(b.text.strip() for t in act.attachments for b in t.blocks)
+        repealed_by = ""
+        if repealed_in_full:
+            first = next(b.text for b in with_text[0].blocks if b.text.strip())
+            repealed_by = rendition.plain(first).strip()
+        in_force = False if (repealed_in_full or "abrogati" in zpath.name) else None
 
         extra = {
             # ELI rule 5: the fixed keys (eli.EXTRA_KEYS)
@@ -218,9 +329,20 @@ class NormattivaSource:
             "eli_id_local": spans.get("eli:id_local") or codice,
             "eli_title": (spans.get("eli:title") or "").strip(),
             "eli_uri_schema": spans.get("eli:uri_schema"),
-            # the origin's own statement: the collection of repealed acts
-            "eli_in_force": False if "abrogati" in zpath.name else None,
             "eli_cites": act.cites,
+            # 09 §9.5's force status, on the origin's word only
+            eli.IN_FORCE: in_force,
+            # the Expression this record is (review §3.1), from the member name
+            "version_key": version_key(form, vig),
+            "vigenza_from": vig or gu,
+            "form": _FORMS[form],
+            "vigenza": vig,
+            "member_version": int(m["v"]),
+            "member_dir": m["dir"],
+            "collection": zpath.stem,
+            "repealed_in_full": repealed_in_full,
+            "repealed_by_text": repealed_by,
+            "entry_into_force": _entry_into_force(act.preface_notes),
             # Normattiva's
             "codice_redazionale": codice,
             "urn_nir": urn,
@@ -229,10 +351,6 @@ class NormattivaSource:
             "doc_date_text": act.doc_date_text,
             "doc_title": act.doc_title,
             "publication": act.publication,
-            "form": _FORMS[m["form"]],
-            "vigenza": m["vig"],
-            "member_version": int(m["v"]),
-            "collection": zpath.stem,
             "member_encoding": stored if stored != "xml" else None,
             "act_name": act.act_name,
             "frbr": act.frbr,

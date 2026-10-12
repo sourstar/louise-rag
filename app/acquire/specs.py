@@ -258,44 +258,50 @@ EMBEDDED_SPEC = AcquisitionSpec(
 )
 
 
-# Normattiva's precompiled collections (dati.normattiva.it), as
-# `collections/collection-predefinite` listed them on 2026-09-14: 60 rows,
-# each collection in ORIGINALE, VIGENTE and MULTIVIGENTE. ONE form each:
-# VIGENTE where offered, ORIGINALE for the four published in no other form
-# — the 124,043 repealed acts among them (the plugin's docstring has the
-# reasons). (name, form, acts, bytes): the bytes are the Content-Range total
-# of a one-byte GET of each AKN zip that day, and seed `estimated_bytes`.
+# Normattiva's precompiled collections (dati.normattiva.it): the MULTIVIGENTE
+# zip of each of the 22 collections that serve one, and the ORIGINALE zip of
+# the repealed acts, which the origin publishes in no other form (a
+# repealed act has no consolidation to produce). One record per Expression
+# (docs/notes/normattiva-multivigenza-review.md §3, operator 2026-10-12):
+# the M zip holds every act's ORIGINALE and every VIGENZA, so no V or O
+# duplicate is fetched beside it. (name, form, members, bytes), measured on
+# 2026-10-12 from each zip's central directory and its Content-Range total;
+# the listing (`collection-predefinite`) advertises M for only 15 of the 22
+# and is not a statement of availability — availability is probed. The
+# bytes seed `estimated_bytes` only.
 #
-# The files declare NO size, deliberately. The origin rebuilds a zip in
-# place (most `dataCreazione`s moved within the month), and a stale declared
-# size would let a segmented download cut the rebuilt, longer zip at the old
-# length and record it complete. An unknown size is honest; a wrong one is
-# a corrupt corpus that passes. (Rebuilds are therefore not re-fetched by
-# themselves: the listing carries no size, date or ETag to compare.)
+# The files declare NO size, deliberately. The origin rebuilds every zip
+# daily (its `dataCreazione` is today on nearly every row, so it is no
+# change signal either), and a stale declared size would let a segmented
+# download cut the rebuilt, longer zip at the old length and record it
+# complete. An unknown size is honest; a wrong one is a corrupt corpus that
+# passes. The engine re-fetches a zip whose size moved and adopts one whose
+# size did not; the central-directory delta of the review's §3.10 replaces
+# both with a per-member comparison.
 _NORMATTIVA: tuple[tuple[str, str, int, int], ...] = (
-    ("Codici", "V", 40, 10_531_559),
-    ("Leggi costituzionali", "V", 50, 313_481),
-    ("Testi Unici", "V", 257, 9_449_203),
-    ("Atti di attuazione Regolamenti UE", "V", 39, 452_689),
-    ("Atti di recepimento direttive UE", "V", 1_093, 24_165_741),
-    ("DL decaduti", "V", 1_735, 3_822_367),
-    ("DL e leggi di conversione", "V", 7_439, 59_689_174),
-    ("DL proroghe", "V", 75, 1_393_173),
-    ("DPCM", "V", 363, 5_636_141),
-    ("DPR", "V", 47_761, 183_268_338),
-    ("Decreti legislativi luogotenenziali", "V", 1_215, 3_608_774),
-    ("Leggi contenenti deleghe", "V", 79, 2_461_235),
-    ("Leggi di delegazione europea", "V", 32, 1_913_246),
-    ("Leggi di ratifica", "V", 2_334, 31_242_548),
-    ("Regi decreti", "V", 91_346, 355_397_370),
-    ("Regi decreti legislativi", "V", 120, 492_939),
-    ("Regolamenti di delegificazione", "V", 376, 6_957_845),
-    ("Regolamenti governativi", "V", 1_943, 28_944_006),
-    ("Regolamenti ministeriali", "V", 2_078, 32_557_719),
-    ("Atti normativi abrogati (in originale)", "O", 124_043, 476_590_208),
-    ("Decreti Legislativi", "O", 2_922, 72_637_059),
-    ("Leggi delega e relativi provvedimenti delegati", "O", 1_153, 38_701_237),
-    ("Leggi finanziarie e di bilancio", "O", 58, 8_616_271),
+    ("Leggi costituzionali", "M", 95, 910_258),
+    ("Codici", "M", 3_321, 1_205_370_292),
+    ("Testi Unici", "M", 5_344, 528_440_671),
+    ("Atti di attuazione Regolamenti UE", "M", 68, 1_607_938),
+    ("Atti di recepimento direttive UE", "M", 4_136, 234_775_427),
+    ("DL decaduti", "M", 5_779, 28_771_802),
+    ("DL e leggi di conversione", "M", 14_459, 53_845_923),
+    ("DL proroghe", "M", 633, 30_132_098),
+    ("DPCM", "M", 603, 12_907_463),
+    ("DPR", "M", 57_640, 762_252_068),
+    ("Decreti Legislativi", "M", 13_813, 1_274_638_021),
+    ("Decreti legislativi luogotenenziali", "M", 3_276, 14_333_101),
+    ("Leggi contenenti deleghe", "M", 277, 11_708_478),
+    ("Leggi delega e relativi provvedimenti delegati", "M", 5_906, 619_041_562),
+    ("Leggi di delegazione europea", "M", 160, 10_918_324),
+    ("Leggi di ratifica", "M", 2_879, 41_806_800),
+    ("Leggi finanziarie e di bilancio", "M", 3_027, 562_583_354),
+    ("Regi decreti", "M", 201_929, 1_695_365_828),
+    ("Regi decreti legislativi", "M", 295, 1_449_876),
+    ("Regolamenti di delegificazione", "M", 911, 51_066_114),
+    ("Regolamenti governativi", "M", 4_062, 133_899_158),
+    ("Regolamenti ministeriali", "M", 2_836, 51_314_559),
+    ("Atti normativi abrogati (in originale)", "O", 123_868, 476_602_139),
 )
 
 
@@ -305,7 +311,7 @@ def _normattiva_rel(name: str, form: str) -> str:
     return f"akn/{form}/{re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')}.zip"
 
 
-_NORMATTIVA_STARTER = ("Codici", "Leggi costituzionali", "Testi Unici")
+_NORMATTIVA_STARTER = ("Leggi costituzionali", "Codici", "Testi Unici")
 
 NORMATTIVA_SPEC = AcquisitionSpec(
     source_id="normattiva",
@@ -330,20 +336,20 @@ NORMATTIVA_SPEC = AcquisitionSpec(
     checksums=ChecksumSource(kind="none"),     # none published (API PDF §6)
     delta=DeltaSpec(mode="full-resync"),
     profiles={
-        "demo": Filter(include=(_normattiva_rel("Codici", "V"),)),
-        "starter": Filter(include=tuple(_normattiva_rel(n, "V")
+        "demo": Filter(include=(_normattiva_rel("Leggi costituzionali", "M"),)),
+        "starter": Filter(include=tuple(_normattiva_rel(n, "M")
                                         for n in _NORMATTIVA_STARTER)),
         "full": Filter(),
     },
     estimated_bytes={
-        "demo": 10_531_559,
+        "demo": 910_258,
         "starter": sum(b for n, f, _, b in _NORMATTIVA if n in _NORMATTIVA_STARTER),
         "full": sum(b for _, _, _, b in _NORMATTIVA),
     },
     profile_labels={
-        "demo": "the 40 codes, in force (Codici)",
-        "starter": "codes, constitutional laws and consolidated texts, in force",
-        "full": "every precompiled collection: in force where offered, else original",
+        "demo": "the constitutional laws, every version (Leggi costituzionali)",
+        "starter": "constitutional laws, codes and consolidated texts, every version",
+        "full": "every precompiled collection, every version; the repealed acts in original",
     },
     license_class=LicenseClass.YELLOW,          # CC BY 4.0, after an NC window (TERMS.txt)
     terms_text_path=Path(__file__).parent.parent / "plugins" / "normattiva" / "TERMS.txt",

@@ -189,6 +189,14 @@ def default_slicing(source) -> dict[str, Any]:
     return _check_slicing(block)
 
 
+def default_profile(source) -> dict[str, Any] | None:
+    """09 §9.3's `profile`, the plugin-defined descriptor, from the plugin's
+    `default_profile` unless the recipe writes one: an ELI profile and, for
+    a versioned collection, its validity axis (app/validity.py)."""
+    p = getattr(source, "default_profile", None)
+    return dict(p) if isinstance(p, dict) else None
+
+
 def default_facets(source) -> tuple[Facet, ...]:
     """05 §5.7. Sorted by field, as 09 §9.3 requires."""
     declared = getattr(source, "default_facets", None) or []
@@ -530,7 +538,7 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
                              key=lambda f: f.field))
                 if "facets" in recipe else default_facets(source)),
         credits=build_credits(source, credits, _embedding),
-        profile=recipe.get("profile"),
+        profile=recipe.get("profile", default_profile(source)),
         version=codex_mod.written_version(space, _version_for(space_version, image_shaped)),
         record_line=_record_line(recipe),
     )

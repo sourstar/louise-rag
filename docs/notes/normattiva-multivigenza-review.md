@@ -500,13 +500,13 @@ lacks.
 
 ## 4. Amendments to name (the spec is in progress; a rule that forces a worse result is changed and named)
 
-1. **05 §5.1, 07 §7.3 — `--as-of` on a validity-declaring collection.**
+1. **05 §5.1, 07 §7.3 — `--as-of` on a validity-declaring collection** (*amended 2026-10-12, built*).
    Where the Codex's `profile` declares a validity axis, `--as-of D`
    selects records by validity on the newest held snapshot (valid time);
    the chain resolution of `asof.py` applies to every other collection
    and, for this one, remains "what we held at D" under a name that says
    so. The result's `snapshot_id` keeps its meaning.
-2. **09 §9.3 `profile`** gains the declaration:
+2. **09 §9.3 `profile`** (*amended 2026-10-12, built*) gains the declaration:
    `{"eli": {...}, "validity": {"from": "extra.vigenza_from", "work":
    "extra.eli_work", "kind": "versions-per-work"}}` — opaque to the
    platform except to the ask layer and the index maintainer.
@@ -516,7 +516,7 @@ lacks.
 4. **02 §2.3 / 06 §6.4 — `origin.unit: index-page` for a zip whose
    central directory is fetched by Range**; **09 §9.17 — a `DeltaSpec`
    mode for the central-directory delta**. Both asked, not assumed.
-5. **05 §5.7 — the range filter is built**, for the validity predicate.
+5. **05 §5.7 — the range filter**: the validity predicate is a column range on the legs (built 2026-10-12); the general range facet filter of 05 §5.7 stays as it was.
 6. **eli-legal-plugins.md §6, rule 2** — "the Expression is pinned by
    the record, read back from what the origin returned; the snapshot
    pins when it was held"; and §5.1 amended likewise.
@@ -623,6 +623,73 @@ lacks.
    Against: one asymmetry in `eli.EXTRA_KEYS`, one test to move.
 
 **Operator, 2026-10-12: all six decided as recommended in §6.1.**
+
+### Built 2026-10-12, first part: the plugin, the spec, the slicing (parser 3)
+
+`app/plugins/normattiva/source.py` discovers every member of every zip as a
+record — `eli.expression_native_id`, the id of §3.1, with one deviation
+from §3.1 as written: an ORIGINALE's `vigenza_from` for the id is its
+**publication date**, the only date the member name carries, because
+discovery enumerates without reading (06 §6.1); the entry into force the
+origin states in the preface note is kept beside it as
+`extra.entry_into_force` (measured on the samples: the day after
+publication for the 1948 statute, the same day for R.D. 206/1861), and §7's
+measurement decides whether the version table should prefer it. The version
+key is the member name's (`version_key`, agreeing with the ELI alias); the
+floor is `VALIDITY_FLOOR = "1948-01-01"` applied at discovery (a version
+whose successor starts on or before it is not yielded); one copy per
+Expression, M before V before O (D1 gone with the rank rule); the repeal
+state is detected (`repealed_in_full`, `repealed_by_text`) and `in_force`
+replaces `eli_in_force` (D3). `app/pack/slicing.py` gains the `normattiva`
+scheme of §3.7 (`type=<the act type the origin files the member under>/vig=<year>`,
+50 records a part) with a `slice_hint` that answers from the manifest row
+(D2). `app/acquire/specs.py` fetches the 22 M zips and the repealed acts'
+O zip (23 files, 7.8 GB); the V and O duplicates are gone. Tests: 146 in
+the affected modules; four real members added as fixtures (three versions
+of the Statuto Sardegna, one repeal state). Not yet built: §3.2–3.4's
+version table and as-of path, §3.5's carry, §3.10's acquisition changes,
+§3.12's relations and reference source — the second part.
+
+**Densities measured for §3.7** (eight VIGENZA members a collection, by
+Range, excluding repeal states; articles per act): Codici 409, DPR 123,
+Testi Unici 86, Leggi delega 78, Leggi finanziarie 75, Regolamenti
+governativi 59, Atti di recepimento 40, Regolamenti ministeriali 19, DL
+decaduti 8, Decreti Legislativi 7, Leggi di ratifica 4, Regi decreti 4, DL
+e leggi di conversione 1. At 50 records a part the codes' parts run to
+about 20,000 chunks and the royal decrees' to 200; one `shard_records` per
+collection is the format's, and the middle of the range meets the target.
+
+
+
+### Built 2026-10-12, second part: validity by key (`app/validity.py`)
+
+The version table and the search window of §3.2–§3.3, with 05 §5.1,
+07 §7.3 and 09 §9.3 amended as §4.1, §4.2 and §4.5 say (§4.3's carry,
+§4.4's acquisition changes and §3.12's relations are still to build). The
+Codex `profile` carries the declaration (`template.default_profile`, from
+the plugin's `default_profile`); the rdf stage records each version and
+recomputes its Work's chain in the manifest's `validity` table (`valid_to`
+= the next version's start, `shown` = the latest version with text,
+`in_force` on the origin's word), one indexed read per document
+(`idx_validity_work`, plan-checked); a neighbour whose end or `shown`
+moved has its fts and embed marks reset in the same transaction, so its
+own stages rewrite its index rows — the fts stage re-adds its chunks with
+the two fast fields, the embed stage reuses every vector and updates the
+two columns in place (`embeddings.sync_columns`); the index maintainer
+drains `synced = 0` rows for a peer whose embed stage does not run. The
+legs take the window as a column range — tantivy fast-field ranges on
+`book_id` (the validity prefix) and `valid_to`, a Lance `where` — never an
+id list; the catalog leg is admitted by the table; `--as-of` reaches
+`retrieval` as an integer day and a versioned collection is excused from
+`asof.resolve`; a result carries `validity: {from, to, in_force,
+current}`. Tests: `tests/test_validity.py` (the chain, idempotence and
+order, the plan, both legs, the repealed act shown by default and absent
+after its repeal, a new version moving its predecessor through its own
+stages with zero encoder calls, the maintainer's drain, the retrieval
+path). One deviation from §3.3 as written: the tantivy and Lance columns
+hold `99999999` for "still in force" (`validity.OPEN`), an index-only
+sentinel — a record never carries it, and a result reads it back as null.
+
 
 ## 7. Measurements owed before parameters are fixed
 

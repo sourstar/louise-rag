@@ -19,6 +19,10 @@ What leaves the embedded text, and where it goes instead:
   * an article repealed in place ("((ARTICOLO ABROGATO DAL …))", 839 in
     the 40 codes) keeps its heading and loses its body, so it produces NO
     chunk — its repeal statement is in the record's `repealed_articles`;
+    the same for a REPEAL STATE, a whole act whose every article reads
+    "((PROVVEDIMENTO ABROGATO DALLA …))" (87,798 members of the archive,
+    normattiva-multivigenza-review.md §1): no chunk at all, and the record
+    says so (`repealed_in_full`, `in_force`);
   * the administration's notes to an article, the preface's notes, the
     preamble and the conclusions — the act's apparatus, kept in the record
     and never embedded (in the file they read as `> nota:`).
@@ -33,7 +37,7 @@ import re
 from . import akn
 
 _NOTE_MARK = re.compile(r"\(\(\s*\d+\s*\)\)")
-_REPEALED = re.compile(r"^\s*\(\(\s*(ARTICOLO\s+)?(ABROGAT|SOPPRESS)", re.I)
+_REPEALED = re.compile(r"^\s*\(\(\s*(ARTICOLO\s+|PROVVEDIMENTO\s+|ATTO\s+)?(ABROGAT|SOPPRESS)", re.I)
 #: a comma's number at the margin: "1. ", "2-bis. ", "10-quinquies."
 _COMMA = re.compile(r"^(\d+(?:-[a-z]+)?\.)(?:\s|$)")
 

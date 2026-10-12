@@ -51,3 +51,27 @@ def test_a_profile_makes_absolute_uris_and_jurisdiction_qualified_keys():
         "http://www.normattiva.it/eli/id/2003/11/15/003G0333"
     assert p.absolute("http://x/eli/id/1") == "http://x/eli/id/1"
     assert p.key("id/2003/11/15/003G0333") == "eli:it:id/2003/11/15/003G0333"
+
+
+def test_an_expression_id_sorts_by_the_start_of_validity_and_tells_versions_apart():
+    """review §3.1: the version key is the origin's identifier of the
+    Expression; an original and a consolidation dated the same day (ten
+    acts in the archive) are two ids; later versions sort later."""
+    work = ("1948-03-09", "048C0003")
+    o = eli.expression_native_id("1948-03-09", work, "ORIGINAL")
+    v11 = eli.expression_native_id("2001-02-01", work, "CONSOLIDATED/20010201")
+    v12 = eli.expression_native_id("2001-02-16", work, "CONSOLIDATED/20010216")
+    assert o // 10**9 == 19480309 and v11 // 10**9 == 20010201
+    assert o < v11 < v12 < 2**63
+    assert v11 == eli.expression_native_id("2001-02-01", work, "CONSOLIDATED/20010201")
+    same_day_c = eli.expression_native_id("1929-05-08", ("1929-05-08", "029U0629"), "CONSOLIDATED/19290508")
+    same_day_o = eli.expression_native_id("1929-05-08", ("1929-05-08", "029U0629"), "ORIGINAL")
+    assert same_day_c != same_day_o and same_day_c // 10**9 == same_day_o // 10**9
+    with pytest.raises(ValueError):
+        eli.expression_native_id("1929", work, "ORIGINAL")
+
+
+def test_the_force_status_key_is_the_documents():
+    """09 §9.5 and 06 §6.1 name it `in_force`; the ELI keys stay prefixed."""
+    assert eli.IN_FORCE == "in_force"
+    assert "eli_in_force" not in eli.EXTRA_KEYS and "in_force" not in eli.EXTRA_KEYS

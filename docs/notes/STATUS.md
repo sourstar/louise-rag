@@ -14,6 +14,12 @@ it left open is below.
 
 - **`hold embedder calibrate`** is a stub: it wants two builds of one model
   to compare (step 3).
+- **Normattiva, the second part's remainder** (2026-10-12,
+  [normattiva-multivigenza-review.md](normattiva-multivigenza-review.md) §4,
+  §7): the cross-record vector carry, the central-directory delta and the
+  `index-page` origin unit, `relations()` and the `eli`/`urn` reference
+  source, and the measurements before `shard_records` and the ORIGINALE's
+  validity-start rule are fixed. Decided; not built.
 - **The Gazzetta plugin**: certified records carrying `extra.seal` — the
   certifier body's to run (step 10).
 - **`backend_gate`** stays while any Codex is version 1 or 2 (five live).
@@ -150,6 +156,43 @@ Everything except two items travels through this repository.
 | **Phase 1** — bundles + community | **built, never exercised.** Signed bundle export/import, verification ladder T0–T4, coordinator with leases and demand-sets, `contribute` mode, genesis import. Integration-tested two-node. The *deliverable* — publishing a revived PubMed corpus — has never been done, and §12 argues that artifact is the entire go-to-market. |
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
+
+### 2026-10-12: Normattiva — one record per Expression, validity by key
+
+The snapshot-chain multivigenza proposal of the morning
+([`normattiva-multivigenza.md`](normattiva-multivigenza.md)) was reviewed
+against the live archive and withdrawn the same day
+([`normattiva-multivigenza-review.md`](normattiva-multivigenza-review.md)):
+`as_of` withholds exactly the amended acts, a monthly chain never holds the
+6.7 % of version transitions shorter than a month (37 % in the forty
+codes), and it conflates valid time with transaction time. The operator
+took the review's six decisions as recommended (§6.1) and said go.
+
+**Built the same day, two parts.** (1) The plugin at parser 3: every
+member of every multivigente zip is a record (`eli.expression_native_id`,
+sorted by the start of validity so arrival stays monotonic), the floor on
+validity at discovery (`VALIDITY_FLOOR = 1948-01-01`), one copy per
+Expression (M before V before O — which removes the blocking defect D1:
+the old rank put the text-less repeal state of 79,922 royal decrees ahead
+of their text), the repeal state detected, `in_force` in place of
+`eli_in_force`; the `normattiva` slicing scheme (type and year, 50 a part);
+the spec fetching the 22 M zips and the repealed acts' O zip (7.8 GB).
+(2) `app/validity.py`: the manifest's `validity` table filled at the rdf
+stage, the two index columns written by the fts and embed stages and
+refreshed through a moved neighbour's own stages, the legs filtering by
+column range, `--as-of` by validity for a versioned collection, results
+carrying `validity`; 05 §5.1, 07 §7.3 and 09 §9.3 amended; the ELI note's
+rule 2 reversed (the record pins the Expression). The embedder stays
+DAR-legal-it — the operator states its licence is the training data's,
+CC-BY-NC-SA-4.0 — and the reranker jina-reranker-v3 (review §10).
+
+**Still open, in the review's §4 and §7:** the cross-record vector carry
+(§4.3), the central-directory delta and `index-page` unit (§4.4),
+`relations()` and the reference source (§3.12), the measurements owed
+before `shard_records` and the ORIGINALE's validity-start rule are fixed,
+and the Constitution's on-demand query. No Normattiva collection exists
+yet; the one measurement the operator asked for first — a second listing
+of the archive a month from now — is dated.
 
 ### 2026-10-05: the side branches merged into main
 
