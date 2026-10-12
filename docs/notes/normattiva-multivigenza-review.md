@@ -515,7 +515,10 @@ lacks.
    vector.
 4. **02 §2.3 / 06 §6.4 — `origin.unit: index-page` for a zip whose
    central directory is fetched by Range**; **09 §9.17 — a `DeltaSpec`
-   mode for the central-directory delta**. Both asked, not assumed.
+   mode for the central-directory delta**. Both asked, not assumed
+   (*decided 2026-10-12, built*: `app/acquire/zipdelta.py`,
+   `member_origin.py`; the plugin's spec is `zip-directory`; `hold check`
+   without `--origin` re-fetches members by Range on an `index-page` Codex).
 5. **05 §5.7 — the range filter**: the validity predicate is a column range on the legs (built 2026-10-12); the general range facet filter of 05 §5.7 stays as it was.
 6. **eli-legal-plugins.md §6, rule 2** — "the Expression is pinned by
    the record, read back from what the origin returned; the snapshot
@@ -690,6 +693,24 @@ path). One deviation from §3.3 as written: the tantivy and Lance columns
 hold `99999999` for "still in force" (`validity.OPEN`), an index-only
 sentinel — a record never carries it, and a result reads it back as null.
 
+
+### Built 2026-10-12, third part: the carry, the edges, the delta, the member as unit
+
+`app/embeddings.py cross_carry` and the manifest's `chunk_hashes` (§3.5;
+06 §6.3 amended); `NormattivaSource.relations()` — `eli:amends`,
+`eli:repeals`, `eli:cites` between acts, by URN:NIR and AKN work path (§3.12's
+first half; the reference source and the resolver remain);
+`app/acquire/zipdelta.py` — the directory by Range, the changed members by
+Range, the local zip rebuilt from raw bytes, wired into the engine as
+`DeltaSpec(mode="zip-directory")` and set on the plugin's spec, every pass
+asking each zip's directory and falling back to the whole fetch where it
+must (§3.10; 09 §9.17 amended); `app/acquire/member_origin.py` — `hold
+check` without `--origin` on an `index-page` Codex re-fetches a sampled
+record's member by Range and weighs the unit by the member (§3.10, D5; 02
+§2.3 amended). Tests: `tests/acquire/test_zipdelta.py`,
+`test_member_origin.py`, `test_engine_zipdelta.py` (against the mock server,
+with and without Range, with a delta not worth taking), the carry and edge
+tests in `tests/test_validity.py` and `tests/test_normattiva.py`.
 
 ## 7. Measurements owed before parameters are fixed
 

@@ -2616,14 +2616,22 @@ def _reparse_from(codex, name: str, origin_dir):
     those bytes are still what the origin serves. It is what an offline
     peer can do, and `origin_hash` is what makes even that meaningful.
     """
-    if not origin_dir:
-        return None
     from pathlib import Path
 
     from app import collections as collections_mod, layers as layers_mod, plugin_io
     from app.pack import build as pack_build, records as pack_records
 
-    base = Path(origin_dir)
+    prepare = None
+    if origin_dir:
+        base = Path(origin_dir)
+    else:
+        # no local origin given: a Codex whose `origin.unit` is `index-page`
+        # re-fetches each sampled record's MEMBER by Range into a temporary
+        # base (app/acquire/member_origin.py; 02 §2.3; review §3.10)
+        mo = _member_origin(codex)
+        if mo is None:
+            return None
+        base, prepare = mo.base, mo.materialise
     # THE CODEX COMES WITH IT. 03 §3.2 asks for the origin "re-parsed with
     # the Codex's toolchain", and two of the things that decides are in the
     # Codex and nowhere else: the layer rules (invariant 1) and
@@ -2639,6 +2647,8 @@ def _reparse_from(codex, name: str, origin_dir):
     plugin = collection.plugin_instance()
 
     def reparse(uid: str, locator: str) -> bytes:
+        if prepare is not None:
+            prepare(locator)
         local, path = plugin_io.local_locator(plugin, locator, base)
         if not local.exists():
             raise FileNotFoundError(str(local))
@@ -2651,13 +2661,27 @@ def _reparse_from(codex, name: str, origin_dir):
     return reparse
 
 
+_member_origins: dict = {}
+
+
+def _member_origin(codex):
+    """One member origin per Codex for a run: `_reparse_from` and
+    `_origin_unit_from` share its directories and its temporary base."""
+    from app.acquire import member_origin
+    key = getattr(codex, "collection_id", id(codex))
+    if key not in _member_origins:
+        _member_origins[key] = member_origin.for_codex(codex)
+    return _member_origins[key]
+
+
 def _origin_unit_from(codex, name: str, origin_dir):
     """`origin locator -> (the origin file it points into, its size in bytes)`,
     for `records-vs-origin`'s bound (app/hold/check.py: `ORIGIN_BYTES`). With
     the origin as a local base the size is the file's; a file that is not
     there has none, and its records are reported as not there, as before."""
     if not origin_dir:
-        return None
+        mo = _member_origin(codex)
+        return mo.unit if mo is not None else None
     from pathlib import Path
 
     from app import collections as collections_mod, plugin_io

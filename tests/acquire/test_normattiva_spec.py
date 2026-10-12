@@ -52,6 +52,7 @@ def test_profiles_grow_and_the_licence_gate_is_yellow_with_terms():
     inc = {p: set(SPEC.profiles[p].include) for p in ("demo", "starter")}
     assert inc["demo"] <= inc["starter"]
     assert SPEC.estimated_bytes["demo"] < SPEC.estimated_bytes["starter"] < SPEC.estimated_bytes["full"]
+    assert SPEC.delta.mode == "zip-directory", "review §3.10: the directory and the changed members, every pass"
     assert SPEC.license_class == LicenseClass.YELLOW
     assert SPEC.terms_text_path.is_file()
     assert b"\r" not in SPEC.terms_text_path.read_bytes(), "terms are byte-exact LF"

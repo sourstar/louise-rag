@@ -11,7 +11,9 @@ CorpusSource Protocol, already stabilized across P0.1/P0.2/P0.3.
 import fnmatch
 import hashlib
 import json
+import os
 import shutil
+import zipfile
 import threading
 import time
 from dataclasses import dataclass
@@ -271,7 +273,7 @@ def _plan_from_files(con, collection, spec: AcquisitionSpec, files: list[RemoteF
             "WHERE source_id=? AND rel_path=?", (spec.source_id, f.rel_path)).fetchone()
         size = f.size or 0
         bytes_total += size
-        is_pending = (row is None or not row["fetch_done"]
+        is_pending = (spec.delta.mode == "zip-directory" or row is None or not row["fetch_done"]
                       or row["remote_size"] != f.size or row["remote_mtime"] != f.mtime)
         if is_pending:
             pending.append(f)
@@ -540,6 +542,11 @@ class _WorkItem:
 
 
 def _is_pending(con, spec: AcquisitionSpec, f: RemoteFile) -> bool:
+    if spec.delta.mode == "zip-directory":
+        # the origin rebuilds the file in place and its listing names no size
+        # or date to compare: every pass asks the file's own directory
+        # (app/acquire/zipdelta.py) — a few MB — what changed
+        return True
     row = con.execute(
         "SELECT remote_size,remote_mtime,fetch_done FROM fetch_files "
         "WHERE source_id=? AND rel_path=?", (spec.source_id, f.rel_path)).fetchone()
@@ -662,12 +669,63 @@ def _promote(land: Path, dest: Path) -> None:
     shutil.move(str(land), str(dest))
 
 
+def _zip_delta(endpoint, f: RemoteFile, dest: Path, spec: AcquisitionSpec, manager,
+               endpoint_key: str) -> _FileResult | None:
+    """09 §9.17 `delta.mode: "zip-directory"` (review §3.10): the file on disk
+    brought up to the origin's by its central directory and one Range per
+    changed member (app/acquire/zipdelta.py). None hands the file to the
+    whole fetch: no copy on disk yet, an origin that will not serve ranges,
+    a member that does not check out, or a delta that would move more than
+    half the file. The budget is drawn per byte as it arrives, which is also
+    where a stop is seen (invariant 5; app/acquire/budget.py)."""
+    if spec.delta.mode != "zip-directory" or not dest.is_file():
+        return None
+    from . import zipdelta
+    url = transport_https._url(endpoint, f)
+    reader = zipdelta.HttpRangeReader(url, transport_https.headers_for(endpoint))
+    out = dest.with_name(dest.name + ".delta")
+    started = time.monotonic()
+    try:
+        got = zipdelta.update(reader, dest, out)
+        digest = checksum.digest_and_verify(out, spec.checksums)
+        os.replace(out, dest)
+    except TransferAborted:
+        out.unlink(missing_ok=True)
+        raise
+    except (TransportError, zipfile.BadZipFile, OSError, ValueError) as e:
+        # the whole fetch follows; the reason is the worker's to see
+        out.unlink(missing_ok=True)
+        _zip_delta_fallbacks.append(f"{f.rel_path}: {type(e).__name__}: {e}"[:300])
+        del _zip_delta_fallbacks[:-50]
+        return _DELTA_DECLINED
+    elapsed = time.monotonic() - started
+    manager.record_throughput(endpoint_key, got.bytes_read, elapsed)
+    return _FileResult(remote=f, endpoint_url=endpoint.url, status="fetched",
+                        size=dest.stat().st_size, digest=digest,
+                        moved=got.bytes_read, seconds=elapsed)
+
+
+#: why the last zip deltas fell back to the whole fetch, for the log line
+_zip_delta_fallbacks: list[str] = []
+#: a delta that was tried and declined: the origin's directory said the
+#: file differs, so the copy on disk is NOT adopted by its size (D4) — the
+#: whole fetch follows
+_DELTA_DECLINED = object()
+
+
 def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                      spec: AcquisitionSpec, manager, endpoint_key: str) -> _FileResult:
     dest = collection.corpus_dir / f.rel_path
+    # a zip the origin rebuilds in place: its own directory says what moved,
+    # before any size comparison — a rebuild of the same size is caught too
+    delta = _zip_delta(endpoint, f, dest, spec, manager, endpoint_key)
+    if delta is not None and delta is not _DELTA_DECLINED:
+        return delta
     # Already there and complete? Verify and record it; move nothing. A file
-    # listed without a size is complete when the origin says it is.
-    if is_adoptable(collection, f) or _origin_says_complete(transport, endpoint, f, dest):
+    # listed without a size is complete when the origin says it is — unless
+    # its own directory just said otherwise (a rebuild of the same size)
+    if delta is not _DELTA_DECLINED and (
+            is_adoptable(collection, f) or _origin_says_complete(transport, endpoint, f, dest)):
         adopted = _adopt_one_file(f, collection, spec)
         if adopted is not None:
             return adopted

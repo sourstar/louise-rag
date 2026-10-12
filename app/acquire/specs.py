@@ -334,7 +334,10 @@ NORMATTIVA_SPEC = AcquisitionSpec(
     layout="container-files",
     filters=("*.zip",),
     checksums=ChecksumSource(kind="none"),     # none published (API PDF §6)
-    delta=DeltaSpec(mode="full-resync"),
+    # the zips are rebuilt daily and their listing names no size or date:
+    # each pass reads each zip's central directory by Range and fetches the
+    # changed members (app/acquire/zipdelta.py; review §3.10, decision 5)
+    delta=DeltaSpec(mode="zip-directory"),
     profiles={
         "demo": Filter(include=(_normattiva_rel("Leggi costituzionali", "M"),)),
         "starter": Filter(include=tuple(_normattiva_rel(n, "M")

@@ -14,12 +14,15 @@ it left open is below.
 
 - **`hold embedder calibrate`** is a stub: it wants two builds of one model
   to compare (step 3).
-- **Normattiva, the second part's remainder** (2026-10-12,
-  [normattiva-multivigenza-review.md](normattiva-multivigenza-review.md) §4,
-  §7): the cross-record vector carry, the central-directory delta and the
-  `index-page` origin unit, `relations()` and the `eli`/`urn` reference
-  source, and the measurements before `shard_records` and the ORIGINALE's
-  validity-start rule are fixed. Decided; not built.
+- **Normattiva, what the second part left** (2026-10-12,
+  [normattiva-multivigenza-review.md](normattiva-multivigenza-review.md) §3.12,
+  §7): the `eli`/`urn` reference source and the citation resolver (so
+  `keys` can be written), closing a repealed-only act's validity from
+  `eli:repeals` edges, the measurements before `shard_records` and the
+  ORIGINALE's validity-start rule are fixed, the Constitution's on-demand
+  query, and no collection created yet. Built the same day: the vector
+  carry, `relations()`, the central-directory delta and the member as
+  origin unit.
 - **The Gazzetta plugin**: certified records carrying `extra.seal` — the
   certifier body's to run (step 10).
 - **`backend_gate`** stays while any Codex is version 1 or 2 (five live).
@@ -186,11 +189,13 @@ rule 2 reversed (the record pins the Expression). The embedder stays
 DAR-legal-it — the operator states its licence is the training data's,
 CC-BY-NC-SA-4.0 — and the reranker jina-reranker-v3 (review §10).
 
-**Still open, in the review's §4 and §7:** the cross-record vector carry
-(§4.3), the central-directory delta and `index-page` unit (§4.4),
-`relations()` and the reference source (§3.12), the measurements owed
-before `shard_records` and the ORIGINALE's validity-start rule are fixed,
-and the Constitution's on-demand query. No Normattiva collection exists
+**Built later the same day:** the cross-record vector carry (§4.3, 06 §6.3
+amended), `relations()` with ELI-named edges (§3.12), the central-directory
+delta (`zip-directory`, 09 §9.17 amended; `app/acquire/zipdelta.py`) and the
+member as origin unit for `records-vs-origin` (`member_origin.py`; 02 §2.3
+amended). **Still open:** the `eli`/`urn` reference source and the citation
+resolver, the measurements owed before `shard_records` and the ORIGINALE's
+validity-start rule are fixed, and the Constitution's on-demand query. No Normattiva collection exists
 yet; the one measurement the operator asked for first — a second listing
 of the archive a month from now — is dated.
 

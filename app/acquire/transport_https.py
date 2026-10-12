@@ -36,6 +36,15 @@ _USER_AGENT = (f"louise-rag/0.1 (+https://github.com/sourstar/louise-rag) "
                f"httpx/{httpx.__version__}")
 
 
+def headers_for(endpoint: Endpoint) -> dict:
+    """The request headers every GET of this transport sends: the product
+    string, and the bearer token read from its path (invariant 8)."""
+    headers = {"User-Agent": _USER_AGENT}
+    if endpoint.auth_token_path is not None:
+        headers["Authorization"] = f"Bearer {endpoint.auth_token_path.read_text().strip()}"
+    return headers
+
+
 def _url(endpoint: Endpoint, remote: RemoteFile) -> str:
     """`remote.remote` when the origin serves the file by query, else the
     destination path itself (spec.RemoteFile)."""

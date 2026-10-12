@@ -2099,7 +2099,7 @@ half never leaves the plugin and the peer.
 | `files` | list of `{rel_path, size or null, checksum or null}` or null | yes | the declared list when `listing` is `"static"`; for a dated-dump origin the dump pinned |
 | `filters` | list of strings | yes | the base include patterns |
 | `checksums` | `{kind: "sidecar" · "manifest" · "none", suffix, algo}` | yes | |
-| `delta` | `{mode: "updatefiles-dir" · "dated-dumps" · "full-resync", subdir: string or null}` | yes | |
+| `delta` | `{mode: "updatefiles-dir" · "dated-dumps" · "full-resync" · "zip-directory", subdir: string or null}` | yes | `zip-directory` (*amended 2026-10-12*, docs/notes/normattiva-multivigenza-review.md §3.10): a zip the origin rebuilds in place is brought up to date by its own central directory — read by Range, compared member by member on CRC-32 and size — and one Range request per changed member; the local copy is rebuilt from the members it holds and the ones fetched, raw bytes copied, never recompressed. The members decompress to the origin's bytes, which is what `origin_hash` covers; the file itself is not byte-identical to the origin's, which no checksum declares. An origin that will not serve ranges, a member that does not check out, or a delta that would move more than half the file falls back to the whole fetch |
 | `endpoints` (mirrors) | | no | additional endpoints, regions, connection limits |
 | `etiquette` | | no | `{max_conns, bandwidth_cap_bps, windows}` |
 | `profiles`, `profile_mode`, `profile_labels`, `estimated_bytes` | | no | named selections of slices and their sizes |

@@ -65,7 +65,10 @@ class ChecksumSource:
 
 @dataclass(frozen=True)
 class DeltaSpec:
-    mode: Literal["updatefiles-dir", "dated-dumps", "full-resync"]
+    #: `zip-directory` (09 §9.17, amended 2026-10-12): a zip the origin rebuilds
+    #: in place, brought up to date by its central directory and one Range per
+    #: changed member (app/acquire/zipdelta.py); the whole fetch when it cannot
+    mode: Literal["updatefiles-dir", "dated-dumps", "full-resync", "zip-directory"]
     updatefiles_subdir: str | None = None
 
 
