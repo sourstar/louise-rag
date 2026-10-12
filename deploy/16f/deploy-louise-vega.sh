@@ -199,6 +199,27 @@ for d in "$ROOT"/data/collections/*/drag; do
   mv "$d" "$t" && echo "moved $d -> $t"
 done
 if ls -d "$ROOT"/data/collections/*/drag 2>/dev/null; then echo "a drag/ is left"; exit 1; fi
+# 5d. One mount per kind, a folder per collection (operator, 2026-10-12): each
+# collection's origin/ and shard/ becomes a symlink into /corpora, /shards or a
+# custom origin, so the paths every manifest stores stay; wikivec's archive is
+# a relative link inside wikipedia's origin; then flatten_mounts.py drops the
+# per-collection mounts and adds the shared ones (one app.update). A folder
+# that holds files is never replaced. Skips what is already done.
+say "5d. one mount per kind"
+link() {   # link <path> <target>
+  if [ -L "$1" ]; then return 0; fi
+  if [ -d "$1" ]; then rmdir "$1" || { echo "$1 holds files: not linked"; exit 1; }; fi
+  ln -s "$2" "$1" && echo "linked $1 -> $2"
+}
+D=$ROOT/data/collections
+link $D/gutenberg/shard /shards/gutenberg
+link $D/gutenberg/origin /corpora-custom/gutenberg
+link $D/pubmed/shard /shards/pubmed
+link $D/pubmed/origin /corpora/pubmed
+link $D/wikipedia/shard /shards/wikipedia
+link $D/wikipedia/origin /corpora/wikipedia
+link /mnt/tank/louise-corpora/wikipedia/data ../wikivec/data
+python3 "$ROOT/src/deploy/16f/flatten_mounts.py"
 # 5b. LOUISE_PLATFORM_IMAGE = the image web and worker will start in (07 §7.3;
 # STATUS 2026-09-14). This runbook did not set it, and from 2026-09-21 to
 # 2026-10-07 the node declared pubmed's Codex image while running every later
@@ -249,3 +270,7 @@ echo "(each kept validation is re-embedded once at start — a few seconds per r
 #   python3 src/deploy/16f/rename_mounts.py /mnt/tank/apps/louise-shard/ /mnt/tank/apps/louise-drag/ shard drag
 #   zfs rename tank/apps/louise-shard tank/apps/louise-drag
 #   for d in data/collections/*/shard; do mv "$d" "$(dirname "$d")/drag"; done
+# Since 2026-10-12 (5d) the per-collection mounts are gone: the old code reads
+# the same paths through the host symlinks, so a backout needs nothing more
+# than the steps above; to restore the old mounts as well, put back
+# app-config-backups/<the copy taken before this deploy>.
