@@ -697,6 +697,20 @@ one weights mount). LocalAI restarted once to register the backend (lesson
 load 21.7 s; run `sha256:85b9fa1a…`; three texts receipt-verified and equal
 to the CPU reference (cosine 1.000000).
 
+**Open: the backend's tree digest moved once with no file changed.** The
+first loads (22:25–22:32 CEST) stated run 85b9fa1a… with engine.image
+`355a0208…`; from about 23:00 every load states 651c4ec0… with image
+`7b5d557e…`, which `tree_digest` recomputes today. VeGa's two run records
+differ in `image`/`build` only, and nothing under `louise-dar-legal-it/`
+has an mtime or a ctime after 22:24:30 — no write, no chmod, no deletion.
+Not explained yet. Found beside it and fixed (24b9faf): the WRAPPER build
+left its stdlib uncompiled, so the wrapper's tree took .pyc files at its
+first loads — a real defect, but the wrapper is not what `image` hashes.
+Since the rebuild two fresh loads state the same run and nothing is written
+in either tree. A drift is safe by construction (an unvalidated run's
+answers are refused before the write and the gate validates the new run),
+so the Normattiva recipe names the engine served now; watch its next loads.
+
 **Left on the node, ours.**
 - Host `/tmp/vega-stage/` (99 MB, tmpfs): sources, the portable Python,
   `out/` with the reports, `pairs.json` and the reference vectors. The pip

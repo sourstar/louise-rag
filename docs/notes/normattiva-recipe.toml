@@ -64,13 +64,15 @@ label = "jurifindit/DAR-legal-it (de7867e4; LocalAI's louise-dar-legal-it backen
 # amendment): the run the reference vectors are computed with, written out
 # whole so anyone can run it again. Read on 2026-10-12 with `hold embedder
 # run --encoder http://192.168.178.10:30286 --api vega --model
-# vega-dar-legal-it`: run sha256:85b9fa1abf79d1798286fe83c08504fd50153b479e
-# 62f056b2c4ed4dbe2718aa (docs/notes/vega.md §12). `create` holds the
+# vega-dar-legal-it`: run sha256:651c4ec08b2a7562335cbc951ecfa483658b01ca0d
+# adc92a07acda6069546386 (docs/notes/vega.md §12; re-read 23:10 CEST after
+# the backend's tree digest moved once from 355a0208… with no file changed —
+# open in vega.md). `create` holds the
 # endpoint's stated run to these values, or creates nothing.
 [space.encoder.engine]
 name = "localai/louise-dar-legal-it"
-build = "355a0208eaf7"
-image = "sha256:355a0208eaf7e9c0f99c515d54d019e9a7a95d5ac3d28a91dcee130562dd21ba"
+build = "7b5d557e1744"
+image = "sha256:7b5d557e17441f88b180cb617bd49fc86bf2db226dc01446b9dbc3eb0a6941eb"
 args = ["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"]
 device = "Intel(R) Arc(TM) Pro B70 Graphics"
 
