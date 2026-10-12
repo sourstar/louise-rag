@@ -96,8 +96,8 @@ are the ones that have drifted; prefer to add a test when you touch them.
    substitute. *Enforced: review.*
 6. STORAGE. /data is a local filesystem: SQLite WAL + LanceDB, no SMB/NFS
    assumptions. SQLite holds state (never travels); Lance holds vectors
-   locally — a bundle travels as Parquet (docs/09 §9.7) and a SHARD's
-   vectors member rests as safetensors (docs/09 §9.6). Implicit rowids
+   locally — a bundle travels as Parquet (docs/09 §9.7) and rests in the
+   peer's LanceDB table (docs/09 §9.6; no per-part vectors file). Implicit rowids
    are load-bearing (the catalog index, `app/catalog.py`, is
    keyed on `documents.rowid`): nothing VACUUMs a manifest, and anything
    that renumbers rowids must rebuild it. *Enforced: review.*

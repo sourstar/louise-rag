@@ -752,3 +752,23 @@ def test_one_runner_address_serving_two_models_keeps_their_runs_apart():
                              query_model="vega-medcpt-query")
     assert run_check._who(medcpt, True) == ("http://localai:30286", "vega-medcpt-query")
     run_check.reset_cache()
+
+
+def test_a_statement_borrowed_from_a_sister_collection_is_kept_as_its_own(node, rage):
+    """A pass validates a run for the SPACE, so a statement under another
+    collection of the same space counts — and is copied here: deleting that
+    retired collection took gutenberg's statements with it (2026-10-12)."""
+    import shutil
+    root, collection, codex = node
+    con = db.connect(collection)
+    assert backend_gate.embed_allowed(con, collection) is True
+    body = statements_kept(root)[0]
+    sister = root / "gutenberg-retired" / "state"
+    sister.mkdir(parents=True)
+    shutil.move(str(hold_runs.directory(root, "gutenberg")), str(sister / "calibration"))
+    hold_runs._read.clear()
+    got = hold_runs.statements_for_space(root, "gutenberg", codex, signer=body["key"])
+    assert body["run"] in got
+    shutil.rmtree(root / "gutenberg-retired")
+    hold_runs._read.clear()
+    assert [s["run"] for s in statements_kept(root)] == [body["run"]], "kept as its own"

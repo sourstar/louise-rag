@@ -188,11 +188,28 @@ def statements_for_space(root: Path, name: str, codex: Codex, role: str = "docum
     on this peer counts here — which is what makes the gate run once per
     (space, run) and not once per collection, and what lets every collection
     of a space leave quarantine together (03 §3.6). This collection's own
-    come first."""
+    come first.
+
+    ONE BORROWED IS ONE KEPT (2026-10-12): a statement found under another
+    collection is copied, byte for byte, into this collection's own
+    directory. The validation is the space's, but the file was the other
+    collection's, and deleting a retired collection of the same space took
+    gutenberg's statements with it and sent it back to quarantine."""
     out = dict(statements(root, name, codex, role, signer=signer))
     for other in _others(root, name):
         for run_id, body in statements(root, other, codex, role, signer=signer).items():
-            out.setdefault(run_id, body)
+            if run_id in out:
+                continue
+            out[run_id] = body
+            src, dst = path_for(root, other, run_id, role), path_for(root, name, run_id, role)
+            try:
+                if not dst.exists():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = dst.with_suffix(".json.tmp")
+                    tmp.write_bytes(src.read_bytes())
+                    os.replace(tmp, dst)
+            except OSError:   # a copy is insurance; the statement still counts from where it is
+                pass
     return out
 
 
