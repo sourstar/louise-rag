@@ -710,6 +710,14 @@ Since the rebuild two fresh loads state the same run and nothing is written
 in either tree. A drift is safe by construction (an unvalidated run's
 answers are refused before the write and the gate validates the new run),
 so the Normattiva recipe names the engine served now; watch its next loads.
+Probed 23:30: none of these reproduces `355a0208…` from today's tree
+(44,710 entries) — without any `__pycache__`, without the top-level one,
+without the `lib` link, without any one top-level entry. VeGa keeps a run's
+digest, not the per-file list it was computed from, so a past drift cannot
+be diffed. Today's list is kept for the next one:
+`/root/dar-legal-it-tree-7b5d557e.json` on the node (8.7 MB, sha256
+59ee8039…). Worth adding: the wrapper writing that list beside each new run
+it states, so a drift names its byte the day it happens.
 
 **Left on the node, ours.**
 - Host `/tmp/vega-stage/` (99 MB, tmpfs): sources, the portable Python,
