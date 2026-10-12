@@ -315,9 +315,16 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
         # re-issued (and its old version kept, shard.promote).
         log(f"[records build] {name}: the last build was frozen into {frozen}; planning afresh")
         pack_build.clean_build_state(staging)
+    # THE CLOSED PARTS OF THE LAST SNAPSHOT are cut where they ended (02
+    # §2.2), so a record gone from the origin re-issues its own part only
+    from app.pack import slicing
+    from app.share import seeder
+    from . import snapshot as sn
+    rps = int(records_per_shard or slicing.scheme_for(pack_build._origin_plugin(src)).records_per_shard)
+    closed = sn.closed_parts(seeder.current_snapshot(shard_dir), rps)
     result = pack_build.build(
         src, staging, snapshot=snapshot_id, name=name, sign=False,
-        records_per_shard=records_per_shard, log=log, stop=stop)
+        records_per_shard=records_per_shard, log=log, stop=stop, closed=closed)
     if result.interrupted:
         # A stopped build promotes NOTHING: what it cut stays in staging,
         # recorded, and the next run resumes it. Promoting the finished part

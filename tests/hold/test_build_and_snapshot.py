@@ -520,3 +520,51 @@ def test_next_months_build_re_issues_a_changed_part_and_keeps_the_old_one(
     snap2 = sn.create(root, "gutenberg", snapshot_id="2026-09", log=lambda *_: None)
     assert snap2.shards[0].writer == pack_records.WRITER, "the re-issued part: this platform's"
     assert {s.writer for s in snap2.shards[1:]} == {"pyarrow 0.0.1"}, "an unchanged part: its writer's"
+
+
+def test_a_book_gone_from_the_origin_re_issues_its_own_part_and_shifts_nothing(
+        isolated_config, tmp_path, corpus_dir):
+    """02 §2.2: a closed part is never refilled. Until 2026-10-12 a fresh
+    build re-cut every slice by count, so one book gone from the origin
+    moved every later record of its slice and re-issued every later part.
+    One record a part: the gone book's number is left empty, and every
+    later part keeps its number and its bytes."""
+    import shutil
+    from collections import Counter
+    from app import db, discovery
+    from app.pack import records as pack_records
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=1)
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    shard_dir = col.shard_dir_of(root, "gutenberg")
+    slice_ = Counter(s.slice for s in snap.shards).most_common(1)[0][0]
+    parts = sorted((s for s in snap.shards if s.slice == slice_), key=lambda s: s.n)
+    assert len(parts) >= 2, "the fixture corpus gives this slice two parts at one record each"
+    before = {s.path: (shard_dir / s.path).read_bytes() for s in snap.shards}
+    gone = next(iter(pack_records.iter_records(shard_dir / parts[0].path)))["uid"]
+    shutil.rmtree(corpus_dir / gone.split(":")[1])
+    coll = rec._local_collection(root, "gutenberg", col.read(root, "gutenberg"), corpus_dir=corpus_dir)
+    con = db.connect(coll)
+    try:
+        discovery.sync_collection(con, coll)
+    finally:
+        con.close()
+    rec.build(root, "gutenberg", corpus_dir=corpus_dir, records_per_shard=1, log=lambda *_: None)
+    for path, old in before.items():
+        if path != parts[0].path:
+            assert (shard_dir / path).read_bytes() == old, f"{path} moved"
+    rec.write_validation(root, "gutenberg")
+    snap2 = sn.create(root, "gutenberg", snapshot_id="2026-09", log=lambda *_: None)
+    assert [t.uid for t in snap2.delta.tombstoned] == [gone]
+    assert {s.path for s in snap2.shards} == {s.path for s in snap.shards} - {parts[0].path},         "the gone book's number left empty, never refilled"
+
+
+def test_closed_parts_are_every_part_but_an_open_last():
+    e = dict(root="r", records_root="r", chunks=1, chunks_root="c", tokens=1, bytes=1)
+    shards = (sn.Shard(slice="lang=en", n=1, first_id="1", last_id="9", records=2, **e),
+              sn.Shard(slice="lang=en", n=2, first_id="10", last_id="12", records=1, **e),
+              sn.Shard(slice="lang=fr", n=1, first_id="3", last_id="4", records=2, **e))
+    snap = sn.Snapshot(collection_id="sha256:x", snapshot_id="2026-08", previous=None,
+                       shards=shards, delta=sn.Delta((), (), ()), files={})
+    assert sn.closed_parts(snap, 2) == {"lang=en": {1: ("1", "9")}, "lang=fr": {1: ("3", "4")}}
+    assert sn.closed_parts(None, 2) == {}

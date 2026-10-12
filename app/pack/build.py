@@ -303,11 +303,26 @@ def _write_figures(plugin, pack_dir: Path, slice_name: str, shard_n: int,
 
 
 def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_shard: int,
-                until: str | None = None, log=print, stop=None) -> tuple[int, int, int, int, bool]:
+                until: str | None = None, log=print, stop=None,
+                closed: dict[str, dict[int, tuple[str, str]]] | None = None
+                ) -> tuple[int, int, int, int, bool]:
     """Pass 2. Returns (shards written, records, chunks, skipped, interrupted).
     `until`: the snapshot cutoff (cutoff.py) — records outside it are
     skipped here, where the document is parsed anyway, so shards stay
-    full and the result is a pure function of (manifest, cutoff)."""
+    full and the result is a pure function of (manifest, cutoff).
+
+    `closed`: {slice: {n: (first_id, last_id)}}, the CLOSED parts of the
+    previous snapshot (02 §2.2: "a closed part never changes again except to
+    be re-issued … fewer afterwards if a tombstoned record is dropped from
+    it, never more, and never refilled"). Part n is then cut where the
+    previous part n ended, not after `records_per_shard` records: a record
+    dropped from it leaves it one shorter and moves nothing after it; a
+    part whose every record went is a number left empty. Only past the
+    closed parts are records counted into `records_per_shard`. Without it
+    (a slice's first build, the legacy `pack build`) every part is counted.
+    Until 2026-10-12 a fresh build re-cut every slice by count, so one book
+    gone from the origin re-issued every later part of its slice."""
+    closed = closed or {}
     plugin = collection.plugin_instance()
     origin = _origin_plugin(collection)
     # THE SHARD'S SHAPE, from the Codex and never from a record (09 §9.5):
@@ -338,6 +353,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
         # `+ 1` continues from what is there — so a pack half-built under
         # the old rule stays contiguous rather than growing a hole.
         next_n = (done["n"] + 1) if done else 1
+        bounds = closed.get(slice_name, {})
         params: list = [slice_name]
         after = ""
         if done:
@@ -490,6 +506,21 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                 # different shards. Like the origin_hash refusal above it
                 # aborts the build rather than skipping the record: a shard
                 # cut two ways is not repairable by the peer who receives it.
+                # A CLOSED PART ENDS WHERE IT ENDED (02 §2.2): past its last
+                # id the part is cut, however few records it kept; a part
+                # left with none is a number skipped, never refilled
+                key = hold_records.order_key(record["native_id"], order)
+                while next_n in bounds and key > hold_records.order_key(bounds[next_n][1], order):
+                    if buf:
+                        close_shard(last_row)
+                    else:
+                        next_n += 1
+                if next_n in bounds and key < hold_records.order_key(bounds[next_n][0], order):
+                    raise hold_records.RecordsError(
+                        f"{record['native_id']!r} sorts between closed parts, before "
+                        f"{bounds[next_n][0]!r}, the first id of {slice_name}/{next_n:05d}. A closed "
+                        f"part is never refilled (02 §2.2), so this record is refused rather "
+                        f"than placed in one")
                 hold_records.refuse_out_of_order(
                     record["native_id"], buf[0]["native_id"] if buf else None,
                     order, slice_=slice_name, n=next_n)
@@ -499,7 +530,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                     shard_plates.setdefault(figure_hash, (src, href))
                 layer_counts[layer] = layer_counts.get(layer, 0) + 1
                 last_row = prow
-                if len(buf) >= records_per_shard:
+                if next_n not in bounds and len(buf) >= records_per_shard:
                     close_shard(last_row)
                     if time.monotonic() - t0 > 30:
                         log(f"[pack build] {slice_name}: shard {next_n - 1} written "
@@ -591,7 +622,7 @@ def write_manifest(collection, con_build, pack_dir: Path, *, snapshot: str, name
 
 def build(collection, pack_dir: Path, *, snapshot: str | None = None, name: str | None = None,
           records_per_shard: int | None = None, until: str | None = None, sign: bool = True,
-          log=print, stop=None) -> BuildResult:
+          log=print, stop=None, closed: dict | None = None) -> BuildResult:
     from .. import licensing
     if licensing.state_for(collection) == licensing.MISSING:
         # a pack carries the data onward: it must not carry data whose
@@ -632,7 +663,7 @@ def build(collection, pack_dir: Path, *, snapshot: str | None = None, name: str 
                 f"{con_build.execute('SELECT COUNT(DISTINCT slice) FROM plan').fetchone()[0]} slice(s)")
         written, n_rec, n_chunks, n_skip, interrupted = pack_slices(
             collection, con_src, con_build, pack_dir, records_per_shard=rps, until=until,
-            log=log, stop=stop)
+            log=log, stop=stop, closed=closed)
         if interrupted:
             return BuildResult(pack_dir, 0, written, n_rec, n_chunks, n_skip, True, None)
         manifest_path = write_manifest(collection, con_build, pack_dir, snapshot=snapshot,

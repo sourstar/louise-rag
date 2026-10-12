@@ -304,6 +304,12 @@ snapshot's `delta.tombstoned`, it is excluded from search and from
 embedding on every peer that holds the snapshot, and its text stays in
 its closed part — so the part still verifies and 01's promise 7 holds
 — until that part is next re-issued, when it is dropped from the file.
+A record the origin no longer supplies cannot be re-parsed, so its own
+going re-issues its part in the next snapshot, one record shorter; the
+version it supersedes is kept (below), and no later part moves, because
+the build cuts every closed part where it ended (*amended 2026-10-12*,
+operator: a build used to re-cut a slice by count, and one book gone
+re-issued every later part).
 A record whose slicing field is corrected while its text is unchanged
 stays in its part: a slice is fixed when a record is first published,
 and the correction shows in the record's fields at its next re-issue.
@@ -398,7 +404,9 @@ extracted — so `records-vs-origin` knows what to re-fetch and reproduce
 the record from. The Codex's `origin.unit` says how those bytes are
 reached, which is what tells a verifier the cost of one: `file` where
 the origin publishes the document alone, `container-member` where a
-container must be fetched to reach it, `index-page` where an index
+container must be fetched to reach it, `index-page` where an index — a
+zip's central directory is one (*amended 2026-10-12*: `records-vs-origin`
+then re-fetches a record's member by Range, tens of KB, and not the zip)
 makes the container seekable (06 §6.4). A document whose text a
 credited pre-embedded archive supplies is located there instead — its
 `origin` a URL into that archive — while `origin.spec` locates the rest

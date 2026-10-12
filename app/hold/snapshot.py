@@ -882,3 +882,23 @@ def _files(shard_dir, codex, snapshot_id: str | None = None) -> dict:
                 f"SHARD unshareable (07 §7.8), and one that named a file that "
                 f"is not there would be worse")
     return out
+
+
+def closed_parts(snap: "Snapshot | None", records_per_shard: int) -> dict[str, dict[int, tuple[str, str]]]:
+    """{slice: {n: (first_id, last_id)}} — the parts `snap` lists that are
+    CLOSED (02 §2.2): every part of a slice but its last, and the last too
+    when it holds `records_per_shard` records. The next build cuts these
+    where they ended (app/pack/build.py `pack_slices`)."""
+    out: dict[str, dict[int, tuple[str, str]]] = {}
+    if snap is None:
+        return out
+    by_slice: dict[str, list[Shard]] = {}
+    for s in snap.shards:
+        by_slice.setdefault(s.slice, []).append(s)
+    for slice_, parts in by_slice.items():
+        parts.sort(key=lambda s: s.n)
+        last = parts[-1]
+        for s in parts:
+            if s is not last or s.records >= records_per_shard:
+                out.setdefault(slice_, {})[s.n] = (s.first_id, s.last_id)
+    return out
