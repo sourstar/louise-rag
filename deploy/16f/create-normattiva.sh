@@ -13,8 +13,9 @@
 #   1. create — mints the PERMANENT Codex (collection_id, space_id) from the
 #      recipe; holds the endpoint's stated run to the recipe's engine and
 #      weights (G5), embeds the calibration set, writes 07 §7.8's file with
-#      slices = "all" (so the worker acquires the `full` profile itself,
-#      app/collections.py codex_defaults) and links origin/ into /corpora.
+#      slices = [] — nothing until the operator says so (help.html) — and
+#      links origin/ into /corpora. Step 5 sets slices = "all" after the ack,
+#      so the worker acquires the `full` profile itself (codex_defaults).
 #   2. ack — the licence is YELLOW (CC BY 4.0, an NC window before it): the
 #      terms are PRINTED, then recorded as read (invariant 9). Without it
 #      the worker withholds scan and archive, and nothing is fetched.
@@ -64,7 +65,11 @@ open(p, "w", encoding="utf-8").write(s)
 PY
 cat "$ROOT/config/collections/normattiva.toml"
 
-say "5. what the worker does next (it reads the file at its next pass)"
+say "5. slices = \"all\": the worker fetches the whole corpus (it re-reads the file between rounds)"
+sed -i 's/^slices = \[\]$/slices = "all"/' "$ROOT/config/collections/normattiva.toml"
+grep -n '^slices' "$ROOT/config/collections/normattiva.toml"
+
+say "6. what the worker does next (it reads the file at its next pass)"
 echo "watch:  docker logs --since 10m ix-louise-rag-worker-1 | grep -i normattiva | tail"
 echo "then:   hold check normattiva  (the quarantine's guinea pig: never listed; fix what it finds missing)"
 echo "pin:    curl -X PUT $ENCODER/models/toggle-pinned/$MODEL/pin   once it embeds"
