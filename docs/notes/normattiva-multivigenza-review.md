@@ -689,10 +689,11 @@ against 0.7534, dim 768 against 2560, the corpus embedded in minutes
 instead of an hour). §3 changes nothing the encoder is trained for: the
 version is chosen by key before ranking, so the encoder never has to tell
 two versions apart, and the index grows by the 1.32× distinct texts of
-§1, which at dim 768 is small. The one open item is the one the memory
-already records: the licence is an assumption (CC-BY-NC-SA-4.0 inferred
-from JuriFindIT), one message to the authors converts it to a fact, and
-the pin is irreversible — ask before `create`. Fallback:
+§1, which at dim 768 is small. The licence question is closed: the operator states (2026-10-12) that
+the weights carry the licence of the material they were trained on,
+CC-BY-NC-SA-4.0 — the Hub card itself still declares none — so
+commercial peers are consumer-only for this collection, as recorded in
+gazzetta-plugin.md §7, and nothing waits on the authors before `create`. Fallback:
 qwen3-embedding-4b with `space.query.instruction`. The operator's own
 trained encoder (`sourstar/ita-legal-embed`) arrives as a **sister**
 (02 §2.7: the same records, a new space, nothing re-fetched) once it

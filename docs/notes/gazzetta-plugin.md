@@ -541,6 +541,8 @@ for a signed pack whose consumers must reproduce it. §12.7.
 >
 > Two things this decision carries, neither of which blocks it.
 >
+> **Operator, 2026-10-12: DAR-legal-it carries the licence of the material it was trained on, CC-BY-NC-SA-4.0.** Recorded as the operator's statement; the model card on the Hub still declares no licence that day (the dataset card declares cc-by-nc-sa-4.0), so the two consequences below stand as consequences of a stated licence rather than of an assumption.
+>
 > **The assumption is not a statement.** The authors declare no licence;
 > CC-BY-NC-SA-4.0 is inferred from the training data. §4.4's class
 > machinery does not cover this — that governs the *corpus* text, and the
