@@ -317,3 +317,128 @@ def test_a_later_version_carries_the_vectors_of_the_articles_it_shares(versioned
     assert con.execute("SELECT COUNT(*) FROM chunk_hashes").fetchone()[0] >= len(texts[V12_ID])
     last = con.execute("SELECT message FROM events WHERE stage='embed' ORDER BY id DESC LIMIT 1").fetchone()[0]
     assert "from other versions" in last
+
+
+# ---- closing a chain from outside it (review §3.2, case 2) ----------------------
+
+REPEALING_M = "LEGGE_20250110_9/2025-01-10_25G00009_ORIGINALE_V0.xml"
+REPEALING_ID = _nid("2025-01-10", "25G00009", "2025-01-10", "ORIGINAL")
+BUILT_1701 = BUILT.replace(b"25/01/2020", b"01/01/1701")
+AKN_RD = "akn:it/act/decreto/stato/2020-01-02/3"        # the template's own identity, kept by RD206_O
+#: a 2025 law stating, as the archive does: one whole-act repeal by AKN path
+#: with the day it applies from, one repeal of an article, one insertion whose
+#: text says "abrogato", and one whole-act repeal by URN without a date
+_ANALYSIS = (b'<analysis source="#x"><activeModifications>'
+             b'<textualMod type="repeal" eId="amod_0"><source href="#art1"/>'
+             b'<destination href="/akn/it/act/decreto/stato/2020-01-02/3/ita@2025-05-09/!main"/></textualMod>'
+             b'<textualMod type="repeal" eId="amod_1"><source href="#art1"/>'
+             b'<destination href="urn:nir:stato:legge:1999-01-01;1#art5"/></textualMod>'
+             b'<textualMod type="insertion" eId="amod_2"><source href="#art1"/>'
+             b'<destination href="urn:nir:stato:legge:1999-01-01;2"/><new>PROVVEDIMENTO ABROGATO</new></textualMod>'
+             b'<textualMod type="repeal" eId="amod_3"><source href="#art1"/>'
+             b'<destination href="urn:nir:stato:legge:1999-01-01;7"/></textualMod>'
+             b'</activeModifications></analysis>')
+REPEALING = (BUILT.replace(b"2020-01-02;3", b"2025-01-10;9").replace(b"/2020-01-02/3", b"/2025-01-10/9")
+             .replace(b"25/01/2020", b"25/01/2025").replace(b"</meta>", _ANALYSIS + b"</meta>"))
+
+
+@pytest.fixture
+def closing(tmp_path, isolated_config, monkeypatch):
+    """R.D. 206/1861's original alone in the repealed-acts zip — no repeal
+    state anywhere — and a 2025 law whose modifications repeal it in full
+    from 2025-05-09."""
+    nsrc._zip_cache.clear()
+    root = tmp_path / "normattiva"
+    _zip(root / "akn/M/leggi.zip", {REPEALING_M: REPEALING})
+    _zip(root / "akn/O/atti-normativi-abrogati-in-originale.zip", {RD206_O: BUILT_1701})
+    c = collections_mod.Collection(
+        name="normattiva", plugin="normattiva", profile=None, embed_mode_default=None,
+        corpus_dir=root, manifest_path=tmp_path / "manifest.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lancedb")
+    con = db.connect(c)
+    discovery.sync_collection(con, c)
+    return c, con
+
+
+def _rdf(con, c, native_id):
+    row = con.execute("SELECT * FROM documents WHERE uid=?", (f"normattiva:{native_id}",)).fetchone()
+    worker.stage_rdf(con, row, c)
+    if con.in_transaction:
+        con.execute("COMMIT")
+
+
+@pytest.mark.parametrize("first", ["repealing", "repealed"])
+def test_a_whole_act_repeal_stated_by_another_act_closes_the_chain(closing, first):
+    """review §3.2 case 2, in either order of arrival: the repealed original
+    ends the day the repealing act's modification applies from. A repeal of
+    an article, an insertion that says "abrogato" and a repeal of an act not
+    held close nothing."""
+    c, con = closing
+    for nid in ([REPEALING_ID, RD_O_ID] if first == "repealing" else [RD_O_ID, REPEALING_ID]):
+        _rdf(con, c, nid)
+    t = _table(con)
+    assert (t[RD_O_ID]["valid_from"], t[RD_O_ID]["valid_to"], t[RD_O_ID]["shown"]) == (17010101, 20250509, 1)
+    assert t[REPEALING_ID]["valid_to"] is None and t[REPEALING_ID]["valid_from"] == 20250125
+    closures = {(r["key"], r["closed_at"]) for r in con.execute("SELECT key, closed_at FROM validity_closures")}
+    assert closures == {(AKN_RD, 20250509), ("urn:nir:stato:legge:1999-01-01;7", 20250125)}, \
+        "the dated AKN target; the undated URN one from the stating version's own start"
+    assert validity.describe(con, [RD_O_ID])[RD_O_ID] == \
+        {"from": "1701-01-01", "to": "2025-05-09", "in_force": False, "current": True}
+    assert validity.admit(con, validity.window(c, 20250508), [RD_O_ID]) == {RD_O_ID}
+    assert validity.admit(con, validity.window(c, 20250509), [RD_O_ID]) == set()
+    assert validity.index_columns(con, [RD_O_ID])[RD_O_ID] == {"valid_from": 17010101, "valid_to": 20250509, "shown": 1}
+    keys = {r["key"] for r in con.execute("SELECT key FROM validity_works WHERE work=?", (t[RD_O_ID]["work"],))}
+    assert keys == {AKN_RD, "urn:nir:stato:decreto:2020-01-02;3", "eli:it:id/1701/01/01/6100206R"}, \
+        "every canonical id of the Work finds its chain"
+
+
+def test_a_closure_is_withdrawn_with_its_statement_and_recorded_once(closing):
+    """Delete-then-insert on the stating uid (invariant 2): the same
+    statement again moves nothing; a re-parse that no longer states the
+    repeal reopens the act, and its index rows follow through its own
+    stages."""
+    c, con = closing
+    _run(con, c, "rdf", "fts")
+    before = _table(con)
+    assert before[RD_O_ID]["valid_to"] == 20250509
+    row = con.execute("SELECT * FROM validity WHERE native_id=?", (REPEALING_ID,)).fetchone()
+    meta = {"from": row["valid_from"], "work": row["work"], "has_text": 1, "in_force": None, "keys": [],
+            "closes": [(AKN_RD, 20250509), ("urn:nir:stato:legge:1999-01-01;7", 20250125)]}
+    assert validity.record(con, row["uid"], REPEALING_ID, meta) == []
+    assert _table(con) == before, "the same statement again moves nothing"
+    assert con.execute("SELECT fts_done FROM documents WHERE uid=?", (f"normattiva:{RD_O_ID}",)).fetchone()[0] == 1
+    moved = validity.record(con, row["uid"], REPEALING_ID, {**meta, "closes": []})
+    assert moved == [f"normattiva:{RD_O_ID}"]
+    t = _table(con)
+    assert t[RD_O_ID]["valid_to"] is None and t[RD_O_ID]["synced"] == 0
+    assert con.execute("SELECT COUNT(*) FROM validity_closures").fetchone()[0] == 0
+    assert con.execute("SELECT fts_done, embed_done FROM documents WHERE uid=?",
+                       (f"normattiva:{RD_O_ID}",)).fetchone()[:2] == (0, 0), "its index rows carry the old end"
+
+
+def test_a_closure_before_the_last_version_is_contradicted_by_it(closing):
+    """A version the origin published after the stated repeal is the better
+    evidence: the chain stays open (and labelled by `in_force`)."""
+    c, con = closing
+    for nid in (RD_O_ID, REPEALING_ID):
+        _rdf(con, c, nid)
+    work = _table(con)[RD_O_ID]["work"]
+    con.execute("UPDATE validity_closures SET closed_at=17000101 WHERE key=?", (AKN_RD,))
+    assert validity.recompute(con, work) == [f"normattiva:{RD_O_ID}"]
+    assert _table(con)[RD_O_ID]["valid_to"] is None
+
+
+def test_the_closure_lookups_are_indexed(closing):
+    """Every query the closures add is answered from an index: no scan, no
+    temporary b-tree (CLAUDE.md's engineering rules)."""
+    c, con = closing
+    plan = " ".join(r[-1] for r in con.execute(
+        "EXPLAIN QUERY PLAN SELECT MIN(c.closed_at) FROM validity_works k "
+        "JOIN validity_closures c ON c.key = k.key WHERE k.work=?", ("w",)))
+    assert "idx_validity_works_work" in plan and "SCAN" not in plan and "TEMP B-TREE" not in plan
+    plan = " ".join(r[-1] for r in con.execute(
+        "EXPLAIN QUERY PLAN SELECT work FROM validity_works WHERE key IN (?, ?)", ("a", "b")))
+    assert "SCAN" not in plan and "TEMP B-TREE" not in plan
+    plan = " ".join(r[-1] for r in con.execute(
+        "EXPLAIN QUERY PLAN SELECT key FROM validity_closures WHERE by_uid=?", ("u",)))
+    assert "idx_validity_closures_by" in plan and "SCAN" not in plan

@@ -41,6 +41,14 @@ class CorpusSource(Protocol):
     # relations member. Called once per parsed document, so an edge is
     # discovered where its source document is.
     def relations(self, doc: CanonicalDoc) -> Iterator[Edge]: ...
+
+    # optional, for a collection whose profile declares a validity axis
+    # (05 §5.1): what THIS version states ends ANOTHER Work's validity —
+    # `(key, day)` pairs, the Work by one of its canonical ids (05 §5.2)
+    # and the ISO day it is no longer in force from. The node applies them
+    # by key, in either order of arrival, to the end of that Work's chain
+    # (docs/notes/normattiva-multivigenza-review.md §3.2, case 2).
+    def closures(self, doc: CanonicalDoc) -> Iterator[tuple[str, str]]: ...
 ```
 
 `Edge` is `{to: str, type: str}` — the uid the edge points at and the

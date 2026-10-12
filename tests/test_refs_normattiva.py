@@ -41,6 +41,7 @@ def test_the_acts_and_their_versions_are_synced_from_the_members_heads(store):
     assert a["denominazione"] == "LEGGE 31 ottobre 2003, n. 306"
     assert a["eli"] == "http://www.normattiva.it/eli/id/2003/11/15/003G0333", "the work, versionless"
     assert (a["codice"], a["pubblicazione"]) == ("003G0333", "2003-11-15")
+    assert a["akn"] == "akn:it/act/legge/stato/2003-10-31/306", "the work path, the id its cross-references use"
     s = atti[URN_SARD]
     assert (s["tipo"], s["numero"], s["anno"]) == ("legge.costituzionale", "3", 1948)
     versions = store.rows("versione", {"urn": URN_SARD}, order_by="valid_from")
@@ -101,7 +102,7 @@ def test_tagging_a_record_writes_the_acts_it_names(store, tmp_path):
                                 ["Art. 1. La legge costituzionale 26 febbraio 1948, n. 3 è modificata."],
                                 refs.RESOLVER, store)
     assert ids == sorted([URN_306, URN_SARD])
-    assert nref.NAMESPACES == ("urn", "eli")
+    assert nref.NAMESPACES == ("urn", "eli", "akn")
     assert "normattiva-refs" in refs.REFS_REGISTRY
 
 
@@ -117,5 +118,5 @@ def test_the_record_writes_its_registered_ids_into_keys(tmp_path):
     _zip(root / "akn/M/codici.zip", {M306: base64.b64encode(L306)})
     ref = next(r for r in SOURCE.discover(DiscoverState(corpus_root=root)) if r.locator.endswith(M306))
     doc = plugin_io.canonical_doc(SOURCE, {"native_id": ref.native_id, "path": ref.locator})
-    assert doc.keys == ["eli:it:id/2003/11/15/003G0333", URN_306]
-    assert doc.keys == sorted(doc.keys) and SOURCE.PARSER_VERSION == 5
+    assert doc.keys == ["akn:it/act/legge/stato/2003-10-31/306", "eli:it:id/2003/11/15/003G0333", URN_306]
+    assert doc.keys == sorted(doc.keys) and SOURCE.PARSER_VERSION == 6

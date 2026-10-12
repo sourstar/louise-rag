@@ -43,13 +43,14 @@ from ..plugins.base import (Entity, RefColumn, RefLink, RefLookup, RefRecordBatc
                             RefSyncState, RefTable)
 
 SOURCE_ID = "normattiva-refs"
-NAMESPACES = ("urn", "eli")
+NAMESPACES = ("urn", "eli", "akn")
 
 ATTO = RefTable(
     name="atto",
     columns=(
         RefColumn("urn", "TEXT"),           # urn:nir:stato:legge:2003-10-31;306 — the act's URN:NIR
         RefColumn("eli", "TEXT"),           # the ELI work URI, version-less
+        RefColumn("akn", "TEXT"),           # akn:it/act/legge/stato/2003-10-31/306 — the Akoma Ntoso work path
         RefColumn("tipo", "TEXT"),          # the URN's type token: legge, decreto.legislativo, …
         RefColumn("data", "TEXT"),          # the act's own date
         RefColumn("anno", "INTEGER"),       # its year, for a citation that gives no day
@@ -81,6 +82,7 @@ HEAD = 64 << 10
 _BATCH = 2_000
 
 _URN = re.compile(r'<FRBRalias\s+name="urn:nir"\s+value="([^"]+)"')
+_AKN = re.compile(r'<FRBRWork>\s*<FRBRthis\s+value="([^"]+)"', re.S)
 _ELI = re.compile(r'<FRBRalias\s+name="eli"\s+value="([^"]+)"')
 _DOC_TYPE = re.compile(r"<docType>(.*?)</docType>", re.S)
 _DOC_DATE = re.compile(r'<docDate\s+date="([^"]+)"[^>]*>(.*?)</docDate>', re.S)
@@ -133,6 +135,8 @@ def meta_of(head: bytes) -> dict | None:
     return {
         "urn": urn_value,
         "eli": _eli_work(eli.group(1).strip()) if eli else "",
+        "akn": (akn.group(1).split("/!", 1)[0].strip("/").replace("akn/", "akn:", 1)
+                if (akn := _AKN.search(s)) and akn.group(1).lstrip("/").startswith("akn/") else ""),
         "tipo": tipo, "data": data,
         "anno": int(data[:4]) if data[:4].isdigit() else None,
         "numero": numero,
@@ -160,7 +164,7 @@ def _codice(alias: str) -> str:
 
 class NormattivaRefSource:
     source_id = SOURCE_ID
-    ref_version = 1
+    ref_version = 2            # 2: the `akn` column (2026-10-12)
     namespaces = NAMESPACES
 
     def schema(self) -> RefSchema:

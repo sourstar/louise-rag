@@ -132,6 +132,48 @@ def member_dir_type(member_dir: str) -> str:
     return "_".join(parts[:-2]).strip() if len(parts) >= 3 else member_dir.strip()
 
 
+_ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def akn_key(work_uri: str) -> str | None:
+    """`/akn/it/act/legge/stato/2003-10-31/306[/!main]` → the canonical id
+    `akn:it/act/legge/stato/2003-10-31/306` — the act's Akoma Ntoso work
+    path, the identifier the archive's own `<ref>`s and modification
+    targets use (registered by app/refs/normattiva.py); None otherwise."""
+    path = str(work_uri or "").split("/!", 1)[0].strip("/")
+    return "akn:" + path[len("akn/"):] if path.startswith("akn/") and len(path) > 4 else None
+
+
+def modification_target(mod: dict) -> tuple[str, str | None, bool] | None:
+    """What an active modification points at: `(key, applies_from, whole)`.
+    The destination act by the canonical id its href uses — `urn:nir:…` on
+    the older exports, an Akoma Ntoso path on the codes' recent members,
+    whose `ita@YYYY-MM-DD` is the Expression the modification creates, that
+    is the day it applies from (measured on the Codici, 2026-10-12: 152
+    repeals typed as such, every one an AKN path with its date); and whether
+    it names the whole act rather than a part (`#art5`, `/!main/~art_2`).
+    None for any other href."""
+    href = str(mod.get("destination") or "").strip()
+    if href.startswith("urn:"):
+        key, _, frag = href.partition("#")
+        return key.strip(), None, not frag
+    path = href.lstrip("/")
+    if not path.startswith("akn/"):
+        return None
+    work, sep, rest = path.partition("/!")
+    date = None
+    head, at, expr = work.rpartition("/ita@")
+    if at:
+        work, date = head, (expr if _ISO_DAY.fullmatch(expr) else None)
+    whole = not sep or ("~" not in rest and "#" not in rest)
+    key = akn_key(work)
+    return (key, date, whole) if key else None
+
+
+def _is_repeal(mod: dict) -> bool:
+    return str(mod.get("type") or "").strip().lower() == "repeal"
+
+
 def original_start(expression_date: str | None, entry_into_force: str | None, gu: str) -> str:
     """An ORIGINALE's start of validity (review §7, measured 2026-10-12 on
     220 originals, ten per collection): the Expression date the member
@@ -221,8 +263,11 @@ class NormattivaSource:
     #: 4 the same day: `keys` carry the act's URN:NIR and ELI, registered
     #: by app/refs/normattiva.py (05 §5.2); free for the same reason. 5 the
     #: same evening: an ORIGINALE's `vigenza_from` is its Expression date
-    #: (`original_start`, measured); free for the same reason.
-    PARSER_VERSION = 5
+    #: (`original_start`, measured); free for the same reason. 6 the same
+    #: evening: `keys` gain the act's Akoma Ntoso work path (`akn:`), the id
+    #: the archive's cross-references and modification targets use,
+    #: registered by app/refs/normattiva.py; free.
+    PARSER_VERSION = 6
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE          # an act withdrawn from the database
     native_id_order = "numeric"            # eli.expression_native_id: start of validity first
@@ -411,12 +456,15 @@ class NormattivaSource:
             language="it",
             date=act.doc_date or None,           # the act's own date (date_document)
             subjects=[],
-            # 05 §5.2: only ids a reference source registers — `urn` and
-            # `eli` are, since app/refs/normattiva.py (parser 4): the act's
-            # URN:NIR verbatim (its scheme is the namespace) as the resolver
-            # emits it, and the unique ELI by-id form (eli rule 1); sorted by
-            # bytes (09 §9.5)
-            keys=sorted({k for k in (urn, PROFILE.key(by_id)) if k}),
+            # 05 §5.2: only ids a reference source registers — `urn`, `eli`
+            # and `akn` are, since app/refs/normattiva.py (parsers 4, 6): the
+            # act's URN:NIR verbatim (its scheme is the namespace) as the
+            # resolver emits it, the unique ELI by-id form (eli rule 1), and
+            # the Akoma Ntoso work path its cross-references and modification
+            # targets use; sorted by bytes (09 §9.5)
+            keys=sorted({k for k in (urn, PROFILE.key(by_id),
+                                     akn_key(act.frbr.get("work", {}).get("uri")
+                                             or act.frbr.get("work", {}).get("this", ""))) if k}),
             extra={k: v for k, v in extra.items() if v not in (None, "", [], {})},
             sections=rendition.sections(act),
             raw_hash=raw.raw_hash,
@@ -425,25 +473,27 @@ class NormattivaSource:
     def relations(self, doc: CanonicalDoc):
         """06 §6.1's typed edges, named after ELI properties
         (eli-legal-plugins.md §5.4, 09 §9.14): what THIS version's own
-        metadata states. `eli:amends` — or `eli:repeals` where the statement
-        says so — for each act its active modifications touch, by the act's
-        URN:NIR; `eli:cites` for each act its references point at, by its
-        AKN work path. `to` is a canonical id left unresolved (05 §5.5):
-        `urn:nir:…`, `akn:it/act/…`; the article a statement names is in the
-        record's `active_modifications` and `eli_cites`, the edge is between
-        acts. One edge per (type, act)."""
+        metadata states. `eli:repeals` for each act an active modification typed `repeal`
+        strikes as a whole, `eli:amends` for each act its other
+        modifications touch (a repeal of a part amends the act), by the id
+        the modification uses (`modification_target`); `eli:cites` for each
+        act its references point at, by its AKN work path. `to` is a
+        canonical id left unresolved (05 §5.5): `urn:nir:…`, `akn:it/act/…`;
+        the article a statement names is in the record's
+        `active_modifications` and `eli_cites`, the edge is between acts.
+        One edge per (type, act)."""
         x = doc.extra or {}
         seen: set[tuple[str, str]] = set()
         for mod in x.get("active_modifications") or []:
-            dest = str(mod.get("destination") or "").split("#", 1)[0].strip()
-            if not dest.startswith("urn:"):
+            target = modification_target(mod)
+            if target is None:
                 continue
-            words = " ".join(str(mod.get(k) or "") for k in ("new", "old", "type")).upper()
-            kind = "eli:repeals" if "ABROG" in words or "REPEAL" in words else "eli:amends"
-            if (kind, dest) in seen:
+            key, _, whole = target
+            kind = "eli:repeals" if whole and _is_repeal(mod) else "eli:amends"
+            if (kind, key) in seen:
                 continue
-            seen.add((kind, dest))
-            yield Edge(to=dest, type=kind)
+            seen.add((kind, key))
+            yield Edge(to=key, type=kind)
         for href in x.get("eli_cites") or []:
             path = str(href).split("#", 1)[0].split("/!", 1)[0].strip("/")
             if not path.startswith("akn/"):
@@ -453,3 +503,26 @@ class NormattivaSource:
                 continue
             seen.add(("eli:cites", target))
             yield Edge(to=target, type="eli:cites")
+
+    def closures(self, doc: CanonicalDoc):
+        """app/validity.py's hook (06 §6.1; review §3.2, case 2): the acts
+        THIS version states it repeals in full — an active modification
+        typed `repeal` whose destination is a whole act — each from the day
+        its href states (the `ita@` Expression date of the destination the
+        repeal creates) or, where the href carries none, from this version's
+        own start of validity. A modification typed otherwise, or aimed at a
+        part, closes nothing however its text reads: under-closing is
+        labelled (case 3), over-closing would mis-date an act silently."""
+        x = doc.extra or {}
+        start = str(x.get("vigenza_from") or "")
+        seen: set[str] = set()
+        for mod in x.get("active_modifications") or []:
+            target = modification_target(mod)
+            if target is None or not target[2] or not _is_repeal(mod):
+                continue
+            key, date, _ = target
+            day = date or start
+            if not day or key in seen:
+                continue
+            seen.add(key)
+            yield key, day

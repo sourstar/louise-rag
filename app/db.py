@@ -264,6 +264,24 @@ CREATE TABLE IF NOT EXISTS validity (
 );
 CREATE INDEX IF NOT EXISTS idx_validity_work ON validity(work, valid_from, native_id);
 CREATE INDEX IF NOT EXISTS idx_validity_native ON validity(native_id);
+-- what ends a Work's validity from OUTSIDE its chain (app/validity.py; the
+-- review's §3.2 case 2): the version `by_uid` states that the Work keyed
+-- `key` (one of its canonical ids) is no longer in force from `closed_at`.
+-- Node-local and derived, like `validity`; rewritten per stating uid.
+CREATE TABLE IF NOT EXISTS validity_closures (
+  key TEXT NOT NULL,
+  by_uid TEXT NOT NULL,
+  closed_at INTEGER NOT NULL,
+  PRIMARY KEY (key, by_uid)
+);
+CREATE INDEX IF NOT EXISTS idx_validity_closures_by ON validity_closures(by_uid);
+-- a Work's canonical ids, so a closure finds the chain it ends
+CREATE TABLE IF NOT EXISTS validity_works (
+  key TEXT NOT NULL,
+  work TEXT NOT NULL,
+  PRIMARY KEY (key, work)
+);
+CREATE INDEX IF NOT EXISTS idx_validity_works_work ON validity_works(work);
 CREATE INDEX IF NOT EXISTS idx_validity_unsynced ON validity(synced, native_id);
 -- 06 §6.3 (amended 2026-10-12): the hash of every chunk text this peer holds
 -- a vector for, so a versioned collection's new version carries the vectors

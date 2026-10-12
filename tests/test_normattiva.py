@@ -181,7 +181,8 @@ def test_the_record_carries_the_eli_set_and_the_identities(corpus):
     x = doc.extra
     assert doc.uid == f"normattiva:{_nid('2003-11-15', '003G0333', '2025-10-02', 'CONSOLIDATED/20251002')}"
     assert doc.date == "2003-10-31" and doc.language == "it"
-    assert doc.keys == ["eli:it:id/2003/11/15/003G0333", "urn:nir:stato:legge:2003-10-31;306"], "05 §5.2: the ids app/refs/normattiva.py registers, sorted by bytes"
+    assert doc.keys == ["akn:it/act/legge/stato/2003-10-31/306", "eli:it:id/2003/11/15/003G0333",
+                        "urn:nir:stato:legge:2003-10-31;306"], "05 §5.2: the ids app/refs/normattiva.py registers, sorted by bytes"
     assert x["urn_nir"] == "urn:nir:stato:legge:2003-10-31;306"
     assert x["codice_redazionale"] == "003G0333"
     assert x["eli_work"] == "http://www.normattiva.it/eli/id/2003/11/15/003G0333"
@@ -451,3 +452,46 @@ def test_an_original_starts_at_the_expression_date_the_member_states():
     assert nsrc.original_start("1989-02-16", "1989-03-16", "1989-03-15") == "1989-03-16", "before publication: the note"
     assert nsrc.original_start("1989-02-16", None, "1989-03-15") == "1989-03-15", "before publication, no note"
     assert nsrc.original_start(None, None, "1948-03-09") == "1948-03-09"
+
+
+def test_a_modification_target_is_read_from_either_href_form():
+    """Both forms the archive uses: the URN (older exports) and the Akoma
+    Ntoso path whose `ita@` date is the day the modification applies from
+    (the codes' 2023 members); a part is `#art5` or `/!main/~art_2`."""
+    from app.plugins.normattiva import source as nsrc
+    t = nsrc.modification_target
+    assert t({"destination": "urn:nir:stato:legge:2003-10-31;306"}) == ("urn:nir:stato:legge:2003-10-31;306", None, True)
+    assert t({"destination": "urn:nir:stato:legge:2003-10-31;306#art5"}) == ("urn:nir:stato:legge:2003-10-31;306", None, False)
+    assert t({"destination": "/akn/it/act/decreto_legislativo/stato/2016-04-18/50/ita@2023-07-01/!main"}) == \
+        ("akn:it/act/decreto_legislativo/stato/2016-04-18/50", "2023-07-01", True)
+    assert t({"destination": "/akn/it/act/decreto-legge/stato/2020-07-16/76/ita@2023-07-01/!main/~art_2-bis"}) == \
+        ("akn:it/act/decreto-legge/stato/2020-07-16/76", "2023-07-01", False)
+    assert t({"destination": "/akn/it/act/legge/stato/1988-08-23/400"}) == ("akn:it/act/legge/stato/1988-08-23/400", None, True)
+    assert t({"destination": "#art1"}) is None and t({}) is None
+    assert nsrc.akn_key("/akn/it/act/legge/stato/2003-10-31/306/!main") == "akn:it/act/legge/stato/2003-10-31/306"
+    assert nsrc.akn_key("/eli/id/2003/11/15/003G0333") is None and nsrc.akn_key("") is None
+
+
+def test_only_a_typed_whole_act_repeal_closes_and_relations_name_it(corpus):
+    """review §3.2 case 2 and 06 §6.1's `closures`: a `repeal` of a whole act
+    closes it from the href's day, or from this version's start without one;
+    a repeal of a part, or any other type however its text reads, amends."""
+    import dataclasses
+    from app.plugins.base import Edge
+    doc = _doc(corpus, M306)
+    mods = [
+        {"type": "repeal", "destination": "/akn/it/act/decreto_legislativo/stato/2016-04-18/50/ita@2023-07-01/!main"},
+        {"type": "repeal", "destination": "/akn/it/act/legge/stato/1992-12-23/498/ita@2023-07-01/!main/~art_11"},
+        {"type": "insertion", "destination": "urn:nir:stato:legge:1999-01-01;2", "new": "PROVVEDIMENTO ABROGATO"},
+        {"type": "repeal", "destination": "urn:nir:stato:legge:1999-01-01;7"},
+        {"type": "repeal", "destination": "urn:nir:stato:legge:1999-01-01;7"},
+    ]
+    doc2 = dataclasses.replace(doc, extra={**doc.extra, "active_modifications": mods, "eli_cites": []})
+    assert list(SOURCE.closures(doc2)) == [("akn:it/act/decreto_legislativo/stato/2016-04-18/50", "2023-07-01"),
+                                           ("urn:nir:stato:legge:1999-01-01;7", doc.extra["vigenza_from"])]
+    assert list(SOURCE.relations(doc2)) == [
+        Edge(to="akn:it/act/decreto_legislativo/stato/2016-04-18/50", type="eli:repeals"),
+        Edge(to="akn:it/act/legge/stato/1992-12-23/498", type="eli:amends"),
+        Edge(to="urn:nir:stato:legge:1999-01-01;2", type="eli:amends"),
+        Edge(to="urn:nir:stato:legge:1999-01-01;7", type="eli:repeals")]
+    assert list(SOURCE.closures(_doc(corpus, RD206_R))) == [], "a repeal state states nothing"

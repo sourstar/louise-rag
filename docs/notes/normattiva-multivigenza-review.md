@@ -334,6 +334,28 @@ Three cases close an act's validity, in this order of evidence:
    the open data"**. That over-includes rather than mis-dates, and says
    so; it is the honest residue of the reviewed note's §7.2.
 
+**Built 2026-10-12 (night): case 2.** The plugin's `closures(doc)` — 06
+§6.1's second optional hook, beside `relations()` — yields `(key, day)`
+for each active modification typed `repeal` whose destination is a whole
+act: the day is the destination's own `ita@YYYY-MM-DD` (the Expression
+the repeal creates, which the codes' 2023 members carry on every one of
+their 152 typed repeals), or the stating version's start where the href
+is a URN without a date. The rdf stage records them in the manifest's
+`validity_closures` keyed on the stating uid (delete-then-insert, so a
+re-parse that no longer states a repeal withdraws it) and each version's
+canonical ids in `validity_works`; `recompute` closes the last version
+of a Work that still has text at the earliest closure later than its
+start, whichever record arrived first. Strict on purpose: a repeal of a
+part, or a modification typed otherwise however its text reads
+("abrogato" in an insertion), closes nothing — under-closing is case 3's
+label, over-closing a silent mis-date. The same strictness now governs
+`eli:repeals` edges; the archive's two href forms (URN on older exports,
+AKN path on recent ones) are both read, and records carry the act's AKN
+work path as a third key (`akn:`, registered by app/refs/normattiva.py,
+parser 6) so a closure or a citation by path finds its act. How many of
+the 33,750 repealed-only acts this dates is measured on the live
+collection (§7).
+
 ### 3.3 What a search does
 
 - **Without `--as-of`**: one record per Work — the **latest version
@@ -768,6 +790,12 @@ tests in `tests/test_validity.py` and `tests/test_normattiva.py`.
   window are columns, and a query in an act's fortnight before entry into
   force returns nothing.
 - The on-demand collection query for the Constitution.
+- The articles' token lengths under DAR-legal-it's tokenizer (the Codici, the
+  longest) → `space.ctx` of the recipe (`normattiva-recipe.toml`, drafted
+  2026-10-12 with 2048 as a placeholder; 09 §9.3 truncates a longer chunk).
+- The engine block and weights digest of the encoder that serves
+  DAR-legal-it, read on the node at create (09 §9.3) — the model is served
+  nowhere yet (STATUS, 2026-10-12).
 - Coverage of `eli:repeals` from `active_modifications` for the
   repealed-only acts (§3.2, case 2).
 - Whether the 23 predefined collections are the whole database: their

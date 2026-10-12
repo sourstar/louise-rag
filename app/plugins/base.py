@@ -322,6 +322,14 @@ class CorpusSource(Protocol):
     # discovered where its source document is (06 §6.1; 09 §9.14).
     def relations(self, doc: CanonicalDoc) -> Iterator[Edge]: ...
 
+    # Optional, for a collection whose profile declares a validity axis
+    # (app/validity.py; 05 §5.1): what THIS version states ends ANOTHER
+    # Work's validity — `(key, day)` pairs, the Work by one of its canonical
+    # ids (05 §5.2) and the ISO day it is no longer in force from. Read at
+    # the rdf stage and applied by key, in either order of arrival (06 §6.1;
+    # docs/notes/normattiva-multivigenza-review.md §3.2, case 2).
+    def closures(self, doc: CanonicalDoc) -> Iterator[tuple[str, str]]: ...
+
 
 @dataclass(frozen=True)
 class RefColumn:

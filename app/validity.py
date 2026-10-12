@@ -44,6 +44,18 @@ row whose index columns may still lag, for a peer on which those stages
 do not run (embed off, an import-only copy): the index maintainer drains
 it (`sync_vectors`).
 
+What ends a chain from OUTSIDE it (review §3.2, case 2): a version of
+another Work may state that this Work is repealed in full from a day —
+the plugin's optional `closures(doc)` yields `(key, day)` pairs, the Work
+by one of its canonical ids. The rdf stage records them in
+`validity_closures` keyed on the stating uid (delete-then-insert, so a
+re-parse that no longer states a repeal withdraws it), each version's
+`keys` in `validity_works`, and `recompute` closes the LAST version of a
+Work that still has text at the earliest closure later than its start —
+whichever of the two records arrived first. A closure earlier than the
+last version's start is contradicted by that version and ignored; a Work
+whose last word is a repeal state is closed by it already (case 1).
+
 `OPEN` is an INDEX sentinel and never reaches a record: 09 §9.5's record
 has no end-of-validity key at all.
 """
@@ -131,10 +143,11 @@ def _field(doc, key: str):
     return getattr(doc, key, None)
 
 
-def of_doc(doc, v: Validity) -> dict[str, Any] | None:
+def of_doc(doc, v: Validity, plugin=None) -> dict[str, Any] | None:
     """What the rdf stage records about one parsed document, or None when
     the document names no start of validity or no Work (then it is not a
-    version of anything and takes no part in the filter)."""
+    version of anything and takes no part in the filter). With the plugin:
+    the Work's canonical ids and the closures this version states."""
     start, work = _field(doc, v.from_key), _field(doc, v.work_key)
     if not start or not work:
         return None
@@ -143,9 +156,19 @@ def of_doc(doc, v: Validity) -> dict[str, Any] | None:
     except ValueError:
         return None
     in_force = (doc.extra or {}).get("in_force")
-    return {"from": start_i, "work": str(work),
-            "has_text": any((body or "").strip() for _, body in (doc.sections or [])),
-            "in_force": None if in_force is None else int(bool(in_force))}
+    out: dict[str, Any] = {
+        "from": start_i, "work": str(work),
+        "has_text": any((body or "").strip() for _, body in (doc.sections or [])),
+        "in_force": None if in_force is None else int(bool(in_force)),
+        "keys": [str(k) for k in (doc.keys or [])], "closes": []}
+    fn = getattr(plugin, "closures", None) if plugin is not None else None
+    if fn is not None:
+        for key, day in fn(doc):
+            try:
+                out["closes"].append((str(key), day_int(str(day))))
+            except ValueError:
+                continue       # a day the origin wrote unreadably closes nothing
+    return out
 
 
 # ---- the manifest's version table -------------------------------------------
@@ -159,26 +182,66 @@ def record(con, uid: str, native_id: int, meta: dict[str, Any]) -> list[str]:
     Cost: one indexed read of the Work's versions (idx_validity_work) and
     one update per version that moved — at most the versions of one act
     (the codes: about 400), typically one."""
+    work = str(meta["work"])
     con.execute(
         "INSERT INTO validity(uid, native_id, work, valid_from, valid_to, has_text, in_force, shown, synced) "
         "VALUES(?,?,?,?,NULL,?,?,0,0) "
         "ON CONFLICT(uid) DO UPDATE SET native_id=excluded.native_id, work=excluded.work, "
         "valid_from=excluded.valid_from, has_text=excluded.has_text, in_force=excluded.in_force, synced=0",
-        (uid, int(native_id), meta["work"], int(meta["from"]), int(bool(meta["has_text"])), meta.get("in_force")))
-    return recompute(con, meta["work"], except_uid=uid)
+        (uid, int(native_id), work, int(meta["from"]), int(bool(meta["has_text"])), meta.get("in_force")))
+    con.executemany("INSERT OR IGNORE INTO validity_works(key, work) VALUES(?,?)",
+                    [(str(k), work) for k in meta.get("keys") or []])
+    touched = _record_closures(con, uid, meta.get("closes") or [])
+    moved = recompute(con, work, except_uid=uid)
+    for other in sorted(touched - {work}):
+        moved += recompute(con, other)
+    return moved
+
+
+def _record_closures(con, by_uid: str, closes) -> set[str]:
+    """This version's closures replace what it stated before (delete-then-
+    insert, keyed on the stating uid). Returns the Works whose chain may
+    have changed: those keyed by any id it states now or stated before."""
+    old = {r[0] for r in con.execute("SELECT key FROM validity_closures WHERE by_uid=?", (by_uid,))}
+    new: dict[str, int] = {}
+    for key, day in closes:
+        new[str(key)] = min(int(day), new.get(str(key), int(day)))
+    con.execute("DELETE FROM validity_closures WHERE by_uid=?", (by_uid,))
+    con.executemany("INSERT INTO validity_closures(key, by_uid, closed_at) VALUES(?,?,?)",
+                    [(k, by_uid, d) for k, d in new.items()])
+    keys = sorted(old | set(new))
+    if not keys:
+        return set()
+    marks = ",".join("?" for _ in keys)
+    return {r[0] for r in con.execute(
+        f"SELECT work FROM validity_works WHERE key IN ({marks})", keys)}
+
+
+def closed_at(con, work: str) -> int | None:
+    """The earliest day a held version states the Work is no longer in force
+    (review §3.2, case 2), by any of its canonical ids; None where none
+    does. Indexed on both sides (idx_validity_works_work, the closures'
+    key)."""
+    r = con.execute("SELECT MIN(c.closed_at) FROM validity_works k "
+                    "JOIN validity_closures c ON c.key = k.key WHERE k.work=?", (work,)).fetchone()
+    return None if r is None or r[0] is None else int(r[0])
 
 
 def recompute(con, work: str, *, except_uid: str | None = None) -> list[str]:
     """The chain of one Work: versions in order of (valid_from, native_id);
-    each ends where the next starts, the last is open; `shown` is the last
-    version that has text."""
+    each ends where the next starts, the last where another Work's version
+    states it is repealed (`closed_at`, if later than its start and it has
+    text) or else open; `shown` is the last version that has text."""
     rows = con.execute(
         "SELECT uid, native_id, valid_from, valid_to, has_text, shown FROM validity "
         "WHERE work=? ORDER BY valid_from, native_id", (work,)).fetchall()
     moved: list[str] = []
     last_text = max((i for i, r in enumerate(rows) if r["has_text"]), default=None)
+    closed = closed_at(con, work) if rows else None
     for i, r in enumerate(rows):
         to = int(rows[i + 1]["valid_from"]) if i + 1 < len(rows) else None
+        if to is None and closed is not None and r["has_text"] and closed > int(r["valid_from"]):
+            to = closed            # review §3.2 case 2: ended from outside its chain
         shown = 1 if i == last_text else 0
         if r["valid_to"] == to and int(r["shown"]) == shown:
             continue

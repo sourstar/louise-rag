@@ -152,7 +152,7 @@ def metadata(plugin, row) -> dict:
     from app import validity
     v = validity.from_plugin(plugin)
     if v is not None:
-        got = validity.of_doc(doc, v)
+        got = validity.of_doc(doc, v, plugin)
         if got is not None:
             meta["validity"] = got
     return meta
