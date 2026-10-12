@@ -92,7 +92,7 @@ it left open is below.
     argued closed, only made narrow.
   Still open:
   - **the robust layer is a watchdog, whatever the cause — now needed, since
-    the cause is not the wake alone — and LocalAI has one**: the busy watchdog (`watchdog_busy_enabled`, OFF on the node;
+    the cause is not the wake alone — and LocalAI has one**: the busy watchdog (`watchdog_busy_enabled`; ON since 2026-10-12 at 10 min, operator — its first second killed a pubmed encoder hung for 8 h, and LocalAI reloaded it on the next call with no hand;
     `watchdog_busy_timeout`, 5m). It times each backend from its OLDEST
     in-flight request, covers every backend (VeGa or not, pinned or not),
     and force-kills (SIGTERM, SIGKILL after the grace period); the next call

@@ -273,7 +273,7 @@ watchdog's `ShutdownModelForce` already does the killing), or at least do not
 log "Deleting" when nothing is deleted.
 
 **What already covers it:** the busy watchdog (`watchdog_busy_enabled`,
-`watchdog_busy_timeout`, default 5m; OFF on the node). It times each
+`watchdog_busy_timeout`, default 5m; ON on the node since 2026-10-12 at 10m — its first second killed a pubmed encoder hung for 8 h, and the next call loaded it again). It times each
 backend from its oldest in-flight request, ignores pinning, and kills with
 `ShutdownModelForce` (go-processmanager: SIGTERM, then SIGKILL after the
 graceful timeout). STATUS.md "Open after the migration" weighs turning it
