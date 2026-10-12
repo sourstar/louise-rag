@@ -211,7 +211,7 @@ def test_the_three_versions_of_one_act_are_three_records(corpus):
     assert [d.extra["eli_expression"].rsplit("/048C0003/", 1)[1] for d in (o, v11, v12)] == \
         ["ORIGINAL", "CONSOLIDATED/20010201", "CONSOLIDATED/20010216"]
     assert [d.extra["vigenza_from"] for d in (o, v11, v12)] == \
-        ["1948-03-09", "2001-02-01", "2001-02-16"]
+        ["1948-03-10", "2001-02-01", "2001-02-16"], "the original: its Expression date (original_start)"
     assert v11.extra["frbr"]["expression"]["date"] == "1993-10-10", "stale at the origin, kept"
     assert len({d.uid for d in (o, v11, v12)}) == 3
     assert o.date == v11.date == "1948-02-26", "`date` is the act's own, on every version"
@@ -438,3 +438,16 @@ def test_the_acts_modifications_and_references_are_eli_edges(corpus):
     assert b'"type":"eli:amends"' in lines[0]
     repealed = _doc(corpus, RD206_R)
     assert list(SOURCE.relations(repealed)) == [], "a repeal state states nothing about other acts"
+
+
+def test_an_original_starts_at_the_expression_date_the_member_states():
+    """review §7 (measured 2026-10-12 on 220 originals): the Expression date
+    is the entry into force; one dated before publication is a typo at the
+    origin and the preface note decides; nothing starts before publication."""
+    from app.plugins.normattiva import source as nsrc
+    assert nsrc.original_start("2019-03-01", "2019-03-01", "2019-02-14") == "2019-03-01"
+    assert nsrc.original_start("2022-07-15", "2020-08-15", "2019-02-14") == "2022-07-15", "postponed after the note"
+    assert nsrc.original_start("1989-10-29", "1939-10-29", "1989-10-14") == "1989-10-29", "the note's century is wrong"
+    assert nsrc.original_start("1989-02-16", "1989-03-16", "1989-03-15") == "1989-03-16", "before publication: the note"
+    assert nsrc.original_start("1989-02-16", None, "1989-03-15") == "1989-03-15", "before publication, no note"
+    assert nsrc.original_start(None, None, "1948-03-09") == "1948-03-09"

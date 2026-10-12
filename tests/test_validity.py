@@ -31,7 +31,10 @@ def versioned(tmp_path, isolated_config, monkeypatch):
     root = tmp_path / "normattiva"
     _zip(root / "akn/M/leggi-costituzionali.zip", dict(SARD_MEMBERS))
     _zip(root / "akn/M/regi-decreti.zip", {RD206_R: RD206_REPEALED})
-    _zip(root / "akn/O/atti-normativi-abrogati-in-originale.zip", {RD206_O: BUILT})
+    # the 1701 original with a 1701 entry into force: the template's 2020 note
+    # would start its validity in 2020 (original_start)
+    _zip(root / "akn/O/atti-normativi-abrogati-in-originale.zip",
+         {RD206_O: BUILT.replace(b"25/01/2020", b"01/01/1701")})
     c = collections_mod.Collection(
         name="normattiva", plugin="normattiva", profile=None, embed_mode_default=None,
         corpus_dir=root, manifest_path=tmp_path / "manifest.db",
@@ -76,10 +79,10 @@ def test_the_plugin_declares_the_axis_and_other_collections_are_untouched(versio
     v = validity.declared(c)
     assert v == validity.Validity(from_key="extra.vigenza_from", work_key="extra.eli_work")
     assert validity.window(c, None) == {"shown": True}
-    assert validity.window(c, 20010210) == {"day": 20010210, "max_id": 20010211 * 10**9}
+    assert validity.window(c, 20010210) == {"day": 20010210}
     assert validity.lance_where({"shown": True}) == "shown = 1"
     assert validity.lance_where(validity.window(c, 20010210)) == \
-        f"book_id < {20010211 * 10**9} AND valid_to > 20010210"
+        "valid_from <= 20010210 AND valid_to > 20010210"
     assert validity.day_int("2001-02-01") == 20010201 and validity.day_text(20010201) == "2001-02-01"
     assert validity.day_text(validity.OPEN) is None and validity.day_text(None) is None
     with pytest.raises(ValueError):
@@ -102,7 +105,7 @@ def test_the_rdf_stage_chains_each_work(versioned):
     _run(con, c, "rdf")
     t = _table(con)
     assert {t[i]["work"] for i in (O_ID, V11_ID, V12_ID)} == {SARD_WORK}
-    assert [t[i]["valid_from"] for i in (O_ID, V11_ID, V12_ID)] == [19480309, 20010201, 20010216]
+    assert [t[i]["valid_from"] for i in (O_ID, V11_ID, V12_ID)] == [19480310, 20010201, 20010216], "the original starts at its Expression date, the day after its publication (original_start)"
     assert [t[i]["valid_to"] for i in (O_ID, V11_ID, V12_ID)] == [20010201, 20010216, None]
     assert [t[i]["shown"] for i in (O_ID, V11_ID, V12_ID)] == [0, 0, 1]
     assert all(t[i]["has_text"] == 1 for i in (O_ID, V11_ID, V12_ID))
@@ -112,9 +115,9 @@ def test_the_rdf_stage_chains_each_work(versioned):
     assert (t[RD_R_ID]["valid_to"], t[RD_R_ID]["has_text"], t[RD_R_ID]["shown"]) == (None, 0, 0)
     assert t[RD_R_ID]["in_force"] == 0 and t[RD_O_ID]["in_force"] == 0
     cols = validity.index_columns(con, [O_ID, V12_ID, RD_O_ID, 42])
-    assert cols[O_ID] == {"valid_to": 20010201, "shown": 0}
-    assert cols[V12_ID] == {"valid_to": validity.OPEN, "shown": 1}
-    assert cols[42] == {"valid_to": validity.OPEN, "shown": 1}, "a record not yet recorded reads as current"
+    assert cols[O_ID] == {"valid_from": 19480310, "valid_to": 20010201, "shown": 0}
+    assert cols[V12_ID] == {"valid_from": 20010216, "valid_to": validity.OPEN, "shown": 1}
+    assert cols[42] == {"valid_from": 0, "valid_to": validity.OPEN, "shown": 1}, "a record not yet recorded reads as current"
     desc = validity.describe(con, [V11_ID, V12_ID, RD_R_ID])
     assert desc[V11_ID] == {"from": "2001-02-01", "to": "2001-02-16", "in_force": None, "current": False}
     assert desc[V12_ID]["to"] is None and desc[V12_ID]["current"] is True
@@ -165,6 +168,8 @@ def test_the_text_leg_admits_one_version_per_work(versioned):
     assert books(20010216) == {V12_ID}, "the boundary day belongs to the new version"
     assert books(20010215) == {V11_ID}
     assert books(19990101) == {O_ID}
+    assert books(19480309) == set(), "published 1948-03-09, in force 1948-03-10: the vacatio returns nothing"
+    assert books(19480310) == {O_ID}, "the original from its Expression date (original_start)"
     assert books(19470101) == set(), "before the act existed"
     unfiltered = {int(h["book_id"]) for h in fts.search("it", "Sardegna", limit=50, collection=c)}
     assert unfiltered == {O_ID, V11_ID, V12_ID}, "without a window every version is in the index"
@@ -197,6 +202,8 @@ def test_the_vector_leg_admits_one_version_per_work(versioned):
     assert books(None) == {V12_ID, RD_O_ID}, "every vector is equal under the fake encoder: the filter decides"
     assert books(20010210) == {V11_ID, RD_O_ID}
     assert books(19990101) == {O_ID, RD_O_ID}
+    assert books(19480309) == {RD_O_ID}, "the original's day between publication and entry into force"
+    assert books(19480310) == {O_ID, RD_O_ID}
     assert books(20260101) == {V12_ID}
     assert books(16000101) == set()
 

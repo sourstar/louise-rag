@@ -34,9 +34,14 @@ review found stale on a real member (`ita@1993-10-10` on the 2001-02-01
 version), and never the member's `V<n>`, a per-zip sequence. The id sorts
 by the START OF VALIDITY, which is what keeps arrival monotonic (02 §2.2):
 a version the origin publishes next month starts next month. An
-ORIGINALE's validity starts at its publication date for the id (the member
-name carries no other date); the entry into force the origin states in the
-preface note is kept beside it as `entry_into_force`.
+ORIGINALE's id sorts by its publication date (the member name carries no
+other date, and nothing enters into force before it is published, so
+arrival stays monotonic); its VALIDITY starts at the Expression date the
+member states — `original_start`, the rule review §7 measured on 220
+originals of the 22 collections — which the index carries as its own
+column beside the id (app/validity.py). The entry into force the origin
+states in the preface note is kept beside it as `entry_into_force`; the
+Expression date is in `extra.frbr` with the rest of the identification.
 
 A REPEAL STATE is a version like any other: the origin's last word on a
 repealed act, every article reading "((PROVVEDIMENTO ABROGATO DAL …))",
@@ -127,6 +132,25 @@ def member_dir_type(member_dir: str) -> str:
     return "_".join(parts[:-2]).strip() if len(parts) >= 3 else member_dir.strip()
 
 
+def original_start(expression_date: str | None, entry_into_force: str | None, gu: str) -> str:
+    """An ORIGINALE's start of validity (review §7, measured 2026-10-12 on
+    220 originals, ten per collection): the Expression date the member
+    states IS its entry into force — equal to the preface's "Entrata in
+    vigore" note on 151 of the 154 members carrying one, and on the pattern
+    of the vacatio (publication + 15, + 1, + 0) where the note is absent.
+    The two disagreements favour the Expression date (an entry into force
+    postponed after the note was written; a note dated to the wrong
+    century). The one member whose Expression date PRECEDES publication (a
+    typo at the origin, 1989-02-16 for 1989-03-16) takes the note, which
+    agrees with the first consolidation; without a note, the publication
+    date. Nothing enters into force before it is published."""
+    if expression_date and expression_date >= gu:
+        return expression_date
+    if entry_into_force and entry_into_force >= gu:
+        return entry_into_force
+    return gu
+
+
 def _entry_into_force(notes: list[str]) -> str | None:
     for note in notes:
         m = _ENTRY_INTO_FORCE.search(note)
@@ -195,8 +219,10 @@ class NormattivaSource:
     #: and `in_force` where 2 wrote `eli_in_force` (09 §9.5's key). Free: no
     #: collection was ever created from 1 or 2.
     #: 4 the same day: `keys` carry the act's URN:NIR and ELI, registered
-    #: by app/refs/normattiva.py (05 §5.2); free for the same reason.
-    PARSER_VERSION = 4
+    #: by app/refs/normattiva.py (05 §5.2); free for the same reason. 5 the
+    #: same evening: an ORIGINALE's `vigenza_from` is its Expression date
+    #: (`original_start`, measured); free for the same reason.
+    PARSER_VERSION = 5
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE          # an act withdrawn from the database
     native_id_order = "numeric"            # eli.expression_native_id: start of validity first
@@ -316,6 +342,8 @@ class NormattivaSource:
             first = next(b.text for b in with_text[0].blocks if b.text.strip())
             repealed_by = rendition.plain(first).strip()
         in_force = False if (repealed_in_full or "abrogati" in zpath.name) else None
+        entry_into_force = _entry_into_force(act.preface_notes)
+        expression_date = act.frbr.get("expression", {}).get("date") or None
 
         extra = {
             # ELI rule 5: the fixed keys (eli.EXTRA_KEYS)
@@ -336,7 +364,7 @@ class NormattivaSource:
             eli.IN_FORCE: in_force,
             # the Expression this record is (review §3.1), from the member name
             "version_key": version_key(form, vig),
-            "vigenza_from": vig or gu,
+            "vigenza_from": vig or original_start(expression_date, entry_into_force, gu),
             "form": _FORMS[form],
             "vigenza": vig,
             "member_version": int(m["v"]),
@@ -344,7 +372,7 @@ class NormattivaSource:
             "collection": zpath.stem,
             "repealed_in_full": repealed_in_full,
             "repealed_by_text": repealed_by,
-            "entry_into_force": _entry_into_force(act.preface_notes),
+            "entry_into_force": entry_into_force,
             # Normattiva's
             "codice_redazionale": codice,
             "urn_nir": urn,

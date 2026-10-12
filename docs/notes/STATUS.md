@@ -17,9 +17,9 @@ it left open is below.
 - **Normattiva, what the second part left** (2026-10-12,
   [normattiva-multivigenza-review.md](normattiva-multivigenza-review.md) §3.12,
   §7): closing a repealed-only act's validity from `eli:repeals` edges,
-  the measurements before `shard_records` and the ORIGINALE's
-  validity-start rule are fixed (a second archive listing a month on),
-  the Constitution's on-demand query, and no collection created yet.
+  the measurement before `shard_records` is fixed (a second archive
+  listing a month on), the Constitution's on-demand query, and no
+  collection created yet.
   Built the same day: the vector carry, `relations()`, the
   central-directory delta, the member as origin unit, and the `urn`/`eli`
   reference source with the citation resolver (`app/refs/normattiva.py`;
@@ -182,7 +182,7 @@ of their text), the repeal state detected, `in_force` in place of
 `eli_in_force`; the `normattiva` slicing scheme (type and year, 50 a part);
 the spec fetching the 22 M zips and the repealed acts' O zip (7.8 GB).
 (2) `app/validity.py`: the manifest's `validity` table filled at the rdf
-stage, the two index columns written by the fts and embed stages and
+stage, the index columns written by the fts and embed stages and
 refreshed through a moved neighbour's own stages, the legs filtering by
 column range, `--as-of` by validity for a versioned collection, results
 carrying `validity`; 05 §5.1, 07 §7.3 and 09 §9.3 amended; the ELI note's
@@ -201,10 +201,16 @@ a `CompositeResolver`; an act's canonical id is its URN:NIR verbatim, 05
 §5.2 amended) and the plugin at parser 4 writing `keys`. The Codici
 measured: 41,289 distinct article texts across 2.9 M occurrences in 3,321
 versions, 2.12× the latest versions' — the carry leaves 1.4 % for the
-encoder. **Still open:** closing a repealed-only act's validity from
-`eli:repeals` edges, the measurements owed before `shard_records` and the
-ORIGINALE's validity-start rule are fixed, and the Constitution's on-demand
-query. No Normattiva collection exists yet; the one measurement the operator
+encoder. Later that evening the ORIGINALE's start was measured on 220
+originals (ten per collection, review §7): the Expression date a member
+states is its entry into force (equal to the preface note on 151 of 154,
+on the vacatio pattern otherwise), so `original_start` sets
+`vigenza_from` from it (parser 5) and `valid_from` became the index's
+third column — the id keeps its publication prefix, discovery reads no
+member, and a query in the fortnight before an act's entry into force
+returns nothing. **Still open:** closing a repealed-only act's validity
+from `eli:repeals` edges, the measurement owed before `shard_records` is
+fixed, and the Constitution's on-demand query. No Normattiva collection exists yet; the one measurement the operator
 asked for first — a second listing of the archive a month from now — is
 dated.
 

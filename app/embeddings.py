@@ -834,9 +834,10 @@ def _np_dtype_of_table(tbl):
 def _np_dtype_of_recipe(recipe):
     return np.float16 if recipe.dtype == "f16" else np.float32
 
-#: a versioned collection's two columns (app/validity.py), int64 beside the
-#: vectors: `valid_to` (YYYYMMDD, OPEN while in force) and `shown`
-VALIDITY_COLUMNS = ("valid_to", "shown")
+#: a versioned collection's three columns (app/validity.py), int64 beside
+#: the vectors: `valid_from`, `valid_to` (YYYYMMDD, OPEN while in force)
+#: and `shown`
+VALIDITY_COLUMNS = ("valid_from", "valid_to", "shown")
 
 
 class ValidityColumnsMissing(RuntimeError):
@@ -871,10 +872,10 @@ def _conform(tbl, rows: list[dict]) -> list[dict]:
     if have <= names and all(c in have for c in VALIDITY_COLUMNS if c in names):
         return rows
     from app import validity as validity_mod
-    defaults = {"valid_to": validity_mod.OPEN, "shown": 1}
     out = []
     for r in rows:
         r2 = {k: v for k, v in r.items() if k in names}
+        defaults = validity_mod.current_columns(int(r["book_id"]))
         for c in VALIDITY_COLUMNS:
             if c in names and c not in r2:
                 r2[c] = defaults[c]
@@ -1653,7 +1654,7 @@ def upsert_chunks(rows: list[dict], collection=None, lock_con=None, *,
             if validity_mod.declared(collection) is not None:
                 # imported vectors of a versioned collection: the columns are
                 # "current" until the maintainer syncs them (app/validity.py)
-                out = [dict(r, valid_to=validity_mod.OPEN, shown=1) for r in out]
+                out = [dict(r, **validity_mod.current_columns(int(r["book_id"]))) for r in out]
             _create_table(db, out)
     return len(out)
 

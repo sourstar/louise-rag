@@ -36,14 +36,14 @@ def _schema(group: str, validity: bool = False) -> tantivy.Schema:
     tantivy refuses to open an index whose on-disk schema differs. Scoping
     body_stem to the groups that use it means adopting PyStemmer for one
     language rebuilds ONE index instead of every index on the node.
-    `validity`: a versioned collection's two columns (app/validity.py),
+    `validity`: a versioned collection's three columns (app/validity.py),
     fast fields a search ranges over; only such a collection's indexes
     carry them, so every other index keeps its schema."""
     b = tantivy.SchemaBuilder()
     b.add_integer_field("book_id", stored=True, indexed=True, fast=True)
     if validity:
-        b.add_integer_field("valid_to", stored=True, indexed=True, fast=True)
-        b.add_integer_field("shown", stored=True, indexed=True, fast=True)
+        for col in ("valid_from", "valid_to", "shown"):
+            b.add_integer_field(col, stored=True, indexed=True, fast=True)
     b.add_text_field("chunk_id", stored=True, tokenizer_name="raw")
     b.add_text_field("chapter", stored=True, tokenizer_name="default")
     b.add_text_field("lang", stored=True, tokenizer_name="raw")
@@ -348,7 +348,7 @@ def rewrite_without(group: str, collection=None) -> int:
             fields = dict(book_id=int(d["book_id"][0]), chunk_id=d["chunk_id"][0],
                           chapter=(d.get("chapter") or [""])[0],
                           lang=(d.get("lang") or ["und"])[0], body=body)
-            for col in ("valid_to", "shown"):           # a versioned collection's columns
+            for col in ("valid_from", "valid_to", "shown"):     # a versioned collection's columns
                 if d.get(col):
                     fields[col] = int(d[col][0])
             if algorithm:

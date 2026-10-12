@@ -12,21 +12,24 @@ the START of its validity (origin information). Its END is not in the
 record: no form of the origin states it, it is the next version's start,
 and 02 §2.3 says a record carries nothing that can be computed from it. So
 the end is DERIVED here, node-locally, into the manifest's `validity`
-table and from there into two columns of the text index and the vector
-table — `valid_to` (an integer YYYYMMDD, `OPEN` while in force) and
-`shown` (1 on the Work's latest version that has text) — so that a search
-filters by a column range and never by a list of ids (05 §5.2's filter
-takes at most 20,000; the law holds 190,000 acts).
+table and from there into three columns of the text index and the vector
+table — `valid_from` (an integer YYYYMMDD, the record's own start),
+`valid_to` (the same form, `OPEN` while in force) and `shown` (1 on the
+Work's latest version that has text) — so that a search filters by a
+column range and never by a list of ids (05 §5.2's filter takes at most
+20,000; the law holds 190,000 acts).
 
 What a search does for such a collection (05 §5.1, amended):
   * without `--as-of`: `shown = 1` — one record per Work, the latest text,
     so a repealed act is shown in the last text it had and labelled
     (eli-legal-plugins.md §5.7);
-  * with `--as-of D`: `valid_from <= D < valid_to` — the id's high digits
-    ARE `valid_from`, so the lower bound is `book_id < (D+1)·10^9` on a
-    column every index already has, and the upper bound is the derived
-    column. Versions of one Work are contiguous, so exactly one is
-    admitted per Work: no two versions ever meet in a leg or in RRF.
+  * with `--as-of D`: `valid_from <= D < valid_to`, both bounds columns.
+    The id's high digits are NOT the lower bound: they sort by the date
+    the member NAME carries, which for an original is its publication,
+    while its validity starts at its entry into force, up to fifteen days
+    later (normattiva `original_start`; a query in that fortnight must
+    not return it). Versions of one Work are contiguous, so exactly one
+    is admitted per Work: no two versions ever meet in a leg or in RRF.
   * the snapshot chain's as-of (app/ask/asof.py) does not apply: the chain
     is transaction time, when the origin's state was held; validity is
     valid time. [R6]/[R7] of the review.
@@ -52,6 +55,14 @@ from typing import Any, Iterable
 
 OPEN = 99_999_999          # "still in force", in the index columns only
 _ID_SPACE = 10 ** 9        # the id's low digits (app/plugins/eli.py)
+COLUMNS = ("valid_from", "valid_to", "shown")
+
+
+def current_columns(native_id: int) -> dict[str, int]:
+    """The three columns of a record the table does not know (none recorded
+    yet, or imported vectors): "current", starting at the date in the id's
+    high digits, until its own rdf stage or the maintainer says otherwise."""
+    return {"valid_from": int(native_id) // _ID_SPACE, "valid_to": OPEN, "shown": 1}
 
 
 @dataclass(frozen=True)
@@ -181,17 +192,18 @@ def recompute(con, work: str, *, except_uid: str | None = None) -> list[str]:
 
 
 def index_columns(con, native_ids: Iterable[int]) -> dict[int, dict[str, int]]:
-    """The two index columns per record, as the table has them now. A record
-    the table does not know (none recorded yet) is open and shown — the
-    columns say "current" until its own rdf stage says otherwise."""
+    """The three index columns per record, as the table has them now. A
+    record the table does not know (none recorded yet) reads as current
+    (`current_columns`) until its own rdf stage says otherwise."""
     ids = sorted({int(i) for i in native_ids})
-    out = {i: {"valid_to": OPEN, "shown": 1} for i in ids}
+    out = {i: current_columns(i) for i in ids}
     for start in range(0, len(ids), 500):
         part = ids[start:start + 500]
         marks = ",".join("?" for _ in part)
-        for r in con.execute(f"SELECT native_id, valid_to, shown FROM validity WHERE native_id IN ({marks})",
-                             part):
-            out[int(r["native_id"])] = {"valid_to": OPEN if r["valid_to"] is None else int(r["valid_to"]),
+        for r in con.execute(f"SELECT native_id, valid_from, valid_to, shown FROM validity "
+                             f"WHERE native_id IN ({marks})", part):
+            out[int(r["native_id"])] = {"valid_from": int(r["valid_from"]),
+                                        "valid_to": OPEN if r["valid_to"] is None else int(r["valid_to"]),
                                         "shown": int(r["shown"])}
     return out
 
@@ -212,18 +224,19 @@ def mark_synced(con, native_ids: Iterable[int]) -> None:
 
 def sync_vectors(con, collection, *, limit: int = 500, lock_con=None) -> int:
     """The index maintainer's drain: the vector table's columns of up to
-    `limit` rows whose (valid_to, shown) moved since they were written, for
+    `limit` rows whose columns moved since they were written, for
     a peer whose embed stage does not run (05 §5.7: the index is local and
     derived; the maintainer keeps it current per snapshot). Returns how
     many it updated; rows the table does not hold are marked synced too."""
     if declared(collection) is None:
         return 0
     from app import embeddings
-    rows = con.execute("SELECT native_id, valid_to, shown FROM validity WHERE synced=0 "
+    rows = con.execute("SELECT native_id, valid_from, valid_to, shown FROM validity WHERE synced=0 "
                        "ORDER BY native_id LIMIT ?", (int(limit),)).fetchall()
     done, n = [], 0
     for r in rows:
-        cols = {"valid_to": OPEN if r["valid_to"] is None else int(r["valid_to"]), "shown": int(r["shown"])}
+        cols = {"valid_from": int(r["valid_from"]),
+                "valid_to": OPEN if r["valid_to"] is None else int(r["valid_to"]), "shown": int(r["shown"])}
         if embeddings.sync_columns(int(r["native_id"]), cols, collection, lock_con=lock_con):
             n += 1
         done.append(int(r["native_id"]))
@@ -237,19 +250,18 @@ def sync_vectors(con, collection, *, limit: int = 500, lock_con=None) -> int:
 def window(collection, as_of: int | None) -> dict[str, Any] | None:
     """What the legs filter on for this collection: None for a collection
     that declares no validity; `{"shown": True}` for the default view;
-    `{"day": D, "max_id": (D+1)·10^9}` as of D."""
+    `{"day": D}` as of D."""
     if declared(collection) is None:
         return None
     if as_of is None:
         return {"shown": True}
-    day = int(as_of)
-    return {"day": day, "max_id": (day + 1) * _ID_SPACE}
+    return {"day": int(as_of)}
 
 
 def lance_where(w: dict[str, Any]) -> str:
     if w.get("shown"):
         return "shown = 1"
-    return f"book_id < {int(w['max_id'])} AND valid_to > {int(w['day'])}"
+    return f"valid_from <= {int(w['day'])} AND valid_to > {int(w['day'])}"
 
 
 def fts_filters(schema, w: dict[str, Any]) -> list:
@@ -257,8 +269,8 @@ def fts_filters(schema, w: dict[str, Any]) -> list:
     import tantivy
     if w.get("shown"):
         return [tantivy.Query.term_query(schema, "shown", 1)]
-    return [tantivy.Query.range_query(schema, "book_id", tantivy.FieldType.Integer,
-                                      0, int(w["max_id"]), True, False),
+    return [tantivy.Query.range_query(schema, "valid_from", tantivy.FieldType.Integer,
+                                      0, int(w["day"]), True, True),
             tantivy.Query.range_query(schema, "valid_to", tantivy.FieldType.Integer,
                                       int(w["day"]), OPEN, False, True)]
 

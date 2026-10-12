@@ -138,8 +138,8 @@ member's date. The `FRBRExpression` date can be **stale**: Statuto
 Sardegna V11 (`VIGENZA_2001-02-01`) carries `ita@1993-10-10` while its
 ELI alias says `CONSOLIDATED/20010201` and the member name agrees; V12
 is consistent. The ELI alias, not `FRBRthis`, is the identifier that
-matches the member. An ORIGINALE member's expression date is one day
-after publication on the sample (entry into force).
+matches the member. An ORIGINALE member's expression date is its entry
+into force (§7: measured on 220 originals the same evening).
 
 **The other export forms.** JSON adds `abrogato: si|no`, `storia` (the
 same events as the lifecycle, numbered differently from the member
@@ -277,15 +277,14 @@ native_id = int(vigenza_from as YYYYMMDD) * 10**9
 uid       = normattiva:<native_id>
 ```
 
-Date-sortable in the high digits by the start of validity, which is
+Date-sortable in the high digits by the member name's date (a VIGENZA's start, an ORIGINALE's publication; §7), which is
 what makes it **monotonic in arrival**: a version the origin publishes
 next month starts next month, so it sorts after every id already in
 its slice (02 §2.2's requirement). Collision-checked at discovery as
 today (`eli.CollisionGuard`). `vigenza_from` is the member's
 `VIGENZA_<date>`; for an ORIGINALE it is the origin's expression date
-(entry into force, one day after publication on the sample — the rule is
-measured before it is fixed, §7), with `eli_date_publication` kept
-beside it as today. The Work stays in `extra.eli_work` and `urn_nir`,
+(its entry into force — measured and fixed, §7: `original_start`), with
+`eli_date_publication` kept beside it as today. The Work stays in `extra.eli_work` and `urn_nir`,
 and reaches `keys` when a reference source registers the namespaces
 (05 §5.2; §3.12).
 
@@ -657,13 +656,14 @@ lacks.
 
 `app/plugins/normattiva/source.py` discovers every member of every zip as a
 record — `eli.expression_native_id`, the id of §3.1, with one deviation
-from §3.1 as written: an ORIGINALE's `vigenza_from` for the id is its
-**publication date**, the only date the member name carries, because
-discovery enumerates without reading (06 §6.1); the entry into force the
-origin states in the preface note is kept beside it as
-`extra.entry_into_force` (measured on the samples: the day after
-publication for the 1948 statute, the same day for R.D. 206/1861), and §7's
-measurement decides whether the version table should prefer it. The version
+from §3.1 as written: an ORIGINALE's id sorts by its **publication date**,
+the only date the member name carries, because discovery enumerates
+without reading (06 §6.1) — its VALIDITY starts at its Expression date
+(`original_start`, fixed by §7's measurement the same evening, parser 5),
+which the index carries as a `valid_from` column of its own beside
+`valid_to` and `shown`, so the as-of filter never reads the id's digits;
+the entry into force the origin states in the preface note is kept beside
+it as `extra.entry_into_force`. The version
 key is the member name's (`version_key`, agreeing with the ELI alias); the
 floor is `VALIDITY_FLOOR = "1948-01-01"` applied at discovery (a version
 whose successor starts on or before it is not yielded); one copy per
@@ -703,11 +703,11 @@ recomputes its Work's chain in the manifest's `validity` table (`valid_to`
 (`idx_validity_work`, plan-checked); a neighbour whose end or `shown`
 moved has its fts and embed marks reset in the same transaction, so its
 own stages rewrite its index rows — the fts stage re-adds its chunks with
-the two fast fields, the embed stage reuses every vector and updates the
-two columns in place (`embeddings.sync_columns`); the index maintainer
+the three fast fields, the embed stage reuses every vector and updates the
+three columns in place (`embeddings.sync_columns`); the index maintainer
 drains `synced = 0` rows for a peer whose embed stage does not run. The
 legs take the window as a column range — tantivy fast-field ranges on
-`book_id` (the validity prefix) and `valid_to`, a Lance `where` — never an
+`valid_from` and `valid_to`, a Lance `where` — never an
 id list; the catalog leg is admitted by the table; `--as-of` reaches
 `retrieval` as an integer day and a versioned collection is excused from
 `asof.resolve`; a result carries `validity: {from, to, in_force,
@@ -750,8 +750,23 @@ tests in `tests/test_validity.py` and `tests/test_normattiva.py`.
   diffed against today's → how many versions arrive with a past
   `vigenza_from` (§3.1's refusal path) and how many published versions
   the origin corrects (`changed` rate).
-- ORIGINALE members: expression date against the "Entrata in vigore"
-  preface note over a sample → the `vigenza_from` rule for originals.
+- ORIGINALE members: MEASURED 2026-10-12, ten originals of each of the 22
+  collections (220; 113 read from the local zips, 107 by Range). Every
+  member states an Expression date; 154 carry the "Entrata in vigore"
+  note, and the two agree on 151. Against publication, the Expression
+  date is +15 on 132, +1 on 45, +0 on 24 — the vacatio — and 217 of 220
+  are one of those or the note. The three others: the Codice della crisi
+  (expression 2022-07-15 = the first consolidation, the note's 2020-08-15
+  twice postponed — the original text never was in force, and the chain
+  gives it an empty interval); a note dated 1939 for 1989; and one
+  Expression date BEFORE publication (1989-02-16 for 1989-03-16, the
+  note's date, which the first consolidation confirms). Rule, parser 5:
+  `vigenza_from` = the Expression date, or the note where the Expression
+  date precedes publication, or publication (`original_start`). The id
+  keeps its publication-date prefix (discovery reads no member), so
+  `valid_from` became the index's third column: both bounds of the as-of
+  window are columns, and a query in an act's fortnight before entry into
+  force returns nothing.
 - The on-demand collection query for the Constitution.
 - Coverage of `eli:repeals` from `active_modifications` for the
   repealed-only acts (§3.2, case 2).
