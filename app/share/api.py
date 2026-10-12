@@ -103,10 +103,11 @@ async def _pull(request: Request, what: str) -> JSONResponse:
     with closing(peers.connect()) as con:
         if peers.is_banned(con, body["key"], now=now):
             raise HTTPException(403, "not a neighbour today (04 §4.2)")
-    payload = messages.answer_pull(_root(), body)
+    # off the event loop: a patch decompresses a part (app/share/patch.py)
+    from starlette.concurrency import run_in_threadpool
+    payload = await run_in_threadpool(messages.answer_pull, _root(), body)
     # invariant 5: an answer leaves under the node's UP budget — paced here,
     # charged to the worker's bucket at its next beat (app/share/answered.py)
-    from starlette.concurrency import run_in_threadpool
     from app.share import answered
     await run_in_threadpool(answered.pace, len(json.dumps(payload)))
     return JSONResponse(payload)
@@ -120,6 +121,12 @@ async def codex_fetch(request: Request) -> JSONResponse:
 @router.post("/snapshot/fetch")
 async def snapshot_fetch(request: Request) -> JSONResponse:
     return await _pull(request, "snapshot")
+
+
+@router.post("/patch/fetch")
+async def patch_fetch(request: Request) -> JSONResponse:
+    """A part patch (app/share/patch.py): the lines the asker lacks."""
+    return await _pull(request, "patch")
 
 
 @router.post("/attestations/fetch")

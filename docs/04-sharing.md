@@ -191,6 +191,14 @@ resolves to the accepted bundles the sharer holds for those chunks,
 delivered as bundles with their signatures, and the fetcher merges them
 itself (02 §2.4).
 
+**A new version of a held part, by patch** (amended 2026-10-12, operator).
+Before fetching a record part it holds an older version of, a peer asks a
+peer holding the new one for the changed lines (09 §9.9 `pull patch`) and
+rebuilds the part; the root decides as for any file, and a rebuild that
+misses costs the whole part by torrent. A promotion that replaces a
+version a held snapshot lists keeps it under its superseded name (02 §2.3),
+on every peer.
+
 **Staging and promotion.** A member is fetched into staging — local
 state beside the copy (07 §7.8), never the copy itself — and resumption
 is per piece from what staging already holds; nothing in staging is

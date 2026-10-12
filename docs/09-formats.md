@@ -1297,6 +1297,7 @@ objects, which are therefore not signed again.
 | pull codex | `POST /api/share/codex/fetch` | `louise-pull` | `louise/event/v1` |
 | pull snapshot | `POST /api/share/snapshot/fetch` | `louise-pull` | `louise/event/v1` |
 | pull attestations | `POST /api/share/attestations/fetch` | `louise-pull` | `louise/event/v1` |
+| pull patch | `POST /api/share/patch/fetch` | `louise-pull` | `louise/event/v1` |
 
 **The digest.** Sent hourly to every neighbour and to every address in
 the peer list (04 §4.2).
@@ -1364,10 +1365,12 @@ seen, decrements `hops` and forwards to its neighbours while `hops > 0`.
 | `kind` | `"louise-pull"` | yes | |
 | `version` | `1` | yes | |
 | `key`, `time` | | yes | |
-| `what` | `"codex"` · `"snapshot"` · `"attestations"` | yes | |
+| `what` | `"codex"` · `"snapshot"` · `"attestations"` · `"patch"` | yes | |
 | `collection_id` | id | yes | |
 | `snapshot_id` | `YYYY-MM` or `YYYY-Www`, or null | yes | for `snapshot`; `null` means the latest the responder holds |
 | `since` | time or null | yes | for `attestations`: only those with `time` after it |
+| `part` | string | for `patch` | the record part, `<slice>/<NNNNN>` |
+| `have` | list of hex | for `patch` | SHA-256 of each line (without its newline) of the version the asker holds, at most 200,000 |
 
 The response is one JSON object `{"items": [{"path": string, "sha256":
 id, "b64": string}…]}` — each item the exact stored bytes, base64 —
@@ -1378,6 +1381,21 @@ attestation
 envelopes as `attestations/<id hex>.json`. The receiver hashes each
 item's bytes, compares with `sha256` and with what a digest advertised,
 and treats a mismatch as 04 §4.2 says.
+
+**The patch** (amended 2026-10-12, operator; docs/notes/part-deltas.md).
+A `patch` pull asks a peer holding a part as `snapshot_id` lists it for the
+lines the asker's version lacks. The answer is one item,
+`patch/<slice>/<NNNNN>.json.gz`: gzip (no time) of canonical JSON
+`{"version": 1, "records": N, "chunks": C, "frames": [lines per frame…],
+"order": [ …a line hash the asker sent, or an index into "new"… ],
+"new": [ …line text… ]}`, or no item when the responder does not hold that
+version. The asker rebuilds the part with §9.5's writer — the lines in
+`order`, cut into frames of `frames`, `chunks` in the index — and promotes
+it only when it hashes to the root the snapshot lists; a rebuild that
+misses is set aside and the part is fetched whole (04 §4.3). A miss is
+never by itself a lie: a writer built against another zstd gives other
+bytes. A responder keeps each patch for `[share] patch_cache_s` (07 §7.8),
+keyed by the new root and the asker's set of lines.
 
 **Worked example.** A digest entry for the Gutenberg collection held by
 a peer that serves Italian and English and has accepted one bundle on

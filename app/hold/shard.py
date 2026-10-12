@@ -370,9 +370,12 @@ def superseded_name(target: Path, snapshot_id: str) -> Path:
     return target.with_name(f"{stem}.{snapshot_id}{dot}{rest}")
 
 
-def last_listing(shard_dir: Path, rel: str) -> tuple[str, str, int] | None:
+def last_listing(shard_dir: Path, rel: str, other_than: str | None = None) -> tuple[str, str, int] | None:
     """(snapshot id, root, bytes) of the newest snapshot held in `shard_dir`
-    that lists `rel` — the version the SHARD holds at that path — or None."""
+    that lists `rel` under a root other than `other_than` — the version the
+    SHARD holds at that path before the new one arrives — or None. A fetcher
+    holds the NEW snapshot before its parts arrive, so the newest listing is
+    the incoming version's own and is skipped."""
     from . import snapshot as sn
     d = Path(shard_dir) / "snapshots"
     ids = sorted((p.stem for p in d.glob("*.json") if not p.name.endswith(".sig.json")),
@@ -383,7 +386,7 @@ def last_listing(shard_dir: Path, rel: str) -> tuple[str, str, int] | None:
         except Exception:                                   # noqa: BLE001 — skip one unreadable file
             continue
         for e in (*snap.shards, *snap.relations, *snap.figures):
-            if e.path == rel:
+            if e.path == rel and e.root != other_than:
                 return sid, e.root, int(e.bytes)
     return None
 
@@ -405,12 +408,12 @@ def keep_superseded(target: Path, shard_dir: Path | None, new_root: str) -> Path
     the producer and on every peer that fetched."""
     if shard_dir is None or not target.is_file():
         return None
-    listed = last_listing(shard_dir, target.relative_to(shard_dir).as_posix())
+    listed = last_listing(shard_dir, target.relative_to(shard_dir).as_posix(), other_than=new_root)
     if listed is None:
-        return None
+        return None                       # no other version listed: nothing to keep
     sid, old_root, old_bytes = listed
-    if old_root == new_root or target.stat().st_size != old_bytes:
-        return None                       # unchanged, or not the snapshotted version
+    if target.stat().st_size != old_bytes:
+        return None                       # not that snapshotted version
     dest = superseded_name(target, sid)
     if dest.exists():
         return dest

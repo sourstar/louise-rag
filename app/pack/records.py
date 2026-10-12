@@ -220,12 +220,18 @@ def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
 
 
 def write_lines(path: Path, lines: Iterable[bytes], *, key_of, level: int = ZSTD_LEVEL,
-                frame_records: int = FRAME_RECORDS) -> ShardInfo:
+                frame_records: int = FRAME_RECORDS, chunks: int = 0,
+                frame_counts: list[int] | None = None) -> ShardInfo:
     """§9.5's framing over lines that are not records — 09 §9.14's edge
     lines — with the index's `uids` map keyed by `key_of(line)` (the frame
     and line of the first line of each key). The same frames, index and
     footer as `write_shard`, so `read_index`, `read_frame` and
-    `iter_records` read the file; `chunks` is 0."""
+    `iter_records` read the file; `chunks` is 0.
+
+    A record part rebuilt from its lines (app/share/patch.py) passes the
+    producer's `chunks` and `frame_counts` (the lines per frame, from its
+    index): the same lines then give `write_shard`'s bytes exactly, so the
+    rebuilt file's root is the snapshot's (tests/share/test_patch.py)."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
@@ -258,10 +264,12 @@ def write_lines(path: Path, lines: Iterable[bytes], *, key_of, level: int = ZSTD
                 n += 1
                 first = first or key
                 last = key
-                if len(buf) >= frame_records:
+                limit = (frame_counts[len(frames)] if frame_counts and len(frames) < len(frame_counts)
+                         else frame_records)
+                if len(buf) >= limit:
                     flush()
             flush()
-            index = {"records": n, "chunks": 0, "frames": frames, "uids": uids}
+            index = {"records": n, "chunks": chunks, "frames": frames, "uids": uids}
             raw_index = json.dumps(index, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             comp_index = bytes(codec.compress(raw_index))
             body = TAG + struct.pack("<I", len(raw_index)) + comp_index
@@ -273,7 +281,7 @@ def write_lines(path: Path, lines: Iterable[bytes], *, key_of, level: int = ZSTD
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
-    return ShardInfo(path=path, records=n, chunks=0, bytes=path.stat().st_size, sha256=sha.hexdigest(),
+    return ShardInfo(path=path, records=n, chunks=chunks, bytes=path.stat().st_size, sha256=sha.hexdigest(),
                      first_uid=first, last_uid=last, id_min=None, id_max=None)
 
 

@@ -220,9 +220,10 @@ class Puller:
                      f"{why}"[:500])
 
     def pull(self, source: Source, what: str, collection_id: str, *,
-             snapshot_id: str | None = None, since: str | None = None) -> list[tuple[str, bytes]]:
+             snapshot_id: str | None = None, since: str | None = None,
+             part: str | None = None, have: list[str] | None = None) -> list[tuple[str, bytes]]:
         body = messages.pull_body(key=self.own_key, what=what, collection_id=collection_id,
-                                  snapshot_id=snapshot_id, since=since)
+                                  snapshot_id=snapshot_id, since=since, part=part, have=have)
         url = f"{source.address.rstrip('/')}/api/share/{what}/fetch"
         try:
             code, answer = gossip._post(url, env.sign(env.EVENT, body, self.key),

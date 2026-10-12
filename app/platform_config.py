@@ -57,6 +57,15 @@ class TransferConfig:
 
 
 @dataclass(frozen=True)
+class ShareConfig:
+    """`[share]` (07 §7.8). `patch_cache_s`: how long this peer keeps a part
+    patch it computed for a peer (app/share/patch.py), so the many peers
+    asking for the same patch after a new snapshot get it without a
+    recompute; 0 deletes each patch once served (operator, 2026-10-12)."""
+    patch_cache_s: int = 7 * 86400
+
+
+@dataclass(frozen=True)
 class TrustConfig:
     """architecture-v2.md §14's `[trust]` block, the part P1.2 needs.
 
@@ -202,6 +211,7 @@ def normalise_address(text: Any) -> str:
 class PlatformConfig:
     bandwidth: BandwidthConfig = BandwidthConfig()
     transfer: TransferConfig = TransferConfig()
+    share: ShareConfig = ShareConfig()
     trust: TrustConfig = TrustConfig()
     admission: AdmissionConfig = AdmissionConfig()
     ask: AskConfig = AskConfig()
@@ -342,6 +352,12 @@ def _load_one(path: Path) -> PlatformConfig:
     bw_raw = raw.get("bandwidth", {}) or {}
     tr_raw = raw.get("transfer", {}) or {}
     trust_raw = raw.get("trust", {}) or {}
+    share_raw = raw.get("share", {}) or {}
+    cache_s = share_raw.get("patch_cache_s", ShareConfig.patch_cache_s)
+    if not isinstance(cache_s, int) or isinstance(cache_s, bool) or cache_s < 0:
+        raise schedule_mod.ScheduleError(
+            f"[share] patch_cache_s is a number of seconds, 0 or more (0 = delete each "
+            f"patch once served), got {cache_s!r}")
 
     authors_raw = trust_raw.get("space_authors", [])
     if not isinstance(authors_raw, list):
@@ -509,6 +525,7 @@ def _load_one(path: Path) -> PlatformConfig:
                         name=node_raw.get("name") if isinstance(node_raw.get("name"), str) else None,
                         pins=pins, peer_port=peer_port)
     return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
+                          share=ShareConfig(patch_cache_s=cache_s),
                           deposit=deposit,
                           peers=peers,
                           trust=TrustConfig(space_authors=tuple(authors)),

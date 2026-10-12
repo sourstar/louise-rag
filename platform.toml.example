@@ -121,3 +121,9 @@ segments_per_file = 1
 # domain the operator controls fronts the node with TLS (03 §3.7).
 # valid_from = "2026-10-07T00:00:00Z"   # from when the key certifies
 # revoked_at = "2027-01-01T00:00:00Z"   # the operator's act, if ever
+
+[share]
+# How long this peer keeps a part patch it computed for another peer
+# (09 §9.9): after a new snapshot many peers holding the same old version ask
+# for the same patch. Seconds; 0 deletes each patch once served.
+patch_cache_s = 604800

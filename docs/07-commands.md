@@ -968,6 +968,8 @@ variable, a file, a log line or a message.
 [peers]      addresses = ["http://peer.example.org:8742"]   # the bootstrap of 04 §4.2, where the peer answers the
              # messages of 09 §9.9 (a bare host:port is http); `share peers add` writes here, each address once
 [peers.pins] "http://peer.example.org:8742" = "ed25519:…"   # a digest from that address under another key is discarded
+[share]      patch_cache_s = 604800   # how long a part patch computed for a peer is kept for the next (09 §9.9;
+             # added 2026-10-12): 0 deletes it once served
 [dht]        enabled = true
 [admission]  bytes_per_hour = "64MB"   objects_per_hour = 1000   queue = "256MB"
              # 08 §8.2: what this peer accepts per hour from keys whose work it has not seen

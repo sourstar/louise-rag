@@ -25,7 +25,7 @@ from app.share import peers
 DIGEST_KIND, EVENT_KIND, PULL_KIND = "louise-digest", "louise-event", "louise-pull"
 DIGEST_VERSION, EVENT_VERSION, PULL_VERSION = 2, 1, 1
 EVENT_TYPES = ("snapshot", "codex", "attestation", "flag", "bundle")
-PULL_WHATS = ("codex", "snapshot", "attestations")
+PULL_WHATS = ("codex", "snapshot", "attestations", "patch")
 
 
 class MessageError(CodexError):
@@ -102,12 +102,19 @@ def event_id(body: dict[str, Any]) -> str:
 
 
 def pull_body(*, key: str, what: str, collection_id: str, snapshot_id: str | None = None,
-              since: str | None = None, now: float | None = None) -> dict[str, Any]:
+              since: str | None = None, now: float | None = None,
+              part: str | None = None, have: list[str] | None = None) -> dict[str, Any]:
+    """`part` and `have` belong to a `patch` pull (app/share/patch.py): the
+    part as `<slice>/<NNNNN>` and the hash of every line of the version the
+    asker holds; every other pull carries neither."""
     if what not in PULL_WHATS:
         raise MessageError(f"a pull is one of {PULL_WHATS}, not {what!r}")
-    return {"kind": PULL_KIND, "version": PULL_VERSION, "key": key, "time": time_text(now),
+    body = {"kind": PULL_KIND, "version": PULL_VERSION, "key": key, "time": time_text(now),
             "what": what, "collection_id": collection_id, "snapshot_id": snapshot_id,
             "since": since}
+    if what == "patch":
+        body.update(part=part, have=list(have or []))
+    return body
 
 
 # ---- receiving ----------------------------------------------------------------------
@@ -145,6 +152,13 @@ def open_pull(envelope: dict[str, Any], *, now: float) -> dict[str, Any]:
         raise MessageError("not a louise-pull this build reads (09 §9.9)")
     if body.get("what") not in PULL_WHATS or not isinstance(body.get("collection_id"), str):
         raise MessageError("a pull names what it wants and the collection")
+    if body["what"] == "patch":
+        from app.share import patch as patch_mod
+        have = body.get("have")
+        if not isinstance(body.get("part"), str) or not patch_mod.PART_RE.match(body["part"])                 or not isinstance(body.get("snapshot_id"), str):
+            raise MessageError("a patch pull names the part as <slice>/<NNNNN> and the snapshot")
+        if not isinstance(have, list) or len(have) > patch_mod.MAX_HAVE                 or not all(isinstance(h, str) and patch_mod.HASH_RE.match(h) for h in have):
+            raise MessageError(f"a patch pull's `have` is at most {patch_mod.MAX_HAVE} line hashes")
     check_time(body, now=now)
     return body
 
@@ -225,6 +239,8 @@ def answer_pull(root: Path, body: dict[str, Any]) -> dict[str, Any]:
             if p.is_file():
                 items.append(item(rel, p.read_bytes()))
         return {"items": items}
+    if what == "patch":
+        return {"items": _answer_patch(root, name, shard_tree, body)}
     since = parse_time(body["since"]) if body.get("since") else None
     d = root / name / "state" / "attestations" / shard_mod._hex(codex.collection_id)
     items = []
@@ -239,3 +255,36 @@ def answer_pull(root: Path, body: dict[str, Any]) -> dict[str, Any]:
                 continue
         items.append(item(f"attestations/{p.name}", data))
     return {"items": items}
+
+
+def _answer_patch(root: Path, name: str, shard_tree: Path, body: dict[str, Any]) -> list[dict[str, Any]]:
+    """A `patch` pull (app/share/patch.py): the patch from the asker's lines
+    to the part as the named snapshot lists it, from this peer's cache when
+    another peer asked the same. Nothing when this peer does not hold that
+    snapshot or that version of the part (the asker then fetches the part)."""
+    from app.hold import snapshot as sn
+    from app.share import patch as patch_mod
+    from app import platform_config
+    sid, part = body["snapshot_id"], body["part"]
+    snap_path = shard_tree / shard_mod.snapshot_path(sid)
+    if not snap_path.is_file():
+        return []
+    snap = sn.load(snap_path)
+    entry = next((s for s in snap.shards if s.path == f"records/{part}{pack_records_suffix()}"), None)
+    if entry is None:
+        return []
+    target = shard_tree / entry.path
+    try:
+        if target.stat().st_size != entry.bytes:
+            return []                     # this peer holds another version at that path
+    except OSError:
+        return []
+    ttl = platform_config.load().share.patch_cache_s
+    data = patch_mod.cached(root / name / "state" / "patches", entry.root, body["have"],
+                            lambda: patch_mod.make(target, body["have"]), ttl_s=ttl)
+    return [item(f"patch/{part}.json.gz", data)]
+
+
+def pack_records_suffix() -> str:
+    from app.pack import records as pack_records
+    return pack_records.SUFFIX

@@ -236,7 +236,8 @@ def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hin
 
 def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: bool, session,
                   con, hints=(), stop=None, log: Callable[[str], None] | None = None,
-                  now: float | None = None, max_files: int | None = None) -> dict[str, Any]:
+                  now: float | None = None, max_files: int | None = None,
+                  patcher: Callable[..., Path | None] | None = None) -> dict[str, Any]:
     """One beat for one collection: every missing file of every wanted
     member of the current snapshot, terms first; with no acknowledgement,
     terms alone (04 §4.4). What moved, and why nothing did."""
@@ -245,7 +246,8 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
     state = root / name / "state"
     staging = state / holdings.STAGING
     out: dict[str, Any] = {"snapshot_id": None, "promoted": [], "refused": [], "errors": [],
-                           "waiting": None, "stopped": False, "wanted": 0, "missing": 0}
+                           "waiting": None, "stopped": False, "wanted": 0, "missing": 0,
+                           "patched": []}
     snap = seeder.current_snapshot(shard_dir)
     if snap is None:
         return out
@@ -284,6 +286,31 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
     with get_manager().bind(Priority.DELTA, Direction.DOWN, stop=stop):
         for m, f in (todo if max_files is None else todo[:max_files]):
             t = next(t for t in m.torrents() if t.path == f.path)
+            # A NEW VERSION OF A PART THIS PEER HOLDS: first a patch from a
+            # peer that holds it (app/share/patch.py) — the changed lines,
+            # not the part; the root decides as for a download, and a patch
+            # that misses costs the torrent below and nothing else
+            if patcher is not None and (shard_dir / f.path).is_file():
+                try:
+                    staged = patcher(f, staging / f.path, snap.snapshot_id)
+                except Exception as e:   # noqa: BLE001 — a patch is an optimisation
+                    staged = None
+                    if log:
+                        log(f"[{name}] share fetch: patch for {f.path}: {type(e).__name__}"[:300])
+                if staged is not None:
+                    try:
+                        holdings.promote(con, staged, shard_dir, snapshot_id=snap.snapshot_id,
+                                         member=m.name, f=f, now=now, allowed_roots=allowed)
+                        out["promoted"].append(f.path)
+                        out["patched"].append(f.path)
+                        if log:
+                            log(f"[{name}] share fetch: {f.path} rebuilt from a patch "
+                                f"({f.bytes} bytes not downloaded)")
+                        continue
+                    except holdings.Refused as e:
+                        if log:
+                            log(f"[{name}] share fetch: a patch for {f.path} missed the root ({e}); "
+                                f"fetching the part")
             try:
                 staged = fetch_file(session, torrent=t, member=m.name, staging=staging,
                                     hints=hints, stop=stop, log=log)
@@ -306,6 +333,33 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
                 if "no metadata" in str(e):
                     break                 # nobody serves this collection now: the rest can wait
     return out
+
+
+def _patcher(root: Path, c, shard_dir: Path, node_con, *, stop=None, now: float,
+             log: Callable[[str], None] | None = None):
+    """`(file, out, snapshot_id) -> rebuilt path | None` for one collection:
+    a record part's new version from a patch (app/share/patch.py), asked of
+    the neighbours whose digest lists the collection. None — every file is
+    fetched whole — without a peer database or the node's key."""
+    if node_con is None:
+        return None
+    try:
+        from app import identity
+        from app.bundles import keys as node_keys
+        key, own = node_keys.load_signing_key(), identity.own()
+    except Exception:   # noqa: BLE001 — no key: no signed pull, the torrent alone
+        return None
+    from app.share import fetch as fetch_mod, patch as patch_mod
+    puller = fetch_mod.Puller(key=key, own_key=own, stop=stop, con=node_con, log=log, now=now)
+
+    def patcher(f, out: Path, snapshot_id: str) -> Path | None:
+        part = patch_mod.part_of(f.path)
+        if part is None:
+            return None
+        sources = fetch_mod.sources(node_con, c.codex.collection_id, now=now)
+        return patch_mod.ask(puller, sources, c.codex.collection_id, snapshot_id, part,
+                             shard_dir / f.path, out, log=log)
+    return patcher
 
 
 # ---- the worker's thread -----------------------------------------------------------------
@@ -402,7 +456,8 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
         hints = hints_for(node_con, c.codex.collection_id, now=now) if node_con is not None else []
         got = fetch_members(root, c.name, c.codex, slices=c.slices, kinds=c.kinds,
                             ack_missing=ack_missing, session=session_factory(), con=con,
-                            hints=hints, stop=stop, log=log, now=now)
+                            hints=hints, stop=stop, log=log, now=now,
+                            patcher=_patcher(root, c, shard_dir, node_con, stop=stop, now=now, log=log))
         if any("no metadata" in e for e in got["errors"]):
             _next_try[c.name] = now + BACKOFF_S
             _tried_hints[c.name] = (frozenset(hints), now)
