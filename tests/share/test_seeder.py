@@ -219,3 +219,13 @@ def test_share_narrows_what_is_served_and_a_changed_narrowing_is_served_again(no
         "the snapshot did not change, the narrowing did: served again"
     assert {e["member"] for e in seeding.read_published(con)} >= {f"records-{SLICE}"}
     assert louise.main(["share", "collection", c.name, "--root", str(node), "--kinds", "nonsense"]) == 2
+
+
+def test_a_slice_is_named_as_the_snapshot_lists_it(node, monkeypatch, capsys):  # noqa: F811
+    """`--slices la` matched no member (`records-lang=la`) and served no part,
+    silently (2026-10-12): a name the snapshot does not list is refused and
+    the right spelling named."""
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    value = SLICE.split("=", 1)[1]
+    assert louise.main(["share", "collection", c.name, "--root", str(node), "--slices", value]) == 2
+    assert SLICE in capsys.readouterr().err

@@ -1134,6 +1134,18 @@ def cmd_share(a) -> int:
             if bad:
                 raise CodexError(f"--kinds names {bad}; the member kinds are "
                                  f"{', '.join(collections_mod.SHARE_KINDS)} (02 §2.6)")
+        elif values != ["all"]:
+            # A SLICE BY ITS NAME, as the snapshot lists it: `--slices la`
+            # matched no member (`records-lang=la`) and served no part at all,
+            # silently (2026-10-12)
+            from app.share import seeder as seeder_mod
+            snap = seeder_mod.current_snapshot(col.shard_dir_of(a.root, name))
+            known = sorted({s.slice for s in snap.shards}) if snap is not None else None
+            bad = [v for v in values if known is not None and v not in known]
+            if bad:
+                hint = [k for k in known if any(k.endswith("=" + b) for b in bad)]
+                raise CodexError(f"--slices names {bad}, which the snapshot does not list; a slice "
+                                 f"is named as it is listed, e.g. {hint or known[:3]}")
         line = None if values == ["all"] else f"{key} = [" + ", ".join(json.dumps(v) for v in values) + "]"
         narrowed[key] = None if line is None else values
         if re.search(rf"^{key}\s*=", text, flags=re.M):
