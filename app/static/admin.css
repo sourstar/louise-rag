@@ -122,7 +122,7 @@ pre.cli{background:var(--ink);border:1px solid var(--line);border-radius:3px;pad
    the rest is free. The legend uses the same swatches. */
 .gpu-bar.whose{display:flex}
 .gpu-bar.whose span{display:block;height:100%}
-.gpu-bar .rage,.swatch.rage{background:var(--brass)}
+.gpu-bar .rage,.swatch.rage,.gpu-bar .louise,.swatch.louise{background:var(--brass)}
 .gpu-bar .others,.swatch.others{background:var(--amber)}
 .gpu-bar .unattributed,.swatch.unattributed{background:var(--muted)}
 .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 4px 0 12px;

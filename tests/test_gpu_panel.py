@@ -266,3 +266,19 @@ def test_the_worker_names_rages_reason_when_rage_refused_the_model():
     except httpx.HTTPStatusError as e:
         assert worker.rage_refusal(e) is None, "busy is not a refusal"
     assert worker.rage_refusal(ValueError("x")) is None
+
+
+def test_the_card_is_broken_down_by_model_louise_or_other(client, monkeypatch):
+    """Operator, 2026-10-12: the panel lists every model on the card as
+    Louise's or another's, from LocalAI's own count (app/gpu_models.py)."""
+    from dataclasses import replace
+    from app import gpu_models
+    _probe(monkeypatch, gpu.GpuSnapshot(devices=(replace(ARC, processes=()),)))
+    monkeypatch.setattr(config, "CHAT_URL", "http://nas:30286/v1")
+    monkeypatch.setattr(config, "CHAT_MODEL", "louise-chat-qwen3-8b")
+    monkeypatch.setattr(gpu_models, "_get_json", lambda url: {"loaded_models": [
+        {"id": "louise-chat-qwen3-8b", "backend": "intel-sycl-f16-llama-cpp", "size_vram": 7 << 30},
+        {"id": "flux-dev", "backend": "stablediffusion-ggml", "size_vram": 6 << 30}]})
+    html = client.get("/admin/system/gpu").text
+    assert "Louise · chat" in html and "flux-dev" in html and "other models 6.00 GiB" in html
+    assert "outside LocalAI" in html and "RAGE not identified" not in html

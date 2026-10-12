@@ -7,7 +7,22 @@
 <div class="gpu-card">
   <div><b>{{ d.name or (d.vendor_id ~ ':' ~ d.device_id) }}</b>
     <span class="note">{{ d.vendor or '' }} · {{ d.driver }} · {{ d.pdev }}</span></div>
-  {% if d.vram_total %}
+  {% set main_card = devices|selectattr('vram_total')|list|sort(attribute='vram_total')|last %}
+  {% set mb = model_bar(models, d.vram_total, d.used) if models is defined and models and d is sameas main_card else none %}
+  {% if d.vram_total and mb %}
+  <div class="gpu-bar whose" title="{{ '%.0f'|format(d.used_pct) }}% used"><span class="louise" style="width:{{ '%.1f'|format(mb.louise) }}%" title="Louise's models: {{ models.louise|size }}"></span><span class="others" style="width:{{ '%.1f'|format(mb.other) }}%" title="other models: {{ models.other|size }}"></span><span class="unattributed" style="width:{{ '%.1f'|format(mb.outside) }}%" title="outside LocalAI's models: {{ mb.outside_bytes|size }}"></span></div>
+  <div class="legend note"><span class="swatch louise"></span>Louise {{ models.louise|size }}<span class="swatch others"></span>other models {{ models.other|size }}<span class="swatch unattributed"></span>outside LocalAI {{ mb.outside_bytes|size }}<span class="swatch free"></span>free {{ d.free|size }}</div>
+  <div>VRAM {{ d.vram_total|size }} · used {{ d.used|size }} · free {{ d.free|size }}</div>
+  <table style="margin-top:8px"><tr><th>model</th><th>used by</th><th>backend</th><th>VRAM</th><th>of card</th></tr>
+    {% for r in models.rows %}
+    <tr><td>{{ r.model }}</td>
+      <td>{% if r.louise %}<span class="swatch louise"></span>Louise · {{ r.uses|join(', ') }}{% else %}<span class="swatch others"></span>other{% endif %}</td>
+      <td class="note">{{ r.backend }}</td><td>{{ r.vram|size }}</td><td>{{ '%.1f'|format(d.share(r.vram)) }}%</td></tr>
+    {% endfor %}
+    <tr class="note"><td>outside LocalAI's models</td><td>the driver, or another program</td><td></td><td>{{ mb.outside_bytes|size }}</td><td>{{ '%.1f'|format(d.share(mb.outside_bytes)) }}%</td></tr>
+  </table>
+  <div class="note">From LocalAI's own count per model ({{ models.asked|join(', ') }}), which reads the driver's per-process counters.{% if models.failed %} Not answering: {{ models.failed|join('; ') }}.{% endif %}</div>
+  {% elif d.vram_total %}
   {% set rc = rage.container if rage is defined and rage and rage.state == "ok" else none %}
   {% set sh = d.shares(rc) %}
   <div class="gpu-bar whose" title="{{ '%.0f'|format(d.used_pct) }}% used"><span class="rage" style="width:{{ '%.1f'|format(sh.rage) }}%" title="RAGE: {{ d.held_by(rc, true)|size }}"></span><span class="others" style="width:{{ '%.1f'|format(sh.others) }}%" title="other processes: {{ d.held_by(rc, false)|size }}"></span><span class="unattributed" style="width:{{ '%.1f'|format(sh.unattributed) }}%" title="held by no process shown: {{ d.unattributed|size }}"></span></div>

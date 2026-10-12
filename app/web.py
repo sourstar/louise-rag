@@ -2983,10 +2983,17 @@ def system_gpu_fragment(request: Request):
     # reads /proc — only the gpu-probe container may see the host's processes
     # RAGE is asked ONCE: its name for itself colours the bar, its reading of
     # the card and its events are its notification to Louise
+    # and each LocalAI Louise points at, for the breakdown by model: Louise's
+    # or the operator's (app/gpu_models.py)
+    from . import gpu_models
+    models = gpu_models.panel(collections_mod.load_all(),
+                              extra_urls=(config.CHAT_URL, config.TRANSLATE_URL, config.RERANK_URL),
+                              chat_model=config.CHAT_MODEL, translate_model=config.TRANSLATE_MODEL)
     return TEMPLATES.TemplateResponse(request, "_fragments/gpu.html",
                                        gpu.panel(config.GPU_PROBE_URL)
                                        | {"governor": gpu.governor(),
-                                          "rage": gpu.rage_status(config.RAGE_URL)})
+                                          "rage": gpu.rage_status(config.RAGE_URL),
+                                          "models": models, "model_bar": gpu_models.bar})
 
 
 @admin_router.get("/system/rage-alerts", response_class=HTMLResponse)
