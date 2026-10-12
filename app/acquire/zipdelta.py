@@ -90,20 +90,45 @@ class HttpRangeReader:
     HEAD names no length), 206 answers for the ranges, every byte drawn from
     the budget AFTER it arrived (invariant 5)."""
 
+    #: A transient fault — a read timeout, a dropped connection — is asked
+    #: again this many times, a second apart and doubling, before it is the
+    #: transport's error. 2026-10-12: one ReadTimeout on one Range request
+    #: ended Normattiva's whole 7.8 GB fetch and waited four hours for the
+    #: next discovery (STATUS); a fault that passes in seconds costs seconds.
+    ATTEMPTS = 3
+
     def __init__(self, url: str, headers: dict, *, charge: Callable[[int], None] | None = None,
-                 timeout: float = 60.0) -> None:
+                 timeout: float = 60.0, sleep: Callable[[float], None] | None = None) -> None:
         self.url, self.headers, self.timeout = url, dict(headers), timeout
         if charge is None:
             from . import budget
             charge = budget.acquire_bytes
         self.charge = charge
+        self.sleep = sleep if sleep is not None else _sleep
         self._total: int | None = None
+
+    def _get(self, range_header: str):
+        """One Range request, answered or the transport's error (`TransportError`,
+        never httpx's own class: the engine's per-file boundary catches ours),
+        a transient fault retried `ATTEMPTS` times."""
+        import httpx
+        last: Exception | None = None
+        for attempt in range(self.ATTEMPTS):
+            if attempt:
+                self.sleep(float(1 << (attempt - 1)))
+            try:
+                with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
+                    return client.get(self.url, headers={**self.headers, "Range": range_header})
+            except httpx.TransportError as e:          # timeouts, drops, resets
+                last = e
+            except httpx.HTTPError as e:
+                raise TransportError(f"{self.url}: {e}") from e
+        raise TransportError(f"{self.url}: {type(last).__name__} on Range {range_header} "
+                             f"after {self.ATTEMPTS} attempts: {last}") from last
 
     def total(self) -> int:
         if self._total is None:
-            import httpx
-            with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
-                r = client.get(self.url, headers={**self.headers, "Range": "bytes=0-0"})
+            r = self._get("bytes=0-0")
             if r.status_code == 200:
                 raise RangeUnsupported(f"{self.url}: the origin answered a one-byte Range with the whole file")
             if r.status_code != 206:
@@ -117,15 +142,18 @@ class HttpRangeReader:
         return self._total
 
     def read(self, start: int, end: int) -> bytes:
-        import httpx
-        with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
-            r = client.get(self.url, headers={**self.headers, "Range": f"bytes={start}-{end}"})
+        r = self._get(f"bytes={start}-{end}")
         if r.status_code == 200:
             raise RangeUnsupported(f"{self.url}: the origin ignored Range and answered 200")
         if r.status_code != 206:
             raise TransportError(f"{self.url}: {r.status_code} to Range {start}-{end}")
         self.charge(len(r.content))
         return r.content
+
+
+def _sleep(seconds: float) -> None:
+    import time
+    time.sleep(seconds)
 
 
 # ---- the directory ---------------------------------------------------------------

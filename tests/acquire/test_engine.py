@@ -365,3 +365,26 @@ def test_a_file_the_staging_area_cannot_hold_lands_in_place(tmp_path, mock_serve
     # unset: always in place
     monkeypatch.setattr(config_mod, "ACQUIRE_STAGING_DIR", None)
     assert engine_mod._staging_target(collection, f, dest) == dest
+
+
+def test_a_stream_dropped_once_resumes_within_the_pass(tmp_path, mock_server, monkeypatch):
+    """A transient fault mid-file is resumed from the bytes on disk a moment
+    later (engine.STREAM_ATTEMPTS), not recorded failed for the next pass."""
+    monkeypatch.setattr(engine.time, "sleep", lambda s: None)
+    content = bytes((i % 256 for i in range(400_000)))
+    _write_origin_file(mock_server, "big.dat", content)
+    spec = _spec(mock_server)
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+    mock_server.fail_next("big.dat", 1)
+    result = engine.run_acquisition(con, collection, spec, "demo")
+    assert result["fetched"] == 1 and result["failed"] == 0
+    assert (collection.corpus_dir / "big.dat").read_bytes() == content
+    assert mock_server.request_count("big.dat") == 2, "the drop, then the stream again"
+    mock_server.fail_next("big.dat", 1000)
+    (collection.corpus_dir / "big.dat").unlink()
+    con.execute("DELETE FROM fetch_files WHERE rel_path='big.dat'")
+    con.commit()
+    result = engine.run_acquisition(con, collection, spec, "demo")
+    assert result["failed"] == 1 and result["fetched"] == 0, "a fault that lasts is this pass's failure, and the pass returns"
+    assert mock_server.request_count("big.dat") == 2 + engine.STREAM_ATTEMPTS

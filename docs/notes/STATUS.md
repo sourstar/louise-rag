@@ -280,6 +280,20 @@ with `deploy/vega/stage/build_vega_package.sh` (`vega-llama-cpp`,
 `vega-louise-medcpt-article-ov`, `vega-louise-dar-legal-it`), and each
 backend's next load tells its tree — the operator's, as every deploy is.
 
+**The fetch's first finding (2026-10-13 00:27 CEST), fixed.** The corpus
+fetch died at 5.1 GB: `corpus fetch (startup) failed: ReadTimeout`, and
+the next discovery would retry it four hours later. One read timeout on one
+zip's Range request ended the whole pass, twice over: the zip delta ran
+BEFORE the per-file boundary of `_fetch_one_file`, and the Range reader
+raised httpx's own class, which that boundary does not catch. Now the whole
+of a file's work is inside its boundary (nothing escapes into the executor;
+a file that fails is one failed file, the pass goes on), the Range reader
+asks again three times (a second apart, doubling) before it is the
+transport's error, and a stream dropped mid-file resumes from the bytes on
+disk within the pass (`STREAM_ATTEMPTS`) before the next pass would. Tests
+in tests/acquire (the mock origin gained `fail_next`). Ships with the next
+deploy; until then the 03:25 UTC retry runs the old code.
+
 
 ### 2026-10-05: the side branches merged into main
 

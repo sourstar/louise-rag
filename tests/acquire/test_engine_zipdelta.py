@@ -120,3 +120,50 @@ def test_every_pass_treats_a_zip_directory_file_as_pending(tmp_path, mock_server
     assert engine._is_pending(con, _spec(mock_server, endpoints=(Endpoint(
         transport=Transport.HTTPS, url=mock_server.base_url, static_files=(f,)),)), f) is False, \
         "a full-resync file listed without a size is done once fetched, as before"
+
+
+def test_a_transient_fault_on_a_range_request_is_retried_not_the_pass_ended(tmp_path, mock_server,
+                                                                          small_tail, monkeypatch):
+    """2026-10-12: one ReadTimeout on one Range request ended Normattiva's
+    whole 7.8 GB fetch (the delta ran outside the per-file boundary, and the
+    error was httpx's class). Now the reader asks again, and nothing a file
+    does escapes its own result."""
+    monkeypatch.setattr(zipdelta, "_sleep", lambda s: None)
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+    _zip(mock_server.root / "m.zip", V1)
+    spec = _delta_spec(mock_server)
+    engine.run_acquisition(con, collection, spec, "demo")
+    _zip(mock_server.root / "m.zip", V2)
+    mock_server.fail_next("m.zip", 1)                    # the size probe drops once
+    before = mock_server.request_count("m.zip")
+    got = engine.run_acquisition(con, collection, spec, "demo")
+    assert got["fetched"] == 1 and got["failed"] == 0
+    assert _members(collection.corpus_dir / "m.zip") == V2
+    assert mock_server.request_count("m.zip") - before == 5, "one request more: the one asked again"
+
+
+def test_an_origin_that_keeps_faulting_fails_the_file_and_the_pass_goes_on(tmp_path, mock_server,
+                                                                        small_tail, monkeypatch):
+    monkeypatch.setattr(zipdelta, "_sleep", lambda s: None)
+    monkeypatch.setattr(engine.time, "sleep", lambda s: None)
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+    _zip(mock_server.root / "m.zip", V1)
+    _zip(mock_server.root / "n.zip", V1)
+    spec = _spec(mock_server, delta=DeltaSpec(mode="zip-directory"), layout="container-files",
+                 filters=("*.zip",),
+                 endpoints=(Endpoint(transport=Transport.HTTPS, url=mock_server.base_url,
+                                     static_files=(RemoteFile(rel_path="m.zip"),
+                                                   RemoteFile(rel_path="n.zip"))),))
+    engine.run_acquisition(con, collection, spec, "demo")
+    _zip(mock_server.root / "m.zip", V2)
+    _zip(mock_server.root / "n.zip", V2)
+    mock_server.fail_next("m.zip", 1000)                 # m is gone for the whole pass
+    got = engine.run_acquisition(con, collection, spec, "demo")
+    assert got["failed"] == 1 and got["fetched"] == 1, "n fetched, m failed, the pass returned"
+    assert _members(collection.corpus_dir / "n.zip") == V2
+    assert _members(collection.corpus_dir / "m.zip") == V1, "the copy on disk is untouched"
+    row = con.execute("SELECT fetch_done, error FROM fetch_files WHERE rel_path='m.zip'").fetchone()
+    assert row["error"] and "disconnected" in row["error"], "the whole fetch, the last resort, failed too"
+    assert any("attempts" in why for why in engine._zip_delta_fallbacks), "the delta asked three times first"

@@ -705,6 +705,9 @@ def _zip_delta(endpoint, f: RemoteFile, dest: Path, spec: AcquisitionSpec, manag
                         moved=got.bytes_read, seconds=elapsed)
 
 
+#: how many times one file's stream is resumed within a pass after a transient
+#: transport fault (a second apart, doubling) before the pass records it failed
+STREAM_ATTEMPTS = 3
 #: why the last zip deltas fell back to the whole fetch, for the log line
 _zip_delta_fallbacks: list[str] = []
 #: a delta that was tried and declined: the origin's directory said the
@@ -716,27 +719,34 @@ _DELTA_DECLINED = object()
 def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                      spec: AcquisitionSpec, manager, endpoint_key: str) -> _FileResult:
     dest = collection.corpus_dir / f.rel_path
-    # a zip the origin rebuilds in place: its own directory says what moved,
-    # before any size comparison — a rebuild of the same size is caught too
-    delta = _zip_delta(endpoint, f, dest, spec, manager, endpoint_key)
-    if delta is not None and delta is not _DELTA_DECLINED:
-        return delta
-    # Already there and complete? Verify and record it; move nothing. A file
-    # listed without a size is complete when the origin says it is — unless
-    # its own directory just said otherwise (a rebuild of the same size)
-    if delta is not _DELTA_DECLINED and (
-            is_adoptable(collection, f) or _origin_says_complete(transport, endpoint, f, dest)):
-        adopted = _adopt_one_file(f, collection, spec)
-        if adopted is not None:
-            return adopted
     land = _staging_target(collection, f, dest)
     part = land.with_name(land.name + ".part")
-    # Read at fetch time, never hoisted with the pending list: a file retried
-    # within the same run would otherwise resume from a stale offset.
-    resume_from = part.stat().st_size if part.is_file() else 0
-    started = time.monotonic()
-    segments = _segments_for(manager, endpoint, spec, f)
+    # EVERYTHING this file does is inside the one try below: a delta, an
+    # adoption or a stream that raised would make the executor's iterator
+    # throw partway through and end the whole pass (2026-10-12: one read
+    # timeout on one zip's Range request ended Normattiva's 7.8 GB fetch and
+    # waited four hours for the next discovery — the delta ran before the try).
     try:
+        # a zip the origin rebuilds in place: its own directory says what
+        # moved, before any size comparison — a rebuild of the same size is
+        # caught too
+        delta = _zip_delta(endpoint, f, dest, spec, manager, endpoint_key)
+        if delta is not None and delta is not _DELTA_DECLINED:
+            return delta
+        # Already there and complete? Verify and record it; move nothing. A
+        # file listed without a size is complete when the origin says it is —
+        # unless its own directory just said otherwise (a rebuild of the same
+        # size)
+        if delta is not _DELTA_DECLINED and (
+                is_adoptable(collection, f) or _origin_says_complete(transport, endpoint, f, dest)):
+            adopted = _adopt_one_file(f, collection, spec)
+            if adopted is not None:
+                return adopted
+        # Read at fetch time, never hoisted with the pending list: a file
+        # retried within the same run would otherwise resume from a stale offset.
+        resume_from = part.stat().st_size if part.is_file() else 0
+        started = time.monotonic()
+        segments = _segments_for(manager, endpoint, spec, f)
         if segments > 1:
             try:
                 size = transport.fetch_segments(endpoint, f, land, segments)
@@ -755,7 +765,20 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                 part.unlink(missing_ok=True)
                 transport_https._sidecar_path(land).unlink(missing_ok=True)
                 resume_from = 0
-        size = transport.fetch_one(endpoint, f, land, resume_from)
+        # A transient fault mid-stream — a read timeout, a dropped connection
+        # — resumes from the bytes on disk a moment later, STREAM_ATTEMPTS
+        # times, before it is this pass's failure (the next pass resumes too;
+        # a fault that passes in seconds should not cost the pass).
+        for attempt in range(STREAM_ATTEMPTS):
+            if attempt:
+                time.sleep(float(1 << (attempt - 1)))
+                resume_from = part.stat().st_size if part.is_file() else 0
+            try:
+                size = transport.fetch_one(endpoint, f, land, resume_from)
+                break
+            except TransportError as e:
+                if isinstance(e, (TransferAborted, RangeUnsupported)) or attempt + 1 == STREAM_ATTEMPTS:
+                    raise
         # One streaming pass for both digests (md5 sidecar + blake2), instead
         # of reading the whole file into memory twice.
         digest = checksum.digest_and_verify(land, spec.checksums)

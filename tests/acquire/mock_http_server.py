@@ -62,6 +62,16 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _serve(self, server: "MockServer", name: str, path: Path):
+        with server.lock:
+            failing = server.failures.get(name, 0)
+            if failing:
+                server.failures[name] = failing - 1
+        if failing:
+            # a transient fault at the origin: the connection closes with no
+            # answer at all, what a client sees as a dropped connection or,
+            # had it waited, a read timeout
+            self.close_connection = True
+            return
         target = server.redirects.get(name)
         if target is not None:
             # 302 like Hugging Face's /resolve/ -> CDN hop; Location is
@@ -155,6 +165,7 @@ class MockServer:
         self.redirects: dict[str, str] = {}
         self.head_counts: dict[str, int] = {}
         self.no_head: set[str] = set()       # names whose HEAD is refused (405)
+        self.failures: dict[str, int] = {}   # names whose next N GETs drop the connection
         self.lock = threading.Lock()
         self.live = 0
         self.peak_concurrency = 0
@@ -181,6 +192,13 @@ class MockServer:
 
     def unstall(self, name: str) -> None:
         self.stall.pop(name, None)
+
+    def fail_next(self, name: str, n: int) -> None:
+        """The next `n` GETs of `name` drop the connection without an answer —
+        a transient fault, gone by itself, which a client must retry rather
+        than give up on."""
+        with self.lock:
+            self.failures[name] = n
 
     def request_count(self, name: str) -> int:
         return self.request_counts.get(name, 0)
