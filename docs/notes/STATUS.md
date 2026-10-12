@@ -224,6 +224,32 @@ fixed, the coverage of the 33,750 repealed-only acts by such closures
 asked for first — a second listing of the archive a month from now — is
 dated.
 
+**Step 3 — the collection on the node (2026-10-12, night): STAGED AND
+PROVED, the swap and the creation left to the operator.** In the evening
+the other session served DAR-legal-it on the node with the operator's
+go-ahead (`vega-dar-legal-it`, torch XPU behind VeGa; vega.md §12), which
+removed the encoder blocker. `hold embedder run` read the run it states
+(sha256:85b9fa1a…, engine `localai/louise-dar-legal-it`, weights
+sha256:92f4c9e0…) into the recipe
+([`normattiva-recipe.toml`](normattiva-recipe.toml)); the articles' token
+lengths were measured for `ctx` (8192, the engine's window; review §7);
+pooling is what the backend does, mean. The runbook for 4493c15 is
+`deploy/16f/deploy-louise-normattiva.sh`: its non-live phases ran — the
+tree staged beside the live one, `louise-rag:staged` built, the live
+config loads every collection under it, and tests/test_validity,
+test_normattiva, test_refs_normattiva, tests/acquire and tests/hold pass in
+it (87, 255, 949). The swap (phases 4–6: promote, build louise-rag:local,
+stop, LOUISE_PLATFORM_IMAGE, start) is refused to the agent as a
+production deploy, as before; the operator runs the script, then
+`deploy/16f/create-normattiva.sh` — the recipe copied into
+/config/recipes, `hold collection create` in the web container (the
+stated run held to the recipe's engine and weights; slices = "all", so the
+worker acquires the full profile itself), the licence terms printed and
+acknowledged, the GPU badge — and the worker takes it from there: fetch
+(7.8 GB, two connections), scan, parse, fts, embed; pin the model through
+LocalAI's API once it embeds. The collection is the quarantine's guinea
+pig: never listed, every missing tool fixed.
+
 
 ### 2026-10-05: the side branches merged into main
 
