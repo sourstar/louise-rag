@@ -510,3 +510,13 @@ def test_next_months_build_re_issues_a_changed_part_and_keeps_the_old_one(
             assert not (shard_dir / shard_mod.superseded_name(Path(path), "2026-08")).exists()
     snap2 = sn.create(root, "gutenberg", snapshot_id="2026-09", log=lambda *_: None)
     assert snap2.shards[0].root != first.root and snap2.shards[0].path == first.path
+    assert all(s.writer == pack_records.WRITER for s in snap.shards)
+    old_writer = {(s.slice, s.n): "pyarrow 0.0.1" for s in snap.shards}
+    # the writer of an unchanged part is the one that wrote its bytes, carried
+    p1 = shard_dir / "snapshots" / "2026-08.json"
+    p1.write_bytes(__import__("dataclasses").replace(snap, shards=tuple(
+        sn.Shard(**{**s.to_dict(), "writer": old_writer[(s.slice, s.n)]}) for s in snap.shards)).canonical())
+    (shard_dir / "snapshots" / "2026-09.json").unlink()
+    snap2 = sn.create(root, "gutenberg", snapshot_id="2026-09", log=lambda *_: None)
+    assert snap2.shards[0].writer == pack_records.WRITER, "the re-issued part: this platform's"
+    assert {s.writer for s in snap2.shards[1:]} == {"pyarrow 0.0.1"}, "an unchanged part: its writer's"

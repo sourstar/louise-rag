@@ -338,9 +338,12 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
 def _patcher(root: Path, c, shard_dir: Path, node_con, *, stop=None, now: float,
              log: Callable[[str], None] | None = None):
     """`(file, out, snapshot_id) -> rebuilt path | None` for one collection:
-    a record part's new version from a patch (app/share/patch.py), asked of
-    the neighbours whose digest lists the collection. None — every file is
-    fetched whole — without a peer database or the node's key."""
+    a record part's or a plates container's new version from a patch
+    (app/share/patch.py), asked of the neighbours whose digest lists the
+    collection. None — every file is fetched whole — without a peer
+    database or the node's key. A record part whose snapshot entry names
+    another `writer` than this platform's is not asked for: its rebuild
+    could not be sure to match."""
     if node_con is None:
         return None
     try:
@@ -349,16 +352,30 @@ def _patcher(root: Path, c, shard_dir: Path, node_con, *, stop=None, now: float,
         key, own = node_keys.load_signing_key(), identity.own()
     except Exception:   # noqa: BLE001 — no key: no signed pull, the torrent alone
         return None
+    from app.pack import records as pack_records
     from app.share import fetch as fetch_mod, patch as patch_mod
     puller = fetch_mod.Puller(key=key, own_key=own, stop=stop, con=node_con, log=log, now=now)
 
+    writers: dict[str, dict[str, str]] = {}
+
+    def writer_of(path: str, snapshot_id: str) -> str:
+        if snapshot_id not in writers:
+            snap = seeder.current_snapshot(shard_dir)
+            writers.clear()
+            writers[snapshot_id] = {s.path: s.writer for s in snap.shards}                 if snap is not None and snap.snapshot_id == snapshot_id else {}
+        return writers[snapshot_id].get(path, "")
+
     def patcher(f, out: Path, snapshot_id: str) -> Path | None:
-        part = patch_mod.part_of(f.path)
+        part, kind = patch_mod.part_of(f.path), "records"
         if part is None:
+            part, kind = patch_mod.figures_part_of(f.path), "figures"
+        if part is None:
+            return None
+        if kind == "records" and writer_of(f.path, snapshot_id) not in ("", pack_records.WRITER):
             return None
         sources = fetch_mod.sources(node_con, c.codex.collection_id, now=now)
         return patch_mod.ask(puller, sources, c.codex.collection_id, snapshot_id, part,
-                             shard_dir / f.path, out, log=log)
+                             shard_dir / f.path, out, kind=kind, log=log)
     return patcher
 
 

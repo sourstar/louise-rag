@@ -90,7 +90,7 @@ def test_a_peer_answers_a_patch_pull_for_the_version_its_snapshot_lists(node, mo
     assert [i["path"] for i in items] == [f"patch/{SLICE}/00001.json.gz"]
     (_, data), = messages.verify_items(items)
     assert patch.apply(old, data, node / "rebuilt.jsonl.zst").read_bytes() == path.read_bytes()
-    assert list((node / c.name / "state" / "patches").glob("*.json.gz")), "kept for the next peer"
+    assert list((node / c.name / "state" / "patches").glob("*.patch")), "kept for the next peer"
     assert messages.answer_pull(node, {**body, "snapshot_id": "2026-07"})["items"] == []
 
 
@@ -154,3 +154,109 @@ def test_the_fetch_tries_a_patch_first_and_a_miss_costs_the_download(node, monke
                                   ack_missing=False, session=None, con=con, patcher=bad)
     assert got["patched"] == [] and fetched == [p1] and got["promoted"] == [p1], got
     assert (d / p1).read_bytes() == newer.read_bytes(), "the miss cost the download, nothing else"
+
+
+# ---- plates containers -----------------------------------------------------------------
+
+def plates(*names):
+    out = {}
+    for n in names:
+        data = (f"plate {n} ".encode() * 300) + bytes(range(256))
+        out[__import__("hashlib").sha256(data).hexdigest()] = data
+    return out
+
+
+def test_a_plates_patch_carries_the_new_frames_verbatim_and_rebuilds_the_container(tmp_path):
+    """A container is one zstd frame per plate, so the plates the asker
+    lacks travel as the producer's own frames and nothing is recompressed:
+    the rebuilt container is the producer's bytes whatever zstd the asker has."""
+    from app.hold import figures
+    old_plates, new_plates = plates("a", "b", "c"), plates("a", "c", "d", "e")
+    old = tmp_path / "old.fig.zst"
+    new = tmp_path / "new.fig.zst"
+    figures.write_container(old, old_plates)
+    figures.write_container(new, new_plates)
+    data = patch.make_figures(new, patch.plates_of(old))
+    head = json.loads(data.split(b"\n", 1)[0])
+    sent = [p for p in head["plates"] if p[2]]
+    assert len(sent) == 2 and len(head["plates"]) == 4, "d and e, nothing else"
+    out = patch.apply_figures(old, data, tmp_path / "rebuilt.fig.zst")
+    assert out.read_bytes() == new.read_bytes()
+    assert patch.make_figures(new, patch.plates_of(old)) == data, "deterministic"
+    with pytest.raises(patch.PatchError, match="does not hold"):
+        other = tmp_path / "other.fig.zst"
+        figures.write_container(other, plates("z"))
+        patch.apply_figures(other, data, tmp_path / "x.fig.zst")
+    with pytest.raises(patch.PatchError, match="shorter"):
+        patch.apply_figures(old, data[:-1], tmp_path / "y.fig.zst")
+    assert not (tmp_path / "y.fig.zst").exists() and not (tmp_path / "y.fig.zst.tmp").exists()
+
+
+def test_a_write_from_frames_is_the_container_write():
+    """write_container is write_frames over its own frames: one layout."""
+    import tempfile
+    from pathlib import Path
+    from app.hold import figures
+    with tempfile.TemporaryDirectory() as t:
+        a = figures.write_container(Path(t) / "a.fig.zst", plates("x", "y"))
+        b = figures.write_frames(Path(t) / "b.fig.zst", patch._frames(a.path))
+        assert b.path.read_bytes() == a.path.read_bytes() and b.sha256 == a.sha256
+
+
+def test_a_peer_answers_a_plates_patch_pull(node, monkeypatch):  # noqa: F811
+    from app.hold import figures
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    cont = d / f"figures/{SLICE}/00001.fig.zst"
+    info = figures.write_container(cont, plates("a", "b"))
+    snap2 = sn.Snapshot(collection_id=snap.collection_id, snapshot_id="2026-08", previous=None,
+                        shards=snap.shards, delta=snap.delta, files={},
+                        figures=(sn.FiguresShard(slice=SLICE, n=1, root=shard_mod.pieces_root_of(cont),
+                                                 figures=2, bytes=info.stored),))
+    (d / "snapshots" / "2026-08.json").write_bytes(snap2.canonical())
+    monkeypatch.setattr(platform_config, "load", lambda: platform_config.PlatformConfig())
+    old = node / "old.fig.zst"
+    figures.write_container(old, plates("a"))
+    body = messages.pull_body(key="k", what="patch", collection_id=codex.collection_id,
+                              snapshot_id="2026-08", part=f"{SLICE}/00001",
+                              have=patch.plates_of(old), kind="figures")
+    assert body["part_kind"] == "figures"
+    items = messages.answer_pull(node, body)["items"]
+    assert [i["path"] for i in items] == [f"patch/figures/{SLICE}/00001.patch"]
+    (_, data), = messages.verify_items(items)
+    assert patch.apply_figures(old, data, node / "rebuilt.fig.zst").read_bytes() == cont.read_bytes()
+    assert patch.figures_part_of(f"figures/{SLICE}/00001.fig.zst") == f"{SLICE}/00001"
+
+
+# ---- the writer beside the part --------------------------------------------------------
+
+def test_a_part_entry_names_its_writer_and_an_old_snapshot_keeps_its_bytes():
+    e = dict(slice=SLICE, n=1, root="sha256:" + "0" * 64, records_root="r", first_id="a",
+             last_id="b", records=1, chunks=1, chunks_root="c", tokens=1, bytes=1)
+    assert "writer" not in sn.Shard(**e).to_dict(), "absent before 2026-10-12: old bytes unchanged"
+    assert sn.Shard(**e, writer=pack_records.WRITER).to_dict()["writer"].startswith("pyarrow ")
+    assert sn.Shard(**sn.Shard(**e, writer="pyarrow 1.0").to_dict()).writer == "pyarrow 1.0"
+
+
+def test_a_part_written_by_another_zstd_is_not_asked_for(node, monkeypatch):  # noqa: F811
+    """A rebuild under a writer other than the producer's may miss the root:
+    the peer does not ask, it fetches the part; a part with no writer named,
+    or this platform's, is asked for."""
+    from app import identity
+    from app.bundles import keys as node_keys
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    asked = []
+    monkeypatch.setattr(node_keys, "load_signing_key", lambda: object())
+    monkeypatch.setattr(identity, "own", lambda: "ed25519:" + "a" * 64)
+    monkeypatch.setattr(patch, "ask", lambda *a, **k: asked.append(a[4]) or None)
+    from app.share import fetch as fetch_mod
+    monkeypatch.setattr(fetch_mod, "sources", lambda *a, **k: [])
+    import sqlite3
+    patcher = transport._patcher(node, c, d, sqlite3.connect(":memory:"), now=0.0)
+    for sid, writer in (("2026-09", "pyarrow 0.0.1"), ("2026-10", pack_records.WRITER), ("2026-11", "")):
+        shards = tuple(sn.Shard(**{**s.to_dict(), "writer": writer}) for s in snap.shards)
+        s2 = sn.Snapshot(collection_id=snap.collection_id, snapshot_id=sid, previous=None,
+                         shards=shards, delta=snap.delta, files={})
+        (d / "snapshots" / f"{sid}.json").write_bytes(s2.canonical())
+        f = type("F", (), {"path": snap.shards[0].path})()
+        patcher(f, node / "out.jsonl.zst", sid)
+    assert asked == [f"{SLICE}/00001", f"{SLICE}/00001"], "2026-09's writer is another zstd: not asked"

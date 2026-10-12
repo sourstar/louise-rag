@@ -43,6 +43,11 @@ SKIPPABLE_MAGIC = 0x184D2A5E
 TAG = b"LOUISE-PACK-IDX1"          # 16 bytes
 FOOTER = b"LPK1"
 SUFFIX = ".jsonl.zst"
+#: who compresses a part's bytes: the zstd pyarrow bundles (statically
+#: linked, its own version not exported), so the wheel's version names it.
+#: A snapshot's part entry carries it (09 §9.4 `writer`): a peer rebuilding
+#: a part from a patch matches the root for certain only under the same one.
+WRITER = f"pyarrow {pa.__version__}"
 
 # The record's keys, in the order they are written (a fixed order is what
 # makes two writers produce byte-identical lines for the same record).

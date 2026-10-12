@@ -144,10 +144,7 @@ def write_container(path: Path, plates: Mapping[str, bytes]) -> ContainerInfo:
     container whose entry does not hash to its own key would fail every
     check downstream with nothing pointing back here.
     """
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     codec = _codec()
-
     ordered: list[tuple[str, bytes]] = []
     for key, data in plates.items():
         want = bare(key)
@@ -158,21 +155,37 @@ def write_container(path: Path, plates: Mapping[str, bytes]) -> ContainerInfo:
                 f"{want[:12]}… — the plate and the record line disagree")
         ordered.append((want, data))
     ordered.sort(key=lambda kv: kv[0])
+    return write_frames(path, ((h, len(data), codec.compress(data, asbytes=True))
+                               for h, data in ordered))
 
+
+def write_frames(path: Path, frames: Iterable[tuple[str, int, bytes]]) -> ContainerInfo:
+    """Write a container from its plates' zstd frames, already compressed:
+    `(hash hex, raw length, frame)` in hash order. `write_container`'s
+    layout from the frames up — the part a plates patch rebuilds with
+    (app/share/patch.py): the frames travel verbatim, so the container's
+    bytes come back without recompressing anything."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     sha = hashlib.sha256()
     raw_total = 0
     entries = bytearray()
     offset = 0
+    count = 0
+    last = ""
     with open(tmp, "wb") as f:
-        for h, data in ordered:
-            frame = codec.compress(data, asbytes=True)
+        for h, length, frame in frames:
+            if h <= last:
+                raise FigureError("a container's frames come in hash order, once each")
+            last = h
             f.write(frame)
             sha.update(frame)
-            entries += ENTRY.pack(bytes.fromhex(h), offset, len(data))
+            entries += ENTRY.pack(bytes.fromhex(h), offset, length)
             offset += len(frame)
-            raw_total += len(data)
-        body = TAG + struct.pack("<I", len(ordered)) + bytes(entries)
+            raw_total += length
+            count += 1
+        body = TAG + struct.pack("<I", count) + bytes(entries)
         # frame_len = the whole skippable frame: 8-byte header + payload,
         # where payload = body + this u32 + FOOTER (pack/records.py:162)
         payload = body + struct.pack("<I", len(body) + 16) + FOOTER
@@ -181,7 +194,7 @@ def write_container(path: Path, plates: Mapping[str, bytes]) -> ContainerInfo:
         sha.update(frame)
         stored = offset + len(frame)
     tmp.replace(path)          # atomic: a reader never sees a half container
-    return ContainerInfo(path=path, figures=len(ordered), bytes=raw_total,
+    return ContainerInfo(path=path, figures=count, bytes=raw_total,
                          stored=stored, sha256="sha256:" + sha.hexdigest())
 
 

@@ -646,6 +646,7 @@ A part entry:
 | `tokens` | integer | yes | `chunks × space.ctx` — the upper bound §4.5 and §4.7 use |
 | `bytes` | integer | yes | size of the stored file |
 | `toolchain` | `"own"` · `"mother"` | yes | which `platform_image` produced it: the Codex's own, or on a daughter the mother's for inherited parts |
+| `writer` | string | no | the zstd that compressed the file, as `"pyarrow <version>"` (the library bundles zstd and does not export its version); a part whose root the previous snapshot listed keeps that entry's. A peer rebuilding the part from a patch (§9.9) matches the root for certain only under the same writer. Absent in snapshots written before 2026-10-12, whose bytes stay as they are (amended 2026-10-12, operator) |
 
 A relations part entry has `slice`, `n`, `root`, `edges` (integer) and
 `bytes`; it sits beside the record part of the same slice and number.
@@ -1370,7 +1371,8 @@ seen, decrements `hops` and forwards to its neighbours while `hops > 0`.
 | `snapshot_id` | `YYYY-MM` or `YYYY-Www`, or null | yes | for `snapshot`; `null` means the latest the responder holds |
 | `since` | time or null | yes | for `attestations`: only those with `time` after it |
 | `part` | string | for `patch` | the record part, `<slice>/<NNNNN>` |
-| `have` | list of hex | for `patch` | SHA-256 of each line (without its newline) of the version the asker holds, at most 200,000 |
+| `have` | list of hex | for `patch` | SHA-256 of each line (without its newline) of the version the asker holds — for a plates container, the plate hashes it holds — at most 200,000 |
+| `part_kind` | `"figures"` | no | the part's plates container (§9.5) instead of its records; absent for a record part |
 
 The response is one JSON object `{"items": [{"path": string, "sha256":
 id, "b64": string}…]}` — each item the exact stored bytes, base64 —
@@ -1394,8 +1396,17 @@ version. The asker rebuilds the part with §9.5's writer — the lines in
 it only when it hashes to the root the snapshot lists; a rebuild that
 misses is set aside and the part is fetched whole (04 §4.3). A miss is
 never by itself a lie: a writer built against another zstd gives other
-bytes. A responder keeps each patch for `[share] patch_cache_s` (07 §7.8),
-keyed by the new root and the asker's set of lines.
+bytes, so a part entry names its `writer` (§9.4) and a peer under another
+does not ask. A responder keeps each patch for `[share] patch_cache_s`
+(07 §7.8), keyed by the new root and the asker's set of lines.
+
+A plates container (`part_kind: "figures"`; amended 2026-10-12, operator)
+is answered as `patch/figures/<slice>/<NNNNN>.patch`: one line of canonical
+JSON `{"version": 1, "kind": "figures", "plates": [[hash hex, length,
+frame bytes]…]}` in hash order, `frame bytes` 0 for a plate the asker
+named, then those frames, verbatim and in that order. The asker lays the
+container out again from its own frames and these (§9.5's layout); nothing
+is recompressed, so no writer condition applies.
 
 **Worked example.** A digest entry for the Gutenberg collection held by
 a peer that serves Italian and English and has accepted one bundle on

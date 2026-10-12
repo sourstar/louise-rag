@@ -44,18 +44,24 @@ class Shard:
     tokens: int                # chunks × space.ctx — the upper bound §4.5 uses
     bytes: int                 # size of the stored file
     toolchain: str = "own"     # "own" | "mother" (a daughter's inherited shards)
+    #: the zstd that compressed the file (09 §9.4, `records.WRITER`); ""
+    #: — the key absent — in snapshots written before 2026-10-12
+    writer: str = ""
 
     @property
     def path(self) -> str:
         return f"records/{self.slice}/{self.n:05d}.jsonl.zst"
 
     def to_dict(self) -> dict[str, Any]:
-        return {"slice": self.slice, "n": self.n, "root": self.root,
-                "records_root": self.records_root, "first_id": self.first_id,
-                "last_id": self.last_id, "records": self.records,
-                "chunks": self.chunks, "chunks_root": self.chunks_root,
-                "tokens": self.tokens, "bytes": self.bytes,
-                "toolchain": self.toolchain}
+        out = {"slice": self.slice, "n": self.n, "root": self.root,
+               "records_root": self.records_root, "first_id": self.first_id,
+               "last_id": self.last_id, "records": self.records,
+               "chunks": self.chunks, "chunks_root": self.chunks_root,
+               "tokens": self.tokens, "bytes": self.bytes,
+               "toolchain": self.toolchain}
+        if self.writer:
+            out["writer"] = self.writer
+        return out
 
 
 @dataclass(frozen=True)
@@ -465,6 +471,11 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
             f"09 §9.4 were computed — rebuild them; a snapshot may not carry "
             f"a root it did not compute (first: {missing[0]})")
 
+    previous, prev_hashes = _previous(shard_dir, snapshot_id)
+    # `writer`: a part whose bytes the previous snapshot already listed was
+    # compressed by whoever wrote it then; a new version by this platform
+    from app.pack import records as pack_records
+    before = {(s.slice, s.n, s.root): s.writer for s in previous.shards} if previous else {}
     shards = tuple(
         Shard(slice=r["slice"], n=r["n"], root=r["root"],
               records_root=r["records_root"],
@@ -472,10 +483,10 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
               records=r["records"], chunks=r["chunks"],
               chunks_root=r["chunks_root"],
               tokens=r["chunks"] * codex.space.ctx,
-              bytes=r["bytes"], toolchain="own")
+              bytes=r["bytes"], toolchain="own",
+              writer=before.get((r["slice"], r["n"], r["root"]), pack_records.WRITER))
         for r in rows)
 
-    previous, prev_hashes = _previous(shard_dir, snapshot_id)
     current = _content_hashes(shard_dir, shards)
     snap = Snapshot(
         collection_id=codex.collection_id, snapshot_id=snapshot_id,

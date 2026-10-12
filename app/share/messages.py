@@ -103,10 +103,13 @@ def event_id(body: dict[str, Any]) -> str:
 
 def pull_body(*, key: str, what: str, collection_id: str, snapshot_id: str | None = None,
               since: str | None = None, now: float | None = None,
-              part: str | None = None, have: list[str] | None = None) -> dict[str, Any]:
+              part: str | None = None, have: list[str] | None = None,
+              kind: str = "records") -> dict[str, Any]:
     """`part` and `have` belong to a `patch` pull (app/share/patch.py): the
     part as `<slice>/<NNNNN>` and the hash of every line of the version the
-    asker holds; every other pull carries neither."""
+    asker holds; every other pull carries neither. `part_kind: "figures"` asks
+    for the part's plates container, `have` then naming its plates; a
+    records patch carries no `kind`."""
     if what not in PULL_WHATS:
         raise MessageError(f"a pull is one of {PULL_WHATS}, not {what!r}")
     body = {"kind": PULL_KIND, "version": PULL_VERSION, "key": key, "time": time_text(now),
@@ -114,6 +117,8 @@ def pull_body(*, key: str, what: str, collection_id: str, snapshot_id: str | Non
             "since": since}
     if what == "patch":
         body.update(part=part, have=list(have or []))
+        if kind != "records":
+            body["part_kind"] = kind
     return body
 
 
@@ -159,6 +164,8 @@ def open_pull(envelope: dict[str, Any], *, now: float) -> dict[str, Any]:
             raise MessageError("a patch pull names the part as <slice>/<NNNNN> and the snapshot")
         if not isinstance(have, list) or len(have) > patch_mod.MAX_HAVE                 or not all(isinstance(h, str) and patch_mod.HASH_RE.match(h) for h in have):
             raise MessageError(f"a patch pull's `have` is at most {patch_mod.MAX_HAVE} line hashes")
+        if body.get("part_kind", "records") not in patch_mod.KINDS:
+            raise MessageError(f"a patch pull's part is one of {patch_mod.KINDS}")
     check_time(body, now=now)
     return body
 
@@ -266,11 +273,17 @@ def _answer_patch(root: Path, name: str, shard_tree: Path, body: dict[str, Any])
     from app.share import patch as patch_mod
     from app import platform_config
     sid, part = body["snapshot_id"], body["part"]
+    kind = body.get("part_kind", "records")
     snap_path = shard_tree / shard_mod.snapshot_path(sid)
     if not snap_path.is_file():
         return []
     snap = sn.load(snap_path)
-    entry = next((s for s in snap.shards if s.path == f"records/{part}{pack_records_suffix()}"), None)
+    if kind == "records":
+        entry = next((s for s in snap.shards if s.path == f"records/{part}{pack_records_suffix()}"), None)
+        make = patch_mod.make
+    else:
+        entry = next((s for s in snap.figures if patch_mod.figures_part_of(s.path) == part), None)
+        make = patch_mod.make_figures
     if entry is None:
         return []
     target = shard_tree / entry.path
@@ -281,8 +294,8 @@ def _answer_patch(root: Path, name: str, shard_tree: Path, body: dict[str, Any])
         return []
     ttl = platform_config.load().share.patch_cache_s
     data = patch_mod.cached(root / name / "state" / "patches", entry.root, body["have"],
-                            lambda: patch_mod.make(target, body["have"]), ttl_s=ttl)
-    return [item(f"patch/{part}.json.gz", data)]
+                            lambda: make(target, body["have"]), ttl_s=ttl)
+    return [item(patch_mod.answer_path(kind, part), data)]
 
 
 def pack_records_suffix() -> str:

@@ -7,9 +7,12 @@ overhead." **Built 2026-10-12 for record parts (option D, operator: "do it"):**
 before the torrent (`transport.fetch_members`), the answering peer's cache
 (`[share] patch_cache_s`, 0 = delete once served). Building it found and
 fixed two defects: no promotion kept a superseded version (02 §2.3), and
-"held" was judged by size alone. Still open: plates containers (the same
-request by plate hash), and the writer's zstd version beside the part. What follows is the problem measured on
-gutenberg and the options, with a recommendation.*
+"held" was judged by size alone, and that a finished build was resumed
+instead of planned afresh, so no monthly build re-issued anything. Also
+built 2026-10-12: plates containers (the same request by plate hash,
+frames sent verbatim — no recompression), and the writer beside each part
+entry (09 §9.4 `writer`; a peer under another does not ask). What follows
+is the problem measured on gutenberg and the options, with a recommendation.*
 
 ## The problem
 
