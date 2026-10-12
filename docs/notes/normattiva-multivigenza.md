@@ -84,6 +84,19 @@ on one act. Members are
 `<dataGU>_<codice>_(ORIGINALE|VIGENZA_<date>)_V<n>.xml`, which the
 existing `_MEMBER` regex in `source.py` already parses.
 
+**`V<n>` is a per-zip sequence, not a version index — a parsing trap.**
+In a VIGENTE zip every act is `…_VIGENZA_<date>_V0`, because there is one
+member per act; the same act in the M zip runs `V0` (ORIGINALE) through
+`V11`. So `V<n>` orders members *within one zip* and says nothing across
+zips. The Expression is the `VIGENZA_<date>` and, authoritatively, the
+member's own `FRBRthis` (§1). Never key on `V<n>`.
+
+**Density, for chunk sizing.** `Codici` V is 40 acts / 10.0 MB but
+**8,814 `<article>` elements** — a mean of 220 articles per act, against a
+handful for a typical decree, and 2,543 in the largest single act. The
+`akn_article` chunker's unit is the article, so act counts are a poor
+proxy for work; article counts are the ones to plan with.
+
 **The listing under-reports what the download serves — do not build the
 spec from it.** `collection-predefinite` advertises MULTIVIGENTE for only
 15 collections, and an earlier draft of this note took that as the limit.
@@ -206,6 +219,28 @@ record shape, no new extra keys.
    two cutoffs is the same bytes and the same `content_hash`, so its
    vectors carry across untouched. That is what makes 939 snapshots
    affordable rather than 939 full builds.
+5. **Nothing about sizes or checksums changes, and that is deliberate.**
+   The spec declares **no file sizes** on purpose: the origin rebuilds a
+   zip in place, and a stale declared size would let a segmented download
+   cut the rebuilt, longer zip at the old length and record it complete —
+   "an unknown size is honest; a wrong one is a corrupt corpus that
+   passes." The bytes in `_NORMATTIVA` seed `estimated_bytes` only, which
+   is what §2's probe refreshes; it does not make them declared sizes.
+   `ChecksumSource(kind="none")` stays — none is published (API PDF §6).
+
+**The delta story is the weak point, and it gets weaker at 5.69 GB.**
+`DeltaSpec(mode="full-resync")`, and the existing comment is explicit that
+rebuilds are *not* re-fetched by themselves because "the listing carries
+no size, date or ETag to compare". At 1.35 GB of vigente that was a
+tolerable periodic re-pull; at 5.69 GB of multivigente, re-pulling to
+discover that nothing changed is the dominant running cost, and a chain
+that must stay current re-pulls often. Two things could fix it and neither
+is built: the delta feed `ricerca/aggiornati` (listed as not built in
+STATUS's 2026-09-14 entry), or `dataCreazione` from
+`collection-predefinite` as a cheap change signal — it is per collection
+and per form, and it did move within the month on most rows, so it is a
+coarse but real trigger. **Worth settling with the cadence in §4**, since
+the two together decide the running cost.
 
 ## 6. Tests to ship with it
 
@@ -244,7 +279,34 @@ record shape, no new extra keys.
 5. **`Regi decreti`** stays excluded by instruction; note it is the only
    collection where multivigente is offered and dropped.
 
-## 8. Reference material
+## 8. The encoder, which is a separate project
+
+No Normattiva collection exists yet because "Normattiva's encoder is the
+operator's side project — a dedicated embedder trained for it. No
+off-the-shelf encoder is to be proposed and no collection created
+meanwhile" (STATUS, 2026-09-14 evening). That work lives in
+`sourstar/ita-legal-embed`, not here.
+
+Two things this note settles for it, and they should be carried across
+rather than re-derived:
+
+- **The corpus pipeline exists.** AKN gives articles, URN:NIR/ELI
+  identities and the inter-article references natively, so the
+  article-number parsing, citation-resolution and "where does the corpus
+  come from" questions that repo still records as open are answered by
+  `app/plugins/normattiva/` and this note.
+- **Point-in-time is a filter, not a ranking problem** (§1, [R2]). The
+  embedder is trained on one Expression per act and never sees version
+  disambiguation. So the temporal requirement does not change the training
+  budget there; it changes the ingest here.
+
+As of 2026-10-12 that repo has an unmerged branch
+(`claude/unzip-add-ita-legal-embed-6tf77s`, PR #2) carrying the scoping
+work, and a separate body of uncommitted local changes in the working
+tree. Which of the two is the trunk is unresolved, and nothing above has
+been written into it.
+
+## 9. Reference material
 
 Marked by how far I actually got into each: **[read]** first-hand,
 **[abstract]** abstract or dataset card only, **[search]** from search
