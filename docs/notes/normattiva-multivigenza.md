@@ -84,24 +84,35 @@ on one act. Members are
 `<dataGU>_<codice>_(ORIGINALE|VIGENZA_<date>)_V<n>.xml`, which the
 existing `_MEMBER` regex in `source.py` already parses.
 
-**Eight collections have no MULTIVIGENTE:**
+**The listing under-reports what the download serves — do not build the
+spec from it.** `collection-predefinite` advertises MULTIVIGENTE for only
+15 collections, and an earlier draft of this note took that as the limit.
+Probing `collection-preconfezionata` directly (Range, `Content-Range`
+total) shows M served for **22 of 23**, including every collection the
+listing omits:
 
-| Collection | Only form | Acts |
-|---|---|---|
-| Atti normativi abrogati | O | 124,045 |
-| DPR | V | 47,761 |
-| Decreti Legislativi | O | 2,928 |
-| Leggi delega e provvedimenti delegati | O | 1,156 |
-| Atti di recepimento direttive UE | V | 1,093 |
-| Testi Unici | O | 257 |
-| Leggi finanziarie e di bilancio | O | 58 |
-| **Codici** | O | 40 |
+| Collection | M | V | M/V |
+|---|---|---|---|
+| Codici | **1,149.5 MB** | 10.0 MB | 115x |
+| Decreti Legislativi | 1,215.6 MB | 64.1 MB | 19x |
+| DPR | 726.9 MB | 174.8 MB | 4x |
+| Leggi delega e provvedimenti delegati | 590.4 MB | 35.7 MB | 17x |
+| Leggi finanziarie e di bilancio | 536.5 MB | 6.9 MB | 78x |
+| Testi Unici | 504.0 MB | 9.0 MB | 56x |
+| Atti di recepimento direttive UE | 223.9 MB | 23.0 MB | 10x |
 
-The repealed acts are defensible — a repealed act has no consolidation to
-produce. `Codici`, `DPR`, `Decreti Legislativi` and `Testi Unici` are not:
-they are the substantive, most-cited law and only one endpoint is offered.
-**This is the central limitation of the proposal**; §7.2 has the only
-untested route around it.
+The only collection with no M and no V is **`Atti normativi abrogati`**
+(124,045 acts, ORIGINALE only) — and that is correct by construction: a
+repealed act has no consolidation to produce, so its original text is all
+there is.
+
+Two consequences. The substantive, most-cited law **does** have a full
+version history available, so the central limitation an earlier draft
+recorded here does not exist. And the listing is not a statement of
+availability — the existing `_NORMATTIVA` table was derived from the
+2026-09-14 listing (60 rows; today's has 54, having silently dropped
+`Codici` V, which still downloads). **Form availability must be probed,
+and the probe recorded, not read off the listing.**
 
 ## 3. The collection set, and the pre-Republic cut
 
@@ -112,8 +123,11 @@ Sizes probed by Range (`Content-Range` total, one byte each), 2026-10-12:
 
 | | |
 |---|---|
-| M where offered + V/O for the rest, all 23 | **2.76 GB** |
-| less `Regi decreti` M (1,616.8 MB) and `Regi decreti legislativi` M (1.4 MB) | **~1.14 GB** |
+| M for all 22 that serve it, + O for `Atti normativi abrogati` | **7.27 GB** |
+| less `Regi decreti` M (1,616.8 MB) and `Regi decreti legislativi` M (1.4 MB) | **~5.69 GB** |
+
+Of which: 4.95 GB is the seven collections the listing hides (§2), 423 MB
+the thirteen it advertises and we keep, and 454 MB the repealed acts in O.
 
 Both dropped collections are royal instruments, wholly pre-1946, so they
 go at download rather than at ingest.
@@ -213,13 +227,17 @@ record shape, no new extra keys.
 
 1. **Cadence**, and whether monthly survives `MAX_CHANGED` (§4). Measure
    before choosing.
-2. **`Codici`, `DPR`, `Decreti Legislativi`, `Testi Unici` have no
-   multivigente.** For these the chain holds one Expression, so as-of over
-   them answers today's text whatever date is asked — precisely the
-   failure the use case exists to avoid. Options: accept and document the
-   gap; or try `ricerca-asincrona` (`nuova-ricerca` / `conferma-ricerca` /
-   `check-status`, email delivery), **untested**, which may expose per-act
-   point-in-time fetches. Nothing else is on offer.
+2. **Closed 2026-10-12: M is served for 22 of 23** (§2), the earlier
+   "central limitation" was an artefact of trusting the listing. The
+   residue is `Atti normativi abrogati` — ORIGINALE only, correctly, since
+   a repealed act has no consolidation. What it means for as-of: a query
+   dated before an act's repeal gets that act's original text, which is
+   the right answer when the act was never amended and a stale one when it
+   was. 124,045 acts is too many to ignore and too many to fix by
+   per-act fetches; `ricerca-asincrona` (`nuova-ricerca` /
+   `conferma-ricerca` / `check-status`, email delivery) is **untested** and
+   the only candidate. Decide whether that residue is accepted and
+   documented, or chased.
 3. **The Constitution** must be sourced separately (§3).
 4. **Storage** — 1.14 GB of origin zips plus the reconstructed chain;
    origins on tank per `storage-placement`.
