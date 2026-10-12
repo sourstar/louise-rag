@@ -1231,6 +1231,17 @@ def cmd_share_fetch(a) -> int:
     out = fetch_mod.fetch(a.root, ref, snapshot_id=a.snapshot, from_address=getattr(a, "from_", None),
                           encoder=a.encoder, encoder_keys=encoder_keys, name=a.name, session=session,
                           log=lambda m: print(m, file=sys.stderr))
+    if slices != "all":
+        # A SLICE BY ITS NAME, as the snapshot just pulled lists it (07 §7.8):
+        # `--slice la` matched no member and fetched no part (2026-10-12)
+        from app.share import seeder as seeder_mod
+        snap = seeder_mod.current_snapshot(Path(out["shard"])) if out.get("shard") else None
+        known = sorted({s.slice for s in snap.shards}) if snap is not None else None
+        bad = [v for v in slices if known is not None and v not in known]
+        if bad:
+            hint = [k for k in known if any(k.endswith("=" + b) for b in bad)]
+            raise CodexError(f"--slice names {bad}, which snapshot {snap.snapshot_id} does not "
+                             f"list; a slice is named as it is listed, e.g. {hint or known[:3]}")
     out["selection"] = _set_held_selection(out["file"], slices, kinds)
     if a.here:
         if not locked:
@@ -4008,7 +4019,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = shverbs.add_parser("fetch", help="take a part: find who holds it, pull and verify, hold it (04 §4.3)")
     root_arg(p); p.add_argument("collection", help="a collection id or a lineage id")
     p.add_argument("--slice", nargs="*", default=None,
-                   help="the slices to hold, by value; absent: every slice")
+                   help="the slices to hold, as the snapshot names them (lang=la); absent: every slice")
     p.add_argument("--kinds", default=None,
                    help="comma-separated member kinds to hold; default records")
     p.add_argument("--here", action="store_true",

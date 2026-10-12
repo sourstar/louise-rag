@@ -352,3 +352,25 @@ def test_the_held_file_of_a_fetch_carries_the_encoder_keys(node, fetcher):  # no
         enc = tomllib.load(f)["encoder"]
     assert enc == {"url": "http://localai:8080", "api": "vega",
                    "embed_model": "vega-medcpt-article", "query_model": "vega-medcpt-query"}
+
+
+def test_a_slice_asked_for_is_named_as_the_snapshot_lists_it(node, fetcher, monkeypatch, capsys, tmp_path):  # noqa: F811
+    """`--slice la` fetched no part, silently (2026-10-12): a name the pulled
+    snapshot does not list is refused, with its listed spelling."""
+    from app import louise
+    from app.hold import snapshot as sn
+    from app.share import seeder
+    from tests.hold.conftest import a_root, pubmed
+    codex = a_root(fetcher, pubmed())
+    held = louise._write_held_file(fetcher, codex, None)
+    monkeypatch.setattr(fetch, "fetch", lambda root, ref, **kw: {
+        "file": str(held), "name": "pubmed", "collection_id": ref, "shard": str(tmp_path)})
+    e = dict(root="r", records_root="r", records=1, chunks=1, chunks_root="c", tokens=1, bytes=1,
+             first_id="1", last_id="2")
+    snap = sn.Snapshot(collection_id=codex.collection_id, snapshot_id="2026-08", previous=None,
+                       shards=(sn.Shard(slice="year=2023", n=1, **e),), delta=sn.Delta((), (), ()), files={})
+    monkeypatch.setattr(seeder, "current_snapshot", lambda d: snap)
+    args = ["share", "fetch", codex.collection_id, "--root", str(fetcher), "--from", SHARER, "--slice"]
+    assert louise.main(args + ["2023"]) == 2
+    assert "year=2023" in capsys.readouterr().err
+    assert louise.main(args + ["year=2023"]) == 0
