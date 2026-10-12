@@ -3,7 +3,7 @@
 # deploy-louise-normattiva.sh has put the code of 4493c15 (or later) live.
 # Run on the node:  ssh root@node bash -s < deploy/16f/create-normattiva.sh
 #
-# The commands run INSIDE the live web container: it carries the mounts
+# The commands run INSIDE the live WORKER container: it carries the mounts
 # (/config, /data, /corpora, /shards) and the env `create` pins
 # (LOUISE_PLATFORM_IMAGE, 07 §7.3) and the VeGa client needs (VEGA_URL).
 # The recipe is docs/notes/normattiva-recipe.toml of the shipped tree; the
@@ -24,7 +24,9 @@
 set -euo pipefail
 
 ROOT=/mnt/ssd4/apps/louise-rag
-WEB=ix-louise-rag-web-1
+# the worker, not the web: the web mounts /corpora read-only, and `create`
+# links origin/ into a /corpora/<name> it makes (2026-10-12: refused there)
+WEB=ix-louise-rag-worker-1
 ENCODER=http://192.168.178.10:30286
 MODEL=vega-dar-legal-it
 
@@ -38,7 +40,7 @@ test ! -e "$ROOT/config/collections/normattiva.toml" || { echo "normattiva.toml 
 
 say "1. the recipe, where the container reads it"
 mkdir -p "$ROOT/config/recipes"
-cp "$ROOT/src/docs/notes/normattiva-recipe.toml" "$ROOT/config/recipes/normattiva.toml"
+cp "${RECIPE:-$ROOT/src/docs/notes/normattiva-recipe.toml}" "$ROOT/config/recipes/normattiva.toml"
 grep -c "TO-READ-ON-THE-NODE" "$ROOT/config/recipes/normattiva.toml" && { echo "the recipe still has placeholders"; exit 1; } || true
 
 say "2. hold collection create (the Codex, the file, the links; minutes: the calibration set is embedded)"
