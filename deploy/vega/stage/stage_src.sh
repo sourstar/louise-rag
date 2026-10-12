@@ -20,8 +20,8 @@ git archive --format=tar "$rev" \
   deploy/localai/backends/run.sh deploy/localai/backends/louise_backend.py \
   deploy/localai/backends/requirements-grpc.txt \
   deploy/localai/backends/louise-medcpt-article-ov deploy/localai/backends/louise-medcpt-rerank \
-  deploy/localai/backends/louise-madlad \
-  deploy/madlad-translate/server.py deploy/medcpt-rerank/server.py \
+  deploy/localai/backends/louise-madlad deploy/localai/backends/louise-dar-legal-it \
+  deploy/madlad-translate/server.py deploy/medcpt-rerank/server.py deploy/dar-legal-it/server.py \
   deploy/medcpt-rerank/convert_article.py | tar -x -C "$tmp"
 git rev-parse "$rev" > "$tmp/REVISION"
 mkdir -p "$tmp/deploy/vega/stage"

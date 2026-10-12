@@ -32,6 +32,7 @@ cp /cache/stubs/backend_pb2.py /cache/stubs/backend_pb2_grpc.py /cache/common/*.
 case "$NAME" in
   louise-madlad) cp /src/deploy/madlad-translate/server.py "$P/madlad.py" ;;
   louise-medcpt-rerank|louise-medcpt-article-ov) cp /src/deploy/medcpt-rerank/server.py "$P/medcpt.py" ;;
+  louise-dar-legal-it) cp /src/deploy/dar-legal-it/server.py "$P/dar_legal_it.py" ;;
   *) echo "unknown backend $NAME" >&2; exit 2 ;;
 esac
 cp /src/REVISION "$P/REVISION"
@@ -49,7 +50,8 @@ ln -s python3 "$P/venv/bin/python3.12"
 
 # requirements.txt reads ../requirements-grpc.txt: resolved from a scratch copy
 mkdir -p /tmp/req/b && cp "$B/requirements-grpc.txt" /tmp/req/ && cp "$B/$NAME/requirements.txt" /tmp/req/b/
-if [ "$NAME" = louise-madlad ]; then
+# torch on the card, in the backend's own venv: MADLAD and DAR-legal-it (2026-10-12)
+if [ "$NAME" = louise-madlad ] || [ "$NAME" = louise-dar-legal-it ]; then
   "$P/venv/bin/python" -m pip install -q "torch==2.14.0" --index-url https://download.pytorch.org/whl/xpu
   ln -s venv/lib "$P/lib"
 fi
@@ -60,6 +62,7 @@ cd "$P"
 LD_LIBRARY_PATH="$P/lib" ./venv/bin/python -c "import backend; print('import backend ok')"
 case "$NAME" in
   louise-madlad) LD_LIBRARY_PATH="$P/lib" ./venv/bin/python -c "import torch, transformers; print('torch', torch.__version__, 'transformers', transformers.__version__)" ;;
+  louise-dar-legal-it) LD_LIBRARY_PATH="$P/lib" ./venv/bin/python -c "import torch, transformers, sentence_transformers; print('torch', torch.__version__, 'transformers', transformers.__version__, 'sentence-transformers', sentence_transformers.__version__)" ;;
   *) ./venv/bin/python -c "import openvino, tokenizers; print('openvino', openvino.__version__, 'tokenizers', tokenizers.__version__)" ;;
 esac
 find "$P" -name __pycache__ -type d -prune -exec rm -rf {} +
