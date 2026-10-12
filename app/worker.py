@@ -1516,6 +1516,16 @@ def _acquire_worker(collection, spec, profile: str, reason: str) -> None:
         db.log_event(con, "warn", "acquire",
                      f"corpus fetch ({reason}) deferred — manifest busy "
                      f"({e}); retrying next round")
+    except httpx.TransportError as e:
+        # THE ORIGIN DID NOT ANSWER — a timeout, a reset, a refused
+        # connection: the origin's state, not the collection's (CLAUDE.md:
+        # deferral is not failure). What landed is kept and checkpointed; the
+        # next discovery starts the fetch again, which is the backoff — a
+        # retry every round would hammer an origin that is down. Logged as an
+        # ERROR until 2026-10-13 (normattiva: one ReadTimeout).
+        db.log_event(con, "warn", "acquire",
+                     f"corpus fetch ({reason}) deferred — the origin did not answer "
+                     f"({type(e).__name__}: {e}); the next discovery retries it"[:400])
     except Exception as e:   # noqa: BLE001 — a fetch must never kill its thread silently
         db.log_event(con, "error", "acquire",
                      f"corpus fetch ({reason}) failed: {type(e).__name__}: {e}"[:400])

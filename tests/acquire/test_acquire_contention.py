@@ -67,3 +67,20 @@ def test_a_real_failure_is_still_an_error(isolated_config, tmp_path, monkeypatch
 def test_busy_timeout_gives_writers_room(isolated_config, tmp_path):
     con = db.connect(_collection(tmp_path))
     assert con.execute("PRAGMA busy_timeout").fetchone()[0] == 60000
+
+
+def test_an_origin_that_does_not_answer_is_a_deferral(isolated_config, tmp_path, monkeypatch):
+    """normattiva, 2026-10-13: one ReadTimeout was logged as a failed fetch.
+    The origin's silence is a deferral; the next discovery retries."""
+    import httpx
+    collection = _collection(tmp_path)
+    db.connect(collection).close()
+
+    def slow(*a, **kw):
+        raise httpx.ReadTimeout("The read operation timed out")
+    monkeypatch.setattr(worker.acquire_engine, "run_acquisition", slow)
+    worker._acquire_worker(collection, GUTENBERG_SPEC, "demo", "test")
+    row = db.connect(collection).execute(
+        "SELECT level, message FROM events WHERE stage='acquire' ORDER BY id DESC LIMIT 1").fetchone()
+    assert row["level"] == "warn" and "deferred" in row["message"] and "ReadTimeout" in row["message"]
+    worker._acquire_done.pop(collection.name, None)
