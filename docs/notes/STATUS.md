@@ -16,14 +16,17 @@ it left open is below.
   to compare (step 3).
 - **Normattiva, what the second part left** (2026-10-12,
   [normattiva-multivigenza-review.md](normattiva-multivigenza-review.md) §3.12,
-  §7): closing a repealed-only act's validity from `eli:repeals` edges,
-  the measurement before `shard_records` is fixed (a second archive
+  §7): the measurement before `shard_records` is fixed (a second archive
   listing a month on), the Constitution's on-demand query, and no
-  collection created yet.
+  collection created yet — the next collection is the quarantine's
+  guinea pig (never listed; the tooling it finds missing gets fixed).
   Built the same day: the vector carry, `relations()`, the
-  central-directory delta, the member as origin unit, and the `urn`/`eli`
-  reference source with the citation resolver (`app/refs/normattiva.py`;
-  `keys` written at parser 4).
+  central-directory delta, the member as origin unit, the `urn`/`eli`/
+  `akn` reference source with the citation resolver
+  (`app/refs/normattiva.py`; `keys` written at parser 6), the original's
+  start at its Expression date with `valid_from` as a third index column,
+  and a repealed act's validity closed by another act's typed whole-act
+  repeal (`closures`, `validity_closures`; review §3.2 case 2).
 - **The Gazzetta plugin**: certified records carrying `extra.seal` — the
   certifier body's to run (step 10).
 - **`backend_gate`** stays while any Codex is version 1 or 2 (five live).
@@ -208,11 +211,41 @@ on the vacatio pattern otherwise), so `original_start` sets
 `vigenza_from` from it (parser 5) and `valid_from` became the index's
 third column — the id keeps its publication prefix, discovery reads no
 member, and a query in the fortnight before an act's entry into force
-returns nothing. **Still open:** closing a repealed-only act's validity
-from `eli:repeals` edges, the measurement owed before `shard_records` is
-fixed, and the Constitution's on-demand query. No Normattiva collection exists yet; the one measurement the operator
+returns nothing. Then §3.2's case 2: the plugin's `closures()` (06 §6.1's
+second optional hook) names the acts a version repeals in full — typed
+`repeal`, whole-act destination — from the day the destination's `ita@`
+Expression states (the Codici: 152 typed repeals, every one an AKN path
+with its date), recorded per stating uid in `validity_closures` and
+applied by key to the end of the repealed Work's chain in either order
+of arrival; records carry the AKN work path as a third key (`akn:`,
+parser 6). **Still open:** the measurement owed before `shard_records` is
+fixed, the coverage of the 33,750 repealed-only acts by such closures
+(on the live collection), and the Constitution's on-demand query. No Normattiva collection exists yet; the one measurement the operator
 asked for first — a second listing of the archive a month from now — is
 dated.
+
+**Step 3 — the collection on the node (2026-10-12, night): PREPARED, NOT
+RUN.** The recipe is drafted at
+[`normattiva-recipe.toml`](normattiva-recipe.toml)
+(parses; every field the plugin does not default, the licence terms'
+hash, the origin form and unit, the validation checks), with the values
+only the node can give left marked: the engine block and weights digest
+of the encoder that serves DAR-legal-it, and `ctx` once the articles'
+token lengths are measured. What stopped the run is outward, not code:
+DAR-legal-it is served nowhere — it needs torch, a sidecar beside LocalAI,
+which is VeGa's sole VRAM owner, on a card that ran three embed streams
+that evening — and serving it is the operator's decision
+(docs/notes/vega.md). The other session (louise-rag-f3) deployed 34874bc
+at 21:45 and set gutenberg's share slices; by message it has nothing
+queued tonight and will deploy main's head next, so no second deploy was
+made over it: restarting the worker for a collection that cannot yet be
+created buys nothing. The order when the window opens: deploy main's head
+(stage, promote, build, the suite on the node, restart); serve the encoder
+and read its run identity into the recipe; measure `ctx`; record the
+licence acknowledgement (YELLOW); `hold collection create normattiva
+--recipe … --encoder …`; `hold fetch normattiva --profile full` (7.8 GB,
+two connections); scan, parse, fts; embed. The collection is the
+quarantine's guinea pig: never listed, every missing tool fixed.
 
 ### 2026-10-05: the side branches merged into main
 

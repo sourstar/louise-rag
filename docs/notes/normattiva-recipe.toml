@@ -1,0 +1,132 @@
+# Normattiva — the numbered acts of the Italian State, every version of
+# every act as its own record (docs/notes/normattiva-multivigenza-review.md;
+# docs/notes/eli-legal-plugins.md). DRAFT, 2026-10-12 night: nothing is
+# created until `hold collection create` runs ON THE NODE, because `create`
+# mints a PERMANENT collection_id and space_id from these bytes and three of
+# them can only be read there:
+#
+#   space.encoder.image    the digest of the image that serves DAR-legal-it
+#   space.encoder.weights  sha256 of the weights file it serves (09 §9.3)
+#   space.ctx              after measuring the articles' token lengths
+#                          (the chunk is the article; review §3.5)
+#
+# The encoder is `jurifindit/DAR-legal-it` (review §10; 305 M, dim 768, CLS,
+# `query: ` prefix, GTE on snowflake-arctic-embed-m-v2.0). The operator
+# states its licence as its training data's, CC-BY-NC-SA-4.0 (2026-10-12);
+# NC makes commercial peers consumer-only, and a pin is irreversible. It is
+# NOT served on the node yet: it needs torch (a sidecar beside LocalAI,
+# which is VeGa's sole VRAM owner — docs/notes/vega.md), on a card that on
+# 2026-10-12 runs three embed streams. Serving it is the operator's call.
+#
+#   hold collection create normattiva --recipe normattiva-recipe.toml \
+#       --name normattiva --platform-image <the running image's digest> \
+#       --encoder http://192.168.178.10:<port>
+#
+# Before the first byte moves: the licence is YELLOW (CC BY 4.0 after an NC
+# window, TERMS.txt), so the acknowledgement is recorded first — the create
+# dialog refuses without it (invariant 9). The origins folder is
+# /corpora/normattiva (one mount per kind; `create` links it). The fetch is
+# 7.8 GB, 23 zips, at most two connections (etiquette), then every pass reads
+# each zip's central directory by Range and fetches changed members only:
+#
+#   hold fetch normattiva --profile full
+#
+# (`profile` is NOT a recipe key for that: in a recipe it would replace the
+# plugin's Codex profile — the ELI implementation and the validity axis —
+# which this collection keeps.)
+
+[descriptive]
+title = "Normattiva — the laws of the Italian State, every version"
+summary = "Every numbered normative act of the Italian State since 1861 from Normattiva's open data, every version of every act as its own record (the original and each consolidation, 'vigenza'), searchable as of any date; repealed acts in their last text, labelled. Testo non ufficiale: fa fede la Gazzetta Ufficiale."
+
+[space]
+dim = 768
+dtype = "f16"
+# TO MEASURE before create: the articles' token lengths on the Codici
+# (the longest articles) — the chunk is the article, a longer one is
+# truncated to ctx (09 §9.3). The base model accepts 8192.
+ctx = 2048
+pooling = "cls"
+normalise = true
+tolerance = "0.95"
+epoch = "0"
+evaluation = ""
+
+[space.encoder]
+weights = "sha256:TO-READ-ON-THE-NODE"
+label = "jurifindit/DAR-legal-it"
+
+# A NEW Codex names its ENGINE, not an image (09 §9.3, the engine
+# amendment): the run the reference vectors are computed with, written out
+# whole so anyone can run it again. Every value is read from the engine
+# that serves the model on the node, at create (the shape deposit-space.json
+# shows for LocalAI's llama-cpp; a torch sidecar names its own).
+[space.encoder.engine]
+name = "TO-READ-ON-THE-NODE"
+build = "TO-READ-ON-THE-NODE"
+image = "sha256:TO-READ-ON-THE-NODE"
+args = []
+device = "TO-READ-ON-THE-NODE"
+
+# DAR-legal-it is asymmetric by prefix only: the same weights on both
+# sides, the query side prefixed as the model was trained
+# (gazzetta-plugin.md §7.1b; 02 §2.4's instruction is inside space_id).
+[space.query]
+instruction = "query: "
+
+[space.calibration]
+set = "sha256:7d06a2f6a4a773da01a517cb30571cac421753df3e30b20fca4716e5441fbf0f"
+
+[space.calibration.quorum]
+n = 16
+min_pass = 12
+
+# The ONGOING work per month, in chunks x ctx: TO MEASURE at the second
+# central-directory listing a month after 2026-10-12 (review §7). Draft:
+# the archive's 150,580 version transitions over its life, the recent
+# years' share (review §1: 739 of the codes' 1,215 sub-month transitions
+# fall in the 2010s–2020s) put at ~3,000 new versions a month; at the
+# measured densities (review §3.7: 409 articles a version for the codes,
+# 4–123 elsewhere) and the carry by chunk hash (2.12x the distinct texts
+# across all versions, review §1), ~60,000 new article chunks a month.
+[work]
+tokens = 120000000
+per = "P1M"
+
+[origin]
+form = "the Akoma Ntoso export (formato=AKN) of the precompiled collections, the multivigente form (formatoRichiesta=M) that holds every act's original and each consolidated version as a member of its own, and the originale form (O) of the collection of repealed acts, which the M zips do not hold; not the JSON or the ELI forms, which carry the same text with less structure (eli-legal-plugins.md §5; review §3.10)"
+unit = "index-page"
+clock = "Europe/Rome"
+cutoff_rule = "update-files"
+jurisdiction = "IT"
+
+# The spec is the plugin's (app/acquire/specs.py NORMATTIVA_SPEC): the 22
+# multivigente zips and the repealed acts' originale zip, listed without
+# size or date by the origin, brought up to date by their central
+# directories (DeltaSpec zip-directory; 09 §9.17).
+
+# YELLOW: CC BY 4.0 from 1 January 2026, an NC window before it; the hash is
+# the terms text the plugin ships (app/plugins/normattiva/TERMS.txt).
+[license]
+class = "yellow"
+terms_sha256 = "sha256:f926ab1dc434440598dc0fe46967be189da73ad75a3590a365abc0377b3d8352"
+
+[validation]
+checks = ["roots", "records", "chunks", "records-vs-origin", "license", "signature", "calibration", "vectors-sample"]
+required = []
+
+[validation.sample.records]
+shards = "0.05"
+
+[validation.sample.chunks]
+shards = "0.05"
+
+[validation.sample."vectors-sample"]
+shards = "0.05"
+
+[validation.sample."records-vs-origin"]
+shards = "0.05"
+
+# Layers, slicing (`normattiva`: type and year, 50 acts a part) and the
+# profile (the ELI implementation and the validity axis, one record per
+# Expression) are the plugin's defaults (app/plugins/normattiva/source.py).
