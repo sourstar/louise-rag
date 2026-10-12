@@ -42,31 +42,52 @@ summary = "Every numbered normative act of the Italian State since 1861 from Nor
 [space]
 dim = 768
 dtype = "f16"
-# TO MEASURE before create: the articles' token lengths on the Codici
-# (the longest articles) — the chunk is the article, a longer one is
-# truncated to ctx (09 §9.3). The base model accepts 8192.
-ctx = 2048
-pooling = "cls"
+# MEASURED 2026-10-12 on the 40 codes' latest versions, 8,818 articles under
+# DAR-legal-it's tokenizer: median 241 tokens, p90 944, p95 1,396, p99 2,943;
+# 2.13 % over 2,048, 0.43 % over 4,096, a handful at the model's 8,192. The
+# chunk is the article (review §3.5) and a longer one is truncated to ctx
+# (09 §9.3), so ctx is the engine's own window: nothing of the codes is cut
+# but those few.
+ctx = 8192
+# what the served backend does (deploy/vega/stage/models/vega-dar-legal-it.yaml)
+pooling = "mean"
 normalise = true
 tolerance = "0.95"
 epoch = "0"
 evaluation = ""
 
 [space.encoder]
-weights = "sha256:TO-READ-ON-THE-NODE"
-label = "jurifindit/DAR-legal-it"
+weights = "sha256:92f4c9e0d4e1cb4465c72078a7d7dcf8cb9ff71818657b7112eae2bbb8046da9"
+label = "jurifindit/DAR-legal-it (de7867e4; LocalAI's louise-dar-legal-it backend, torch XPU, behind VeGa; the node's card)"
 
 # A NEW Codex names its ENGINE, not an image (09 §9.3, the engine
 # amendment): the run the reference vectors are computed with, written out
-# whole so anyone can run it again. Every value is read from the engine
-# that serves the model on the node, at create (the shape deposit-space.json
-# shows for LocalAI's llama-cpp; a torch sidecar names its own).
+# whole so anyone can run it again. Read on 2026-10-12 with `hold embedder
+# run --encoder http://192.168.178.10:30286 --api vega --model
+# vega-dar-legal-it`: run sha256:85b9fa1abf79d1798286fe83c08504fd50153b479e
+# 62f056b2c4ed4dbe2718aa (docs/notes/vega.md §12). `create` holds the
+# endpoint's stated run to these values, or creates nothing.
 [space.encoder.engine]
-name = "TO-READ-ON-THE-NODE"
-build = "TO-READ-ON-THE-NODE"
-image = "sha256:TO-READ-ON-THE-NODE"
-args = []
-device = "TO-READ-ON-THE-NODE"
+name = "localai/louise-dar-legal-it"
+build = "355a0208eaf7"
+image = "sha256:355a0208eaf7e9c0f99c515d54d019e9a7a95d5ac3d28a91dcee130562dd21ba"
+args = ["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"]
+device = "Intel(R) Arc(TM) Pro B70 Graphics"
+
+[space.encoder.engine.env]
+NEO_CACHE_DIR = "/data/louise-cache/neo-cache"
+
+[space.encoder.engine.options]
+ContextSize = 8192
+Embeddings = true
+FlashAttention = "auto"
+MMap = true
+Model = "weights/dar-legal-it"
+ModelFile = "${WEIGHTS}"
+ModelPath = "${MODELS}"
+NBatch = 1
+Options = ["device:xpu"]
+Threads = 6
 
 # DAR-legal-it is asymmetric by prefix only: the same weights on both
 # sides, the query side prefixed as the model was trained

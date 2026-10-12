@@ -790,12 +790,14 @@ tests in `tests/test_validity.py` and `tests/test_normattiva.py`.
   window are columns, and a query in an act's fortnight before entry into
   force returns nothing.
 - The on-demand collection query for the Constitution.
-- The articles' token lengths under DAR-legal-it's tokenizer (the Codici, the
-  longest) → `space.ctx` of the recipe (`normattiva-recipe.toml`, drafted
-  2026-10-12 with 2048 as a placeholder; 09 §9.3 truncates a longer chunk).
-- The engine block and weights digest of the encoder that serves
-  DAR-legal-it, read on the node at create (09 §9.3) — the model is served
-  nowhere yet (STATUS, 2026-10-12).
+- The articles' token lengths under DAR-legal-it's tokenizer: MEASURED
+  2026-10-12 on the 40 codes' latest versions, 8,818 articles — median 241,
+  p90 944, p95 1,396, p99 2,943; 2.13 % over 2,048, 0.43 % over 4,096, a
+  handful at the model's 8,192 → `space.ctx = 8192`, the engine's own
+  window (`normattiva-recipe.toml`).
+- The engine block and weights digest of the encoder: READ the same night
+  with `hold embedder run` against the node's `vega-dar-legal-it` (served
+  that evening, vega.md §12; run sha256:85b9fa1a…) into the recipe.
 - Coverage of `eli:repeals` from `active_modifications` for the
   repealed-only acts (§3.2, case 2).
 - Whether the 23 predefined collections are the whole database: their
