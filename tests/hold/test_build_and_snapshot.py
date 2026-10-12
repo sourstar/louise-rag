@@ -431,3 +431,39 @@ def test_the_build_says_why_its_staging_manifest_is_unsigned(isolated_config, tm
     rec.build(root, "gutenberg", corpus_dir=corpus_dir, log=said.append, records_per_shard=2)
     line = next(s for s in said if s.startswith("[pack build] manifest:"))
     assert line.endswith("unsigned (the snapshot carries the signature)") and "NODE_KEY_PATH" not in line
+
+
+def test_a_re_issued_part_keeps_the_version_it_supersedes(isolated_config, tmp_path, corpus_dir):
+    """02 §2.3: "A re-issued part keeps its path; the version it supersedes
+    is renamed with the id of the last snapshot that listed it and kept".
+    Until 2026-10-12 every promotion overwrote it, on the producer
+    (`records._promote_records`) and on every fetcher (`holdings.promote`),
+    which both go through `shard.promote`."""
+    from pathlib import Path
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    shard_dir = col.shard_dir_of(root, "gutenberg")
+    first, second = snap.shards[0], snap.shards[1]
+    old = (shard_dir / first.path).read_bytes()
+    new = tmp_path / "staged" / "00001.jsonl.zst"
+    new.parent.mkdir()
+    new.write_bytes(old + b"a different version")
+    shard_mod.promote(new, shard_dir / first.path, shard_dir=shard_dir)
+    kept = shard_dir / shard_mod.superseded_name(Path(first.path), "2026-08")
+    assert kept.read_bytes() == old, "the 2026-08 version, byte for byte, under its superseded name"
+    assert (shard_dir / first.path).read_bytes() == old + b"a different version"
+
+    same = tmp_path / "staged" / "00002.jsonl.zst"
+    same.write_bytes((shard_dir / second.path).read_bytes())
+    shard_mod.promote(same, shard_dir / second.path, shard_dir=shard_dir)
+    assert not (shard_dir / shard_mod.superseded_name(Path(second.path), "2026-08")).exists(), \
+        "the same bytes again are not a new version"
+
+    stray = shard_dir / "records" / "lang=en" / "00099.jsonl.zst"
+    stray.write_bytes(b"listed by no snapshot")
+    other = tmp_path / "staged" / "00099.jsonl.zst"
+    other.write_bytes(b"new")
+    shard_mod.promote(other, stray, shard_dir=shard_dir)
+    assert stray.read_bytes() == b"new" and not list(stray.parent.glob("00099.*.jsonl.zst")), \
+        "bytes no snapshot lists are nobody's version: replaced"

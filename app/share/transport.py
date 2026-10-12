@@ -256,7 +256,7 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
         want = [m for m in want if m.name == "terms"]
         out["waiting"] = "acknowledgement: `hold collection ack` first (04 §4.4)"
     holdings.sweep_marks(con, shard_dir)
-    todo = holdings.missing(shard_dir, want)
+    todo = holdings.missing(shard_dir, want, holdings.marks(con))
     out["missing"] = len(todo)
     if not todo:
         return out
@@ -395,7 +395,7 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
         want = holdings.wanted(snap, slices=c.slices, kinds=c.kinds)
         if ack_missing:
             want = [m for m in want if m.name == "terms"]
-        if not holdings.missing(shard_dir, want):
+        if not holdings.missing(shard_dir, want, holdings.marks(con)):
             _complete[c.name] = (selection, now)
             continue                      # the session is opened only for a byte to fetch
         _complete.pop(c.name, None)

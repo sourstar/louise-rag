@@ -363,9 +363,67 @@ def scaffold(shard_tree: Path) -> Path:
     return shard_tree
 
 
-def promote(src: Path, target: Path) -> None:
+def superseded_name(target: Path, snapshot_id: str) -> Path:
+    """`NNNNN.<snapshot id>.jsonl.zst` (or `.fig.zst`) beside `target`:
+    02 §2.3's name for a version a re-issue replaced."""
+    stem, dot, rest = target.name.partition(".")
+    return target.with_name(f"{stem}.{snapshot_id}{dot}{rest}")
+
+
+def last_listing(shard_dir: Path, rel: str) -> tuple[str, str, int] | None:
+    """(snapshot id, root, bytes) of the newest snapshot held in `shard_dir`
+    that lists `rel` — the version the SHARD holds at that path — or None."""
+    from . import snapshot as sn
+    d = Path(shard_dir) / "snapshots"
+    ids = sorted((p.stem for p in d.glob("*.json") if not p.name.endswith(".sig.json")),
+                 reverse=True) if d.is_dir() else []
+    for sid in ids:
+        try:
+            snap = sn.load(d / f"{sid}.json")
+        except Exception:                                   # noqa: BLE001 — skip one unreadable file
+            continue
+        for e in (*snap.shards, *snap.relations, *snap.figures):
+            if e.path == rel:
+                return sid, e.root, int(e.bytes)
+    return None
+
+
+def keep_superseded(target: Path, shard_dir: Path | None, new_root: str) -> Path | None:
+    """Before a new version (`new_root`) replaces `target`: when the newest
+    held snapshot listing that path names other bytes, and the file there is
+    that version (its size), rename it to its superseded name and keep it
+    (02 §2.3: "the version it supersedes is renamed with the id of the last
+    snapshot that listed it and kept, so an old snapshot can still be served
+    and checked"). Bytes no snapshot lists are nobody's version and are
+    replaced. The old version's root comes from the snapshot, never from
+    hashing the file: a monthly rebuild promotes every part and plate
+    container, and re-reading them all (gutenberg: ~95 GB) per promotion
+    would be the cost of the rule. The moved path, or None.
+
+    Until 2026-10-12 nothing did this: the name existed
+    (`shard_path(..., superseded_by=)`) and every promotion overwrote, on
+    the producer and on every peer that fetched."""
+    if shard_dir is None or not target.is_file():
+        return None
+    listed = last_listing(shard_dir, target.relative_to(shard_dir).as_posix())
+    if listed is None:
+        return None
+    sid, old_root, old_bytes = listed
+    if old_root == new_root or target.stat().st_size != old_bytes:
+        return None                       # unchanged, or not the snapshotted version
+    dest = superseded_name(target, sid)
+    if dest.exists():
+        return dest
+    target.replace(dest)
+    return dest
+
+
+def promote(src: Path, target: Path, *, shard_dir: Path | None = None,
+            new_root: str | None = None) -> None:
     """Move one finished file into the SHARD; `target` only ever appears
-    whole.
+    whole. With `shard_dir`, a different version already at `target` that a
+    held snapshot lists is kept under its superseded name first
+    (`keep_superseded`).
 
     A rename where `src` and `target` share a filesystem. Where they do not
     — the SHARD's bytes on other storage, mounted at `shard/` as `origin/`'s
@@ -376,6 +434,9 @@ def promote(src: Path, target: Path) -> None:
     import errno
     import os
     import shutil
+    if shard_dir is not None and Path(target).is_file():
+        keep_superseded(Path(target), Path(shard_dir),
+                        new_root if new_root is not None else pieces_root_of(Path(src)))
     try:
         os.replace(src, target)
         return

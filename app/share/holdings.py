@@ -95,21 +95,29 @@ def wanted(snapshot, *, slices, kinds) -> list[mem.Member]:
     return out
 
 
-def file_held(shard_dir: Path, f: MemberFile) -> bool:
+def file_held(shard_dir: Path, f: MemberFile, marks: dict | None = None) -> bool:
+    """The file is there at the snapshot's size and, where this peer marked
+    it when it promoted it, under the snapshot's root. Size alone was the
+    test until 2026-10-12, so a re-issued part that kept its size (an edit
+    that changed no length) would never have been fetched."""
     p = Path(shard_dir) / f.path
     try:
-        return p.is_file() and p.stat().st_size == f.bytes
+        if not (p.is_file() and p.stat().st_size == f.bytes):
+            return False
     except OSError:
         return False
+    m = (marks or {}).get(f.path)
+    return m is None or m.get("root") == f.root
 
 
 def held(shard_dir: Path, member: mem.Member) -> bool:
     return all(file_held(shard_dir, f) for f in member.files)
 
 
-def missing(shard_dir: Path, members) -> list[tuple[mem.Member, MemberFile]]:
-    """Every file of every wanted member that is not in the SHARD."""
-    return [(m, f) for m in members for f in m.files if not file_held(shard_dir, f)]
+def missing(shard_dir: Path, members, marks: dict | None = None) -> list[tuple[mem.Member, MemberFile]]:
+    """Every file of every wanted member that is not in the SHARD at the
+    snapshot's version (`file_held`)."""
+    return [(m, f) for m in members for f in m.files if not file_held(shard_dir, f, marks)]
 
 
 # ---- the mark -------------------------------------------------------------------------
@@ -172,7 +180,7 @@ def promote(con, staged: Path, shard_dir: Path, *, snapshot_id: str, member: str
                       f"key signed; set aside, not promoted — manifest-only (03 §3.8)")
     target = shard_dir / f.path
     target.parent.mkdir(parents=True, exist_ok=True)
-    shard_mod.promote(staged, target)
+    shard_mod.promote(staged, target, shard_dir=shard_dir, new_root=got)
     mark(con, snapshot_id=snapshot_id, member=member, f=f, now=now)
     return target
 

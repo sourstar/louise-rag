@@ -144,9 +144,9 @@ def test_a_beat_on_a_complete_collection_costs_a_listing_not_a_stat_per_shard(no
     calls: list[int] = []
     real = holdings.missing
 
-    def counted(shard_dir, members):
+    def counted(shard_dir, members, marks=None):
         calls.append(1)
-        return real(shard_dir, members)
+        return real(shard_dir, members, marks)
     monkeypatch.setattr(holdings, "missing", counted)
     con = db.connect(c)
     opened: list[int] = []

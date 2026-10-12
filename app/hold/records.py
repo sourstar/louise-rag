@@ -467,7 +467,7 @@ def _promote_records(staging, shard_dir) -> int:
         for f in sorted(src.rglob(suffix)):
             target = dst / f.relative_to(src)
             target.parent.mkdir(parents=True, exist_ok=True)
-            shard_mod.promote(f, target)
+            shard_mod.promote(f, target, shard_dir=Path(shard_dir))
             if kind == "records":
                 n += 1
     return n
