@@ -570,6 +570,58 @@ lacks.
    `index-page` unit) — new machinery, asked first.
 6. **The naming of `in_force`** (D3).
 
+### 6.1 Recommendations (reviewer, 2026-10-12)
+
+1. **Adopt §3, as one collection** (every version a record; the default
+   view is the latest text per Work; no separate "current" collection).
+   For: it answers the question with exact dates; holds every version
+   (invariant 11); one acquisition, one space, one monthly chain whose
+   delta is additions; no per-query chain walk; versions never compete
+   (invariant 4). Against: four spec amendments and the range filter to
+   build; the ELI note's "snapshot pins the Expression" reverses to "the
+   record pins it"; ~1.33× records and chunks; the retroactive-version
+   path is unmeasured; late consolidations keep snapshots reproducible
+   only from peers (true today as well). Keeping the chain has no
+   pros that survive F1 and F2.
+2. **Regi decreti in, under the floor.** For: ~1,250 live amended royal
+   decrees are law in force (ordinamento giudiziario among them); the
+   79,407 repeal states date the repeal of 79,922 acts, which makes the
+   as-of exclusion exact for them; the floor removes what ended before
+   1948 anyway. Against: the largest zip (1.7 GB, 202k members, ~80k of
+   them text-less repeal states to discover and count each pass);
+   placeholder dates (1,070 acts dated 1701-01-01) the floor and the
+   slicing must tolerate.
+3. **Keep the 33,750 undated repealed-only acts, open-ended and
+   labelled**, after measuring how many `eli:repeals` edges can date
+   (§7). For: a 1925 law repealed by the 2010 *taglia-leggi* was in force
+   for 62 years of the Republic and the open data cannot tell it from one
+   repealed in 1930 — dropping on publication date would lose
+   Republic-era law silently, which promise 9 and "a wrong date is worse
+   than no answer" both forbid; a label is an honest unknown. Against:
+   ~30k mostly pre-Republic acts stay in the index and can surface in any
+   as-of answer after their publication, labelled "repealed, date not in
+   the open data"; narrowing later is a new collection, widening later a
+   daughter — so keeping is the reversible side.
+4. **Fix D1 before anything else, under either design.** For: promise 8;
+   79,922 acts indexed empty is a wrong artefact that passes every check.
+   Against: none; under the current design the fix is "prefer the member
+   with text", and the repeal date is then read from the repeal-state
+   member the rank discards, a small addition to discovery.
+5. **Both acquisition changes, built together** (they share the
+   Range-member fetch), with the whole-zip fallback. For: the monthly pull
+   drops from 7.8 GB to the central directories plus changed members; a
+   `records-vs-origin` unit becomes tens of KB instead of a 1.2 GB zip;
+   `freshness` gains `current()`; comparing member CRCs closes D4's
+   same-size silent miss. Against: a new `DeltaSpec` mode and transport
+   code to test (zip64, a rebuild mid-pass that moves offsets — caught by
+   the member's CRC, answered by re-listing; the tokenised URL's
+   lifetime, observed stable within a session); it depends on the origin
+   keeping Range, and the fallback is today's cost.
+6. **The plugin writes `in_force`**, the key the documents name (09 §9.5,
+   06 §6.1), keeping `eli_*` for the ontology fields. For: the ask layer
+   and every later legal plugin (the Gazzetta) read one key; free now.
+   Against: one asymmetry in `eli.EXTRA_KEYS`, one test to move.
+
 ## 7. Measurements owed before parameters are fixed
 
 - Chunk density per collection (articles per act, from the V zips'
