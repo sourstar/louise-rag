@@ -231,8 +231,9 @@ def test_a_new_version_moves_its_predecessor_through_its_own_stages(versioned):
         _run(con, c, "fts", "embed")
     finally:
         embeddings._embed_texts = orig
-    v15_chunks = len(worker._load_chunks(row, c))
-    assert len(calls) == v15_chunks, "only the new version reached the encoder; the moved one reused everything"
+    assert len(calls) == 0, ("nothing reached the encoder: the moved version reused everything, and the new "
+                             "version's text is R.D. 206's original, whose vectors it carries (06 §6.3, amended)")
+    assert embeddings._conn(c).open_table(embeddings.TABLE).count_rows(f"book_id = {V15_ID}") == len(worker._load_chunks(row, c))
     t = _table(con)
     assert t[V12_ID]["synced"] == 1
     def text_books(day):
@@ -274,3 +275,38 @@ def test_retrieval_applies_the_window_per_collection(versioned):
     assert {int(h["book_id"]) for h in got["hits"]} == {V12_ID}
     got = retrieval.search(con, "Sardegna", k=10, mode="fts", translate=False, collection=c, as_of=19470101)
     assert got["hits"] == []
+
+
+def test_a_later_version_carries_the_vectors_of_the_articles_it_shares(versioned, monkeypatch):
+    """06 §6.3 (amended 2026-10-12, RULE 1): the same cleaned text in one
+    space has one vector, so a version embeds only the articles it changed;
+    every version still holds every vector."""
+    c, con, _ = versioned
+    _run(con, c, "rdf", "fts")
+    calls: list = []
+
+    def counting(items, recipe=None, **kw):
+        calls.extend(items)
+        return [[1.0] + [0.0] * 7 for _ in items]
+    monkeypatch.setattr(embeddings, "_embed_texts", counting)
+    rows = {int(r["native_id"]): r for r in con.execute("SELECT * FROM documents")}
+    texts = {nid: {ch["text"] for ch in worker._load_chunks(rows[nid], c)} for nid in (O_ID, V11_ID, V12_ID)}
+    assert 0 < len(texts[V11_ID] - texts[O_ID]) < len(texts[V11_ID]) // 2, "most articles are shared"
+
+    def embed(nid):
+        before = len(calls)
+        worker.stage_embed(con, rows[nid], c)
+        if con.in_transaction:
+            con.execute("COMMIT")
+        return len(calls) - before
+    assert embed(O_ID) == len(texts[O_ID])
+    assert embed(V11_ID) == len(texts[V11_ID] - texts[O_ID]), \
+        "only the articles the 2001 version changed reached the encoder"
+    assert embed(V12_ID) == len(texts[V12_ID] - texts[V11_ID] - texts[O_ID])
+    tbl = embeddings._conn(c).open_table(embeddings.TABLE)
+    for nid in (O_ID, V11_ID, V12_ID):
+        assert tbl.count_rows(f"book_id = {nid}") == len(worker._load_chunks(rows[nid], c)), \
+            "a carried vector is a row of the new version like any other"
+    assert con.execute("SELECT COUNT(*) FROM chunk_hashes").fetchone()[0] >= len(texts[V12_ID])
+    last = con.execute("SELECT message FROM events WHERE stage='embed' ORDER BY id DESC LIMIT 1").fetchone()[0]
+    assert "from other versions" in last

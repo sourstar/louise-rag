@@ -414,3 +414,27 @@ def test_origin_coverage(corpus):
     for ref in refs:
         read |= assert_covered(SOURCE, ref, corpus)
     assert read, "fetch read the zips"
+
+
+# ---- relations ----------------------------------------------------------------
+
+def test_the_acts_modifications_and_references_are_eli_edges(corpus):
+    """06 §6.1 `relations()`, eli-legal-plugins.md §5.4: the statements the
+    origin makes about other acts, as typed edges between acts, left
+    unresolved (05 §5.5); written by the build as 09 §9.14's lines."""
+    from app.hold import records as hold_records
+    from app.plugins.base import Edge
+    doc = _doc(corpus, M306)
+    edges = list(SOURCE.relations(doc))
+    assert Edge(to="urn:nir:stato:decreto.legislativo:2000-05-26;187", type="eli:amends") in edges
+    assert Edge(to="akn:it/act/legge/stato/1988-08-23/400", type="eli:cites") in edges
+    assert all(e.type in ("eli:amends", "eli:repeals", "eli:cites") for e in edges)
+    assert all("#" not in e.to and not e.to.endswith("!main") for e in edges), "between acts, never articles"
+    assert len(edges) == len({(e.type, e.to) for e in edges}), "one edge per (type, act)"
+    amends = {e.to for e in edges if e.type == "eli:amends"}
+    assert 1 <= len(amends) <= len(doc.extra["active_modifications"])
+    lines = hold_records.edges_of(SOURCE, doc, from_uid=doc.uid, snapshot_id="2026-10")
+    assert len(lines) == len(edges) and all(line.endswith(b"\n") for line in lines)
+    assert b'"type":"eli:amends"' in lines[0]
+    repealed = _doc(corpus, RD206_R)
+    assert list(SOURCE.relations(repealed)) == [], "a repeal state states nothing about other acts"

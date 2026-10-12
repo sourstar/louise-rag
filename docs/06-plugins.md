@@ -377,6 +377,18 @@ paragraph costs one chunk in every family: `cdc` and `verbatim` because
 their boundaries follow the text, `fixed` because the unchanged prefix
 before the edit still hashes the same and only the tail is re-embedded.
 
+*Amended 2026-10-12 (RULE 1; docs/notes/normattiva-multivigenza-review.md
+§3.5):* in a VERSIONED collection — one whose Codex `profile` declares a
+validity axis (09 §9.3) — the map crosses records. A chunk whose text
+another record of the collection already holds a vector for is carried
+under its new id and never embedded again, because a space is a function
+from cleaned text to vectors (02 §2.4) and the same text has one vector;
+each version of an act shares most of its articles with the one before.
+Measured on the constitutional laws' 95 versions, every version together
+holds 1.32× the distinct article texts of the latest ones, not 6×. The
+map stays local — the peer keeps the hash of every chunk text it holds a
+vector for — so nothing new travels.
+
 Chunking is a pure function of the cleaned text and the layer's chunker
 version. Two peers with the same platform image cut the same document
 into the same chunks with the same ids, or a check fails and names the

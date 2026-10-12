@@ -265,6 +265,16 @@ CREATE TABLE IF NOT EXISTS validity (
 CREATE INDEX IF NOT EXISTS idx_validity_work ON validity(work, valid_from, native_id);
 CREATE INDEX IF NOT EXISTS idx_validity_native ON validity(native_id);
 CREATE INDEX IF NOT EXISTS idx_validity_unsynced ON validity(synced, native_id);
+-- 06 §6.3 (amended 2026-10-12): the hash of every chunk text this peer holds
+-- a vector for, so a versioned collection's new version carries the vectors
+-- of the articles it shares with another version instead of embedding them
+-- again (app/embeddings.py cross_carry). Node-local; one holder per hash.
+CREATE TABLE IF NOT EXISTS chunk_hashes (
+  text_hash BLOB PRIMARY KEY,
+  chunk_id TEXT NOT NULL,
+  native_id INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chunk_hashes_native ON chunk_hashes(native_id);
 """
 
 class ManifestConnection(sqlite3.Connection):

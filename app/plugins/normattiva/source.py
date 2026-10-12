@@ -72,7 +72,7 @@ import zipfile
 from pathlib import Path
 
 from .. import eli
-from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass,
+from ..base import (CanonicalDoc, DiscoverState, DocRef, Edge, Erasure, LicenseClass,
                     Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc,
                     UnindexableDocument)
 from . import akn, rendition
@@ -392,3 +392,35 @@ class NormattivaSource:
             sections=rendition.sections(act),
             raw_hash=raw.raw_hash,
         )
+
+    def relations(self, doc: CanonicalDoc):
+        """06 §6.1's typed edges, named after ELI properties
+        (eli-legal-plugins.md §5.4, 09 §9.14): what THIS version's own
+        metadata states. `eli:amends` — or `eli:repeals` where the statement
+        says so — for each act its active modifications touch, by the act's
+        URN:NIR; `eli:cites` for each act its references point at, by its
+        AKN work path. `to` is a canonical id left unresolved (05 §5.5):
+        `urn:nir:…`, `akn:it/act/…`; the article a statement names is in the
+        record's `active_modifications` and `eli_cites`, the edge is between
+        acts. One edge per (type, act)."""
+        x = doc.extra or {}
+        seen: set[tuple[str, str]] = set()
+        for mod in x.get("active_modifications") or []:
+            dest = str(mod.get("destination") or "").split("#", 1)[0].strip()
+            if not dest.startswith("urn:"):
+                continue
+            words = " ".join(str(mod.get(k) or "") for k in ("new", "old", "type")).upper()
+            kind = "eli:repeals" if "ABROG" in words or "REPEAL" in words else "eli:amends"
+            if (kind, dest) in seen:
+                continue
+            seen.add((kind, dest))
+            yield Edge(to=dest, type=kind)
+        for href in x.get("eli_cites") or []:
+            path = str(href).split("#", 1)[0].split("/!", 1)[0].strip("/")
+            if not path.startswith("akn/"):
+                continue
+            target = "akn:" + path[len("akn/"):]
+            if ("eli:cites", target) in seen:
+                continue
+            seen.add(("eli:cites", target))
+            yield Edge(to=target, type="eli:cites")

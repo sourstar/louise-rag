@@ -941,6 +941,59 @@ def _written_chunks(db, book_id: int) -> dict[str, dict]:
         return {}
 
 
+def record_chunk_hashes(con, book_id: int, chunks) -> None:
+    """The hash of every chunk text this document holds a vector for, in the
+    manifest's `chunk_hashes` (06 §6.3, amended 2026-10-12): what lets a
+    later version of the same Work carry those vectors instead of embedding
+    the same articles again (`cross_carry`). One holder per hash is enough,
+    so a text two documents share names whichever wrote last."""
+    rows = [(chunk_text_hash(c["text"]), c["id"], int(book_id))
+            for c in chunks if _reusable(c)]
+    con.execute("DELETE FROM chunk_hashes WHERE native_id=?", (int(book_id),))
+    if rows:
+        con.executemany("INSERT OR REPLACE INTO chunk_hashes(text_hash, chunk_id, native_id) "
+                        "VALUES(?,?,?)", rows)
+
+
+def cross_carry(con, collection, chunks, carry: dict, *, exclude_book: int) -> int:
+    """06 §6.3 (amended 2026-10-12, RULE 1): in a versioned collection a
+    chunk whose TEXT another record already holds a vector for is carried
+    under its new id, never embedded again — a space is a function from
+    cleaned text to vectors (02 §2.4), so the same text has one vector.
+    Extends `carry` (hash -> vector) and returns how many it added. The
+    lookup is the manifest's hash table, then `vectors_by_chunk_id`, which
+    reads by `book_id`: bounded by this document's chunks, never by the
+    corpus."""
+    want: dict[bytes, dict] = {}
+    for c in chunks:
+        if not _reusable(c):
+            continue
+        h = chunk_text_hash(c["text"])
+        if h not in carry:
+            want[h] = c
+    if not want:
+        return 0
+    found: dict[bytes, str] = {}
+    hashes = list(want)
+    for i in range(0, len(hashes), 500):
+        part = hashes[i:i + 500]
+        marks = ",".join("?" for _ in part)
+        for r in con.execute(f"SELECT text_hash, chunk_id FROM chunk_hashes "
+                             f"WHERE text_hash IN ({marks}) AND native_id<>?",
+                             [*part, int(exclude_book)]):
+            found[bytes(r[0])] = r[1]
+    if not found:
+        return 0
+    vectors = vectors_by_chunk_id(list(found.values()), collection)
+    n = 0
+    for h, cid in found.items():
+        v = vectors.get(cid)
+        if v is not None:
+            carry[h] = v
+            n += 1
+    return n
+
+
 def _held_columns(at: "pa.Table"):
     """(id, text, vector) per row of a read, the vector a numpy row of the
     table's own type — never a Python list. Measured on 128 documents of 130
@@ -1025,6 +1078,9 @@ class EmbedCounts:
     files)."""
     embedded: int = 0
     reused: int = 0
+    #: of `reused`, those carried from ANOTHER record's vector (06 §6.3,
+    #: amended 2026-10-12)
+    crossed: int = 0
     chars: int = 0
 
     def add(self, other: "EmbedCounts") -> None:
@@ -1160,14 +1216,26 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
     todo = [c for c in chunks if c["id"] not in done]
     if counts is not None:
         counts.reused += len(done)
+    from app import validity as validity_mod
+    versioned = lock_con is not None and validity_mod.declared(collection) is not None
     if not todo:
+        if versioned:
+            record_chunk_hashes(lock_con, book_id, chunks)
         return len(chunks)          # already complete; nothing to embed
+    if versioned and reuse:
+        # 06 §6.3 (amended 2026-10-12): the articles this version shares with
+        # another version of its Work keep their vectors
+        crossed = cross_carry(lock_con, collection, todo, carry, exclude_book=int(book_id))
+        if counts is not None and crossed:
+            counts.crossed += crossed
     if sink is not None and len(todo) <= config.EMBED_SLICE_CHUNKS:
         # one slice: embedded here, committed with the rest of its batch
         sink.put(PendingDoc(int(book_id),
                             _rows_for(book_id, lang, todo, recipe, carry, dtype,
                                       collection, counts, columns),
                             purge=rebuild, seen=seen))
+        if versioned:
+            record_chunk_hashes(lock_con, book_id, chunks)
         return len(todo) + len(done)
 
     written = 0
@@ -1230,6 +1298,8 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
             raise EmbedInterrupted(
                 f"stopped after {written} of {len(todo)} chunks; "
                 f"the document resumes from what is already written")
+    if versioned:
+        record_chunk_hashes(lock_con, book_id, chunks)
     return written + len(done)
 
 

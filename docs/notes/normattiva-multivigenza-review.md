@@ -511,7 +511,7 @@ lacks.
    "extra.eli_work", "kind": "versions-per-work"}}` — opaque to the
    platform except to the ask layer and the index maintainer.
 3. **06 §6.3 — vectors carried by chunk hash across records of one
-   collection** (RULE 1): the same cleaned text in one space has one
+   collection** (RULE 1; *amended 2026-10-12, built*): the same cleaned text in one space has one
    vector.
 4. **02 §2.3 / 06 §6.4 — `origin.unit: index-page` for a zip whose
    central directory is fetched by Range**; **09 §9.17 — a `DeltaSpec`

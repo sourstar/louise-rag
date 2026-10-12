@@ -488,7 +488,8 @@ def stage_embed(con, row, collection) -> None:
         "UPDATE documents SET embed_done=1,embed_version=?,updated_at=? WHERE uid=?",
         (config.EMBED_VERSION, int(time.time()), row["uid"]))
     db.log_event(con, "info", "embed",
-                 f"embedded {counts.embedded} chunks, reused {counts.reused}", row["uid"])
+                 f"embedded {counts.embedded} chunks, reused {counts.reused}"
+                 + (f" ({counts.crossed} from other versions)" if counts.crossed else ""), row["uid"])
 
 
 def _record_embedded(collection, started: float, counts) -> None:
