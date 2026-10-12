@@ -224,33 +224,6 @@ fixed, the coverage of the 33,750 repealed-only acts by such closures
 asked for first — a second listing of the archive a month from now — is
 dated.
 
-**Step 3 — the collection on the node (2026-10-12, night): PREPARED, NOT
-RUN.** The recipe is drafted at
-[`normattiva-recipe.toml`](normattiva-recipe.toml)
-(parses; every field the plugin does not default, the licence terms'
-hash, the origin form and unit, the validation checks), with the values
-only the node can give left marked: the engine block and weights digest
-of the encoder that serves DAR-legal-it, and `ctx` once the articles'
-token lengths are measured. What stopped the run is outward, not code:
-DAR-legal-it was served nowhere. **Served since 2026-10-12 22:25 (operator:
-"do it")**: `vega-dar-legal-it` in the LocalAI app, the repo's
-`louise-dar-legal-it` backend (torch 2.14.0+xpu in its own venv) behind
-VeGa's wrapper — no sidecar, LocalAI stays the card's sole owner; weights
-`/mnt/ssd5/apps/models/dar-legal-it` at revision de7867e4; run
-`sha256:85b9fa1a…`; three Italian legal texts verified by receipt and equal
-to a CPU sentence-transformers run (cosine 1.000000). GteModel has no
-llama.cpp converter, so no GGUF exists. One LocalAI restart; watchdog and
-pins survived (docs/notes/vega.md §12). The other session (louise-rag-f3) deployed 34874bc
-at 21:45 and set gutenberg's share slices; by message it has nothing
-queued tonight and will deploy main's head next, so no second deploy was
-made over it: restarting the worker for a collection that cannot yet be
-created buys nothing. The order when the window opens: deploy main's head
-(stage, promote, build, the suite on the node, restart); serve the encoder
-and read its run identity into the recipe; measure `ctx`; record the
-licence acknowledgement (YELLOW); `hold collection create normattiva
---recipe … --encoder …`; `hold fetch normattiva --profile full` (7.8 GB,
-two connections); scan, parse, fts; embed. The collection is the
-quarantine's guinea pig: never listed, every missing tool fixed.
 
 ### 2026-10-05: the side branches merged into main
 
