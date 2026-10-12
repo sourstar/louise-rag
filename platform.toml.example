@@ -127,3 +127,10 @@ segments_per_file = 1
 # (09 §9.9): after a new snapshot many peers holding the same old version ask
 # for the same patch. Seconds; 0 deletes each patch once served.
 patch_cache_s = 604800
+
+[translate]
+# Reading translation by SOURCE language: the Ask page's results and its
+# reader send a text in a listed language to that model instead of
+# TRANSLATE_MODEL (one item per call; a failure falls back to it). Searches
+# always use TRANSLATE_MODEL. Node-wide, in no Codex.
+# reading = { la = "index-translate-9b", grc = "index-translate-9b" }

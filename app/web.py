@@ -308,12 +308,26 @@ def _mt_items(lang: str, items: list[tuple[str, str, str]]
     stays a name is its answer, not the chat model's copy-through."""
     if not items:
         return {}, []
-    got = mt.translate([(text, lang) for _cid, text, _src in items])
-    if not got:
-        return None
     out: dict[str, str] = {}
     missed: list[str] = []
-    for (cid, text, _src), value in zip(items, got):
+    # `[translate] reading` (operator, 2026-10-12): a text whose SOURCE
+    # language has its own reading model goes there first, one at a time;
+    # what it cannot translate joins TRANSLATE_MODEL's batch below
+    rest: list[tuple[str, str, str]] = []
+    for cid, text, src in items:
+        model = mt.reading_model(src) if src != lang else None
+        value = mt.translate_reading(model, text, src, lang) if model else None
+        if value is None:
+            rest.append((cid, text, src))
+        else:
+            out[cid] = value
+            _remember(lang, text, value)
+    if not rest:
+        return out, missed
+    got = mt.translate([(text, lang) for _cid, text, _src in rest])
+    if not got:
+        return (out, [cid for cid, _t, _s in rest]) if out else None
+    for (cid, text, _src), value in zip(rest, got):
         if value is None:
             missed.append(cid)
             continue
@@ -2977,6 +2991,15 @@ def system_log_fragment(request: Request):
                                        {"events": _recent_events_all()})
 
 
+def _reading_models() -> dict[str, str]:
+    """`[translate] reading`, for the GPU panel; {} when the file cannot be read."""
+    from . import platform_config
+    try:
+        return dict(platform_config.load().translate.reading)
+    except Exception:   # noqa: BLE001 — the panel shows what it can
+        return {}
+
+
 @admin_router.get("/system/gpu", response_class=HTMLResponse)
 def system_gpu_fragment(request: Request):
     # asked of the probe over HTTP, bounded (app/gpu.py): this process never
@@ -2988,7 +3011,8 @@ def system_gpu_fragment(request: Request):
     from . import gpu_models
     models = gpu_models.panel(collections_mod.load_all(),
                               extra_urls=(config.CHAT_URL, config.TRANSLATE_URL, config.RERANK_URL),
-                              chat_model=config.CHAT_MODEL, translate_model=config.TRANSLATE_MODEL)
+                              chat_model=config.CHAT_MODEL, translate_model=config.TRANSLATE_MODEL,
+                              reading=_reading_models())
     return TEMPLATES.TemplateResponse(request, "_fragments/gpu.html",
                                        gpu.panel(config.GPU_PROBE_URL)
                                        | {"governor": gpu.governor(),

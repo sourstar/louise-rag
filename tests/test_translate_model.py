@@ -257,3 +257,86 @@ def test_the_completion_names_translate_model_only_when_set(monkeypatch, model):
     assert seen["url"] == "http://runner/v1/completions"
     assert seen["body"].get("model") == (model or None)
     assert ("model" in seen["body"]) == bool(model)
+
+
+# ---- [translate] reading: a model per source language (operator, 2026-10-12) ----------
+
+def _reading(monkeypatch, mapping):
+    from app import platform_config
+    monkeypatch.setattr(platform_config, "load",
+                        lambda: platform_config.PlatformConfig(
+                            translate=platform_config.TranslateConfig(reading=mapping)))
+
+
+def test_a_latin_passage_is_read_through_its_reading_model_and_the_rest_through_madlad(
+        client, monkeypatch):
+    """Index-Translate for Latin, one call with its own template; the German
+    item in the same page stays in MADLAD's batch."""
+    from app import model_load
+    calls = []
+    _server(monkeypatch, calls=calls)
+    madlad = mt.httpx.post
+    asked = []
+
+    def post(url, json=None, timeout=None, headers=None):
+        if json.get("model") == "index-translate-9b":
+            asked.append(json["prompt"])
+            return _Resp({"choices": [{"text": "  Gallia est omnis divisa (it)  "}]})
+        return madlad(url, json=json, timeout=timeout, headers=headers)
+    monkeypatch.setattr(mt.httpx, "post", post)
+    monkeypatch.setattr(model_load, "ensure_loaded", lambda *a, **k: None)
+    _reading(monkeypatch, {"la": "index-translate-9b"})
+    d = client.post("/ask/translate", json={"lang": "it", "items": [
+        {"id": "a", "text": "Gallia est omnis divisa", "src": "la"},
+        {"id": "b", "text": "Ein Titel", "src": "de"}]}).json()
+    assert d["items"] == {"a": "Gallia est omnis divisa (it)", "b": "it:Ein Titel"}
+    assert len(asked) == 1 and "意大利语" in asked[0] and asked[0].endswith("<think>\n\n</think>\n\n")
+    assert calls == [[("Ein Titel", "it")]], "only the German item went to MADLAD"
+
+
+def test_a_reading_model_that_fails_hands_the_item_to_madlad(client, monkeypatch):
+    from app import model_load
+    calls = []
+    _server(monkeypatch, calls=calls)
+    madlad = mt.httpx.post
+
+    def post(url, json=None, timeout=None, headers=None):
+        if json.get("model") == "index-translate-9b":
+            raise httpx.ConnectError("refused")
+        return madlad(url, json=json, timeout=timeout, headers=headers)
+    monkeypatch.setattr(mt.httpx, "post", post)
+    monkeypatch.setattr(model_load, "ensure_loaded", lambda *a, **k: None)
+    _reading(monkeypatch, {"la": "index-translate-9b"})
+    d = client.post("/ask/translate", json={"lang": "it", "items": [
+        {"id": "a", "text": "Gallia est omnis divisa", "src": "la"}]}).json()
+    assert d["items"] == {"a": "it:Gallia est omnis divisa"} and d["missed"] == []
+    assert calls == [[("Gallia est omnis divisa", "it")]]
+
+
+def test_a_search_never_uses_a_reading_model(monkeypatch):
+    """Query translation is mt.translate alone: the reading map is not consulted."""
+    _reading(monkeypatch, {"la": "index-translate-9b"})
+    calls = []
+    _server(monkeypatch, calls=calls)
+    assert mt.translate([("balena", "la")]) == ["la:balena"]
+    assert calls == [[("balena", "la")]]
+
+
+def test_the_reading_map_is_parsed_and_refused_when_malformed(tmp_path, monkeypatch):
+    from app import platform_config
+    from app.transfer import schedule as schedule_mod
+    p = tmp_path / "platform.toml"
+    p.write_text('[translate]\nreading = { la = "index-translate-9b", grc = "index-translate-9b" }\n',
+                 encoding="utf-8")
+    cfg = platform_config._load_one(p)
+    assert cfg.translate.reading == {"la": "index-translate-9b", "grc": "index-translate-9b"}
+    p.write_text('[translate]\nreading = { Latin = 3 }\n', encoding="utf-8")
+    with pytest.raises(schedule_mod.ScheduleError, match="reading"):
+        platform_config._load_one(p)
+
+
+def test_the_gpu_panel_names_a_reading_model():
+    from app import gpu_models
+    uses = gpu_models.louise_uses([], translate_model="louise-translate-madlad",
+                                  reading={"grc": "index-translate-9b", "la": "index-translate-9b"})
+    assert uses["index-translate-9b"] == ["translation (reading grc)", "translation (reading la)"]

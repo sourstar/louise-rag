@@ -974,6 +974,9 @@ variable, a file, a log line or a message.
 [peers.pins] "http://peer.example.org:8742" = "ed25519:…"   # a digest from that address under another key is discarded
 [share]      patch_cache_s = 604800   # how long a part patch computed for a peer is kept for the next (09 §9.9;
              # added 2026-10-12): 0 deletes it once served
+[translate]  reading = { la = "index-translate-9b", grc = "index-translate-9b" }   # what is READ (the Ask
+             # page's results, the reader) in a listed source language goes to that model, one item per call,
+             # falling back to TRANSLATE_MODEL; searches never use it. Node-wide, in no Codex (added 2026-10-12)
 [dht]        enabled = true
 [admission]  bytes_per_hour = "64MB"   objects_per_hour = 1000   queue = "256MB"
              # 08 §8.2: what this peer accepts per hour from keys whose work it has not seen

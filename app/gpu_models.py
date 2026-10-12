@@ -34,7 +34,8 @@ class ModelRow:
         return bool(self.uses)
 
 
-def louise_uses(collections, *, chat_model: str = "", translate_model: str = "") -> dict[str, list[str]]:
+def louise_uses(collections, *, chat_model: str = "", translate_model: str = "",
+                reading: dict[str, str] | None = None) -> dict[str, list[str]]:
     """model name -> what Louise uses it for, from the collection files and
     the chat and translation settings."""
     out: dict[str, list[str]] = {}
@@ -56,6 +57,8 @@ def louise_uses(collections, *, chat_model: str = "", translate_model: str = "")
             add(r.model, f"{c.name}: reranking")
     add(chat_model, "chat")
     add(translate_model, "translation")
+    for src, model in sorted((reading or {}).items()):
+        add(model, f"translation (reading {src})")
     return out
 
 
@@ -110,11 +113,12 @@ def _get_json(url: str):
 
 
 def panel(collections, *, extra_urls=(), chat_model: str = "", translate_model: str = "",
-          get_json=None) -> dict:
+          reading: dict[str, str] | None = None, get_json=None) -> dict:
     """The breakdown: rows from every LocalAI that answers `/system`, the two
     sums, and the origins that did not answer (named, never silent)."""
     get_json = get_json or _get_json
-    uses = louise_uses(collections, chat_model=chat_model, translate_model=translate_model)
+    uses = louise_uses(collections, chat_model=chat_model, translate_model=translate_model,
+                       reading=reading)
     rows: list[ModelRow] = []
     seen: set = set()
     asked, failed = [], []

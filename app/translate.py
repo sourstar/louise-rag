@@ -124,3 +124,96 @@ def translate(items: list[tuple[str, str]]) -> list[str | None]:
     if not isinstance(out, list) or len(out) != len(items):
         return []
     return [o if isinstance(o, str) and o.strip() else None for o in out]
+
+
+# ---- reading translation by source language (operator, 2026-10-12) -------------------
+#
+# `[translate] reading` in platform.toml maps a SOURCE language to a model for
+# what is READ — the Ask page's results and its reader — where TRANSLATE_MODEL
+# is weak: Index-Translate-9B for Latin and Ancient Greek (chrF 51.6 / 51.9
+# against MADLAD's 34.4 / 47.3; docs/notes/translator-choice.md). Searches
+# never come here. One item per call: these are chat models, not MADLAD's
+# batched backend. A failure is None and the caller hands the item to
+# TRANSLATE_MODEL, so a reading model only ever improves a translation.
+
+#: one reading call's bound: a whole passage measured 31 s median on the node
+READING_TIMEOUT_S = 240.0
+#: Index-Translate's card asks in Chinese and names the target in Chinese
+_ZH = {"en": "英语", "fr": "法语", "fi": "芬兰语", "de": "德语", "zh": "中文", "ja": "日语",
+       "ko": "韩语", "it": "意大利语", "es": "西班牙语", "pt": "葡萄牙语", "nl": "荷兰语",
+       "sv": "瑞典语", "no": "挪威语", "da": "丹麦语", "pl": "波兰语", "ru": "俄语",
+       "uk": "乌克兰语", "cs": "捷克语", "hu": "匈牙利语", "ro": "罗马尼亚语",
+       "el": "希腊语", "tr": "土耳其语", "ar": "阿拉伯语", "he": "希伯来语", "hi": "印地语",
+       "la": "拉丁语", "grc": "古希腊语", "ca": "加泰罗尼亚语", "eo": "世界语"}
+_EN = {"en": "English", "fr": "French", "fi": "Finnish", "de": "German", "zh": "Chinese",
+       "ja": "Japanese", "ko": "Korean", "it": "Italian", "es": "Spanish", "pt": "Portuguese",
+       "nl": "Dutch", "sv": "Swedish", "no": "Norwegian", "da": "Danish", "pl": "Polish",
+       "ru": "Russian", "uk": "Ukrainian", "cs": "Czech", "hu": "Hungarian", "ro": "Romanian",
+       "el": "Greek", "tr": "Turkish", "ar": "Arabic", "he": "Hebrew", "hi": "Hindi",
+       "la": "Latin", "grc": "Ancient Greek", "ca": "Catalan", "eo": "Esperanto"}
+
+
+def reading_model(src: str) -> str | None:
+    """The model `[translate] reading` names for text in `src`, or None."""
+    if not available():
+        return None
+    from . import platform_config
+    try:
+        return platform_config.load().translate.reading.get((src or "").lower())
+    except Exception:   # noqa: BLE001 — an unreadable file: TRANSLATE_MODEL, as before
+        return None
+
+
+def _reading_request(model: str, text: str, src: str, to: str) -> tuple[str, dict] | None:
+    """(path, body) for one reading call, or None when this model cannot be
+    asked for `to`. Greedy, as measured."""
+    greedy = {"temperature": 0, "top_k": 1, "top_p": 1.0, "seed": 0,
+              "max_tokens": min(8192, len(text) + 256)}
+    if model.startswith("index-translate"):
+        if to not in _ZH:
+            return None
+        # LocalAI drops chat_template_kwargs, so the model would think aloud:
+        # its own template with enable_thinking=false, rendered here — an
+        # empty think block after the turn (measured 2026-10-10)
+        prompt = (f"<|im_start|>user\n请将以下文本翻译为{_ZH[to]}，直接输出翻译结果，"
+                  f"不要进行任何解释。\n\n{text}<|im_end|>\n"
+                  "<|im_start|>assistant\n<think>\n\n</think>\n\n")
+        return "/v1/completions", {"model": model, "prompt": prompt, "stop": ["<|im_end|>"], **greedy}
+    if to not in _EN:
+        return None
+    ask = (f"Translate the following {_EN.get(src, src)} text into {_EN[to]}. "
+           f"Output only the translation.\n\n{text}")
+    return "/v1/chat/completions", {"model": model, "messages": [{"role": "user", "content": ask}], **greedy}
+
+
+def translate_reading(model: str, text: str, src: str, to: str) -> str | None:
+    """One text through a reading model; None when it cannot or did not
+    answer — the caller then asks TRANSLATE_MODEL."""
+    req = _reading_request(model, text, src, to)
+    if req is None or not available():
+        return None
+    path, body = req
+
+    def call(timeout: float) -> dict:
+        r = httpx.post(f"{config.TRANSLATE_URL}{path}", json=body, timeout=timeout,
+                       headers=dispatch.level_headers())
+        r.raise_for_status()
+        return r.json()
+    try:
+        model_load.ensure_loaded(
+            config.TRANSLATE_URL, model,
+            lambda bound_s: _reading_warm(model, bound_s), caller="translation (reading)")
+        with dispatch.call(config.TRANSLATE_URL, dispatch.Level.TRANSLATE, timeout=READING_TIMEOUT_S):
+            choice = call(READING_TIMEOUT_S)["choices"][0]
+    except Exception:   # noqa: BLE001 — the caller falls back to TRANSLATE_MODEL
+        return None
+    out = choice.get("text") if path == "/v1/completions" else (choice.get("message") or {}).get("content")
+    out = (out or "").replace("<think>", "").replace("</think>", "").strip()
+    return out or None
+
+
+def _reading_warm(model: str, bound_s: float) -> None:
+    path, body = _reading_request(model, "OK", "en", "it") or ("/v1/completions", {"model": model, "prompt": "OK"})
+    r = httpx.post(f"{config.TRANSLATE_URL}{path}", json={**body, "max_tokens": 4},
+                   timeout=bound_s, headers={dispatch.LEVEL_HEADER: "translate"})
+    r.raise_for_status()

@@ -7,6 +7,11 @@ config changed. Scripts: `tools/measure/translator_choice_{build,search,score,re
 node side `/root/xlate-choice/` (`xlate.py`, `run2.sh`/`run3.sh`, `go*.sh`, `out/`).
 Local copies and raw outputs: `tools/measure/out/xlate_choice/`.*
 
+**Built 2026-10-12 (operator: "do it"):** `[translate] reading` in
+platform.toml (07 §7.8) sends what is read in Latin and Ancient Greek to
+Index-Translate-9B (app/translate.py `translate_reading`, the template
+measured here); everything else, and every search, stays on MADLAD.
+
 **Complete (2026-10-11).** The operator's GPU pause stopped the first run
 before Index-Translate-9B and TranslateGemma-12B; both ran on 2026-10-10/11
 (`go4.sh`, `go5.sh`), and all six candidates are scored on the same sets.

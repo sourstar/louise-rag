@@ -66,6 +66,18 @@ class ShareConfig:
 
 
 @dataclass(frozen=True)
+class TranslateConfig:
+    """`[translate]` (07 §7.8). `reading`: {source language: model} — the
+    Ask page's translation of what is READ (results, the reader) for a text
+    in that language goes to that model instead of TRANSLATE_MODEL
+    (app/translate.py `reading_model`). Searches never use it: a query is
+    translated by TRANSLATE_MODEL. Node-wide, in no Codex (operator,
+    2026-10-12; docs/notes/translator-choice.md: Index-Translate-9B for
+    Latin and Ancient Greek)."""
+    reading: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class TrustConfig:
     """architecture-v2.md §14's `[trust]` block, the part P1.2 needs.
 
@@ -212,6 +224,7 @@ class PlatformConfig:
     bandwidth: BandwidthConfig = BandwidthConfig()
     transfer: TransferConfig = TransferConfig()
     share: ShareConfig = ShareConfig()
+    translate: TranslateConfig = TranslateConfig()
     trust: TrustConfig = TrustConfig()
     admission: AdmissionConfig = AdmissionConfig()
     ask: AskConfig = AskConfig()
@@ -358,6 +371,13 @@ def _load_one(path: Path) -> PlatformConfig:
         raise schedule_mod.ScheduleError(
             f"[share] patch_cache_s is a number of seconds, 0 or more (0 = delete each "
             f"patch once served), got {cache_s!r}")
+    reading_raw = (raw.get("translate", {}) or {}).get("reading", {}) or {}
+    if not isinstance(reading_raw, dict) or not all(
+            isinstance(k, str) and re.fullmatch(r"[a-z]{2,3}", k) and isinstance(v, str) and v.strip()
+            for k, v in reading_raw.items()):
+        raise schedule_mod.ScheduleError(
+            "[translate] reading is {source language code: model name}, "
+            "e.g. { la = \"index-translate-9b\" } (07 §7.8)")
 
     authors_raw = trust_raw.get("space_authors", [])
     if not isinstance(authors_raw, list):
@@ -526,6 +546,7 @@ def _load_one(path: Path) -> PlatformConfig:
                         pins=pins, peer_port=peer_port)
     return PlatformConfig(bandwidth=bandwidth, transfer=transfer,
                           share=ShareConfig(patch_cache_s=cache_s),
+                          translate=TranslateConfig(reading={k: v.strip() for k, v in reading_raw.items()}),
                           deposit=deposit,
                           peers=peers,
                           trust=TrustConfig(space_authors=tuple(authors)),
