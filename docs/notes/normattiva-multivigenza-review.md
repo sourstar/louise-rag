@@ -622,6 +622,8 @@ lacks.
    and every later legal plugin (the Gazzetta) read one key; free now.
    Against: one asymmetry in `eli.EXTRA_KEYS`, one test to move.
 
+**Operator, 2026-10-12: all six decided as recommended in §6.1.**
+
 ## 7. Measurements owed before parameters are fixed
 
 - Chunk density per collection (articles per act, from the V zips'
@@ -677,3 +679,73 @@ tags, whitespace runs and the `((…))` markers removed, hashed as
 strings. Dates compared as `YYYY-MM-DD`; the ORIGINALE's date taken as
 its publication date for the gap counts, which makes the first gap of
 every act conservative by the vacatio.
+
+## 10. Embedder and reranker, in the light of [R2] (2026-10-12)
+
+**Embedder: `jurifindit/DAR-legal-it`, as decided 2026-09-20, unchanged
+by §3.** The measurement stands (gazzetta-plugin.md §7.1b: recall@10
+0.8031 against qwen3-embedding-4b-instructed's 0.7748, ndcg@100 0.7704
+against 0.7534, dim 768 against 2560, the corpus embedded in minutes
+instead of an hour). §3 changes nothing the encoder is trained for: the
+version is chosen by key before ranking, so the encoder never has to tell
+two versions apart, and the index grows by the 1.32× distinct texts of
+§1, which at dim 768 is small. The one open item is the one the memory
+already records: the licence is an assumption (CC-BY-NC-SA-4.0 inferred
+from JuriFindIT), one message to the authors converts it to a fact, and
+the pin is irreversible — ask before `create`. Fallback:
+qwen3-embedding-4b with `space.query.instruction`. The operator's own
+trained encoder (`sourstar/ita-legal-embed`) arrives as a **sister**
+(02 §2.7: the same records, a new space, nothing re-fetched) once it
+beats DAR on the same 179 questions, which is
+`embedder-choice-and-supersession.md`'s path and the reason to pin now.
+
+**What [R2] reveals about the embedder.** (a) Its encoder is
+domain-adapted and **proprietary** — "weights, multi-version index and
+inference code, all proprietary" — so its result does not transfer, and
+such an encoder could not own a Louise space at all (02 §2.4:
+obtainable weights). (b) The paper names no base model, no pair count,
+no chunk size, and reports no comparison against an off-the-shelf
+encoder or BM25 alone; it is not evidence for any model choice. (c) P3
+("mutual nearest neighbours under any standard sentence encoder") is
+asserted, not measured — and it is the reason version selection must
+be a key lookup, which §3.3 makes it; the embedder has no temporal job.
+(d) **83.7 % of their questions name the article number**, and the
+authors conclude "citing the article is often not evidence of
+retrieval". Their 99 % provenance is therefore mostly a citation
+resolved by key — in Louise the reference source and resolver of §3.12,
+facts never ranked — and the embedder decides only the uncited
+remainder, which JuriFindIT's questions measure directly. (e) Their
+questions were screened so that the gold value is absent from the
+current text: a dense leg finds the article by topic, a number in the
+query is the lexical leg's — keep RRF over text and vector (05 §5.1),
+as the gazzetta note already insisted. (f) The 8,000-character
+"query-windowed extract" is the LLM's context per article, not an
+embedding chunk; it coincides with `akn_article`'s `max_chars` default
+and says nothing about chunking for embedding.
+
+**Reranker: `jina-reranker-v3` under the p95 ≤ 2 s budget, as decided
+2026-08-26, on by default for this collection, measured after the
+collection exists.** [R2] tried a fiscal cross-encoder and reports "no
+top-1 gain … adds nothing on this niche set" — expected where 84 % of
+candidates are a citation and the version layer does the rest. For
+Louise the reranker matters only on uncited semantic queries, where it
+is unmeasured on Italian law; on gutenberg it measured MRR 0.342 → 0.660
+on title queries and 0.121 → 0.223 on descriptive ones (05 §5.6). Two
+of gazzetta-plugin.md §7.5's three objections are gone: a candidate is
+sent as two whole chunks, never truncated, and every fallback names its
+reason under `rerank_withheld`; the third (node-global) is
+reranker-scope.md's conclusion. Under §3 the reranker sees one version
+per act, because the legs are prefiltered — [R2]'s near-identical
+versions never reach it. `RERANK_URL` is outside `space_id`, so this
+costs nothing to revisit: measure with and without on the 179 questions
+over the built collection, keep it if it holds ≤ 400 ms of the budget;
+Qwen3-Reranker-8B offline as the ceiling.
+
+**What to copy from [R2] into the pilot (gazzetta-plugin.md §7.2):** a
+temporal provenance arm. Questions dated to a past version whose gold
+value is absent from the current text, surfaced from the version diffs
+the archive already marks (`((…))` and `passive_modifications`),
+scored deterministically — did `--as-of` return the version in force
+(provenance), and does the answer carry the value (nugget) — with no
+LLM judge. It measures the one thing §3 exists for and costs an
+afternoon over the Codici.
