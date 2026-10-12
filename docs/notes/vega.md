@@ -686,6 +686,17 @@ At the end nothing is loaded and LocalAI is RUNNING.
 **Not staged.** DAR-legal-it (not in step 3's brief; no live collection
 uses it) and DNABERT-2 (genome collections deleted).
 
+**DAR-legal-it, staged 2026-10-12 (operator).** `louise-dar-legal-it`
+(`build_louise_backend.sh` from 3ecc108: torch 2.14.0+xpu, transformers
+4.55.4, sentence-transformers 5.1.0 in its own venv; 3.6 GB) and the wrapper
+`vega-louise-dar-legal-it` (166 MB, the shared receipts socket); model
+`vega-dar-legal-it` (not pinned, context 8192, device xpu); weights
+`/mnt/ssd5/apps/models/dar-legal-it` (820 MB, revision de7867e4, under the
+one weights mount). LocalAI restarted once to register the backend (lesson
+2 above); the busy watchdog and the five pins read back the same. First
+load 21.7 s; run `sha256:85b9fa1a…`; three texts receipt-verified and equal
+to the CPU reference (cosine 1.000000).
+
 **Left on the node, ours.**
 - Host `/tmp/vega-stage/` (99 MB, tmpfs): sources, the portable Python,
   `out/` with the reports, `pairs.json` and the reference vectors. The pip

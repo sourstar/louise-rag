@@ -232,10 +232,15 @@ hash, the origin form and unit, the validation checks), with the values
 only the node can give left marked: the engine block and weights digest
 of the encoder that serves DAR-legal-it, and `ctx` once the articles'
 token lengths are measured. What stopped the run is outward, not code:
-DAR-legal-it is served nowhere — it needs torch, a sidecar beside LocalAI,
-which is VeGa's sole VRAM owner, on a card that ran three embed streams
-that evening — and serving it is the operator's decision
-(docs/notes/vega.md). The other session (louise-rag-f3) deployed 34874bc
+DAR-legal-it was served nowhere. **Served since 2026-10-12 22:25 (operator:
+"do it")**: `vega-dar-legal-it` in the LocalAI app, the repo's
+`louise-dar-legal-it` backend (torch 2.14.0+xpu in its own venv) behind
+VeGa's wrapper — no sidecar, LocalAI stays the card's sole owner; weights
+`/mnt/ssd5/apps/models/dar-legal-it` at revision de7867e4; run
+`sha256:85b9fa1a…`; three Italian legal texts verified by receipt and equal
+to a CPU sentence-transformers run (cosine 1.000000). GteModel has no
+llama.cpp converter, so no GGUF exists. One LocalAI restart; watchdog and
+pins survived (docs/notes/vega.md §12). The other session (louise-rag-f3) deployed 34874bc
 at 21:45 and set gutenberg's share slices; by message it has nothing
 queued tonight and will deploy main's head next, so no second deploy was
 made over it: restarting the worker for a collection that cannot yet be
