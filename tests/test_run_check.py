@@ -99,9 +99,11 @@ class Rage:
         else:
             vectors = opening(texts, tag=self.tag)
         if self.batches_differ and len(texts) > 1:
-            # the same direction to five decimals, other bytes: what a
-            # batching fault looks like to every check but the fingerprint
-            vectors = [[x * 1.0000001 + 1e-9 for x in v] for v in vectors]
+            # a direction moved well inside the tolerance (cosine ~0.9998)
+            # and far outside last-bit noise: a batching fault to the batch
+            # check, never to the cosines. Last-bit noise alone is within
+            # the run's own band since amendment (b) of 2026-10-12 (03 §3.3)
+            vectors = [[v[0] + 0.02] + list(v[1:]) for v in vectors]
         request = httpx.Request("POST", url)
         run = next((r for u, r in self.by_url.items() if url.startswith(u)), self.run)
         return httpx.Response(

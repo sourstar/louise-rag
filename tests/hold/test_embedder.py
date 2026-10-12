@@ -375,3 +375,37 @@ def test_a_version_2_collection_keeps_the_statement_it_always_had():
     assert "run" not in body
     assert set(emb.benchmarks_entry(body)) == {"space_id", "encoder_image",
                                                "encoder_weights", "tokens_per_s"}
+
+
+# ---- amendment (b), 2026-10-12: batching judged against the run's own variation ----
+
+def _jitter(vectors, eps, seed):
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    out = []
+    for v in vectors:
+        x = np.asarray(v, dtype=np.float32) + rng.normal(0, eps, len(v)).astype(np.float32)
+        out.append((x / np.linalg.norm(x)).tolist())
+    return out
+
+
+def test_batched_answers_within_the_single_text_repeat_band_are_batch_invariant():
+    """An engine whose single-text answers move run to run by last-bit noise,
+    and whose batched answers move no more: invariant at those settings."""
+    base = fake_embed([f"text {i}" for i in range(16)])
+    single, repeat = _jitter(base, 1e-4, 1), _jitter(base, 1e-4, 2)
+    batched = _jitter(base, 1e-5, 3)
+    assert emb.within_band(single, batched, lambda: repeat) is True
+
+
+def test_batched_answers_outside_the_band_are_not():
+    """A deterministic single-text engine (repeats equal) leaves no band:
+    batched answers that differ beyond f32 rounding fail, and a vector for
+    another text — 2026-07's fault — fails whatever the band."""
+    base = fake_embed([f"text {i}" for i in range(16)])
+    assert emb.within_band(base, _jitter(base, 1e-3, 4), lambda: base) is False
+    swapped = [base[1], base[0]] + base[2:]
+    noisy = _jitter(base, 1e-4, 5)
+    assert emb.within_band(base, swapped, lambda: noisy) is False
+    assert emb.within_band(base, list(base), lambda: (_ for _ in ()).throw(AssertionError("asked"))) \
+        is True, "equal bytes: no second pass"

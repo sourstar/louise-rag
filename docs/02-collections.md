@@ -423,25 +423,21 @@ needs the text — `chunks`, T4 — runs where the text is (03 §3.2).
 
 ## 2.4 Vectors, spaces and the index
 
-Each part's vectors are one file: f16, one row per chunk, plus the
-**bucket label** of each row.
+A peer's vectors rest in its own LanceDB table, one per space (invariant
+of storage; *amended 2026-10-12*, operator: the per-part safetensors file
+this section described was never built, and nothing reads it), each row
+a chunk's vector with its **bucket label**.
 
 ```
-vectors/<space>/<slice>/NNNNN.safetensors         -- that part's vectors and labels (09 §9.6)
 vectors/<space>/index.json                        -- the index: version, k, seed rule, sample rule, iterations, group_size, training record
 vectors/<space>/centres/v<n>.safetensors          -- the centre points of index version n, a few MB
 vectors/<space>/buckets/v<n>/<group>.safetensors  -- the same vectors re-sorted by bucket (optional)
 ```
 
-The file holds two tensors, `vectors` (f16, rows in the order of the
-part's chunk ids) and `labels` (u32), and a header carrying
-`chunk_ids_sha256` — SHA-256 over the chunk ids in row order —
-`producers`, the ids of the bundles merged into it, and `index_min`, the
-oldest index version whose centres label every row correctly. A row
-with no vector yet is a zero row with label `0xFFFFFFFF`. Vectors reach
-a peer as signed bundles (03 §3.5; 09 §9.7) — Parquet is the travelling
-form, this file the at-rest one — and the file is that peer's merge of
-the bundles it accepted: when two accepted bundles cover one chunk, the
+Vectors reach a peer as signed bundles (03 §3.5; 09 §9.7) — Parquet is
+the travelling form, the peer's table the at-rest one — and the table is
+that peer's merge of the bundles it accepted, local and never a member:
+when two accepted bundles cover one chunk, the
 first accepted is the row and the second is compared, and the
 comparison is a `vectors-sample` attestation naming both producers.
 Two peers that accepted different producers hold different rows for

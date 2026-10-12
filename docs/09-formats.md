@@ -966,24 +966,14 @@ record on a text-holding peer has the title and the abstract in
 
 ## 9.6 Vectors, centres and buckets
 
-The vector files under `vectors/<space>/` are the at-rest form on one
-peer: assembled from accepted bundles (§9.7), never a member's bytes,
-never fetched as such — vectors travel only as bundles (04 §4.3).
-`<space>` is the 16-digit segment of §9.3. Every file is safetensors;
-tensor bytes are little-endian, row-major; header metadata values are
-strings.
-
-**Per-part vectors.** `vectors/<space>/<slice>/<NNNNN>.safetensors`:
-
-| tensor / header | type | required | meaning |
-|---|---|---|---|
-| `vectors` | `[n, dim]` in `space.dtype` | yes | one row per chunk of record part `n`, in part order: records in order, each record's chunks by `seq`; a row without an accepted vector is all zeros |
-| `labels` | `[n]` u32 | yes | each row's bucket label under `index_version`; `0xFFFFFFFF` for a row with no vector |
-| `chunk_ids_sha256` | header | yes | `H(id_0 ‖ id_1 ‖ …)` over the chunk ids in row order (§9.1's concatenation) |
-| `producers` | header | yes | the canonical JSON array of the bundle ids merged, sorted |
-| `index_version` | header | yes | the index version the labels were computed against |
-| `index_min` | header | yes | the oldest index version whose centres give these labels |
-| `collection_id`, `snapshot_id`, `space_id`, `shard` | header | yes | what the file belongs to; `shard` is `"<slice>/<n>"`, the part — the key keeps the old word |
+A peer's vectors rest in its own LanceDB table, one per space: assembled
+from accepted bundles (§9.7), never a member's bytes, never fetched as
+such — vectors travel only as bundles (04 §4.3). *Amended 2026-10-12*
+(operator): a per-part file `vectors/<space>/<slice>/<NNNNN>.safetensors`
+was specified here and never built; nothing reads or exchanges it, so it
+is removed. The files below are under `vectors/<space>/`, `<space>` the
+16-digit segment of §9.3; each is safetensors, tensor bytes
+little-endian, row-major, header metadata values strings.
 
 The row for a chunk is the vector from the first bundle accepted for it
 (04 §4.5); a later bundle for the same chunk is compared and not
@@ -991,8 +981,8 @@ stored, unless the first is flagged. Labels are computed by the
 importer against the centres it holds, never read from a bundle.
 
 **The quantised types.** `i8`, `i5` and `i4` are symmetric absmax
-quantisations of a unit vector, with a per-vector scale. A file in one
-of them carries a third tensor:
+quantisations of a unit vector, with a per-vector scale. A vector
+tensor in one of them comes with a third tensor:
 
 | tensor | type | required | meaning |
 |---|---|---|---|
@@ -1054,7 +1044,8 @@ in `index.json`.
 is in group `k` under version `n`, sorted by (label, chunk id bytes);
 tensors `vectors` and `labels` as above; beside it `g<k>.ids`, the chunk
 ids one per line, `\n`-terminated, zstd-compressed with the framing of
-§9.5, and the header `chunk_ids_sha256` over them in row order. Local
+§9.5, and the header `chunk_ids_sha256` over them in row order (`vectors`
+`[n, dim]` in `space.dtype`, `labels` `[n]` u32). Local
 and optional; a request for a bucket group resolves to bundles (04
 §4.3).
 
@@ -1064,18 +1055,6 @@ nothing of it travels. The index is one per collection and language group,
 not per part, so there was no per-slice unit to publish; the library has
 no way to take in another peer's segments; and a peer rebuilds it at about
 1,200 chunks a second, once per snapshot.
-
-**Worked example.** German Wikipedia, slice `lang=de/pages=3M`, part
-`00042`, 2,000 pages, 11,806 chunks under a `cdc` layer:
-`vectors/41844ebbc0d19f2e/lang=de/pages=3M/00042.safetensors` with
-`vectors [11806, 1024] f16`, `labels [11806] u32`, header
-`{"chunk_ids_sha256": "sha256:…", "producers": "[\"sha256:2f…\",\"sha256:9a…\"]",
-"index_version": "2", "index_min": "1", "collection_id": "sha256:…",
-"snapshot_id": "2026-08", "space_id": "sha256:41844ebb…", "shard":
-"lang=de/pages=3M/00042"}`. Two producers, because the part was
-embedded by one peer up to chunk 7,400 and by its rendezvous successor
-from there; 140 rows are zeros with label `0xFFFFFFFF` because a
-bundle covering them has not yet passed this peer's ladder.
 
 ## 9.7 The bundle
 
@@ -1829,8 +1808,9 @@ embedded one at a time, truncated as a chunk is. A run's fingerprint is
 `H` over the sixteen vectors, in that order, each as the endpoint
 returned it, converted to little-endian f32 and concatenated. The gate
 embeds the same sixteen a second time as the peer contributes, with its
-batching and concurrency. Equal bytes mean the run is batch-invariant
-at those settings. An asymmetric space's query run has its own
+batching and concurrency. The run is batch-invariant at those settings
+when the bytes are equal, or when its batched vectors stay within the
+band two single-text passes show (03 §3.3, *amended 2026-10-12*). An asymmetric space's query run has its own
 fingerprint, over the same texts with `space.query.instruction`
 prefixed.
 

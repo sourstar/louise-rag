@@ -286,8 +286,14 @@ nor searched with.
 **The gate also measures what the answers depend on besides the run.**
 It embeds the sixteen fingerprint texts (09 §9.12) one at a time, then
 again the way the peer contributes: its batching and its concurrency.
-A run whose answers differ between the two is validated only for
-single-text, one-at-a-time work. The batching fault that silently
+Equal bytes pass at once. Otherwise the batched answers are judged
+against the run's own run-to-run variation: the sixteen are embedded one
+at a time a second time, and every batched vector must be as close to its
+single-text answer as the two single-text passes are to each other at
+their furthest apart, less f32 rounding (10⁻⁶ of cosine). A run whose
+batched answers fall outside that band is validated only for
+single-text, one-at-a-time work (*amended 2026-10-12*, operator: equal
+bytes failed engines whose batching adds no more than last-bit noise). The batching fault that silently
 corrupted 714 books (2026-07) is a property of a run's settings, and it
 is measured, never assumed. The sixteen vectors' hash, the run's
 **fingerprint**, goes into the statement as evidence, not as a check

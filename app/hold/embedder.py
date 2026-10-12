@@ -130,6 +130,33 @@ def cosine(a: Sequence[float], b: Sequence[float]) -> float:
     return float(np.dot(x / nx, y / ny))
 
 
+#: what f32 rounding alone moves a cosine of two unit vectors by, so two
+#: answers whose cosines differ by less are the same answer to the gate
+COSINE_ROUNDING = 1e-6
+
+
+def within_band(single: Sequence[Sequence[float]], batched: Sequence[Sequence[float]],
+                again) -> bool:
+    """03 §3.3's batch check (amended 2026-10-12, operator: amendment b).
+    Equal bytes pass at once. Otherwise the batched answers are judged
+    against the run's OWN run-to-run variation: `again()` embeds the same
+    texts one at a time a second time, and every batched vector must be as
+    close to its single-text answer as the closest-to-worst single-text
+    repeat is — the lowest cosine between the two single-text passes,
+    less f32 rounding. A batching fault like 2026-07's (a vector for
+    another text) is far outside any such band; last-bit noise is not."""
+    from . import fingerprint
+    if fingerprint.of(batched) == fingerprint.of(single):
+        return True
+    if len(batched) != len(single):
+        return False
+    repeat = again()
+    if len(repeat) != len(single):
+        return False
+    band = min(cosine(a, b) for a, b in zip(single, repeat))
+    return min(cosine(a, b) for a, b in zip(single, batched)) >= band - COSINE_ROUNDING
+
+
 def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
              embed, seed: bytes | None = None,
              collection_id: str | None = None,
@@ -217,9 +244,10 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
     if embed_one is not None:
         from . import fingerprint
         sixteen = [texts[i] for i in fingerprint.indices(texts)]
-        taken = fingerprint.of(embed_one(sixteen))
+        single = embed_one(sixteen)
+        taken = fingerprint.of(single)
         if contribute is not None:
-            invariant = fingerprint.of(contribute(sixteen)) == taken
+            invariant = within_band(single, contribute(sixteen), lambda: embed_one(sixteen))
 
     return Run(
         space_id=codex.space_id,
