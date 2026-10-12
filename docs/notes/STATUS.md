@@ -220,9 +220,9 @@ applied by key to the end of the repealed Work's chain in either order
 of arrival; records carry the AKN work path as a third key (`akn:`,
 parser 6). **Still open:** the measurement owed before `shard_records` is
 fixed, the coverage of the 33,750 repealed-only acts by such closures
-(on the live collection), and the Constitution's on-demand query. No Normattiva collection exists yet; the one measurement the operator
-asked for first — a second listing of the archive a month from now — is
-dated.
+(on the live collection), and the Constitution's on-demand query. The
+one measurement the operator asked for first — a second listing of the
+archive a month from now — is dated.
 
 **Step 3 — the collection on the node (2026-10-12, night): STAGED AND
 PROVED, the swap and the creation left to the operator.** In the evening
@@ -249,6 +249,22 @@ acknowledged, the GPU badge — and the worker takes it from there: fetch
 (7.8 GB, two connections), scan, parse, fts, embed; pin the model through
 LocalAI's API once it embeds. The collection is the quarantine's guinea
 pig: never listed, every missing tool fixed.
+
+**CREATED, 2026-10-12 21:24 UTC.** The other session ran both scripts on
+the operator's go-ahead after a clean suite (4,529): d07ee60 is deployed
+and the collection is `sha256:28562add0b128a229cf3f050532deeef38a95e6022aa0be05abb586776851dd6`,
+`slices = "all"`, `embed = "off"` (the operator decides embedding), in
+quarantine (gate, roots/chunks, records-vs-origin pending); the worker
+began the corpus fetch at once (222 MB of the 7.8 GB an hour later). Three
+things the scripts had wrong, fixed in 1f234a1, 5027330 and 8f51502:
+`create` runs in the WORKER container (the web mounts /corpora read-only);
+it writes `slices = []` by design, so the script sets "all" after the
+ack; and the served engine's image had moved (`355a0208…` → `7b5d557e…`,
+run 651c4ec0…) with no file under the backend changed — open in vega.md
+§12, safe by construction (an unvalidated run's answers are refused
+before the write), the recipe names the engine served now. The wrapper
+build left its stdlib uncompiled, fixed in 24b9faf. `vega-dar-legal-it`
+is not pinned yet.
 
 
 ### 2026-10-05: the side branches merged into main
