@@ -1130,6 +1130,14 @@ collection is another name.
 └── keys/                    the peer key, at NODE_KEY_PATH
 ```
 
+
+One mount per kind, a folder per collection (amended 2026-10-12, operator):
+with `SHARDS_ROOT` and `ORIGINS_ROOT` set (environment: this node's
+paths), `create` makes `<name>/shard` a link to `<SHARDS_ROOT>/<name>` and
+`<name>/origin` a link to `<ORIGINS_ROOT>/<name>`; a custom origin is
+linked by hand. The paths above, which every manifest stores, do not move,
+and a new collection needs no new mount.
+
 A deposit collection (02 §2.9) has the same tree, and its `shard/` holds
 only `codex.json` and the calibration member. Its `origin/` holds the
 deposits, byte-exact — one directory per deposit, named by its deposit

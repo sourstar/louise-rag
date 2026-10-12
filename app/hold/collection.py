@@ -95,9 +95,47 @@ def write(root: Path, codex: Codex, mother: Codex | None = None, *,
                 f"holds one collection for its life, and another collection is "
                 f"another name (07 §7.8)")
         return d
-    d.mkdir(parents=True, exist_ok=False)
+    if not link_shared_roots(root, name):
+        d.mkdir(parents=True, exist_ok=False)
     p.write_bytes(codex.canonical())
     return d
+
+
+def link_shared_roots(root: Path, name: str) -> bool:
+    """ONE MOUNT PER KIND, A FOLDER PER COLLECTION (operator, 2026-10-12).
+    With `SHARDS_ROOT` set, `<name>/shard` is a symlink to
+    `<SHARDS_ROOT>/<name>`, made here when the collection is first written;
+    with `ORIGINS_ROOT` set, `<name>/origin` likewise points at
+    `<ORIGINS_ROOT>/<name>` (left alone when it already exists: a custom
+    origin, gutenberg's, is linked by hand). Every path a manifest stores
+    stays `<root>/<name>/…`, so nothing is rescanned or relocated, and a new
+    collection needs no new mount. Only for the node's own root
+    (`<LOUISE_ROOT>/collections`): a `--root` elsewhere is untouched.
+    Returns whether the SHARD directory was linked (and so exists)."""
+    import os
+    from app import config
+    if Path(root).resolve() != (config.louise_root() / "collections").resolve():
+        return False
+    base = dir_of(root, name)
+    linked = False
+    shards = os.getenv("SHARDS_ROOT", "").strip()
+    if shards:
+        target = Path(shards) / name
+        if target.exists() and any(target.iterdir()):
+            raise CodexError(f"{target} already holds files: another collection's SHARD under "
+                             f"this name? Nothing is linked over it")
+        target.mkdir(parents=True, exist_ok=True)
+        base.mkdir(parents=True, exist_ok=True)
+        (base / SHARD_DIR).symlink_to(target, target_is_directory=True)
+        linked = True
+    origins = os.getenv("ORIGINS_ROOT", "").strip()
+    link = base / "origin"
+    if origins and not link.exists() and not link.is_symlink():
+        target = Path(origins) / name
+        target.mkdir(parents=True, exist_ok=True)
+        base.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target, target_is_directory=True)
+    return linked
 
 
 def _normalise(cid: str) -> str:

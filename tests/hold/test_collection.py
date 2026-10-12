@@ -290,3 +290,37 @@ def test_show_names_both_hashes_and_the_space_segment(tmp_path: Path, codex):
     assert shown["space"] == c.space_segment
     assert shown["license"] == {"class": "red"}
     assert shown["refused"] is None
+
+
+def test_with_shared_roots_a_new_collection_links_its_shard_and_origin(tmp_path, codex, monkeypatch):
+    """Operator, 2026-10-12: one mount per kind, a folder per collection.
+    The node's root gets `<name>/shard` -> `<SHARDS_ROOT>/<name>` and
+    `<name>/origin` -> `<ORIGINS_ROOT>/<name>`; the paths a manifest stores
+    stay `<root>/<name>/…`. Any other root is untouched."""
+    node = tmp_path / "data"
+    monkeypatch.setenv("LOUISE_ROOT", str(node))
+    monkeypatch.setenv("SHARDS_ROOT", str(tmp_path / "shards"))
+    monkeypatch.setenv("ORIGINS_ROOT", str(tmp_path / "corpora"))
+    root = node / "collections"
+    col.create(root, codex, name="gutenberg")
+    d = col.shard_dir_of(root, "gutenberg")
+    assert d.is_symlink() and d.resolve() == (tmp_path / "shards" / "gutenberg").resolve()
+    assert (tmp_path / "shards" / "gutenberg" / "codex.json").is_file()
+    origin = root / "gutenberg" / "origin"
+    assert origin.is_symlink() and origin.resolve() == (tmp_path / "corpora" / "gutenberg").resolve()
+    col.create(root, codex, name="gutenberg")
+    assert col.shard_dir_of(root, "gutenberg").is_symlink(), "idempotent"
+
+    other = tmp_path / "elsewhere"
+    col.create(other, codex, name="gutenberg")
+    assert not col.shard_dir_of(other, "gutenberg").is_symlink() and not (other / "gutenberg" / "origin").exists()
+
+
+def test_a_shared_root_folder_that_already_holds_files_is_never_linked_over(tmp_path, codex, monkeypatch):
+    node = tmp_path / "data"
+    monkeypatch.setenv("LOUISE_ROOT", str(node))
+    monkeypatch.setenv("SHARDS_ROOT", str(tmp_path / "shards"))
+    (tmp_path / "shards" / "gutenberg").mkdir(parents=True)
+    (tmp_path / "shards" / "gutenberg" / "stray").write_text("x")
+    with pytest.raises(CodexError, match="already holds files"):
+        col.create(node / "collections", codex, name="gutenberg")
