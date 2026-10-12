@@ -871,3 +871,23 @@ def test_a_decision_is_never_read_from_a_pipe(node, rage, capsys, monkeypatch):
     assert louise.main(["hold", "collection", "ack", "gutenberg", "--root", str(root), "--origin-unchecked"]) == 2
     assert "--yes is required when stdin is not a terminal" in capsys.readouterr().err
     assert not (root / "gutenberg" / "state" / copy_state.ORIGIN_ACK).exists()
+
+
+def test_a_copy_with_no_snapshot_says_its_checks_wait_for_the_first_one(node, rage):
+    """Roots, chunks and records-vs-origin draw over a snapshot's parts, and
+    `hold check` refuses a copy that holds none: the status says so and
+    names what makes the first snapshot, never only the check it would
+    refuse (wikipedia, 2026-10-13)."""
+    import shutil
+    root, collection, codex = node
+    snaps = root / "gutenberg" / "shard" / "snapshots"
+    if snaps.is_dir():
+        shutil.rmtree(snaps)
+    s = state_of(collection)
+    for t in ("roots-and-chunks", "origin"):
+        test = s.test(t)
+        assert "holds no snapshot yet" in test.detail and "hold snapshot create gutenberg" in test.clears
+    snaps.mkdir(parents=True)
+    (snaps / "2026-08.json").write_text("{}", encoding="utf-8")
+    s = state_of(collection)
+    assert "holds no snapshot" not in s.test("roots-and-chunks").detail

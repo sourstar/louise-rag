@@ -536,6 +536,30 @@ def _origin(root: Path, name: str, codex: Codex, bodies, key: str | None) -> tup
                  clears), ORIGIN_PENDING)
 
 
+def _holds_snapshot(root: Path, name: str) -> bool:
+    """Whether the copy's SHARD holds a snapshot — one directory listing."""
+    d = Path(root) / name / "shard" / "snapshots"
+    try:
+        return any(p.suffix == ".json" and not p.name.endswith(".sig.json") for p in d.iterdir())
+    except OSError:
+        return False
+
+
+def _awaits_snapshot(t: Test, name: str) -> Test:
+    """A test that has not run because there is nothing yet to run it on:
+    roots, chunks and records-vs-origin draw over a snapshot's parts (03
+    §3.2), and `hold check` refuses a copy that holds none. Said so, with
+    what makes the first snapshot — the check's own command could only be
+    refused (wikipedia, 2026-10-13: "tests open" naming a check it refuses)."""
+    if t.status not in (OPEN, CANNOT_RUN):
+        return t
+    return Test(t.name, t.status,
+                f"{t.detail}: this copy holds no snapshot yet, and the check draws over "
+                f"a snapshot's parts (03 §3.2)",
+                f"the first snapshot — `louise hold records build {name}`, then "
+                f"`louise hold snapshot create {name}` — and then {t.clears}")
+
+
 # ---- the state ------------------------------------------------------------------------------
 
 _STANDS_IN_FOR = ("roots-and-chunks", "origin")
@@ -589,6 +613,8 @@ def evaluate(root: Path, name: str, codex: Codex | None, *, licence: str,
     else:
         origin, origin_check = _origin(root, name, codex, bodies, key)
         roots = _roots_and_chunks(bodies, key, name)
+        if not _holds_snapshot(root, name):
+            roots, origin = _awaits_snapshot(roots, name), _awaits_snapshot(origin, name)
     tests = (roots, _bundles(), gate, _licence(licence, name), origin)
     if before:
         tests = tuple(_decided(t) for t in tests)
