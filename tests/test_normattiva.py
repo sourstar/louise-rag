@@ -181,7 +181,7 @@ def test_the_record_carries_the_eli_set_and_the_identities(corpus):
     x = doc.extra
     assert doc.uid == f"normattiva:{_nid('2003-11-15', '003G0333', '2025-10-02', 'CONSOLIDATED/20251002')}"
     assert doc.date == "2003-10-31" and doc.language == "it"
-    assert doc.keys == [], "05 §5.2: only registered ids, and nothing registers eli or urn"
+    assert doc.keys == ["eli:it:id/2003/11/15/003G0333", "urn:nir:stato:legge:2003-10-31;306"], "05 §5.2: the ids app/refs/normattiva.py registers, sorted by bytes"
     assert x["urn_nir"] == "urn:nir:stato:legge:2003-10-31;306"
     assert x["codice_redazionale"] == "003G0333"
     assert x["eli_work"] == "http://www.normattiva.it/eli/id/2003/11/15/003G0333"

@@ -7,9 +7,9 @@ identity rules and the same `extra` keys as the Italian one:
 
   rule 1  the record carries the jurisdiction's UNIQUE ELI (the by-id
           permalink, never a human alias that may name several acts) —
-          in `extra.eli_work`, and in `keys` only once a reference source
-          registers the `eli` namespace (05 §5.2: a plugin writes only
-          registered ids into `keys`) — `Profile.key`;
+          in `extra.eli_work`, and in `keys` since app/refs/normattiva.py
+          registers the `eli` and `urn` namespaces (05 §5.2: a plugin writes
+          only registered ids into `keys`) — `Profile.key`;
   rule 2  the Expression is read back from what the origin returned, never
           from what was asked for — `version_of`;
   rule 3  `native_id` is DERIVED from the unique work key, hashed where the
@@ -74,9 +74,9 @@ class Profile:
         return self.base.rstrip("/") + "/" + relative.lstrip("/")
 
     def key(self, by_id_path: str) -> str:
-        """06 §6.5's `<namespace>:<id>`, jurisdiction-qualified. NOT written
-        into any record until a reference source registers `eli` and says
-        this is the form (05 §5.2)."""
+        """06 §6.5's `<namespace>:<id>`, jurisdiction-qualified: the by-id
+        form, the unique one (rule 1). Written into `keys` since
+        app/refs/normattiva.py registers `eli` and names this form (05 §5.2)."""
         return f"eli:{self.jurisdiction.lower()}:{by_id_path.strip('/')}"
 
 

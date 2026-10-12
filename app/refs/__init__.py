@@ -6,7 +6,8 @@ from .clinvar_mini import ClinvarMiniSource
 from .gnomad import GnomadConstraintSource
 from .hgnc import HgncSource
 from .homologene import HomologeneSource
-from .resolver import DictResolver
+from .normattiva import CitationResolver, NormattivaRefSource
+from .resolver import CompositeResolver, DictResolver
 from .store import RefStore, connect, ensure_schema
 
 REFS_REGISTRY = {
@@ -14,9 +15,14 @@ REFS_REGISTRY = {
     "clinvar-mini": ClinvarMiniSource(),
     "gnomad-constraint": GnomadConstraintSource(),
     "homologene": HomologeneSource(),
+    # the Italian acts: `urn` and `eli` registered (05 §5.2), citations
+    # resolved by key (app/refs/normattiva.py; review §3.12)
+    "normattiva-refs": NormattivaRefSource(),
 }
 
-RESOLVER = DictResolver()
+#: every registered resolver in turn; `expand` follows the declared links
+#: whichever source owns the entity (app/refs/resolver.py)
+RESOLVER = CompositeResolver((DictResolver(), CitationResolver()))
 
 
 #: thread -> (the refs.db path it was opened on, the store). SQLite

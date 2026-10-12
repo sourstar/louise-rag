@@ -194,7 +194,9 @@ class NormattivaSource:
     #: `version_key`, `member_dir`, the repeal state, `entry_into_force`),
     #: and `in_force` where 2 wrote `eli_in_force` (09 §9.5's key). Free: no
     #: collection was ever created from 1 or 2.
-    PARSER_VERSION = 3
+    #: 4 the same day: `keys` carry the act's URN:NIR and ELI, registered
+    #: by app/refs/normattiva.py (05 §5.2); free for the same reason.
+    PARSER_VERSION = 4
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE          # an act withdrawn from the database
     native_id_order = "numeric"            # eli.expression_native_id: start of validity first
@@ -381,13 +383,12 @@ class NormattivaSource:
             language="it",
             date=act.doc_date or None,           # the act's own date (date_document)
             subjects=[],
-            # NONE YET. 05 §5.2: "a plugin writes only registered ids into a
-            # record's `keys`" — a key in any form but the resolver's never
-            # matches, silently — and no reference source registers `eli`
-            # or `urn`. The identities are all in `extra` (eli_work,
-            # eli_expression, urn_nir, codice_redazionale); keys join them
-            # when an `eli` reference source exists, as a new collection.
-            keys=[],
+            # 05 §5.2: only ids a reference source registers — `urn` and
+            # `eli` are, since app/refs/normattiva.py (parser 4): the act's
+            # URN:NIR verbatim (its scheme is the namespace) as the resolver
+            # emits it, and the unique ELI by-id form (eli rule 1); sorted by
+            # bytes (09 §9.5)
+            keys=sorted({k for k in (urn, PROFILE.key(by_id)) if k}),
             extra={k: v for k, v in extra.items() if v not in (None, "", [], {})},
             sections=rendition.sections(act),
             raw_hash=raw.raw_hash,

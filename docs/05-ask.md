@@ -153,7 +153,11 @@ execute and fuse steps and costs nothing extra.
 **A canonical id** is `<namespace>:<id>`: a lower-case namespace,
 registered by the reference source that owns it (§6.5), and the
 origin's own identifier verbatim — `hgnc:11998`, `rs:80359351`,
-`pmid:38112034`, `eli:it/stato/decreto.legislativo/2008/04/09/81`.
+`pmid:38112034`, `eli:it:id/2003/11/15/003G0333` (the by-id form, the
+one that is unique — docs/notes/eli-legal-plugins.md rule 1). An
+identifier that is itself a URI carries its scheme as its namespace and
+is written verbatim, never prefixed twice:
+`urn:nir:stato:legge:2003-10-31;306`, namespace `urn`.
 Where the origin's identifier is not qualified on its own, the
 namespace's registration says how it is qualified: a genomic region
 carries its assembly, `region:grch38:13:32316461-32316527`. A plugin

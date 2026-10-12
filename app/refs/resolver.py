@@ -136,8 +136,7 @@ class DictResolver:
         needs (gene -> its ClinVar variants); the reverse (variant -> its
         gene) would need entity.kind as a link's from_table and isn't wired
         up since nothing exercises it yet."""
-        _, _, native = entity.entity_id.partition(":")
-        row = refs.get(entity.kind, native)
+        row = row_of(refs, entity)
         if row is None:
             return []
         out: list[Entity] = []
@@ -160,8 +159,7 @@ class DictResolver:
         nobody could read. Bounded, the same three links cost 24.6 ms
         (2026-09-21). ClinVar's order still sorts that gene's rows (no index
         serves a CASE), so it grows as n log n with the gene: tens of ms."""
-        _, _, native = entity.entity_id.partition(":")
-        row = refs.get(entity.kind, native)
+        row = row_of(refs, entity)
         if row is None:
             return []
         out: list[Reached] = []
@@ -178,6 +176,44 @@ class DictResolver:
                                for r in refs.rows(table, where, order_by=order, limit=limit)),
                 total=refs.count(table, where), link=link))
         return out
+
+
+def row_of(refs: RefLookup, entity: Entity) -> dict | None:
+    """The entity's own table row: keyed by the id after the namespace
+    (`hgnc:1101` → 1101), or — where the namespace is a URI scheme and the
+    table keys on the whole identifier (`urn:nir:stato:legge:2003-10-31;306`,
+    app/refs/normattiva.py) — by the id entire. The second lookup runs only
+    when the first misses."""
+    _, _, native = entity.entity_id.partition(":")
+    return refs.get(entity.kind, native) or refs.get(entity.kind, entity.entity_id)
+
+
+class CompositeResolver:
+    """Several resolvers as one: `resolve` is the union of theirs, in their
+    order, each entity once; `expand` and `expand_bounded` are the link
+    walk every resolver shares (`DictResolver`'s, generic over the declared
+    links), so an act's versions are reached exactly as a gene's variants."""
+
+    def __init__(self, resolvers) -> None:
+        self.resolvers = tuple(resolvers)
+        self._walker = next((r for r in self.resolvers if isinstance(r, DictResolver)), None) \
+            or DictResolver()
+
+    def resolve(self, query: str, refs: RefLookup) -> list[Entity]:
+        out: list[Entity] = []
+        seen: set[str] = set()
+        for r in self.resolvers:
+            for e in r.resolve(query, refs):
+                if e.entity_id not in seen:
+                    seen.add(e.entity_id)
+                    out.append(e)
+        return out
+
+    def expand(self, entity: Entity, refs: RefLookup) -> list[Entity]:
+        return self._walker.expand(entity, refs)
+
+    def expand_bounded(self, entity: Entity, refs: RefLookup, limit: int) -> list[Reached]:
+        return self._walker.expand_bounded(entity, refs, limit)
 
 
 def llm_fallback_resolve(query: str, refs: RefLookup) -> list[Entity]:

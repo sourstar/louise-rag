@@ -16,13 +16,14 @@ it left open is below.
   to compare (step 3).
 - **Normattiva, what the second part left** (2026-10-12,
   [normattiva-multivigenza-review.md](normattiva-multivigenza-review.md) §3.12,
-  §7): the `eli`/`urn` reference source and the citation resolver (so
-  `keys` can be written), closing a repealed-only act's validity from
-  `eli:repeals` edges, the measurements before `shard_records` and the
-  ORIGINALE's validity-start rule are fixed, the Constitution's on-demand
-  query, and no collection created yet. Built the same day: the vector
-  carry, `relations()`, the central-directory delta and the member as
-  origin unit.
+  §7): closing a repealed-only act's validity from `eli:repeals` edges,
+  the measurements before `shard_records` and the ORIGINALE's
+  validity-start rule are fixed (a second archive listing a month on),
+  the Constitution's on-demand query, and no collection created yet.
+  Built the same day: the vector carry, `relations()`, the
+  central-directory delta, the member as origin unit, and the `urn`/`eli`
+  reference source with the citation resolver (`app/refs/normattiva.py`;
+  `keys` written at parser 4).
 - **The Gazzetta plugin**: certified records carrying `extra.seal` — the
   certifier body's to run (step 10).
 - **`backend_gate`** stays while any Codex is version 1 or 2 (five live).
@@ -193,11 +194,19 @@ CC-BY-NC-SA-4.0 — and the reranker jina-reranker-v3 (review §10).
 amended), `relations()` with ELI-named edges (§3.12), the central-directory
 delta (`zip-directory`, 09 §9.17 amended; `app/acquire/zipdelta.py`) and the
 member as origin unit for `records-vs-origin` (`member_origin.py`; 02 §2.3
-amended). **Still open:** the `eli`/`urn` reference source and the citation
-resolver, the measurements owed before `shard_records` and the ORIGINALE's
-validity-start rule are fixed, and the Constitution's on-demand query. No Normattiva collection exists
-yet; the one measurement the operator asked for first — a second listing
-of the archive a month from now — is dated.
+amended); in the evening the reference source `normattiva-refs`
+(`app/refs/normattiva.py`: `atto` and `versione` from the members' heads,
+owning `urn` and `eli`; the citation resolver beside the gene resolver in
+a `CompositeResolver`; an act's canonical id is its URN:NIR verbatim, 05
+§5.2 amended) and the plugin at parser 4 writing `keys`. The Codici
+measured: 41,289 distinct article texts across 2.9 M occurrences in 3,321
+versions, 2.12× the latest versions' — the carry leaves 1.4 % for the
+encoder. **Still open:** closing a repealed-only act's validity from
+`eli:repeals` edges, the measurements owed before `shard_records` and the
+ORIGINALE's validity-start rule are fixed, and the Constitution's on-demand
+query. No Normattiva collection exists yet; the one measurement the operator
+asked for first — a second listing of the archive a month from now — is
+dated.
 
 ### 2026-10-05: the side branches merged into main
 

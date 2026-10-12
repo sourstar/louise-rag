@@ -177,7 +177,8 @@ multivigente archive and withdrawn — a snapshot chain holds the state at
 its cutoffs only, and 6.7 % of all version transitions (37 % in the codes)
 are shorter than a month (normattiva-multivigenza-review.md §1–§2). The
 record pins the Expression: `uid` names one version of one Work, the Work
-URI stays in `extra.eli_work` (and in `keys` once registered), and `--as-of`
+URI stays in `extra.eli_work` (and in `keys`, since `app/refs/normattiva.py`
+registers `eli` and `urn` — the by-id form and the URN:NIR verbatim), and `--as-of`
 selects by validity. The paragraphs below stand as the record of the
 earlier reasoning; what survives of it is rule 2 — the Expression is read
 back from what the origin returned.

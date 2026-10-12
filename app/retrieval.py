@@ -36,6 +36,7 @@ from . import (cancel, catalog, collections as collections_mod, config, copy_sta
                dispatch, embeddings, model_load,
                fts, httpc, language_plan, refs, work_dedup)
 from .language_plan import LanguagePlan
+from .refs.resolver import row_of
 from .bundles import verify_on_use
 from .hold import runs as hold_runs
 
@@ -471,8 +472,7 @@ def _build_pinned_facts(entities_found, store) -> list[PinnedFact]:
         if e.entity_id in seen:
             continue
         seen.add(e.entity_id)
-        _, _, native = e.entity_id.partition(":")
-        row = store.get(e.kind, native) or {}
+        row = row_of(store, e) or {}
         facts.append(PinnedFact(entity_id=e.entity_id, kind=e.kind, source_id=e.source_id,
                                  label=e.label, fields=row, via=via))
     return facts

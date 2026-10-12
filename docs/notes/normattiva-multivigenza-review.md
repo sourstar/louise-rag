@@ -123,6 +123,13 @@ days apart, one pair one day apart: 1989-01-17 → 1989-01-18).
 3,304 article occurrences hold **730 distinct article texts**; the 50
 latest versions alone hold 553 (551 distinct). Holding every version
 costs 1.32× the distinct chunk texts of the current corpus, not 6×.
+Measured on the Codici the same evening (the M zip downloaded whole, 1.2
+GB, every `<article>` with its tags stripped and whitespace normalised):
+3,321 versions of 40 codes hold 2,904,112 article occurrences and
+**41,289 distinct article texts**; the 40 latest versions hold 19,444
+(19,440 distinct). Every version costs **2.12×** the latest versions'
+distinct texts, against 83 versions per act — the carry by chunk hash
+(§3.5) leaves 1.4 % of the occurrences for the encoder.
 
 **What a member says about its own version.** The lifecycle lists the
 amendment events **up to the member's own version and no later**: the
@@ -380,9 +387,9 @@ today for the VIGENTE design too; the note did not say it.
 
 Chunks are the articles of each version. Measured on the constitutional
 laws, every version together holds 1.32× the distinct article texts of
-the latest versions (§1); the codes, amended by single articles hundreds
-of times, will be nearer 1 than the Codici's 83 versions per act
-suggest. That number is what is embedded, on one condition: **a vector
+the latest versions, and on the Codici 2.12× — 41,289 distinct texts
+across 2.9 M occurrences, where 83 versions per act had suggested far
+more (§1). That number is what is embedded, on one condition: **a vector
 is carried by chunk hash across records**, not only within one record
 as 06 §6.3 reads today. A space is a function from cleaned text to
 vectors (02 §2.4), so an identical chunk text in one space has one
@@ -479,6 +486,25 @@ namespaces, with the citation resolver ("art. 5, l. 306/2003, as of
 key, never ranked** (invariant 4). Once it exists, records write their
 ids into `keys` as 05 §5.2 requires — a parser bump, free until a
 collection is created.
+
+**Built 2026-10-12 (evening): `app/refs/normattiva.py`.** The reference
+source `normattiva-refs` owns `urn` and `eli`; its tables are `atto`
+(URN:NIR, type, year, number, date, title, denomination, the Work's ELI,
+GU code and date, read from each M member's head — 24 KB by Range, the
+two base64 codes decoded) and `versione` (uid, URN, expression,
+`valid_from`, member), linked `versione.urn → atto.urn`, so
+`expand_bounded` on an act pins its versions as facts exactly as a gene's
+variants. The `CitationResolver` turns "l. 306/2003", "legge n. 306 del
+2003", "legge 31 ottobre 2003, n. 306" or "art. 5, comma 3, della legge
+306/2003" into the act's entity, the article kept on the label; a
+`CompositeResolver` runs it beside the gene resolver (`app/refs`), and
+`row_of` looks a table row up by the id after the namespace or, where the
+namespace is a URI scheme, by the whole id. **The canonical id of an act
+is its URN:NIR verbatim** — `urn:nir:stato:legge:2003-10-31;306`,
+namespace `urn` — never `urn:urn:…`; 05 §5.2's examples amended to say
+so. The plugin at parser 4 writes `keys = [eli by-id form, URN]`, sorted
+(05 §5.2, 09 §9.5); free, no collection exists. Relations by `eli:repeals`
+closing a repealed-only act's validity (§3.2 case 2) remain open.
 
 ### 3.13 Why the reviewed note's retraction does not hold
 
@@ -699,7 +725,8 @@ sentinel — a record never carries it, and a result reads it back as null.
 `app/embeddings.py cross_carry` and the manifest's `chunk_hashes` (§3.5;
 06 §6.3 amended); `NormattivaSource.relations()` — `eli:amends`,
 `eli:repeals`, `eli:cites` between acts, by URN:NIR and AKN work path (§3.12's
-first half; the reference source and the resolver remain);
+first half; the reference source and the resolver followed in the evening,
+§3.12 "Built");
 `app/acquire/zipdelta.py` — the directory by Range, the changed members by
 Range, the local zip rebuilt from raw bytes, wired into the engine as
 `DeltaSpec(mode="zip-directory")` and set on the plugin's spec, every pass
@@ -716,8 +743,9 @@ tests in `tests/test_validity.py` and `tests/test_normattiva.py`.
 
 - Chunk density per collection (articles per act, from the V zips'
   members) → `shard_records` (§3.7).
-- Distinct article texts across all versions of the Codici (download
-  once: 1.2 GB) → the embedding budget and the work parameter (§3.5).
+- Distinct article texts across all versions of the Codici: MEASURED
+  2026-10-12 — 41,289 distinct across 2,904,112 occurrences in 3,321
+  versions, 2.12× the latest versions' 19,440 (§1, §3.5).
 - A second central-directory listing of every M zip a month from now,
   diffed against today's → how many versions arrive with a past
   `vigenza_from` (§3.1's refusal path) and how many published versions
