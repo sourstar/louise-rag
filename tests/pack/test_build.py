@@ -139,8 +139,11 @@ def test_build_is_resumable_and_idempotent(isolated_config, tmp_path, corpus_dir
     assert r1.interrupted and written == ["00001.jsonl.zst"]
     assert not (pack_dir / manifest_mod.FILENAME).exists()
     monkeypatch.setattr(records, "write_shard", real)
-    r2 = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, log=lambda *_: None)
+    said: list[str] = []
+    r2 = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, log=lambda *a: said.append(" ".join(map(str, a))))
     assert not r2.interrupted and r2.shards == 3 and r2.records == 3
+    assert any(m.endswith("lang=en: 2 shard(s)") for m in said), said   # the shards written, not the next index
+    assert any(m.endswith("lang=fr: 1 shard(s)") for m in said), said
     first = (pack_dir / "records/lang=en/00001.jsonl.zst").stat().st_mtime_ns
     r3 = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, log=lambda *_: None)
     assert r3.shards == 3

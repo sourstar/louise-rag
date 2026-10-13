@@ -542,7 +542,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                         log(f"[pack build] stop requested — {slice_name}: resumes at shard {next_n}")
                         return written, n_records, n_chunks, n_skipped, True
         close_shard(last_row)
-        log(f"[pack build] {slice_name}: {next_n} shard(s)")
+        log(f"[pack build] {slice_name}: {next_n - 1} shard(s)")   # next_n is the NEXT index: one past the last written
     return written, n_records, n_chunks, n_skipped, False
 
 
