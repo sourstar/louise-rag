@@ -164,6 +164,16 @@ Everything except two items travels through this repository.
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
 
+### 2026-10-13: JuriFindIT acknowledged — the operator, for the legal pilot
+
+The operator acknowledged the JuriFindIT question set's licence,
+CC-BY-NC-SA-4.0, on 2026-10-13 ("I acknowledge it"), for the Normattiva
+pilot's measurement (`tools/legal_pilot.py`, read-only, under
+`/data/pilot/jurifindit` on the node). The acknowledgement is of these
+bytes, as `legal_pilot fetch` printed them:
+`corpus.parquet` 18,544,036 B sha256:33632b14e48cd75b106112c9771f30e1c471f364c57fe95a76bbb641f0f3c524;
+`questions-validation.parquet` 33,219 B sha256:4c64549f76143411e555ee30bb787cf7ac2899ee4f6479cd6b855441e4adf8c6.
+
 ### 2026-10-12: Normattiva — one record per Expression, validity by key
 
 The snapshot-chain multivigenza proposal of the morning
@@ -388,6 +398,24 @@ fetch's step is 32 MiB, and every delta's decline or deferral is an event.
 Both files are in the build: discovery and the stages read the corpus and
 the documents table; `fetch_files` is consulted by the Library page alone.
 The next pass adopts both and writes their rows.
+
+**LIVE (2026-10-13, morning UTC).** Built by the other session under
+4a2fbbe: 318,349 records in 6,979 parts over 972 slices, 6,878,986 chunks,
+about twenty minutes, nothing refused; snapshot 2026-09
+`sha256:52700e550cd2…`, signed; `hold check normattiva` PASS for roots,
+records and chunks (15,832 records over 349 parts, none failing), licence,
+signature, calibration 16/16, vectors-sample 45; out of quarantine, embedding
+at about 9 documents a second on `vega-dar-legal-it`, now pinned. The fetch
+under 4a2fbbe read "fetched 23, adopted 23", every zip left untouched. Two
+findings with it: `records-vs-origin` came back INCONCLUSIVE once — one
+sampled record of 15,832 could not be re-fetched from the origin (a
+TransportError on the Regi decreti URL; the check's re-fetch shares the
+delta's reader, so if it ran before 4a2fbbe's pieces it met the 64 MB tail;
+to re-run under 4a2fbbe and, if it repeats, read the whole error) — the
+worker's own bounded check had passed at 09:43 UTC, which cleared
+quarantine; and the pack build's per-slice line said one shard more than it
+wrote (the next index, fixed). The pilot's harness runs next, once the
+embedding is complete (legal-collection-template.md §9).
 
 
 ### 2026-10-05: the side branches merged into main
