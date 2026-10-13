@@ -888,3 +888,19 @@ def test_only_blocked_work_left_prints_nothing_either(isolated_config):
         "but there is no work the stage can take, so no placeholder"
     html = _render_library(shelf)
     assert "(-)" not in html
+
+
+def test_a_card_says_how_old_its_counts_are_and_how_often_they_move(isolated_config):
+    """pubmed's card moved in ~25-minute jumps (its count is recounted at
+    most 10 % of the time, and one count takes minutes) under a page note
+    that said "cached 2 min": the operator read it as stuck (2026-10-13)."""
+    c = collections_mod.load_all()[0]
+    _wait_counts(c)
+    shelf = dict(web._collection_shelf(c, {}))
+    assert shelf["counts_every"] >= web._COUNTS_TTL_S
+    shelf.update(counts_age=24 * 60.0, counts_every=25 * 60.0)
+    html = _render_library(shelf)
+    assert "counted 24 min ago, every 25 min" in html
+    assert "cached 2 min" not in html
+    fresh = dict(shelf, counts_age=30.0)
+    assert "counted" not in _render_library(fresh).split("embedded (dense)")[1][:400]

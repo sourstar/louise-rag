@@ -1664,6 +1664,10 @@ def _collection_shelf(collection: collections_mod.Collection,
         # visibly stale rather than quietly wrong; counts_pending = the
         # first scan after a restart is still running (cold cache)
         "counts_age": counts_age,
+        # how often THIS collection is recounted: two minutes, longer for a
+        # manifest whose count is expensive (_counts_ttl_for) — pubmed's
+        # ~25 min read as "stuck" under a page note that said 2 (2026-10-13)
+        "counts_every": _counts_ttl_for(_counts_key(collection)),
         "counts_pending": counts_pending,
         # a torrent-collection peer combines slices like an additive source
         "profile_mode": ("additive" if _offered_by_torrent_collection(collection) is not None
