@@ -166,3 +166,20 @@ def test_the_command_runs_end_to_end_on_files(built, tmp_path, monkeypatch, caps
     stubs = tmp_path / "stubs.jsonl"
     assert lp.main(["temporal-make", "--collection", "normattiva", "--out", str(stubs), "--limit", "5"]) == 0
     assert stubs.read_text(encoding="utf-8").count("\n") >= 1
+
+
+def test_a_gold_act_under_a_ministry_authority_resolves_by_date_and_number(built):
+    """The coverage run of 2026-10-13 counted D.M. 7 novembre 2001 n. 458
+    "act not held" while the collection holds it as
+    `urn:nir:ministero.giustizia:decreto:2001-11-07;458`: the URN pattern
+    admitted `stato` alone. Any authority now; the type abbreviation decides
+    only where one (date, number) names several acts, and `dm` accepts the
+    ministry's plain `decreto`."""
+    built.con.execute("INSERT OR IGNORE INTO validity_works(key, work) VALUES (?, ?)",
+                      ("urn:nir:ministero.giustizia:decreto:2001-11-07;458", "work-dm-458"))
+    built.con.execute("INSERT OR IGNORE INTO validity_works(key, work) VALUES (?, ?)",
+                      ("urn:nir:stato:legge:2001-11-07;458", "work-l-458"))
+    built._acts = None
+    assert built.work_for(("dm", "2001-11-07", 458)) == "work-dm-458"
+    assert built.work_for(("l", "2001-11-07", 458)) == "work-l-458"
+    assert built.work_for(("dlgs", "2001-11-07", 458)) is None, "two acts, neither of that type"

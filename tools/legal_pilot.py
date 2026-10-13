@@ -78,15 +78,21 @@ DEFAULT_K = 20
 #: a question; the Latin suffix kept, normalised: `1167`, `2043-bis`
 _ARTICLE = re.compile(r"art(?:icle|icolo)?\.?\s*_?\s*(\d+)\s*[-_ ]?\s*"
                       r"(bis|ter|quater|quinquies|sexies|septies|octies|novies|decies)?\b", re.I)
-_URN = re.compile(r"^urn:nir:stato:([^:]+):(\d{4}-\d{2}-\d{2});(\d+)")
+#: any authority, not `stato` alone: D.M. 7 novembre 2001 n. 458 is held as
+#: `urn:nir:ministero.giustizia:decreto:2001-11-07;458` and the coverage run
+#: of 2026-10-13 counted it "act not held" (review §10.1)
+_URN = re.compile(r"^urn:nir:([^:]+):([^:]+):(\d{4}-\d{2}-\d{2});(\d+)")
 _NUMBER = re.compile(r"\d[\d.,]*\d|\d")
 #: JuriFindIT's act-type abbreviations → the URN:NIR type token, consulted
 #: only where one (date, number) names several acts
-TYPE_OF = {"rd": "regio.decreto", "rdl": "regio.decreto.legge", "l": "legge",
-           "lcost": "legge.costituzionale", "dlgs": "decreto.legislativo", "dl": "decreto.legge",
-           "dpr": "decreto.del.presidente.della.repubblica",
-           "dpcm": "decreto.del.presidente.del.consiglio.dei.ministri", "dm": "decreto.ministeriale",
-           "dlt": "decreto.legislativo.luogotenenziale"}
+TYPE_OF: dict[str, tuple[str, ...]] = {
+    "rd": ("regio.decreto",), "rdl": ("regio.decreto.legge",), "l": ("legge",),
+    "lcost": ("legge.costituzionale",), "dlgs": ("decreto.legislativo",), "dl": ("decreto.legge",),
+    "dpr": ("decreto.del.presidente.della.repubblica",),
+    "dpcm": ("decreto.del.presidente.del.consiglio.dei.ministri",),
+    # a ministerial decree is `decreto` under its ministry's authority
+    "dm": ("decreto.ministeriale", "decreto"),
+    "dlt": ("decreto.legislativo.luogotenenziale",)}
 
 
 def article_token(text: str) -> str | None:
@@ -135,8 +141,8 @@ class Held:
                 m = _URN.match(r["key"])
                 if not m:
                     continue
-                entry = (m.group(1), r["work"])
-                lst = out.setdefault((m.group(2), int(m.group(3))), [])
+                entry = (m.group(2), r["work"])
+                lst = out.setdefault((m.group(3), int(m.group(4))), [])
                 if entry not in lst:
                     lst.append(entry)
             self._acts = out
@@ -147,8 +153,8 @@ class Held:
         found = self.acts().get((day, number)) or []
         if len(found) == 1:
             return found[0][1]
-        wanted = TYPE_OF.get(abbrev)
-        exact = [w for t, w in found if t == wanted]
+        wanted = TYPE_OF.get(abbrev) or ()
+        exact = [w for t, w in found if t in wanted]
         return exact[0] if len(exact) == 1 else None
 
     def keys_of(self, work: str) -> set[str]:
