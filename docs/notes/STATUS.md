@@ -352,6 +352,23 @@ was built, the corpus on /corpora stays and is adopted by its directories),
 then `create-normattiva.sh` again. The node's action, as every creation
 is.
 
+**The pilot's harness and the template (2026-10-13).** `tools/legal_pilot.py`
+measures a built legal collection deterministically: `coverage` resolves
+JuriFindIT's gold articles by key (its `file_name` is the act, its `path` the
+article, both through `validity_works` and the shown version's chunks) and
+excludes what the collection does not hold — EU regulations are; `run`
+scores recall, mrr and ndcg over the gold node ids and the REACH of the
+misses, how many sit one declared edge from a hit, which decides the review's
+open point on widening by the edges; `temporal-make` mines dated question
+stubs from the version table for a person to review, and `temporal-run` holds
+`--as-of` to the version's uid and a numeric nugget to its text, with the
+undated control (R2's 0 % provenance, measured here). It runs once the
+collection embeds. `legal-collection-template.md` collects what Normattiva
+left for the next legal collection: identity and the id width, versions and
+validity, origin and fidelity, the four acquisition findings as a checklist,
+chunks and encoder, relations as facts, the reference source, the studies
+adopted and not, the process, and a numbered checklist.
+
 
 ### 2026-10-05: the side branches merged into main
 

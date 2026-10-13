@@ -916,3 +916,17 @@ scored deterministically — did `--as-of` return the version in force
 (provenance), and does the answer carry the value (nugget) — with no
 LLM judge. It measures the one thing §3 exists for and costs an
 afternoon over the Codici.
+
+Built 2026-10-13 as `tools/legal_pilot.py`: `coverage` resolves the gold
+articles BY KEY (the dataset's `file_name` is the act, its `path` the
+article; both through the collection's own `validity_works` keys and the
+shown version's chunks) and excludes what the collection does not hold;
+`run` scores recall, mrr and ndcg over the gold node ids and measures the
+REACH of the misses — how many sit one declared edge from a hit — which
+answers §7's open point on widening by the edges before anything is built
+for it; `temporal-make` mines dated question stubs from the version table
+(an article whose text differs between consecutive versions, a numeric
+nugget the later text lost) for a person to review, and `temporal-run`
+holds `--as-of` to the version's uid and the nugget to its text, with the
+undated control. All of it deterministic; it runs once the collection
+embeds (legal-collection-template.md §9).
