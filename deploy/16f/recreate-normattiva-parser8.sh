@@ -66,11 +66,16 @@ $L dev carry "$OLD" "$NEW" --rebuilt --copy
 $L dev carry "$OLD" "$NEW" --rebuilt --copy --yes
 
 say "4. the records, with parser 8, and the snapshot (about twenty minutes)"
-$L hold records build "$NEW"
-$L hold snapshot create "$NEW"
+# the worker adopts the new collection within a round and holds its lock:
+# pause it for the writes below, retry while the lock is released, resume at 7
+$L node pause "$NEW" >/dev/null
+run() { for i in $(seq 1 40); do out=$($L "$@" 2>&1); echo "$out" | grep -q "held by the node" || break; sleep 15; done; echo "$out"; }
+run hold records build "$NEW"
+run hold records validation "$NEW"          # 09 §9.4: every snapshot lists it
+run hold snapshot create "$NEW"
 
 say "5. reconcile: vectors kept where the content did not move"
-$L dev carry "$OLD" "$NEW" --reconcile --yes
+run dev carry "$OLD" "$NEW" --reconcile --yes
 
 say "6. the A1c proof"
 $L hold check "$NEW" --checks vectors-sample
@@ -78,10 +83,12 @@ $L hold check "$NEW" --checks vectors-sample
 say "7. the collection file: as $OLD's — everything, embedding on, the GPU badge"
 F="$ROOT/config/collections/$NEW.toml"
 sed -i 's/^slices = \[\]$/slices = "all"/' "$F"
+sed -i 's/^embed = "off"$/embed = "all"/' "$F"     # create writes "off"
 grep -q '^embed' "$F" || sed -i '/^kinds/a embed = "all"' "$F"
 grep -q '^device' "$F" || sed -i '/^query_model/a device = "gpu"' "$F"
 cat "$F"
 $L hold index show "$NEW"
+$L node resume "$NEW" >/dev/null
 
 say "8. next"
 echo "watch:  docker logs --since 10m $W | grep -i $NEW | tail   (the 23,610 new versions: rdf, fts, embed)"
