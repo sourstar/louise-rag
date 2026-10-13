@@ -246,6 +246,23 @@ def _writer(key, idx):
         return got
 
 
+def forget(fts_dir) -> int:
+    """Drop this process's handles on the indexes under `fts_dir` — for a
+    collection that LEFT the node. The caches are keyed on the path, and a
+    collection re-created at the same path would otherwise be written through
+    the old Index and writer, whose files are gone: normattiva, 2026-10-13,
+    "An index writer was killed … io::Error" on 244 documents. A thread still
+    holding one keeps its own reference; nothing is closed here. How many
+    handles went."""
+    base = str(fts_dir)
+    with _lock:
+        keys = [k for k in _indexes if k[0] == base] + [k for k in _writers if k[0] == base]
+        for k in keys:
+            _indexes.pop(k, None)
+            _writers.pop(k, None)
+    return len(set(keys))
+
+
 def close_all() -> None:
     """Let go of every writer this process holds — for tests, whose
     collections come and go. The worker keeps its writers until it exits.

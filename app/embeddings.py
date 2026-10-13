@@ -41,6 +41,11 @@ def _conn(collection=None):
         _dbs[key] = lancedb.connect(str(collection.lance_dir))
     return _dbs[key]
 
+def forget(collection) -> None:
+    """Drop the LanceDB connection on this collection's vector store — for a
+    collection that left the node (fts.forget, 2026-10-13)."""
+    _dbs.pop(str(collection.lance_dir), None)
+
 #: docs/09-formats.md §9.12: what RAGE states with every answer
 RUN_HEADER = "Louise-Run"
 

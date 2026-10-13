@@ -3766,6 +3766,14 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
                       _archive_log_state, _archive_last_kick, _sizing_names,
                       _license_nagged, _profile_nagged, _pipeline_idle_log):
             table.pop(gone, None)
+        # its index and vector handles, keyed on paths a re-created collection
+        # of the same name reuses (normattiva, 2026-10-13: 244 fts errors)
+        left = previous_by_name.get(gone)
+        if left is not None:
+            from . import catalog as catalog_mod, embeddings as embeddings_mod, fts as fts_mod
+            fts_mod.forget(left.fts_dir)
+            catalog_mod.forget(left)
+            embeddings_mod.forget(left)
         cons[gone].close()
         del cons[gone]
         last_discover.pop(gone, None)

@@ -50,6 +50,17 @@ _writers: dict = {}                          # and its one writer per index, by 
 _readers: dict[str, tantivy.Index] = {}      # reading handles, by path#generation
 
 
+def forget(collection) -> None:
+    """Drop the handles on this collection's catalog index — for a
+    collection that left the node, so one re-created at the same path never
+    writes through a handle on deleted files (fts.forget, 2026-10-13)."""
+    base = str(path_for(collection))
+    with _lock:
+        for table in (_indexes, _writers, _readers, _write_locks):
+            for k in [k for k in table if str(k) == base or str(k).startswith(base + "#")]:
+                table.pop(k, None)
+
+
 def path_for(collection) -> Path:
     return Path(collection.fts_dir) / "_catalog"
 
