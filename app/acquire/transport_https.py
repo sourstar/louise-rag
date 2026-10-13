@@ -53,8 +53,11 @@ def _url(endpoint: Endpoint, remote: RemoteFile) -> str:
 
 
 #: One closed Range of `fetch_ranged`: seconds at a few MB/s, so an origin
-#: that cuts or stalls a long response costs a step, never the file.
-RANGE_STEP = 64 << 20
+#: that cuts or stalls a long response costs a step, never the file. Below
+#: 50 MiB: this origin caps a Range response there (52,428,800 bytes, then a
+#: stall) — at 64 MiB every step hung for a minute before continuing from
+#: the 50 MiB it had (2026-10-13; zipdelta.DIRECTORY_PIECE for the same).
+RANGE_STEP = 32 << 20
 #: How many times one step is asked again on a transient fault — a timeout, a
 #: drop, the origin's own 5xx — before it is the transport's error: a second
 #: apart, doubling, 15 s in all, which outlasts the eight-second episode of

@@ -369,6 +369,26 @@ validity, origin and fidelity, the four acquisition findings as a checklist,
 chunks and encoder, relations as facts, the reference source, the studies
 adopted and not, the process, and a numbered checklist.
 
+**The fifth and sixth findings (2026-10-13, the re-created collection's
+first pass), fixed.** (5) The 21 complete zips were not adopted: the delta
+read each directory, found nothing changed, and REBUILT the file anyway —
+7.8 GB copied through tank and re-hashed every pass, mtimes moved, nothing
+moved over the network ("fetched 21, adopted 0"). Now a directory that
+says "the same members, in the same order" is the adoption: nothing
+written, nothing hashed (the directory's CRC-32 per member is the
+verification), the row keeps the digest the last fetch wrote, the pass
+counts it adopted. (6) Two files — regi-decreti and the repealed acts' O
+zip, the two with the most members — had no row and were "skipped": their
+directory reads had timed out five times over and 2c4194f's deferral
+counted them skipped, silently, because the reasons lived in a list nobody
+printed. Probed from here: this origin caps a Range response at 50 MiB
+(52,428,800 bytes, then a stall), and the directory reader's third step
+asked 64 MB. The tail is now read in pieces of at most 32 MiB, the ranged
+fetch's step is 32 MiB, and every delta's decline or deferral is an event.
+Both files are in the build: discovery and the stages read the corpus and
+the documents table; `fetch_files` is consulted by the Library page alone.
+The next pass adopts both and writes their rows.
+
 
 ### 2026-10-05: the side branches merged into main
 

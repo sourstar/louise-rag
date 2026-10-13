@@ -121,7 +121,7 @@ before the next step (STATUS, 2026-10-13). They are the checklist.
 2. **Probe the origin with curl before designing a fetch path.** This one
    cuts every whole stream at 1,086,390,272 bytes and stalls an open-ended
    resume, while a closed range at the same offset answers in a second. The
-   file is fetched in closed 64 MiB ranges (`transport_https.fetch_ranged`),
+   file is fetched in closed 32 MiB ranges (`transport_https.fetch_ranged`),
    each request its own unit with its own timeout and retries.
 3. **A 5xx, a read timeout, a dropped connection are the origin's episode,
    not the file's.** Retry them within the pass (five attempts, 15 s in all —
@@ -133,6 +133,14 @@ before the next step (STATUS, 2026-10-13). They are the checklist.
    Only a directory READ that says the file differs sends it to the whole
    fetch. A complete 1.2 GB zip was re-fetched and failed on a transient 500
    before this rule.
+5. **Keep every request below what the origin serves in one answer, and
+   say every decline and deferral.** This origin caps a Range response at
+   50 MiB and stalls past it; the two zips with the most members had their
+   directory reads time out on a 64 MB tail, their rows went unwritten and
+   the pass said "skipped" with the reason in a list nobody printed. The
+   directory is read in pieces, the ranged step is 32 MiB, and the delta's
+   reasons are events. An unchanged zip is adopted by its directory, never
+   rewritten: before this rule 7.8 GB went through tank every pass.
 
 Also: the listing's dates are not a change signal (the zips are rebuilt
 daily); the delta reads each zip's directory every pass and moves only the

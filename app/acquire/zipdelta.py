@@ -42,6 +42,11 @@ from .spec import TransportError
 #: the directory is not inside it, up to the limit
 DIRECTORY_TAIL = 4 << 20
 DIRECTORY_LIMIT = 512 << 20
+#: One Range request at most, reading a tail: this origin caps a Range
+#: response at 50 MiB (exactly 52,428,800 bytes, then it stalls) — a 64 MB
+#: tail, the third step for a directory of 200,000 members, timed out five
+#: times over on 2026-10-13. 32 MiB answered in 9 s.
+DIRECTORY_PIECE = 32 << 20
 #: a delta that would fetch more than this share of the file is not a delta:
 #: the whole fetch is cheaper and is what the caller falls back to
 WHOLE_IS_CHEAPER = 0.5
@@ -174,13 +179,27 @@ def directory(reader: RangeReader, *, tail: int | None = None,
     again with a longer one."""
     tail = DIRECTORY_TAIL if tail is None else tail        # read at call time: a test sizes it
     limit = DIRECTORY_LIMIT if limit is None else limit
+    piece = DIRECTORY_PIECE
     total = reader.total()
     want = min(tail, total)
     read = 0
     while True:
         start = total - want
-        data = reader.read(start, total - 1)
-        read += len(data)
+        # in pieces of at most DIRECTORY_PIECE, never one request for the
+        # whole tail: this origin caps a Range response at 50 MiB and stalls
+        # past it, and a 64 MB tail — the third step for a directory of
+        # 200,000 members — timed out five times over (2026-10-13)
+        parts: list[bytes] = []
+        at = start
+        while at <= total - 1:
+            end = min(total - 1, at + piece - 1)
+            data = reader.read(at, end)
+            if len(data) != end - at + 1:
+                raise TransportError(f"{len(data)} bytes to Range {at}-{end}: the origin answered short")
+            parts.append(data)
+            read += len(data)
+            at = end + 1
+        data = b"".join(parts)
         fd, path = tempfile.mkstemp(prefix="louise-zipdir-", suffix=".zip")
         try:
             with os.fdopen(fd, "r+b") as f:
@@ -237,6 +256,21 @@ def plan(local: Path | None, remote: list[zipfile.ZipInfo]) -> Plan:
     names = {i.filename for i in remote}
     out.dropped = sorted(n for n in have if n not in names)
     return out
+
+
+def unchanged(local: Path | None, p: Plan) -> bool:
+    """Is the local copy the origin's zip, member for member? Nothing to
+    fetch, nothing dropped, and the members in the origin's order — then the
+    bytes that matter (every member's name, CRC-32 and size) are the same,
+    and the copy is left exactly as it is."""
+    if local is None or not Path(local).is_file() or p.fetch or p.dropped:
+        return False
+    try:
+        with zipfile.ZipFile(local) as z:
+            mine = [i.filename for i in z.infolist()]
+    except zipfile.BadZipFile:
+        return False
+    return mine == [i.filename for i in p.order]
 
 
 # ---- the members ------------------------------------------------------------------
@@ -374,6 +408,7 @@ class Outcome:
     dropped: int
     bytes_read: int        # what crossed the network, directory included
     total: int             # the remote file's size
+    unchanged: bool = False   # the local copy IS the origin's: nothing fetched, nothing written
 
 
 def update(reader: RangeReader, local: Path | None, out: Path, *, stop=None,
@@ -386,6 +421,13 @@ def update(reader: RangeReader, local: Path | None, out: Path, *, stop=None,
     from .spec import TransferAborted
     infos, total, read = directory(reader, tail=tail)
     p = plan(local, infos)
+    if unchanged(local, p):
+        # the directory says the copy holds every member the origin lists,
+        # by CRC-32 and size, in the origin's order: nothing to fetch, and
+        # nothing to write — a rebuild would copy the whole file through for
+        # no change (2026-10-13: 7.8 GB rewritten on tank, every pass)
+        return Outcome(members=len(p.order), fetched=0, kept=len(p.keep), dropped=0,
+                       bytes_read=read, total=total, unchanged=True)
     if total and p.fetch_bytes > total * whole_is_cheaper:
         raise DeltaNotWorthIt(f"{p.fetch_bytes} of {total} bytes changed: the whole file is cheaper")
     fetched: dict[str, bytes] = {}

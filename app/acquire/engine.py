@@ -398,7 +398,7 @@ def _upsert_fetched(con, source_id: str, f: RemoteFile, endpoint_url: str, local
         "ON CONFLICT(source_id,rel_path) DO UPDATE SET "
         "endpoint_url=excluded.endpoint_url,remote_size=excluded.remote_size,"
         "remote_mtime=excluded.remote_mtime,local_path=excluded.local_path,"
-        "bytes_fetched=excluded.bytes_fetched,blake2=excluded.blake2,fetch_done=1,"
+        "bytes_fetched=excluded.bytes_fetched,blake2=COALESCE(excluded.blake2,fetch_files.blake2),fetch_done=1,"
         "fetch_version=excluded.fetch_version,profile=excluded.profile,error=NULL,"
         "extra=excluded.extra,updated_at=excluded.updated_at",
         (source_id, f.rel_path, endpoint_url, f.size, f.mtime, local_path, bytes_fetched,
@@ -694,6 +694,17 @@ def _zip_delta(endpoint, f: RemoteFile, dest: Path, spec: AcquisitionSpec, manag
     started = time.monotonic()
     try:
         got = zipdelta.update(reader, dest, out)
+        if got.unchanged:
+            # the directory says the copy IS the origin's file: adopted,
+            # nothing written, nothing hashed (the directory's CRC-32 per
+            # member is the verification); the row keeps the digest the
+            # last fetch wrote (2026-10-13: 21 zips were rewritten and
+            # re-hashed every pass before this)
+            elapsed = time.monotonic() - started
+            manager.record_throughput(endpoint_key, got.bytes_read, elapsed)
+            return _FileResult(remote=f, endpoint_url=endpoint.url, status="fetched",
+                                size=dest.stat().st_size, digest=None, adopted=True,
+                                moved=got.bytes_read, seconds=elapsed)
         digest = checksum.digest_and_verify(out, spec.checksums)
         os.replace(out, dest)
     except TransferAborted:
@@ -1145,8 +1156,11 @@ def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: st
             elif r.status == "deferred":
                 # nothing is known about the file this pass (its directory
                 # could not be read): the row is left exactly as it was, the
-                # copy on disk stands, the next pass asks again
-                pass
+                # copy on disk stands, the next pass asks again — SAID, so
+                # that two files with no row and a "skipped" count are not a
+                # riddle (2026-10-13)
+                db.log_event(con, "warn", "acquire",
+                             f"{r.remote.rel_path}: deferred, the copy on disk stands — {r.error}")
             else:
                 _upsert_failed(con, spec.source_id, r.remote, r.endpoint_url,
                                 r.bytes_now, profile, r.error or "unknown error")
@@ -1172,6 +1186,10 @@ def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: st
                 # downstream from a downloaded one. This is the extra
                 # detail of how it got there, not a fourth outcome.
                 counters["adopted"] += 1
+        # why a zip's delta declined or deferred, as events: the list was a
+        # module-level note nobody printed (2026-10-13)
+        while _zip_delta_fallbacks:
+            db.log_event(con, "warn", "acquire", "zip delta: " + _zip_delta_fallbacks.pop(0))
 
     workers = min(manager.platform.transfer.workers, max(1, len(items)))
     # the claim is already held by run_acquisition, covering the whole pass

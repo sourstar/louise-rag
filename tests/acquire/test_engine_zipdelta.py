@@ -15,6 +15,11 @@ from app.acquire.spec import DeltaSpec, Endpoint, RemoteFile, Transport
 
 from tests.acquire.test_engine import _collection, _spec
 
+
+def _warned(con):
+    """What the pass said of its zip deltas, as events (the list behind them is drained into events)."""
+    return [r[0] for r in con.execute("SELECT message FROM events WHERE stage='acquire' AND level='warn'")]
+
 V1 = {f"D/{i:03d}_X_ORIGINALE_V0.xml": random.Random(i).randbytes(20_000) for i in range(40)}
 V2 = dict(V1)
 V2["D/003_X_ORIGINALE_V0.xml"] = random.Random(9003).randbytes(20_000)      # corrected at the origin
@@ -91,7 +96,7 @@ def test_without_ranges_the_whole_fetch_follows(tmp_path, mock_server, small_tai
     assert got["fetched"] == 1 and _members(collection.corpus_dir / "m.zip") == V2
     assert mock_server.request_count("m.zip") - before == 3, \
         "the delta's probe and the ranged fetch's both answered 200 — no ranges — and the whole file followed"
-    assert any("RangeUnsupported" in why for why in engine._zip_delta_fallbacks)
+    assert any("RangeUnsupported" in why for why in _warned(con))
 
 
 def test_a_delta_moving_most_of_the_file_hands_back_to_the_whole_fetch(tmp_path, mock_server, small_tail):
@@ -107,7 +112,7 @@ def test_a_delta_moving_most_of_the_file_hands_back_to_the_whole_fetch(tmp_path,
     assert got["fetched"] == 1 and got["adopted"] == 0
     assert mock_server.request_count("m.zip") - before == 4, "size, directory, the size again, then the whole file in one closed range"
     assert _members(collection.corpus_dir / "m.zip") == changed, "not adopted by its size once the directory said it differs"
-    assert any("DeltaNotWorthIt" in why for why in engine._zip_delta_fallbacks)
+    assert any("DeltaNotWorthIt" in why for why in _warned(con))
 
 
 def test_every_pass_treats_a_zip_directory_file_as_pending(tmp_path, mock_server):
@@ -168,7 +173,7 @@ def test_an_origin_that_keeps_faulting_fails_the_file_and_the_pass_goes_on(tmp_p
     row = con.execute("SELECT fetch_done, error FROM fetch_files WHERE rel_path='m.zip'").fetchone()
     assert row["fetch_done"] == 1 and row["error"] is None, "nothing recorded against a file nothing is known about"
     assert any("directory unread, the copy stands" in why and "attempts" in why
-               for why in engine._zip_delta_fallbacks), "the size probe asked ATTEMPTS times first"
+               for why in _warned(con)), "the size probe asked ATTEMPTS times first"
 
 
 # ---- the file in closed ranges (transport_https.fetch_ranged, 2026-10-13) --------------
@@ -264,7 +269,7 @@ def test_a_directory_that_cannot_be_read_leaves_a_complete_copy_standing(tmp_pat
     assert tuple(after) == tuple(row), "the row is exactly as it was"
     assert mock_server.request_count("m.zip") - before == zipdelta.HttpRangeReader.ATTEMPTS, \
         "the size probe asked ATTEMPTS times, then nothing else"
-    assert any("directory unread, the copy stands" in why for why in engine._zip_delta_fallbacks)
+    assert any("directory unread, the copy stands" in why for why in _warned(con))
     mock_server.statuses.clear()                                # the episode is over
     got = engine.run_acquisition(con, collection, spec, "demo")
     assert got["fetched"] == 1 and _members(collection.corpus_dir / "m.zip") == V2
@@ -294,3 +299,88 @@ def test_the_origins_faults_read_as_deferrals():
         assert engine.transient(text), text
     assert not engine.transient("TransportError: https://x/y: 404 to Range 0-9")
     assert not engine.transient("checksum mismatch: sidecar says a, file says b")
+
+
+# ---- an unchanged zip is adopted, not rewritten; a deferral is said (2026-10-13) --------
+
+def test_an_unchanged_zip_is_adopted_by_its_directory_and_left_untouched(tmp_path, mock_server, small_tail):
+    """The re-created collection re-read 21 complete zips and REWROTE them
+    (7.8 GB through tank, mtimes moved, nothing moved over the network):
+    the delta rebuilt the file even when nothing changed. Now the directory
+    saying "the same members, the same order" is the adoption: no write, no
+    hash, the digest kept from the last fetch, counted adopted."""
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+    _zip(mock_server.root / "m.zip", V1)
+    spec = _delta_spec(mock_server)
+    first = engine.run_acquisition(con, collection, spec, "demo")
+    assert first["adopted"] == 0
+    dest = collection.corpus_dir / "m.zip"
+    st = dest.stat()
+    row = con.execute("SELECT blake2 FROM fetch_files WHERE rel_path='m.zip'").fetchone()
+    assert row["blake2"], "the fetch wrote the digest"
+    before = mock_server.request_count("m.zip")
+    again = engine.run_acquisition(con, collection, spec, "demo")       # nothing changed at the origin
+    assert again == {"fetched": 1, "skipped": 0, "failed": 0, "aborted": 0, "adopted": 1, "total": 1}
+    after = dest.stat()
+    assert (after.st_ino, after.st_mtime_ns, after.st_size) == (st.st_ino, st.st_mtime_ns, st.st_size), \
+        "the file is exactly the one that was there: no rewrite"
+    assert mock_server.request_count("m.zip") - before == 2, "the size and the directory, nothing else"
+    kept = con.execute("SELECT blake2, fetch_done FROM fetch_files WHERE rel_path='m.zip'").fetchone()
+    assert kept["blake2"] == row["blake2"] and kept["fetch_done"] == 1, "the digest of the last fetch stands"
+    assert not any(p.suffix == ".delta" for p in dest.parent.iterdir())
+
+
+def test_a_deferral_and_a_declined_delta_are_said_as_events(tmp_path, mock_server, small_tail, monkeypatch):
+    """Two files with no row and a "skipped" count were a riddle on the node:
+    the reason lived in a module-level list nobody printed."""
+    monkeypatch.setattr(zipdelta, "_sleep", lambda s: None)
+    monkeypatch.setattr(engine.time, "sleep", lambda s: None)
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+    _zip(mock_server.root / "m.zip", V1)
+    spec = _delta_spec(mock_server)
+    engine.run_acquisition(con, collection, spec, "demo")
+    mock_server.answer_next("m.zip", 500, 1000)
+    got = engine.run_acquisition(con, collection, spec, "demo")
+    assert got["skipped"] == 1
+    said = [r[0] for r in con.execute("SELECT message FROM events WHERE stage='acquire' AND level='warn'")]
+    assert any("m.zip: deferred, the copy on disk stands" in m for m in said), said
+    assert any(m.startswith("zip delta: m.zip: directory unread") for m in said), said
+    mock_server.statuses.clear()
+    changed = {k: random.Random(i + 900).randbytes(20_000) for i, k in enumerate(V1)}
+    _zip(mock_server.root / "m.zip", changed)                 # most of the file moved: declined
+    engine.run_acquisition(con, collection, spec, "demo")
+    said = [r[0] for r in con.execute("SELECT message FROM events WHERE stage='acquire' AND level='warn'")]
+    assert any("DeltaNotWorthIt" in m for m in said), said
+
+
+# ---- a directory larger than one request, under an origin that caps a response ------
+
+def test_a_large_directory_is_read_in_pieces_below_the_origins_cap(tmp_path, mock_server, monkeypatch):
+    """The two zips with the most members (200,000 and 124,000) had their
+    directory reads time out five times over: the tail grew to 64 MB and
+    this origin caps a Range response at 50 MiB, then stalls. The tail is
+    read in pieces of DIRECTORY_PIECE now, each a request of its own."""
+    monkeypatch.setattr(zipdelta, "DIRECTORY_TAIL", 8 * 1024)
+    monkeypatch.setattr(zipdelta, "DIRECTORY_PIECE", 64 * 1024)
+    monkeypatch.setattr(zipdelta, "_sleep", lambda s: None)
+    many = {f"D/{i:04d}_X_ORIGINALE_V0.xml": random.Random(i).randbytes(200) for i in range(3000)}
+    _zip(mock_server.root / "m.zip", many)
+    mock_server.cut_after_bytes("m.zip", 100 * 1024)          # a response longer than this is cut
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+    spec = _delta_spec(mock_server)
+    first = engine.run_acquisition(con, collection, spec, "demo")  # the first fetch, in closed ranges
+    assert first["fetched"] == 1 and _members(collection.corpus_dir / "m.zip") == many
+    n = len(mock_server.range_requests["m.zip"])
+    again = engine.run_acquisition(con, collection, spec, "demo")  # the directory, in pieces; adopted
+    assert again["adopted"] == 1 and again["failed"] == 0, again
+    lengths = []
+    for r in mock_server.range_requests["m.zip"][n:]:
+        a, b = r.split("=", 1)[1].split("-")
+        if b:
+            lengths.append(int(b) - int(a) + 1)
+    assert lengths and max(lengths) <= 64 * 1024, "the directory read never asks more than a piece"
+    with zipfile.ZipFile(collection.corpus_dir / "m.zip") as z:
+        assert len(z.infolist()) == 3000
