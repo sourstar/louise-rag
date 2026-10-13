@@ -92,6 +92,7 @@ louise hold
               ack --web-sources [--yes]                                print the web-sources disclaimer; record this node's acceptance, once (04 §4.4)
               certify <collection> <snapshot>                          sign a snapshot as this collection's certifier
               forget <collection> [--kinds …] [--yes] [--dry-run] [--here]  stop holding: remove this peer's copy and its state; --here when no worker runs
+              rename <collection> <new-name> [--dry-run]               the same collection under another local name; nothing recomputed
               list [--all]                                             collections held, by lineage; --all includes the dormant
               show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, and the copy's state — refused, quarantine or in use — with every reason
   deposit     add <collection> FILE [--key K] [--here]                 store a file as a deposit; an existing key is replaced whole
@@ -279,6 +280,15 @@ reader needs at the command line:
   no mark. It is refused (exit 2) while another test is still open or
   has failed, and when the origin check has in fact run: a decision
   stands in for a test that cannot run, never for one that failed.
+- **`rename`.** The same collection under another local name (*added
+  2026-10-13*): a name is this peer's own (§7.8) — no Codex, record,
+  chunk or vector holds it — so nothing is recomputed. The directory, its
+  folders under the shared roots (an origin folder another held
+  collection also links stays where it is), the absolute paths the
+  manifest stores, a per-collection pause and the held file move, the
+  held file last; the new name must be free. It takes the collection's
+  lock, so a running node pauses the collection first (§7.7); an
+  interrupted rename is finished by running it again.
 - **`forget`.** Removes the copy, or with `--kinds` only those members,
   and the local state that goes with them; the Codex, this peer's
   attestations and anything another peer holds are untouched (01,

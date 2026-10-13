@@ -589,3 +589,31 @@ def test_reconcile_keeps_the_vectors_of_every_unchanged_document_and_resets_the_
     assert all(hashes[u] == after[u][1] for u in after), "txt_hash is the record's origin_hash"
     again = carry.reconcile(root, "old", "re", log=quiet)
     assert (again["kept"], again["reset"]) == (out["kept"], out["reset"]), "resumed, not redone"
+
+
+@pytest.mark.parametrize("copy", [True, False])
+def test_an_empty_manifest_another_writer_made_meanwhile_is_replaced_not_taken(pair, monkeypatch, copy):
+    """2026-10-13, normattiva-1861: the worker opened the target two seconds
+    after the carry removed its empty manifest, `db.connect` made a fresh
+    one, and the carry took it for its own earlier copy — the copy never
+    happened (and, moving, the source's manifest would have been deleted as
+    an interrupted move). A target manifest with fewer documents than the
+    source's is replaced; the source's documents arrive."""
+    root, old, new = pair
+    _seeded(root)
+    uids, _ids = _vectors(root, old)
+    real = carry._transfer
+
+    def racing(src, dst, *, copy):
+        if dst.name == "lance":                       # the first transfer: the worker strikes
+            db.connect(_local(root, "new")).close()   # an empty manifest at the target
+        return real(src, dst, copy=copy)
+    monkeypatch.setattr(carry, "_transfer", racing)
+    out = carry.carry(root, "old", "new", copy=copy, apply=True, log=quiet)
+    assert out["done"]["manifest"] == ("copied" if copy else "moved")
+    assert out["documents"] == len(uids) and len(uids) > 0
+    con = db.connect(_local(root, "new"))
+    try:
+        assert {r[0] for r in con.execute("SELECT uid FROM documents")} == set(uids)
+    finally:
+        con.close()

@@ -3746,6 +3746,22 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
         # forever — `_archive_worker` logs nothing on an empty fetch, so it
         # would fail invisibly.
         _gone.pop(added.name, None)
+        # ANOTHER WRITER HOLDS IT: not opened, not even its manifest, until it
+        # lets go (07 §7.7). 2026-10-13: `dev carry` held normattiva-1861 and
+        # had removed its empty manifest to put the carried one in place; this
+        # loop opened the collection two seconds later, `db.connect` created a
+        # fresh empty manifest, the carry took it for its own earlier copy,
+        # and 318,349 documents' parse, index and embed marks were lost. Not
+        # added this round; the next round asks again.
+        from app.hold import lock as lock_mod
+        held_by = lock_mod.holder(Path(added.manifest_path).parent)
+        if held_by is not None:
+            if _lock_nagged.get(added.name) != str(held_by) and cons:
+                _lock_nagged[added.name] = str(held_by)
+                db.log_event(next(iter(cons.values())), "info", "worker",
+                             f"new collection {added.name!r} not opened this round: "
+                             f"{held_by.get('what') or 'another writer'} holds it")
+            continue
         try:
             spaces.validate_boot([added])
         except (spaces.BootValidationError, collections_mod.NoEncoder) as e:

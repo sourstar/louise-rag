@@ -121,3 +121,27 @@ def test_the_documents_word_for_a_mode_is_read(isolated_config, data_dir, config
     codex_collection("od", louise_root=data_dir, config_dir=config_dir,
                      toml_extra='embed = "on-demand"\n')
     assert collections_mod.by_name("od").embed_mode_default == "lazy"
+
+
+def test_a_new_collection_another_writer_holds_is_not_opened(tmp_path, monkeypatch):
+    """07 §7.7, 2026-10-13: `dev carry` held normattiva-1861 and had removed
+    its manifest to put the carried one in place; the worker opened the
+    collection anyway, and `db.connect` made a fresh empty manifest the carry
+    then took for its own. A collection whose lock another writer holds is
+    not opened — not even its manifest — until the lock is free."""
+    from app.hold import lock as lock_mod
+    added = _collection(tmp_path / "new", embed_mode="lazy")
+    state = Path(added.manifest_path).parent
+    monkeypatch.setattr(collections_mod, "load_all", lambda: [added])
+    monkeypatch.setattr(worker, "_discover", lambda *a, **k: None)
+    monkeypatch.setattr(worker.spaces, "validate_boot", lambda cs: None)
+    held = lock_mod.take(state, added.name, "louise dev carry")
+    try:
+        cons: dict = {}
+        assert worker._sync_collections([], cons, {}, pipeline=False) == []
+        assert cons == {} and not Path(added.manifest_path).exists(), "no manifest made"
+    finally:
+        held.release()
+    assert [c.name for c in worker._sync_collections([], cons, {}, pipeline=False)] == [added.name]
+    assert Path(added.manifest_path).exists()
+    cons[added.name].close()

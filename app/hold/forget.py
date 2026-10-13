@@ -20,6 +20,7 @@ forgetting what is not held is nothing to do.
 """
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Callable
@@ -30,6 +31,11 @@ from .codex import CodexError
 VECTOR_MEMBER_PREFIXES = ("vectors-", "buckets-", "bundle-", "centres-")
 #: the `--kinds` taken apart today; everything else goes with the copy whole
 KINDS = ("vectors",)
+
+
+def _linked_by_others(root: Path, name: str, target: Path) -> list[str]:
+    from .rename import _origin_shared
+    return _origin_shared(Path(root), name, target)
 
 
 def forget(root: Path, name: str, *, kinds=None, dry_run: bool = False,
@@ -86,7 +92,28 @@ def forget(root: Path, name: str, *, kinds=None, dry_run: bool = False,
     erased = 0
     if codex is not None and deposit.is_deposit(codex) and base.exists():
         erased = deposit.erase_all(root, name, codex)
-    # 4. the directory, whole
+    # 4. its folders under the shared roots (one mount per kind, a folder per
+    #    collection, 2026-10-12): the directory's links name them and rmtree
+    #    removes only the links, so the SHARD folder was left behind under
+    #    the name — and a collection renamed to that name found it taken
+    #    (2026-10-13). The SHARD folder is this collection's copy and goes;
+    #    an origin folder goes too unless another held collection links it
+    #    (both Normattiva collections read /corpora/normattiva)
+    for link_name, env in ((shard_mod.SHARD_DIR if hasattr(shard_mod, "SHARD_DIR") else "shard",
+                            "SHARDS_ROOT"), ("origin", "ORIGINS_ROOT")):
+        link = base / link_name
+        shared_root = os.getenv(env, "").strip()
+        if not (shared_root and link.is_symlink()):
+            continue
+        target = Path(os.readlink(link))
+        if target.name != name or os.path.normpath(target.parent) != os.path.normpath(shared_root):
+            continue                         # a custom origin, linked by hand: not ours
+        if link_name == "origin" and _linked_by_others(root, name, target):
+            continue
+        if target.is_dir():
+            shutil.rmtree(target)
+            removed.append(str(target))
+    # 5. the directory, whole
     if base.exists():
         shutil.rmtree(base)
         removed.append(str(base))

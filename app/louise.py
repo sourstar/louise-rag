@@ -920,6 +920,21 @@ def cmd_collection_forget(a) -> int:
     return 0
 
 
+def cmd_collection_rename(a) -> int:
+    """`hold collection rename <collection> <new-name> [--dry-run]` (07 §7.3):
+    the same collection under another local name — its directory, its
+    shared folders, the manifest's stored paths, its pause and its held
+    file (app/hold/rename.py). Takes the collection's write lock: on a
+    running node, `node pause <collection>` first. Exit 2 while it is held."""
+    from app.hold import rename as rename_mod
+    name = col.name_of(a.root, a.collection)
+    root = Path(a.root) if a.root else _default_root()
+    if not a.dry_run:
+        _take_write_lock(a.root, name, "hold collection rename", exit_code=2)
+    _print(rename_mod.rename(root, name, a.new_name, dry_run=a.dry_run))
+    return 0
+
+
 # ---- the one writer per collection (07 §7.7) ---------------------------------
 _cli_locks: list = []
 
@@ -3617,6 +3632,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="in this process, for a node whose worker is not running; "
                         "otherwise queued for the worker, the one writer")
     p.set_defaults(fn=cmd_collection_forget)
+
+    p = verbs.add_parser("rename",
+                         help="the same collection under another local name: its directory, "
+                              "shared folders, stored paths, pause and held file (07 §7.3)")
+    root_arg(p); p.add_argument("collection"); p.add_argument("new_name", metavar="new-name")
+    p.add_argument("--dry-run", action="store_true", dest="dry_run",
+                   help="name what would move; move nothing")
+    p.set_defaults(fn=cmd_collection_rename)
 
     p = verbs.add_parser("ack",
                          help="record the licence acknowledgement a yellow- "

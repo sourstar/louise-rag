@@ -302,9 +302,27 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         for suffix in _COMPANIONS:
             _transfer(Path(f"{sp['manifest']}{suffix}"), Path(f"{tp['manifest']}{suffix}"),
                       copy=False)
+    # A MANIFEST AT THE TARGET IS NOT PROOF OF AN EARLIER COPY (2026-10-13):
+    # the worker created an empty one in normattiva-1861 two seconds after
+    # this carry removed it, `_transfer` called it "present", and the copy
+    # never happened — 318,349 documents' marks lost; moving, the SOURCE's
+    # manifest would have been deleted as "an interrupted move". A target
+    # manifest holding fewer documents than the source's is a stray, removed
+    # with its companions, and the source is transferred.
+    src_docs = _documents(sp["manifest"]) if sp["manifest"].is_file() else None
+    if src_docs and tp["manifest"].is_file() and (_documents(tp["manifest"]) or 0) < src_docs:
+        log(f"[carry] {to_name}: a manifest of {_documents(tp['manifest']) or 0} document(s) "
+            f"appeared at the target meanwhile (another writer?); replaced by {from_name}'s")
+        for suffix in ("", *_COMPANIONS):
+            Path(f"{tp['manifest']}{suffix}").unlink(missing_ok=True)
     done["manifest"] = _transfer(sp["manifest"], tp["manifest"], copy=copy)
     if not tp["manifest"].is_file():
         raise CodexError(f"carry: {tp['manifest']} is missing after the transfer")
+    if src_docs is not None and _documents(tp["manifest"]) != src_docs:
+        raise CarryMismatch(
+            f"carry: {tp['manifest']} holds {_documents(tp['manifest'])} document(s) and "
+            f"{from_name}'s manifest {src_docs}: the copy is not the source's. Nothing is "
+            f"marked done; pause both collections and run the carry again")
 
     cleared = _repin(tp["manifest"], src, to)
     plan.update(done=done, coverage_rows_cleared=cleared, documents=_documents(tp["manifest"]))
