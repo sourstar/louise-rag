@@ -1074,6 +1074,21 @@ ANSWER_SYSTEM = (
 #: language and whole. Nothing is lost: the reasoning was never shown.
 THINK_OFF = " /no_think"
 
+#: THE CITATIONS, ASKED LAST AND BY EXAMPLE. With the switch on, the model
+#: stopped citing: "Diritto all'oblio" over normattiva, 2026-10-13, 0
+#: markers in Italian and 1 without a language, where the thinking runs
+#: had cited four sources — the reasoning was where it planned them, and
+#: the page's [n] links went with it ("complete, but without the links",
+#: operator). The system prompt's "cite as [n]" sits far from the end;
+#: asked again after the question it is followed, and a reminder written
+#: as "[n]" was copied literally ("[n4]", 0 markers in four runs) where
+#: the example "[2] or [2][5]" gave 4–6 markers in each of three runs. The
+#: page links `[digits]` only (ask.html linkCitations), so the example
+#: shows that shape and nothing else inside the brackets.
+CITE_REMINDER = ("After each statement, cite the source it rests on by its number in square "
+                 "brackets, like [2] or [2][5]: the numbers of the sources above, nothing "
+                 "else inside the brackets.")
+
 #: Characters of passages an answer is given. The chat runs with a 16,384-
 #: token context and Ollama silently drops the START of a prompt that does
 #: not fit — the instructions first. The results count is the reader's to
@@ -1124,5 +1139,5 @@ def build_answer_messages(query: str, result: dict, answer_lang: str | None = No
     system += THINK_OFF
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": f"Sources:\n\n{context}\n\nQuestion: {query}"},
+        {"role": "user", "content": f"Sources:\n\n{context}\n\nQuestion: {query}\n\n{CITE_REMINDER}"},
     ]

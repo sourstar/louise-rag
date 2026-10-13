@@ -478,6 +478,22 @@ evicting LRU model … lastUsed" one second after each completion) and nags
 cold start; that is LocalAI's watchdog under the card's squeeze (the embedder
 runs beside it), a configuration matter for the operator.
 
+**"COMPLETE, BUT WITHOUT THE LINKS" (2026-10-13, 16:2x UTC, after
+765c1e1 went live).** The Italian answer now arrives whole, and without a
+single [n]: measured through the web port, 0 markers with the answer
+language set and 1 without, where the thinking runs had cited four
+sources — the hidden reasoning was where the model planned its citations,
+and the switch took them with it; the page links `[digits]` only
+(ask.html `linkCitations`). Fixed by asking LAST and BY EXAMPLE: the user
+turn ends, after the question, with "cite the source … like [2] or
+[2][5]: the numbers of the sources above, nothing else inside the
+brackets" (`retrieval.CITE_REMINDER`). A reminder written as "[n]" was
+copied literally ("[n4]", 0 markers in four runs); the example gave 4–6
+markers in each of three runs, all on the one source that is about the
+topic — the thinking runs' extra citations had been of sources that were
+not. Test: the user turn ends with the reminder; the system prompt still
+ends with the switch.
+
 **NORMATTIVA: REMEDY DONE, THE PILOT'S COVERAGE, THE ARCHIVE'S SCOPE
 (2026-10-13, afternoon UTC).** The other session deployed 03bc036 and ran
 the remedy: `hold vectors validity-columns normattiva` — 156,727 rows,
@@ -525,6 +541,29 @@ ask IPZS for a multivigente custom export or a "Leggi" collection. The note
 recommends C now and A as the daughter's first step; the machinery A needs
 (an `api-export` spec mode, the daughter's Codex per 02 §2.7) is asked
 before built, so the next step is the operator's word on C and A.
+
+**A NEW COLLECTION FOR THE FULL CORPUS: THE EXPORT MODE BUILT (2026-10-13,
+evening UTC; operator: "a new collection").** The origin's asynchronous
+export is an acquisition FILE KIND now: a `RemoteFile` whose `remote` is
+`export:<partition json>` (09 §9.17 amended; app/acquire/export_job.py) —
+the job started, confirmed, polled and downloaded, every wait bounded, the
+stop honoured between polls; `engine._export_fetch` adopts the copy when
+the origin's update feed (`ricerca/aggiornati`, read since the copy's
+mtime) names no act of its partition, re-exports when it does, leaves it
+standing when the feed is unread; a job not done in JOB_BOUND_S is a quiet
+deferral (engine.transient). NORMATTIVA_SPEC lists `akn/E/O|V/<year>.zip`
+for 1861 to this year under a new `archive` profile; `full` names the 23
+zips explicitly, so `normattiva`'s passes do not change (tested). The
+mock origin gained the job routes. The new collection is
+`normattiva-archive`: docs/notes/normattiva-archive-recipe.toml — the same
+space as `normattiva` byte for byte, so every shared chunk carries its
+vectors (RULE 1) — and deploy/16f/create-normattiva-archive.sh, which sets
+`profile = "archive"`. NOT CREATED YET: the measurement of one year's job
+in both forms (time, size, the VIGENTE member's naming against its
+FRBRthis) is owed first — the origin answered the one-act job in 50 s at
+15:3x UTC and dropped every job request at 135 s from 17:xx UTC after a
+run of probes (throttling or an outage; measure on a clean day, from a
+single job, and tell the operator the numbers before the first pass).
 
 
 ### 2026-10-05: the side branches merged into main

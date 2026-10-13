@@ -111,3 +111,18 @@ def test_the_answer_prompt_carries_the_no_think_switch():
         system = retrieval.build_answer_messages("q", result, **kw)[0]["content"]
         assert system.endswith(retrieval.THINK_OFF), system[-60:]
     assert "ISO code 'it'" in retrieval.build_answer_messages("q", result, answer_lang="it")[0]["content"]
+
+
+def test_the_citations_are_asked_last_and_by_example():
+    """With the switch on the model stopped citing (0 markers in Italian,
+    2026-10-13) and the page's [n] links went with it; a reminder written as
+    "[n]" was copied literally ("[n4]"). The question is followed by the
+    reminder with a concrete example of the shape the page links."""
+    result = {"hits": [{"chunk_id": "normattiva:1:0:1", "book_id": 1, "text": "t", "title": "T",
+                        "authors": "", "lang": "it"}], "facts": [], "catalog": []}
+    user = retrieval.build_answer_messages("Diritto all'oblio", result, answer_lang="it")[1]["content"]
+    assert "Question: Diritto all'oblio\n\n" in user
+    assert user.endswith(retrieval.CITE_REMINDER)
+    assert "like [2] or [2][5]" in retrieval.CITE_REMINDER and "[n]" not in retrieval.CITE_REMINDER
+    system = retrieval.build_answer_messages("q", result)[0]["content"]
+    assert system.endswith(retrieval.THINK_OFF)
