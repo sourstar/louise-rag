@@ -36,7 +36,7 @@ mkdir -p "$ROOT/src.new"
 tar -xzf "$TGZ" -C "$ROOT/src.new"
 grep -q "validity_closures" "$ROOT/src.new/app/db.py"                    # the closures (review §3.2 case 2)
 grep -q "def closures" "$ROOT/src.new/app/plugins/normattiva/source.py"
-grep -q "PARSER_VERSION = 6" "$ROOT/src.new/app/plugins/normattiva/source.py"
+grep -q "PARSER_VERSION = 7" "$ROOT/src.new/app/plugins/normattiva/source.py"
 grep -q "normattiva-refs" "$ROOT/src.new/app/refs/__init__.py"
 test -s "$ROOT/src.new/docs/notes/normattiva-recipe.toml"
 test ! -e "$ROOT/src.new/deploy/reference"                              # never shipped (gitignored)

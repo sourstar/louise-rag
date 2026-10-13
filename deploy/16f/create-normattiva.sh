@@ -35,7 +35,7 @@ say() { printf '\n=== %s\n' "$*"; }
 
 say "0. the live code is the shipped one, and the model is served"
 cat "$ROOT/src/.deployed-commit"
-docker exec "$WEB" python -c "from app.plugins.normattiva import SOURCE; assert SOURCE.PARSER_VERSION == 6, SOURCE.PARSER_VERSION; print('parser', SOURCE.PARSER_VERSION)"
+docker exec "$WEB" python -c "from app.plugins.normattiva import SOURCE; assert SOURCE.PARSER_VERSION == 7, SOURCE.PARSER_VERSION; print('parser', SOURCE.PARSER_VERSION)"
 curl -s --max-time 10 "$ENCODER/v1/models" | tr ',' '\n' | grep -q "\"$MODEL\"" && echo "$MODEL is listed"
 test ! -e "$ROOT/config/collections/normattiva.toml" || { echo "normattiva.toml exists already: nothing to create"; exit 1; }
 
