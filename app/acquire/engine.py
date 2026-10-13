@@ -765,20 +765,31 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                 part.unlink(missing_ok=True)
                 transport_https._sidecar_path(land).unlink(missing_ok=True)
                 resume_from = 0
-        # A transient fault mid-stream — a read timeout, a dropped connection
-        # — resumes from the bytes on disk a moment later, STREAM_ATTEMPTS
-        # times, before it is this pass's failure (the next pass resumes too;
-        # a fault that passes in seconds should not cost the pass).
-        for attempt in range(STREAM_ATTEMPTS):
-            if attempt:
-                time.sleep(float(1 << (attempt - 1)))
-                resume_from = part.stat().st_size if part.is_file() else 0
+        size: int | None = None
+        if spec.delta.mode == "zip-directory" and hasattr(transport, "fetch_ranged"):
+            # an origin whose delta rests on Range serves Range: the file in
+            # closed steps, each with its own timeout and retries — 2026-10-13,
+            # the 1.7 GB zip the origin cut at 1.09 GB into every whole stream
+            # (transport_https.fetch_ranged)
             try:
-                size = transport.fetch_one(endpoint, f, land, resume_from)
-                break
-            except TransportError as e:
-                if isinstance(e, (TransferAborted, RangeUnsupported)) or attempt + 1 == STREAM_ATTEMPTS:
-                    raise
+                size = transport.fetch_ranged(endpoint, f, land, resume_from)
+            except RangeUnsupported:
+                resume_from = part.stat().st_size if part.is_file() else 0
+        if size is None:
+            # A transient fault mid-stream — a read timeout, a dropped connection
+            # — resumes from the bytes on disk a moment later, STREAM_ATTEMPTS
+            # times, before it is this pass's failure (the next pass resumes too;
+            # a fault that passes in seconds should not cost the pass).
+            for attempt in range(STREAM_ATTEMPTS):
+                if attempt:
+                    time.sleep(float(1 << (attempt - 1)))
+                    resume_from = part.stat().st_size if part.is_file() else 0
+                try:
+                    size = transport.fetch_one(endpoint, f, land, resume_from)
+                    break
+                except TransportError as e:
+                    if isinstance(e, (TransferAborted, RangeUnsupported)) or attempt + 1 == STREAM_ATTEMPTS:
+                        raise
         # One streaming pass for both digests (md5 sidecar + blake2), instead
         # of reading the whole file into memory twice.
         digest = checksum.digest_and_verify(land, spec.checksums)

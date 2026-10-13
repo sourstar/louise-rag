@@ -7,6 +7,7 @@ crawling anything.
 import json
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from pathlib import Path
@@ -51,6 +52,58 @@ def _url(endpoint: Endpoint, remote: RemoteFile) -> str:
     return f"{endpoint.url.rstrip('/')}/{remote.remote or remote.rel_path}"
 
 
+#: One closed Range of `fetch_ranged`: seconds at a few MB/s, so an origin
+#: that cuts or stalls a long response costs a step, never the file.
+RANGE_STEP = 64 << 20
+#: How many times one step is asked again on a transient fault before it is
+#: the transport's error — a second apart, doubling.
+RANGE_ATTEMPTS = 3
+
+
+def _stream_range(url: str, headers: dict, f, start: int, end: int,
+                  attempts: int = RANGE_ATTEMPTS, *, whole: bool = False) -> int:
+    """`bytes=start-end` streamed into `f` (open for appending), fsynced and
+    charged chunk by chunk; returns the bytes written, which may be fewer
+    than asked when the origin closed early — the caller asks for the rest.
+    Zero progress after `attempts` transient faults is the transport's
+    error; a 200 is RangeUnsupported, as everywhere — except to a range that
+    IS the whole file (`whole`), which an origin may answer 200 with exactly
+    those bytes."""
+    last: Exception | None = None
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(float(1 << (attempt - 1)))
+        written = 0
+        try:
+            with httpx.Client(timeout=60, follow_redirects=True) as client:
+                with client.stream("GET", url, headers={**headers, "Range": f"bytes={start}-{end}"}) as r:
+                    if r.status_code == 200 and not whole:
+                        raise RangeUnsupported(f"{url}: the origin ignored Range and answered 200")
+                    if r.status_code not in (200, 206):
+                        raise TransportError(f"{url}: {r.status_code} to Range {start}-{end}")
+                    cr = r.headers.get("content-range", "")
+                    if r.status_code == 206 and not cr.startswith(f"bytes {start}-"):
+                        raise TransportError(f"{url}: Content-Range {cr!r} is not the range asked "
+                                             f"({start}-{end})")
+                    for chunk in r.iter_bytes(_CHUNK_SIZE):
+                        if written + len(chunk) > end - start + 1:
+                            raise TransportError(f"{url}: more bytes than the range {start}-{end}")
+                        f.write(chunk)
+                        f.flush()
+                        os.fsync(f.fileno())
+                        budget.acquire_bytes(len(chunk))
+                        written += len(chunk)
+            return written
+        except httpx.TransportError as e:         # a timeout, a drop, a reset: transient
+            last = e
+            if written:
+                return written                    # progress stands; the caller asks for the rest
+        except httpx.HTTPError as e:
+            raise TransportError(f"{url}: {e}") from e
+    raise TransportError(f"{url}: {type(last).__name__} on Range {start}-{end} after "
+                         f"{attempts} attempts: {last}") from last
+
+
 class HttpsTransport:
     # Declares that this transport can split ONE file across several
     # connections; the engine checks for it rather than knowing which
@@ -85,6 +138,46 @@ class HttpsTransport:
             return int(r.headers["content-length"])
         except (KeyError, ValueError):
             return None
+
+    def fetch_ranged(self, endpoint: Endpoint, remote: RemoteFile, dest: Path,
+                     resume_from: int, *, step: int | None = None) -> int:
+        """One file in CLOSED Range requests of `step` bytes, appended to the
+        `.part` in order, each request with its own timeout and retries — for
+        an origin that serves Range but not a whole stream (the engine uses
+        it where a spec declares `zip-directory`, which already rests on Range).
+
+        Normattiva, 2026-10-12/13: its 1.7 GB zip was cut by the origin at
+        1,086,390,272 bytes into every whole stream, and an open-ended resume
+        from there (`bytes=N-`) stalled past the read timeout three times,
+        while closed ranges at the same offset answered within a second at
+        the full rate — so a stream that can never finish became a file that
+        could not be fetched at all. A closed range of RANGE_STEP takes
+        seconds; a stall costs one step's retry, not the file.
+
+        The size comes from a one-byte Range (this origin's HEAD names no
+        length). An origin that answers a Range with 200 raises
+        RangeUnsupported, and the caller streams the file whole instead."""
+        from . import zipdelta
+        step = RANGE_STEP if step is None else int(step)
+        part = dest.with_name(dest.name + ".part")
+        part.parent.mkdir(parents=True, exist_ok=True)
+        url = _url(endpoint, remote)
+        headers = headers_for(endpoint)
+        try:
+            total = zipdelta.HttpRangeReader(url, headers, charge=budget.acquire_bytes).total()
+        except zipdelta.RangeUnsupported as e:          # the delta's own class, this module's name
+            raise RangeUnsupported(str(e)) from e
+        have = part.stat().st_size if (resume_from > 0 and part.is_file()) else 0
+        if have > total:
+            have = 0                 # a part longer than the file: not this file's; start over
+        with open(part, "ab" if have else "wb") as f:
+            while have < total:
+                end = min(total - 1, have + step - 1)
+                have += _stream_range(url, headers, f, have, end, whole=(have == 0 and end == total - 1))
+        if have != total:
+            raise TransportError(f"{url}: {have} bytes where the origin's Range says {total}")
+        os.replace(part, dest)
+        return have
 
     def fetch_one(self, endpoint: Endpoint, remote: RemoteFile, dest: Path,
                   resume_from: int) -> int:

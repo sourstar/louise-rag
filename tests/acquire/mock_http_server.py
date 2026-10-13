@@ -66,10 +66,14 @@ class _Handler(BaseHTTPRequestHandler):
             failing = server.failures.get(name, 0)
             if failing:
                 server.failures[name] = failing - 1
-        if failing:
+        range_now = self.headers.get("Range") or ""
+        open_ended = range_now.startswith("bytes=") and range_now.endswith("-")
+        if failing or (open_ended and name in server.refused_open_ranges):
             # a transient fault at the origin: the connection closes with no
             # answer at all, what a client sees as a dropped connection or,
-            # had it waited, a read timeout
+            # had it waited, a read timeout. `refused_open_ranges` models the
+            # origin seen 2026-10-13: a resume `bytes=N-` stalls, a closed
+            # range at the same offset answers
             self.close_connection = True
             return
         target = server.redirects.get(name)
@@ -132,6 +136,16 @@ class _Handler(BaseHTTPRequestHandler):
             self.close_connection = True   # abrupt end: client sees fewer bytes than promised
             return
 
+        cut = server.cuts.get(name)        # bytes per RESPONSE, whatever its range
+        if cut is not None and len(remaining) > cut:
+            try:
+                self.wfile.write(remaining[:cut])
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            self.close_connection = True   # the origin's limit on one response, 2026-10-13
+            return
+
         rate = server.drip_rates.get(name)
         try:
             if rate:
@@ -166,6 +180,8 @@ class MockServer:
         self.head_counts: dict[str, int] = {}
         self.no_head: set[str] = set()       # names whose HEAD is refused (405)
         self.failures: dict[str, int] = {}   # names whose next N GETs drop the connection
+        self.cuts: dict[str, int] = {}       # names whose every response body ends after N bytes
+        self.refused_open_ranges: set[str] = set()   # names whose `bytes=N-` requests get no answer
         self.lock = threading.Lock()
         self.live = 0
         self.peak_concurrency = 0
@@ -199,6 +215,19 @@ class MockServer:
         than give up on."""
         with self.lock:
             self.failures[name] = n
+
+    def cut_after_bytes(self, name: str, n: int) -> None:
+        """Every response for `name` carries at most `n` bytes of body, then
+        the connection closes — an origin's limit on one response (seen
+        2026-10-13: 1,086,390,272 bytes of a 1.7 GB zip, every time). A
+        client finishes the file only in requests smaller than that."""
+        self.cuts[name] = n
+
+    def refuse_open_ranges(self, name: str) -> None:
+        """A resume `Range: bytes=N-` for `name` gets no answer at all, while a
+        closed range `bytes=N-M` is served — the origin's second trait of
+        2026-10-13."""
+        self.refused_open_ranges.add(name)
 
     def request_count(self, name: str) -> int:
         return self.request_counts.get(name, 0)

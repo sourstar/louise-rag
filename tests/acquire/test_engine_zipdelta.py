@@ -54,7 +54,7 @@ def test_a_rebuilt_zip_is_brought_up_to_date_by_its_directory(tmp_path, mock_ser
     _zip(mock_server.root / "m.zip", V1)
     spec = _delta_spec(mock_server)
     first = engine.run_acquisition(con, collection, spec, "demo")
-    assert first["fetched"] == 1 and mock_server.request_count("m.zip") == 1, "no copy yet: the whole file"
+    assert first["fetched"] == 1 and mock_server.request_count("m.zip") == 2, "no copy yet: the size, then the file in one closed range"
     dest = collection.corpus_dir / "m.zip"
     assert _members(dest) == V1
 
@@ -89,8 +89,8 @@ def test_without_ranges_the_whole_fetch_follows(tmp_path, mock_server, small_tai
     before = mock_server.request_count("m.zip")
     got = engine.run_acquisition(con, collection, spec, "demo")
     assert got["fetched"] == 1 and _members(collection.corpus_dir / "m.zip") == V2
-    assert mock_server.request_count("m.zip") - before == 2, \
-        "the one-byte probe answered 200 — no ranges — and the whole file followed"
+    assert mock_server.request_count("m.zip") - before == 3, \
+        "the delta's probe and the ranged fetch's both answered 200 — no ranges — and the whole file followed"
     assert any("RangeUnsupported" in why for why in engine._zip_delta_fallbacks)
 
 
@@ -105,7 +105,7 @@ def test_a_delta_moving_most_of_the_file_hands_back_to_the_whole_fetch(tmp_path,
     before = mock_server.request_count("m.zip")
     got = engine.run_acquisition(con, collection, spec, "demo")
     assert got["fetched"] == 1 and got["adopted"] == 0
-    assert mock_server.request_count("m.zip") - before == 3, "size, directory, then the whole file"
+    assert mock_server.request_count("m.zip") - before == 4, "size, directory, the size again, then the whole file in one closed range"
     assert _members(collection.corpus_dir / "m.zip") == changed, "not adopted by its size once the directory said it differs"
     assert any("DeltaNotWorthIt" in why for why in engine._zip_delta_fallbacks)
 
@@ -167,3 +167,69 @@ def test_an_origin_that_keeps_faulting_fails_the_file_and_the_pass_goes_on(tmp_p
     row = con.execute("SELECT fetch_done, error FROM fetch_files WHERE rel_path='m.zip'").fetchone()
     assert row["error"] and "disconnected" in row["error"], "the whole fetch, the last resort, failed too"
     assert any("attempts" in why for why in engine._zip_delta_fallbacks), "the delta asked three times first"
+
+
+# ---- the file in closed ranges (transport_https.fetch_ranged, 2026-10-13) --------------
+
+from app.acquire import transport_https
+
+
+@pytest.fixture
+def small_steps(monkeypatch):
+    """Ranges sized for test zips (the 64 MiB default would be the whole file)."""
+    monkeypatch.setattr(transport_https, "RANGE_STEP", 256 * 1024)
+    monkeypatch.setattr(transport_https.time, "sleep", lambda s: None)
+    monkeypatch.setattr(zipdelta, "_sleep", lambda s: None)
+    monkeypatch.setattr(engine.time, "sleep", lambda s: None)
+
+
+def test_an_origin_that_cuts_every_stream_is_fetched_in_closed_ranges(tmp_path, mock_server,
+                                                                       small_tail, small_steps):
+    """Normattiva's largest zip: every whole stream cut at the same byte, an
+    open-ended resume from there never answered — a file no stream could
+    finish is fetched in closed ranges, each a request of its own."""
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+    _zip(mock_server.root / "m.zip", V1)                       # ~800 KB
+    size = (mock_server.root / "m.zip").stat().st_size
+    mock_server.cut_after_bytes("m.zip", 500_000)
+    mock_server.refuse_open_ranges("m.zip")
+    spec = _delta_spec(mock_server)
+    got = engine.run_acquisition(con, collection, spec, "demo")
+    assert got["fetched"] == 1 and got["failed"] == 0, got
+    assert _members(collection.corpus_dir / "m.zip") == V1
+    steps = -(-size // (256 * 1024))
+    assert mock_server.request_count("m.zip") == 1 + steps, "the size probe, then one request a step"
+    assert all(r.endswith("-") is False for r in mock_server.range_requests["m.zip"]), \
+        "every range closed: the origin's open-ended stall is never met"
+    assert not (collection.corpus_dir / "m.zip.part").exists()
+
+
+def test_a_step_dropped_once_is_asked_again_and_a_partial_step_continues(tmp_path, mock_server,
+                                                                       small_tail, small_steps):
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+    _zip(mock_server.root / "m.zip", V1)
+    spec = _delta_spec(mock_server)
+    mock_server.fail_next("m.zip", 2)                 # the probe drops once, the first step too
+    got = engine.run_acquisition(con, collection, spec, "demo")
+    assert got["fetched"] == 1 and _members(collection.corpus_dir / "m.zip") == V1
+    # a step answered short (the origin's cut inside a step) continues from where it ended
+    _zip(mock_server.root / "n.zip", V2)
+    mock_server.cut_after_bytes("n.zip", 100_000)      # smaller than a step
+    spec2 = _delta_spec(mock_server, name="n.zip")
+    got = engine.run_acquisition(con, collection, spec2, "demo")
+    assert got["fetched"] == 1 and _members(collection.corpus_dir / "n.zip") == V2
+    starts = [int(r.split("=", 1)[1].split("-")[0]) for r in mock_server.range_requests["n.zip"] if r != "bytes=0-0"]
+    assert starts == sorted(starts) and len(set(starts)) == len(starts), "each request asks from where the last ended"
+
+
+def test_an_origin_without_ranges_falls_back_to_the_stream(tmp_path, mock_server, small_tail, small_steps):
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+    _zip(mock_server.root / "m.zip", V1)
+    mock_server.no_ranges.add("m.zip")
+    spec = _delta_spec(mock_server)
+    got = engine.run_acquisition(con, collection, spec, "demo")
+    assert got["fetched"] == 1 and _members(collection.corpus_dir / "m.zip") == V1
+    assert mock_server.request_count("m.zip") == 2, "the probe answered 200 — no ranges — then the whole stream"

@@ -294,6 +294,24 @@ disk within the pass (`STREAM_ATTEMPTS`) before the next pass would. Tests
 in tests/acquire (the mock origin gained `fail_next`). Ships with the next
 deploy; until then the 03:25 UTC retry runs the old code.
 
+**The fetch's second finding (2026-10-13 00:22 UTC), fixed.** Under
+67f5e92 the pass survived, but `akn/M/regi-decreti.zip` (1.7 GB) failed
+its three in-pass retries at 1,086,390,272 bytes — the same byte as the
+night before — and the row carries `retries 3` and an error (reported
+after DEFER_ATTEMPTS, as designed; `_is_pending` reads `fetch_done` alone,
+so the file is still retried every pass — it is not taken out of
+selection, as feared). Probed from here and from the node: the origin cuts
+every whole stream at that byte, an open-ended resume `bytes=N-` from there
+stalls past the read timeout, while a CLOSED range at the same offset
+answers within a second at the full rate. So `transport_https.fetch_ranged`
+fetches a file in closed ranges of `RANGE_STEP` (64 MiB), each request with
+its own timeout and three retries, a short answer continued from where it
+ended; the engine uses it where the spec declares `zip-directory` (an
+origin whose delta already rests on Range), and falls back to the stream
+when the origin answers a Range with 200. The mock origin gained
+`cut_after_bytes` and `refuse_open_ranges`, the two traits seen. Ships with
+the next deploy; the build waits for the file.
+
 
 ### 2026-10-05: the side branches merged into main
 
