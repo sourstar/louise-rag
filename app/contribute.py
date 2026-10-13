@@ -80,8 +80,16 @@ def _ensure_embedded(con, collection, uids: list[str], *, stop=None) -> list[str
             chunks = layers_mod.chunks_for_document(collection, row, chapters)
             if not chunks:
                 continue
+            # a versioned collection's columns, as every writer passes them
+            # (2026-10-13: a writer that passed none built a table no date
+            # could filter)
+            from . import validity as validity_mod
+            cols = validity_mod.columns_for(con, collection, [native_id]).get(native_id)
             embeddings.upsert_book(native_id, row["lang"], chunks, collection,
-                                   lock_con=con, reuse=embeddings.may_reuse(row))
+                                   lock_con=con, reuse=embeddings.may_reuse(row),
+                                   columns=cols)
+            if cols:
+                validity_mod.mark_synced(con, [native_id])
             con.execute(
                 "UPDATE documents SET embed_done=1, embed_version=?, updated_at=? "
                 "WHERE uid=?", (config.EMBED_VERSION, int(time.time()), uid))

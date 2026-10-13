@@ -417,6 +417,30 @@ quarantine; and the pack build's per-slice line said one shard more than it
 wrote (the next index, fixed). The pilot's harness runs next, once the
 embedding is complete (legal-collection-template.md §9).
 
+**DENSE SEARCH WITHHELD — the vector table without its columns (2026-10-13,
+afternoon UTC).** The node logged `normattiva [dense] dense search withheld:
+the vector table carries no validity columns`. Root cause: the batched embed
+path (`worker._embed_parallel`, every encoder's since the producers) called
+`upsert_book` without `columns=` while `stage_embed` passed them; the first
+write created `chunks` without the three columns and `_conform` stripped
+every later row to fit the table, silently: 40,112 rows (table created 13:09
+local) that no date can filter. `contribute` passed none either. Fixed in
+three places: the batched path and `contribute` pass the columns and mark
+the rows synced; `_conform` REFUSES a row that carries the columns for a
+table that lacks them (`ValidityColumnsMissing`, a deferral — the table's
+state, never the document's, so nothing is written to the document and
+nothing more is stripped); `hold vectors validity-columns <collection>`
+rebuilds the table with the columns read from the version table, every
+vector kept (RULE 1, nothing re-embedded; the vector index is rebuilt
+after). A guard test asserts every `upsert_book` call under app/ names
+`columns=`; `hold index show` prints `validity_columns` for a versioned
+collection. Node remedy, for the other session: deploy; stop the worker (it
+holds the collection lock); in the worker container `hold vectors
+validity-columns normattiva`, then `hold index build normattiva --vector`;
+start. Until then the embed stage defers every Normattiva document. The
+template's §11–12 carry the finding as the test pool a new collection runs
+through.
+
 
 ### 2026-10-05: the side branches merged into main
 

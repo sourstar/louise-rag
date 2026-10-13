@@ -473,7 +473,7 @@ def stage_embed(con, row, collection) -> None:
         if cols:
             # a document whose every vector was kept rewrote no row: the two
             # columns follow the version table in place (app/validity.py)
-            embeddings.sync_columns(int(row["native_id"]), cols, collection, lock_con=con)
+            embeddings.sync_columns(int(row["native_id"]), cols, collection, lock_con=con, refuse=True)
             validity.mark_synced(con, [int(row["native_id"])])
     finally:
         stats.recorder().set_in_flight(collection.name, 0)
@@ -1187,15 +1187,26 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                                 return (row, None, "stopped", False)
                     started = time.time()
                     counts = embeddings.EmbedCounts()
+                    # the validity columns of a versioned collection, as
+                    # stage_embed passes them: this path did not, so the first
+                    # write created Normattiva's table WITHOUT them and every
+                    # later row was stripped to fit it (2026-10-13)
+                    from app import validity
+                    nid = int(row["native_id"])
+                    cols = validity.columns_for(tcon, collection, [nid]).get(nid)
                     try:
                         # `stop` bounds SIGTERM to one slice of a long
                         # document (stage_embed's reason: gutenberg 4656 is
                         # 5,335 chunks); the rest resumes from what is written
-                        n = embeddings.upsert_book(int(row["native_id"]), row["lang"],
+                        n = embeddings.upsert_book(nid, row["lang"],
                                                     chunks, collection, lock_con=tcon,
                                                     stop=_embed_stop, held=held, sink=sink,
                                                     reuse=embeddings.may_reuse(row),
-                                                    counts=counts)
+                                                    counts=counts, columns=cols)
+                        if cols and not counts.embedded and counts.reused:
+                            # every vector kept, no row rewritten: the columns
+                            # follow the version table in place (app/validity.py)
+                            embeddings.sync_columns(nid, cols, collection, lock_con=tcon, refuse=True)
                     finally:
                         if submitted is not None:
                             submitted.release()
@@ -1292,6 +1303,9 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     endpoint = encoder_timeouts.endpoint_of(recipe)
     place = str(collection.manifest_path)
 
+    from app import validity as validity_mod
+    versioned = validity_mod.declared(collection) is not None
+
     def mark_done(uids) -> None:
         now = int(time.time())
         for uid in uids:
@@ -1300,6 +1314,10 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                 "WHERE uid=?", (config.EMBED_VERSION, now, uid))
             bundle_ledger.clear_verification(con, uid)
             con.execute("DELETE FROM embed_queue WHERE uid=?", (uid,))
+        if versioned:
+            # the rows just written carry the version table's columns: synced
+            # (app/validity.py), as stage_embed marks them
+            validity_mod.mark_synced(con, [int(str(u).split(":", 1)[1]) for u in uids])
 
     def record_error(uid, err) -> None:
         con.execute(
@@ -2827,7 +2845,11 @@ def transient_failure(exc: BaseException) -> bool:
     stays selectable, while `backend_gate.embed_allowed` gates the new run
     at once or pauses the collection's embedding and says why."""
     return (endpoint_unavailable(exc) or manifest_contended(exc)
-            or vector_store_contended(exc) or run_not_validated(exc))
+            or vector_store_contended(exc) or run_not_validated(exc)
+            # the vector table lacks the validity columns the collection
+            # declares: the TABLE's state, repaired once by `hold vectors
+            # validity-columns`; every document defers until then (2026-10-13)
+            or isinstance(exc, embeddings.ValidityColumnsMissing))
 
 
 def run_not_validated(exc: BaseException) -> bool:

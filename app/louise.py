@@ -2315,6 +2315,33 @@ def cmd_vectors_show(a) -> int:
     return 0
 
 
+def cmd_vectors_validity_columns(a) -> int:
+    """`hold vectors validity-columns <collection>`: the repair for a
+    versioned collection whose vector table was written without its validity
+    columns — dense search as of a date withheld, the embed stage deferring
+    every document (Normattiva, 2026-10-13: the batched path passed none).
+    The table is rebuilt with the three columns read from the manifest's
+    version table, EVERY VECTOR KEPT (RULE 1: nothing is re-embedded). Its
+    vector index is not carried: `hold index build <collection> --vector`
+    afterwards. Exit 1 for a collection that declares no validity."""
+    from app import db, embeddings, validity
+    from app.hold import collection as col, records as rec
+
+    name, codex = col.resolve(a.root, a.collection)
+    _take_write_lock(a.root, name, "hold vectors validity-columns")
+    local = rec.local_collection(a.root, name, codex)
+    if validity.declared(local) is None:
+        print(f"louise: {name} declares no validity: its vector table carries no columns "
+              f"by design", file=sys.stderr)
+        return 1
+    con = db.connect(local)
+    log = lambda m: print(m, file=sys.stderr)       # noqa: E731
+    out = embeddings.add_validity_columns(local, con, lock_con=con, log=log)
+    _print({"collection": name, **out,
+            "next": None if out.get("unchanged") else f"hold index build {name} --vector"})
+    return 0
+
+
 def cmd_vectors_build(a) -> int:
     """`hold vectors build` — this peer's own chunks, embedded here.
 
@@ -3265,7 +3292,8 @@ def cmd_index_show(a) -> int:
     from app import config, vector_index
     from app.hold import records as rec
     name, codex = col.resolve(a.root, a.collection)
-    st = vector_index.stats(rec._local_collection(a.root, name, codex))
+    local = rec._local_collection(a.root, name, codex)
+    st = vector_index.stats(local)
     out: dict = {"collection": name, "vector_table": st is not None}
     if st is not None:
         out.update(rows=st["rows"], vector_index=(
@@ -3273,6 +3301,12 @@ def cmd_index_show(a) -> int:
             if st["indexed"] else None),
             book_id_index=bool(st.get("book_id_indexed")),
             auto_build_at_rows=config.VECTOR_INDEX_MIN_ROWS)
+        from app import embeddings, validity
+        if validity.declared(local) is not None:
+            # the first check of a versioned collection's table (2026-10-13:
+            # a table written without them is withheld from every as-of search)
+            names = embeddings._conn(local).open_table(embeddings.TABLE).schema.names
+            out["validity_columns"] = set(embeddings.VALIDITY_COLUMNS) <= set(names)
     _print(out)
     return 0
 
@@ -3939,6 +3973,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "the coverage map stops claiming it. Off by default: "
                         "deleting vectors on a cosine is an operator's call")
     p.set_defaults(fn=cmd_vectors_check)
+    p = vverbs.add_parser("validity-columns",
+                          help="add the validity columns a versioned collection's "
+                               "vector table was written without: rebuilt in place, "
+                               "every vector kept; then `hold index build --vector`")
+    root_arg(p); p.add_argument("collection")
+    p.set_defaults(fn=cmd_vectors_validity_columns)
 
     key = nouns.add_parser("key", help="this peer's key, the trust list, a certifier's anchor")
     kverbs = key.add_subparsers(dest="verb", required=True)

@@ -245,3 +245,32 @@ held or not, the version in force or not — never an LLM judge.
    a score — then `run`, then the temporal arm after a person reviews its
    stubs. Record the numbers in the review before pinning anything that
    depends on them.
+9. **After the first embedded document, read the vector table's schema**:
+   `hold index show <collection>` prints `validity_columns: true` for a
+   versioned collection. False means a writer passed no columns, and
+   every later row is refused until `hold vectors validity-columns`
+   rebuilds the table (nothing re-embedded). Normattiva's first 40,112
+   rows were written that way (2026-10-13).
+10. **Read the second fetch pass's counters, not the first's**: "adopted"
+    equals the unchanged zips, no mtime moved, every "skipped" named by a
+    warn event. The first pass cannot show a rewrite.
+11. **Collide the ids at the real scale before the layout is pinned**: the
+    decimal layout survived every fixture and lost 329,000 documents'
+    uniqueness on the node within the hour (3ba1e0a).
+
+## 12. The test pool: what a new collection is checked for
+
+Every defect the first legal collection found is a test in the suite and a
+reading on the node. A new collection is run through both; a finding that is
+in neither is not closed.
+
+| Finding (commit) | In the suite | On the node |
+|---|---|---|
+| A pass ended by one ReadTimeout (67f5e92) | tests/acquire/test_engine_zipdelta.py, tests/acquire/test_transport_https.py | a pass's counters never fall to "fetched 0" on a transient; the warn event names the file |
+| A stream cut at 1.09 GB; an open-ended resume stalling (0699408) | tests/acquire/test_transport_https.py: closed ranges of RANGE_STEP | files over 1 GB complete; `hold collection show` lists no partial |
+| A 500 episode with the directory unread, counted skipped (2c4194f) | tests/acquire/test_engine_zipdelta.py: a deferral is a result, not a skip | "deferred" in the pass line; the row untouched; the next pass takes it |
+| Id collisions at scale (3ba1e0a) | tests/test_eli.py: the day/hash layout, `id_day` | the create log's collision guard is silent; `hold records build` refuses none |
+| Unchanged zips rewritten, big directories unread, reasons unsaid (4a2fbbe) | tests/acquire/test_engine_zipdelta.py: adopted by directory, pieces under a capped origin, reasons as events | second pass "fetched N, adopted N"; inodes and mtimes unchanged |
+| The pack build's per-slice count one too many | tests/pack/test_build.py: the resumable build's two slices | the line equals the parts on disk |
+| The vector table without its validity columns (2026-10-13) | tests/test_validity.py: the batched path writes them; a table without them refuses rows and is repaired with every vector kept; every `upsert_book` call under app/ names `columns=` | `hold index show` → `validity_columns: true`; `[dense] dense search withheld` never logged |
+| `records-vs-origin` INCONCLUSIVE on a re-fetch under the 64 MB tail | the check shares the delta's reader (pieces, 4a2fbbe) | re-run the check after the fetch code changes; an INCONCLUSIVE names its URL |

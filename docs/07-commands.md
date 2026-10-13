@@ -359,6 +359,15 @@ reader needs at the command line:
 - **`vectors check`.** Is `hold check --checks vectors-sample` over this
   peer's own vectors; `--drop` turns a failing row into an empty one
   (02 §2.4) so the coverage map stops claiming it.
+- **`vectors validity-columns`.** The repair for a versioned collection
+  (05 §5.1's validity) whose vector table was written without its three
+  columns: the table is rebuilt in place with the columns read from the
+  manifest's version table, every vector kept, nothing re-embedded; the
+  vector index is not carried, so `index build --vector` follows. Until
+  it runs, the embed stage defers every document of that collection and
+  no search as of a date is answered from vectors (the leg is withheld
+  and says so). Takes the collection's lock: the node must not be running
+  it (`node pause <collection>` releases the lock).
 - **`vectors show`.** Prints the coverage map (09 §9.10): per part of
   the current snapshot the chunks accepted here, whether it is open, and
   — among the live peers whose digests carry a benchmark for the space,

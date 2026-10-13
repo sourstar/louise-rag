@@ -68,7 +68,7 @@ def test_two_documents_are_submitted_and_a_third_is_prepared(tmp_path, monkeypat
         return [{"text": "x"}]
 
     def upsert(book_id, lang, chunks, collection, lock_con=None, stop=None, *,
-               held=None, sink=None, reuse=True, counts=None):
+               held=None, sink=None, reuse=True, counts=None, columns=None):
         with lock:
             inside["n"] += 1
             inside["max"] = max(inside["max"], inside["n"])

@@ -9,12 +9,14 @@ slots; order is preserved. Vectors are stored float16 when EMBED_DTYPE=f16
 import contextvars
 import hashlib
 import math
+import os
 import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 import httpx
 import lancedb
@@ -868,14 +870,20 @@ def _create_table(db, rows):
 
 
 def _conform(tbl, rows: list[dict]) -> list[dict]:
-    """Rows shaped for THIS table: a column the table lacks is dropped (a
-    table written before its collection declared validity — a search asking
-    for the filter is told so), a column the table has and a row lacks is
-    filled as "current" until synced (app/validity.py)."""
+    """Rows shaped for THIS table: a column the table has and a row lacks is
+    filled as "current" until synced (app/validity.py). A row that CARRIES the
+    validity columns for a table that lacks them is refused
+    (ValidityColumnsMissing): the collection declares validity and the table
+    was written without it — stripping the columns silently is how
+    Normattiva's table grew 40,000 rows no date could filter (2026-10-13);
+    the writer defers the document, and `hold vectors validity-columns`
+    rebuilds the table with the columns, every vector kept."""
     names = set(tbl.schema.names)
     have = set(rows[0]) if rows else set()
     if have <= names and all(c in have for c in VALIDITY_COLUMNS if c in names):
         return rows
+    if rows and all(c in have for c in VALIDITY_COLUMNS) and not all(c in names for c in VALIDITY_COLUMNS):
+        raise ValidityColumnsMissing(_COLUMNS_MISSING)
     from app import validity as validity_mod
     out = []
     for r in rows:
@@ -888,22 +896,84 @@ def _conform(tbl, rows: list[dict]) -> list[dict]:
     return out
 
 
-def sync_columns(book_id: int, columns: dict, collection=None, lock_con=None) -> bool:
+_COLUMNS_MISSING = ("the vector table carries no validity columns (written before the collection "
+                    "declared validity, or by a writer that passed none): run `hold vectors "
+                    "validity-columns <collection>` to add them — nothing is re-embedded")
+
+
+def sync_columns(book_id: int, columns: dict, collection=None, lock_con=None, *,
+                 refuse: bool = False) -> bool:
     """A document's validity columns updated IN PLACE (app/validity.py): the
     embed stage calls it for a document whose every vector was reused and
     so rewrote no row, the maintainer for rows no stage rewrites. False
-    when there is no table, or one without the columns."""
+    when there is no table, or one without the columns — or, with `refuse`
+    (the embed stage's way), ValidityColumnsMissing for the latter: a
+    document whose rows cannot carry the columns is deferred, never marked
+    done over a table no date can filter (2026-10-13)."""
     db = _conn(collection)
     if TABLE not in db.table_names():
         return False
     with _write_lock(lock_con):
         tbl = db.open_table(TABLE)
         if not set(columns) <= set(tbl.schema.names):
+            if refuse:
+                raise ValidityColumnsMissing(_COLUMNS_MISSING)
             return False
         before = tbl.version
         tbl.update(where=_book_filter(book_id), values={k: int(v) for k, v in columns.items()})
         _note_own_versions(db.uri, before + 1, tbl.version, book_id)
     return True
+
+
+def add_validity_columns(collection, con, *, lock_con=None, batch_rows: int = 50_000,
+                         log=None) -> dict:
+    """The repair for a vector table written without the validity columns
+    its collection declares (2026-10-13: Normattiva's first 40,112 rows, by
+    the batched embed path): the table is rebuilt row for row with the three
+    columns read from the manifest's version table, EVERY VECTOR KEPT — RULE
+    1, nothing re-embedded — and swapped in under the write lock. The vector
+    index, if any, is not carried: `index vector build` recreates it.
+    Returns `{rows, documents, versions}`; a table that already carries the
+    columns is left alone (`{"rows": n, "unchanged": True}`)."""
+    import pyarrow as pa
+    from app import validity as validity_mod
+    db = _conn(collection)
+    if TABLE not in db.table_names():
+        return {"rows": 0, "unchanged": True}
+    tbl = db.open_table(TABLE)
+    if set(VALIDITY_COLUMNS) <= set(tbl.schema.names):
+        return {"rows": tbl.count_rows(), "unchanged": True}
+    say = log or (lambda _m: None)
+    tmp = f"{TABLE}__validity"
+    with _write_lock(lock_con):
+        if tmp in db.table_names():
+            db.drop_table(tmp)
+        schema = pa.schema(list(tbl.schema) + [pa.field(c, pa.int64()) for c in VALIDITY_COLUMNS])
+        new = None
+        rows = 0
+        seen: set[int] = set()
+        for part in tbl.to_lance().to_batches(batch_size=batch_rows):
+            books = part.column("book_id").to_pylist()
+            cols = validity_mod.index_columns(con, set(books))
+            arrays = {c: pa.array([cols[int(b)][c] for b in books], pa.int64()) for c in VALIDITY_COLUMNS}
+            full = pa.RecordBatch.from_arrays(
+                list(part.columns) + [arrays[c] for c in VALIDITY_COLUMNS],
+                schema=schema)
+            if new is None:
+                new = db.create_table(tmp, data=pa.Table.from_batches([full]), schema=schema)
+            else:
+                new.add(pa.Table.from_batches([full]))
+            rows += part.num_rows
+            seen.update(int(b) for b in books)
+            say(f"validity columns: {rows} rows rewritten")
+        if new is None:                              # an empty table: recreated with the columns
+            new = db.create_table(tmp, schema=schema)
+        versions = tbl.version
+        db.drop_table(TABLE)
+        src, dst = Path(collection.lance_dir) / f"{tmp}.lance", Path(collection.lance_dir) / f"{TABLE}.lance"
+        os.replace(src, dst)
+        _dbs.pop(str(collection.lance_dir), None)       # the connection re-reads the directory
+    return {"rows": rows, "documents": len(seen), "versions": versions}
 
 def _book_filter(book_id) -> str:
     """Build a Lance filter for one document.
@@ -1782,7 +1852,9 @@ def search(query: str, k: int = 20, langs: list[str] | None = None, collection=N
         if not set(VALIDITY_COLUMNS) <= set(tbl.schema.names):
             raise ValidityColumnsMissing(
                 "the vector table carries no validity columns (written before the "
-                "collection declared validity): rebuild it to search as of a date")
+                "collection declared validity, or by a writer that passed none): "
+                "`hold vectors validity-columns <collection>` adds them to every row, "
+                "nothing re-embedded; until then no search as of a date")
         from app import validity as validity_mod
         q = q.where(validity_mod.lance_where(validity), prefilter=True)
     out = []

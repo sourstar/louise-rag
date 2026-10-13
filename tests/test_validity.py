@@ -442,3 +442,125 @@ def test_the_closure_lookups_are_indexed(closing):
     plan = " ".join(r[-1] for r in con.execute(
         "EXPLAIN QUERY PLAN SELECT key FROM validity_closures WHERE by_uid=?", ("u",)))
     assert "idx_validity_closures_by" in plan and "SCAN" not in plan
+
+
+# ---- the vector table's columns: from the first row, or repaired ----------------
+# The test pool for the 2026-10-13 defect (docs/notes/legal-collection-template.md
+# §12): Normattiva embedded through the batched path, which passed no columns;
+# its first write created the table without them, `_conform` stripped every
+# later row, and dense search as of a date was withheld on 40,112 rows.
+
+
+def _distinct_vectors(monkeypatch):
+    """A fake encoder whose vector differs per text, so "every vector kept"
+    is an assertion and not a tautology of the fixture's constant vector."""
+    import hashlib
+
+    def fake(items, recipe=None, **kw):
+        out = []
+        for it in items:
+            text = getattr(it, "text", None)
+            text = str(it) if text is None else text
+            out.append([b / 255.0 for b in hashlib.blake2b(text.encode(), digest_size=8).digest()])
+        return out
+    monkeypatch.setattr(embeddings, "_embed_texts", fake)
+
+
+def _vectors_of(c) -> dict[str, tuple]:
+    tbl = embeddings._conn(c).open_table(embeddings.TABLE)
+    return {r["id"]: tuple(float(x) for x in r["vector"]) for r in tbl.to_arrow().to_pylist()}
+
+
+def _vector_books(c, day):
+    return {int(h["book_id"]) for h in
+            embeddings.search("Sardegna", k=200, collection=c, validity=validity.window(c, day))}
+
+
+def test_the_batched_embed_path_writes_the_columns_too(versioned):
+    """`_embed_parallel` (the embed producers, every encoder) passes the
+    columns `stage_embed` passes and marks the rows synced — the writer
+    that built Normattiva's table without them."""
+    c, con, _ = versioned
+    from dataclasses import replace
+    from app import licensing
+    c = replace(c, license_ack=licensing.make_ack(c))   # the producers' selection is gated (invariant 9)
+    _run(con, c, "rdf", "fts")
+    for _ in range(10):
+        if not worker._embed_parallel(con, c, c.embed, slots=1):
+            break
+    if con.in_transaction:
+        con.execute("COMMIT")
+    tbl = embeddings._conn(c).open_table(embeddings.TABLE)
+    assert set(embeddings.VALIDITY_COLUMNS) <= set(tbl.schema.names), tbl.schema.names
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=0 AND in_scope=1").fetchone()[0] == 0
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE error IS NOT NULL").fetchone()[0] == 0
+    assert con.execute("SELECT COUNT(*) FROM validity WHERE synced=0").fetchone()[0] == 0
+    assert _vector_books(c, 20010210) == {V11_ID, RD_O_ID}
+    assert _vector_books(c, 20260101) == {V12_ID}
+
+
+def test_a_table_without_the_columns_is_refused_and_repaired_with_every_vector_kept(versioned, monkeypatch):
+    """A row that carries the columns for a table that lacks them is REFUSED
+    (ValidityColumnsMissing, a deferral: no error on the document, nothing
+    stripped), search as of a date is withheld, and `add_validity_columns`
+    rebuilds the table with the columns from the version table: the same
+    rows, the same vectors, nothing re-embedded (RULE 1)."""
+    c, con, _ = versioned
+    _distinct_vectors(monkeypatch)
+    _run(con, c, "rdf", "fts")
+    # the table as the batched path created it before the fix: one
+    # document's rows, no columns
+    first = con.execute("SELECT * FROM documents WHERE in_scope=1 ORDER BY rowid LIMIT 1").fetchone()
+    nid = int(first["native_id"])
+    embeddings.upsert_book(nid, first["lang"], worker._load_chunks(first, c), c, lock_con=con)
+    tbl = embeddings._conn(c).open_table(embeddings.TABLE)
+    assert not (set(embeddings.VALIDITY_COLUMNS) & set(tbl.schema.names))
+    before = _vectors_of(c)
+    assert len(before) >= 2 and len(set(before.values())) == len(before), "distinct vectors to keep"
+
+    for row in con.execute("SELECT * FROM documents WHERE in_scope=1 AND embed_done=0").fetchall():
+        with pytest.raises(embeddings.ValidityColumnsMissing) as e:
+            worker.stage_embed(con, row, c)
+        assert worker.transient_failure(e.value), "the table's state, never the document's"
+        assert "hold vectors validity-columns" in str(e.value)
+        if con.in_transaction:
+            con.execute("ROLLBACK")
+    assert _vectors_of(c) == before, "nothing stripped to fit the table"
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE error IS NOT NULL").fetchone()[0] == 0
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] == 0
+    with pytest.raises(embeddings.ValidityColumnsMissing):      # retrieval withholds the leg and says so
+        embeddings.search("Sardegna", k=200, collection=c, validity=validity.window(c, 20010210))
+
+    out = embeddings.add_validity_columns(c, con, lock_con=con, batch_rows=2)
+    assert out["rows"] == len(before) and out["documents"] == 1 and "unchanged" not in out
+    tbl = embeddings._conn(c).open_table(embeddings.TABLE)
+    assert set(embeddings.VALIDITY_COLUMNS) <= set(tbl.schema.names)
+    assert _vectors_of(c) == before, "every vector kept, byte for byte"
+    want = validity.index_columns(con, [nid])[nid]
+    for r in tbl.to_arrow().to_pylist():
+        assert int(r["book_id"]) == nid
+        assert {k: r[k] for k in embeddings.VALIDITY_COLUMNS} == want
+    assert embeddings.add_validity_columns(c, con, lock_con=con) == {"rows": len(before), "unchanged": True}
+
+    _run(con, c, "embed")                      # the stage proceeds; the first document's rows are reused
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=0 AND in_scope=1").fetchone()[0] == 0
+    assert _vector_books(c, 20010210) == {V11_ID, RD_O_ID}
+    assert _vector_books(c, 20260101) == {V12_ID}
+
+
+def test_every_vector_writer_in_app_passes_the_columns():
+    """The guard: a writer that calls `upsert_book` without `columns=` is the
+    defect again — the first write makes a table without the columns and
+    every later row is refused. Each call site under app/ names the argument
+    (a non-versioned collection's `columns_for` is empty, so naming it costs
+    nothing there)."""
+    import re
+    from pathlib import Path
+    app = Path(__file__).resolve().parent.parent / "app"
+    offenders = []
+    for p in sorted(app.rglob("*.py")):
+        src = p.read_text(encoding="utf-8")
+        for m in re.finditer(r"(?<!def )(?<!`)upsert_book\((?:[^()]|\([^()]*\))*\)", src):
+            if "columns=" not in m.group(0):
+                offenders.append(f"{p.relative_to(app.parent)}:{src[:m.start()].count(chr(10)) + 1}")
+    assert offenders == [], f"vector writers without `columns=`: {offenders}"
