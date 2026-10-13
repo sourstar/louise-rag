@@ -439,17 +439,21 @@ record `metadata.json` at the top level — the runner's note of the
 install, not a byte the backend runs, so a reinstall of the same bytes
 is the same engine. `<path>` is relative to the directory,
 `/`-separated, UTF-8. `<entry>` is, for a regular file,
-`{"type": "file", "exec": <true when any of its three execute bits is
-set>, "size": <bytes>, "sha256": "<64 lowercase hexadecimal digits of
-SHA-256 over its contents>"}`; for a symbolic link,
+`{"type": "file", "size": <bytes>, "sha256": "<64 lowercase hexadecimal
+digits of SHA-256 over its contents>"}` (*amended 2026-10-13*, operator:
+the execute bit is out — on the reference node's NFSv4-ACL dataset ZFS
+synthesises it, and across a reboot the same untouched files reported it
+on 700 instead of 5,734, moving the engine's identity; a bit that cannot
+change a vector is not part of what computes one — a program without it
+does not start, loudly); for a symbolic link,
 `{"type": "link", "target": "<the link's own string>"}`, never followed;
 for a directory, an empty one included, `{"type": "dir"}`. Anything else
 — a socket, a FIFO, a device — or a name or link target that is not
-UTF-8 states no run. Owners, times and the other mode bits are not in it.
+UTF-8 states no run. Owners, times and modes are not in it.
 It is written `sha256:<hex>` like every `H`. It is not the weights digest
 of a directory: that one refuses links and maps a path to a digest, this
-one keeps links and execute bits, because a backend is a program and
-those are part of it.
+one keeps links, because a backend is a program and its links are part
+of it.
 
 A backend engine is told by its bytes: its program, `args[0]`, begins
 with `${BACKEND}/`, which no other engine may carry, and its `image` is

@@ -283,14 +283,17 @@ def tree_manifest(root: Path, files: FileDigests | None = None) -> dict[str, dic
     following symbolic links, except the top-level `metadata.json`
     (INSTALL_RECORD). <path> is relative to `root`, `/`-separated, UTF-8; a
     name that is not UTF-8 is refused. <entry> is:
-    - a regular file: {"type": "file", "exec": <bool: any of the mode's three
-      execute bits is set>, "size": <bytes>, "sha256": "<64 lowercase hex of
-      its contents>"};
+    - a regular file: {"type": "file", "size": <bytes>, "sha256": "<64
+      lowercase hex of its contents>"} — no execute bit (09 §9.3, amended
+      2026-10-13: on an NFSv4-ACL dataset ZFS synthesises the bit, and across
+      a reboot it reported 700 of the same 5,734 files as executable, every
+      byte unchanged; a bit that cannot change an answer — a backend whose
+      program lost it fails to start, loudly — moved the engine's identity);
     - a symbolic link: {"type": "link", "target": "<readlink's string>"},
       never followed;
     - a directory: {"type": "dir"}, an empty one included;
     anything else (a socket, a FIFO, a device) is refused. Owners, times and
-    the other mode bits are not in it. Unchanged files are not read again
+    modes are not in it. Unchanged files are not read again
     (`files`, a FileDigests)."""
     files = files if files is not None else FileDigests()
     root = Path(root)
@@ -316,8 +319,7 @@ def tree_manifest(root: Path, files: FileDigests | None = None) -> dict[str, dic
                 walk(e.path, rel + "/")
             elif stat.S_ISREG(st.st_mode):
                 size, sha = files.read(e.path)
-                manifest[rel] = {"type": "file", "exec": bool(st.st_mode & 0o111),
-                                 "size": size, "sha256": sha}
+                manifest[rel] = {"type": "file", "size": size, "sha256": sha}
             else:
                 raise loadopts.Unstatable(f"{e.path} is neither a file, a directory nor a "
                                           f"symbolic link: the backend's tree has no digest")

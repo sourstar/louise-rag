@@ -26,13 +26,20 @@ def diff(before: Mapping[str, Entry], after: Mapping[str, Entry]) -> dict[str, A
     """`{"added": {path: entry}, "removed": {path: entry},
     "changed": {path: {"before": entry, "after": entry}}, "same": <count>}`,
     paths sorted; empty objects where nothing differs."""
-    b, a = dict(before), dict(after)
+    # a list written before 09 §9.3's amendment of 2026-10-13 carries the
+    # execute bit; it is compared without it, as the digest now is
+    b, a = _without_exec(before), _without_exec(after)
     added = {p: a[p] for p in sorted(set(a) - set(b))}
     removed = {p: b[p] for p in sorted(set(b) - set(a))}
     changed = {p: {"before": b[p], "after": a[p]}
                for p in sorted(set(a) & set(b)) if a[p] != b[p]}
     same = len(set(a) & set(b)) - len(changed)
     return {"added": added, "removed": removed, "changed": changed, "same": same}
+
+
+def _without_exec(tree: Mapping[str, Entry]) -> dict[str, Entry]:
+    return {p: ({k: v for k, v in e.items() if k != "exec"} if isinstance(e, Mapping) else e)
+            for p, e in tree.items()}
 
 
 def lines(d: Mapping[str, Any]) -> list[str]:

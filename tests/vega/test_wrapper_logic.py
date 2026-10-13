@@ -111,12 +111,12 @@ def test_the_tree_digest_is_its_definition(tmp_path):
     def sha(b):
         return hashlib.sha256(b).hexdigest()
     manifest = {
-        "bin": {"type": "file", "exec": True, "size": 11, "sha256": sha(b"\x7fELF binary")},
+        "bin": {"type": "file", "size": 11, "sha256": sha(b"\x7fELF binary")},
         "lib": {"type": "dir"},
         "lib/libx.so.1": {"type": "link", "target": "libx.so.1.2.3"},
-        "lib/libx.so.1.2.3": {"type": "file", "exec": False, "size": 13,
+        "lib/libx.so.1.2.3": {"type": "file", "size": 13,
                               "sha256": sha(b"library bytes")},
-        "run.sh": {"type": "file", "exec": True, "size": (d / "run.sh").stat().st_size,
+        "run.sh": {"type": "file", "size": (d / "run.sh").stat().st_size,
                    "sha256": sha((d / "run.sh").read_bytes())},
     }
     assert vw.tree_digest(d) == "sha256:" + sha(canonical_json(manifest))
@@ -136,7 +136,7 @@ def test_the_tree_digest_is_deterministic_and_ignores_the_install_record(tmp_pat
     assert vw.tree_digest(d) != first, "only the top-level install record is left out"
 
 
-@pytest.mark.parametrize("change", ["content", "new file", "exec bit", "symlink target",
+@pytest.mark.parametrize("change", ["content", "new file", "symlink target",
                                     "empty dir", "rename"])
 def test_the_tree_digest_sees_every_change(tmp_path, change):
     d = _tree(tmp_path)
@@ -145,8 +145,6 @@ def test_the_tree_digest_sees_every_change(tmp_path, change):
         (d / "lib" / "libx.so.1.2.3").write_bytes(b"library BYTES")      # same size
     elif change == "new file":
         (d / "lib" / "liby.so").write_bytes(b"")
-    elif change == "exec bit":
-        (d / "lib" / "libx.so.1.2.3").chmod(0o744)
     elif change == "symlink target":
         (d / "lib" / "libx.so.1").unlink()
         (d / "lib" / "libx.so.1").symlink_to("./libx.so.1.2.3")
@@ -161,7 +159,11 @@ def test_the_tree_digest_ignores_owner_time_and_other_mode_bits(tmp_path):
     import os
     d = _tree(tmp_path)
     before = vw.tree_digest(d)
-    (d / "bin").chmod(0o700)                         # still executable
+    (d / "bin").chmod(0o700)
+    # the execute bit too (09 §9.3, amended 2026-10-13): ZFS on an NFSv4-ACL
+    # dataset reported it differently across a reboot on untouched files
+    (d / "lib" / "libx.so.1.2.3").chmod(0o744)
+    (d / "run.sh").chmod(0o644)
     os.utime(d / "lib" / "libx.so.1.2.3", ns=(1, 1))
     assert vw.tree_digest(d) == before
 
@@ -545,7 +547,7 @@ def test_the_tree_manifest_is_what_the_digest_hashes(tmp_path):
     assert set(manifest) == {"bin", "lib", "lib/libx.so.1", "lib/libx.so.1.2.3", "run.sh"}
     assert manifest["lib"] == {"type": "dir"}
     assert manifest["lib/libx.so.1"] == {"type": "link", "target": "libx.so.1.2.3"}
-    assert manifest["bin"]["type"] == "file" and manifest["bin"]["exec"] is True
+    assert manifest["bin"]["type"] == "file" and "exec" not in manifest["bin"]
     assert digest(canonical_json(manifest)) == vw.tree_digest(d) == vw.manifest_digest(manifest)
     (d / "lib" / "libnew.so").write_bytes(b"an upgrade")
     after = vw.tree_manifest(d)

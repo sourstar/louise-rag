@@ -11,14 +11,14 @@ from app import louise
 from app.hold.codex import canonical_json, digest
 from app.vega import trees
 
-BEFORE = {"run.sh": {"type": "file", "exec": True, "size": 10, "sha256": "ab" * 32},
+BEFORE = {"run.sh": {"type": "file", "size": 10, "sha256": "ab" * 32},
           "lib": {"type": "dir"},
           "lib/libx.so.1": {"type": "link", "target": "libx.so.1.2.3"},
-          "lib/libx.so.1.2.3": {"type": "file", "exec": False, "size": 13, "sha256": "cd" * 32},
-          "gone": {"type": "file", "exec": False, "size": 1, "sha256": "ee" * 32}}
+          "lib/libx.so.1.2.3": {"type": "file", "size": 13, "sha256": "cd" * 32},
+          "gone": {"type": "file", "size": 1, "sha256": "ee" * 32}}
 AFTER = {**{k: v for k, v in BEFORE.items() if k != "gone"},
-         "lib/libx.so.1.2.3": {"type": "file", "exec": False, "size": 14, "sha256": "cf" * 32},
-         "lib/libnew.so.1": {"type": "file", "exec": False, "size": 9, "sha256": "11" * 32}}
+         "lib/libx.so.1.2.3": {"type": "file", "size": 14, "sha256": "cf" * 32},
+         "lib/libnew.so.1": {"type": "file", "size": 9, "sha256": "11" * 32}}
 
 
 def test_a_diff_is_a_set_difference_on_paths_and_an_equality_on_entries():
@@ -75,3 +75,13 @@ def test_the_command_says_what_moved_and_exits_by_it(tmp_path, capsys, monkeypat
     image = digest(canonical_json(AFTER))
     assert louise.main(["hold", "embedder", "tree-diff", str(a), image]) == 2, \
         "a digest needs VEGA_URL to be read from"
+
+
+def test_a_list_with_the_execute_bit_compares_with_one_without():
+    """Lists kept before 09 §9.3's amendment of 2026-10-13 carry `exec`; the
+    digest no longer does. The 7b5d557e → 173c04c1 drift was 5,034 files that
+    differed in nothing else: compared now, nothing moved."""
+    old = {"lib/libumf.so.1": {"type": "file", "exec": True, "size": 9, "sha256": "ab" * 32}}
+    new = {"lib/libumf.so.1": {"type": "file", "size": 9, "sha256": "ab" * 32}}
+    d = trees.diff(old, new)
+    assert d == {"added": {}, "removed": {}, "changed": {}, "same": 1}
