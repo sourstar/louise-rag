@@ -2,7 +2,7 @@
 runtime override in force, each collection's state and what it is doing
 now, the last round's cost as the worker logged it, and the verbs running
 under the node (07 §7.4: "a verb that outlives the request … `node show`
-lists it"). Migration step 14 — `louise health` carried the state until
+lists it"). Migration step 14 — `louise node health` carried the state until
 2026-10-07.
 
 READ-ONLY, and it creates nothing: the node's store is peeked

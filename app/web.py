@@ -969,7 +969,7 @@ def _document_counts_sql(spans: list[tuple[int, int]]) -> tuple[str, dict]:
         # that keeps a non-numeric id out of the range, 3.23 s — +52% over
         # the base, the TTL stretching with it (_counts_ttl_for).
         #
-        # arch_in_range_waiting is the gap `louise health` reports (its
+        # arch_in_range_waiting is the gap `louise node health` reports (its
         # _WAITING['embed'], past indexing), so the card can say how much of
         # its own gap health will explain; arch_past_range is what is ABOVE
         # the range — the rest of what lies outside it (a gap between files,

@@ -768,7 +768,7 @@ _BACKFILL_CURSOR_TTL_S = 120
 #: pubmed's 40M, about a tenth of a core for ever, after the windowing above
 #: had already cut it from a whole one (the node, 2026-09-22).
 #: Nothing an OPERATOR asks for waits on this: every re-embed they can
-#: request — `api.reindex`, `louise reindex`, a scope change — sets
+#: request — `api.reindex`, a scope change — sets
 #: `embed_done=0`, and that is the new walk's business, at its short wait.
 _REEMBED_IDLE_TTL_S = 3600
 
@@ -1065,7 +1065,7 @@ def _next_embed(con, scope, collection=None):
     # gates its round; this selector, which the main loop uses whenever
     # pipeline threads own rdf/fts, did not, so an unacknowledged yellow or
     # red collection's documents past fts were still embedded (found by the
-    # review of `louise health`, 2026-09-13).
+    # review of `louise node health`, 2026-09-13).
     if collection is not None and not _license_allows(con, collection, "embedding"):
         return None, None
     r = con.execute(_QUEUE_ELIGIBLE,

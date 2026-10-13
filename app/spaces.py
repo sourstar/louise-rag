@@ -352,10 +352,10 @@ def report_boot_status(collections: list) -> list[dict]:
         except Exception as e:   # noqa: BLE001 — one collection, never the report
             # PER COLLECTION. `db.connect` sat outside the try, so one
             # manifest that could not be opened made the whole report raise,
-            # and a real refusal beside it vanished from `louise health`
+            # and a real refusal beside it vanished from `louise node health`
             # (verification pass, 2026-09-13)
             # `checked: False` — not a verdict of the boot check, and a
-            # reader must not take it for one (`louise health` reports an
+            # reader must not take it for one (`louise node health` reports an
             # unopenable manifest through its own connect, as "cannot open")
             report.append({"collection": collection.name, "ok": False, "checked": False,
                             "message": f"cannot be checked: {type(e).__name__}: {e}"})
@@ -504,7 +504,7 @@ def _validate_one(con, collection, *, pin_if_missing: bool = True) -> bool:
                 f"pinned dim {pinned_dim}. REFUSE TO BOOT (CLAUDE.md invariant 1).")
         # the pin's width is filled in AT BOOT only. report_boot_status
         # promises READ-ONLY and still wrote it — from every System page
-        # view and, once `louise health` used it, from every check
+        # view and, once `louise node health` used it, from every check
         # (verification pass, 2026-09-13: dim NULL -> 768 after one check)
         if pinned_dim is None and pin_if_missing:
             con.execute("UPDATE space SET dim=? WHERE id=1", (observed_dim,))

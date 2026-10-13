@@ -64,7 +64,7 @@ _SCHEMA = "CREATE TABLE IF NOT EXISTS control (key TEXT PRIMARY KEY, value TEXT)
 # the manifest and kept the vector-index maintainer running — parsing and
 # indexing under a button that named neither — and a scan already running
 # ignored a pause until it ended (1,083 s on wikivec). Every gate in the
-# worker, the seeder, `louise health` and the Library now reads this table,
+# worker, the seeder, `louise node health` and the Library now reads this table,
 # so they cannot come to disagree about what a mode means.
 FETCH, SEED, PARSE, INDEX, EMBED = "fetch", "seed", "parse", "index", "embed"
 

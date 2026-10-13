@@ -1830,7 +1830,7 @@ def reopen_finals_with_unserved(con, collection) -> dict[str, int]:
 
     Deliberately NOT on any round's path — it pays one indexed range count
     per final shard, which is the cost the event above exists to avoid.
-    `louise dev genesis-recheck` runs it once.
+    `louise dev genesis recheck` runs it once.
     """
     archive = ARCHIVES.get(getattr(collection, "genesis_archive", "") or "")
     if archive is None or archive.local or not archive.ids_per_shard:
