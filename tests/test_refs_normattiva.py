@@ -119,4 +119,4 @@ def test_the_record_writes_its_registered_ids_into_keys(tmp_path):
     ref = next(r for r in SOURCE.discover(DiscoverState(corpus_root=root)) if r.locator.endswith(M306))
     doc = plugin_io.canonical_doc(SOURCE, {"native_id": ref.native_id, "path": ref.locator})
     assert doc.keys == ["akn:it/act/legge/stato/2003-10-31/306", "eli:it:id/2003/11/15/003G0333", URN_306]
-    assert doc.keys == sorted(doc.keys) and SOURCE.PARSER_VERSION == 6
+    assert doc.keys == sorted(doc.keys) and SOURCE.PARSER_VERSION == 7

@@ -162,9 +162,10 @@ def slice_hint(plugin_name: str, row) -> str | None:
             lang = row["lang"] if "lang" in row.keys() else None
             return f"lang={lang}" if lang else None
         if plugin_name == "normattiva":
+            from ..plugins import eli
             from ..plugins.normattiva.source import split_locator
             _, member = split_locator(row["path"])
-            year = int(row["native_id"]) // 10**9 // 10000
+            year = eli.id_day(int(row["native_id"])) // 10000
             return f"type={_normattiva_type(member.split('/', 1)[0])}/vig={year:04d}"
         if plugin_name == "pubmed":
             from ..plugins.pubmed import pack as pubmed_pack

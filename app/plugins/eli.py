@@ -27,6 +27,7 @@ the registration fixes (05 §5.2's example is the by-type alias form).
 """
 import hashlib
 from dataclasses import dataclass
+from datetime import date, timedelta
 
 ONTOLOGY = "http://data.europa.eu/eli/ontology#"
 
@@ -81,41 +82,82 @@ class Profile:
 
 
 #: Room for the hash under the date: 10**9 keeps a YYYYMMDD prefix inside a
-#: signed 64-bit integer (max 9.2e18; 99991231 * 10**9 = 9.99e16).
-_HASH_SPACE = 10 ** 9
+#: THE ID'S LAYOUT (eli-legal-plugins.md §5.2, amended 2026-10-13): the day
+#: in the high bits, the hash in the low —
+#:
+#:     (days since EPOCH) << HASH_BITS  |  blake2b(key) mod 2**HASH_BITS
+#:
+#: 18 bits of days reach the year 2217 from 1500-01-01 (a date outside is
+#: refused; the oldest act any EU origin publishes is centuries inside),
+#: 45 bits of hash make a same-day collision one pair in 3.5·10¹³, and the
+#: whole is exactly 63 bits: the largest signed int64, as every book_id
+#: column is. The earlier form — `YYYYMMDD * 10**9 + hash mod 10**9` — had
+#: nine decimal digits of hash, and Normattiva's 2010-12-16 (the
+#: taglia-leggi day: ~77,000 versions start that day) collided three times
+#: on the first discovery, as the birthday arithmetic said it would
+#: (n²/2·10⁹ ≈ 3); here the same day expects 8·10⁻⁵. Still checked, never
+#: trusted (`CollisionGuard`).
+EPOCH = date(1500, 1, 1)
+DAY_BITS = 18
+HASH_BITS = 45
+_HASH_SPACE = 1 << HASH_BITS
+_DAYS = 1 << DAY_BITS
+
+
+def _day_index(date_iso: str) -> int:
+    """Days since EPOCH of an ISO `YYYY-MM-DD`; anything else is refused."""
+    if len(date_iso) != 10 or date_iso[4] != "-" or date_iso[7] != "-":
+        raise ValueError(f"not an ISO date: {date_iso!r}")
+    try:
+        d = date.fromisoformat(date_iso)
+    except ValueError:
+        raise ValueError(f"not an ISO date: {date_iso!r}") from None
+    days = (d - EPOCH).days
+    if not 0 <= days < _DAYS:
+        raise ValueError(f"{date_iso}: outside the id's day range ({EPOCH.isoformat()} to "
+                         f"{(EPOCH + timedelta(days=_DAYS - 1)).isoformat()})")
+    return days
+
+
+def _compose(date_iso: str, key: bytes) -> int:
+    digest = hashlib.blake2b(key, digest_size=8).digest()
+    return (_day_index(date_iso) << HASH_BITS) | (int.from_bytes(digest, "big") & (_HASH_SPACE - 1))
+
+
+def id_date(native_id: int) -> date:
+    """The day an id sorts under — the publication date of a Work's id, the
+    start of validity of an Expression's."""
+    return EPOCH + timedelta(days=int(native_id) >> HASH_BITS)
+
+
+def id_day(native_id: int) -> int:
+    """`id_date` as the integer YYYYMMDD the validity columns use."""
+    d = id_date(native_id)
+    return d.year * 10000 + d.month * 100 + d.day
 
 
 def native_id(date_iso: str, local_id: str) -> int:
-    """eli-legal-plugins.md §5.2: `YYYYMMDD * 10**9 + blake2b(local id) mod
-    10**9`. Stable (a pure function of the work key), date-sortable in the
-    high digits so range predicates and browse order keep their meaning,
-    and NOT reversible — `keys` carry the identity, this is a join key.
-    Two acts can collide only on the same date, one pair in 10**9; the
-    caller checks (`CollisionGuard`), it does not trust the arithmetic."""
-    ymd = date_iso.replace("-", "")
-    if len(ymd) != 8 or not ymd.isdigit():
-        raise ValueError(f"not an ISO date: {date_iso!r}")
-    digest = hashlib.blake2b(local_id.encode("utf-8"), digest_size=8).digest()
-    return int(ymd) * _HASH_SPACE + int.from_bytes(digest, "big") % _HASH_SPACE
+    """eli-legal-plugins.md §5.2: the publication day in the high bits and
+    blake2b(local id) in the low (the layout above). Stable (a pure function
+    of the work key), date-sortable so browse order keeps its meaning, and
+    NOT reversible — `keys` carry the identity, this is a join key. Two acts
+    can collide only on the same date, one pair in 2**46; the caller checks
+    (`CollisionGuard`), it does not trust the arithmetic."""
+    return _compose(date_iso, local_id.encode("utf-8"))
 
 
 def expression_native_id(valid_from_iso: str, work_key: tuple[str, ...],
                          expression: str) -> int:
     """One record per Expression (normattiva-multivigenza-review.md §3.1):
-    `YYYYMMDD of the start of validity * 10**9 + blake2b(work key ‖
-    expression) mod 10**9`. Sorting by the start of validity is what keeps
-    arrival monotonic (02 §2.2): a version the origin publishes next month
-    starts next month, so it sorts after every id already in its slice.
-    `expression` is the origin's own identifier of the version (`ORIGINAL`,
-    `CONSOLIDATED/20010201`), so an original and a consolidation dated the
-    same day are two ids. Collision-checked by the caller like `native_id`,
-    on (work key, expression)."""
-    ymd = valid_from_iso.replace("-", "")
-    if len(ymd) != 8 or not ymd.isdigit():
-        raise ValueError(f"not an ISO date: {valid_from_iso!r}")
-    key = "".join((*work_key, expression)).encode("utf-8")
-    digest = hashlib.blake2b(key, digest_size=8).digest()
-    return int(ymd) * _HASH_SPACE + int.from_bytes(digest, "big") % _HASH_SPACE
+    the start of validity in the high bits, blake2b(work key ‖ expression)
+    in the 46 low ones — `native_id`'s layout. Sorting by the start of
+    validity is what keeps arrival monotonic (02 §2.2): a version the origin
+    publishes next month starts next month, so it sorts after every id
+    already in its slice. `expression` is the origin's own identifier of the
+    version (`ORIGINAL`, `CONSOLIDATED/20010201`), so an original and a
+    consolidation dated the same day are two ids. Collision-checked by the
+    caller like `native_id`, on (work key, expression)."""
+    return _compose(valid_from_iso, "".join((*work_key, expression)).encode("utf-8"))
 
 
 class CollisionGuard:

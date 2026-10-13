@@ -65,8 +65,11 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Iterable
 
+from .plugins import eli
+
 OPEN = 99_999_999          # "still in force", in the index columns only
-_ID_SPACE = 10 ** 9        # the id's low digits (app/plugins/eli.py)
+#: the day an id sorts under is read back by the layout's own decoder
+#: (app/plugins/eli.py `id_day`): never arithmetic on the id here
 COLUMNS = ("valid_from", "valid_to", "shown")
 
 
@@ -74,7 +77,7 @@ def current_columns(native_id: int) -> dict[str, int]:
     """The three columns of a record the table does not know (none recorded
     yet, or imported vectors): "current", starting at the date in the id's
     high digits, until its own rdf stage or the maintainer says otherwise."""
-    return {"valid_from": int(native_id) // _ID_SPACE, "valid_to": OPEN, "shown": 1}
+    return {"valid_from": eli.id_day(int(native_id)), "valid_to": OPEN, "shown": 1}
 
 
 @dataclass(frozen=True)

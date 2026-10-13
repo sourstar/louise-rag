@@ -119,7 +119,7 @@ def test_every_version_is_a_record_in_validity_order(corpus):
     ids = [int(r.native_id) for r in refs]
     assert ids == sorted(ids)
     sard = [r for r in refs if "048C0003" in r.locator]
-    assert [int(r.native_id) // 10**9 for r in sard] == [19480309, 20010201, 20010216]
+    assert [eli.id_day(int(r.native_id)) for r in sard] == [19480309, 20010201, 20010216]
     assert sard[0].native_id == str(_nid("1948-03-09", "048C0003", "1948-03-09", "ORIGINAL"))
     assert sard[1].native_id == str(_nid("1948-03-09", "048C0003", "2001-02-01", "CONSOLIDATED/20010201"))
     # 3 Sardegna + 2 of the 1967 law + 306 + built + 2 of R.D. 206 + 2 of R.D. 7

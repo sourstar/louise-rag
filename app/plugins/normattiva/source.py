@@ -266,8 +266,11 @@ class NormattivaSource:
     #: (`original_start`, measured); free for the same reason. 6 the same
     #: evening: `keys` gain the act's Akoma Ntoso work path (`akn:`), the id
     #: the archive's cross-references and modification targets use,
-    #: registered by app/refs/normattiva.py; free.
-    PARSER_VERSION = 6
+    #: registered by app/refs/normattiva.py; free. 7 on 2026-10-13: the id's
+    #: layout (eli.py) — the first discovery of the whole archive collided
+    #: three times on 2010-12-16 under nine decimal digits of hash; the
+    #: collection is re-created, nothing was built.
+    PARSER_VERSION = 7
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE          # an act withdrawn from the database
     native_id_order = "numeric"            # eli.expression_native_id: start of validity first

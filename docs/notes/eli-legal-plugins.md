@@ -243,18 +243,31 @@ as an integer at all.
 **What survives:** `uid` and `keys` carry the URIs losslessly, and
 `native_id` becomes a *derived* integer rather than a readable encoding:
 
-    native_id = int(YYYYMMDD_publication) * 10**9
-              + (blake2b(codiceRedazionale) mod 10**9)
+    native_id = (days since 1500-01-01) << 45
+              | (blake2b(work key) mod 2**45)
+
+*(Amended 2026-10-13. Until then it was `int(YYYYMMDD) * 10**9 + blake2b
+mod 10**9`: nine decimal digits of hash, one pair in 10⁹ per day. The
+first discovery of the whole Normattiva archive collided three times on
+2010-12-16, the taglia-leggi day, when about 77,000 versions start —
+n²/2·10⁹ ≈ 3, as the birthday arithmetic says. The layout is now 18 bits
+of days, which reach the year 2217, and 45 bits of hash, one pair in
+3.5·10¹³: that day expects 8·10⁻⁵. Exactly 63 bits, the signed int64 of
+every book_id column. `eli.id_day` reads the day back; nothing else does
+arithmetic on the id. The collection was re-created, nothing having been
+built from the old ids.)*
 
 Properties, stated honestly. It is **stable** (a pure function of the Work
-key), **date-sortable** in the high digits — so browse ordering and the
-`BETWEEN` range predicates in `worker.py:407` still mean something — and
-**not reversible**, which is fine because `uid` is the identity and this is
-only a join key. It can **collide** within a single publication date; that
-is a one-in-10⁹ event per pair, and discovery must **check for it against
-the manifest and fail loudly** rather than trust the arithmetic. An
-unchecked hash key is the kind of thing that works until a corpus is large
-enough to matter.
+key), **date-sortable** in the high bits — so browse ordering keeps its
+meaning; the validity window reads its own columns (app/validity.py), never
+the id — and **not reversible**, which is fine because `uid` is the
+identity and this is only a join key. It can **collide** within a single
+day; that is a one-in-3.5·10¹³ event per pair, and discovery still
+**checks for it and refuses the newcomer loudly** rather than trust the
+arithmetic (`eli.CollisionGuard`; the first holder keeps the id, the
+colliding member is reported, never minted). An unchecked hash key is the
+kind of thing that works until a corpus is large enough to matter — and
+nine digits were not enough the first time a whole archive was discovered.
 
 The act-type vocabulary keeps its rule, now with an address:
 

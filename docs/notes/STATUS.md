@@ -331,6 +331,27 @@ declines the delta and sends the file to the whole fetch (D4); an origin
 that answers a Range with 200 falls to the pre-delta rules. The mock origin
 gained `answer_next`. Ships with the next deploy.
 
+**The fourth finding (2026-10-13, after the fetch completed): the id's
+width.** The whole archive discovered — 318,345 seen, 329,429 documents —
+with `container_errors 4`: four pairs of versions whose native ids
+collided, three on 2010-12-16 and one on 2011-02-10. Not four bad acts:
+the id was `YYYYMMDD * 10**9 + blake2b mod 10**9`, nine decimal digits of
+hash per day, and 2010-12-16 is the taglia-leggi day on which about 77,000
+versions start — n²/2·10⁹ ≈ 3, the birthday arithmetic the ELI note itself
+warned of. What the guard dropped was the colliding member alone (a scan
+report, not the container), but a uid minted from a colliding id would have
+been permanent, so the other session did not start the build. Fixed in
+eli.py: 18 bits of days from 1500-01-01 (to the year 2217) and 45 bits of
+hash, exactly 63 — one pair in 3.5·10¹³, 8·10⁻⁵ expected on that day;
+`eli.id_day` reads the day back for the validity columns and the slicing,
+nothing else does arithmetic on the id; parser 7. Every id changes, and
+the Codex pins the parser that produced the records (02 §2.3), so the
+collection is RE-CREATED: remove the collection file and the collection's
+directory under data/collections (manifest, index, lance, state; nothing
+was built, the corpus on /corpora stays and is adopted by its directories),
+then `create-normattiva.sh` again. The node's action, as every creation
+is.
+
 
 ### 2026-10-05: the side branches merged into main
 

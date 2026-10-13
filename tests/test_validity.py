@@ -117,7 +117,7 @@ def test_the_rdf_stage_chains_each_work(versioned):
     cols = validity.index_columns(con, [O_ID, V12_ID, RD_O_ID, 42])
     assert cols[O_ID] == {"valid_from": 19480310, "valid_to": 20010201, "shown": 0}
     assert cols[V12_ID] == {"valid_from": 20010216, "valid_to": validity.OPEN, "shown": 1}
-    assert cols[42] == {"valid_from": 0, "valid_to": validity.OPEN, "shown": 1}, "a record not yet recorded reads as current"
+    assert cols[42] == {"valid_from": 15000101, "valid_to": validity.OPEN, "shown": 1}, "a record not yet recorded reads as current"
     desc = validity.describe(con, [V11_ID, V12_ID, RD_R_ID])
     assert desc[V11_ID] == {"from": "2001-02-01", "to": "2001-02-16", "in_force": None, "current": False}
     assert desc[V12_ID]["to"] is None and desc[V12_ID]["current"] is True

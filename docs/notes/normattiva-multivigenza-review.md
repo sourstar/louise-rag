@@ -272,10 +272,15 @@ CONSOLIDATED member on the same day, so the date alone is not the key;
 the alias is (ELI rule 2, read back from the member).
 
 ```
-native_id = int(vigenza_from as YYYYMMDD) * 10**9
-          + blake2b(gu_date ‖ codice ‖ eli_alias_tail) mod 10**9
+native_id = (days of vigenza_from since 1500-01-01) << 45
+          | blake2b(gu_date ‖ codice ‖ eli_alias_tail) mod 2**45
 uid       = normattiva:<native_id>
 ```
+
+*(The hash was nine decimal digits under `YYYYMMDD * 10**9` until
+2026-10-13, when the first discovery of the whole archive collided three
+times on 2010-12-16 — the taglia-leggi day, ~77,000 versions — exactly as
+n²/2·10⁹ predicts; eli-legal-plugins.md §5.2 as amended, parser 7.)*
 
 Date-sortable in the high digits by the member name's date (a VIGENZA's start, an ORIGINALE's publication; §7), which is
 what makes it **monotonic in arrival**: a version the origin publishes
