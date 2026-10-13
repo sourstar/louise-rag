@@ -500,6 +500,32 @@ API's search routes — new acquisition machinery. The harness also wrote 200
 temporal stubs for the operator's review (`/data/pilot/temporal-stubs.jsonl`);
 the `records-vs-origin` re-run is still owed (cut by the deploy).
 
+**NORMATTIVA STAYS AS IT IS; THE FULL CORPUS MEASURED FOR A DAUGHTER
+(2026-10-13, evening UTC; operator's decision).** The operator keeps the
+collection at the 23 pre-packaged collections and asked how the full body of
+state law can be had for a new or daughter collection.
+docs/notes/normattiva-full-corpus.md is the answer, measured on the node
+against the live collection: the archive holds 205,100 acts (one advanced
+search's facets); 1948–2026 has 74,613, the collection 63,804 — 10,809
+missing, 85 % held (87/85/79/78 % by period); the gap is ordinary laws
+(1990: 223 in the archive, 98 held). The documented API gives the
+enumeration (`ricerca/avanzata`, 500 a page, facets by year and type), an
+asynchronous export measured end to end (search → token → confirm → ~50 s →
+303 → zip, the pre-packaged zips' member naming, at most 7,000 acts a job)
+that yields ONE version per job — the original, or the one in force at
+`dataVigenza` — and `ricerca/aggiornati` as the change feed. The portal's
+own per-act export answers a browser session only and was not pursued. The
+archive serves one AKN per Expression whatever the route (a browser
+session's export of a held version was byte-identical to the zip member),
+so the plugin and parser apply unchanged. Three designs with costs: A, a
+daughter with original + current for every act (about 340 jobs, a few GB,
+intermediate versions declared missing); B, the full history by one job per
+(act, version) — about 7,000 more jobs, four days of the service's time; C,
+ask IPZS for a multivigente custom export or a "Leggi" collection. The note
+recommends C now and A as the daughter's first step; the machinery A needs
+(an `api-export` spec mode, the daughter's Codex per 02 §2.7) is asked
+before built, so the next step is the operator's word on C and A.
+
 
 ### 2026-10-05: the side branches merged into main
 
