@@ -19,7 +19,9 @@ gated by app.auth.require_admin (a single ADMIN_TOKEN, header or cookie);
 read/query endpoints (status/stats/events/books/search/chat) stay open —
 "Ask is LAN-open read-only" (architecture-v2.md §15).
 """
+import contextvars
 import json
+import queue
 import sys
 import threading
 import time
@@ -570,6 +572,11 @@ def api_verify(body: VerifyBody):
         merged["quarantined"].extend(summary.get("quarantined", []))
     return merged
 
+#: an SSE comment every so often while an answer has nothing to show yet
+#: (`_chat_answer`): the stream is never silent for longer than this
+KEEPALIVE_S = 5.0
+
+
 class ChatBody(BaseModel):
     model: str = "gutenberg-rag"
     messages: list[dict]
@@ -630,18 +637,75 @@ def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
         }
 
     def sse():
+        # THE ANSWER'S STREAM, RELAYED FROM A THREAD (2026-10-13: "the answer
+        # was cut", and nothing had recorded how it ended). `pump` reads the
+        # endpoint, so this generator never blocks longer than KEEPALIVE_S:
+        # while nothing has arrived — the cold start, the prompt, a model
+        # that thinks before it writes — an SSE comment goes out instead,
+        # which the page ignores and anything on the way counts as traffic.
+        # And the stream's END is said: an answer the endpoint capped, failed
+        # or closed early gets a visible note and a warn line, where before
+        # it ended exactly like a whole one. Every answer gets one log line
+        # with its size and timing, so the next report has a measurement.
+        q: queue.Queue = queue.Queue()
+        stop = threading.Event()
+
+        def pump() -> None:
+            try:
+                it = llm.chat_stream(messages, temperature=body.temperature)
+                while not stop.is_set():
+                    try:
+                        q.put(("delta", next(it)))
+                    except StopIteration as s:
+                        q.put(("end", s.value))
+                        return
+                it.close()          # the reader left: the endpoint stops writing
+            except BaseException as e:      # noqa: BLE001 — said to the reader below
+                q.put(("error", e))
+        threading.Thread(target=contextvars.copy_context().run, args=(pump,),
+                         name="chat-stream", daemon=True).start()
+
+        def chunk(delta: str) -> str:
+            return "data: " + json.dumps({
+                "id": rid, "object": "chat.completion.chunk", "created": int(time.time()),
+                "model": "gutenberg-rag",
+                "choices": [{"index": 0, "delta": {"content": delta},
+                             "finish_reason": None}]}) + "\n\n"
+
+        chars = 0
+        first: float | None = None
+        why: str | None = None
         try:
-            for delta in llm.chat_stream(messages, temperature=body.temperature):
-                chunk = {"id": rid, "object": "chat.completion.chunk",
-                         "created": int(time.time()), "model": "gutenberg-rag",
-                         "choices": [{"index": 0, "delta": {"content": delta},
-                                      "finish_reason": None}]}
-                yield f"data: {json.dumps(chunk)}\n\n"
-        except Exception as e:
-            err = {"id": rid, "object": "chat.completion.chunk",
-                   "choices": [{"index": 0, "delta": {"content": f"\n[error: {e}]"},
-                                "finish_reason": None}]}
-            yield f"data: {json.dumps(err)}\n\n"
+            while True:
+                try:
+                    kind, value = q.get(timeout=KEEPALIVE_S)
+                except queue.Empty:
+                    yield ": keepalive\n\n"
+                    continue
+                if kind == "delta":
+                    if first is None:
+                        first = time.time() - t0
+                    chars += len(value)
+                    yield chunk(value)
+                    continue
+                if kind == "error":
+                    why = f"the endpoint failed ({type(value).__name__}: {value})"
+                elif value is None or not value.whole:
+                    why = value.why() if value is not None else "the stream said no end"
+                break
+        except GeneratorExit:
+            stop.set()
+            raise
+        secs = time.time() - t0
+        if why is not None:
+            yield chunk(f"\n[answer cut: {why}]")
+            db.log_event(con, "warn", "chat",
+                         f"answer cut after {chars} chars, {secs:.1f} s: {why}")
+        elif first is None:
+            db.log_event(con, "info", "chat", f"answer: empty, {secs:.1f} s")
+        else:
+            db.log_event(con, "info", "chat",
+                         f"answer: {chars} chars in {secs:.1f} s, first word at {first:.1f} s")
         done = {"id": rid, "object": "chat.completion.chunk",
                 "created": int(time.time()), "model": "gutenberg-rag",
                 "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}

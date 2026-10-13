@@ -1165,3 +1165,76 @@ def test_the_answer_is_not_pushed_out_of_view_as_it_streams(client):
     page = client.get("/ask").text
     assert "#results{overflow-anchor:none}" in page, "the results must never be the anchor"
     assert "pane.scrollIntoView({block:'start'})" in page, "the answer starts where it is seen"
+
+
+# ---------------- The answer's stream says how it ended (2026-10-13) ----------------
+
+
+def _no_sources(monkeypatch):
+    from app import api
+    monkeypatch.setattr(api, "_run_search", lambda *a, **k: {
+        "hits": [], "timings": {"total": 1.0}, "facts": [], "catalog": []})
+
+
+def _answer_text(sse: str) -> str:
+    import json
+    out = []
+    for event in sse.split("\n\n"):
+        if not event.startswith("data:") or event.endswith("[DONE]"):
+            continue
+        out.append(json.loads(event[5:])["choices"][0]["delta"].get("content") or "")
+    return "".join(out)
+
+
+def test_an_answer_the_endpoint_cut_is_said_to_the_reader_and_logged(client, monkeypatch, capsys):
+    """"The answer was cut" (operator, 2026-10-13): the stream used to end a
+    capped answer exactly like a whole one. Now the note is in the answer
+    and a warn line names the size and the reason."""
+    from app import api, llm
+    _no_sources(monkeypatch)
+
+    def capped(messages, temperature=0.3, **kw):
+        yield "Il diritto all'"
+        return llm.StreamEnd(finish_reason="length", done=True, error=None)
+    monkeypatch.setattr(api.llm, "chat_stream", capped)
+    r = client.post("/v1/chat/completions",
+                    json={"messages": [{"role": "user", "content": "q"}], "stream": True})
+    assert r.status_code == 200
+    assert _answer_text(r.text) == "Il diritto all'\n[answer cut: the token limit was reached]"
+    assert r.text.rstrip().endswith("data: [DONE]")
+    assert "answer cut after 15 chars" in capsys.readouterr().out
+
+
+def test_an_endpoint_that_fails_mid_answer_is_said(client, monkeypatch, capsys):
+    from app import api
+    _no_sources(monkeypatch)
+
+    def failing(messages, temperature=0.3, **kw):
+        yield "Il "
+        raise RuntimeError("slot gone")
+    monkeypatch.setattr(api.llm, "chat_stream", failing)
+    r = client.post("/v1/chat/completions",
+                    json={"messages": [{"role": "user", "content": "q"}], "stream": True})
+    assert _answer_text(r.text) == "Il \n[answer cut: the endpoint failed (RuntimeError: slot gone)]"
+    assert "answer cut after 3 chars" in capsys.readouterr().out
+
+
+def test_a_whole_answer_is_logged_and_the_stream_kept_alive_while_silent(client, monkeypatch, capsys):
+    """Nothing reaches the page during the cold start, the prompt and a
+    model's hidden reasoning (19–34 s measured): an SSE comment goes out
+    every KEEPALIVE_S instead, which the page's reader skips."""
+    import time as time_mod
+    from app import api, llm
+    _no_sources(monkeypatch)
+    monkeypatch.setattr(api, "KEEPALIVE_S", 0.05)
+
+    def slow(messages, temperature=0.3, **kw):
+        time_mod.sleep(0.3)
+        yield "Il diritto"
+        return llm.StreamEnd(finish_reason="stop", done=True, error=None)
+    monkeypatch.setattr(api.llm, "chat_stream", slow)
+    r = client.post("/v1/chat/completions",
+                    json={"messages": [{"role": "user", "content": "q"}], "stream": True})
+    assert ": keepalive\n\n" in r.text
+    assert _answer_text(r.text) == "Il diritto" and "[answer cut" not in r.text
+    assert "answer: 10 chars in" in capsys.readouterr().out

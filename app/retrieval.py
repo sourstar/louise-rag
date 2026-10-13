@@ -1063,6 +1063,17 @@ ANSWER_SYSTEM = (
     "facts, not ranked evidence — use them but do not cite them with [n]."
 )
 
+#: QWEN3'S OWN SWITCH, in the prompt — as `llm._RESTRICT_SYSTEM` carries it.
+#: The node's chat model ignores `chat_template_kwargs.enable_thinking` and
+#: thinks before it answers. Measured on "Diritto all'oblio" over
+#: normattiva (2026-10-13, five runs): about 1,400 characters of hidden
+#: reasoning per answer, the first visible word after 19–34 s, and the
+#: reasoning — written in English — pulled the Italian question's answer
+#: into English once in four runs. With the switch: no reasoning, the first
+#: word after 0.4 s warm (9.8 s cold), the answer in the question's
+#: language and whole. Nothing is lost: the reasoning was never shown.
+THINK_OFF = " /no_think"
+
 #: Characters of passages an answer is given. The chat runs with a 16,384-
 #: token context and Ollama silently drops the START of a prompt that does
 #: not fit — the instructions first. The results count is the reader's to
@@ -1110,6 +1121,7 @@ def build_answer_messages(query: str, result: dict, answer_lang: str | None = No
         system += (f" Write your whole answer in the language with ISO code "
                    f"'{answer_lang}', whatever language the question or the "
                    f"sources are in.")
+    system += THINK_OFF
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": f"Sources:\n\n{context}\n\nQuestion: {query}"},

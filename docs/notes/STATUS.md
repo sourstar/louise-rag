@@ -441,6 +441,43 @@ start. Until then the embed stage defers every Normattiva document. The
 template's §11–12 carry the finding as the test pool a new collection runs
 through.
 
+**"THE ANSWER WAS CUT" (2026-10-13, afternoon UTC).** The operator asked
+"Diritto all'oblio" over normattiva four times between 13:44 and 13:57 UTC
+and saw the answer cut. Measured on the node: LocalAI caps nothing (a
+13,772-token generation ended with `finish_reason: stop`, 61 tok/s); the
+operator's exact request, rebuilt in the web container and streamed five
+times, ended whole every time (1,044–1,661 characters, full sentences,
+`stop`, `[DONE]`); end to end through Louise's own port the same. What the
+measurements DID show: the chat model ignores
+`chat_template_kwargs.enable_thinking` and thinks before it writes — about
+1,400 characters of hidden reasoning per answer, so the page received NOTHING
+for 19–34 s after the request (cold start 6–10 s, the prompt, the reasoning),
+and the reasoning, in English, once pulled the Italian answer into English;
+and two of the four runs have no `query_log` row while LocalAI finished them
+(13:50:27 and 13:57:11): their page connection was gone before the model's
+end — the generator abandoned by Starlette on the disconnect, nothing logged.
+No proxy sits in that path (Funnel fronts port 30014, not the web's 30042),
+so what closed those connections is not known from the node; the operator's
+browser and route are the missing datum.
+
+Three changes, all measured or tested: Qwen3's own switch ` /no_think` on
+the answer prompt (`retrieval.THINK_OFF`, as `llm._RESTRICT_SYSTEM` carries
+it): no reasoning, the first word after 0.4 s warm / 9.8 s cold, the answer
+in the question's language, whole — the reasoning was never shown, nothing
+is lost. The stream's END is said: `llm.chat_stream` RETURNS a `StreamEnd`
+(finish_reason, the end marker, an error payload), the API relays the
+endpoint from a thread with an SSE comment every 5 s while nothing has
+arrived (`KEEPALIVE_S`; the page skips non-data lines), appends
+`[answer cut: <why>]` to an answer the endpoint capped, failed or closed
+early, and logs one line per answer (`answer: N chars in S s, first word at
+F s` / `answer cut after N chars: why`) — the next report has a measurement
+where this one had none. Observed and NOT changed: LocalAI's memory
+reclaimer evicts the chat model right after every answer ("Memory reclaimer
+evicting LRU model … lastUsed" one second after each completion) and nags
+"Skipping … busy model" twice a second during it, so every ask pays a 6–10 s
+cold start; that is LocalAI's watchdog under the card's squeeze (the embedder
+runs beside it), a configuration matter for the operator.
+
 
 ### 2026-10-05: the side branches merged into main
 

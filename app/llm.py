@@ -66,24 +66,83 @@ def warm(level: Level = Level.CHAT) -> None:
                              caller=level.name.lower())
 
 
-def _delta(line: str) -> tuple[str, bool]:
-    """(the text one streamed line carries, whether the stream is over)."""
+@dataclass(frozen=True)
+class Piece:
+    """What one streamed line carries: `text` for the reader, `over` when
+    the line is the stream's end marker, `finish_reason` when the line
+    states how the answer ended, `error` when it carries the endpoint's
+    error instead of a delta."""
+    text: str = ""
+    over: bool = False
+    finish_reason: str | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class StreamEnd:
+    """How a streamed answer ended — the value `chat_stream` RETURNS, so a
+    caller that reads it (`end = yield from chat_stream(...)`) can say
+    whether the reader saw the whole answer. Before 2026-10-13 nothing
+    recorded it: the operator saw an answer cut and no line said whether
+    the endpoint capped it, failed, or closed the stream."""
+    finish_reason: str | None      # "stop" is the only whole answer; "length" a cap
+    done: bool                     # the end marker came ([DONE], Ollama's done)
+    error: str | None              # an error payload the stream carried
+
+    @property
+    def whole(self) -> bool:
+        return self.error is None and (self.finish_reason == "stop"
+                                       or (self.finish_reason is None and self.done))
+
+    def why(self) -> str:
+        if self.error is not None:
+            return f"the endpoint reported an error: {self.error}"
+        if self.finish_reason == "length":
+            return "the token limit was reached"
+        if self.finish_reason not in (None, "stop"):
+            return f"the endpoint ended it with finish_reason={self.finish_reason}"
+        if not self.done:
+            return "the stream closed before its end marker"
+        return "whole"
+
+
+def _piece(line: str) -> Piece:
     if config.CHAT_API == "openai":
         if not line.startswith("data:"):
-            return "", False                    # a comment, an event name, a blank
+            return Piece()                      # a comment, an event name, a blank
         data = line[5:].strip()
         if data == "[DONE]":
-            return "", True
+            return Piece(over=True)
         try:
-            choice = (json.loads(data).get("choices") or [{}])[0]
+            obj = json.loads(data)
         except json.JSONDecodeError:
-            return "", False
-        return (choice.get("delta") or {}).get("content") or "", False
+            return Piece()
+        if not isinstance(obj, dict):
+            return Piece()
+        if obj.get("error") is not None:
+            err = obj["error"]
+            msg = err.get("message") if isinstance(err, dict) else err
+            return Piece(error=str(msg)[:300])
+        choice = (obj.get("choices") or [{}])[0]
+        return Piece(text=(choice.get("delta") or {}).get("content") or "",
+                     finish_reason=choice.get("finish_reason") or None)
     try:
         obj = json.loads(line)
     except json.JSONDecodeError:
-        return "", False
-    return obj.get("message", {}).get("content", ""), bool(obj.get("done"))
+        return Piece()
+    if not isinstance(obj, dict):
+        return Piece()
+    if obj.get("error") is not None:
+        return Piece(error=str(obj["error"])[:300])
+    done = bool(obj.get("done"))
+    return Piece(text=obj.get("message", {}).get("content", ""), over=done,
+                 finish_reason=(obj.get("done_reason") or None) if done else None)
+
+
+def _delta(line: str) -> tuple[str, bool]:
+    """(the text one streamed line carries, whether the stream is over)."""
+    p = _piece(line)
+    return p.text, p.over
 
 
 def chat(messages: list[dict], temperature: float = 0.3, max_tokens: int = 1500,
@@ -166,11 +225,15 @@ def tool_message(call: ToolCall, content: str) -> dict:
 def chat_stream(messages: list[dict], temperature: float = 0.3,
                 max_tokens: int | None = None, num_ctx: int = 16384, *,
                 level: Level = Level.CHAT):
-    """Yield content deltas. The claim and the gate are held for the whole
-    stream: the model is working until the last token."""
+    """Yield content deltas; RETURN a `StreamEnd` saying how the answer
+    ended (`end = yield from chat_stream(...)`): a caller that shows the
+    answer can tell a whole one from one the endpoint capped, failed or
+    closed early. The claim and the gate are held for the whole stream:
+    the model is working until the last token."""
     warm(level)
     url, body = _request(messages, stream=True, temperature=temperature,
                          max_tokens=max_tokens, num_ctx=num_ctx)
+    finish: str | None = None
     with dispatch.call(config.CHAT_URL, level, timeout=config.LLM_TIMEOUT), \
             httpx.Client(timeout=config.LLM_TIMEOUT) as client:
         # the header is read HERE, in the step that makes the request: a
@@ -181,11 +244,16 @@ def chat_stream(messages: list[dict], temperature: float = 0.3,
             for line in r.iter_lines():
                 if not line:
                     continue
-                delta, over = _delta(line)
-                if delta:
-                    yield delta
-                if over:
-                    return
+                piece = _piece(line)
+                if piece.error is not None:
+                    return StreamEnd(finish, False, piece.error)
+                if piece.finish_reason:
+                    finish = piece.finish_reason
+                if piece.text:
+                    yield piece.text
+                if piece.over:
+                    return StreamEnd(finish, True, None)
+    return StreamEnd(finish, False, None)
 
 def translate_query(query: str, target_langs: list[str]) -> dict[str, str]:
     """One prompt, N translations, JSON out. Failure degrades to no fan-out.
