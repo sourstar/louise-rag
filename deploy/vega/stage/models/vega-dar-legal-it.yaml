@@ -5,14 +5,15 @@
 # vega-louise-dar-legal-it, the wrapper in front of louise-dar-legal-it. Its
 # architecture (GteModel) has no llama.cpp converter, so no GGUF. MEAN pooling, sdpa,
 # no query prefix here (the Codex's space.query.instruction is Louise's to add).
-# context_size: the longest text in tokens, the server's MAX_SEQ. NOT pinned: no
-# collection embeds with it yet. The weights: /mnt/ssd5/apps/models/dar-legal-it, under
+# context_size: the longest text in tokens, the server's MAX_SEQ. PINNED since
+# 2026-10-13 11:09 UTC, when normattiva began embedding with it (through the API:
+# vega.md §12 — this file is put back afterwards, the call drops comments). The weights: /mnt/ssd5/apps/models/dar-legal-it, under
 # the one read-only weights mount. JSON, which is YAML.
 {
   "name": "vega-dar-legal-it",
   "backend": "vega-louise-dar-legal-it",
   "embeddings": true,
-  "pinned": false,
+  "pinned": true,
   "context_size": 8192,
   "threads": 6,
   "gpu_layers": 0,
