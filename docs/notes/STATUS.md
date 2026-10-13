@@ -478,6 +478,28 @@ evicting LRU model … lastUsed" one second after each completion) and nags
 cold start; that is LocalAI's watchdog under the card's squeeze (the embedder
 runs beside it), a configuration matter for the operator.
 
+**NORMATTIVA: REMEDY DONE, THE PILOT'S COVERAGE, THE ARCHIVE'S SCOPE
+(2026-10-13, afternoon UTC).** The other session deployed 03bc036 and ran
+the remedy: `hold vectors validity-columns normattiva` — 156,727 rows,
+35,470 documents, 1,359 Lance versions behind — then `hold index build
+--vector` (ivf_pq, 196 s); verified from here afterwards: `validity_columns:
+true`, 445,980 rows, embedding on with the columns, no refusal in the worker
+log. 765c1e1 goes out next. The pilot's `coverage` (run 20261013T111846Z):
+179 questions, 175 covered; 590 gold articles, 245 held; 148 not Italian
+acts, 162 not articles (annexes, preambles, communications), 34 acts not
+held, 1 article not in the shown version. Of the 34, 29 are authorities'
+provisions Normattiva does not publish, 1 is held under its ministry's URN
+(a harness fix owed), 2 are not state acts, and ONE is: L. 185/1990, absent
+from all 23 origin zips. Measured from it (review §10.1): the pre-packaged
+collections are thematic and name no collection of ordinary laws; per year
+the collection holds 52–71 % of the state's numbered acts since 1990
+(85–91 % for 1950–1980, by the DPR and Regi decreti collections). The
+records are right and verified; the scope was over-read. DECISION OWED by
+the operator: state the scope on the card, or complement the origin by the
+API's search routes — new acquisition machinery. The harness also wrote 200
+temporal stubs for the operator's review (`/data/pilot/temporal-stubs.jsonl`);
+the `records-vs-origin` re-run is still owed (cut by the deploy).
+
 
 ### 2026-10-05: the side branches merged into main
 

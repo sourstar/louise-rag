@@ -258,6 +258,14 @@ held or not, the version in force or not — never an LLM judge.
     decimal layout survived every fixture and lost 329,000 documents'
     uniqueness on the node within the hour (3ba1e0a).
 
+12. **Measure the origin's scope against the law's own numbering before
+    calling the collection "the law".** A bulk archive organised by
+    category is a subset: Normattiva's 23 pre-packaged collections name
+    no collection of ordinary laws and hold 52–71 % of the state's
+    numbered acts per year since 1990 (review §10.1; found by one gold
+    article of the pilot, L. 185/1990). State the scope on the card, or
+    plan the complementary origin form, before the Codex is pinned.
+
 ## 12. The test pool: what a new collection is checked for
 
 Every defect the first legal collection found is a test in the suite and a
@@ -274,3 +282,4 @@ in neither is not closed.
 | The pack build's per-slice count one too many | tests/pack/test_build.py: the resumable build's two slices | the line equals the parts on disk |
 | The vector table without its validity columns (2026-10-13) | tests/test_validity.py: the batched path writes them; a table without them refuses rows and is repaired with every vector kept; every `upsert_book` call under app/ names `columns=` | `hold index show` → `validity_columns: true`; `[dense] dense search withheld` never logged |
 | `records-vs-origin` INCONCLUSIVE on a re-fetch under the 64 MB tail | the check shares the delta's reader (pieces, 4a2fbbe) | re-run the check after the fetch code changes; an INCONCLUSIVE names its URL |
+| The archive a thematic subset; "every act" over-read (review §10.1) | `tools/legal_pilot.py coverage`: every "act not held" that is a state act, looked up in the origin zips' directories | per year, distinct state acts held against the year's highest act number (52–91 % for Normattiva's 23 collections); the scope stated on the card |

@@ -930,3 +930,71 @@ nugget the later text lost) for a person to review, and `temporal-run`
 holds `--as-of` to the version's uid and the nugget to its text, with the
 undated control. All of it deterministic; it runs once the collection
 embeds (legal-collection-template.md §9).
+
+### 10.1 The pilot's coverage run, and what one absent law revealed (2026-10-13)
+
+The harness (`tools/legal_pilot.py`, b1f443e) ran `coverage` on the built,
+embedded collection (run `20261013T111846Z`, the other session): **179
+questions, 175 covered, 4 excluded; 590 gold articles, 245 held**. By
+outcome: not an Italian act 148; no article in the node path 162; act not
+held 34; article not among the shown version's chunks 1. Reading them:
+"not an Italian act" is JuriFindIT's EU and foreign material, outside this
+collection by design. "No article in the node path" is a gold unit that is
+not an article — an annex, a preamble, a point of an authority's provision,
+a Garante communication or announcement — which the harness scores at
+article granularity only (the annexes themselves ARE kept: `akn.py`'s
+`Attachment`, rendered under `## Allegati`). Of the 34 "act not held", 29
+are authorities' provisions (`provision`, Garante/Consob-style numbers),
+which Normattiva does not publish; D.M. 7 novembre 2001 n. 458 IS held,
+under `urn:nir:ministero.giustizia:decreto:…` — the harness resolves gold
+to `stato` only, a harness fix owed; reg. 12 febbraio 2019 n. 44 and reg.
+29 gennaio 2002 n. 4825750 are not state acts by their numbers; and
+**L. 9 luglio 1990, n. 185** (arms export; art. 27 and 27-bis) is absent
+from the collection AND from every one of the 23 origin zips — no
+`LEGGE_19900709_185` member anywhere — while its implementing D.P.C.M.
+94/1991 is held.
+
+**What L. 185/1990 reveals: the pre-packaged collections are a thematic
+subset of state law.** `collection-predefinite` offers 23 collections —
+codes, consolidated texts, constitutional laws, ratification laws,
+delegation laws, budget laws, decree-laws with their conversion laws,
+legislative decrees, DPR, DPCM, three kinds of regulation, royal decrees,
+repealed acts — and NO collection of ordinary laws as such: a law that is
+none of those is in no zip. Measured against the year's numbering (shared
+by every state act of a year, so the highest number held is a floor of the
+year's count), from `validity_works`:
+
+| Year | distinct state acts held | highest number | share |
+|---|---|---|---|
+| 1960 | 1,823 | 2,036 | 89 % |
+| 1980 | 1,081 | 1,265 | 85 % |
+| 1990 | 235 | 451 | 52 % |
+| 2000 | 262 | 455 | 57 % |
+| 2010 | 197 | 277 | 71 % |
+| 2020 | 132 | 196 | 67 % |
+| 2024 | 129 | 222 | 58 % |
+
+The early decades are carried by the DPR (57,640 members) and Regi decreti
+(201,929) collections; since 1990 the collection holds 52–71 % of the
+state's numbered acts, and the gap is mostly ordinary laws. §3.10's "M holds
+every act's ORIGINALE and every VIGENZA" is true of every act IN a
+collection and was read as "every act". Nothing in the records is wrong:
+the 318,349 records are what the origin's 23 collections hold, verified
+against them (`hold check` PASS). What was wrong is the implied scope —
+"Italian state law" is not what this collection is; "Normattiva's 23
+pre-packaged collections" is.
+
+**The decision owed (operator).** (a) State the scope: the collection's
+card and TERMS name the 23 collections, the pilot keeps its 175 covered
+questions, L. 185/1990 is a known absence. (b) Complement the origin: the
+API's untested `ricerca/{semplice,avanzata}` and `ricerca-asincrona`
+routes ([R14]) are the only published way to reach an act outside the
+collections — a search by type and year, or a per-act AKN export by URN —
+new acquisition machinery, asked before built (CLAUDE.md), with a second
+origin unit beside the zip member and its form recorded with its reason
+(invariant 11). The size: roughly 45 % of the Republic's acts since 1990,
+about 200 a year. How many matter to a legal question is what the pilot's
+`run` will say on the covered side — and [R2]'s "83.7 % of questions name
+the article" says what the miss looks like: a cited act that is not held is
+a miss by key, the worst kind. Also written by the harness: 200 temporal
+stubs for the operator's review (`/data/pilot/temporal-stubs.jsonl`).
