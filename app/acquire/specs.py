@@ -313,6 +313,31 @@ def _normattiva_rel(name: str, form: str) -> str:
 
 _NORMATTIVA_STARTER = ("Leggi costituzionali", "Codici", "Testi Unici")
 
+#: THE ACTS OUTSIDE THE 23 COLLECTIONS (docs/notes/normattiva-full-corpus.md,
+#: 2026-10-13): the pre-packaged collections are thematic and hold 85 % of
+#: the state's acts since 1948 — no collection of ordinary laws exists. The
+#: origin's asynchronous export (app/acquire/export_job.py) builds a zip
+#: per request, ONE version per job: `O`, the originals, and `V`, the
+#: versions in force on the day of the pass. One job per year and form,
+#: under `akn/E/<form>/<year>.zip` — the directory letter is what the
+#: plugin ranks a copy by (M before V before O), so a version the M zips
+#: hold is kept from them. The `full` profile keeps to the 23 collections,
+#: which is the live collection's scope; `archive` adds the exports.
+EXPORT_FIRST_YEAR = 1861
+
+
+def _export_years() -> range:
+    import time as _time
+    return range(EXPORT_FIRST_YEAR, _time.gmtime().tm_year + 1)
+
+
+def _normattiva_exports() -> tuple[RemoteFile, ...]:
+    from . import export_job
+    return tuple(
+        RemoteFile(rel_path=f"akn/E/{form}/{year}.zip",
+                   remote=export_job.encode({"year": year, "form": form}))
+        for year in _export_years() for form in ("O", "V"))
+
 NORMATTIVA_SPEC = AcquisitionSpec(
     source_id="normattiva",
     transport=Transport.HTTPS,
@@ -329,7 +354,7 @@ NORMATTIVA_SPEC = AcquisitionSpec(
                                 remote="collection-preconfezionata?" + urlencode(
                                     {"nome": name, "formato": "AKN",
                                      "formatoRichiesta": form}, quote_via=quote))
-                     for name, form, _, _ in _NORMATTIVA)),
+                     for name, form, _, _ in _NORMATTIVA) + _normattiva_exports()),
     ),
     layout="container-files",
     filters=("*.zip",),
@@ -342,8 +367,15 @@ NORMATTIVA_SPEC = AcquisitionSpec(
         "demo": Filter(include=(_normattiva_rel("Leggi costituzionali", "M"),)),
         "starter": Filter(include=tuple(_normattiva_rel(n, "M")
                                         for n in _NORMATTIVA_STARTER)),
-        "full": Filter(),
+        # the 23 pre-packaged collections: the live collection's scope
+        # (STATUS 2026-10-13, operator) — named explicitly now that the
+        # exports exist, so its passes keep fetching exactly what they did
+        "full": Filter(include=("akn/M/*", "akn/O/*")),
+        # the 23 collections and the yearly exports of every act: the full
+        # body of state law, for a new collection
+        "archive": Filter(),
     },
+    all_profile="full",
     estimated_bytes={
         "demo": 910_258,
         "starter": sum(b for n, f, _, b in _NORMATTIVA if n in _NORMATTIVA_STARTER),

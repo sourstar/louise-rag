@@ -334,3 +334,17 @@ def test_the_command_line_refuses_a_url_naming_no_model_before_creating(
     assert louise.main(base + ["--api", "vega", "--embed-model", "vega-a"]) == 2
     assert "--query-model" in capsys.readouterr().err
     assert not any(root.iterdir())
+
+
+def test_a_profile_other_than_the_whole_is_kept_with_its_acquisition(node):
+    """normattiva-archive's file (deploy/16f/create-normattiva-archive.sh):
+    `profile = "archive"` with `acquire_enabled = true`, a selection the
+    spec offers beside the collection's whole, loads as that profile with
+    acquisition on; the rewrite keeps both, since the Codex cannot say them."""
+    _, make, load = node
+    path, c = load(f'codex = "{make().collection_id}"\nprofile = "starter"\nacquire_enabled = true\n')
+    assert (c.slices, c.profile, c.acquire_enabled) == (None, "starter", True)
+    rewrite(path, c)
+    text = path.read_text(encoding="utf-8")
+    assert 'profile = "starter"' in text and "acquire_enabled = true" in text
+    assert collections_mod._load_one(path) == c

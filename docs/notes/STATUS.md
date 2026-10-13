@@ -553,8 +553,12 @@ mtime) names no act of its partition, re-exports when it does, leaves it
 standing when the feed is unread; a job not done in JOB_BOUND_S is a quiet
 deferral (engine.transient). NORMATTIVA_SPEC lists `akn/E/O|V/<year>.zip`
 for 1861 to this year under a new `archive` profile; `full` names the 23
-zips explicitly, so `normattiva`'s passes do not change (tested). The
-mock origin gained the job routes. The new collection is
+zips explicitly, and the spec DECLARES it as what `slices = "all"` spells
+(`AcquisitionSpec.all_profile`; 09 §9.17) — the first full suite caught
+`archive`, the profile whose filter includes everything, taking its
+place, which would have started the live collection exporting — so
+`normattiva`'s passes do not change (tested). The mock origin gained the
+job routes. The new collection is
 `normattiva-archive`: docs/notes/normattiva-archive-recipe.toml — the same
 space as `normattiva` byte for byte, so every shared chunk carries its
 vectors (RULE 1) — and deploy/16f/create-normattiva-archive.sh, which sets

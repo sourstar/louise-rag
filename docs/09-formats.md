@@ -2103,9 +2103,25 @@ half never leaves the plugin and the peer.
 | `endpoints` (mirrors) | | no | additional endpoints, regions, connection limits |
 | `etiquette` | | no | `{max_conns, bandwidth_cap_bps, windows}` |
 | `profiles`, `profile_mode`, `profile_labels`, `estimated_bytes` | | no | named selections of slices and their sizes |
+| `all_profile` | string or null | no | the profile `slices = "all"` spells (07 §7.8) where it is not the one whose filter includes everything — a spec that lists files beyond a collection's whole names it (*amended 2026-10-13*: Normattiva's `full` is the 23 pre-packaged collections; `archive` adds the yearly exports for another collection) |
 | `probe_file` | | no | the mirror structure probe |
 | `extras` | | no | formats the origin offers that Louise does not exchange |
 | `terms_text_path`, `ssh_key_path`, `auth_token_path` | paths | no | never in any shared object |
+
+**Files the origin builds on request** (*amended 2026-10-13*,
+docs/notes/normattiva-full-corpus.md §2–4). A declared file whose
+request is not a URL but a job: its `remote` (local half, never in the
+Codex) is `export:<partition>` — canonical JSON naming what the origin is
+asked to build, `{"year": 1990, "form": "O"}` for Normattiva's asynchronous
+export of a year of acts in one form — and its `rel_path` is where the
+zip lands, `akn/E/<form>/<year>.zip`. The platform starts the job,
+confirms it, polls its status and downloads the zip it names
+(app/acquire/export_job.py); the file is listed without size or date, like
+a rebuilt zip, and every pass asks the origin's UPDATE FEED, read since
+the copy's own mtime, whether an act of the partition moved — the copy is
+adopted when none did, re-exported when one did, left standing when the
+feed cannot be read. The `files` entry in the Codex is the same
+`{rel_path, size or null, checksum or null}` as any other.
 
 **The deposit plugin's spec.** A deposit collection (02 §2.9) has no
 acquisition spec: its origin is the client. Its `origin.spec` is exactly

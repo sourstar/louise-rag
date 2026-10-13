@@ -13,7 +13,9 @@ other than loopback speed:
     several requests at once, so "per-endpoint concurrency never exceeded N"
     is a real assertion rather than a restatement of the client's own limit.
 """
+import json
 import threading
+import uuid
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,9 +29,108 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass   # keep test output quiet
 
+    # ---- an origin's asynchronous export (app/acquire/export_job.py) ----
+
+    def _body_json(self) -> dict:
+        n = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(n) if n else b""
+        try:
+            return json.loads(raw.decode("utf-8")) if raw else {}
+        except ValueError:
+            return {"_raw": raw.decode("utf-8", "replace")}
+
+    def _answer(self, status: int, body: bytes, content_type: str = "application/json",
+                extra: dict | None = None) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        server: "MockServer" = self.server.mock   # type: ignore[attr-defined]
+        name = self.path.lstrip("/")
+        body = self._body_json()
+        with server.lock:
+            server.posts.append((name, body))
+        if name.endswith("ricerca-asincrona/nuova-ricerca"):
+            # the first scripted job whose `when` accepts this request: two
+            # jobs in flight at once (the engine's pool) must each get their
+            # own zip, as the origin ties a job to its request
+            token = None
+            with server.lock:
+                for i, t in enumerate(server.job_queue):
+                    when = server.jobs[t].get("when")
+                    if when is None or when(body):
+                        token = server.job_queue.pop(i)
+                        break
+            if token is None:
+                self._answer(400, json.dumps({"message": "no job scripted", "code": "1003"}).encode())
+                return
+            self._answer(202, token.encode(), "text/plain")
+            return
+        if name.endswith("ricerca/aggiornati"):
+            with server.lock:
+                acts = list(server.updated)
+            self._answer(200, json.dumps({"listaAtti": acts}).encode())
+            return
+        self._answer(404, b"")
+
+    def do_PUT(self):
+        server: "MockServer" = self.server.mock   # type: ignore[attr-defined]
+        name = self.path.lstrip("/")
+        body = self._body_json()
+        with server.lock:
+            server.posts.append((name, body))
+        if name.endswith("ricerca-asincrona/conferma-ricerca"):
+            token = str(body.get("token") or "")
+            with server.lock:
+                known = token in server.jobs
+                if known:
+                    server.jobs[token]["confirmed"] = True
+            if not known:
+                self._answer(404, b"")
+                return
+            self._answer(200, json.dumps({"stato": 1, "descrizioneStato": "confermata"}).encode())
+            return
+        self._answer(404, b"")
+
+    def _job_get(self, server: "MockServer", name: str) -> bool:
+        """The export's two GET routes; False when `name` is neither."""
+        status_prefix, download_prefix = "ricerca-asincrona/check-status/", "collections/download/collection-asincrona/"
+        if status_prefix in name:
+            token = name.split(status_prefix, 1)[1]
+            with server.lock:
+                job = server.jobs.get(token)
+                if job is not None:
+                    job["polls_seen"] = job.get("polls_seen", 0) + 1
+                    ready = job["confirmed"] and job["polls_seen"] >= job["polls"]
+            if job is None:
+                self._answer(404, b"")
+            elif not ready:
+                self._answer(200, json.dumps({"stato": 2, "descrizioneStato": "in elaborazione"}).encode())
+            else:
+                self._answer(303, json.dumps({"stato": 3, "descrizioneStato": "elaborata"}).encode(),
+                             extra={"x-ipzs-location": f"{server.base_url}/{download_prefix}{token}"})
+            return True
+        if download_prefix in name:
+            token = name.split(download_prefix, 1)[1]
+            with server.lock:
+                job = server.jobs.get(token)
+            if job is None:
+                self._answer(404, b"")
+            else:
+                self._serve(server, job["file"], server.root / job["file"])
+            return True
+        return False
+
     def do_GET(self):
         server: "MockServer" = self.server.mock   # type: ignore[attr-defined]
         name = self.path.lstrip("/")
+        if self._job_get(server, name):
+            return
         path = server.root / name
         with server.lock:
             server.request_counts[name] = server.request_counts.get(name, 0) + 1
@@ -192,6 +293,13 @@ class MockServer:
         self.cuts: dict[str, int] = {}       # names whose every response body ends after N bytes
         self.refused_open_ranges: set[str] = set()   # names whose `bytes=N-` requests get no answer
         self.statuses: dict[str, list[int]] = {}     # names whose next GETs answer these statuses
+        # an origin's asynchronous export (app/acquire/export_job.py): the
+        # tokens the next `nuova-ricerca` calls hand out, in order; each
+        # token's job — the zip it serves, how many status polls it takes
+        self.job_queue: list[str] = []
+        self.jobs: dict[str, dict] = {}
+        self.posts: list[tuple[str, dict]] = []      # (route, body) of every POST and PUT
+        self.updated: list[dict] = []                # what `ricerca/aggiornati` lists
         self.lock = threading.Lock()
         self.live = 0
         self.peak_concurrency = 0
@@ -244,6 +352,30 @@ class MockServer:
         closed range `bytes=N-M` is served — the origin's second trait of
         2026-10-13."""
         self.refused_open_ranges.add(name)
+
+    def export_job(self, file_name: str, *, polls: int = 2, token: str | None = None,
+                   when=None) -> str:
+        """Script a `nuova-ricerca`: its token, the zip at `root/file_name`
+        the job will serve, how many status polls it takes after
+        confirmation to answer 303, and `when` — a predicate over the
+        request body that says which request this job answers (None: the
+        next one)."""
+        token = token or str(uuid.uuid4())
+        with self.lock:
+            self.job_queue.append(token)
+            self.jobs[token] = {"file": file_name, "polls": polls, "confirmed": False,
+                                "polls_seen": 0, "when": when}
+        return token
+
+    def set_updated(self, acts: list[dict]) -> None:
+        """What `ricerca/aggiornati` answers: `listaAtti` rows, each with at
+        least `denominazioneAtto` and `annoProvvedimento`."""
+        with self.lock:
+            self.updated = list(acts)
+
+    def requests_to(self, route_suffix: str) -> list[dict]:
+        with self.lock:
+            return [b for n, b in self.posts if n.endswith(route_suffix)]
 
     def request_count(self, name: str) -> int:
         return self.request_counts.get(name, 0)

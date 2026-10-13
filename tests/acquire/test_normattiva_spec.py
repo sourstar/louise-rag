@@ -12,7 +12,10 @@ SPEC = specs.NORMATTIVA_SPEC
 
 
 def test_every_collection_is_requested_as_akn_in_one_form():
-    files = SPEC.endpoints[0].static_files
+    from app.acquire import export_job
+    # the 23 pre-packaged collections; the yearly exports beside them are
+    # export_job's (tests/acquire/test_export_job.py)
+    files = [f for f in SPEC.endpoints[0].static_files if not export_job.is_export(f)]
     assert len(files) == len(specs._NORMATTIVA) == 23
     for f in files:
         q = parse_qs(urlsplit("x?" + f.remote.split("?", 1)[1]).query)

@@ -1,11 +1,19 @@
 # Normattiva: the acts outside the 23 pre-packaged collections (2026-10-13)
 
-Status: MEASURED, not built. The operator keeps `normattiva` as it is —
-the 23 pre-packaged collections (review §10.1) — and asked how the full
-body of Italian state law can be obtained for a new collection or a
-daughter. This note is the answer: what the origin offers, measured on the
-node against the live collection, and three designs with their costs. New
-acquisition machinery is asked before built (CLAUDE.md); nothing here is.
+Status: MEASURED; design A BUILT as code (2026-10-13 evening; the
+operator's decision: a NEW collection, `normattiva` stays as it is). The
+collection itself is not created: one measurement is owed first (§5, the
+origin dropped every job request on the evening of the 13th after a run
+of probes). What exists: `app/acquire/export_job.py` (the asynchronous
+export as an acquisition file; 09 §9.17 amended), `engine._export_fetch`
+(adopted by the update feed, re-exported, or left standing), the
+`archive` profile of NORMATTIVA_SPEC (the 23 zips plus 1861–today in both
+forms; `full` keeps to the 23), the recipe
+`docs/notes/normattiva-archive-recipe.toml` (the same space as
+`normattiva`, so shared chunks carry their vectors) and
+`deploy/16f/create-normattiva-archive.sh`. This note is the measurement
+the design rests on: what the origin offers, measured on the node against
+the live collection, and the three designs with their costs.
 
 ## 1. The size of the gap
 
@@ -106,7 +114,20 @@ Recommendation: C now, in writing; A as the daughter's first step whatever
 C answers, because it closes "the law today" for every act with existing
 machinery plus one spec mode; B only for the acts the pilot shows matter.
 
-## 4. The machinery A needs (to ask before building)
+## 4. The machinery A needs — built 2026-10-13 (the operator chose a new collection)
+
+What follows was the plan; the code is as it says, with these names: the
+spec mode is a FILE KIND, not a delta mode — a `RemoteFile` whose `remote`
+is `export:<partition json>` (app/acquire/export_job.py; 09 §9.17), under
+`akn/E/<form>/<year>.zip` so the plugin's copy ranking (M before V before
+O) keeps a version the M zips hold; the engine's `_export_fetch` runs the
+job, adopts by the update feed, defers when the feed is unread; the
+`archive` profile of NORMATTIVA_SPEC selects the 23 zips and the exports,
+and `full` names the 23 explicitly so the live collection's passes do not
+change. The new collection is `normattiva-archive`
+(docs/notes/normattiva-archive-recipe.toml; deploy/16f/create-normattiva-archive.sh):
+`normattiva`'s space byte for byte, the origin extended. Tests:
+tests/acquire/test_export_job.py.
 
 - An acquisition spec mode beside `zip-directory`: **`api-export`** —
   enumerate by `ricerca/avanzata` facets, run the async jobs in order,

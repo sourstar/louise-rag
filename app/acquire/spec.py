@@ -128,6 +128,10 @@ class AcquisitionSpec:
     delta: DeltaSpec = field(default_factory=lambda: DeltaSpec(mode="full-resync"))
     etiquette: RateLimit = field(default_factory=RateLimit)
     profiles: dict[str, Filter] = field(default_factory=dict)
+    #: the profile `slices = "all"` spells (07 §7.8), where it is not the one
+    #: whose filter includes everything: a spec that lists files beyond a
+    #: collection's whole (Normattiva's yearly exports, 2026-10-13) names it
+    all_profile: str | None = None
     # MIRRORED sources (several endpoints): the relative path of a SMALL
     # file every structurally-correct mirror must serve — the structure
     # probe AND the benchmark unit (app/acquire/mirrors.py). A mirror that
@@ -233,7 +237,13 @@ def estimated_bytes_for(spec: AcquisitionSpec, profile: str) -> int | None:
 def everything_profile(spec: AcquisitionSpec) -> str | None:
     """The profile that selects every slice — what 07 §7.8's `slices =
     "all"` fetches. Profiles are local (09 §9.17), so the collection file
-    names the selection and this finds the spec's spelling of it."""
+    names the selection and this finds the spec's spelling of it: the one
+    the spec DECLARES (`all_profile`) where it declares one — Normattiva's
+    `full` is the 23 pre-packaged collections, the live collection's whole,
+    while `archive` adds the yearly exports for another collection
+    (2026-10-13) — else the profile whose filter includes everything."""
+    if spec.all_profile:
+        return spec.all_profile
     for name, flt in spec.profiles.items():
         if flt == Filter():
             return name

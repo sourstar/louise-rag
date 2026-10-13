@@ -1,0 +1,143 @@
+# normattiva-archive — the FULL body of the Italian State's numbered acts:
+# Normattiva's 23 pre-packaged collections (every version of every act they
+# hold) AND the origin's yearly exports of every other act, the original and
+# the version in force (docs/notes/normattiva-full-corpus.md, design A; the
+# operator's decision of 2026-10-13: a NEW collection, `normattiva` stays as
+# it is). DRAFT: nothing is created until `hold collection create` runs ON
+# THE NODE, by deploy/16f/create-normattiva-archive.sh.
+#
+# The space is `normattiva`'s, byte for byte — the same encoder, engine,
+# ctx, pooling, calibration set — so `space_id` is the same and the vectors
+# of every chunk the two collections share are carried, never re-embedded
+# (02 §2.4's carry; RULE 1). Only the origin differs: the acquisition
+# profile is `archive` (app/acquire/specs.py NORMATTIVA_SPEC): the 23 zips
+# plus `akn/E/O/<year>.zip` and `akn/E/V/<year>.zip` for 1861 to this year,
+# each built by the origin's asynchronous export on request
+# (app/acquire/export_job.py; at most 7,000 acts a job, one version a job).
+#
+#   hold collection create normattiva-archive --recipe normattiva-archive-recipe.toml \
+#       --name normattiva-archive --encoder http://192.168.178.10:30286 \
+#       --api vega --embed-model vega-dar-legal-it --query-model vega-dar-legal-it
+#
+# Before the first byte moves: the licence is YELLOW (CC BY 4.0 after an NC
+# window, TERMS.txt), so the acknowledgement is recorded first (invariant
+# 9). The collection file then says `profile = "archive"` (not `slices`):
+# the worker fetches the 23 zips as `normattiva` does and runs the export
+# jobs one after the other, about 330 of them on the first pass; a pass
+# after that re-exports only the years the origin's update feed
+# (`ricerca/aggiornati`) names.
+#
+# OWED BEFORE THE FIRST PASS (the note's §5): one year's job timed in both
+# forms, and the member naming of a VIGENTE export checked against its
+# FRBRthis — the origin answered no job request on the evening of
+# 2026-10-13 after a run of probes, so this is measured on a clean day.
+
+[descriptive]
+title = "Normattiva archive — the laws of the Italian State, every act"
+summary = "Every numbered normative act of the Italian State since 1861 from Normattiva's open data: the 23 pre-packaged collections with every version of every act they hold, and for every other act its original text and the version in force at the last pass, exported yearly through the open-data API. Versions between an original and the current text are held only where a pre-packaged collection carries them, and a record says when its validity is not known. Search as of a date resolves one version per act by key."
+
+[space]
+dim = 768
+dtype = "f16"
+# MEASURED 2026-10-12 on the 40 codes' latest versions, 8,818 articles under
+# DAR-legal-it's tokenizer: median 241 tokens, p90 944, p95 1,396, p99 2,943;
+# 2.13 % over 2,048, 0.43 % over 4,096, a handful at the model's 8,192. The
+# chunk is the article (review §3.5) and a longer one is truncated to ctx
+# (09 §9.3), so ctx is the engine's own window: nothing of the codes is cut
+# but those few.
+ctx = 8192
+# what the served backend does (deploy/vega/stage/models/vega-dar-legal-it.yaml)
+pooling = "mean"
+normalise = true
+tolerance = "0.95"
+epoch = "0"
+evaluation = ""
+
+[space.encoder]
+weights = "sha256:92f4c9e0d4e1cb4465c72078a7d7dcf8cb9ff71818657b7112eae2bbb8046da9"
+label = "jurifindit/DAR-legal-it (de7867e4; LocalAI's louise-dar-legal-it backend, torch XPU, behind VeGa; the node's card)"
+
+# The engine `normattiva` was created with (docs/notes/normattiva-recipe.toml;
+# 09 §9.3): `create` holds the endpoint's stated run to these values, or
+# creates nothing. The same engine is what makes the space the same.
+[space.encoder.engine]
+name = "localai/louise-dar-legal-it"
+build = "7b5d557e1744"
+image = "sha256:7b5d557e17441f88b180cb617bd49fc86bf2db226dc01446b9dbc3eb0a6941eb"
+args = ["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"]
+device = "Intel(R) Arc(TM) Pro B70 Graphics"
+
+[space.encoder.engine.env]
+NEO_CACHE_DIR = "/data/louise-cache/neo-cache"
+
+[space.encoder.engine.options]
+ContextSize = 8192
+Embeddings = true
+FlashAttention = "auto"
+MMap = true
+Model = "weights/dar-legal-it"
+ModelFile = "${WEIGHTS}"
+ModelPath = "${MODELS}"
+NBatch = 1
+Options = ["device:xpu"]
+Threads = 6
+
+# DAR-legal-it is asymmetric by prefix only: the same weights on both
+# sides, the query side prefixed as the model was trained
+# (gazzetta-plugin.md §7.1b; 02 §2.4's instruction is inside space_id).
+[space.query]
+instruction = "query: "
+
+[space.calibration]
+set = "sha256:7d06a2f6a4a773da01a517cb30571cac421753df3e30b20fca4716e5441fbf0f"
+
+[space.calibration.quorum]
+n = 16
+min_pass = 12
+
+# The ONGOING work per month: `normattiva`'s draft (~60,000 new article
+# chunks a month, review §7) plus the exports' share — about 15 % more acts
+# (docs/notes/normattiva-full-corpus.md §1), measured at the second pass.
+[work]
+tokens = 140000000
+per = "P1M"
+
+[origin]
+form = "the Akoma Ntoso export (formato=AKN) of the 23 precompiled collections — the multivigente form (formatoRichiesta=M) that holds every act's original and each consolidated version as a member of its own, and the originale form (O) of the collection of repealed acts, which the M zips do not hold — AND, for every act outside those collections, the open-data API's asynchronous export of each year of acts (ricerca-asincrona, formato AKN), in the two forms the API offers: the originals (ORIGINALE) and the versions in force on the day of the pass (dataVigenza); one version a job is all the API offers outside the precompiled collections, so the versions between an act's original and its current text are held only where a precompiled collection carries them (docs/notes/normattiva-full-corpus.md §2–3). Not the portal's own per-act export, which answers browser sessions only; not the JSON or ELI forms, which carry the same text with less structure (eli-legal-plugins.md §5; review §3.10)"
+unit = "index-page"
+clock = "Europe/Rome"
+cutoff_rule = "update-files"
+jurisdiction = "IT"
+
+# The spec is the plugin's (app/acquire/specs.py NORMATTIVA_SPEC) under the
+# `archive` profile: the 22 multivigente zips and the repealed acts'
+# originale zip, brought up to date by their central directories (DeltaSpec
+# zip-directory; 09 §9.17), and the yearly export files, each a job the
+# origin builds on request and the update feed decides to repeat (09 §9.17,
+# amended 2026-10-13; app/acquire/export_job.py).
+
+# YELLOW: CC BY 4.0 from 1 January 2026, an NC window before it; the hash is
+# the terms text the plugin ships (app/plugins/normattiva/TERMS.txt).
+[license]
+class = "yellow"
+terms_sha256 = "sha256:f926ab1dc434440598dc0fe46967be189da73ad75a3590a365abc0377b3d8352"
+
+[validation]
+checks = ["roots", "records", "chunks", "records-vs-origin", "license", "signature", "calibration", "vectors-sample"]
+required = []
+
+[validation.sample.records]
+shards = "0.05"
+
+[validation.sample.chunks]
+shards = "0.05"
+
+[validation.sample."vectors-sample"]
+shards = "0.05"
+
+[validation.sample."records-vs-origin"]
+shards = "0.05"
+
+# Layers, slicing (type and year, 50 acts a part) and the profile (the ELI
+# implementation and the validity axis, one record per Expression) are the
+# plugin's defaults (app/plugins/normattiva/source.py), as for `normattiva`.

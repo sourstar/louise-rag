@@ -28,6 +28,7 @@ from ..transfer.bucket import Priority
 from ..transfer.manager import Direction, get_manager
 from . import checksum
 from . import claim as claim_mod
+from . import export_job
 from . import mirrors
 from . import transport_https
 from .transport_https import RangeUnsupported
@@ -549,6 +550,11 @@ class _WorkItem:
 
 
 def _is_pending(con, spec: AcquisitionSpec, f: RemoteFile) -> bool:
+    if export_job.is_export(f):
+        # a file the origin builds on request names no size or date either:
+        # every pass asks the origin's update feed whether its partition
+        # moved, and adopts the copy when it did not (_export_fetch)
+        return True
     if spec.delta.mode == "zip-directory":
         # the origin rebuilds the file in place and its listing names no size
         # or date to compare: every pass asks the file's own directory
@@ -758,6 +764,41 @@ _zip_delta_fallbacks: list[str] = []
 _DELTA_DECLINED = object()
 
 
+def _export_fetch(endpoint, f: RemoteFile, collection, spec: AcquisitionSpec,
+                  manager, endpoint_key: str) -> _FileResult:
+    """A file the origin BUILDS on request (app/acquire/export_job.py; 09
+    §9.17 amended 2026-10-13): adopted when the origin's update feed, read
+    since the copy's own mtime, names no act of its partition; re-exported
+    when it does; left standing (deferred) when the feed cannot be read —
+    never a failure of the file for the feed's fault. Raises as the normal
+    path raises; `_fetch_one_file` turns that into the file's outcome."""
+    dest = collection.corpus_dir / f.rel_path
+    api = export_job.api_root(endpoint.url)
+    headers = transport_https.headers_for(endpoint)
+    partition = export_job.partition_of(f)
+    if dest.is_file():
+        try:
+            updated = export_job.updated_since(api, dest.stat().st_mtime, headers=headers)
+        except TransportError as e:
+            _zip_delta_fallbacks.append(f"{f.rel_path}: update feed unread, the copy stands: "
+                                        f"{type(e).__name__}: {e}"[:300])
+            del _zip_delta_fallbacks[:-50]
+            return _FileResult(remote=f, endpoint_url=endpoint.url, status="deferred",
+                                size=dest.stat().st_size, error=f"{type(e).__name__}: {e}"[:300])
+        if not export_job.partition_touched(partition, updated):
+            adopted = _adopt_one_file(f, collection, spec)
+            if adopted is not None:
+                return adopted
+    started = time.monotonic()
+    body = export_job.body_for(partition, vigenza_day=time.strftime("%Y-%m-%d", time.gmtime()))
+    size = export_job.run(api, body, dest, headers=headers)
+    elapsed = time.monotonic() - started
+    manager.record_throughput(endpoint_key, size, elapsed)
+    digest = checksum.digest_and_verify(dest, spec.checksums)
+    return _FileResult(remote=f, endpoint_url=endpoint.url, status="fetched",
+                        size=size, digest=digest, moved=size, seconds=elapsed)
+
+
 def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
                      spec: AcquisitionSpec, manager, endpoint_key: str) -> _FileResult:
     dest = collection.corpus_dir / f.rel_path
@@ -769,6 +810,9 @@ def _fetch_one_file(transport, endpoint, f: RemoteFile, collection,
     # timeout on one zip's Range request ended Normattiva's 7.8 GB fetch and
     # waited four hours for the next discovery — the delta ran before the try).
     try:
+        # a file the origin builds on request: its own path, start to end
+        if export_job.is_export(f):
+            return _export_fetch(endpoint, f, collection, spec, manager, endpoint_key)
         # a zip the origin rebuilds in place: its own directory says what
         # moved, before any size comparison — a rebuild of the same size is
         # caught too
