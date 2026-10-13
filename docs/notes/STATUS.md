@@ -524,6 +524,23 @@ chunk hash. `normattiva` stays paused; removing it is the operator's call.
 Article-level resolution (pinning the cited article's text by key) stays
 open, as before.
 
+**`normattiva` IS THE COMPLETE COLLECTION (2026-10-14, night).** The
+parser-8 re-creation (`normattiva-1861`) lost its carried manifest to a race
+— the worker opened the new collection two seconds after `dev carry` had
+removed its empty manifest, db.connect made a fresh one, and the carry took
+it for its own (d6575d2 fixes both sides). The vectors were carried; the
+manifest was restored from the parser-7 one (c8b0bf3: 318,349 documents,
+183,287 embedded, 0 re-embedded) and reconciled. Lesson for any restore of
+a manifest: the copy brings the source's runtime embed mode (it was "off",
+set to keep the old one asleep); the target's file must be applied after.
+Then, operator's go under RULE 1: the parser-7 `normattiva` forgotten
+(~18 GB of index, vectors, state and parts; /corpora/normattiva kept, the
+new one links it) and `hold collection rename normattiva-1861 normattiva`
+(341,959 stored paths rewritten in one transaction; discovery after: added
+0). Live: 1,934,944 vectors with validity columns, ~155k documents still to
+embed (~5 h). The origin (api.normattiva.it) answers nothing to this
+address since the evening's probes; acquisition defers, the zips stand.
+
 
 **NORMATTIVA: REMEDY DONE, THE PILOT'S COVERAGE, THE ARCHIVE'S SCOPE
 (2026-10-13, afternoon UTC).** The other session deployed 03bc036 and ran
