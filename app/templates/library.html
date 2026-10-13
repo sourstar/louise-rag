@@ -160,81 +160,13 @@
     <span class="badge err">embedding paused</span> {{ c.gate.reason }}
   </div>
   {% endif %}
-  {% if c.genesis and not c.genesis.standalone %}
-  {# a collection WITH PRE-EMBEDDINGS — pubmed and MedCPT, wikipedia and
-     Upstash — shows them in their own SUB-BOX (lighter green), the same
-     rows and the same badge on every card (operator, 2026-09-14). It
-     lives in the SAME embedding space as the main box (what import
-     admission verifies), so no space badge is repeated here. Only a
-     stand-alone pre-embedded collection (wikivec) never gets one: its
-     whole card IS the pre-embedded box. #}
-  <div style="background:rgba(111,191,115,.06);border:1px solid rgba(111,191,115,.30);border-radius:6px;padding:8px 10px;margin-top:8px">
-    <div>
-      pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.fetch_state == 'done' else ('brass' if c.genesis.fetch_state == 'active' else '')) }}">{{ c.genesis.archive }}</span>
-    </div>
-    {% if c.genesis.rejected %}
-    <div class="note">REJECTED — not this collection's encoder; see System log. <code>genesis retry {{ c.name }}</code> to retry.</div>
-    {% elif not c.genesis.known %}
-    <div class="note">unknown archive id — nothing will import.</div>
-    {% else %}
-    {# amendment 38 — two rows, no knob. fetched (vectors): the archive's
-       OWN download meter — shards landed over declared (it is a second
-       acquisition stream, behind the corpus on the link, bounded on
-       disk). pre-embedded (dense): over the archive's DECLARED id range,
-       documents that hold a vector against in-scope documents inside it —
-       vectors held, not the import ledger (pass bookkeeping; it read
-       80,654 short on pubmed). The gap inside the range is split the way
-       `louise node health` counts it: past indexing (health's number) and still
-       being indexed. Outside the range the archive has nothing: those are
-       the local encoder's — "past id N" only for ids above the range's end;
-       gaps between declared files, ids below the first, and ids that are
-       not numbers are "outside". An archive that declares no range keeps
-       the ledger's count. Colors: green complete, turquoise moving or
-       scheduled, grey paused. #}
-    <div class="stage"><div class="lbl"><span title="the archive's own download, behind the corpus on the link. green = all landed, turquoise = downloading or scheduled, grey = paused"{% if c.genesis.fetch_state == 'done' %} style="color:var(--ok)"{% elif c.genesis.fetch_state == 'active' or (mode_fetches and c.license.acquire_enabled) %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>fetched (vectors)</span>
-        <span>{{ c.genesis.fetched|num }} / {{ c.genesis.shard_total|num }} archive files{% if c.genesis.resident_bytes %} <span class="note" title="bounded by GENESIS_CACHE_BYTES">({{ (c.genesis.resident_bytes / 1073741824)|round(1) }} GB on disk)</span>{% endif %}</span></div>
-      <div class="spine"><span style="width:{{ (100*c.genesis.fetched/c.genesis.shard_total)|round(1) if c.genesis.shard_total else 0 }}%;background:var(--brass)"></span></div></div>
-    {% if c.genesis.in_range is not none and not c.counts_pending %}
-    {% set g = c.genesis %}
-    {% set range_title %}in-scope documents inside the archive's declared id range{{ 's' if g.spans|length > 1 }} ({% for lo, hi in g.spans %}{{ lo|num }} – {{ hi|num }}{{ ', ' if not loop.last }}{% endfor %}) that hold vectors, over all in-scope documents inside it{% endset %}
-    <div class="stage"><div class="lbl"><span title="{{ range_title }}"{% if g.in_range and g.in_range_embedded >= g.in_range %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>pre-embedded (dense)</span>
-        <span>{{ g.in_range_embedded|num }} / {{ g.in_range|num }}{% if g.pending %} <span class="note" title="in landed archive files, awaiting indexing">({{ g.pending|num }} awaiting indexing)</span>{% endif %}</span></div>
-      <div class="spine"><span style="width:{{ (100*g.in_range_embedded/g.in_range)|round(1) if g.in_range else 0 }}%;background:var(--lapis)"></span></div></div>
-    {% if g.in_range_missing %}
-    <div class="note">{{ g.in_range_missing|num }} inside the range still without a vector{% if g.in_range_indexing %} ({{ g.in_range_indexing|num }} still being indexed){% endif %}{% if g.in_range_waiting %} — <code>louise health {{ c.name }}</code> says whether the archive is still serving {% if g.in_range_indexing %}the other {{ g.in_range_waiting|num }}{% else %}them{% endif %}{% endif %}</div>
-    {% endif %}
-    {% if g.outside_range %}
-    <div class="note">{% if g.outside_range == g.past_range %}{{ g.past_range|num }} past id {{ g.range_hi|num }}: {{ g.past_note }}{% else %}{{ g.outside_range|num }} outside the declared range{% if g.past_range %} ({{ g.past_range|num }} past id {{ g.range_hi|num }}){% endif %}: the archive has no vectors for them{% endif %}{% if g.outside_empty %}; {{ g.outside_empty|num }} with nothing to embed{% endif %}; only the local encoder can embed {{ 'the rest' if g.outside_empty else 'them' }}{% if c.embed_mode == 'off' %}, and embedding is off{% else %} ({{ g.outside_embedded|num }} done){% endif %}</div>
-    {% endif %}
-    {% elif c.genesis.range_hi is not none %}
-    {# a declared range whose counts are not in yet (the first cold process
-       after a deploy): counting — never the ledger, never a zero #}
-    <div class="stage"><div class="lbl"><span title="in-scope documents inside the archive's declared id range that hold vectors, over all in-scope documents inside it" style="color:var(--muted)">pre-embedded (dense)</span>
-        <span>counting…{% if c.genesis.pending %} <span class="note" title="in landed archive files, awaiting indexing">({{ c.genesis.pending|num }} awaiting indexing)</span>{% endif %}</span></div>
-      <div class="spine"><span style="width:0%;background:var(--lapis)"></span></div></div>
-    {% else %}
-    <div class="stage"><div class="lbl"><span title="documents whose vectors came from the archive — no GPU spent"{% if c.in_scope and c.embed_done >= c.in_scope %} style="color:var(--ok)"{% elif worker_state == 'running' %} style="color:var(--brass)"{% else %} style="color:var(--muted)"{% endif %}>pre-embedded (dense)</span>
-        <span>{{ c.genesis.docs|num }} / {{ 'counting…' if c.counts_pending else c.in_scope|num }}{% if c.genesis.pending %} <span class="note" title="in landed archive files, awaiting indexing">({{ c.genesis.pending|num }} awaiting indexing)</span>{% endif %}</span></div>
-      <div class="spine"><span style="width:{{ (100*c.genesis.docs/c.in_scope)|round(1) if c.in_scope else 0 }}%;background:var(--lapis)"></span></div></div>
-    {% endif %}
-    {% if c.genesis.rejected_shards %}
-    <div class="note">{{ c.genesis.rejected_shards|num }} archive file(s) rejected — their ranges go to the local encoder; see System log. <code>genesis retry {{ c.name }}</code> to retry.</div>
-    {% endif %}
-    {% if not c.license.acquire_enabled %}
-    <div class="note">acquisition is off — the archive is not fetched either.</div>
-    {% endif %}
-    {% endif %}
-  </div>
-  {% elif c.genesis %}
-  {# stand-alone pre-embedded collection (local archive): one box, one
-     note — the pre-embedded (dense) row above already carries progress #}
-  <div class="note">
-    pre-embedded data: <span class="badge {{ 'err' if c.genesis.rejected else ('ok' if c.genesis.fetch_state == 'done' else ('brass' if c.genesis.fetch_state == 'active' else '')) }}">{{ c.genesis.archive }}</span>
-    {% if c.genesis.rejected %} — REJECTED (not this encoder; see System log; <code>genesis retry {{ c.name }}</code>)
-    {% elif not c.genesis.known %} — unknown archive id
-    {% else %} — {{ c.genesis.applied|num }}/{{ c.genesis.shard_total|num }} archive files read
-    {% endif %}
-  </div>
+  {% if c.genesis %}
+  {# PRE-EMBEDDED DATA, ONE LINE (operator, 2026-10-13: "a one line note like
+     'N pre embedded vectors by XYZ', remove all the rest", for every
+     collection): the vectors the archive brought, from the import ledger,
+     and who produced them, from the Codex's credits. The rest — fetch meter,
+     range rows, rejected shards — lives in the System log and `node health`. #}
+  <div class="note">{{ c.genesis.imported_vectors|num }} pre-embedded vectors by {{ c.genesis.producer }}</div>
   {% endif %}
   {# ONE knob on EVERY card's main box (operator: "single knob"). It
      governs the LOCAL encoder only; an archive imports whenever the

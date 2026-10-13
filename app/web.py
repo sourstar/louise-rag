@@ -1725,7 +1725,10 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
         "SUM(state IN ('fetched','applying','applied','final')) fetched, "
         "SUM(state='fetching') fetching, "
         "SUM(CASE WHEN state IN ('fetched','applying','applied') THEN COALESCE(bytes,0) ELSE 0 END) resident_bytes, "
-        "SUM(CASE WHEN state='applied' THEN COALESCE(pending,0) ELSE 0 END) pending "
+        "SUM(CASE WHEN state='applied' THEN COALESCE(pending,0) ELSE 0 END) pending, "
+        # THE CARD'S ONE LINE (operator, 2026-10-13): the vectors the archive
+        # brought, as its shards were imported — the ledger, not what is held
+        "SUM(CASE WHEN state IN ('applied','final') THEN COALESCE(chunks,0) ELSE 0 END) imported "
         "FROM genesis_imports WHERE archive=?",
         (collection.genesis_archive,)).fetchone()
     if archive is not None and archive.local:
@@ -1797,8 +1800,13 @@ def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
     in_range, in_range_embedded, waiting, past, outside_empty, outside_embedded = (
         (int(counts[k] or 0) for k in sums) if ranged else (None,) * 6)
     missing = max(0, in_range - in_range_embedded) if ranged else None
+    producer = next((c.producer for c in (getattr(getattr(collection, "codex", None), "credits", None) or ())
+                     if c.kind == "archive" and c.archive == collection.genesis_archive),
+                    collection.genesis_archive)
     return {
         "archive": collection.genesis_archive,
+        "producer": producer,
+        "imported_vectors": int(totals["imported"] or 0),
         "known": archive is not None,
         "local": bool(archive and archive.local),
         "standalone": standalone,

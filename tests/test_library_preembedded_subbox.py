@@ -53,10 +53,11 @@ def test_wikivec_stays_stand_alone(isolated_config, tmp_path):
     assert g["fetch_state"] == "active", "a stand-alone card reads its own fetch"
 
 
-def test_the_template_keys_the_sub_box_on_standalone():
-    """The sub-box, the main row's label and the backfill note all follow
-    `standalone`, not the archive's kind."""
+def test_the_card_says_pre_embedded_data_in_one_line():
+    """Operator, 2026-10-13: pre-embedded data stays on every card, as ONE
+    line, "N pre-embedded vectors by XYZ" — the vectors the archive brought
+    and its producer; the sub-box and its rows are gone."""
     from pathlib import Path
     html = (Path(web.__file__).parent / "templates" / "library.html").read_text(encoding="utf-8")
-    assert "{% if c.genesis and not c.genesis.standalone %}" in html
-    assert "not c.genesis.local" not in html and "c.genesis and c.genesis.local" not in html
+    assert "pre-embedded vectors by {{ c.genesis.producer }}" in html
+    assert "fetched (vectors)" not in html and "genesis retry" not in html

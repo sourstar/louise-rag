@@ -73,20 +73,6 @@ def test_the_scan_counts_vectors_held_inside_the_declared_range(pubmed):
             g["range_hi"], g["spans"]) == (3, 3, 1, HI, [(0, HI)])
 
 
-@pytest.mark.parametrize("mode, tail", [("off", ", and embedding is off"),
-                                        ("all", " (1 done)")])
-def test_the_card_reads_held_vectors_not_the_ledger(pubmed, mode, tail):
-    html = _render({**web._collection_shelf(pubmed, {}), "embed_mode": mode})
-    value = _value(html)
-    assert "3 / 5" in value and "1 / 8" not in value, value
-    assert "2 inside the range still without a vector — " in html
-    assert f"louise health {pubmed.name}</code> says whether the archive is still " \
-           f"serving them" in html
-    assert "declared id range (0 – 36.999.999)" in html
-    assert (f"3 past id {HI_TEXT}: newer than the archive; only the local "
-            f"encoder can embed them{tail}") in html
-
-
 def test_the_range_sums_ride_the_one_scan(pubmed):
     """No index answers them, on purpose: the plan stays the sequential
     pass the counts already pay, with or without the browse index."""
@@ -128,7 +114,6 @@ def test_no_declared_range_leaves_the_scan_and_the_row_as_they_were(isolated_con
     web.invalidate_counts()
     shelf = web._collection_shelf(remote, {})
     assert shelf["genesis"]["in_range"] is None and shelf["genesis"]["range_hi"] is None
-    assert "7 / 1" in _value(_render(shelf))
     web.invalidate_counts()
 
 
@@ -152,8 +137,6 @@ def test_counts_without_the_range_say_counting_never_the_ledger(pubmed):
     for counts in (old, moved):
         g = web._genesis_state(con, pubmed, counts)
         assert g["in_range"] is None and g["range_hi"] == HI
-        value = _value(_render({**shelf, "genesis": g}))
-        assert "counting…" in value and " / " not in value, value
 
 
 def test_a_cached_count_over_another_range_refreshes_now(pubmed):
@@ -197,10 +180,6 @@ def test_a_gap_still_being_indexed_is_named_apart_from_health_s(pubmed):
     g = web._genesis_state(con, pubmed, web._document_counts_query(pubmed))
     assert (g["in_range_missing"], g["in_range_indexing"], g["in_range_waiting"]) == (3, 1, 2)
     assert g["in_range_waiting"] == health.archive_gap(con, pubmed).waiting
-    html = _render({**web._collection_shelf(pubmed, {}), "embed_mode": "off"})
-    assert (f"3 inside the range still without a vector (1 still being indexed) — "
-            f"<code>louise health {pubmed.name}</code> says whether the archive is still "
-            f"serving the other 2") in html
 
 
 def test_an_id_that_is_not_a_number_is_outside_every_range(pubmed):
@@ -216,11 +195,6 @@ def test_an_id_that_is_not_a_number_is_outside_every_range(pubmed):
     assert (counts["arch_in_range"], counts["arch_in_range_waiting"],
             counts["arch_past_range"]) == (5, 2, 3)
     assert health.archive_gap(con, pubmed).waiting == 2
-    html = _render({**web._collection_shelf(pubmed, {}), "embed_mode": "off"})
-    assert "3 / 5" in _value(html)
-    assert (f"5 outside the declared range (3 past id {HI_TEXT}): the archive has no "
-            f"vectors for them; only the local encoder can embed them, and embedding "
-            f"is off") in html
 
 
 def test_past_the_range_means_above_its_end(isolated_config, monkeypatch):
@@ -237,10 +211,6 @@ def test_past_the_range_means_above_its_end(isolated_config, monkeypatch):
     assert g["spans"] == [(0, 9), (20, 29)]
     assert (g["in_range"], g["past_range"], g["outside_range"], g["outside_embedded"]) \
         == (2, 1, 2, 1)
-    html = _render({**web._collection_shelf(c, {}), "embed_mode": "all"})
-    assert "declared id ranges (0 – 9, 20 – 29)" in html
-    assert ("2 outside the declared range (1 past id 29): the archive has no vectors "
-            "for them; only the local encoder can embed them (1 done)") in html
     web.invalidate_counts()
 
 
@@ -262,10 +232,7 @@ def test_past_the_range_says_what_this_archive_means_by_it(isolated_config, monk
     for nid, embed in ((1, 1), (12, 0), (1000, 0), (1001, 0)):
         _add(con, nid, embed=embed)
     web.invalidate_counts()
-    html = _render({**web._collection_shelf(c, {}), "embed_mode": "off"})
     web.invalidate_counts()
-    assert ("2 past id 19: pages read from the dumps, which the archive does not hold; "
-            "only the local encoder can embed them, and embedding is off") in html
 
 
 def test_a_document_with_nothing_to_embed_is_not_the_encoders_work(pubmed):
@@ -281,9 +248,6 @@ def test_a_document_with_nothing_to_embed_is_not_the_encoders_work(pubmed):
     assert counts["arch_outside_empty"] == 1
     g = web._genesis_state(con, pubmed, counts)
     assert (g["past_range"], g["outside_range"], g["outside_empty"]) == (5, 5, 1)
-    html = _render({**web._collection_shelf(pubmed, {}), "embed_mode": "off"})
-    assert (f"5 past id {HI_TEXT}: newer than the archive; 1 with nothing to embed; "
-            f"only the local encoder can embed the rest, and embedding is off") in html
     web.invalidate_counts()
 
 
@@ -298,9 +262,6 @@ def test_an_empty_record_marked_embedded_is_not_counted_as_done(pubmed):
     assert (counts["arch_outside_empty"], counts["arch_outside_embedded"]) == (2, 1)
     g = web._genesis_state(con, pubmed, counts)
     assert (g["past_range"], g["outside_empty"], g["outside_embedded"]) == (5, 2, 1)
-    html = _render({**web._collection_shelf(pubmed, {}), "embed_mode": "all"})
-    assert (f"5 past id {HI_TEXT}: newer than the archive; 2 with nothing to embed; "
-            f"only the local encoder can embed the rest (1 done)") in html
     web.invalidate_counts()
 
 
@@ -328,8 +289,6 @@ def test_the_first_cold_render_after_the_deploy_says_counting(pubmed, monkeypatc
         shelf = web._collection_shelf(pubmed, {})
         assert not shelf["counts_pending"] and shelf["in_scope"] == 8, \
             "the stored row answered the cold render"
-        value = _value(_render(shelf))
-        assert "counting…" in value and " / " not in value, value
     finally:
         release.set()
         deadline = time.time() + 10
