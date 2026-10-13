@@ -356,7 +356,7 @@ def test_a_stopped_archive_is_blocked_and_never_called_served(archived):
     for mode in ("running", "acquire-only"):
         got = health.archive_gap(archived, Collection(archive="medcpt-pubmed"), mode=mode)
         assert got.state == health.BLOCKED, (mode, got)
-        assert "STOPPED" in got.reason and "genesis retry pubmed" in got.reason
+        assert "STOPPED" in got.reason and "import pubmed --archive medcpt-pubmed --retry" in got.reason
         assert "being served" not in got.reason and "held" not in got.reason
 
 
@@ -467,3 +467,25 @@ def test_a_held_row_says_held_once(con, monkeypatch, archived):
     got = health.archive_gap(archived, Collection(archive="medcpt-pubmed"),
                              mode="acquire-only")
     assert got.state == health.HELD and "held" not in got.reason, got
+
+
+def test_every_command_a_status_line_names_exists():
+    """The archive stage told the operator to run `louise genesis status` and
+    `louise genesis retry`, verbs renamed long ago (found 2026-10-13): a
+    reason that names a command must name one the CLI parses."""
+    import re
+    import shlex
+    from pathlib import Path
+    from app import louise
+    text = Path(health.__file__).read_text(encoding="utf-8")
+    text = re.sub(r'"\s*\n\s*f?"', "", text)          # adjacent f-string pieces, joined
+    named = set(re.findall(r"`louise ([a-z][^`]*)`", text))
+    assert named, "the status lines name commands"
+    parser = louise.build_parser() if hasattr(louise, "build_parser") else None
+    for cmd in named:
+        argv = [a if "{" not in a else "x" for a in shlex.split(re.sub(r"\{[^}]*\}", "x", cmd))]
+        if parser is not None:
+            try:
+                parser.parse_args(argv)
+            except SystemExit as e:
+                raise AssertionError(f"`louise {cmd}` does not parse") from e

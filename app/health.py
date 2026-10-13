@@ -360,16 +360,18 @@ def archive_gap(con, collection, mode: str | None = None) -> Stage | None:
             "archive", total, BLOCKED,
             f"the archive is STOPPED: a shard was rejected before any shard "
             f"proved it, so nothing more is fetched or imported and its ranges "
-            f"go to the local encoder — `louise genesis status {name}` says "
-            f"why, `louise genesis retry {name}` puts it back in line")
+            f"go to the local encoder — the Library's pre-embedded data panel says "
+            f"why, `louise hold vectors import {name} --archive {collection.genesis_archive} --retry` "
+            f"puts it back in line")
     if owed["final"] or owed["rejected"]:
         parts = []
         if owed["final"]:
             parts.append(f"{owed['final']:,} under FINAL shard(s), which never "
-                         f"revisit them — run `louise genesis recheck {name}`")
+                         f"revisit them — run `louise dev genesis recheck {name}`")
         if owed["rejected"]:
             parts.append(f"{owed['rejected']:,} under REJECTED shard(s) — "
-                         f"`louise genesis status {name}` says why")
+                         f"the Library's pre-embedded data panel says why; `louise hold vectors "
+                         f"import {name} --archive {collection.genesis_archive} --retry` retries them")
         if owed["open"]:
             # the open part follows the node's mode like any other: acquire-
             # only fetches those shards and imports nothing (verification pass)
