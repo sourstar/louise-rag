@@ -312,6 +312,25 @@ when the origin answers a Range with 200. The mock origin gained
 `cut_after_bytes` and `refuse_open_ranges`, the two traits seen. Ships with
 the next deploy; the build waits for the file.
 
+**The fetch's third finding (2026-10-13 01:26 UTC), fixed.** Under 0699408
+the ranged fetch moved regi-decreti forward (1.09 → 1.24 GB), then the
+origin answered 500 to every Range request for eight seconds and three files
+failed: regi-decreti mid-step, dl-e-leggi-di-conversione at its first step,
+and codici — complete on disk — at its directory probe, which declined the
+delta and sent a complete file to a fetch that the same 500s then failed.
+Two rules were missing. (1) A 5xx is the origin's episode, not the file's:
+the Range reader, the ranged step and the stream retry it, five attempts
+spaced 1, 2, 4, 8 s (15 s in all, more than the episode), and `transient`
+reads a 5xx, a read timeout and a dropped connection as deferrals, so the
+row's error stays quiet until DEFER_ATTEMPTS. (2) A directory that could
+not be read says nothing about the file: the delta now returns a
+**deferral** — the copy on disk stands, the row is left exactly as it was,
+the pass counts it skipped, the next pass asks again; only a directory READ
+that says the file differs too much, or a member that does not check out,
+declines the delta and sends the file to the whole fetch (D4); an origin
+that answers a Range with 200 falls to the pre-delta rules. The mock origin
+gained `answer_next`. Ships with the next deploy.
+
 
 ### 2026-10-05: the side branches merged into main
 

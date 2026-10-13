@@ -76,6 +76,15 @@ class _Handler(BaseHTTPRequestHandler):
             # range at the same offset answers
             self.close_connection = True
             return
+        with server.lock:
+            statuses = server.statuses.get(name) or []
+            status_now = statuses.pop(0) if statuses else None
+        if status_now is not None:
+            # the origin's own error for this request (a 500 episode, 2026-10-13)
+            self.send_response(status_now)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         target = server.redirects.get(name)
         if target is not None:
             # 302 like Hugging Face's /resolve/ -> CDN hop; Location is
@@ -182,6 +191,7 @@ class MockServer:
         self.failures: dict[str, int] = {}   # names whose next N GETs drop the connection
         self.cuts: dict[str, int] = {}       # names whose every response body ends after N bytes
         self.refused_open_ranges: set[str] = set()   # names whose `bytes=N-` requests get no answer
+        self.statuses: dict[str, list[int]] = {}     # names whose next GETs answer these statuses
         self.lock = threading.Lock()
         self.live = 0
         self.peak_concurrency = 0
@@ -222,6 +232,12 @@ class MockServer:
         2026-10-13: 1,086,390,272 bytes of a 1.7 GB zip, every time). A
         client finishes the file only in requests smaller than that."""
         self.cuts[name] = n
+
+    def answer_next(self, name: str, status: int, n: int) -> None:
+        """The next `n` GETs of `name` are answered with `status` and no body
+        — the origin's own error, as the 500s of 2026-10-13 were."""
+        with self.lock:
+            self.statuses.setdefault(name, []).extend([status] * n)
 
     def refuse_open_ranges(self, name: str) -> None:
         """A resume `Range: bytes=N-` for `name` gets no answer at all, while a

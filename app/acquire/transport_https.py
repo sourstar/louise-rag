@@ -55,9 +55,11 @@ def _url(endpoint: Endpoint, remote: RemoteFile) -> str:
 #: One closed Range of `fetch_ranged`: seconds at a few MB/s, so an origin
 #: that cuts or stalls a long response costs a step, never the file.
 RANGE_STEP = 64 << 20
-#: How many times one step is asked again on a transient fault before it is
-#: the transport's error — a second apart, doubling.
-RANGE_ATTEMPTS = 3
+#: How many times one step is asked again on a transient fault — a timeout, a
+#: drop, the origin's own 5xx — before it is the transport's error: a second
+#: apart, doubling, 15 s in all, which outlasts the eight-second episode of
+#: 500s the origin had on 2026-10-13.
+RANGE_ATTEMPTS = 5
 
 
 def _stream_range(url: str, headers: dict, f, start: int, end: int,
@@ -69,7 +71,8 @@ def _stream_range(url: str, headers: dict, f, start: int, end: int,
     error; a 200 is RangeUnsupported, as everywhere — except to a range that
     IS the whole file (`whole`), which an origin may answer 200 with exactly
     those bytes."""
-    last: Exception | None = None
+    last: str | None = None
+    cause: BaseException | None = None
     for attempt in range(attempts):
         if attempt:
             time.sleep(float(1 << (attempt - 1)))
@@ -77,6 +80,9 @@ def _stream_range(url: str, headers: dict, f, start: int, end: int,
         try:
             with httpx.Client(timeout=60, follow_redirects=True) as client:
                 with client.stream("GET", url, headers={**headers, "Range": f"bytes={start}-{end}"}) as r:
+                    if r.status_code >= 500:          # the origin's episode, not the file
+                        last, cause = f"{r.status_code} to Range {start}-{end}", None
+                        continue
                     if r.status_code == 200 and not whole:
                         raise RangeUnsupported(f"{url}: the origin ignored Range and answered 200")
                     if r.status_code not in (200, 206):
@@ -95,13 +101,12 @@ def _stream_range(url: str, headers: dict, f, start: int, end: int,
                         written += len(chunk)
             return written
         except httpx.TransportError as e:         # a timeout, a drop, a reset: transient
-            last = e
+            last, cause = f"{type(e).__name__}: {e}", e
             if written:
                 return written                    # progress stands; the caller asks for the rest
         except httpx.HTTPError as e:
             raise TransportError(f"{url}: {e}") from e
-    raise TransportError(f"{url}: {type(last).__name__} on Range {start}-{end} after "
-                         f"{attempts} attempts: {last}") from last
+    raise TransportError(f"{url}: {last} on Range {start}-{end} after {attempts} attempts") from cause
 
 
 class HttpsTransport:

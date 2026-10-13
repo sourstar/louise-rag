@@ -161,12 +161,14 @@ def test_an_origin_that_keeps_faulting_fails_the_file_and_the_pass_goes_on(tmp_p
     _zip(mock_server.root / "n.zip", V2)
     mock_server.fail_next("m.zip", 1000)                 # m is gone for the whole pass
     got = engine.run_acquisition(con, collection, spec, "demo")
-    assert got["failed"] == 1 and got["fetched"] == 1, "n fetched, m failed, the pass returned"
+    assert (got["fetched"], got["skipped"], got["failed"]) == (1, 1, 0), \
+        "n fetched; m's directory unread, its complete copy stands as a deferral; the pass returned"
     assert _members(collection.corpus_dir / "n.zip") == V2
     assert _members(collection.corpus_dir / "m.zip") == V1, "the copy on disk is untouched"
     row = con.execute("SELECT fetch_done, error FROM fetch_files WHERE rel_path='m.zip'").fetchone()
-    assert row["error"] and "disconnected" in row["error"], "the whole fetch, the last resort, failed too"
-    assert any("attempts" in why for why in engine._zip_delta_fallbacks), "the delta asked three times first"
+    assert row["fetch_done"] == 1 and row["error"] is None, "nothing recorded against a file nothing is known about"
+    assert any("directory unread, the copy stands" in why and "attempts" in why
+               for why in engine._zip_delta_fallbacks), "the size probe asked ATTEMPTS times first"
 
 
 # ---- the file in closed ranges (transport_https.fetch_ranged, 2026-10-13) --------------
@@ -233,3 +235,62 @@ def test_an_origin_without_ranges_falls_back_to_the_stream(tmp_path, mock_server
     got = engine.run_acquisition(con, collection, spec, "demo")
     assert got["fetched"] == 1 and _members(collection.corpus_dir / "m.zip") == V1
     assert mock_server.request_count("m.zip") == 2, "the probe answered 200 — no ranges — then the whole stream"
+
+
+# ---- the origin's own 5xx: an episode, never the file (2026-10-13 01:26 UTC) --------------
+
+def test_a_directory_that_cannot_be_read_leaves_a_complete_copy_standing(tmp_path, mock_server,
+                                                                        small_tail, small_steps):
+    """Three files failed in eight seconds of 500s, one complete on disk: a
+    5xx is retried (15 s of waiting), and a directory still unread after that
+    is a deferral — the copy stands, the row is untouched, the pass goes on,
+    the next pass asks again. Never the file's failure."""
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+    _zip(mock_server.root / "m.zip", V1)
+    spec = _delta_spec(mock_server)
+    engine.run_acquisition(con, collection, spec, "demo")
+    row = con.execute("SELECT fetch_done, retries, error, updated_at FROM fetch_files "
+                      "WHERE rel_path='m.zip'").fetchone()
+    assert row["fetch_done"] == 1 and row["error"] is None
+    _zip(mock_server.root / "m.zip", V2)                       # the origin rebuilt it...
+    mock_server.answer_next("m.zip", 500, 1000)                 # ...and is having an episode
+    before = mock_server.request_count("m.zip")
+    got = engine.run_acquisition(con, collection, spec, "demo")
+    assert got == {"fetched": 0, "skipped": 1, "failed": 0, "aborted": 0, "adopted": 0, "total": 1}
+    assert _members(collection.corpus_dir / "m.zip") == V1, "the copy stands"
+    after = con.execute("SELECT fetch_done, retries, error, updated_at FROM fetch_files "
+                        "WHERE rel_path='m.zip'").fetchone()
+    assert tuple(after) == tuple(row), "the row is exactly as it was"
+    assert mock_server.request_count("m.zip") - before == zipdelta.HttpRangeReader.ATTEMPTS, \
+        "the size probe asked ATTEMPTS times, then nothing else"
+    assert any("directory unread, the copy stands" in why for why in engine._zip_delta_fallbacks)
+    mock_server.statuses.clear()                                # the episode is over
+    got = engine.run_acquisition(con, collection, spec, "demo")
+    assert got["fetched"] == 1 and _members(collection.corpus_dir / "m.zip") == V2
+
+
+def test_a_500_during_the_episode_is_retried_within_the_pass(tmp_path, mock_server, small_tail, small_steps):
+    collection = _collection(tmp_path)
+    con = db.connect(collection)
+    _zip(mock_server.root / "m.zip", V1)
+    spec = _delta_spec(mock_server)
+    mock_server.answer_next("m.zip", 500, 3)                    # the probe twice, the first step once
+    got = engine.run_acquisition(con, collection, spec, "demo")
+    assert got["fetched"] == 1 and got["failed"] == 0
+    assert _members(collection.corpus_dir / "m.zip") == V1
+    row = con.execute("SELECT error FROM fetch_files WHERE rel_path='m.zip'").fetchone()
+    assert row["error"] is None
+
+
+def test_the_origins_faults_read_as_deferrals():
+    """The recorded error of a file that failed on such a fault stays quiet
+    until DEFER_ATTEMPTS: it is the origin's, not the file's."""
+    for text in ("TransportError: https://x/y: 500 to Range 1243676672-1310785535",
+                 "TransportError: https://x/y: 500 to a Range request after 5 attempts",
+                 "TransportError: https://x/y: The read operation timed out",
+                 "TransportError: https://x/y: ReadTimeout: The read operation timed out on Range 0-9 after 5 attempts",
+                 "TransportError: https://x/y: Server disconnected without sending a response."):
+        assert engine.transient(text), text
+    assert not engine.transient("TransportError: https://x/y: 404 to Range 0-9")
+    assert not engine.transient("checksum mismatch: sidecar says a, file says b")

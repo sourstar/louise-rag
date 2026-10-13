@@ -422,6 +422,13 @@ _TRANSIENT = ("connection reset by peer", "connection unexpectedly closed",
               "no route to host", "timeout waiting for daemon connection",
               "timeout in data send/receive", "timed out after",
               "max connections",
+              # HTTPS: a read that timed out, a dropped connection, the
+              # origin's own 5xx — an episode of the origin, never the file
+              # (Normattiva 2026-10-13: eight seconds of 500s to Range
+              # requests, three files)
+              "read operation timed out", "readtimeout", "connecttimeout",
+              "server disconnected", "remoteprotocolerror", "readerror",
+              " 500 to ", " 502 to ", " 503 to ", " 504 to ",
               # the rsync transport's own verdict on an exit 0 whose fork
               # kept the pipes and had to be killed (_raise_unless_clean):
               # not the file, and not known to be the mirror — a retry,
@@ -692,12 +699,35 @@ def _zip_delta(endpoint, f: RemoteFile, dest: Path, spec: AcquisitionSpec, manag
     except TransferAborted:
         out.unlink(missing_ok=True)
         raise
-    except (TransportError, zipfile.BadZipFile, OSError, ValueError) as e:
-        # the whole fetch follows; the reason is the worker's to see
+    except (zipdelta.DeltaNotWorthIt, zipdelta.MemberMismatch, zipfile.BadZipFile,
+            OSError, ValueError) as e:
+        # the directory WAS read and says the copy differs too much, or a
+        # member did not check out: the whole fetch follows, and the copy is
+        # not adopted by its size (D4); the reason is the worker's to see
         out.unlink(missing_ok=True)
         _zip_delta_fallbacks.append(f"{f.rel_path}: {type(e).__name__}: {e}"[:300])
         del _zip_delta_fallbacks[:-50]
         return _DELTA_DECLINED
+    except zipdelta.RangeUnsupported as e:
+        # an origin that will not serve ranges cannot be checked by its
+        # directory at all: the pre-delta rules apply (adoption by the size
+        # the origin states, else the whole fetch)
+        out.unlink(missing_ok=True)
+        _zip_delta_fallbacks.append(f"{f.rel_path}: {type(e).__name__}: {e}"[:300])
+        del _zip_delta_fallbacks[:-50]
+        return None
+    except TransportError as e:
+        # the directory could not be read THIS pass (a 5xx episode, a timeout
+        # past the reader's retries — 2026-10-13: three files failed in eight
+        # seconds of 500s, one of them complete on disk): nothing is known
+        # about the file, so the copy on disk stands and the row is left as
+        # it was; the next pass asks again. Never a failure of the file.
+        out.unlink(missing_ok=True)
+        _zip_delta_fallbacks.append(f"{f.rel_path}: directory unread, the copy stands: "
+                                    f"{type(e).__name__}: {e}"[:300])
+        del _zip_delta_fallbacks[:-50]
+        return _FileResult(remote=f, endpoint_url=endpoint.url, status="deferred",
+                            size=dest.stat().st_size, error=f"{type(e).__name__}: {e}"[:300])
     elapsed = time.monotonic() - started
     manager.record_throughput(endpoint_key, got.bytes_read, elapsed)
     return _FileResult(remote=f, endpoint_url=endpoint.url, status="fetched",
@@ -706,8 +736,9 @@ def _zip_delta(endpoint, f: RemoteFile, dest: Path, spec: AcquisitionSpec, manag
 
 
 #: how many times one file's stream is resumed within a pass after a transient
-#: transport fault (a second apart, doubling) before the pass records it failed
-STREAM_ATTEMPTS = 3
+#: transport fault (a second apart, doubling: 15 s in all) before the pass
+#: records it failed — an origin's episode of 5xx lasted eight seconds (2026-10-13)
+STREAM_ATTEMPTS = 5
 #: why the last zip deltas fell back to the whole fetch, for the log line
 _zip_delta_fallbacks: list[str] = []
 #: a delta that was tried and declined: the origin's directory said the
@@ -1087,7 +1118,7 @@ def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: st
     # the last winner); the manager's EWMA re-ranks live within the pass:
     # measured beats benchmarked beats declared
     ranked = manager.rank_endpoints([(e.url, e) for e in endpoints])
-    counters = {"fetched": 0, "failed": 0, "aborted": 0, "adopted": 0}
+    counters = {"fetched": 0, "failed": 0, "aborted": 0, "adopted": 0, "deferred": 0}
     claim_ts = [time.time()]
 
     def _apply(results: list[_FileResult]) -> None:
@@ -1111,6 +1142,11 @@ def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: st
             elif r.status == "aborted":
                 _upsert_aborted(con, spec.source_id, r.remote, r.endpoint_url,
                                  r.bytes_now, profile)
+            elif r.status == "deferred":
+                # nothing is known about the file this pass (its directory
+                # could not be read): the row is left exactly as it was, the
+                # copy on disk stands, the next pass asks again
+                pass
             else:
                 _upsert_failed(con, spec.source_id, r.remote, r.endpoint_url,
                                 r.bytes_now, profile, r.error or "unknown error")
@@ -1144,6 +1180,8 @@ def _run_acquisition_claimed(con, collection, spec: AcquisitionSpec, profile: st
         _make_worker(transport, collection, spec, manager, ranked, stop, priority),
         _apply, max_workers=workers, stop=stop)
 
-    return {"fetched": counters["fetched"], "skipped": skipped,
+    # a deferred file (its directory unread this pass) is skipped: nothing
+    # moved, nothing recorded, the copy stands — not a failure of the file
+    return {"fetched": counters["fetched"], "skipped": skipped + counters["deferred"],
             "failed": counters["failed"], "aborted": counters["aborted"],
             "adopted": counters["adopted"], "total": len(files)}

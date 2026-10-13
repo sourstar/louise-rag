@@ -95,7 +95,9 @@ class HttpRangeReader:
     #: transport's error. 2026-10-12: one ReadTimeout on one Range request
     #: ended Normattiva's whole 7.8 GB fetch and waited four hours for the
     #: next discovery (STATUS); a fault that passes in seconds costs seconds.
-    ATTEMPTS = 3
+    #: Five attempts: 1 + 2 + 4 + 8 = 15 s of waiting, which outlasts the
+    #: eight-second episode of 500s the origin had on 2026-10-13.
+    ATTEMPTS = 5
 
     def __init__(self, url: str, headers: dict, *, charge: Callable[[int], None] | None = None,
                  timeout: float = 60.0, sleep: Callable[[float], None] | None = None) -> None:
@@ -110,21 +112,27 @@ class HttpRangeReader:
     def _get(self, range_header: str):
         """One Range request, answered or the transport's error (`TransportError`,
         never httpx's own class: the engine's per-file boundary catches ours),
-        a transient fault retried `ATTEMPTS` times."""
+        a transient fault — a timeout, a drop, the origin's own 5xx — retried
+        `ATTEMPTS` times."""
         import httpx
-        last: Exception | None = None
+        last: str | None = None
+        cause: BaseException | None = None
         for attempt in range(self.ATTEMPTS):
             if attempt:
                 self.sleep(float(1 << (attempt - 1)))
             try:
                 with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
-                    return client.get(self.url, headers={**self.headers, "Range": range_header})
+                    r = client.get(self.url, headers={**self.headers, "Range": range_header})
             except httpx.TransportError as e:          # timeouts, drops, resets
-                last = e
+                last, cause = f"{type(e).__name__}: {e}", e
+                continue
             except httpx.HTTPError as e:
                 raise TransportError(f"{self.url}: {e}") from e
-        raise TransportError(f"{self.url}: {type(last).__name__} on Range {range_header} "
-                             f"after {self.ATTEMPTS} attempts: {last}") from last
+            if r.status_code >= 500:                   # the origin's episode, not the file
+                last, cause = f"{r.status_code} to Range {range_header}", None
+                continue
+            return r
+        raise TransportError(f"{self.url}: {last} after {self.ATTEMPTS} attempts") from cause
 
     def total(self) -> int:
         if self._total is None:
