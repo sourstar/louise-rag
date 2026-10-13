@@ -40,7 +40,7 @@ test ! -e "$ROOT/config/collections/$NEW.toml" || { echo "$NEW.toml exists: resu
 if [ ! -e "$ROOT/config/collections/$NEW.toml" ]; then
   mkdir -p "$ROOT/config/recipes"
   cp "$ROOT/src/docs/notes/normattiva-recipe.toml" "$ROOT/config/recipes/$NEW.toml"
-  $L hold collection create "$NEW" --recipe "/config/recipes/$NEW.toml" --name "$NEW" \
+  $L hold collection create normattiva --recipe "/config/recipes/$NEW.toml" --name "$NEW" \
     --encoder "$ENCODER" --api vega --embed-model "$MODEL" --query-model "$MODEL"
   $L hold collection ack "$NEW" || true
   $L hold collection ack "$NEW" --yes
