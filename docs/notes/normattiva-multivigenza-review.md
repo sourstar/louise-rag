@@ -444,6 +444,17 @@ type are measured before the number is fixed (§7).
 
 ### 3.8 The pre-Republic floor
 
+> **WITHDRAWN 2026-10-13, parser 8 (operator: "I want everything").** A
+> query for article 12 of the 1919 emigration consolidated text (R.D.L.
+> 13 novembre 1919, n. 2205), repealed in 1930, found the act and none
+> of the words the article had in force: the floor had dropped the 16
+> versions before 1940 that the origin carries. Every version since 1861
+> is discovered now — 341,959 against 318,349, measured on the node from
+> the zips' directories. The collection is re-created as `normattiva-1861`
+> and carried (A1c, RULE 1: nothing re-fetched; the 318,349 versions keep
+> their rows, index and vectors; deploy/16f/recreate-normattiva-parser8.sh).
+> The text below is the decision as it stood.
+
 The reviewed note's rule stands and gains its mechanism: a version
 whose `vigenza_to` is before 1948-01-01 is not acquired into the
 collection — decided at discovery from the member list, declared in the

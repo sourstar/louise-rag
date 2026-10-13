@@ -494,6 +494,37 @@ topic — the thinking runs' extra citations had been of sources that were
 not. Test: the user turn ends with the reminder; the system prompt still
 ends with the switch.
 
+**NORMATTIVA PARSER 8: EVERY VERSION SINCE 1861; CITATIONS BY DATE AND
+NUMBER (2026-10-13, night; operator: "I want everything", "remember rule
+1").** The operator's query "art. 12 della legge sull'emigrazione testo
+unico 13 novembre 1919, n. 2205" failed three ways, measured on the node:
+the act is held (R.D.L. 2205/1919, Testi Unici) but only its 4 versions
+from 1940 — the 1948 floor dropped the 16 before, and article 12 was
+repealed in 1930, so no held version has its words; the citation parser
+found nothing (a title stood between "legge" and the date, and the origin
+files the act as a regio decreto-legge), so the act ranked seventh behind
+the decrees that cite it; and its current version was not embedded yet.
+Parser 8 removes the floor: 341,959 versions against 318,349 (23,610 more,
+most from the 1910s–1930s, every one parsing), measured from the zips'
+directories. The citation parser admits up to eight words of title between
+the form and the date, reads "testo unico"/"t.u." as a form the origin
+decides, and a dated citation whose form is not the origin's resolves by
+date and number (an undated one still needs its form; tests). RULE 1 for
+the collection: a new Codex (the Codex pins the parser, and the old
+versions would enter published, closed parts, which the build refuses —
+02 §2.3), made by A1c as gutenberg's parser 9 was:
+deploy/16f/recreate-normattiva-parser8.sh pauses `normattiva` FIRST (with
+parser 8 live it would discover the old versions itself), creates
+`normattiva-1861` from the same recipe, points its origin at the same
+zips (no fetch; discovery reads the new path as a relocation), carries
+manifest, index and vectors (`dev carry --rebuilt --copy`), builds and
+snapshots, then `--reconcile` keeps every unchanged document's vectors —
+only the 23,610 are embedded, most of their article texts carried by
+chunk hash. `normattiva` stays paused; removing it is the operator's call.
+Article-level resolution (pinning the cited article's text by key) stays
+open, as before.
+
+
 **NORMATTIVA: REMEDY DONE, THE PILOT'S COVERAGE, THE ARCHIVE'S SCOPE
 (2026-10-13, afternoon UTC).** The other session deployed 03bc036 and ran
 the remedy: `hold vectors validity-columns normattiva` — 156,727 rows,

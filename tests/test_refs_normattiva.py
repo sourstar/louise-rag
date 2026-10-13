@@ -75,6 +75,35 @@ def test_an_article_stays_on_the_label_and_an_unknown_act_resolves_to_nothing(st
         {"tipo": "legge", "numero": "4", "anno": 1948, "data": "1948-02-26", "art": None}]
 
 
+@pytest.mark.parametrize("text", [
+    # a title between the form and the date (operator, 2026-10-13: "art. 12
+    # della legge sull'emigrazione testo unico 13 novembre 1919, n. 2205")
+    "art. 12 della legge sugli obblighi comunitari 31 ottobre 2003, n. 306",
+    # a form that is not the origin's, or none: the date and number decide
+    "decreto-legge 31 ottobre 2003, n. 306",
+    "testo unico 31 ottobre 2003, n. 306",
+    "art. 2 del t.u. delle norme comunitarie 31 ottobre 2003, n. 306",
+])
+def test_a_dated_citation_names_the_act_by_its_date_and_number(store, text):
+    got = refs.RESOLVER.resolve(text, store)
+    assert [e.entity_id for e in got] == [URN_306], text
+
+
+def test_a_form_that_is_not_the_origin_s_needs_the_date():
+    """Without the date, the form is part of the key: "d.l. 306/2003" is
+    not the law 306/2003 — two acts of one year may share a number."""
+    assert nref.citations("d.l. 306/2003")[0]["tipo"] == "decreto.legge"
+    got = nref.citations("art. 12 della legge sull'emigrazione testo unico 13 novembre 1919, n. 2205")
+    assert got == [{"tipo": "legge", "numero": "2205", "anno": 1919, "data": "1919-11-13",
+                    "art": "art. 12"}]
+
+
+def test_an_undated_citation_in_another_form_resolves_to_nothing(store):
+    assert refs.RESOLVER.resolve("d.l. 306/2003", store) == []
+    assert refs.RESOLVER.resolve("decreto-legge 30 ottobre 2003, n. 306", store) == [], \
+        "a date that is not the act's names no act"
+
+
 def test_the_gene_resolver_still_answers_beside_the_citations(store):
     got = refs.RESOLVER.resolve("BRCA2 and the legge 306/2003", store)
     assert {e.entity_id for e in got} == {"hgnc:1101", URN_306}
@@ -119,4 +148,4 @@ def test_the_record_writes_its_registered_ids_into_keys(tmp_path):
     ref = next(r for r in SOURCE.discover(DiscoverState(corpus_root=root)) if r.locator.endswith(M306))
     doc = plugin_io.canonical_doc(SOURCE, {"native_id": ref.native_id, "path": ref.locator})
     assert doc.keys == ["akn:it/act/legge/stato/2003-10-31/306", "eli:it:id/2003/11/15/003G0333", URN_306]
-    assert doc.keys == sorted(doc.keys) and SOURCE.PARSER_VERSION == 7
+    assert doc.keys == sorted(doc.keys) and SOURCE.PARSER_VERSION == 8

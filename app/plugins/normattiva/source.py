@@ -49,13 +49,12 @@ dated the day the repeal took effect. It yields no chunk, closes the
 version before it, and carries `in_force: false` and the repealing act's
 words. 87,798 members of the archive are repeal states (review §1).
 
-THE FLOOR (operator: "from the Constitution onwards"): a version whose
-validity ended on or before `VALIDITY_FLOOR` — the next version of the same
-act starts on or before it — is not discovered. The 1942 civil code is kept;
-a decree repealed in 1935 is dropped; a royal decree repealed by the 2010
-taglia-leggi is kept in the text it had until then. Declared pruning
-(invariant 11), reproducible from the member list alone, pinned by
-PARSER_VERSION; the recipe's `origin.form` names it.
+NO FLOOR (parser 8, operator 2026-10-13: "I want everything"). Parser 7
+dropped every version whose validity ended on or before 1948-01-01 ("from
+the Constitution onwards"); a query for article 12 of the 1919 emigration
+consolidated text, repealed in 1930, found the act and none of the words
+the article had while in force. Every version the origin carries since
+1861 is discovered now: 341,959 against 318,349.
 
 ONE COPY PER EXPRESSION: the repealed acts' originals sit in their own zip
 and in `Regi decreti`'s (79,922 acts), and 4,142 acts sit in two live
@@ -96,8 +95,9 @@ _FORMS = {"VIGENZA": "vigente", "ORIGINALE": "originale"}
 #: directory the acquisition spec lands it in (`akn/<M|V|O>/…`)
 _ZIP_FORM_RANK = {"M": 0, "V": 1, "O": 2}
 
-#: A version whose validity ends on or before this day is not discovered.
-VALIDITY_FLOOR = "1948-01-01"
+#: Parser 7's floor, gone in parser 8 (above): no version is left undiscovered
+#: for its age. None, so a reader of the old name learns the rule changed.
+VALIDITY_FLOOR = None
 
 #: "Entrata in vigore del provvedimento: 17/03/1861" — the preface note the
 #: origin writes on most acts; kept as `entry_into_force`.
@@ -269,8 +269,13 @@ class NormattivaSource:
     #: registered by app/refs/normattiva.py; free. 7 on 2026-10-13: the id's
     #: layout (eli.py) — the first discovery of the whole archive collided
     #: three times on 2010-12-16 under nine decimal digits of hash; the
-    #: collection is re-created, nothing was built.
-    PARSER_VERSION = 7
+    #: collection is re-created, nothing was built. 8 on 2026-10-13: the floor
+    #: is gone (operator: "I want everything") — every version since 1861 is
+    #: discovered, 23,610 more than parser 7 (341,959 against 318,349,
+    #: measured on the node from the zips' directories). Records parser 7
+    #: wrote are unchanged; a parser-8 collection is created and carried from
+    #: the parser-7 one by `dev carry --rebuilt` and `--reconcile` (A1c, RULE 1).
+    PARSER_VERSION = 8
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE          # an act withdrawn from the database
     native_id_order = "numeric"            # eli.expression_native_id: start of validity first
@@ -278,15 +283,14 @@ class NormattivaSource:
 
     def discover(self, state: DiscoverState):
         """Every zip is enumerated in full each scan — a central directory
-        is cheap to read, and both the choice between two copies of one
-        Expression and the floor need every member of an act at once. Refs
+        is cheap to read, and the choice between two copies of one Expression
+        needs every member at once. Refs
         come out in native-id order, which is validity order."""
         root = state.corpus_root
         if not root.is_dir():
             return
         guard = eli.CollisionGuard()
         held: dict[int, tuple] = {}            # nid -> (rank, zpath, member, mtime, size)
-        by_act: dict[tuple[str, str], list[tuple]] = {}   # (gu, codice) -> [(from, form order, nid)]
         for zpath in sorted(root.rglob("*.zip")):
             try:
                 with zipfile.ZipFile(zpath) as zf:
@@ -327,22 +331,9 @@ class NormattivaSource:
                 rank = (zrank, str(zpath), info.filename)
                 cand = (rank, str(zpath), info.filename, _member_mtime(info), info.file_size)
                 prior = held.get(nid)
-                if prior is None:
-                    by_act.setdefault((gu, codice), []).append(
-                        (valid_from, 0 if form == "ORIGINALE" else 1, nid))
                 if prior is None or rank < prior[0]:
                     held[nid] = cand
-        # the floor: a version whose successor starts on or before it ended
-        # before the Republic; the last version of an act is open and stays
-        dropped: set[int] = set()
-        for versions in by_act.values():
-            versions.sort()
-            for (_, _, nid), (nxt, _, _) in zip(versions, versions[1:]):
-                if nxt <= VALIDITY_FLOOR:
-                    dropped.add(nid)
         for nid in sorted(held):
-            if nid in dropped:
-                continue
             _rank, zpath, member, mtime, size = held[nid]
             yield DocRef(source_id=self.source_id, native_id=str(nid),
                          locator=f"{zpath}{_LOCATOR_SEP}{member}",

@@ -90,7 +90,9 @@ def corpus(tmp_path) -> Path:
          {**SARD_MEMBERS, LC_O: LC67, LC_V: LC67})
     _zip(root / "akn/M/codici.zip", {M306: base64.b64encode(L306), MBUILT: BUILT})
     _zip(root / "akn/M/regi-decreti.zip",
-         {RD206_R: RD206_REPEALED, RD7_O: BUILT, RD7_V1: BUILT, RD7_V2: BUILT})
+         {RD206_R: RD206_REPEALED, RD7_V1: BUILT, RD7_V2: BUILT,
+          # its own entry into force: the template's 2020 note would start it in 2020
+          RD7_O: BUILT.replace(b"25/01/2020", b"25/01/1930")})
     _zip(root / "akn/O/atti-normativi-abrogati-in-originale.zip",
          {LC_O: LC67, RD206_O: BUILT})
     return root
@@ -122,8 +124,9 @@ def test_every_version_is_a_record_in_validity_order(corpus):
     assert [eli.id_day(int(r.native_id)) for r in sard] == [19480309, 20010201, 20010216]
     assert sard[0].native_id == str(_nid("1948-03-09", "048C0003", "1948-03-09", "ORIGINAL"))
     assert sard[1].native_id == str(_nid("1948-03-09", "048C0003", "2001-02-01", "CONSOLIDATED/20010201"))
-    # 3 Sardegna + 2 of the 1967 law + 306 + built + 2 of R.D. 206 + 2 of R.D. 7
-    assert len(refs) == 11
+    # 3 Sardegna + 2 of the 1967 law + 306 + built + 2 of R.D. 206 + 3 of R.D. 7
+    # (its 1930 original too, since parser 8: no floor)
+    assert len(refs) == 12
 
 
 def test_a_version_in_two_zips_is_held_once_from_the_multivigente_zip(corpus):
@@ -135,13 +138,16 @@ def test_a_version_in_two_zips_is_held_once_from_the_multivigente_zip(corpus):
         "the original only the repealed-acts zip holds comes from there"
 
 
-def test_the_floor_drops_a_version_that_ended_before_the_republic(corpus):
-    """review §3.8: the original of R.D. 7/1930 ended 1935-06-01; the 1935
-    version ended 1950-03-01 and stays; the 1950 version is open and stays."""
+def test_every_version_since_1861_is_discovered(corpus):
+    """Parser 8 (operator, 2026-10-13: "I want everything"): parser 7 dropped
+    the original of R.D. 7/1930, whose validity ended 1935-06-01, by the 1948
+    floor; now every version the origin carries is discovered, in order."""
     members = {nsrc.split_locator(r.locator)[1] for r in _refs(corpus)}
-    assert RD7_O not in members and RD7_V1 in members and RD7_V2 in members
-    assert RD206_O in members, "an original whose repeal came in 2025 is in force after 1948"
-    assert nsrc.VALIDITY_FLOOR == "1948-01-01"
+    assert RD7_O in members and RD7_V1 in members and RD7_V2 in members
+    assert RD206_O in members
+    assert nsrc.VALIDITY_FLOOR is None and SOURCE.PARSER_VERSION == 8
+    rd7 = sorted(eli.id_day(int(r.native_id)) for r in _refs(corpus) if "030U0007" in r.locator)
+    assert rd7 == [19300110, 19350601, 19500301], "the original, then each version from its own day"
 
 
 def test_a_collision_is_refused_loudly(corpus, monkeypatch):
@@ -386,7 +392,7 @@ def test_worker_stages_run_end_to_end(tmp_path, corpus, isolated_config):
         fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lancedb")
     con = db.connect(collection)
     discovery.sync_collection(con, collection)
-    assert con.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 11
+    assert con.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 12, "every version, since parser 8"
     uid = f"normattiva:{_nid('2003-11-15', '003G0333', '2025-10-02', 'CONSOLIDATED/20251002')}"
     row = con.execute("SELECT * FROM documents WHERE uid=?", (uid,)).fetchone()
     worker.stage_rdf(con, row, collection)
@@ -495,3 +501,26 @@ def test_only_a_typed_whole_act_repeal_closes_and_relations_name_it(corpus):
         Edge(to="urn:nir:stato:legge:1999-01-01;2", type="eli:amends"),
         Edge(to="urn:nir:stato:legge:1999-01-01;7", type="eli:repeals")]
     assert list(SOURCE.closures(_doc(corpus, RD206_R))) == [], "a repeal state states nothing"
+
+
+def test_a_version_older_than_the_republic_is_dated_and_closed(tmp_path, corpus, isolated_config):
+    """Parser 8: the original of R.D. 7/1930, in force from 1930 to 1935, is a
+    record whose validity the next version closes — so a question as of 1932
+    finds the text the act had then, which parser 7's floor never held."""
+    from app import validity, worker
+    collection = collections_mod.Collection(
+        name="normattiva", plugin="normattiva", profile=None, embed_mode_default=None,
+        corpus_dir=corpus, manifest_path=tmp_path / "manifest.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lancedb")
+    con = db.connect(collection)
+    discovery.sync_collection(con, collection)
+    rows = con.execute("SELECT * FROM documents WHERE path LIKE '%030U0007%'").fetchall()
+    assert len(rows) == 3
+    for row in rows:
+        worker.stage_rdf(con, row, collection)
+        if con.in_transaction:
+            con.execute("COMMIT")
+    cols = validity.index_columns(con, [int(r["native_id"]) for r in rows])
+    spans = sorted((c["valid_from"], c["valid_to"]) for c in cols.values())
+    assert spans[0][1] == 19350601 and spans[1] == (19350601, 19500301), spans
+    assert spans[2][0] == 19500301 and spans[2][1] == validity.OPEN

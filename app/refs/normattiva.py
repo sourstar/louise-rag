@@ -233,6 +233,10 @@ _TYPES: tuple[tuple[str, str], ...] = (
      "decreto.del.presidente.del.consiglio.dei.ministri"),
     (r"regio\s+decreto[-\s]legge|r\.\s*d\.\s*l\.", "regio.decreto.legge"),
     (r"regio\s+decreto|r\.\s*d\.", "regio.decreto"),
+    # a consolidated text named by what it is, not by its legal form: the
+    # form is the origin's to say ("testo unico … 13 novembre 1919, n. 2205"
+    # is a regio decreto-legge), found by date and number (`resolve`)
+    (r"testo\s+unico|t\.\s*u\.", "*"),
     (r"legge|\bl\.", "legge"),
 )
 _TYPE_RE = "|".join(f"(?:{p})" for p, _ in _TYPES)
@@ -244,9 +248,12 @@ _NUM = r"(?P<num>\d+(?:[-\s]?(?:bis|ter|quater|quinquies))?)"
 #: "art. 5, comma 3, della" before an act: the article and comma kept for
 #: the label, the preposition not
 _ART = r"(?:(?P<art>art(?:icolo|\.)?\s*\d+(?:-\w+)?(?:\s*,?\s*comma\s*\d+)?)\s*,?\s*(?:del(?:la)?\s+)?)?"
-#: "legge 31 ottobre 2003, n. 306" — the full form
+#: "legge 31 ottobre 2003, n. 306" — the full form; a few words of title may
+#: stand between the form and the date ("legge sull'emigrazione testo unico
+#: 13 novembre 1919, n. 2205", operator 2026-10-13: the citation went
+#: unrecognised and the act was answered by ranking alone)
 _CITE_DATED = re.compile(
-    rf"{_ART}(?P<type>{_TYPE_RE})\s+(?P<day>\d{{1,2}})[°]?\s+(?P<month>{_MONTH_RE})\s+(?P<year>\d{{4}})"
+    rf"{_ART}(?P<type>{_TYPE_RE})(?:\s+[^\s\d,;]+){{0,8}}?\s*,?\s+(?P<day>\d{{1,2}})[°]?\s+(?P<month>{_MONTH_RE})\s+(?P<year>\d{{4}})"
     rf"\s*,?\s*n\.?\s*{_NUM}", re.I)
 #: "l. 306/2003", "d.lgs. n. 82 del 2005", "d.lgs. 82 del 7 marzo 2005"
 _CITE_SHORT = re.compile(
@@ -315,6 +322,9 @@ def _acts_index(refs: RefLookup) -> dict:
     for r in rows:
         key = (r["tipo"], str(r["numero"] or "").lower(), r["anno"])
         index.setdefault(key, []).append(r)
+        # every act also by number and year alone, whatever its form: a dated
+        # citation whose form is not the origin's finds it by its date
+        index.setdefault(("*",) + key[1:], []).append(r)
     if stamp is not None:
         with _index_lock:
             _index_cache = (stamp, index)
@@ -341,10 +351,16 @@ class CitationResolver:
         out: list[Entity] = []
         seen: set[str] = set()
         for c in found:
-            rows = index.get((c["tipo"], c["numero"], c["anno"]), [])
+            rows = index.get((c["tipo"], c["numero"], c["anno"]), []) if c["tipo"] != "*" else []
             if c["data"]:
                 dated = [r for r in rows if r.get("data") == c["data"]]
                 rows = dated or rows
+                if not rows:
+                    # the form the citation gives is not the origin's (a
+                    # "legge" that is a regio decreto-legge, a "testo unico"):
+                    # date and number name one act whatever its form
+                    rows = [r for r in index.get(("*", c["numero"], c["anno"]), [])
+                            if r.get("data") == c["data"]]
             for r in rows:
                 # the URN verbatim IS the canonical id (05 §5.2): namespace
                 # `urn`, the origin's identifier after it; the table keys on

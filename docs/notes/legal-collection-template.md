@@ -83,9 +83,11 @@ Use the ELI layer (`app/plugins/eli.py`, the rules in its docstring).
   destination's `ita@` date names); **neither**, and the act stays
   open-ended, `in_force: false`, labelled "repeal date not in the open data".
   Under-closing is a label; over-closing is a silent mis-date. Be strict.
-- A floor on validity at discovery (1948-01-01 for Normattiva) is a decision
-  about scope, not fidelity: every version that governs a day after the
-  floor is held, including versions that started before it.
+- A floor on validity at discovery is a decision about scope, and an
+  expensive one to take back: Normattiva's 1948 floor (parser 7) left the
+  text of every article repealed before the Republic unanswerable, and
+  lifting it took a parser version and a re-created collection (parser 8,
+  2026-10-13). Hold every version the origin carries; narrow at query time.
 
 ## 4. Origin and fidelity
 
