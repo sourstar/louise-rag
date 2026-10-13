@@ -724,6 +724,22 @@ be diffed. Today's list is kept for the next one:
 59ee8039…). Worth adding: the wrapper writing that list beside each new run
 it states, so a drift names its byte the day it happens.
 
+**Second drift, 2026-10-13 22:2x CEST, across a NAS reboot — named.**
+`7b5d557e…` → `173c04c1…` (run 651c4ec0… → e231057e…; the gate validated
+the new run by itself). Diffed against the kept list: 0 files added, 0 gone,
+**5,034 changed — every one only its `exec` bit (true → false)**, contents
+byte-identical (venv/lib/libumf.so.1, site-packages `__pycache__/*.pyc`, …).
+Not the app's permissions container: it touches only `config` and `data`
+(rendered compose) and last ran 2026-10-12 12:27. So something rewrites
+modes under `/mnt/tank/apps/localai/backends` when LocalAI starts — most
+likely LocalAI normalising a backend's files; the older backends settled
+long ago and stay put. Open: confirm what does it, then either build the
+trees already normalised (the next start then changes nothing) or keep
+`exec` out of the digest for non-executables (a 09 §9.3 change that moves
+every backend engine's identity once). Today's list for 173c04c1:
+`/root/dar-legal-it-tree-7b5d557e.json` is the previous one; take a new one
+before the next restart.
+
 **Built the same night (operator's "do it").** The wrapper's `tree_digest`
 is now H of `tree_manifest`, the list kept: after it publishes a run, the
 wrapper tells VeGa `{"kind": "tree", "image", "tree"}` once per tree and
