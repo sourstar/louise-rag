@@ -729,16 +729,19 @@ it states, so a drift names its byte the day it happens.
 the new run by itself). Diffed against the kept list: 0 files added, 0 gone,
 **5,034 changed — every one only its `exec` bit (true → false)**, contents
 byte-identical (venv/lib/libumf.so.1, site-packages `__pycache__/*.pyc`, …).
-Not the app's permissions container: it touches only `config` and `data`
-(rendered compose) and last ran 2026-10-12 12:27. So something rewrites
-modes under `/mnt/tank/apps/localai/backends` when LocalAI starts — most
-likely LocalAI normalising a backend's files; the older backends settled
-long ago and stay put. Open: confirm what does it, then either build the
-trees already normalised (the next start then changes nothing) or keep
-`exec` out of the digest for non-executables (a 09 §9.3 change that moves
-every backend engine's identity once). Today's list for 173c04c1:
-`/root/dar-legal-it-tree-7b5d557e.json` is the previous one; take a new one
-before the next restart.
+Not the app's permissions container (it touches only `config` and `data`,
+last ran 2026-10-12 12:27), **and no writer at all: the files' ctime is still
+the build's (2026-10-12 22:23:37)** — their mode never changed on disk.
+LocalAI normalises nothing either: louise-medcpt-article-ov still mixes exec
+and non-exec `.pyc`/`.so`. The exec bit `stat` REPORTS differed before vs
+after the reboot (5,734 files exec in the list of 10-12 23:38, 700 now) on
+`tank/apps/localai/backends` (acltype nfsv4, aclmode/aclinherit
+passthrough) — most likely ZFS's mode synthesis under NFSv4 ACLs. So
+"build the trees normalised" cannot help; the choices are (B) the digest
+ignores the exec bit, or counts it only for real executables (a 09 §9.3
+change: every backend identity moves once), or (C) the backends on a
+POSIX-ACL dataset. Operator's call (2026-10-13: keep track). Lists kept:
+`/root/dar-legal-it-tree-7b5d557e.json`, `/root/dar-legal-it-tree-173c04c1.json`.
 
 **Built the same night (operator's "do it").** The wrapper's `tree_digest`
 is now H of `tree_manifest`, the list kept: after it publishes a run, the
