@@ -18,6 +18,7 @@ requests come from [`rage-over-localai.md`](rage-over-localai.md), accepted
 | B7 | defect, may be intended | loader: when busy models cannot be evicted, the load goes ahead over `max_active_backends` | availability | not filed |
 | B8 | defect | `POST /models/reload` never forgets a model whose YAML was removed: it lists and serves it until LocalAI restarts | RAGE's `DELETE` answers 502 and says so | not filed; seen on a real LocalAI, 2026-10-03 |
 | B9 | defect | `/v1/embeddings`: a vector holding a NaN fails the whole request with 500 ("json: unsupported value: NaN"), losing every other vector and the reason | Louise retries it as the null vector llama-server sends (`embeddings._numeric_failure`) | not filed; seen on the node, 2026-10-04 (15c) |
+| B11 | defect | memory reclaimer: a model being loaded has a zero `lastUsed` and is evicted first, as the "least recently used" — under memory pressure the model a request is waiting for is evicted every time, the request fails with 500 | availability: every Ask answer failed with 500 for minutes (2026-10-14) | not filed; seen on the node with v4.11.0, log and source in §B11 |
 | **P1** | **patch we carry** | `GET /system` lists the options each loaded model was given, with their hash | **blocking**: without it RAGE states no run for any LocalAI model | not filed; [`deploy/localai/patches/0001-system-list-load-options.patch`](../../deploy/localai/patches/0001-system-list-load-options.patch) |
 | R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: RAGE checks before and after instead | not filed |
 | R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (rage-over-localai §8.2) | not filed |
@@ -280,6 +281,79 @@ graceful timeout). STATUS.md "Open after the migration" weighs turning it
 on.
 
 ---
+
+### B11. Memory reclaimer: a model being loaded is evicted first, as the "least recently used"
+
+*Reported live, and certain from the code. Seen on the node with stock
+`quay.io/go-skynet/local-ai:v4.11.0-gpu-intel`, 2026-10-14 (Intel Arc Pro
+B70, 34 GB).*
+
+**What happened.** Every chat request failed with HTTP 500. The GPU stood
+at 79.2 % against the reclaimer's 68 % threshold. Each time the chat model
+was loaded for a waiting request, the reclaimer chose it as the
+least-recently-used model and stopped it about 5 seconds into its load;
+the request got 500 and the next one started the cycle again. Six cycles
+in 40 seconds, while idle models stayed loaded. The log, ANSI colours
+stripped:
+
+```
+09:06:28.788 WARN [WatchDog] Memory usage exceeds threshold, evicting LRU backend type="GPU" usage_percent=79.2167126944692 threshold_percent=68
+09:06:28.789 INFO [WatchDog] Memory reclaimer evicting LRU model model="louise-chat-qwen3-8b" lastUsed=0001-01-01T00:00:00Z
+09:06:37.239 INFO Backend process stopped id="louise-chat-qwen3-8b" address="127.0.0.1:45373" process="run.sh" exitCode="-1"
+09:06:37.340 INFO BackendLoader starting modelID="louise-chat-qwen3-8b" backend="intel-sycl-f16-llama-cpp" model="weights/chat/qwen3-8b.gguf"
+09:06:37.820 INFO [WatchDog] Memory reclaimer evicting LRU model model="louise-chat-qwen3-8b" lastUsed=0001-01-01T00:00:00Z
+09:06:42.574 INFO Backend process stopped id="louise-chat-qwen3-8b" address="127.0.0.1:39129" process="run.sh" exitCode="-1"
+09:06:42.649 INFO HTTP request method="POST" path="/v1/chat/completions" status=500
+09:06:44.677 INFO BackendLoader starting modelID="louise-chat-qwen3-8b" …
+09:06:44.689 INFO [WatchDog] Memory reclaimer evicting LRU model model="louise-chat-qwen3-8b" lastUsed=0001-01-01T00:00:00Z
+09:06:49.827 INFO Backend process stopped id="louise-chat-qwen3-8b" address="127.0.0.1:42149" … exitCode="-1"
+… the same at 09:06:50, 09:06:56, 09:07:01; six "evicting LRU model" lines
+for the chat model, every one with lastUsed=0001-01-01T00:00:00Z
+09:07:06.887 ERROR Stream ended with error error=rpc error: code = Unavailable desc = connection error: … connect: connection refused
+09:07:06.887 INFO HTTP request method="POST" path="/v1/chat/completions" status=500
+```
+
+What `GET /system` listed as loaded meanwhile (`size_vram`):
+
+| model | VRAM | state |
+|---|---|---|
+| vega-dar-legal-it | 13.6 GB | busy (an embedding stream) |
+| vega-qwen3-embedding-4b | 9.9 GB | idle: loaded at 00:11, no request since |
+| vega-bge-m3 | 1.1 GB | idle |
+| vega-medcpt-query, vega-medcpt-article-ov, vega-granite | 1.1 GB together | idle |
+
+The idle 4B embedder, last used at 00:11, was never chosen; the chat model,
+loading for a request that was waiting, was chosen six times. Stopping the
+idle 4B model by hand (`POST /backend/shutdown`) let the chat model load,
+and the next request answered 200.
+
+**Why, from the source** (`pkg/model/watchdog.go` at `v4.11.0`):
+`evictLRUModel` sorts the candidates oldest-first by `lastUsed`
+(`a.lastUsed.Compare(b.lastUsed)`). `lastUsed` is written only when a
+request begins or ends (`beginRequestLocked`, `finishRequestLocked`,
+`UpdateLastUsed`); nothing initialises it when a model is registered, so a
+model whose load has started but whose first request has not yet reached
+the backend has the zero time (`0001-01-01`) and sorts as the oldest model
+on the card. The busy check (`busyTime`) does not cover it either: the
+request that caused the load is not yet in flight at the backend. So under
+memory pressure the reclaimer evicts exactly the model a request is
+waiting for, every time, and the request can never succeed while the
+pressure lasts.
+
+**Suggested fix**, any of:
+- set `lastUsed[address] = now` when the address is registered
+  (`AddAddressModelMap`), so a model being loaded counts as just used;
+- or skip, as busy, an address whose load has a request waiting on it;
+- or, at least, never choose a model whose `lastUsed` is zero while another
+  candidate has a real time.
+
+**What covers it for us:** Louise unloads an embedder whose collection does
+not embed everything (`worker._release_embedder`, 2026-10-14), so idle
+encoders do not hold the card; the chat model can still lose this race
+whenever the card is over the threshold for other reasons.
+
+---
+
 
 ## Patches we carry
 
