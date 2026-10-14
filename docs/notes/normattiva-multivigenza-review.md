@@ -1008,4 +1008,4 @@ about 200 a year. How many matter to a legal question is what the pilot's
 `run` will say on the covered side — and [R2]'s "83.7 % of questions name
 the article" says what the miss looks like: a cited act that is not held is
 a miss by key, the worst kind. Also written by the harness: 200 temporal
-stubs for the operator's review (`/data/pilot/temporal-stubs.jsonl`).
+stubs, judged useless by the operator and deleted (2026-10-14).

@@ -561,7 +561,8 @@ the collection holds 52–71 % of the state's numbered acts since 1990
 records are right and verified; the scope was over-read. DECISION OWED by
 the operator: state the scope on the card, or complement the origin by the
 API's search routes — new acquisition machinery. The harness also wrote 200
-temporal stubs for the operator's review (`/data/pilot/temporal-stubs.jsonl`);
+temporal stubs; the operator judged them useless and they were deleted
+(2026-10-14);
 the `records-vs-origin` re-run is still owed (cut by the deploy).
 
 **NORMATTIVA STAYS AS IT IS; THE FULL CORPUS MEASURED FOR A DAUGHTER
