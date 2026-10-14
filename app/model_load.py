@@ -169,6 +169,28 @@ def loaded_models(server: str) -> frozenset[str] | None:
 UNLOAD_TIMEOUT_S = 30.0
 
 
+def activity(server: str) -> dict[str, float] | None:
+    """`{model: cpu_percent}` of what a LocalAI runner holds, read fresh from
+    `/system` (its `loaded_models[].process.cpu_percent`); None when the
+    runner cannot say. A model whose backend burns no CPU is not serving."""
+    try:
+        r = httpc.get(f"{server}/system", timeout=PROBE_TIMEOUT_S)
+        rows = r.json().get("loaded_models") if r.status_code == 200 else None
+    except Exception:   # noqa: BLE001
+        return None
+    if not isinstance(rows, list):
+        return None
+    out: dict[str, float] = {}
+    for m in rows:
+        if isinstance(m, dict) and isinstance(m.get("id"), str):
+            proc = m.get("process") or {}
+            try:
+                out[m["id"]] = float(proc.get("cpu_percent") or 0.0)
+            except (TypeError, ValueError):
+                out[m["id"]] = 0.0
+    return out
+
+
 def unload(url: str, model: str | None) -> bool:
     """Ask a LocalAI runner to stop `model`'s backend (`POST <server>/backend/
     shutdown {"model": …}`), freeing its memory; it loads again on the next

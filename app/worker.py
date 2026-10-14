@@ -3710,6 +3710,80 @@ def _release_embedder(collection, con=None, others=None, reason: str = "") -> bo
     return done
 
 
+#: Louise's embedders on the model runner are VeGa's (docs/notes/vega.md):
+#: `vega-<model>`. Chat, reranking and translation are not, and are never swept.
+EMBEDDER_PREFIX = "vega-"
+#: consecutive settle beats (SETTLE_BEAT_S each) an on-demand embedder must
+#: be idle before it is unloaded: two beats, one to two minutes
+IDLE_BEATS = 2
+_idle_beats: dict[tuple[str, str], int] = {}
+
+
+def _sweep_unheld_embedders(collections, con=None) -> list[str]:
+    """NO HELD COLLECTION, NO EMBEDDER ON THE CARD (operator, 2026-10-14:
+    deposit-granite was removed and vega-granite stayed loaded). On every
+    runner a held collection's encoder lives on, each loaded `vega-` model
+    that no held collection names — as its document model or its query
+    model — is unloaded. Returns what went; never raises."""
+    servers: set[str] = set()
+    named: set[str] = set()
+    for c in collections:
+        try:
+            r = collections_mod.recipe_for(c)
+        except Exception:   # noqa: BLE001 — no encoder declared
+            continue
+        if not r:
+            continue
+        for url in (r.url, getattr(r, "query_url", None)):
+            if url:
+                servers.add(model_load.server_of(url))
+        for m in (r.model, getattr(r, "query_model", None)):
+            if m:
+                named.add(m)
+    # the models some collection on "all" names: those stay, idle or not
+    kept: set[str] = set()
+    for c in collections:
+        if _effective_embed_mode(c) != "all":
+            continue
+        try:
+            r = collections_mod.recipe_for(c)
+        except Exception:   # noqa: BLE001
+            continue
+        if r:
+            kept |= {m for m in (r.model, getattr(r, "query_model", None)) if m}
+    gone: list[str] = []
+    idle: list[str] = []
+    for server in sorted(servers):
+        busy = model_load.activity(server)
+        if busy is None:
+            continue
+        for m in sorted(busy):
+            if not m.startswith(EMBEDDER_PREFIX) or m in kept:
+                _idle_beats.pop((server, m), None)
+                continue
+            if m not in named:
+                if model_load.unload(server, m):
+                    gone.append(m)
+                continue
+            # named only by collections that do not embed everything: a search
+            # or an on-demand embed loaded it (a gutenberg or wikipedia query
+            # encoder); it goes once idle for IDLE_BEATS beats in a row
+            beats = 0 if busy[m] > 0.0 else _idle_beats.get((server, m), 0) + 1
+            _idle_beats[(server, m)] = beats
+            if beats >= IDLE_BEATS and model_load.unload(server, m):
+                _idle_beats.pop((server, m), None)
+                idle.append(m)
+    if con is not None and (gone or idle):
+        if gone:
+            db.log_event(con, "info", "control",
+                         f"embedder(s) {', '.join(gone)} unloaded: no held collection names them")
+        if idle:
+            db.log_event(con, "info", "control",
+                         f"embedder(s) {', '.join(idle)} unloaded: idle, and no collection "
+                         f"that names them embeds everything")
+    return gone + idle
+
+
 def _apply_tier2_embed_mode(con, collection, reason: str) -> None:
     """On restart, on add, and on a TOML edit the file wins (invariant 10):
     the Library's runtime override is replaced by the TOML's `embed_mode`
@@ -3847,6 +3921,8 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
     for gone in sorted(known - now_names):
         db.log_event(cons[gone], "info", "worker",
                      f"collection {gone!r} removed — ingestion stopped, data kept")
+        # its embedders leave the card when no held collection names them
+        _sweep_unheld_embedders(current, cons[gone])
         # Signal the byte-moving threads HERE, not at _sync_pipeline_threads:
         # that runs later in the round and not at all in non-pipeline mode or
         # while the node is paused. Waking the transfer manager is required
@@ -4080,6 +4156,16 @@ def _settle_runs_for_search() -> None:
             collections = collections_mod.load_all()
         except Exception:   # noqa: BLE001 — the next beat
             continue
+        # and each beat, the embedders no held collection names (a removal
+        # made while the worker was down, a model loaded by hand)
+        try:
+            gone = _sweep_unheld_embedders(collections)
+            if gone:
+                _node_line("control")(f"embedder(s) {', '.join(gone)} unloaded: idle or "
+                                      f"named by no held collection, and no collection "
+                                      f"that names them embeds everything")
+        except Exception:   # noqa: BLE001 — never the thread
+            pass
         for c in collections:
             if _stop.is_set():
                 return
