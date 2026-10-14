@@ -165,6 +165,33 @@ def loaded_models(server: str) -> frozenset[str] | None:
         return ids
 
 
+#: the bound on one unload request
+UNLOAD_TIMEOUT_S = 30.0
+
+
+def unload(url: str, model: str | None) -> bool:
+    """Ask a LocalAI runner to stop `model`'s backend (`POST <server>/backend/
+    shutdown {"model": …}`), freeing its memory; it loads again on the next
+    request. Only where the runner lists the model as loaded — a runner that
+    cannot say (not LocalAI, unreachable) is left alone. True when it was
+    stopped. Never raises (operator, 2026-10-14: an embedder whose collection
+    does not embed everything must not hold the card)."""
+    if not url or not model:
+        return False
+    server = server_of(url)
+    ids = loaded_models(server)
+    if ids is None or model not in ids:
+        return False
+    try:
+        r = httpc.post(f"{server}/backend/shutdown", json={"model": model},
+                       timeout=UNLOAD_TIMEOUT_S)
+    except Exception:   # noqa: BLE001 — the runner keeps it; nothing breaks
+        return False
+    with _lock:
+        _systems.pop(server, None)           # what it holds has changed
+    return r.status_code == 200
+
+
 def _note_loaded(server: str, model: str) -> None:
     with _lock:
         got = _systems.get(server)

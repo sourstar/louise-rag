@@ -35,8 +35,8 @@ from pathlib import Path
 import httpx
 
 from . import (catalog, chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
-                dispatch, embeddings, encoder_timeouts, entities, fts, node_state, plugin_io, refs, sched, sizing,
-                spaces, stats)
+                dispatch, embeddings, encoder_timeouts, entities, fts, model_load, node_state, plugin_io, refs,
+                sched, sizing, spaces, stats)
 from .dispatch import Level
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
@@ -3654,6 +3654,62 @@ def _join_pipeline_threads(timeout: float = 90.0) -> None:
         thread.join(timeout=max(0.0, deadline - time.time()))
 
 
+def _effective_embed_mode(collection, con=None) -> str:
+    """The mode the worker acts on: the runtime scope where it can be read,
+    else the file's, else the default."""
+    if con is not None:
+        try:
+            mode = db.get_scope(con).get("embed_mode")
+            if mode:
+                return str(mode)
+        except Exception:   # noqa: BLE001 — the file's word then
+            pass
+    return collection.embed_mode_default or collections_mod.DEFAULT_EMBED_MODE
+
+
+def _release_embedder(collection, con=None, others=None, reason: str = "") -> bool:
+    """AN EMBEDDER IS HELD ONLY FOR A COLLECTION THAT EMBEDS EVERYTHING
+    (operator, 2026-10-14). The worker's start-up run check loads every
+    collection's encoder to settle its run for search, and LocalAI keeps a
+    model until evicted: gutenberg's 4B embedder (embed on-demand) held
+    9.9 GB of the card all night, the card crossed LocalAI's eviction
+    threshold, and its reclaimer evicted the chat model five seconds into
+    every load — each Ask answer ended in a 500. So when this collection's
+    mode is not "all", its embedder is unloaded, unless another collection
+    whose mode IS "all" uses the same model on the same runner. It loads
+    again on the next request (a search, an on-demand embed). True when
+    unloaded; never raises."""
+    if _effective_embed_mode(collection, con) == "all":
+        return False
+    try:
+        recipe = collections_mod.recipe_for(collection)
+    except Exception:   # noqa: BLE001 — no encoder declared: nothing held
+        return False
+    if not recipe or not getattr(recipe, "model", None):
+        return False
+    server = model_load.server_of(recipe.url)
+    if others is None:
+        with _live_lock:
+            others = list(_live_collections.values())
+    for other in others:
+        if other.name == collection.name:
+            continue
+        try:
+            o = collections_mod.recipe_for(other)
+        except Exception:   # noqa: BLE001
+            continue
+        if o and model_load.server_of(o.url) == server and o.model == recipe.model \
+                and _effective_embed_mode(other) == "all":
+            return False
+    done = model_load.unload(recipe.url, recipe.model)
+    if done and con is not None:
+        db.log_event(con, "info", "control",
+                     f"embedder {recipe.model} unloaded{(' on ' + reason) if reason else ''}: "
+                     f"embed is {_effective_embed_mode(collection, con)!r}, not 'all'; it "
+                     f"loads again on the next request")
+    return done
+
+
 def _apply_tier2_embed_mode(con, collection, reason: str) -> None:
     """On restart, on add, and on a TOML edit the file wins (invariant 10):
     the Library's runtime override is replaced by the TOML's `embed_mode`
@@ -3727,6 +3783,8 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
             continue
         if prev.embed_mode_default != kept.embed_mode_default:
             _apply_tier2_embed_mode(cons[kept.name], kept, "TOML edit")
+            # switched to off or on-demand: its embedder leaves the card
+            _release_embedder(kept, cons[kept.name], current, "the switch")
         if (prev.acquire_enabled, prev.license_ack, prev.profile,
                 prev.extras, prev.peer_source) != \
                 (kept.acquire_enabled, kept.license_ack, kept.profile,
@@ -4033,6 +4091,9 @@ def _settle_runs_for_search() -> None:
                 con = db.connect(c)
                 if run_check.embed_allowed(con, c, stop=_stop.is_set):
                     _settled_for_search.add(key)
+                    # the settle loaded the embedder; a collection that does
+                    # not embed everything does not keep it on the card
+                    _release_embedder(c, con, reason="the start-up run check")
             except Exception:   # noqa: BLE001 — one collection, not the thread
                 pass
             finally:
