@@ -673,12 +673,24 @@ def ensure(collection, con=None, *, log=None, may_continue=None) -> dict | None:
     # the refresh starved: wikipedia sat at 4.7M unindexed rows against a
     # 1.34M threshold while the hourly pass spent 40–51 minutes compacting
     # (2026-09-17).
+    # AND THE FRAGMENTS IN THE SAME PASS (2026-10-14). Returning after the
+    # refresh starved the compaction instead: normattiva embeds faster than
+    # the refresh threshold, so every pass found a refresh due and none ever
+    # compacted — 33,701 fragments, 19,347 of them outside the book_id index,
+    # every per-document read 1–1.7 s, embedding by reuse down to ~17
+    # documents a minute. The index still goes first; the compaction follows
+    # when it is due, between the two `may_continue` is asked again.
+    did = None
     if refresh_due(st):
         with maintenance(collection):
-            return refresh(collection, con, log=log)
+            did = refresh(collection, con, log=log)
+        if not go():
+            return did
+        st = stats(collection) or st
     if compact_due(st):
-        return compact(collection, con, log=log)
-    return None
+        out = compact(collection, con, log=log)
+        return {"refresh": did, "compact": out} if did is not None else out
+    return did
 
 
 def refresh(collection, con=None, *, log=None) -> dict:

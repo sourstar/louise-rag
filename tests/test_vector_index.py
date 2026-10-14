@@ -470,7 +470,16 @@ def test_the_index_refresh_is_not_starved_by_a_compaction(isolated_config, tmp_p
     monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None:
                         steps.append("compact") or {"compacted": True})
     vector_index.ensure(c)
-    assert steps == ["refresh"]
+    assert steps == ["refresh", "compact"], \
+        "the index first, and the fragments in the same pass: a refresh due every pass " \
+        "starved the compaction (normattiva, 2026-10-14: 33,701 fragments)"
+
+    steps.clear()
+    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None:
+                        steps.append("compact") or {"compacted": True})
+    told = iter([True, False])                  # asked before the prune/index, then between
+    vector_index.ensure(c, may_continue=lambda: next(told))
+    assert steps == ["refresh"], "a pause between the two is honoured"
 
     steps.clear()
     monkeypatch.setattr(vector_index, "stats", lambda coll: {
