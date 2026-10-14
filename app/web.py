@@ -657,6 +657,7 @@ def _ask_result(body: AskQueryBody) -> dict:
                 except Exception:      # noqa: BLE001 — a missing field is not a 500
                     h["origin_url"] = None
     _attach_annotations(result)
+    _attach_figures(result)
     con = db.connect()   # query_log lives in the default collection's manifest regardless
     # .get, not [...]: when every collection is withheld `run_search`
     # returns {hits, withheld} with no `timings` at all, and a KeyError
@@ -710,6 +711,44 @@ def _attach_annotations(result: dict) -> None:
                      "reason": f"annotations not attached: {type(e).__name__}: {e}"[:300]}]
     if withheld:
         result["withheld"] = list(result.get("withheld") or []) + withheld
+
+
+def _attach_figures(result: dict) -> None:
+    """05 §5.3 `figures` on the Ask page's hits, as the API path places them
+    (app/ask/results.py): the plates whose markers fall inside each chunk,
+    shown under it and fetched from `GET /api/ask/figure`. Until 2026-10-14
+    the API carried them and the page drew none.
+
+    Only a collection whose records carry figures (`record_line` 2), and
+    never a red-class one — the route refuses its plates (04 §4.4), so a
+    picture the page drew would be a broken one. A failure is said under
+    `withheld`, never fatal."""
+    hits = result.get("hits") or []
+    if not hits:
+        return
+    from app.ask import results as ask_results
+    by_name = {c.name: c for c in collections_mod.load_all()}
+    source_of: dict[int, object] = {}
+    contexts: dict[str, dict] = {}
+    for h in hits:
+        c = by_name.get(h.get("source_collection") or "")
+        codex = getattr(c, "codex", None)
+        if codex is None or not h.get("chunk_id") or getattr(codex, "record_line", 1) == 1:
+            continue
+        if codex.license.cls == "red":
+            continue
+        h["uid"] = retrieval.record_of(h)
+        h["figures"] = []
+        source_of[id(h)] = c
+        contexts[c.name] = {"codex": codex, "red": False}
+    if not source_of:
+        return
+    try:
+        ask_results._place_figures([{"hits": hits}], source_of, contexts, ask_results._root())
+    except Exception as e:   # noqa: BLE001 — a plate that cannot be placed is said, never fatal
+        result["withheld"] = list(result.get("withheld") or []) + [
+            {"collection": None, "collection_id": None, "shards": "all",
+             "reason": f"figures not placed: {type(e).__name__}: {e}"[:300]}]
 
 
 # ---------------- admin login (outside admin_router — must be reachable
