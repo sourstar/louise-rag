@@ -541,6 +541,18 @@ new one links it) and `hold collection rename normattiva-1861 normattiva`
 embed (~5 h). The origin (api.normattiva.it) answers nothing to this
 address since the evening's probes; acquisition defers, the zips stand.
 
+**THE ASK PAGE DRAWS THE PLATES; ab4a584 DEPLOYED (2026-10-14, 17:26Z;
+image `47a9e739…`).** The API has placed `figures` on results since
+ae944b9; the page drew none. `web._attach_figures` places them through
+`results._place_figures` (record_line 2 collections, never a red one) and
+`_ask_results.html` draws a held plate as a thumbnail on
+`GET /api/ask/figure`, names one not held or not carried. A chat answer's
+[n] link to these hits, so its sources show them too. Suite 4,621; staged
+202. Live: "illustration of the cathedral facade" in gutenberg, 10 hits,
+25 plates drawn, one fetched (200, image/jpeg, 600×684); a warm search
+8.77 s against the legs' 8.66 s — placing costs ~0.1 s. Shipped with it:
+ddb64c0 (dar-legal-it backend source under deploy/, not rebuilt here).
+
 
 **NORMATTIVA: REMEDY DONE, THE PILOT'S COVERAGE, THE ARCHIVE'S SCOPE
 (2026-10-13, afternoon UTC).** The other session deployed 03bc036 and ran
