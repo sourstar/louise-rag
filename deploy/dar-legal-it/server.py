@@ -33,6 +33,31 @@ one text per call keeps that to one text's square.
 from __future__ import annotations
 
 
+#: what the backend may keep reserved between texts. The weights are ~1.2 GB in
+#: float32; one 8,192-token article's attention peaks at several GB (12 heads
+#: x seq x seq), and torch's caching allocator keeps every block it once took:
+#: on the node the backend sat at 12.6–13.6 GB for a model that needs ~1.5
+#: (2026-10-14), pushing the card over LocalAI's eviction threshold.
+RELEASE_ABOVE = 3 << 30
+
+
+def release(torch_mod, device: str, above: int = RELEASE_ABOVE) -> bool:
+    """Hand torch's cached blocks back to the driver when more than `above`
+    bytes are reserved: after a long article, never after each short one (a
+    re-allocation costs a moment). The arithmetic is untouched, so the
+    vectors are the same. True when it released."""
+    dev = getattr(torch_mod, device, None) if device in ("xpu", "cuda") else None
+    if dev is None or not hasattr(dev, "memory_reserved") or not hasattr(dev, "empty_cache"):
+        return False
+    try:
+        if dev.memory_reserved() <= above:
+            return False
+        dev.empty_cache()
+        return True
+    except Exception:   # noqa: BLE001 — memory housekeeping never fails a text
+        return False
+
+
 def build_encoder(model_dir: str, device: str, max_seq: int):
     from sentence_transformers import SentenceTransformer
 
@@ -43,9 +68,13 @@ def build_encoder(model_dir: str, device: str, max_seq: int):
                        "unpad_inputs": False})
     model.max_seq_length = max_seq
 
+    import torch
+
     def encode(batch: list[str]) -> list[list[float]]:
         vectors = model.encode(batch, batch_size=len(batch),
                                convert_to_numpy=True)
-        return [v.astype("float32").tolist() for v in vectors]
+        out = [v.astype("float32").tolist() for v in vectors]
+        release(torch, device)
+        return out
 
     return encode, int(model.get_sentence_embedding_dimension())

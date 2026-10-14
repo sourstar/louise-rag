@@ -501,3 +501,22 @@ def test_a_pair_to_a_model_loaded_without_pairs_is_refused(tmp_path):
     assert code == "INVALID_ARGUMENT" and "pairs:true" in why
     assert aborted(lambda: _article().Embedding(SimpleNamespace(Embeddings="x"),
                                                 Context()))[0] == "FAILED_PRECONDITION"
+
+
+def test_dar_legal_it_hands_torch_cache_back_after_a_long_text():
+    """12.6–13.6 GB held on the node for a ~1.5 GB model (2026-10-14): torch's
+    caching allocator kept one long article's attention peak. Over
+    RELEASE_ABOVE reserved, the cache goes back to the driver; under it,
+    nothing is done (a short text pays no re-allocation)."""
+    from types import SimpleNamespace
+    server = dar_backend.dar_legal_it
+    calls = []
+    reserved = {"n": 13 << 30}
+    xpu = SimpleNamespace(memory_reserved=lambda: reserved["n"],
+                          empty_cache=lambda: calls.append("empty"))
+    torch = SimpleNamespace(xpu=xpu)
+    assert server.release(torch, "xpu") is True and calls == ["empty"]
+    reserved["n"] = 1 << 30
+    assert server.release(torch, "xpu") is False and calls == ["empty"]
+    assert server.release(torch, "cpu") is False, "the CPU has no device cache to hand back"
+    assert server.release(SimpleNamespace(), "xpu") is False
