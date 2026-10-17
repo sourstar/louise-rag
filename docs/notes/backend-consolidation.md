@@ -35,6 +35,36 @@ The backend's tree replaces four engines with one, so each pinned model's
 run is new: DAR-legal-it (normattiva) and medcpt-article-ov (pubmed) pass the
 calibration gate again. By the figures above, no re-embedding (RULE 1).
 
+## louise-python on the node, end to end (2026-10-17, 60e7a6a)
+
+Installed as the GUI installs: `POST /api/backends/install-external` (what
+"From URL" calls) with `ocifile:///backends/.louise-python-intel.tar` (the
+`docker save` of the Intel image, 8.2 GB; `pip freeze` in the build equals
+the pins). LocalAI unpacked it as `louise-python`, wrote its metadata.json and
+registered it without a restart. VeGa's wrapper `vega-louise-python` was
+installed the same way from a directory (build_vega_package.sh, BACKEND=
+louise-python). Probe models with the live models' settings plus `task:`
+(`probe-lp-*`, `vega-probe-lp-*`; not pinned, unloaded after), each against
+the live model:
+
+| model | through | result | the live engine against itself |
+|---|---|---|---|
+| medcpt-article | VeGa (tagged, base64, receipts verified) | 16/16 PubMed pairs bit-identical | — |
+| DAR-legal-it | VeGa | 1/4 bit-identical, max abs 7.1e-8 | 1/4, max 8.2e-8 (the new one: 1/4, 7.8e-8) |
+| medcpt-rerank | LocalAI `/v1/rerank` | same order, scores identical (max abs 0.0); 2.4 s vs 4.9 s | — |
+| MADLAD | LocalAI `/v1/completions` | 40/42 identical | 41/42 over three runs: it flips items 13 and 25 between two versions; the new one always gives one of them (42/42 against itself) |
+
+**VeGa works as expected on it**: a direct untagged call to a `vega-` model is
+refused ("an input without a VeGa tag"); through Louise's client every
+receipt verifies, and each run states `name: localai/louise-python`, `image`
+= the installed tree's digest (`sha256:9eb8807c…`), the device READ from the
+card (the B70), and the load's options with `task:`. Nothing was written into
+either installed tree by the loads.
+
+**RULE 1.** Every difference is within the live engine's own variation, so
+the switch keeps every vector: the two pinned models' new runs pass the
+calibration gate once and nothing is re-embedded.
+
 ## What the stock backends would need (for upstream)
 
 What `intel-transformers` / `intel-rerankers` (v4.11.0's, as installed on the
@@ -74,5 +104,25 @@ No venv: the packages are in the portable CPython's prefix, so the backend
 does not depend on the directory it is unpacked into (a venv's pyvenv.cfg
 does; upstream rewrites it at every start, which a hashed tree cannot have).
 
-Open: the AMD peer (WSL2, next week) needs this backend's ROCm build; OpenVINO
-has no AMD GPU, so MedCPT runs on its CPU there.
+## ROCm (the dev PC's RX 9060 XT, WSL2)
+
+Built, not yet run on the card (it is not in the PC yet):
+- `VARIANT=rocm`: torch 2.14.0+rocm7.2 (the same torch; ROCm 7.2 is what
+  AMD's WSL matrix pairs with the RX 9060 XT), the shared pins unchanged;
+  `pip freeze` == pins. 23.8 GB (Intel: 8.2): the wheel carries kernels for
+  every AMD architecture. It links the system's libatomic, which the backend
+  now carries in `python/lib`.
+- Devices: torch calls a ROCm card `cuda`, so a model says `device:cuda`;
+  OpenVINO has no AMD plugin and refuses it naming `device:cpu` (MedCPT runs
+  on the CPU there); MADLAD hands its cache back on `cuda` as on `xpu`.
+- `deploy/localai-wsl/compose.yaml`: LocalAI's ROCm image (v4.11.0-gpu-hipblas,
+  by digest) with `/dev/dxg`, `/usr/lib/wsl/lib`, the host's librocdxg and
+  `HSA_ENABLE_DXG_DETECTION=1`, under Docker Engine inside Ubuntu (Docker
+  Desktop's VM exposes neither the device nor the libraries).
+- llama.cpp models: LocalAI's own `rocm-llama-cpp`; no backend of ours.
+
+Open for the card: `rocminfo` lists gfx1200 under WSL (ROCm issue #6323 is a
+report that it does not on Windows 10); each task loads on `cuda`; and VeGa
+under WSL. `/dev/dxg` has no per-process DRM counters, so since 66a3afa the
+wrapper refuses to state such a run (it read as CPU before). Until a decision
+on how the device is read there, the AMD peer embeds nothing through VeGa.

@@ -6,3 +6,5 @@
 # OpenVINO has no AMD plugin: MedCPT's tasks run with device:cpu here.
 --extra-index-url https://download.pytorch.org/whl/rocm7.2
 torch==2.14.0+rocm7.2
+setuptools==84.0.0
+triton-rocm==3.8.0
