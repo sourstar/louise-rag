@@ -10,7 +10,7 @@
 # pubmed embeds nothing (embed = "off"). JSON, which is YAML.
 {
   "name": "vega-medcpt-article-ov",
-  "backend": "vega-louise-medcpt-article-ov",
+  "backend": "vega-louise-python",
   "embeddings": true,
   "pinned": false,
   "context_size": 512,
@@ -22,6 +22,7 @@
     "seed": 0
   },
   "options": [
+    "task:medcpt-article",
     "device:xpu",
     "pairs:true"
   ],

@@ -11,7 +11,7 @@
 # the one read-only weights mount. JSON, which is YAML.
 {
   "name": "vega-dar-legal-it",
-  "backend": "vega-louise-dar-legal-it",
+  "backend": "vega-louise-python",
   "embeddings": true,
   "pinned": true,
   "context_size": 8192,
@@ -23,6 +23,7 @@
     "seed": 0
   },
   "options": [
+    "task:dar-legal-it",
     "device:xpu"
   ],
   "env": {

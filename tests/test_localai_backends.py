@@ -710,3 +710,25 @@ def test_the_gallery_lists_a_variant_per_gpu_each_with_its_requirements():
         variant = concrete["uri"].rsplit(":", 1)[1]
         assert concrete["alias"] == "louise-python" and "capabilities" not in concrete
         assert (PYTHON_DIR / f"requirements-{variant}.txt").is_file(), (gpu, variant)
+
+
+def test_each_staged_model_on_louise_python_is_a_load_its_task_accepts():
+    """deploy/vega/stage/models: what the node's LocalAI holds. A model on
+    louise-python (or VeGa's wrapper of it) names one task, and every other
+    option is one that task reads, at a value it takes."""
+    tasks = {"dar-legal-it": dar_backend, "madlad": madlad_backend,
+             "medcpt-article": article_backend, "medcpt-rerank": medcpt_backend}
+    assert set(tasks) == set(python_backend.TASKS)
+    seen = set()
+    for path in sorted((ROOT / "deploy" / "vega" / "stage" / "models").glob("*.yaml")):
+        text = "\n".join(l for l in path.read_text(encoding="utf-8").splitlines()
+                         if not l.lstrip().startswith("#"))
+        body = json.loads(text)
+        if body["backend"] not in ("louise-python", "vega-louise-python"):
+            assert not body["backend"].startswith(("louise-", "vega-louise-")), \
+                f"{path.name}: on a retired per-model backend"
+            continue
+        task, rest = python_backend.split_task(body["options"])
+        lb.options(rest, tasks[task].KNOWN, tasks[task].DEFAULTS)
+        seen.add(task)
+    assert seen == set(tasks), "each task serves a model"
