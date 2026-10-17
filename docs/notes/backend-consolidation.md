@@ -77,8 +77,8 @@ per-model backends (louise-dar-legal-it 3.6 GB, louise-madlad 3.5 GB,
 louise-medcpt-article-ov 336 MB, louise-medcpt-rerank 335 MB) were removed
 on the operator's word, 2026-10-17, through `POST /backends/delete/<name>`
 once no YAML and no process used them. Their VeGa wrappers
-(vega-louise-dar-legal-it, vega-louise-medcpt-article-ov, 193 MB each) wrap
-nothing now and await the operator's word.
+(vega-louise-dar-legal-it, vega-louise-medcpt-article-ov, 193 MB each) were
+removed the same way the same day, on the operator's word.
 
 ## What the stock backends would need (for upstream)
 
