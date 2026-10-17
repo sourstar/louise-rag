@@ -117,6 +117,19 @@ def test_card_memory_is_counted_once_per_drm_client_and_per_card(tmp_path):
         "a gone process is not an error"
 
 
+def test_a_process_on_wsls_gpu_is_unreadable_never_a_cpu_process(tmp_path):
+    """/dev/dxg (WSL) has no DRM clients: an empty mapping would state a run
+    on the card as a CPU run."""
+    (tmp_path / "9" / "fdinfo").mkdir(parents=True)
+    (tmp_path / "9" / "fdinfo" / "3").write_text("pos: 0\n")
+    (tmp_path / "9" / "fd").mkdir()
+    try:
+        (tmp_path / "9" / "fd" / "3").symlink_to("/dev/dxg")
+    except OSError:
+        pytest.skip("no symlinks here")
+    assert ProcFS(tmp_path).card_mib_by_device(9) is None
+
+
 # ---- the driver is the one the card is bound to ------------------------------------
 #
 # Operator, 2026-09-20: "RAGE should be independent from a specific

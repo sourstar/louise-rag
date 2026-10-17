@@ -21,6 +21,8 @@ _CLIENT = re.compile(r"^drm-client-id:\s*(\S+)", re.M)
 _PDEV = re.compile(r"^drm-pdev:\s*(\S+)", re.M)
 _UNIT = {None: 1, "K": 1 << 10, "M": 1 << 20, "G": 1 << 30}
 MIB = 1 << 20
+#: WSL's paravirtual GPU: every card behind it, no DRM fdinfo
+WSL_GPU = "/dev/dxg"
 
 
 @dataclass(frozen=True)
@@ -85,10 +87,14 @@ class ProcFS:
         through several file descriptors, and counting each would multiply
         what it holds. None when nothing can be read: no fdinfo, or not ours.
         An empty mapping is a process with no client on any card — a CPU
-        process."""
+        process. A process holding WSL's paravirtual GPU (`/dev/dxg`) is None
+        too: that device has no DRM clients, so an empty mapping would state a
+        card run as a CPU run."""
         try:
             infos = list((self.root / str(pid) / "fdinfo").iterdir())
         except OSError:
+            return None
+        if self._holds(pid, WSL_GPU):
             return None
         clients: dict[str, tuple[str | None, int]] = {}
         for info in infos:
@@ -107,3 +113,17 @@ class ProcFS:
         for pdev, held in clients.values():
             out[pdev] = out.get(pdev, 0) + held // MIB
         return out
+
+    def _holds(self, pid: int, device: str) -> bool:
+        """Whether one of the process's descriptors points at `device`."""
+        try:
+            fds = list((self.root / str(pid) / "fd").iterdir())
+        except OSError:
+            return False
+        for fd in fds:
+            try:
+                if os.readlink(fd) == device:
+                    return True
+            except OSError:
+                continue
+        return False
