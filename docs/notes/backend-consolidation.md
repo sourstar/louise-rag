@@ -73,7 +73,12 @@ vega-louise-python. The gate (`node pause` → `hold embedder check` →
 `resume`): normattiva document run `f849f99d…` 16/16, worst 1.000000;
 pubmed document run `5c3df300…` 16/16, worst 1.000000 (its query run,
 llama.cpp, unchanged, passed again). Nothing re-embedded. The four
-per-model backends stay installed, unused, until the operator says.
+per-model backends (louise-dar-legal-it 3.6 GB, louise-madlad 3.5 GB,
+louise-medcpt-article-ov 336 MB, louise-medcpt-rerank 335 MB) were removed
+on the operator's word, 2026-10-17, through `POST /backends/delete/<name>`
+once no YAML and no process used them. Their VeGa wrappers
+(vega-louise-dar-legal-it, vega-louise-medcpt-article-ov, 193 MB each) wrap
+nothing now and await the operator's word.
 
 ## What the stock backends would need (for upstream)
 
