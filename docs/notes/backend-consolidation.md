@@ -65,6 +65,16 @@ either installed tree by the loads.
 the switch keeps every vector: the two pinned models' new runs pass the
 calibration gate once and nothing is re-embedded.
 
+**Switched, 2026-10-17 12:10 UTC** (deploy/vega/switch/backends-20261017.sh,
+run by the operator; backups `*.yaml.bak-20261017-backends` beside them):
+vega-dar-legal-it, vega-medcpt-article-ov, vega-medcpt-article-ov-cpu,
+louise-translate-madlad, louise-rerank-medcpt are on louise-python /
+vega-louise-python. The gate (`node pause` → `hold embedder check` →
+`resume`): normattiva document run `f849f99d…` 16/16, worst 1.000000;
+pubmed document run `5c3df300…` 16/16, worst 1.000000 (its query run,
+llama.cpp, unchanged, passed again). Nothing re-embedded. The four
+per-model backends stay installed, unused, until the operator says.
+
 ## What the stock backends would need (for upstream)
 
 What `intel-transformers` / `intel-rerankers` (v4.11.0's, as installed on the
