@@ -1,0 +1,40 @@
+# LocalAI on an AMD card under WSL2 (the dev PC's RX 9060 XT, 16 GB; docs/notes/
+# backend-consolidation.md, "ROCm"). Run with the Docker Engine INSIDE an
+# Ubuntu 24.04 WSL distribution, not Docker Desktop's: Docker Desktop's VM
+# exposes neither /dev/dxg nor the host's ROCm libraries.
+#
+# The host (the Ubuntu distribution), once:
+#   - Windows: AMD Software Adrenalin 26.1.1 or later (the WSL2 driver);
+#   - Ubuntu: ROCm 7.2.1 for WSL (amdgpu-install --usecase=wsl,rocm
+#     --no-dkms), which installs librocdxg; `rocminfo` must list gfx1200
+#     before anything here is worth starting;
+#   - Docker Engine (docs.docker.com/engine/install/ubuntu).
+#
+#   docker compose -f deploy/localai-wsl/compose.yaml up -d
+#
+# WSL has no /dev/kfd and no /dev/dri for compute: the card is /dev/dxg, and
+# ROCm reaches it through librocdxg, which loads libdxcore from
+# /usr/lib/wsl/lib. HSA_ENABLE_DXG_DETECTION=1 is the runtime's opt-in.
+services:
+  localai:
+    image: quay.io/go-skynet/local-ai:v4.11.0-gpu-hipblas@sha256:09a90e35e0a1071e4e36527a9f5773c7550d6753219e5377aae97545263ae7dd
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:30286:8080"
+    devices:
+      - /dev/dxg
+    environment:
+      HSA_ENABLE_DXG_DETECTION: "1"
+      LD_LIBRARY_PATH: /usr/lib/wsl/lib
+      LOCALAI_BACKEND_GALLERIES: >-
+        [{"name":"localai","url":"github:mudler/LocalAI/backend/index.yaml@master"},
+         {"name":"louise","url":"github:sourstar/louise-rag/deploy/localai/gallery/index.yaml@main"}]
+    volumes:
+      - /usr/lib/wsl/lib:/usr/lib/wsl/lib:ro
+      - /opt/rocm/lib/librocdxg.so.1:/usr/lib/x86_64-linux-gnu/librocdxg.so:ro
+      - localai-models:/models
+      - localai-backends:/backends
+      - ${LOUISE_WEIGHTS:-./weights}:/models/weights:ro
+volumes:
+  localai-models:
+  localai-backends:

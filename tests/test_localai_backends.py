@@ -520,3 +520,193 @@ def test_dar_legal_it_hands_torch_cache_back_after_a_long_text():
     assert server.release(torch, "xpu") is False and calls == ["empty"]
     assert server.release(torch, "cpu") is False, "the CPU has no device cache to hand back"
     assert server.release(SimpleNamespace(), "xpu") is False
+
+
+# ---- louise-python: the four as one backend (docs/notes/backend-consolidation.md) ------------
+
+PYTHON_DIR = BACKENDS / "louise-python"
+
+def _dispatcher():
+    """backend.py imports louise_backend, beside it in the image."""
+    saved = sys.modules.get("louise_backend")
+    sys.modules["louise_backend"] = lb
+    try:
+        return _exec("backend_louise_python_under_test", PYTHON_DIR / "backend.py")
+    finally:
+        if saved is None:
+            sys.modules.pop("louise_backend", None)
+        else:
+            sys.modules["louise_backend"] = saved
+
+
+python_backend = _dispatcher()
+UNIMPLEMENTED = SimpleNamespace(**vars(STATUS), UNIMPLEMENTED="UNIMPLEMENTED")
+
+
+def _combined(made: list | None = None, **servicers):
+    """The dispatcher with each task's Servicer handed in: the real classes of
+    the backends it replaces, with their stand-in models."""
+    made = [] if made is None else made
+
+    def load_module(name):
+        made.append(name)
+        return SimpleNamespace(Servicer=servicers[name])
+    return python_backend.Servicer(PB, UNIMPLEMENTED, load_module=load_module)
+
+
+def test_every_task_is_the_backend_it_replaces_copied_by_the_dockerfile():
+    """TASKS names modules; the Dockerfile lays each one down from the backend
+    it replaces, beside the model code that backend imports."""
+    dockerfile = (PYTHON_DIR / "Dockerfile").read_text()
+    replaced = {"task_dar_legal_it": "louise-dar-legal-it", "task_madlad": "louise-madlad",
+                "task_medcpt_article": "louise-medcpt-article-ov",
+                "task_medcpt_rerank": "louise-medcpt-rerank"}
+    assert set(python_backend.TASKS.values()) == set(replaced)
+    for module, directory in replaced.items():
+        assert f"backends/{directory}/backend.py" in dockerfile.split(f"/out/{module}.py")[0] \
+            .splitlines()[-1], f"{module} is {directory}'s backend.py"
+    for server, as_name in (("deploy/dar-legal-it/server.py", "dar_legal_it.py"),
+                            ("deploy/madlad-translate/server.py", "madlad.py"),
+                            ("deploy/medcpt-rerank/server.py", "medcpt.py")):
+        assert any(server in line and line.rstrip().endswith(f"/out/{as_name}")
+                   for line in dockerfile.splitlines()), as_name
+    assert "\nFROM scratch\nCOPY --from=build /out/ /\n" in dockerfile, \
+        "the image IS the backend directory, run.sh at its root (LocalAI refuses one without)"
+
+
+def test_the_task_option_picks_the_backend_and_the_rest_go_to_it_unchanged(tmp_path):
+    made: list = []
+    seen: list = []
+    s = _combined(made, task_dar_legal_it=lambda pb, st: _dar(seen))
+    r = s.LoadModel(load_call(tmp_path, options=["device:cpu", "task:dar-legal-it"],
+                              context_size=8192), None)
+    assert r.success, r.message
+    assert made == ["task_dar_legal_it"] and s.task == "dar-legal-it"
+    assert seen == [("build", str(tmp_path), "cpu", 8192)], \
+        "device:cpu reached it; task: did not (it would refuse an unknown option)"
+    out = s.Embedding(SimpleNamespace(Embeddings="art. 1"), Context())
+    assert out.embeddings == [6.0, 0.5] and out.layout == PB.EMBEDDING_LAYOUT_FINAL
+
+
+@pytest.mark.parametrize("options, why", [
+    ([], "no task"), (["task:madlad", "task:madlad"], "several"),
+    (["task:llama"], "this backend runs")])
+def test_a_load_without_one_known_task_is_refused(tmp_path, options, why):
+    r = _combined().LoadModel(load_call(tmp_path, options=options), None)
+    assert not r.success and why in r.message
+
+
+def test_one_process_serves_one_task(tmp_path):
+    s = _combined(task_dar_legal_it=lambda pb, st: _dar(),
+                  task_madlad=lambda pb, st: _madlad())
+    assert s.LoadModel(load_call(tmp_path, options=["task:dar-legal-it"],
+                                 context_size=8192), None).success
+    r = s.LoadModel(load_call(tmp_path, options=["task:madlad"], batch=4), None)
+    assert not r.success and "another process" in r.message
+    assert s.task == "dar-legal-it"
+
+
+def test_a_refused_load_leaves_nothing_loaded(tmp_path):
+    s = _combined(task_dar_legal_it=lambda pb, st: _dar())
+    assert not s.LoadModel(load_call(tmp_path, options=["task:dar-legal-it"]), None).success
+    assert s.inner is None and s.task is None
+    assert aborted(lambda: s.Embedding(SimpleNamespace(Embeddings="x"),
+                                       Context()))[0] == "FAILED_PRECONDITION"
+
+
+def test_a_call_the_task_does_not_answer_is_unimplemented(tmp_path):
+    s = _combined(task_medcpt_rerank=lambda pb, st: _medcpt(tmp_path))
+    r = s.LoadModel(load_call(_medcpt_dir(tmp_path), options=["task:medcpt-rerank"],
+                              context_size=512, batch=4), None)
+    assert r.success, r.message
+    code, message = aborted(lambda: s.Embedding(SimpleNamespace(Embeddings="x"), Context()))
+    assert code == "UNIMPLEMENTED" and "medcpt-rerank" in message
+
+
+def test_madlad_and_the_article_encoder_answer_through_it_as_before(tmp_path):
+    m = _combined(task_madlad=lambda pb, st: _madlad())
+    assert m.LoadModel(load_call(tmp_path, options=["task:madlad", "device:cpu"], batch=4),
+                       None).success
+    got = json.loads(m.Predict(SimpleNamespace(Prompt=json.dumps(
+        {"items": [{"text": "ave", "to": "it"}]})), Context()).message)
+    assert got["translations"] == ["<2it>|AVE"]
+    a = _combined(task_medcpt_article=lambda pb, st: _article())
+    assert a.LoadModel(load_call(_medcpt_dir(tmp_path),
+                                 options=["pairs:true", "task:medcpt-article"],
+                                 context_size=512), None).success
+    out = a.Embedding(SimpleNamespace(Embeddings=lb.PAIR_MARK + json.dumps(["ab", "cde"])),
+                      Context())
+    assert out.embeddings == [2.0, 3.0, 2.0], "a true pair: its second segment is segment 1"
+
+
+def test_run_sh_runs_the_portable_python_wherever_it_is_unpacked(tmp_path):
+    """No venv (its pyvenv.cfg names the interpreter by absolute path, and a
+    GUI install picks the directory); nothing of the host image's PYTHON*."""
+    d = tmp_path / "any-name-the-install-gives"
+    (d / "python" / "bin").mkdir(parents=True)
+    (d / "run.sh").write_bytes((PYTHON_DIR / "run.sh").read_bytes())
+    (d / "run.sh").chmod(0o755)
+    python = d / "python" / "bin" / "python3"
+    python.write_text('#!/bin/sh\necho "$$ $0 $* LD=${LD_LIBRARY_PATH:-}"\n')
+    python.chmod(0o755)
+    ran = subprocess.run(["sh", "-c", f'echo "$$"; exec {d}/run.sh --addr 127.0.0.1:4001'],
+                         capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"},
+                         check=True)
+    shell_pid, line = ran.stdout.split("\n", 1)
+    pid, program, rest = line.split(" ", 2)
+    assert pid == shell_pid, "exec: the pid LocalAI lists is the backend's"
+    assert program == f"{python}"
+    assert rest.strip() == f"-B -E -s {d}/backend.py --addr 127.0.0.1:4001 LD={d}/python/lib"
+
+
+def test_its_pins_are_the_measured_set():
+    """docs/notes/backend-consolidation.md: transformers 4.x (DAR-legal-it's
+    GteModel does not run on 5), tokenizers 0.21.4 (MedCPT's tokens identical),
+    the OpenVINO the IRs were checked on, torch 2.14.0 on the card."""
+    pins = dict(line.split("==") for line in
+                (PYTHON_DIR / "requirements.txt").read_text().splitlines()
+                if "==" in line and not line.startswith("#"))
+    assert pins["transformers"] == "4.55.4" and pins["sentence-transformers"] == "5.1.0"
+    assert pins["tokenizers"] == "0.21.4" and pins["openvino"] == "2026.3.1"
+    assert "torch" not in pins, "torch is the variant's"
+    assert "torch==2.14.0+xpu" in (PYTHON_DIR / "requirements-intel.txt").read_text()
+
+
+def test_a_rocm_or_nvidia_card_is_torchs_cuda_and_openvino_refuses_it(tmp_path):
+    """The AMD peer (docs/notes/backend-consolidation.md): torch names ROCm's
+    HIP `cuda`; OpenVINO has no plugin for it, and says what to set."""
+    assert lb.device("cuda") == "cuda"
+    assert lb.openvino_device("xpu") == "GPU" and lb.openvino_device("cpu") == "CPU"
+    with pytest.raises(lb.LoadError, match="device:cpu"):
+        lb.openvino_device("cuda")
+    r = _medcpt(tmp_path).LoadModel(load_call(_medcpt_dir(tmp_path), options=["device:cuda"],
+                                              context_size=512, batch=4), None)
+    assert not r.success and "set device:cpu" in r.message
+    seen: list = []
+    r = _dar(seen).LoadModel(load_call(tmp_path, options=["device:cuda"], context_size=8192),
+                             None)
+    assert r.success and seen[0][2] == "cuda"
+
+
+def test_madlad_hands_the_cache_back_on_cuda_as_on_xpu():
+    """madlad.load's release(): the pass's peak, then the cache back, on
+    either card; the CPU has neither."""
+    server = madlad_backend.madlad
+    src = Path(server.__file__).read_text()
+    assert 'kind in ("xpu", "cuda")' in src and "getattr(torch, kind)" in src
+
+
+def test_the_gallery_lists_a_variant_per_gpu_each_with_its_requirements():
+    """deploy/localai/gallery/index.yaml, read as LocalAI reads a backend
+    gallery: the meta entry's capabilities name concrete entries, and each
+    concrete one is an image of a variant the Dockerfile can build."""
+    yaml = pytest.importorskip("yaml")
+    entries = {e["name"]: e for e in yaml.safe_load(
+        (ROOT / "deploy" / "localai" / "gallery" / "index.yaml").read_text())}
+    meta = entries["louise-python"]
+    assert "uri" not in meta and set(meta["capabilities"]) == {"intel", "amd"}
+    for gpu, name in meta["capabilities"].items():
+        concrete = entries[name]
+        variant = concrete["uri"].rsplit(":", 1)[1]
+        assert concrete["alias"] == "louise-python" and "capabilities" not in concrete
+        assert (PYTHON_DIR / f"requirements-{variant}.txt").is_file(), (gpu, variant)

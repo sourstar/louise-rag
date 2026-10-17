@@ -203,10 +203,12 @@ def load(model_id: str, device: str, dtype_name: str, beams: int | None = None):
     def release():
         # the pass's peak, then the cache back to the card's other tenants
         peak = None
-        if device.startswith("xpu"):
-            peak = round(torch.xpu.max_memory_reserved() / 2**20)
-            torch.xpu.empty_cache()
-            torch.xpu.reset_peak_memory_stats()
+        kind = device.split(":")[0]
+        if kind in ("xpu", "cuda"):         # cuda: an NVIDIA card or ROCm's
+            card = getattr(torch, kind)
+            peak = round(card.max_memory_reserved() / 2**20)
+            card.empty_cache()
+            card.reset_peak_memory_stats()
         return peak
 
     return count, generate, known, languages, release

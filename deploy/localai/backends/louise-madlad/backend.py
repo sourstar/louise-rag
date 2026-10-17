@@ -29,7 +29,7 @@ The load call:
     ModelFile     the snapshot directory
     NBatch        segments per pass (the server's BATCH, 32: memory is the
                   budget on a shared card — the measurements are in server.py)
-    options       device:xpu|cpu (default xpu), dtype:bfloat16|float16|float32
+    options       device:xpu|cuda|cpu (default xpu), dtype:bfloat16|float16|float32
                   (bfloat16), max_seg_tokens (96), beams (1), max_items (512)
 """
 from __future__ import annotations

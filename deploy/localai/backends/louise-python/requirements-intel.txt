@@ -1,0 +1,29 @@
+# louise-python for Intel GPUs: torch on XPU, the version every measurement
+# of 2026-10-17 ran on, and the SYCL runtime its wheel brought that day.
+--extra-index-url https://download.pytorch.org/whl/xpu
+torch==2.14.0+xpu
+dpcpp-cpp-rt==2026.1.0
+impi-rt==2021.18.1
+intel-cmplr-lib-rt==2026.1.0
+intel-cmplr-lib-ur==2026.1.0
+intel-cmplr-lic-rt==2026.1.0
+intel-opencl-rt==2026.1.0
+intel-openmp==2026.1.0
+intel-pti==1.0.1
+intel-sycl-rt==2026.1.0
+mkl==2026.1.0
+oneccl==2022.1.1
+oneccl-devel==2022.1.1
+onemkl-license==2026.1.0
+onemkl-sycl-blas==2026.1.0
+onemkl-sycl-dft==2026.1.0
+onemkl-sycl-lapack==2026.1.0
+onemkl-sycl-rng==2026.1.0
+onemkl-sycl-sparse==2026.1.0
+pyelftools==0.32
+pyzes==0.1.2
+setuptools==78.1.0
+tbb==2023.1.0
+tcmlib==1.5.0
+triton-xpu==3.8.0
+umf==1.1.0

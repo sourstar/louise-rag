@@ -1,0 +1,43 @@
+# Louise's LocalAI backend gallery (docs/notes/backend-consolidation.md).
+# LocalAI reads it when LOCALAI_BACKEND_GALLERIES names it, e.g.
+#   LOCALAI_BACKEND_GALLERIES='[{"name":"louise","url":"https://raw.githubusercontent.com/sourstar/louise-rag/main/deploy/localai/gallery/index.yaml"}]'
+# and its web GUI then lists louise-python in the Backends catalog. Without a
+# gallery, the GUI's "From URL" takes the image directly: its registry name,
+# or ocifile:///<a `docker save` tar LocalAI's container can read>.
+#
+# The meta entry picks a variant by the host's GPU, as LocalAI's own do.
+# The uris are where the images are pushed (ghcr.io/sourstar): until they
+# are, the catalog lists entries it cannot install.
+- name: louise-python
+  alias: louise-python
+  license: AGPL-3.0
+  description: >-
+    Louise's Python models in one backend: DAR-legal-it and MADLAD on torch,
+    MedCPT's article encoder and reranker on OpenVINO. A model's YAML names
+    its task in its options (task:dar-legal-it | task:madlad |
+    task:medcpt-article | task:medcpt-rerank).
+  urls:
+    - https://github.com/sourstar/louise-rag
+  tags:
+    - embeddings
+    - rerank
+    - translation
+  capabilities:
+    intel: intel-louise-python
+    amd: rocm-louise-python
+- name: intel-louise-python
+  alias: louise-python
+  license: AGPL-3.0
+  description: louise-python for Intel GPUs (torch 2.14.0+xpu, OpenVINO 2026.3.1).
+  urls:
+    - https://github.com/sourstar/louise-rag
+  uri: ghcr.io/sourstar/louise-python:intel
+- name: rocm-louise-python
+  alias: louise-python
+  license: AGPL-3.0
+  description: >-
+    louise-python for AMD GPUs (torch 2.14.0+rocm7.2; OpenVINO on the CPU, as
+    it has no AMD plugin). Models say device:cuda (torch's word for ROCm).
+  urls:
+    - https://github.com/sourstar/louise-rag
+  uri: ghcr.io/sourstar/louise-python:rocm

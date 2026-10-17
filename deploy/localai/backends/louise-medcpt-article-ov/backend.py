@@ -22,7 +22,7 @@ The load call:
     ModelFile     the directory: openvino_model.xml (output: the last hidden
                   state) and tokenizer.json — convert_article.py's output
     ContextSize   tokens per text or pair, cut longest-first (NCBI's 512)
-    options       device:xpu|cpu  (OpenVINO's GPU or CPU; default xpu)
+    options       device:xpu|cpu  (OpenVINO's GPU or CPU; default xpu; no AMD or NVIDIA card)
                   pairs:true      a marked string is a pair; without it one
                                   is refused (the front never sends one)
     env           OV_CACHE_DIR, where OpenVINO keeps the compiled model
@@ -37,8 +37,6 @@ import medcpt
 
 KNOWN = {"device": lb.device, "pairs": lb.flag}
 DEFAULTS = {"device": "xpu", "pairs": False}
-#: RAGE's device word -> OpenVINO's
-OV_DEVICE = {"xpu": "GPU", "cpu": "CPU"}
 
 
 class Servicer:
@@ -70,7 +68,7 @@ class Servicer:
             if request.ContextSize <= 0:
                 raise lb.LoadError("context_size (tokens per text or pair) is set in the "
                                    "model's YAML")
-            device = OV_DEVICE[opts["device"]]
+            device = lb.openvino_device(opts["device"])
             self.encode = self._encoder(str(tok), request.ContextSize)
             self.infer = self._infer(str(xml), device, os.environ.get("OV_CACHE_DIR") or None)
             # the first inference compiles its kernels, and says the dimension

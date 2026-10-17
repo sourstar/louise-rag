@@ -40,8 +40,11 @@ from typing import Any, Callable, Iterable, Mapping
 
 #: set before any model library is imported
 OFFLINE = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"}
-#: RAGE's words for a device; each backend maps them to its library's
-DEVICES = ("xpu", "cpu")
+#: RAGE's words for a device; each backend maps them to its library's.
+#: `cuda` is torch's word for an NVIDIA card AND for an AMD one (ROCm's HIP)
+DEVICES = ("xpu", "cuda", "cpu")
+#: RAGE's word -> OpenVINO's; OpenVINO has no plugin for an NVIDIA or AMD card
+OPENVINO_DEVICES = {"xpu": "GPU", "cpu": "CPU"}
 #: as LocalAI's own Python backends
 MAX_MESSAGE = 50 * 1024 * 1024
 #: a request in progress when LocalAI stops the backend finishes within this
@@ -86,6 +89,14 @@ def device(value: str) -> str:
     if value not in DEVICES:
         raise ValueError(f"one of {', '.join(DEVICES)}")
     return value
+
+
+def openvino_device(value: str) -> str:
+    """OpenVINO's name for the device, or a LoadError naming the one it can use."""
+    if value not in OPENVINO_DEVICES:
+        raise LoadError(f"device:{value}: OpenVINO runs on an Intel GPU or a CPU; "
+                        f"set device:cpu on this host")
+    return OPENVINO_DEVICES[value]
 
 
 def positive(value: str) -> int:

@@ -24,7 +24,10 @@ SUSPENDED = sorted((ROOT / "deploy" / "rage" / "localai-models" / "suspended").g
 ALL = MODELS + SUSPENDED
 BACKENDS = ROOT / "deploy" / "localai" / "backends"
 #: the platform's Python backends (15e-2), by the name a YAML's `backend` gives
-PYTHON_BACKENDS = sorted(d.name for d in BACKENDS.iterdir() if d.name.startswith("louise-"))
+#: the per-model backends RAGE's image assembles; louise-python, the four as
+#: one with its own Dockerfile, is tested in tests/test_localai_backends.py
+PYTHON_BACKENDS = sorted(d.name for d in BACKENDS.iterdir()
+                         if d.name.startswith("louise-") and d.name != "louise-python")
 SERIES = (ROOT / "deploy" / "localai" / "patches" / "series").read_text(encoding="utf-8")
 
 

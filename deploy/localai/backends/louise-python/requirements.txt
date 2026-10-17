@@ -1,0 +1,42 @@
+# louise-python, every variant: the set measured on the node 2026-10-17
+# (docs/notes/backend-consolidation.md), pinned as `pip freeze` gave it, less
+# torch and the runtime its variant's wheel brings (requirements-<variant>.txt).
+# transformers stays on 4.x: DAR-legal-it's GteModel code does not run on 5.
+-r ../requirements-grpc.txt
+accelerate==1.15.0
+certifi==2026.7.22
+charset-normalizer==3.5.2
+cloudpickle==3.1.2
+einops==0.8.2
+filelock==3.32.3
+fsspec==2026.7.0
+hf-xet==1.7.0
+huggingface_hub==0.36.2
+idna==3.20
+Jinja2==3.1.6
+joblib==1.6.0
+MarkupSafe==3.0.3
+mpmath==1.3.0
+narwhals==2.27.1
+networkx==3.6.1
+numpy==2.5.4
+openvino==2026.3.1
+openvino-telemetry==2025.2.0
+packaging==26.3
+pillow==13.0.0
+psutil==7.2.2
+PyYAML==6.0.3
+regex==2026.9.29
+requests==2.34.2
+safetensors==0.8.0
+scikit-learn==1.9.1
+scipy==1.18.1
+sentence-transformers==5.1.0
+sentencepiece==0.2.2
+sympy==1.14.0
+threadpoolctl==3.7.0
+tokenizers==0.21.4
+tqdm==4.70.1
+transformers==4.55.4
+typing_extensions==4.16.0
+urllib3==2.8.0

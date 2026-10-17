@@ -35,5 +35,44 @@ The backend's tree replaces four engines with one, so each pinned model's
 run is new: DAR-legal-it (normattiva) and medcpt-article-ov (pubmed) pass the
 calibration gate again. By the figures above, no re-embedding (RULE 1).
 
+## What the stock backends would need (for upstream)
+
+What `intel-transformers` / `intel-rerankers` (v4.11.0's, as installed on the
+node) would need to serve these four, and whether each change could move a
+model they already serve. "Gated" = behind a new option; a model whose YAML
+does not set it loads as today.
+
+| # | patch | for | other models |
+|---|---|---|---|
+| U1 | `SentenceTransformer`: pass `device` (XPU/CUDA from the load call), `model_kwargs` (`attn_implementation`), `config_kwargs`, and `max_seq_length` from `ContextSize` | DAR-legal-it | none if gated. **Ungated, `max_seq_length` changes vectors** of every ST model whose texts exceed its card's length |
+| U2 | DAR-legal-it's `GteModel` code calls `get_extended_attention_mask`, gone in transformers 5 | DAR-legal-it | NOT a backend patch: the code is the model's (`trust_remote_code`, inside its weights digest). Upstream would need transformers 4.x for it, which breaks every model that needs 5. **This alone keeps DAR-legal-it on a backend of ours** |
+| U3 | `Embedding` prints every text in full to stderr ("Calculated embeddings for: …") | all | none; a whole article per line in LocalAI's log |
+| U4 | OpenVINO: optimum-intel 1.15.0 imports `openvino.runtime`, which openvino 2026.4.1 removed | every OV model | **the stock OV path is broken for every model** (checked: `ModuleNotFoundError`); the fix (optimum-intel ≥ 2.x, as `intel-rerankers` has) moves every OV model to a new optimum |
+| U5 | OpenVINO: `if "CPU" or "NPU" in device_map` is always true (localai-bugs B1), so the GPU-only settings never apply | every OV model on GPU | **yes**: fixed, every OV model on a GPU gets the GPU settings, and its numbers can move |
+| U6 | OpenVINO: `export=True` at every load (B2), so an IR on disk is re-exported and the compile cache never hits | every OV model | load time only; the result is the same graph |
+| U7 | OpenVINO feature extraction: a text pair (segment ids) and [CLS] pooling | medcpt-article | none if gated (`pooling:cls`); the pair needs a field LocalAI's API does not have, so our marker (`app/rage/pairs.py`), which upstream is unlikely to take |
+| U8 | Seq2Seq `Predict`: a batch in one prompt | MADLAD | none if gated; but the format is Louise's (app/translate.py), not LocalAI's |
+| U9 | `rerankers`: pass the device (none is passed) | medcpt-rerank (on its HF weights, not our IR) | **yes**: every reranker moves to the GPU when one is present — memory and placement for all of them |
+
+U3, U4 and U6 are plain upstream fixes worth filing (localai-bugs.md). U1,
+U7, U8 are gated features. U2 is not fixable in a backend; U5 and U9 move
+models other people run.
+
+## Importing it in LocalAI's GUI
+
+`deploy/localai/backends/louise-python/Dockerfile` builds the backend as an
+image whose root is the backend directory (run.sh first), as LocalAI's own
+backend images are. LocalAI installs it, under the name the install gives,
+from:
+- **Backends → From URL** with the image's registry name, or
+  `ocifile:///<path>` to a `docker save` tar its container can read
+  (`pkg/downloader`: `ocifile://` is extracted as an OCI image);
+- **the catalog**, once `LOCALAI_BACKEND_GALLERIES` names
+  `deploy/localai/gallery/index.yaml` (a meta entry picking the variant by
+  GPU, as upstream's).
+No venv: the packages are in the portable CPython's prefix, so the backend
+does not depend on the directory it is unpacked into (a venv's pyvenv.cfg
+does; upstream rewrites it at every start, which a hashed tree cannot have).
+
 Open: the AMD peer (WSL2, next week) needs this backend's ROCm build; OpenVINO
 has no AMD GPU, so MedCPT runs on its CPU there.

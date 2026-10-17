@@ -15,7 +15,7 @@ The load call:
     ModelFile     the directory: openvino_model.xml and tokenizer.json
     ContextSize   tokens per pair, cut longest-first (the model card's 512)
     NBatch        pairs per inference
-    options       device:xpu|cpu  (OpenVINO's GPU or CPU; default xpu)
+    options       device:xpu|cpu  (OpenVINO's GPU or CPU; default xpu; no AMD or NVIDIA card)
     env           OV_CACHE_DIR, where OpenVINO keeps the model compiled for
                   the card (docs/notes/rage.md §20) — in the run, as the
                   engine's `env` (operator, 2026-10-01)
@@ -30,8 +30,6 @@ import medcpt
 
 KNOWN = {"device": lb.device}
 DEFAULTS = {"device": "xpu"}
-#: RAGE's device word -> OpenVINO's
-OV_DEVICE = {"xpu": "GPU", "cpu": "CPU"}
 
 
 class Servicer:
@@ -55,7 +53,7 @@ class Servicer:
             if request.ContextSize <= 0 or request.NBatch <= 0:
                 raise lb.LoadError("context_size (tokens per pair) and batch (pairs per "
                                    "inference) are set in the model's YAML")
-            device = OV_DEVICE[opts["device"]]
+            device = lb.openvino_device(opts["device"])
             reranker = medcpt.Reranker(
                 self._encoder(str(tok), request.ContextSize),
                 self._infer(str(xml), device, os.environ.get("OV_CACHE_DIR") or None),

@@ -20,7 +20,7 @@ The load call:
     ModelFile     the snapshot directory (its remote code included: it is part
                   of the weights digest, 09 §9.3)
     ContextSize   the longest text in tokens (the server's MAX_SEQ, 8192)
-    options       device:xpu|cpu  (default xpu)
+    options       device:xpu|cuda|cpu  (default xpu; cuda = NVIDIA or ROCm)
 """
 from __future__ import annotations
 
