@@ -131,6 +131,17 @@ Built, not yet run on the card (it is not in the PC yet):
   Desktop's VM exposes neither the device nor the libraries).
 - llama.cpp models: LocalAI's own `rocm-llama-cpp`; no backend of ours.
 
+**Without a card (node, 2026-10-17):** the ROCm image's tree, run in a CPU
+container: torch 2.14.0+rocm7.2 imports (HIP 7.2.53211, no GPU), DAR-legal-it
+with `device:cpu` gives cosine 1.000000 against the B70's vectors on three
+texts, and medcpt-article runs on OpenVINO's CPU. Both images
+(`louise-python:intel`, `louise-python:rocm`) are on the node, ready to push
+to ghcr.io once Docker there is logged in.
+
+After the switch, a live normattiva search (`/api/search`, hybrid): the dense
+leg is present (551 ms) — the query encoded by DAR-legal-it on louise-python,
+its run accepted; the first translation paid MADLAD's cold load (9.1 s).
+
 Open for the card: `rocminfo` lists gfx1200 under WSL (ROCm issue #6323 is a
 report that it does not on Windows 10); each task loads on `cuda`; and VeGa
 under WSL. `/dev/dxg` has no per-process DRM counters, so since 66a3afa the
