@@ -71,11 +71,13 @@ COPY deploy/localai/backends/louise-medcpt-rerank/backend.py /out/task_medcpt_re
 COPY deploy/dar-legal-it/server.py                           /out/dar_legal_it.py
 COPY deploy/madlad-translate/server.py                       /out/madlad.py
 COPY deploy/medcpt-rerank/server.py                          /out/medcpt.py
+COPY deploy/localai/backends/louise-python/task_jina_v3.py   /out/task_jina_v3.py
+COPY deploy/jina-embeddings-v3/server.py                     /out/jina_v3.py
 # everything compiled now: nothing is written into the tree at run time (a
 # backend behind VeGa is identified by its installed files, hashed at every load)
 RUN set -eu; P=/out/python/bin/python3; chmod 0755 /out/run.sh; \
     cd /out && LD_LIBRARY_PATH=/out/python/lib $P -B -E -s -c "import backend, task_dar_legal_it, \
-task_madlad, task_medcpt_article, task_medcpt_rerank, backend_pb2_grpc, grpc_auth, torch, \
+task_madlad, task_medcpt_article, task_medcpt_rerank, task_jina_v3, backend_pb2_grpc, grpc_auth, torch, \
 transformers, sentence_transformers, openvino, tokenizers; \
 print('torch', torch.__version__, 'transformers', transformers.__version__, 'openvino', \
 openvino.__version__)"; \

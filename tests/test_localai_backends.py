@@ -561,13 +561,18 @@ def test_every_task_is_the_backend_it_replaces_copied_by_the_dockerfile():
     replaced = {"task_dar_legal_it": "louise-dar-legal-it", "task_madlad": "louise-madlad",
                 "task_medcpt_article": "louise-medcpt-article-ov",
                 "task_medcpt_rerank": "louise-medcpt-rerank"}
-    assert set(python_backend.TASKS.values()) == set(replaced)
+    native = {"task_jina_v3": "deploy/localai/backends/louise-python/task_jina_v3.py"}
+    assert set(python_backend.TASKS.values()) == set(replaced) | set(native)
+    for module, source in native.items():
+        assert any(source in line and line.rstrip().endswith(f"/out/{module}.py")
+                   for line in dockerfile.splitlines()), f"{module} is written for louise-python"
     for module, directory in replaced.items():
         assert f"backends/{directory}/backend.py" in dockerfile.split(f"/out/{module}.py")[0] \
             .splitlines()[-1], f"{module} is {directory}'s backend.py"
     for server, as_name in (("deploy/dar-legal-it/server.py", "dar_legal_it.py"),
                             ("deploy/madlad-translate/server.py", "madlad.py"),
-                            ("deploy/medcpt-rerank/server.py", "medcpt.py")):
+                            ("deploy/medcpt-rerank/server.py", "medcpt.py"),
+                            ("deploy/jina-embeddings-v3/server.py", "jina_v3.py")):
         assert any(server in line and line.rstrip().endswith(f"/out/{as_name}")
                    for line in dockerfile.splitlines()), as_name
     assert "\nFROM scratch\nCOPY --from=build /out/ /\n" in dockerfile, \
@@ -717,7 +722,8 @@ def test_each_staged_model_on_louise_python_is_a_load_its_task_accepts():
     louise-python (or VeGa's wrapper of it) names one task, and every other
     option is one that task reads, at a value it takes."""
     tasks = {"dar-legal-it": dar_backend, "madlad": madlad_backend,
-             "medcpt-article": article_backend, "medcpt-rerank": medcpt_backend}
+             "medcpt-article": article_backend, "medcpt-rerank": medcpt_backend,
+             "jina-v3": jina_task}
     assert set(tasks) == set(python_backend.TASKS)
     seen = set()
     for path in sorted((ROOT / "deploy" / "vega" / "stage" / "models").glob("*.yaml")):
@@ -731,4 +737,93 @@ def test_each_staged_model_on_louise_python_is_a_load_its_task_accepts():
         task, rest = python_backend.split_task(body["options"])
         lb.options(rest, tasks[task].KNOWN, tasks[task].DEFAULTS)
         seen.add(task)
-    assert seen == set(tasks), "each task serves a model"
+    assert seen >= set(tasks) - {"jina-v3"}, "each live task serves a model (jina-v3: none yet)"
+
+
+# ---- jina-v3: wikidata's encoder, a louise-python task of its own ------------------------
+
+def _jina_task():
+    """task_jina_v3.py as the image lays it out: louise_backend and the model
+    code (deploy/jina-embeddings-v3/server.py, as `jina_v3`) beside it."""
+    shared = {"louise_backend": lb,
+              "jina_v3": _exec("jina_v3", ROOT / "deploy" / "jina-embeddings-v3" / "server.py")}
+    saved = {k: sys.modules.get(k) for k in shared}
+    try:
+        sys.modules.update(shared)
+        return _exec("task_jina_v3_under_test", PYTHON_DIR / "task_jina_v3.py")
+    finally:
+        for name, module in saved.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+
+jina_task = _jina_task()
+
+
+def _jina(seen=None):
+    seen = [] if seen is None else seen
+
+    def build(model_dir, device, adapter, dim, max_tokens):
+        seen.append(("build", model_dir, device, adapter, dim, max_tokens))
+
+        def encode(text):
+            seen.append(("encode", text))
+            return [1.0] + [0.0] * (dim - 1)
+        return encode, dim
+    return jina_task.Servicer(PB, STATUS, build=build)
+
+
+def test_jina_v3_loads_the_adapter_and_width_the_load_names(tmp_path):
+    """Wikimedia's vectors: retrieval.passage at 512 (docs/notes/wikidata-plugins.md);
+    a query encoder is the same weights with adapter:retrieval.query."""
+    seen: list = []
+    r = _jina(seen).LoadModel(load_call(tmp_path, options=["dim:512"], context_size=8192), None)
+    assert r.success, r.message
+    assert seen[0] == ("build", str(tmp_path), "xpu", "retrieval.passage", 512, 8192)
+    assert seen[1] == ("encode", "the first pass compiles its kernels"), "warm before answering"
+    seen.clear()
+    assert _jina(seen).LoadModel(load_call(tmp_path, options=["adapter:retrieval.query",
+                                                              "device:cuda"],
+                                           context_size=8192), None).success
+    assert seen[0][2:5] == ("cuda", "retrieval.query", 1024)
+
+
+@pytest.mark.parametrize("options, context, why", [
+    (["dim:500"], 8192, "dim"), (["adapter:"], 8192, "adapter"), ([], 0, "context_size")])
+def test_jina_v3_refuses_a_load_it_cannot_honour(tmp_path, options, context, why):
+    r = _jina().LoadModel(load_call(tmp_path, options=options, context_size=context), None)
+    assert not r.success and why in r.message
+
+
+def test_jina_v3_embeds_one_text_as_sent_and_declares_it_final(tmp_path):
+    seen: list = []
+    s = _jina(seen)
+    s.LoadModel(load_call(tmp_path, options=["dim:512"], context_size=8192), None)
+    out = s.Embedding(SimpleNamespace(Embeddings="Gdańsk, city in Poland"), Context())
+    assert seen[-1] == ("encode", "Gdańsk, city in Poland"), \
+        "the text untouched: the model's own encode prefixes its task instruction"
+    assert len(out.embeddings) == 512 and out.dim == 512
+    assert out.layout == PB.EMBEDDING_LAYOUT_FINAL
+    assert aborted(lambda: s.Embedding(SimpleNamespace(Embeddings=""),
+                                       Context()))[0] == "INVALID_ARGUMENT"
+
+
+def test_jina_v3_reads_its_remote_code_from_inside_the_weights(tmp_path):
+    """The weights digest (09 §9.3) must cover the code that computes the vector."""
+    server = jina_task.jina_v3
+    with pytest.raises(FileNotFoundError, match="remote code"):
+        server.hub_cache(str(tmp_path))
+    (tmp_path / "hf-cache").mkdir()
+    assert server.hub_cache(str(tmp_path)) == str(tmp_path / "hf-cache")
+    assert server.normalised([3.0, 4.0]) == [0.6, 0.8]
+    with pytest.raises(ValueError):
+        server.normalised([0.0, 0.0])
+
+
+def test_jina_v3_through_the_dispatcher(tmp_path):
+    s = _combined(task_jina_v3=lambda pb, st: _jina())
+    assert s.LoadModel(load_call(tmp_path, options=["task:jina-v3", "dim:512"],
+                                 context_size=8192), None).success
+    assert len(s.Embedding(SimpleNamespace(Embeddings="x"), Context()).embeddings) == 512

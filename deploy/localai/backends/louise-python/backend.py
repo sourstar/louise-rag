@@ -10,6 +10,7 @@ THE MODEL'S YAML SAYS WHICH MODEL IT IS, with one more option:
     task:madlad           Predict (a JSON batch)  torch, transformers
     task:medcpt-article   Embedding (text pairs)  OpenVINO
     task:medcpt-rerank    Rerank                  OpenVINO
+    task:jina-v3          Embedding               torch (wikidata's encoder)
 
 Each task IS the backend it replaces: its backend.py, copied beside this file
 under the module name TASKS gives (the Dockerfile), unchanged. Every other
@@ -28,7 +29,8 @@ import louise_backend as lb
 TASKS = {"dar-legal-it": "task_dar_legal_it",
          "madlad": "task_madlad",
          "medcpt-article": "task_medcpt_article",
-         "medcpt-rerank": "task_medcpt_rerank"}
+         "medcpt-rerank": "task_medcpt_rerank",
+         "jina-v3": "task_jina_v3"}
 TASK = "task"
 #: the calls LocalAI may make of a model; a task answers those it defines
 CALLS = ("Embedding", "Predict", "Rerank")
