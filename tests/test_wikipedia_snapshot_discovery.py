@@ -32,6 +32,8 @@ def _dump(root, wiki: str, snap: str, pages) -> None:
         bz2.compress("".join(_page(*p) for p in pages).encode()))
     (d / f"{base}-index.txt.bz2").write_bytes(
         bz2.compress("".join(f"0:{p[0]}:{p[1]}\n" for p in pages).encode()))
+    from tests import wikipedia_props
+    wikipedia_props.write(d / f"{base}.xml.bz2")
 
 
 @pytest.fixture

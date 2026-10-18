@@ -8,6 +8,9 @@ fetch() decompresses ONLY the one stream a page lives in.
 
 Locator format (plugin-opaque per §2, survives the manifest like pubmed's):
     "<dump path>::<stream start>::<stream end>"    end == 0 → EOF.
+and, since parser 5, when the dump run's `page_props` holds rows for the
+page, a last segment naming them (page_props.py):
+    "…|<page_props path>::<start>::<end>"          decompressed bytes.
 
 ONE COLLECTION, WIKIVEC'S LANGUAGES, TWO LAYERS (operator, 2026-09-10 and
 2026-09-14; docs/notes/wikipedia-two-layers.md). The native id carries the
@@ -28,10 +31,15 @@ from ... import chunking
 from .. import cursor
 from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass,
                     Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc)
-from . import archive, wikitext
+from . import archive, page_props, wikitext
 from .ids import DUMP_BASE, LANG_ORDINAL, decode_native_id, native_id_of  # noqa: F401
 
 _LOCATOR_SEP = "::"
+#: what joins a page's own bytes and its page_props unit in a RawDoc, before
+#: the unit's length (8 bytes, big-endian) — gutenberg's form for its
+#: catalogue entry. Neither an XML page nor the archive's JSON holds a NUL.
+#: A page with no unit is its bytes alone: parser 4's `origin_hash`.
+_PROPS_MARK = b"\0page_props\0"
 # canonical-namespace pages only; everything else is navigation/meta. The
 # FALLBACK for a dump whose header names no namespaces: English names only,
 # so it let every other wiki's categories and templates through (see
@@ -96,10 +104,59 @@ def _archive_prefix() -> str:
     return f"{a.base_url}/resolve/{a.revision}/"
 
 
+def props_segment(locator: str) -> tuple[str, tuple[Path, int, int] | None]:
+    """`(the locator without its page_props segment, that segment as
+    (file, start, end))` — the segment is None when the page has none."""
+    head, sep, last = str(locator).rpartition(archive.SEG_SEP)
+    if sep and page_props.is_props_locator(last):
+        path, _, tail = last.rpartition(_LOCATOR_SEP)
+        path2, _, start = path.rpartition(_LOCATOR_SEP)
+        return head, (Path(path2), int(start), int(tail))
+    return str(locator), None
+
+
 def split_locator(locator: str) -> tuple[Path, int, int]:
-    path, _, tail = locator.rpartition(_LOCATOR_SEP)
+    """A dump page's (dump, stream start, stream end)."""
+    path, _, tail = props_segment(locator)[0].rpartition(_LOCATOR_SEP)
     path2, _, start = path.rpartition(_LOCATOR_SEP)
     return Path(path2), int(start), int(tail)
+
+
+def _with_props(locator: str, props: Path | None, unit) -> str:
+    if props is None or unit is None:
+        return locator
+    return (f"{locator}{archive.SEG_SEP}{props}{_LOCATOR_SEP}{unit[0]}"
+            f"{_LOCATOR_SEP}{unit[1]}")
+
+
+def _split_raw(data: bytes) -> tuple[bytes, bytes | None]:
+    """A RawDoc's bytes back into the page's own and its page_props unit."""
+    i = data.find(_PROPS_MARK)
+    if i < 0:
+        return data, None
+    at = i + len(_PROPS_MARK)
+    n = int.from_bytes(data[at:at + 8], "big")
+    unit = data[at + 8:]
+    if len(unit) != n:
+        raise ValueError(f"page_props unit of {len(unit)} bytes, {n} declared")
+    return data[:i], unit
+
+
+class _PropsAware:
+    """The archive's discovery cursor, answering for each shard's language's
+    page_props file as well: a shard is unchanged only while that file is,
+    so a new page_props re-signs every article of its language."""
+
+    def __init__(self, progress, root: Path, props_of: dict[str, Path]):
+        self.progress, self.root, self.props_of = progress, root, props_of
+
+    def unchanged(self, shard: Path) -> bool:
+        lang = archive.lang_of_shard(shard.relative_to(self.root))
+        props = self.props_of.get(lang) if lang else None
+        return self.progress.unchanged(shard) and (props is None or self.progress.unchanged(props))
+
+    def __getattr__(self, name):
+        return getattr(self.progress, name)         # stage, flush: the cursor's own
 
 
 # One-slot stream cache. A multistream chunk holds ~100 pages, and every
@@ -265,7 +322,14 @@ class WikipediaSource:
     #: 4 the same evening: the native id carries the language (wikivec's
     #: numbering) so the collection holds all of wikivec's languages, and
     #: `extra.page_id` keeps the Wikipedia page id the id no longer is.
-    PARSER_VERSION = 4
+    #: 5 since 2026-10-18 (operator: the QIDs, from the source): every
+    #: record, of either layer, holds its page's rows of the dump run's
+    #: `page_props` — the Wikidata item in `extra.wikidata`, every other
+    #: property in `extra.page_props` — and `origin_hash` covers them beside
+    #: the page, as gutenberg's covers its catalogue entry. Title and
+    #: sections do not move, so neither does a chunk (02 §2.4 A1d;
+    #: docs/notes/wikipedia-qids.md).
+    PARSER_VERSION = 5
     #: 09 §9.5's `origin` is `<dump>#<start>::<end>`: the member is the
     #: stream's byte range, TWO fields (plugin_io.origin_locator). Without
     #: these the record carried the raw `::` locator, which the reparse
@@ -302,15 +366,6 @@ class WikipediaSource:
         root = state.corpus_root
         if not root.is_dir():
             return
-        # LAYER 1's SOURCE FIRST: the pre-embedded archive's articles, under
-        # its own ids. `covered` is every page the archive holds, whatever
-        # the scan cursor skips, so the dump pass below never mints a second
-        # document for one of them.
-        covered = archive.covered_articles(root, state.state_dir)
-        yield from archive.discover_articles(
-            state, self.source_id, cursor.Progress(state, f"{self.source_id}-archive"),
-            self._archive_ref)
-        progress = cursor.Progress(state, self.source_id)
         dumps = sorted(root.rglob(f"*{_DUMP_SUFFIX}"))
         # THE PINNED SNAPSHOT ONLY. Dated dumps coexist in one corpus by
         # design (acquire/specs.py `_wiki_files`), and the node keeps the
@@ -320,6 +375,50 @@ class WikipediaSource:
         pin = getattr(state, "snapshot", None)
         if pin:
             dumps = [d for d in dumps if d.parent.name == pin]
+        # EACH LANGUAGE'S page_props, the dump run's own (parser 5): what both
+        # layers' records take their QIDs from. A language with two dumps (an
+        # unpinned corpus) names none — the dump pass refuses its second.
+        runs: dict[str, list[Path]] = {}
+        for d in dumps:
+            runs.setdefault(_lang_of(d.name), []).append(page_props.props_path_of(d))
+        props_of = {lang: ps[0] for lang, ps in runs.items() if len(ps) == 1}
+        if pin:
+            # an archive language whose pinned dump is not on disk still has its
+            # run's page_props where acquisition puts it
+            for lang in LANG_ORDINAL:
+                if lang not in runs:
+                    w = f"{lang}wiki"
+                    props_of[lang] = root / w / pin / f"{w}-{pin}{page_props.SUFFIX}"
+        # LAYER 1's SOURCE FIRST: the pre-embedded archive's articles, under
+        # its own ids. `covered` is every page the archive holds, whatever
+        # the scan cursor skips, so the dump pass below never mints a second
+        # document for one of them.
+        covered = archive.covered_articles(root, state.state_dir)
+        # A language whose page_props is not on disk waits — deferred, never an
+        # error on its documents: its records cannot be made whole yet
+        for lang in sorted(covered):
+            if not (lang in props_of and props_of[lang].is_file()):
+                want = props_of.get(lang)
+                yield DocRef(source_id=self.source_id, native_id=f"{lang}-page_props",
+                             locator=str(want or root), scope="container",
+                             error=(f"the archive's {lang} articles wait for their dump run's "
+                                    f"page_props ({want.name if want else 'no single dump run'})"))
+        ready = {lang for lang, p in props_of.items() if p.is_file()}
+        readers: dict[str, object] = {}
+
+        def make_ref(pending: dict, lang: str) -> DocRef:
+            if lang not in readers:
+                readers[lang] = page_props.reader(props_of[lang])
+            return self._archive_ref(pending, lang, props_of[lang], readers[lang])
+        a_progress = cursor.Progress(state, f"{self.source_id}-archive")
+        yield from archive.discover_articles(
+            state, self.source_id, _PropsAware(a_progress, root, props_of), make_ref,
+            ready=lambda lang: lang in ready)
+        for lang in sorted(ready & set(covered)):
+            a_progress.stage(props_of[lang])
+        a_progress.flush()
+        readers.clear()
+        progress = cursor.Progress(state, self.source_id)
         seen_wikis: set[str] = set()
         # EVERY WIKI OF THE COLLECTION, apart by id (06 §6.1: refuse a
         # collision rather than trust it). A page id is unique only within
@@ -353,9 +452,21 @@ class WikipediaSource:
                              locator=str(dump), scope="container",
                              error=f"multistream index missing for {dump.name}")
                 continue
-            if progress.unchanged(dump) and progress.unchanged(index):
+            props = page_props.props_path_of(dump)
+            if not props.is_file():
+                yield DocRef(source_id=self.source_id, native_id=dump.name,
+                             locator=str(dump), scope="container",
+                             error=f"{props.name} missing: {dump.name}'s pages wait for it")
+                continue
+            if progress.unchanged(dump) and progress.unchanged(index) \
+                    and progress.unchanged(props):
                 continue     # already enumerated at this (mtime, size)
             st = dump.stat()
+            # THE SIGNATURE COVERS THE page_props FILE TOO: a record holds its
+            # rows, so a new table must rebuild it (tests/origin_coverage.py)
+            pst = props.stat()
+            sig = (int(max(st.st_mtime, pst.st_mtime)), st.st_size + pst.st_size)
+            unit_of = page_props.reader(props)
             lang = _lang_of(dump.name)
             # articles only, by THIS wiki's own namespace names
             skip = namespace_prefixes(dump, index)
@@ -372,7 +483,7 @@ class WikipediaSource:
                             continue
                         offset = int(offset_s)
                         if offset != last_offset and pending:
-                            yield from self._flush(pending, offset, dump, st, lang, covered)
+                            yield from self._flush(pending, offset, dump, sig, lang, covered, props, unit_of)
                             pending = []
                         last_offset = offset
                         if (title.startswith(skip) if skip else _SKIP_TITLE.match(title)):
@@ -386,21 +497,23 @@ class WikipediaSource:
                                     f"{type(e).__name__}: {e}"[:200])
                 continue
             if pending:
-                yield from self._flush(pending, 0, dump, st, lang, covered)
+                yield from self._flush(pending, 0, dump, sig, lang, covered, props, unit_of)
             # both files staged together, recorded once the dump's refs are
             # committed (cursor.Progress) — an interrupted scan resumes here
             progress.stage(dump)
             progress.stage(index)
+            progress.stage(props)
         progress.flush()
 
-    def _flush(self, pending, end_offset, dump, st, lang, covered):
+    def _flush(self, pending, end_offset, dump, sig, lang, covered, props, unit_of):
         for offset, page_id, title in pending:
             if archive.covers(covered, lang, int(page_id)):
                 continue            # layer 1: read from the archive, not here
+            locator = f"{dump}{_LOCATOR_SEP}{offset}{_LOCATOR_SEP}{end_offset}"
             yield DocRef(
                 source_id=self.source_id, native_id=str(native_id_of(lang, int(page_id))),
-                locator=f"{dump}{_LOCATOR_SEP}{offset}{_LOCATOR_SEP}{end_offset}",
-                mtime=int(st.st_mtime), size=st.st_size,
+                locator=_with_props(locator, props, unit_of(int(page_id))),
+                mtime=sig[0], size=sig[1],
                 extra={"title": title, "lang": lang, "page_id": page_id})
 
     def origin_url_of(self, rel_path: str) -> str | None:
@@ -417,9 +530,11 @@ class WikipediaSource:
         prefix = _archive_prefix()
         return url[len(prefix):] if url.startswith(prefix) else None
 
-    def _archive_ref(self, pending: dict, lang: str) -> DocRef:
+    def _archive_ref(self, pending: dict, lang: str, props: Path, unit_of) -> DocRef:
         """An archive article's ref: wikivec's own id, so the archive's
-        vectors attach to it one to one. Size is the article's ROW COUNT —
+        vectors attach to it one to one, and its page's page_props unit from
+        the collection's dump run (the page id is Wikipedia's, and stable).
+        Size is the article's ROW COUNT plus the page_props file's bytes —
         the change gate is (mtime, size), and a shard's size says nothing
         about one article in it (the legacy plugin's lesson)."""
         try:
@@ -428,23 +543,23 @@ class WikipediaSource:
             return DocRef(source_id=self.source_id, native_id=str(pending.get("article")),
                           locator=archive.join_segments(pending["segments"]),
                           error=f"malformed article id {pending.get('article')!r}")
+        pst = props.stat()
         return DocRef(
             source_id=self.source_id,
             native_id=str(native_id_of(lang, page_id, archive=True)),
-            locator=archive.join_segments(pending["segments"]),
-            mtime=pending["mtime"], size=pending["rows"],
+            locator=_with_props(archive.join_segments(pending["segments"]), props,
+                                unit_of(page_id)),
+            mtime=int(max(pending["mtime"], pst.st_mtime)), size=pending["rows"] + pst.st_size,
             extra={"title": pending["title"], "lang": lang, "page_id": str(page_id),
                    "source": "archive"})
 
-    def _fetch_archive(self, ref: DocRef) -> RawDoc:
+    def _fetch_archive(self, ref: DocRef, locator: str) -> bytes:
         """The article's rows, as the legacy plugin fetched them — the same
-        bytes, so the same `origin_hash`."""
+        bytes, so (with no page_props unit) the same `origin_hash`."""
         rows: list[dict] = []
-        for path, start, end in archive.split_locator(ref.locator):
+        for path, start, end in archive.split_locator(locator):
             rows.extend(archive.read_rows(path, start, end))
-        data = json.dumps(rows, ensure_ascii=False, sort_keys=True).encode("utf-8")
-        return RawDoc(ref=ref, raw_hash=hashlib.blake2b(data, digest_size=16).hexdigest(),
-                      data=data)
+        return json.dumps(rows, ensure_ascii=False, sort_keys=True).encode("utf-8")
 
     def _parse_archive(self, raw: RawDoc, lang: str, page_id: int) -> CanonicalDoc:
         """LAYER 1: the archive's own text in the archive's own cut — one
@@ -453,7 +568,8 @@ class WikipediaSource:
         from. Everything the archive gives about the article is here: its
         rows' id, url, title and text (the vectors enter by the archive
         route)."""
-        rows = json.loads(raw.data.decode("utf-8"))
+        own, unit = _split_raw(raw.data)
+        rows = json.loads(own.decode("utf-8"))
         rows.sort(key=lambda r: archive.split_row_id(r["id"])[1])
         return CanonicalDoc(
             uid=f"{self.source_id}:{raw.ref.native_id}",
@@ -469,6 +585,8 @@ class WikipediaSource:
                 "source": "archive",
                 "archive": "upstash-wikipedia-2024-06",
                 "url": rows[0]["url"] if rows else "",
+                # the page's rows of the dump run's page_props (parser 5)
+                **page_props.fields_of(unit),
             }.items() if v},
             sections=[("", archive.embed_input(r["title"], r["text"])) for r in rows],
             raw_hash=raw.raw_hash,
@@ -509,18 +627,35 @@ class WikipediaSource:
         """The page's bytes AS ELEMENTTREE RE-WRITES THEM, and `origin_hash`
         is their hash — not the dump's bytes, which differ on every page
         (06 §6.4: how a unit is extracted is part of the parser). A
-        verifier reproduces this serialisation to check a record."""
-        if archive.is_archive_locator(ref.locator):
-            return self._fetch_archive(ref)
-        dump, start, end = split_locator(ref.locator)
-        pages = _stream_pages(dump, start, end)
-        page = pages.get(str(decode_native_id(int(ref.native_id))[1]))
-        if page is None:
-            raise RuntimeError(f"page {ref.native_id} not found in its stream "
-                                f"({ref.locator})")
-        data = page_bytes(page)
-        digest = hashlib.blake2b(data, digest_size=16).hexdigest()
-        return RawDoc(ref=ref, raw_hash=digest, data=data)
+        verifier reproduces this serialisation to check a record.
+
+        Since parser 5 the page's page_props unit follows, after
+        `_PROPS_MARK` and its length, when the locator names one — the
+        bytes of the decompressed table its segment's range names, which
+        the pack holds; `origin_hash` is over both."""
+        body, seg = props_segment(ref.locator)
+        page_id = decode_native_id(int(ref.native_id))[1]
+        if archive.is_archive_locator(body):
+            data = self._fetch_archive(ref, body)
+        else:
+            dump, start, end = split_locator(body)
+            pages = _stream_pages(dump, start, end)
+            page = pages.get(str(page_id))
+            if page is None:
+                raise RuntimeError(f"page {ref.native_id} not found in its stream "
+                                    f"({ref.locator})")
+            data = page_bytes(page)
+        if seg is not None:
+            props, start, end = seg
+            unit = page_props.unit_of(props, page_id)
+            if unit is None or (unit[0], unit[1]) != (start, end):
+                raise RuntimeError(f"page {page_id}: {props.name} holds "
+                                   f"{'no rows' if unit is None else f'[{unit[0]}, {unit[1]})'} "
+                                   f"for it, the locator [{start}, {end}) — discovery has not "
+                                   f"seen this table yet")
+            data += _PROPS_MARK + len(unit[2]).to_bytes(8, "big") + unit[2]
+        return RawDoc(ref=ref, raw_hash=hashlib.blake2b(data, digest_size=16).hexdigest(),
+                      data=data)
 
     API_URL = "https://{lang}.wikipedia.org/w/api.php"
 
@@ -553,7 +688,8 @@ class WikipediaSource:
         lang_of_id, page_of_id, from_archive = decode_native_id(int(raw.ref.native_id))
         if from_archive:
             return self._parse_archive(raw, lang_of_id, page_of_id)
-        page = ET.fromstring(raw.data.decode("utf-8"))
+        own, unit = _split_raw(raw.data)
+        page = ET.fromstring(own.decode("utf-8"))
         title = page.findtext("title") or ""
         text = page.findtext("revision/text") or ""
         # THE DUMP'S OWN NAME, not `ref.extra`: the pipeline rebuilds the
@@ -649,6 +785,10 @@ class WikipediaSource:
                 # presence only: the identifiers live in Wikidata, and 573
                 # of 574 sampled templates carry no parameters at all
                 "has_authority_control": parsed.get("has_authority_control", False),
+                # THE PAGE'S ROWS OF THE DUMP RUN'S page_props (parser 5): its
+                # Wikidata item, the one key into Wikidata the dump gives, and
+                # every other property MediaWiki holds for the page
+                **page_props.fields_of(unit),
             }.items() if v not in ("", None, [], {}, False)},
             sections=sections,
             raw_hash=raw.raw_hash,

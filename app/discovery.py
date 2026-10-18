@@ -94,7 +94,7 @@ def _clear_cursor_if_relocated(con, collection, root) -> bool:
 DISCOVER_BATCH_REFS = 2000
 
 
-def sync_collection(con, collection, *, stop=None) -> dict:
+def sync_collection(con, collection, *, stop=None, adopt: bool = False) -> dict:
     """Enumerate the corpus and upsert what changed. Streams; commits every
     DISCOVER_BATCH_REFS refs and tells the plugin (DiscoverState.committed,
     on_commit) so its scan cursor can be saved as it goes. `stop` (an
@@ -102,7 +102,12 @@ def sync_collection(con, collection, *, stop=None) -> dict:
     the next ref: the batch so far is committed, the cursor covers exactly
     the containers whose rows are durable, and the result carries
     `interrupted=True` — the next scan resumes from there. Invariant 2: the
-    resumable unit of a scan is one batch of refs."""
+    resumable unit of a scan is one batch of refs.
+
+    `adopt` is `louise dev carry --resign`'s and nothing else's (02 §2.4
+    A1d): a document whose signature or locator moved takes the new ones as
+    a fresh discovery would write them — `txt_hash` unset — and keeps every
+    stage mark, because its text is provably the same text. Never fetches."""
     t0 = time.time()
     plugin = collection.plugin_instance()
     root = collection.corpus_dir
@@ -151,7 +156,7 @@ def sync_collection(con, collection, *, stop=None) -> dict:
     # scan resumable: rows written so far stand, and the plugin's cursor is
     # only advanced past containers whose rows are committed.
     counts = {"seen": 0, "added": 0, "changed": 0, "missing": 0,
-              "container_errors": 0, "relocated": 0}
+              "container_errors": 0, "relocated": 0, "resigned": 0}
     interrupted = False
     applied = 0                 # refs durably written so far
     batch: list[DocRef] = []
@@ -170,7 +175,7 @@ def sync_collection(con, collection, *, stop=None) -> dict:
         # would both plan as new. Flushing first keeps last-write-wins by
         # arrival order exact: the later ref sees the earlier one committed.
         if batch and (uid in batch_uids or len(batch) >= DISCOVER_BATCH_REFS):
-            if not _apply_batch(con, plugin, batch, counts, stop, wait=True):
+            if not _apply_batch(con, plugin, batch, counts, stop, wait=True, adopt=adopt):
                 interrupted = True      # stop arrived while the manifest was contended
                 batch = []
                 break
@@ -184,7 +189,7 @@ def sync_collection(con, collection, *, stop=None) -> dict:
         # the tail (or the batch a stop request cut short): one attempt if
         # stopping — a contended manifest must not hold SIGTERM past its
         # grace; what is not committed is simply re-enumerated next scan
-        if _apply_batch(con, plugin, batch, counts, stop, wait=not interrupted):
+        if _apply_batch(con, plugin, batch, counts, stop, wait=not interrupted, adopt=adopt):
             applied += len(batch)
             _signal_committed(state, applied)
     if not interrupted and (counts["added"] or counts["changed"]
@@ -197,6 +202,8 @@ def sync_collection(con, collection, *, stop=None) -> dict:
              "secs": round(time.time() - t0, 1)}
     if counts["relocated"]:
         stats["relocated"] = counts["relocated"]
+    if counts["resigned"]:
+        stats["resigned"] = counts["resigned"]
     if counts["container_errors"]:
         stats["container_errors"] = counts["container_errors"]
     if interrupted:
@@ -215,7 +222,8 @@ def _signal_committed(state, n: int) -> None:
         hook()
 
 
-def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool) -> bool:
+def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool,
+                 adopt: bool = False) -> bool:
     """Apply one batch of refs to the manifest. Two phases, so the write
     lock is held only for the writes:
 
@@ -284,6 +292,16 @@ def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool) ->
                 (uid, ref.source_id, ref.native_id, ref.locator, txt_name, lang,
                  ref.mtime, ref.size, now)))
             local["added"] += 1
+        elif adopt and (row["mtime"] != ref.mtime or row["size"] != ref.size
+                        or row["path"] != ref.locator):
+            # A1d: the new parser's signature and locator, as a fresh scan
+            # would write them (no txt_hash), every stage mark kept — the
+            # caller proves the text unchanged (hold/carry.py `resign`)
+            writes.append((
+                "UPDATE documents SET path=?,txt_name=?,lang=COALESCE(?,lang),"
+                "mtime=?,size=?,txt_hash=NULL,updated_at=? WHERE uid=?",
+                (ref.locator, txt_name, lang, ref.mtime, ref.size, now, uid)))
+            local["resigned"] += 1
         elif row["mtime"] != ref.mtime or row["size"] != ref.size:
             raw = plugin.fetch(ref)                 # no lock held here
             if raw.raw_hash != row["txt_hash"]:

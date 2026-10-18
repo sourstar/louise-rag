@@ -138,11 +138,21 @@ def join_segments(segments: list[list]) -> str:
         for rel, start, end in segments)
 
 
+#: the page's own page_props unit (wikipedia parser 5, page_props.py), the
+#: locator's last segment where it has one: never a piece of archive rows
+_PROPS_SUFFIX = "-page_props.sql.gz"
+
+
 def split_locator(locator: str) -> list[tuple[str, int, int]]:
+    """The archive rows' segments (or a dump page's stream) — never the
+    page_props segment, so an article in one shard stays ONE segment for
+    genesis's straddler test (bundles/genesis.py)."""
     out = []
     for seg in locator.split(SEG_SEP):
         head, _, tail = seg.rpartition(_LOCATOR_SEP)
         path, _, start = head.rpartition(_LOCATOR_SEP)
+        if path.endswith(_PROPS_SUFFIX):
+            continue
         out.append((path, int(start), int(tail)))
     return out
 
@@ -261,13 +271,17 @@ def _head_continuation(pq, nxt: Path, article: str) -> int:
     return n
 
 
-def discover_articles(state, source_id: str, progress, make_ref):
+def discover_articles(state, source_id: str, progress, make_ref, ready=None):
     """One ref per ARTICLE over the archive's shards, via `make_ref(pending,
     lang)`; container-scope refs for what cannot be read. Moved unchanged
     from the legacy `embedded` plugin, whose discovery it still is.
 
     The last article of a shard is carried into the next shard's scan, so
-    a boundary-straddling article becomes ONE ref with two segments."""
+    a boundary-straddling article becomes ONE ref with two segments.
+
+    `ready(lang)`, when given, is False for a language whose records cannot
+    be made yet (wikipedia parser 5: its dump run's page_props not on disk):
+    its shards are neither walked nor staged, so a later scan walks them."""
     import pyarrow.parquet as pq
     from ..base import DocRef
     root = state.corpus_root
@@ -301,6 +315,9 @@ def discover_articles(state, source_id: str, progress, make_ref):
         if pending is not None and pending_lang != lang:
             yield from release(pending, pending_lang)
             pending, pending_lang = None, None
+        if ready is not None and not ready(lang):
+            prev, prev_skipped = None, False
+            continue
         if progress.unchanged(shard):
             if pending is not None:
                 # The mirror of the tail-carry case below: the carry may

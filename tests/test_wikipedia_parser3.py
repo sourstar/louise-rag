@@ -107,6 +107,8 @@ def dump(tmp_path) -> dict:
         offset += len(blob)
     (root / "itwiki-20260801-pages-articles-multistream-index.txt.bz2").write_bytes(
         bz2.compress(("\n".join(lines) + "\n").encode()))
+    from tests import wikipedia_props
+    wikipedia_props.write(path)
     # keyed by PAGE id for the tests' readability; the native id carries the
     # language too since parser 4
     refs = {r.extra["page_id"]: r for r in SOURCE.discover(DiscoverState(corpus_root=root))}

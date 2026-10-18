@@ -46,6 +46,8 @@ def _dump(root, header: str | None):
     (d / f"{base}.xml.bz2").write_bytes(head + body)
     (d / f"{base}-index.txt.bz2").write_bytes(bz2.compress(
         "".join(f"{len(head)}:{pid}:{title}\n" for pid, _ns, title in PAGES).encode()))
+    from tests import wikipedia_props
+    wikipedia_props.write(d / f"{base}.xml.bz2")
     return d / f"{base}.xml.bz2", d / f"{base}-index.txt.bz2"
 
 
@@ -84,6 +86,8 @@ def test_eswikis_anexo_is_articles(tmp_path):
     (d / f"{base}.xml.bz2").write_bytes(head + bz2.compress("".join(_page(*p) for p in pages).encode()))
     index = d / f"{base}-index.txt.bz2"
     index.write_bytes(bz2.compress("".join(f"{len(head)}:{p}:{t}\n" for p, _n, t in pages).encode()))
+    from tests import wikipedia_props
+    wikipedia_props.write(d / f"{base}.xml.bz2")
     assert wsrc.namespace_prefixes(d / f"{base}.xml.bz2", index) == ("Plantilla:",)
     assert _articles(tmp_path / "wikipedia") == [native_id_of("es", 1), native_id_of("es", 2)]
 

@@ -13,6 +13,7 @@ from app.plugins.base import DiscoverState
 from app.plugins.wikipedia import SOURCE
 from app.plugins.wikipedia.source import native_id_of, split_locator
 from app.plugins.wikipedia.wikitext import to_sections
+from tests import wikipedia_props
 
 ARTICLE_MOON = """'''The Moon''' is [[Earth]]'s only natural satellite.
 
@@ -66,6 +67,12 @@ def corpus(tmp_path) -> Path:
     ]
     index = d / "enwiki-latest-pages-articles-multistream-index.txt.bz2"
     index.write_bytes(bz2.compress(("\n".join(index_lines) + "\n").encode()))
+    # the run's page_props (parser 5): the Moon's item and lead image, a
+    # sitelink badge on the redirect, nothing for Cheese
+    wikipedia_props.write(dump, [(1, "wikibase_item", "Q405"),
+                                 (1, "page_image_free", "FullMoon2010.jpg"),
+                                 (2, "wikibase-badge-Q70894304", "1", "1"),
+                                 (4, "wikibase_item", "Q1234")])
     return tmp_path / "wiki-corpus"
 
 
@@ -172,6 +179,8 @@ def test_two_languages_live_in_one_collection_apart_by_id(tmp_path):
         (d / f"{wiki}-latest-pages-articles-multistream.xml.bz2").write_bytes(stream)
         (d / f"{wiki}-latest-pages-articles-multistream-index.txt.bz2").write_bytes(
             bz2.compress(b"0:7:Seven\n"))
+        wikipedia_props.write(d / f"{wiki}-latest-pages-articles-multistream.xml.bz2",
+                              [(7, "wikibase_item", "Q23350" if wiki == "enwiki" else "Q7")])
     refs = {r.native_id: r for r in SOURCE.discover(DiscoverState(corpus_root=root))}
     assert set(refs) == {nid(7, "en"), nid(7, "it")}
     docs = {SOURCE.parse(SOURCE.fetch(r)).language: SOURCE.parse(SOURCE.fetch(r))
@@ -213,7 +222,9 @@ def test_a_page_is_serialised_only_when_it_is_asked_for(corpus, monkeypatch):
     pages = wiki._stream_pages(*split_locator(refs[nid(1)].locator))
     old = {pid: ET.tostring(page, encoding="unicode").encode("utf-8")
            for pid, page in pages.items()}
-    assert one.data == old[str(1)] and two.data == old[str(2)], \
+    # the page's own part: since parser 5 its page_props unit follows it
+    assert wiki._split_raw(one.data)[0] == old[str(1)] \
+        and wiki._split_raw(two.data)[0] == old[str(2)], \
         "byte for byte what ET.tostring produced before"
     assert one.raw_hash != two.raw_hash
 

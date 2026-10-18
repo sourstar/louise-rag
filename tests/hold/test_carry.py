@@ -617,3 +617,102 @@ def test_an_empty_manifest_another_writer_made_meanwhile_is_replaced_not_taken(p
         assert {r[0] for r in con.execute("SELECT uid FROM documents")} == set(uids)
     finally:
         con.close()
+
+
+# ---- A1d: an origin that only adds files; a source with no records ----------
+
+def _with_file(c, rel="added/page_props.sql.gz"):
+    spec = dict(c.origin.spec)
+    spec["files"] = [*(spec.get("files") or []), {"rel_path": rel, "size": None, "checksum": None}]
+    spec["filters"] = [*(spec.get("filters") or []), "*.sql.gz"]
+    return replace(c, parser=Parser("gutenberg", 99),
+                   origin=replace(c.origin, spec=spec, form=c.origin.form + "; and a table beside it"))
+
+
+def test_an_origin_that_only_adds_files_is_the_one_difference_a1d_admits(pair):
+    _root, old, _new = pair
+    added = _with_file(old)
+    assert carry.origin_only_adds(old, added)
+    assert not carry.origin_only_adds(added, old), "a file the records were read from removed"
+    moved = replace(added, origin=replace(added.origin, spec={**added.origin.spec, "url": "https://x"}))
+    assert not carry.origin_only_adds(old, moved)
+    assert not carry.origin_only_adds(old, replace(old, origin=replace(old.origin, form="other")))
+
+
+def _unrecorded_source(pair, corpus_dir):
+    """`src`: discovered and embedded with its real chunks, never built — no
+    record, no snapshot (wikipedia's state, 2026-10-18)."""
+    from app import discovery, layers, plugin_io
+    root, old, _new = pair
+    src = col.create(root, replace(old, parser=Parser("gutenberg", 98)), name="src")
+    coll = rec._local_collection(root, "src", src, corpus_dir=corpus_dir)
+    con = db.connect(coll)
+    try:
+        discovery.sync_collection(con, coll)
+        con.execute("UPDATE documents SET rdf_done=1, fts_done=1, embed_done=1")
+        con.execute("INSERT INTO space(id, space_id, dim, pinned_at) VALUES(1, ?, ?, 0)",
+                    (src.space_id, src.space.dim))
+        con.commit()
+        docs = [dict(r) for r in con.execute("SELECT uid, native_id, path, lang FROM documents")]
+    finally:
+        con.close()
+    plugin = coll.plugin_instance()
+    rng = np.random.default_rng(3)
+    rows = [{"id": c["id"], "book_id": int(d["native_id"]), "lang": d["lang"] or "en",
+             "seq": c["seq"], "chapter": c.get("chapter") or "", "text": c["text"],
+             "vector": rng.standard_normal(src.space.dim).astype("float32")}
+            for d in docs for c in layers.chunks_for_document(coll, d, plugin_io.sections(plugin, d))]
+    embeddings.upsert_chunks(rows, collection=coll, dtype=src.space.dtype)
+    target = col.create(root, _with_file(src), name="tgt")
+    return root, src, target, docs, rows
+
+
+def test_resign_keeps_every_mark_and_vector_and_takes_the_new_signatures(pair, corpus_dir):
+    root, src, tgt, docs, rows = _unrecorded_source(pair, corpus_dir)
+    with pytest.raises(CodexError, match="carry --rebuilt"):
+        carry.resign(root, "src", "tgt", log=quiet)
+    carry.carry(root, "src", "tgt", rebuilt=True, copy=True, apply=True, log=quiet)
+    coll = rec._local_collection(root, "tgt", tgt, corpus_dir=corpus_dir)
+    con = db.connect(coll)
+    try:   # the signatures and hashes the OLD parser left, which the new one does not give
+        before = {r["uid"]: (r["mtime"], r["size"]) for r in con.execute("SELECT uid, mtime, size FROM documents")}
+        con.execute("UPDATE documents SET mtime=mtime-7, txt_hash='parser-98'")
+        con.commit()
+    finally:
+        con.close()
+    out = carry.resign(root, "src", "tgt", sample=50, corpus_dir=corpus_dir, log=quiet)
+    assert out["scan"]["resigned"] == len(docs) and not out["scan"].get("changed")
+    assert out["compared"] == len(docs) and out["mismatched"] == []
+    con = db.connect(coll)
+    try:
+        got = con.execute("SELECT uid, mtime, size, txt_hash, rdf_done, fts_done, embed_done "
+                          "FROM documents").fetchall()
+    finally:
+        con.close()
+    assert {r["uid"]: (r["mtime"], r["size"]) for r in got} == before
+    assert all(r["txt_hash"] is None and (r["rdf_done"], r["fts_done"], r["embed_done"]) == (1, 1, 1)
+               for r in got), "as a fresh scan writes it; every mark kept"
+    left = embeddings.chunk_ids_of_books([int(d["native_id"]) for d in docs], collection=coll)
+    assert sorted(left) == sorted(r["id"] for r in rows), "every vector kept"
+    again = carry.resign(root, "src", "tgt", sample=50, corpus_dir=corpus_dir, log=quiet)
+    assert not again["scan"].get("resigned"), "a second run rewrites nothing"
+
+
+def test_resign_refuses_when_a_sampled_document_cuts_to_other_chunks(pair, corpus_dir):
+    root, src, tgt, docs, rows = _unrecorded_source(pair, corpus_dir)
+    carry.carry(root, "src", "tgt", rebuilt=True, copy=True, apply=True, log=quiet)
+    coll = rec._local_collection(root, "tgt", tgt, corpus_dir=corpus_dir)
+    victim = rows[0]
+    embeddings.upsert_chunks([{**victim, "text": victim["text"] + " (another text)"}],
+                             collection=coll, dtype=tgt.space.dtype)
+    with pytest.raises(carry.CarryMismatch, match="the text moved"):
+        carry.resign(root, "src", "tgt", sample=50, corpus_dir=corpus_dir, log=quiet)
+
+
+def test_resign_is_for_a_source_without_records(pair):
+    """A source with a snapshot has every document's content_hash to compare:
+    `--reconcile` is the stronger proof and the one to use."""
+    root, old, re_, _uids, _ids = _rebuilt_pair(pair)
+    carry.carry(root, "old", "re", rebuilt=True, copy=True, apply=True, log=quiet)
+    with pytest.raises(CodexError, match="--reconcile"):
+        carry.resign(root, "old", "re", log=quiet)

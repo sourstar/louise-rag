@@ -58,6 +58,11 @@ def corpus(tmp_path):
     (d / f"{DUMP}.xml.bz2").write_bytes(stream)
     (d / f"{DUMP}-index.txt.bz2").write_bytes(
         bz2.compress(b"0:10:Moon\n0:11:Sun\n0:20:Cheese\n"))
+    # the run's page_props, which both layers' records read (parser 5)
+    from tests import wikipedia_props
+    wikipedia_props.write(d / f"{DUMP}.xml.bz2", [(10, "wikibase_item", "Q405"),
+                                                  (11, "wikibase_item", "Q525"),
+                                                  (11, "page_image_free", "The_Sun.jpg")])
     return root
 
 
@@ -111,10 +116,16 @@ def test_a_straddlers_origin_names_both_shards_and_reads_back(corpus):
     assert up.revision and "main" not in arch
     ref = _refs(corpus)[str(native_id_of("en", 11, archive=True))]
     origin = plugin_io.origin_locator(SOURCE, ref.locator, corpus)
-    assert origin == f"{arch}data/en/000.parquet#2::3|{arch}data/en/001.parquet#0::1"
+    # and, since parser 5, the page's rows of the dump run's page_props,
+    # relative to the dumps' base like any dump file
+    rows, props = origin.rsplit("|", 1)
+    assert rows == f"{arch}data/en/000.parquet#2::3|{arch}data/en/001.parquet#0::1"
+    assert props.startswith("enwiki/latest/enwiki-latest-page_props.sql.gz#")
     local, locator = plugin_io.local_locator(SOURCE, origin, corpus)
     assert local.is_file() and locator == ref.locator
     assert _doc(ref).sections == [("", "Sun\nstraddle start"), ("", "Sun\nstraddle end")]
+    assert _doc(ref).extra["wikidata"] == "Q525"
+    assert _doc(ref).extra["page_props"] == {"page_image_free": "The_Sun.jpg"}
 
     dump_ref = _refs(corpus)[str(native_id_of("en", 20))]
     assert plugin_io.origin_locator(SOURCE, dump_ref.locator, corpus) == \

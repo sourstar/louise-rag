@@ -94,6 +94,13 @@ def collection(isolated_config, tmp_path, monkeypatch):
         (_page(10, "Moon", "'''The Moon''' is newer text.")
          + _page(20, "Cheese", "'''Cheese''' is made from milk.")).encode()))
     (d / f"{DUMP}-index.txt.bz2").write_bytes(bz2.compress(b"0:10:Moon\n0:20:Cheese\n"))
+    # parser 5: a page_props segment in every locator it has rows for — never
+    # a second piece of archive rows (an article in one shard stays one read)
+    from tests import wikipedia_props
+    wikipedia_props.write(d / f"{DUMP}.xml.bz2", [(10, "wikibase_item", "Q405"),
+                                                  (11, "wikibase_item", "Q525"),
+                                                  (12, "wikibase_item", "Q111"),
+                                                  (20, "wikibase_item", "Q10943")])
     c = collections_mod.Collection(
         name="wikipedia", plugin="wikipedia", profile=None, embed_mode_default=None,
         corpus_dir=root, manifest_path=tmp_path / "m" / "manifest.db",

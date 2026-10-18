@@ -26,7 +26,8 @@ def test_dated_paths_are_immutable_and_latest_is_not():
 
     assert [f.rel_path for f in dated] == [
         "enwiki/20260801/enwiki-20260801-pages-articles-multistream.xml.bz2",
-        "enwiki/20260801/enwiki-20260801-pages-articles-multistream-index.txt.bz2"]
+        "enwiki/20260801/enwiki-20260801-pages-articles-multistream-index.txt.bz2",
+        "enwiki/20260801/enwiki-20260801-page_props.sql.gz"]   # parser 5
     assert all("latest" in f.rel_path for f in latest), \
         "the unpinned default is unchanged — a live corpus must not be orphaned"
     # the two never collide on disk, so a pinned and an unpinned copy can
@@ -38,7 +39,7 @@ def test_two_snapshots_do_not_collide():
     a = {f.rel_path for f in WIKIPEDIA_SPEC.snapshot_files("20260701")}
     b = {f.rel_path for f in WIKIPEDIA_SPEC.snapshot_files("20260801")}
     assert not (a & b), "each snapshot is a separate, complete corpus"
-    assert len(a) == len(b) == 2 * len(specs.WIKIS)
+    assert len(a) == len(b) == 3 * len(specs.WIKIS)   # dump, index, page_props
 
 
 def test_the_spec_declares_dated_dumps():

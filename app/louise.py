@@ -34,7 +34,7 @@
     louise hold config show|apply [<collection>]
     louise node health [<collection>] [--errors]
     louise dev genesis recheck <collection> | recount <collection> [--yes]
-    louise dev carry <from> <to> [--copy] [--keep producer:ARCHIVE] [--rebuilt|--reconcile] [--yes]
+    louise dev carry <from> <to> [--copy] [--keep producer:ARCHIVE] [--rebuilt|--reconcile|--resign] [--yes]
 
 The previous tree (`python -m app.cli`, 07 §7.6) is retired (2026-10-08):
 every name it had that is still useful is one of these.
@@ -1044,6 +1044,13 @@ def cmd_dev_carry(a) -> int:
             say(f"[carry] would reconcile {to_name} against {from_name} (--yes)")
             return 0
         _print({"reconcile": carry_mod.reconcile(a.root, from_name, to_name, log=say)})
+        return 0
+    if getattr(a, "resign", False):
+        if not a.yes:
+            say(f"[carry] would re-sign {to_name}'s documents by its own discovery and prove "
+                f"their chunks unchanged (A1d; --yes)")
+            return 0
+        _print({"resign": carry_mod.resign(a.root, from_name, to_name, log=say)})
         return 0
     out = {"carry": carry_mod.carry(a.root, from_name, to_name, copy=a.copy,
                                     apply=a.yes, keep=producer,
@@ -2785,8 +2792,11 @@ def _origin_unit_from(codex, name: str, origin_dir):
     weighed: dict[str, tuple[str, int | None]] = {}
 
     def origin_unit(locator: str) -> tuple[str, int | None]:
-        key = (locator if seg and seg in locator
-               else locator.partition(plugin_io.DEFAULT_MEMBER_SEP)[0])
+        # the FILES of every piece: wikipedia's page_props segment (parser 5)
+        # puts a piece in nearly every locator, and a key with the members in
+        # it would weigh each record again
+        pieces = locator.split(seg) if seg and seg in locator else [locator]
+        key = (seg or "").join(p.partition(plugin_io.DEFAULT_MEMBER_SEP)[0] for p in pieces)
         if key not in weighed:
             weighed[key] = plugin_io.origin_unit(plugin, locator, base)
         return weighed[key]
@@ -4090,6 +4100,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reconcile", action="store_true",
                    help="after `--rebuilt`, the build and the snapshot: keep the vectors of "
                         "every document whose content_hash did not move, embed the rest again")
+    p.add_argument("--resign", action="store_true",
+                   help="after `--rebuilt`, where the source holds no records: re-sign every "
+                        "document by the target's discovery and prove a sample's chunks "
+                        "unchanged (A1d)")
     p.add_argument("--yes", action="store_true", help="do it; without it, the checks and the plan")
     p.set_defaults(fn=cmd_dev_carry)
     p = dverbs.add_parser("genesis", help="one-shot repairs of an archive's ledger; writes")

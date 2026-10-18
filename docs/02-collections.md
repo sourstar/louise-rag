@@ -627,7 +627,20 @@ its vectors, its chunks being a function of its title and sections alone
 loses them and is embedded again (`--reconcile`); and `vectors-sample`
 passes before use, as for any carry. Gutenberg's parser 9 is the case:
 `origin_hash` now covers the book's catalogue entry, so every record's
-bytes moved and not one chunk did.
+bytes moved and not one chunk did. *Amendment A1d (RULE 1, 2026-10-18):*
+the parser may also read an origin file the source's did not — the
+target's origin adds files beside every file the source's records were
+read from, declared as before, and changes nothing else but `form` — and
+where the source holds no records there is no snapshot to reconcile
+against: the target's own discovery runs once and every document whose
+locator or signature moved takes the new ones as a fresh scan would write
+them, `txt_hash` unset, every stage mark and vector kept (`louise dev
+carry --resign`); a seeded sample of its embedded documents, cut again by
+the target's parser and layers, must hold byte for byte the chunk texts the
+vector table holds, or the carry is refused. Wikipedia's parser 5 is the
+case: each record holds its page's rows of the dump run's `page_props`
+(docs/notes/wikipedia-qids.md), no record had ever been built, and its
+52.9M documents keep their marks and their vectors.
 
 The **calibration** block is the contract for anyone who wants to
 contribute vectors. The calibration set is corpus-independent: a fixed

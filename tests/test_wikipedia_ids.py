@@ -47,9 +47,25 @@ def test_the_spec_offers_every_language_combinable():
     assert set(_WIKI_DUMP_BYTES) == set(wikipedia.LANG_ORDINAL)
     for lang in wikipedia.LANG_ORDINAL:
         assert WIKIPEDIA_SPEC.profiles[lang].include == (f"{lang}wiki/*",)
-    assert WIKIPEDIA_SPEC.estimated_bytes["all"] == sum(_WIKI_DUMP_BYTES.values())
+    from app.acquire.specs import _WIKI_PROPS_BYTES
+    assert set(_WIKI_PROPS_BYTES) == set(_WIKI_DUMP_BYTES)
+    assert WIKIPEDIA_SPEC.estimated_bytes["all"] == \
+        sum(_WIKI_DUMP_BYTES.values()) + sum(_WIKI_PROPS_BYTES.values())
     names = {f.rel_path.split("/")[0] for f in WIKIPEDIA_SPEC.endpoints[0].static_files}
     assert names == {f"{lang}wiki" for lang in wikipedia.LANG_ORDINAL}, "no simplewiki"
+
+
+def test_a_dump_run_is_its_articles_their_index_and_its_page_props():
+    """Parser 5 reads each page's rows of its run's `page_props` (the QIDs, from
+    the source): a pinned run lists the table beside the dump, and the filter
+    admits it."""
+    import fnmatch
+    from app.acquire.specs import _wikipedia_snapshot_files
+    files = [f.rel_path for f in _wikipedia_snapshot_files("20260801") if f.rel_path.startswith("dewiki/")]
+    assert files == ["dewiki/20260801/dewiki-20260801-pages-articles-multistream.xml.bz2",
+                     "dewiki/20260801/dewiki-20260801-pages-articles-multistream-index.txt.bz2",
+                     "dewiki/20260801/dewiki-20260801-page_props.sql.gz"]
+    assert all(any(fnmatch.fnmatch(f, pat) for pat in WIKIPEDIA_SPEC.filters) for f in files)
 
 
 def test_a_slice_bins_the_page_id_not_the_native_id():

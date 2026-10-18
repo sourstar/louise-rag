@@ -114,11 +114,20 @@ _WIKI_DUMP_BYTES: dict[str, int] = {
     "fa": 1_590_148_993, "tr": 1_145_175_844,
 }
 WIKIS = tuple(f"{lang}wiki" for lang in _WIKI_DUMP_BYTES)
+#: each run's `page_props` table (wikipedia parser 5: the QIDs, from the
+#: source), as dumps.wikimedia.org answered a HEAD for 20260801 on 2026-10-18
+_WIKI_PROPS_BYTES: dict[str, int] = {
+    "en": 458_205_292, "de": 102_496_830, "fr": 103_768_704, "ru": 62_653_053,
+    "es": 60_733_218, "it": 61_981_816, "ja": 59_626_394, "pt": 41_806_943,
+    "zh": 53_185_451, "fa": 38_020_402, "tr": 22_010_094,
+}
 _SNAPSHOT_RE = re.compile(r"^\d{8}$")
 
 
 def _wiki_files(wiki: str, snapshot: str = "latest") -> tuple[RemoteFile, ...]:
-    """The multistream dump + its index, the only two files the plugin needs.
+    """The multistream dump + its index, and the run's `page_props` table:
+    the three files the plugin reads (parser 5 takes each page's Wikidata item
+    and properties from the same run as its text).
 
     `snapshot` is a dump date ("20260801") or the literal "latest".
 
@@ -135,7 +144,8 @@ def _wiki_files(wiki: str, snapshot: str = "latest") -> tuple[RemoteFile, ...]:
     """
     base = f"{wiki}/{snapshot}/{wiki}-{snapshot}-pages-articles-multistream"
     return (RemoteFile(rel_path=f"{base}.xml.bz2"),
-            RemoteFile(rel_path=f"{base}-index.txt.bz2"))
+            RemoteFile(rel_path=f"{base}-index.txt.bz2"),
+            RemoteFile(rel_path=f"{wiki}/{snapshot}/{wiki}-{snapshot}-page_props.sql.gz"))
 
 
 def _wikipedia_snapshot_files(snapshot: str) -> tuple[RemoteFile, ...]:
@@ -186,7 +196,7 @@ WIKIPEDIA_SPEC = AcquisitionSpec(
                  static_files=sum((_wiki_files(w) for w in WIKIS), ())),
     ),
     layout="container-files",
-    filters=("*multistream.xml.bz2", "*multistream-index.txt.bz2"),
+    filters=("*multistream.xml.bz2", "*multistream-index.txt.bz2", "*-page_props.sql.gz"),
     checksums=ChecksumSource(kind="none"),
     # Dated dumps, once a collection pins one: each is a complete, immutable
     # snapshot, which is what a delta chain and a torrent both need.
@@ -205,8 +215,9 @@ WIKIPEDIA_SPEC = AcquisitionSpec(
         "all": Filter(),
     },
     profile_mode="additive",
-    estimated_bytes={"demo": _WIKI_DUMP_BYTES["tr"], **_WIKI_DUMP_BYTES,
-                     "all": sum(_WIKI_DUMP_BYTES.values())},
+    estimated_bytes={"demo": _WIKI_DUMP_BYTES["tr"] + _WIKI_PROPS_BYTES["tr"],
+                     **{lang: n + _WIKI_PROPS_BYTES[lang] for lang, n in _WIKI_DUMP_BYTES.items()},
+                     "all": sum(_WIKI_DUMP_BYTES.values()) + sum(_WIKI_PROPS_BYTES.values())},
     license_class=LicenseClass.YELLOW,          # CC BY-SA (§8)
     terms_text_path=Path(__file__).parent.parent / "plugins" / "wikipedia" / "TERMS.txt",
 )

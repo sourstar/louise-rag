@@ -199,6 +199,23 @@ WEIGHTS_WITH_KEEP = frozenset({"encoder.weights", "query.encoder.weights"})
 RECORDS_REBUILT = frozenset({"parser", "toolchain.platform_image"})
 
 
+def origin_only_adds(a: Codex, b: Codex) -> bool:
+    """A1d: `b`'s origin is `a`'s with files added — every file `a`'s records
+    were read from still declared exactly as before, the filters only widened
+    — and nothing else changed but `form`, the sentence saying which form was
+    taken (wikipedia parser 5: each run's page_props beside its dump)."""
+    oa, ob = a.origin.to_dict(), b.origin.to_dict()
+    sa, sb = dict(oa.pop("spec") or {}), dict(ob.pop("spec") or {})
+    oa.pop("form", None)
+    ob.pop("form", None)
+    if oa != ob:
+        return False
+    fa, fb = sa.pop("files", None) or [], sb.pop("files", None) or []
+    la, lb = sa.pop("filters", None) or [], sb.pop("filters", None) or []
+    return (sa == sb and all(f in fb for f in fa) and all(x in lb for x in la)
+            and len(fb) > len(fa))
+
+
 def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool = False,
           keep: str | None = None, rebuilt: bool = False,
           log: Callable[[str], None] = print) -> dict[str, Any]:
@@ -221,12 +238,14 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
     if rebuilt:
         if src.collection_id == to.collection_id:
             raise CodexError("carry: the source and the target are one collection")
-        other = [d for d in record_differences(src, to) if d not in RECORDS_REBUILT]
+        other = [d for d in record_differences(src, to) if d not in RECORDS_REBUILT
+                 and not (d == "origin" and origin_only_adds(src, to))]
         if other:
             raise CodexError(
                 f"carry --rebuilt: {to.collection_id} and {src.collection_id} differ in "
-                f"{', '.join(other)} — only the parser and its image may differ (A1c); "
-                f"anything else moves chunks, and nothing is carried")
+                f"{', '.join(other)} — only the parser and its image may differ (A1c), and "
+                f"the origin only by files added beside the ones read (A1d); anything else "
+                f"moves chunks, and nothing is carried")
     else:
         refuse_unless_same_records(src, to, "carry")
     diff = space_differences(src, to)
@@ -331,7 +350,8 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         f"{done['index']}, lance/ {done['lance']}; space re-pinned to "
         f"{to.space_id[:23]}…; {cleared} coverage row(s) of {from_name} cleared. Before "
         + (f"use: `hold records build {to_name}`, `hold snapshot create {to_name}`, then "
-           f"`dev carry {from_name} {to_name} --reconcile` (A1c)" if rebuilt else
+           f"`dev carry {from_name} {to_name} --reconcile` (A1c) — or, where {from_name} "
+           f"holds no records, `dev carry {from_name} {to_name} --resign` (A1d)" if rebuilt else
            f"use: `hold check {to_name} --checks vectors-sample` (amendment A1)"))
     return plan
 
@@ -439,6 +459,137 @@ def reconcile(root, from_ref: str, to_ref: str, *, window: int = WINDOW,
         f"{state['rehashed']} txt_hash(es) set to their record's origin_hash. Before use: "
         f"`hold check {to_name} --checks vectors-sample` (A1c)")
     return out
+
+
+# ---- A1d: re-sign a rebuilt target whose source holds no records -----------
+
+RESIGN_KEY = "carry_resign"
+#: documents re-chunked to prove the text did not move
+RESIGN_SAMPLE = 2000
+
+
+def _scanned(root: Path, name: str, codex, corpus_dir=None):
+    """The collection as the WORKER discovers it — its own resolution
+    (`collections.by_name`: corpus, pinned snapshot, credited archive) — or,
+    where this root is not the node's configuration, the local side with the
+    corpus `records build` would read and the snapshot the Codex pins."""
+    from dataclasses import replace as _replace
+    from . import records as rec
+    from app import collections as collections_mod
+    from app.acquire import spec as acquire_spec
+    from app.acquire.specs import ACQUIRE_REGISTRY
+    local = rec.local_collection(root, name, codex,
+                                 corpus_dir=corpus_dir or (Path(root) / name / "origin"))
+    try:
+        worker = collections_mod.by_name(name)
+    except Exception:   # noqa: BLE001 — no node configuration here
+        worker = None
+    if worker is not None and Path(worker.manifest_path) == Path(local.manifest_path) \
+            and corpus_dir is None:
+        return worker
+    spec = ACQUIRE_REGISTRY.get(codex.plugin)
+    pin = acquire_spec.pinned_snapshot(spec, codex.origin.spec) if spec is not None else None
+    return _replace(local, snapshot=pin)
+
+
+def resign(root, from_ref: str, to_ref: str, *, sample: int = RESIGN_SAMPLE, corpus_dir=None,
+           log: Callable[[str], None] = print) -> dict[str, Any]:
+    """After `carry --rebuilt`, where the source holds no records to reconcile
+    against (02 §2.4 A1d; wikipedia parser 5, 2026-10-18): the target's own
+    discovery, once, in `adopt` mode — every document takes the locator and
+    signature the new parser gives it, `txt_hash` unset as a fresh scan leaves
+    it, every stage mark and vector kept — and then the proof: a seeded sample
+    of embedded documents, cut again by the target's parser and layers,
+    holds byte for byte the chunk texts the vector table holds. A mismatch
+    raises and the collection is not to be used. Repeatable: the scan
+    rewrites nothing the second time."""
+    from . import collection as col, records as rec
+    from app import db, discovery
+
+    root = Path(root)
+    from_name, src = col.resolve(root, from_ref)
+    to_name, to = col.resolve(root, to_ref)
+    marker = _paths(root, to_name)["state"] / MARKER
+    held = json.loads(marker.read_text(encoding="utf-8")) if marker.is_file() else {}
+    if not (held.get("rebuilt") and held.get("done") and held.get("from") == src.collection_id
+            and held.get("to") == to.collection_id):
+        raise CodexError(f"resign: {to_name} records no finished `carry --rebuilt` from "
+                         f"{from_name} ({marker})")
+    try:
+        latest_snapshot(root, from_name)
+    except CodexError:
+        pass
+    else:
+        raise CodexError(f"resign: {from_name} holds records — `--reconcile` compares every "
+                         f"document's content_hash (A1c), which is the stronger proof")
+    coll = _scanned(root, to_name, to, corpus_dir)
+    con = db.connect(coll)
+    try:
+        scan = discovery.sync_collection(con, coll, adopt=True)
+        if scan.get("error") or scan.get("interrupted"):
+            raise CodexError(f"resign: {to_name}'s scan did not finish ({scan}); run it again")
+        if scan.get("container_errors"):
+            # a container the scan could not read (wikipedia: a run whose
+            # page_props is not on disk yet) left its documents unsigned, and
+            # the worker's next scan would read them as CHANGED and reset them
+            raise CodexError(
+                f"resign: {scan['container_errors']} container(s) of {to_name} could not be "
+                f"enumerated (its event log names them); their documents are not re-signed. "
+                f"Keep {to_name} paused, put them right and run it again")
+        proof = _resign_proof(coll, con, seed=to.collection_id, n=sample)
+        out = {"collection": to_name, "scan": scan, **proof}
+        con.execute("BEGIN IMMEDIATE")
+        db.set_control(con, RESIGN_KEY, json.dumps(
+            {**out, "done": not proof["mismatched"]}, sort_keys=True))
+        con.execute("COMMIT")
+    finally:
+        con.close()
+    if proof["mismatched"]:
+        raise CarryMismatch(
+            f"resign: {len(proof['mismatched'])} of {proof['compared']} sampled document(s) of "
+            f"{to_name} cut to chunks the vector table does not hold "
+            f"({', '.join(proof['mismatched'][:5])}): the text moved, A1d does not apply. "
+            f"Do not use {to_name}")
+    log(f"[carry] {to_name}: {scan.get('resigned', 0)} document(s) re-signed, "
+        f"{scan.get('added', 0)} new; {proof['compared']} sampled document(s) cut to exactly "
+        f"the chunks the vector table holds ({proof['chunks']} chunks; "
+        f"{proof['without_vectors']} sampled without vectors). A1d holds")
+    return out
+
+
+def _resign_proof(coll, con, *, seed: str, n: int) -> dict[str, Any]:
+    """`n` embedded documents drawn by rowid under `seed`, each cut by the
+    collection's parser and layers and compared, id and text, with the chunks
+    the vector table holds for it."""
+    import random
+    from app import embeddings, layers, plugin_io
+    plugin = coll.plugin_instance()
+    top = con.execute("SELECT max(rowid) FROM documents").fetchone()[0] or 0
+    rng = random.Random(seed)
+    rows: dict[int, dict] = {}
+    for _ in range(max(1, n) * 20):
+        if len(rows) >= n or not top:
+            break
+        r = con.execute("SELECT rowid, uid, native_id, path FROM documents WHERE rowid=? "
+                        "AND embed_done=1 AND error IS NULL", (rng.randint(1, top),)).fetchone()
+        if r is not None:
+            rows[int(r["rowid"])] = dict(r)
+    picked = [rows[k] for k in sorted(rows)]
+    stored = embeddings.held_chunks(coll, [int(r["native_id"]) for r in picked])
+    compared, chunks, without, mismatched = 0, 0, 0, []
+    for row in picked:
+        have = {cid: v["text"] for cid, v in stored.of(row["native_id"]).items()}
+        if not have:
+            without += 1
+            continue
+        cut = {c["id"]: c["text"] for c in layers.chunks_for_document(
+            coll, row, plugin_io.sections(plugin, row))}
+        compared += 1
+        chunks += len(cut)
+        if cut != have:
+            mismatched.append(row["uid"])
+    return {"sampled": len(picked), "compared": compared, "chunks": chunks,
+            "without_vectors": without, "mismatched": mismatched}
 
 
 def _repin(manifest: Path, src: Codex, to: Codex) -> int:

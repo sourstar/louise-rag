@@ -109,6 +109,9 @@ def wiki_corpus(tmp_path) -> Path:
     index = [f"0:1:The Moon", f"0:2:Cheese", f"{len(s1)}:1500000:Far page"]
     (d / "enwiki-latest-pages-articles-multistream-index.txt.bz2").write_bytes(
         bz2.compress(("\n".join(index) + "\n").encode()))
+    from tests import wikipedia_props
+    wikipedia_props.write(d / "enwiki-latest-pages-articles-multistream.xml.bz2",
+                          [(1, "wikibase_item", "Q405")])
     return tmp_path / "wiki-corpus"
 
 
