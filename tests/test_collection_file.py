@@ -348,3 +348,41 @@ def test_a_profile_other_than_the_whole_is_kept_with_its_acquisition(node):
     text = path.read_text(encoding="utf-8")
     assert 'profile = "starter"' in text and "acquire_enabled = true" in text
     assert collections_mod._load_one(path) == c
+
+
+def test_a_codex_pins_the_snapshot_its_own_filters_select():
+    """Wikipedia's parser 5 lists each run's page_props in the spec; the live
+    Codex (parser 4) pins the dumps and their indexes alone, under its own
+    filters, and still pins that date. A Codex pinning PART of what its own
+    filters select is still refused."""
+    old_filters = ["*multistream.xml.bz2", "*multistream-index.txt.bz2"]
+    old = [{"rel_path": f.rel_path, "size": None, "checksum": None}
+           for f in WIKIPEDIA_SPEC.snapshot_files("20260801")
+           if not f.rel_path.endswith("page_props.sql.gz")]
+    assert len(old) == 22
+    assert acquire_spec.pinned_snapshot(WIKIPEDIA_SPEC, {"files": old, "filters": old_filters}) \
+        == "20260801"
+    with pytest.raises(ValueError, match="no dated snapshot"):
+        acquire_spec.pinned_snapshot(WIKIPEDIA_SPEC, {"files": old, "filters": list(WIKIPEDIA_SPEC.filters)})
+    with pytest.raises(ValueError, match="no dated snapshot"):
+        acquire_spec.pinned_snapshot(WIKIPEDIA_SPEC, {"files": old[:3], "filters": old_filters})
+
+
+def test_a_codex_collection_fetches_by_its_codexs_filters():
+    """The parser-4 wikipedia collection must never fetch the page_props its
+    plugin now lists: one landing in its corpus would move every document's
+    signature (docs/notes/wikipedia-qids.md §3)."""
+    from types import SimpleNamespace
+    from app.acquire import engine
+    def collection(filters):
+        return SimpleNamespace(peer_source=None, profile="all", snapshot="20260801",
+                               codex=SimpleNamespace(origin=SimpleNamespace(spec={"filters": filters})))
+    old = engine.effective_spec(collection(["*multistream.xml.bz2", "*multistream-index.txt.bz2"]),
+                                WIKIPEDIA_SPEC)
+    files = engine._list_and_filter(old, "all", "20260801")
+    assert files and not any(f.rel_path.endswith("page_props.sql.gz") for f in files)
+    new = engine.effective_spec(collection(list(WIKIPEDIA_SPEC.filters)), WIKIPEDIA_SPEC)
+    assert sum(f.rel_path.endswith("page_props.sql.gz")
+               for f in engine._list_and_filter(new, "all", "20260801")) == 11
+    no_codex = SimpleNamespace(peer_source=None, profile="all", snapshot="20260801", codex=None)
+    assert engine.effective_spec(no_codex, WIKIPEDIA_SPEC).filters == WIKIPEDIA_SPEC.filters

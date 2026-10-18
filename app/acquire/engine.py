@@ -313,6 +313,15 @@ def effective_spec(collection, spec: AcquisitionSpec,
     languages; growing the profile adds members without a TOML edit.
     """
     from dataclasses import replace
+    # A CODEX COLLECTION FETCHES BY ITS CODEX'S FILTERS — the identifying half
+    # of the spec it was made from (09 §9.17) — never by a plugin's that has
+    # moved since: wikipedia's parser 5 lists each run's page_props, and the
+    # parser-4 collection must not fetch them, or its next scan would read
+    # every document as changed (docs/notes/wikipedia-qids.md §3)
+    codex = getattr(collection, "codex", None)
+    pinned_filters = ((getattr(codex, "origin", None) and codex.origin.spec) or {}).get("filters")
+    if pinned_filters:
+        spec = replace(spec, filters=tuple(pinned_filters))
     peers = peer_sources(collection)
     if not peers:
         return spec

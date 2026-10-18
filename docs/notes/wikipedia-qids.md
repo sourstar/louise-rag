@@ -90,11 +90,16 @@ re-imports 144 M vectors. Carried instead, one Codex for everything due:
 
 Amendment A1d (02 §2.4, 07 §7.3) is written; steps 1, 2 and 7 are not built.
 
-**Deploying parser 5 before the switch is safe.** With no `page_props` on
-disk the live collection's scan reports each wiki as waiting and yields no
-document, so nothing in its manifest moves; documents already there keep
-their parser-4 locators and parse as before (no segment, no rows). What must
-not happen is a `page_props` file landing in `/corpora/wikipedia` while the
-old collection still scans: every signature would move and every mark reset.
-Step 4 therefore runs with the old collection paused (as normattiva's
-re-creation did).
+**Deploying parser 5 before the switch is safe — since 2026-10-18's fix,
+not before.** The first attempt (rollout phase B, step 3a) refused it: the
+plugin's spec now lists 33 files per run, the live Codex pins 22, and
+`pinned_snapshot` matched exactly, so no collection loaded. Worse was behind
+it: acquisition listed the PLUGIN's files, so the parser-4 collection would
+have fetched the tables, and its next scan would have read every document as
+changed. Now a Codex pins the snapshot as its own filters select it, and a
+Codex collection fetches by its Codex's filters (`acquire/spec.pinned_snapshot`,
+`engine.effective_spec`). With no `page_props` on disk the live collection's
+scan reports each wiki as waiting and yields no document; documents already
+there keep their parser-4 locators and parse as before. A table landing in
+`/corpora/wikipedia` while the old collection scans would still move every
+signature, so step 4 runs with it paused (as normattiva's re-creation did).

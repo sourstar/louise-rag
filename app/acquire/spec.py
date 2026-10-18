@@ -250,19 +250,37 @@ def everything_profile(spec: AcquisitionSpec) -> str | None:
     return None
 
 
+def admitted(rel_path: str, filters) -> bool:
+    """`rel_path` against a spec's base filters: a `!` pattern vetoes, any
+    other one admits (engine._apply_filters' reading, without a profile)."""
+    import fnmatch
+    if any(p.startswith("!") and fnmatch.fnmatch(rel_path, p[1:]) for p in filters):
+        return False
+    positive = [p for p in filters if not p.startswith("!")]
+    return not positive or any(fnmatch.fnmatch(rel_path, p) for p in positive)
+
+
 def pinned_snapshot(spec: AcquisitionSpec, origin_spec: dict | None) -> str | None:
     """The dated dump a Codex pins, read back from its `origin.spec.files`
     (09 §9.17: "for a dated-dump origin the dump pinned"), so that a
     collection file never states it a second time. None when the source
-    publishes no dated dumps or the Codex pins none."""
+    publishes no dated dumps or the Codex pins none.
+
+    THE SNAPSHOT AS THE CODEX'S OWN FILTERS SELECT IT. A plugin's spec may
+    list more of a dump run than an older Codex pins — wikipedia's parser 5
+    added each run's page_props, and the live Codex pins the dumps and their
+    indexes alone — and that Codex still pins that date. A Codex pinning
+    PART of what its filters select is refused, as before."""
     files = (origin_spec or {}).get("files")
     if spec.snapshot_files is None or not files:
         return None
     pinned = {f["rel_path"] for f in files}
+    filters = (origin_spec or {}).get("filters") or spec.filters
     dates = sorted({seg for p in pinned for seg in p.split("/")
                     if len(seg) == 8 and seg.isdigit()})
     for date in dates:
-        if {f.rel_path for f in spec.snapshot_files(date)} == pinned:
+        if {f.rel_path for f in spec.snapshot_files(date)
+                if admitted(f.rel_path, filters)} == pinned:
             return date
     raise ValueError(f"{spec.source_id}: the Codex pins {len(pinned)} origin "
                      f"files that no dated snapshot of this spec lists")
