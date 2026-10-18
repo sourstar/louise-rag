@@ -2022,7 +2022,12 @@ def _index_maintainer() -> None:
     cons: dict[str, object] = {}
     while not _stop.wait(INDEX_MAINTAINER_INTERVAL_S):
         try:
-            collections = collections_mod.load_all()
+            # A PAUSED COLLECTION IS ONE THE NODE IS NOT RUNNING (07 §7.7):
+            # its derived indexes wait with it. 2026-10-18: pubmed-v8, paused
+            # for its carry, got facets written into its index/ and the carry
+            # refused it as not empty
+            paused = node_state.paused_collections()
+            collections = [c for c in collections_mod.load_all() if c.name not in paused]
             if not collections:
                 continue
             if not _maintenance_allowed():

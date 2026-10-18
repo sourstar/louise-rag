@@ -151,3 +151,29 @@ def test_a_pause_mid_cycle_stops_the_maintainer_before_the_next_collection(
         assert len(calls) == 1, f"maintained after the pause: {calls}"
     finally:
         _halt(maintainer)
+
+
+def test_the_index_maintainer_leaves_a_paused_collection_alone(isolated_config, monkeypatch):
+    """07 §7.7: `node pause <collection>` — the node is not running it, and its
+    derived indexes wait with it. 2026-10-18: pubmed-v8, paused for its carry,
+    got facets written into its index/, and the carry refused a target that
+    was not empty."""
+    monkeypatch.setattr(worker, "INDEX_MAINTAINER_INTERVAL_S", 0.05)
+    calls: list[str] = []
+    monkeypatch.setattr(worker, "_maintain_vector_index",
+                        lambda con, c: calls.append(c.name) or False)
+    name = collections_mod.load_all()[0].name
+    node_state.set_worker_state("running")
+    node_state.set_paused(name, True)
+    sched.scheduler().demand(sched.RES_INDEX, name)
+    maintainer = threading.Thread(target=worker._index_maintainer, daemon=True)
+    maintainer.start()
+    try:
+        time.sleep(0.5)
+        assert calls == [], "a paused collection's indexes are not maintained"
+        node_state.set_paused(name, False)
+        sched.scheduler().demand(sched.RES_INDEX, name)
+        assert _wait(lambda: name in calls), "resumed, it is maintained again"
+    finally:
+        _halt(maintainer)
+        node_state.set_paused(name, False)
