@@ -22,7 +22,9 @@ git archive --format=tar "$rev" \
   deploy/localai/backends/louise-medcpt-article-ov deploy/localai/backends/louise-medcpt-rerank \
   deploy/localai/backends/louise-madlad deploy/localai/backends/louise-dar-legal-it \
   deploy/madlad-translate/server.py deploy/medcpt-rerank/server.py deploy/dar-legal-it/server.py \
-  deploy/medcpt-rerank/convert_article.py | tar -x -C "$tmp"
+  deploy/medcpt-rerank/convert_article.py \
+  app/vega/client.py tools/__init__.py tools/vega_repro_check.py tools/vega_cut_scan.py \
+  calibration/text.jsonl deploy/localai/patches/series | tar -x -C "$tmp"
 git rev-parse "$rev" > "$tmp/REVISION"
 mkdir -p "$tmp/deploy/vega/stage"
 cp -r deploy/vega/stage/. "$tmp/deploy/vega/stage/"

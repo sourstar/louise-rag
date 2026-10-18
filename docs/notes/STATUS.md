@@ -59,6 +59,15 @@ it left open is below.
   every input whole with `ctx` as the tag's `window`, cut there exactly; every
   live Codex keeps the character cut its references were made with, until its
   corrected Codex (wikipedia's parser-5 switch first) — the note's §4–5.
+  **The exact cut needs our llama.cpp backend** (2026-10-18, operator: "patch
+  it"): upstream's ignores token ids ([localai-bugs.md](localai-bugs.md) B14),
+  and 3 of 512 texts have no text with exactly their first 1,022 tokens. P2
+  embeds them (189/189 cut exactly on the CPU build); the wrapper sends a cut
+  as its tokens where `Gate._probe` finds the backend does. Not yet on the
+  node: `deploy/vega/switch/rollout-p2.sh` (the SYCL build by
+  `deploy/localai/llama-cpp/build.sh`, invariant 12 measured by
+  `tools/vega_repro_check.py`, then the gate), with the operator present;
+  the AMD peer builds `hipblas` the same way.
 - **Wikipedia parser 5** (2026-10-18, [wikipedia-qids.md](wikipedia-qids.md)):
   the QIDs from each run's `page_props`, built and tested with `dev carry
   --resign` (A1d); the node still runs parser 4's Codex, and the switch's
