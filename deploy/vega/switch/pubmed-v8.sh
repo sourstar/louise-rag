@@ -98,12 +98,24 @@ $TOOL python -m tools.recipe_from_codex /w/codex-v6.json "/config/recipes/$NEW.j
   --cut tokens --engine /w/doc-run.json --query-engine /w/query-run.json
 
 say "5. create $NEW (the calibration set embedded through the token cut)"
+# A PAIR SPACE'S SET travels in its member (09 §9.12): the very 512 pairs of
+# $OLD's, read from its member's `pairs` tensor and refused unless they hash to
+# the set its Codex names, which the recipe keeps
+docker exec "$W" python -c "
+from pathlib import Path
+from app.hold import calibration as cal, codex as cx, shard
+c = cx.loads(open('/data/collections/$OLD/shard/codex.json', 'rb').read())
+m = Path('/data/collections/$OLD/shard') / shard.calibration_paths(c.space.calibration.set)[0]
+data = cal.read_pairs(m, expect=c.space.calibration.set)
+open('/config/recipes/$NEW.pairs', 'wb').write(data)
+print('pairs', len(data), 'bytes, set', c.space.calibration.set[:23])"
 if [ ! -e "$CFG/$NEW.toml" ]; then
   # both sides on one URL; the query side's references are made only when
   # its endpoint is named (`--query-encoder`), and its model picks the side
   $L hold collection create pubmed --recipe "/config/recipes/$NEW.json" --name "$NEW" \
     --encoder "$LOCALAI" --query-encoder "$LOCALAI" --api vega \
-    --embed-model "$DOC" --query-model "$QUERY"
+    --embed-model "$DOC" --query-model "$QUERY" \
+    --calibration-set "/config/recipes/$NEW.pairs"
 fi
 $L hold collection ack "$NEW" || true
 $L hold collection ack "$NEW" --yes
