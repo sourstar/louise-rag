@@ -128,7 +128,17 @@ A row is flagged below the collection's tolerance.
 
 | collection | encoder, engine on the card | CPU reference | result |
 |---|---|---|---|
-| normattiva | DAR-legal-it, torch XPU (`louise-python`) | the same code, `device:cpu` | pending |
-| pubmed | MedCPT article, OpenVINO GPU (`louise-python`) | OpenVINO CPU (`vega-medcpt-article-ov-cpu`) | pending |
-| gutenberg | Qwen3-Embedding-4B GGUF, llama.cpp SYCL | llama.cpp CPU | pending |
-| wikipedia | bge-m3 GGUF, llama.cpp SYCL (layer 2; layer 1 is wikivec's archive) | llama.cpp CPU | pending |
+| normattiva | DAR-legal-it, torch XPU (`louise-python`) | the same code, `device:cpu` | **clean**: 597 chunks, 49 of them in the failing length ranges; DAR runs SDPA, not the eager softmax |
+| pubmed | MedCPT article, OpenVINO GPU (`louise-python`) | OpenVINO CPU (`vega-medcpt-article-ov-cpu`) | **the card is clean; 74 of 1,088 stored vectors are not this function's** — below, and [char-cut-truncation.md](char-cut-truncation.md) |
+| gutenberg | Qwen3-Embedding-4B GGUF, llama.cpp SYCL | llama.cpp CPU | not measured: the CPU twin did not finish 1,000 chunks of a 4B model within an hour; to run at night (quiet hours) |
+| wikipedia | bge-m3 GGUF, llama.cpp SYCL (layer 2; layer 1 is wikivec's archive) | llama.cpp CPU | not measurable yet: `vectors-sample` draws over a snapshot's parts and wikipedia has none; the switch to parser 5 measures it ([wikipedia-qids.md](wikipedia-qids.md) §4) |
+
+**Pubmed, 2026-10-18** (seed `aa7b98d0…`, `tools/cross_device_check.py --explain`). On
+all 74 failing chunks the card now and the CPU twin agree (cosine 0.99995 or more), while
+the stored vector agrees with neither (0.95–0.9999): the stored vectors were made from
+another input. All 74 are NCBI's imported MedCPT vectors (`genesis:medcpt-pubmed`), and
+they are the LONG abstracts (median 2,255 characters, against 1,183 for the imported
+vectors that pass). Re-run on the card with the platform's character cut disabled, so
+the encoder truncates at its own 512 tokens as NCBI did, 73 of the 74 reproduce and 18
+locally embedded vectors fail instead. The cause is the platform's cut, not the card:
+[char-cut-truncation.md](char-cut-truncation.md).

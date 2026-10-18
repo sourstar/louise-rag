@@ -843,6 +843,25 @@ def test_the_cross_device_check_changes_only_the_model():
         xdc.cpu_recipe(r, "vega-dar-legal-it")
 
 
+def test_the_cross_device_explain_names_which_side_is_wrong():
+    """`--explain`: a stored vector the card got wrong reads low against the
+    twin and high against the card now; ids map to texts in the check's order,
+    and a held id with no text in that call is never mis-paired."""
+    from tools import cross_device_check as xdc
+    stored = {"a": [1.0, 0.0], "b": [0.0, 1.0]}
+    twin = {"ta": [1.0, 0.0], "tb": [1.0, 0.0]}           # the twin disagrees on b
+    r = xdc.Recorder(lambda ids: {i: stored[i] for i in ids if i in stored},
+                     lambda texts: [twin[t] for t in texts])
+    r.vectors_for(["a", "missing", "b"])
+    r.embed(["ta", "tb"])
+    rows = r.explain(["b"], lambda texts: [stored["b"] for _ in texts])  # the card repeats itself
+    assert rows == [{"chunk": "b", "chars": 2, "stored_twin": 0.0,
+                     "stored_card_now": 1.0, "card_now_twin": 0.0}]
+    r.vectors_for(["a", "b"])
+    r.embed(["ta"])                                         # sizes disagree: not recorded
+    assert r.text["a"] == "ta" and r.explain(["zzz"], lambda t: []) == []
+
+
 def dataclasses_fields_equal(a, b, *, but):
     import dataclasses
     return all(getattr(a, f.name) == getattr(b, f.name)
