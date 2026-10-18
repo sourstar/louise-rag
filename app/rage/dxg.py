@@ -119,6 +119,24 @@ def clients(amd_smi: AmdSmi, proc_root: Path = Path("/proc")) -> dict[int, str]:
     return out
 
 
+def used_vram_mib(amd_smi: AmdSmi) -> dict[str, int]:
+    """{card's PCI address: VRAM in use on it, MiB}, card-wide. A listed
+    client is only a process holding a GPU CONTEXT — measured 2026-10-18, a
+    llama.cpp backend shown no HIP device (`HIP_VISIBLE_DEVICES=-1`,
+    `gpu_layers: 0`) is listed exactly like one computing on the card — so
+    where the weights went is read from what a load did to this number."""
+    cards = addresses(amd_smi)
+    out: dict[str, int] = {}
+    for g in _gpus(_json(amd_smi, ["metric", "--mem-usage", "--json"])):
+        pci = (cards.get(g.get("gpu")) or {}).get("pci")
+        used = (g.get("mem_usage") or {}).get("used_vram")
+        if not pci or not isinstance(used, dict) or not isinstance(used.get("value"), int):
+            continue
+        unit = str(used.get("unit", "MB")).upper()
+        out[pci] = used["value"] * (1024 if unit.startswith("G") else 1)
+    return out
+
+
 def driver_line(amd_smi: AmdSmi, pci: str) -> str:
     """The card's driver as `driver_string` states it: the paravirtual
     device and the Windows driver's version behind it."""

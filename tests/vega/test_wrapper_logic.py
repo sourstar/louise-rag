@@ -376,26 +376,78 @@ class FakeDxgProc(FakeProc):
         return device == "/dev/dxg" and pid in self.on_dxg
 
 
-def test_on_wsls_gpu_the_card_is_the_one_the_driver_lists_the_backend_on():
-    cards = {"0000:03:00.0": "AMD Radeon RX 9060 XT"}
-    proc = FakeDxgProc({1})
-    assert vw.device_of([1, 2], cards, proc, lambda: {2: "0000:03:00.0", 77: "0000:03:00.0"}) \
-        == ("AMD Radeon RX 9060 XT", "0000:03:00.0")
+AMD = "0000:03:00.0"
+DXG_CARDS = {AMD: "AMD Radeon RX 9060 XT"}
+
+
+def _dxg(pids, clients, moved, declared, weights=1104.0):
+    return vw.device_on_dxg(pids, DXG_CARDS, clients, vram_delta_mib={AMD: moved},
+                            weights_mib=weights, declared=declared)
+
+
+def test_on_wsls_gpu_a_card_run_is_listed_and_moved_the_weights_onto_the_card():
+    """bge-m3 F16 (1,104 MiB) on the RX 9060 XT, 2026-10-18: +971 MiB."""
+    assert _dxg([1, 2], {2: AMD, 77: AMD}, 971, "card") == ("AMD Radeon RX 9060 XT", AMD)
+
+
+def test_on_wsls_gpu_a_cpu_twin_is_listed_too_and_is_stated_as_cpu_by_what_it_did_not_move():
+    """The measured trap: a backend shown no HIP device (gpu_layers 0) is a
+    driver client like a card run. It moved nothing, and its options say CPU."""
+    assert _dxg([1], {1: AMD}, 3, "cpu") == ("cpu", None)
+
+
+@pytest.mark.parametrize("moved, declared, why", [
+    (3, "card", "disagree"),         # asked for the card, nothing went there (HIP found no card)
+    (971, "cpu", "disagree"),        # said CPU, the weights went to the card
+    (300, None, "disagree"),         # gpu_layers 0 with op offload: split
+    (-2900, "card", "disagree"),     # another model evicted during the load
+    (400, "cpu", "disagree"),        # something else loaded meanwhile
+])
+def test_on_wsls_gpu_anything_the_two_readings_do_not_agree_on_states_no_run(moved, declared,
+                                                                              why):
+    with pytest.raises(loadopts.Unstatable, match=why):
+        _dxg([1], {1: AMD}, moved, declared)
+
+
+def test_on_wsls_gpu_the_driver_must_list_the_backend_on_one_named_card():
     with pytest.raises(loadopts.Unstatable, match="lists none of its processes"):
-        vw.device_of([1], cards, proc, lambda: {77: "0000:03:00.0"})
+        _dxg([1], {77: AMD}, 971, "card")
     with pytest.raises(loadopts.Unstatable, match="several cards"):
-        vw.device_of([1], cards, proc, lambda: {1: "several"})
+        _dxg([1], {1: "several"}, 971, "card")
     with pytest.raises(loadopts.Unstatable, match="names no device"):
-        vw.device_of([1], cards, proc, lambda: {1: "0000:04:00.0"})
+        _dxg([1], {1: "0000:04:00.0"}, 971, "card")
+    with pytest.raises(loadopts.Unstatable, match="not read around the load"):
+        vw.device_on_dxg([1], DXG_CARDS, {1: AMD}, vram_delta_mib={}, weights_mib=1.0,
+                         declared="card")
 
 
-def test_on_wsls_gpu_without_amd_smi_no_run_is_stated_as_before():
-    cards = {"0000:03:00.0": "AMD Radeon RX 9060 XT"}
+def test_device_of_asks_the_dxg_reader_only_for_a_backend_on_dev_dxg():
+    seen = []
+
+    def reader(pids):
+        seen.append(pids)
+        return DXG_CARDS[AMD], AMD
+    assert vw.device_of([1, 2], DXG_CARDS, FakeDxgProc({1}), reader) == (DXG_CARDS[AMD], AMD)
+    assert seen == [[1, 2]]
     with pytest.raises(loadopts.Unstatable, match="cannot be read"):
-        vw.device_of([1], cards, FakeDxgProc({1}))
-    # a process that does not hold /dev/dxg is never asked about
+        vw.device_of([1], DXG_CARDS, FakeDxgProc({1}))                 # no amd_smi: as before
     with pytest.raises(loadopts.Unstatable, match="cannot be read"):
-        vw.device_of([1], cards, FakeDxgProc(set()), lambda: {1: "0000:03:00.0"})
+        vw.device_of([1], DXG_CARDS, FakeDxgProc(set()), reader)       # not on /dev/dxg
+
+
+@pytest.mark.parametrize("layers, options, env, placement", [
+    (999, [], {}, "card"),
+    (0, ["no_op_offload:true"], {}, "cpu"),
+    (0, [], {}, None),                                   # op offload still uses the card
+    (999, [], {"HIP_VISIBLE_DEVICES": "-1"}, "cpu"),     # no device to use
+    (None, [], {}, None),
+])
+def test_the_options_say_where_the_work_was_asked_to_go(layers, options, env, placement):
+    load = {"Model": "m.gguf", "ModelFile": "/models/m.gguf", "Options": options,
+            "EnvVars": env}
+    if layers is not None:
+        load["NGPULayers"] = layers
+    assert vw.declared_placement(vw.canon_from_protojson(json.dumps(load))) == placement
 
 
 def test_the_config_names_amd_smi_by_absolute_path(tmp_path):

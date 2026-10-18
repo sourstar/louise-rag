@@ -22,14 +22,27 @@ PROCESS = [{"gpu": 0, "process_list": [{"process_info": {
     "mem_usage": "N/A", "usage": {"gfx": "N/A", "enc": "N/A"}}}]}]
 
 
-def fake_smi(process=PROCESS, static=STATIC):
+METRIC = {"gpu_data": [{"gpu": 0, "mem_usage": {
+    "total_vram": {"value": 16304, "unit": "MB"}, "used_vram": {"value": 1725, "unit": "MB"},
+    "free_vram": {"value": 14579, "unit": "MB"}, "used_gtt": {"value": 414, "unit": "MB"}}}]}
+
+
+def fake_smi(process=PROCESS, static=STATIC, metric=METRIC):
     def run(args):
         if args[0] == "process":
             return json.dumps(process)
         if args[0] == "static":
             return json.dumps(static)
+        if args[0] == "metric":
+            return json.dumps(metric)
         raise AssertionError(args)
     return run
+
+
+def test_the_cards_used_vram_is_read_per_address():
+    assert dxg.used_vram_mib(fake_smi()) == {"0000:03:00.0": 1725}
+    no_value = {"gpu_data": [{"gpu": 0, "mem_usage": {"used_vram": "N/A"}}]}
+    assert dxg.used_vram_mib(fake_smi(metric=no_value)) == {}
 
 
 def thread(proc, tid, tgid):
