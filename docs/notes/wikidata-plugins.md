@@ -421,6 +421,23 @@ holding less than Wikidata says. Choosing the dump means a record's text
 depends on other entities' labels from the same dump, which is pinned per
 snapshot. **The collection is not created until this is answered.**
 
+**Throughput on the B70** (128 entity texts, 2026-10-18 04:10; batches
+need `torch.unique` on the CPU, the XPU overflow's workaround):
+
+| | 1 text | batch 8 | batch 32 |
+|---|---|---|---|
+| fp32 | 4.6 texts/s | 21.7 | 45.0 (cosine to one-at-a-time ≥ 0.9999999) |
+| bf16 | 5.7 | 33.6 | 73.1 (drifts up to 1.4e-4) |
+
+At fp32 batch 32, embedding the four languages (~44.6 M chunks) is ~11.5 days
+of GPU, about 34 nights inside the quiet hours. LocalAI calls a backend one
+text at a time, so the batch has to be assembled inside the backend, from
+concurrent calls. Until then it is 4.6/s.
+
+**The phrase tables.** The textifier knows six languages (`ar de en es fr
+zh`, `language_variables.json`). Any other (Italian included) gets English
+scaffolding ("Attributes include:") around its own labels.
+
 **Other facts for the build:**
 - jina-v3's `encode` on the B70 fails on a batch (`torch.unique`:
   "numel: integer multiplication overflow") and works one text at a time.
