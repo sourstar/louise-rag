@@ -338,8 +338,13 @@ def import_bundle(con, collection, bundle_dir, *, embed_fn=None,
     # invariant 9, "not imported": the backstop for every caller. The doors
     # — the worker's inbox, `bundle import` — refuse first, in their own
     # words; this makes a door that forgets impossible (audit, 2026-09-13)
-    from .. import licensing
+    from .. import disk_guard, licensing
     licensing.require_ack(collection, use="vectors are imported into it")
+    short = disk_guard.vectors_short(collection)
+    if short:
+        # the disk's, not the bundle's: retryable, nothing ledgered against it
+        disk_guard.signal(con, collection, short)
+        return {"ok": False, "retryable": True, "error": short, "error_class": "LowDisk"}
     try:
         return _import_checked(con, collection, bundle_dir, embed_fn=embed_fn,
                                strict=strict, stop=stop)

@@ -182,6 +182,13 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     local = None
     if write is None or vectors_for is None:
         local = rec.local_collection(root, name, codex)
+    from app import disk_guard
+    short = disk_guard.vectors_short(local) if local is not None else None
+    if short:
+        # the disk's, not the bundle's: left staged, accepted on a later pass
+        disk_guard.signal(con, local, short)
+        say(f"[{name}] share: bundle {bundle_id[:23]}… waits — {short}")
+        return {"outcome": "deferred", "bundle_id": bundle_id, "why": short}
     if write is None:
         write = lambda r: embeddings.upsert_chunks(r, collection=local, dtype=codex.space.dtype)  # noqa: E731
     if vectors_for is None:
@@ -592,5 +599,6 @@ def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop
                 break                               # nobody serves it now: the rest can wait
             continue
         out[got["outcome"]] += 1
-        attest.mark_acted(node_con, ev["id"])
+        if got["outcome"] != "deferred":            # a short disk: left unacted, retried
+            attest.mark_acted(node_con, ev["id"])
     return out

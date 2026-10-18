@@ -440,6 +440,15 @@ VECTOR_INDEX_KEEP_VERSIONS_H = float(os.getenv("VECTOR_INDEX_KEEP_VERSIONS_H", "
 #: below.
 VECTOR_INDEX_MIN_FREE_GB = float(os.getenv("VECTOR_INDEX_MIN_FREE_GB", "2"))
 
+#: Below this much free space on the filesystem under a collection's vectors,
+#: nothing writes vectors — embedding, archive and bundle imports defer and
+#: say why (app/disk_guard.py; operator, 2026-10-18). The floor is the larger
+#: of the two: an absolute one, and a share of the filesystem, because a ZFS
+#: pool slows long before it is full. Maintenance is not gated by it: pruning
+#: and compaction are what give space back (VECTOR_INDEX_MIN_FREE_GB above).
+VECTORS_MIN_FREE_GB = float(os.getenv("VECTORS_MIN_FREE_GB", "32"))
+VECTORS_MIN_FREE_FRACTION = float(os.getenv("VECTORS_MIN_FREE_FRACTION", "0.05"))
+
 #: Free space a compaction of a table needs, as a fraction of that table.
 #: Measured once: compacting a 291 GiB table took free space down by 23 GiB
 #: before it released anything, about 8 %. 0.25 is that with margin.

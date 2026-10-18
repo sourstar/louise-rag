@@ -257,7 +257,7 @@ def test_an_archive_pass_in_flight_ends_at_its_next_row_when_the_mode_changes(co
 
     monkeypatch.setattr(worker.bundle_genesis, "drain_next_shard", drain)
     monkeypatch.setattr(worker, "_acquire_archive", lambda *a, **k: None)
-    monkeypatch.setattr(worker, "_vector_writes_allowed", lambda c: True)
+    monkeypatch.setattr(worker, "_vector_writes_allowed", lambda c, con=None: True)
     monkeypatch.setattr(worker, "_license_allows", lambda *a: True)
     monkeypatch.setattr(worker, "_quarantine_allows", lambda *a: True)
     monkeypatch.setattr(worker, "_ingest_pending", lambda con: False)

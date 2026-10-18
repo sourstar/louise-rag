@@ -177,7 +177,8 @@ def _embed_reason(collection, scope: dict) -> str:
     if mode == "off":
         return (f"embed is OFF for this collection — set it in "
                 f"config/collections/{collection.name}.toml")
-    return ""
+    from . import disk_guard
+    return disk_guard.vectors_short(collection) or ""
 
 
 def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -> Report:

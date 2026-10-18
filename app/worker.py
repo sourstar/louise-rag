@@ -1760,8 +1760,13 @@ def _maintain_catalog(con, collection) -> bool:
     return True
 
 
-def _vector_writes_allowed(collection) -> bool:
+def _vector_writes_allowed(collection, con=None) -> bool:
     """Whether this collection's vector writers may run.
+
+    NOT BELOW THE DISK FLOOR (operator, 2026-10-18; app/disk_guard.py): a
+    vector store whose filesystem is short of space takes no more rows from
+    any writer — a deferral, said in the event log, never an error on a
+    document.
 
     For a BUILD or a REFRESH they always may, and that is deliberate
     (2026-08-28). This used to answer "not while the index maintainer is
@@ -1780,8 +1785,14 @@ def _vector_writes_allowed(collection) -> bool:
     `VECTOR_INDEX_COMPACT_FRAGMENTS` small fragments — so waiting for one
     is affordable where waiting for every refresh was not.
     """
-    from . import vector_index
-    return not vector_index.rewriting(collection)
+    from . import disk_guard, vector_index
+    if vector_index.rewriting(collection):
+        return False
+    short = disk_guard.vectors_short(collection)
+    if short:
+        disk_guard.signal(con, collection, short)
+        return False
+    return True
 
 
 def vector_store_contended(exc: BaseException) -> bool:
@@ -2074,8 +2085,8 @@ def _drain_remote_archive(con, collection, stop) -> bool:
     drain_next_shard; anything unexpected is logged, never raised."""
     if not collection.genesis_archive:
         return False
-    if not _vector_writes_allowed(collection):
-        return False            # the index maintainer holds the table; next round
+    if not _vector_writes_allowed(collection, con):
+        return False            # the index maintainer holds the table, or the disk is short
     if not _license_allows(con, collection, "archive import"):
         return False            # vectors are USE of the corpus they describe
     _acquire_archive(con, collection, "round")
@@ -3077,8 +3088,8 @@ def _run_one_step(con, collection, last_idle_log: dict,
             return False
         else:
             stage, row = _next_book(con, scope, embed_allowed=False, collection=collection)
-    if stage == "embed" and not _vector_writes_allowed(collection):
-        return False            # index build/refresh in progress: deferred, not an error
+    if stage == "embed" and not _vector_writes_allowed(collection, con):
+        return False            # index rewrite in progress, or the disk short: deferred, not an error
     if stage == "embed":
         recipe = collections_mod.recipe_for(collection)
         if recipe.concurrency > 1:
@@ -3559,7 +3570,7 @@ def _producer_step(con, collection) -> bool:
         return False
     if not _license_allows(con, collection, "embedding"):
         return False
-    if not _vector_writes_allowed(collection):
+    if not _vector_writes_allowed(collection, con):
         return False
     if not _embedding_allowed(con, collection):
         return False

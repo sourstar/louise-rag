@@ -119,7 +119,11 @@ def show() -> dict[str, Any]:
         name, why = (bad if isinstance(bad, tuple) else (str(bad), "does not load"))[:2]
         rows.append({"name": name, "collection_id": None, "state": "refused", "reasons": [str(why)],
                      "paused": False, "embed": None, "integrity_violated": [], "doing": None, "stages": []})
+    from app import disk_guard
     return {"mode": ov["mode"], "overrides": ov,
+            # every filesystem under a collection's vectors: below its floor,
+            # nothing writes vectors there (app/disk_guard.py)
+            "disk": disk_guard.status(loaded),
             "collections": rows,
             "jobs": node_state.peek(_jobs, [], table="jobs"),
             "last_round": last_round(loaded)}
