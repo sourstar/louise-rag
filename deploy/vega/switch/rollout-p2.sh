@@ -40,8 +40,18 @@ tar -xzf "$SRC_STAGE" -C "$STAGE/src"
 echo "revision $(cat "$STAGE/src/REVISION")"
 grep -q "def _probe" "$STAGE/src/deploy/vega/vega_wrapper.py"              # the token path
 grep -q "0002-llama-cpp-embed-token-ids.patch" "$STAGE/src/deploy/localai/patches/series"
-test ! -e "$BK/$NAME" || { echo "$BK/$NAME exists already: delete it in LocalAI first"; exit 1; }
-cp "$SRC_TAR" "$TAR"                              # where LocalAI's container sees it
+# RESUMABLE (2026-10-18: the first run installed and rebuilt, then stopped at
+# step 7): an install of OUR tar is kept, any other is refused
+INSTALLED=
+if [ -e "$BK/$NAME" ]; then
+  grep -q "\"uri\": \"ocifile:///backends/$(basename "$TAR")\"" "$BK/$NAME/metadata.json" \
+    || { echo "$BK/$NAME exists and is not ours: delete it in LocalAI first"; exit 1; }
+  cmp -s "$SRC_TAR" "$TAR" || { echo "$TAR is not $SRC_TAR: delete $NAME in LocalAI first"; exit 1; }
+  INSTALLED=1
+  echo "$NAME installed already, from this tar"
+else
+  cp "$SRC_TAR" "$TAR"                            # where LocalAI's container sees it
+fi
 
 say "1. the node paused while the backends change (its mode now)"
 $L node show | python3 -c "import sys,json; print('mode', json.load(sys.stdin)['mode'])"
@@ -51,8 +61,10 @@ say "2. LocalAI's own files the package carries, fetched and checked"
 docker run --rm -v "$STAGE/cache:/cache" -v "$STAGE/src:/src:ro" "$PY" sh /src/deploy/vega/stage/fetch.sh
 
 say "3. our llama.cpp backend installed as LocalAI installs any (From URL, ocifile://)"
-curl -sf -X POST "$LOCALAI/api/backends/install-external" -H "Content-Type: application/json" \
-  -d "{\"uri\":\"ocifile:///backends/$(basename "$TAR")\",\"name\":\"$NAME\"}"; echo
+if [ -z "$INSTALLED" ]; then
+  curl -sf -X POST "$LOCALAI/api/backends/install-external" -H "Content-Type: application/json" \
+    -d "{\"uri\":\"ocifile:///backends/$(basename "$TAR")\",\"name\":\"$NAME\"}"; echo
+fi
 for _ in $(seq 120); do test -x "$BK/$NAME/run.sh" && break; sleep 5; done
 test -x "$BK/$NAME/run.sh" || { echo "LocalAI did not install $NAME in 10 min"; exit 1; }
 cat "$BK/$NAME/metadata.json"; echo
@@ -67,11 +79,18 @@ done
 
 say "5. vega-llama-cpp saved, then rebuilt in front of $NAME at the staged commit"
 test -e "$SAVED/vega-llama-cpp" || { mkdir -p "$SAVED" && cp -a "$BK/vega-llama-cpp" "$SAVED/"; }
-docker run --rm -e PKG=vega-llama-cpp -e BACKEND="$NAME" \
-  -e SOCKET=/backends/vega-llama-cpp/run/receipts.sock \
-  -v "$BK/vega-llama-cpp:/backends/vega-llama-cpp" \
-  -v "$STAGE/src:/src:ro" -v "$STAGE/cache:/cache:ro" \
-  "$PY" sh /src/deploy/vega/stage/build_vega_package.sh
+# built already at this commit in front of $NAME: kept — another build is another
+# tree, so another run to gate
+if [ "$(cat "$BK/vega-llama-cpp/REVISION" 2>/dev/null)" = "$(cat "$STAGE/src/REVISION")" ] \
+   && grep -q "\"backend\": \"$NAME\"" "$BK/vega-llama-cpp/vega.json"; then
+  echo "vega-llama-cpp is built already at $(cat "$STAGE/src/REVISION") in front of $NAME"
+else
+  docker run --rm -e PKG=vega-llama-cpp -e BACKEND="$NAME" \
+    -e SOCKET=/backends/vega-llama-cpp/run/receipts.sock \
+    -v "$BK/vega-llama-cpp:/backends/vega-llama-cpp" \
+    -v "$STAGE/src:/src:ro" -v "$STAGE/cache:/cache:ro" \
+    "$PY" sh /src/deploy/vega/stage/build_vega_package.sh
+fi
 echo "vega-llama-cpp: $(cat "$BK/vega-llama-cpp/REVISION") $(tr -d '\n ' < "$BK/vega-llama-cpp/vega.json")"
 grep -q "\"backend\": \"$NAME\"" "$BK/vega-llama-cpp/vega.json"
 
@@ -79,9 +98,13 @@ say "6. LocalAI reads the models again"
 curl -s -X POST "$LOCALAI/models/reload"; echo
 
 say "7. invariant 12: each new run bit-identical over fresh loads and orders"
+# a window below every model's context (granite's and MedCPT's are 512): a long
+# text sent whole overflows a 512-token model (the first run stopped there),
+# and the window takes the token-id path P2 adds
 for m in $SYCL; do
   docker run --rm --network host -v "$STAGE/src:/srv:ro" -w /srv -e PYTHONPATH=/srv \
-    louise-rag:local python -m tools.vega_repro_check --url "$LOCALAI" --model "$m" --n 16
+    louise-rag:local python -m tools.vega_repro_check --url "$LOCALAI" --model "$m" --n 16 \
+    --window 511
 done
 # the token path on the model whose context is above the window: bit-identical,
 # and the 512 calibration texts all cut exactly (3 were refused before P2)
