@@ -492,6 +492,42 @@ def test_the_driver_lines_are_the_runs_runtime(tmp_path):
     assert run["driver"] == "kernel 6.18.0; xe; libze_intel_gpu.so.1.15.39122 sha256:" + "aa" * 32
 
 
+@pytest.mark.parametrize("name, env", [
+    ("rocm-llama-cpp", {"ROCBLAS_DEFAULT_ATOMICS_MODE": "0"}),
+    ("intel-sycl-f16-llama-cpp", {"GGML_SYCL_ENABLE_DNN": "0"}),
+    ("cuda12-llama-cpp", {}),              # cuBLAS disallows atomics by default
+    ("vulkan-llama-cpp", {}),              # no mode offered
+    ("llama-cpp", {}),
+])
+def test_each_stack_names_its_vendors_deterministic_mode(name, env):
+    assert vw.determinism_env(name) == env
+
+
+def _load_with(env):
+    return vw.canon_from_protojson(json.dumps(json.loads(LOAD) | {"EnvVars": env}))
+
+
+@pytest.mark.parametrize("name, env", [
+    ("rocm-llama-cpp", {"ROCBLAS_DEFAULT_ATOMICS_MODE": "0"}),
+    ("intel-sycl-f16-llama-cpp", {"GGML_SYCL_ENABLE_DNN": "0"}),
+])
+def test_a_card_run_without_its_vendors_deterministic_mode_is_never_stated(tmp_path, name, env):
+    """CLAUDE.md invariant 12: in the MODEL's env, so the run states it."""
+    backend = vw.real_backend(_backend_dir(tmp_path, name=name))
+    kw = dict(backend=backend, device="the card", pci=None, weights="sha256:" + "11" * 32,
+              tree=vw.tree_digest(backend.directory), runtime=[],
+              card_driver_line="dxg 1")
+    (key, value), = env.items()
+    with pytest.raises(loadopts.Unstatable, match=f"invariant 12.*{key}={value}"):
+        vw.state_run(canon=_load_with({}), environ=env, **kw)
+    with pytest.raises(loadopts.Unstatable, match="invariant 12"):
+        vw.state_run(canon=_load_with({key: "1"}), environ={key: "1"}, **kw)
+    _rid, run = vw.state_run(canon=_load_with(env), environ=env, **kw)
+    assert run["engine"]["env"] == env, "the run says it ran deterministic"
+    # the same backend on the CPU uses no card library: nothing is required
+    vw.state_run(canon=_load_with({}), environ={}, **(kw | {"device": "cpu"}))
+
+
 @pytest.mark.parametrize("left, timeout", [(9.223372035063293e18, None), (None, None),
                                            (30.0, 30.0), (0.0, 0.0)])
 def test_no_deadline_is_forwarded_as_none(left, timeout):

@@ -592,6 +592,33 @@ def load_options(pb: Any, raw: bytes) -> loadopts.Canon:
     return canon_from_protojson(json_format.MessageToJson(msg, preserving_proto_field_name=True))
 
 
+#: CLAUDE.md invariant 12 (ENCODER DETERMINISM): each GPU stack's own
+#: bitwise-reproducibility control, by the token LocalAI names its backends
+#: with (docs/notes/approved-encoders.md, "Bitwise reproducibility, by vendor").
+#: It must be in the MODEL's `env` — so the run states it — whenever the run is
+#: on a card. CUDA needs none: cuBLAS defaults to CUBLAS_ATOMICS_NOT_ALLOWED,
+#: and llama.cpp runs one stream. Vulkan and llama.cpp's CPU offer no mode.
+DETERMINISM: dict[str, dict[str, str]] = {
+    # rocBLAS reduces with atomics unless told not to (the F16 models' gemm_ex
+    # path; measured on the RX 9060 XT, 2026-10-18)
+    "rocm": {"ROCBLAS_DEFAULT_ATOMICS_MODE": "0"},
+    "hip": {"ROCBLAS_DEFAULT_ATOMICS_MODE": "0"},
+    # oneDNN picks kernels by heuristic and is not reproducible run to run;
+    # llama.cpp's own SYCL kernels are (llama-intel-arc-b70 KNOWN-ISSUES)
+    "sycl": {"GGML_SYCL_ENABLE_DNN": "0"},
+}
+
+
+def determinism_env(backend_name: str) -> dict[str, str]:
+    """The environment invariant 12 requires of a card run on this backend."""
+    tokens = set(re.split(r"[-_]", backend_name.lower()))
+    out: dict[str, str] = {}
+    for token, env in DETERMINISM.items():
+        if token in tokens:
+            out.update(env)
+    return out
+
+
 def state_run(*, backend: RealBackend, canon: loadopts.Canon, environ: Mapping[str, str],
               device: str, pci: str | None, weights: str, tree: str, runtime: list[str],
               sys_root: Path = Path("/sys"), proc_root: Path = Path("/proc"),
@@ -600,7 +627,18 @@ def state_run(*, backend: RealBackend, canon: loadopts.Canon, environ: Mapping[s
     backend's tree digest read at this load, `runtime` the driver lines
     (`driver_lines`, or dpkg's `runtime_lines` for a backend carrying none).
     The build is the install record's declared `version`, else the tree's
-    short form (`short_build`) — never the uri's tag, which moves."""
+    short form (`short_build`) — never the uri's tag, which moves.
+
+    A card run without its vendor's deterministic mode in the model's `env`
+    is refused (invariant 12): a vector that the same card would not
+    reproduce from the same input is not stated as a run."""
+    if device != CPU:
+        absent = sorted(f"{k}={v}" for k, v in determinism_env(backend.name).items()
+                        if canon.env.get(k) != v)
+        if absent:
+            raise loadopts.Unstatable(
+                f"the run is on a card without its vendor's deterministic mode (CLAUDE.md "
+                f"invariant 12): the model's YAML must set env {', '.join(absent)}")
     missing = sorted(k for k, v in canon.env.items() if environ.get(k) != v)
     if missing:
         raise loadopts.Unstatable(f"the backend does not carry the environment it was loaded "

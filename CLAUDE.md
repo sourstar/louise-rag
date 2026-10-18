@@ -39,6 +39,11 @@ obeyed. Name the amendment.
   of the pitfalls that have already cost six reworks. Measure with
   `louise dev schedule-report` before proposing anything; a scheduling
   change whose commit message has no numbers in it is a guess.
+- **Deploying, configuring or measuring an ENCODER — on any card, any
+  vendor — read invariant 12 and docs/notes/approved-encoders.md
+  ("Bitwise reproducibility, by vendor") FIRST.** The vendor's
+  deterministic mode was documented there in August and missed in
+  October on a new AMD peer and on the node's own SYCL LocalAI.
 - Read the existing code in app/ for conventions before writing new modules.
 
 ## Invariants (violating any of these is a blocking bug)
@@ -177,6 +182,34 @@ are the ones that have drifted; prefer to add a test when you touch them.
     the choice with its reason beside the plugin — the form is part of what
     a verifier needs in order to reproduce our records. *Enforced: build +
     test (tests/pack/test_origin_fidelity.py); the form choice by review.*
+12. ENCODER DETERMINISM. *(Operator, 2026-10-18: a fundamental pillar.)*
+    The same input on the same card, the same build and the same flags
+    gives the SAME BYTES, every time — not "within tolerance". Tolerance
+    (03 §3.1) is for what no vendor can promise, agreement ACROSS
+    hardware; it is never a cover for a card that does not reproduce its
+    own output, because a vector its own encoder cannot reproduce cannot
+    be checked by anyone. So every encoder run on a card uses its stack's
+    bitwise-reproducibility mode, set in the MODEL's YAML `env` so the
+    stated run carries it (docs/notes/approved-encoders.md, "Bitwise
+    reproducibility, by vendor"):
+      - AMD ROCm: `ROCBLAS_DEFAULT_ATOMICS_MODE=0` (rocBLAS reduces with
+        atomics by default; llama.cpp's F16 models go through its gemm_ex);
+      - Intel SYCL: `GGML_SYCL_ENABLE_DNN=0` (oneDNN chooses kernels by
+        heuristic and drifts run to run; llama-intel-arc-b70);
+      - NVIDIA CUDA: none to set — cuBLAS disallows atomics by default;
+        a single stream (`parallel:1`) keeps it so;
+      - Vulkan, llama.cpp CPU: no mode offered — measure, do not assume.
+    And it is MEASURED, never assumed: before a new engine (card, build,
+    flags, env) embeds for a collection, the same texts are embedded over
+    several fresh loads and in several orders, and every vector must come
+    back bit-identical (llama-intel-arc-b70 `capture.py` + a byte compare;
+    the prompt cache and overlapping requests are what break it — `-np 1`).
+    *Enforced: the VeGa wrapper states no card run whose model env lacks
+    its vendor's mode (deploy/vega/vega_wrapper.py `DETERMINISM`,
+    tests/vega/test_wrapper_logic.py); the bit-exact measurement by
+    review until the gate runs it.* Open: torch (louise-python) and
+    OpenVINO have their own controls (`torch.use_deterministic_algorithms`,
+    CUBLAS_WORKSPACE_CONFIG) and are not yet checked by the wrapper.
 
 ## Engineering rules (blocking in review; each one was paid for)
 - **"Fix it after" is NEVER an option** (docs/01, promise 8). A known

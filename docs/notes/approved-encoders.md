@@ -131,6 +131,30 @@ Notes:
   own rounding rather than the encoder's. So "CPU is unstable" is not a
   property of CPU inference; it is a property of a particular build, and
   the llama.cpp case is the one still to be re-measured.
+- **Re-measured 2026-10-18, the dev PC's RX 9060 XT** (LocalAI v4.11.0,
+  `rocm-llama-cpp` = ROCm 7.2.1, Docker Desktop over /dev/dxg;
+  llama-intel-arc-b70's gate pool, `capture.py` + a byte compare of f32):
+  - bge-m3 F16 (its matmuls are rocBLAS `gemm_ex`, f16 in, f32 out —
+    traced with `ROCBLAS_LAYER`): **15/15 chunks bit-identical over 120
+    vectors** (2 fresh loads x 4 shuffled repeats), with atomics allowed AND
+    with `ROCBLAS_DEFAULT_ATOMICS_MODE=0`, and the two settings give the SAME
+    bytes. The mode costs nothing here and makes the guarantee the vendor's
+    rather than this shape's luck; invariant 12 requires it.
+  - Qwen3-Embedding 4B and 8B Q4_K_M: llama.cpp's own quantised kernels,
+    no rocBLAS call at all; 16/16 bit-identical.
+  - **llama.cpp's CPU backend** (the same build, `gpu_layers: 0`): 16/16
+    bit-identical. The "does not reproduce its own output" clause above
+    does not hold for this build.
+  - The native Windows Vulkan build (b10603, `-np 4`, the PC's encoder
+    until today): 14/16, two chunks at 0.99983. Vulkan offers no mode.
+  - GPU against CPU, same build and options (Qwen3-4B): worst 0.9964, a
+    uniform precision gap at every length — the cross-device question,
+    which a deterministic mode does not and cannot close.
+- **The node's SYCL LocalAI runs WITHOUT `GGML_SYCL_ENABLE_DNN=0`**
+  (2026-10-18: not in the container's env, any model's YAML, or any
+  backend process). The deployed llama-server config had it
+  (llama-intel-arc-b70 `embed-xpu-qwen3-8b.yaml`); the move to LocalAI
+  dropped it. Invariant 12 makes that a refused run.
 
 **What this means for `tolerance`, which is the number it feeds.** The
 loosest HONEST deviation measured anywhere in this project is 4x10^-4 —
