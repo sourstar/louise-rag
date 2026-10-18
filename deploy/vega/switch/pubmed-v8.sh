@@ -83,8 +83,12 @@ say "2. $OLD paused: its state moves to $NEW"
 $L node pause "$OLD" >/dev/null || true
 
 say "3. the runs both sides state now (G5: create holds the reference to them)"
-$L hold embedder run --encoder "$LOCALAI" --api vega --model "$DOC" --pair > "$WORK/doc-run.json"
-$L hold embedder run --encoder "$LOCALAI" --api vega --model "$QUERY" --query > "$WORK/query-run.json"
+# the JSON alone: a model loaded cold logs a "cold start" line on stdout first
+# (2026-10-18, the first run: "Extra data" in the query side's file)
+$L hold embedder run --encoder "$LOCALAI" --api vega --model "$DOC" --pair \
+  | sed -n '/^{/,$p' > "$WORK/doc-run.json"
+$L hold embedder run --encoder "$LOCALAI" --api vega --model "$QUERY" --query \
+  | sed -n '/^{/,$p' > "$WORK/query-run.json"
 python3 -c "import json,sys; [print(f, json.load(open(f))['run'][:23], json.load(open(f))['engine']['name']) for f in sys.argv[1:]]" \
   "$WORK/doc-run.json" "$WORK/query-run.json"
 
