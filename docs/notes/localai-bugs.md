@@ -495,6 +495,16 @@ refused (3 before P2). `tools/vega_repro_check`, 16 texts x 2 fresh loads x
 2 shuffled passes, bit-identical: vega-bge-m3 (`--window 1024`) 16/16,
 its CPU twin 16/16, vega-qwen3-embedding-4b 16/16.
 
+**LIVE on the node, 2026-10-18 21:19** (`deploy/vega/switch/rollout-p2.sh`,
+the SYCL build of series digest `724329e027f2`, installed as
+`louise-sycl-f16-llama-cpp`): the five SYCL vega- models 16/16 bit-identical
+over 2 fresh loads x 2 shuffled passes at a window of 511 (bge-m3 at 1,024
+too); the cut scan 0 of 512 refused at 1,024; the gate passed on every new
+run — gutenberg worst 0.999999, normattiva 1.000000, pubmed document 0.999999
+and query 1.000000, wikipedia 0.9997 (whole set 0.9990) — and nothing was
+re-embedded. The first run stopped at step 7: a 512-token model sent a
+2,465-token text whole; every model is now measured with a window.
+
 **Tokens against HF's** (bge-m3's `tokenizer.json`): 475 of 512 identical.
 The other 37 are one thing: the text ends with a space, and HF's tokenizer
 adds a trailing `▁` that llama.cpp, as SentencePiece, does not. The first

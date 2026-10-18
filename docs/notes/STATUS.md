@@ -63,18 +63,17 @@ it left open is below.
   it"): upstream's ignores token ids ([localai-bugs.md](localai-bugs.md) B14),
   and 3 of 512 texts have no text with exactly their first 1,022 tokens. P2
   embeds them (189/189 cut exactly on the CPU build); the wrapper sends a cut
-  as its tokens where `Gate._probe` finds the backend does. Not yet on the
-  node: `deploy/vega/switch/rollout-p2.sh` (the SYCL build by
-  `deploy/localai/llama-cpp/build.sh`, invariant 12 measured by
-  `tools/vega_repro_check.py`, then the gate), with the operator present;
-  the AMD peer builds `hipblas` the same way.
+  as its tokens where `Gate._probe` finds the backend does. LIVE on the node
+  2026-10-18 21:19 (`deploy/vega/switch/rollout-p2.sh`): the five SYCL models
+  bit-identical over fresh loads, 0 of 512 refused at 1,024, every gate passed,
+  nothing re-embedded; the AMD peer runs its `hipblas` build the same way.
   **Pubmed's corrected Codex is built** (2026-10-18, operator: "Yes";
   "Remember rule 1"): Codex version 8 declares `space.cut = "tokens"` (inside
   `space_id`), `dev carry --recut` crosses it (A1e), and
   `tools/recipe_from_codex.py` rebuilds the live v6 Codex byte for byte before
-  making its token twin (space `504c1d34…`). On the node, by the operator, at
-  night and in order: `deploy-louise-cut.sh`, `rollout-p2.sh`,
-  `pubmed-v8.sh` — ~778 k local vectors re-embedded, the other 39.2 M carried.
+  making its token twin (space `504c1d34…`). Louise 8ff300b is live (the
+  deploy and P2 ran 2026-10-18 evening); `pubmed-v8.sh` runs at night, by the
+  operator — ~778 k local vectors re-embedded, the other 39.2 M carried.
 - **Wikipedia parser 5** (2026-10-18, [wikipedia-qids.md](wikipedia-qids.md)):
   the QIDs from each run's `page_props`, built and tested with `dev carry
   --resign` (A1d); the node still runs parser 4's Codex, and the switch's
