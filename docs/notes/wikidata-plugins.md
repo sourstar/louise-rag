@@ -322,6 +322,115 @@ Wikipedia.
 
 ---
 
+## Measured against the origin (2026-10-18 — the origin's data wins)
+
+Operator: "their specs are the source of the truth". What the published
+datasets actually hold, read from their rows and files:
+
+| | the design | measured | how |
+|---|---|---|---|
+| vector width | 1024 | **512**, float32 little-endian, unit norm | 10 rows (ar, en) decoded from `Wikidata_Vectors_0.2` through the datasets-server `rows` API: 2,048 bytes each, norm 1.000000. The dataset card agrees: "embedding size: 512" — jina-v3's Matryoshka cut, renormalised |
+| rows | 53.7M | 53.7M rows (viewer); the card's table says 44.57M vectors (en 21.13M, fr 10.66M, de 9.79M, ar 2.99M) — to reconcile from the files | |
+| row id | — | `<QID>_<lang>_<n>`, n from 1 per (entity, language) | WikidataTextEmbedding `main.py`: `_id = f"{item.id}_{LANG}_{i + 1}"` over `chunk_item_text(item, tokenizer, max_length=1024, lang)` |
+| chunk length | 8,192 tokens | **1,024 tokens** (jina-v3's tokenizer) | the same call |
+| entities with vectors | — | at least one Wikipedia sitelink; a label in the language (or `mul`); a description or a statement | the dataset card |
+| engine | local | Jina's hosted API (`api.jina.ai/v1/embeddings`, `dimensions`, `task: retrieval.passage`, `late_chunking: false`) | `src/JinaAI.py` (`JinaAIAPIEmbedder`); the pipeline needs `JINA_API_KEY` |
+| text | the "textifier" | WikidataTextifier (`wmde/WikidataTextifier`, BSD-3), imported in-process, pinned to `main` only; labels it lacks are fetched from the Wikibase API | `scripts/run_pipeline_with_wdtextifier.sh`, `main.py` |
+| corpus rows | — | every claim's value carries the referenced entity's labels in all languages, so a row is self-contained | one row read through the viewer |
+
+### Can Wikimedia's vectors be carried? (2026-10-18, night, on the node)
+
+**The probe.** Their own code at pinned commits: WikidataTextifier `0befd7c`
+(the code live from 25 May to 4 August 2026; `804e7c6` and `fa32546` give the
+same results), WikidataTextEmbedding `c9dc819`, with the versions their
+`uv.lock` pins (beautifulsoup4 4.14.3 matters: a newer one parses the property
+page to nothing). It ran offline. Three pieces of their stack had to be
+rebuilt to do that:
+- **Labels:** a label factory filled from each corpus row's own labels. Their
+  cleaner wrote into every row exactly the label dictionaries their factory
+  had resolved.
+- **Dates and coordinates:** formatted by their pinned Wikibase,
+  `wikibase/wikibase:mw1.44.0` (`sha256:069ede5e…`) on `mariadb:10.11`
+  (`sha256:0d0945c5…`), through `wbformatvalue`. This is their own design.
+  Without it a date silently drops out of the text ("has date of birth").
+- **Claim order and filter:** from the page
+  "MediaWiki:Wikibase-SortedProperties" at revision 2550808357 (2026-09-29;
+  13,532 properties). It is edited about monthly, so its revision is a
+  parameter of the text.
+
+Corpus rows were converted back to the dump's shape. jina-v3 ran locally on
+the B70 (`ab036b0`, with `xlm-roberta-flash-implementation` at `bd55a5e`
+inside the model folder; `model.encode(task="retrieval.passage",
+truncate_dim=512)`, one text per call), on an internal Docker network that
+reaches only the formatter.
+
+**Results, 1,000 random English entities of `chunk_100` (1,003 chunks):**
+
+| | |
+|---|---|
+| chunk counts equal to the archive's | 999 / 1,000 |
+| exact (cosine ≥ 0.9999 to the archive vector) | 860 (85.7 %) |
+| ≥ 0.999 | 874 (87.1 %) |
+| below 0.99 | 97 (9.7 %); one at −0.07 (another text entirely) |
+| median | 0.999958 |
+
+**The engine is not the difference.** The same text through the local model
+and through Jina's API agrees to 1e-6 for a bare label ("24-hour urine
+collection." → 0.999999), and to 3–5e-5 for a full entity. The differences
+are in the TEXT.
+
+**Why the text differs, from their code** (`src/wikidataVectorCache.py`
+`filter_for_update`). An entity is re-embedded only when its `modified`
+date is later than its cached vector. So the archive keeps vectors computed
+in earlier runs: uploads since March 2026, then the `20260507` branch
+merged into main on 17 and 30 July. Those were made with older text code,
+older labels of referenced entities and an older property page. Example:
+for Q9208205 their vector is the text "24-hour urine collection." (with a
+full stop); every textifier since February, and the live API today, write
+it without one.
+
+**What follows (RULE 1, promise 8).** A carried vector must be our chunk's
+vector, within the engine's variation. About 14 % of the archive's rows are
+vectors of another text: they would pass a 0.95 import gate and fail a
+verify-on-use at any honest tolerance. They cannot be told apart without
+re-embedding, because the dates that would tell them apart (`modified`) are
+among the fields the corpus dropped. Carrying the whole archive would be the
+artefact promise 8 forbids. Ways out, for the operator:
+1. **Ask Wikimedia for the chunk texts** (their vector database stores each
+   row's `content`; the public API does not return it). With the texts, a
+   `verbatim` layer carries 100 %, the wikivec precedent.
+2. **Embed it ourselves** with their recipe: about 44.6 M chunks over the
+   four languages. One text per call measured 4.4 chunks/s on the B70, i.e.
+   ~117 days of continuous GPU. Batching should be several times faster,
+   once jina's `torch.unique` overflow on XPU is worked round. Night hours
+   only (quiet-hours), so months.
+3. **Carry, then re-embed everything over time to find the 14 %.** This
+   costs option 2's GPU anyway; its only gain is being searchable sooner.
+
+**The corpus form (invariant 11, a question for the operator).** Their
+cleaner (`WikidataJSONCleaner.clean_entity`) drops content that is about
+the entity:
+- `snaktype`, so "no value" and "unknown value" become indistinguishable;
+- each statement's id (GUID);
+- a property's `datatype`;
+- sitelink badges;
+- `modified`, `lastrevid` and `type`.
+
+The official dump keeps them all. Choosing the HF corpus (the design) means
+holding less than Wikidata says. Choosing the dump means a record's text
+depends on other entities' labels from the same dump, which is pinned per
+snapshot. **The collection is not created until this is answered.**
+
+**Other facts for the build:**
+- jina-v3's `encode` on the B70 fails on a batch (`torch.unique`:
+  "numel: integer multiplication overflow") and works one text at a time.
+- `HF_HUB_OFFLINE` alone did not stop the remote-code download warning.
+  The probe ran with no internet to prove the load is offline, and the
+  backend must too.
+
+Probe scripts, data and the formatter's containers: on the node, in
+`/mnt/tank/apps/localai-probe/wikidata/`.
+
 ## First-read notes (Claude, 2026-10-18 — not part of the design)
 
 Where the design meets docs/01–09 or CLAUDE.md and a decision is needed
