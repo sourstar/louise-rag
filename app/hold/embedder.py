@@ -51,8 +51,8 @@ class StatedRun:
     """The run the platform said gave the answers (09 §9.12): its identity,
     from the `Louise-Run` header, and what that identity stands for, from
     `GET /louise/runs/<run_id>` — the engine as launched, the weights
-    actually loaded, the device's driver. RAGE computes all of it from what
-    it launched; nothing here is this peer's declaration."""
+    actually loaded, the device's driver. VeGa's wrapper computes all of it
+    from what LocalAI launched; nothing here is this peer's declaration."""
     run_id: str
     engine: dict[str, Any]
     weights: str
@@ -339,7 +339,8 @@ def _statement_run(run: Run, key, *, now: str) -> dict[str, Any]:
             "so this pass cannot be kept: a calibration statement says WHICH run "
             "is compliant, and a vector is written only from an answer naming a "
             "validated one (03 §3.3). Search works through such an endpoint; "
-            "writing needs the node's model container, RAGE")
+            "writing needs an encoder that states the run of every answer: "
+            "`api = \"vega\"`, whose receipts name it (docs/notes/vega.md)")
     if run.fingerprint is None or run.batch_invariant is None:
         raise GateError("a version-2 statement carries the run's fingerprint and "
                         "whether it is batch-invariant; this pass measured neither")

@@ -13,7 +13,7 @@ from app.verify import backend_gate
 def gate(monkeypatch):
     backend_gate.reset_cache()
     calls, logged = [], []
-    recipe = {"r": SimpleNamespace(url="http://rage:30437/upstream/q", api="openai",
+    recipe = {"r": SimpleNamespace(url="http://models:30437/upstream/q", api="openai",
                                    model="q", query_model="q")}
     monkeypatch.setattr(config, "BACKEND_GATE", "on")
     monkeypatch.setattr(collections_mod, "recipe_for", lambda c: recipe["r"])
@@ -29,7 +29,7 @@ def gate(monkeypatch):
 def test_a_pass_is_cached_for_the_same_endpoint(gate):
     assert backend_gate.embed_allowed(None, gate.coll)
     assert backend_gate.embed_allowed(None, gate.coll)
-    assert gate.calls == ["http://rage:30437/upstream/q"]
+    assert gate.calls == ["http://models:30437/upstream/q"]
 
 
 def test_a_new_endpoint_is_gated_before_the_cached_pass_is_used(gate):
@@ -37,7 +37,7 @@ def test_a_new_endpoint_is_gated_before_the_cached_pass_is_used(gate):
     gate.recipe["r"] = SimpleNamespace(url="http://localai:30286", api="vega",
                                        model="vega-q", query_model="vega-q")
     assert backend_gate.embed_allowed(None, gate.coll)
-    assert gate.calls == ["http://rage:30437/upstream/q", "http://localai:30286"]
+    assert gate.calls == ["http://models:30437/upstream/q", "http://localai:30286"]
     assert len(gate.logged) == 2          # the re-gate on the new endpoint is logged
 
 

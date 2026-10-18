@@ -169,8 +169,9 @@ def answering_run(recipe, *, query: bool = False, probe_item=PROBE) -> str:
             f"{_endpoint(recipe, query)} states no run identity (no "
             f"`{runs_mod.RUN_HEADER}` on its answer). A pass validates a RUN, so there "
             f"is nothing here to validate: searching with this endpoint works and "
-            f"nothing is written through it (03 §3.3). Writing needs the node's model "
-            f"container, RAGE")
+            f"nothing is written through it (03 §3.3). Writing needs an encoder that "
+            f"states the run of every answer: `api = \"vega\"`, whose receipts "
+            f"name it (docs/notes/vega.md)")
     return next(iter(probe.runs))
 
 
@@ -191,8 +192,7 @@ def describe_run(recipe, run_id: str, *, query: bool = False) -> emb.StatedRun:
     if getattr(recipe, "api", None) == embeddings.VEGA:
         return runs_mod.describe(_endpoint(recipe, query), run_id, get=httpx.get,
                                  at=f"{config.VEGA_URL}/vega/runs/{run_id}")
-    return runs_mod.describe(_endpoint(recipe, query), run_id,
-                             get=httpx.get, fallback=config.RAGE_URL)
+    return runs_mod.describe(_endpoint(recipe, query), run_id, get=httpx.get)
 
 
 # ---- the gate against the run that answers ------------------------------------

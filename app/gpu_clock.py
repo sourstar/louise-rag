@@ -18,8 +18,7 @@ WHO HOLDS IT. Two callers, one mechanism:
   §11) until it retired on 2026-10-09; its code went on 2026-10-18.
 
 This module is the whole of what writes the host's sysfs, and it imports
-nothing of the platform: RAGE's image carries no manifest layer, and must
-not need one to hold a clock.
+nothing of the platform.
 
 RESTORED ON EXIT. `release()` puts the rest value back. A holder killed
 while pinning leaves the card pinned, so the next one takes a `min_freq`

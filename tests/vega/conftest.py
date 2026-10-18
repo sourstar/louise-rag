@@ -36,7 +36,7 @@ def load_wrapper():
 
 
 class IntakeThread:
-    """VeGa's intake on an event loop of its own, as louise-rage runs it."""
+    """VeGa's intake on an event loop of its own, as louise-vega runs it."""
 
     def __init__(self, path: Path, receipts: ReceiptStore, runs: Runs) -> None:
         self.intake = Intake(path, receipts, runs, log=lambda _m: None)

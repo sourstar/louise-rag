@@ -4,7 +4,8 @@ The xe driver's known issue: after a workload the fan stays high until a GPU
 process restarts, and the driver exposes the fan read-only (no pwm). What can
 be done is to see it: the live fan, temperatures, power and clock in the GPU
 panel, and a week of samples every 10 s, kept for a widget to come and not
-shown yet (operator, 2026-09-19/20; the workaround belongs to RAGE only).
+shown yet (operator, 2026-09-19/20; the workaround, restarting an engine, is never
+Louise's).
 """
 import time
 from contextlib import closing

@@ -291,7 +291,7 @@ def fake_query_embed(texts, *, dim: int = DIM):
 
 
 def a_stated_run(codex=None):
-    """The run RAGE would state for the engine of 09 §9.3's worked example
+    """The run an endpoint would state for the engine of 09 §9.3's worked example
     (09 §9.12): its id, from `Louise-Run`, and what it stands for, from
     `GET /louise/runs/<id>`. A version-2 calibration statement names it;
     without one a pass cannot be kept (03 §3.3)."""

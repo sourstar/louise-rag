@@ -34,7 +34,7 @@ def collection(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
     monkeypatch.delenv("LOUISE_ROOT", raising=False)
     monkeypatch.setattr(config, "CORPUS_DIR", tmp_path / "corpus")
-    recipe = collections_mod.EmbedRecipe(url="http://rage:30437/upstream/medcpt-article",
+    recipe = collections_mod.EmbedRecipe(url="http://models:30437/upstream/medcpt-article",
                                          api="openai", model="", dtype="f32", ctx=512,
                                          dim=DIM)
     monkeypatch.setattr(collections_mod, "recipe_for", lambda c=None: recipe)

@@ -114,22 +114,13 @@ class GpuDevice:
     def share(self, bytes_: int) -> float:
         return 0.0 if not self.vram_total else 100.0 * bytes_ / self.vram_total
 
-    def shares(self, rage_container: str | None) -> dict[str, float]:
-        """The bar, in per cent of the card: what RAGE's children hold, what every
-        other process shown holds, what the driver counts and no process shown
-        holds, and what is free. `rage_container` is the name RAGE gives itself
-        (`GET /louise/gpu`); unknown, everything attributed is "others"."""
-        rage = sum(p.vram for p in self.processes
-                   if rage_container and p.container == rage_container)
-        others = self.attributed - rage
-        out = {"rage": self.share(rage), "others": self.share(others),
+    def shares(self) -> dict[str, float]:
+        """The bar, in per cent of the card: what the processes shown hold, what
+        the driver counts and no process shown holds, and what is free."""
+        out = {"processes": self.share(self.attributed),
                "unattributed": self.share(self.unattributed)}
         out["free"] = max(0.0, 100.0 - sum(out.values())) if self.vram_total else 0.0
         return out
-
-    def held_by(self, rage_container: str | None, rage: bool) -> int:
-        return sum(p.vram for p in self.processes
-                   if (bool(rage_container) and p.container == rage_container) == rage)
 
 
 @dataclass(frozen=True)
@@ -271,13 +262,6 @@ def governor() -> dict:
     GOVERNOR_STALE_S). Absent is allowed — chat is slower on an idle card,
     and the tab says so — so this never raises."""
     from . import config, db, node_state
-    if config.RAGE_URL:
-        # THE CLOCK IS RAGE'S once the node's models are (docs/notes/rage.md:
-        # the governor moved into the model container, and its own app is
-        # retired). The heartbeat below is then nobody's: after the cut-over
-        # of 2026-09-19 this panel read "GPU governor not running" while
-        # RAGE was holding the clock. Asked over HTTP, bounded like the probe.
-        return _rage_clock(config.RAGE_URL)
     try:
         if not node_state.path().is_file():
             return {"state": "absent"}
@@ -292,69 +276,3 @@ def governor() -> dict:
     return {"state": "running", "pinned": bool(payload.get("pinned")),
             "rest_mhz": payload.get("rest_mhz"), "max_mhz": payload.get("max_mhz")}
 
-
-def rage_status(url: str | None) -> dict:
-    """RAGE's `GET /louise/gpu`, whole: its name for itself (so the panel can
-    tell RAGE's processes from a stranger's), each card's REAL memory as RAGE
-    reads it, and what it refused, gave up under pressure and restored — that
-    list is RAGE's notification to Louise (operator, 2026-09-20). Never raises:
-    `state` is `unset`, `absent` (with why) or `ok`."""
-    if not url:
-        return {"state": "unset"}
-    try:
-        raw = _get_json(url.rstrip("/") + "/louise/gpu") or {}
-    except Exception as e:   # noqa: BLE001
-        return {"state": "absent", "error": f"{type(e).__name__}: {e}"}
-    events = [e for e in (raw.get("events") or []) if isinstance(e, dict)]
-    memory = {d: m for d, m in (raw.get("memory") or {}).items() if isinstance(m, dict)}
-    return {"state": "ok", "container": raw.get("container"), "memory": memory,
-            "events": events[::-1],                    # newest first
-            "alerts": alerts(memory, events), "clock": raw.get("clock") or {}}
-
-
-#: a refusal or an unload older than this is history, not a notification
-ALERT_FRESH_S = 900
-
-
-def alerts(memory: dict, events: list[dict], now: float | None = None) -> list[str]:
-    """What an operator must be TOLD, in words: a model Louise needed that did
-    not fit, models RAGE gave up because a stranger squeezed the card, a card
-    squeezed or a model pushed off it right now. Empty when all is well."""
-    import time
-    now = time.time() if now is None else now
-    out: list[str] = []
-    for device, m in sorted(memory.items()):
-        if m.get("squeezed"):
-            out.append(f"{device}: processes outside RAGE hold {m.get('foreign_mib')} MiB of "
-                       f"the card and {m.get('free_mib')} MiB are free, under the "
-                       f"{m.get('reserve_mib')} MiB reserved")
-        if m.get("pushed_out"):
-            out.append(f"{device}: pushed off the card into host RAM: "
-                       f"{', '.join(m['pushed_out'])}")
-        if m.get("unloaded_under_pressure"):
-            out.append(f"{device}: idle and unloaded because a process outside RAGE squeezed "
-                       f"the card — back by themselves once it has room, or on their next "
-                       f"request: {', '.join(m['unloaded_under_pressure'])}")
-    for e in events[::-1]:
-        if e.get("kind") == "refused" and now - float(e.get("time") or 0) <= ALERT_FRESH_S:
-            times = f" ({e['count']} times)" if int(e.get("count") or 1) > 1 else ""
-            out.append(f"RAGE could not load {e.get('model')}{times}: {e.get('detail')}")
-    return out
-
-
-def _rage_clock(url: str) -> dict:
-    """RAGE's `GET /louise/gpu`, in the shape the governor's heartbeat had:
-    `running` (with whether the clock is pinned now), `error` (it runs and
-    cannot set the clock), or `absent` (RAGE did not answer, or holds no
-    clock — `RAGE_FREQ_DIR` unset). Never raises: a bad reading is the
-    panel's state, never the page's."""
-    try:
-        clock = (_get_json(url.rstrip("/") + "/louise/gpu") or {}).get("clock") or {}
-    except Exception:   # noqa: BLE001
-        return {"state": "absent"}
-    if clock.get("error"):
-        return {"state": "error", "error": str(clock["error"])}
-    if not clock.get("running"):
-        return {"state": "absent"}
-    return {"state": "running", "pinned": bool(clock.get("pinned")),
-            "rest_mhz": clock.get("rest_mhz"), "max_mhz": clock.get("max_mhz")}

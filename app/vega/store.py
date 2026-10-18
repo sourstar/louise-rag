@@ -1,15 +1,15 @@
-"""The runs this front has stated, kept across its own restarts.
+"""The runs the wrappers have stated, kept across the service's restarts.
 
 docs/09-formats.md §9.12: the platform "describes a run on request (`GET
 /louise/runs/<run_id>`)", and that is where a calibration statement's
 `engine`, `weights` and `driver` come from. A statement may be written
-minutes after the answer that named the run, so a front that restarted in
+minutes after the answer that named the run, so a service that restarted in
 between must still be able to describe it.
 
-RAGE's OWN FILE, in its state directory — never Louise's node store: the
-two are separate apps, and an optional helper does not write the database
-of what it helps. It holds nothing but what the front computed: no desired
-state (that is `rage.toml`), and nothing a restart must not see.
+VeGa's OWN FILE, in its state directory — never Louise's node store: an
+optional helper does not write the database of what it helps. It holds
+nothing but what the wrappers computed: no desired state (that is LocalAI's
+model YAML), and nothing a restart must not see.
 
 One statement writes a row, and a run's object is fixed by its id, so a
 second insert of the same id is the same row: INSERT OR IGNORE, no read

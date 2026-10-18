@@ -1245,9 +1245,6 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                 timed_out.append(timeout)       # the hold is made on this thread's caller
                 return (row, None, DEFERRED, False)
             if transient_failure(e):
-                said = rage_refusal(e)
-                if said:
-                    refused.append(said)        # list.append: safe across threads
                 if endpoint_misconfigured(e):
                     wrong_endpoint.append(e)    # the pause is made on this thread's caller
                 return (row, None, DEFERRED, False)
@@ -1296,7 +1293,6 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     awaiting: dict[int, str] = {}   # book_id -> uid: embedded, its batch not yet committed
     waiting_since = 0.0
     done = deferred = 0
-    refused: list[str] = []        # RAGE's own words, when it would not load the model
     wrong_endpoint: list[BaseException] = []   # 404/401/…: the collection's embedding pauses
     timed_out: list[BaseException] = []        # read timeouts: the endpoint held as busy
     answered_here: list[bool] = []             # a document the encoder answered
@@ -1362,8 +1358,6 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
         except Exception as e:  # noqa: BLE001
             if transient_failure(e):
                 deferred += len(uids)       # nothing marked: embedded again later
-                if rage_refusal(e):
-                    refused.append(rage_refusal(e))
                 return
         # not the moment's fault: one document at a time, so that only the
         # one at fault is recorded as such
@@ -1437,8 +1431,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                      f"the store held by another writer, an answer from a run not "
                      f"yet validated (03 §3.3), or the node's mode no longer running "
                      f"this; "
-                     f"untouched, and retried when it answers again"
-                     + (f". RAGE COULD NOT LOAD THE MODEL: {refused[-1]}" if refused else ""))
+                     f"untouched, and retried when it answers again")
     # Nothing embedded and something deferred means the endpoint is down:
     # report no work so the caller yields the round rather than spinning
     # through the rest of the corpus against a dead encoder.
@@ -2596,28 +2589,6 @@ _ENDPOINT_DOWN_ERRNOS = frozenset(
 #: restarts on 2026-09-15), one overloaded (429), or a proxy that lost it
 #: (502/504). A 500 is NOT here: it can be the document's own failure.
 _ENDPOINT_BUSY_STATUS = frozenset({429, 502, 503, 504})
-
-
-def rage_refusal(exc: BaseException | None) -> str | None:
-    """RAGE's own words when it would not load the model — a 503 whose body
-    carries its `admission` verdict (RAGE, retired) — however deep the
-    client wrapped it; None for any other failure. It is still a DEFERRAL,
-    never an error on a document; but it is not the same as "busy", and the
-    operator asked to be TOLD (2026-09-20): the collection's own log says
-    which model did not fit and what holds the card."""
-    seen: set[int] = set()
-    while exc is not None and id(exc) not in seen:
-        seen.add(id(exc))
-        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 503:
-            try:
-                body = exc.response.json()
-            except Exception:                           # noqa: BLE001
-                return None
-            if isinstance(body, dict) and isinstance(body.get("admission"), dict):
-                return str(body.get("error") or body["admission"].get("reason") or "")[:400]
-            return None
-        exc = exc.__cause__ or exc.__context__
-    return None
 
 
 def _http_status(exc: BaseException | None) -> int | None:

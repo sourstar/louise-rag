@@ -17,10 +17,10 @@ def test_absent_means_nothing_is_named(tmp_path):
 
 
 def test_encoder_space_and_one_name(tmp_path):
-    d = load(tmp_path, '[deposit]\nencoder = "http://rage/upstream/granite"\n'
+    d = load(tmp_path, '[deposit]\nencoder = "http://models/upstream/granite"\n'
                        'space = "granite-space.toml"\n'
                        '[deposit.collections.alice]\nspace_from = "sha256:ab"\n').deposit
-    assert d.encoder == "http://rage/upstream/granite"
+    assert d.encoder == "http://models/upstream/granite"
     assert d.space == tmp_path / "granite-space.toml"     # beside platform.toml
     assert d.by_name == {"alice": "sha256:ab"}
 
@@ -38,7 +38,7 @@ def test_what_would_silently_pick_another_encoder_is_refused(tmp_path, text):
 # ---- the [encoder] a deposit collection's file is written with (amended 2026-10-09)
 
 def test_api_and_models_default_to_openai_and_the_url(tmp_path):
-    d = load(tmp_path, '[deposit]\nencoder = "http://rage/upstream/granite"\n').deposit
+    d = load(tmp_path, '[deposit]\nencoder = "http://models/upstream/granite"\n').deposit
     assert (d.api, d.embed_model, d.query_model) == ("openai", None, None)
 
 
@@ -55,7 +55,7 @@ def test_a_vega_deposit_names_both_models(tmp_path):
      "requires embed_model and query_model"),
     ('[deposit]\nencoder = "http://x:1"\napi = "vega"\n', "requires embed_model"),
     ('[deposit]\nembed_model = "g"\n', "deposit.encoder, which is not set"),
-    ('[deposit]\nencoder = "http://rage/upstream/granite"\nembed_model = "other"\n',
+    ('[deposit]\nencoder = "http://models/upstream/granite"\nembed_model = "other"\n',
      "must agree"),
     ('[deposit]\nencoder = "http://x:1"\nquery_model = 7\n', "is a string"),
 ])

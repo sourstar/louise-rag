@@ -36,10 +36,10 @@ from tests.hold.conftest import KEY, NOW, PLATFORM
 #: this node's public key, as a statement names it: the only signer counted
 ME = env.key_text(KEY.verify_key)
 from tests.hold.test_template import SPACE, recipe as a_recipe
-from tests.test_run_check import (DOC_URL, QUERY_URL, R1, R2, RAGE,  # noqa: F401
-                                  chunks, node, opening, opening_query, rage, stored)
+from tests.test_run_check import (DOC_URL, QUERY_URL, R1, R2, ENDPOINT,  # noqa: F401
+                                  chunks, node, opening, opening_query, endpoint, stored)
 
-OTHER_URL = f"{RAGE}/upstream/another-encoder"
+OTHER_URL = f"{ENDPOINT}/upstream/another-encoder"
 
 
 @pytest.fixture(autouse=True)
@@ -93,7 +93,7 @@ def fully_tested(root, collection, codex) -> None:
 
 # ---- each reason, and the test that clears it -----------------------------------------
 
-def test_a_new_copy_is_in_quarantine_and_each_test_clears_its_own_reason(node, rage):
+def test_a_new_copy_is_in_quarantine_and_each_test_clears_its_own_reason(node, endpoint):
     root, collection, codex = node
     s = state_of(collection)
     assert s.state == "quarantine" and s.origin_check == "pending"
@@ -118,7 +118,7 @@ def test_a_new_copy_is_in_quarantine_and_each_test_clears_its_own_reason(node, r
     assert s.test("bundles").status == "passed"
 
 
-def test_the_licence_is_one_of_the_five(node, rage):
+def test_the_licence_is_one_of_the_five(node, endpoint):
     root, collection, codex = node
     fully_tested(root, collection, codex)
     missing = copy_state.evaluate(root, "gutenberg", codex, licence="missing",
@@ -133,7 +133,7 @@ def test_the_licence_is_one_of_the_five(node, rage):
     assert judged.state == "quarantine", "a licence that cannot be judged fails closed"
 
 
-def test_another_keys_attestations_are_not_this_peers_tests(node, rage):
+def test_another_keys_attestations_are_not_this_peers_tests(node, endpoint):
     from nacl import signing
     root, collection, codex = node
     stranger = signing.SigningKey(b"\x09" * 32)
@@ -144,14 +144,14 @@ def test_another_keys_attestations_are_not_this_peers_tests(node, rage):
     assert s.test("origin").status == "open"
 
 
-def test_a_peer_with_no_key_is_told_so(node, rage):
+def test_a_peer_with_no_key_is_told_so(node, endpoint):
     root, collection, codex = node
     s = copy_state.evaluate(root, "gutenberg", codex, licence="not_required", key=None)
     assert s.state == "quarantine"
     assert any("no key" in r and "NODE_KEY_PATH" in r for r in s.reasons)
 
 
-def test_a_refused_copy_is_refused_and_only_a_person_clears_it(node, rage):
+def test_a_refused_copy_is_refused_and_only_a_person_clears_it(node, endpoint):
     root, collection, codex = node
     fully_tested(root, collection, codex)
     s = copy_state.evaluate(root, "gutenberg", codex, licence="not_required",
@@ -168,7 +168,7 @@ def _tree(root) -> dict:
             for p in sorted(root.rglob("*")) if p.is_file()}
 
 
-def test_the_state_is_derived_and_nothing_is_written_for_it(node, rage):
+def test_the_state_is_derived_and_nothing_is_written_for_it(node, endpoint):
     root, collection, codex = node
     fully_tested(root, collection, codex)
     before = _tree(root)
@@ -181,7 +181,7 @@ def test_the_state_is_derived_and_nothing_is_written_for_it(node, rage):
     assert _tree(root) == before, "evaluating the state wrote a file"
 
 
-def test_an_evaluation_is_a_lookup_until_the_holdings_change(node, rage, monkeypatch):
+def test_an_evaluation_is_a_lookup_until_the_holdings_change(node, endpoint, monkeypatch):
     """A COST test (scheduling.md §6.7). Attestations accumulate for a
     collection's whole life, so an evaluation must not grow with them: warm,
     it verifies no signature and lists no directory of them — one `stat`."""
@@ -221,7 +221,7 @@ def test_an_evaluation_is_a_lookup_until_the_holdings_change(node, rage, monkeyp
 # ---- a run not yet tested -------------------------------------------------------------------
 
 @pytest.fixture
-def three(node, tmp_path, rage):
+def three(node, tmp_path, endpoint):
     """Two collections that reach ONE encoder, and a third that reaches another."""
     root, first, codex = node
     cfg = tmp_path / "config" / "collections"
@@ -246,11 +246,11 @@ def three(node, tmp_path, rage):
 
 
 def test_a_changed_run_requarantines_every_collection_of_that_encoder_and_only_those(
-        three, rage):
+        three, endpoint):
     root, loaded, made = three
     assert all(state_of(c).state == "in-use" for c in loaded.values())
 
-    rage.by_url[DOC_URL] = R2                # the model was relaunched with another flag
+    endpoint.by_url[DOC_URL] = R2                # the model was relaunched with another flag
     with pytest.raises(hold_runs.RunUnvalidated):
         embeddings.upsert_book(7, "en", chunks(2), loaded["gutenberg"])
 
@@ -270,7 +270,7 @@ def test_a_changed_run_requarantines_every_collection_of_that_encoder_and_only_t
             "a pass validates the run for the SPACE: it counts for both"
 
 
-def test_a_copy_that_arrived_whole_is_gated_without_any_embed_work(node, rage):
+def test_a_copy_that_arrived_whole_is_gated_without_any_embed_work(node, endpoint):
     root, collection, codex = node
     attest(root, codex, "roots"); attest(root, codex, "chunks")
     attest(root, codex, "records-vs-origin")
@@ -278,13 +278,13 @@ def test_a_copy_that_arrived_whole_is_gated_without_any_embed_work(node, rage):
     worker._settle_the_run(db.connect(collection), collection)
     assert state_of(collection).state == "in-use"
 
-    cost = rage.texts
+    cost = endpoint.texts
     for _ in range(10):
         worker._settle_the_run(db.connect(collection), collection)
-    assert rage.texts == cost, "settling a settled run costs the encoder nothing"
+    assert endpoint.texts == cost, "settling a settled run costs the encoder nothing"
 
 
-def test_the_gate_comes_before_quarantine_at_the_embed_stage(node, rage, tmp_path):
+def test_the_gate_comes_before_quarantine_at_the_embed_stage(node, endpoint, tmp_path):
     """The gate is one of the tests that CLEAR a quarantine; asked in the
     other order, an untested run would stay untested for ever."""
     root, collection, codex = node
@@ -296,9 +296,9 @@ def test_the_gate_comes_before_quarantine_at_the_embed_stage(node, rage, tmp_pat
 
 # ---- a run that failed -------------------------------------------------------------------------
 
-def test_a_failed_run_withholds_the_vector_leg_and_quarantines_nothing(node, rage, tmp_path):
+def test_a_failed_run_withholds_the_vector_leg_and_quarantines_nothing(node, endpoint, tmp_path):
     root, collection, codex = node
-    rage.tag = b"another model"
+    endpoint.tag = b"another model"
     attest(root, codex, "roots"); attest(root, codex, "chunks")
     attest(root, codex, "records-vs-origin")
     assert backend_gate.embed_allowed(db.connect(collection), collection) is False
@@ -313,32 +313,32 @@ def test_a_failed_run_withholds_the_vector_leg_and_quarantines_nothing(node, rag
     assert query_service.withheld_reason(collection) is None, "the text leg is searchable"
 
 
-def test_the_search_says_that_the_vector_leg_was_withheld(node, rage, tmp_path):
+def test_the_search_says_that_the_vector_leg_was_withheld(node, endpoint, tmp_path):
     from app import retrieval
     root, collection, codex = node
-    rage.tag = b"another model"
+    endpoint.tag = b"another model"
     tested_but_failed = [attest(root, codex, c) for c in
                          ("roots", "chunks", "records-vs-origin")]
     assert tested_but_failed
     backend_gate.embed_allowed(db.connect(collection), collection)
     enforce(tmp_path)
 
-    asked = rage.posts
+    asked = endpoint.posts
     result = retrieval.search(db.connect(collection), "a lighthouse", mode="hybrid",
                               translate=False, collection=collection)
     assert result["legs_withheld"] == [{
         "collection": "gutenberg", "collection_id": codex.collection_id, "leg": "vector",
         "reason": copy_state.vector_leg_withheld(collection)}]
-    assert rage.posts == asked, "the encoder was asked for a leg that is withheld"
+    assert endpoint.posts == asked, "the encoder was asked for a leg that is withheld"
 
 
-def test_an_answer_from_an_untested_run_answers_no_query(node, rage, tmp_path):
+def test_an_answer_from_an_untested_run_answers_no_query(node, endpoint, tmp_path):
     root, collection, codex = node
     fully_tested(root, collection, codex)
     embeddings.upsert_book(7, "en", chunks(3), collection)
     recipe = collections_mod.recipe_for(collection)
 
-    rage.by_url[QUERY_URL] = R2
+    endpoint.by_url[QUERY_URL] = R2
     assert embeddings.search("chunk 1", collection=collection), \
         "while the node only reports, the answer is used and the run is remembered"
     assert run_check.answering(collection)["query"] == R2
@@ -352,7 +352,7 @@ def test_an_answer_from_an_untested_run_answers_no_query(node, rage, tmp_path):
 
 # ---- what quarantine withholds, and when ----------------------------------------------------------
 
-def test_in_the_reporting_deploy_nothing_is_withheld(node, rage):
+def test_in_the_reporting_deploy_nothing_is_withheld(node, endpoint):
     root, collection, codex = node
     assert state_of(collection).state == "quarantine"
     assert copy_state.enforced() is False, "report is the default"
@@ -371,7 +371,7 @@ def test_in_the_reporting_deploy_nothing_is_withheld(node, rage):
     assert note[0] == "" and "REPORTED ONLY" in note[1]
 
 
-def test_enforced_a_quarantined_copy_enters_no_list_and_is_named(node, rage, tmp_path):
+def test_enforced_a_quarantined_copy_enters_no_list_and_is_named(node, endpoint, tmp_path):
     root, collection, codex = node
     enforce(tmp_path)
     assert collection not in query_service.resolve_collections(None)
@@ -390,7 +390,7 @@ def test_enforced_a_quarantined_copy_enters_no_list_and_is_named(node, rage, tmp
     assert health._copy_state(collection)[0].startswith("withheld: quarantine")
 
 
-def test_enforced_nothing_of_a_quarantined_copy_is_exported(node, rage, tmp_path):
+def test_enforced_nothing_of_a_quarantined_copy_is_exported(node, endpoint, tmp_path):
     from app.bundles import export
     root, collection, codex = node
     enforce(tmp_path)
@@ -400,7 +400,7 @@ def test_enforced_nothing_of_a_quarantined_copy_is_exported(node, rage, tmp_path
         copy_state.require_in_use(root, "gutenberg", codex, use="exporting its vectors")
 
 
-def test_a_tested_copy_is_used_like_any_other_when_enforced(node, rage, tmp_path):
+def test_a_tested_copy_is_used_like_any_other_when_enforced(node, endpoint, tmp_path):
     root, collection, codex = node
     fully_tested(root, collection, codex)
     enforce(tmp_path)
@@ -425,7 +425,7 @@ def ack(root, *extra) -> int:
                         "--origin-unchecked", "--yes", *extra])
 
 
-def test_origin_unchecked_is_refused_while_another_test_is_open(node, rage, capsys):
+def test_origin_unchecked_is_refused_while_another_test_is_open(node, endpoint, capsys):
     root, collection, codex = node
     copy_state.note_origin_attempt(root, "gutenberg", codex, why="origin unreachable", now=NOW)
     assert ack(root) == 2
@@ -433,14 +433,14 @@ def test_origin_unchecked_is_refused_while_another_test_is_open(node, rage, caps
     assert not (root / "gutenberg" / "state" / copy_state.ORIGIN_ACK).exists()
 
 
-def test_origin_unchecked_is_refused_when_the_check_was_never_tried(node, rage, capsys):
+def test_origin_unchecked_is_refused_when_the_check_was_never_tried(node, endpoint, capsys):
     root, collection, codex = node
     all_but_the_origin(root, collection, codex)
     assert ack(root) == 2
     assert "has not been tried" in capsys.readouterr().err
 
 
-def test_origin_unchecked_is_accepted_with_the_origin_away(node, rage, capsys):
+def test_origin_unchecked_is_accepted_with_the_origin_away(node, endpoint, capsys):
     root, collection, codex = node
     all_but_the_origin(root, collection, codex)
     copy_state.note_origin_attempt(root, "gutenberg", codex,
@@ -462,14 +462,14 @@ def test_origin_unchecked_is_accepted_with_the_origin_away(node, rage, capsys):
     assert s.origin_check == "acknowledged-unchecked"
 
 
-def test_origin_unchecked_is_refused_when_the_check_has_in_fact_run(node, rage, capsys):
+def test_origin_unchecked_is_refused_when_the_check_has_in_fact_run(node, endpoint, capsys):
     root, collection, codex = node
     fully_tested(root, collection, codex)
     assert ack(root) == 2
     assert "HAS run" in capsys.readouterr().err
 
 
-def test_a_later_origin_failure_requarantines_acknowledged_or_not(node, rage):
+def test_a_later_origin_failure_requarantines_acknowledged_or_not(node, endpoint):
     root, collection, codex = node
     all_but_the_origin(root, collection, codex)
     copy_state.note_origin_attempt(root, "gutenberg", codex, why="away", now=NOW)
@@ -486,14 +486,14 @@ def test_a_later_origin_failure_requarantines_acknowledged_or_not(node, rage):
     assert state_of(collection).state == "in-use", "the latest of its own checks decides"
 
 
-def test_a_roots_failure_after_a_pass_is_one_shards_fault_not_quarantine(node, rage):
+def test_a_roots_failure_after_a_pass_is_one_shards_fault_not_quarantine(node, endpoint):
     root, collection, codex = node
     fully_tested(root, collection, codex)
     attest(root, codex, "roots", "fail", time="2026-10-01T00:00:00Z", shards=("lang=en/00001",))
     assert state_of(collection).state == "in-use"
 
 
-def test_hold_check_notes_an_origin_check_that_could_not_run(node, rage):
+def test_hold_check_notes_an_origin_check_that_could_not_run(node, endpoint):
     root, collection, codex = node
     assert copy_state.origin_attempt(root, "gutenberg") is None
     copy_state.note_origin_attempt(root, "gutenberg", codex, why="x" * 900, now=NOW)
@@ -503,7 +503,7 @@ def test_hold_check_notes_an_origin_check_that_could_not_run(node, rage):
 
 # ---- show -------------------------------------------------------------------------------------------------
 
-def test_hold_collection_show_prints_the_state_and_every_reason(node, rage, capsys):
+def test_hold_collection_show_prints_the_state_and_every_reason(node, endpoint, capsys):
     root, collection, codex = node
     assert louise.main(["hold", "collection", "show", "gutenberg", "--root", str(root)]) == 0
     shown = json.loads(capsys.readouterr().out)
@@ -553,7 +553,7 @@ def test_a_command_asks_the_same_licence_resolution_as_the_worker(tmp_path, monk
 # ---- in use before the peer enforced (operator, 2026-09-20) ----------------------------------------
 
 def test_a_copy_in_use_before_enforcement_stays_in_use_and_says_by_whose_decision(
-        node, rage, tmp_path):
+        node, endpoint, tmp_path):
     """"Assume that the current collections have already passed it. The next
     collection to be created will be our guinea pig." The copies a peer used
     before it enforced cannot run two of the tests yet; the decision is
@@ -587,7 +587,7 @@ def test_a_copy_in_use_before_enforcement_stays_in_use_and_says_by_whose_decisio
     assert s.state == "in-use" and s.reasons == () and s.origin_check == "passed"
 
 
-def test_the_guinea_pig_is_tested_for_real(node, rage, tmp_path):
+def test_the_guinea_pig_is_tested_for_real(node, endpoint, tmp_path):
     """Every copy NOT in the list — another collection's id is in it here."""
     root, collection, codex = node
     assert backend_gate.embed_allowed(db.connect(collection), collection) is True
@@ -598,7 +598,7 @@ def test_the_guinea_pig_is_tested_for_real(node, rage, tmp_path):
     assert collection not in query_service.resolve_collections(None)
 
 
-def test_the_decision_stands_in_for_no_failure_no_gate_and_no_licence(node, rage, tmp_path):
+def test_the_decision_stands_in_for_no_failure_no_gate_and_no_licence(node, endpoint, tmp_path):
     root, collection, codex = node
     enforce(tmp_path, before=[codex.collection_id])
 
@@ -634,7 +634,7 @@ def test_the_decision_stands_in_for_no_failure_no_gate_and_no_licence(node, rage
 
 
 def test_the_origin_acknowledgement_has_nothing_to_add_to_a_copy_in_use_before(
-        node, rage, tmp_path):
+        node, endpoint, tmp_path):
     root, collection, codex = node
     all_but_the_origin(root, collection, codex)
     enforce(tmp_path, before=[codex.collection_id])
@@ -670,7 +670,7 @@ def test_the_list_holds_collection_ids_and_a_name_is_refused(tmp_path, monkeypat
 NEWER = "sha256:" + "2e" * 32
 
 
-def test_an_origin_failure_under_another_image_flags_nothing(node, rage):
+def test_an_origin_failure_under_another_image_flags_nothing(node, endpoint):
     """Live 2026-09-21: a deploy moved pubmed's parser from 4 to 8, the check
     re-parsed under the new image, every record differed — and the copy was
     quarantined as if its own toolchain had failed. 03 §3.4: "an
@@ -686,7 +686,7 @@ def test_an_origin_failure_under_another_image_flags_nothing(node, rage):
     assert "flags nothing" in origin.detail and NEWER[:19] in origin.detail
 
 
-def test_the_references_own_failure_still_flags(node, rage):
+def test_the_references_own_failure_still_flags(node, endpoint):
     root, collection, codex = node
     all_but_the_origin(root, collection, codex)
     attest(root, codex, "records-vs-origin", "fail", image=NEWER, time="2026-10-01T00:00:00Z")
@@ -695,7 +695,7 @@ def test_the_references_own_failure_still_flags(node, rage):
     assert s.state == "quarantine" and s.origin_check == "failed"
 
 
-def test_an_image_that_proved_equivalence_can_flag(node, rage):
+def test_an_image_that_proved_equivalence_can_flag(node, endpoint):
     """Its own records-vs-origin AND chunks passed under it: it is a
     reference for this collection now, and its later failure counts."""
     root, collection, codex = node
@@ -708,7 +708,7 @@ def test_an_image_that_proved_equivalence_can_flag(node, rage):
     assert s.state == "quarantine" and s.origin_check == "failed"
 
 
-def test_half_an_equivalence_is_none(node, rage):
+def test_half_an_equivalence_is_none(node, endpoint):
     """records-vs-origin passed under the image but chunks never ran there:
     not proven, so its later failure still flags nothing."""
     root, collection, codex = node
@@ -718,7 +718,7 @@ def test_half_an_equivalence_is_none(node, rage):
     assert state_of(collection).origin_check != "failed"
 
 
-def test_records_are_built_only_by_the_reference_or_an_equivalent_image(node, rage, monkeypatch):
+def test_records_are_built_only_by_the_reference_or_an_equivalent_image(node, endpoint, monkeypatch):
     """03 §3.4: "does not build its records, create its snapshots or
     contribute vectors to it until its own records-vs-origin and chunks pass
     under the image it runs". Found live 2026-09-21: gutenberg's Codex image
@@ -754,7 +754,7 @@ def test_the_empty_bytes_placeholder_names_no_image(monkeypatch):
     assert equivalence.running_image() is None
 
 
-def test_an_image_running_the_codexs_versions_is_equivalent_by_invariant_3(node, rage, monkeypatch):
+def test_an_image_running_the_codexs_versions_is_equivalent_by_invariant_3(node, endpoint, monkeypatch):
     """03 §3.4, amended 2026-10-09 (RULE 1): the Codex's parser at its parser
     version and every layer's chunker at its version make the same records
     and chunks (invariant 3), so such an image needs no per-image proof; an
@@ -773,7 +773,7 @@ def test_an_image_running_the_codexs_versions_is_equivalent_by_invariant_3(node,
 
 
 def test_under_an_image_that_is_not_the_reference_the_origin_check_cannot_run(
-        node, rage, monkeypatch):
+        node, endpoint, monkeypatch):
     """03 §3.6: the fifth test CANNOT RUN when "this peer's platform image is
     neither the Codex's nor equivalent (§3.4), so that its failure would say
     nothing about the collection" — and the operator decides, with `hold
@@ -807,7 +807,7 @@ def _as_the_web(collection) -> None:
 
 
 def test_the_web_relies_only_on_a_statement_the_worker_re_checked_since_it_started(
-        node, rage, tmp_path):
+        node, endpoint, tmp_path):
     root, collection, codex = node
     enforce(tmp_path)
     recipe = collections_mod.recipe_for(collection)
@@ -826,7 +826,7 @@ def test_the_web_relies_only_on_a_statement_the_worker_re_checked_since_it_start
 
 
 def test_a_statement_changed_after_the_worker_re_checked_it_is_not_relied_on(
-        node, rage, tmp_path):
+        node, endpoint, tmp_path):
     """Re-signed with the node's own key — layer 1 passes it — but it is not
     the statement the worker re-checked: the record names its digest."""
     root, collection, codex = node
@@ -846,7 +846,7 @@ def test_a_statement_changed_after_the_worker_re_checked_it_is_not_relied_on(
         run_check.check_query(collection, recipe, {R1})
 
 
-def test_a_command_line_process_does_not_replace_the_workers_record(node, rage, tmp_path):
+def test_a_command_line_process_does_not_replace_the_workers_record(node, endpoint, tmp_path):
     root, collection, codex = node
     run_check.publish_rechecks()
     assert backend_gate.embed_allowed(db.connect(collection), collection) is True
@@ -858,7 +858,7 @@ def test_a_command_line_process_does_not_replace_the_workers_record(node, rage, 
     assert run_check.record_path().read_bytes() == before
 
 
-def test_a_decision_is_never_read_from_a_pipe(node, rage, capsys, monkeypatch):
+def test_a_decision_is_never_read_from_a_pipe(node, endpoint, capsys, monkeypatch):
     """Live, 2026-10-07: `ack --origin-unchecked` without `--yes`, run with
     `docker exec`, read stdin regardless and ended in an EOFError traceback.
     Without a terminal it is a refusal that names `--yes`, and nothing is
@@ -873,7 +873,7 @@ def test_a_decision_is_never_read_from_a_pipe(node, rage, capsys, monkeypatch):
     assert not (root / "gutenberg" / "state" / copy_state.ORIGIN_ACK).exists()
 
 
-def test_a_copy_with_no_snapshot_says_its_checks_wait_for_the_first_one(node, rage):
+def test_a_copy_with_no_snapshot_says_its_checks_wait_for_the_first_one(node, endpoint):
     """Roots, chunks and records-vs-origin draw over a snapshot's parts, and
     `hold check` refuses a copy that holds none: the status says so and
     names what makes the first snapshot, never only the check it would

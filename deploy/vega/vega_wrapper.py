@@ -7,8 +7,8 @@ as its child, and proxies gRPC to it. Two methods are intercepted:
 
 - `LoadModel`: the ModelOptions exactly as LocalAI sent them, the weights
   hashed WHILE the backend loads them, and the run computed from what this
-  process launched — the same identity as RAGE's (app/vega/runs.py,
-  loadopts.py: 09 §9.12), published to VeGa's receipts service.
+  process launched (app/vega/runs.py, loadopts.py: 09 §9.12), published to
+  VeGa's receipts service.
 - `Embedding`: refused without a valid tag (app/vega/tag.py); the tag
   stripped and the bare text — or the pair, in the form the backend reads —
   forwarded; the receipt {id, run_id, input_digest, vector_digest} delivered
@@ -23,10 +23,10 @@ OPTIONS does not: options this file's backend.proto cannot name would be
 missing from the run, so such a load is refused until the wrapper is rebuilt
 against that release.
 
-WHAT THE WRAPPER KNOWS THAT RAGE HAD TO READ. It is the backend's parent: the
+WHAT THE WRAPPER KNOWS WITHOUT READING IT. It is the backend's parent: the
 argument vector is the one it passed, the environment the one it gave, the
 options the ones it received — no `/proc` matching, no LocalAI patch (vega.md
-§3). Only the card is read, from the child's DRM clients, as RAGE reads it,
+§3). Only the card is read, from the child's DRM clients, as app/gpu_probe does,
 and the environment run.sh gave the program it started (the driver it loads).
 
 THE ENGINE'S `image` IS THE BACKEND'S INSTALLED FILES, hashed at every load
@@ -45,7 +45,7 @@ THE PACKAGE (what LocalAI's backends path holds as `vega-<backend>/`):
     grpc_auth.py  model_identity.py  parent_watch.py   LocalAI's, same release
     app/__init__.py  app/hold/{__init__,codex}.py
     app/vega/{__init__,tag,model,procfs,runs,loadopts,dxg}.py
-The `app/` files are Louise's, copied as RAGE's image copies the codex: ONE
+The `app/` files are Louise's, copied into the package: ONE
 definition of canonical JSON, the run and the tag. None imports more than the
 standard library; the venv holds grpcio and protobuf (requirements.txt).
 """
@@ -112,7 +112,7 @@ WORKERS = 16
 #: What a model's YAML declares for a pair model.
 PAIRS_OPTION = "pairs:true"
 #: The compute runtime the run's driver names, read from the image's dpkg
-#: status (RAGE's list, deploy/rage/Dockerfile.localai).
+#: status.
 RUNTIME_PACKAGES = ("libze-intel-gpu1", "intel-opencl-icd", "libze1")
 PORT_PLACEHOLDER = "${PORT}"
 #: The backend's directory in a backend engine's `args`, whose bytes `image`
@@ -624,7 +624,7 @@ def declares_pairs(options: Any) -> bool:
 def canon_from_protojson(text: str) -> loadopts.Canon:
     """ModelOptions as protojson with proto field names, unset fields omitted
     — the form P1 lists them in (deploy/localai/patches) — as 09 §9.3's
-    options: RAGE's canonicalisation, byte for byte."""
+    options: app/vega/loadopts.py's canonicalisation, byte for byte."""
     return loadopts.canonical(loadopts.parse(text))
 
 

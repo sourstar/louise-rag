@@ -37,8 +37,8 @@ shows only the live reading, and the history is kept for a widget to come
 high after a workload, until a GPU process restarts; in the history it is
 a high fan on a cool, idle card. The
 fan cannot be set from here (xe exposes it read-only); the workaround,
-restarting an engine, belongs to RAGE and only to RAGE (operator,
-2026-09-20: never restart other apps).
+restarting an engine, is not this app's: the engines are LocalAI's
+(operator, 2026-09-20: never restart other apps).
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ from pathlib import Path
 
 from . import config, db, dispatch, gpu, node_state
 # The clock itself lives in app/gpu_clock.py, which imports nothing of the
-# platform, so RAGE's front can hold it too (docs/notes/rage.md §11). It is
+# platform (RAGE's front held it too, docs/notes/rage.md §11). It is
 # named here because this app, and its tests, know it as the governor's.
 from .gpu_clock import Governor  # noqa: F401
 

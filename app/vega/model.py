@@ -1,5 +1,4 @@
-"""What every part of RAGE calls a device, a model id and a configuration
-error.
+"""What VeGa calls a device, a model id and a configuration error.
 
 Until migration step 15g this module was `rage.toml`'s whole desired state:
 each model's command per device, its memory, priority, preload and park

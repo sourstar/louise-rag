@@ -5,8 +5,9 @@ docs/03-checking.md §3.3 (dd9bef4); docs/09-formats.md §9.12.
 
 A pass validates a RUN: one engine as it was actually launched — the image
 by its running digest, the weights, the exact arguments and environment, the
-device, its driver. RAGE, the node's model container, computes that identity
-from what it launched and states it with every answer (`Louise-Run`). So
+device, its driver. The endpoint states that identity with every answer:
+in a `Louise-Run` header (09 §9.12), or, for an `api = "vega"` encoder, in
+the receipt VeGa's wrapper computes from what LocalAI launched. So
 what keeps later work honest is not a test repeated during the work:
 
   - a vector is written ONLY if the answer that carried it names a run with
@@ -296,7 +297,7 @@ def set_aside(root: Path, name: str, codex: Codex, run_id: str,
 
 def base_url(encoder_url: str, fallback: str = "") -> str | None:
     """The platform behind a model's URL: everything before `/upstream/`
-    (07 §7.8: `http://<node>:<port>/upstream/<model>`), else `RAGE_URL`."""
+    (07 §7.8: `http://<node>:<port>/upstream/<model>`), else `fallback`."""
     head, sep, _ = encoder_url.partition("/upstream/")
     if sep:
         return head.rstrip("/")
@@ -317,8 +318,8 @@ def describe(encoder_url: str, run_id: str, *, get: Callable[..., Any],
         if base is None:
             raise RunRefused(
                 f"{encoder_url} names a run ({run_id[:23]}…) and nothing says where to ask "
-                f"what it stands for: the URL is not `…/upstream/<model>` and RAGE_URL is "
-                f"unset (07 §7.8)")
+                f"what it stands for: the URL is not `…/upstream/<model>` and the encoder "
+                f"is not behind VeGa (07 §7.8)")
         at = f"{base}/louise/runs/{run_id}"
     else:
         base = at.rsplit("/", 1)[0]
@@ -358,8 +359,8 @@ def check(root: Path, name: str, codex: Codex, answered: set, *,
         raise RunRefused(
             f"{name}: the encoder states no run identity (no `{RUN_HEADER}` on its "
             f"answers), so nothing is written through it (03 §3.3). Searching with it "
-            f"works. Writing needs the node's model container, RAGE, which states the "
-            f"run of every answer")
+            f"works. Writing needs an encoder that states the run of every answer: "
+            f"`api = \"vega\"`, whose receipts name it (docs/notes/vega.md)")
     # THE COMMON CASE IS ONE LOOKUP: the run is one this collection has a
     # statement for. Only a run it has none for sends the check to the other
     # collections of the space on this peer.

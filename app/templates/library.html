@@ -6,7 +6,6 @@
 {% set mode_scans = mode_runs(worker_state|default('running'), 'parse') %}
 {% set mode_fetches = mode_runs(worker_state|default('running'), 'fetch') %}
 <h1>Library</h1>
-<div id="rage-alerts" hx-get="/admin/system/rage-alerts" hx-trigger="load, every 15s" hx-swap="innerHTML"></div>
 <div class="panel">
   <span class="dot {{ 'running' if worker_state=='running' else 'paused' }}"></span>
   worker: <b>{{ worker_state }}</b>

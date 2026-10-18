@@ -2,7 +2,7 @@
 NCBI uses it (transformers, fp32, CPU; the tokenizer's own pair encoding cut
 longest-first to 512; the [CLS] row of the last hidden state) on the pairs of
 /in.json, written as little-endian f32 in base64 to /out.json. The reference
-for `vega-medcpt-article-ov`, which has no counterpart in RAGE. Runs in
+for `vega-medcpt-article-ov`, which has no llama.cpp counterpart. Runs in
 convert_article.sh's container, after the conversion, fetching nothing.
 """
 import base64

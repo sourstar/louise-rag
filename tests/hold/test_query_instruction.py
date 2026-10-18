@@ -39,7 +39,7 @@ def _one_model(instruction):
 
 
 def _recipe(codex, **encoder):
-    return collections_mod._codex_encoder({"url": "http://rage:30437", "embed_model": "m",
+    return collections_mod._codex_encoder({"url": "http://models:30437", "embed_model": "m",
                                            "query_model": "m", **encoder},
                                           codex, "normattiva.toml")
 

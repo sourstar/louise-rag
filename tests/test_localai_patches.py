@@ -1,4 +1,4 @@
-"""The LocalAI patches RAGE carries, held to the one list of LocalAI action
+"""The LocalAI patches we carry, held to the one list of LocalAI action
 items (deploy/localai/patches/, docs/notes/localai-bugs.md; migration-plan
 step 15).
 

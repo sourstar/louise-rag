@@ -14,7 +14,7 @@ Python cannot stop a thread, so stopping is cooperative, in two halves:
   statement running when the caller leaves, and a progress handler aborts
   any statement after that — one begun a moment later included (`watch`).
 
-What cannot be interrupted is one in-flight HTTP call to RAGE (a translation,
+What cannot be interrupted is one in-flight HTTP call to a model (a translation,
 a query embedding, a rerank); each is bounded by its own timeout, and the
 checkpoint after it stops the search. So a cancelled search stops within one
 such step.

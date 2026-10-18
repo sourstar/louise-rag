@@ -96,11 +96,12 @@ def level_headers() -> dict[str, str]:
     """The header every request to a model endpoint carries: this caller's
     level, by name (`corpus`, `translate`, `chat`, `rerank`, `query`).
 
-    ADVISORY, as the spec says: RAGE holds the card's clock while a request
-    at `translate` or above is in flight (docs/notes/rage.md §11), and no
-    answer depends on it — an endpoint that ignores the header loses nothing
-    but speed. It is what lets the GPU governor's claim in the node store
-    retire: RAGE sees every model request itself."""
+    ADVISORY, as the spec says: a model container may hold the card's clock
+    while a request at `translate` or above is in flight (RAGE's front did,
+    docs/notes/rage.md §11, until it retired on 2026-10-09), and no answer
+    depends on it — an endpoint that ignores the header, as LocalAI does,
+    loses nothing but speed. The GPU governor follows the node store's
+    claim instead."""
     return {LEVEL_HEADER: current()[0].name.lower()}
 
 

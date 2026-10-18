@@ -37,10 +37,10 @@ def client(tmp_path, isolated_config, monkeypatch):
         yield c
 
 
-ENC = "http://rage:8080/upstream/medcpt-article"
+ENC = "http://models:8080/upstream/medcpt-article"
 #: the shared test recipe is a bi-encoder space (09 §9.3's worked example), so
 #: `create` needs the query side's endpoint too
-QENC = "http://rage:8080/upstream/medcpt-query"
+QENC = "http://models:8080/upstream/medcpt-query"
 _REAL_EMBED_FOR_RECIPE = louise._embed_for_recipe
 
 

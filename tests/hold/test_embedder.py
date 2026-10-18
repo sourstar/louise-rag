@@ -61,7 +61,7 @@ NO_RUN = object()
 
 
 def gate(codex, got, *, seed=b"\x09" * 32, ref=None, stated=None, invariant=True):
-    """One pass, as the node runs it against RAGE: the endpoint states its
+    """One pass, as the node runs it: the endpoint states its
     run, the sixteen fingerprint texts go one at a time and then the way the
     peer contributes. `stated=NO_RUN` is an endpoint that states none."""
     ref = ref if ref is not None else reference()

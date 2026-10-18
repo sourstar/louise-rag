@@ -2,10 +2,11 @@
 speaks either protocol (migration-plan step 13e; docs/09-formats.md §9.12,
 *the request's level*; docs/notes/rage.md §4, §11).
 
-`Louise-Level` is what lets RAGE hold the card's clock while a person waits
-without anything being written anywhere: it sees every model request itself.
-`CHAT_API=openai` is what lets the chat model leave Ollama for RAGE — the same
-file, behind llama-server — and come back by switching one variable.
+`Louise-Level` is what lets a model container hold the card's clock while a
+person waits without anything being written anywhere: it sees every model
+request itself (RAGE's front did, until 2026-10-09). `CHAT_API=openai` is
+what lets the chat model leave Ollama for LocalAI — the same file, behind
+llama-server — and come back by switching one variable.
 """
 import json
 

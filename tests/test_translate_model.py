@@ -243,7 +243,7 @@ def test_each_mixed_group_is_searched_in_every_language_it_holds(isolated_config
 def test_the_completion_names_translate_model_only_when_set(monkeypatch, model):
     """VeGa switch-over (2026-10-09): LocalAI serves many models from one
     address and picks the one in the body, so TRANSLATE_MODEL is sent when
-    set; unset, no model is named (a URL that names its model, RAGE's)."""
+    set; unset, no model is named (a URL that names its model, `…/upstream/<model>`)."""
     seen = {}
 
     def post(url, json=None, timeout=None, headers=None):

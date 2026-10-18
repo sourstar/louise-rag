@@ -14,7 +14,7 @@ from app.hold import collection as col, deposit
 from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed
 from tests.hold.test_template import SPACE
 
-ENCODER_URL = "http://rage:30450/upstream/granite-embedding-107m-multilingual"
+ENCODER_URL = "http://models:30450/upstream/granite-embedding-107m-multilingual"
 
 #: A symmetric space: a deposit collection's encoder embeds queries too.
 TEXT_SPACE = {**SPACE, "query": {"encoder": None, "instruction": None}}
@@ -278,7 +278,7 @@ def test_create_leaves_the_manifest_in_wal_mode_before_the_held_file(node):
 
 def test_a_space_whose_engine_is_a_localai_run_makes_a_version_4_codex_the_others_copy(node):
     """deploy/16f: the first deposit collection's space file is written from
-    the run RAGE over LocalAI states (09 §9.12: name localai/<backend>,
+    the run VeGa over LocalAI states (09 §9.12: name localai/<backend>,
     variant null, `options` the load call). Such an engine needs Codex 4
     (09 §9.3); the next collection on the encoder copies the space whole,
     options and all (02 §2.9). Granite's shape: 384 wide, 512 tokens, CLS."""

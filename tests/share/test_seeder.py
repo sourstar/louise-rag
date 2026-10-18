@@ -43,7 +43,7 @@ def a_shared_collection(node, monkeypatch):  # noqa: F811
                        previous=None, shards=shards, delta=sn.Delta((), (), ()), files={})
     (d / "snapshots").mkdir(exist_ok=True)
     (d / "snapshots" / "2026-08.json").write_bytes(snap.canonical())
-    louise._write_held_file(node, codex, "http://rage:1/upstream/x")
+    louise._write_held_file(node, codex, "http://models:1/upstream/x")
     assert louise.main(["share", "collection", name, "--root", str(node)]) == 0
     c = collections_mod.by_name(name)
     assert c is not None and c.share is True

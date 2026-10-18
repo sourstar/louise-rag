@@ -378,6 +378,24 @@ collection) and the raw container `dnabert2-xpu` — DNA is frozen
 
 ## 8. RAGE's lifecycle and the old model servers — RETIRED 2026-10-05 (15g)
 
+**The rest of RAGE went on 2026-10-18** (operator: "Why do we have still
+RAGE nomenclature around? … Do it"). In 6a4f517 the run identity moved to
+`app/vega/` (`runs`, `loadopts`, `model`, `procfs`, `dxg`, `store`) and the
+rest was deleted: the LocalAI front, `deploy/rage/`,
+`deploy/truenas-rage-localai.yaml`, `tools/rage_smoke_*`,
+`tools/load_profile.py` with `dev load-profile` (it measured reloads through
+RAGE's admin API), `tests/rage/`. After it: `RAGE_URL`, the GPU panel's RAGE
+share and the RAGE alerts strip, the governor's RAGE branch, the worker's
+RAGE refusal, `vega/runs.boot_image`, and the RAGE-against-VeGa scripts that
+cannot run without RAGE (`deploy/vega/proof/`,
+`deploy/vega/stage/{verify,mounts}.py`; in git at fe9124e). The tests' stand-in
+for a run-stating endpoint is `Endpoint`, no longer `Rage`. The app
+`louise-rage`, which runs VeGa's receipts service, is recreated as
+`louise-vega` with the same configuration
+(`deploy/vega/switch/rename-vega-app-20261018.sh`); the operator deletes the
+old one. What still says RAGE is history (dated notes) and one host path,
+`/mnt/ssd5/apps/louise-rage/state/vega`: the receipts state and socket.
+
 **Done in the repository, at the operator's word** ("go for 15g", the
 day of the cut-over, before the full day this section asked for). The way
 back does not depend on the repository: backout.sh uses the images and

@@ -56,12 +56,12 @@ def test_encoder_table_requires_url(isolated_config, data_dir, config_dir):
     ('url = "http://enc:1"\nembed_model = "m"\n', "`query_model` is required"),
     ('url = "http://enc:1"\nembed_model = ""\nquery_model = "m"\n', "`embed_model` is required"),
     # a model-container URL names its model; the key must be that model
-    ('url = "http://rage:1/upstream/bge-m3"\nembed_model = "BGE-M3"\nquery_model = "bge-m3"\n',
+    ('url = "http://models:1/upstream/bge-m3"\nembed_model = "BGE-M3"\nquery_model = "bge-m3"\n',
      "names 'bge-m3'"),
-    ('url = "http://rage:1/upstream/bge-m3"\nembed_model = "bge-m3"\nquery_model = "other"\n',
+    ('url = "http://models:1/upstream/bge-m3"\nembed_model = "bge-m3"\nquery_model = "other"\n',
      "`query_model` = 'other' and url"),
-    ('url = "http://rage:1/upstream/medcpt-article"\n'
-     'query_url = "http://rage:1/upstream/medcpt-query"\n'
+    ('url = "http://models:1/upstream/medcpt-article"\n'
+     'query_url = "http://models:1/upstream/medcpt-query"\n'
      'embed_model = "medcpt-article"\nquery_model = "medcpt-article"\n',
      "`query_model` = 'medcpt-article' and query_url"),
 ])
@@ -72,7 +72,7 @@ def test_a_file_without_its_model_keys_is_refused_for_that_collection_only(
     with the URL's model: refused for THAT collection, named with its reason
     where refusals are shown; the node keeps the others (never a raise)."""
     codex_collection("good", louise_root=data_dir, config_dir=config_dir,
-                     toml_extra='[encoder]\nurl = "http://rage:1/upstream/bge-m3"\n'
+                     toml_extra='[encoder]\nurl = "http://models:1/upstream/bge-m3"\n'
                                 'embed_model = "bge-m3"\nquery_model = "bge-m3"\n')
     codex_collection("old", louise_root=data_dir, config_dir=config_dir,
                      toml_extra="[encoder]\n" + encoder)
@@ -92,7 +92,7 @@ def test_a_file_without_its_model_keys_is_refused_for_that_collection_only(
 @pytest.mark.parametrize("reranker,why", [
     ('url = "http://rr:1/v1/rerank"\napi = "jina"\nmodel = "bge-reranker"\n', "now `rerank_model`"),
     ('url = "http://rr:1/v1/rerank"\napi = "jina"\n', "`rerank_model` is required"),
-    ('url = "http://rage:1/upstream/bge-reranker/v1/rerank"\napi = "jina"\n'
+    ('url = "http://models:1/upstream/bge-reranker/v1/rerank"\napi = "jina"\n'
      'rerank_model = "medcpt-rerank"\n', "names 'bge-reranker'"),
 ])
 def test_a_reranker_without_its_model_key_is_refused_for_that_collection(
@@ -104,13 +104,13 @@ def test_a_reranker_without_its_model_key_is_refused_for_that_collection(
 
 
 def test_the_model_keys_agree_with_a_rage_url_and_load(isolated_config, data_dir, config_dir):
-    codex_collection("rage", louise_root=data_dir, config_dir=config_dir,
-                     toml_extra='[encoder]\nurl = "http://rage:1/upstream/medcpt-article"\n'
-                                'query_url = "http://rage:1/upstream/medcpt-query"\n'
+    codex_collection("upstream", louise_root=data_dir, config_dir=config_dir,
+                     toml_extra='[encoder]\nurl = "http://models:1/upstream/medcpt-article"\n'
+                                'query_url = "http://models:1/upstream/medcpt-query"\n'
                                 'embed_model = "medcpt-article"\nquery_model = "medcpt-query"\n'
-                                '[reranker]\nurl = "http://rage:1/upstream/medcpt-rerank/v1/rerank"\n'
+                                '[reranker]\nurl = "http://models:1/upstream/medcpt-rerank/v1/rerank"\n'
                                 'api = "jina"\nrerank_model = "medcpt-rerank"\n')
-    c = collections_mod.by_name("rage")
+    c = collections_mod.by_name("upstream")
     assert (c.embed.model, c.embed.query_model) == ("medcpt-article", "medcpt-query")
     assert c.reranker.model == "medcpt-rerank"
 
@@ -217,15 +217,15 @@ def test_a_query_names_the_query_encoder_its_url_names_never_the_documents(
     to the query encoder's URL; a runner that picks the model from the body
     would have embedded the query with the article encoder."""
     calls = _capture_posts(monkeypatch)
-    rage = collections_mod.EmbedRecipe(
+    upstream = collections_mod.EmbedRecipe(
         url="http://nas:30450/upstream/medcpt-article", api=api,
         model="MedCPT-Article-Encoder", dtype="f16", ctx=512,
         query_url="http://nas:30450/upstream/medcpt-query")
-    embeddings._embed_texts(["is aspirin safe?"], recipe=rage, query=True)
+    embeddings._embed_texts(["is aspirin safe?"], recipe=upstream, query=True)
     assert calls[0]["url"] == f"http://nas:30450/upstream/medcpt-query{path}"
     assert calls[0]["json"]["model"] == "medcpt-query"
     calls.clear()
-    embeddings._embed_texts(["an abstract"], recipe=rage)
+    embeddings._embed_texts(["an abstract"], recipe=upstream)
     assert calls[0]["json"]["model"] == "MedCPT-Article-Encoder", "documents unchanged"
 
     calls.clear()
@@ -338,7 +338,7 @@ def test_localais_500_over_the_context_shrinks_the_budget_too(isolated_config, m
     2026-10-05, at the cut-over). It must cut as TEI's 413 does, never become
     an error on a document."""
     recipe = collections_mod.EmbedRecipe(
-        url="http://rage:1/upstream/qwen3-embedding-4b", api="openai",
+        url="http://models:1/upstream/qwen3-embedding-4b", api="openai",
         model="qwen3-embedding-4b", dtype="f16", ctx=512)
     localai = _refusing_server(
         monkeypatch, 500, '{"error":{"code":500,"message":"rpc error: code = Internal '
@@ -393,7 +393,7 @@ def test_localais_nan_500_is_retried_as_a_nan_vector_is(isolated_config, monkeyp
         return Resp(500 if len(sent) < 3 else 200)
     monkeypatch.setattr(embeddings.httpc, "post", flaky)
     recipe = collections_mod.EmbedRecipe(
-        url="http://rage:1/upstream/bge-m3", api="openai", model="bge-m3", dtype="f16",
+        url="http://models:1/upstream/bge-m3", api="openai", model="bge-m3", dtype="f16",
         ctx=8192)
     assert embeddings._embed_texts(["a sentence"], recipe=recipe) == [[0.6, 0.8]]
     assert sent == ["a sentence"] * 3, "retried whole, never cut"
@@ -404,7 +404,7 @@ def test_localais_nan_500_that_never_clears_is_the_numeric_failure_it_is(
     monkeypatch.setattr(embeddings.time, "sleep", lambda s: None)
     _refusing_server(monkeypatch, 500, LOCALAI_NAN, limit=0)
     recipe = collections_mod.EmbedRecipe(
-        url="http://rage:1/upstream/bge-m3", api="openai", model="bge-m3", dtype="f16",
+        url="http://models:1/upstream/bge-m3", api="openai", model="bge-m3", dtype="f16",
         ctx=8192)
     with pytest.raises(RuntimeError, match="null/NaN vectors even after retries"):
         embeddings._embed_texts(["a sentence"], recipe=recipe)
@@ -501,14 +501,14 @@ def test_a_node_file_cannot_state_a_query_instruction(key):
     told to write one. Refused, not ignored: ignored, it would look set."""
     with pytest.raises(ValueError, match="not a node's to state"):
         collections_mod.parse_recipe(
-            {"url": "http://rage:30437", "embed_model": "dar-legal-it",
+            {"url": "http://models:30437", "embed_model": "dar-legal-it",
              "query_model": "dar-legal-it", key: "query: "},
             where="normattiva.toml")
 
 
 def _instructed(**kw):
     return collections_mod.EmbedRecipe(
-        url="http://rage:30437", api="openai", model="dar-legal-it",
+        url="http://models:30437", api="openai", model="dar-legal-it",
         dtype="f16", ctx=8192, query_instruction="query: ", **kw)
 
 
@@ -525,7 +525,7 @@ def test_the_instruction_reaches_queries_and_never_documents(isolated_config, mo
     # no instruction: the untouched path, queries included
     calls.clear()
     bare = collections_mod.EmbedRecipe(
-        url="http://rage:30437", api="openai", model="m", dtype="f16", ctx=8192)
+        url="http://models:30437", api="openai", model="m", dtype="f16", ctx=8192)
     embeddings._embed_texts(["q"], recipe=bare, query=True)
     assert calls[0]["json"]["input"] == ["q"]
 

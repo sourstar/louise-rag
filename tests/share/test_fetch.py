@@ -150,7 +150,7 @@ def test_fetch_holds_the_codex_and_the_signed_snapshot_from_a_peer_given_by_hand
     codex, name, d, snap = a_shard(node)
     client = TestClient(api.app)
     out = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=client,
-                      key=OURS, own_key=OUR_KEY, encoder="http://rage:1/upstream/x")
+                      key=OURS, own_key=OUR_KEY, encoder="http://models:1/upstream/x")
     assert (out["from"], out["chain"], out["pre_ack"], out["tried"]) == (SHARER, 1, True, [])
     assert out["snapshots"] == {"promoted": ["2026-08"], "kept": [], "staged": []}
     assert out["snapshot_id"] == "2026-08" and out["snapshot_hash"] == snap.hash and out["signatures"] == 1
@@ -163,10 +163,10 @@ def test_fetch_holds_the_codex_and_the_signed_snapshot_from_a_peer_given_by_hand
     held = fetcher / f"{fname}.toml"
     text = held.read_text(encoding="utf-8")
     assert out["file"] == str(held) and f'codex = "{codex.collection_id}"' in text \
-        and "share = false" in text and 'url = "http://rage:1/upstream/x"' in text
+        and "share = false" in text and 'url = "http://models:1/upstream/x"' in text
     assert not (fetcher / fname / "state" / fetch.STAGING).exists()
     again = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=client,
-                        key=OURS, own_key=OUR_KEY, encoder="http://rage:1/upstream/x")
+                        key=OURS, own_key=OUR_KEY, encoder="http://models:1/upstream/x")
     assert again["snapshots"] == {"promoted": [], "kept": ["2026-08"], "staged": []}, "nothing twice"
     assert (fd / "snapshots/2026-08.sig.json").read_bytes() == canonical_json(side), "the union of one"
 

@@ -125,7 +125,7 @@ def test_weights_that_are_not_on_disk_are_an_error_never_a_download(tmp_path):
 
 def test_run_sh_execs_the_backends_own_python_on_its_backend_py(tmp_path):
     """LocalAI lists the pid it spawned; `exec` keeps it the backend's, whose
-    program RAGE finds in the image's backends path."""
+    program VeGa finds in the image's backends path."""
     d = tmp_path / "louise-x"
     (d / "venv" / "bin").mkdir(parents=True)
     (d / "run.sh").write_bytes((BACKENDS / "run.sh").read_bytes())
@@ -236,7 +236,7 @@ def test_the_platform_reads_localais_rerank_of_it_as_jina(tmp_path):
              "relevance_score": r.relevance_score} for r in out.results]})
 
     hits = [{"text": t, "id": i} for i, t in enumerate(["abc", "abcdefgh", "a"])]
-    recipe = RerankRecipe(url="http://rage/upstream/medcpt-rerank/v1/rerank", api="jina",
+    recipe = RerankRecipe(url="http://models/upstream/medcpt-rerank/v1/rerank", api="jina",
                           model="medcpt-rerank")
     with httpx.Client(transport=httpx.MockTransport(localai)) as client:
         old, retrieval.httpc = retrieval.httpc, client
@@ -379,23 +379,23 @@ def test_the_platforms_client_and_the_backend_agree_on_the_one_prompt(tmp_path, 
     asked = []
 
     def localai(url, json=None, timeout=None, headers=None):
-        assert url == "http://rage:8080/upstream/madlad/v1/completions"
+        assert url == "http://models:8080/upstream/madlad/v1/completions"
         asked.append(json)
         reply = s.Predict(SimpleNamespace(Prompt=json["prompt"]), Context())
         return httpx.Response(200, json={"object": "text_completion", "choices": [
             {"index": 0, "text": reply.message.decode("utf-8")}]},
             request=httpx.Request("POST", url))
 
-    monkeypatch.setattr(config, "TRANSLATE_URL", "http://rage:8080/upstream/madlad")
+    monkeypatch.setattr(config, "TRANSLATE_URL", "http://models:8080/upstream/madlad")
     monkeypatch.setattr(mt.httpx, "post", localai)
     mt.reset()
     assert mt.languages() == frozenset({"de", "it", "la"})
     assert mt.translate([("über", "it"), ("x", "zz"), ("y", "la")]) == \
         ["<2it>|ÜBER", None, "<2la>|Y"]
     assert len(asked) == 2 and set(asked[-1]) == {"prompt"}, \
-        "the model is the URL's: RAGE's front names it (rage-over-localai §7)"
+        "the model is the URL's (`…/upstream/<model>`, 07 §7.8)"
     assert sorted(seen["batches"][-1]) == ["<2it> über", "<2la> y"], "one pass for the batch"
-    assert mt.health_url() == "http://rage:8080/upstream/madlad/v1/models"
+    assert mt.health_url() == "http://models:8080/upstream/madlad/v1/models"
     mt.reset()
 
 

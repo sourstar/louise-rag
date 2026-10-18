@@ -60,9 +60,9 @@ def test_symmetric_localai_query_model_is_the_model():
 
 
 def test_no_model_line_takes_both_from_the_urls():
-    before = CODEX + '\n[encoder]\nurl = "http://rage:1/upstream/bge-m3"\n\n# end\n'
+    before = CODEX + '\n[encoder]\nurl = "http://models:1/upstream/bge-m3"\n\n# end\n'
     assert mig.migrate_text(before) == (
-        CODEX + '\n[encoder]\nurl = "http://rage:1/upstream/bge-m3"\n'
+        CODEX + '\n[encoder]\nurl = "http://models:1/upstream/bge-m3"\n'
         'embed_model = "bge-m3"\nquery_model = "bge-m3"\n\n# end\n')
 
 
@@ -73,9 +73,9 @@ def test_reranker_model_is_renamed():
 
 
 def test_crlf_and_no_final_newline_are_kept():
-    before = (CODEX + '[encoder]\nurl = "http://rage:1/upstream/m"\nmodel = "m"').replace("\n", "\r\n")
+    before = (CODEX + '[encoder]\nurl = "http://models:1/upstream/m"\nmodel = "m"').replace("\n", "\r\n")
     after = mig.migrate_text(before)
-    assert after == (CODEX + '[encoder]\nurl = "http://rage:1/upstream/m"\n'
+    assert after == (CODEX + '[encoder]\nurl = "http://models:1/upstream/m"\n'
                      'embed_model = "m"\nquery_model = "m"').replace("\n", "\r\n")
 
 
@@ -85,8 +85,8 @@ def test_crlf_and_no_final_newline_are_kept():
     # a separate query endpoint naming no model: X would be the document model
     (CODEX + '[encoder]\nurl = "http://a:1"\nquery_url = "http://q:2"\nmodel = "a"\n',
      "query_model cannot be determined"),
-    # a stated model the RAGE URL contradicts: the node would refuse the result
-    (CODEX + '[encoder]\nurl = "http://rage:1/upstream/bge-m3"\nmodel = "BGE-M3"\n', "names 'bge-m3'"),
+    # a stated model the `…/upstream/<model>` URL contradicts: the node would refuse the result
+    (CODEX + '[encoder]\nurl = "http://models:1/upstream/bge-m3"\nmodel = "BGE-M3"\n', "names 'bge-m3'"),
     (CODEX + '[reranker]\nurl = "http://gpu:30447/v1/rerank"\n', "rerank_model cannot be determined"),
     (CODEX + "[encoder\n", "not a TOML file"),
 ])
@@ -102,7 +102,7 @@ def test_a_directory_each_file_on_its_own(tmp_path, capsys):
     good = tmp_path / "good.toml"
     bad = tmp_path / "bad.toml"
     done = tmp_path / "done.toml"
-    good.write_text(CODEX + '[encoder]\nurl = "http://rage:1/upstream/m"\nmodel = "m"\n', encoding="utf-8")
+    good.write_text(CODEX + '[encoder]\nurl = "http://models:1/upstream/m"\nmodel = "m"\n', encoding="utf-8")
     bad.write_text(CODEX + '[encoder]\nurl = "http://x:1"\n', encoding="utf-8")
     done.write_text(CODEX + '[encoder]\nurl = "http://x:1"\nembed_model = "m"\nquery_model = "m"\n',
                     encoding="utf-8")

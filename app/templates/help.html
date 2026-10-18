@@ -292,23 +292,18 @@
   unaffected. The health table is a liveness indicator only — no pipeline
   decision consults it.</p>
   <p class="note"><b>The GPU panel.</b> The bar says <i>whose</i> the card's
-  memory is: <span class="swatch rage"></span>RAGE's models,
-  <span class="swatch others"></span>every other process,
-  <span class="swatch unattributed"></span>what the driver counts and no
-  process shown holds; the rest is free. Each row then gives three
+  memory is: <span class="swatch louise"></span>Louise's models,
+  <span class="swatch others"></span>LocalAI's other models,
+  <span class="swatch unattributed"></span>what is outside LocalAI's models
+  (other processes, the driver's own buffers); the rest is free. Without
+  LocalAI's figures it says what the processes shown hold and what the driver
+  counts and no process shown holds. Each row then gives three
   <i>host</i> figures, and only two of them are occupancy: <b>GPU buffers in
   host RAM</b> and <b>process RAM</b> are real; <b>mapped file</b> is page
   cache seen through the process (the model file, right after a load), which
   the kernel takes back whenever it wants the room. A row marked
   <b>pushed off the card</b> has most of its buffers in host RAM: the card was
   overcommitted and the driver moved them out, silently.</p>
-  <p class="note"><b>The GPU memory strip</b> on top of the Library and of this
-  page is RAGE's notification. It appears when RAGE <i>could not load</i> a
-  model Louise asked for (and says how much of the card processes outside
-  RAGE hold), when it <i>gave up idle models</i> because such a process
-  squeezed the card — never one in use; they come back by themselves — and
-  when a model has been pushed off the card. It shows nothing when there is
-  nothing to say.</p>
 
   <h2>Ingestion pipeline</h2>
   <p class="note lead"><b>In short:</b> every document climbs four steps — found, described, searchable, embedded — and any step can be safely interrupted and re-run.</p>
@@ -752,7 +747,7 @@ url = "http://…"               # (+ query_url for a bi-encoder). There is no d
                                # a file that names none is refused (System page)
 embed_model = "…"              # REQUIRED: the model documents are embedded with
 query_model = "…"              # REQUIRED: the model questions are embedded with (the same
-                               # model named twice when one does both); on a RAGE URL
+                               # model named twice when one does both); on a model-container URL
                                # (…/upstream/&lt;model&gt;) each must be the model it names
 
 [reranker]                     # optional: this node's reranker for this collection

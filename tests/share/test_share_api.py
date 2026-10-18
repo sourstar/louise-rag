@@ -129,7 +129,7 @@ def test_the_beat_sends_this_nodes_digest_signed_to_every_recipient(node, monkey
                                                       neighbours=[], benchmarks=[],
                                                       collections=[], now=now), now=now)
     from app import louise
-    louise._write_held_file(node, codex, "http://rage:1/upstream/x")
+    louise._write_held_file(node, codex, "http://models:1/upstream/x")
     fake = FakeClient()
     out = gossip.beat(collections_mod.load_all(), now=now, client=fake, force=True)
     assert out["digest"] == {"sent": 1, "failed": 0, "recipients": ["http://peer.test"]}

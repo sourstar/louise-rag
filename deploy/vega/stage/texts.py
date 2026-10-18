@@ -1,5 +1,5 @@
 """Switch-over step 3 (docs/notes/vega.md §12): the verification inputs, as the
-proof's (deploy/vega/proof/proof.py): docstrings of Python's standard library,
+VeGa node proof's (docs/notes/vega.md §10): docstrings of Python's standard library,
 deterministic, nothing from a Louise collection. Writes <out>/texts.json (N
 texts) and <out>/pairs.json (N (title, abstract) pairs: a paragraph's first
 sentence and the rest of its docstring; the last pair runs past 512 tokens).

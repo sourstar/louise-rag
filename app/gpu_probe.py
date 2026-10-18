@@ -49,8 +49,7 @@ PCI_IDS_PATHS = (Path("/usr/share/louise/pci.ids"), Path("/usr/share/misc/pci.id
                  Path("/usr/share/hwdata/pci.ids"))
 
 # The driver's memory query — its ioctl, its structures, the capability it
-# wants — lives in app/gpu_memory.py, which RAGE's front shares: ONE copy of a
-# kernel ABI. The names below stay because the tests and the notes use them.
+# wants — lives in app/gpu_memory.py: ONE copy of a kernel ABI. The names below stay because the tests and the notes use them.
 DRM_IOCTL_XE_DEVICE_QUERY = gpu_memory.DRM_IOCTL_XE_DEVICE_QUERY
 XE_QUERY_MEM_REGIONS = gpu_memory.XE_QUERY_MEM_REGIONS
 _XE_QUERY, _XE_REGIONS, _XE_REGION = (gpu_memory._XE_QUERY, gpu_memory._XE_REGIONS,
@@ -246,7 +245,7 @@ def label(argv: list[str], root: Path) -> str:
     exe, args = PurePosixPath(argv[0]).name, argv[1:]
     if _PYTHON.fullmatch(exe):
         # A PYTHON SERVER THAT NAMES ITS WEIGHTS IS LABELLED BY THEM, as
-        # llama-server is. RAGE starts its torch and OpenVINO servers through
+        # llama-server is. RAGE started its torch and OpenVINO servers through
         # one launcher (`python -m servers.launch madlad --weights …`), so
         # after the cut-over the panel showed two rows called
         # "servers.launch" — 6.2 GB and 432 MB of the card, and nothing to say

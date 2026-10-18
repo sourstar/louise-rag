@@ -43,19 +43,12 @@ def _chat_url() -> str:
 CHAT_URL = _chat_url()
 # WHICH PROTOCOL CHAT_URL SPEAKS (app/llm.py): "ollama" — /api/chat, as the
 # node has always run — or "openai" — /v1/chat/completions, what llama-server
-# serves and so what RAGE serves (docs/notes/rage.md §4). Beside the old one,
-# not instead of it: the chat model moves to RAGE the day this is switched,
-# and back the day it is switched back. Under "openai" the context size is
+# and LocalAI serve. Beside the old one, not instead of it: the chat model
+# moves the day this is switched, and back the day it is switched back. Under "openai" the context size is
 # the server's, fixed at launch (operator, 2026-09-19); `num_ctx` is Ollama's.
 CHAT_API = os.getenv("CHAT_API", "ollama").strip().lower()
 if CHAT_API not in ("ollama", "openai"):
     raise RuntimeError(f"CHAT_API must be 'ollama' or 'openai', not {CHAT_API!r}")
-# RAGE, the node's model container (docs/03 §3.3; docs/07 §7.8): its base
-# URL, for the System page's list of models and their controls. Unset, the
-# page has neither, and the node learns a run only from the answers it
-# gets — which is enough to check every one of them. Every model is still
-# reached by its own URL (`<RAGE_URL>/upstream/<model>`), never through this.
-RAGE_URL = os.getenv("RAGE_URL", "").rstrip("/")
 # VeGa, the Vector Gate (docs/notes/vega.md): where this node READS the
 # receipts of an encoder its collection file declares `api = "vega"` —
 # `GET <VEGA_URL>/vega/receipts`, and `/vega/runs/<run_id>` for what a run
@@ -71,7 +64,7 @@ TRANSLATE_URL = os.getenv("TRANSLATE_URL", "").rstrip("/")
 # The model TRANSLATE_URL's server is asked for, in the request body: a runner
 # that serves many models from one address (LocalAI) picks it from there
 # (VeGa switch-over, 2026-10-09; as CHAT_MODEL for CHAT_URL). Unset, no model
-# is named — a server whose URL names the model (RAGE's /upstream/madlad).
+# is named — a server whose URL names the model (`…/upstream/madlad`, 07 §7.8).
 TRANSLATE_MODEL = os.getenv("TRANSLATE_MODEL", "")
 # The GPU probe (app/gpu_probe.py, the `gpu-probe` service): the System
 # page's GPU panel asks it for each card's memory and every process's

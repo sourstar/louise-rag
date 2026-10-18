@@ -342,15 +342,15 @@ def test_hold_calibrate_takes_a_vega_endpoint(localai, vega):
 
 
 def test_an_openai_encoder_never_reads_vega(vega, monkeypatch):
-    """RAGE's path, beside VeGa's until the cut-over: the run is the header's."""
-    def rage(url, *, json=None, timeout=None, headers=None):    # noqa: A002
+    """The header path (09 §9.12), beside VeGa's: the run is the header's."""
+    def endpoint(url, *, json=None, timeout=None, headers=None):    # noqa: A002
         assert "encoding_format" not in json and json["input"] == ["one"]
         return httpx.Response(200, request=httpx.Request("POST", url),
                               headers={"Louise-Run": R2},
                               json={"data": [{"index": 0, "embedding": [0.6, 0.8]}]})
-    monkeypatch.setattr(embeddings.httpc, "post", rage)
+    monkeypatch.setattr(embeddings.httpc, "post", endpoint)
     seen: set = set()
-    recipe = collections_mod.EmbedRecipe(url="http://rage:30437/upstream/m", api="openai",
+    recipe = collections_mod.EmbedRecipe(url="http://encoder:30437/upstream/m", api="openai",
                                          model="m", dtype="f32", ctx=512)
     assert embeddings.embed_calibration(recipe, ["one"], runs=seen) == [[0.6, 0.8]]
     assert seen == {R2} and vega.reads == 0

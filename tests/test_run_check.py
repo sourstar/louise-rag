@@ -3,7 +3,7 @@ names a validated run (docs/03-checking.md §3.3; migration plan, step 13e).
 
     Validate once; then every answer says which run gave it.
 
-What is proved here, against a stand-in for RAGE that states a run with
+What is proved here, against a stand-in endpoint that states a run with
 every answer and describes it at `/louise/runs/<id>`:
 
   - an answer naming a run this peer has not validated writes NO row and
@@ -36,13 +36,13 @@ from app.hold import envelope as env
 ME = env.key_text(KEY.verify_key)
 from tests.hold.test_template import recipe as a_recipe
 
-RAGE = "http://rage:30437"
-DOC_URL = f"{RAGE}/upstream/medcpt-article"
-QUERY_URL = f"{RAGE}/upstream/medcpt-query"
+ENDPOINT = "http://encoder:30437"
+DOC_URL = f"{ENDPOINT}/upstream/medcpt-article"
+QUERY_URL = f"{ENDPOINT}/upstream/medcpt-query"
 
 
 def a_run(flag: str = "") -> tuple[str, dict]:
-    """A run as RAGE would state it: its id IS the hash of its description."""
+    """A run as an endpoint would state it: its id IS the hash of its description."""
     obj = {"driver": "kernel 6.18.0; xe 9F2C1A; libze-intel-gpu1 26.05.1",
            "engine": {"name": "llama.cpp", "build": "b10630", "variant": "sycl",
                       "image": "sha256:" + "8c" * 32,
@@ -70,7 +70,7 @@ R1, R1_OBJ = a_run()
 R2, R2_OBJ = a_run("--flash-attn")
 
 
-class Rage:
+class Endpoint:
     """The model container, as far as a client sees it: `/v1/embeddings`
     with `Louise-Run` on the answer, and `/louise/runs/<id>`."""
 
@@ -114,23 +114,23 @@ class Rage:
     def get(self, url, *, timeout=None):
         request = httpx.Request("GET", url)
         run_id = url.rsplit("/", 1)[-1]
-        if not url.startswith(f"{RAGE}/louise/runs/") or run_id not in self.known:
+        if not url.startswith(f"{ENDPOINT}/louise/runs/") or run_id not in self.known:
             return httpx.Response(404, request=request)
         return httpx.Response(200, request=request, json=self.known[run_id])
 
 
 @pytest.fixture
-def rage(monkeypatch):
-    r = Rage()
+def endpoint(monkeypatch):
+    r = Endpoint()
     monkeypatch.setattr(embeddings.httpc, "post", r.post)
     monkeypatch.setattr(run_check.httpx, "get", r.get)
     return r
 
 
 @pytest.fixture
-def node(tmp_path, monkeypatch, rage):
+def node(tmp_path, monkeypatch, endpoint):
     """A LOUISE_ROOT holding one VERSION-3 collection whose file reaches its
-    encoder through RAGE."""
+    encoder through the stand-in endpoint."""
     root = tmp_path / "louise"
     (root / "collections").mkdir(parents=True)
     codex = col.create_from_recipe(
@@ -187,7 +187,7 @@ def _doc(con, uid="g:7"):
 
 # ---- the write is refused, and nothing is marked ---------------------------------
 
-def test_an_unvalidated_run_writes_no_row(node, rage):
+def test_an_unvalidated_run_writes_no_row(node, endpoint):
     root, collection, codex = node
     with pytest.raises(hold_runs.RunUnvalidated) as e:
         embeddings.upsert_book(7, "en", chunks(3), collection)
@@ -195,7 +195,7 @@ def test_an_unvalidated_run_writes_no_row(node, rage):
     assert stored(collection) == 0, "an unvalidated answer reached the table"
 
 
-def test_the_worker_defers_the_document_and_marks_nothing(node, rage, monkeypatch):
+def test_the_worker_defers_the_document_and_marks_nothing(node, endpoint, monkeypatch):
     root, collection, codex = node
     con = db.connect(collection)
     row = _doc(con)
@@ -221,7 +221,7 @@ def test_the_runs_state_is_never_the_documents_fault(exc):
 
 # ---- the gate: at once, and once ---------------------------------------------------
 
-def test_the_gate_runs_at_once_and_work_resumes_under_the_run(node, rage):
+def test_the_gate_runs_at_once_and_work_resumes_under_the_run(node, endpoint):
     root, collection, codex = node
     con = db.connect(collection)
 
@@ -238,21 +238,21 @@ def test_the_gate_runs_at_once_and_work_resumes_under_the_run(node, rage):
     assert stored(collection) == 3
 
 
-def test_once_per_run_not_once_per_answer(node, rage):
+def test_once_per_run_not_once_per_answer(node, endpoint):
     root, collection, codex = node
     con = db.connect(collection)
     assert backend_gate.embed_allowed(con, collection) is True
-    gate_cost = rage.texts
+    gate_cost = endpoint.texts
     assert gate_cost >= 512, "the gate embeds the whole calibration set"
 
     # cached: asking again costs nothing at all
     assert backend_gate.embed_allowed(con, collection) is True
-    assert rage.texts == gate_cost
+    assert endpoint.texts == gate_cost
 
     # twenty documents: twenty answers, no second gate
     for book in range(20):
         embeddings.upsert_book(book, "en", chunks(2, book), collection)
-    assert rage.texts == gate_cost + 40
+    assert endpoint.texts == gate_cost + 40
 
     # and a verdict forgotten — as in a new process — costs one tiny request
     # an encoder and the re-check of each kept statement (its sixteen
@@ -260,25 +260,25 @@ def test_once_per_run_not_once_per_answer(node, rage):
     run_check.reset_cache()
     assert backend_gate.embed_allowed(con, collection) is True
     n = codex.space.calibration.n
-    assert rage.texts == gate_cost + 40 + 2 + 2 * n, \
+    assert endpoint.texts == gate_cost + 40 + 2 + 2 * n, \
         "one probe and one re-check each: document, query"
 
     # the re-check is once per process: asked again, only the probes
     backend_gate.reset_cache()
     run_check._verdicts.clear()
     assert backend_gate.embed_allowed(con, collection) is True
-    assert rage.texts == gate_cost + 40 + 2 + 2 * n + 2, "a probe each, no re-check"
+    assert endpoint.texts == gate_cost + 40 + 2 + 2 * n + 2, "a probe each, no re-check"
     assert len(statements_kept(root)) == 1
 
 
-def test_the_query_encoder_is_a_run_of_its_own(node, rage):
+def test_the_query_encoder_is_a_run_of_its_own(node, endpoint):
     """03 §3.3: "An asymmetric space's query encoder is a run of its own,
     validated against the query reference vectors" — gated at once and by
     itself, from the same place, and never deciding whether documents may be
     embedded."""
     root, collection, codex = node
     con = db.connect(collection)
-    rage.by_url[QUERY_URL] = R2
+    endpoint.by_url[QUERY_URL] = R2
     assert backend_gate.embed_allowed(con, collection) is True
     document, = statements_kept(root)
     query, = statements_kept(root, "query")
@@ -287,20 +287,20 @@ def test_the_query_encoder_is_a_run_of_its_own(node, rage):
     assert run_check.answering(collection) == {"document": R1, "query": R2}
 
     # a query side that states no run pauses nothing: it is only searched with
-    rage.by_url[QUERY_URL] = None
+    endpoint.by_url[QUERY_URL] = None
     run_check.reset_cache()
-    rage.run = R1
+    endpoint.run = R1
     assert backend_gate.embed_allowed(con, collection) is True
 
 
-def test_backend_gate_off_does_not_switch_the_run_check_off(node, rage, monkeypatch):
+def test_backend_gate_off_does_not_switch_the_run_check_off(node, endpoint, monkeypatch):
     root, collection, codex = node
     monkeypatch.setattr(config, "BACKEND_GATE", "off")
-    rage.run = None
+    endpoint.run = None
     assert backend_gate.embed_allowed(db.connect(collection), collection) is False
 
 
-def test_a_second_caller_does_not_start_a_second_gate(node, rage):
+def test_a_second_caller_does_not_start_a_second_gate(node, endpoint):
     """Two threads of one collection's stage: the one that finds the other
     looking gets False for this round — never a wait, never a second gate."""
     root, collection, codex = node
@@ -310,20 +310,20 @@ def test_a_second_caller_does_not_start_a_second_gate(node, rage):
     assert lock.acquire(blocking=False)
     try:
         assert backend_gate.embed_allowed(con, collection) is False
-        assert rage.posts == 0, "it asked the endpoint while another was gating"
+        assert endpoint.posts == 0, "it asked the endpoint while another was gating"
     finally:
         lock.release()
 
 
 # ---- a run that changes under the work ---------------------------------------------
 
-def test_a_run_that_changes_mid_document_stops_the_write(node, rage, monkeypatch):
+def test_a_run_that_changes_mid_document_stops_the_write(node, endpoint, monkeypatch):
     root, collection, codex = node
     con = db.connect(collection)
     assert backend_gate.embed_allowed(con, collection) is True
     monkeypatch.setattr(config, "EMBED_SLICE_CHUNKS", 2)
 
-    rage.switch_after = 2                  # two more answers from R1, then R2
+    endpoint.switch_after = 2                  # two more answers from R1, then R2
     with pytest.raises(hold_runs.RunUnvalidated) as e:
         embeddings.upsert_book(7, "en", chunks(6), collection)
     assert e.value.run_id == R2
@@ -331,22 +331,22 @@ def test_a_run_that_changes_mid_document_stops_the_write(node, rage, monkeypatch
 
     # the verdict was forgotten with it, so the stage looks again: R2 is
     # gated at once, passes, and the document RESUMES from what is written
-    rage.switch_after = None
-    before = rage.texts
+    endpoint.switch_after = None
+    before = endpoint.texts
     assert backend_gate.embed_allowed(con, collection) is True
     assert sorted(b["run"] for b in statements_kept(root)) == sorted([R1, R2])
-    gated = rage.texts
+    gated = endpoint.texts
     assert gated - before >= 512
     assert embeddings.upsert_book(7, "en", chunks(6), collection) == 6
     assert stored(collection) == 6
-    assert rage.texts - gated == 4, "the two chunks already written were embedded again"
+    assert endpoint.texts - gated == 4, "the two chunks already written were embedded again"
 
 
-def test_a_slice_answered_by_two_runs_is_not_written(node, rage, monkeypatch):
+def test_a_slice_answered_by_two_runs_is_not_written(node, endpoint, monkeypatch):
     """One slice, several requests: every answer counts, not the last one."""
     root, collection, codex = node
     assert backend_gate.embed_allowed(db.connect(collection), collection) is True
-    rage.switch_after = 1
+    endpoint.switch_after = 1
     with pytest.raises(hold_runs.RunUnvalidated):
         embeddings.upsert_book(7, "en", chunks(3), collection)
     assert stored(collection) == 0
@@ -354,9 +354,9 @@ def test_a_slice_answered_by_two_runs_is_not_written(node, rage, monkeypatch):
 
 # ---- an endpoint that states no run --------------------------------------------------
 
-def test_a_runless_endpoint_serves_a_query_and_refuses_a_write(node, rage):
+def test_a_runless_endpoint_serves_a_query_and_refuses_a_write(node, endpoint):
     root, collection, codex = node
-    rage.run = None
+    endpoint.run = None
     recipe = collections_mod.recipe_for(collection)
 
     vector = embeddings._embed_texts(["what is a lighthouse"], recipe=recipe, query=True)
@@ -373,9 +373,9 @@ def test_a_runless_endpoint_serves_a_query_and_refuses_a_write(node, rage):
     assert statements_kept(root) == [], "there is no run to make a statement about"
 
 
-def test_a_description_that_does_not_hash_to_the_run_is_refused(node, rage):
+def test_a_description_that_does_not_hash_to_the_run_is_refused(node, endpoint):
     root, collection, codex = node
-    rage.known[R1] = R2_OBJ                 # the platform's two answers disagree
+    endpoint.known[R1] = R2_OBJ                 # the platform's two answers disagree
     with pytest.raises(hold_runs.RunRefused, match="does not hash"):
         run_check.stated_run(collections_mod.recipe_for(collection))
     assert backend_gate.embed_allowed(db.connect(collection), collection) is False
@@ -383,29 +383,29 @@ def test_a_description_that_does_not_hash_to_the_run_is_refused(node, rage):
 
 
 def test_the_platform_is_found_before_upstream_or_at_rage_url():
-    assert hold_runs.base_url(DOC_URL) == RAGE
-    assert hold_runs.base_url("http://enc:8080", "http://rage:30437/") == RAGE
+    assert hold_runs.base_url(DOC_URL) == ENDPOINT
+    assert hold_runs.base_url("http://enc:8080", "http://encoder:30437/") == ENDPOINT
     assert hold_runs.base_url("http://enc:8080") is None
 
 
 # ---- a run that fails, and one that batches differently ---------------------------------
 
-def test_a_failed_run_is_kept_pauses_and_is_not_gated_again(node, rage):
+def test_a_failed_run_is_kept_pauses_and_is_not_gated_again(node, endpoint):
     root, collection, codex = node
     con = db.connect(collection)
-    rage.tag = b"another model"
+    endpoint.tag = b"another model"
     assert backend_gate.embed_allowed(con, collection) is False
     kept = statements_kept(root)
     assert len(kept) == 1 and hold_runs.passing(kept[0], codex) is False, \
         "a failure is kept too, so the run is not retried against the same set"
     assert "FAILED the gate" in backend_gate.gate_state(con)["reason"]
 
-    cost = rage.texts
+    cost = endpoint.texts
     run_check.reset_cache()
     assert backend_gate.embed_allowed(con, collection) is False
     # two probes, and the passing QUERY statement re-checked (its sixteen
     # sampled texts); the failed document run is not gated a second time
-    assert rage.texts == cost + 2 + codex.space.calibration.n, \
+    assert endpoint.texts == cost + 2 + codex.space.calibration.n, \
         "the failed run was gated a second time"
 
     with pytest.raises(hold_runs.RunUnvalidated) as e:
@@ -413,10 +413,10 @@ def test_a_failed_run_is_kept_pauses_and_is_not_gated_again(node, rage):
     assert e.value.failed is True and stored(collection) == 0
 
 
-def test_a_run_whose_batches_differ_is_for_single_text_work_only(node, rage, monkeypatch):
+def test_a_run_whose_batches_differ_is_for_single_text_work_only(node, endpoint, monkeypatch):
     root, collection, codex = node
     monkeypatch.setattr(config, "EMBED_BATCH", 4)
-    rage.batches_differ = True
+    endpoint.batches_differ = True
     con = db.connect(collection)
 
     assert backend_gate.embed_allowed(con, collection) is False
@@ -432,7 +432,7 @@ def test_a_run_whose_batches_differ_is_for_single_text_work_only(node, rage, mon
     assert embeddings.upsert_book(7, "en", chunks(2), collection) == 2
 
 
-def test_the_gate_contributes_with_the_workers_concurrency(node, rage, monkeypatch):
+def test_the_gate_contributes_with_the_workers_concurrency(node, endpoint, monkeypatch):
     """`recipe.concurrency` documents in flight is a setting the answers can
     depend on, so the gate's second pass sends that many requests at once."""
     root, collection, codex = node
@@ -447,7 +447,7 @@ def test_the_gate_contributes_with_the_workers_concurrency(node, rage, monkeypat
 
 # ---- stopping, and a statement nobody signed ------------------------------------------
 
-def test_a_node_that_is_stopping_leaves_the_gate_and_keeps_nothing(node, rage):
+def test_a_node_that_is_stopping_leaves_the_gate_and_keeps_nothing(node, endpoint):
     root, collection, codex = node
     recipe = collections_mod.recipe_for(collection)
     asked = {"n": 0}
@@ -458,20 +458,20 @@ def test_a_node_that_is_stopping_leaves_the_gate_and_keeps_nothing(node, rage):
 
     with pytest.raises(emb.GateDeferred, match="stopping"):
         run_check.validate(root, "gutenberg", codex, recipe, key=KEY, now=NOW, stop=stop)
-    assert rage.texts < 512, "it went on embedding after it was told to stop"
+    assert endpoint.texts < 512, "it went on embedding after it was told to stop"
     assert statements_kept(root) == []
 
 
-def test_a_pass_whose_answers_came_from_two_runs_is_inconclusive(node, rage):
+def test_a_pass_whose_answers_came_from_two_runs_is_inconclusive(node, endpoint):
     root, collection, codex = node
-    rage.switch_after = 100
+    endpoint.switch_after = 100
     with pytest.raises(emb.GateDeferred, match="inconclusive"):
         run_check.validate(root, "gutenberg", codex, collections_mod.recipe_for(collection),
                            key=KEY, now=NOW)
     assert statements_kept(root) == []
 
 
-def test_a_statement_nobody_signed_validates_nothing(node, rage):
+def test_a_statement_nobody_signed_validates_nothing(node, endpoint):
     root, collection, codex = node
     assert backend_gate.embed_allowed(db.connect(collection), collection) is True
     path = hold_runs.path_for(root, "gutenberg", R1)
@@ -484,7 +484,7 @@ def test_a_statement_nobody_signed_validates_nothing(node, rage):
         hold_runs.check(root, "gutenberg", codex, {R2}, signer=ME)
 
 
-def test_the_check_is_a_lookup_until_the_directory_changes(node, rage, monkeypatch):
+def test_the_check_is_a_lookup_until_the_directory_changes(node, endpoint, monkeypatch):
     root, collection, codex = node
     assert backend_gate.embed_allowed(db.connect(collection), collection) is True
     reads = {"n": 0}
@@ -520,7 +520,7 @@ def _forge(root, codex, run_id, key):
     return out
 
 
-def test_a_statement_signed_by_another_key_validates_nothing(node, rage):
+def test_a_statement_signed_by_another_key_validates_nothing(node, endpoint):
     """Layer 1: the signature verifies — under the key written in the file —
     and it counts for nothing, because this node did not make it."""
     from nacl import signing
@@ -537,15 +537,15 @@ def test_a_statement_signed_by_another_key_validates_nothing(node, rage):
     assert planted.name in hold_runs.foreign(root, "gutenberg")
 
     # the endpoint now answers from R2: the gate runs, as for any untested run
-    rage.run = R2
-    before = rage.texts
+    endpoint.run = R2
+    before = endpoint.texts
     run_check.reset_cache()
     backend_gate.reset_cache()
     assert backend_gate.embed_allowed(con, collection) is True
-    assert rage.texts - before >= 512, "the planted statement spared R2 the gate"
+    assert endpoint.texts - before >= 512, "the planted statement spared R2 the gate"
 
 
-def test_a_node_with_no_key_counts_no_statement(node, rage):
+def test_a_node_with_no_key_counts_no_statement(node, endpoint):
     root, collection, codex = node
     assert backend_gate.embed_allowed(db.connect(collection), collection) is True
     assert hold_runs.statements(root, "gutenberg", codex, signer=None) == {}
@@ -553,7 +553,7 @@ def test_a_node_with_no_key_counts_no_statement(node, rage):
         hold_runs.check(root, "gutenberg", codex, {R1}, signer=None)
 
 
-def test_a_kept_statement_that_no_longer_holds_is_set_aside_and_gated_again(node, rage):
+def test_a_kept_statement_that_no_longer_holds_is_set_aside_and_gated_again(node, endpoint):
     """Layer 3: the same run id, other answers — a statement the evidence no
     longer supports. The first use after start re-checks it, sets it aside,
     and gates the run from scratch, which fails and is kept."""
@@ -564,7 +564,7 @@ def test_a_kept_statement_that_no_longer_holds_is_set_aside_and_gated_again(node
 
     run_check.reset_cache()          # a new process
     backend_gate.reset_cache()
-    rage.tag = b"another model"
+    endpoint.tag = b"another model"
     assert backend_gate.embed_allowed(con, collection) is False
     aside = sorted((hold_runs.directory(root, "gutenberg") / "set-aside").glob("document-*"))
     assert len(aside) == 1, "the statement that did not hold is kept, set aside"
@@ -573,7 +573,7 @@ def test_a_kept_statement_that_no_longer_holds_is_set_aside_and_gated_again(node
         "the gate ran from scratch and its failure is the statement now"
 
 
-def test_a_write_waits_for_the_re_check_after_start(node, rage):
+def test_a_write_waits_for_the_re_check_after_start(node, endpoint):
     """A kept statement is not relied on until it has been re-checked in this
     process: the write is deferred, never an error, and goes ahead once the
     stage's `embed_allowed` has re-checked it."""
@@ -590,18 +590,18 @@ def test_a_write_waits_for_the_re_check_after_start(node, rage):
     assert embeddings.upsert_book(7, "en", chunks(2), collection) == 2
 
 
-def test_a_re_check_answered_by_another_run_decides_nothing(node, rage):
+def test_a_re_check_answered_by_another_run_decides_nothing(node, endpoint):
     root, collection, codex = node
     assert backend_gate.embed_allowed(db.connect(collection), collection) is True
     run_check.reset_cache()
-    rage.switch_after = 0            # every answer from now on names R2
+    endpoint.switch_after = 0            # every answer from now on names R2
     with pytest.raises(emb.GateDeferred, match="inconclusive"):
         run_check.recheck(root, "gutenberg", codex,
                           collections_mod.recipe_for(collection), R1, key=KEY)
     assert not (hold_runs.directory(root, "gutenberg") / "set-aside").exists()
 
 
-def test_a_statement_whose_sample_is_not_the_quorum_does_not_hold(node, rage):
+def test_a_statement_whose_sample_is_not_the_quorum_does_not_hold(node, endpoint):
     root, collection, codex = node
     assert backend_gate.embed_allowed(db.connect(collection), collection) is True
     body = dict(statements_kept(root)[0], sampled=[0, 1, 2])
@@ -636,7 +636,7 @@ def test_vectors_build_checks_each_batch_before_its_write():
     assert len(written) == 1, "the batch whose answers were refused was written"
 
 
-def test_the_command_line_gates_a_new_run_inline(node, rage):
+def test_the_command_line_gates_a_new_run_inline(node, endpoint):
     root, collection, codex = node
     recipe = collections_mod.recipe_for(collection)
     said: list[str] = []
@@ -644,9 +644,9 @@ def test_the_command_line_gates_a_new_run_inline(node, rage):
     assert [b["run"] for b in statements_kept(root)] == [R1]
     assert any("new to this peer" in m for m in said)
 
-    cost = rage.texts
+    cost = endpoint.texts
     run_check.guard(root, "gutenberg", codex, recipe, {R1}, key=KEY)
-    assert rage.texts == cost, "a validated run was gated again"
+    assert endpoint.texts == cost, "a validated run was gated again"
 
     with pytest.raises(hold_runs.RunRefused):
         run_check.guard(root, "gutenberg", codex, recipe, {None}, key=KEY)
@@ -670,7 +670,7 @@ def test_a_collection_older_than_version_3_is_not_touched(isolated_config, monke
 
 # ---- a check runs under a validated run, or is inconclusive ---------------------------------
 
-def test_a_check_runs_under_a_validated_run_or_is_inconclusive(node, rage):
+def test_a_check_runs_under_a_validated_run_or_is_inconclusive(node, endpoint):
     """03 §3.3, checking: "An answer that names another makes the check
     inconclusive, and an inconclusive check yields no attestation." Never a
     verdict: an encoder that is not the space's says nothing about vectors
@@ -682,11 +682,11 @@ def test_a_check_runs_under_a_validated_run_or_is_inconclusive(node, rage):
     assert len(embed(["a text"])) == 1, "a new run is gated at once, inline, and answers"
     assert [b["run"] for b in statements_kept(root)] == [R1]
 
-    rage.run = None
+    endpoint.run = None
     with pytest.raises(emb.GateDeferred, match="inconclusive"):
         embed(["a text"])
 
-    rage.run, rage.tag = R2, b"another model"
+    endpoint.run, endpoint.tag = R2, b"another model"
     with pytest.raises(emb.GateDeferred, match="inconclusive.*FAILED"):
         embed(["a text"])
     assert hold_runs.passing(next(b for b in statements_kept(root) if b["run"] == R2),
@@ -754,7 +754,7 @@ def test_one_runner_address_serving_two_models_keeps_their_runs_apart():
     run_check.reset_cache()
 
 
-def test_a_statement_borrowed_from_a_sister_collection_is_kept_as_its_own(node, rage):
+def test_a_statement_borrowed_from_a_sister_collection_is_kept_as_its_own(node, endpoint):
     """A pass validates a run for the SPACE, so a statement under another
     collection of the same space counts — and is copied here: deleting that
     retired collection took gutenberg's statements with it (2026-10-12)."""

@@ -3,7 +3,7 @@
 docs/notes/input-forms.md (operator, 2026-10-08): "a pair space's
 calibration set is 512 title-and-abstract pairs from the collection's own
 records, so the gate and every probe embed pairs". Against a stand-in for
-RAGE that answers `input_pairs` and `input` alike (tests/test_run_check.py's,
+endpoint that answers `input_pairs` and `input` alike (tests/test_run_check.py's,
 taught pairs), this holds the node's side to it: the probe that asks which
 run answers, the gate's every pass, the re-check and a check's challenge all
 send `input_pairs` to the document encoder; the query encoder gets one text
@@ -21,7 +21,7 @@ from app.hold import calibration as cal, collection as col, shard as shard_mod, 
 from app.verify import backend_gate
 from tests.hold.conftest import KEY, NOW, PLATFORM
 from tests.hold.test_pair_calibration import PAIR_BYTES, PAIRS, _key, pair_recipe
-from tests.test_run_check import DOC_URL, QUERY_URL, R1, Rage, opening, opening_query
+from tests.test_run_check import DOC_URL, QUERY_URL, R1, Endpoint, opening, opening_query
 
 
 def pair_opening(items, tag: bytes = b""):
@@ -30,8 +30,8 @@ def pair_opening(items, tag: bytes = b""):
     return opening([_key(x) for x in items], tag=tag)
 
 
-class PairRage(Rage):
-    """RAGE serving a `pairs:true` model: `input_pairs` is embedded as pairs.
+class PairEndpoint(Endpoint):
+    """An endpoint serving a `pairs:true` model: `input_pairs` is embedded as pairs.
     `flatten` stands for a front that turned each pair into one string."""
 
     def __init__(self) -> None:
@@ -51,17 +51,17 @@ class PairRage(Rage):
 
 
 @pytest.fixture
-def rage(monkeypatch):
-    r = PairRage()
+def endpoint(monkeypatch):
+    r = PairEndpoint()
     monkeypatch.setattr(embeddings.httpc, "post", r.post)
     monkeypatch.setattr(run_check.httpx, "get", r.get)
     return r
 
 
 @pytest.fixture
-def node(tmp_path, monkeypatch, rage):
+def node(tmp_path, monkeypatch, endpoint):
     """A LOUISE_ROOT holding one version-5 PAIR collection reaching its
-    encoder through RAGE."""
+    encoder through the stand-in endpoint."""
     root = tmp_path / "louise"
     (root / "collections").mkdir(parents=True)
     codex = col.create_from_recipe(
@@ -87,23 +87,23 @@ def node(tmp_path, monkeypatch, rage):
     return root / "collections", collection, codex
 
 
-def _sent(rage, url):
-    return [b for u, b in rage.bodies if u.startswith(url)]
+def _sent(endpoint, url):
+    return [b for u, b in endpoint.bodies if u.startswith(url)]
 
 
-def test_the_gate_of_a_pair_space_sends_pairs_and_passes(node, rage):
+def test_the_gate_of_a_pair_space_sends_pairs_and_passes(node, endpoint):
     root, collection, codex = node
     recipe = collections_mod.recipe_for(collection)
     body = run_check.validate(root, "pairs", codex, recipe, key=KEY)
     assert hold_runs.passing(body, codex) and body["run"] == R1
     assert body["batch_invariant"] is True
-    doc = _sent(rage, DOC_URL)
+    doc = _sent(endpoint, DOC_URL)
     assert doc and all("input_pairs" in b and "input" not in b for b in doc), \
         "the probe, the passes, the fingerprint and the batches: every one a pair"
     assert doc[0]["input_pairs"] == [list(run_check.PAIR_PROBE)]
     sent = [tuple(p) for b in doc[1:] for p in b["input_pairs"]]
     assert _as_sent(PAIRS) <= set(sent), "each pair, cut to the window as a chunk is"
-    assert not _sent(rage, QUERY_URL)
+    assert not _sent(endpoint, QUERY_URL)
 
 
 def _as_sent(pairs):
@@ -113,52 +113,52 @@ def _as_sent(pairs):
     return {(a, b[:max(0, budget - len(a))]) for a, b in pairs}
 
 
-def test_the_query_run_of_a_pair_space_is_gated_on_one_text_per_pair(node, rage):
+def test_the_query_run_of_a_pair_space_is_gated_on_one_text_per_pair(node, endpoint):
     root, collection, codex = node
     recipe = collections_mod.recipe_for(collection)
     body = run_check.validate(root, "pairs", codex, recipe, role="query", key=KEY)
     assert hold_runs.passing(body, codex) and body["role"] == "query"
-    query = _sent(rage, QUERY_URL)
+    query = _sent(endpoint, QUERY_URL)
     assert query and all("input" in b and "input_pairs" not in b for b in query)
     asked = {t for b in query[1:] for t in b["input"]}
     assert {f"{a}\n\n{b}"[:512 * 4] for a, b in PAIRS} <= asked, \
         "one text per pair, cut to the window as a chunk is"
 
 
-def test_a_front_that_flattens_pairs_fails_the_gate(node, rage):
+def test_a_front_that_flattens_pairs_fails_the_gate(node, endpoint):
     """The defect the pair form exists for: the same model fed the flattened
     text is another function. The run is kept as a failure and writes
     nothing (03 §3.3)."""
     root, collection, codex = node
-    rage.flatten = True
+    endpoint.flatten = True
     body = run_check.validate(root, "pairs", codex,
                               collections_mod.recipe_for(collection), key=KEY)
     assert body["passed"] == 0 and not hold_runs.passing(body, codex)
 
 
-def test_the_worker_settles_a_pair_space_and_re_checks_on_pairs(node, rage):
+def test_the_worker_settles_a_pair_space_and_re_checks_on_pairs(node, endpoint):
     root, collection, codex = node
     con = db.connect(collection)
     assert backend_gate.embed_allowed(con, collection) is True
-    before = len(rage.bodies)
+    before = len(endpoint.bodies)
     run_check.reset_cache()                      # a new process: re-check, never re-gate
     assert backend_gate.embed_allowed(con, collection) is True
-    doc = [b for u, b in rage.bodies[before:] if u.startswith(DOC_URL)]
+    doc = [b for u, b in endpoint.bodies[before:] if u.startswith(DOC_URL)]
     assert doc and all("input_pairs" in b for b in doc)
     assert sum(len(b["input_pairs"]) for b in doc) == 1 + codex.space.calibration.n
 
 
-def test_a_check_s_challenge_goes_out_as_pairs_under_a_validated_run(node, rage):
+def test_a_check_s_challenge_goes_out_as_pairs_under_a_validated_run(node, endpoint):
     root, collection, codex = node
     recipe = collections_mod.recipe_for(collection)
     embed = run_check.checking(root, "pairs", codex, recipe, key=KEY)
     member = root / "pairs" / "shard" / shard_mod.calibration_paths(codex.space.calibration.set)[0]
-    before = len(rage.bodies)
+    before = len(endpoint.bodies)
     rows = exp.challenge_rows(codex, embed, member)
     assert len(rows) == 16
     # the first sixteen pairs sent are the challenge (as many requests as the
     # node's EMBED_BATCH makes of them); the gate of the new run follows
-    sent = [tuple(p) for u, b in rage.bodies[before:] if u.startswith(DOC_URL)
+    sent = [tuple(p) for u, b in endpoint.bodies[before:] if u.startswith(DOC_URL)
             for p in b["input_pairs"]]
     assert set(sent[:16]) == _as_sent(PAIRS[:16])
 

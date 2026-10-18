@@ -15,7 +15,7 @@ LocalAI starts a backend as `run.sh --addr 127.0.0.1:<port>` and names the
 model in `LoadModel`: `ModelFile` is the weights (a directory, for these),
 `ContextSize` and `NBatch` are LocalAI's own fields, used for what they mean,
 and `Options` carries `key:value` strings for what LocalAI has no field for.
-All of it is in the run RAGE states (09 §9.3), so a backend takes its settings
+All of it is in the run VeGa states (09 §9.3), so a backend takes its settings
 from the load call, and from an environment variable only where the model's
 `env:` sets it — which is in the run too, as the engine's `env`.
 
@@ -40,10 +40,11 @@ from typing import Any, Callable, Iterable, Mapping
 
 #: set before any model library is imported
 OFFLINE = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"}
-#: RAGE's words for a device; each backend maps them to its library's.
+#: VeGa's words for a device (app/vega/model.py); each backend maps them to
+#: its library's.
 #: `cuda` is torch's word for an NVIDIA card AND for an AMD one (ROCm's HIP)
 DEVICES = ("xpu", "cuda", "cpu")
-#: RAGE's word -> OpenVINO's; OpenVINO has no plugin for an NVIDIA or AMD card
+#: VeGa's word -> OpenVINO's; OpenVINO has no plugin for an NVIDIA or AMD card
 OPENVINO_DEVICES = {"xpu": "GPU", "cpu": "CPU"}
 #: as LocalAI's own Python backends
 MAX_MESSAGE = 50 * 1024 * 1024

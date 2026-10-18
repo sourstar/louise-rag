@@ -23,10 +23,9 @@
   </table>
   <div class="note">From LocalAI's own count per model ({{ models.asked|join(', ') }}), which reads the driver's per-process counters.{% if models.failed %} Not answering: {{ models.failed|join('; ') }}.{% endif %}</div>
   {% elif d.vram_total %}
-  {% set rc = rage.container if rage is defined and rage and rage.state == "ok" else none %}
-  {% set sh = d.shares(rc) %}
-  <div class="gpu-bar whose" title="{{ '%.0f'|format(d.used_pct) }}% used"><span class="rage" style="width:{{ '%.1f'|format(sh.rage) }}%" title="RAGE: {{ d.held_by(rc, true)|size }}"></span><span class="others" style="width:{{ '%.1f'|format(sh.others) }}%" title="other processes: {{ d.held_by(rc, false)|size }}"></span><span class="unattributed" style="width:{{ '%.1f'|format(sh.unattributed) }}%" title="held by no process shown: {{ d.unattributed|size }}"></span></div>
-  <div class="legend note"><span class="swatch rage"></span>RAGE {{ d.held_by(rc, true)|size }}<span class="swatch others"></span>other processes {{ d.held_by(rc, false)|size }}{% if d.unattributed %}<span class="swatch unattributed"></span>no process shown {{ d.unattributed|size }}{% endif %}<span class="swatch free"></span>free {{ d.free|size }}{% if not rc %} · <span title="RAGE did not say which container is its own, so nothing can be marked as RAGE's">RAGE not identified</span>{% endif %}</div>
+  {% set sh = d.shares() %}
+  <div class="gpu-bar whose" title="{{ '%.0f'|format(d.used_pct) }}% used"><span class="others" style="width:{{ '%.1f'|format(sh.processes) }}%" title="processes: {{ d.attributed|size }}"></span><span class="unattributed" style="width:{{ '%.1f'|format(sh.unattributed) }}%" title="held by no process shown: {{ d.unattributed|size }}"></span></div>
+  <div class="legend note"><span class="swatch others"></span>processes {{ d.attributed|size }}{% if d.unattributed %}<span class="swatch unattributed"></span>no process shown {{ d.unattributed|size }}{% endif %}<span class="swatch free"></span>free {{ d.free|size }}</div>
   <div>VRAM {{ d.vram_total|size }} · used {{ d.used|size }}{% if d.vram_used is none %} <span class="note">(sum of the processes)</span>{% endif %} · free {{ d.free|size }}</div>
   {% else %}
   <div class="note">VRAM not read for the {{ d.driver }} driver</div>
@@ -38,19 +37,19 @@
     {% if s.clock_mhz is not none %} · clock {% if s.clock_mhz %}{{ s.clock_mhz }}{% if s.clock_max_mhz %} of {{ s.clock_max_mhz }}{% endif %} MHz{% else %}idle{% endif %}{% endif %}</div>
   {% endif %}
   {% if d.processes %}
-  <table style="margin-top:8px"><tr><th>model</th><th>whose</th><th>container</th><th>pid</th><th>VRAM</th><th>of card</th>
+  <table style="margin-top:8px"><tr><th>model</th><th>container</th><th>pid</th><th>VRAM</th><th>of card</th>
     <th title="REAL host RAM: GPU buffers the driver keeps in host memory for this process (GTT, system). A few MiB is normal. A whole model here means the card was overcommitted and the driver moved it out.">GPU buffers in host RAM</th>
     <th title="REAL host RAM: memory that exists because of this process — its runtime, its tokenizer, its heap (the kernel's RssAnon + RssShmem).">process RAM</th>
     <th title="NOT occupancy: pages of files the process has mapped — the model file, libraries — that are in the page cache now (the kernel's RssFile). The kernel takes them back whenever it wants the room; right after a load this is about the size of the model file and then shrinks by itself.">mapped file (reclaimable)</th></tr>
     {% for p in d.processes %}
-    <tr><td title="{{ p.command }}">{{ p.label }}</td><td>{% if rc and p.container == rc %}<span class="swatch rage"></span>RAGE{% else %}<span class="swatch others"></span>other{% endif %}</td><td>{{ p.container }}</td><td>{{ p.pid }}</td>
+    <tr><td title="{{ p.command }}">{{ p.label }}</td><td>{{ p.container }}</td><td>{{ p.pid }}</td>
       <td>{{ p.vram|size }}</td><td>{{ '%.1f'|format(d.share(p.vram)) }}%</td>
       <td>{{ p.host|size }}{% if p.pushed_out %} <span class="badge err" title="More of this model is in host RAM than on the card: the card was overcommitted and the driver moved its buffers out, with no error to anyone. It still answers, slower, and this host RAM is real. Reloading the model brings it back once the card has room.">pushed off the card</span>{% endif %}</td>
       <td>{{ p.ram|size if p.ram is not none else '—' }}</td>
       <td class="note">{{ p.mapped|size if p.mapped is not none else '—' }}</td></tr>
     {% endfor %}
     {% if d.unattributed %}
-    <tr class="note"><td>not held by any process shown</td><td></td><td></td><td></td>
+    <tr class="note"><td>not held by any process shown</td><td></td><td></td>
       <td>{{ d.unattributed|size }}</td><td>{{ '%.1f'|format(d.share(d.unattributed)) }}%</td><td></td><td></td><td></td></tr>
     {% endif %}
   </table>
@@ -63,36 +62,6 @@
 <div class="note">the probe found no GPU</div>
 {% endfor %}
 {% for n in notes %}<div class="note">{{ n }}</div>{% endfor %}
-{% endif %}
-{% if rage is defined and rage and rage.state != "unset" %}
-<div class="gpu-rage" style="margin-top:10px">
-{% if rage.state == "absent" %}
-  <span class="badge brass">RAGE does not answer</span> <span class="note">{{ rage.error }} — its memory figures and its notifications are not shown</span>
-{% else %}
-  {% for device, m in rage.memory|dictsort %}
-  <div><b>RAGE · {{ device }}</b>
-    {% if m.read %}
-    <span class="note">reads the card before every load: {{ m.used_mib }} of {{ m.total_mib }} MiB used —
-      its own {{ m.own_mib }}, <b>outside RAGE {{ m.foreign_mib }}</b>, free {{ m.free_mib }}
-      ({{ m.reserve_mib }} reserved; its models declare {{ m.declared_held_mib }})</span>
-    {% if m.squeezed %}<span class="badge err" title="Real free memory is under the reserve and a process outside RAGE holds part of the card. RAGE gives up idle models — never one in use — so the rest are not pushed into host RAM.">squeezed from outside</span>{% endif %}
-    {% else %}
-    <span class="badge brass">card not read</span> <span class="note">{{ m.why_not }} — admission counts only what RAGE's own models declare</span>
-    {% endif %}
-    {% if m.own_in_host_ram_mib and m.own_in_host_ram_mib >= 256 %}<span class="note"> · {{ m.own_in_host_ram_mib }} MiB of its GPU buffers are in host RAM</span>{% endif %}
-  </div>
-  {% endfor %}
-  {% if rage.events %}
-  <table style="margin-top:6px"><tr><th>when</th><th>what RAGE did</th><th>model</th><th>why</th></tr>
-    {% for e in rage.events[:8] %}
-    <tr><td class="note">{{ e.time|ago }}</td>
-      <td>{% if e.kind == "refused" %}<span class="badge err">could not load</span>{% elif e.kind == "restored" %}<span class="badge ok">restored</span>{% elif e.kind == "parked" %}<span class="badge brass" title="Off the card, its process kept and its weights in host RAM: its next request copies them back instead of starting it again.">parked in RAM</span>{% else %}<span class="badge brass">unloaded, idle</span>{% endif %}{% if e.count and e.count > 1 %} <span class="note">×{{ e.count }}</span>{% endif %}</td>
-      <td>{{ e.model }}</td><td class="note">{{ e.detail }}</td></tr>
-    {% endfor %}
-  </table>
-  {% endif %}
-{% endif %}
-</div>
 {% endif %}
 {% if governor %}
 <div class="gpu-governor" style="margin-top:8px">

@@ -2,9 +2,9 @@
 
 ONE VERB, ONE READER PER KERNEL DRIVER. Whoever asks names a PCI device and
 gets two numbers or none; which driver answered is this module's business and
-nobody else's. RAGE's front asks through here and never learns a
-manufacturer's name (docs/notes/rage.md §18: "no manufacturer in RAGE" — a
-second manufacturer is a second reader behind the same verb, as with the
+nobody else's. The GPU probe asks through here and never learns a
+manufacturer's name (operator, 2026-09-20, docs/notes/rage.md §18: no
+manufacturer in the platform — a second manufacturer is a second reader behind the same verb, as with the
 clock, `app/gpu_clock.py`). A driver with no reader here gives (None, None,
 why), and the asker goes on with what it declares, as it did before this
 existed.
@@ -18,8 +18,8 @@ Admission cannot see a stranger on the card unless somebody reads the card.
 `xe` reports what is USED only to CAP_PERFMON (or CAP_SYS_ADMIN); without it
 the total is read and `used` is None. `amdgpu` publishes both in sysfs.
 
-Shared by the GPU probe (`app/gpu_probe.py`) and by RAGE's image, like
-`app/gpu_clock.py`; it imports nothing of the platform.
+Read by the GPU probe (`app/gpu_probe.py`) and by tools/profile_models.py;
+like `app/gpu_clock.py`, it imports nothing of the platform.
 """
 from __future__ import annotations
 

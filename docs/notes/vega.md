@@ -311,7 +311,7 @@ says why. `hold embedder calibrate` takes `api = "vega"`. Tests:
 ## 10. The node proof (2026-10-08)
 
 *§6 on the node, beside the live RAGE, which was only read. Scripts in
-`deploy/vega/proof/` (not committed): `build_package.sh` builds the package,
+`deploy/vega/proof/` (deleted 2026-10-18 with RAGE's code; in git at fe9124e): `build_package.sh` builds the package,
 `proof.py` and `proof_direct.py` measure, `gpu_snapshot.py` reads the card as
 `app/gpu_probe` does. Texts: 2,048 docstrings of Python's standard library
 (295,514 characters; 81,754 tokens by LocalAI's tokenizer, 40 a text), in
@@ -449,7 +449,7 @@ To remove them:
 ## 11. Eviction on the node (2026-10-08)
 
 *§6.2 on the LocalAI app (v4.11.0-gpu-intel), beside the live RAGE, which
-was only read. Scripts in `deploy/vega/proof/` (not committed):
+was only read. Scripts in `deploy/vega/proof/` (deleted 2026-10-18 with RAGE's code; in git at fe9124e):
 - `evict_snap.py` reads the card from the host, as `app/gpu_probe` does: the
   DRM fdinfo of every process, one record per client, plus xe's TTM managers
   in debugfs;
@@ -627,7 +627,8 @@ transformers 5.15.1 from the HF cache. The check pairs were this staging's
   beside it, not held to the bound. The edit to `convert_article.py` is not
   committed.
 
-**Mounts.** One `app.update localai` (`mounts.py`) added six read-only host
+**Mounts.** One `app.update localai` (`deploy/vega/stage/mounts.py`, deleted 2026-10-18 with RAGE's code; in git at fe9124e)
+added six read-only host
 paths without ACLs (uid 568 already reads them through their inherited
 NFSv4 entry `user:apps`). They are RAGE's own: `bge-m3-models`,
 `louise-rage/models/chat`, `granite-models`, `llama-embed`, `madlad-models`
@@ -668,7 +669,7 @@ in the middle of its load, while a translation model filled the card to
 rewrites the YAML without its comments, so put the commented file back
 afterwards (`pinned` reads the same).
 
-**Verified** (`verify.py`, in `vega-proof`). Each model was loaded once,
+**Verified** (`deploy/vega/stage/verify.py`, in `vega-proof`; deleted 2026-10-18 with RAGE's code; in git at fe9124e). Each model was loaded once,
 asked, compared, and shut down. The inputs were 64 standard-library
 docstrings (64 pairs for the pair encoder), cut to 1,000 characters for
 the 512-token models. Every vector came back with base64 and was checked

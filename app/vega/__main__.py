@@ -7,7 +7,7 @@ Identity from the environment (tier 1):
     VEGA_STATE_DIR  where the run descriptions are kept          (/state)
     VEGA_PORT       the read-only HTTP API                        (8090)
 
-On the node it runs inside the louise-rage app (operator, 2026-10-08), which
+On the node it runs inside the louise-vega app (operator, 2026-10-18), which
 mounts `service.router` and starts a `service.Intake`; this entry point is the
 same service for a container of its own and for the tests.
 """

@@ -48,7 +48,8 @@ def forget(collection) -> None:
     collection that left the node (fts.forget, 2026-10-13)."""
     _dbs.pop(str(collection.lance_dir), None)
 
-#: docs/09-formats.md §9.12: what RAGE states with every answer
+#: docs/09-formats.md §9.12: the run an endpoint states with every answer (an
+#: `api = "vega"` encoder's receipts name it instead, `_request_vouched`)
 RUN_HEADER = "Louise-Run"
 
 

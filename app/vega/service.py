@@ -2,7 +2,7 @@
 descriptions from the wrappers, and Louise reads them.
 
     intake   a unix socket on a dataset both containers mount (LocalAI's,
-             where the wrappers run, and louise-rage's, where this runs).
+             where the wrappers run, and louise-vega's, where this runs).
              One JSON object a line each way, canonical JSON (09 §9.1):
                → {"kind": "run", "run_id": …, "run": {driver, engine, weights}}
                → {"kind": "receipt", "id", "run_id", "input_digest", "vector_digest"}
@@ -83,7 +83,7 @@ TREE_TYPES = ("file", "dir", "link")
 #: Most ids one read may ask for: a batch is at most a few hundred inputs.
 MAX_IDS = 1024
 #: The socket's mode. The access control is the dataset: only LocalAI's
-#: container and louise-rage's mount it. Open within it, so the wrappers
+#: container and louise-vega's mount it. Open within it, so the wrappers
 #: connect whatever user LocalAI's container runs them as.
 SOCKET_MODE = 0o666
 
@@ -378,7 +378,7 @@ def router(receipts: ReceiptStore, runs: Runs) -> APIRouter:
 
 
 def create_app(receipts: ReceiptStore, runs: Runs, intake: Intake | None) -> FastAPI:
-    """The service on its own (`python -m app.vega`); louise-rage mounts
+    """The service on its own (`python -m app.vega`); louise-vega mounts
     `router` and starts an `Intake` in its own app instead."""
 
     @asynccontextmanager

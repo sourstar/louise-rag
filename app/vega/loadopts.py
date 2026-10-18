@@ -85,7 +85,7 @@ def _canon(value: Any, path: str) -> Any:
 
 def canonical(raw: Any) -> Canon:
     if not isinstance(raw, dict) or not raw:
-        raise Unstatable("LocalAI lists no load options for it; RAGE needs them to state a "
+        raise Unstatable("LocalAI lists no load options for it; VeGa needs them to state a "
                          "run (deploy/localai/patches P1 applied to the LocalAI it runs?)")
     weights = raw.get("ModelFile")
     if not isinstance(weights, str) or not weights.startswith("/"):

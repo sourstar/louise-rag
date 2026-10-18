@@ -3,7 +3,7 @@
 What is hashed is never the raw argument vector or environment: those carry
 a port, a path and a container's host name, so every restart would be
 another run and re-gate every space. The observer writes them with
-placeholders (tests/rage/test_localai_front.py); here, the parts every run
+placeholders (app/vega/loadopts.py); here, the parts every run
 is made of — the image, the weights digest, the driver — and the hash.
 """
 import hashlib
@@ -15,21 +15,6 @@ from app.vega import runs
 from app.vega.procfs import ProcFS
 #: the digest a deployment pins as its image (09 §9.12)
 IMAGE = "sha256:" + "ab" * 32
-
-
-# ---- the image ---------------------------------------------------------------
-
-@pytest.mark.parametrize("value", [None, "", "rage:latest", "ghcr.io/x/rage:v1",
-                                   "sha256:abc", "SHA256:" + "ab" * 32])
-def test_a_tag_or_nothing_refuses_to_start_and_names_the_variable(value):
-    env = {} if value is None else {"RAGE_IMAGE": value}
-    with pytest.raises(runs.BootError, match="RAGE_IMAGE") as e:
-        runs.boot_image(env)
-    assert "09-formats.md" in str(e.value)
-
-
-def test_a_digest_is_the_image():
-    assert runs.boot_image({"RAGE_IMAGE": IMAGE}) == IMAGE
 
 
 # ---- the weights digest (09 §9.3) ---------------------------------------------
@@ -188,7 +173,7 @@ def test_a_module_with_no_version_file_is_named_alone(tmp_path):
 
 
 def test_runtime_lines_given_stand_in_for_the_images_file(tmp_path):
-    """VeGa's wrapper runs in LocalAI's image, which RAGE did not build: it
+    """VeGa's wrapper runs in LocalAI's image, which nobody here built: it
     reads the runtime from dpkg's status file and hands the lines in."""
     host = _host(tmp_path, {ARC: "xe"}, {"xe": ("srcversion", "9F2C1A")})
     assert runs.driver_string("xpu", pci=ARC, **host, runtime_lines=["libze1  1.21.9", ""]) == \
@@ -198,7 +183,7 @@ def test_runtime_lines_given_stand_in_for_the_images_file(tmp_path):
 def test_several_drivers_and_no_address_states_no_run_and_says_what_to_declare(tmp_path):
     host = _host(tmp_path, {ARC: "xe", RADEON: "amdgpu"},
                  {"xe": ("srcversion", "9F2C1A"), "amdgpu": ("version", "6.12")})
-    with pytest.raises(runs.DriverUnknown, match=r"declare \[rage\] pci\.xpu"):
+    with pytest.raises(runs.DriverUnknown, match=r"`cards` does not say which card `xpu`"):
         runs.driver_string("xpu", **host)
 
 

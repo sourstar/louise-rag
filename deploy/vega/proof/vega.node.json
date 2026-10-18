@@ -1,5 +1,0 @@
-{
-  "backend": "intel-sycl-f16-llama-cpp",
-  "receipts_socket": "/backends/vega-llama-cpp/run/receipts.sock",
-  "cards": {"0000:03:00.0": "Intel(R) Arc(TM) Pro B70 Graphics"}
-}

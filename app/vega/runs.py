@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -30,34 +29,14 @@ from ..hold.codex import canonical_json, digest
 from .model import CPU
 
 MIB = 1 << 20
-_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
-IMAGE_VARIABLE = "RAGE_IMAGE"
 #: kernel modules that drive a card. Read ONLY where no card address is declared
 #: and exactly one of them is loaded (`driver_string`): a list is no way to tell
 #: two manufacturers' cards apart
 GPU_MODULES = ("xe", "i915", "amdgpu", "nvidia")
 
 
-class BootError(RuntimeError):
-    """RAGE refuses to start. The message names the variable and the rule."""
-
-
 class WeightsError(RuntimeError):
     """The weights cannot be hashed as 09 §9.3 requires."""
-
-
-def boot_image(environ: Mapping[str, str]) -> str:
-    """The digest of the image this process runs in, from a deployment
-    pinned by digest — or a refusal. A digest-pinned deployment IS the
-    observation: the container runtime runs no other image."""
-    value = environ.get(IMAGE_VARIABLE, "")
-    if not _DIGEST.fullmatch(value):
-        raise BootError(
-            f"{IMAGE_VARIABLE} must be the digest of the image RAGE runs in, written "
-            f"sha256:<64 hex digits>, the same digest the deployment pins in `image:`. "
-            f"It is {'unset' if not value else 'not a digest — a tag is not an image'}; "
-            f"a run identity cannot be stated without it (docs/09-formats.md §9.12).")
-    return value
 
 
 # ---- the weights digest (09 §9.3) ------------------------------------------
@@ -121,7 +100,7 @@ def card_driver(pci: str, *, sys_root: Path = Path("/sys")) -> str:
     device = sys_root / "bus" / "pci" / "devices" / pci
     if not device.is_dir():
         raise DriverUnknown(f"there is no PCI device {pci} on this host "
-                            f"([rage] pci names the card's address, as `lspci -D` prints it)")
+                            f"(the wrapper's `cards` names the card's address, as `lspci -D` prints it)")
     try:
         return os.path.basename(os.readlink(device / "driver"))
     except OSError:
@@ -130,14 +109,14 @@ def card_driver(pci: str, *, sys_root: Path = Path("/sys")) -> str:
 
 def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path("/sys"),
                   proc_root: Path = Path("/proc"),
-                  runtime_versions: Path = Path("/etc/rage/runtime-versions"),
+                  runtime_versions: Path = Path("/etc/vega/runtime-versions"),
                   runtime_lines: list[str] | None = None,
                   card_driver_line: str | None = None) -> str:
     """The device's kernel driver and compute runtime, with versions, as
     this platform reads them; `"cpu"` on a CPU (09 §9.12).
 
     THE DRIVER IS THE ONE THE CARD IS BOUND TO (`pci`, the card's address,
-    declared in `rage.toml`; `card_driver`). It used to be "the first GPU
+    declared in the wrapper's `cards`; `card_driver`). It used to be "the first GPU
     module loaded" from a fixed list, which is right only on a host with one
     manufacturer's driver: the reference node loads `xe` for its Arc AND
     `amdgpu` for the processor's own graphics, and read `xe` because `xe`
@@ -149,11 +128,11 @@ def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path(
 
     The kernel and the module are the host's, so they are read. The
     compute runtime is the image's: its package versions are written into
-    the image when it is built (`deploy/rage/Dockerfile.localai`), one `name
-    version` a line, and read back here — no package manager runs at start.
-    `runtime_lines` gives those lines instead, for a caller that reads them
-    elsewhere: VeGa's wrapper, in LocalAI's image, which RAGE did not build
-    (deploy/vega/vega_wrapper.py reads dpkg's status file).
+    the image when it is built, one `name version` a line, and read back here — no
+    package manager runs at start. `runtime_lines` gives those lines instead,
+    for a caller that reads them elsewhere: VeGa's wrapper, in LocalAI's
+    image, which nobody here built (deploy/vega/vega_wrapper.py reads dpkg's
+    status file).
 
     `card_driver_line` is the card's driver as read where sysfs has no PCI
     bus: under WSL2 the card is `/dev/dxg` and its driver is Windows',
@@ -179,9 +158,9 @@ def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path(
         loaded = [m for m in GPU_MODULES if (sys_root / "module" / m).is_dir()]
         if len(loaded) > 1:
             raise DriverUnknown(
-                f"this host loads several GPU drivers ({', '.join(loaded)}) and rage.toml "
-                f"does not say which card `{device}` is: declare [rage] pci.{device} = "
-                f"\"<its PCI address>\" (`lspci -D`), and the driver is read from there")
+                f"this host loads several GPU drivers ({', '.join(loaded)}) and the wrapper's "
+                f"`cards` does not say which card `{device}` is: map its PCI address "
+                f"(`lspci -D`) to it, and the driver is read from there")
         module = loaded[0] if loaded else None
     if module:
         version = (first_line(sys_root / "module" / module / "version")

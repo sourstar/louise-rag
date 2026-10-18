@@ -2894,7 +2894,6 @@ def _effective_config() -> dict:
         "CHAT_URL": config.CHAT_URL,
         "CHAT_API": f"{config.CHAT_API} — the protocol CHAT_URL speaks",
         "CHAT_MODEL": config.CHAT_MODEL,
-        "RAGE_URL": config.RAGE_URL or "(unset — no list of models, no load or unload)",
         "VEGA_URL": config.VEGA_URL or "(unset — an api = \"vega\" encoder embeds nothing)",
         "TRANSLATE_URL": config.TRANSLATE_URL or "(unset — the chat model translates, slowly)",
         "GPU_PROBE_URL": config.GPU_PROBE_URL or "(unset — no GPU panel)",
@@ -3055,9 +3054,7 @@ def _reading_models() -> dict[str, str]:
 def system_gpu_fragment(request: Request):
     # asked of the probe over HTTP, bounded (app/gpu.py): this process never
     # reads /proc — only the gpu-probe container may see the host's processes
-    # RAGE is asked ONCE: its name for itself colours the bar, its reading of
-    # the card and its events are its notification to Louise
-    # and each LocalAI Louise points at, for the breakdown by model: Louise's
+    # — and each LocalAI Louise points at, for the breakdown by model: Louise's
     # or the operator's (app/gpu_models.py)
     from . import gpu_models
     models = gpu_models.panel(collections_mod.load_all(),
@@ -3067,15 +3064,4 @@ def system_gpu_fragment(request: Request):
     return TEMPLATES.TemplateResponse(request, "_fragments/gpu.html",
                                        gpu.panel(config.GPU_PROBE_URL)
                                        | {"governor": gpu.governor(),
-                                          "rage": gpu.rage_status(config.RAGE_URL),
                                           "models": models, "model_bar": gpu_models.bar})
-
-
-@admin_router.get("/system/rage-alerts", response_class=HTMLResponse)
-def rage_alerts_fragment(request: Request):
-    """RAGE's notification to Louise, for the strip on top of the Library and
-    the System page (operator, 2026-09-20: "if Louise needs a model that RAGE
-    cannot fit in memory I want a notification to Louise"). Empty when there
-    is nothing to say; bounded like every call to RAGE."""
-    return TEMPLATES.TemplateResponse(request, "_fragments/rage_alerts.html",
-                                       {"rage": gpu.rage_status(config.RAGE_URL)})

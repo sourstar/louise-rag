@@ -2,7 +2,7 @@
 
 ONE MODULE ON BOTH SIDES. Louise tags with it (app/vega/client.py) and VeGa's
 wrapper parses with it (deploy/vega/vega_wrapper.py, which carries `app/vega/`
-and `app/hold/codex.py` into its package as the RAGE image carries the codex):
+and `app/hold/codex.py` into its package):
 there is one definition of the bytes, never two kept equal.
 
 THE TAG. Every input to a `vega-` model is one string:

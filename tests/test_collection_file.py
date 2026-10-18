@@ -246,8 +246,8 @@ def test_create_names_both_sides_models(node):
     root, make, _ = node
     cx = make()
     held = louise._write_held_file(root / "collections", cx,
-                                   "http://rage:1/upstream/medcpt-article",
-                                   "http://rage:1/upstream/medcpt-query")
+                                   "http://models:1/upstream/medcpt-article",
+                                   "http://models:1/upstream/medcpt-query")
     text = held.read_text(encoding="utf-8")
     assert 'embed_model = "medcpt-article"\nquery_model = "medcpt-query"\n' in text
     c = collections_mod._load_one(held)
@@ -263,15 +263,15 @@ def test_create_model_keys_where_a_url_names_none():
         ("vega-medcpt", "vega-medcpt")
     assert louise.model_keys("http://localai:8080", embed_model="vega-a",
                              query_model="vega-q") == ("vega-a", "vega-q")
-    assert louise.model_keys("http://rage:1/upstream/bge-m3") == ("bge-m3", "bge-m3")
+    assert louise.model_keys("http://models:1/upstream/bge-m3") == ("bge-m3", "bge-m3")
     # a separate query endpoint naming no model needs --query-model
     with pytest.raises(CodexError, match="--query-encoder .* names no model.*--query-model"):
-        louise.model_keys("http://rage:1/upstream/a", "http://query:2")
-    assert louise.model_keys("http://rage:1/upstream/a", "http://query:2",
+        louise.model_keys("http://models:1/upstream/a", "http://query:2")
+    assert louise.model_keys("http://models:1/upstream/a", "http://query:2",
                              query_model="vega-q") == ("a", "vega-q")
     # a key that is not the model its URL names: the file would say two things
     with pytest.raises(CodexError, match="must agree"):
-        louise.model_keys("http://rage:1/upstream/a", embed_model="b")
+        louise.model_keys("http://models:1/upstream/a", embed_model="b")
     with pytest.raises(CodexError, match="--api is one of"):
         louise.check_api("grpc")
 
