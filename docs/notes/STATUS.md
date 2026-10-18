@@ -50,6 +50,22 @@ it left open is below.
   recommendation (a patch packed on request by any peer holding the new part,
   rebuilt by the platform's writer, the root still the proof) in
   [part-deltas.md](part-deltas.md). Not decided.
+- **The character cut** (2026-10-18, [char-cut-truncation.md](char-cut-truncation.md)):
+  the platform cuts long inputs by characters, not to `ctx` tokens. Pubmed
+  fails its own `vectors-sample` on it (74 of 1,088 sampled chunks, all
+  NCBI's long abstracts; 73 reproduce once the encoder truncates). The fix,
+  approved the same day and BUILT: Louise sends a VeGa encoder every input
+  whole with `ctx` as the tag's `window`, and the wrapper or the task cuts at
+  exactly that many tokens. Not deployed: the wrappers go first, then Louise;
+  then a corrected Codex per collection (its calibration reference was cut
+  too) — the note's §4–5. The wikipedia switch waits for it.
+- **Wikipedia parser 5** (2026-10-18, [wikipedia-qids.md](wikipedia-qids.md)):
+  the QIDs from each run's `page_props`, built and tested with `dev carry
+  --resign` (A1d); the node still runs parser 4's Codex, and the switch's
+  order is in the note's §3 (after the character cut, a measured tolerance).
+- **Vector writes stop below the disk floor** (2026-10-18, operator):
+  `app/disk_guard.py`; `node show` lists the filesystems. ssd5 (LocalAI's
+  models, ComfyUI's, Ollama's) stood at 94 % that day, 26 GB free.
 - **A record parsed from bytes its `origin_hash` does not cover** (found
   2026-10-11, operator: "note this issue for the future"). Gutenberg's
   records took creators, dates and subjects from `pg<id>.rdf` while

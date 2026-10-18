@@ -129,6 +129,7 @@ class LocalAI:
         self.base64 = True               # False: JSON whatever was asked
         self.alter_vector = None         # after the receipt: LocalAI changed it
         self.alter_input = None          # before the backend: LocalAI changed it
+        self.windows: list = []           # each input's window, as tagged
         self.vector = vector_of
         self.bodies: list[dict] = []
         self.texts = 0
@@ -144,7 +145,8 @@ class LocalAI:
                            "the receipt was not acknowledged"}})
         vectors = []
         for i, tagged in enumerate(json["input"]):
-            tid, form, content = vtag.parse(tagged)
+            tid, form, content, window = vtag.parse_window(tagged)
+            self.windows.append(window)
             if self.alter_input is not None:
                 content = self.alter_input(content)
             v = self.vector(form, content)
@@ -152,7 +154,7 @@ class LocalAI:
             if self.receipts:
                 run = self.run_of(i) if self.run_of else self.run
                 self.vega.intake({"kind": "receipt", "id": tid, "run_id": run,
-                                  "input_digest": vtag.input_digest(form, content),
+                                  "input_digest": vtag.input_digest(form, content, window),
                                   "vector_digest": vtag.vector_digest(v)})
             if self.alter_vector is not None:
                 v = self.alter_vector(v)
@@ -550,3 +552,27 @@ def test_a_query_needs_a_receipt_too(node, localai, vega):
                               collection=collection)
     leg, = result["legs_withheld"]
     assert leg["leg"] == "vector" and "not the one the backend produced" in leg["reason"]
+
+
+def test_a_long_input_goes_whole_with_the_spaces_ctx_as_its_window(localai):
+    """docs/notes/char-cut-truncation.md: the platform cut a long input to
+    about ctx x 4 CHARACTERS, a window that is not `ctx` tokens, and archive
+    vectors of long inputs could not be reproduced through it. To a VeGa
+    encoder it goes whole, and the tag names the window the encoder cuts at."""
+    long_text = "word " * 5000                      # ten times the old character budget
+    embeddings.embed_calibration(RECIPE, [long_text], raw=True)
+    body, = localai.bodies
+    assert parsed(body) == [("text", long_text)], "never cut by characters"
+    assert localai.windows == [RECIPE.ctx]
+
+
+def test_an_input_vega_cannot_cut_exactly_is_that_inputs_refusal(localai, monkeypatch):
+    """The wrapper's refusal of one input (it cannot be cut at its window
+    exactly) is that input's error, never a deferral retried for ever."""
+    def refused(url, *, json=None, timeout=None, headers=None):   # noqa: A002
+        return httpx.Response(500, request=httpx.Request("POST", url), json={"error": {
+            "code": 500, "message": "rpc error: code = InvalidArgument desc = "
+                                    f"{vtag.INPUT_MARK} cannot be cut at 512 tokens exactly"}})
+    monkeypatch.setattr(embeddings.httpc, "post", refused)
+    with pytest.raises(embeddings.InputRefused, match="cannot be cut at 512"):
+        embeddings.embed_calibration(RECIPE, ["x"], raw=True)

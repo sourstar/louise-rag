@@ -103,3 +103,25 @@ def test_the_pair_form_the_backend_reads_is_the_one_rage_and_the_backend_hold():
     assert vtag.PAIR_MARK == pairs.MARK == lb.PAIR_MARK
     assert vtag.backend_pair("Té", "x\ny") == pairs.encode("Té", "x\ny")
     assert lb.decode_pair(vtag.backend_pair("a", "b")) == ("a", "b")
+
+
+def test_a_window_rides_in_the_tag_and_in_the_input_digest():
+    """docs/notes/char-cut-truncation.md: the encoder cuts at the window, and a
+    receipt binds the text and the cut. A tag without one keeps its old bytes."""
+    tid, s = vtag.tag("text", "a long text", id=ID, window=1024)
+    assert s == vtag.MARK + '{"form":"text","id":"' + ID + '","text":"a long text","window":1024}'
+    assert vtag.parse_window(s) == (ID, "text", "a long text", 1024)
+    assert vtag.parse(s) == (ID, "text", "a long text")
+    assert vtag.parse_window(vtag.tag("pair", ("T", "A"), id=ID)[1])[3] is None
+    assert vtag.input_digest("text", "x", 512) != vtag.input_digest("text", "x")
+    assert vtag.input_digest("text", "x") == vtag.input_digest("text", "x", None)
+    assert vtag.tag("text", "x", id=ID)[1] == vtag.MARK + '{"form":"text","id":"' + ID + '","text":"x"}'
+
+
+@pytest.mark.parametrize("window", [0, -1, True, 1.5, "512"])
+def test_a_window_that_is_not_a_count_of_tokens_is_refused(window):
+    with pytest.raises(vtag.TagError, match="whole number of tokens"):
+        vtag.tag("text", "x", window=window)
+    body = '{"form":"text","id":"' + ID + '","text":"x","window":' + json.dumps(window) + "}"
+    with pytest.raises(vtag.TagError):
+        vtag.parse(vtag.MARK + body)

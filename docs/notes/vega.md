@@ -189,6 +189,29 @@ little-endian f32. The phase-3 pair marker stays as the BACKEND's form of a
 pair (`louise-medcpt-article-ov` reads it): replacing it in RAGE's front, the
 backend and their tests is not trivial while RAGE runs.
 
+**The window** (*amended 2026-10-18*, operator's yes; [char-cut-truncation.md](char-cut-truncation.md)).
+Either form may carry `"window":<tokens>`: the encoder embeds at most that
+many tokens of the input, cut by the model's own tokenizer, as 09 §9.3 cuts a
+chunk to `ctx`. Louise sends every input whole with its space's `ctx` there;
+it no longer cuts by characters. The window is inside `input_digest`, so a
+receipt binds the text and its cut; a tag without one is unchanged, bytes and
+digest. The wrapper cuts as its `vega.json` says (`cuts`): `tokenizer`, the
+default — llama.cpp embeds whatever it is given — with the backend's
+`TokenizeString`, keeping the first `window − specials` tokens (the special
+tokens it adds counted once at load, from a probe embedded and never
+returned), sending a text whose tokens are exactly those — the longest prefix
+of the input that has them, else the pieces read back (`Detokenize`): on
+bge-m3's tokenizer and the 512 calibration texts the two together cut all 622
+over-long inputs exactly at windows of 128, 512 and 1,024, the first alone
+178 of 189 at 1,024 — and refusing the answer if the backend says it embedded
+another count;
+`context_size` — every `louise-python` task cuts at its load-time context
+size, a pair longest-first — requiring the window to equal it. A pair is
+never cut by the wrapper. An input that cannot be cut exactly is refused as
+itself (`INPUT_MARK`, an error on its document); a backend whose tokens cannot
+be counted cuts nothing and refuses any window. **The wrapper is deployed
+before Louise**: the one before it refuses a tag with a key it does not know.
+
 **The intake.** One canonical JSON line each way: `{"kind":"run","run_id","run"}`
 (accepted only if `run_id` = `H(run)`), `{"kind":"receipt","id","run_id",
 "input_digest","vector_digest"}`; answers `{"ok":true}` or `{"ok":false,

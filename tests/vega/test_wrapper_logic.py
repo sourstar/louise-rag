@@ -41,6 +41,7 @@ def test_the_config_names_the_backend_beside_the_wrapper(tmp_path):
     assert cfg.backend == tmp_path / "backends" / "fake-embed"
     assert cfg.socket == Path("/vega/r.sock") and cfg.cards == {"0000:03:00.0": "Arc"}
     assert cfg.runtime_packages == vw.RUNTIME_PACKAGES
+    assert cfg.cuts == vw.TOKENIZER, "the wrapper cuts, unless the backend says it does"
 
 
 @pytest.mark.parametrize("doc, why", [
@@ -48,6 +49,7 @@ def test_the_config_names_the_backend_beside_the_wrapper(tmp_path):
     ({"backend": "b", "receipts_socket": "relative"}, "absolute"),
     ({"backend": "b", "receipts_socket": "/r", "cards": {"3:0": "Arc"}}, "PCI address"),
     ({"backend": "b", "receipts_socket": "/r", "colour": 1}, "unknown key"),
+    ({"backend": "b", "receipts_socket": "/r", "cuts": "characters"}, "`cuts` is one of"),
 ])
 def test_a_config_that_is_not_valid_is_refused_with_its_rule(tmp_path, doc, why):
     p = tmp_path / "vega.json"

@@ -52,8 +52,8 @@ class Node:
     real_run_sh: Path
     stubs: Any
 
-    def embed(self, items, model="vega-fake", **extra):
-        batch = client.tag_batch(items)
+    def embed(self, items, model="vega-fake", window=None, **extra):
+        batch = client.tag_batch(items, window=window)
         r = self.localai.post("/v1/embeddings",
                               json={"model": model, "input": list(batch.inputs), **extra})
         return batch, r
@@ -86,7 +86,8 @@ class Node:
 def make_node(tmp_path, stubs, vega):
     made = []
 
-    def make(*, pairs=False, receipt_timeout_s=2.0, socket=None) -> Node:
+    def make(*, pairs=False, receipt_timeout_s=2.0, socket=None, tokenizer=False,
+             cuts=None) -> Node:
         backends = tmp_path / "backends"
         real = backends / "fake-embed"
         real.mkdir(parents=True)
@@ -98,13 +99,15 @@ def make_node(tmp_path, stubs, vega):
         pkg = backends / "vega-fake-embed"
         pkg.mkdir()
         (pkg / "vega.json").write_text(json.dumps(
-            {"backend": "fake-embed", "receipts_socket": str(socket or vega.socket)}))
+            {"backend": "fake-embed", "receipts_socket": str(socket or vega.socket),
+             **({"cuts": cuts} if cuts else {})}))
         weights = tmp_path / "models" / "fake.bin"
         weights.parent.mkdir()
         weights.write_bytes(b"weights " * 1000)
         log = tmp_path / "backend.log"
         log.touch()
         env = dict(os.environ, FAKE_BACKEND_LOG=str(log), VEGA_TEST_ENV="on",
+                   **({"FAKE_TOKENIZER": "1"} if tokenizer else {}),
                    PYTHONPATH=os.pathsep.join([str(stubs.dir), os.environ.get("PYTHONPATH", "")]))
         cfg = vw.load_config(pkg / "vega.json", backends)
         running = vw.serve(cfg, "127.0.0.1:0", pb=stubs.pb, environ=env,
@@ -414,3 +417,100 @@ def test_a_directory_that_is_no_backend_refuses_to_start(tmp_path, stubs):
     proc, _port = _start(tmp_path, stubs, pkg)
     assert proc.wait(timeout=20) == 2
     assert "no run.sh" in proc.stderr.read()
+
+
+# ---- the cut to a tag's window (docs/notes/char-cut-truncation.md) ----------------
+
+WORDS = " ".join(f"w{i}" for i in range(20))
+
+
+def test_a_long_text_is_cut_at_its_window_by_the_models_own_tokens(make_node):
+    """09 §9.3: a chunk is truncated to `ctx` TOKENS. The backend adds two
+    special tokens, so a window of 10 keeps the first 8 of the text's own."""
+    node = make_node(tokenizer=True)
+    batch, r = node.embed([WORDS], window=10)
+    assert r.status_code == 200, r.text
+    node.verify(batch, r)
+    embedded = [c["text"] for c in node.calls("Embedding")]
+    assert embedded[-1].split() == [f"w{i}" for i in range(8)], embedded
+    assert WORDS.startswith(embedded[-1]), "a prefix of the input itself"
+    assert batch.input_digests[0] == vtag.input_digest("text", WORDS, 10), \
+        "the receipt binds the text AND its window"
+    assert batch.input_digests[0] != vtag.input_digest("text", WORDS)
+
+
+def test_a_text_within_its_window_goes_whole(make_node):
+    node = make_node(tokenizer=True)
+    batch, r = node.embed(["w1 w2 w3"], window=10)
+    assert r.status_code == 200, r.text
+    node.verify(batch, r)
+    assert node.calls("Embedding")[-1]["text"] == "w1 w2 w3"
+    assert len(node.calls("TokenizeString")) == 2, "the probe at load, then the input once"
+
+
+def test_a_backend_whose_tokens_cannot_be_counted_cuts_nothing(make_node):
+    """Without a tokenizer it can reach, the wrapper refuses an input with a
+    window rather than guess a cut; one without a window is embedded whole,
+    as before."""
+    node = make_node(tokenizer=False)
+    _batch, r = node.embed([WORDS], window=10)
+    assert r.status_code == 500 and "could not be counted at load" in r.text
+    batch, r = node.embed([WORDS])
+    assert r.status_code == 200
+    node.verify(batch, r)
+
+
+def test_a_backend_that_cuts_itself_takes_its_own_window_only(make_node):
+    """`cuts: context_size` (louise-python): the input goes whole, and the
+    window must be the size it was loaded with (512 here)."""
+    node = make_node(cuts="context_size")
+    batch, r = node.embed([WORDS], window=512)
+    assert r.status_code == 200, r.text
+    node.verify(batch, r)
+    assert node.calls("Embedding")[-1]["text"] == WORDS
+    _batch, r = node.embed([WORDS], window=1024)
+    assert r.status_code == 500 and "context_size of 512" in r.text
+
+
+def test_a_pair_is_never_cut_by_the_wrapper(make_node):
+    node = make_node(pairs=True, tokenizer=True)
+    _batch, r = node.embed([("Aspirin", "An abstract.")], window=10)
+    assert r.status_code == 500 and "cannot cut a pair" in r.text
+
+
+def test_a_backend_that_embeds_other_than_the_cut_is_refused(make_node, monkeypatch):
+    node = make_node(tokenizer=True)
+    real = vw.Gate._cut
+
+    def short_count(self, *a, **k):
+        text, expect = real(self, *a, **k)
+        return text, expect + 1                      # the answer will disagree
+    monkeypatch.setattr(vw.Gate, "_cut", short_count)
+    _batch, r = node.embed([WORDS], window=10)
+    assert r.status_code == 500 and "embedded 10 token(s) of an input cut to 11" in r.text
+
+
+def test_where_no_prefix_has_the_tokens_the_pieces_read_back_are_sent(stubs):
+    """The second way of `Gate._cut`: no prefix of the input tokenizes to the
+    first `keep` tokens (a word segmented otherwise once cut), so the text read
+    back from those tokens' pieces is sent — checked to tokenize to them."""
+    from types import SimpleNamespace
+    pb = stubs.pb
+    want = [7, 8]
+
+    def tokens(_call, _req, text):
+        if text == "alpha beta":                     # the pieces read back, the space dropped
+            return want
+        if text == "alphabetagammadelta":            # the whole input
+            return [7, 8, 9, 9, 9]
+        return [7, 9, 9, 9, 9, 9][:max(1, len(text) // 4)]   # every prefix: another second token
+    gate = SimpleNamespace(pb=pb, cfg=SimpleNamespace(cuts=vw.TOKENIZER),
+                           backend=SimpleNamespace(name="fake"), _tokens=tokens)
+
+    def call(method, raw):
+        assert method == vw.DETOKENIZE and list(pb.DetokenizeRequest.FromString(raw).tokens) == want
+        return pb.DetokenizeResponse(content=" alpha beta").SerializeToString()
+    state = SimpleNamespace(specials=2, context_size=0)
+    text, expect = vw.Gate._cut(gate, state, call, pb.PredictOptions(), "text",
+                                "alphabetagammadelta", 4)
+    assert (text, expect) == ("alpha beta", 4)

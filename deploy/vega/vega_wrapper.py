@@ -76,6 +76,19 @@ from app.vega import tag as vtag
 
 LOAD = "/backend.Backend/LoadModel"
 EMBED = "/backend.Backend/Embedding"
+TOKENIZE = "/backend.Backend/TokenizeString"
+DETOKENIZE = "/backend.Backend/Detokenize"
+#: HOW AN INPUT IS CUT TO ITS TAG'S WINDOW (docs/notes/char-cut-truncation.md),
+#: `cuts` in vega.json. `tokenizer`: the wrapper cuts, with the backend's own
+#: tokenizer (TokenizeString, Detokenize) — llama.cpp embeds whatever it is
+#: given and never truncates. `context_size`: the backend cuts every input at
+#: its load-time context size itself (every `louise-python` task does, a pair
+#: longest-first), so the window must be that size.
+TOKENIZER, CONTEXT_SIZE = "tokenizer", "context_size"
+CUTS = (TOKENIZER, CONTEXT_SIZE)
+#: embedded once at load, never returned: its token count with and without
+#: the special tokens the backend adds says how many those are
+PROBE_TEXT = "VeGa counts the special tokens"
 #: How long a receipt may take to be acknowledged, reconnects included. The
 #: receipts service answers in well under a millisecond on the same host; two
 #: seconds is a hung or absent service, and the call then fails UNAVAILABLE —
@@ -152,19 +165,21 @@ class Config:
     socket: Path                          # VeGa's intake
     cards: Mapping[str, str] = field(default_factory=dict)   # PCI address -> device name
     runtime_packages: tuple[str, ...] = RUNTIME_PACKAGES
+    cuts: str = TOKENIZER
 
 
 def load_config(path: Path, backends_root: Path) -> Config:
     """vega.json: `backend` (a directory name under LocalAI's backends path,
     or absolute), `receipts_socket`, `cards` ({PCI address: the device as its
-    driver names it, 09 §9.3}) and optionally `runtime_packages`."""
+    driver names it, 09 §9.3}) and optionally `runtime_packages` and `cuts`
+    (`CUTS`; `tokenizer` by default)."""
     try:
         doc = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         raise ConfigError(f"cannot read {path}: {type(e).__name__}: {e}") from None
     if not isinstance(doc, dict):
         raise ConfigError(f"{path} is a JSON object")
-    unknown = set(doc) - {"backend", "receipts_socket", "cards", "runtime_packages"}
+    unknown = set(doc) - {"backend", "receipts_socket", "cards", "runtime_packages", "cuts"}
     if unknown:
         raise ConfigError(f"{path}: unknown key(s) {sorted(unknown)}")
     backend, sock = doc.get("backend"), doc.get("receipts_socket")
@@ -181,9 +196,12 @@ def load_config(path: Path, backends_root: Path) -> Config:
     packages = doc.get("runtime_packages", list(RUNTIME_PACKAGES))
     if not isinstance(packages, list) or not all(isinstance(p, str) and p for p in packages):
         raise ConfigError(f"{path}: `runtime_packages` is a list of package names")
+    cuts = doc.get("cuts", TOKENIZER)
+    if cuts not in CUTS:
+        raise ConfigError(f"{path}: `cuts` is one of {', '.join(CUTS)}")
     directory = Path(backend) if backend.startswith("/") else Path(backends_root) / backend
     return Config(backend=directory, socket=Path(sock), cards=dict(cards),
-                  runtime_packages=tuple(packages))
+                  runtime_packages=tuple(packages), cuts=cuts)
 
 
 @dataclass(frozen=True)
@@ -715,6 +733,12 @@ class Loaded:
     run: dict[str, Any]
     pairs: bool
     pid: int
+    #: the load's ContextSize: where a `context_size` backend cuts
+    context_size: int = 0
+    #: the special tokens a `tokenizer` backend adds to an input, counted at
+    #: load (`PROBE_TEXT`); None when it could not be, and then no input is
+    #: cut by this wrapper
+    specials: int | None = None
 
 
 class Gate:
@@ -741,7 +765,8 @@ class Gate:
         return self.pb.Result(success=False,
                               message=f"VeGa: no run can be stated: {why}").SerializeToString()
 
-    def load_model(self, raw: bytes, forward: Callable[[bytes], bytes]) -> bytes:
+    def load_model(self, raw: bytes, forward: Callable[[bytes], bytes],
+                   call: Callable[[str, bytes], bytes] | None = None) -> bytes:
         with self._load_lock:
             self.loaded = None                       # a new load has no run until it is stated
             try:
@@ -802,8 +827,13 @@ class Gate:
                     raise loadopts.Unstatable("the backend exited while its run was computed")
             except (loadopts.Unstatable, runs.DriverUnknown, OSError) as e:
                 return self._refuse_load(e)
+            try:
+                context_size = int(self.pb.ModelOptions.FromString(raw).ContextSize)
+            except Exception:                        # noqa: BLE001 — protobuf's DecodeError
+                context_size = 0
+            specials = self._count_specials(call) if self.cfg.cuts == TOKENIZER else None
             self.loaded = Loaded(run_id, run, declares_pairs(canon.options.get("Options")),
-                                 self.child.pid)
+                                 self.child.pid, context_size, specials)
             log(f"{self.backend.name}: {Path(canon.weights_path).name} loaded on {device}, "
                 f"run {run_id[:23]}…, files {hashed['tree'][:19]}… (installed from "
                 f"{self.backend.uri or 'nowhere recorded'}, the registry's digest "
@@ -822,7 +852,113 @@ class Gate:
                     log(f"{self.backend.name}: the tree's file list is not kept by VeGa: {e}")
             return answer
 
-    def embedding(self, raw: bytes, forward: Callable[[bytes], bytes]) -> bytes:
+    # ---- the cut to a tag's window (docs/notes/char-cut-truncation.md) ------------
+
+    def _count_specials(self, call: Callable[[str, bytes], bytes] | None) -> int | None:
+        """The special tokens the backend adds to every input: `PROBE_TEXT`'s
+        tokens as embedded, less its tokens as tokenized. None (said) when the
+        backend cannot tell — and then no input is cut here."""
+        if call is None:
+            return None
+        try:
+            probe = self.pb.PredictOptions(Prompt=PROBE_TEXT)
+            bare = len(self.pb.TokenizationResponse.FromString(
+                call(TOKENIZE, probe.SerializeToString())).tokens)
+            embedded = self.pb.EmbeddingResult.FromString(call(EMBED, self.pb.PredictOptions(
+                Embeddings=PROBE_TEXT).SerializeToString())).prompt_tokens
+        except Exception as e:                       # noqa: BLE001 — UNIMPLEMENTED, a dead child
+            log(f"{self.backend.name}: its tokens cannot be counted ({type(e).__name__}: "
+                f"{e}); an input with a window is refused")
+            return None
+        if not bare or embedded < bare:
+            log(f"{self.backend.name}: it reports {embedded} embedded token(s) for {bare} "
+                f"tokenized; an input with a window is refused")
+            return None
+        return embedded - bare
+
+    def _tokens(self, call, req, text: str) -> list[int]:
+        q = self.pb.PredictOptions()
+        q.CopyFrom(req)                              # the model's identity, as asked
+        q.Embeddings, q.Prompt = "", text
+        return list(self.pb.TokenizationResponse.FromString(
+            call(TOKENIZE, q.SerializeToString())).tokens)
+
+    def _cut(self, state: Loaded, call, req, form: str, content, window: int
+             ) -> tuple[str | None, int | None]:
+        """`(the text to forward, the tokens it must be embedded as)` for an input
+        whose tag names `window`. The text is None for a pair or a backend that
+        cuts itself: the content goes as it is, and the count is not known."""
+        if self.cfg.cuts == CONTEXT_SIZE:
+            if state.context_size and window != state.context_size:
+                raise Refusal("FAILED_PRECONDITION",
+                              f"VeGa: {self.backend.name} cuts every input at its context_size "
+                              f"of {state.context_size} tokens and this one is to be cut at "
+                              f"{window}: the model's context_size is the space's ctx")
+            return None, None
+        if form == vtag.PAIR:
+            raise Refusal("FAILED_PRECONDITION",
+                          f"VeGa: {self.backend.name} cannot cut a pair at a window; a pair "
+                          f"model is served by a backend that cuts it itself")
+        if state.specials is None or call is None:
+            raise Refusal("FAILED_PRECONDITION",
+                          f"VeGa: {self.backend.name}'s tokens could not be counted at load, "
+                          f"so no input is cut to a window here")
+        if state.context_size and window > state.context_size:
+            raise Refusal("FAILED_PRECONDITION",
+                          f"VeGa: a window of {window} tokens, over the model's context_size "
+                          f"of {state.context_size}")
+        tokens = self._tokens(call, req, content)
+        if len(tokens) + state.specials <= window:
+            return content, len(tokens) + state.specials
+        keep = window - state.specials
+        if keep < 1:
+            raise Refusal("INVALID_ARGUMENT", f"{vtag.INPUT_MARK} has a window of {window} "
+                                              f"tokens, not more than the model's special ones")
+        want = tokens[:keep]
+        # 1. A PREFIX OF THE INPUT ITSELF: the longest whose tokens are at most
+        # `keep`, then a few shorter, each checked to be exactly the first
+        # `keep`. SentencePiece keeps its pieces NORMALISED (full-width
+        # punctuation, whitespace), so pieces read back are not the input's
+        # text — on bge-m3 and the calibration set, 18 of 189 cuts at 1,024
+        # failed that way, all of them CJK (2026-10-18)
+        lo, hi = 0, len(content)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if len(self._tokens(call, req, content[:mid])) <= keep:
+                lo = mid
+            else:
+                hi = mid - 1
+        for end in range(lo, max(0, lo - 8), -1):
+            if self._tokens(call, req, content[:end]) == want:
+                return content[:end], keep + state.specials
+        # 2. THE PIECES READ BACK: where no prefix has exactly those tokens — a
+        # word segmented otherwise once cut (11 of 189 at 1,024, all Latin);
+        # the two together cut all 622 of that day's over-long inputs exactly
+        try:
+            text = self.pb.DetokenizeResponse.FromString(call(DETOKENIZE, self.pb.DetokenizeRequest(
+                tokens=want).SerializeToString())).content
+        except Exception:                            # noqa: BLE001 — DecodeError, UTF-8
+            # the cut falls inside a character spelled as byte tokens: its
+            # pieces are not text, and no text has exactly those tokens
+            raise Refusal("INVALID_ARGUMENT", f"{vtag.INPUT_MARK} cannot be cut at {window} "
+                                              f"tokens exactly: the cut falls inside a "
+                                              f"character") from None
+        # THE TEXT WHOSE TOKENS ARE THE FIRST `keep` — the vector is a function
+        # of the tokens alone, so any such text gives the by-the-book vector.
+        # The pieces joined, without the leading space a word-start piece reads
+        # back with when the input itself does not begin with one, else as read.
+        seen: list[str] = []
+        for c in ((text[1:] if text[:1] == " " and content[:1] != " " else text), text,
+                  text.lstrip()):
+            if c and c not in seen:
+                seen.append(c)
+                if self._tokens(call, req, c) == want:
+                    return c, keep + state.specials
+        raise Refusal("INVALID_ARGUMENT", f"{vtag.INPUT_MARK} cannot be cut at {window} tokens "
+                                          f"exactly: no text reads back as its first {keep}")
+
+    def embedding(self, raw: bytes, forward: Callable[[bytes], bytes],
+                  call: Callable[[str, bytes], bytes] | None = None) -> bytes:
         state = self.loaded
         if state is None:
             raise Refusal("FAILED_PRECONDITION", "VeGa: no run is stated for this backend (not "
@@ -835,9 +971,11 @@ class Gate:
         if len(req.EmbeddingTokens):
             raise Refusal("INVALID_ARGUMENT", "VeGa: token ids carry no tag; send the tagged text")
         try:
-            tid, form, content = vtag.parse(req.Embeddings)
+            tid, form, content, window = vtag.parse_window(req.Embeddings)
         except vtag.TagError as e:
             raise Refusal("INVALID_ARGUMENT", f"VeGa: {e}") from None
+        cut, expect = (self._cut(state, call, req, form, content, window)
+                       if window is not None else (None, None))
         if form == vtag.PAIR:
             if not state.pairs:
                 raise Refusal("INVALID_ARGUMENT",
@@ -848,18 +986,25 @@ class Gate:
             if vtag.PAIR_MARK in content:
                 raise Refusal("INVALID_ARGUMENT", f"VeGa: a text carries the pair marker "
                                                   f"{vtag.PAIR_MARK!r}, which only VeGa writes")
-            req.Embeddings = content
+            req.Embeddings = content if cut is None else cut
         answer = forward(req.SerializeToString())
         result = self.pb.EmbeddingResult.FromString(answer)
         if result.layout == self.pb.EMBEDDING_LAYOUT_PER_TOKEN:
             raise Refusal("FAILED_PRECONDITION",
                           "VeGa: the backend answered per-token vectors, which LocalAI would "
                           "pool itself — a vector no receipt can name; pool in the backend")
+        # THE CUT, CHECKED ON THE ANSWER: the tokens the backend says it embedded
+        if expect is not None and result.prompt_tokens != expect:
+            raise Refusal("INTERNAL", f"VeGa: the backend embedded {result.prompt_tokens} "
+                                      f"token(s) of an input cut to {expect}")
+        if window is not None and result.prompt_tokens > window:
+            raise Refusal("INTERNAL", f"VeGa: the backend embedded {result.prompt_tokens} "
+                                      f"tokens of an input whose window is {window}")
         if self.loaded is not state or self.child.pid != state.pid or not self.child.alive():
             raise Refusal("UNAVAILABLE", "VeGa unavailable: the backend was reloaded while it "
                                          "answered; ask again")
         receipt = {"id": tid, "run_id": state.run_id,
-                   "input_digest": vtag.input_digest(form, content),
+                   "input_digest": vtag.input_digest(form, content, window),
                    "vector_digest": vtag.vector_digest(list(result.embeddings))}
         try:
             self.receipts.deliver(receipt, state.run_id, state.run)
@@ -901,9 +1046,9 @@ class Proxy:
         context.set_trailing_metadata(tuple(_forwardable(e.trailing_metadata())))
         context.abort(e.code(), e.details() or "")
 
-    def _unary(self, method: str, intercept: Callable[[bytes, Callable[[bytes], bytes]], bytes]):
+    def _unary(self, method: str, intercept: Callable[..., bytes]):
         call = self.channel.unary_unary(method)       # no serializers: bytes both ways
-        grpc = self.grpc
+        grpc, channel = self.grpc, self.channel
 
         def behaviour(raw: bytes, context: Any) -> bytes:
             def forward(request: bytes) -> bytes:
@@ -911,8 +1056,14 @@ class Proxy:
                     context.invocation_metadata()), timeout=remaining(context))
                 context.set_trailing_metadata(tuple(_forwardable(c.trailing_metadata())))
                 return response
+
+            def other(name: str, request: bytes) -> bytes:
+                """Another of the backend's methods, inside this call: its
+                metadata (the backend's auth) and its deadline."""
+                return channel.unary_unary(name)(request, metadata=_forwardable(
+                    context.invocation_metadata()), timeout=remaining(context))
             try:
-                return intercept(raw, forward)
+                return intercept(raw, forward, other)
             except grpc.RpcError as e:
                 self._abort_from(e, context)
             except Refusal as e:

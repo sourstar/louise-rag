@@ -11,6 +11,12 @@ THE TAG. Every input to a `vega-` model is one string:
         {"form": "text", "id": <one-time id>, "text": <the text>}
      or {"form": "pair", "id": <one-time id>, "pair": [<first>, <second>]}
 
+and, where the input is to be cut to the space's window, `"window": <tokens>`
+beside them (docs/notes/char-cut-truncation.md; operator, 2026-10-18): the
+encoder embeds at most that many tokens of the input, cut by the model's own
+tokenizer as 09 §9.3 cuts a chunk to `ctx`. The platform holds no tokenizer,
+so it no longer cuts by characters; a tag without a window is embedded whole.
+
 `MARK` is two record separators around a name and a version, which no text
 carries by accident and which canonical JSON never contains raw (it escapes
 control characters). The id is 128 random bits as 32 lowercase hexadecimal
@@ -19,7 +25,8 @@ float, a duplicate key, any byte the canonical form would write otherwise — is
 refused: the wrapper never guesses what was meant.
 
 THE INPUT DIGEST is `H(canonical JSON of the tag's object without its id)`:
-what was asked, independent of who asked. THE VECTOR DIGEST is SHA-256 over
+what was asked, independent of who asked — the window included, so a receipt
+binds the text and the cut it was embedded under. THE VECTOR DIGEST is SHA-256 over
 the vector as little-endian float32, concatenated — the bytes the backend
 produced, written `sha256:<hex>` like every identity (09 §9.1).
 
@@ -39,6 +46,11 @@ from ..hold.codex import CodexError, canonical_json, digest
 MARK = "\x1eVEGA/1\x1e"
 TEXT, PAIR = "text", "pair"
 FORMS = (TEXT, PAIR)
+#: the optional key of either form: the tokens the encoder embeds at most
+WINDOW = "window"
+#: how VeGa's wrapper begins a refusal of the INPUT itself (it cannot be cut at
+#: its window exactly): Louise reads it as the input's error, not a deferral
+INPUT_MARK = "VeGa: this input"
 _ID = re.compile(r"[0-9a-f]{32}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
@@ -95,14 +107,30 @@ def _canonical(obj: dict[str, Any]) -> bytes:
                        f"{type(e).__name__}") from None
 
 
-def tag(form: str, content: Item | list[str], *, id: str | None = None) -> tuple[str, str]:
-    """`(id, the tagged string)` for one input. `id` is for tests; Louise
-    always takes a fresh one."""
-    key = _key(form)
+def _window(window: Any) -> int | None:
+    if window is None:
+        return None
+    if isinstance(window, bool) or not isinstance(window, int) or window < 1:
+        raise TagError("the window is a whole number of tokens, at least 1")
+    return window
+
+
+def _object(form: str, content: Item | list[str], window: int | None) -> dict[str, Any]:
+    obj: dict[str, Any] = {"form": form, _key(form): _content(form, content)}
+    if _window(window) is not None:
+        obj[WINDOW] = window
+    return obj
+
+
+def tag(form: str, content: Item | list[str], *, id: str | None = None,
+        window: int | None = None) -> tuple[str, str]:
+    """`(id, the tagged string)` for one input, cut to `window` tokens by the
+    encoder when one is given. `id` is for tests; Louise always takes a fresh
+    one."""
     tid = new_id() if id is None else id
     if not _ID.fullmatch(tid):
         raise TagError("the id is 32 lowercase hexadecimal digits")
-    body = _canonical({"form": form, "id": tid, key: _content(form, content)})
+    body = _canonical({**_object(form, content, window), "id": tid})
     return tid, MARK + body.decode("utf-8")
 
 
@@ -121,7 +149,13 @@ def _no_float(text: str) -> Any:
 
 def parse(s: str) -> tuple[str, str, Item]:
     """`(id, form, content)` of a tagged input — a pair as a tuple — or a
-    TagError naming the rule it breaks."""
+    TagError naming the rule it breaks. The window, if any: `parse_window`."""
+    tid, form, content, _window_ = parse_window(s)
+    return tid, form, content
+
+
+def parse_window(s: str) -> tuple[str, str, Item, int | None]:
+    """`(id, form, content, window or None)` of a tagged input."""
     if not isinstance(s, str):
         raise TagError("an input is a string")
     if not s.startswith(MARK):
@@ -143,20 +177,21 @@ def parse(s: str) -> tuple[str, str, Item]:
     if form not in FORMS:
         raise TagError(f"the tag's form is one of {', '.join(FORMS)}")
     key = _key(form)
-    if set(obj) != {"form", "id", key}:
-        raise TagError(f"a {form} tag has exactly the keys form, id and {key}")
+    if set(obj) - {WINDOW} != {"form", "id", key}:
+        raise TagError(f"a {form} tag has exactly the keys form, id and {key}, and "
+                       f"{WINDOW} where it is cut")
     tid = obj["id"]
     if not isinstance(tid, str) or not _ID.fullmatch(tid):
         raise TagError("the tag's id is 32 lowercase hexadecimal digits")
     content = _content(form, obj[key])
+    window = _window(obj.get(WINDOW))
     if _canonical(obj).decode("utf-8") != body:
         raise TagError("the tag is not in canonical form (09 §9.1)")
-    return tid, form, (content if form == TEXT else (content[0], content[1]))
+    return tid, form, (content if form == TEXT else (content[0], content[1])), window
 
 
-def input_digest(form: str, content: Item | list[str]) -> str:
-    key = _key(form)
-    return digest(_canonical({"form": form, key: _content(form, content)}))
+def input_digest(form: str, content: Item | list[str], window: int | None = None) -> str:
+    return digest(_canonical(_object(form, content, window)))
 
 
 def f32_bytes(values: Sequence[float] | bytes) -> bytes:

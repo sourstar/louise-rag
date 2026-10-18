@@ -44,6 +44,9 @@ from . import tag as vtag
 #: what VeGa's wrapper puts in the error LocalAI passes on when the receipt
 #: could not be delivered (deploy/vega/vega_wrapper.py): a deferral
 UNAVAILABLE_MARK = "VeGa unavailable"
+#: and when THIS input cannot be embedded as asked (it cannot be cut at the
+#: window exactly): the input's own refusal, an error on its document
+INPUT_MARK = vtag.INPUT_MARK
 
 
 class Refusal(RuntimeError):
@@ -63,16 +66,17 @@ class TaggedBatch:
     input_digests: tuple[str, ...]
 
 
-def tag_batch(items: Sequence[vtag.Item]) -> TaggedBatch:
+def tag_batch(items: Sequence[vtag.Item], *, window: int | None = None) -> TaggedBatch:
     """Each item tagged with a fresh id: a text as `text`, a (first, second)
-    tuple as `pair` (09 §9.3's input forms)."""
+    tuple as `pair` (09 §9.3's input forms) — and `window`, the space's `ctx`,
+    for the encoder to cut it to (docs/notes/char-cut-truncation.md)."""
     ids, inputs, digests = [], [], []
     for item in items:
         form = vtag.TEXT if isinstance(item, str) else vtag.PAIR
-        tid, tagged = vtag.tag(form, item)
+        tid, tagged = vtag.tag(form, item, window=window)
         ids.append(tid)
         inputs.append(tagged)
-        digests.append(vtag.input_digest(form, item))
+        digests.append(vtag.input_digest(form, item, window))
     return TaggedBatch(tuple(ids), tuple(inputs), tuple(digests))
 
 
@@ -197,3 +201,8 @@ def is_deferral(status: int, text: str) -> bool:
     """Whether LocalAI's error answer is VeGa saying it could not deliver a
     receipt (the wrapper failed the call UNAVAILABLE): a deferral."""
     return status >= 500 and UNAVAILABLE_MARK in text
+
+
+def is_input_refusal(status: int, text: str) -> bool:
+    """Whether LocalAI's error answer is VeGa refusing the input itself."""
+    return status >= 400 and INPUT_MARK in text

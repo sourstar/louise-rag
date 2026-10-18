@@ -285,7 +285,7 @@ def _request_vouched(batch: list[Item], timeout: float,
             f"{recipe.url}: the encoder is declared api = \"vega\" and VEGA_URL is "
             f"unset, so no receipt can be read and nothing is embedded through it "
             f"(docs/notes/vega.md)")
-    tagged = vclient.tag_batch(batch)
+    tagged = vclient.tag_batch(batch, window=recipe.ctx or None)
     body: dict = {"input": list(tagged.inputs), "encoding_format": "base64"}
     if recipe.model:
         body["model"] = recipe.model
@@ -429,8 +429,15 @@ def _embed_batch(batch: list[Item], timeout: float,
         per_char = (dense / 1.0 + (chars - dense) / 4.0) / chars
         budget = max(256, int(recipe.ctx / per_char))
     still_refused: httpx.HTTPStatusError | None = None
+    # A VeGa ENCODER IS SENT THE INPUT WHOLE (operator, 2026-10-18;
+    # docs/notes/char-cut-truncation.md): the tag names the space's `ctx` and
+    # the encoder cuts there with the model's own tokenizer, as 09 §9.3 says.
+    # The character cut below is only for an encoder that cannot: it shortened
+    # every long input to a window that is not `ctx`, and NCBI's and Upstash's
+    # vectors of long inputs could not be reproduced through it.
+    vouched = recipe.api == VEGA
     for attempt in range(10):
-        cut = [_cut(t, budget) for t in batch]
+        cut = list(batch) if vouched else [_cut(t, budget) for t in batch]
         try:
             # `runs` only where asked for: a test's stand-in for this function
             # takes the three arguments it always took
@@ -451,10 +458,11 @@ def _embed_batch(batch: list[Item], timeout: float,
             # a cut, so one bad input errors only its own document and every
             # input is cut as if it had been sent alone.
             refused_input = _over_budget(e.response) or \
-                e.response.status_code in INPUT_STATUS
+                e.response.status_code in INPUT_STATUS or \
+                vclient.is_input_refusal(e.response.status_code, e.response.text)
             if refused_input and len(batch) > 1:
                 return _split(batch, timeout, recipe, raw=raw, runs=runs)
-            if _over_budget(e.response) and budget > 256:
+            if _over_budget(e.response) and budget > 256 and not vouched:
                 budget = max(256, int(budget * 0.8))
                 still_refused = e
                 continue

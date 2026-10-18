@@ -372,7 +372,7 @@ a `<space>` segment and would read as one in a member name (§9.16; until
 | `encoder` | object | yes | `{weights: "sha256:…", engine: <engine>, label: string}` — the weights digest (below: of the file, or of the directory where the model is one), the engine the reference vectors were computed with (below), and a readable label without guarantee. The engine's image is named here and nowhere else: `toolchain` pins the platform build only (02 §2.1), and §9.18 would refuse a Codex carrying a third `toolchain` key |
 | `dim` | integer | yes | vector width as stored |
 | `dtype` | `"f16"` · `"f32"` · `"i8"` · `"i5"` · `"i4"` | yes | storage type of vectors. The three integer types are quantised and carry a per-vector scale beside them (§9.6, §9.7); a space in one of them is normally reached by the top-level `derivation` above rather than by an encoder, because few encoders emit integers |
-| `ctx` | integer | yes | the encoder's input window in tokens; a chunk is truncated to it |
+| `ctx` | integer | yes | the encoder's input window in tokens; a chunk is truncated to it — by the encoder, with the model's own tokenizer, the platform sending the chunk whole with `ctx` as its window (*amended 2026-10-18*: the platform cut by characters, to a window that is not `ctx`; docs/notes/char-cut-truncation.md) |
 | `pooling` | string | yes | `"cls"`, `"mean"`, `"last"` — the pooling the encoder is run with |
 | `normalise` | boolean | yes | whether vectors are unit-normalised before storage; `true` in every text space |
 | `query` | object | yes | `{encoder: {weights, engine} or null, instruction: string or null}` — an asymmetric space's query encoder, with its own weights digest and engine, and its prefix; both `null` in a symmetric space |

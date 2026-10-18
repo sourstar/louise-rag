@@ -11,6 +11,10 @@
 #     -v /tmp/vega-stage/src:/src:ro -v /tmp/vega-stage/cache:/cache:ro \
 #     python@sha256:54c85f3c… sh /src/deploy/vega/stage/build_vega_package.sh
 #
+# `-e CUTS=context_size` for vega-louise-python: its tasks cut every input at
+# the model's context_size themselves; llama.cpp cuts nothing, so the default,
+# `tokenizer`, has the wrapper cut it (docs/notes/char-cut-truncation.md).
+#
 # A rebuild replaces everything but `run/` (the receipts socket, bind-mounted
 # into the receipts service's container: the directory must stay the same
 # inode) and `neo-cache/`.
@@ -43,10 +47,12 @@ for f in app/__init__.py app/hold/__init__.py app/hold/codex.py app/rage/__init_
   cp "/src/$f" "$P/$f"
 done
 cp /src/REVISION "$P/REVISION"
-python - "$P/vega.json" "$BACKEND" "$SOCKET" <<'PY'
+python - "$P/vega.json" "$BACKEND" "$SOCKET" "${CUTS:-tokenizer}" <<'PY'
 import json, sys
-path, backend, sock = sys.argv[1:]
-doc = {"backend": backend, "receipts_socket": sock,
+path, backend, sock, cuts = sys.argv[1:]
+# `cuts` (vega_wrapper.CUTS): how an input is cut to its tag's window —
+# llama.cpp by the wrapper with its tokenizer, louise-python by its tasks
+doc = {"backend": backend, "receipts_socket": sock, "cuts": cuts,
        "cards": {"0000:03:00.0": "Intel(R) Arc(TM) Pro B70 Graphics"}}
 open(path, "w").write(json.dumps(doc, indent=2) + "\n")
 PY

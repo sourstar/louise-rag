@@ -24,6 +24,25 @@ import backend_pb2_grpc
 
 HALFWAY = struct.unpack("<f", bytes.fromhex("fd43ae15"))[0]
 
+#: With $FAKE_TOKENIZER set, a word tokenizer as llama.cpp's backend answers
+#: one: TokenizeString without the special tokens, Detokenize as pieces that
+#: each begin with a space (a sentencepiece word start), and an Embedding
+#: that reports the tokens it evaluated, SPECIALS added. Without it,
+#: TokenizeString is not implemented, as in LocalAI's Python backends.
+SPECIALS = 2
+_vocab: dict[str, int] = {}
+_words: dict[int, str] = {}
+
+
+def _ids(text: str) -> list[int]:
+    out = []
+    for w in text.split():
+        if w not in _vocab:
+            _vocab[w] = len(_vocab) + 10
+            _words[_vocab[w]] = w
+        out.append(_vocab[w])
+    return out
+
 
 def note(context, **kw) -> None:
     md = {k: v for k, v in context.invocation_metadata() if k.startswith("x-")}
@@ -51,8 +70,21 @@ class Servicer(backend_pb2_grpc.BackendServicer):
             context.abort(grpc.StatusCode.FAILED_PRECONDITION, "no model is loaded")
         h = hashlib.sha256(request.Embeddings.encode("utf-8")).digest()
         vector = [(b - 128) / 256 for b in h[:5]] + [-0.0, HALFWAY, 0.1]
+        counted = len(_ids(request.Embeddings)) + SPECIALS if os.environ.get("FAKE_TOKENIZER") else 0
         return backend_pb2.EmbeddingResult(embeddings=vector, dim=len(vector), tokens=1,
+                                           prompt_tokens=counted,
                                            layout=backend_pb2.EMBEDDING_LAYOUT_FINAL)
+
+    def TokenizeString(self, request, context):  # noqa: N802
+        if not os.environ.get("FAKE_TOKENIZER"):
+            context.abort(grpc.StatusCode.UNIMPLEMENTED, "Method not implemented!")
+        note(context, method="TokenizeString", prompt=request.Prompt)
+        ids = _ids(request.Prompt)
+        return backend_pb2.TokenizationResponse(length=len(ids), tokens=ids)
+
+    def Detokenize(self, request, context):  # noqa: N802
+        note(context, method="Detokenize", tokens=list(request.tokens))
+        return backend_pb2.DetokenizeResponse(content="".join(" " + _words[t] for t in request.tokens))
 
     def Predict(self, request, context):  # noqa: N802
         note(context, method="Predict", prompt=request.Prompt)
