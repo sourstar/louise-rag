@@ -8,7 +8,7 @@
 # with its vega- model (as the node's, docs/notes/vega.md §13).
 #
 # Once:
-#   docker build -t louise-localai:rocm deploy/localai-desktop
+#   docker build -f deploy/localai-desktop/Dockerfile.localai -t louise-localai:rocm deploy/localai-desktop
 #   docker build -t louise-rag:local .                          # VeGa's image
 #   the weights, byte-identical to the node's, under LOUISE_WEIGHTS
 #     (llama-embed/, granite/, bge-m3/, chat/ — the node's /mnt/ssd5/apps/models)
