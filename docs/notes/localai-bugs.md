@@ -487,6 +487,14 @@ sha256 `daec91ff…`), over gRPC, on the 512 calibration texts:
   1,024 tokens (1,022 + the 2 specials), 339, 352 and 372 among them;
 - the same ids twice, the same bytes: 8 of 8.
 
+**On the AMD peer's RX 9060 XT** (2026-10-18, its session): `build.sh hipblas`
+with `AMDGPU_TARGETS=gfx1200` at 5193953 (series digest `724329e027f2`, as
+the SYCL build; 3.0 GB), installed as `louise-rocm-llama-cpp`, vega-llama-cpp
+rebuilt in front of it. `tools/vega_cut_scan` vega-bge-m3 at 1,024: 0 of 512
+refused (3 before P2). `tools/vega_repro_check`, 16 texts x 2 fresh loads x
+2 shuffled passes, bit-identical: vega-bge-m3 (`--window 1024`) 16/16,
+its CPU twin 16/16, vega-qwen3-embedding-4b 16/16.
+
 **Tokens against HF's** (bge-m3's `tokenizer.json`): 475 of 512 identical.
 The other 37 are one thing: the text ends with a space, and HF's tokenizer
 adds a trailing `▁` that llama.cpp, as SentencePiece, does not. The first
