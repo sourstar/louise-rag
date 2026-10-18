@@ -154,7 +154,30 @@ Notes:
   (2026-10-18: not in the container's env, any model's YAML, or any
   backend process). The deployed llama-server config had it
   (llama-intel-arc-b70 `embed-xpu-qwen3-8b.yaml`); the move to LocalAI
-  dropped it. Invariant 12 makes that a refused run.
+  dropped it. Invariant 12 makes that a refused run. Fixed by the P2
+  rollout the same evening (every llama.cpp `vega-` model sets it).
+
+**Cross-device bar: the CPU is the reference, 0.995 the review line**
+*(operator, 2026-10-18).* An engine on a card is compared, text by text,
+with a CPU twin of the same build and options (`gpu_layers: 0`,
+`no_op_offload:true`, the device hidden — `gpu_layers: 0` alone still
+offloads matmuls). A cosine **below 0.995 sends that engine to further
+review**; at or above it the precision gap between devices is accepted.
+This is a review line, not the space's `tolerance` (which calibration
+sets, 03 §3.1), and it says nothing about run-to-run identity, which is
+invariant 12 and must be exact.
+
+*Measured 2026-10-18, request 1* (bge-m3 F16, all 512 calibration texts,
+VeGa window 1024, LocalAI v4.11.0 + P1/P2 `louise-rocm-llama-cpp`, RX 9060
+XT; captures in `D:\louise-captures` on the dev PC):
+
+| | result |
+|---|---|
+| card, run to run | 512/512 bit-identical, 2 fresh loads x 2 shuffled orders |
+| CPU twin, run to run | 512/512 bit-identical, 1 load x 2 orders |
+| **card vs CPU twin** | worst **0.998362**, p1 0.999702, median 0.999999; below 0.999: 1 text; below 0.995: **none** — passes |
+| `tools/vega_cut_scan` at 1024 | 0 of 512 refused (3 before P2) |
+| granite, Qwen3-4B, Qwen3-8B, bge-m3 (`tools/vega_repro_check`) | 16/16 bit-identical each |
 
 **What this means for `tolerance`, which is the number it feeds.** The
 loosest HONEST deviation measured anywhere in this project is 4x10^-4 —
