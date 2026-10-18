@@ -333,3 +333,28 @@ fit only while nothing else runs.
 The deciding measurement for any of them is the same two numbers: NCBI's
 scores reproduced (Kendall tau against TEI or transformers on the same
 pairs), and 50 candidates inside the budget.
+
+## 13. Choosing reranker WEIGHTS — the August inventory (2026-08-29)
+
+Written then in a local working copy, never committed; landed 2026-10-18
+because none of it was recorded anywhere else. The node has served
+`bge-reranker-v2-m3` (`louise-rerank-bge`) since; this is what to know
+before adding any other.
+
+| model | license | GGUF from a trusted source | finding |
+|---|---|---|---|
+| **Qwen3-Reranker-0.6B** | Apache-2.0 | **yes** — `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF` | *measured* on the Arc: scores separate (0.482 vs 8e-6), the relevant passage first in English *and* for an Italian query against an English passage, 1.86 s for 40 passages x 2,000 chars |
+| Qwen3-Reranker-4B | Apache-2.0 | no | must be converted with `convert_hf_to_gguf.py`; ~5.8 s/query (*modelled* from measured embedder ratios) |
+| Qwen3-Reranker-8B | Apache-2.0 | no | as above; ~8.7 s/query (*modelled*) |
+| `BAAI/bge-reranker-v2-m3` | Apache-2.0 | yes (the node's f16 GGUF) | 100+ languages, one forward pass — the one chosen |
+| `jina-reranker-v2-base-multilingual` | **CC-BY-NC-4.0** | — | **ruled out**: non-commercial weights must not feed a published pack |
+
+- **Qwen publishes no GGUF for any reranker size** (unlike its embedders).
+  Of 45 community Qwen3-Reranker GGUF repos, only the 0.6B comes from
+  `ggml-org`.
+- **Community conversions often drop `cls.output.weight`** and then return
+  ~4.5e-23 for every document while answering 200 OK (llama.cpp #16407,
+  #17743). Any reranker GGUF must pass the two checks a broken one cannot
+  fake: **scores that separate, and the relevant passage first.**
+- The April 2026 timestamps on Qwen's reranker repos are README and
+  Sentence-Transformers commits, not new weights.

@@ -129,11 +129,11 @@ question)**
 | reading | value |
 |---|---|
 | endpoint | `llama.cpp` server, `Qwen3-Embedding-8B-Q4_K_M.gguf`, `-ngl 999 -np 4`, Intel Arc |
-| chunk size, this corpus | ~4,000 chars = **~3,528 tokens** per chunk |
-| server throughput | ~1,640 tokens/s across 2 concurrent requests (~2.15 s/chunk) |
-| `EMBED_CONCURRENCY` | 2 — while the server was started with **4 slots** |
+| chunk size, this corpus | ~4,000 chars = ~~~3,528 tokens~~ → **980 tokens** per chunk (*corrected 2026-08-29, measured*: counted with the production tokenizer over 40 real chunks, 3.96 chars/token; the 3,528 was inferred) |
+| server throughput | ~1,640 tokens/s across 2 concurrent requests (~2.15 s/chunk) — *as deployed then*; on the `-np 1` flags deployed 2026-08-27 **3,054–3,132 tokens/s = 3.1–3.2 chunks/s** (*measured*, llama-intel-arc-b70 `baselines/history.csv`) |
+| `EMBED_CONCURRENCY` | 2 — while the server was started with **4 slots** (overlapping requests on a multi-slot server corrupt vectors; `-np 1` since) |
 | remaining work | 63,764 documents = **7,182,952 chunks** (avg 113, max 13,003) |
-| projection at that rate | **~178 days** |
+| projection at that rate | ~~~178 days~~ → **~26 days** at 3.2 chunks/s (*modelled*; the 178 followed from both errors above) |
 
 Three conclusions, each of which cost a measurement:
 
@@ -150,12 +150,14 @@ Three conclusions, each of which cost a measurement:
    (conc 2 → 0.277 chunks/s, conc 4 → 0.275) says the server saturates
    near its 4 slots, NOT that concurrency does not help. The worker using
    2 of 4 slots is the readable fact, and it is the cheap thing to fix.
-3. **The bottleneck is the model, not the pipeline.** 7.18M chunks ×
-   ~3,528 tokens is ~25 billion tokens through an 8B embedder. No
-   scheduling change touches that number; only a smaller model, smaller
-   chunks, or more time will. Both of the first two change `space_id`
-   (invariant 1/3) and mean re-embedding — which is cheapest NOW, at 16 %
-   done, and never gets cheaper.
+3. ~~**The bottleneck is the model, not the pipeline.** 7.18M chunks ×
+   ~3,528 tokens is ~25 billion tokens through an 8B embedder.~~
+   **Corrected 2026-08-29 (measured; landed 2026-10-18): the opposite.**
+   At the real 980 tokens per chunk it is ~7 billion tokens, and the
+   encoder alone does 3.2 chunks/s against the pipeline's 0.47 — a 6.4x gap
+   that is NOT the GPU, the backend or the model. The lever is the
+   pipeline. A smaller model or smaller chunks would still change
+   `space_id` (invariant 1/3) and mean re-embedding.
 
 **An archive pass (wikivec, 18,020 documents / 100,000 vectors, ~150 s)**
 

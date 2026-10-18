@@ -44,6 +44,12 @@ obeyed. Name the amendment.
   ("Bitwise reproducibility, by vendor") FIRST.** The vendor's
   deterministic mode was documented there in August and missed in
   October on a new AMD peer and on the node's own SYCL LocalAI.
+- **MEASURING, BENCHMARKING OR TESTING ANYTHING — read
+  docs/notes/measuring.md FIRST and use its checklist (§6).** Use the
+  harness that already exists (`llama-intel-arc-b70`,
+  `llama-amd-rx-9060-xt`, `tools/vega_repro_check.py`), measure the
+  DEPLOYED flags and env, check that a doc's number was counted rather
+  than inferred, and watch free space — measurement is a writer.
 - Read the existing code in app/ for conventions before writing new modules.
 
 ## Invariants (violating any of these is a blocking bug)

@@ -9,10 +9,10 @@ now measured rather than guessed:
 | | |
 |---|---|
 | chunks in `gutenberg-2026-06` | **8,661,545** |
-| this node's encoder | ~0.47 chunks/s (Qwen3-Embedding-8B on one Arc) |
-| **one node embedding the whole pack** | **≈ 213 GPU-days** |
-| ten nodes, perfectly partitioned | ≈ 21 days each |
-| ten nodes, uncoordinated | up to 213 days each, for the same output |
+| this node's encoder | ~~~0.47 chunks/s~~ → **3.2 chunks/s** (Qwen3-Embedding-8B-Q4_K_M on one Arc, `-np 1`, client concurrency 1; *measured* 2026-08-28/29 by three harnesses within 2 %. The 0.47 was the PIPELINE's rate, 6.4x slower than the encoder; corrected in August, landed 2026-10-18) |
+| **one node embedding the whole pack** | ~~≈ 213 GPU-days~~ → **≈ 31 GPU-days** (*modelled* from the line above; gutenberg's current encoder, Qwen3-Embedding-4B, is faster still) |
+| ten nodes, perfectly partitioned | ≈ 3.1 days each |
+| ten nodes, uncoordinated | up to 31 days each, for the same output |
 
 The gap between the last two rows is the whole subject.
 
@@ -50,7 +50,7 @@ Ranked by how much community GPU time each costs:
 
 | source | cost | fixable by |
 |---|---|---|
-| **A re-pin of the space** (encoder, chunker, or cleaning version) | the ENTIRE corpus, ×every peer — 213 GPU-days per node, at once | discipline + layers/derived collections (§6) |
+| **A re-pin of the space** (encoder, chunker, or cleaning version) | the ENTIRE corpus, ×every peer — 31 GPU-days per node (modelled), at once | discipline + layers/derived collections (§6) |
 | **N peers each embedding the same corpus** | ×N | the coverage map (§3) + partitioning (§4) |
 | **Recomputing instead of importing**, because verifying someone else's vectors feels riskier than doing it yourself | ×(peers who distrust) | cheap verification, already designed |
 | **Work lost when a peer leaves mid-shard** | up to one shard per departure | publish partial work (§5) |
@@ -75,7 +75,10 @@ Gutenberg is not the hard case. Every collection on this node:
 | genome-dm6 / sacCer3 | 1,887 | 45,231 | 22 / 203 | 34,846 | — |
 | **total** | | **234,955,748** | | | |
 
-**5,786 GPU-days to embed all of it once** at this node's 0.47 chunks/s.
+~~5,786~~ **≈ 850 GPU-days to embed all of it once** at this node's 3.2
+chunks/s (*modelled*: the encoder's measured rate with Qwen3-Embedding-8B;
+the 5,786 used the pipeline's 0.47 — corrected in August, landed 2026-10-18).
+The ordering below does not change; only the scale shrinks ~6.8x.
 
 Three things follow that gutenberg alone would not have shown:
 

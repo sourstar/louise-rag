@@ -105,8 +105,10 @@ waste is zero and the verification is paid for. Bidding spends a
 protocol to eliminate duplicates that the trust model then has to
 recreate by hand.
 
-Scale, using the measured Gutenberg number (213 GPU-days for one node):
-a hundred peers under HRW with ε = 5 % spend 2.1 days each plus 5 % in
+Scale, using the Gutenberg number (≈ 31 GPU-days for one node — modelled
+from the encoder's measured 3.2 chunks/s; an earlier 213 came from the
+pipeline's rate, embedding-redundancy.md):
+a hundred peers under HRW with ε = 5 % spend 0.31 days each plus 5 % in
 attestations. Bidding reaches the same order with a stateful protocol,
 per-block polling, semi-synchronised clocks and a cascade of timeouts to
 tune. It buys nothing HRW does not give.
