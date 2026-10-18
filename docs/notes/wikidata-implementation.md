@@ -11,10 +11,11 @@ is built from what waits for a decision.*
 | | question | why it is the operator's | recommendation |
 |---|---|---|---|
 | **D1** | **Origin form.** HF corpus (`philippesaade/wikidata`, as designed) or the official Wikidata JSON dump of the same date? | Invariant 11: Wikimedia's cleaner drops `snaktype` (no value vs unknown value), statement ids, a property's `datatype`, sitelink badges, `modified`/`lastrevid`. "If you cannot decide, ASK." The 2026-05-07 dump is **gone** from dumps.wikimedia.org (the oldest entity dump listed on 2026-10-18 is 20260902; archive.org shows none). So: **with D2 = embed ourselves, the current official dump** (complete; twice a week upstream, so the collection can follow it monthly, where the HF corpus is a one-off). **With D2 = carry Wikimedia's texts, the HF corpus** (the same snapshot as their vectors), its losses on the card. |
-| **D2** | **The archive's vectors.** 85.7 % reproduce exactly; ~14 % are vectors of an older text (their cache keeps vectors of entities whose `modified` did not move). | Promise 8: carrying them all is a wrong artefact that passes every check. | **Ask Wikimedia for the chunk texts** (Philippe Saade, Wikidata talk:Embedding_Project): with them a `verbatim` layer carries 100 % (the wikivec precedent). Meanwhile embed nothing in bulk. Failing that, embed it ourselves (~34 nights at batch 32). |
+| **D2** | **The archive's vectors.** 85.7 % reproduce exactly; ~14 % are vectors of an older text (their cache keeps vectors of entities whose `modified` did not move). | Promise 8: carrying them all is a wrong artefact that passes every check. | **Ask Wikimedia for the chunk texts** (Philippe Saade, Wikidata talk:Embedding_Project): with them a `verbatim` layer carries 100 % (the wikivec precedent). Meanwhile embed nothing in bulk. Failing that, embed it ourselves (53.7 M chunks: ~41 nights at batch 32). |
 | **D3** | **Languages and layers.** An entity is one record in every language; the design adds languages one at a time. | Invariant 1: one chunker per layer, every document in exactly ONE layer; the chunker is in `space_id`. | One layer whose chunker cuts the record's text in each of a declared **language list** (a chunker parameter); chunk ids carry the language. A language added = a new chunker parameter = a new Codex in the lineage, with **amendment A-W1**: a chunker whose output for every record is a superset of its mother's (only new languages' chunks added) carries the mother's vectors as they are (RULE 1), and embeds only the new language. |
 | **D4** | **Dates and coordinates.** Their text formats them through a pinned Wikibase (`wbformatvalue`, mw1.44.0). | A chunker that calls a service is new to the platform. | The formatter as a **pinned image** the chunker runs beside it (digests in the chunker's parameters), deferral when it is unreachable (never an error on a document), and a Python port only if it is proven equal over every distinct value of the corpus. |
 | **D5** | **gutenberg-wd-kg's shape** (§4): an annotations collection, amended. | Wire format (09 §9.5, §9.14) and 02 §2.10. | Amendment A-K1..K4 below. |
+| **D6** | **A new dependency: `tokenizers`** (Hugging Face's, Rust, no torch) in the platform image. The chunker cuts at 1,024 tokens of jina-v3's tokenizer; the app has no real tokenizer today (`_est_tokens` is chars/4). | CLAUDE.md: new dependencies, ask first. | Add it, pinned. The alternative, asking the encoder backend to tokenize, makes chunking depend on the GPU service. |
 
 ## 2. wikidata — the mapping
 
@@ -77,10 +78,13 @@ re-fetch. What it lacks for this design, as named amendments:
   reproducible in principle; a check re-runs a sample and counts agreement.
   The tolerance is a measurement to make.
 
-Models: GLiNER — LocalAI's `vllm-cpp` gained GLiNER 2.5 on 2026-09-23 (PR
-#12140, after the v4.11.0 the node runs), or a `louise-python` task (torch,
-one backend per engine). Gemma 4 26B A4B Q8_0 — GGUF published (unsloth);
-~27 GB on the B70, so it runs alone, at night.
+Models (licences read from the Hub, 2026-10-18):
+- **GLiNER 2.5** (`fastino/gliner2.5-multi-v1` cf5593a, Apache-2.0). LocalAI's
+  `vllm-cpp` gained it on 2026-09-23 (PR #12140, after the v4.11.0 the node
+  runs). Alternatively a `louise-python` task (torch; one backend per engine).
+- **Gemma 4 26B A4B** (`google/gemma-4-26B-A4B-it` 4d7ae49, Apache-2.0;
+  `unsloth/gemma-4-26B-A4B-it-GGUF` c099eb4 has `gemma-4-26B-A4B-it-Q8_0.gguf`).
+  ~27 GB on the B70, so it runs alone, at night.
 
 Order: it needs the wikidata collection (entity linking searches its vectors),
 so it follows wikidata.

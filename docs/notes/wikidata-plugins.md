@@ -330,7 +330,7 @@ datasets actually hold, read from their rows and files:
 | | the design | measured | how |
 |---|---|---|---|
 | vector width | 1024 | **512**, float32 little-endian, unit norm | 10 rows (ar, en) decoded from `Wikidata_Vectors_0.2` through the datasets-server `rows` API: 2,048 bytes each, norm 1.000000. The dataset card agrees: "embedding size: 512" — jina-v3's Matryoshka cut, renormalised |
-| rows | 53.7M | 53.7M rows (viewer); the card's table says 44.57M vectors (en 21.13M, fr 10.66M, de 9.79M, ar 2.99M) — to reconcile from the files | |
+| rows | 53.7M | **53,666,646**: en 22,667,152 (227 files), fr 11,978,401 (120), de 11,180,375 (112), ar 7,840,718 (79). The card's table (44.57M) predates the July merges | every vector file's Parquet footer, read by HTTP Range |
 | row id | — | `<QID>_<lang>_<n>`, n from 1 per (entity, language) | WikidataTextEmbedding `main.py`: `_id = f"{item.id}_{LANG}_{i + 1}"` over `chunk_item_text(item, tokenizer, max_length=1024, lang)` |
 | chunk length | 8,192 tokens | **1,024 tokens** (jina-v3's tokenizer) | the same call |
 | entities with vectors | — | at least one Wikipedia sitelink; a label in the language (or `mul`); a description or a statement | the dataset card |
@@ -400,8 +400,8 @@ artefact promise 8 forbids. Ways out, for the operator:
    row's `content`; the public API does not return it). With the texts, a
    `verbatim` layer carries 100 %, the wikivec precedent.
 2. **Embed it ourselves** with their recipe: about 44.6 M chunks over the
-   four languages. One text per call measured 4.4 chunks/s on the B70, i.e.
-   ~117 days of continuous GPU. Batching should be several times faster,
+   four languages (53,666,646 rows). One text per call measured 4.4 chunks/s on the B70, i.e.
+   ~141 days of continuous GPU; batch 32 measured 45/s, ~14 days (~41 nights). Batching
    once jina's `torch.unique` overflow on XPU is worked round. Night hours
    only (quiet-hours), so months.
 3. **Carry, then re-embed everything over time to find the 14 %.** This
@@ -429,8 +429,8 @@ need `torch.unique` on the CPU, the XPU overflow's workaround):
 | fp32 | 4.6 texts/s | 21.7 | 45.0 (cosine to one-at-a-time ≥ 0.9999999) |
 | bf16 | 5.7 | 33.6 | 73.1 (drifts up to 1.4e-4) |
 
-At fp32 batch 32, embedding the four languages (~44.6 M chunks) is ~11.5 days
-of GPU, about 34 nights inside the quiet hours. LocalAI calls a backend one
+At fp32 batch 32, embedding the four languages (53.7 M chunks) is ~14 days
+of GPU, about 41 nights inside the quiet hours. LocalAI calls a backend one
 text at a time, so the batch has to be assembled inside the backend, from
 concurrent calls. Until then it is 4.6/s.
 
