@@ -68,6 +68,13 @@ it left open is below.
   `deploy/localai/llama-cpp/build.sh`, invariant 12 measured by
   `tools/vega_repro_check.py`, then the gate), with the operator present;
   the AMD peer builds `hipblas` the same way.
+  **Pubmed's corrected Codex is built** (2026-10-18, operator: "Yes";
+  "Remember rule 1"): Codex version 8 declares `space.cut = "tokens"` (inside
+  `space_id`), `dev carry --recut` crosses it (A1e), and
+  `tools/recipe_from_codex.py` rebuilds the live v6 Codex byte for byte before
+  making its token twin (space `504c1d34…`). On the node, by the operator, at
+  night and in order: `deploy-louise-cut.sh`, `rollout-p2.sh`,
+  `pubmed-v8.sh` — ~778 k local vectors re-embedded, the other 39.2 M carried.
 - **Wikipedia parser 5** (2026-10-18, [wikipedia-qids.md](wikipedia-qids.md)):
   the QIDs from each run's `page_props`, built and tested with `dev carry
   --resign` (A1d); the node still runs parser 4's Codex, and the switch's

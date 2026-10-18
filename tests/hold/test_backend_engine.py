@@ -167,12 +167,13 @@ def test_a_version_6_codex_without_a_backend_engine_is_refused():
 def test_an_unknown_codex_version_is_still_refused():
     d = _with(BACKEND, version=6).to_dict()
     # 7 is the annotations Codex since 2026-10-09 (02 §2.10): a version-6
-    # object relabelled 7 lacks `annotates` and is refused for that; 8 is unknown
+    # object relabelled 7 lacks `annotates` and is refused for that; 8 is the
+    # token cut's since 2026-10-18 (tests/hold/test_cut.py); 9 is unknown
     d["version"] = 7
     with pytest.raises(CodexError, match="missing field.*annotates"):
         cx.loads(canonical_json(d))
-    d["version"] = 8
-    with pytest.raises(CodexError, match="unsupported Codex version 8"):
+    d["version"] = 9
+    with pytest.raises(CodexError, match="unsupported Codex version 9"):
         cx.loads(canonical_json(d))
 
 

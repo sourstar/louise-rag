@@ -102,10 +102,13 @@ Counted on the node (the items longer than the character budget):
 | gutenberg | 8,192 | 0.95 | 10 of 512 (2 %) | only the few non-Latin chunks over 8,192 tokens, which LocalAI refused and Louise cut shorter (1609aa9). Its chunker is `fixed{1000, 120}` cutting at 4,000 CHARACTERS, kept byte-identical to the legacy `book` cut so its vectors carried (recipe, preflight item 2): no chunk ever reached the old budget. The tolerance stays 0.95 by decision: no second endpoint to measure one (one Arc, one model server; preflight item 5) |
 | normattiva | 8,192 | 0.95 | 10 of 512 (2 %) | the same |
 
-A corrected Codex for each: the reference recomputed through the fixed path
-(the space is unchanged — calibration is outside `space_id` — so the vector
-table is carried, A1), and only the local vectors whose input was cut embedded
-again. Wikipedia's comes with its parser-5 switch (wikipedia-qids.md §3),
+A corrected Codex for each: version 8, its space declaring `cut = "tokens"`
+(09 §9.3, *amended 2026-10-18*) — the cut is the function's, so it is INSIDE
+`space_id` and the corrected Codex is another space — the reference recomputed
+through the fixed path by `hold collection create`, and the vector table
+carried by amendment A1e (02 §2.4, `louise dev carry --recut`): the rows the
+character cut left whole and an archive's stay, and only the local vectors
+whose input was cut are embedded again. Wikipedia's comes with its parser-5 switch (wikipedia-qids.md §3),
 with its tolerance then measured across devices. Pubmed's then passes its
 `vectors-sample` again (73 of its 74 misses reproduce). On the node, with the
 operator: the counts of local vectors to re-embed are measured first.

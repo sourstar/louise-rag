@@ -354,9 +354,10 @@ def test_a_missing_field_is_refused(codex):
 
 
 def test_an_unknown_version_is_refused(codex):
-    # 7 is the annotations Codex since 2026-10-09 (02 §2.10); 8 is unknown
-    d = dict(codex.to_dict(), version=8)
-    with pytest.raises(CodexError, match="unsupported Codex version 8"):
+    # 7 is the annotations Codex since 2026-10-09 (02 §2.10), 8 the token
+    # cut's since 2026-10-18 (tests/hold/test_cut.py); 9 is unknown
+    d = dict(codex.to_dict(), version=9)
+    with pytest.raises(CodexError, match="unsupported Codex version 9"):
         cx.from_dict(d)
 
 

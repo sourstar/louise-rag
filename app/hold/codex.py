@@ -42,7 +42,7 @@ CODEX_VERSION = 5
 #: so inside `collection_id` — changing it does not upgrade a collection, it
 #: names a different one" (§9.3). So 1 and 2 are read forever and never
 #: rewritten.
-CODEX_VERSIONS = (1, 2, 3, 4, 5, 6, 7)
+CODEX_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8)
 
 #: THE ENGINE AMENDMENT (0d85f7f; 02 §2.4, 09 §9.3). From this version a
 #: space's encoder is `{weights, engine, label}`: the ENGINE the reference
@@ -97,6 +97,23 @@ BACKEND_VERSION = 6
 #: `collection_id` already written moves: below this version `annotates`
 #: is an unknown key, and from it the key is required and non-null.
 ANNOTATIONS_VERSION = 7
+
+#: THE CUT AMENDMENT (operator, 2026-10-18; 09 §9.3 `ctx` and `cut`, §9.18,
+#: docs/notes/char-cut-truncation.md). How an input longer than `ctx` is cut
+#: is part of the function its vector is of, so a space states it: `cut`
+#: `"tokens"` — the encoder cuts at `ctx` with the model's own tokenizer
+#: (VeGa's wrapper, the platform sending the input whole with `ctx` as its
+#: window), as 09 §9.3 always said a chunk is truncated. ABSENT below this
+#: version, never null, and absent means the platform's cut to about `ctx` x 4
+#: characters, which is how every space written before it was calibrated: no
+#: Codex, space or `collection_id` already written moves. Written for a Codex
+#: that declares the token cut ALONE, as BACKEND_VERSION is for a backend
+#: engine; inside `space_id` where present. Its engines are backend engines,
+#: since only VeGa's wrapper cuts by tokens (the platform holds no tokenizer,
+#: invariant 7). It is not an annotations Codex: `annotates` is version 7's.
+CUT_VERSION = 8
+#: The one value `cut` takes (09 §9.3); "characters" is what its absence means.
+TOKEN_CUT = "tokens"
 #: The plugin (uid prefix) of every annotations collection, as `deposit` is
 #: of every deposit collection; its relation types are `annotations:<type>`.
 ANNOTATIONS_PLUGIN = "annotations"
@@ -430,6 +447,9 @@ class Space:
     epoch: str = "0"         # "0" for a root; the mother's for a daughter or
                              # a sister; salted for a corrective sister
     evaluation: dict[str, Any] | None = None
+    #: TOKEN_CUT from CUT_VERSION; None — absent — below it: the platform's
+    #: character cut every space before 2026-10-18 was calibrated through
+    cut: str | None = None
 
     @property
     def has_engine(self) -> bool:
@@ -452,13 +472,17 @@ class Space:
                    for e in (self.encoder, self.query.encoder))
 
     def to_dict(self) -> dict[str, Any]:
-        return {"encoder": self.encoder.to_dict(), "dim": self.dim,
-                "dtype": self.dtype, "ctx": self.ctx, "pooling": self.pooling,
-                "normalise": self.normalise, "query": self.query.to_dict(),
-                "tolerance": self.tolerance,
-                "calibration": self.calibration.to_dict(self.has_engine),
-                "envelope": self.envelope, "epoch": self.epoch,
-                "evaluation": self.evaluation}
+        out = {"encoder": self.encoder.to_dict(), "dim": self.dim,
+               "dtype": self.dtype, "ctx": self.ctx, "pooling": self.pooling,
+               "normalise": self.normalise, "query": self.query.to_dict(),
+               "tolerance": self.tolerance,
+               "calibration": self.calibration.to_dict(self.has_engine),
+               "envelope": self.envelope, "epoch": self.epoch,
+               "evaluation": self.evaluation}
+        if self.cut is not None:
+            # ABSENT, never null, where the space declares none (CUT_VERSION)
+            out["cut"] = self.cut
+        return out
 
 
 @dataclass(frozen=True)
@@ -797,9 +821,9 @@ class Codex:
             # unknown key — so a version-1 Codex carrying it, even as
             # null, is a different object that no reader accepts.
             out["record_line"] = self.record_line
-        if self.version >= ANNOTATIONS_VERSION:
-            # ABSENT below it, never null: an older Codex carrying the key
-            # would be an object nobody else hashes the same (09 §9.18)
+        if self.version == ANNOTATIONS_VERSION:
+            # ABSENT at every other version, never null: a Codex carrying the
+            # key would be an object nobody else hashes the same (09 §9.18)
             out["annotates"] = None if self.annotates is None else self.annotates.to_dict()
         return out
 
@@ -859,13 +883,18 @@ class Codex:
         else:
             encoder = {"image": sp.encoder.image, "weights": sp.encoder.weights}
             query = sp.query.to_dict()
+        space: dict[str, Any] = {"ctx": sp.ctx, "dim": sp.dim, "dtype": sp.dtype,
+                                 "epoch": sp.epoch, "normalise": sp.normalise,
+                                 "pooling": sp.pooling, "query": query}
+        if sp.cut is not None:
+            # the cut is the function's (CUT_VERSION): inside where declared,
+            # absent where not, so no `space_id` already written moves
+            space["cut"] = sp.cut
         return digest(canonical_json({
             "cleaning_version": self.cleaning_version,
             "encoder": encoder,
             "layers": [l.to_dict() for l in self.layers],
-            "space": {"ctx": sp.ctx, "dim": sp.dim, "dtype": sp.dtype,
-                      "epoch": sp.epoch, "normalise": sp.normalise,
-                      "pooling": sp.pooling, "query": query},
+            "space": space,
         }))
 
     @property
@@ -926,6 +955,8 @@ def written_version(space: Space, version: int) -> int:
     Raising a version below INPUT_VERSION to 6 would add `input` to the
     layers and so move `space_id`; the callers that promise to keep a
     space (`derive` in her mother's space) refuse that case themselves."""
+    if space.cut is not None:
+        return CUT_VERSION                  # the token cut alone makes a Codex 8
     if space.has_backend:
         return BACKEND_VERSION
     if version >= BACKEND_VERSION:
@@ -1286,7 +1317,23 @@ def _validate_encoder_shape(codex: Codex) -> None:
         if not _DIGEST_RE.match(enc.weights):
             raise CodexError(f"{where}.weights must be a sha256: digest, got "
                              f"{enc.weights!r}")
-    if codex.version >= BACKEND_VERSION and not sp.has_backend:
+    # THE CUT (09 §9.3, CUT_VERSION): declared exactly at version 8, which is
+    # written for it alone; the cut is the encoder's, so its engines are
+    # backend engines behind VeGa's wrapper
+    if (sp.cut is not None) != (codex.version == CUT_VERSION):
+        raise CodexError(
+            f"space.cut is declared exactly in a version {CUT_VERSION} Codex, which is "
+            f"written for a space that declares the token cut alone (09 §9.3, §9.18); "
+            f"this version {codex.version} Codex "
+            f"{'declares it' if sp.cut is not None else 'does not'}")
+    if sp.cut is not None and sp.cut != TOKEN_CUT:
+        raise CodexError(f"space.cut is \"{TOKEN_CUT}\" (09 §9.3), got {sp.cut!r}")
+    if sp.cut is not None and not sp.has_backend:
+        raise CodexError(
+            "a space that cuts by tokens has the ENCODER cut, with the model's own "
+            "tokenizer — VeGa's wrapper, in front of a backend engine (09 §9.3); this one "
+            "names no backend engine, and the platform holds no tokenizer (invariant 7)")
+    if codex.version == BACKEND_VERSION and not sp.has_backend:
         # 09 §9.3, §9.18: version 6 is "written for a Codex that carries one
         # alone — every other is written at 5". A version-6 Codex with no
         # backend engine is an object no conforming writer produces: the
@@ -1712,9 +1759,9 @@ def from_dict(d: dict[str, Any]) -> Codex:
             "§9.3). A Codex already written stays 1 and cannot be moved: "
             "`version` is inside `collection_id`, so adding the key does not "
             "upgrade a collection, it names a different one")
-    _only(d, _TOP_V7 if version >= ANNOTATIONS_VERSION else _TOP if version >= 2 else _TOP_V1,
+    _only(d, _TOP_V7 if version == ANNOTATIONS_VERSION else _TOP if version >= 2 else _TOP_V1,
           "codex")
-    annotations = version >= ANNOTATIONS_VERSION
+    annotations = version == ANNOTATIONS_VERSION
     if (d["space"] is None or d["work"] is None) and not annotations:
         raise CodexError(f"space and work are null only on an annotations Codex "
                          f"(version {ANNOTATIONS_VERSION}, 09 §9.3)")
@@ -1734,7 +1781,14 @@ def from_dict(d: dict[str, Any]) -> Codex:
     if d["space"] is not None:
         sp = _only(d["space"], ("encoder", "dim", "dtype", "ctx", "pooling",
                                 "normalise", "query", "tolerance", "calibration",
-                                "envelope", "epoch", "evaluation"), "space")
+                                "envelope", "epoch", "evaluation")
+                   + (("cut",) if version >= CUT_VERSION else ()), "space")
+        # 09 §9.3: `cut` from version 8, required there; below it an unknown
+        # key, which `_only` has refused
+        if version >= CUT_VERSION and sp.get("cut") != TOKEN_CUT:
+            raise CodexError(f"a version {CUT_VERSION} Codex's space declares its cut, "
+                             f"\"cut\": \"{TOKEN_CUT}\" (09 §9.3); this one says "
+                             f"{sp.get('cut')!r}")
         # THE SHAPE FOLLOWS THE VERSION, checked where the file is read and not
         # only in `validate`: 09 §9.3 defines version 2 as "this object with
         # `space.encoder` … as `{image, weights, label}`", so a version-2 file
@@ -1872,6 +1926,7 @@ def _space(sp: dict[str, Any]) -> Space:
         calibration=Calibration(ca["set"], ca["vectors"], qm["n"], qm["min_pass"],
                                 ca.get("query_vectors")),
         envelope=sp["envelope"], epoch=sp["epoch"], evaluation=sp["evaluation"],
+        cut=sp.get("cut"),
     )
 
 

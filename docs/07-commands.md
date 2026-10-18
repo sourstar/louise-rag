@@ -202,7 +202,7 @@ louise dev                                                             operator 
   refs-sync            reference tables from their origins; writes
   genesis recheck <collection>                                         reopen final archive shards that still have documents the archive could serve; writes
   genesis recount <collection> [--yes]                                 an archive ledger's docs and chunks recounted from chunk_verification; writes only with --yes (added 2026-10-08)
-  carry <from> <to> [--copy] [--keep producer:<archive>] [--rebuilt|--reconcile|--resign] [--yes]  amendment A1 (02 §2.4): the manifest (after a TRUNCATE checkpoint), index/ and lance/ moved
+  carry <from> <to> [--copy] [--keep producer:<archive>] [--rebuilt|--reconcile|--resign|--recut] [--yes]  amendment A1 (02 §2.4): the manifest (after a TRUNCATE checkpoint), index/ and lance/ moved
                                                                        — or copied, reflinked where it can — into a collection with the same records whose space
                                                                        differs only by engine or input form, both write locks held; refused unless the agreement of
                                                                        `snapshot create --shards-from` holds, the space's function (weights, dim, dtype, ctx,
@@ -220,7 +220,10 @@ louise dev                                                             operator 
                                                                        the source holds no records: the target's own discovery once, every moved document taking its
                                                                        new locator and signature with txt_hash unset and every mark and vector kept, then a seeded
                                                                        sample re-cut by the target's parser must hold exactly the chunk texts the vector table holds
-                                                                       (exit 1 otherwise)
+                                                                       (exit 1 otherwise). --recut (A1e, 2026-10-18): the target's space differs only by cutting
+                                                                       by tokens; then every row over the source's ctx x 4 characters that no archive made is
+                                                                       dropped and its document embedded again, in one read of the table; a dense-script row
+                                                                       refuses it, nothing written
 ```
 
 `--dry-run`, `--json` and `--yes` are not shown per line; §7.7 says which

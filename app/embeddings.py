@@ -329,6 +329,12 @@ def _invalid(v) -> bool:
     return not v or any(x is None or not math.isfinite(x) for x in v)
 
 
+#: `_dense_script`'s ranges, for a reader that needs them as data (carry's
+#: recut, A1e); tests/hold/test_carry.py holds the two to each other
+DENSE_RANGES = ((0x3040, 0x30FF), (0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xAC00, 0xD7AF),
+                (0xF900, 0xFAFF), (0x20000, 0x2FA1F))
+
+
 def _dense_script(ch: str) -> bool:
     """Characters that cost roughly one token each rather than amortising
     over four: CJK ideographs, kana and hangul. Measured at 1.02 chars per
@@ -441,6 +447,14 @@ def _embed_batch(batch: list[Item], timeout: float,
     # calibration reference was made with: the cut is part of the function, and
     # changing it under a Codex made gutenberg's re-check fail on the node.
     vouched = recipe.api == VEGA and recipe.cut == TOKEN_CUT
+    if recipe.cut == TOKEN_CUT and not vouched:
+        # the cut a token space names is the ENCODER's (VeGa's wrapper); any
+        # other endpoint would get the character cut below, a vector of
+        # another function that passes every check — never sent (09 §9.3)
+        raise EndpointMisconfigured(
+            f"{recipe.url}: this space cuts by tokens, which the encoder does behind "
+            f"VeGa (`api = \"vega\"`, 09 §9.3), and its `[encoder]` names api "
+            f"{recipe.api!r}; nothing is embedded through it")
     for attempt in range(10):
         cut = list(batch) if vouched else [_cut(t, budget) for t in batch]
         try:
@@ -1894,6 +1908,17 @@ def search_records(query: str, depth: int, langs: list[str] | None = None, colle
     return leg_depth.to_records(
         lambda n: search(query, k=n, langs=langs, collection=collection, **restrict),
         depth, first=2 * depth)
+
+
+def scan_columns(collection, columns, batch_size: int = 65_536):
+    """The vector table's `columns`, a record batch at a time: ONE read of
+    the table, for a pass that must see every row (carry's recut, A1e) —
+    where a lookup per window of documents cost pubmed ~16 h (carry.py)."""
+    db = _conn(collection)
+    if TABLE not in db.table_names():
+        return
+    yield from db.open_table(TABLE).to_lance().to_batches(columns=list(columns),
+                                                          batch_size=batch_size)
 
 
 def stats(collection=None) -> dict:

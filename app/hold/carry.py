@@ -42,7 +42,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from .codex import Codex, CodexError
+from .codex import TOKEN_CUT, Codex, CodexError
 from .seed import latest_snapshot, refuse_unless_same_records
 
 MARKER = "carry.json"
@@ -72,7 +72,9 @@ def space_differences(a: Codex, b: Codex) -> list[str]:
                 "ctx": s.ctx, "pooling": s.pooling, "normalise": s.normalise,
                 "query.encoder.weights": q.encoder.weights if q.encoder else None,
                 "query.instruction": q.instruction, "epoch": s.epoch,
-                "cleaning_version": c.cleaning_version}
+                "cleaning_version": c.cleaning_version,
+                # the cut is the function's (Codex version 8): crossed by --recut alone
+                "cut": s.cut}
     fa, fb = fn(a), fn(b)
     return [k for k in fa if fa[k] != fb[k]]
 
@@ -217,7 +219,7 @@ def origin_only_adds(a: Codex, b: Codex) -> bool:
 
 
 def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool = False,
-          keep: str | None = None, rebuilt: bool = False,
+          keep: str | None = None, rebuilt: bool = False, recut: bool = False,
           log: Callable[[str], None] = print) -> dict[str, Any]:
     """Carry `from_ref`'s manifest, text index and vector table into `to_ref`
     (G1). `apply=False` checks everything and writes nothing.
@@ -251,6 +253,21 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
     diff = space_differences(src, to)
     if keep:
         diff = [d for d in diff if d not in WEIGHTS_WITH_KEEP]
+    if "cut" in diff:
+        if not recut:
+            raise CodexError(
+                f"carry: {to_name} cuts by {to.space.cut or 'characters'} and {from_name} by "
+                f"{src.space.cut or 'characters'}: the cut is part of the function (09 "
+                f"§9.3). Only `--recut` (A1e) crosses it, keeping the rows both cuts make "
+                f"alike and dropping the rest to be embedded again")
+        if src.space.cut is not None or to.space.cut != TOKEN_CUT:
+            raise CodexError(
+                "carry --recut: from a space cut by characters into one cut by tokens, "
+                "never the other way: a character cut is not reproducible (A1e)")
+        diff = [d for d in diff if d != "cut"]
+    elif recut:
+        raise CodexError(f"carry --recut: {from_name} and {to_name} cut alike; there is "
+                         f"nothing to recut")
     if diff:
         raise CodexError(
             f"carry: the spaces differ in {', '.join(diff)}. Amendment A1 lets a vector "
@@ -738,4 +755,127 @@ def keep_producer(root, to_ref: str, producer: str, *, window: int = WINDOW,
         raise CarryMismatch(
             f"{name}: the vector table holds {rows_now} rows and {state['kept']} were kept — "
             f"rows whose book_id is no document of the manifest were never visited")
+    return out
+
+
+# ---- A1e: the rows the character cut shortened --------------------------------
+
+#: An archive's rows (02 §2.4 A1b): made by its producer at the token cut the
+#: archive declares, never through this platform's character cut.
+ARCHIVE_PREFIX = "genesis:"
+#: Rows read from the vector table at a time, a few MB of text each.
+SCAN_ROWS = 65_536
+
+
+def _dense_pattern() -> str:
+    """embeddings._dense_script as an RE2 class: a batch holding one such
+    character was cut to a budget below `ctx` x 4 that nothing recorded."""
+    from app import embeddings
+    return "[" + "".join(rf"\x{{{lo:04X}}}-\x{{{hi:04X}}}"
+                         for lo, hi in embeddings.DENSE_RANGES) + "]"
+
+
+def recut(root, to_ref: str, *, budget: int, apply: bool = False, window: int = WINDOW,
+          log: Callable[[str], None] = print) -> dict[str, Any]:
+    """A1e (RULE 1, 2026-10-18): after a carry from a space cut by characters
+    into one cut by tokens, drop the rows the two cuts make unalike, and mark
+    their documents to be embedded again. A row is the same vector under both
+    when the character cut left its input whole: an input within `budget`
+    (the source's `ctx` x 4) went to the encoder whole, and the encoder cut it
+    at `ctx` itself — so a row longer than the budget is dropped, unless an
+    ARCHIVE made it (a `chunk_verification` row of a `genesis:` producer, A1b:
+    the archive cut by tokens). A row holding a dense-script character is the
+    case nothing decides — its batch's budget was lowered by an amount not
+    recorded, its neighbours' too — so finding one refuses the recut, nothing
+    written.
+
+    One read of the table (id, text), the drops then a window of documents at
+    a time: the reset committed first (a document marked not done whose rows
+    still exist is embedded again, never lost), the rows deleted under the
+    vector write lock. A second run recomputes what is left, so nothing needs
+    a cursor. The caller holds the target's write lock."""
+    import pyarrow.compute as pc
+
+    from . import collection as col, records as rec
+    from app import db, embeddings
+
+    root = Path(root)
+    name, codex = col.resolve(root, to_ref)
+    if codex.space is None or codex.space.cut != TOKEN_CUT:
+        raise CodexError(f"recut: {name} does not cut by tokens; there is nothing to recut")
+    coll = rec.local_collection(root, name, codex)
+    dense_re = _dense_pattern()
+    con = db.connect(coll)
+    try:
+        before = embeddings.stats(coll)["vectors"]
+        drop: list[str] = []
+        long_rows = archive_rows = dense_rows = 0
+        for part in embeddings.scan_columns(coll, ("id", "text"), batch_size=SCAN_ROWS):
+            text = part.column("text")
+            dense = pc.match_substring_regex(text, dense_re)
+            hit = pc.or_(pc.greater(pc.utf8_length(text), budget), dense)
+            ids = pc.filter(part.column("id"), hit).to_pylist()
+            if not ids:
+                continue
+            dense_ids = set(pc.filter(part.column("id"), dense).to_pylist())
+            archive: set[str] = set()
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                archive.update(r[0] for r in con.execute(
+                    f"SELECT chunk_id FROM chunk_verification WHERE chunk_id IN "
+                    f"({','.join('?' * len(chunk))}) AND producer LIKE ?",
+                    (*chunk, ARCHIVE_PREFIX + "%")))
+            long_rows += len(ids)
+            archive_rows += len(archive)
+            for c in ids:
+                if c in archive:
+                    continue
+                dense_rows += c in dense_ids
+                drop.append(c)
+        out: dict[str, Any] = {
+            "collection": name, "budget_chars": budget, "vectors": before,
+            "over_budget_or_dense": long_rows, "kept_archive": archive_rows,
+            "dense_not_archive": dense_rows, "to_drop": len(drop)}
+        if dense_rows:
+            raise CodexError(
+                f"recut: {name} holds {dense_rows} row(s) not an archive's with dense-script "
+                f"characters (CJK, kana, hangul): the character cut lowered their batch's "
+                f"budget by an amount nothing recorded, so which of their neighbours it "
+                f"shortened is unknown. Nothing was written ({out})")
+        if not apply:
+            log(f"[carry] {name}: --recut would drop {len(drop)} row(s) the character cut "
+                f"shortened (over {budget} characters, not an archive's) and embed their "
+                f"documents again; {archive_rows} archive row(s) over it stay; nothing "
+                f"written (--yes)")
+            return {**out, "apply": False}
+        drop.sort()
+        reset = 0
+        for i in range(0, len(drop), window):
+            part_ids = drop[i:i + window]
+            uids = sorted({c.rsplit(":", 2)[0] for c in part_ids})
+            # step 1: the documents marked not done FIRST; a bundle's provenance
+            # of the dropped rows goes with them (ledger.clear_verification)
+            con.execute("BEGIN IMMEDIATE")
+            con.execute(f"UPDATE documents SET embed_done=0 WHERE uid IN "
+                        f"({','.join('?' * len(uids))})", uids)
+            con.execute(f"DELETE FROM chunk_verification WHERE chunk_id IN "
+                        f"({','.join('?' * len(part_ids))})", part_ids)
+            con.execute("COMMIT")
+            reset += len(uids)
+            # step 2: the rows, under the vector write lock
+            embeddings.delete_chunks(part_ids, collection=coll, lock_con=con)
+            if (i // window) % 200 == 0:
+                log(f"[carry] {name}: recut {i + len(part_ids)}/{len(drop)} row(s)")
+    finally:
+        con.close()
+    rows_now = embeddings.stats(coll)["vectors"]
+    out.update(apply=True, dropped=len(drop), documents_reset=reset, vectors_now=rows_now,
+               verified=rows_now == before - len(drop))
+    log(f"[carry] {name}: dropped {len(drop)} row(s) the character cut shortened, {reset} "
+        f"document(s) to embed again; the table holds {rows_now} (was {before}). Before use: "
+        f"`hold check {name} --checks vectors-sample` (A1e)")
+    if not out["verified"]:
+        raise CarryMismatch(
+            f"{name}: the table holds {rows_now} rows, {before} - {len(drop)} expected; run "
+            f"the recut again (it recomputes what is left)")
     return out

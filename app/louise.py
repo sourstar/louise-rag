@@ -34,7 +34,7 @@
     louise hold config show|apply [<collection>]
     louise node health [<collection>] [--errors]
     louise dev genesis recheck <collection> | recount <collection> [--yes]
-    louise dev carry <from> <to> [--copy] [--keep producer:ARCHIVE] [--rebuilt|--reconcile|--resign] [--yes]
+    louise dev carry <from> <to> [--copy] [--keep producer:ARCHIVE] [--rebuilt|--reconcile|--resign|--recut] [--yes]
 
 The previous tree (`python -m app.cli`, 07 §7.6) is retired (2026-10-08):
 every name it had that is still useful is one of these.
@@ -660,9 +660,12 @@ def _embed_for_recipe(space: dict, url: str | None, model: str | None = None, *,
         raise CodexError(f"the encoder at {url} names no model (…/upstream/<model>) and "
                          f"none was given: name it (--embed-model, 07 §7.8). Nothing "
                          f"was created")
+    # THE CUT IS THE SPACE'S (09 §9.3, Codex version 8): the reference vectors
+    # are made through the cut the recipe declares, or they name other inputs
     recipe = collections_mod.EmbedRecipe(
         url=url, api=api, model=model,
-        dtype=space["dtype"], ctx=space["ctx"], dim=space["dim"])
+        dtype=space["dtype"], ctx=space["ctx"], dim=space["dim"],
+        cut=space.get("cut") or "characters")
     # G5: an endpoint that states its runs — VeGa's receipts — is held to
     # the engine and weights the recipe names, checked before the Codex exists
     vouched = api == embeddings.VEGA
@@ -1052,9 +1055,19 @@ def cmd_dev_carry(a) -> int:
             return 0
         _print({"resign": carry_mod.resign(a.root, from_name, to_name, log=say)})
         return 0
+    recut = getattr(a, "recut", False)
+    if recut and (producer or getattr(a, "rebuilt", False)):
+        raise CodexError("--recut stands alone: it drops the rows the character cut "
+                         "shortened, and keeps every other (A1e)")
     out = {"carry": carry_mod.carry(a.root, from_name, to_name, copy=a.copy,
                                     apply=a.yes, keep=producer,
-                                    rebuilt=getattr(a, "rebuilt", False), log=say)}
+                                    rebuilt=getattr(a, "rebuilt", False), recut=recut,
+                                    log=say)}
+    if recut:
+        # the SOURCE's budget: the character cut its rows went through
+        _, src_codex = col.resolve(a.root, from_name)
+        out["recut"] = carry_mod.recut(a.root, to_name, budget=src_codex.space.ctx * 4,
+                                       apply=a.yes, log=say)
     if producer and a.yes:
         out["keep"] = carry_mod.keep_producer(a.root, to_name, producer, log=say)
     elif producer:
@@ -4095,6 +4108,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rebuilt", action="store_true",
                    help="the target's records are built, not seeded: only its parser and image "
                         "differ (A1c); then `--reconcile` after its build and snapshot")
+    p.add_argument("--recut", action="store_true",
+                   help="into a space that differs only by cutting by tokens (A1e): then drop "
+                        "the rows the character cut shortened, not an archive's, and embed "
+                        "their documents again")
     p.add_argument("--reconcile", action="store_true",
                    help="after `--rebuilt`, the build and the snapshot: keep the vectors of "
                         "every document whose content_hash did not move, embed the rest again")

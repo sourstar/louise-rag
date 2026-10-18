@@ -466,7 +466,8 @@ different input:
 
 ```
 space_id = H(canonical-json({encoder: {weights}, layers, cleaning_version,
-                             space: {dim, dtype, ctx, pooling, normalise, query, epoch}}))
+                             space: {dim, dtype, ctx, pooling, normalise, query, epoch,
+                                     cut where declared}}))
 ```
 
 Not `tolerance`, not `calibration`, not `envelope`, not `work`: those
@@ -640,7 +641,19 @@ the target's parser and layers, must hold byte for byte the chunk texts the
 vector table holds, or the carry is refused. Wikipedia's parser 5 is the
 case: each record holds its page's rows of the dump run's `page_props`
 (docs/notes/wikipedia-qids.md), no record had ever been built, and its
-52.9M documents keep their marks and their vectors.
+52.9M documents keep their marks and their vectors. *Amendment A1e (RULE 1,
+2026-10-18):* the space may also differ by its CUT, from the platform's
+character cut into the token cut (09 §9.3 `cut`; docs/notes/char-cut-truncation.md),
+and only that way. A row is the same vector under both where the character
+cut left its input whole — an input within `ctx` x 4 characters went to the
+encoder whole, and the encoder cut it at `ctx` itself — and an archive's rows
+were made at the token cut the archive declares (A1b). Those stay; every
+other row over the budget is dropped and its document embedded again (`louise
+dev carry --recut`), and a row holding a dense-script character refuses the
+recut, since its batch's budget was lowered by an amount nothing recorded;
+`vectors-sample` passes before use, as for any carry. PubMed is the case:
+of its 40.0M vectors, NCBI's 35.4M and the local ones within the budget stay,
+and ~778k are embedded again.
 
 The **calibration** block is the contract for anyone who wants to
 contribute vectors. The calibration set is corpus-independent: a fixed
