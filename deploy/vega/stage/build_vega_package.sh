@@ -18,8 +18,18 @@
 # A rebuild replaces everything but `run/` (the receipts socket, bind-mounted
 # into the receipts service's container: the directory must stay the same
 # inode) and `neo-cache/`.
+#
+# The card and its runtime default to the node's Arc. Another host passes
+# them (the dev PC's RX 9060 XT under WSL2, deploy/localai-desktop):
+#   -e CARDS='{"0000:03:00.0": "AMD Radeon RX 9060 XT"}' \
+#   -e RUNTIME_PACKAGES='["hip-runtime-amd", "hsa-rocr", "rocdxg-roct"]' \
+#   -e AMD_SMI=/opt/rocm-wsl/bin/amd-smi -e OWNER=0:0
 set -eu
 : "${PKG:?}" "${BACKEND:?}" "${SOCKET:?}"
+CARDS=${CARDS:-'{"0000:03:00.0": "Intel(R) Arc(TM) Pro B70 Graphics"}'}
+RUNTIME_PACKAGES=${RUNTIME_PACKAGES:-}
+AMD_SMI=${AMD_SMI:-}
+OWNER=${OWNER:-568:0}
 P=/backends/$PKG
 test -d "$P"
 find "$P" -mindepth 1 -maxdepth 1 ! -name run ! -name neo-cache -exec rm -rf {} +
@@ -42,18 +52,22 @@ cp /src/deploy/vega/run.sh /src/deploy/vega/vega_wrapper.py /src/deploy/vega/req
 chmod 0755 "$P/run.sh"
 for f in app/__init__.py app/hold/__init__.py app/hold/codex.py app/rage/__init__.py \
          app/rage/model.py app/rage/procfs.py app/rage/runs.py app/rage/loadopts.py \
-         app/vega/__init__.py app/vega/tag.py; do
+         app/rage/dxg.py app/vega/__init__.py app/vega/tag.py; do
   mkdir -p "$P/$(dirname "$f")"
   cp "/src/$f" "$P/$f"
 done
 cp /src/REVISION "$P/REVISION"
-python - "$P/vega.json" "$BACKEND" "$SOCKET" "${CUTS:-tokenizer}" <<'PY'
+python - "$P/vega.json" "$BACKEND" "$SOCKET" "${CUTS:-tokenizer}" "$CARDS" \
+         "$RUNTIME_PACKAGES" "$AMD_SMI" <<'PY'
 import json, sys
-path, backend, sock, cuts = sys.argv[1:]
+path, backend, sock, cuts, cards, packages, amd_smi = sys.argv[1:]
 # `cuts` (vega_wrapper.CUTS): how an input is cut to its tag's window —
 # llama.cpp by the wrapper with its tokenizer, louise-python by its tasks
-doc = {"backend": backend, "receipts_socket": sock, "cuts": cuts,
-       "cards": {"0000:03:00.0": "Intel(R) Arc(TM) Pro B70 Graphics"}}
+doc = {"backend": backend, "receipts_socket": sock, "cuts": cuts, "cards": json.loads(cards)}
+if packages:
+    doc["runtime_packages"] = json.loads(packages)
+if amd_smi:
+    doc["amd_smi"] = amd_smi
 open(path, "w").write(json.dumps(doc, indent=2) + "\n")
 PY
 printf '{"name": "%s"}\n' "$PKG" > "$P/metadata.json"
@@ -74,5 +88,5 @@ find "$P" -name __pycache__ -type d -prune -exec rm -rf {} +
 # it (vega-louise-dar-legal-it: run 85b9fa1a… became 651c4ec0…). A few
 # stdlib test files do not compile, as everywhere.
 "$P/venv/bin/python" -m compileall -q -j 0 "$P" >/dev/null 2>&1 || true
-find "$P" -path "$P/run" -prune -o -exec chown 568:0 {} +
+find "$P" -path "$P/run" -prune -o -exec chown "$OWNER" {} +
 du -sh "$P"

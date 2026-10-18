@@ -69,9 +69,9 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from app.hold.codex import canonical_json, digest
-from app.rage import loadopts, runs
+from app.rage import dxg, loadopts, runs
 from app.rage.model import CPU
-from app.rage.procfs import ProcFS
+from app.rage.procfs import WSL_GPU, ProcFS
 from app.vega import tag as vtag
 
 LOAD = "/backend.Backend/LoadModel"
@@ -166,20 +166,24 @@ class Config:
     cards: Mapping[str, str] = field(default_factory=dict)   # PCI address -> device name
     runtime_packages: tuple[str, ...] = RUNTIME_PACKAGES
     cuts: str = TOKENIZER
+    amd_smi: Path | None = None           # WSL2: the dxg build of amd-smi (app/rage/dxg.py)
 
 
 def load_config(path: Path, backends_root: Path) -> Config:
     """vega.json: `backend` (a directory name under LocalAI's backends path,
     or absolute), `receipts_socket`, `cards` ({PCI address: the device as its
-    driver names it, 09 §9.3}) and optionally `runtime_packages` and `cuts`
-    (`CUTS`; `tokenizer` by default)."""
+    driver names it, 09 §9.3}) and optionally `runtime_packages`, `cuts`
+    (`CUTS`; `tokenizer` by default) and `amd_smi` (the absolute path of the
+    dxg build of amd-smi, on a host whose card is WSL's /dev/dxg; without it
+    such a backend states no run)."""
     try:
         doc = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         raise ConfigError(f"cannot read {path}: {type(e).__name__}: {e}") from None
     if not isinstance(doc, dict):
         raise ConfigError(f"{path} is a JSON object")
-    unknown = set(doc) - {"backend", "receipts_socket", "cards", "runtime_packages", "cuts"}
+    unknown = set(doc) - {"backend", "receipts_socket", "cards", "runtime_packages", "cuts",
+                          "amd_smi"}
     if unknown:
         raise ConfigError(f"{path}: unknown key(s) {sorted(unknown)}")
     backend, sock = doc.get("backend"), doc.get("receipts_socket")
@@ -199,9 +203,14 @@ def load_config(path: Path, backends_root: Path) -> Config:
     cuts = doc.get("cuts", TOKENIZER)
     if cuts not in CUTS:
         raise ConfigError(f"{path}: `cuts` is one of {', '.join(CUTS)}")
+    amd_smi = doc.get("amd_smi")
+    if amd_smi is not None and not (isinstance(amd_smi, str) and amd_smi.startswith("/")):
+        raise ConfigError(f"{path}: `amd_smi` is the absolute path of the dxg build of "
+                          f"amd-smi (/opt/rocm-wsl/bin/amd-smi)")
     directory = Path(backend) if backend.startswith("/") else Path(backends_root) / backend
     return Config(backend=directory, socket=Path(sock), cards=dict(cards),
-                  runtime_packages=tuple(packages), cuts=cuts)
+                  runtime_packages=tuple(packages), cuts=cuts,
+                  amd_smi=Path(amd_smi) if amd_smi else None)
 
 
 @dataclass(frozen=True)
@@ -487,15 +496,23 @@ def family(pid: int, proc_root: Path = Path("/proc")) -> list[int]:
     return out
 
 
-def device_of(pids: list[int], cards: Mapping[str, str], procfs: ProcFS) -> tuple[str, str | None]:
+def device_of(pids: list[int], cards: Mapping[str, str], procfs: ProcFS,
+              dxg_clients: Callable[[], Mapping[int, str]] | None = None
+              ) -> tuple[str, str | None]:
     """(the device as its driver names it, its PCI address) of the card the
     processes hold memory on; (cpu, None) when they hold none. Read, never
-    declared: a backend that fell back to the CPU states a CPU run."""
+    declared: a backend that fell back to the CPU states a CPU run.
+
+    A backend on WSL's `/dev/dxg` has no DRM clients to read; with
+    `dxg_clients` (vega.json's `amd_smi`, app/rage/dxg.py) its card is the
+    one the Windows driver lists it a client of — `device_on_dxg`."""
     on: dict[str | None, int] = {}
     for i, pid in enumerate(pids):
         held = procfs.card_mib_by_device(pid)
         if held is None:
             if i == 0:
+                if dxg_clients is not None and procfs.holds(pid, WSL_GPU):
+                    return device_on_dxg(pids, cards, dxg_clients())
                 raise loadopts.Unstatable("which card the backend is on cannot be read: its "
                                           "DRM clients are not visible in /proc")
             continue                                  # a descendant gone since it was listed
@@ -516,6 +533,26 @@ def device_of(pids: list[int], cards: Mapping[str, str], procfs: ProcFS) -> tupl
                                   "vega.json names several cards")
     if pdev not in cards:
         raise loadopts.Unstatable(f"the backend holds memory on the card at {pdev}, which "
+                                  f"vega.json's `cards` names no device for")
+    return cards[pdev], pdev
+
+
+def device_on_dxg(pids: list[int], cards: Mapping[str, str],
+                  clients: Mapping[int, str]) -> tuple[str, str]:
+    """The card of a backend on `/dev/dxg`: the one the driver lists one of
+    its processes as a client of (`dxg.clients`). Holding the device is not
+    enough — a backend that opened it and runs on the CPU is listed on no
+    card, and is refused rather than stated as a CPU run it may not be."""
+    on = {clients[p] for p in pids if p in clients}
+    if not on:
+        raise loadopts.Unstatable("the backend holds /dev/dxg, but the driver lists none of "
+                                  "its processes as a client of a card")
+    if len(on) > 1 or "several" in on:
+        raise loadopts.Unstatable(f"the driver lists the backend on several cards "
+                                  f"({sorted(on)}); a run is on one device")
+    (pdev,) = on
+    if pdev not in cards:
+        raise loadopts.Unstatable(f"the driver lists the backend on the card at {pdev}, which "
                                   f"vega.json's `cards` names no device for")
     return cards[pdev], pdev
 
@@ -557,8 +594,8 @@ def load_options(pb: Any, raw: bytes) -> loadopts.Canon:
 
 def state_run(*, backend: RealBackend, canon: loadopts.Canon, environ: Mapping[str, str],
               device: str, pci: str | None, weights: str, tree: str, runtime: list[str],
-              sys_root: Path = Path("/sys"), proc_root: Path = Path("/proc")
-              ) -> tuple[str, dict[str, Any]]:
+              sys_root: Path = Path("/sys"), proc_root: Path = Path("/proc"),
+              card_driver_line: str | None = None) -> tuple[str, dict[str, Any]]:
     """(run_id, run) of 09 §9.12, from what this wrapper launched: `tree` the
     backend's tree digest read at this load, `runtime` the driver lines
     (`driver_lines`, or dpkg's `runtime_lines` for a backend carrying none).
@@ -569,7 +606,8 @@ def state_run(*, backend: RealBackend, canon: loadopts.Canon, environ: Mapping[s
         raise loadopts.Unstatable(f"the backend does not carry the environment it was loaded "
                                   f"with: {', '.join(missing)}")
     driver = runs.driver_string(CPU if device == CPU else "card", pci=pci, sys_root=sys_root,
-                                proc_root=proc_root, runtime_lines=runtime)
+                                proc_root=proc_root, runtime_lines=runtime,
+                                card_driver_line=card_driver_line)
     engine = {"name": f"localai/{backend.name}",
               "build": backend.version or short_build(tree), "variant": None,
               "image": tree,
@@ -750,13 +788,15 @@ class Gate:
                  hash_weights: Callable[[Path], str] = runs.weights_digest,
                  procfs: ProcFS | None = None, proc_root: Path = Path("/proc"),
                  sys_root: Path = Path("/sys"), dpkg_status: Path = Path("/var/lib/dpkg/status"),
-                 files: FileDigests | None = None) -> None:
+                 files: FileDigests | None = None, amd_smi: dxg.AmdSmi | None = None) -> None:
         self.cfg, self.backend, self.child, self.receipts, self.pb = cfg, backend, child, receipts, pb
         self.environ = os.environ if environ is None else environ
         self.hash_weights = hash_weights
         self.files = files if files is not None else FileDigests()
         self.procfs = procfs or ProcFS(proc_root)
         self.proc_root, self.sys_root, self.dpkg_status = proc_root, sys_root, dpkg_status
+        self.amd_smi = amd_smi if amd_smi is not None else (
+            dxg.runner(cfg.amd_smi) if cfg.amd_smi else None)
         self.loaded: Loaded | None = None
         self._load_lock = threading.Lock()
 
@@ -812,7 +852,13 @@ class Gate:
                         raise loadopts.Unstatable(f"the {key} digest cannot be computed: "
                                                   f"{hashed[f'{key} error']}")
                 pids = family(self.child.pid, self.proc_root)
-                device, pci = device_of(pids, self.cfg.cards, self.procfs)
+                amd_smi = self.amd_smi
+                device, pci = device_of(
+                    pids, self.cfg.cards, self.procfs,
+                    None if amd_smi is None else lambda: dxg.clients(amd_smi, self.proc_root))
+                card_driver_line = (dxg.driver_line(amd_smi, pci)
+                                    if amd_smi is not None and pci and device != CPU
+                                    and self.procfs.holds(self.child.pid, WSL_GPU) else None)
                 runtime: list[str] = []
                 if device != CPU:
                     libraries = driver_libraries(self.backend.directory, pids, self.environ,
@@ -822,10 +868,11 @@ class Gate:
                 run_id, run = state_run(
                     backend=self.backend, canon=canon, environ=self.environ, device=device,
                     pci=pci, weights=hashed["weights"], tree=hashed["tree"], runtime=runtime,
-                    sys_root=self.sys_root, proc_root=self.proc_root)
+                    sys_root=self.sys_root, proc_root=self.proc_root,
+                    card_driver_line=card_driver_line)
                 if not self.child.alive():
                     raise loadopts.Unstatable("the backend exited while its run was computed")
-            except (loadopts.Unstatable, runs.DriverUnknown, OSError) as e:
+            except (loadopts.Unstatable, runs.DriverUnknown, dxg.DxgUnreadable, OSError) as e:
                 return self._refuse_load(e)
             try:
                 context_size = int(self.pb.ModelOptions.FromString(raw).ContextSize)

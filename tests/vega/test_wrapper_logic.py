@@ -366,6 +366,47 @@ def test_the_device_is_read_from_the_cards_the_family_holds():
         vw.device_of([1], cards, FakeProc({}))
 
 
+class FakeDxgProc(FakeProc):
+    """A family whose first process holds WSL's /dev/dxg: no DRM clients."""
+    def __init__(self, on_dxg):
+        super().__init__({})
+        self.on_dxg = on_dxg
+
+    def holds(self, pid, device):
+        return device == "/dev/dxg" and pid in self.on_dxg
+
+
+def test_on_wsls_gpu_the_card_is_the_one_the_driver_lists_the_backend_on():
+    cards = {"0000:03:00.0": "AMD Radeon RX 9060 XT"}
+    proc = FakeDxgProc({1})
+    assert vw.device_of([1, 2], cards, proc, lambda: {2: "0000:03:00.0", 77: "0000:03:00.0"}) \
+        == ("AMD Radeon RX 9060 XT", "0000:03:00.0")
+    with pytest.raises(loadopts.Unstatable, match="lists none of its processes"):
+        vw.device_of([1], cards, proc, lambda: {77: "0000:03:00.0"})
+    with pytest.raises(loadopts.Unstatable, match="several cards"):
+        vw.device_of([1], cards, proc, lambda: {1: "several"})
+    with pytest.raises(loadopts.Unstatable, match="names no device"):
+        vw.device_of([1], cards, proc, lambda: {1: "0000:04:00.0"})
+
+
+def test_on_wsls_gpu_without_amd_smi_no_run_is_stated_as_before():
+    cards = {"0000:03:00.0": "AMD Radeon RX 9060 XT"}
+    with pytest.raises(loadopts.Unstatable, match="cannot be read"):
+        vw.device_of([1], cards, FakeDxgProc({1}))
+    # a process that does not hold /dev/dxg is never asked about
+    with pytest.raises(loadopts.Unstatable, match="cannot be read"):
+        vw.device_of([1], cards, FakeDxgProc(set()), lambda: {1: "0000:03:00.0"})
+
+
+def test_the_config_names_amd_smi_by_absolute_path(tmp_path):
+    cfg = vw.load_config(_config(tmp_path, amd_smi="/opt/rocm-wsl/bin/amd-smi"),
+                         tmp_path / "backends")
+    assert cfg.amd_smi == Path("/opt/rocm-wsl/bin/amd-smi")
+    assert vw.load_config(_config(tmp_path), tmp_path / "backends").amd_smi is None
+    with pytest.raises(vw.ConfigError, match="amd_smi"):
+        vw.load_config(_config(tmp_path, amd_smi="amd-smi"), tmp_path / "backends")
+
+
 #: ModelOptions as protojson with proto names, unset fields omitted: P1's form
 LOAD = json.dumps({"Model": "bge-m3.gguf", "ModelFile": "/models/bge-m3.gguf",
                    "ModelPath": "/models", "ContextSize": 8192, "Embeddings": True,

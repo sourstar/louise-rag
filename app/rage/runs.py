@@ -131,7 +131,8 @@ def card_driver(pci: str, *, sys_root: Path = Path("/sys")) -> str:
 def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path("/sys"),
                   proc_root: Path = Path("/proc"),
                   runtime_versions: Path = Path("/etc/rage/runtime-versions"),
-                  runtime_lines: list[str] | None = None) -> str:
+                  runtime_lines: list[str] | None = None,
+                  card_driver_line: str | None = None) -> str:
     """The device's kernel driver and compute runtime, with versions, as
     this platform reads them; `"cpu"` on a CPU (09 §9.12).
 
@@ -152,7 +153,12 @@ def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path(
     version` a line, and read back here — no package manager runs at start.
     `runtime_lines` gives those lines instead, for a caller that reads them
     elsewhere: VeGa's wrapper, in LocalAI's image, which RAGE did not build
-    (deploy/vega/vega_wrapper.py reads dpkg's status file)."""
+    (deploy/vega/vega_wrapper.py reads dpkg's status file).
+
+    `card_driver_line` is the card's driver as read where sysfs has no PCI
+    bus: under WSL2 the card is `/dev/dxg` and its driver is Windows',
+    which app/rage/dxg.py reads from amd-smi (`dxg <version>`). It stands in
+    for the bound module, never beside it."""
     if device == CPU:
         return CPU
 
@@ -163,8 +169,12 @@ def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path(
             return None
 
     parts = [f"kernel {first_line(proc_root / 'sys/kernel/osrelease') or 'unknown'}"]
-    if pci:
-        module: str | None = card_driver(pci, sys_root=sys_root)
+    module: str | None
+    if card_driver_line:
+        parts.append(card_driver_line)
+        module = None
+    elif pci:
+        module = card_driver(pci, sys_root=sys_root)
     else:
         loaded = [m for m in GPU_MODULES if (sys_root / "module" / m).is_dir()]
         if len(loaded) > 1:

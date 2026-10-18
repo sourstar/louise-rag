@@ -94,7 +94,7 @@ class ProcFS:
             infos = list((self.root / str(pid) / "fdinfo").iterdir())
         except OSError:
             return None
-        if self._holds(pid, WSL_GPU):
+        if self.holds(pid, WSL_GPU):
             return None
         clients: dict[str, tuple[str | None, int]] = {}
         for info in infos:
@@ -114,8 +114,9 @@ class ProcFS:
             out[pdev] = out.get(pdev, 0) + held // MIB
         return out
 
-    def _holds(self, pid: int, device: str) -> bool:
-        """Whether one of the process's descriptors points at `device`."""
+    def holds(self, pid: int, device: str) -> bool:
+        """Whether one of the process's descriptors points at `device`
+        (`WSL_GPU`: the card is then read by app/rage/dxg.py, not here)."""
         try:
             fds = list((self.root / str(pid) / "fd").iterdir())
         except OSError:
