@@ -202,12 +202,18 @@ digest. The wrapper cuts as its `vega.json` says (`cuts`): `tokenizer`, the
 default — llama.cpp embeds whatever it is given — with the backend's
 `TokenizeString`, keeping the first `window − specials` tokens (the special
 tokens it adds counted once at load, from a probe embedded and never
-returned), sending a text whose tokens are exactly those — the longest prefix
+returned) and sending THOSE TOKENS as `EmbeddingTokens` to a backend that
+embeds them — ours, LocalAI's llama.cpp backend with P2 (localai-bugs.md
+B14: upstream's ignores them), found at load by sending the probe's tokens
+with no text and comparing the vector with the text's, bit for bit
+(*amended 2026-10-18*, operator: "patch it"). To a backend that takes text
+only, it sends a text whose tokens are exactly those — the longest prefix
 of the input that has them, else the pieces read back (`Detokenize`): on
 bge-m3's tokenizer and the 512 calibration texts the two together cut all 622
-over-long inputs exactly at windows of 128, 512 and 1,024, the first alone
-178 of 189 at 1,024 — and refusing the answer if the backend says it embedded
-another count;
+over-long inputs exactly at windows of 128, 512 and 1,024 with HF's tokenizer,
+the first alone 178 of 189 at 1,024, but not 3 of 512 at 1,024 with
+llama.cpp's (the AMD peer). Either way it refuses the answer if the backend
+says it embedded another count;
 `context_size` — every `louise-python` task cuts at its load-time context
 size, a pair longest-first — requiring the window to equal it. A pair is
 never cut by the wrapper. An input that cannot be cut exactly is refused as

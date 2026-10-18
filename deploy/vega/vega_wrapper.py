@@ -63,6 +63,7 @@ import subprocess
 import sys
 import threading
 import time
+from array import array
 from concurrent import futures
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -871,6 +872,9 @@ class Loaded:
     #: load (`PROBE_TEXT`); None when it could not be, and then no input is
     #: cut by this wrapper
     specials: int | None = None
+    #: the backend embeds `EmbeddingTokens` as the text they are the tokens of,
+    #: checked at load (`Gate._probe`): a cut is then sent as its tokens
+    token_ids: bool = False
 
 
 class Gate:
@@ -994,9 +998,10 @@ class Gate:
                 context_size = int(self.pb.ModelOptions.FromString(raw).ContextSize)
             except Exception:                        # noqa: BLE001 — protobuf's DecodeError
                 context_size = 0
-            specials = self._count_specials(call) if self.cfg.cuts == TOKENIZER else None
+            specials, token_ids = (self._probe(call) if self.cfg.cuts == TOKENIZER
+                                   else (None, False))
             self.loaded = Loaded(run_id, run, declares_pairs(canon.options.get("Options")),
-                                 self.child.pid, context_size, specials)
+                                 self.child.pid, context_size, specials, token_ids)
             log(f"{self.backend.name}: {Path(canon.weights_path).name} loaded on {device}, "
                 f"run {run_id[:23]}…, files {hashed['tree'][:19]}… (installed from "
                 f"{self.backend.uri or 'nowhere recorded'}, the registry's digest "
@@ -1017,27 +1022,50 @@ class Gate:
 
     # ---- the cut to a tag's window (docs/notes/char-cut-truncation.md) ------------
 
-    def _count_specials(self, call: Callable[[str, bytes], bytes] | None) -> int | None:
-        """The special tokens the backend adds to every input: `PROBE_TEXT`'s
-        tokens as embedded, less its tokens as tokenized. None (said) when the
-        backend cannot tell — and then no input is cut here."""
+    def _probe(self, call: Callable[[str, bytes], bytes] | None) -> tuple[int | None, bool]:
+        """`(the special tokens the backend adds to every input, whether it
+        embeds token ids)`, from `PROBE_TEXT`. The specials are its tokens as
+        embedded less its tokens as tokenized; None (said) when the backend
+        cannot tell — and then no input is cut here.
+
+        TOKEN IDS: `PROBE_TEXT`'s tokens are sent as `EmbeddingTokens` WITH NO
+        TEXT, and must come back as the text's own vector, bit for bit, from as
+        many tokens. Stock LocalAI v4.11.0's llama.cpp backend ignores the field
+        (docs/notes/localai-bugs.md B14) and so refuses the empty text: a backend
+        that drops the ids can never pass for one that embeds them."""
         if call is None:
-            return None
+            return None, False
         try:
             probe = self.pb.PredictOptions(Prompt=PROBE_TEXT)
-            bare = len(self.pb.TokenizationResponse.FromString(
+            bare = list(self.pb.TokenizationResponse.FromString(
                 call(TOKENIZE, probe.SerializeToString())).tokens)
             embedded = self.pb.EmbeddingResult.FromString(call(EMBED, self.pb.PredictOptions(
-                Embeddings=PROBE_TEXT).SerializeToString())).prompt_tokens
+                Embeddings=PROBE_TEXT).SerializeToString()))
         except Exception as e:                       # noqa: BLE001 — UNIMPLEMENTED, a dead child
             log(f"{self.backend.name}: its tokens cannot be counted ({type(e).__name__}: "
                 f"{e}); an input with a window is refused")
-            return None
-        if not bare or embedded < bare:
-            log(f"{self.backend.name}: it reports {embedded} embedded token(s) for {bare} "
-                f"tokenized; an input with a window is refused")
-            return None
-        return embedded - bare
+            return None, False
+        if not bare or embedded.prompt_tokens < len(bare):
+            log(f"{self.backend.name}: it reports {embedded.prompt_tokens} embedded token(s) "
+                f"for {len(bare)} tokenized; an input with a window is refused")
+            return None, False
+        specials = embedded.prompt_tokens - len(bare)
+        try:
+            by_ids = self.pb.EmbeddingResult.FromString(call(EMBED, self.pb.PredictOptions(
+                EmbeddingTokens=bare).SerializeToString()))
+        except Exception as e:                       # noqa: BLE001 — the empty text refused
+            log(f"{self.backend.name}: it does not embed token ids ({type(e).__name__}: {e}); "
+                f"an over-long input is cut as text")
+            return specials, False
+        same = (by_ids.prompt_tokens == embedded.prompt_tokens and len(embedded.embeddings) > 0
+                and array("f", by_ids.embeddings).tobytes()
+                == array("f", embedded.embeddings).tobytes())
+        log(f"{self.backend.name}: it embeds token ids; an over-long input is sent as its "
+            f"first tokens" if same else
+            f"{self.backend.name}: its vector of a text's token ids is not the text's "
+            f"({by_ids.prompt_tokens} token(s) for {embedded.prompt_tokens}); an over-long "
+            f"input is cut as text")
+        return specials, same
 
     def _tokens(self, call, req, text: str) -> list[int]:
         q = self.pb.PredictOptions()
@@ -1047,9 +1075,10 @@ class Gate:
             call(TOKENIZE, q.SerializeToString())).tokens)
 
     def _cut(self, state: Loaded, call, req, form: str, content, window: int
-             ) -> tuple[str | None, int | None]:
-        """`(the text to forward, the tokens it must be embedded as)` for an input
-        whose tag names `window`. The text is None for a pair or a backend that
+             ) -> tuple[str | list[int] | None, int | None]:
+        """`(what to forward, the tokens it must be embedded as)` for an input
+        whose tag names `window`: a text, or — from a backend that embeds token
+        ids — the first tokens themselves. None for a pair or a backend that
         cuts itself: the content goes as it is, and the count is not known."""
         if self.cfg.cuts == CONTEXT_SIZE:
             if state.context_size and window != state.context_size:
@@ -1082,6 +1111,13 @@ class Gate:
             raise Refusal("INVALID_ARGUMENT", f"{vtag.INPUT_MARK} has a window of {window} "
                                               f"tokens, not more than the model's special ones")
         want = tokens[:keep]
+        # 0. THE TOKENS THEMSELVES, where the backend embeds token ids: 09 §9.3's
+        # cut as the book makes it — tokenize, keep the first, embed those — with
+        # no text to find. The two ways below are for a backend that takes text
+        # only, and some inputs have no text with exactly those tokens (3 of 512
+        # on llama.cpp at 1,024, the AMD peer, 2026-10-18)
+        if state.token_ids:
+            return want, keep + state.specials
         # 1. A PREFIX OF THE INPUT ITSELF: the longest whose tokens are at most
         # `keep`, then a few shorter, each checked to be exactly the first
         # `keep`. SentencePiece keeps its pieces NORMALISED (full-width
@@ -1153,7 +1189,11 @@ class Gate:
             if vtag.PAIR_MARK in content:
                 raise Refusal("INVALID_ARGUMENT", f"VeGa: a text carries the pair marker "
                                                   f"{vtag.PAIR_MARK!r}, which only VeGa writes")
-            req.Embeddings = content if cut is None else cut
+            if isinstance(cut, list):                # the first tokens, and no text beside them
+                req.Embeddings = ""
+                req.EmbeddingTokens.extend(cut)
+            else:
+                req.Embeddings = content if cut is None else cut
         answer = forward(req.SerializeToString())
         result = self.pb.EmbeddingResult.FromString(answer)
         if result.layout == self.pb.EMBEDDING_LAYOUT_PER_TOKEN:

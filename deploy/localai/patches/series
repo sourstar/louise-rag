@@ -1,5 +1,6 @@
-# LocalAI patches carried by the RAGE image, applied in this order with
-# `git am` onto the base. Each is described, with its upstream status, in
-# docs/notes/localai-bugs.md.
+# LocalAI patches, applied in this order with `git am` onto the base: the
+# source our llama.cpp backend images are built from. Each is described, with
+# its upstream status, in docs/notes/localai-bugs.md.
 base 58830f7ac508845a6f4efa32cfca06af422d4d82
 0001-system-list-load-options.patch
+0002-llama-cpp-embed-token-ids.patch

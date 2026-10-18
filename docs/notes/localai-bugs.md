@@ -1,7 +1,7 @@
 # LocalAI: every action item for the LocalAI team
 
 *One place for everything this project owes or asks `mudler/LocalAI`: the
-defects found (B1–B9), the patches we carry (P1), and the requests (R1–R5).
+defects found (B1–B14), the patches we carry (P1–P2), and the requests (R1–R5).
 The operator files them upstream. Started 2026-10-02 while mapping LocalAI
 against RAGE ([`rage-prior-art.md`](rage-prior-art.md)); the patches and
 requests come from [`rage-over-localai.md`](rage-over-localai.md), accepted
@@ -21,7 +21,9 @@ requests come from [`rage-over-localai.md`](rage-over-localai.md), accepted
 | B11 | defect | memory reclaimer: a model being loaded has a zero `lastUsed` and is evicted first, as the "least recently used" — under memory pressure the model a request is waiting for is evicted every time, the request fails with 500 | availability: every Ask answer failed with 500 for minutes (2026-10-14) | not filed; seen on the node with v4.11.0, log and source in §B11 |
 | B12 | defect | `intel-transformers` (v4.11.0's, as the gallery installed it 2026-10-05): optimum-intel 1.15.0 imports `openvino.runtime`, which the openvino 2026.4.1 beside it no longer has, so EVERY `OVModel*` type fails to load (`ModuleNotFoundError`, checked on the node 2026-10-17). `intel-rerankers` has optimum-intel 2.2.0 and is not affected | none since louise-python (docs/notes/backend-consolidation.md, U4) | not filed |
 | B13 | defect | transformers backend, `Embedding`: prints every input in full to stderr ("Calculated embeddings for: …"), a whole document per line in LocalAI's log | — (U3) | not filed |
-| **P1** | **patch we carry** | `GET /system` lists the options each loaded model was given, with their hash | **blocking**: without it RAGE states no run for any LocalAI model | not filed; [`deploy/localai/patches/0001-system-list-load-options.patch`](../../deploy/localai/patches/0001-system-list-load-options.patch) |
+| B14 | defect | llama.cpp backend, `Embedding`: ignores `EmbeddingTokens`, which `/v1/embeddings` fills when given token ids; it embeds the empty text beside them and refuses it ("Input content cannot be empty"), so no client can embed tokens | **blocking** for a space that cuts by tokens: without token ids an input cannot always be cut to exactly its first N tokens (3 of 512 at 1,024 on the AMD peer); P2 | not filed; found 2026-10-18, source in §B14 |
+| **P1** | **patch we carry** | `GET /system` lists the options each loaded model was given, with their hash | none since VeGa: the wrapper receives `LoadModel` itself (vega.md §1). It was blocking for RAGE; kept for upstream | not filed; [`deploy/localai/patches/0001-system-list-load-options.patch`](../../deploy/localai/patches/0001-system-list-load-options.patch) |
+| **P2** | **patch we carry** | llama.cpp backend: `Embedding` embeds `EmbeddingTokens`, with the special tokens a text gets (B14) | **blocking** for the token cut: VeGa's wrapper sends a cut as its first tokens to a backend that embeds them (`Gate._probe`) | not filed; [`deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch`](../../deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch) |
 | R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: RAGE checks before and after instead | not filed |
 | R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (rage-over-localai §8.2) | not filed |
 | R3 | request | read API keys from a file, not only from `LOCALAI_API_KEY` | only if LocalAI's own UI is published (invariant 8) | not filed |
@@ -354,17 +356,45 @@ not embed everything (`worker._release_embedder`, 2026-10-14), so idle
 encoders do not hold the card; the chat model can still lose this race
 whenever the card is over the threshold for other reasons.
 
+### B14. llama.cpp backend: `Embedding` ignores the token ids it is given
+
+*Found 2026-10-18 from the source at `v4.11.0` (58830f7), after the AMD peer's
+LocalAI (rocm-llama-cpp) refused 3 of the 512 calibration texts at a window
+of 1,024 tokens (`tools/vega_cut_scan.py`).*
+
+`/v1/embeddings` takes token ids as well as text. `core/backend/embeddings.go`
+(`ModelEmbedding`, L131–L144) puts them in `PredictOptions.EmbeddingTokens`
+and leaves `Embeddings`, the text, empty. The llama.cpp backend's `Embedding`
+(`backend/cpp/llama-cpp/grpc-server.cpp` L2880 on) reads only the text
+(`parse_options`, L371: `data["embeddings"] = predict->embeddings()`);
+`EmbeddingTokens` appears nowhere in the file. So the empty text is
+tokenized and refused: "Input content cannot be empty". llama.cpp itself
+embeds token ids: the `tokenize_input_prompts` the backend calls takes an
+array of numbers as the tokens themselves.
+
+**Why it matters to us.** A space that cuts by tokens (09 §9.3, `ctx`;
+char-cut-truncation.md) embeds an input's first `ctx` tokens — exactly what
+its calibration reference embeds. With text only, VeGa's wrapper has to find
+a text with exactly those tokens: a prefix of the input, or the pieces read
+back (`Detokenize`). Some inputs have none — a word segmented otherwise once
+cut, a cut inside a character spelled as byte tokens, a read-back that
+tokenizes differently: 3 of 512 at 1,024 on llama.cpp's tokenizer (i = 339,
+Greek decoded as Latin-1; 352, Danish; 372, Latin), all 622 with HF's.
+
+**Fix: P2.** Embed the ids, with the special tokens a text gets, so that
+embedding a text's tokens is embedding the text.
+
 ---
 
 
 ## Patches we carry
 
-The RAGE image builds LocalAI from the base commit in
+Our llama.cpp backend images build LocalAI's backend from the base commit in
 [`deploy/localai/patches/series`](../../deploy/localai/patches/series) with
-these patches applied in order. A patch leaves the series when upstream
-merges it, or when a merged change makes it unnecessary.
-`tests/rage/test_localai_patches.py` holds the series, the files and this
-section to each other.
+these patches applied in order (the RAGE image built LocalAI itself that way
+until 2026-10-09). A patch leaves the series when upstream merges it, or
+when a merged change makes it unnecessary. `tests/test_localai_patches.py`
+holds the series, the files and this section to each other.
 
 ### P1. `GET /system` lists the options each loaded model was given
 
@@ -419,6 +449,56 @@ options nor the hash are kept.
 key: the proxy options name a key's variable or file, not the key. A
 model's `env:` is copied into them (`core/backend/options.go` L580),
 which the DEBUG log already shows.
+
+### P2. llama.cpp backend: `Embedding` embeds the token ids it is given
+
+*Base: `v4.11.0` = master
+[`58830f7`](https://github.com/mudler/LocalAI/tree/58830f7ac508845a6f4efa32cfca06af422d4d82),
+after P1 (they touch different files). File:
+`0002-llama-cpp-embed-token-ids.patch`. 5 files, 99 lines added, none
+removed.*
+
+**Why.** B14: the backend drops `EmbeddingTokens`, so a client cannot
+embed tokens, and cannot cut an input to exactly its first N tokens.
+
+**What it changes** (`backend/cpp/llama-cpp/`):
+- `grpc-server.cpp`, `Embedding`: when `EmbeddingTokens` is set, the prompt
+  is those ids with the special tokens a text gets, as an array of numbers,
+  which `tokenize_input_prompts` takes as the tokens themselves. A request
+  with text only takes the same path as before.
+- `embedding_tokens.h`: where the special tokens go. The ids are an input's
+  tokens as `TokenizeString` returns them, without special tokens; a probe
+  text ("a") is tokenized with and without them, and the ids take the place
+  of its own tokens. That covers BOS/EOS, CLS/SEP, BOS only, EOS only and
+  none, without naming any vocabulary type.
+- `embedding_tokens_test.cpp`: those five cases, and the refusal when the
+  probe's tokens are not found; `prepare.sh` copies both files, as it does
+  the other helpers; `CMakeLists.txt` registers the test under
+  `LLAMA_GRPC_BUILD_TESTS`. `backend/cpp/run-unit-tests.sh` finds it by its
+  name.
+
+**Run:** the unit test, `g++ -std=c++17 -Wall -Wextra -Werror` (gcc 14),
+passes. **Measured** (2026-10-18, the dev PC): the CPU variant built by
+`deploy/localai/llama-cpp/build.sh`'s recipe, bge-m3 (the node's GGUF,
+sha256 `daec91ff…`), over gRPC, on the 512 calibration texts:
+- a text's token ids give the text's vector bit for bit, from as many
+  tokens: the probe, and 64 of 64 whole texts;
+- at a window of 1,024: 189 of 189 over-long texts embedded from exactly
+  1,024 tokens (1,022 + the 2 specials), 339, 352 and 372 among them;
+- the same ids twice, the same bytes: 8 of 8.
+
+**Tokens against HF's** (bge-m3's `tokenizer.json`): 475 of 512 identical.
+The other 37 are one thing: the text ends with a space, and HF's tokenizer
+adds a trailing `▁` that llama.cpp, as SentencePiece, does not. The first
+tokens agree, so no cut is affected; a whole text ending with a space is
+one token apart, as it is today without the patch.
+
+**How VeGa uses it.** At load the wrapper sends a probe's tokens as
+`EmbeddingTokens` WITH NO TEXT and keeps the token path only if the vector
+comes back bit-identical to the text's, from as many tokens
+(`Gate._probe`). A stock backend refuses the empty text, so it can never
+pass for one that embeds the ids; its inputs are cut as text, exactly or
+refused, as before.
 
 ---
 

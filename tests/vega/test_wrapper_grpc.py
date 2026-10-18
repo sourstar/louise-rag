@@ -87,7 +87,7 @@ def make_node(tmp_path, stubs, vega):
     made = []
 
     def make(*, pairs=False, receipt_timeout_s=2.0, socket=None, tokenizer=False,
-             cuts=None) -> Node:
+             cuts=None, token_ids=False) -> Node:
         backends = tmp_path / "backends"
         real = backends / "fake-embed"
         real.mkdir(parents=True)
@@ -108,6 +108,7 @@ def make_node(tmp_path, stubs, vega):
         log.touch()
         env = dict(os.environ, FAKE_BACKEND_LOG=str(log), VEGA_TEST_ENV="on",
                    **({"FAKE_TOKENIZER": "1"} if tokenizer else {}),
+                   **({"FAKE_TOKEN_IDS": "1"} if token_ids else {}),
                    PYTHONPATH=os.pathsep.join([str(stubs.dir), os.environ.get("PYTHONPATH", "")]))
         cfg = vw.load_config(pkg / "vega.json", backends)
         running = vw.serve(cfg, "127.0.0.1:0", pb=stubs.pb, environ=env,
@@ -510,7 +511,7 @@ def test_where_no_prefix_has_the_tokens_the_pieces_read_back_are_sent(stubs):
     def call(method, raw):
         assert method == vw.DETOKENIZE and list(pb.DetokenizeRequest.FromString(raw).tokens) == want
         return pb.DetokenizeResponse(content=" alpha beta").SerializeToString()
-    state = SimpleNamespace(specials=2, context_size=0)
+    state = SimpleNamespace(specials=2, context_size=0, token_ids=False)
     text, expect = vw.Gate._cut(gate, state, call, pb.PredictOptions(), "text",
                                 "alphabetagammadelta", 4)
     assert (text, expect) == ("alpha beta", 4)
@@ -525,3 +526,35 @@ def test_a_window_that_fills_the_models_context_is_refused_at_once(make_node):
     assert r.status_code == 500 and "needs a context_size above it" in r.text
     batch, r = node.embed([WORDS], window=511)
     assert r.status_code == 200, r.text
+
+
+def test_a_backend_that_embeds_token_ids_is_sent_the_first_tokens_themselves(make_node):
+    """09 §9.3's cut as the book makes it: the text's tokens, the first kept,
+    those embedded — no text is looked for (the 3 of 512 no text could cut
+    exactly on llama.cpp, the AMD peer 2026-10-18). Our llama.cpp backend
+    embeds them (localai-bugs P2); the probe at load found that it does."""
+    node = make_node(tokenizer=True, token_ids=True)
+    batch, r = node.embed([WORDS], window=10)
+    assert r.status_code == 200, r.text
+    node.verify(batch, r)
+    sent = node.calls("Embedding")[-1]
+    assert sent["text"] == "" and len(sent["tokens"]) == 8, sent
+    assert not node.calls("Detokenize"), "no text is read back"
+    _b, whole = node.embed([" ".join(f"w{i}" for i in range(8))])
+    assert whole.json()["data"][0]["embedding"] == r.json()["data"][0]["embedding"],         "the 8 ids sent ARE the first 8 tokens, w0…w7"
+    assert batch.input_digests[0] == vtag.input_digest("text", WORDS, 10)
+    batch, r = node.embed(["w1 w2 w3"], window=10)
+    assert r.status_code == 200 and node.calls("Embedding")[-1]["text"] == "w1 w2 w3",         "an input within its window goes as its text"
+
+
+def test_a_backend_that_ignores_token_ids_is_found_out_at_load(make_node):
+    """Stock LocalAI v4.11.0's llama.cpp backend drops `EmbeddingTokens`
+    (localai-bugs B14). The probe sends the ids WITH NO TEXT, so the backend
+    refuses instead of embedding a text beside them, and every cut stays a
+    text cut, exact or refused."""
+    node = make_node(tokenizer=True)
+    batch, r = node.embed([WORDS], window=10)
+    assert r.status_code == 200, r.text
+    probes = [c for c in node.calls("Embedding") if c["tokens"]]
+    assert len(probes) == 1 and probes[0]["text"] == "", "the ids alone, once, at load"
+    assert node.calls("Embedding")[-1]["tokens"] == [] and         node.calls("Embedding")[-1]["text"].split() == [f"w{i}" for i in range(8)]

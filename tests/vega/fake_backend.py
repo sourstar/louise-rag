@@ -29,6 +29,10 @@ HALFWAY = struct.unpack("<f", bytes.fromhex("fd43ae15"))[0]
 #: each begin with a space (a sentencepiece word start), and an Embedding
 #: that reports the tokens it evaluated, SPECIALS added. Without it,
 #: TokenizeString is not implemented, as in LocalAI's Python backends.
+#: `EmbeddingTokens` are ignored, as stock LocalAI v4.11.0's llama.cpp backend
+#: ignores them (an empty text beside them is refused, as there), unless
+#: $FAKE_TOKEN_IDS is set: then they are embedded as the text they are the
+#: tokens of (our patched backend, localai-bugs P2).
 SPECIALS = 2
 _vocab: dict[str, int] = {}
 _words: dict[int, str] = {}
@@ -65,12 +69,17 @@ class Servicer(backend_pb2_grpc.BackendServicer):
         return backend_pb2.Result(success=True, message="loaded")
 
     def Embedding(self, request, context):  # noqa: N802
-        note(context, method="Embedding", text=request.Embeddings)
+        ids = list(request.EmbeddingTokens)
+        note(context, method="Embedding", text=request.Embeddings, tokens=ids)
         if self.loaded is None:
             context.abort(grpc.StatusCode.FAILED_PRECONDITION, "no model is loaded")
-        h = hashlib.sha256(request.Embeddings.encode("utf-8")).digest()
+        text = (" ".join(_words[t] for t in ids) if ids and os.environ.get("FAKE_TOKEN_IDS")
+                else request.Embeddings)
+        if ids and not text:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "Input content cannot be empty")
+        h = hashlib.sha256(text.encode("utf-8")).digest()
         vector = [(b - 128) / 256 for b in h[:5]] + [-0.0, HALFWAY, 0.1]
-        counted = len(_ids(request.Embeddings)) + SPECIALS if os.environ.get("FAKE_TOKENIZER") else 0
+        counted = len(_ids(text)) + SPECIALS if os.environ.get("FAKE_TOKENIZER") else 0
         return backend_pb2.EmbeddingResult(embeddings=vector, dim=len(vector), tokens=1,
                                            prompt_tokens=counted,
                                            layout=backend_pb2.EMBEDDING_LAYOUT_FINAL)

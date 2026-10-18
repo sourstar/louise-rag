@@ -1,0 +1,185 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 16:03:42 +0200
+Subject: [PATCH] fix(llama-cpp): embed the token ids Embedding is given
+
+/v1/embeddings accepts token ids, and core/backend/embeddings.go sends
+them to the backend in PredictOptions.EmbeddingTokens, leaving the text
+field empty. The llama.cpp backend never reads that field: it embeds the
+empty text, which it then refuses ("Input content cannot be empty"). A
+client cannot embed tokens at all, and so cannot truncate an input to
+exactly N tokens of the model's own tokenizer. Cutting the text instead
+is not exact: a prefix of a text does not always tokenize to a prefix of
+its tokens, and a detokenized prefix does not always tokenize back to
+the same tokens (3 of 512 multilingual texts at 1,024 tokens, bge-m3).
+
+Embed the ids. They are the input's tokens as TokenizeString returns
+them, without special tokens, so they get the special tokens a text
+gets: a probe text is tokenized with and without them, and the ids take
+the place of its own tokens (embedding_tokens.h, with a unit test).
+Embedding a text's tokens is then embedding the text, bit for bit; a
+request with text only is unchanged.
+
+Assisted-by: Claude Code
+---
+ backend/cpp/llama-cpp/CMakeLists.txt          |  6 +++
+ backend/cpp/llama-cpp/embedding_tokens.h      | 37 +++++++++++++++++++
+ .../cpp/llama-cpp/embedding_tokens_test.cpp   | 36 ++++++++++++++++++
+ backend/cpp/llama-cpp/grpc-server.cpp         | 16 ++++++++
+ backend/cpp/llama-cpp/prepare.sh              |  4 ++
+ 5 files changed, 99 insertions(+)
+ create mode 100644 backend/cpp/llama-cpp/embedding_tokens.h
+ create mode 100644 backend/cpp/llama-cpp/embedding_tokens_test.cpp
+
+diff --git a/backend/cpp/llama-cpp/CMakeLists.txt b/backend/cpp/llama-cpp/CMakeLists.txt
+index 3c195c3..a2e875d 100644
+--- a/backend/cpp/llama-cpp/CMakeLists.txt
++++ b/backend/cpp/llama-cpp/CMakeLists.txt
+@@ -141,4 +141,10 @@ if(LLAMA_GRPC_BUILD_TESTS)
+     target_include_directories(stream_peer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+     target_compile_features(stream_peer_test PRIVATE cxx_std_17)
+     add_test(NAME stream_peer_test COMMAND stream_peer_test)
++
++    # Special tokens around Embedding's token ids (standard library only).
++    add_executable(embedding_tokens_test embedding_tokens_test.cpp embedding_tokens.h)
++    target_include_directories(embedding_tokens_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
++    target_compile_features(embedding_tokens_test PRIVATE cxx_std_17)
++    add_test(NAME embedding_tokens_test COMMAND embedding_tokens_test)
+ endif()
+diff --git a/backend/cpp/llama-cpp/embedding_tokens.h b/backend/cpp/llama-cpp/embedding_tokens.h
+new file mode 100644
+index 0000000..b8589b8
+--- /dev/null
++++ b/backend/cpp/llama-cpp/embedding_tokens.h
+@@ -0,0 +1,37 @@
++#pragma once
++
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++#include <optional>
++#include <vector>
++
++namespace llama_grpc {
++
++// Token ids sent to Embedding (PredictOptions.EmbeddingTokens, which
++// core/backend/embeddings.go fills when /v1/embeddings is given tokens) are an
++// input's tokens as TokenizeString returns them: without special tokens. A text
++// is embedded with the special tokens its vocabulary adds (BOS/EOS, CLS/SEP, or
++// none at all), so the ids get the same ones: where a probe text's own tokens
++// (`bare`) sit inside its tokens with the special ones added (`full`), the ids
++// take their place. Embedding a text's tokens is then embedding the text.
++//
++// nullopt when `bare` is empty or does not occur inside `full`: there is then
++// no telling where the special tokens go.
++inline std::optional<std::vector<int32_t>> with_special_tokens(const std::vector<int32_t> & bare,
++                                                               const std::vector<int32_t> & full,
++                                                               const std::vector<int32_t> & ids) {
++    if (bare.empty()) {
++        return std::nullopt;
++    }
++    const auto at = std::search(full.begin(), full.end(), bare.begin(), bare.end());
++    if (at == full.end()) {
++        return std::nullopt;
++    }
++    std::vector<int32_t> out(full.begin(), at);
++    out.insert(out.end(), ids.begin(), ids.end());
++    out.insert(out.end(), at + static_cast<std::ptrdiff_t>(bare.size()), full.end());
++    return out;
++}
++
++} // namespace llama_grpc
+diff --git a/backend/cpp/llama-cpp/embedding_tokens_test.cpp b/backend/cpp/llama-cpp/embedding_tokens_test.cpp
+new file mode 100644
+index 0000000..322e252
+--- /dev/null
++++ b/backend/cpp/llama-cpp/embedding_tokens_test.cpp
+@@ -0,0 +1,36 @@
++#include "embedding_tokens.h"
++
++#include <cstdio>
++#include <vector>
++
++using llama_grpc::with_special_tokens;
++using ids_t = std::vector<int32_t>;
++
++static int expect(const char * what, const std::optional<ids_t> & got, const ids_t & want) {
++    if (!got || *got != want) {
++        std::fprintf(stderr, "%s: the special tokens were not placed as for the text\n", what);
++        return 1;
++    }
++    return 0;
++}
++
++int main() {
++    const ids_t ids = {7, 8, 9};
++    int failed = 0;
++    // BOS and EOS (an XLM-RoBERTa vocabulary: <s> ... </s>)
++    failed += expect("bos+eos", with_special_tokens({5}, {0, 5, 2}, ids), {0, 7, 8, 9, 2});
++    // BOS only (a llama vocabulary)
++    failed += expect("bos", with_special_tokens({5}, {1, 5}, ids), {1, 7, 8, 9});
++    // EOS only: it follows the ids, never precedes them
++    failed += expect("eos", with_special_tokens({5}, {5, 2}, ids), {7, 8, 9, 2});
++    // none: the ids as they are
++    failed += expect("none", with_special_tokens({5}, {5}, ids), ids);
++    // a probe of several tokens
++    failed += expect("long probe", with_special_tokens({5, 6}, {101, 5, 6, 102}, ids),
++                     {101, 7, 8, 9, 102});
++    if (with_special_tokens({5}, {0, 6, 2}, ids) || with_special_tokens({}, {0, 2}, ids)) {
++        std::fprintf(stderr, "special tokens were placed without the probe's own tokens to go by\n");
++        failed += 1;
++    }
++    return failed == 0 ? 0 : 1;
++}
+diff --git a/backend/cpp/llama-cpp/grpc-server.cpp b/backend/cpp/llama-cpp/grpc-server.cpp
+index 3b90873..f03cc02 100644
+--- a/backend/cpp/llama-cpp/grpc-server.cpp
++++ b/backend/cpp/llama-cpp/grpc-server.cpp
+@@ -60,6 +60,7 @@
+ #include "passthrough_options.h"
+ #include "stream_peer.h"
+ #include "tts_request_options.h"
++#include "embedding_tokens.h"
+ #include <getopt.h>
+ #include <grpcpp/ext/proto_server_reflection_plugin.h>
+ #include <grpcpp/grpcpp.h>
+@@ -2898,6 +2899,21 @@ public:
+         // for the shape of input/content, see tokenize_input_prompts()
+         json prompt = body.at("embeddings");
+ 
++        // Token ids are embedded, with the special tokens a text gets
++        // (embedding_tokens.h). An array of numbers is taken by
++        // tokenize_input_prompts() as the tokens themselves.
++        if (request->embeddingtokens_size() > 0) {
++            const std::string probe = "a";
++            const auto ids = llama_grpc::with_special_tokens(
++                common_tokenize(ctx_server.impl->vocab, probe, /*add_special=*/false, /*parse_special=*/true),
++                common_tokenize(ctx_server.impl->vocab, probe, /*add_special=*/true, /*parse_special=*/true),
++                std::vector<int32_t>(request->embeddingtokens().begin(), request->embeddingtokens().end()));
++            if (!ids) {
++                return grpc::Status(grpc::StatusCode::INTERNAL,
++                                    "cannot tell where this model's special tokens go around token ids");
++            }
++            prompt = *ids;
++        }
+ 
+         auto tokenized_prompts = tokenize_input_prompts(ctx_server.impl->vocab, ctx_server.impl->mctx, prompt, true, true LOCALAI_MTMD_INIT_OPT_ARG(ctx_server.impl->init_opt));
+         for (const auto & tokens : tokenized_prompts) {
+diff --git a/backend/cpp/llama-cpp/prepare.sh b/backend/cpp/llama-cpp/prepare.sh
+index a7fe9ab..409ed87 100644
+--- a/backend/cpp/llama-cpp/prepare.sh
++++ b/backend/cpp/llama-cpp/prepare.sh
+@@ -75,6 +75,10 @@ cp -r parent_watch_test.cpp llama.cpp/tools/grpc-server/
+ # test (run via backend/cpp/run-unit-tests.sh; also buildable under ctest).
+ cp -r stream_peer.h llama.cpp/tools/grpc-server/
+ cp -r stream_peer_test.cpp llama.cpp/tools/grpc-server/
++# Special tokens around Embedding's token ids (included by grpc-server.cpp)
++# and its standalone unit test.
++cp -r embedding_tokens.h llama.cpp/tools/grpc-server/
++cp -r embedding_tokens_test.cpp llama.cpp/tools/grpc-server/
+ cp -rfv llama.cpp/vendor/nlohmann/json.hpp llama.cpp/tools/grpc-server/
+ cp -rfv llama.cpp/vendor/cpp-httplib/httplib.h llama.cpp/tools/grpc-server/
+ 
+-- 
+2.55.0.windows.3
+

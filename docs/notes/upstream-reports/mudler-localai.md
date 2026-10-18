@@ -72,3 +72,12 @@ optimum-intel ≥ 2.x in `requirements-intel.txt`.
 **B13 (code) — `transformers` backend: `Embedding` prints every input in full to
 stderr** ("Calculated embeddings for: …"), a whole document per line in the log.
 Fix: drop it, or log at debug level with a length.
+
+**B14 (code, and seen as its consequence) — llama.cpp backend: `Embedding`
+ignores the token ids it is given.** `/v1/embeddings` accepts token ids and
+`core/backend/embeddings.go` sends them as `PredictOptions.EmbeddingTokens`
+with an empty text; `grpc-server.cpp` reads only the text, so the request is
+refused ("Input content cannot be empty"). Fix: when `EmbeddingTokens` is
+set, embed them, with the special tokens a text gets (so embedding a text's
+tokens is embedding the text) — patch ready,
+`deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch`.
