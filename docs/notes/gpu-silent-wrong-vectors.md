@@ -130,7 +130,7 @@ A row is flagged below the collection's tolerance.
 |---|---|---|---|
 | normattiva | DAR-legal-it, torch XPU (`louise-python`) | the same code, `device:cpu` | **clean**: 597 chunks, 49 of them in the failing length ranges; DAR runs SDPA, not the eager softmax |
 | pubmed | MedCPT article, OpenVINO GPU (`louise-python`) | OpenVINO CPU (`vega-medcpt-article-ov-cpu`) | **the card is clean; 74 of 1,088 stored vectors are not this function's** — below, and [char-cut-truncation.md](char-cut-truncation.md) |
-| gutenberg | Qwen3-Embedding-4B GGUF, llama.cpp SYCL | llama.cpp CPU | not measured: the CPU twin did not finish 1,000 chunks of a 4B model within an hour; to run at night (quiet hours) |
+| gutenberg | Qwen3-Embedding-4B GGUF, llama.cpp SYCL | llama.cpp CPU | not measured, and the least exposed: llama.cpp, not torch, so not the softmax; its known drift is oneDNN's (0.9999974), which `GGML_SYCL_ENABLE_DNN=0` removes (invariant 12). The CPU twin needs hours, and the NAS takes no sustained load (operator, 2026-10-18): the sample's parts are to be copied to the dev PC and cut and embedded there (`--export` alone cut for over 10 minutes on the NAS and was stopped) |
 | wikipedia | bge-m3 GGUF, llama.cpp SYCL (layer 2; layer 1 is wikivec's archive) | llama.cpp CPU | not measurable yet: `vectors-sample` draws over a snapshot's parts and wikipedia has none; the switch to parser 5 measures it ([wikipedia-qids.md](wikipedia-qids.md) §4) |
 
 **Pubmed, 2026-10-18** (seed `aa7b98d0…`, `tools/cross_device_check.py --explain`). On
