@@ -40,7 +40,7 @@ rm -rf "$ROOT/src.new"
 mkdir -p "$ROOT/src.new"
 tar -xzf "$TGZ" -C "$ROOT/src.new"
 grep -q 'WINDOW = "window"' "$ROOT/src.new/app/vega/tag.py"                  # the window
-grep -q "window=recipe.ctx" "$ROOT/src.new/app/embeddings.py"            # sent with ctx
+grep -q "TOKEN_CUT" "$ROOT/src.new/app/embeddings.py"                     # the cut is the space's
 grep -q "def vectors_short" "$ROOT/src.new/app/disk_guard.py"           # the disk guard
 grep -q "PARSER_VERSION = 5" "$ROOT/src.new/app/plugins/wikipedia/source.py"
 test ! -e "$ROOT/src.new/deploy/reference"                              # never shipped (gitignored)
