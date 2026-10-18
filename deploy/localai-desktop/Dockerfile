@@ -1,0 +1,40 @@
+# LocalAI on the dev PC's RX 9060 XT (gfx1200) under Docker DESKTOP on
+# Windows (WSL2) — deploy/localai-desktop/compose.yaml.
+#
+# deploy/localai-wsl/ assumed Docker Desktop's VM exposes neither /dev/dxg
+# nor the ROCm bridge, so it needed Docker Engine inside an Ubuntu distro.
+# Measured 2026-10-18 (Docker Desktop 29.8, Adrenalin 26.8.1): the VM has
+# /dev/dxg and /usr/lib/wsl/lib; what it lacks is librocdxg, and that is a
+# .deb AMD publishes. With it baked in here `rocminfo` lists gfx1200 and
+# rocm-llama-cpp runs on the card (Compute engine busy, 11.7 GB VRAM).
+#
+# - librocdxg 1.2.2 (ROCm/librocdxg): the bridge between ROCm 7.2.x — what
+#   this LocalAI tag is built on — and the Windows driver.
+# - its amd-smi (rocdxg-amd-smi-lib, /opt/rocm-wsl): the only tool that reads
+#   the card under WSL2. VeGa's wrapper reads the run's device with it
+#   (vega.json `amd_smi`, app/rage/dxg.py), and LocalAI's own GPU panel
+#   through the rocm-smi shim below.
+#
+#   docker build -t louise-localai:rocm deploy/localai-desktop
+FROM quay.io/go-skynet/local-ai:v4.11.0-gpu-hipblas@sha256:09a90e35e0a1071e4e36527a9f5773c7550d6753219e5377aae97545263ae7dd
+
+ADD --checksum=sha256:28ded1254811192ebace1f76c0227580184af7b27ab2475fb9728295a702d541 \
+    https://github.com/ROCm/librocdxg/releases/download/v1.2.2/rocdxg-roct_1.2.2_amd64.deb \
+    /tmp/rocdxg-roct.deb
+ADD --checksum=sha256:f9b601457ea513a223c7dd2cc281fb0aef1d11f21f38ce6108dc76e665ad6cc5 \
+    https://github.com/ROCm/librocdxg/releases/download/v1.2.2/rocdxg-amd-smi-lib_1.2.2_amd64.deb \
+    /tmp/rocdxg-amd-smi-lib.deb
+# --force-overwrite: rocdxg-amd-smi-lib ships files the image's amd-smi-lib
+# also owns (python bindings); the dxg build is the one that can run here.
+RUN dpkg -i /tmp/rocdxg-roct.deb \
+ && dpkg -i --force-overwrite /tmp/rocdxg-amd-smi-lib.deb \
+ && rm /tmp/*.deb && ldconfig \
+ && mv /opt/rocm/bin/rocm-smi /opt/rocm/bin/rocm-smi.native
+
+# LocalAI finds AMD GPUs only via `rocm-smi --showmeminfo --csv`; rocm-smi
+# needs /sys/class/drm, absent under WSL2. The shim answers from amd-smi.
+COPY --chmod=0755 rocm-smi-dxg /opt/rocm/bin/rocm-smi
+
+# ROCm < 7.13 loads librocdxg only when asked to.
+ENV HSA_ENABLE_DXG_DETECTION=1 \
+    LOCALAI_FORCE_META_BACKEND_CAPABILITY=amd

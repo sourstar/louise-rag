@@ -1,0 +1,83 @@
+# LocalAI + VeGa's receipts service on the dev PC's RX 9060 XT, under Docker
+# DESKTOP on Windows (2026-10-18). The models a Louise node there needs —
+# deploy/docker/compose.yaml is the node; its .env points at this:
+#   CHAT_URL=http://host.docker.internal:30286   CHAT_API=openai
+#   CHAT_MODEL=louise-chat-qwen3-8b
+#   VEGA_URL=http://host.docker.internal:30439
+# and each collection's [encoder] url is http://host.docker.internal:30286
+# with its vega- model (as the node's, docs/notes/vega.md §13).
+#
+# Once:
+#   docker build -t louise-localai:rocm deploy/localai-desktop
+#   docker build -t louise-rag:local .                          # VeGa's image
+#   the weights, byte-identical to the node's, under LOUISE_WEIGHTS
+#     (llama-embed/, granite/, bge-m3/, chat/ — the node's /mnt/ssd5/apps/models)
+#   the vega-llama-cpp package into the backends volume (README.md here)
+#   LOUISE_WEIGHTS=C:/Users/<you>/louise-peer2/weights \
+#     docker compose -f deploy/localai-desktop/compose.yaml up -d
+#
+# THE CARD. Docker Desktop's VM has /dev/dxg; ROCm reaches it through
+# librocdxg (baked into the image), which loads libdxcore from the VM's
+# /usr/lib/wsl/lib. No /dev/kfd, no /dev/dri.
+#
+# WEIGHTS are read-only, inside LocalAI's models directory (VerifyPath), at
+# weights/<what> as on the node, so a model YAML is the node's own. A
+# Windows folder is fine here — they are read, never written (invariant 6
+# is about /data, which stays in the node's named volume).
+name: louise-localai
+
+services:
+  localai:
+    image: louise-localai:rocm
+    pull_policy: never
+    restart: unless-stopped
+    init: true                    # forwards the stop signal, reaps the backends
+    ports:
+      - "30286:8080"
+    devices:
+      - /dev/dxg
+    environment:
+      LOCALAI_MODELS_PATH: /models
+      LOCALAI_BACKENDS_PATH: /backends
+      # the memory reclaimer evicts every model when another process holds
+      # the card (localai-bugs B4) — on a desktop GPU something always does
+      LOCALAI_MEMORY_RECLAIMER: "false"
+    volumes:
+      - /usr/lib/wsl/lib/libdxcore.so:/usr/lib/libdxcore.so:ro
+      - ./models:/models
+      - ${LOUISE_WEIGHTS:?set LOUISE_WEIGHTS to the weights folder}:/models/weights:ro
+      - localai-backends:/backends
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # VeGa's receipts (docs/notes/vega.md): the wrapper in front of
+  # rocm-llama-cpp writes a receipt per vector to the socket in its
+  # package's run/ directory; Louise reads them here before writing a vector.
+  vega:
+    image: louise-rag:local
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    command: ["python", "-m", "app.vega"]
+    environment:
+      VEGA_SOCKET: /run/vega/receipts.sock
+      VEGA_STATE_DIR: /state
+      VEGA_PORT: "8090"
+    ports:
+      - "30439:8090"
+    volumes:
+      - type: volume
+        source: localai-backends
+        target: /run/vega
+        volume:
+          subpath: vega-llama-cpp/run
+      - vega-state:/state
+
+volumes:
+  localai-backends:
+    name: localai_backends     # where rocm-llama-cpp and vega-llama-cpp are installed
+  vega-state:

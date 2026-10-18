@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""rocm-smi shim for WSL2 (/dev/dxg).
+
+LocalAI discovers AMD GPUs and their VRAM ONLY through
+`rocm-smi --showmeminfo {all|vram} --csv`. rocm-smi reads /sys/class/drm,
+which does not exist under WSL2, so LocalAI shows no GPU even while ROCm
+compute works. The dxg build of amd-smi (rocdxg-amd-smi-lib, /opt/rocm-wsl)
+can read the card; this answers that one query from it in rocm-smi's CSV
+shape and hands every other invocation to the original binary.
+"""
+import json
+import os
+import subprocess
+import sys
+
+NATIVE = "/opt/rocm/bin/rocm-smi.native"
+AMD_SMI = "/opt/rocm-wsl/bin/amd-smi"
+MIB = 1024 * 1024
+
+
+def wsl_env() -> dict:
+    env = dict(os.environ)
+    for var, path in (("PATH", "/opt/rocm-wsl/bin"),
+                      ("LD_LIBRARY_PATH", "/opt/rocm-wsl/lib"),
+                      ("PYTHONPATH", "/opt/rocm-wsl/share/amd_smi"),
+                      ("PYTHONPATH", "/opt/rocm-wsl/libexec/amdsmi_cli")):
+        env[var] = path + (":" + env[var] if env.get(var) else "")
+    return env
+
+
+def mib(field) -> int:
+    """amd-smi reports {"value": N, "unit": "MB"} (or a bare number)."""
+    if isinstance(field, dict):
+        value, unit = field.get("value", 0), str(field.get("unit", "MB")).upper()
+    else:
+        value, unit = field, "MB"
+    value = int(float(value or 0))
+    return value * (1024 if unit.startswith("G") else 1)
+
+
+def meminfo_csv() -> int:
+    out = subprocess.run([AMD_SMI, "metric", "--mem-usage", "--json"],
+                         capture_output=True, text=True, env=wsl_env(), timeout=20)
+    if out.returncode != 0:
+        sys.stderr.write(out.stderr)
+        return out.returncode or 1
+    data = json.loads(out.stdout)
+    gpus = data.get("gpu_data", data) if isinstance(data, dict) else data
+    print("device,VRAM Total Memory (B),VRAM Total Used Memory (B)")
+    for i, g in enumerate(gpus):
+        mem = g.get("mem_usage", {})
+        print(f"card{g.get('gpu', i)},{mib(mem.get('total_vram')) * MIB},"
+              f"{mib(mem.get('used_vram')) * MIB}")
+    return 0
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if "--showmeminfo" in args and "--csv" in args:
+        return meminfo_csv()
+    os.execv(NATIVE, [NATIVE, *args])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

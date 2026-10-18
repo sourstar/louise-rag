@@ -1,0 +1,23 @@
+# The node's YAML (/mnt/ssd5/apps/localai/models), byte for byte in every
+# load option, without NEO_CACHE_DIR (Intel's compiler cache) and with the
+# AMD deterministic mode in env (CLAUDE.md invariant 12). A different
+# card is a new engine and run: the space's calibration gate passes it once.
+name: louise-rerank-bge
+backend: rocm-llama-cpp
+context_size: 16384
+embeddings: true
+flash_attention: "on"
+gpu_layers: 999
+mmap: true
+options:
+    - parallel:4
+    - ubatch:8192
+parameters:
+    batch: 8192
+    model: weights/bge-m3/bge-reranker-v2-m3-f16.gguf
+    seed: 0
+reranking: true
+threads: 6
+env:
+    # CLAUDE.md invariant 12: rocBLAS without atomics, bit-identical run to run
+    ROCBLAS_DEFAULT_ATOMICS_MODE: "0"
