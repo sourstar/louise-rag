@@ -775,6 +775,15 @@ def _dense_pattern() -> str:
                          for lo, hi in embeddings.DENSE_RANGES) + "]"
 
 
+def embedded_alone(codex: Codex) -> bool:
+    """Was every input of this collection embedded in a request of its own?
+    A pair layer is admitted only on a chunker that makes one chunk per record
+    (09 §9.3), and the worker embeds one document at a time, so each pair was
+    its own batch: no neighbour's characters set its budget."""
+    from .codex import INPUT_PAIR
+    return bool(codex.layers) and all(l.input == INPUT_PAIR for l in codex.layers)
+
+
 def recut(root, to_ref: str, *, budget: int, apply: bool = False, window: int = WINDOW,
           log: Callable[[str], None] = print) -> dict[str, Any]:
     """A1e (RULE 1, 2026-10-18): after a carry from a space cut by characters
@@ -787,7 +796,10 @@ def recut(root, to_ref: str, *, budget: int, apply: bool = False, window: int = 
     the archive cut by tokens). A row holding a dense-script character is the
     case nothing decides — its batch's budget was lowered by an amount not
     recorded, its neighbours' too — so finding one refuses the recut, nothing
-    written.
+    written; EXCEPT where every input was embedded alone (`embedded_alone`:
+    a pair layer, one chunk per record), where there were no neighbours and
+    such a row is dropped too, its own cut uncertain and such rows few
+    (pubmed, 2026-10-18: 102 of 4.58 M).
 
     One read of the table (id, text), the drops then a window of documents at
     a time: the reset committed first (a document marked not done whose rows
@@ -832,11 +844,12 @@ def recut(root, to_ref: str, *, budget: int, apply: bool = False, window: int = 
                     continue
                 dense_rows += c in dense_ids
                 drop.append(c)
+        alone = embedded_alone(codex)
         out: dict[str, Any] = {
             "collection": name, "budget_chars": budget, "vectors": before,
             "over_budget_or_dense": long_rows, "kept_archive": archive_rows,
-            "dense_not_archive": dense_rows, "to_drop": len(drop)}
-        if dense_rows:
+            "dense_not_archive": dense_rows, "embedded_alone": alone, "to_drop": len(drop)}
+        if dense_rows and not alone:
             raise CodexError(
                 f"recut: {name} holds {dense_rows} row(s) not an archive's with dense-script "
                 f"characters (CJK, kana, hangul): the character cut lowered their batch's "

@@ -211,3 +211,36 @@ def test_recut_goes_one_way(pair):
         carry.carry(root, "tok", "old", recut=True, log=quiet)
     with pytest.raises(CodexError, match="nothing to recut"):
         carry.carry(root, "old", "new", recut=True, log=quiet)
+
+
+def test_a_pair_layer_embedded_every_input_alone():
+    """A pair layer is admitted only on a chunker that makes one chunk per
+    record (09 §9.3), and the worker embeds one document at a time."""
+    from dataclasses import replace
+    c = _token_codex()
+    assert not carry.embedded_alone(c), "a text layer's chunks share requests"
+    pairs = replace(c, layers=tuple(replace(l, input=dict(cx.INPUT_PAIR)) for l in c.layers))
+    assert carry.embedded_alone(pairs)
+
+
+def test_where_every_input_was_alone_a_dense_row_is_dropped_not_refused(pair, monkeypatch):
+    """pubmed, 2026-10-18: 102 of its 4.58 M local rows hold CJK characters;
+    each was its own request, so no neighbour's budget moved and they are
+    dropped with the rest, embedded again by the book."""
+    root, old, _new = pair
+    _tokens_target(root)
+    uids = _rows(root, old, {(0, 0): LONG, (1, 0): "漢字の要旨", (2, 0): "short"})
+    carry.carry(root, "old", "tok", apply=True, recut=True, log=quiet)
+    con = db.connect(_local(root, "tok"))
+    try:
+        con.execute("UPDATE documents SET embed_done=1")
+    finally:
+        con.close()
+    monkeypatch.setattr(carry, "embedded_alone", lambda codex: True)
+    out = carry.recut(root, "tok", budget=2048, apply=True, log=quiet)
+    assert (out["dense_not_archive"], out["dropped"], out["vectors_now"]) == (1, 2, 1)
+    marks = _marks(root, "tok")
+    assert (marks[uids[0]], marks[uids[1]], marks[uids[2]]) == (0, 0, 1),         "the two dropped rows' documents are embedded again, the kept one is not"
+    books = [int(u.split(":")[1]) for u in uids]
+    assert embeddings.chunk_ids_of_books(books, collection=_local(root, "tok")) == \
+        [f"{uids[2]}:0:1"], "only the short Latin row stays"

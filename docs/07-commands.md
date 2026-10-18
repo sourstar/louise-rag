@@ -223,7 +223,7 @@ louise dev                                                             operator 
                                                                        (exit 1 otherwise). --recut (A1e, 2026-10-18): the target's space differs only by cutting
                                                                        by tokens; then every row over the source's ctx x 4 characters that no archive made is
                                                                        dropped and its document embedded again, in one read of the table; a dense-script row
-                                                                       refuses it, nothing written
+                                                                       refuses it, nothing written — dropped too where every input was embedded alone (a pair layer)
 ```
 
 `--dry-run`, `--json` and `--yes` are not shown per line; §7.7 says which

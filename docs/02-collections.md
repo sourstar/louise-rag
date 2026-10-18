@@ -650,7 +650,9 @@ encoder whole, and the encoder cut it at `ctx` itself — and an archive's rows
 were made at the token cut the archive declares (A1b). Those stay; every
 other row over the budget is dropped and its document embedded again (`louise
 dev carry --recut`), and a row holding a dense-script character refuses the
-recut, since its batch's budget was lowered by an amount nothing recorded;
+recut, since its batch's budget was lowered by an amount nothing recorded —
+unless every input was embedded alone (a pair layer: one chunk per record,
+one document a request), where it had no neighbours and is dropped too;
 `vectors-sample` passes before use, as for any carry. PubMed is the case:
 of its 40.0M vectors, NCBI's 35.4M and the local ones within the budget stay,
 and ~778k are embedded again.
