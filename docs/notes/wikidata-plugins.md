@@ -1,16 +1,16 @@
-# Wikidata, gutenberg-wd-kg and "Philippe in auto" — the operator's design
+# Wikidata, gutenberg-wd-kg and "Philippe in the car" — the operator's design
 
 *Designed by the operator in another conversation, 2026-10-17, in the Claude
 Docs document "Louise — Collezione Wikidata"
 (https://claude.ai/code/artifact/5a99909f-f587-44da-a473-7c81da34d40e).
-Copied here 2026-10-18 so the repository holds it. The doc's text is
-reproduced AS WRITTEN (its prose is Italian, its JSON unchanged); nothing in
-it has been checked against docs/01–09 yet. The first-read notes at the end
+Copied here 2026-10-18 so the repository holds it. The JSON is reproduced as
+written; the doc's Italian prose is translated into English (the doc is the
+original). Nothing in it has been checked against docs/01–09 yet. The first-read notes at the end
 are not part of the design.*
 
 ---
 
-## 1. Louise — Collezione Wikidata
+## 1. Louise — the Wikidata collection
 
 ### Codex
 
@@ -28,7 +28,7 @@ are not part of the design.*
 }
 ```
 
-### Manifest iniziale
+### Initial manifest
 
 ```json
 {
@@ -40,25 +40,27 @@ are not part of the design.*
 }
 ```
 
-Estensione: qualsiasi lingua del corpus, selezionabile una alla volta. Esempio
-stima per l'italiano sulla B70: circa 1-3 giorni (da confermare con benchmark).
+Extension: any language in the corpus, selected one at a time. Example
+estimate for Italian on the B70: about 1–3 days (to be confirmed by a
+benchmark).
 
-### Fonti e note
+### Sources and notes
 
 - [Wikidata Embedding Project](https://www.wikidata.org/wiki/Wikidata:Embedding_Project)
 - [Vector Database](https://www.wikidata.org/wiki/Wikidata:Vector_Database)
-- [Release 1 ottobre 2025](https://www.wikidata.org/wiki/Wikidata:Embedding_Project/October_1_2025_Release)
+- [Release of 1 October 2025](https://www.wikidata.org/wiki/Wikidata:Embedding_Project/October_1_2025_Release)
 - [WikidataTextEmbedding](https://github.com/philippesaade-wmde/WikidataTextEmbedding)
 - [Jina Embeddings v3](https://huggingface.co/jinaai/jina-embeddings-v3)
-- Download con token Hugging Face e huggingface-cli download.
-- Ai nuovi snapshot: verificare i vettori Wikimedia contro i nostri entro tolleranza.
+- Download with a Hugging Face token and `huggingface-cli download`.
+- At each new snapshot: check Wikimedia's vectors against ours, within the
+  tolerance.
 
 ---
 
-## 2. Collezione sorella: gutenberg-wd-kg (Gutenberg Wikidata Knowledge Graph)
+## 2. Sister collection: gutenberg-wd-kg (Gutenberg Wikidata Knowledge Graph)
 
-Sorella di Gutenberg (Qwen3 Embedding 4B) e di Wikidata (Jina v3). Il Codex
-fissa la versione di entrambe.
+A sister of Gutenberg (Qwen3 Embedding 4B) and of Wikidata (Jina v3). The
+Codex pins the version of both.
 
 ### Codex
 
@@ -87,7 +89,7 @@ fissa la versione di entrambe.
 }
 ```
 
-### Manifest iniziale
+### Initial manifest
 
 ```json
 {
@@ -100,48 +102,49 @@ fissa la versione di entrambe.
 }
 ```
 
-Regola: cambiare solo l'LLM crea una nuova sorella che riusa i pacchetti
-menzioni identici. Totale stimato: circa 2-3 settimane sulla B70.
+Rule: changing only the LLM creates a new sister that reuses the identical
+mention packets. Estimated total: about 2–3 weeks on the B70.
 
 ---
 
-## 3. Philippe in auto — guida vocale su storia e geografia
+## 3. Philippe in the car — a voice guide to history and geography
 
-Mentre guidi, Philippe racconta storia, geografia e avvenimenti dei luoghi
-intorno, usando Wikidata, gutenberg-wd-kg, Gutenberg e Wikipedia.
+While you drive, Philippe tells the history, geography and events of the
+places around you, using Wikidata, gutenberg-wd-kg, Gutenberg and Wikipedia.
 
-### Requisiti
+### Requirements
 
-- Riconosce chi parla tramite impronta vocale.
-- Presenti impliciti (voci sentite di recente; solo la tua = solo tu) o
-  dichiarati ("siamo io e Heike"); la presenza dichiarata vale finché non dici
-  il contrario.
-- Persona sconosciuta: la saluta e chiede il consenso a registrare l'impronta
-  vocale (dato biometrico, GDPR). Se rifiuta: ospite di sessione, nulla salvato.
-- Memoria per ascoltatore e per QID: prima la panoramica, poi i dettagli; passa
-  oltre salvo richiesta; alla volta successiva riprende da dove era rimasto.
-- Con più presenti racconta come un narratore umano ("come Augusto già sa…"),
-  senza saltare ciò che altri non hanno sentito.
+- Recognises who is speaking by voiceprint.
+- Who is present is implicit (voices heard recently; only yours = only you)
+  or declared ("it's me and Heike"); a declared presence holds until you say
+  otherwise.
+- An unknown person: Philippe greets them and asks for consent to record
+  their voiceprint (biometric data, GDPR). If they refuse: a guest for the
+  session, nothing saved.
+- Memory per listener and per QID: the overview first, then the details; it
+  moves on unless asked; next time it picks up where it left off.
+- With several people present it narrates as a human storyteller would ("as
+  Augusto already knows…"), without skipping what the others have not heard.
 
-### Componenti
+### Components
 
-| Pezzo | Funzione | Già disponibile |
+| Piece | Function | Already available |
 |---|---|---|
-| App in auto | GPS + microfono, WebRTC verso LocalAI | Da scrivere (client Realtime API) |
-| Voce (STT, TTS, VAD) | Pipeline realtime | LocalAI Realtime API + OmniVoice HQ |
-| Riconoscimento voci | Registra e identifica impronte | LocalAI /v1/voice/register e /v1/voice/identify (SpeechBrain ECAPA-TDNN); diarizzazione /v1/audio/diarization (sherpa-onnx). Archivio impronte solo in memoria: va reso persistente da noi |
-| Database ascoltatori | Persone, consenso, cosa è stato raccontato per QID e livello | Da scrivere (SQLite) |
-| Ricerca per posizione | QID vicini (Wikidata P625) ordinati per importanza e direzione | Da scrivere (indice spaziale sui dati Wikidata) |
-| Orchestratore | Presenti + QID vicini + memoria → prompt e tool di Philippe | LocalAGI come base agenti, oppure codice nostro |
-| Memoria testuale | Note libere di conversazione | Louise (già sviluppato; LocalRecall non necessario) |
+| In-car app | GPS + microphone, WebRTC to LocalAI | To be written (Realtime API client) |
+| Voice (STT, TTS, VAD) | Realtime pipeline | LocalAI Realtime API + OmniVoice HQ |
+| Voice recognition | Registers and identifies voiceprints | LocalAI /v1/voice/register and /v1/voice/identify (SpeechBrain ECAPA-TDNN); diarization /v1/audio/diarization (sherpa-onnx). The voiceprint store is in memory only: we must make it persistent |
+| Listener database | People, consent, what has been told per QID and level | To be written (SQLite) |
+| Search by position | Nearby QIDs (Wikidata P625) ordered by importance and direction | To be written (a spatial index over the Wikidata data) |
+| Orchestrator | Who is present + nearby QIDs + memory → Philippe's prompt and tools | LocalAGI as the agent base, or our own code |
+| Text memory | Free-form conversation notes | Louise (already developed; LocalRecall not needed) |
 
-### Tool di Philippe
+### Philippe's tools
 
-- `search_nearby(posizione, raggio)`
+- `search_nearby(position, radius)`
 - `search_graph(qid)`
 - `search_rag(collection, query)`
-- `mark_told(persone, qid, livello)`
-- `register_voice(nome, consenso)`
+- `mark_told(people, qid, level)`
+- `register_voice(name, consent)`
 
 ---
 
