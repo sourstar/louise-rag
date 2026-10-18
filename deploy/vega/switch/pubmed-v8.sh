@@ -52,7 +52,13 @@ run() {   # a writer, retried while the worker still holds the collection
 
 say "0. the code, the backend and the hour"
 H=$(date +%H)
-{ [ "$H" -ge 23 ] || [ "$H" -lt 7 ]; } || { echo "run between 23:00 and 07:00 (quiet hours); it is $H h"; exit 1; }
+# QUIET_HOURS=lifted: the operator lifts them for this run (2026-10-18: "you can
+# already use the full power of NAS without waiting until 23")
+if [ "${QUIET_HOURS:-}" = lifted ]; then
+  echo "quiet hours lifted by the operator for this run ($H h)"
+else
+  { [ "$H" -ge 23 ] || [ "$H" -lt 7 ]; } || { echo "run between 23:00 and 07:00 (quiet hours); it is $H h"; exit 1; }
+fi
 docker exec "$W" python -c "from app.hold import codex, carry; assert codex.CUT_VERSION == 8 and carry.recut; print('Louise: Codex 8, --recut')"
 grep -q '"backend": "louise-sycl-f16-llama-cpp"' /mnt/tank/apps/localai/backends/vega-llama-cpp/vega.json \
   || { echo "vega-llama-cpp is not in front of P2's backend: run rollout-p2.sh first"; exit 1; }
