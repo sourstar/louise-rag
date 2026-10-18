@@ -559,3 +559,18 @@ def test_the_instruction_survives_a_declared_query_encoder(isolated_config, monk
     embeddings._embed_texts(["q"], recipe=_instructed(query_url="http://query:2"), query=True)
     assert calls[0]["url"] == "http://query:2/v1/embeddings"
     assert calls[0]["json"]["input"] == ["query: q"]
+
+
+def test_a_codex_encoder_cuts_as_its_space_declares_and_by_characters_otherwise():
+    """docs/notes/char-cut-truncation.md: the cut is part of the function, so it
+    is the Codex's space's to state; no live Codex states one, and they stay
+    on the character cut their calibration references were made with."""
+    from types import SimpleNamespace
+    raw = {"url": "http://localai:8080", "api": "vega", "embed_model": "m", "query_model": "m"}
+
+    def codex(**space):
+        return SimpleNamespace(space=SimpleNamespace(dtype="f16", ctx=512, dim=768,
+                                                     query=SimpleNamespace(instruction=None),
+                                                     **space))
+    assert collections_mod._codex_encoder(raw, codex(), "t").cut == "characters"
+    assert collections_mod._codex_encoder(raw, codex(cut="tokens"), "t").cut == "tokens"

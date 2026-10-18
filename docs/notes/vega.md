@@ -192,8 +192,11 @@ backend and their tests is not trivial while RAGE runs.
 **The window** (*amended 2026-10-18*, operator's yes; [char-cut-truncation.md](char-cut-truncation.md)).
 Either form may carry `"window":<tokens>`: the encoder embeds at most that
 many tokens of the input, cut by the model's own tokenizer, as 09 §9.3 cuts a
-chunk to `ctx`. Louise sends every input whole with its space's `ctx` there;
-it no longer cuts by characters. The window is inside `input_digest`, so a
+chunk to `ctx`. Louise sends every input whole with its space's `ctx` there
+IN A SPACE THAT CUTS BY TOKENS (`EmbedRecipe.cut`, from the Codex); every other
+space keeps the character cut its references were made with. llama.cpp embeds
+at most `context_size − 1` tokens, so the wrapper refuses a window that is not
+below the model's context. The window is inside `input_digest`, so a
 receipt binds the text and its cut; a tag without one is unchanged, bytes and
 digest. The wrapper cuts as its `vega.json` says (`cuts`): `tokenizer`, the
 default — llama.cpp embeds whatever it is given — with the backend's

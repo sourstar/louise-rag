@@ -54,11 +54,11 @@ it left open is below.
   the platform cuts long inputs by characters, not to `ctx` tokens. Pubmed
   fails its own `vectors-sample` on it (74 of 1,088 sampled chunks, all
   NCBI's long abstracts; 73 reproduce once the encoder truncates). The fix,
-  approved the same day and BUILT: Louise sends a VeGa encoder every input
-  whole with `ctx` as the tag's `window`, and the wrapper or the task cuts at
-  exactly that many tokens. Not deployed: the wrappers go first, then Louise;
-  then a corrected Codex per collection (its calibration reference was cut
-  too) — the note's §4–5. The wikipedia switch waits for it.
+  approved the same day, BUILT and DEPLOYED (wrappers and Louise, 2026-10-18).
+  The cut is a space's: a space that declares `tokens` sends a VeGa encoder
+  every input whole with `ctx` as the tag's `window`, cut there exactly; every
+  live Codex keeps the character cut its references were made with, until its
+  corrected Codex (wikipedia's parser-5 switch first) — the note's §4–5.
 - **Wikipedia parser 5** (2026-10-18, [wikipedia-qids.md](wikipedia-qids.md)):
   the QIDs from each run's `page_props`, built and tested with `dev carry
   --resign` (A1d); the node still runs parser 4's Codex, and the switch's

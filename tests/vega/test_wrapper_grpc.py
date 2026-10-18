@@ -514,3 +514,14 @@ def test_where_no_prefix_has_the_tokens_the_pieces_read_back_are_sent(stubs):
     text, expect = vw.Gate._cut(gate, state, call, pb.PredictOptions(), "text",
                                 "alphabetagammadelta", 4)
     assert (text, expect) == ("alpha beta", 4)
+
+
+def test_a_window_that_fills_the_models_context_is_refused_at_once(make_node):
+    """llama.cpp embeds at most context_size − 1 tokens (`n_tokens >= n_ctx` is
+    refused): a window of 512 on a model loaded at 512 could never pass whole,
+    so the wrapper says so before cutting anything."""
+    node = make_node(tokenizer=True)                 # loaded with ContextSize 512
+    _batch, r = node.embed([WORDS], window=512)
+    assert r.status_code == 500 and "needs a context_size above it" in r.text
+    batch, r = node.embed([WORDS], window=511)
+    assert r.status_code == 200, r.text

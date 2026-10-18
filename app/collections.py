@@ -70,6 +70,16 @@ class EmbedRecipe:
     # `space_id` while calibration and the gate prefixed with the Codex's:
     # the gate would have passed one function and search run another.
     query_instruction: str | None = None
+    # HOW AN INPUT LONGER THAN `ctx` IS CUT, which is part of the function a
+    # space's vectors are of (docs/notes/char-cut-truncation.md, 2026-10-18).
+    # `characters`: the platform cuts to ~ctx x 4 characters, as every live
+    # Codex's calibration reference was made; `tokens`: the input goes to a
+    # VeGa encoder whole and is cut there to exactly `ctx` tokens, as 09 §9.3
+    # says. Only `_codex_encoder` sets it, from the Codex's space, and a space
+    # that does not declare one is `characters` — changing the cut under a
+    # Codex changes its function, and its references no longer reproduce
+    # (rollout of 2026-10-18: gutenberg's re-check failed on the first try).
+    cut: str = "characters"
     # Documents embedded concurrently by the worker (thread pool of whole
     # documents, each a single-text request). NOT part of the space identity
     # — it changes no vector, like EMBED_BATCH. >1 belongs to CPU encoders
@@ -764,7 +774,9 @@ def _codex_encoder(raw: Any, codex, where: str) -> EmbedRecipe | None:
     # The query side of the space, from the Codex and only from it: the same
     # instruction calibration and the gate prefix with (hold/calibration.py,
     # hold/embedder.py), so search runs the function the gate passed.
-    return replace(recipe, query_instruction=space.query.instruction or None)
+    # and the cut, the space's when it declares one (no live Codex does)
+    return replace(recipe, query_instruction=space.query.instruction or None,
+                   cut=getattr(space, "cut", None) or "characters")
 
 
 def _warn_deprecated(path: Path, raw: dict) -> None:

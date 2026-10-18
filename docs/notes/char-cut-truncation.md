@@ -45,10 +45,25 @@ over 1,024 tokens, up to 7,103; gutenberg and normattiva to be counted).
 
 ## 4. The fix — approved 2026-10-18, built
 
-The one place that holds the tokenizer cuts: the encoder. Louise sends a VeGa
-encoder every input WHOLE, and the tag names the space's `ctx` as its
-`window` (vega.md §9, "The window"; 09 §9.3 amended). The window is inside the
-receipt's input digest. VeGa's wrapper cuts as its package declares:
+The one place that holds the tokenizer cuts: the encoder. In a space that
+cuts by tokens, Louise sends a VeGa encoder every input WHOLE, and the tag
+names the space's `ctx` as its `window` (vega.md §9, "The window"; 09 §9.3
+amended). The window is inside the receipt's input digest.
+
+**The cut is the SPACE's, not the platform's** (corrected the same day, after
+the rollout). The first deploy cut every space by tokens, and gutenberg's run
+failed its re-check on start: its calibration reference was made through the
+character cut, and a calibration text cut to exactly 8,192 tokens is another
+input — which llama.cpp also refused, since it embeds at most
+`context_size − 1` tokens. How an input is cut is part of the function a
+space's vectors are of, like its input form. So `EmbedRecipe.cut` comes from
+the Codex's space alone (`characters` unless the space declares `tokens`),
+every live Codex stays on the character cut it was made with, and each
+collection's next Codex — wikipedia's parser-5 switch first — declares the
+token cut, its references made through it, its llama.cpp models' context
+above the window (the wrapper refuses a window that is not).
+
+VeGa's wrapper cuts as its package declares:
 
 - `tokenizer` (llama.cpp: bge-m3, Qwen3, MedCPT's query side, granite), the
   wrapper with the backend's own `TokenizeString`/`Detokenize`: the first

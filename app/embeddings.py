@@ -78,6 +78,9 @@ class InputFormError(ValueError):
 #: one, every answer vouched for by receipts read from VEGA_URL. Declared,
 #: never guessed from a model's name.
 VEGA = "vega"
+#: a space's cut that sends a VeGa encoder whole inputs with `ctx` as the
+#: window (`EmbedRecipe.cut`); every other cut is the platform's characters
+TOKEN_CUT = "tokens"
 #: The APIs whose body can say a text pair: `input_pairs` (openai), the
 #: tagged pair (vega).
 PAIR_APIS = ("openai", VEGA)
@@ -285,7 +288,8 @@ def _request_vouched(batch: list[Item], timeout: float,
             f"{recipe.url}: the encoder is declared api = \"vega\" and VEGA_URL is "
             f"unset, so no receipt can be read and nothing is embedded through it "
             f"(docs/notes/vega.md)")
-    tagged = vclient.tag_batch(batch, window=recipe.ctx or None)
+    tagged = vclient.tag_batch(batch, window=(recipe.ctx or None) if recipe.cut == TOKEN_CUT
+                               else None)
     body: dict = {"input": list(tagged.inputs), "encoding_format": "base64"}
     if recipe.model:
         body["model"] = recipe.model
@@ -429,13 +433,13 @@ def _embed_batch(batch: list[Item], timeout: float,
         per_char = (dense / 1.0 + (chars - dense) / 4.0) / chars
         budget = max(256, int(recipe.ctx / per_char))
     still_refused: httpx.HTTPStatusError | None = None
-    # A VeGa ENCODER IS SENT THE INPUT WHOLE (operator, 2026-10-18;
-    # docs/notes/char-cut-truncation.md): the tag names the space's `ctx` and
-    # the encoder cuts there with the model's own tokenizer, as 09 §9.3 says.
-    # The character cut below is only for an encoder that cannot: it shortened
-    # every long input to a window that is not `ctx`, and NCBI's and Upstash's
-    # vectors of long inputs could not be reproduced through it.
-    vouched = recipe.api == VEGA
+    # A SPACE THAT CUTS BY TOKENS sends a VeGa encoder the input WHOLE
+    # (operator, 2026-10-18; docs/notes/char-cut-truncation.md): the tag names
+    # `ctx` and the encoder cuts there with the model's own tokenizer, as 09
+    # §9.3 says. Every other space keeps the character cut below, the one its
+    # calibration reference was made with: the cut is part of the function, and
+    # changing it under a Codex made gutenberg's re-check fail on the node.
+    vouched = recipe.api == VEGA and recipe.cut == TOKEN_CUT
     for attempt in range(10):
         cut = list(batch) if vouched else [_cut(t, budget) for t in batch]
         try:

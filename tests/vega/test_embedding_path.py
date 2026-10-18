@@ -554,16 +554,25 @@ def test_a_query_needs_a_receipt_too(node, localai, vega):
     assert leg["leg"] == "vector" and "not the one the backend produced" in leg["reason"]
 
 
-def test_a_long_input_goes_whole_with_the_spaces_ctx_as_its_window(localai):
-    """docs/notes/char-cut-truncation.md: the platform cut a long input to
-    about ctx x 4 CHARACTERS, a window that is not `ctx` tokens, and archive
-    vectors of long inputs could not be reproduced through it. To a VeGa
-    encoder it goes whole, and the tag names the window the encoder cuts at."""
-    long_text = "word " * 5000                      # ten times the old character budget
-    embeddings.embed_calibration(RECIPE, [long_text], raw=True)
+def test_a_space_that_cuts_by_tokens_sends_the_input_whole_with_ctx_as_its_window(localai):
+    """docs/notes/char-cut-truncation.md: a space declaring the token cut sends
+    a VeGa encoder the input whole, and the tag names the window it cuts at."""
+    from dataclasses import replace
+    long_text = "word " * 5000                      # ten times the character budget
+    embeddings.embed_calibration(replace(RECIPE, cut="tokens"), [long_text], raw=True)
     body, = localai.bodies
     assert parsed(body) == [("text", long_text)], "never cut by characters"
     assert localai.windows == [RECIPE.ctx]
+
+
+def test_every_other_space_keeps_the_cut_its_references_were_made_with(localai):
+    """The cut is part of the function: a space that does not declare the token
+    cut (every live Codex) is cut by characters, as before, and names no window."""
+    long_text = "word " * 5000
+    embeddings.embed_calibration(RECIPE, [long_text], raw=True)
+    body, = localai.bodies
+    (form, sent), = parsed(body)
+    assert len(sent) <= RECIPE.ctx * 4 < len(long_text) and localai.windows == [None]
 
 
 def test_an_input_vega_cannot_cut_exactly_is_that_inputs_refusal(localai, monkeypatch):

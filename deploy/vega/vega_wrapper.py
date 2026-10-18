@@ -988,10 +988,14 @@ class Gate:
             raise Refusal("FAILED_PRECONDITION",
                           f"VeGa: {self.backend.name}'s tokens could not be counted at load, "
                           f"so no input is cut to a window here")
-        if state.context_size and window > state.context_size:
+        # llama.cpp refuses an input that FILLS its context (`n_tokens >= n_ctx`,
+        # "request (8192 tokens) exceeds the available context size (8192
+        # tokens)", the node 2026-10-18): a full window needs a larger context
+        if state.context_size and window >= state.context_size:
             raise Refusal("FAILED_PRECONDITION",
-                          f"VeGa: a window of {window} tokens, over the model's context_size "
-                          f"of {state.context_size}")
+                          f"VeGa: a window of {window} tokens needs a context_size above it — "
+                          f"llama.cpp embeds at most context_size − 1 tokens, and this model's "
+                          f"is {state.context_size}")
         tokens = self._tokens(call, req, content)
         if len(tokens) + state.specials <= window:
             return content, len(tokens) + state.specials
