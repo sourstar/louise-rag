@@ -827,3 +827,64 @@ def test_jina_v3_through_the_dispatcher(tmp_path):
     assert s.LoadModel(load_call(tmp_path, options=["task:jina-v3", "dim:512"],
                                  context_size=8192), None).success
     assert len(s.Embedding(SimpleNamespace(Embeddings="x"), Context()).embeddings) == 512
+
+
+def test_the_cross_device_check_changes_only_the_model():
+    """tools/cross_device_check.py: the collection's own encoder recipe with the
+    document-side model swapped for its twin on another device — nothing else."""
+    from app.collections import EmbedRecipe
+    from tools import cross_device_check as xdc
+    r = EmbedRecipe(url="http://localai:8080", api="vega", model="vega-dar-legal-it",
+                    dtype="f16", ctx=8192, dim=768)
+    cpu = xdc.cpu_recipe(r, "vega-dar-legal-it-cpu")
+    assert cpu.model == "vega-dar-legal-it-cpu"
+    assert dataclasses_fields_equal(cpu, r, but={"model"})
+    with pytest.raises(ValueError):
+        xdc.cpu_recipe(r, "vega-dar-legal-it")
+
+
+def dataclasses_fields_equal(a, b, *, but):
+    import dataclasses
+    return all(getattr(a, f.name) == getattr(b, f.name)
+               for f in dataclasses.fields(a) if f.name not in but)
+
+
+def test_jina_v3_refuses_a_model_whose_attention_is_not_the_one_measured():
+    """docs/notes/gpu-silent-wrong-vectors.md: the eager softmax is wrong on the
+    B70 for some lengths, so every SelfAttention goes through SDPA — and a model
+    with none is refused rather than run on the path that was not measured."""
+    server = jina_task.jina_v3
+
+    class SelfAttention:
+        causal, softmax_scale = False, None
+
+        def forward(self, *a):
+            return "eager"
+
+    class Other:
+        pass
+
+    model = SimpleNamespace(modules=lambda: [Other(), SelfAttention(), SelfAttention()])
+    assert server.use_sdpa(model) == 2
+    with pytest.raises(ValueError, match="not the one measured"):
+        server.use_sdpa(SimpleNamespace(modules=lambda: [Other()]))
+
+
+def test_sdpa_forward_is_the_eager_attention():
+    """The replacement computes their SelfAttention's function (mha.py, bd55a5e):
+    softmax(QKᵀ·scale + padding) V, (B, S, 3, H, D) in, (B, S, H, D) out."""
+    torch = pytest.importorskip("torch")
+    import math
+    server = jina_task.jina_v3
+    torch.manual_seed(0)
+    qkv = torch.randn(2, 37, 3, 4, 16)
+    keep = torch.ones(2, 37, dtype=torch.bool)
+    keep[1, 30:] = False
+    q, k, v = qkv.unbind(dim=2)
+    scores = torch.einsum("bthd,bshd->bhts", q, k / math.sqrt(16))
+    pad = torch.full((2, 37), -10000.0).masked_fill_(keep, 0.0)
+    eager = torch.einsum("bhts,bshd->bthd", torch.softmax(scores + pad[:, None, None, :], dim=-1), v)
+    me = SimpleNamespace(causal=False, softmax_scale=None)
+    got = server.sdpa_forward(me, qkv, key_padding_mask=keep)
+    assert got.shape == eager.shape
+    assert torch.allclose(got, eager, atol=1e-5)
