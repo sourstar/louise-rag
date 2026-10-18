@@ -148,7 +148,7 @@ def main() -> int:
          "rage": 0.0}
     c = {"b64_ok": 0, "b64_bad": 0, "b64_missing": 0, "json_ok": 0, "json_bad": 0,
          "json_missing": 0, "verify_batches_pass": 0, "verify_batches_fail": 0,
-         "b64_vs_json_bitequal": 0, "vega_vs_rage_bitequal": 0, "json_negzero": 0, "rage_runs": set(), "vega_runs": set()}
+         "b64_vs_json_bitequal": 0, "vega_vs_rage_bitequal": 0, "json_negzero": 0, "runs_mod": set(), "vega_runs": set()}
     cos, maxabs, selfabs = [], 0.0, 0.0
     failures: list[str] = []
     for i in range(0, n, BATCH):
@@ -192,7 +192,7 @@ def main() -> int:
                        json={"model": RAGE_MODEL, "input": chunk})
         t["rage"] += time.monotonic() - t0
         rr.raise_for_status()
-        c["rage_runs"].add(rr.headers.get("louise-run"))
+        c["runs_mod"].add(rr.headers.get("louise-run"))
         vr = client.parse_response(rr.content)
         for x, y, z in zip(vb, vj, vr):
             xb, yb = f32(x), f32(y)
@@ -202,7 +202,7 @@ def main() -> int:
             cos.append(cosine(fx, fz))
             maxabs = max(maxabs, max(abs(p - q) for p, q in zip(fx, fz)))
             selfabs = max(selfabs, max(abs(p - q) for p, q in zip(fx, fy)))
-    c["rage_runs"] = sorted(c["rage_runs"])
+    c["runs_mod"] = sorted(c["runs_mod"])
     c["vega_runs"] = sorted(c["vega_runs"])
     rep["counts"] = c
     rep["failures"] = failures[:10]

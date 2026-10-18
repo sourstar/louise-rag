@@ -24,7 +24,7 @@ def test_an_instrument_gets_its_own_flags_whole(monkeypatch):
     assert louise.main(["dev", "embedder-profile", "--url", "http://encoder", "--texts", "3"]) == 0
     assert seen["profile"] == ["louise dev embedder-profile", "--url", "http://encoder", "--texts", "3"]
     assert sys.argv == before, "sys.argv put back"
-    assert set(louise.DEV_TOOLS) == {"schedule-report", "embedder-profile", "load-profile", "refs-sync"}
+    assert set(louise.DEV_TOOLS) == {"schedule-report", "embedder-profile", "refs-sync"}
 
 
 def test_migrate_schema_runs_over_the_named_collection(isolated_config, monkeypatch, capsys):

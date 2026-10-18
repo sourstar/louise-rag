@@ -92,16 +92,14 @@ def test_the_two_halfway_values_are_repaired_and_nothing_else_moves():
     assert vtag.f32_bytes(list(exact)) == bytes.fromhex("fc43ae15fe43ae15"), "neighbours unmoved"
 
 
-def test_the_pair_form_the_backend_reads_is_the_one_rage_and_the_backend_hold():
-    from app.rage import pairs
+def test_the_pair_form_the_backend_reads_is_the_one_the_backend_holds():
     import importlib.util
     from pathlib import Path
     path = Path(__file__).resolve().parents[2] / "deploy/localai/backends/louise_backend.py"
     spec = importlib.util.spec_from_file_location("louise_backend_for_vega", path)
     lb = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(lb)
-    assert vtag.PAIR_MARK == pairs.MARK == lb.PAIR_MARK
-    assert vtag.backend_pair("Té", "x\ny") == pairs.encode("Té", "x\ny")
+    assert vtag.PAIR_MARK == lb.PAIR_MARK
     assert lb.decode_pair(vtag.backend_pair("a", "b")) == ("a", "b")
 
 

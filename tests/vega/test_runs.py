@@ -1,4 +1,4 @@
-"""The run identity (app/rage/runs.py) — docs/09-formats.md §9.3 and §9.12.
+"""The run identity (app/vega/runs.py) — docs/09-formats.md §9.3 and §9.12.
 
 What is hashed is never the raw argument vector or environment: those carry
 a port, a path and a container's host name, so every restart would be
@@ -11,9 +11,10 @@ import hashlib
 import pytest
 
 from app.hold.codex import canonical_json, digest
-from app.rage import runs
-from app.rage.procfs import ProcFS
-from tests.rage.conftest import IMAGE
+from app.vega import runs
+from app.vega.procfs import ProcFS
+#: the digest a deployment pins as its image (09 §9.12)
+IMAGE = "sha256:" + "ab" * 32
 
 
 # ---- the image ---------------------------------------------------------------

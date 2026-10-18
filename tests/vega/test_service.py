@@ -10,8 +10,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.hold.codex import canonical_json
-from app.rage import runs as rage_runs
-from app.rage.store import RunStore
+from app.vega import runs as runs_mod
+from app.vega.store import RunStore
 from app.vega import service
 from app.vega.service import ReceiptStore, Refused, Runs
 
@@ -20,7 +20,7 @@ RUN = {"driver": "cpu", "weights": "sha256:" + "11" * 32,
                   "image": "sha256:" + "22" * 32, "args": ["/b/run.sh", "--addr",
                                                        "127.0.0.1:${PORT}"],
                   "env": {}, "device": "cpu", "options": {"ModelFile": "${WEIGHTS}"}}}
-RUN_ID = rage_runs.run_id(RUN)
+RUN_ID = runs_mod.run_id(RUN)
 
 
 def receipt(i: int = 0, **kw: str) -> dict[str, str]:

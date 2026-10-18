@@ -19,7 +19,7 @@ from pathlib import Path
 
 import uvicorn
 
-from ..rage.store import RunStore
+from .store import RunStore
 from .service import Intake, ReceiptStore, Runs, create_app
 
 

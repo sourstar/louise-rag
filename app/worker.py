@@ -2600,7 +2600,7 @@ _ENDPOINT_BUSY_STATUS = frozenset({429, 502, 503, 504})
 
 def rage_refusal(exc: BaseException | None) -> str | None:
     """RAGE's own words when it would not load the model — a 503 whose body
-    carries its `admission` verdict (app/rage/placement.py) — however deep the
+    carries its `admission` verdict (RAGE, retired) — however deep the
     client wrapped it; None for any other failure. It is still a DEFERRAL,
     never an error on a document; but it is not the same as "busy", and the
     operator asked to be TOLD (2026-09-20): the collection's own log says

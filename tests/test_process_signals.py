@@ -146,7 +146,7 @@ def test_every_image_we_build_answers_sigterm_as_pid_1():
             continue
         assert Path(argv[0]).name in ("python", "python3"), f"{name}: {argv} — unknown PID 1"
         if argv[1] == "-m":
-            # `python -m app.rage` (deploy/rage): the module of the repository,
+            # `python -m <package>`: the module of the repository,
             # its __main__ when it is a package
             module = ROOT.joinpath(*argv[2].split("."))
             script = module / "__main__.py" if module.is_dir() else module.with_suffix(".py")

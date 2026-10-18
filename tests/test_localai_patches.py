@@ -10,7 +10,7 @@ a patch named there but missing here is one the image never applies.
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 PATCHES = ROOT / "deploy" / "localai" / "patches"
 ACTIONS = (ROOT / "docs" / "notes" / "localai-bugs.md").read_text(encoding="utf-8")
 

@@ -7,7 +7,7 @@ as its child, and proxies gRPC to it. Two methods are intercepted:
 
 - `LoadModel`: the ModelOptions exactly as LocalAI sent them, the weights
   hashed WHILE the backend loads them, and the run computed from what this
-  process launched — the same identity as RAGE's (app/rage/runs.py,
+  process launched — the same identity as RAGE's (app/vega/runs.py,
   loadopts.py: 09 §9.12), published to VeGa's receipts service.
 - `Embedding`: refused without a valid tag (app/vega/tag.py); the tag
   stripped and the bare text — or the pair, in the form the backend reads —
@@ -44,7 +44,7 @@ THE PACKAGE (what LocalAI's backends path holds as `vega-<backend>/`):
                                         of the release LocalAI runs
     grpc_auth.py  model_identity.py  parent_watch.py   LocalAI's, same release
     app/__init__.py  app/hold/{__init__,codex}.py
-    app/rage/{__init__,model,procfs,runs,loadopts}.py  app/vega/{__init__,tag}.py
+    app/vega/{__init__,tag,model,procfs,runs,loadopts,dxg}.py
 The `app/` files are Louise's, copied as RAGE's image copies the codex: ONE
 definition of canonical JSON, the run and the tag. None imports more than the
 standard library; the venv holds grpcio and protobuf (requirements.txt).
@@ -69,9 +69,9 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from app.hold.codex import canonical_json, digest
-from app.rage import dxg, loadopts, runs
-from app.rage.model import CPU
-from app.rage.procfs import WSL_GPU, ProcFS
+from app.vega import dxg, loadopts, runs
+from app.vega.model import CPU
+from app.vega.procfs import WSL_GPU, ProcFS
 from app.vega import tag as vtag
 
 LOAD = "/backend.Backend/LoadModel"
@@ -109,7 +109,7 @@ GRACE_S = 30.0
 MAX_MESSAGE = 50 * 1024 * 1024
 #: Calls in flight at once. A stream holds its thread while it lasts.
 WORKERS = 16
-#: What a model's YAML declares for a pair model (app/rage/pairs.py OPTION).
+#: What a model's YAML declares for a pair model.
 PAIRS_OPTION = "pairs:true"
 #: The compute runtime the run's driver names, read from the image's dpkg
 #: status (RAGE's list, deploy/rage/Dockerfile.localai).
@@ -166,7 +166,7 @@ class Config:
     cards: Mapping[str, str] = field(default_factory=dict)   # PCI address -> device name
     runtime_packages: tuple[str, ...] = RUNTIME_PACKAGES
     cuts: str = TOKENIZER
-    amd_smi: Path | None = None           # WSL2: the dxg build of amd-smi (app/rage/dxg.py)
+    amd_smi: Path | None = None           # WSL2: the dxg build of amd-smi (app/vega/dxg.py)
 
 
 def load_config(path: Path, backends_root: Path) -> Config:
@@ -371,7 +371,7 @@ def tree_digest(root: Path, files: FileDigests | None = None) -> str:
         H( canonical JSON (09 §9.1) of <the tree_manifest> )
 
     H is sha256, written `sha256:<hex>`, as the weights digest of a directory
-    is (app/rage/runs.py) — the form 09 §9.3's validator reads for an image."""
+    is (app/vega/runs.py) — the form 09 §9.3's validator reads for an image."""
     return manifest_digest(tree_manifest(root, files), root)
 
 
@@ -610,7 +610,7 @@ def weights_mib(path: str) -> float:
 
 
 def declares_pairs(options: Any) -> bool:
-    """Whether a load's `Options` declare a pair model (app/rage/pairs.py)."""
+    """Whether a load's `Options` declare a pair model (`PAIRS_OPTION`)."""
     return isinstance(options, list) and any(
         isinstance(o, str) and o.replace(" ", "") == PAIRS_OPTION for o in options)
 

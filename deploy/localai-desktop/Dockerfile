@@ -12,7 +12,7 @@
 #   this LocalAI tag is built on — and the Windows driver.
 # - its amd-smi (rocdxg-amd-smi-lib, /opt/rocm-wsl): the only tool that reads
 #   the card under WSL2. VeGa's wrapper reads the run's device with it
-#   (vega.json `amd_smi`, app/rage/dxg.py), and LocalAI's own GPU panel
+#   (vega.json `amd_smi`, app/vega/dxg.py), and LocalAI's own GPU panel
 #   through the rocm-smi shim below.
 #
 #   docker build -t louise-localai:rocm deploy/localai-desktop

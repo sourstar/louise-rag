@@ -12,8 +12,8 @@ cut longest-first to 512 tokens, the [CLS] row. Measured on the node
 cosine 1.00000; "title\\n\\nabstract" as one text does not (0.98926 median).
 
 ONE STRING PER CALL. LocalAI hands a backend one string per embedding, so
-RAGE's front sends a pair as `PAIR_MARK + json.dumps([first, second])`
-(app/rage/pairs.py) and only to a model whose YAML declares `pairs:true`; this
+VeGa's wrapper sends a pair as `PAIR_MARK + json.dumps([first, second])`
+(app/vega/tag.backend_pair) and only to a model whose YAML declares `pairs:true`; this
 backend decodes it (louise_backend.decode_pair). A plain string is one text,
 segment 0 alone — how NCBI's query encoder reads a query, and what a `text`
 form layer would send.

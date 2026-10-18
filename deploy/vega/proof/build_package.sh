@@ -56,8 +56,8 @@ cp /src/tests/fixtures/vega/backend.proto "$PKG/"
 # the wrapper and the Louise modules it carries (vega_wrapper.py's docstring)
 cp /src/deploy/vega/run.sh /src/deploy/vega/vega_wrapper.py /src/deploy/vega/requirements.txt "$PKG/"
 chmod 0755 "$PKG/run.sh"
-for f in app/__init__.py app/hold/__init__.py app/hold/codex.py app/rage/__init__.py \
-         app/rage/model.py app/rage/procfs.py app/rage/runs.py app/rage/loadopts.py \
+for f in app/__init__.py app/hold/__init__.py app/hold/codex.py \
+         app/vega/model.py app/vega/procfs.py app/vega/runs.py app/vega/loadopts.py \
          app/vega/__init__.py app/vega/tag.py; do
   mkdir -p "$PKG/$(dirname "$f")"
   cp "/src/$f" "$PKG/$f"

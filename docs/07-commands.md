@@ -198,8 +198,6 @@ louise node
 louise dev                                                             operator instruments; read-only unless the line says otherwise
   schedule-report      what the worker spent its rounds on
   embedder-profile     the concurrency an endpoint sustains
-  load-profile         how long each model takes to come back to the card, from disk and from RAM,
-                       idle and beside an embedding; loads and unloads models, and puts back what it found
   migrate schema [<collection>]                                        apply pending schema changes to a state database; writes; never runs on its own
   refs-sync            reference tables from their origins; writes
   genesis recheck <collection>                                         reopen final archive shards that still have documents the archive could serve; writes
@@ -793,7 +791,7 @@ unknown command. The table says where each went.
 | `/admin/…`, `/api/search`, `/api/verify` | `/api/hold/…`, `/api/ask/search`; T4 needs no route — it runs on use |
 | `/v1/chat/completions` | kept as an alias of `/api/ask/chat` for clients that speak that protocol |
 | LocalAGI's `/api/collections/…` | kept as aliases of `hold deposit`, `hold source` and `ask search` for LocalAGI (§7.4) |
-| `tools/sched_report`, `profile_embed`, `load_profile`, `migrate_manifest`, `sync_refs` | `dev schedule-report`, `dev embedder-profile`, `dev load-profile`, `dev migrate schema`, `dev refs-sync` |
+| `tools/sched_report`, `profile_embed`, `migrate_manifest`, `sync_refs` | `dev schedule-report`, `dev embedder-profile`, `dev migrate schema`, `dev refs-sync` (`dev load-profile` retired with RAGE, 2026-10-18: it measured reloads through RAGE's admin API) |
 
 ## 7.7 Contracts: exit codes, arguments, output, concurrency, interruption
 

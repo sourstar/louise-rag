@@ -50,9 +50,9 @@ cp /cache/stubs/backend_pb2.py /cache/stubs/backend_pb2_grpc.py /cache/stubs/bac
 cp /cache/common/*.py "$P/"
 cp /src/deploy/vega/run.sh /src/deploy/vega/vega_wrapper.py /src/deploy/vega/requirements.txt "$P/"
 chmod 0755 "$P/run.sh"
-for f in app/__init__.py app/hold/__init__.py app/hold/codex.py app/rage/__init__.py \
-         app/rage/model.py app/rage/procfs.py app/rage/runs.py app/rage/loadopts.py \
-         app/rage/dxg.py app/vega/__init__.py app/vega/tag.py; do
+for f in app/__init__.py app/hold/__init__.py app/hold/codex.py \
+         app/vega/model.py app/vega/procfs.py app/vega/runs.py app/vega/loadopts.py \
+         app/vega/dxg.py app/vega/__init__.py app/vega/tag.py; do
   mkdir -p "$P/$(dirname "$f")"
   cp "/src/$f" "$P/$f"
 done

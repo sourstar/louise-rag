@@ -4,9 +4,9 @@ error.
 Until migration step 15g this module was `rage.toml`'s whole desired state:
 each model's command per device, its memory, priority, preload and park
 (docs/notes/rage.md §5). LocalAI's model YAML holds the lifecycle now
-(deploy/rage/localai-models/; rage-over-localai §7), and `rage.toml` holds the
-cards alone (app/rage/localai_config.py). The retirement is recorded in
-docs/notes/legacy-to-delete.md §8.
+(rage-over-localai §7). RAGE retired on 2026-10-09 and its code went on
+2026-10-18; VeGa's wrapper keeps this module for `CPU`. The retirement is
+recorded in docs/notes/legacy-to-delete.md §8.
 """
 from __future__ import annotations
 

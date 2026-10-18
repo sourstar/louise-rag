@@ -56,9 +56,8 @@ DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 #: The phase-3 form of a pair, what `louise-medcpt-article-ov` decodes
 #: (docs/notes/rage-over-localai.md §13). The wrapper forwards a tagged pair
-#: in it; app/rage/pairs.py and deploy/localai/backends/louise_backend.py
-#: hold the same marker for RAGE, and a test holds the three equal until RAGE
-#: retires.
+#: in it; deploy/localai/backends/louise_backend.py holds the same marker,
+#: and a test holds the two equal.
 PAIR_MARK = "\x1eLOUISE-PAIR\x1e"
 
 #: THE ONLY TWO float32 VALUES whose JSON, as LocalAI writes it (Go's
@@ -223,5 +222,5 @@ def vector_digest(values: Sequence[float] | bytes) -> str:
 
 
 def backend_pair(first: str, second: str) -> str:
-    """A pair as `louise-medcpt-article-ov` reads it (app/rage/pairs.encode)."""
+    """A pair as `louise-medcpt-article-ov` reads it (louise_backend.decode_pair)."""
     return PAIR_MARK + json.dumps([first, second], ensure_ascii=False)

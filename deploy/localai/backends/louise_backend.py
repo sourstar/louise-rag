@@ -51,8 +51,8 @@ MAX_MESSAGE = 50 * 1024 * 1024
 GRACE_S = 30.0
 
 
-#: what RAGE's front puts before a text pair's JSON array, the one string per
-#: embedding LocalAI hands a backend (app/rage/pairs.py MARK, held equal by a
+#: what VeGa's wrapper puts before a text pair's JSON array, the one string per
+#: embedding LocalAI hands a backend (app/vega/tag.PAIR_MARK, held equal by a
 #: test; docs/notes/input-forms.md)
 PAIR_MARK = "\x1eLOUISE-PAIR\x1e"
 

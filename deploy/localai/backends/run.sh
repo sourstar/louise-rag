@@ -3,8 +3,8 @@
 # copy of this file in each backend's directory under LocalAI's system
 # backends path, beside its backend.py and its venv. LocalAI runs it as
 # `run.sh --addr 127.0.0.1:<port>`; `exec` keeps the pid LocalAI lists, so the
-# process RAGE reads is the backend's python, whose program lies in the
-# image's backends path (app/rage/observer.py).
+# process VeGa's wrapper reads is the backend's python, whose program lies
+# in the image's backends path (deploy/vega/vega_wrapper.py).
 #
 # Nothing is installed here: LocalAI's own run.sh creates a missing venv and
 # downloads into it, which would be a backend no image holds (09 §9.12).

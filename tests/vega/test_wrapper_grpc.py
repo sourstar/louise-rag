@@ -27,7 +27,7 @@ import grpc  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.rage import runs as rage_runs  # noqa: E402
+from app.vega import runs as runs_mod  # noqa: E402
 from app.vega import client, service  # noqa: E402
 from app.vega import tag as vtag  # noqa: E402
 
@@ -138,7 +138,7 @@ def test_tagged_texts_come_back_with_receipts_and_the_run_is_what_was_launched(m
     assert [c["text"] for c in node.calls("Embedding")] == ["hello", "wörld"], "the tag is stripped"
     (run_id,) = run_ids
     run = node.vega_http.get(f"/vega/runs/{run_id}").json()
-    assert rage_runs.run_id(run) == run_id
+    assert runs_mod.run_id(run) == run_id
     assert run["weights"] == "sha256:" + hashlib.sha256(node.weights.read_bytes()).hexdigest()
     assert run["driver"] == "cpu"
     engine = run["engine"]

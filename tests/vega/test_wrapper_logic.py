@@ -10,8 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app.rage import loadopts, runs as rage_runs
-from app.rage import pairs
+from app.vega import loadopts, runs as runs_mod
 
 from .conftest import ROOT, load_wrapper
 
@@ -483,7 +482,7 @@ def test_the_run_is_what_the_wrapper_launched(tmp_path):
     rid, run = vw.state_run(backend=backend, canon=canon,
                             environ={"NEO_CACHE_DIR": "/state/neo-cache"}, device="cpu",
                             pci=None, weights="sha256:" + "11" * 32, tree=tree, runtime=[])
-    assert rid == rage_runs.run_id(run)
+    assert rid == runs_mod.run_id(run)
     assert run["driver"] == "cpu" and run["weights"] == "sha256:" + "11" * 32
     assert run["engine"] == {
         "name": "localai/fake-embed", "build": "v4.11.0", "variant": None, "image": tree,
@@ -591,9 +590,10 @@ def test_no_deadline_is_forwarded_as_none(left, timeout):
     assert vw.remaining(Context()) == timeout
 
 
-def test_pairs_are_declared_as_rage_reads_them():
-    for options in (["pairs:true"], ["device:xpu", "pairs : true"], ["pairs:false"], [], None):
-        assert vw.declares_pairs(options) == pairs.declares_pairs(options)
+def test_pairs_are_declared_by_the_option_alone():
+    for options, says in (((["pairs:true"]), True), (["device:xpu", "pairs : true"], True),
+                          (["pairs:false"], False), ([], False), (None, False)):
+        assert vw.declares_pairs(options) is says, options
 
 
 def test_the_wrapper_venv_pins_the_backends_grpc():
@@ -609,7 +609,7 @@ def test_the_wrapper_venv_pins_the_backends_grpc():
 RUN = {"driver": "cpu", "weights": "sha256:" + "11" * 32,
        "engine": {"name": "localai/fake", "build": "v1", "variant": None, "image": DIGEST,
                   "args": [], "env": {}, "device": "cpu", "options": {"M": 1}}}
-RUN_ID = rage_runs.run_id(RUN)
+RUN_ID = runs_mod.run_id(RUN)
 
 
 def _receipt(i):
@@ -629,7 +629,7 @@ def test_a_receipt_is_delivered_with_its_run_told_first(vega):
 def test_a_service_that_forgot_the_run_is_told_again(vega):
     c = vw.ReceiptClient(vega.socket, timeout_s=2)
     c.publish(RUN_ID, RUN)
-    from app.rage.store import RunStore
+    from app.vega.store import RunStore
     vega.runs._known.clear()                 # a service with a fresh state directory
     vega.runs.store = RunStore(vega.socket.parent / "fresh.sqlite")
     c.deliver(_receipt(5), RUN_ID, RUN)

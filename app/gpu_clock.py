@@ -14,8 +14,8 @@ any GPU without naming one.
 WHO HOLDS IT. Two callers, one mechanism:
 - the GPU governor app (app/gpu_governor.py), which follows the node's
   interactive claim;
-- RAGE's front (app/rage/clock.py), which follows the requests it proxies
-  (docs/notes/rage.md §11), and replaces the governor app when it is live.
+- RAGE's front, which followed the requests it proxied (docs/notes/rage.md
+  §11) until it retired on 2026-10-09; its code went on 2026-10-18.
 
 This module is the whole of what writes the host's sysfs, and it imports
 nothing of the platform: RAGE's image carries no manifest layer, and must

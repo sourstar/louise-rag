@@ -1,11 +1,10 @@
 """What a model's process really is — read from /proc, never from a declaration.
 
 docs/09-formats.md §9.12: the platform states a run only from what was
-launched. LocalAI's backends are RAGE's children, in its own PID namespace,
-so this needs no privilege: no host PID namespace, no capability. What the
-observer reads (app/rage/observer.py): the argument vector, the environment,
-the working directory, when the process started, and which card it holds
-memory on.
+launched. A LocalAI backend is VeGa's wrapper's child, in its own PID
+namespace, so this needs no privilege: no host PID namespace, no capability.
+What it reads: the argument vector, the environment, the working directory,
+when the process started, and which card it holds memory on.
 
 The root is a parameter so the tests hand it a directory of files.
 """
@@ -116,7 +115,7 @@ class ProcFS:
 
     def holds(self, pid: int, device: str) -> bool:
         """Whether one of the process's descriptors points at `device`
-        (`WSL_GPU`: the card is then read by app/rage/dxg.py, not here)."""
+        (`WSL_GPU`: the card is then read by app/vega/dxg.py, not here)."""
         try:
             fds = list((self.root / str(pid) / "fd").iterdir())
         except OSError:

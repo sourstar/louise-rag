@@ -18,9 +18,9 @@ descriptions from the wrappers, and Louise reads them.
                                               image is the digest of
 
 A RUN IS ACCEPTED ONLY UNDER ITS OWN NAME: `run_id` must be `H` of the
-description's canonical JSON (app/rage/runs.py, the one definition), so a run
+description's canonical JSON (app/vega/runs.py, the one definition), so a run
 read here is the run a receipt names. Runs are kept across restarts
-(app/rage/store.py's table, VeGa's own file): a calibration statement may be
+(app/vega/store.py's table, VeGa's own file): a calibration statement may be
 written long after the answer that named its run (09 §9.12). A receipt naming
 a run this service has never been told is refused with `unknown-run`; the
 wrapper tells it the run and sends the receipt again.
@@ -60,8 +60,8 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 
 from ..hold.codex import CodexError, canonical_json, digest
-from ..rage import runs as rage_runs
-from ..rage.store import RunStore
+from . import runs as runs_mod
+from .store import RunStore
 from .tag import DIGEST
 
 #: How long a receipt is kept. Louise reads a batch's receipts right after
@@ -169,7 +169,7 @@ class Runs:
         if not isinstance(run["weights"], str) or not DIGEST.fullmatch(run["weights"]):
             raise Refused(INVALID, "a run's weights are a digest, sha256:<64 hex>")
         try:
-            computed = rage_runs.run_id(run)
+            computed = runs_mod.run_id(run)
         except (CodexError, UnicodeEncodeError, TypeError) as e:
             raise Refused(INVALID, f"the run has no canonical form: {e}") from None
         if run_id != computed:

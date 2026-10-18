@@ -9,7 +9,7 @@ THREE RULES MAKE IT COMPUTABLE, and this module is the three of them.
 - `image` comes from a deployment pinned by digest (`boot_image`): a process
   cannot see the digest of the image it runs in, and a tag is not an image.
 - `args`, `env` and `options` are read from what LocalAI launched, with the
-  port and the paths as placeholders (app/rage/observer.py, loadopts.py): the
+  port and the paths as placeholders (the wrapper, loadopts.py): the
   raw argument vector carries a port and a path, and hashed, every restart
   would be another run and re-gate every space.
 - `weights` are hashed at every launch, from the bytes on disk.
@@ -157,7 +157,7 @@ def driver_string(device: str, *, pci: str | None = None, sys_root: Path = Path(
 
     `card_driver_line` is the card's driver as read where sysfs has no PCI
     bus: under WSL2 the card is `/dev/dxg` and its driver is Windows',
-    which app/rage/dxg.py reads from amd-smi (`dxg <version>`). It stands in
+    which app/vega/dxg.py reads from amd-smi (`dxg <version>`). It stands in
     for the bound module, never beside it."""
     if device == CPU:
         return CPU

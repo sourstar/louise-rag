@@ -1,4 +1,4 @@
-"""app/rage/dxg.py: the card a process is on under WSL2's /dev/dxg, read
+"""app/vega/dxg.py: the card a process is on under WSL2's /dev/dxg, read
 from the dxg build of amd-smi. The answers below are amd-smi 1.2.2's
 (rocdxg-amd-smi-lib) on the dev PC's RX 9060 XT, 2026-10-18, trimmed."""
 from __future__ import annotations
@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from app.rage import dxg, runs
+from app.vega import dxg, runs
 
 STATIC = {"gpu_data": [{
     "gpu": 0,

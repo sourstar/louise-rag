@@ -39,7 +39,7 @@ from app import collections as collections_mod, config, db, embeddings, run_chec
 from app import layers as layers_mod
 from app.hold import calibrate, collection as col, embedder as emb, runs as hold_runs
 from app.hold.codex import Chunker, Layer, canonical_json, digest
-from app.rage.store import RunStore
+from app.vega.store import RunStore
 from app.vega import client as vclient, service, tag as vtag
 from app.verify import backend_gate
 from tests.hold.conftest import KEY, NOW, PLATFORM, fake_embed, pubmed

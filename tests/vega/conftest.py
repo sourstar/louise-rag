@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.rage.store import RunStore
+from app.vega.store import RunStore
 from app.vega.service import Intake, ReceiptStore, Runs
 
 ROOT = Path(__file__).resolve().parents[2]

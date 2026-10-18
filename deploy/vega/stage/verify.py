@@ -119,9 +119,9 @@ def encoder(model: str, texts: list[str], pairs: list) -> dict:
     rep["run_ids"] = sorted(runs | runs0)
     rep["run"] = http.get(f"{VEGA}/vega/runs/{rep['run_ids'][0]}").json()
     if rage_model:
-        theirs, rage_runs = rage_embed(rage_model, items)
+        theirs, runs_mod = rage_embed(rage_model, items)
         rep["vs_rage"] = {"model": rage_model, **compare(vectors, theirs),
-                          "rage_runs": sorted(x for x in rage_runs if x)}
+                          "runs_mod": sorted(x for x in runs_mod if x)}
     else:
         ref = json.load(open(f"{IN}/article-reference.json"))["vectors"]
         rep["vs_transformers_fp32_cpu"] = compare(vectors, [floats(base64.b64decode(v)) for v in ref])
