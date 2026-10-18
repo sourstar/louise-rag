@@ -399,11 +399,11 @@ artefact promise 8 forbids. Ways out, for the operator:
 1. **Ask Wikimedia for the chunk texts** (their vector database stores each
    row's `content`; the public API does not return it). With the texts, a
    `verbatim` layer carries 100 %, the wikivec precedent.
-2. **Embed it ourselves** with their recipe: about 44.6 M chunks over the
-   four languages (53,666,646 rows). One text per call measured 4.4 chunks/s on the B70, i.e.
-   ~141 days of continuous GPU; batch 32 measured 45/s, ~14 days (~41 nights). Batching
-   once jina's `torch.unique` overflow on XPU is worked round. Night hours
-   only (quiet-hours), so months.
+2. **Embed it ourselves** with their recipe: 53,666,646 chunks over the four
+   languages. One text per call measured 4.4 chunks/s on the B70, i.e. ~141
+   days of continuous GPU. Batch 32 (with jina's `torch.unique` overflow on
+   XPU worked round) measured 45/s, i.e. ~14 days: about 41 nights inside the
+   quiet hours.
 3. **Carry, then re-embed everything over time to find the 14 %.** This
    costs option 2's GPU anyway; its only gain is being searchable sooner.
 
