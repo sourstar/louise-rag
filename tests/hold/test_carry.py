@@ -619,6 +619,24 @@ def test_an_empty_manifest_another_writer_made_meanwhile_is_replaced_not_taken(p
         con.close()
 
 
+
+def test_a_moved_sources_empty_manifest_does_not_undo_the_move(pair):
+    """2026-10-19, pubmed → pubmed-v8: after the move a restart opened the
+    source, whose file still names it, and `db.connect` made it an empty
+    manifest; the resumed carry compared 0 with the target's 39,994,988 and
+    refused. Resumed, a move whose target holds the documents stands: the
+    stray is removed and the carry finishes."""
+    root, old, new = pair
+    _seeded(root)
+    uids, _ids = _vectors(root, old)
+    carry.carry(root, "old", "new", apply=True, log=quiet)
+    db.connect(_local(root, "old")).close()              # the stray, after the move
+    assert (root / "old" / "state" / "manifest.sqlite").is_file()
+    again = carry.carry(root, "old", "new", apply=True, log=quiet)
+    assert again["done"]["manifest"] == "present" and again["documents"] == len(uids)
+    assert not (root / "old" / "state" / "manifest.sqlite").exists(), "the stray goes"
+
+
 # ---- A1d: an origin that only adds files; a source with no records ----------
 
 def _with_file(c, rel="added/page_props.sql.gz"):

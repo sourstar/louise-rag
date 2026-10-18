@@ -346,6 +346,16 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
     # manifest holding fewer documents than the source's is a stray, removed
     # with its companions, and the source is transferred.
     src_docs = _documents(sp["manifest"]) if sp["manifest"].is_file() else None
+    # A MOVED SOURCE'S STRAY (2026-10-19, pubmed → pubmed-v8): after the move a
+    # restart opened the source collection, whose file still names it, and
+    # db.connect made it an empty manifest. Resumed, the move had happened —
+    # the target holds the documents — and `_transfer` below removes the empty
+    # file, moving: there is nothing to compare the target with.
+    if (not copy and held is not None and src_docs == 0 and tp["manifest"].is_file()
+            and (_documents(tp["manifest"]) or 0) > 0):
+        log(f"[carry] {from_name}: an empty manifest appeared after its move (another "
+            f"opener?); removed, the move stands")
+        src_docs = None
     if src_docs and tp["manifest"].is_file() and (_documents(tp["manifest"]) or 0) < src_docs:
         log(f"[carry] {to_name}: a manifest of {_documents(tp['manifest']) or 0} document(s) "
             f"appeared at the target meanwhile (another writer?); replaced by {from_name}'s")

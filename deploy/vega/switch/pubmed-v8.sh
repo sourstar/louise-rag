@@ -138,8 +138,12 @@ fi
 
 say "7. $NEW paused, then its snapshot seeded from $OLD's parts"
 $L node pause "$NEW" >/dev/null
-run hold records validation "$NEW"
-run hold snapshot create "$NEW" --shards-from "$OLD"
+if docker exec "$W" sh -c "ls /data/collections/$NEW/shard/snapshots/*.json" >/dev/null 2>&1; then
+  echo "$NEW holds its seeded snapshot already"   # a rerun: the check reads every part (~20 min)
+else
+  run hold records validation "$NEW"
+  run hold snapshot create "$NEW" --shards-from "$OLD"
+fi
 
 say "8. the carry, A1e: the dry run, then the move and the recut"
 run dev carry "$OLD" "$NEW" --recut
