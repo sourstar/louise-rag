@@ -109,3 +109,13 @@ again. Wikipedia's comes with its parser-5 switch (wikipedia-qids.md §3),
 with its tolerance then measured across devices. Pubmed's then passes its
 `vectors-sample` again (73 of its 74 misses reproduce). On the node, with the
 operator: the counts of local vectors to re-embed are measured first.
+
+**Pubmed, measured 2026-10-18** (read-only, 24 s in the worker container; a
+seeded sample of 2,000 local documents): 39,993,653 vectors, 35,417,887 of
+them NCBI's (a `chunk_verification` row each), so ~4.58 M local (11.4 % of
+the embedded documents in the sample). 340 of the 2,000 local chunks, 17 %
+(95 % CI 15.4–18.7 %), had a title + abstract over the 2,048-character
+budget (median 2,313 characters): **~778,000 local vectors to re-embed**
+(~705–855 k). The imported 35.4 M stay: they were cut by NCBI at 512 tokens,
+as the corrected Codex cuts. One chunk per document, so at the 23–41
+docs/s pubmed embedded in September, about one night (quiet hours).
