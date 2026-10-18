@@ -390,6 +390,14 @@ def test_on_wsls_gpu_a_card_run_is_listed_and_moved_the_weights_onto_the_card():
     assert _dxg([1, 2], {2: AMD, 77: AMD}, 971, "card") == ("AMD Radeon RX 9060 XT", AMD)
 
 
+def test_on_wsls_gpu_a_small_model_whose_token_table_stays_on_the_host_is_a_card_run():
+    """granite 107M: the 250k x 384 token table is most of its 211 MiB and
+    llama.cpp keeps it in host memory — measured +78 MiB."""
+    assert _dxg([1], {1: AMD}, 78, "card", weights=211.0) == ("AMD Radeon RX 9060 XT", AMD)
+    with pytest.raises(loadopts.Unstatable, match="disagree"):
+        _dxg([1], {1: AMD}, 40, "card", weights=211.0)      # below a quarter: not stated
+
+
 def test_on_wsls_gpu_a_cpu_twin_is_listed_too_and_is_stated_as_cpu_by_what_it_did_not_move():
     """The measured trap: a backend shown no HIP device (gpu_layers 0) is a
     driver client like a card run. It moved nothing, and its options say CPU."""

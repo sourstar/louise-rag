@@ -539,8 +539,12 @@ def device_of(pids: list[int], cards: Mapping[str, str], procfs: ProcFS,
 
 #: Variables that show a HIP/ROCm (or CUDA) runtime no device at all.
 HIDE_DEVICES = ("HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES")
-#: A card load moves at least this share of the weights onto the card...
-ON_CARD_SHARE = 0.5
+#: A card load moves at least this share of the weights onto the card. Not
+#: all of them: llama.cpp keeps the token-embedding table in host memory, and
+#: in a small multilingual model that table is most of the file — granite
+#: 107M (250k vocabulary x 384) moved 78 MiB for its 211 MiB (37 %), bge-m3
+#: 971 for 1,104, a CPU twin 3 (RX 9060 XT, 2026-10-18)...
+ON_CARD_SHARE = 0.25
 #: ...and a CPU load moves at most this much VRAM (MiB, or 5 % of the weights).
 OFF_CARD_MIB = 64
 

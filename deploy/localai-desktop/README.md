@@ -4,7 +4,7 @@ The dev PC's RX 9060 XT (gfx1200), 2026-10-18. The Louise node itself is
 `deploy/docker/` with an env file pointing here (see `compose.yaml`).
 
 1. **Image** — LocalAI's ROCm build plus librocdxg and the dxg amd-smi:
-   `docker build -t louise-localai:rocm deploy/localai-desktop`
+   `docker build -f deploy/localai-desktop/Dockerfile.localai -t louise-localai:rocm deploy/localai-desktop`
 2. **Weights** — byte-identical to the node's (`/mnt/ssd5/apps/models`:
    `llama-embed/`, `granite/`, `bge-m3/`, `chat/`), checked with `sha256sum`,
    in a folder named by `LOUISE_WEIGHTS`.
