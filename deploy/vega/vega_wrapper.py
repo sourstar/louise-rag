@@ -497,22 +497,22 @@ def family(pid: int, proc_root: Path = Path("/proc")) -> list[int]:
 
 
 def device_of(pids: list[int], cards: Mapping[str, str], procfs: ProcFS,
-              dxg_clients: Callable[[], Mapping[int, str]] | None = None
+              dxg_device: Callable[[list[int]], tuple[str, str | None]] | None = None
               ) -> tuple[str, str | None]:
     """(the device as its driver names it, its PCI address) of the card the
     processes hold memory on; (cpu, None) when they hold none. Read, never
     declared: a backend that fell back to the CPU states a CPU run.
 
     A backend on WSL's `/dev/dxg` has no DRM clients to read; with
-    `dxg_clients` (vega.json's `amd_smi`, app/rage/dxg.py) its card is the
-    one the Windows driver lists it a client of — `device_on_dxg`."""
+    `dxg_device` (vega.json's `amd_smi`: `device_on_dxg` over what amd-smi
+    read around the load) the driver is asked instead."""
     on: dict[str | None, int] = {}
     for i, pid in enumerate(pids):
         held = procfs.card_mib_by_device(pid)
         if held is None:
             if i == 0:
-                if dxg_clients is not None and procfs.holds(pid, WSL_GPU):
-                    return device_on_dxg(pids, cards, dxg_clients())
+                if dxg_device is not None and procfs.holds(pid, WSL_GPU):
+                    return dxg_device(pids)
                 raise loadopts.Unstatable("which card the backend is on cannot be read: its "
                                           "DRM clients are not visible in /proc")
             continue                                  # a descendant gone since it was listed
@@ -537,12 +537,46 @@ def device_of(pids: list[int], cards: Mapping[str, str], procfs: ProcFS,
     return cards[pdev], pdev
 
 
-def device_on_dxg(pids: list[int], cards: Mapping[str, str],
-                  clients: Mapping[int, str]) -> tuple[str, str]:
-    """The card of a backend on `/dev/dxg`: the one the driver lists one of
-    its processes as a client of (`dxg.clients`). Holding the device is not
-    enough — a backend that opened it and runs on the CPU is listed on no
-    card, and is refused rather than stated as a CPU run it may not be."""
+#: Variables that show a HIP/ROCm (or CUDA) runtime no device at all.
+HIDE_DEVICES = ("HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES")
+#: A card load moves at least this share of the weights onto the card...
+ON_CARD_SHARE = 0.5
+#: ...and a CPU load moves at most this much VRAM (MiB, or 5 % of the weights).
+OFF_CARD_MIB = 64
+
+
+def declared_placement(canon: loadopts.Canon) -> str | None:
+    """Where the load's own options put the work: "card", "cpu", or None
+    when they leave it split. A HIP runtime shown no device runs nothing on
+    a card; `gpu_layers: 0` alone is NOT a CPU run — llama.cpp still sends
+    large batched matmuls to the card unless `no_op_offload` is set."""
+    if any(canon.env.get(k) == "-1" for k in HIDE_DEVICES):
+        return CPU
+    layers = canon.options.get("NGPULayers")
+    options = canon.options.get("Options") or []
+    no_op_offload = any(isinstance(o, str) and o.replace(" ", "") in
+                        ("no_op_offload", "no_op_offload:true") for o in options)
+    if isinstance(layers, int) and layers > 0:
+        return "card"
+    if no_op_offload:
+        return CPU
+    return None
+
+
+def device_on_dxg(pids: list[int], cards: Mapping[str, str], clients: Mapping[int, str], *,
+                  vram_delta_mib: Mapping[str, int], weights_mib: float,
+                  declared: str | None) -> tuple[str, str | None]:
+    """The device of a backend on `/dev/dxg`, where two readings must agree
+    with the load's options before a run is stated:
+    - the driver lists one of its processes as a client of a card
+      (`dxg.clients`) — necessary, not enough: it lists every process with a
+      GPU context, one running wholly on the CPU too (measured 2026-10-18);
+    - what the load did to that card's used VRAM (`dxg.used_vram_mib`, read
+      just before and just after it): at least ON_CARD_SHARE of the weights
+      for a card run, at most OFF_CARD_MIB (or 5 %) for a CPU run.
+    The options say which one was asked for (`declared_placement`). Anything
+    else — a split load, a HIP runtime that found no card while asked for
+    one, another model evicted or loaded during this one — states no run."""
     on = {clients[p] for p in pids if p in clients}
     if not on:
         raise loadopts.Unstatable("the backend holds /dev/dxg, but the driver lists none of "
@@ -554,7 +588,25 @@ def device_on_dxg(pids: list[int], cards: Mapping[str, str],
     if pdev not in cards:
         raise loadopts.Unstatable(f"the driver lists the backend on the card at {pdev}, which "
                                   f"vega.json's `cards` names no device for")
-    return cards[pdev], pdev
+    if pdev not in vram_delta_mib:
+        raise loadopts.Unstatable(f"the card at {pdev}'s used VRAM was not read around the load")
+    moved = vram_delta_mib[pdev]
+    if declared == "card" and moved >= ON_CARD_SHARE * weights_mib:
+        return cards[pdev], pdev
+    if declared == CPU and abs(moved) <= max(OFF_CARD_MIB, 0.05 * weights_mib):
+        return CPU, None
+    raise loadopts.Unstatable(
+        f"on /dev/dxg the load and the driver disagree: the options put the work on "
+        f"{declared or 'both the card and the CPU (gpu_layers 0 without no_op_offload)'}, "
+        f"and the card's used VRAM moved {moved} MiB for {weights_mib:.0f} MiB of weights")
+
+
+def weights_mib(path: str) -> float:
+    """The size of what a load reads: a file, or a directory model's files."""
+    p = Path(path)
+    if p.is_dir():
+        return sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) / 2**20
+    return p.stat().st_size / 2**20
 
 
 def declares_pairs(options: Any) -> bool:
@@ -875,6 +927,15 @@ class Gate:
                 "weights": hashing("weights", lambda: self.hash_weights(Path(canon.weights_path))),
                 "tree": hashing("tree", tree),
             }
+            # on WSL's /dev/dxg, what the load does to each card's used VRAM is
+            # half of how its device is read (`device_on_dxg`)
+            vram_before: dict[str, int] | None = None
+            if self.amd_smi is not None:
+                try:
+                    vram_before = dxg.used_vram_mib(self.amd_smi)
+                except dxg.DxgUnreadable as e:
+                    vram_before = None
+                    log(f"{self.backend.name}: VRAM before the load not read: {e}")
             answer = forward(raw)
             if not self.pb.Result.FromString(answer).success:
                 return answer                        # the backend's own refusal, as it said it
@@ -891,9 +952,22 @@ class Gate:
                                                   f"{hashed[f'{key} error']}")
                 pids = family(self.child.pid, self.proc_root)
                 amd_smi = self.amd_smi
-                device, pci = device_of(
-                    pids, self.cfg.cards, self.procfs,
-                    None if amd_smi is None else lambda: dxg.clients(amd_smi, self.proc_root))
+
+                def on_dxg(family_pids: list[int]) -> tuple[str, str | None]:
+                    assert amd_smi is not None
+                    if vram_before is None:
+                        raise loadopts.Unstatable("the card's used VRAM before the load was "
+                                                  "not read")
+                    after = dxg.used_vram_mib(amd_smi)
+                    return device_on_dxg(
+                        family_pids, self.cfg.cards, dxg.clients(amd_smi, self.proc_root),
+                        vram_delta_mib={k: after[k] - vram_before[k]
+                                        for k in after if k in vram_before},
+                        weights_mib=weights_mib(canon.weights_path),
+                        declared=declared_placement(canon))
+
+                device, pci = device_of(pids, self.cfg.cards, self.procfs,
+                                        None if amd_smi is None else on_dxg)
                 card_driver_line = (dxg.driver_line(amd_smi, pci)
                                     if amd_smi is not None and pci and device != CPU
                                     and self.procfs.holds(self.child.pid, WSL_GPU) else None)
