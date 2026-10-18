@@ -907,3 +907,16 @@ def test_sdpa_forward_is_the_eager_attention():
     got = server.sdpa_forward(me, qkv, key_padding_mask=keep)
     assert got.shape == eager.shape
     assert torch.allclose(got, eager, atol=1e-5)
+
+
+def test_the_cross_device_export_is_what_the_check_read_in_its_order():
+    """`--export`: each chunk the check read, its input as the encoder is fed it
+    (a pair as two strings) and its stored vector, for another machine."""
+    from tools import cross_device_check as xdc
+    stored = {"a": [1.0, 0.0], "p": [0.0, 1.0]}
+    r = xdc.Recorder(lambda ids: {i: stored[i] for i in ids if i in stored},
+                     lambda texts: [[0.0, 0.0] for _ in texts])
+    r.vectors_for(["a", "p"])
+    r.embed(["text a", ("Title", "Abstract")])
+    assert r.export() == [{"chunk": "a", "input": "text a", "stored": [1.0, 0.0]},
+                          {"chunk": "p", "input": ["Title", "Abstract"], "stored": [0.0, 1.0]}]

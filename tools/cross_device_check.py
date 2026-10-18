@@ -20,6 +20,11 @@ model and prints, per chunk, the three cosines that tell the cases apart:
 stored against the twin, stored against the card now, the card now against the
 twin. A precision gap between devices reads high everywhere; a wrong vector
 reads low against the twin and high against the card.
+
+`--export FILE` embeds nothing: it writes the sample's inputs (as the encoder is
+fed them) and stored vectors, for a machine without the node's limits to embed
+and compare (the dev PC's CPU twin, operator 2026-10-18: the NAS takes no
+sustained load).
 """
 from __future__ import annotations
 
@@ -65,6 +70,15 @@ class Recorder:
                 self.text[cid], self.twin[cid] = t, list(v)
         return out
 
+    def export(self) -> list[dict]:
+        """Every chunk the check read, in the order it read them: its id, its
+        input as the encoder is fed it (a text, or a pair as two strings) and
+        its stored vector — what another machine needs to embed it and compare
+        (`--export`)."""
+        return [{"chunk": cid, "input": list(t) if isinstance(t, tuple) else t,
+                 "stored": [float(x) for x in self.stored[cid]]}
+                for cid, t in self.text.items()]
+
     def explain(self, failing, own_embed) -> list[dict]:
         """One row per failing chunk the recorder saw, its text embedded again
         by `own_embed` (the collection's own model)."""
@@ -87,7 +101,7 @@ class Recorder:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="cross_device_check")
     p.add_argument("collection")
-    p.add_argument("--model", required=True, help="the same model on another device")
+    p.add_argument("--model", default=None, help="the same model on another device")
     p.add_argument("--api", default=None, help="the twin's api when it is not behind VeGa (openai)")
     p.add_argument("--sample", default=None, help="raise the plan's part fraction")
     p.add_argument("--seed", default=None, help="32 bytes as hex")
@@ -95,7 +109,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--explain", action="store_true",
                    help="embed the failing chunks again with the collection's own model and "
                         "print the three cosines per chunk")
+    p.add_argument("--export", type=Path, default=None, metavar="FILE",
+                   help="embed nothing: write the sample's inputs and stored vectors to FILE, "
+                        "for another machine to embed and compare")
     a = p.parse_args(argv)
+    if not a.model and not a.export:
+        p.error("--model names the twin, or --export writes the sample for another machine")
 
     from app import embeddings, louise
     from app.hold import check as chk, collection as col, records as rec
@@ -106,9 +125,14 @@ def main(argv: list[str] | None = None) -> int:
     snapshot = louise._latest_snapshot(a.root, name, None)
     seed = bytes.fromhex(a.seed) if a.seed else os.urandom(32)
     own = louise._recipe_for(codex, name)
-    recipe = cpu_recipe(own, a.model, a.api)
-    rec_ = Recorder(lambda ids: embeddings.vectors_by_chunk_id(ids, collection=local),
-                    lambda texts: embeddings.embed_chunks(codex, texts, recipe=recipe))
+    if a.export:
+        # nothing is embedded here: a zero vector per input, so the check
+        # records what it read and fails every chunk, which is not reported
+        twin = lambda texts: [[0.0] * codex.space.dim for _ in texts]   # noqa: E731
+    else:
+        recipe = cpu_recipe(own, a.model, a.api)
+        twin = lambda texts: embeddings.embed_chunks(codex, texts, recipe=recipe)   # noqa: E731
+    rec_ = Recorder(lambda ids: embeddings.vectors_by_chunk_id(ids, collection=local), twin)
     report = chk.run(
         a.root, name, codex, snapshot, seed=seed, checks=["vectors-sample"], sample=a.sample,
         embed=rec_.embed,
@@ -116,6 +140,14 @@ def main(argv: list[str] | None = None) -> int:
         only_shards=None, live=None,
         vectors_for=rec_.vectors_for,
         log=lambda m: print(m, file=sys.stderr))
+    if a.export:
+        rows = rec_.export()
+        a.export.write_text(json.dumps({"collection": name, "collection_id": codex.collection_id,
+                                        "space_id": codex.space_id, "ctx": codex.space.ctx,
+                                        "seed": seed.hex(), "chunks": rows}), encoding="utf-8")
+        print(json.dumps({"collection": name, "exported": len(rows), "to": str(a.export),
+                          "seed": seed.hex()}))
+        return 0
     for o in report.outcomes:
         print(json.dumps({"collection": name, "model": a.model, "check": o.check,
                           "result": o.result, "detail": o.detail, "why": o.why,
