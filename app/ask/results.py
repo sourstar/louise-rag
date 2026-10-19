@@ -230,10 +230,11 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
            filters: dict[str, Any] | None = None, limit: int = DEFAULT_LIMIT,
            rerank_depth: int = DEFAULT_DEPTH, as_of: str | None = None, freshness: bool = False,
            translate: bool = False, all_languages: bool = False, root: Path | None = None,
-           now: float | None = None, run=None) -> dict[str, Any]:
+           now: float | None = None, run=None, annotations: list[str] | None = None) -> dict[str, Any]:
     """05 §5.4's `louise_search`: `{lists, facts, unresolved, withheld,
     legs_withheld, translations}`. `run` is query_service.run_search unless
-    a test gives another."""
+    a test gives another. `annotations`: the annotations collections
+    consulted, by name (None = every one held; 05 §5.3, amended 2026-10-19)."""
     from app import collections as collections_mod, identity, query_service
     from app.ask import asof as asof_mod
     if filters is not None and not isinstance(filters, dict):
@@ -289,7 +290,8 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
     if named:
         result = run(names, query, limit, "hybrid", translate, rerank_depth=rerank_depth,
                      all_languages=all_languages, filters=filters or None,
-                     **({"as_of": validity_mod.day_int(day)} if day is not None and by_validity else {}))
+                     **({"as_of": validity_mod.day_int(day)} if day is not None and by_validity else {}),
+                     **({"annotations": annotations} if annotations is not None else {}))
     else:
         # nothing to search — everything withheld, or no collection dated as
         # asked: said so, never a request for "no collections" one layer down
@@ -357,7 +359,9 @@ def search(query: str, *, collections: list[str] | None = None, space: str | Non
     from app.ask import annotations as annotation_facts
     try:
         withheld_annotations = annotation_facts.attach(
-            lists, source_of, contexts, root=Path(root) if root is not None else _root())
+            lists, source_of, contexts, root=Path(root) if root is not None else _root(),
+            **({"collections": query_service.resolve_annotations(annotations)}
+               if annotations is not None else {}))
     except Exception as e:   # noqa: BLE001 — a fact that cannot be placed is said, never fatal
         withheld_annotations = [{"collection": None, "collection_id": None, "shards": "all",
                                  "reason": f"annotations not attached: {type(e).__name__}: {e}"[:300]}]

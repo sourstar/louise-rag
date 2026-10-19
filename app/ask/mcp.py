@@ -34,6 +34,10 @@ TOOLS: list[dict[str, Any]] = [
                          "description": "collection ids, id prefixes or local names; default: every "
                                         "collection held and usable"},
          "space": {"type": "string", "description": "a space_id: only the collections in it"},
+         "annotations": {"type": "array", "items": {"type": "string"},
+                         "description": "the annotations collections consulted, by local name: their work "
+                                        "claims group a work's editions into one hit and their claims come "
+                                        "beside the hits (05 §5.3); default: every one held, [] none"},
          "filters": {"type": "object", "description": "{facet field: value | {not: value}}"},
          "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
          "rerank_depth": {"type": "integer", "minimum": 1, "maximum": 300, "default": 50},
@@ -68,7 +72,8 @@ def _call_tool(name: str, args: dict[str, Any]) -> Any:
                               filters=args.get("filters"), limit=int(args.get("limit") or results.DEFAULT_LIMIT),
                               rerank_depth=int(args.get("rerank_depth") or results.DEFAULT_DEPTH),
                               as_of=args.get("as_of"), freshness=bool(args.get("freshness")),
-                              translate=bool(args.get("translate")), all_languages=bool(args.get("all_languages")))
+                              translate=bool(args.get("translate")), all_languages=bool(args.get("all_languages")),
+                              annotations=args.get("annotations"))
     if name == "louise_lookup":
         return lookup.lookup(str(args["id"]))
     if name == "louise_traverse":

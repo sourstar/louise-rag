@@ -10,6 +10,19 @@
     <span class="chip on" data-name="{{ c.name }}" onclick="toggleChip(this)">{{ c.name }}</span>
     {% endfor %}
   </div>
+  {% if annotations %}
+  {# 02 §2.10, 05 §5.3 (amended 2026-10-19): an annotations collection is not
+     a search leg (invariant 4) — it is consulted. On, its work claims group a
+     work's editions into one hit and its claims are shown beside the hits
+     ("also:"); off, the search runs as if this node did not hold it. #}
+  <label title="claims about the collections above: on, a collection's work claims group editions into one hit and its claims are shown beside each hit; off, it is not consulted">Annotations consulted</label>
+  <div id="annotation-chips">
+    {% for a in annotations %}
+    <span class="chip ann on" data-name="{{ a.name }}" onclick="toggleChip(this)"
+          title="{{ a.title }} — annotates {{ a.target or 'a collection not held here' }} from snapshot {{ a.from_snapshot }}">{{ a.name }}{% if a.target %} <small>→ {{ a.target }}</small>{% endif %}</span>
+    {% endfor %}
+  </div>
+  {% endif %}
   <label>Question</label>
   <textarea id="q" rows="3" placeholder="Ask across every collection in scope… Ctrl/Cmd+Enter to ask"
     onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();ask()}"></textarea>
@@ -127,12 +140,31 @@
 {% endblock %}
 {% block scripts %}
 <script>
-function toggleChip(el){el.classList.toggle('on')}
-function scopeCollections(){
-  const chips=[...document.querySelectorAll('#scope-chips .chip')];
+function toggleChip(el){el.classList.toggle('on');rememberScope()}
+function chipsOn(sel){
+  const chips=[...document.querySelectorAll(sel)];
   const on=chips.filter(c=>c.classList.contains('on')).map(c=>c.dataset.name);
-  return on.length===chips.length ? null : on;   // null = all enabled (server default)
+  return on.length===chips.length ? null : on;   // null = all (server default)
 }
+function scopeCollections(){return chipsOn('#scope-chips .chip')}
+// the annotations collections consulted: null = every one held; [] = none
+function scopeAnnotations(){return chipsOn('#annotation-chips .chip')}
+// THE SCOPE IS REMEMBERED (operator, 2026-10-19), in this browser only, as
+// the chips turned OFF: a collection added since starts on, like the rest,
+// and one turned off stays off until it is turned on again.
+function rememberScope(){
+  try{const off=sel=>[...document.querySelectorAll(sel)].filter(c=>!c.classList.contains('on')).map(c=>c.dataset.name);
+    localStorage.setItem('ask.scope',JSON.stringify({off:off('#scope-chips .chip'),annotations_off:off('#annotation-chips .chip')}))
+  }catch(e){}
+}
+(function restoreScope(){
+  try{const s=JSON.parse(localStorage.getItem('ask.scope')||'null'); if(!s)return;
+    const apply=(sel,off)=>{for(const c of document.querySelectorAll(sel)){if((off||[]).includes(c.dataset.name))c.classList.remove('on')}};
+    apply('#scope-chips .chip',s.off); apply('#annotation-chips .chip',s.annotations_off);
+    // every collection off searches nothing: the server would refuse, so start over
+    if(scopeCollections()&&scopeCollections().length===0){for(const c of document.querySelectorAll('#scope-chips .chip'))c.classList.add('on')}
+  }catch(e){}
+})();
 function selectedLang(){const v=document.getElementById('lang').value;return v==='original'?null:v}
 // the two counts: a number in range, else the default the page was given
 function count(id){
@@ -165,7 +197,8 @@ async function search(opts){
   document.getElementById('answer').textContent='';
   document.getElementById('results').innerHTML='<div class="note">searching…</div>';
   const r=await fetch('/ask/query',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({query:q,collections:scopeCollections(),mode:document.getElementById('mode').value,
+    body:JSON.stringify({query:q,collections:scopeCollections(),annotations:scopeAnnotations(),
+                         mode:document.getElementById('mode').value,
                          show_in:selectedLang(),...counts()})});
   document.getElementById('results').innerHTML=await r.text();
   wireHits();
@@ -188,7 +221,7 @@ async function ask(){
   pane.scrollIntoView({block:'start'});
   const r=await fetch('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({messages:[{role:'user',content:q}],stream:true,collections:scopeCollections(),
-                         answer_lang:want,...counts()})});
+                         annotations:scopeAnnotations(),answer_lang:want,...counts()})});
   const reader=r.body.getReader(); const dec=new TextDecoder(); a.textContent=''; let buf='';
   for(;;){const {done,value}=await reader.read(); if(done)break;
     buf+=dec.decode(value,{stream:true});

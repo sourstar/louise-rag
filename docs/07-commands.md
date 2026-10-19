@@ -676,6 +676,18 @@ process, which holds only the public key (§7.8; operator, 2026-09-29):
 follows one. A create waits while the node's mode does not embed. The web interface is a client of these routes and
 shows the command line of every action it offers.
 
+*Amended 2026-10-19.* `hold collection create annotations` (§7.3; 02
+§2.10) is `POST /api/hold/collection/create-annotations`, the one route
+whose body is a multipart form, because its input that is not a flag is
+the claims file: the fields are the flags (`name`, `annotates`,
+`from_snapshot`, `title`, `summary`, `annotator`, `snapshot`), `claims`
+the file, and `dry_run` is `--dry-run` — the claims checked against the
+target snapshot and counted, nothing written, answered at once (200).
+Without it the same check runs first (a refusal is the 409 above and
+queues nothing), then the create is queued for the worker (202) like
+`create` — it signs the first snapshot — but it embeds nothing, so it
+runs in every mode. The Library's *new collection* offers the type.
+
 **One route is not JSON, and it is the only one.**
 
 ```
@@ -792,7 +804,7 @@ unknown command. The table says where each went.
 |---|---|
 | `corpus add` / `grow` (`--profile P`) | `hold records fetch --profile P` — both fetched; neither created |
 | `corpus add --ack-terms FILE` | `hold collection ack` |
-| the web interface's *new collection* | `hold collection create --recipe FILE` |
+| the web interface's *new collection* | `hold collection create --recipe FILE`; the annotations type, `hold collection create annotations` (*amended 2026-10-19*) |
 | `corpus status` | `hold collection show` |
 | `pack build`, `tools/pack_convert` | `hold records build` |
 | `pack verify` | `hold check` |

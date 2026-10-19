@@ -234,6 +234,11 @@ class AskQueryBody(BaseModel):
     # work's one hit is shown in it where one of its editions in it was
     # found (05 §5.3, amended 2026-10-09)
     show_in: str | None = Field(None, max_length=8)
+    # which annotations collections this search consults (05 §5.3, amended
+    # 2026-10-19): None = every one held, [] = none, names = those. Not a
+    # search leg (invariant 4): it decides whether their work claims group
+    # editions into one hit and whether their claims are shown beside hits
+    annotations: list[str] | None = None
 
 
 # "show results in" — the CONTENT languages the Ask page offers. The
@@ -274,11 +279,27 @@ RESULT_LANGUAGES = (
 def ask_page(request: Request):
     return TEMPLATES.TemplateResponse(request, "ask.html", {
         "active": "ask", "collections": collections_mod.load_public(), "result": None,
+        "annotations": _ask_annotations(),
         "result_languages": RESULT_LANGUAGES,
         "default_results": retrieval.DEFAULT_RESULTS,
         "default_rerank_depth": retrieval.RERANK_TOP_N,
         "max_results": retrieval.MAX_RESULTS,
         "max_rerank_depth": retrieval.MAX_RERANK_DEPTH})
+
+
+def _ask_annotations() -> list[dict]:
+    """The annotations collections the Ask page offers as a choice (05 §5.3,
+    amended 2026-10-19): each with the local name of the collection it
+    annotates, so the chip can say what it is about. Never raises: a
+    collection whose target this node does not hold is still listed."""
+    served = {getattr(c.codex, "collection_id", None): c.name for c in collections_mod.load_all()}
+    out = []
+    for a in collections_mod.load_annotations():
+        target = a.codex.annotates
+        out.append({"name": a.name, "target": served.get(target.collection_id),
+                    "from_snapshot": target.from_snapshot,
+                    "title": a.title or a.codex.descriptive.title})
+    return out
 
 
 class TranslateBody(BaseModel):
@@ -639,10 +660,12 @@ async def ask_query(request: Request, body: AskQueryBody):
 
 
 def _ask_result(body: AskQueryBody) -> dict:
+    chosen = {"annotations": body.annotations} if body.annotations is not None else {}
     result = query_service.run_search(body.collections, body.query, body.limit, body.mode, True,
                                       rerank_depth=body.rerank_depth,
                                       all_languages=body.all_languages,
-                                      **({"show_in": body.show_in} if body.show_in else {}))
+                                      **({"show_in": body.show_in} if body.show_in else {}),
+                                      **chosen)
     # every hit names its COLLECTION for the reader panel: federated hits
     # carry it; a single-collection hit is resolved from its source prefix
     # (the plugin id) to the first collection of that plugin
@@ -668,7 +691,7 @@ def _ask_result(body: AskQueryBody) -> dict:
                                             "title": h.get("title")})
                 except Exception:      # noqa: BLE001 — a missing field is not a 500
                     h["origin_url"] = None
-    _attach_annotations(result)
+    _attach_annotations(result, body.annotations)
     _attach_figures(result)
     con = db.connect()   # query_log lives in the default collection's manifest regardless
     # .get, not [...]: when every collection is withheld `run_search`
@@ -680,7 +703,7 @@ def _ask_result(body: AskQueryBody) -> dict:
     return result
 
 
-def _attach_annotations(result: dict) -> None:
+def _attach_annotations(result: dict, annotations: list[str] | None = None) -> None:
     """05 §5.3 `annotations` on the Ask page's hits, as the API path attaches
     them (app/ask/results.py): the claims an annotations collection held
     here makes about each hit's record, placed beside it and never in the
@@ -690,10 +713,14 @@ def _attach_annotations(result: dict) -> None:
     Each hit's collection gives the claim's target and the snapshot read —
     the two things `attach` asks of a context, and nothing heavier (no
     trust level: the page does not show one per hit). A copy withheld is
-    named under `withheld`; a failure is said there too, never fatal."""
+    named under `withheld`; a failure is said there too, never fatal.
+    `annotations`: the page's choice of annotations collections (None =
+    every one held; `query_service.resolve_annotations`)."""
     hits = result.get("hits") or []
     if not hits:
         return
+    chosen = ({"collections": query_service.resolve_annotations(annotations)}
+              if annotations is not None else {})
     from app.ask import annotations as annotation_facts
     from app.ask import results as ask_results
     from app.hold import collection as hold_col
@@ -717,7 +744,7 @@ def _attach_annotations(result: dict) -> None:
             contexts[c.name] = {"collection_id": codex.collection_id,
                                 "snapshot_id": snap.snapshot_id if snap else None}
     try:
-        withheld = annotation_facts.attach([{"hits": hits}], source_of, contexts, root=root)
+        withheld = annotation_facts.attach([{"hits": hits}], source_of, contexts, root=root, **chosen)
     except Exception as e:   # noqa: BLE001 — a fact that cannot be placed is said, never fatal
         withheld = [{"collection": None, "collection_id": None, "shards": "all",
                      "reason": f"annotations not attached: {type(e).__name__}: {e}"[:300]}]
@@ -1751,6 +1778,28 @@ def _collection_shelf(collection: collections_mod.Collection,
     }
 
 
+def _annotatable(served: list) -> list[dict]:
+    """The served Codex collections an annotations collection can be about,
+    with the id of the snapshot each holds now — the default for `from
+    snapshot`, since claims are checked against a snapshot this peer holds
+    (02 §2.10). Never raises; a collection with no snapshot yet says so."""
+    from .hold import collection as col
+    from .share import seeder
+    root = collections_mod.louise_root() / "collections"
+    out = []
+    for c in served:
+        if getattr(c, "codex", None) is None or collections_mod.is_annotations(c) \
+                or c.codex.plugin == "deposit":
+            continue
+        try:
+            snap = seeder.current_snapshot(col.shard_dir_of(root, c.name))
+            snapshot = snap.snapshot_id if snap is not None else None
+        except Exception:  # noqa: BLE001
+            snapshot = None
+        out.append({"name": c.name, "snapshot": snapshot})
+    return out
+
+
 def _annotations_shelf(collection, served: list) -> dict:
     """The Library's card for an annotations collection (02 §2.10): what it
     annotates and from which target snapshot, how many claims its current
@@ -2015,6 +2064,9 @@ def library_page(request: Request):
         "active": "library",
         "shelves": shelves,
         "annotations": annotations,
+        # the Add panel's annotations type (02 §2.10): the collections a new
+        # one can annotate, each with the snapshot its claims would hold from
+        "annotatable": _annotatable(collections),
         # oldest cached count on the page — a stale bar should look stale
         "counts_age": max((s["counts_age"] for s in shelves), default=0),
         "plugins": sorted(collections_mod.PLUGIN_REGISTRY),

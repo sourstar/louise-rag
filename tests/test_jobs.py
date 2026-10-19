@@ -171,3 +171,12 @@ def test_the_jobs_route_needs_the_admin_token(client):
     del client.headers["X-Admin-Token"]
     assert client.get(f"/api/jobs/{job_id}").status_code == 401
     assert client.get(f"/admin/library/gutenberg/bundle/export/{job_id}").status_code == 401
+
+
+def test_an_annotations_create_runs_in_any_mode(con, monkeypatch):
+    """It signs the first snapshot (the worker's key) and embeds nothing
+    (02 §2.10): never held back by a mode that does not embed."""
+    monkeypatch.setattr(jobs, "_create_annotations", lambda args: {"name": args["name"]})
+    job_id = jobs.submit(jobs.CREATE_ANNOTATIONS, {"name": "pubmed-same-work"})
+    done = jobs.run_next(con, "paused", log=quiet)
+    assert done.id == job_id and done.state == jobs.DONE and done.result == {"name": "pubmed-same-work"}

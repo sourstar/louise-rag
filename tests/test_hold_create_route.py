@@ -208,3 +208,114 @@ def test_the_librarys_form_carries_the_model_keys(client):
     page = client.get("/admin/library").text
     assert 'id="nc_embed_model"' in page and 'id="nc_query_model"' in page
     assert 'id="nc_api"' in page and "embed_model,query_model" in page
+
+
+# ---- the annotations type (02 §2.10; 07 §7.4, amended 2026-10-19) ----
+
+ANN_ROUTE = "/api/hold/collection/create-annotations"
+
+
+def _target_and_claims(client):
+    """A held target with a snapshot on this test's node, and a claims file
+    about two of its records (tests/hold/test_annotations.py's helpers)."""
+    from app.hold.annotations import SHARD_RECORDS  # noqa: F401 — the module the route runs
+    from tests.hold.test_annotations import TARGET_SNAPSHOT, a_claim, a_target, claims_file
+    root = louise._default_root()
+    root.mkdir(parents=True, exist_ok=True)
+    a_target(root)
+    return TARGET_SNAPSHOT, claims_file(a_claim(), a_claim("pubmed:3", "pubmed:1", confidence="0.73"))
+
+
+def _form(snapshot, name="pubmed-same-work", **over):
+    data = {"name": name, "annotates": "pubmed", "from_snapshot": snapshot, "title": "Same works",
+            "summary": "Claims.", "annotator": "", "dry_run": "false"}
+    data.update(over)
+    return data
+
+
+def test_a_dry_run_checks_and_counts_the_claims_and_writes_nothing(client):
+    snapshot, claims = _target_and_claims(client)
+    r = client.post(ANN_ROUTE, data=_form(snapshot, dry_run="true"),
+                    files={"claims": ("claims.jsonl", claims, "application/json")})
+    assert r.status_code == 200, r.text
+    p = r.json()
+    assert (p["target"], p["from_snapshot"], p["claims"], p["target_records_named"], p["written"]) == \
+        ("pubmed", snapshot, 2, 3, False)
+    assert p["by_type"] == {"same-work": 2} and p["annotator"] == "a test annotator"
+    assert p["cli"].startswith("louise hold collection create annotations --annotates pubmed") \
+        and p["cli"].endswith("--dry-run")
+    assert not collections_mod.config_toml_path("pubmed-same-work").exists()
+    assert collections_mod.load_annotations() == []
+
+
+def test_the_create_is_checked_then_queued_and_the_worker_writes_it_in_any_mode(client):
+    """The same check as the dry run, then a job of its own kind: it signs
+    the first snapshot (the worker's key) and embeds nothing, so unlike
+    `collection-create` it does not wait for a mode that embeds."""
+    from contextlib import closing
+    from app import jobs
+    from app.hold import collection as col
+    snapshot, claims = _target_and_claims(client)
+    r = client.post(ANN_ROUTE, data=_form(snapshot),
+                    files={"claims": ("claims.jsonl", claims, "application/json")})
+    assert r.status_code == 202, r.text
+    q = r.json()
+    assert q["state"] == "queued" and q["preview"]["claims"] == 2 and q["kind"] == jobs.CREATE_ANNOTATIONS
+    uploads = list((config.louise_root() / "state" / "claims-uploads").glob("pubmed-same-work-*.jsonl"))
+    assert len(uploads) == 1 and uploads[0].read_bytes() == claims, "the upload waits for the worker"
+    assert collections_mod.load_annotations() == [], "nothing written by the web process"
+    with closing(jobs.connect()) as con:
+        done = jobs.run_next(con, "paused")
+    assert done.id == q["id"] and done.state == "done", done.error
+    d = done.result
+    assert (d["exit"], d["name"], d["claims"], d["signed"]) == (0, "pubmed-same-work", 2, True)
+    assert d["held"] == str(collections_mod.config_toml_path("pubmed-same-work"))
+    assert d["cli"] == ("louise hold collection create annotations --annotates pubmed "
+                        f"--from-snapshot {snapshot} --claims FILE --name pubmed-same-work "
+                        "--title 'Same works' --summary 'Claims.'")
+    (held,) = collections_mod.load_annotations()
+    assert held.name == "pubmed-same-work" and held.codex.collection_id == d["collection_id"]
+    assert col.show(louise._default_root(), "pubmed-same-work")["annotates"]["target"] == "pubmed"
+    assert not uploads[0].exists(), "read once, then gone"
+    assert collections_mod.load_all() == [] or "pubmed-same-work" not in [c.name for c in collections_mod.load_all()]
+
+
+def test_a_refused_claims_file_is_409_and_queues_nothing(client):
+    from contextlib import closing
+    from app import jobs
+    from tests.hold.test_annotations import a_claim, claims_file
+    snapshot, claims = _target_and_claims(client)
+    bad = claims_file(a_claim("pubmed:1", "pubmed:99"))
+    r = client.post(ANN_ROUTE, data=_form(snapshot),
+                    files={"claims": ("claims.jsonl", bad, "application/json")})
+    assert r.status_code == 409 and "pubmed:99" in r.json()["detail"]
+    r = client.post(ANN_ROUTE, data=_form("2031-01"),
+                    files={"claims": ("claims.jsonl", claims, "application/json")})
+    assert r.status_code == 409 and "2031-01" in r.json()["detail"]
+    r = client.post(ANN_ROUTE, data=_form(snapshot, annotates="nope"),
+                    files={"claims": ("claims.jsonl", claims, "application/json")})
+    assert r.status_code == 409
+    r = client.post(ANN_ROUTE, data=_form(snapshot, name=""),
+                    files={"claims": ("claims.jsonl", claims, "application/json")})
+    assert r.status_code == 409 and "name" in r.json()["detail"]
+    r = client.post(ANN_ROUTE, data=_form(snapshot, name="pubmed"),
+                    files={"claims": ("claims.jsonl", claims, "application/json")})
+    assert r.status_code == 409 and "already held" in r.json()["detail"]
+    with closing(jobs.connect()) as con:
+        assert jobs.run_next(con, "running") is None, "nothing queued"
+    assert not list((config.louise_root() / "state").glob("claims-uploads/*"))
+    assert collections_mod.load_annotations() == []
+
+
+def test_the_annotations_route_needs_the_admin_token(client):
+    snapshot, claims = _target_and_claims(client)
+    r = client.post(ANN_ROUTE, data=_form(snapshot, dry_run="true"),
+                    files={"claims": ("claims.jsonl", claims, "application/json")},
+                    headers={"X-Admin-Token": ""})
+    assert r.status_code == 401
+
+
+def test_the_librarys_form_offers_the_annotations_type(client):
+    page = client.get("/admin/library").text
+    assert ANN_ROUTE in page and 'value="annotations"' in page and 'id="na_claims"' in page
+    assert "louise hold collection create annotations" in page

@@ -37,6 +37,11 @@ from typing import Any
 from . import node_state
 
 CREATE, EXPORT = "collection-create", "bundle-export"
+#: `hold collection create annotations` (02 §2.10), queued by the Library's
+#: *new collection* form: it signs the first snapshot with the node's key,
+#: which only the worker holds — and embeds NOTHING, so unlike CREATE it
+#: runs in every mode (2026-10-19).
+CREATE_ANNOTATIONS = "annotations-create"
 #: A deposit collection's writes, queued by the web's LocalAGI routes (07
 #: §7.4): the web process must not write a collection's indexes, because
 #: tantivy allows ONE writer per index directory and the worker keeps its
@@ -45,7 +50,7 @@ CREATE, EXPORT = "collection-create", "bundle-export"
 #: that is embedding a calibration set for minutes; in every mode, because
 #: an agent writing its memory is not the node's background work.
 DEPOSIT = "deposit"
-KINDS = (CREATE, EXPORT, DEPOSIT)
+KINDS = (CREATE, CREATE_ANNOTATIONS, EXPORT, DEPOSIT)
 
 #: A deposit job's row names a key, and 02 §2.9 lets nothing name an erased
 #: deposit: the web deletes the row when it has read the result (`forget`),
@@ -130,7 +135,8 @@ def get(job_id: int) -> Job | None:
 def kinds_allowed(mode: str) -> tuple[str, ...]:
     """What the general job thread may run in this mode. Deposits are not
     among them: they have a thread of their own (`serve_deposits`)."""
-    return (CREATE, EXPORT) if node_state.runs(mode, node_state.EMBED) else (EXPORT,)
+    return ((CREATE, CREATE_ANNOTATIONS, EXPORT) if node_state.runs(mode, node_state.EMBED)
+            else (CREATE_ANNOTATIONS, EXPORT))
 
 
 def waiting_because(job: Job, mode: str) -> str | None:
@@ -279,7 +285,7 @@ def run_next(con: sqlite3.Connection, mode: str, log=print,
     job = claim(con, kinds_allowed(mode) if kinds is None else kinds)
     if job is None:
         return None
-    what = job.args.get("collection") or job.args.get("plugin") or "?"
+    what = job.args.get("collection") or job.args.get("plugin") or job.args.get("name") or "?"
     log(f"[info:jobs] {what}: job {job.id} ({job.kind}) started")
     try:
         result = run(job)
@@ -311,6 +317,8 @@ def run(job: Job) -> dict[str, Any]:
     """Do the job; its result, or an exception whose text is the failure."""
     if job.kind == CREATE:
         return _create(job.args)
+    if job.kind == CREATE_ANNOTATIONS:
+        return _create_annotations(job.args)
     if job.kind == EXPORT:
         return _export(job.id, job.args)
     if job.kind == DEPOSIT:
@@ -403,6 +411,44 @@ def _create(args: dict[str, Any]) -> dict[str, Any]:
                                          name=args.get("name"))
     return {"exit": 0, "collection_id": codex.collection_id, "name": held.stem,
             "held": str(held), "cli": args.get("cli", "")}
+
+
+def _create_annotations(args: dict[str, Any]) -> dict[str, Any]:
+    """`hold collection create annotations` (07 §7.3; 02 §2.10) as the web
+    queued it: the claims file the page uploaded, saved by the route under
+    the node's state and removed here once read — kept as the collection's
+    own origin by `create`. The first snapshot is signed with the node key
+    when there is one (09 §9.4)."""
+    from . import louise
+    from .hold import annotations as ann
+    claims_path = Path(args["claims_path"])
+    try:
+        claims = claims_path.read_bytes()
+    except FileNotFoundError:
+        raise ValueError(f"the uploaded claims file is gone ({claims_path.name}): upload it again") from None
+    key = None
+    try:
+        from .bundles import keys as node_keys
+        key = node_keys.load_signing_key()
+    except Exception:   # noqa: BLE001 — no key: the snapshot is written unsigned (09 §9.4)
+        key = None
+    root = louise._default_root()
+    root.mkdir(parents=True, exist_ok=True)
+    codex, snap = ann.create(
+        root, args["name"], target_ref=args["annotates"], from_snapshot=args["from_snapshot"],
+        claims=claims, platform_image=louise.preflight_create({}, args.get("platform_image")),
+        title=args.get("title") or None, summary=args.get("summary") or None,
+        annotator=args.get("annotator") or None, snapshot_id=args.get("snapshot") or None,
+        key=key, now=louise._utc_now(), log=lambda m: None)
+    try:
+        claims_path.unlink()
+    except OSError:
+        pass
+    from . import collections as collections_mod
+    return {"exit": 0, "collection_id": codex.collection_id, "name": args["name"],
+            "held": str(collections_mod.config_toml_path(args["name"])),
+            "snapshot": snap.snapshot_id, "claims": snap.records, "signed": key is not None,
+            "cli": args.get("cli", "")}
 
 
 def _export(job_id: int, args: dict[str, Any]) -> dict[str, Any]:

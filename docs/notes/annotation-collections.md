@@ -304,3 +304,40 @@ collection rewrites its file with no `[encoder]` and no `embed`. The Ask
 tab is unchanged by design: an annotations collection is not a search
 leg (02 §2.10, 05 §5.1) and is not selectable there; its claims appear
 on the target's hits as "also:".
+
+### Chosen on Ask, created from the Library (2026-10-19, night)
+
+The operator: annotations "shall be selectable, to affect or not the
+search", the last selection kept, and *Add a collection* "does not show
+the annotations type". Three changes.
+
+- **`annotations` on every search** (05 §5.4): `AskQueryBody`, `ChatBody`,
+  `SearchBody`, `louise_search` and the MCP tool take the names of the
+  annotations collections consulted; None = every one held (as before),
+  `[]` = none. `query_service.resolve_annotations` checks the names once
+  (400 on an unknown one) and `run_search` hands the resolved list to
+  `retrieval.search`/`federated_search` → `_one_hit_per_work` →
+  `works.one_hit_per_work(annotations=)`, and the page/API hand it to
+  `annotations.attach(collections=)`. So "off" is exactly "as if this
+  node did not hold it": no editions grouping by its work claims, no
+  "also:" from it. Still never a leg (invariant 4).
+- **The Ask page**: a second chip row, "Annotations consulted", one
+  dashed chip per held annotations collection naming its target; both
+  fetches (search and answer) send `annotations`. The scope is remembered
+  in `localStorage['ask.scope']` as the chips turned OFF (collections and
+  annotations separately), so a collection added later starts on; a saved
+  state with every collection off is reset, since the server refuses an
+  empty list.
+- **The Add panel**: a type `annotations` beside the plugins. Its form is
+  name, target (a served collection; `from snapshot` prefilled with the
+  snapshot it holds now), title, summary, annotator, the claims file.
+  *Check claims* is `--dry-run` (`ann.preview`, 200, nothing written);
+  *Create* runs the same check (409 on a refusal, nothing queued), saves
+  the upload under `state/claims-uploads/` and queues an
+  `annotations-create` job (`app/jobs.py`), which runs in EVERY mode — it
+  embeds nothing — signs the first snapshot with the node key and removes
+  the upload. Route: `POST /api/hold/collection/create-annotations`,
+  multipart (07 §7.4).
+
+Open: the chat path's `annotations` is sent by the page; Open WebUI and
+other API clients get every held one, as before.

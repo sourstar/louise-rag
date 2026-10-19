@@ -810,21 +810,24 @@ def _attach_work_fields(con, collection, hits: list[dict], query: str) -> list[d
 
 
 def _one_hit_per_work(hits: list[dict], collection, plan: LanguagePlan,
-                      show_in: str | None) -> list[dict]:
+                      show_in: str | None, annotations=None) -> list[dict]:
     """05 §5.3 (amended 2026-10-09): each work once, after the reranker and
     before the cut to `k`, shown in the reader's language where one of its
     editions in it was found (app/ask/works.py). Grouping that cannot run
-    returns the list as ranked."""
+    returns the list as ranked. `annotations`: the annotations collections
+    whose work claims group (None = every one held; the Ask page's choice,
+    2026-10-19)."""
     from .ask import works
     return works.one_hit_per_work(hits, collection,
-                                  works.preference(show_in, plan.query_lang))
+                                  works.preference(show_in, plan.query_lang),
+                                  annotations=annotations)
 
 
 def search(con, query: str, k: int = 12, mode: str = "hybrid",
            translate: bool = True, collection=None,
            rerank_depth: int = RERANK_TOP_N, all_languages: bool = False,
            book_ids: set[int] | None = None, show_in: str | None = None,
-           as_of: int | None = None) -> dict:
+           as_of: int | None = None, annotations=None) -> dict:
     """mode: hybrid | fts | dense | catalog. Single collection — unchanged
     behavior/signature from pre-P0.5. See federated_search() for N&gt;1.
     `k` results after the reranker, which orders the top `rerank_depth`;
@@ -860,7 +863,7 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     ranked, reranked, rerank_why = _reranked(plan.core, candidates,
                                              collections_mod.reranker_for(collection),
                                              _rerank_budget_s(rerank_depth), rerank_depth)
-    final = _one_hit_per_work(ranked, collection, plan, show_in)[:k]
+    final = _one_hit_per_work(ranked, collection, plan, show_in, annotations)[:k]
     timings["rerank"] = round((time.time() - t0) * 1000, 1)
 
     # This one WRITES (the lazy-embed queue): a search nobody is waiting for
@@ -911,7 +914,8 @@ def _merge_rrf_federated(lists: list[list[dict]]) -> list[dict]:
 def federated_search(collections: list, query: str, k: int = 12, mode: str = "hybrid",
                       translate: bool = True, rerank_depth: int = RERANK_TOP_N,
                       all_languages: bool = False, book_ids_for=None,
-                      show_in: str | None = None, as_of: int | None = None) -> dict:
+                      show_in: str | None = None, as_of: int | None = None,
+                      annotations=None) -> dict:
     """Query-time federation across N collections (architecture-v2.md §3/§4).
     Entity resolution/PinnedFacts happen ONCE, collection-agnostic — never
     multiplied per collection (CLAUDE.md invariant 4). Each collection's
@@ -1018,7 +1022,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
                                     rerank_depth)
         # each work once, per collection (work claims are about one
         # collection's records), before the fuse cuts to k
-        return _one_hit_per_work(ranked, collection, plan, show_in), ok, why
+        return _one_hit_per_work(ranked, collection, plan, show_in, annotations), ok, why
 
     with ThreadPoolExecutor(max_workers=max(1, len(per_collection))) as ex:
         ranked = list(ex.map(cancel.carry(_rerank_one), per_collection))

@@ -349,3 +349,14 @@ def test_sharing_an_annotations_collection_writes_its_file_without_an_encoder(cl
     r = client.post("/admin/library/pubmed-same-work/share", json={"share": False})
     assert r.status_code == 200
     assert "share = false" in toml_path.read_text(encoding="utf-8")
+
+
+def test_the_add_panel_offers_the_annotations_type_with_the_held_targets(client):
+    """Operator, 2026-10-19: "Add a collection does not show the annotations
+    type". The type is offered beside the plugins, and its target list is
+    the served collections with the snapshot each holds now."""
+    r = client.get("/admin/library")
+    html = r.text
+    assert '<option value="annotations">' in html
+    assert 'id="na_target"' in html and '<option value="gutenberg" data-snapshot=' in html
+    assert "/api/hold/collection/create-annotations" in html

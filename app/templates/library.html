@@ -289,8 +289,36 @@
       {# display names only — the internal id is minted into every document
          uid and can never change; 'embedded' currently means the wikivec
          pre-embedded Wikipedia dataset on every known deployment #}
-      <select id="nc_plugin">{% for p in plugins %}<option value="{{ p }}">{{ 'wikivec (pre-embedded Wikipedia)' if p == 'embedded' else p }}</option>{% endfor %}</select>
+      <select id="nc_plugin" onchange="createKindChanged()">{% for p in plugins %}<option value="{{ p }}">{{ 'wikivec (pre-embedded Wikipedia)' if p == 'embedded' else p }}</option>{% endfor %}<option value="annotations">annotations (claims about a held collection)</option></select>
     </div>
+  </div>
+  {# 02 §2.10: the annotations type — no space, no encoder, no recipe: a
+     claims file about a held collection's records, checked against the
+     target snapshot before anything is written (`create annotations
+     --dry-run`), then created by the worker, which signs the first snapshot.
+     Shown in place of the recipe form when the type is chosen (2026-10-19). #}
+  <div id="nc_ann" style="display:none">
+    <div class="row">
+      <div><label>Name</label><input id="na_name" placeholder="gutenberg-book-editions"></div>
+      <div><label>Annotates (a held collection)</label>
+        <select id="na_target" onchange="annotationTargetChanged()">{% for t in annotatable %}<option value="{{ t.name }}" data-snapshot="{{ t.snapshot or '' }}">{{ t.name }}</option>{% endfor %}</select></div>
+      <div><label>From snapshot (the target snapshot the claims hold from)</label>
+        <input id="na_from" placeholder="2026-09"></div>
+      <div><label>Title (optional)</label><input id="na_title" placeholder="Book editions"></div>
+      <div><label>Summary (optional)</label><input id="na_summary" placeholder="one line on what the claims say"></div>
+      <div><label>Annotator (optional; default: the claims' one contributor)</label><input id="na_annotator"></div>
+      <div><label>Claims file (JSON Lines, one claim per line)</label><input type="file" id="na_claims" accept=".jsonl,.json,.ndjson,application/json,text/plain"></div>
+    </div>
+    <div class="note">The claims are checked against the target snapshot named: every claim's two records must be in it. <b>Check</b> counts them and writes nothing; <b>Create</b> runs the same check, then the worker writes the collection and signs its first snapshot.</div>
+    <div class="actions">
+      <button onclick="checkAnnotations()">Check claims</button>
+      <button class="primary" onclick="createAnnotations()">Create on this node</button>
+    </div>
+    <pre class="cli">louise hold collection create annotations --annotates &lt;collection&gt; --from-snapshot &lt;id&gt; --claims FILE --name &lt;name&gt; [--title T] [--summary S] [--annotator A] [--dry-run]</pre>
+    <div id="na_result"></div>
+  </div>
+  <div id="nc_std">
+  <div class="row">
     <div><label>Space from (optional)</label>
       <input id="nc_space_from" placeholder="a held collection's name or id"></div>
     {# a collection names its own encoder — there is no default one
@@ -313,6 +341,7 @@
   </div>
   <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE --encoder URL [--api A] [--embed-model M] [--query-model M] [--space-from &lt;collection&gt;]</pre>
   <div id="nc_result"></div>
+  </div>
 </div>
 {% endblock %}
 {% block scripts %}
@@ -504,6 +533,64 @@ async function createCollection(){
     box.innerHTML=`<div class="note">Created <b>${esc(d.name)}</b>: <code>${esc(d.collection_id)}</code><br>
       file <b>${esc(d.held)}</b> — it holds no slice yet: set <code>slices = "all"</code> there to fetch.</div>
       <pre class="cli">${esc(d.cli)}</pre>`;
+  }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
+}
+// the annotations type (02 §2.10) has its own form: no recipe, no encoder
+function createKindChanged(){
+  const ann=document.getElementById('nc_plugin').value==='annotations';
+  document.getElementById('nc_ann').style.display=ann?'':'none';
+  document.getElementById('nc_std').style.display=ann?'none':'';
+  if(ann)annotationTargetChanged();
+}
+function annotationTargetChanged(){
+  const sel=document.getElementById('na_target'), opt=sel.options[sel.selectedIndex];
+  const from=document.getElementById('na_from');
+  if(opt&&!from.dataset.edited)from.value=opt.dataset.snapshot||'';
+}
+document.getElementById('na_from').addEventListener('input',e=>{e.target.dataset.edited='1'});
+function annotationsForm(dryRun){
+  const f=new FormData();
+  for(const [k,id] of [['name','na_name'],['annotates','na_target'],['from_snapshot','na_from'],
+                       ['title','na_title'],['summary','na_summary'],['annotator','na_annotator']])
+    f.append(k,document.getElementById(id).value.trim());
+  const file=document.getElementById('na_claims').files[0];
+  if(!file){toast('choose the claims file');return null}
+  f.append('claims',file,file.name);
+  f.append('dry_run',dryRun?'true':'false');
+  return f;
+}
+async function postForm(url,form){
+  // the admin cookie authorises it, as postJSON's requests (app/auth.py)
+  const r=await fetch(url,{method:'POST',body:form});
+  const text=await r.text(); let j; try{j=JSON.parse(text)}catch(e){j={detail:text}}
+  if(!r.ok)throw (j.detail||text);
+  return j;
+}
+function previewHtml(p){
+  const dl=o=>Object.entries(o||{}).map(([k,v])=>esc(k)+' '+esc(v)).join(', ')||'none';
+  return `${esc(p.claims)} claim(s) about ${esc(p.target_records_named)} record(s) of <b>${esc(p.target)}</b> as snapshot ${esc(p.from_snapshot)} holds them · annotator: ${esc(p.annotator||'?')} · types: ${dl(p.by_type)} · methods: ${dl(p.by_method)} · ${esc(p.parts)} part(s)`;
+}
+async function checkAnnotations(){
+  const f=annotationsForm(true); if(!f)return;
+  const box=document.getElementById('na_result');
+  box.innerHTML='<div class="note">checking the claims against the target snapshot…</div>';
+  try{const p=await postForm('/api/hold/collection/create-annotations',f);
+    box.innerHTML=`<div class="note">Checked, nothing written: ${previewHtml(p)}</div><pre class="cli">${esc(p.cli)}</pre>`}
+  catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
+}
+async function createAnnotations(){
+  const f=annotationsForm(false); if(!f)return;
+  if(!document.getElementById('na_name').value.trim()){toast('name the collection');return}
+  const box=document.getElementById('na_result');
+  box.innerHTML='<div class="note">checking the claims, then queued for the worker…</div>';
+  try{const q=await postForm('/api/hold/collection/create-annotations',f);
+    box.innerHTML=`<div class="note">${previewHtml(q.preview)} — queued as job ${esc(q.id)}</div>`;
+    const j=await waitForJob(q.id,s=>{box.innerHTML+='<div class="note">'+esc(s)+'</div>'});
+    const d=j.result;
+    box.innerHTML=`<div class="note">Created <b>${esc(d.name)}</b>: <code>${esc(d.collection_id)}</code><br>
+      ${esc(d.claims)} claims in snapshot ${esc(d.snapshot)}${d.signed?', signed':', unsigned (no node key)'} — file <b>${esc(d.held)}</b>; not shared until you turn sharing on.</div>
+      <pre class="cli">${esc(d.cli)}</pre>`;
+    setTimeout(()=>location.reload(),2500);
   }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
 }
 // What needs the node's private key runs in the worker (app/jobs.py): the

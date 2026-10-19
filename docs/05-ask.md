@@ -462,6 +462,12 @@ louise_traverse(id, relation?, depth?, resolve_in?)   -- resolve_in: the collect
 ```
 
 `collections` names collections by id, prefix or local name (07 §7.7)
+and `annotations` (*amended 2026-10-19*) names, by local name, the
+annotations collections consulted — absent, every one held; `[]`, none.
+They are never legs (invariant 4): the choice decides whether a
+collection's work claims group a work's editions into one hit (§5.3)
+and whether its claims come beside the hits. The Ask page offers each
+held one as a chip and remembers the choice in the browser.
 and defaults to every collection the peer holds and may use; `space`
 restricts the search to the collections in one space; `limit` is the
 number of results per list, 10 by default and at most 100.
