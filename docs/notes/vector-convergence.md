@@ -49,6 +49,19 @@ choosing between two admitted versions; it does not enter here.
 
 ## 4. The survivor — 04 §4.6's adoption, applied to vectors
 
+**Operator's position (2026-10-19), for the P2P review session: in
+theory the most-seeded version is the one that survives.** Every
+completed fetch makes the fetcher a seeder (04 §4.3), so "the distinct
+keys that accepted a version and list it in their digests" — adoption,
+below — is the count of peers seeding it. Read that way, adoption ranks
+FIRST, and checks (and an archive's provenance, per
+vector-convergence-review.md) break ties among equally seeded versions —
+the reverse of the order below. It also answers the review's
+availability concern: the survivor is by construction the version most
+peers already hold, so converging on it never makes a part rarer.
+
+The order as first proposed, kept for the session to choose between:
+
 Among equivalent versions of the same chunks, every peer applies the
 same total order, so the network converges on one:
 
