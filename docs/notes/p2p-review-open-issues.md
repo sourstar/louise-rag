@@ -458,7 +458,13 @@ Perugia's intake since the operator's `ack --origin-unchecked` (13:27Z):
 1,687,191 chunks — 4.8 bundles/min, ~28 k chunks/min, no deferred,
 stalled or refused lines, 12–19 TCP sockets; the node's digest 1,096,042
 bytes. Coverage at 13:52Z: 1,255 offered-unaccepted rows over 881 parts,
-114 fetched and accepted, 8 local.
+114 fetched and accepted, 8 local — every accepted row stamped
+13:27:44Z, the beat's clock, while the log shows them landing one by one
+over the hour. Fixed with it: `take` and the contribute pass stamp a row,
+and date its `bundle` event or `vectors-sample` attestation, at the
+moment of the judgement, not with the beat's or the pass's `now` (the
+node's holder pass ran for hours; 04 §4.5's grace window reads the
+leader's last bundle from that stamp).
 
 ### Still open after the review
 

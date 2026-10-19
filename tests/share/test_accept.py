@@ -328,9 +328,10 @@ def test_a_second_bundle_over_held_chunks_is_compared_attested_and_not_stored(re
                "files": member.to_dict()["files"]}
     events_before = len(peers.to_forward(kw["node_con"]))
     said: list[str] = []
+    stale = time.time() - 3600                      # a beat that began an hour ago (Perugia, 2026-10-19)
     taken = accept.take(root, "gutenberg", codex, payload, session=None, con=kw["con"], node_con=kw["node_con"],
                         vectors_for=kw["vectors_for"], write=kw["write"], key=OURS, own_key=OUR_KEY,
-                        log=said.append)
+                        log=said.append, now=stale)
     assert taken["outcome"] == "accepted" and taken["written"] == 0, "compared, not stored"
     dup = taken["duplicate"]
     assert dup["result"] == "pass" and dup["failed"] == [] and len(dup["compared"]) == b2["chunks"]
@@ -344,6 +345,12 @@ def test_a_second_bundle_over_held_chunks_is_compared_attested_and_not_stored(re
     row = cov.row(kw["con"], b2["bundle_id"])
     assert row["accepted_at"] and row["producer"] == PEER_KEY and row["source"] == "fetched"
     assert any("compared with what was held: pass" in s for s in said)
+    # stamped and dated at the moment of the judgement, not with the beat's clock:
+    # 291 rows of one hour-long beat all read 13:27:44Z (Perugia, 2026-10-19)
+    from app.share import messages
+    for text in (row["accepted_at"], body["time"]):
+        assert text != messages.time_text(stale)
+        assert abs(messages.parse_time(text) - time.time()) < 120
 
 
 def test_an_event_about_a_collection_not_held_is_left_alone_and_a_gated_one_waits(ready, monkeypatch):

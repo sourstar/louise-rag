@@ -204,8 +204,13 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
                        reference=reference, mine=mine,
                        text_of=lambda cid: landing.input_of(cut, cid), embed=None,
                        seed=os.urandom(32))
+    # the row is stamped with the moment the bundle was judged, not the
+    # beat's clock: one beat took 291 bundles in over an hour and every row
+    # read 13:27:44Z (Perugia, 2026-10-19) — the grace window and the
+    # fingerprint of what moved read that stamp
+    at = time.time()
     cov.record_from_report(con, codex, report, header, source=cov.FETCHED,
-                           now=messages.time_text(now))
+                           now=messages.time_text(at))
     if not report.ok:
         failed = [t.tier for t in report.tiers if t.failed]
         for f in member.files:
@@ -231,7 +236,7 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     # for are COMPARED, attested and not stored; the first accepted vector
     # stays what is searched
     duplicate = compare_duplicate(root, name, codex, snapshot, report, header, con=con, node_con=node_con,
-                                  vectors_for=vectors_for, key=key, own_key=own_key, now=now, log=log)
+                                  vectors_for=vectors_for, key=key, own_key=own_key, now=at, log=log)
     if duplicate is not None:
         written = 0
         fresh = [(cid, vec_) for cid, vec_ in report.admitted if cid not in duplicate["compared"]]

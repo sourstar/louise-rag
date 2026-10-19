@@ -309,16 +309,20 @@ def _bundle_shard(root: Path, name: str, codex, snapshot: sn.Snapshot, shard: sn
         entry = {"bundle_id": b["bundle_id"], "shard": sid, "chunks": b["chunks"],
                  "member": member.name, "root": member.root, "bytes": member.bytes,
                  "tiers": tiers, "dir": str(final), "from": what}
+        # stamped and announced at the moment, not with the pass's clock: the
+        # node's holder pass ran for hours and would have dated 1,296 rows and
+        # events at its start (Perugia found the same on the fetch beat)
+        at = time.time()
         cov.record(con, bundle_id=b["bundle_id"], shard=cov.shard_id(codex, sid), producer=own_key,
                    uids=list(header.get("uids") or []), chunks=len(report.admitted) if report.ok else 0,
-                   tiers=tiers, source=cov.LOCAL, accepted_at=messages.time_text(now) if report.ok else None)
-        cov.note_open(con, codex, sid, now=messages.time_text(now))
+                   tiers=tiers, source=cov.LOCAL, accepted_at=messages.time_text(at) if report.ok else None)
+        cov.note_open(con, codex, sid, now=messages.time_text(at))
         out["bundles"].append(entry)
         if report.ok:
             out["accepted"].append(b["bundle_id"])
             if serving:
                 announce(node_con, codex, snapshot, {**header, "bundle_id": b["bundle_id"]}, member,
-                         key=key, own_key=own_key, now=now)
+                         key=key, own_key=own_key, now=at)
                 out["events"] += 1
                 say(f"[{name}] share contribute: {sid}: bundle {b['bundle_id'][:23]}… "
                     f"({b['chunks']} chunks, {what}) accepted and announced")

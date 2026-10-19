@@ -287,6 +287,25 @@ def test_what_a_peer_already_holds_it_bundles_whoever_leads_the_shard(ready):
     assert again["probed"] == 0 and again["held"] == [] and again["events"] == 0
 
 
+def test_a_bundle_s_row_and_event_are_dated_when_it_is_made_not_with_the_pass_s_clock(ready):
+    """The node's holder pass ran for hours; every row and `bundle` event it
+    made would have carried the pass's start (Perugia found the same stamp
+    on the fetch beat, 2026-10-19). 04 §4.5's grace window reads the
+    leader's last bundle from `accepted_at`."""
+    from app.share import messages
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    stale = time.time() - 3600
+    out = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)], now=stale, **kw)
+    assert out["accepted"]
+    for r in cov.rows(kw["con"]):
+        assert r["accepted_at"] != messages.time_text(stale)
+        assert abs(messages.parse_time(r["accepted_at"]) - time.time()) < 120
+    for ev in peers.to_forward(kw["node_con"]):
+        assert abs(messages.parse_time(ev["envelope"]["body"]["time"]) - time.time()) < 120
+
+
 def test_a_peer_that_holds_nothing_of_a_shard_led_elsewhere_leaves_it_to_the_leader(ready):
     root, snapshot, codex, kw = ready
     for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
