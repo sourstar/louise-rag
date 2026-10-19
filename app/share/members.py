@@ -17,6 +17,8 @@ a collection by computing its key, not by asking anyone.
 """
 from __future__ import annotations
 
+import json
+
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -257,10 +259,81 @@ def bundle_dirs(state_dir: Path, space: str) -> list[Path]:
             if all((d / f).is_file() for f in BUNDLE_FILES)]
 
 
+#: under `state/share/`: the roots of every held bundle's files, keyed on
+#: each file's physical identity — path, size, mtime_ns (CLAUDE.md: a cache
+#: keys on physical identity, never on a name). A bundle directory is
+#: immutable and named by its id (09 §9.7), so a file is hashed ONCE per
+#: bundle: without this every digest and every publish hashed every held
+#: bundle — 385 bundles, 10.7 GiB, 8 s per call on the node (2026-10-19),
+#: heading for 55 GB and 40 s a minute while contribute produced them
+ROOTS_CACHE = "bundle-roots.json"
+
+
+def _roots_cache_path(state_dir: Path) -> Path:
+    return Path(state_dir) / "share" / ROOTS_CACHE
+
+
+def _read_roots_cache(path: Path) -> dict[str, Any]:
+    try:
+        got = json.loads(path.read_bytes())
+    except (OSError, ValueError):
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+def _write_roots_cache(path: Path, cache: dict[str, Any]) -> None:
+    """Whole, through a temporary file of this process and thread: two
+    threads (the digest's, the seeder's) may write at once, and the last
+    whole file wins — both are right."""
+    import os
+    import threading
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{ROOTS_CACHE}.{os.getpid()}.{threading.get_ident()}")
+        tmp.write_bytes(json.dumps(cache, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        tmp.replace(path)
+    except OSError:
+        pass                                   # a cache that cannot be written is recomputed
+
+
 def bundle_members(state_dir: Path, space: str) -> list[Member]:
     """Every bundle this peer holds for the space, as members with their
-    roots (`bundle_dirs`, each file hashed)."""
-    return [bundle_member(space, d) for d in bundle_dirs(state_dir, space)]
+    roots — hashed once per bundle and kept in `ROOTS_CACHE`; a file whose
+    size or mtime moved is hashed again, a directory gone leaves the cache."""
+    state_dir = Path(state_dir)
+    dirs = bundle_dirs(state_dir, space)
+    cache_path = _roots_cache_path(state_dir)
+    cache = _read_roots_cache(cache_path)
+    base = state_dir / "bundles" / space
+    out: list[Member] = []
+    live: set[str] = set()
+    changed = False
+    for d in dirs:
+        key = f"{space}/{d.relative_to(base).as_posix()}"
+        live.add(key)
+        try:
+            stats = [[f, (d / f).stat().st_size, (d / f).stat().st_mtime_ns] for f in BUNDLE_FILES]
+        except OSError:
+            continue                           # vanished between the listing and the stat
+        hit = cache.get(key)
+        if isinstance(hit, dict) and hit.get("stat") == stats and isinstance(hit.get("files"), list) \
+                and len(hit["files"]) == len(BUNDLE_FILES):
+            try:
+                files = tuple(MemberFile(str(p), str(r), int(b)) for p, r, b in hit["files"])
+                out.append(Member(f"bundle-{shard_mod.check_space(space)}-{d.name}", files, base=d))
+                continue
+            except (TypeError, ValueError):
+                pass                           # a cache entry of another shape: hashed again
+        member = bundle_member(space, d)
+        out.append(member)
+        cache[key] = {"stat": stats, "files": [f.to_list() for f in member.files]}
+        changed = True
+    stale = [k for k in cache if k.startswith(f"{space}/") and k not in live]
+    for k in stale:
+        del cache[k]
+    if changed or stale:
+        _write_roots_cache(cache_path, cache)
+    return out
 
 
 def members_of(snapshot, *, shard_dir: Path | None = None) -> tuple[Member, ...]:

@@ -111,6 +111,17 @@ the leader too; a partial holding leaves the rest to the leader, whose
 change to the cascade: a holder's bundle does not renew the leader's
 window, it closes chunks.
 
+**Perugia's first pass on 39fd6e2** (12:09–12:55 CEST, stopped for the
+hold of §8): 932 open parts probed, 640 led by this peer, 0 held, 60 left
+to the fetch (a neighbour offered a bundle for each), 4 bundles built and
+announced (2,957 chunks: lang=bo/00001, br/00001, ca/00002, ceb/00001),
+2,772 s. The 640 led parts are parts the NODE holds vectors for: at pass
+time the node's holder pass had bundled 385 of its ~1,470, so Perugia
+embedded four parts the node had — the transition's race, "duplicates are
+checks". Perugia's contribute resumes after the node's holder pass is
+through, and is the measurement of what rendezvous leaves to a second GPU
+once every held part is offered.
+
 **To measure on the node's first pass** (CLAUDE.md: time every new
 per-round cost): 1,612 open parts × (one 5 MB part read + one
 `vectors_by_chunk_id` over ~6,000 ids) + 16 challenge rows per part held.
@@ -240,6 +251,18 @@ offered and taken in from digests. Fixed:
   it. Test: a bundle landing after the publish is served a minute later
   with four files hashed and the records not again; the digest offers
   exactly what is served; a removed bundle's torrents go.
+- And the second half, measured by München on the first fix (7d23449):
+  `bundle_members` hashed all four files of EVERY held bundle before the
+  incremental check could keep anything — 385 bundles, 10.7 GiB, 8.1 s a
+  call warm, on every publish AND every digest (pre-existing there),
+  heading for 55 GB and 40 s a minute while contribute produces bundles;
+  a cost that grows with what is held, never with the work. The roots are
+  now cached under `state/share/bundle-roots.json`, keyed on each file's
+  physical identity (path, size, mtime_ns): a bundle is hashed once, again
+  only when a file moved; a directory gone leaves the cache; a cache that
+  does not read is recomputed. Test: two bundles, eight hashes; a publish
+  and a digest, none; a third bundle, four; a moved file, its bundle
+  again; a broken cache, everything once.
 
 **Storage (München, for the operator):** the bundles rest in
 `collections/<c>/state/bundles` on the node's SSD — 9.7 GB at 5,206 B per

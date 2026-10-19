@@ -326,3 +326,61 @@ def test_a_bundle_that_lands_after_the_publish_is_served_without_rehashing_the_r
     quiet_sessions(monkeypatch)
     seeding.tick([c], {c.name: con}, con, "running")
     assert len(seeding._seeder._handles) == 2
+
+
+def test_a_held_bundle_is_hashed_once_not_at_every_digest_and_publish(node, monkeypatch):  # noqa: F811
+    """Measured on the node, 2026-10-19: `bundle_members` hashed all four
+    files of every held bundle at every digest and every publish — 385
+    bundles, 10.7 GiB, 8 s a call, growing with what is held. The roots are
+    cached on each file's physical identity (path, size, mtime_ns); a file
+    is hashed once per bundle, again only when it moved."""
+    import json
+    from app.share import gossip
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    con = db.connect(c)
+    state = node / c.name / "state"
+    space = codex.space_segment
+    hashed: list[str] = []
+    real = mem.shard_mod.pieces_root_of
+
+    def counted(path):
+        hashed.append(str(path))
+        return real(path)
+    monkeypatch.setattr(mem.shard_mod, "pieces_root_of", counted)
+
+    def land(hex_name: str, salt: bytes = b""):
+        bdir = state / "bundles" / space / SLICE / "00001" / hex_name
+        bdir.mkdir(parents=True)
+        for f in mem.BUNDLE_FILES:
+            (bdir / f).write_bytes(f.encode() * 50 + salt)
+        return bdir
+    land("a" * 64)
+    land("b" * 64)
+    first = mem.bundle_members(state, space)
+    assert len(first) == 2 and len(hashed) == 8, "two new bundles: eight files hashed"
+    assert mem.bundle_members(state, space) == first and len(hashed) == 8, "the same set: nothing hashed"
+    cache = json.loads((state / "share" / mem.ROOTS_CACHE).read_bytes())
+    assert set(cache) == {f"{space}/{SLICE}/00001/{'a' * 64}", f"{space}/{SLICE}/00001/{'b' * 64}"}
+    monkeypatch.setattr(seeder, "_last_bundle_scan", {})
+    seeder.sync([c], {c.name: con}, con, "running", now=1_800_000_000.0)
+    (entry,) = gossip.entries(node, [c])
+    assert len([m for m in entry["members"] if m["name"].startswith("bundle-")]) == 2
+    assert len(hashed) == 8, "a publish and a digest: nothing hashed again"
+    third = land("c" * 64)
+    seeder.sync([c], {c.name: con}, con, "running", now=1_800_000_000.0 + 61)
+    assert len(hashed) == 12 and len(seeding.read_published(con)) == 2 + 12, "the new bundle's four files, once"
+    gossip.entries(node, [c])
+    assert len(hashed) == 12
+    # a file that moved is hashed again; a bundle gone leaves the cache
+    import os
+    os.utime(third / mem.BUNDLE_FILES[0], ns=(1, 1))
+    mem.bundle_members(state, space)
+    assert len(hashed) == 16, "a file that moved: its bundle hashed again, whole"
+    import shutil
+    shutil.rmtree(third)
+    mem.bundle_members(state, space)
+    cache = json.loads((state / "share" / mem.ROOTS_CACHE).read_bytes())
+    assert len(cache) == 2 and not any("c" * 64 in k for k in cache)
+    # a cache that is not one is recomputed, not trusted
+    (state / "share" / mem.ROOTS_CACHE).write_bytes(b"{not json")
+    assert len(mem.bundle_members(state, space)) == 2 and len(hashed) == 16 + 8
