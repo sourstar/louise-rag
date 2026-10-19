@@ -17,6 +17,13 @@ serves it: every completed fetch makes the fetcher a sharer (04 §4.3).
 Refused, the row says so and the files are set aside. An event about a
 collection not held here, or one without a file list (an older announcer),
 is acted on by being left alone.
+
+A bundle a neighbour's DIGEST offers — a `bundle-<space>-<id>` member with
+its `files` (09 §9.9) — that this peer has not accepted is taken in the same
+way, without its event (amended 2026-10-19): an event is forwarded once
+and kept seven days, so a peer that joined later, or whose producer did
+not serve when it announced, would otherwise never get the bundle. The
+digests are read again only when one arrived, or after a backoff.
 """
 from __future__ import annotations
 
@@ -139,7 +146,6 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     known = cov.row(con, bundle_id)
     if known and known["accepted_at"]:
         return {"outcome": "held", "bundle_id": bundle_id}
-    final = contribute.bundle_dir(root, name, codex, str(payload.get("shard") or "x/00000"), bundle_id)
     staging = root / name / "state" / holdings.STAGING
     staged_dir = staging / member.name
     for t in member.torrents():
@@ -162,6 +168,10 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
         shutil.rmtree(staged_dir, ignore_errors=True)
         return {"outcome": "refused", "bundle_id": bundle_id,
                 "why": f"the bundle reads as {read_id[:23]}…: not the one announced"}
+    # the bundle's shard is the header's (09 §9.7): a digest's member entry
+    # names none, an event's may; the header has been read and is signed
+    final = contribute.bundle_dir(root, name, codex, str(header.get("shard") or payload.get("shard") or "x/00000"),
+                                  bundle_id)
     snapshot = landing.snapshot_named(root, name, header["snapshot_id"])
     records = landing.records_for(root, name, snapshot, header["shard"], header["uids"])
     mine = {r["uid"]: r["content_hash"] for r in records}
@@ -533,6 +543,113 @@ def reproduce_claims(root: Path, collections, node_con, *, own_key: str | None =
     return out
 
 
+# ---- bundles the digests offer (04 §4.5, amended 2026-10-19) ---------------------------------
+
+#: bundle id -> not before: a digest-offered bundle nobody served waits this long
+_digest_backoff: dict[str, float] = {}
+#: the digests last read: (fingerprint of (key, last_digest) over the neighbours, when)
+_digests_read: tuple[tuple, float] | None = None
+
+
+def _digest_fingerprint(node_con, *, now: float) -> tuple:
+    rows = node_con.execute(
+        "SELECT key, last_digest FROM peers WHERE last_digest >= ? AND address IS NOT NULL ORDER BY key",
+        (now - 3 * 3600.0,)).fetchall()
+    return tuple((r[0], r[1]) for r in rows)
+
+
+def listed_bundles(node_con, codex, con, *, now: float) -> list[tuple[dict[str, Any], list[tuple[str, int]]]]:
+    """`(payload, hints)` for every bundle member a live neighbour's digest
+    offers for the collection that this peer has not accepted — the payload
+    in the `bundle` event's shape (09 §9.9), from the member's name, root,
+    bytes and files; the hints the swarms of the neighbours offering it."""
+    from urllib.parse import urlsplit
+    from app.share import peers
+    prefix = f"bundle-{codex.space_segment}-"
+    found: dict[str, tuple[dict[str, Any], list[tuple[str, int]]]] = {}
+    for n in peers.neighbours(node_con, now=now):
+        d = peers.digest_of(node_con, n["key"]) or {}
+        port = d.get("peer_port")
+        host = urlsplit(n["address"]).hostname
+        hint = (host, port) if host and isinstance(port, int) and not isinstance(port, bool) else None
+        for e in d.get("collections", []) or []:
+            if not isinstance(e, dict) or e.get("collection_id") != codex.collection_id:
+                continue
+            for m in e.get("members", []) or []:
+                if not isinstance(m, dict) or not isinstance(m.get("name"), str) \
+                        or not m["name"].startswith(prefix) or not isinstance(m.get("files"), list):
+                    continue
+                bundle_id = "sha256:" + m["name"][len(prefix):]
+                if len(bundle_id) != 71:
+                    continue
+                if bundle_id in found:
+                    if hint is not None and hint not in found[bundle_id][1]:
+                        found[bundle_id][1].append(hint)
+                    continue
+                known = cov.row(con, bundle_id)
+                if known and known["accepted_at"]:
+                    continue                                    # accepted here already
+                payload = {"collection": codex.collection_id, "space_id": codex.space_id,
+                           "snapshot_id": e.get("snapshot_id"), "shard": None, "uids": [],
+                           "bundle_id": bundle_id, "root": m.get("root"), "bytes": m.get("bytes"),
+                           "files": m["files"]}
+                found[bundle_id] = (payload, [hint] if hint is not None else [])
+    return list(found.values())
+
+
+def from_digests(collections, cons: dict, node_con, *, session_factory, root: Path, usable, stop=None,
+                 now: float | None = None, log: Callable[[str], None] | None = None, key=None,
+                 own_key=None, force: bool = False) -> dict[str, int]:
+    """Every bundle a neighbour's digest offers for a usable collection held
+    here, taken in as its event would have had it taken. The digests are
+    read when one arrived since the last read, or after `transport.BACKOFF_S`;
+    a bundle nobody served waits that long before it is asked for again."""
+    global _digests_read
+    now = time.time() if now is None else now
+    out = {"accepted": 0, "refused": 0, "ignored": 0, "held": 0, "deferred": 0, "offered": 0}
+    fp = _digest_fingerprint(node_con, now=now)
+    if not force and _digests_read is not None and _digests_read[0] == fp \
+            and now - _digests_read[1] < transport.BACKOFF_S:
+        return out
+    _digests_read = (fp, now)
+    for c in collections:
+        codex = getattr(c, "codex", None)
+        if codex is None or cons.get(c.name) is None or not usable(c):
+            continue
+        if stop is not None and stop.is_set():
+            break
+        offered = listed_bundles(node_con, codex, cons[c.name], now=now)
+        out["offered"] += len(offered)
+        for payload, hints in offered:
+            if stop is not None and stop.is_set():
+                break
+            bid = payload["bundle_id"]
+            if _digest_backoff.get(bid, 0.0) > now:
+                out["deferred"] += 1
+                continue
+            for h in transport.hints_for(node_con, codex.collection_id, now=now):
+                if h not in hints:
+                    hints.append(h)
+            try:
+                got = take(root, c.name, codex, payload, session=session_factory(), con=cons[c.name],
+                           node_con=node_con, hints=hints, stop=stop, log=log, now=now, key=key, own_key=own_key)
+            except (transport.TransferAborted, transport.AcquireAborted):
+                return out
+            except (transport.TransportError, CodexError, OSError, KeyError, ValueError) as e:
+                out["deferred"] += 1
+                _digest_backoff[bid] = now + transport.BACKOFF_S
+                if log:
+                    log(f"[{c.name}] share: bundle {bid[:23]}… a digest offers: {type(e).__name__}: {e}"[:400])
+                if isinstance(e, transport.TransportError) and transport.nobody_served(str(e)):
+                    break                                   # nobody serves it now: the rest can wait
+                continue
+            out[got["outcome"]] += 1
+            if got["outcome"] == "accepted" and log:
+                log(f"[{c.name}] share: bundle {bid[:23]}… taken in from a digest's offer, its event "
+                    f"never seen here (04 §4.5)")
+    return out
+
+
 def _current_snapshot_shards(root: Path, name: str):
     d = Path(root) / name / "shard" / "snapshots"
     ids = sorted(p for p in d.glob("*.json") if not p.name.endswith(".sig.json")) if d.is_dir() else []
@@ -567,6 +684,13 @@ def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop
         codex = getattr(c, "codex", None)
         if codex is not None:
             by_id[codex.collection_id] = c
+
+    def usable(c) -> bool:
+        try:
+            return licensing.state_for(c) != licensing.MISSING and copy_state.of(c).in_use \
+                and c.codex.privacy == "public"
+        except Exception:   # noqa: BLE001 — a gate error withholds
+            return False
     for ev in pending(node_con):
         if stop is not None and stop.is_set():
             break
@@ -576,12 +700,7 @@ def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop
             out["ignored"] += 1
             attest.mark_acted(node_con, ev["id"])
             continue
-        try:
-            usable = licensing.state_for(c) != licensing.MISSING and copy_state.of(c).in_use \
-                and c.codex.privacy == "public"
-        except Exception:   # noqa: BLE001 — a gate error withholds
-            usable = False
-        if not usable:
+        if not usable(c):
             out["deferred"] += 1                    # left unacted: the gate may clear
             continue
         hints = transport.hints_for(node_con, c.codex.collection_id, now=now)
@@ -601,4 +720,16 @@ def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop
         out[got["outcome"]] += 1
         if got["outcome"] != "deferred":            # a short disk: left unacted, retried
             attest.mark_acted(node_con, ev["id"])
+    # the bundles the digests offer and no event brought (04 §4.5, amended 2026-10-19)
+    if not (stop is not None and stop.is_set()):
+        try:
+            got = from_digests(collections, cons, node_con, session_factory=session_factory, root=root,
+                               usable=usable, stop=stop, now=now, log=log, key=key, own_key=own_key)
+            for k in ("accepted", "refused", "held"):
+                out[k] += got[k]
+            if got["offered"]:
+                out["from_digests"] = got
+        except Exception as e:   # noqa: BLE001 — the events were acted on; this is the recovery path
+            if log:
+                log(f"[warn:share] bundles from digests: {type(e).__name__}: {e}"[:400])
     return out

@@ -471,7 +471,11 @@ reader needs at the command line:
   until the operator adds one (§7.8). `--name` is the local name. No
   peer known is exit 2; every peer down is exit 3. `--slice` and
   `--kinds` are written into the collection's file (§7.8), joined with
-  what it already says — no `--slice` means every slice, `"all"` — and
+  what it already says — no `--slice` means every slice, `"all"` — as is
+  `share = true` for a public collection, since sharing is automatic after
+  a completed fetch (04 §4.3; until 2026-10-19 the file said `share =
+  false`, and a fetched copy's records and bundles were offered to nobody
+  until `share <collection>` was run by hand) — and
   the node's worker fetches what the SHARD lacks of them at its next
   beat, member by member: `LICENSE-TERMS` first and, for a yellow or red
   collection, nothing else until the acknowledgement is recorded

@@ -370,3 +370,74 @@ def test_an_event_about_a_collection_not_held_is_left_alone_and_a_gated_one_wait
     out = accept.beat([c], {"gutenberg": kw["con"]}, node_con, session_factory=lambda: None, root=root)
     assert out["ignored"] == 1, "no file list the root agrees with: acted on by being left alone"
     assert accept.pending(node_con) == []
+
+
+def test_a_bundle_a_digest_offers_is_taken_in_without_its_event(node, monkeypatch, tmp_path):  # noqa: F811
+    """04 §4.5, amended 2026-10-19: an event is forwarded once and kept seven
+    days; a peer that missed it finds the bundle under the neighbour's
+    digest `members` and takes it in the same way — once per digest
+    arrival, with a backoff for a bundle nobody served."""
+    import types
+    from app.share import messages
+    cid = "sha256:" + "0" * 64
+    codex = types.SimpleNamespace(collection_id=cid, space_id="sha256:" + "5" * 64, space_segment="a" * 16,
+                                  privacy="public")
+    d = tmp_path / ("b" * 64)                       # a bundle directory is named by its id's hex (09 §9.7)
+    d.mkdir()
+    for f in mem.BUNDLE_FILES:
+        (d / f).write_bytes(f.encode() * 10)
+    member = mem.bundle_member("a" * 16, d)
+    bid = "sha256:" + d.name
+    entry = {"collection_id": cid, "lineage_id": cid, "title": "g", "snapshot_id": "2026-09",
+             "snapshot_hash": "sha256:" + "1" * 64, "codex_hash": "sha256:" + "2" * 64, "license": "green",
+             "privacy": "public", "coverage": [{"shard": f"{cid}/{'a' * 16}/lang=af/00001", "bundles": [bid]}],
+             "members": [member.to_dict(), {"name": "records-lang=af", "root": "sha256:" + "3" * 64, "bytes": 5}]}
+    now = time.time()
+    import sqlite3
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    cov.ensure_schema(con)
+    with peers.connect() as ncon:
+        body = messages.digest_body(key=PEER_KEY, address="http://10.0.0.7:30042", neighbours=[], benchmarks=[],
+                                    collections=[entry], now=now)
+        peers.record_digest(ncon, {**body, "peer_port": 6881}, now=now)
+        offered = accept.listed_bundles(ncon, codex, con, now=now)
+        assert len(offered) == 1
+        payload, hints = offered[0]
+        assert payload["bundle_id"] == bid and payload["root"] == member.root and payload["files"] == member.to_dict()["files"]
+        assert payload["collection"] == cid and payload["snapshot_id"] == "2026-09" and hints == [("10.0.0.7", 6881)]
+        assert accept.member_of(payload, "a" * 16) is not None, "the event's shape: the same reader takes it"
+        cov.record(con, bundle_id=bid, shard=f"{cid}/{'a' * 16}/lang=af/00001", producer=PEER_KEY, uids=[],
+                   chunks=3, tiers={}, source=cov.FETCHED, accepted_at=messages.time_text(now))
+        assert accept.listed_bundles(ncon, codex, con, now=now) == [], "accepted here: not asked for"
+        con.execute("DELETE FROM coverage")
+        # the beat: taken in through `take`, read once per digest arrival, backed off when nobody serves
+        taken: list[dict] = []
+        verdict = {"outcome": "accepted"}
+
+        def fake_take(root, name, codex_, payload_, **kw):
+            taken.append(payload_)
+            if isinstance(verdict.get("raise"), Exception):
+                raise verdict["raise"]
+            return dict(verdict)
+        monkeypatch.setattr(accept, "take", fake_take)
+        monkeypatch.setattr(accept, "_digests_read", None)
+        monkeypatch.setattr(accept, "_digest_backoff", {})
+        c = C("g", codex)
+        kw = dict(session_factory=lambda: None, root=tmp_path, usable=lambda c_: True, now=now)
+        got = accept.from_digests([c], {"g": con}, ncon, **kw)
+        assert got["offered"] == 1 and got["accepted"] == 1 and [p["bundle_id"] for p in taken] == [bid]
+        assert accept.from_digests([c], {"g": con}, ncon, **dict(kw, now=now + 60)) == \
+            {"accepted": 0, "refused": 0, "ignored": 0, "held": 0, "deferred": 0, "offered": 0}, \
+            "the same digests: not read again until one arrives or the backoff passes"
+        peers.record_digest(ncon, {**body, "peer_port": 6881}, now=now + 100)      # a digest arrived
+        verdict.update({"raise": transport.TransportError("MANIFEST.sig: no metadata after 120s — nobody")})
+        got = accept.from_digests([c], {"g": con}, ncon, **dict(kw, now=now + 120))
+        assert got["offered"] == 1 and got["deferred"] == 1 and len(taken) == 2
+        peers.record_digest(ncon, {**body, "peer_port": 6881}, now=now + 200)
+        got = accept.from_digests([c], {"g": con}, ncon, **dict(kw, now=now + 240))
+        assert got["deferred"] == 1 and len(taken) == 2, "nobody served it: not asked for again within the backoff"
+        got = accept.from_digests([c], {"g": con}, ncon, **dict(kw, now=now + transport.BACKOFF_S + 300, force=True))
+        assert len(taken) == 3, "asked for again once the backoff has passed"
+        assert accept.listed_bundles(ncon, types.SimpleNamespace(collection_id="sha256:" + "f" * 64,
+                                                                 space_id="x", space_segment="a" * 16), con, now=now) == []

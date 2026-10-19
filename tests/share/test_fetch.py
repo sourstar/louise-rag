@@ -163,7 +163,8 @@ def test_fetch_holds_the_codex_and_the_signed_snapshot_from_a_peer_given_by_hand
     held = fetcher / f"{fname}.toml"
     text = held.read_text(encoding="utf-8")
     assert out["file"] == str(held) and f'codex = "{codex.collection_id}"' in text \
-        and "share = false" in text and 'url = "http://models:1/upstream/x"' in text
+        and "share = true" in text and 'url = "http://models:1/upstream/x"' in text, \
+        "a fetched public collection is shared (04 §4.3: sharing is automatic; 2026-10-19)"
     assert not (fetcher / fname / "state" / fetch.STAGING).exists()
     again = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=client,
                         key=OURS, own_key=OUR_KEY, encoder="http://models:1/upstream/x")

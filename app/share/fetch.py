@@ -511,7 +511,10 @@ def hold(root: Path, chain: list[tuple[cx.Codex, bytes]], pulled: list[Pulled], 
         if not sig_target.is_file() or sig_target.read_bytes() != data:
             _write_whole(sig_target, data)
     from app import louise
+    # 04 §4.3: sharing is automatic after a completed fetch of a public
+    # collection, unless the file says otherwise — so the file says so
     held_file = louise._write_held_file(root, head, encoder, source="shard",
+                                        share=getattr(head, "privacy", "public") == "public",
                                         **(encoder_keys or {}))
     newest = pulled[0]
     return {
