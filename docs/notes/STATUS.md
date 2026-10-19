@@ -71,9 +71,22 @@ it left open is below.
   "Remember rule 1"): Codex version 8 declares `space.cut = "tokens"` (inside
   `space_id`), `dev carry --recut` crosses it (A1e), and
   `tools/recipe_from_codex.py` rebuilds the live v6 Codex byte for byte before
-  making its token twin (space `504c1d34…`). Louise 8ff300b is live (the
-  deploy and P2 ran 2026-10-18 evening); `pubmed-v8.sh` runs at night, by the
-  operator — ~778 k local vectors re-embedded, the other 39.2 M carried.
+  making its token twin (space `504c1d34…`). **Ran 2026-10-18/19, overnight**
+  (operator: "continue unattended"; Louise c4be8d0 live, bc3c00f's tools run
+  from source — no internet to build): `pubmed-v8` (`a1d8a9f7…`) holds pubmed's
+  state by carry; the recut dropped 844,918 local rows the character cut
+  shortened (102 of them CJK: each embedded alone, a pair layer); vectors-sample
+  then found NCBI rows of another input — 54,548 POPLINE citations whose only
+  abstract is an OtherAbstract, cut to their title
+  ([pubmed-other-abstracts.md](pubmed-other-abstracts.md), a decision for the
+  operator) — dropped with `dev drop-rows`, and 5 single misses; two fresh
+  seeds then PASS (1 and 3 rows under the tolerance, below the quorum). ~900 k
+  documents re-embed at night (cron jobs 7/8); old `pubmed` paused and its file
+  set aside, nothing deleted. **Open, first:** those residual misses (~0.2 % of
+  sampled rows, 2022 PMIDs: records revised after NCBI embedded them?) —
+  compare every imported row with the title/abstract NCBI ships beside its
+  embeddings (`pubmed_chunk_N.json`) once the internet is back, and drop the
+  ones that differ.
 - **Wikipedia parser 5** (2026-10-18, [wikipedia-qids.md](wikipedia-qids.md)):
   the QIDs from each run's `page_props`, built and tested with `dev carry
   --resign` (A1d); the node still runs parser 4's Codex, and the switch's
