@@ -522,9 +522,11 @@ def test_the_version_selection_that_reads_the_corpus_is_no_longer_run(tmp_path, 
     source = inspect.getsource(worker._backfill_rows)
     assert "_REEMBED_SQL" not in source, "the selection that reads the corpus is not run"
     assert source.count("_REEMBED_WINDOWED") == 2, "the version walk is windowed in BOTH branches"
-    # three pages in all: the version walk in each branch, and the new walk in
-    # the archive branch — which is the one the archive's spans bound
-    assert source.count("_cursor_page") == 3
+    # four pages in all: the version walk in each branch, the new walk in the
+    # archive branch — which is the one the archive's spans bound — and the
+    # new walk by the cursor when another peer leads some parts (04 §4.5),
+    # whose skipped head would otherwise block the plain walk
+    assert source.count("_cursor_page") == 4
 
 
 def test_the_prefetch_probe_walks_forward_from_the_current_document(tmp_path):
@@ -696,3 +698,66 @@ def test_the_reindex_window_is_a_rowid_range_not_an_index_walk(tmp_path):
         assert "USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)" in plan, plan
         assert "idx_documents_scope" not in plan, plan
         assert "TEMP B-TREE" not in plan.upper(), plan
+
+
+# --- 04 §4.5: the parts another live peer leads are left to it ----------------
+
+def _skipping(monkeypatch, skip_ids):
+    """`leading.skip_test` answering for a fixed set of native ids."""
+    from app.share import leading
+    monkeypatch.setattr(leading, "skip_test",
+                        lambda collection, con, **kw: (lambda r: int(r["native_id"]) in skip_ids))
+
+
+def _all_ready(tmp_path):
+    c, con = _discovered(tmp_path)
+    con.execute("UPDATE documents SET rdf_done=1, fts_done=1, fts_version=?, entity_version=?",
+                (config.FTS_VERSION, config.ENTITY_VERSION))
+    con.commit()
+    worker.reset_backfill_cursors()
+    return c, con
+
+
+def test_backfill_leaves_the_parts_another_peer_leads(tmp_path, monkeypatch):
+    c, con = _all_ready(tmp_path)
+    ids = sorted(int(r["native_id"]) for r in con.execute("SELECT native_id FROM documents"))
+    assert len(ids) >= 2
+    _skipping(monkeypatch, {ids[0]})
+    picked = {int(r["native_id"]) for r in worker._backfill_rows(con, c, 100)}
+    assert picked == set(ids[1:]), "the peer's part is its to embed"
+    scope = dict(db.get_scope(con), embed_mode="all")
+    assert {int(r["native_id"]) for r in worker._embed_candidates(con, scope, 100, c)} == set(ids[1:])
+
+
+def test_a_window_whose_candidates_are_all_skipped_does_not_stall_the_walk(tmp_path, monkeypatch):
+    """The plain new-walk takes the FIRST candidates: skipped ones would be
+    that head every round, and the collection would never progress. With a
+    filter the walk goes by the cursor and moves past a skipped window."""
+    c, con = _all_ready(tmp_path)
+    _embedded_bulk(con, 0)
+    con.execute("UPDATE documents SET embed_done=0")
+    con.executemany(
+        "INSERT INTO documents(uid, source, native_id, path, in_scope, rdf_done, fts_done, "
+        "embed_done) VALUES(?,?,?,?,1,1,1,0)",
+        [(f"gutenberg:{i}", "gutenberg", str(i), f"/nowhere/{i}") for i in range(30_000, 33_000)])
+    con.commit()
+    skip = {int(r["native_id"]) for r in con.execute("SELECT native_id FROM documents")
+            if int(r["native_id"]) < 32_000}
+    _skipping(monkeypatch, skip)
+    _fixed_windows(monkeypatch, 1000)
+    monkeypatch.setattr(config, "BACKFILL_WALK_BUDGET_S", 60.0)
+    rows = worker._backfill_rows(con, c, 5)
+    assert rows and all(int(r["native_id"]) >= 32_000 for r in rows), \
+        "the skipped windows are walked past, not returned"
+    key = (str(c.manifest_path), "new")
+    assert worker._backfill_cursor[key][1] == int(rows[0]["rid"]) - 1
+
+
+def test_no_peer_leading_elsewhere_leaves_the_backfill_as_it_was(tmp_path, monkeypatch):
+    from app.share import leading
+    c, con = _all_ready(tmp_path)
+    monkeypatch.setattr(leading, "skip_test", lambda collection, con, **kw: None)
+    seen = _window_queries(con)
+    rows = worker._backfill_rows(con, c, 100)
+    assert rows and not [s for s in seen if "embed_done=0" in s], \
+        "no filter: the plain scope-index walk, no cursor windows for the new walk"

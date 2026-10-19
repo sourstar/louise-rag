@@ -224,3 +224,17 @@ def test_a_heavier_neighbour_leads_the_shards_the_hash_gives_it(ready):
         much_later = time.time() + 2 * grace + 3 * 86400
         assert contribute.shards_i_lead(codex, snapshot, kw["con"], me=OUR_KEY, live=live, now=much_later) == [], \
             "every window run out: the cascade starts over at the top"
+
+
+def test_leaders_agrees_with_shards_i_lead_and_writes_nothing(ready):
+    root, snapshot, codex, kw = ready
+    live = [rendezvous.Peer(OUR_KEY, 1000.0), rendezvous.Peer(PEER_KEY, 1000.0)]
+    con = kw["con"]
+    before = dict(cov.opened_at(con))
+    lead = contribute.leaders(codex, snapshot, con, live=live)
+    assert dict(cov.opened_at(con)) == before, \
+        "the embed stage's read: no first-open time written"
+    mine = contribute.shards_i_lead(codex, snapshot, con, me=OUR_KEY, live=live)
+    assert sorted(cov.shard_id(codex, f"{s.slice}/{s.n:05d}") for s in mine) == \
+        sorted(sid for sid, k in lead.items() if k == OUR_KEY)
+    assert set(lead.values()) <= {OUR_KEY, PEER_KEY}

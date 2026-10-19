@@ -810,21 +810,57 @@ def _covered_ranges(con, collection) -> list[tuple[int, int]]:
     return bundle_genesis.declared_spans(archive, exclude=done)
 
 
+def _kept_window(con, sql: str, start: int, end: int, params: tuple, n: int, keep) -> list:
+    """One rowid window of `sql`, paged until `n` rows pass `keep` or the
+    window is exhausted. A window whose candidates are ALL left to another
+    peer returns nothing, so `_cursor_page` moves past it — never the same
+    skipped head every round (`"did work" is not "made progress"`)."""
+    out: list = []
+    lo = start
+    while len(out) < n:
+        rows = con.execute(sql, (lo, end, *params, n)).fetchall()
+        if not rows:
+            break
+        out += [r for r in rows if keep(r)]
+        lo = int(rows[-1]["rid"])
+        if len(rows) < n:
+            break
+    return out[:n]
+
+
 def _backfill_rows(con, collection, limit: int) -> list:
     """Dense backfill candidates under "all": new documents first, then
     version-driven re-embeds — both cursor-paged when an archive is
-    declared, both walked from the start otherwise."""
+    declared, both walked from the start otherwise.
+
+    A shared collection's open parts that ANOTHER live peer leads (04 §4.5)
+    are left to it (`share.leading`): their documents are not candidates
+    here, and the new walk then goes by the cursor, so a skipped head
+    never blocks it. No peer, no lead elsewhere: exactly as before."""
     ranges = _covered_ranges(con, collection)
     key = str(collection.manifest_path) if collection is not None else ""
     if collection is not None:
         _remember_label(key, collection.name)
+    from app.share import leading
+    skip = leading.skip_test(collection, con) if collection is not None else None
     if not ranges:
-        # THE NEW WALK STAYS UNBOUNDED, and must: its index prefix
-        # (in_scope, rdf_done, fts_done, embed_done=0) IS the candidate set,
-        # so it lands on the first candidate or on nothing, and a document
-        # that clears fts has to be embeddable in the same round.
-        rows = con.execute(_BACKFILL_SQL.format(covered=""),
-                           (config.MAX_RETRIES, -1, limit)).fetchall()
+        if skip is None:
+            # THE NEW WALK STAYS UNBOUNDED, and must: its index prefix
+            # (in_scope, rdf_done, fts_done, embed_done=0) IS the candidate set,
+            # so it lands on the first candidate or on nothing, and a document
+            # that clears fts has to be embeddable in the same round.
+            rows = con.execute(_BACKFILL_SQL.format(covered=""),
+                               (config.MAX_RETRIES, -1, limit)).fetchall()
+        else:
+            # …except when some candidates are another peer's: they would be
+            # that head every round, so the walk goes by the cursor
+            new_sql = _BACKFILL_WINDOWED.format(covered="")
+            rows = _cursor_page(
+                con, key, "new",
+                lambda start, end, n: _kept_window(con, new_sql, start, end,
+                                                   (config.MAX_RETRIES,), n,
+                                                   lambda r: not skip(r)),
+                limit, time.monotonic() + config.BACKFILL_WALK_BUDGET_S)
         # THE VERSION WALK IS WINDOWED HERE TOO. Its prefix ends at
         # embed_done=1, which is EVERY embedded document, and `embed_version`
         # is then tested row by row — so with no archive this read the whole
@@ -847,11 +883,14 @@ def _backfill_rows(con, collection, limit: int) -> list:
     # ONE budget for the whole call, both walks: a call that finds nothing
     # must cost a bounded slice of the encoder's turn, never a sweep
     deadline = time.monotonic() + config.BACKFILL_WALK_BUDGET_S
-    rows = _cursor_page(
-        con, key, "new",
-        lambda start, end, n: con.execute(
-            new_sql, (start, end, config.MAX_RETRIES, *params, n)).fetchall(),
-        limit, deadline)
+    if skip is None:
+        def new_page(start, end, n):
+            return con.execute(new_sql, (start, end, config.MAX_RETRIES, *params, n)).fetchall()
+    else:
+        def new_page(start, end, n):
+            return _kept_window(con, new_sql, start, end, (config.MAX_RETRIES, *params), n,
+                                lambda r: not skip(r))
+    rows = _cursor_page(con, key, "new", new_page, limit, deadline)
     if len(rows) < limit:
         archive = bundle_genesis.ARCHIVES.get(collection.genesis_archive or "")
         if archive is not None and archive.local:
