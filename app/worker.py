@@ -3795,10 +3795,9 @@ def _release_embedder(collection, con=None, others=None, reason: str = "") -> bo
 #: Louise's embedders on the model runner are VeGa's (docs/notes/vega.md):
 #: `vega-<model>`. Chat, reranking and translation are not, and are never swept.
 EMBEDDER_PREFIX = "vega-"
-#: consecutive settle beats (SETTLE_BEAT_S each) an on-demand embedder must
-#: be idle before it is unloaded: two beats, one to two minutes
+#: settle beats (SETTLE_BEAT_S each) an on-demand embedder must have answered
+#: no request for before it is unloaded: two beats, two minutes
 IDLE_BEATS = 2
-_idle_beats: dict[tuple[str, str], int] = {}
 
 
 def _sweep_unheld_embedders(collections, con=None) -> list[str]:
@@ -3833,24 +3832,30 @@ def _sweep_unheld_embedders(collections, con=None) -> list[str]:
             continue
         if r:
             kept |= {m for m in (r.model, getattr(r, "query_model", None)) if m}
-    # a process the worker does not run — `share contribute`, `hold vectors
-    # build` — embedding with a model says so in node.sqlite, renewed per
-    # batch (node_state.lease_encoder; Perugia, 2026-10-19: the backend's
-    # CPU share reads 0.0 one sample in four while the GPU embeds non-stop,
-    # and the sweep stopped a busy encoder seven times, 19 s a cold start)
+    # WHO IS USING A MODEL is read from the node's store, not from LocalAI's
+    # CPU figure (Perugia, 2026-10-19): `/system`'s cpu_percent is the VeGa
+    # wrapper's process, 0.07–2 % whatever the encoder does — so a busy
+    # encoder read idle (seven shutdowns under a running contribute) and an
+    # idle one, its HIP runtime spinning 2.8 cores, never did. Two signals
+    # replace it: the LEASE a process outside the worker holds while it
+    # embeds (node_state.lease_encoder, renewed per batch), and the LAST
+    # REQUEST any process made of the model (embeddings._touch, written by
+    # the client itself on every answer, rate-limited).
+    now = time.time()
     try:
-        leased = node_state.leased_encoders()
-    except Exception:   # noqa: BLE001 — the store unreadable: no lease known, as before
-        leased = set()
+        leased = node_state.leased_encoders(now=now)
+        last_used = node_state.encoder_last_used()
+    except Exception:   # noqa: BLE001 — the store unreadable: nothing known, as before
+        leased, last_used = set(), {}
+    idle_after_s = IDLE_BEATS * SETTLE_BEAT_S
     gone: list[str] = []
     idle: list[str] = []
     for server in sorted(servers):
-        busy = model_load.activity(server)
-        if busy is None:
+        loaded = model_load.activity(server)
+        if loaded is None:
             continue
-        for m in sorted(busy):
+        for m in sorted(loaded):
             if not m.startswith(EMBEDDER_PREFIX) or m in kept or (server, m) in leased:
-                _idle_beats.pop((server, m), None)
                 continue
             if m not in named:
                 if model_load.unload(server, m):
@@ -3858,11 +3863,9 @@ def _sweep_unheld_embedders(collections, con=None) -> list[str]:
                 continue
             # named only by collections that do not embed everything: a search
             # or an on-demand embed loaded it (a gutenberg or wikipedia query
-            # encoder); it goes once idle for IDLE_BEATS beats in a row
-            beats = 0 if busy[m] > 0.0 else _idle_beats.get((server, m), 0) + 1
-            _idle_beats[(server, m)] = beats
-            if beats >= IDLE_BEATS and model_load.unload(server, m):
-                _idle_beats.pop((server, m), None)
+            # encoder); it goes once nobody has asked it anything for IDLE_BEATS
+            # beats — a model nobody recorded a request for is idle now
+            if now - last_used.get((server, m), 0.0) >= idle_after_s and model_load.unload(server, m):
                 idle.append(m)
     if con is not None and (gone or idle):
         if gone:

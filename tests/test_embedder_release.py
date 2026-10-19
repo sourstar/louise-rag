@@ -7,9 +7,11 @@ LocalAI's eviction threshold and every chat load was evicted (500s)."""
 from contextlib import closing
 from dataclasses import replace
 
+import time
+
 import pytest
 
-from app import collections as collections_mod, db, model_load, worker
+from app import collections as collections_mod, db, embeddings, model_load, worker
 from tests.test_config_tiers_embed_mode import _collection
 
 URL = "http://localai:8080"
@@ -31,7 +33,6 @@ def runner(monkeypatch):
     monkeypatch.setattr(model_load, "_fetch_system", lambda server: frozenset(held))
     cpu: dict = {}                               # model -> cpu_percent; absent = idle
     monkeypatch.setattr(model_load, "activity", lambda server: {m: cpu.get(m, 0.0) for m in held})
-    worker._idle_beats.clear()
 
     def post(url, json=None, timeout=None):
         calls.append((url, json))
@@ -116,32 +117,68 @@ def test_a_removed_collection_s_embedder_leaves_with_it(tmp_path, runner, monkey
     cons[stays.name].close()
 
 
-def test_an_on_demand_embedder_is_unloaded_once_idle_two_beats(tmp_path, runner, monkeypatch):
+def test_an_on_demand_embedder_is_unloaded_once_nobody_asked_it_for_two_beats(tmp_path, runner, monkeypatch,
+                                                                              isolated_config):
     """gutenberg and wikipedia (on-demand) still held their embedders: a
     search loads the query encoder, which IS the embedder. A model named only
-    by collections not on "all" goes after two idle beats; one in use stays."""
+    by collections not on "all" goes once no process has asked it anything
+    for IDLE_BEATS beats — the last request as the embeddings client records
+    it (node_state.encoder_use), never LocalAI's CPU figure, which is the
+    VeGa wrapper's and reads 0.07–2 % whatever the encoder does (Perugia,
+    2026-10-19: an idle encoder spinning 2.8 cores was never unloaded)."""
+    from app import node_state
     held, calls = runner
     lazy = _with(_collection(tmp_path, "gutenberg"), "vega-4b", "lazy")
     full = _with(_collection(tmp_path, "normattiva"), "vega-dar", "all")
-    assert worker._sweep_unheld_embedders([lazy, full]) == [], "idle one beat: kept"
-    assert worker._sweep_unheld_embedders([lazy, full]) == ["vega-4b"], "idle two beats: unloaded"
+    idle_after = worker.IDLE_BEATS * worker.SETTLE_BEAT_S
+    # asked a moment ago (a search): kept, whatever LocalAI's CPU figure says
+    monkeypatch.setattr(model_load, "activity", lambda server: {m: 0.0 for m in held})
+    node_state.touch_encoder(URL, "vega-4b")
+    assert worker._sweep_unheld_embedders([lazy, full]) == [], "in use: kept"
+    # last asked longer ago than two beats: unloaded, though its wrapper shows CPU
+    monkeypatch.setattr(model_load, "activity", lambda server: {m: 1.9 for m in held})
+    node_state.touch_encoder(URL, "vega-4b", now=time.time() - idle_after - 1)
+    assert worker._sweep_unheld_embedders([lazy, full]) == ["vega-4b"], "nobody asked: unloaded"
     assert held == {"vega-dar"}, "the 'all' collection's embedder stays, idle or not"
 
 
-def test_a_busy_on_demand_embedder_is_not_unloaded(tmp_path, monkeypatch):
-    model_load.reset()
-    worker._idle_beats.clear()
-    held = {"vega-4b"}
-    cpu = {"vega-4b": 0.0}
-    monkeypatch.setattr(model_load, "_fetch_system", lambda server: frozenset(held))
-    monkeypatch.setattr(model_load, "activity", lambda server: {m: cpu[m] for m in held})
-    calls = []
-    monkeypatch.setattr(model_load.httpc, "post", lambda url, json=None, timeout=None: calls.append(json))
+def test_a_model_nobody_ever_asked_is_idle_now(tmp_path, runner, isolated_config):
+    """No row: loaded by hand, or before the store knew — unloaded at the
+    first beat; the next request reloads it (one cold start)."""
+    held, calls = runner
     lazy = _with(_collection(tmp_path, "gutenberg"), "vega-4b", "lazy")
-    assert worker._sweep_unheld_embedders([lazy]) == []
-    cpu["vega-4b"] = 35.0                        # a search is using it
-    assert worker._sweep_unheld_embedders([lazy]) == [] and calls == [], "busy resets the count"
-    model_load.reset()
+    full = _with(_collection(tmp_path, "normattiva"), "vega-dar", "all")
+    assert worker._sweep_unheld_embedders([lazy, full]) == ["vega-4b"]
+
+
+def test_the_embeddings_client_records_each_answer_for_the_sweep(isolated_config, monkeypatch):
+    """`embeddings._post` writes the (server, model) it just asked, at most
+    once per _TOUCH_EVERY_S, into the node's store — from whichever process
+    embeds — and never creates the store or fails the request over it."""
+    from app import node_state
+    recipe = collections_mod.EmbedRecipe(url=URL + "/v1/embeddings", api="vega", model="vega-4b",
+                                         dtype="f16", ctx=512)
+
+    class R:
+        status_code = 200
+    monkeypatch.setattr(embeddings.httpc, "post", lambda url, timeout=None, **kw: R())
+    embeddings._touched.clear()
+    # no store yet: nothing written, nothing created
+    assert not node_state.path().is_file()
+    embeddings._post(recipe, recipe.url, timeout=1.0, json={})
+    assert not node_state.path().is_file()
+    node_state.connect().close()                 # the worker's boot makes the store
+    embeddings._touched.clear()
+    embeddings._post(recipe, recipe.url, timeout=1.0, json={})
+    used = node_state.encoder_last_used()
+    assert set(used) == {(URL, "vega-4b")} and time.time() - used[(URL, "vega-4b")] < 5
+    # rate-limited: a second answer within _TOUCH_EVERY_S writes nothing new
+    monkeypatch.setattr(node_state, "touch_encoder", lambda *a, **k: (_ for _ in ()).throw(AssertionError("twice")))
+    embeddings._post(recipe, recipe.url, timeout=1.0, json={})
+    # a store that cannot be written never fails the request
+    embeddings._touched.clear()
+    monkeypatch.setattr(node_state, "touch_encoder", lambda *a, **k: (_ for _ in ()).throw(OSError("ro")))
+    assert embeddings._post(recipe, recipe.url, timeout=1.0, json={}).status_code == 200
 
 
 # ---- encoder leases (Perugia, 2026-10-19) ---------------------------------------------
@@ -155,7 +192,6 @@ def test_a_leased_embedder_is_left_alone_until_the_lease_expires(tmp_path, isola
     process left expires on its own."""
     from app import node_state
     model_load.reset()
-    worker._idle_beats.clear()
     held = {"vega-4b"}
     monkeypatch.setattr(model_load, "_fetch_system", lambda server: frozenset(held))
     monkeypatch.setattr(model_load, "activity", lambda server: {m: 0.0 for m in held})
@@ -172,12 +208,11 @@ def test_a_leased_embedder_is_left_alone_until_the_lease_expires(tmp_path, isola
     node_state.lease_encoder(URL, "vega-4b", "share contribute pid 1", now=1000.0, ttl_s=600.0)
     real = node_state.leased_encoders
     monkeypatch.setattr(node_state, "leased_encoders", lambda con=None, now=None: real(con, 1300.0))
-    # three idle beats under the lease: nothing goes
+    # three beats under the lease, no request of its own recorded: nothing goes
     for _ in range(3):
         assert worker._sweep_unheld_embedders([off]) == [] and calls == []
-    # the lease ran out (the process died without releasing): two idle beats, then unloaded
+    # the lease ran out (the process died without releasing): nobody asks, unloaded
     monkeypatch.setattr(node_state, "leased_encoders", lambda con=None, now=None: real(con, 1700.0))
-    assert worker._sweep_unheld_embedders([off]) == []
     assert worker._sweep_unheld_embedders([off]) == ["vega-4b"] and calls == [{"model": "vega-4b"}]
     model_load.reset()
 

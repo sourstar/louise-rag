@@ -756,4 +756,9 @@ reload on the next request), ~1 % of the pass. Fix: the encoder lease
 (`node_state.encoder_leases`; `louise._leasing` on `share contribute`
 and `hold vectors build`; the sweep skips a leased model) —
 scheduling.md pitfall 17, scheduling-log.md row of 2026-10-19. To
-verify on Perugia: no shutdown while a contribute runs.
+verify on Perugia: no shutdown while a contribute runs. *Verified 20:31–
+20:41Z: 0 sweep unloads, the lease renewed and released.* Then Perugia's
+second find: the CPU figure was the VeGa wrapper's, and an idle encoder
+spinning 2.8 cores was never unloaded — the idle test is now the last
+request recorded by the embeddings client (`encoder_use`), the CPU
+signal gone (pitfall 17's addendum).

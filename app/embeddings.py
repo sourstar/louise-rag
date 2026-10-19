@@ -142,17 +142,52 @@ class EndpointTimedOut(EndpointBusy):
     (app/encoder_timeouts.py). A search withholds its vector leg and says why."""
 
 
+#: the encoder-use row is rewritten at most this often per (server, model)
+#: in this process: a search's query embed and a worker's batches are
+#: seconds apart, and the sweep reads it once a minute
+_TOUCH_EVERY_S = 5.0
+_touched: dict[tuple[str, str], float] = {}
+_touched_lock = threading.Lock()
+
+
+def _touch(recipe: "collections_mod.EmbedRecipe") -> None:
+    """The model just answered: say so in the node's store (node_state
+    `encoder_use`), so the worker's sweep of idle embedders — in another
+    process — knows what is in use. Best effort, never raises, never
+    creates the store (a node with none has no sweep to inform)."""
+    model = getattr(recipe, "model", None)
+    if not model:
+        return
+    from . import model_load, node_state
+    try:
+        key = (model_load.server_of(recipe.url), model)
+        now = time.time()
+        with _touched_lock:
+            last = _touched.get(key, 0.0)
+            if now - last < _TOUCH_EVERY_S:
+                return
+            _touched[key] = now
+        if not node_state.path().is_file():
+            return
+        node_state.touch_encoder(key[0], key[1], now=now)
+    except Exception:   # noqa: BLE001 — bookkeeping for the sweep, not the embed
+        pass
+
+
 def _post(recipe: "collections_mod.EmbedRecipe", url: str, *, timeout: float, **kw):
     """One request to the encoder; a timeout reading or sending it is
     `EndpointTimedOut`, never a bare httpx error a caller could put on a
-    document. (A connect timeout already reads as the endpoint's.)"""
+    document. (A connect timeout already reads as the endpoint's.) An
+    answer, whatever its status, marks the model used (`_touch`)."""
     try:
-        return httpc.post(url, timeout=timeout, **kw)
+        response = httpc.post(url, timeout=timeout, **kw)
     except (httpx.ReadTimeout, httpx.WriteTimeout) as e:
         raise EndpointTimedOut(
             f"the encoder at {recipe.url} did not answer within {timeout:.0f} s "
             f"({type(e).__name__}) — held as busy; the batch is deferred and its "
             f"documents are untouched") from e
+    _touch(recipe)
+    return response
 
 
 class EndpointMisconfigured(EndpointDeferred):

@@ -382,9 +382,21 @@ model and holder, renewed before every batch, `ENCODER_LEASE_TTL_S` =
 600 s, released when the command ends; `louise._leasing` wraps the
 embed callable of `share contribute` and `hold vectors build`). The
 sweep skips a leased model however idle it reads. A lease a dead process
-left expires on its own, so the model is freed within the TTL. The CPU
-signal stays for what it can tell — a query encoder nobody has asked in
-two minutes — and is never again the only witness that a GPU is busy.
+left expires on its own, so the model is freed within the TTL.
+
+→ *The same night, Perugia again:* the CPU figure was never the encoder's.
+LocalAI's `/system` `process.cpu_percent` is the VeGa WRAPPER's process
+(`python vega_wrapper.py`, 0.07–2 %, 61 MB), not the llama.cpp child's —
+which, idle on ROCm under Docker Desktop's dxg bridge, busy-polls at
+283 % CPU and 5.4 GB. So "busy == 0.0" was false in both directions: a
+busy encoder read idle (above), and an idle one — never exactly 0.0 —
+was never unloaded: the operator's machine sat at 35 % CPU with nothing
+running, 24 min after the contribute had exited. The CPU signal is gone
+from the sweep. "Idle" is now: no lease, and no process on the node has
+asked the model anything for IDLE_BEATS beats — the embeddings client
+itself writes `encoder_use (server, model, last_used)` in node.sqlite
+after every answer (rate-limited to one write per 5 s per model), from
+whichever process embeds: the worker, the web's search, a command.
 
 ## 6. Before you change the scheduler — the checklist
 

@@ -505,9 +505,22 @@ embedding: no slowdown seen; too short against the 143/min to be the
 figure (the bundles mixed vectors of the earlier stop). The row stays
 open for the next long pass and for the node's night.
 
+**Perugia, 21:05Z: the other direction.** 24 min after the contribute
+exited and released its lease, vmmemwsl at 35 % CPU and 74 % RAM with
+nothing running: the LocalAI container at 200 % CPU, 12.7 GB; inside it
+the idle `llama-cpp-fallback` of vega-qwen3-embedding-4b at 283 % CPU
+(the HIP runtime busy-polls under dxg); `/system` for the same model:
+cpu_percent 0.078, rss 62,914,560 — the VeGa wrapper's numbers. Never
+exactly 0.0, so the sweep never unloaded it. Perugia shut it down by
+hand (`POST /backend/shutdown`): 0.03 % CPU, 5.7 GB page cache. Fix the
+same night: the sweep's idle test is the last request any process made
+(`encoder_use`, written by the embeddings client), not CPU.
+
 **Expected after.** No "unloaded" line for a model under lease while a
 contribute runs; `/backend/shutdown` only for a model no process is
-embedding with; a lease a killed process left gone within 600 s. Cost
+embedding with; a lease a killed process left gone within 600 s; an
+on-demand encoder nobody asks unloaded within two beats of its last
+answer, whatever its idle CPU. Cost
 of the fix: one `INSERT OR REPLACE` per batch (seconds apart), one
 SELECT per settle beat over a table of a handful of rows (plan-checked:
 tests/test_embedder_release.py). To be measured on Perugia over one

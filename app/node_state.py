@@ -57,6 +57,17 @@ _LEASES = ("CREATE TABLE IF NOT EXISTS encoder_leases (server TEXT NOT NULL, mod
 #: (the largest book is hours of them, but a batch is seconds), shorter
 #: than the idle unload is worth waiting for
 ENCODER_LEASE_TTL_S = 600.0
+#: ENCODER USE (Perugia, 2026-10-19, the same night): when a model last
+#: answered an embedding request from ANY process on this node — the
+#: worker's, the web's search, a command's. The sweep judged "idle" by
+#: LocalAI's `/system` cpu_percent, which is the VeGa WRAPPER's process
+#: (0.07–2 %, never exactly 0.0) and not the llama.cpp child's — so on
+#: Perugia an idle encoder whose HIP runtime busy-polls 2.8 cores was
+#: never unloaded, and a busy one read idle. The embeddings client writes
+#: one row per (server, model) after a request (rate-limited); the sweep
+#: unloads what nobody has asked for IDLE_BEATS beats and nobody leases.
+_USE = ("CREATE TABLE IF NOT EXISTS encoder_use (server TEXT NOT NULL, model TEXT NOT NULL, "
+        "last_used REAL NOT NULL, PRIMARY KEY (server, model))")
 
 # ---- what each mode runs -------------------------------------------------------
 #
@@ -133,7 +144,32 @@ def connect() -> sqlite3.Connection:
     con.execute("PRAGMA busy_timeout=60000")
     con.execute(_SCHEMA)
     con.execute(_LEASES)
+    con.execute(_USE)
     return con
+
+
+def touch_encoder(server: str, model: str, *, con: sqlite3.Connection | None = None,
+                  now: float | None = None) -> None:
+    """`model` on `server` answered an embedding request now."""
+    row = (server, model, time.time() if now is None else now)
+    sql = "INSERT OR REPLACE INTO encoder_use (server, model, last_used) VALUES (?, ?, ?)"
+    if con is not None:
+        con.execute(sql, row)
+        return
+    with closing(connect()) as c:
+        c.execute(sql, row)
+
+
+def encoder_last_used(con: sqlite3.Connection | None = None) -> dict[tuple[str, str], float]:
+    """When each (server, model) last answered a request, from every process
+    of this node; absent = never since the row was first kept."""
+    def read(c):
+        return {(r["server"], r["model"]): float(r["last_used"]) for r in
+                c.execute("SELECT server, model, last_used FROM encoder_use")}
+    if con is not None:
+        return read(con)
+    with closing(connect()) as c:
+        return read(c)
 
 
 def lease_encoder(server: str, model: str, holder: str, *, ttl_s: float = ENCODER_LEASE_TTL_S,
