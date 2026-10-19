@@ -336,8 +336,13 @@ the annotations type". Three changes.
   the upload under `state/claims-uploads/` and queues an
   `annotations-create` job (`app/jobs.py`), which runs in EVERY mode — it
   embeds nothing — signs the first snapshot with the node key and removes
-  the upload. Route: `POST /api/hold/collection/create-annotations`,
-  multipart (07 §7.4).
+  the upload. Route: `POST /api/hold/collection/create-annotations`, the
+  flags as query parameters and the file as the raw body (07 §7.4). It
+  was multipart for one push: FastAPI needs python-multipart for that,
+  which requirements.txt does not carry — this container had it, the
+  node's image did not, and München's suite caught `app.api` failing at
+  import before the deploy. A guard test now refuses any `Form`/`File`/
+  `UploadFile` route unless the package is declared.
 
 Open: the chat path's `annotations` is sent by the page; Open WebUI and
 other API clients get every held one, as before.

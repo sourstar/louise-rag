@@ -29,7 +29,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import (HTMLResponse, RedirectResponse, Response, StreamingResponse,
                                JSONResponse)
@@ -347,64 +347,76 @@ CLAIMS_MAX_BYTES = 256 * 1024 * 1024
 
 @app.post("/api/hold/collection/create-annotations", dependencies=[Depends(auth.require_admin)])
 async def hold_collection_create_annotations(
-        name: str = Form(""), annotates: str = Form(""), from_snapshot: str = Form(""),
-        title: str = Form(""), summary: str = Form(""), annotator: str = Form(""),
-        snapshot: str = Form(""), platform_image: str = Form(""),
-        dry_run: bool = Form(False), claims: UploadFile = File(...)):
+        request: Request, name: str = "", annotates: str = "", from_snapshot: str = "",
+        title: str = "", summary: str = "", annotator: str = "", snapshot: str = "",
+        platform_image: str = "", dry_run: bool = False):
     """`louise hold collection create annotations` as one route (07 §7.4;
     02 §2.10), the Library's *new collection* of the annotations type
-    (2026-10-19): a multipart form, because its one input that is not a
-    flag is the claims file. `dry_run` is `--dry-run`: the claims checked
-    against the target snapshot and counted, nothing written, answered at
-    once. Otherwise the same check runs first — a refusal is a 409 that
-    names its rule and queues nothing — and the create is QUEUED for the
-    worker, 202, which holds the key that signs the first snapshot
-    (app/jobs.py); the uploaded file waits under the node's state until the
-    job has read it."""
+    (2026-10-19). The flags are QUERY parameters and the claims file is the
+    RAW request body (`application/x-ndjson`) — no multipart, which would
+    need python-multipart, a dependency the platform does not carry (the
+    bundle import route is built the same way). `dry_run` is `--dry-run`:
+    the claims checked against the target snapshot and counted, nothing
+    written, answered at once. Otherwise the same check runs first — a
+    refusal is a 409 that names its rule and queues nothing — and the
+    create is QUEUED for the worker, 202, which holds the key that signs
+    the first snapshot (app/jobs.py); the uploaded file waits under the
+    node's state until the job has read it."""
     import secrets
     from . import jobs, louise
     from .hold import annotations as ann
     from .hold.codex import CodexError
-    missing = [f for f, v in (("annotates", annotates), ("from_snapshot", from_snapshot)) if not v.strip()]
-    if not dry_run and not name.strip():
+    name, annotates, from_snapshot = name.strip(), annotates.strip(), from_snapshot.strip()
+    title, summary, annotator, snapshot = title.strip(), summary.strip(), annotator.strip(), snapshot.strip()
+    missing = [f for f, v in (("annotates", annotates), ("from_snapshot", from_snapshot)) if not v]
+    if not dry_run and not name:
         missing.append("name")
     if missing:
         raise HTTPException(409, f"create annotations takes {', '.join(missing)}: the collection it "
                                  f"annotates, the target snapshot the claims hold from and the new "
                                  f"collection's name (02 §2.10)")
-    data = await claims.read(CLAIMS_MAX_BYTES + 1)
-    if len(data) > CLAIMS_MAX_BYTES:
-        raise HTTPException(413, f"the claims file is over {CLAIMS_MAX_BYTES // (1024 * 1024)} MB")
+    # the body, bounded as it streams: a claims file is one JSON object a
+    # line, and one beyond this is a mistake the web process does not buffer
+    parts, received = [], 0
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > CLAIMS_MAX_BYTES:
+            raise HTTPException(413, f"the claims file is over {CLAIMS_MAX_BYTES // (1024 * 1024)} MB")
+        parts.append(chunk)
+    data = b"".join(parts)
+    if not data.strip():
+        raise HTTPException(409, "the claims file is the request body, and it is empty (09 §9.5: one "
+                                 "JSON claim per line)")
     root = louise._default_root()
     try:
         if not dry_run:
             louise.preflight_create({}, platform_image or None)
             from .hold import collection as hold_col
-            hold_col.check_name(name.strip())
-            if collections_mod.config_toml_path(name.strip()).exists() or hold_col.dir_of(root, name.strip()).exists():
-                raise CodexError(f"a collection named {name.strip()!r} is already held: a name holds one "
+            hold_col.check_name(name)
+            if collections_mod.config_toml_path(name).exists() or hold_col.dir_of(root, name).exists():
+                raise CodexError(f"a collection named {name!r} is already held: a name holds one "
                                  f"collection for its life (07 §7.8)")
         preview = await run_in_threadpool(
-            ann.preview, root, target_ref=annotates.strip(), from_snapshot=from_snapshot.strip(),
-            claims=data, annotator=annotator.strip() or None)
+            ann.preview, root, target_ref=annotates, from_snapshot=from_snapshot,
+            claims=data, annotator=annotator or None)
     except (ann.AnnotationsError, CodexError, ValueError, FileNotFoundError) as e:
         raise HTTPException(409, str(e)) from None
-    cli = (f"louise hold collection create annotations --annotates {annotates.strip()} "
-           f"--from-snapshot {from_snapshot.strip()} --claims FILE --name {name.strip() or '<name>'}")
+    cli = (f"louise hold collection create annotations --annotates {annotates} "
+           f"--from-snapshot {from_snapshot} --claims FILE --name {name or '<name>'}")
     for flag, value in (("--title", title), ("--summary", summary), ("--annotator", annotator),
                         ("--snapshot", snapshot)):
-        if value.strip():
-            cli += f" {flag} {value.strip()!r}"
+        if value:
+            cli += f" {flag} {value!r}"
     if dry_run:
         return {**preview, "cli": cli + " --dry-run"}
     uploads = config.louise_root() / "state" / CLAIMS_UPLOADS
     uploads.mkdir(parents=True, exist_ok=True)
-    saved = uploads / f"{name.strip()}-{secrets.token_hex(6)}.jsonl"
+    saved = uploads / f"{name}-{secrets.token_hex(6)}.jsonl"
     saved.write_bytes(data)
     job_id = jobs.submit(jobs.CREATE_ANNOTATIONS, {
-        "name": name.strip(), "annotates": annotates.strip(), "from_snapshot": from_snapshot.strip(),
-        "title": title.strip(), "summary": summary.strip(), "annotator": annotator.strip(),
-        "snapshot": snapshot.strip(), "platform_image": platform_image or None,
+        "name": name, "annotates": annotates, "from_snapshot": from_snapshot,
+        "title": title, "summary": summary, "annotator": annotator,
+        "snapshot": snapshot, "platform_image": platform_image or None,
         "claims_path": str(saved), "cli": cli})
     return JSONResponse(status_code=202, content={**jobs.view(jobs.get(job_id)), "preview": preview})
 

@@ -548,20 +548,22 @@ function annotationTargetChanged(){
   if(opt&&!from.dataset.edited)from.value=opt.dataset.snapshot||'';
 }
 document.getElementById('na_from').addEventListener('input',e=>{e.target.dataset.edited='1'});
-function annotationsForm(dryRun){
-  const f=new FormData();
+// the flags as query parameters and the file as the raw body: no multipart
+// (python-multipart is not a dependency of the platform; the bundle import
+// is sent the same way)
+function annotationsRequest(dryRun){
+  const q=new URLSearchParams();
   for(const [k,id] of [['name','na_name'],['annotates','na_target'],['from_snapshot','na_from'],
                        ['title','na_title'],['summary','na_summary'],['annotator','na_annotator']])
-    f.append(k,document.getElementById(id).value.trim());
+    q.set(k,document.getElementById(id).value.trim());
+  q.set('dry_run',dryRun?'true':'false');
   const file=document.getElementById('na_claims').files[0];
   if(!file){toast('choose the claims file');return null}
-  f.append('claims',file,file.name);
-  f.append('dry_run',dryRun?'true':'false');
-  return f;
+  return {url:'/api/hold/collection/create-annotations?'+q.toString(),file};
 }
-async function postForm(url,form){
+async function postClaims(req){
   // the admin cookie authorises it, as postJSON's requests (app/auth.py)
-  const r=await fetch(url,{method:'POST',body:form});
+  const r=await fetch(req.url,{method:'POST',body:req.file,headers:{'Content-Type':'application/x-ndjson'}});
   const text=await r.text(); let j; try{j=JSON.parse(text)}catch(e){j={detail:text}}
   if(!r.ok)throw (j.detail||text);
   return j;
@@ -571,19 +573,19 @@ function previewHtml(p){
   return `${esc(p.claims)} claim(s) about ${esc(p.target_records_named)} record(s) of <b>${esc(p.target)}</b> as snapshot ${esc(p.from_snapshot)} holds them · annotator: ${esc(p.annotator||'?')} · types: ${dl(p.by_type)} · methods: ${dl(p.by_method)} · ${esc(p.parts)} part(s)`;
 }
 async function checkAnnotations(){
-  const f=annotationsForm(true); if(!f)return;
+  const req=annotationsRequest(true); if(!req)return;
   const box=document.getElementById('na_result');
   box.innerHTML='<div class="note">checking the claims against the target snapshot…</div>';
-  try{const p=await postForm('/api/hold/collection/create-annotations',f);
+  try{const p=await postClaims(req);
     box.innerHTML=`<div class="note">Checked, nothing written: ${previewHtml(p)}</div><pre class="cli">${esc(p.cli)}</pre>`}
   catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
 }
 async function createAnnotations(){
-  const f=annotationsForm(false); if(!f)return;
+  const req=annotationsRequest(false); if(!req)return;
   if(!document.getElementById('na_name').value.trim()){toast('name the collection');return}
   const box=document.getElementById('na_result');
   box.innerHTML='<div class="note">checking the claims, then queued for the worker…</div>';
-  try{const q=await postForm('/api/hold/collection/create-annotations',f);
+  try{const q=await postClaims(req);
     box.innerHTML=`<div class="note">${previewHtml(q.preview)} — queued as job ${esc(q.id)}</div>`;
     const j=await waitForJob(q.id,s=>{box.innerHTML+='<div class="note">'+esc(s)+'</div>'});
     const d=j.result;

@@ -677,11 +677,12 @@ follows one. A create waits while the node's mode does not embed. The web interf
 shows the command line of every action it offers.
 
 *Amended 2026-10-19.* `hold collection create annotations` (§7.3; 02
-§2.10) is `POST /api/hold/collection/create-annotations`, the one route
-whose body is a multipart form, because its input that is not a flag is
-the claims file: the fields are the flags (`name`, `annotates`,
-`from_snapshot`, `title`, `summary`, `annotator`, `snapshot`), `claims`
-the file, and `dry_run` is `--dry-run` — the claims checked against the
+§2.10) is `POST /api/hold/collection/create-annotations`, whose input
+that is not a flag is the claims file: the flags are query parameters
+(`name`, `annotates`, `from_snapshot`, `title`, `summary`, `annotator`,
+`snapshot`), the file is the raw request body (`application/x-ndjson`,
+as the bundle import takes its tar — no multipart, which the platform's
+dependencies do not carry), and `dry_run` is `--dry-run` — the claims checked against the
 target snapshot and counted, nothing written, answered at once (200).
 Without it the same check runs first (a refusal is the 409 above and
 queues nothing), then the create is queued for the worker (202) like

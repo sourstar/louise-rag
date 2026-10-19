@@ -235,8 +235,7 @@ def _form(snapshot, name="pubmed-same-work", **over):
 
 def test_a_dry_run_checks_and_counts_the_claims_and_writes_nothing(client):
     snapshot, claims = _target_and_claims(client)
-    r = client.post(ANN_ROUTE, data=_form(snapshot, dry_run="true"),
-                    files={"claims": ("claims.jsonl", claims, "application/json")})
+    r = client.post(ANN_ROUTE, params=_form(snapshot, dry_run="true"), content=claims)
     assert r.status_code == 200, r.text
     p = r.json()
     assert (p["target"], p["from_snapshot"], p["claims"], p["target_records_named"], p["written"]) == \
@@ -256,8 +255,7 @@ def test_the_create_is_checked_then_queued_and_the_worker_writes_it_in_any_mode(
     from app import jobs
     from app.hold import collection as col
     snapshot, claims = _target_and_claims(client)
-    r = client.post(ANN_ROUTE, data=_form(snapshot),
-                    files={"claims": ("claims.jsonl", claims, "application/json")})
+    r = client.post(ANN_ROUTE, params=_form(snapshot), content=claims)
     assert r.status_code == 202, r.text
     q = r.json()
     assert q["state"] == "queued" and q["preview"]["claims"] == 2 and q["kind"] == jobs.CREATE_ANNOTATIONS
@@ -286,20 +284,15 @@ def test_a_refused_claims_file_is_409_and_queues_nothing(client):
     from tests.hold.test_annotations import a_claim, claims_file
     snapshot, claims = _target_and_claims(client)
     bad = claims_file(a_claim("pubmed:1", "pubmed:99"))
-    r = client.post(ANN_ROUTE, data=_form(snapshot),
-                    files={"claims": ("claims.jsonl", bad, "application/json")})
+    r = client.post(ANN_ROUTE, params=_form(snapshot), content=bad)
     assert r.status_code == 409 and "pubmed:99" in r.json()["detail"]
-    r = client.post(ANN_ROUTE, data=_form("2031-01"),
-                    files={"claims": ("claims.jsonl", claims, "application/json")})
+    r = client.post(ANN_ROUTE, params=_form("2031-01"), content=claims)
     assert r.status_code == 409 and "2031-01" in r.json()["detail"]
-    r = client.post(ANN_ROUTE, data=_form(snapshot, annotates="nope"),
-                    files={"claims": ("claims.jsonl", claims, "application/json")})
+    r = client.post(ANN_ROUTE, params=_form(snapshot, annotates="nope"), content=claims)
     assert r.status_code == 409
-    r = client.post(ANN_ROUTE, data=_form(snapshot, name=""),
-                    files={"claims": ("claims.jsonl", claims, "application/json")})
+    r = client.post(ANN_ROUTE, params=_form(snapshot, name=""), content=claims)
     assert r.status_code == 409 and "name" in r.json()["detail"]
-    r = client.post(ANN_ROUTE, data=_form(snapshot, name="pubmed"),
-                    files={"claims": ("claims.jsonl", claims, "application/json")})
+    r = client.post(ANN_ROUTE, params=_form(snapshot, name="pubmed"), content=claims)
     assert r.status_code == 409 and "already held" in r.json()["detail"]
     with closing(jobs.connect()) as con:
         assert jobs.run_next(con, "running") is None, "nothing queued"
@@ -307,10 +300,15 @@ def test_a_refused_claims_file_is_409_and_queues_nothing(client):
     assert collections_mod.load_annotations() == []
 
 
+def test_an_empty_body_is_refused_as_no_claims_file(client):
+    snapshot, _ = _target_and_claims(client)
+    r = client.post(ANN_ROUTE, params=_form(snapshot, dry_run="true"), content=b"")
+    assert r.status_code == 409 and "request body" in r.json()["detail"]
+
+
 def test_the_annotations_route_needs_the_admin_token(client):
     snapshot, claims = _target_and_claims(client)
-    r = client.post(ANN_ROUTE, data=_form(snapshot, dry_run="true"),
-                    files={"claims": ("claims.jsonl", claims, "application/json")},
+    r = client.post(ANN_ROUTE, params=_form(snapshot, dry_run="true"), content=claims,
                     headers={"X-Admin-Token": ""})
     assert r.status_code == 401
 

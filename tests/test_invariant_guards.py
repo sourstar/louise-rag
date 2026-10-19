@@ -133,3 +133,23 @@ def test_the_guard_sees_a_call_and_not_a_comment(tmp_path):
     p.write_text("from app import embeddings\nembeddings._embed_texts(['t'])\n",
                  encoding="utf-8")
     assert _names_used(p) & _PRIVATE_CLIENT == {"_embed_texts"}
+
+
+def test_no_route_needs_python_multipart_unless_it_is_a_declared_dependency():
+    """FastAPI registers a `Form`/`File`/`UploadFile` route only where
+    python-multipart is installed, else `app.api` fails at import and the web
+    does not start. The package is not in requirements.txt; a container that
+    happens to carry it hid exactly that (2026-10-19: the node's build
+    refused a tip the suite here had passed). Uploads are raw bodies with
+    query parameters instead — the bundle import, the claims file."""
+    requirements = (APP.parent / "requirements.txt").read_text(encoding="utf-8").lower()
+    declared = "python-multipart" in requirements or "python_multipart" in requirements
+    if declared:
+        return
+    uses = []
+    for path in sorted(APP.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if re.search(r"\bfrom fastapi import[^\n]*\b(Form|File|UploadFile)\b", text) or \
+                re.search(r"(?<![\w.])(Form|File)\(|\bUploadFile\b", text):
+            uses.append(path.relative_to(APP).as_posix())
+    assert uses == [], f"routes needing python-multipart, which requirements.txt does not declare: {uses}"
