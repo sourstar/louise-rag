@@ -52,6 +52,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from app import embed_marks as marks
 from app.hold import collection as col, shard as shard_mod, envelope as env, export as exp, \
     land as landing, snapshot as sn, vectors_build as vb
 from app.hold.codex import CodexError
@@ -352,7 +353,8 @@ def _bundle_shard(root: Path, name: str, codex, snapshot: sn.Snapshot, shard: sn
 def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vectors_for, write,
          live: Sequence[rendezvous.Peer], con, node_con, now: float | None = None, stop=None,
          log: Callable[[str], None] | None = None, batch: int = 64,
-         before_write: Callable[[], None] | None = None, serving: bool = True) -> dict[str, Any]:
+         before_write: Callable[[], None] | None = None, serving: bool = True,
+         collection=None) -> dict[str, Any]:
     """One pass (07 §7.3 `--once`): first the vectors this peer already
     holds for the open shards it does not lead, bundled (no GPU beyond the
     challenge rows); then the shards this peer leads, built, exported,
@@ -371,7 +373,8 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
     out: dict[str, Any] = {"snapshot_id": snapshot.snapshot_id, "peers": len(me_live),
                            "mine": [f"{s.slice}/{s.n:05d}" for s in mine], "built": 0,
                            "held": [], "probed": 0, "left_to_fetch": [], "bundles": [], "accepted": [],
-                           "refused": [], "events": 0, "unannounced": 0, "interrupted": False}
+                           "refused": [], "events": 0, "unannounced": 0, "interrupted": False,
+                           "marked": 0}
     common = dict(key=key, own_key=own_key, embed=embed, vectors_for=vectors_for, con=con,
                   node_con=node_con, now=now, say=say, out=out, serving=serving)
     if not mine and not others:
@@ -427,6 +430,17 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
                          vectors_for=vectors_for, embed=embed, write=write, batch=batch, stop=stop,
                          log=say, before_write=before_write)
         out["built"] += built.chunks_written
+        # the documents the build completed are marked embedded in the
+        # manifest, AFTER the vectors are written (invariant 2) — the build
+        # never did, and the worker would have embedded them again (372 on
+        # the node, München 2026-10-19); interrupted, what is whole is marked
+        if built.chunks_written:
+            try:
+                records = landing.records_for(root, name, snapshot, sid, None)
+                out["marked"] += marks.mark_complete(con, collection, codex, records, vectors_for)
+            except Exception as e:   # noqa: BLE001 — a mark is bookkeeping; the vectors are written
+                say(f"[{name}] share contribute: {sid}: marking the documents embedded: "
+                    f"{type(e).__name__}: {e}"[:300])
         if built.interrupted:
             out["interrupted"] = True
             break

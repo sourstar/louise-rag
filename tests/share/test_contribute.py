@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from app import db, embeddings
+from app import config, db, embeddings
 from app.hold import collection as col, envelope as env, records as rec
 from app.share import attest, contribute, coverage as cov, members as mem, peers, rendezvous, seeder
 from tests.hold.conftest import KEY
@@ -489,3 +489,41 @@ def test_a_leader_leaves_a_led_shard_whose_bundle_a_neighbour_offers_to_the_fetc
     again = contribute.once(root, "gutenberg", codex, live=live, **kw)
     assert again["left_to_fetch"] == [] and again["mine"] == [offered_sid] and again["built"] > 0
     assert [b["shard"] for b in again["bundles"]] == [offered_sid]
+
+
+def test_the_build_marks_the_documents_it_completed_embedded_and_the_reconcile_catches_up(ready, monkeypatch, capsys):
+    """München, 2026-10-19: 372 documents on the node had every chunk in
+    Lance and `embed_done = 0` — the build wrote vectors and never touched
+    the manifest. After a shard's build the completed records are marked,
+    after the write; `dev mark-embedded` marks what an older build left."""
+    from app import identity, louise
+    from app.bundles import keys as node_keys
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    con = kw["con"]
+    uids = [r["uid"] for r in con.execute("SELECT uid FROM documents WHERE in_scope=1").fetchall()]
+    assert uids and all(r["embed_done"] == 0 for r in con.execute("SELECT embed_done FROM documents").fetchall())
+    out = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)], **kw)
+    assert out["built"] > 0 and out["marked"] == len(uids)
+    rows = {r["uid"]: r for r in con.execute("SELECT uid, embed_done, embed_version FROM documents").fetchall()}
+    assert all(rows[u]["embed_done"] == 1 and rows[u]["embed_version"] == config.EMBED_VERSION for u in uids)
+    # an older build's documents: vectors there, rows unmarked — the reconcile
+    con.execute("UPDATE documents SET embed_done=0, updated_at=1")
+    monkeypatch.setattr(node_keys, "load_signing_key", lambda path=None: OURS)
+    monkeypatch.setattr(identity, "own", lambda: OUR_KEY)
+    assert louise.main(["dev", "mark-embedded", "gutenberg", "--root", str(root), "--dry-run"]) == 0
+    text = capsys.readouterr().out
+    dry = json.loads(text[text.index("{"):])
+    assert dry == {"collection": "gutenberg", "shards": len(snapshot.shards), "complete_unmarked": len(uids),
+                   "marked": 0, "dry_run": True}
+    assert all(r["embed_done"] == 0 for r in con.execute("SELECT embed_done FROM documents").fetchall())
+    assert louise.main(["dev", "mark-embedded", "gutenberg", "--root", str(root)]) == 0
+    text = capsys.readouterr().out
+    got = json.loads(text[text.index("{"):])
+    assert got["marked"] == got["complete_unmarked"] == len(uids) and got["dry_run"] is False
+    assert all(r["embed_done"] == 1 for r in con.execute("SELECT embed_done FROM documents").fetchall())
+    # nothing left: the second run marks nothing
+    assert louise.main(["dev", "mark-embedded", "gutenberg", "--root", str(root)]) == 0
+    text = capsys.readouterr().out
+    assert json.loads(text[text.index("{"):])["marked"] == 0

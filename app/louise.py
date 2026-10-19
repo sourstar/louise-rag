@@ -1011,6 +1011,45 @@ def cmd_dev_tool(a) -> int:
     return int(rc or 0)
 
 
+def cmd_dev_mark_embedded(a) -> int:
+    """`louise dev mark-embedded <collection>`: the one-off reconcile for the
+    documents `share contribute`'s build embedded and never marked (372 on
+    the node, 2026-10-19) — per shard of the current snapshot, the records
+    whose every chunk has a vector here and whose row says `embed_done =
+    0`, marked as the embed stage marks them. Takes the collection's lock.
+    Per shard one lookup of its chunk ids: the snapshot's size, once."""
+    from app import db as _db, embed_marks, embeddings
+    from app.hold import land as landing, records as rec
+    from app.share import seeder
+    name, codex = col.resolve(a.root, a.collection)
+    snapshot = seeder.current_snapshot(col.shard_dir_of(a.root, name))
+    if snapshot is None:
+        raise CodexError(f"{name}: no snapshot in the SHARD")
+    local = rec.local_collection(a.root, name, codex)
+    if not a.dry_run:
+        _take_write_lock(a.root, name, "dev mark-embedded")
+    vectors_for = lambda ids: embeddings.vectors_by_chunk_id(ids, collection=local)  # noqa: E731
+    out = {"collection": name, "shards": 0, "complete_unmarked": 0, "marked": 0, "dry_run": bool(a.dry_run)}
+    with _closing(_db.connect(local)) as con:
+        for shard in snapshot.shards:
+            sid = f"{shard.slice}/{shard.n:05d}"
+            records = landing.records_for(a.root, name, snapshot, sid, None)
+            out["shards"] += 1
+            if a.dry_run:
+                uids = embed_marks.complete_uids(codex, records, vectors_for)
+                for i in range(0, len(uids), 500):
+                    part = uids[i:i + 500]
+                    out["complete_unmarked"] += con.execute(
+                        f"SELECT COUNT(*) FROM documents WHERE embed_done=0 AND uid IN "
+                        f"({','.join('?' * len(part))})", part).fetchone()[0]
+            else:
+                n = embed_marks.mark_complete(con, local, codex, records, vectors_for)
+                out["complete_unmarked"] += n
+                out["marked"] += n
+    _print(out)
+    return 0
+
+
 def cmd_dev_withdraw_duplicates(a) -> int:
     """`louise dev withdraw-duplicates <collection>` (03 §3.6; 09 §9.8): this
     peer's accepted bundles that share a `content_digest` with another of
@@ -4211,6 +4250,11 @@ def build_parser() -> argparse.ArgumentParser:
                                                 "and linked, as a new collection's is; writes (07 §7.8)")
     root_arg(p); p.add_argument("collection")
     p.set_defaults(fn=cmd_dev_adopt_bundles)
+    p = dverbs.add_parser("mark-embedded", help="documents whose every chunk has a vector here and whose "
+                                                 "manifest row says embed_done = 0, marked (writes)")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--dry-run", action="store_true", help="count them and mark nothing")
+    p.set_defaults(fn=cmd_dev_mark_embedded)
     p = dverbs.add_parser("withdraw-duplicates", help="this peer's bundles that duplicate another of its own for a "
                                                       "part, withdrawn (03 §3.6; 09 §9.8); writes, asks first")
     root_arg(p); p.add_argument("collection")

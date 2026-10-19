@@ -1405,17 +1405,10 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     versioned = validity_mod.declared(collection) is not None
 
     def mark_done(uids) -> None:
-        now = int(time.time())
-        for uid in uids:
-            con.execute(
-                "UPDATE documents SET embed_done=1, embed_version=?, updated_at=? "
-                "WHERE uid=?", (config.EMBED_VERSION, now, uid))
-            bundle_ledger.clear_verification(con, uid)
-            con.execute("DELETE FROM embed_queue WHERE uid=?", (uid,))
-        if versioned:
-            # the rows just written carry the version table's columns: synced
-            # (app/validity.py), as stage_embed marks them
-            validity_mod.mark_synced(con, [int(str(u).split(":", 1)[1]) for u in uids])
+        # the rows just written carry the version table's columns: synced
+        # (app/validity.py), as stage_embed marks them
+        from app import embed_marks
+        embed_marks.mark_embedded(con, collection, uids, synced=versioned)
 
     def record_error(uid, err) -> None:
         con.execute(

@@ -466,6 +466,35 @@ moment of the judgement, not with the beat's or the pass's `now` (the
 node's holder pass ran for hours; 04 §4.5's grace window reads the
 leader's last bundle from that stamp).
 
+### 13. The contribute build left `embed_done = 0` — FIXED (München's find)
+
+München, read-only on the node: 372 in-scope gutenberg documents have
+every chunk in Lance (363 with rows == chunks, 47,148 chunks) and
+`embed_done = 0`, `updated_at` from September. `share contribute`'s build
+(`hold.vectors_build.build`) writes vectors through a callable and never
+touched `documents` — the worker's embed stage marks a document in its
+own closure. Consequences: under `all local` the worker embeds them again
+(GPU, and a delete-then-insert of the same bytes); the Library's "7,471
+more would embed" is off by 372; a query's lazy path may re-embed.
+
+Fixed: `app/embed_marks.py` is the one place a document is marked
+embedded (`mark_embedded`: `embed_done`, `embed_version`, `updated_at`,
+the imported-provenance rows and the queue entry gone; a versioned
+collection's rows marked synced only when the writer carried the columns)
+— the worker's closure wraps it. `share contribute` marks, after each
+shard's build, the records whose every chunk now has a vector
+(`complete_uids`: the chunks through the layers, the vectors asked of the
+table, never `documents.chunks`), interrupted or not. The one-off
+reconcile for the 372: `louise dev mark-embedded gutenberg [--dry-run]`
+(07 §7.3), per shard of the snapshot. Tests: tests/share/test_contribute.py,
+tests/hold/test_embed_marks.py.
+
+München's other finding: the en/00043 T0 hypothesis (a chunks = 0 record
+in `possession.json` with no rows) does not hold — `export.grouped` skips
+a record it holds no row for, so such a record is in neither. The
+refusal stays unexplained; f3d2633's log line names the clause if it
+recurs, and en/00043 has an accepted built bundle now.
+
 ### Still open after the review
 
 - **Vector convergence** ([vector-convergence.md](vector-convergence.md),

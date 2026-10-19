@@ -1228,6 +1228,13 @@ the old directory set aside as `state/bundles.moved-<time>` for the
 operator to delete, the link put in its place. `rename` and `forget` follow
 the link as they do the SHARD's.
 
+`dev mark-embedded <collection> [--dry-run]` (amended 2026-10-19): the
+documents whose every chunk has a vector here and whose manifest row still
+says `embed_done = 0`, marked as the embed stage marks them. The one-off
+repair for what `share contribute`'s build embedded and never marked (372
+documents on the node); the build marks what it completes since, after the
+write. Per shard of the current snapshot, one lookup of its chunk ids.
+
 `dev withdraw-duplicates <collection> [--dry-run] [--yes]` (amended
 2026-10-19, operator) is the producer's side of 03 §3.6's `withdraw`, for
 the one case met so far: this peer's accepted bundles that share a
