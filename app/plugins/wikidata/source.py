@@ -77,12 +77,15 @@ class WikidataSource:
     #: list as a parameter; both come from here until the Codex binds them.
     languages: tuple[str, ...] = ("en",)
     fallback_language = "en"
+    #: 06 §6.3: the layer's chunker and its parameters enter `space_id`. The
+    #: tokenizer is named by the sha256 of its tokenizer.json, which only a
+    #: recipe can state (the plugin pins no file): a recipe for this plugin
+    #: carries `[[layers]]` with `params.tokenizer`; `create` refuses without.
     default_layers = [
-        {"chunker": {"id": "wikidata-text", "version": 1,
-                     "params": {"languages": ["en"], "max_tokens": 1024}},
+        {"chunker": {"id": "wikidata-text", "version": 1, "params": {"max_tokens": 1024}},
          "rule": "default"},
     ]
-    default_slicing = {"keys": ["range"], "order": "numeric", "shard_records": 20_000}
+    #: the slicing is the scheme's (app/pack/slicing.py "wikidata"): one declaration
 
     def __init__(self, languages: tuple[str, ...] | None = None):
         if languages:

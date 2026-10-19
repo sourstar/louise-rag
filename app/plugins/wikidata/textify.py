@@ -30,6 +30,9 @@ LANGUAGE_VARIABLES: dict[str, dict[str, str]] = {
 
 #: `labels(entity_id, lang) -> label or None`: the dump's label table
 Labels = Callable[[str, str], Optional[str]]
+#: rendered first: what the entity is an instance of — upstream's
+#: `sticky_property_ids`, which every chunk of a long text repeats
+STICKY_PROPERTIES = ("P31",)
 
 
 # ---- the data classes (upstream's, `to_text` as theirs) -----------------------------------
@@ -218,6 +221,10 @@ class Normalizer:
             claim = self._claim(entity, pid, statements)
             if claim is not None and claim.values:
                 claims_out.append(claim)
+        # OURS: `instance of` first, the rest in the dump's order — the line the
+        # chunker keeps in every window (the STICKY claim of Wikimedia's
+        # chunk_item_text), found by its place rather than by a label
+        claims_out.sort(key=lambda c: 0 if c.property.id in STICKY_PROPERTIES else 1)
         entity.claims = claims_out
         return entity
 

@@ -154,9 +154,19 @@ only after it exists (memory: keys-registered-only).
    month names, ISO elsewhere) — tests over the real entities. Still to
    do here: `parse` producing the sections; `records-vs-origin` on the
    sample.
-5. The chunker and the tokenizer (D6: `tokenizers` in requirements and
-   the image); the acquisition spec (dated dumps, `max_conns` 2, the
-   checksums file of the dump directory); the recipe TOML.
+5. ✔ (2026-10-19 night) The chunker `wikidata-text` (`chunker.py`:
+   Wikimedia's rule over our rendered text, the instance-of line first and
+   sticky, a tokenizer named by sha256 under `TOKENIZERS_DIR`, registered
+   in app/chunking.py) and D6 (`tokenizers==0.22.1` in requirements.txt —
+   München rebuilds the gate image); the slicing scheme `range=` in
+   app/pack/slicing.py. ✔ (same night) The pack, the label table, the
+   source (pack.py, source.py). STILL TO DO: the acquisition spec (dated
+   dumps, `max_conns` 2, the checksum files of the dump directory, the
+   newest directory that holds an all.json.bz2); the recipe TOML with the
+   jina-v3 tokenizer's sha256 (München computes it from the Hub file at
+   the pinned revision; the image fetches the file at build); the entry in
+   PLUGIN_REGISTRY / ACQUIRE_REGISTRY — after which `hold collection
+   create wikidata` can run.
 6. The jina-v3 task installed on the node; the calibration set embedded;
    determinism measured; `hold collection create wikidata`; the first
    fetch (~100 GB to tank) and build (the pass over 1.5 TB of JSON:

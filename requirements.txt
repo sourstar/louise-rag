@@ -96,3 +96,7 @@ pyhanko>=0.25
 # and the trusted lists' own signatures. It arrives with pyhanko already;
 # named here because the code imports it directly (2026-10-07).
 lxml>=5
+# Hugging Face tokenizers (Rust, no torch) for chunkers that cut at the
+# tokens of a pinned tokenizer.json — wikidata-text, 06 §6.3 (operator,
+# 2026-10-18, D6: "Yes match it"). Pinned: the cut enters space_id.
+tokenizers==0.22.1

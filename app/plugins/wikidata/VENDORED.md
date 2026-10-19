@@ -20,12 +20,19 @@ What was changed, and why (docs/notes/wikidata-build-plan.md §2, §5):
   (`Q2755432`) instead of `<no label>`: the id is searchable, the
   placeholder is not; a PROPERTY without a label still drops its claim
   from the text, as upstream;
+- the `instance of` (P31) statement is rendered FIRST, the rest in the
+  dump's order: it is the sticky line the chunker repeats in every window
+  (upstream's `sticky_property_ids`), found by its place in the text;
 - the rank filter, the `external_ids`/`qualifiers`/`references` defaults
   and the connectives (`language_variables.json`, inlined) are upstream's.
 
-The chunking we will use is WikidataTextEmbedding's (`src/utils.py`,
-`chunk_item_text`, commit c9dc819, MIT, Copyright (c) 2024 Jonathan
-Fraine), to be carried into the `wikidata-text` chunker with its notice.
+`chunker.py` carries the cutting rule of **WikidataTextEmbedding**
+(`src/utils.py`, `chunk_item_text` and `_trim_to_length`, commit c9dc819),
+MIT, Copyright (c) 2024 Jonathan Fraine: the whole text when it fits, else
+head + sticky statement + the longest run of statements that fits, an
+over-long statement cut at the token that fits. Rewritten over our rendered
+text (the statement lines) and a `tokenizers` tokenizer named by sha256;
+the rule and its parameters are theirs.
 
 ---
 

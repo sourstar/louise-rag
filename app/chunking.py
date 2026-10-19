@@ -371,10 +371,20 @@ VERBATIM = "verbatim"
 ABSTRACT = "abstract"
 CDC = "cdc"
 AKN_ARTICLE = "akn_article"
+#: 06 §6.3 (2026-10-19): a Wikidata entity's text per language, windows of a
+#: pinned tokenizer's tokens at the textifier's statement boundaries
+#: (app/plugins/wikidata/chunker.py); it enters only the spaces that declare it
+WIKIDATA_TEXT = "wikidata-text"
+
+
+def _chunk_wikidata_text(uid, native_id, sections, version=None, params=None):
+    from app.plugins.wikidata import chunker as wd_chunker
+    return wd_chunker.chunk_wikidata_text(uid, native_id, sections, version, params)
+
 
 _CHUNKERS = {BOOK: chunk_book, FIXED: chunk_fixed, VERBATIM: chunk_verbatim,
              ABSTRACT: chunk_abstract, CDC: chunk_cdc,
-             AKN_ARTICLE: chunk_akn_article}
+             AKN_ARTICLE: chunk_akn_article, WIKIDATA_TEXT: _chunk_wikidata_text}
 
 # CDC is versioned SEPARATELY from the fixed-width chunkers, and that
 # separation is the point: CHUNK_VERSION used to be one global number that
@@ -434,6 +444,9 @@ def chunker_name(profile: str | None, mutability=None) -> str:
 def chunk_version_for(name: str) -> int:
     if name == CDC:
         return CDC_CHUNK_VERSION
+    if name == WIKIDATA_TEXT:
+        from app.plugins.wikidata import chunker as wd_chunker
+        return wd_chunker.CHUNK_VERSION
     if name == ABSTRACT:
         return ABSTRACT_CHUNK_VERSION
     if name == AKN_ARTICLE:

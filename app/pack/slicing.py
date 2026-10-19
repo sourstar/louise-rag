@@ -85,6 +85,22 @@ def gutenberg_slice(doc: CanonicalDoc, native_id: int) -> str:
     return f"lang={doc.language or 'und'}"
 
 
+#: the Wikidata id range a part holds: 10⁷ ids (docs/notes/wikidata-build-plan.md
+#: §2 "Slicing and parts"); every property in one range of its own
+_WD_RANGE = 10_000_000
+_WD_PROPERTY_RANGE = 100
+
+
+def wikidata_slice(doc: CanonicalDoc, native_id: int) -> str:
+    """`range=<native_id // 10⁷>` for an item, `range=100` for a property
+    (ids.PROPERTY_BASE and above): a pure function of the native id, so
+    `slice_hint` answers it without the record."""
+    from ..plugins.wikidata.ids import PROPERTY_BASE
+    if int(native_id) >= PROPERTY_BASE:
+        return f"range={_WD_PROPERTY_RANGE}"
+    return f"range={int(native_id) // _WD_RANGE}"
+
+
 def single_slice(doc: CanonicalDoc, native_id: int) -> str:
     return "all"
 
@@ -124,6 +140,11 @@ SCHEMES: dict[str, SliceScheme] = {
         keys=("lang", "pages"), records_per_shard=2_000,
         describe={"keys": ["lang", "pages"], "pages": {"field": "article_id", "bin": _PAGE_BIN}},
         slice_of=embedded_slice),
+    "wikidata": SliceScheme(
+        keys=("range",), records_per_shard=20_000,
+        describe={"keys": ["range"], "range": {"field": "native_id", "bin": _WD_RANGE,
+                                                "properties": _WD_PROPERTY_RANGE}},
+        slice_of=wikidata_slice),
     "gutenberg": SliceScheme(
         keys=("lang",), records_per_shard=50,
         describe={"keys": ["lang"]},
@@ -161,6 +182,8 @@ def slice_hint(plugin_name: str, row) -> str | None:
         if plugin_name == "gutenberg":
             lang = row["lang"] if "lang" in row.keys() else None
             return f"lang={lang}" if lang else None
+        if plugin_name == "wikidata":
+            return wikidata_slice(None, int(row["native_id"]))
         if plugin_name == "normattiva":
             from ..plugins import eli
             from ..plugins.normattiva.source import split_locator
