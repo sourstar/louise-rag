@@ -336,6 +336,7 @@ what `space_id` hashes (§2.4); a chunker reads no node configuration.
 | `cdc` | content-defined boundaries from a rolling hash over the text, per section, between `min` and `max` characters and concentrated near `target`; an edit moves only its own neighbourhood | `{target, min, max}` | none |
 | `abstract` | one chunk per record: title and sections joined | none | none |
 | `verbatim` | one chunk per section, exactly as the plugin emitted it — the chunking a pre-embedded archive delivered, preserved so its vectors map one to one | none | none |
+| `wikidata-text` | per section — one per language of a Wikidata entity's textified form (the parser's, §6.4) — windows of at most `max_tokens` tokens of the tokenizer `tokenizer` names by sha256, split at the textifier's own statement boundaries as Wikimedia's `chunk_item_text` splits them (code vendored at pinned commits), so a chunk of ours is a chunk of theirs for the same text; no overlap. *Added 2026-10-19, docs/notes/wikidata-build-plan.md* | `{max_tokens, tokenizer}` | none |
 
 ```
 layers: [{chunker: {id: "verbatim", version: 1, params: {}},     rule: "archive:upstash-wikipedia-2024-06"},
@@ -497,6 +498,21 @@ applies them (§6.2). `origin_hash` verifies that a RECORD is faithful
 to the document it was parsed from. Conflating the two buys the first's
 provenance at the cost of the second's granularity, which is the wrong
 trade: the fetch is checked once, the record is checked forever.
+
+**A parser whose text depends on other units of the same origin**
+(*amended 2026-10-19*, docs/notes/wikidata-build-plan.md §2). A Wikidata
+entity's text names the labels of the entities its statements point at —
+other lines of the same dump. The plugin builds a derived table of the
+PINNED origin (the label table: id → label per language) in its first
+pass over it and reads it in `parse()`; `origin.form` says which part of
+the text comes from it. `origin_hash` keeps covering the document's own
+bytes — the unit a query returns — and a verifier reproduces the record
+from the same dump, whose identity the Codex pins (`origin.spec.files`),
+rebuilding the table the same way. The table is local and derived, never
+a member. **A parser that runs a pinned service beside it** — Wikibase's
+value formatter for dates and coordinates — names the service's image
+digests in the Codex `profile`; an unreachable service is a deferral of
+the document, never an error on it.
 
 Where the document is a member of a container, how it is extracted is
 part of the parser, pinned by the platform image, and a change to it

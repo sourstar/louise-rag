@@ -9,6 +9,7 @@ from .homologene import HomologeneSource
 from .normattiva import CitationResolver, NormattivaRefSource
 from .resolver import CompositeResolver, DictResolver
 from .store import RefStore, connect, ensure_schema
+from .wikidata import WikidataRefSource
 
 REFS_REGISTRY = {
     "hgnc": HgncSource(),
@@ -18,6 +19,10 @@ REFS_REGISTRY = {
     # the Italian acts: `urn` and `eli` registered (05 §5.2), citations
     # resolved by key (app/refs/normattiva.py; review §3.12)
     "normattiva-refs": NormattivaRefSource(),
+    # Wikidata's entity ids: the namespace `wikidata` (QIDs, PIDs) for the
+    # wikidata collection's keys and gutenberg-graph's mentions
+    # (docs/notes/wikidata-build-plan.md §2)
+    "wikidata-refs": WikidataRefSource(),
 }
 
 #: every registered resolver in turn; `expand` follows the declared links

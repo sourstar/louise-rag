@@ -800,6 +800,14 @@ directory has a parent: those are the canonical words for those things
 and they keep them. Naming what is ours should cost a reader none of
 the words they already know.
 
+A daughter whose parser adds to every record a section the mother's did
+not have — a Wikidata entity's text in one more language
+(docs/notes/wikidata-build-plan.md, D3; *amended 2026-10-19*) — re-issues
+the parts whose records changed and keeps every vector whose chunk text
+did not: the recut is carried by chunk hash (06 §6.3), the space being
+the mother's, so only the new language's chunks are embedded. No rule is
+added for it; this sentence says the existing ones suffice.
+
 A **daughter** continues the collection. The transition is a snapshot
 boundary, and the two fields that fix it read as one sentence:
 `continues` names the mother's Codex, `continues_through` the last
