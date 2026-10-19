@@ -233,6 +233,29 @@ Everything except two items travels through this repository.
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
 
+### 2026-10-19: the deploy gate is München's full suite on the real image
+
+Operator decision (2026-10-19, night), after a tip passed the
+architecture session's tests and failed at import on the node's image
+(python-multipart present in one container, absent from the other):
+
+- **One gate.** A commit deploys on any peer only after München has run
+  the FULL suite on it in an image built from `requirements.txt` alone —
+  the image the node runs. That run tests what is deployed; nothing
+  else does.
+- **The architecture session** runs the test files its change touches
+  before every push, and says in the push message which it ran. It does
+  not run the full suite: its container carries packages the platform
+  does not declare, so its pass is not the gate.
+- **Perugia** deploys a commit München has passed without rerunning the
+  suite: same code, same image build; what differs is the machine. It
+  runs its own smoke checks (the web answers, the worker's first round,
+  `louise health`) and reports those.
+- A difference between the two containers that lets a test pass in one
+  and fail in the other is itself a defect to fix (tonight's:
+  tests/test_invariant_guards.py now refuses a multipart route unless
+  the package is declared).
+
 ### 2026-10-13: JuriFindIT acknowledged — the operator, for the legal pilot
 
 The operator acknowledged the JuriFindIT question set's licence,
