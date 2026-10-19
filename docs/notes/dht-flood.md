@@ -70,3 +70,19 @@ Deploy, set `[dht] enabled = true`, and watch the NAS's conntrack count
 and the worker's UDP flows for an hour. Expected: the routing table's upkeep
 plus three announcements per shared snapshot every 15 minutes, which is
 hundreds of flows, not thousands. Record the numbers here.
+
+## After the fix (deployed f85a606, 2026-10-19)
+
+The DHT went back on at 10:35 (`/root/dht-on.sh`), watched for an hour with
+an automatic revert above 3,000 flows. The node seeds the same 3,170
+gutenberg torrents and now announces only the three keys of its snapshot:
+
+| time  | conntrack flows | the worker's UDP flows |
+|-------|-----------------|------------------------|
+| 10:35 (DHT off) | 107 | — |
+| 10:36 | 110 | 43 |
+| 10:37 | 95  | 44 |
+| 10:38 | 73  | 15 |
+
+That compares with 14,194 flows (9,910 UDP) before the fix. The rest of the
+hour is in `/root/dht-watch.log` on the node.
