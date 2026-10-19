@@ -33,6 +33,12 @@ from app.transfer.bucket import Priority, TransferAborted
 
 POLL_S = 0.5
 METADATA_TIMEOUT_S = 120.0       # as the acquisition transport's: no peer holding it answered
+#: a swarm that answered — a peer connected, or bytes came — and then sent
+#: nothing for this long is stalled: the Perugia peer waited fifteen minutes
+#: and more on a part the node did not serve, its one connection to the
+#: node's swarm counting as "answered" and the metadata bound never firing
+#: (2026-10-18 21:53; p2p-review-open-issues.md §6)
+STALL_TIMEOUT_S = 300.0
 LANDED_TIMEOUT_S = 60.0          # a file received whole, until the disk holds what was verified
 RATE_REFRESH_S = 5.0
 RECONNECT_EVERY = 20             # polls between peer-hint connects while waiting for metadata
@@ -40,6 +46,38 @@ BACKOFF_S = 15 * 60.0            # a collection nobody served waits this long be
 CONTROL_KEY = "share_fetch"      # per collection: the last beat's account
 #: (collection_id, snapshot_id) -> (the swarms found under its swarm key, when)
 _swarms: dict[tuple[str, str], tuple[list[tuple[str, int]], float]] = {}
+
+
+#: the words a fetch that found nobody ends in (`fetch_file`), read by the
+#: beats that back off on them
+NOBODY_SERVED = ("no metadata", "stalled")
+
+
+def nobody_served(text: str) -> bool:
+    """Whether a transport error says that nobody served the file — the
+    metadata wait ran out, or the swarm answered and then sent nothing."""
+    return any(w in str(text) for w in NOBODY_SERVED)
+
+
+def offered_by_neighbours(node_con, collection_id: str, *, now: float) -> set[tuple[str, str]] | None:
+    """`{(member name, member root)}` over every live neighbour's digest
+    entry for the collection (09 §9.9 `members`: what each one SERVES), or
+    None when no neighbour lists the collection at all — then nothing is
+    known about who serves what, and a fetch is bounded by its timeouts
+    alone. A wanted member in no neighbour's list is deferred and said, not
+    waited on (04 §4.3, amended 2026-10-19)."""
+    listed = False
+    out: set[tuple[str, str]] = set()
+    for n in peers.neighbours(node_con, now=now):
+        d = peers.digest_of(node_con, n["key"]) or {}
+        for e in d.get("collections", []) or []:
+            if not isinstance(e, dict) or e.get("collection_id") != collection_id:
+                continue
+            listed = True
+            for m in e.get("members", []) or []:
+                if isinstance(m, dict) and isinstance(m.get("name"), str) and isinstance(m.get("root"), str):
+                    out.add((m["name"], m["root"]))
+    return out if listed else None
 
 
 def _has_dht(session) -> bool:
@@ -150,17 +188,25 @@ def _connect(handle, hints) -> None:
 
 def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hints=(),
                stop=None, log: Callable[[str], None] | None = None, poll_s: float = POLL_S,
-               metadata_timeout_s: float | None = None) -> Path:
+               metadata_timeout_s: float | None = None, stall_timeout_s: float | None = None) -> Path:
     """One member file into `staging/<member>/<path>`, whole: added with the
     metadata its snapshot names, this one file on, paced by the lease, credited as it
     lands, stopped on `stop` with staging left for the next beat. The
     download handle leaves the session afterwards; serving is the seeder's,
-    from the SHARD, when the collection's file says so."""
+    from the SHARD, when the collection's file says so.
+
+    Two bounds, never none: no peer answers within `metadata_timeout_s`
+    ("no metadata"), or the swarm answered and no byte landed for
+    `stall_timeout_s` ("stalled") — a connected peer that does not hold
+    the torrent is an answer with nothing in it, and until 2026-10-19 it
+    turned the wait unbounded."""
     from app.acquire import transport_torrent as tt
     from app.transfer.manager import get_manager
     lt = seeder._lt()
     if metadata_timeout_s is None:
         metadata_timeout_s = METADATA_TIMEOUT_S
+    if stall_timeout_s is None:
+        stall_timeout_s = STALL_TIMEOUT_S
     rel = f"{member}/{torrent.path}"
     key = f"share:{torrent.infohash}"
     staging = Path(staging)
@@ -204,11 +250,14 @@ def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hin
             deadline = time.monotonic() + metadata_timeout_s
             answered = False
             polls = 0
+            last_done, progressed_at = 0, time.monotonic()
             while True:
                 done = handle.file_progress()[index]
                 tt._credit_download(key, handle)
                 if done >= total:
                     break
+                if done > last_done:
+                    last_done, progressed_at = done, time.monotonic()
                 st = handle.status()
                 if stop is not None and stop.is_set():
                     # the file off before leaving, so nothing lands outside the lease
@@ -219,7 +268,8 @@ def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hin
                 error = getattr(st, "errc", None)
                 if error is not None and getattr(error, "value", lambda: 0)():
                     raise TransportError(f"{rel}: {error.message()}")
-                answered = answered or done > 0 or int(getattr(st, "num_peers", 0) or 0) > 0
+                num_peers = int(getattr(st, "num_peers", 0) or 0)
+                answered = answered or done > 0 or num_peers > 0
                 if not answered:
                     if time.monotonic() > deadline:
                         raise TransportError(f"{rel}: no metadata after {metadata_timeout_s:.0f}s — "
@@ -227,6 +277,13 @@ def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hin
                     polls += 1
                     if polls % RECONNECT_EVERY == 0:
                         _connect(handle, hints)
+                elif time.monotonic() - progressed_at > stall_timeout_s:
+                    # a peer connected and nothing came: it does not hold this
+                    # torrent, or stopped serving it. Staging keeps the pieces
+                    # for the next beat; the wait ends here
+                    raise TransportError(f"{rel}: stalled — {done}/{total} bytes and nothing for "
+                                         f"{stall_timeout_s:.0f}s from {num_peers} peer(s); nobody "
+                                         f"serving it answered")
                 now = time.monotonic()
                 if now - last_refresh > RATE_REFRESH_S:
                     tt._apply_rate(handle, leased_bps)
@@ -264,17 +321,26 @@ def fetch_file(session, *, torrent: mem.Torrent, member: str, staging: Path, hin
 def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: bool, session,
                   con, hints=(), stop=None, log: Callable[[str], None] | None = None,
                   now: float | None = None, max_files: int | None = None,
-                  patcher: Callable[..., Path | None] | None = None) -> dict[str, Any]:
+                  patcher: Callable[..., Path | None] | None = None,
+                  offered: set[tuple[str, str]] | None = None) -> dict[str, Any]:
     """One beat for one collection: every missing file of every wanted
     member of the current snapshot, terms first; with no acknowledgement,
-    terms alone (04 §4.4). What moved, and why nothing did."""
+    terms alone (04 §4.4). What moved, and why nothing did.
+
+    `offered` is what the neighbours' digests serve for the collection
+    (`offered_by_neighbours`): a wanted member in it is fetched; one in no
+    digest, when the swarm key found no swarm either, is DEFERRED and said
+    — `deferred` lists its files — not waited on (04 §4.3, amended
+    2026-10-19: the node served two slices and a peer wanting every slice
+    hung on the first part nobody served). None: nothing is known, every
+    member is tried under the bounds."""
     root = Path(root)
     shard_dir = col.shard_dir_of(root, name)
     state = root / name / "state"
     staging = state / holdings.STAGING
     out: dict[str, Any] = {"snapshot_id": None, "promoted": [], "refused": [], "errors": [],
                            "waiting": None, "stopped": False, "wanted": 0, "missing": 0,
-                           "patched": []}
+                           "patched": [], "deferred": []}
     snap = seeder.current_snapshot(shard_dir)
     if snap is None:
         return out
@@ -310,13 +376,26 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
                 log(f"[{name}] share fetch: {out['waiting']}")
             return out
     hints = list(hints)
-    for h in swarm_hints(session, snap.collection_id, snap.snapshot_id,
-                         now=time.time() if now is None else now):
+    swarms = swarm_hints(session, snap.collection_id, snap.snapshot_id,
+                         now=time.time() if now is None else now)
+    for h in swarms:
         if h not in hints:
             hints.append(h)
+    deferred_members: set[str] = set()
     from app.transfer.manager import Direction, get_manager
     with get_manager().bind(Priority.DELTA, Direction.DOWN, stop=stop):
         for m, f in (todo if max_files is None else todo[:max_files]):
+            if offered is not None and not swarms and (m.name, m.root) not in offered:
+                # no neighbour's digest offers this member and no swarm was
+                # found under the swarm key: nobody is known to serve it.
+                # Deferred — the next digest may offer it — never waited on
+                out["deferred"].append(f.path)
+                if m.name not in deferred_members:
+                    deferred_members.add(m.name)
+                    if log:
+                        log(f"[{name}] share fetch: {m.name}: no neighbour offers it; deferred, not "
+                            f"waited on (04 §4.3)")
+                continue
             t = next(t for t in m.torrents() if t.path == f.path)
             # A NEW VERSION OF A PART THIS PEER HOLDS: first a patch from a
             # peer that holds it (app/share/patch.py) — the changed lines,
@@ -362,8 +441,11 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
                 out["errors"].append(f"{f.path}: {e}"[:300])
                 if log:
                     log(f"[{name}] share fetch: {f.path}: {e}"[:400])
-                if "no metadata" in str(e):
+                if nobody_served(str(e)):
                     break                 # nobody serves this collection now: the rest can wait
+    if out["deferred"] and not out["promoted"] and not out["errors"] and out["waiting"] is None:
+        out["waiting"] = (f"{len(out['deferred'])} file(s) of {len(deferred_members)} member(s) no "
+                          f"neighbour offers: deferred until a digest offers them (04 §4.3)")
     return out
 
 
@@ -498,16 +580,32 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
         want = holdings.wanted(snap, slices=c.slices, kinds=c.kinds)
         if ack_missing:
             want = [m for m in want if m.name == "terms"]
-        if not holdings.missing(shard_dir, want, holdings.marks(con)):
+        todo = holdings.missing(shard_dir, want, holdings.marks(con))
+        if not todo:
             _complete[c.name] = (selection, now)
             continue                      # the session is opened only for a byte to fetch
         _complete.pop(c.name, None)
         hints = hints_for(node_con, c.codex.collection_id, now=now) if node_con is not None else []
+        offered = offered_by_neighbours(node_con, c.codex.collection_id, now=now) if node_con is not None else None
+        try:
+            # the beat's account is written when it STARTS as well as when it
+            # ends: a beat that never returned left the previous one's row
+            # standing, and nothing said it was stuck (Perugia, 2026-10-18)
+            db.set_control(con, CONTROL_KEY, json.dumps({"at": now, "running": True, "wanted": len(want),
+                                                         "missing": len(todo), "hints": len(hints),
+                                                         "offered": None if offered is None else len(offered)}))
+        except Exception:   # noqa: BLE001 — the account is a courtesy
+            pass
         got = fetch_members(root, c.name, c.codex, slices=c.slices, kinds=c.kinds,
                             ack_missing=ack_missing, session=session_factory(), con=con,
                             hints=hints, stop=stop, log=log, now=now,
-                            patcher=_patcher(root, c, shard_dir, node_con, stop=stop, now=now, log=log))
-        if any("no metadata" in e for e in got["errors"]):
+                            patcher=_patcher(root, c, shard_dir, node_con, stop=stop, now=now, log=log),
+                            offered=offered)
+        nobody = any(nobody_served(e) for e in got["errors"]) or bool(
+            got.get("deferred") and not got["promoted"] and not got["errors"] and not got["stopped"])
+        if nobody:
+            # nobody serves what is wanted: wait for news — a digest naming a
+            # swarm or offering the members — before asking again
             _next_try[c.name] = now + BACKOFF_S
             _tried_hints[c.name] = (frozenset(hints), now)
         else:

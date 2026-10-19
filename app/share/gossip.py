@@ -131,6 +131,12 @@ def entries(root: Path, collections) -> list[dict[str, Any]]:
             # the bundles this peer holds for the space, served from state/
             # (09 §9.7, §9.16): offered beside the snapshot's members
             members += mem.bundle_members(root / c.name / "state", codex.space_segment)
+        # what `share --slices/--kinds` narrowed out is not served, so it is
+        # not offered: the node listed every member held while serving two
+        # slices, and a peer wanting every slice hung on the first part nobody
+        # served (2026-10-18; 04 §4.2 "announcing what you do not serve would
+        # be a lie")
+        members = [m for m in members if seeder.serves(c, m.name)]
         try:
             lid = lineage_id(codex, resolve)
         except Exception:   # noqa: BLE001 — a chain this node cannot follow: the root is itself

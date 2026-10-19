@@ -595,7 +595,7 @@ def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop
             if log:
                 log(f"[{c.name}] share: bundle {str(payload.get('bundle_id'))[:23]}…: "
                     f"{type(e).__name__}: {e}"[:400])
-            if isinstance(e, transport.TransportError) and "no metadata" in str(e):
+            if isinstance(e, transport.TransportError) and transport.nobody_served(str(e)):
                 break                               # nobody serves it now: the rest can wait
             continue
         out[got["outcome"]] += 1

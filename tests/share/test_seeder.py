@@ -248,3 +248,24 @@ def test_a_slice_is_named_as_the_snapshot_lists_it(node, monkeypatch, capsys):  
     value = SLICE.split("=", 1)[1]
     assert louise.main(["share", "collection", c.name, "--root", str(node), "--slices", value]) == 2
     assert SLICE in capsys.readouterr().err
+
+
+def test_the_digest_offers_what_is_served_not_every_member_held(node, monkeypatch):  # noqa: F811
+    """2026-10-18: the node served two slices (`share_slices`) and its digest
+    listed every member it held; a peer wanting every slice hung on the first
+    part nobody served. The digest's `members` is what the seeder serves
+    (04 §4.2: announcing what you do not serve would be a lie)."""
+    from app import collections as collections_mod
+    from app.share import gossip
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    (entry,) = gossip.entries(node, [c])
+    assert [m["name"] for m in entry["members"]] == [f"records-{SLICE}"]
+    assert louise.main(["share", "collection", c.name, "--root", str(node), "--kinds", "vectors"]) == 0
+    c = collections_mod.by_name(c.name)
+    (entry,) = gossip.entries(node, [c])
+    assert entry["members"] == [], "a kind narrowed out is not offered"
+    assert louise.main(["share", "collection", c.name, "--root", str(node), "--kinds", "all",
+                        "--slices", SLICE]) == 0
+    c = collections_mod.by_name(c.name)
+    (entry,) = gossip.entries(node, [c])
+    assert [m["name"] for m in entry["members"]] == [f"records-{SLICE}"]

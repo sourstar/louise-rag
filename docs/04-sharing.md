@@ -250,6 +250,18 @@ meanwhile; a peer that computed neither promotes nothing from either
 until the check has run, and if the origin cannot answer
 (*inconclusive*, 03 §3.1) both stay in staging, shown as disputed.
 
+**Nobody serving it is a deferral, said at once** (amended 2026-10-19,
+P2P review). A digest's `members` is what its sender SERVES (09 §9.9), so
+a wanted member that no neighbour's digest offers — and that no swarm
+found under the swarm key could hold — is deferred and shown as waiting
+for a digest that offers it, never waited on; a fetch that does start is
+bounded twice, by the metadata wait when no peer answers and by a stall
+bound when a peer answers and sends nothing. The node served two slices
+of a collection, its digest offered every member it held, and a peer
+wanting every slice waited without end on the first part nobody served:
+the one connection it had, to a swarm that did not hold the part, counted
+as an answer, and the metadata bound never fired.
+
 **Sizes are known before the first byte.** A fetch that would not fit
 in the free space of its target — members declared, staging included —
 is not started; the collection is shown as waiting for space with the
