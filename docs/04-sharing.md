@@ -486,6 +486,19 @@ when the live set or the set of open parts changes — a digest arrived,
 a bundle was accepted — and a peer keeps, per part, only the head of
 the ordering, extending it when the cascade needs the next candidate.
 
+**What a peer already holds, it bundles** (amended 2026-10-19, P2P review;
+RULE 1). Rendezvous assigns the parts WITHOUT vectors; a peer that already
+holds vectors for an open part — embedded before it had neighbours,
+carried from a sister, imported from an archive — bundles and announces
+them whoever leads the part, before any GPU is spent, because bundling
+held vectors costs the challenge rows and nothing else. The first bundle
+is the claim: the part closes for the chunks it covers, and its leader
+embeds only what still lacks an accepted bundle. The node held 91 % of
+gutenberg's vectors and announced none, every coverage map showed 0 %,
+and a new peer's first pass re-embedded parts the node had (74 % of its
+chunks). Who EMBEDS a part is rendezvous's question; who BUNDLES vectors
+already held is everyone's who holds them.
+
 **Weight and eligibility.** The weight is the peer's benchmark for this
 collection's space — the `benchmarks` entry of its digest whose
 `space_id` matches (§3.3; 09 §9.9), a peer with no such entry being
@@ -563,10 +576,21 @@ coverage map is the set of accepted bundles per part (02 §2.5, 09 §9.10).
 **How a bundle travels.** A bundle is a member (§4.3): its producer
 announces it with a `bundle` event naming the collection, space,
 snapshot, part, chunk range, bundle id, root and size, and lists it in
-its digest's coverage once it has accepted it itself. A peer that sees
-the event and lacks the range fetches the member, runs the ladder of
-03 §3.5, and, if it passes, merges the vectors into its own file for
-that part (02 §2.4) and reports the bundle id in its next digest. A
+its digest's coverage once it has accepted it itself. A producer that
+does not SERVE the collection — its file says `share = false`, or its
+mode does not seed — announces no event (§4.2: announcing what you do
+not serve would be a lie); the bundle is accepted on that peer, listed
+under its digest's `coverage`, and offered under `members` from the
+moment it serves *(amended 2026-10-19: a peer announced bundles nobody
+could fetch from it, and the node waited two minutes on each)*. A peer
+that sees the event and lacks the range fetches the member, runs the
+ladder of 03 §3.5, and, if it passes, merges the vectors into its own
+file for that part (02 §2.4) and reports the bundle id in its next
+digest. A peer that lacks a bundle a neighbour's digest OFFERS — a
+`bundle-<space>-<id>` member with its files (09 §9.9) — fetches it the
+same way without its event: an event is forwarded once and kept seven
+days, and the digest is the recovery path for every peer that missed it
+*(amended 2026-10-19)*. A
 coverage claim counts — for the cascade, for adoption, for §4.7 — only
 when the bundle it names has been fetched and passed T0–T3. A bundle's
 id is the hash of its signed bytes (09 §9.7); a producer that restarts

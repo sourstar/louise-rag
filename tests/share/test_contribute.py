@@ -238,3 +238,102 @@ def test_leaders_agrees_with_shards_i_lead_and_writes_nothing(ready):
     assert sorted(cov.shard_id(codex, f"{s.slice}/{s.n:05d}") for s in mine) == \
         sorted(sid for sid, k in lead.items() if k == OUR_KEY)
     assert set(lead.values()) <= {OUR_KEY, PEER_KEY}
+
+
+def test_what_a_peer_already_holds_it_bundles_whoever_leads_the_shard(ready):
+    """04 §4.5, amended 2026-10-19 (RULE 1): the node held 91 % of gutenberg's
+    vectors under `embed = "all"` and announced none; every coverage map
+    showed 0 % and a new peer re-embedded what the node had. A holder
+    bundles what it holds for every open shard, before any GPU is spent,
+    whoever rendezvous gives the shard to."""
+    from app.hold import land as landing, vectors_build as vb
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    # every vector embedded here already (the node before it had neighbours)
+    built = vb.build(codex, shards=list(snapshot.shards),
+                     records_for=lambda s: landing.records_for(root, "gutenberg", snapshot, f"{s.slice}/{s.n:05d}", None),
+                     vectors_for=kw["vectors_for"], embed=kw["embed"], write=kw["write"], batch=2)
+    assert built.chunks_written > 0
+    # a neighbour so heavy that rendezvous gives it every shard
+    heavy = rendezvous.Peer(PEER_KEY, 1e12)
+    live = [rendezvous.Peer(OUR_KEY, 1000.0), heavy]
+    shards = [f"{s.slice}/{s.n:05d}" for s in snapshot.shards]
+    limit = cov.period_seconds(codex.work.per)
+    assert all(rendezvous.leader(rendezvous.ShardWork(cov.shard_id(codex, sid), s.tokens), live, limit).key == PEER_KEY
+               for sid, s in zip(shards, snapshot.shards)), "the fixture: another peer leads everything"
+    embed_calls: list[int] = []
+    real_embed = kw["embed"]
+
+    def counted(texts):
+        embed_calls.append(len(texts))
+        return real_embed(texts)
+    said: list[str] = []
+    out = contribute.once(root, "gutenberg", codex, live=live, log=said.append, **{**kw, "embed": counted})
+    assert out["mine"] == [] and out["built"] == 0, "this peer leads nothing and embeds nothing"
+    assert out["held"] == shards and out["probed"] == len(shards), "every open shard probed; every one held, bundled"
+    assert len(out["accepted"]) == len(out["bundles"]) == len(shards) and out["refused"] == []
+    assert all(b["from"] == "held" for b in out["bundles"])
+    from app.hold import export as exp
+    assert embed_calls and all(n <= exp.CHALLENGE_N for n in embed_calls), \
+        "the GPU saw the challenge rows and never a chunk (RULE 1)"
+    assert out["events"] == len(shards) and len(peers.to_forward(kw["node_con"])) == len(shards), "announced"
+    shown = cov.show(codex, snapshot, kw["con"], peers=live)
+    assert shown["covered"] == shown["chunks"] and all(not s["open"] for s in shown["shards"]), \
+        "the first bundle is the claim: the shards close for the leader too"
+    assert any("no GPU spent" in s for s in said)
+    # nothing open: the next pass probes nothing, bundles nothing
+    again = contribute.once(root, "gutenberg", codex, live=live, **kw)
+    assert again["probed"] == 0 and again["held"] == [] and again["events"] == 0
+
+
+def test_a_peer_that_holds_nothing_of_a_shard_led_elsewhere_leaves_it_to_the_leader(ready):
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    live = [rendezvous.Peer(OUR_KEY, 1000.0), rendezvous.Peer(PEER_KEY, 1e12)]
+    out = contribute.once(root, "gutenberg", codex, live=live, **kw)
+    assert out["mine"] == [] and out["probed"] == len(snapshot.shards) and out["held"] == []
+    assert out["bundles"] == [] and out["events"] == 0 and out["built"] == 0, "nothing held, nothing embedded"
+
+
+def test_a_bundle_is_announced_only_where_it_is_served(ready):
+    """04 §4.5, amended 2026-10-19 (§7 of the review): the Perugia peer, under
+    `share = false`, announced bundles nobody could fetch from it, and the
+    node waited two minutes on each. Not serving: accepted, in the map, in
+    the digest's coverage — no event."""
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    said: list[str] = []
+    me = [rendezvous.Peer(OUR_KEY, 1000.0)]
+    out = contribute.once(root, "gutenberg", codex, live=me, log=said.append, serving=False, **kw)
+    n = len(snapshot.shards)
+    assert len(out["accepted"]) == n and out["events"] == 0 and out["unannounced"] == n
+    assert peers.to_forward(kw["node_con"]) == [], "no event"
+    rows = cov.rows(kw["con"])
+    assert len(rows) == n and all(r["accepted_at"] and r["source"] == "local" for r in rows), "accepted here"
+    from app.share import gossip
+    assert sum(len(c["bundles"]) for c in gossip.coverage_of(root, "gutenberg")) == n, "in the digest's coverage"
+    assert any("does not serve" in s for s in said) and any("NOT announced" in s for s in said)
+
+
+def test_the_command_announces_where_the_file_shares_and_the_mode_seeds(ready, monkeypatch):
+    from app import louise, node_state
+    root, snapshot, codex, kw = ready
+    held = louise._held_file(root, "gutenberg")
+    text = held.read_text(encoding="utf-8") if held.is_file() else f'codex = "{codex.collection_id}"\n'
+    with peers.connect() as node_con:
+        monkeypatch.setattr(node_state, "worker_state", lambda con=None: "acquire-only")
+        held.write_text(text.replace("share = true\n", "").replace("share = false\n", "") + "share = false\n",
+                        encoding="utf-8")
+        assert louise._serves_here(root, "gutenberg", node_con) is False, "share = false"
+        held.write_text(text.replace("share = true\n", "").replace("share = false\n", "") + "share = true\n",
+                        encoding="utf-8")
+        assert louise._serves_here(root, "gutenberg", node_con) is True, "acquire-only seeds (07 §7.8)"
+        monkeypatch.setattr(node_state, "worker_state", lambda con=None: "paused")
+        assert louise._serves_here(root, "gutenberg", node_con) is False, "paused seeds nothing"
+        monkeypatch.setattr(node_state, "worker_state", lambda con=None: "running")
+        assert louise._serves_here(root, "gutenberg", node_con) is True
+        held.unlink()
+        assert louise._serves_here(root, "gutenberg", node_con) is False, "no file: not shared"

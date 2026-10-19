@@ -79,6 +79,12 @@ class ExportError(CodexError):
     """The shard cannot be exported as a conformant bundle."""
 
 
+class NothingHeld(ExportError):
+    """This peer holds no vector for any record of the shard: nothing to
+    export. Named, so `share contribute` can tell a part it holds nothing
+    of (skipped) from a part whose export failed (refused)."""
+
+
 def _shard_of(snapshot: snap.Snapshot, shard: str) -> snap.Shard:
     """The named shard entry, `"<slice>/<n>"`, as `Shard.path` spells it."""
     want = str(shard).strip()
@@ -244,7 +250,7 @@ def export(root, ref: str, *, shard: str, dest, vectors_for, embed, key,
     records = _records(shard_dir, entry)
     entries = grouped(codex, records, vectors_for)
     if not entries:
-        raise ExportError(
+        raise NothingHeld(
             f"this peer holds no vectors for any record of {shard}; there is "
             f"nothing to export. A bundle carries what a peer PRODUCED, so an "
             f"empty one is not a smaller bundle but an absent one")

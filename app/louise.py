@@ -503,13 +503,17 @@ def model_keys(encoder: str, query_encoder: str | None = None, *,
 def _write_held_file(root, codex, encoder: str | None = None,
                      query_encoder: str | None = None, *, source: str | None = None,
                      api: str = "openai", embed_model: str | None = None,
-                     query_model: str | None = None) -> Path:
+                     query_model: str | None = None, share: bool = False) -> Path:
     """07 §7.8: `hold collection create` writes `collections/<name>.toml`,
     and the file existing is the collection being held.
 
     It says what a new collection holds before anything is fetched: no
     slice yet (`records fetch` records the ones it takes, 07 §7.3), the
-    default kinds, nothing spent on embedding, nothing shared — and the
+    default kinds, nothing spent on embedding, nothing shared unless
+    `share` says so — `share fetch` says so for a public collection, since
+    sharing is automatic after a completed fetch (04 §4.3; until 2026-10-19
+    it wrote `share = false`, and a peer's bundles and records were offered
+    to nobody) — and the
     encoder it was created with, in `[encoder]`: a collection names its
     own, and a file that names none is refused (no default encoder,
     operator 2026-09-18).
@@ -546,7 +550,7 @@ def _write_held_file(root, codex, encoder: str | None = None,
                    + ('kinds = ["records", "relations"]\n' if cx.is_annotations(codex)
                       else 'kinds = ["records", "vectors"]\n')
                    + 'embed = "off"\n'
-                   "share = false\n"
+                   + f"share = {'true' if share else 'false'}\n"
                    # 07 §7.8 `source`: a fetched collection reads its documents
                    # from the shards it holds (app/plugins/shard.py)
                    + (f'source = "{source}"\n' if source else "")
@@ -1408,6 +1412,25 @@ def cmd_share_attest(a) -> int:
     return 0 if report.ok else 1
 
 
+def _serves_here(root, name: str, node_con) -> bool:
+    """Whether a bundle this peer accepts can be fetched from it (04 §4.2:
+    announcing what you do not serve would be a lie): `share = true` in the
+    collection's file, and a node mode that seeds (07 §7.8). The Perugia
+    peer announced bundles under `share = false`, and the node waited two
+    minutes on each (2026-10-19)."""
+    from app import node_state
+    try:
+        with open(_held_file(root, name), "rb") as f:
+            share = bool(tomllib.load(f).get("share", False))
+    except (OSError, ValueError, CodexError):
+        share = False
+    try:
+        seeds = node_state.runs(node_state.worker_state(node_con), node_state.SEED)
+    except Exception:   # noqa: BLE001 — no state: the mode is unknown, and an unknown mode runs nothing
+        seeds = False
+    return share and seeds
+
+
 def _embedding_callables(root, name: str, codex, *, stop):
     """What `vectors build` embeds with (03 §3.3): the collection's own
     encoder through its recipe and, for a collection gated per answer, the
@@ -1508,7 +1531,7 @@ def cmd_share_contribute(a) -> int:
                                                                     dtype=codex.space.dtype),
                         live=live, con=mcon, node_con=node_con, now=now, stop=stop,
                         log=lambda m: print(m, file=sys.stderr), batch=config.EMBED_SLICE_CHUNKS,
-                        before_write=before_write)
+                        before_write=before_write, serving=_serves_here(a.root, name, node_con))
             if stop.is_set():
                 break
         return results

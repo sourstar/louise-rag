@@ -495,9 +495,16 @@ reader needs at the command line:
 - **`share contribute`.** Chooses parts by 04 §4.5, on a collection
   whose `roots` and `chunks` pass on the parts this peer holds and for
   whose snapshot a `records-vs-origin` attestation exists; then `hold
-  vectors build`, then `share` of the bundles. `--once` takes the parts
-  this peer currently leads, builds and shares them, and exits instead
-  of looping until stopped. Exactly: the open parts of the current
+  vectors build`, then `share` of the bundles. `--once` first bundles
+  the vectors this peer already holds for every open part it does not
+  lead (04 §4.5, amended 2026-10-19: no GPU beyond the challenge rows;
+  one read of each such part's records), then takes the parts this
+  peer currently leads, builds and shares them, and exits instead
+  of looping until stopped. A bundle is announced with its event only
+  where this peer SERVES the collection — `share = true` in its file and
+  a mode that seeds; otherwise it is accepted here, listed under the
+  digest's coverage, and offered as a member once this peer serves
+  (04 §4.5, amended 2026-10-19). Exactly: the open parts of the current
   snapshot are read off the coverage map (09 §9.10), the live peers off
   the digests (a benchmark for the space, this peer's own from its
   statements); the top of the ordering leads, its window running from
