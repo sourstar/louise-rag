@@ -362,7 +362,12 @@ def _positive_int(raw: dict, key: str, default: int) -> int:
 def _load_one(path: Path) -> PlatformConfig:
     with open(path, "rb") as f:
         raw: dict[str, Any] = tomllib.load(f)
-    bw_raw = raw.get("bandwidth", {}) or {}
+    # 07 §7.8 names the table `[budget]`; `[bandwidth]` is this module's
+    # older spelling and still loads. Only the older one was read, so a file
+    # written as the spec says had its ceilings silently ignored (2026-10-19)
+    if raw.get("budget") is not None and raw.get("bandwidth") is not None:
+        raise schedule_mod.ScheduleError("[budget] and [bandwidth] are one table (07 §7.8): keep [budget]")
+    bw_raw = raw.get("budget", raw.get("bandwidth", {})) or {}
     tr_raw = raw.get("transfer", {}) or {}
     trust_raw = raw.get("trust", {}) or {}
     share_raw = raw.get("share", {}) or {}

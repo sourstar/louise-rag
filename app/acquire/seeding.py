@@ -83,6 +83,24 @@ class Seeder:
         self._meta: dict[str, dict] = {}            # info_hash -> entry
         self._uploaded: dict[str, int] = {}         # info_hash -> last total_upload seen
         self._paused = False
+        self._upload_limit: int | None = None       # what the session was last told
+
+    def limit_upload(self, session) -> int:
+        """The session's upload ceiling set to the UP budget's (invariant 5):
+        libtorrent meters every byte it uploads against it — the seeds' and
+        a fetch's handles' alike — and 0 is unlimited. `account` only counts
+        what went out after the fact, and nothing ever slowed it: an
+        `up_max` in platform.toml capped no seed (2026-10-19). Told only
+        when the ceiling moves. Returns the limit in force."""
+        from ..transfer.manager import get_manager
+        manager = get_manager()
+        manager.maybe_refresh()
+        rate = manager.bucket(Direction.UP).core.rate
+        limit = 0 if rate is None else max(1, int(rate))
+        if limit != self._upload_limit:
+            session.apply_settings({"upload_rate_limit": limit})
+            self._upload_limit = limit
+        return limit
 
     # ---------------- lifecycle ----------------
 
@@ -292,6 +310,9 @@ def tick(collections, cons: dict, control_con, worker_state: str) -> None:
                 except Exception as e:   # noqa: BLE001 — one bad torrent, not the seeder
                     db.log_event(con, "warn", "seeding",
                                  f"cannot seed {entry.get('name')}: {type(e).__name__}: {e}"[:300])
+        from . import transport_torrent as tt
+        if tt._session is not None:
+            seeder.limit_upload(tt._session)
         seeder.account()
         db.set_control(control_con, SEEDING_TABLE_KEY,
                        json.dumps({"at": time.time(), "rows": seeder.table()}))

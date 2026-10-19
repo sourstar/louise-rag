@@ -177,3 +177,31 @@ def test_a_shard_member_is_seeded_off_the_dht_and_a_published_corpus_on_it(
         flags["member" in e] = int(seeder._handles[e.get("info_hash") or e["torrent_path"]].flags())
     assert flags[True] & quiet == quiet, "a SHARD member is never announced by its own infohash"
     assert flags[False] & quiet == 0, "a published corpus stays findable by magnet"
+
+
+def test_the_seeds_upload_no_faster_than_the_up_budget(tmp_path, isolated_config, monkeypatch):
+    """Invariant 5: the session's upload ceiling IS the UP budget's. Before,
+    the seeder only counted what had gone out, so `[bandwidth] up_max` in
+    platform.toml capped no seed (2026-10-19: 100 Mbit of upload, the
+    operator's 20 % share of it is the ceiling). Unlimited is 0."""
+    from app import platform_config as pc
+    from app.acquire import transport_torrent as tt
+    from app.transfer import manager as tm
+
+    c = _collection(tmp_path)
+    con = db.connect(c)
+    monkeypatch.setattr(tt, "_session", None)
+    monkeypatch.setattr(tt, "_session_lock", __import__("threading").Lock())
+    monkeypatch.setattr(tt, "session_settings", lambda: {
+        "listen_interfaces": "127.0.0.1:0", "enable_dht": False, "enable_lsd": False,
+        "enable_upnp": False, "enable_natpmp": False, "alert_mask": 0})
+    monkeypatch.setattr(seeding, "_seeder", None)
+    session = tt.get_session()
+    capped = tm.TransferManager(platform=pc.PlatformConfig(
+        bandwidth=pc.BandwidthConfig(up_max_bps=pc.schedule_mod.parse_rate("20Mbit"))))
+    monkeypatch.setattr(tm, "_manager", capped, raising=False)
+    seeding.tick([c], {c.name: con}, con, "running")
+    assert session.get_settings()["upload_rate_limit"] == 2_500_000
+    monkeypatch.setattr(tm, "_manager", tm.TransferManager(platform=pc.PlatformConfig()), raising=False)
+    seeding.tick([c], {c.name: con}, con, "running")
+    assert session.get_settings()["upload_rate_limit"] == 0, "no ceiling: libtorrent's unlimited"

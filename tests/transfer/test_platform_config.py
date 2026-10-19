@@ -121,3 +121,14 @@ def test_schedule_under_bandwidth_matches_section_14_spelling(cfg_dir):
     pc = platform_config.load()
     assert pc.bandwidth.schedule.factor_at(3 * 60) == 1.0
     assert pc.transfer.workers == platform_config.DEFAULT_WORKERS
+
+
+def test_the_spec_s_budget_table_is_read_and_both_spellings_at_once_refused(cfg_dir):
+    """07 §7.8 names the table `[budget]`; only `[bandwidth]` was read, so a
+    file written as the spec says had its ceilings silently ignored
+    (2026-10-19, the operator's 20 % of a 100 Mbit upload)."""
+    (cfg_dir / "platform.toml").write_text('[budget]\nup_max = "20Mbit"\n')
+    assert platform_config.load().bandwidth.up_max_bps == 2_500_000
+    (cfg_dir / "platform.toml").write_text('[budget]\nup_max = "20Mbit"\n[bandwidth]\nup_max = "40Mbit"\n')
+    with pytest.raises(sched.ScheduleError, match="one table"):
+        platform_config.load()

@@ -997,6 +997,8 @@ variable, a file, a log line or a message.
              # peer_port: where this node's swarm listens, as peers reach it; named in its digest (09 §9.9) so a
              # fetcher with the DHT off still finds the swarm; absent, the session's own port is named when one runs
 [budget]     down_max = "400Mbit"   up_max = "40Mbit"   schedule = "01:00-07:00 full; else 30%"
+             # up_max is the swarm's upload ceiling too: the session uploads no faster (invariant 5; until
+             # 2026-10-19 seeding was only counted); `[bandwidth]`, the older spelling, still loads
 [peers]      addresses = ["http://peer.example.org:8742"]   # the bootstrap of 04 §4.2, where the peer answers the
              # messages of 09 §9.9 (a bare host:port is http); `share peers add` writes here, each address once
 [peers.pins] "http://peer.example.org:8742" = "ed25519:…"   # a digest from that address under another key is discarded
