@@ -316,3 +316,29 @@ def test_the_command_creates_it_and_show_prints_what_it_annotates(tmp_path, monk
     copy_state.reset_cache()
     assert louise.main(["hold", "collection", "show", "same", "--root", str(tmp_path)]) == 0
     assert json.loads(capsys.readouterr().out)["state"] == "in-use"
+
+
+def test_a_dry_run_checks_the_claims_against_the_target_and_writes_nothing(tmp_path, monkeypatch, capsys):
+    """Operator, 2026-10-19 (the gutenberg graph collection): thousands of
+    claims about a live collection are measured before they are written."""
+    from app import louise
+    target, hashes = a_target(tmp_path)
+    claims = tmp_path / "claims.jsonl"
+    claims.write_bytes(claims_file(a_claim(), a_claim("pubmed:3", "pubmed:4", method={"kind": "wikidata"},
+                                                       evidence={"item": "Q1"}, confidence="0.96875")))
+    got = ann.preview(tmp_path, target_ref="pubmed", from_snapshot=TARGET_SNAPSHOT, claims=claims.read_bytes())
+    assert got["claims"] == 2 and got["target_records_named"] == 4 and got["written"] is False
+    assert got["by_type"] == {"same-work": 2} and got["by_method"] == {"matcher:louise-classical-matcher": 1,
+                                                                        "wikidata": 1}
+    assert got["annotator"] == "a test annotator" and got["target_id"] == target.collection_id
+    # a claim about a record the snapshot does not hold refuses the dry run as it refuses the write
+    bad = claims_file(a_claim("pubmed:1", "pubmed:99"))
+    with pytest.raises(ann.AnnotationsError):
+        ann.preview(tmp_path, target_ref="pubmed", from_snapshot=TARGET_SNAPSHOT, claims=bad)
+    base = ["hold", "collection", "create", "annotations", "--root", str(tmp_path), "--annotates", "pubmed",
+            "--from-snapshot", TARGET_SNAPSHOT, "--claims", str(claims), "--name", "same", "--dry-run"]
+    assert louise.main(base) == 0
+    text = capsys.readouterr().out
+    assert json.loads(text[text.index("{"):])["claims"] == 2
+    assert not (col.shard_dir_of(tmp_path, "same")).exists() and not (tmp_path / "same").exists(), "nothing written"
+    assert not list((tmp_path / "collections").glob("same*")) if (tmp_path / "collections").is_dir() else True

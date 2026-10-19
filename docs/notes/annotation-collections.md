@@ -209,8 +209,28 @@ claims.jsonl`, then `louise hold collection create annotations
 --claims claims.jsonl --name gutenberg-works`. Nothing in gutenberg is
 rebuilt (RULE 1). Until it exists the search groups nothing on gutenberg
 and the fusion fixes stand alone.
+**The operator's task, 2026-10-19 evening — "Start implementing the
+gutenberg graph collection."** Read as this collection: the edges over
+gutenberg's records that the search and `louise_traverse` follow. The
+plan, with the operator: ONE collection, `gutenberg-works`, holding both
+claim sets — the works (Wikidata and PG's editions notes, 4,376) and the
+classical matcher's pairs (357) — merged by `tools/annotations_merge.py`
+(a pair stated twice keeps the higher confidence; `same-work` and
+`translation-of` over one pair both stay), measured by `hold collection
+create annotations --dry-run` (the claims checked against gutenberg's
+current snapshot exactly as the write would, counted, nothing written),
+then created on the node, checked, shared (the digest lists it; Perugia
+fetches it like any collection) and verified with `ask traverse
+<uid>` and a title query grouped on it. Nothing in gutenberg is rebuilt
+(RULE 1). What this does not do: origin-stated edges (book → author,
+book → subject from PG's RDF) as a relations member of gutenberg itself,
+which would re-issue gutenberg's snapshot — asked of the operator, not
+assumed.
+
 - **A target with other annotation collections.** Several annotations
   collections on one target each attach their own facts, labelled by
-  collection id. Nothing merges them, deliberately.
+  collection id. Nothing merges them, deliberately — two ANNOTATORS stay
+  two collections; one annotator's two claim files are one collection
+  (`annotations_merge.py`).
 - **Scale.** The claim index is in memory per copy. That is fine for
   thousands of claims. Millions would want the manifest instead.

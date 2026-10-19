@@ -206,6 +206,10 @@ def cmd_create_annotations(a) -> int:
     if a.recipe:
         raise CodexError("create annotations takes no --recipe: its Codex is fixed by 02 §2.10 "
                          "and named by the flags")
+    if getattr(a, "dry_run", False):
+        _print(ann.preview(a.root, target_ref=a.annotates, from_snapshot=a.from_snapshot,
+                           claims=Path(a.claims).read_bytes(), annotator=a.annotator))
+        return 0
     key = None
     try:
         from app.bundles import keys as node_keys
@@ -3791,6 +3795,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--snapshot", default=None, metavar="ID",
                    help="create annotations: this collection's first snapshot id (default: the "
                         "period that closed last, by its monthly cadence)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="create annotations: check the claims against the target snapshot and print the "
+                        "counts; write nothing")
     p.set_defaults(fn=cmd_create)
 
     p = verbs.add_parser("derive", help="a sister: her mother's corpus, a new space")

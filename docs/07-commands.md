@@ -71,10 +71,14 @@ louise hold
                                                                        (amended 2026-10-08)
               create deposit --name N [--encoder URL [--api A] [--embed-model M] [--query-model M]] [--space-from CODEX | --space FILE]
                                                                        a deposit collection (02 §2.9): no recipe; the node's deposit encoder unless one is named
-              create annotations --annotates C --from-snapshot S --claims FILE --name N [--title T] [--summary S] [--annotator A] [--snapshot ID]
+              create annotations --annotates C --from-snapshot S --claims FILE --name N [--title T] [--summary S] [--annotator A] [--snapshot ID] [--dry-run]
                                                                        an annotations collection (02 §2.10; amended 2026-10-09): no recipe, no encoder; each claim's
                                                                        target hashes read from C's snapshot S; writes the parts, the relations, the first snapshot
-                                                                       (signed with the node's key when there is one) and the file; prints its id
+                                                                       (signed with the node's key when there is one) and the file; prints its id. `--dry-run`
+                                                                       (2026-10-19) checks the file against S exactly as the write would and prints the counts
+                                                                       (claims, target records named, by type and method), writing nothing. Several claims
+                                                                       files for one collection are merged first with `tools/annotations_merge.py` (a pair
+                                                                       stated twice keeps the higher confidence)
               derive <codex> [--space-from CODEX | --space FILE | --encoder-weights D --engine FILE] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
                                                                        a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
                                                                        Prints what would be inherited — vectors, coverage, credits — and waits for --accept;

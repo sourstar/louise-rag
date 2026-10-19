@@ -506,6 +506,47 @@ def write_held_file(root: Path, codex: Codex, name: str) -> Path:
     return path
 
 
+def _checked(root: Path, target_ref: str, from_snapshot: str, claims: bytes, *, annotator: str | None):
+    """What `create` checks before it writes anything: the target, the
+    claims file, every claim's two records in the target snapshot, the one
+    annotator."""
+    from . import collection as col
+    tname, target = col.resolve(Path(root), target_ref)
+    if is_annotations(target):
+        raise AnnotationsError(f"{tname} is itself an annotations collection; annotations are "
+                               f"about a collection's records (02 §2.10)")
+    submitted = read_claims(claims, target_plugin=target.plugin)
+    tshard = col.shard_dir_of(Path(root), tname)
+    held = target_records(tshard, target, from_snapshot,
+                          {u for s in submitted for u in (s.claim["subject"], s.claim["object"])})
+    pinned = pin(submitted, held, from_snapshot)
+    contributors = sorted({c["contributor"] for c in pinned})
+    annotator = annotator or (contributors[0] if len(contributors) == 1 else None)
+    if not annotator:
+        raise AnnotationsError(f"the claims name {len(contributors)} contributors; name the "
+                               f"annotator the Codex credits with --annotator")
+    return tname, target, submitted, pinned, annotator
+
+
+def preview(root: Path, *, target_ref: str, from_snapshot: str, claims: bytes,
+            annotator: str | None = None) -> dict[str, Any]:
+    """`create annotations --dry-run`: the claims checked against the target
+    snapshot exactly as `create` checks them, counted, nothing written —
+    for a file of thousands of claims about a live collection, the measure
+    before the write (operator, 2026-10-19: the gutenberg graph collection)."""
+    from collections import Counter
+    tname, target, _submitted, pinned, who = _checked(root, target_ref, from_snapshot, claims, annotator=annotator)
+    records = {u for c in pinned for u in (c["subject"], c["object"])}
+    return {"target": tname, "target_id": target.collection_id, "from_snapshot": from_snapshot,
+            "claims": len(pinned), "target_records_named": len(records), "annotator": who,
+            "by_type": dict(sorted(Counter(c["type"] for c in pinned).items())),
+            "by_method": dict(sorted(Counter(
+                c["method"]["kind"] + (f":{c['method']['id']}" if c["method"]["kind"] == "matcher" else "")
+                for c in pinned).items())),
+            "parts": -(-len(pinned) // SHARD_RECORDS),
+            "written": False}
+
+
 def create(root: Path, name: str, *, target_ref: str, from_snapshot: str, claims: bytes,
            platform_image: str, title: str | None = None, summary: str | None = None,
            annotator: str | None = None, snapshot_id: str | None = None,
@@ -527,20 +568,8 @@ def create(root: Path, name: str, *, target_ref: str, from_snapshot: str, claims
 
     root = Path(root)
     col.check_name(name)
-    tname, target = col.resolve(root, target_ref)
-    if is_annotations(target):
-        raise AnnotationsError(f"{tname} is itself an annotations collection; annotations are "
-                               f"about a collection's records (02 §2.10)")
-    submitted = read_claims(claims, target_plugin=target.plugin)
-    tshard = col.shard_dir_of(root, tname)
-    held = target_records(tshard, target, from_snapshot,
-                          {u for s in submitted for u in (s.claim["subject"], s.claim["object"])})
-    pinned = pin(submitted, held, from_snapshot)
-    contributors = sorted({c["contributor"] for c in pinned})
-    annotator = annotator or (contributors[0] if len(contributors) == 1 else None)
-    if not annotator:
-        raise AnnotationsError(f"the claims name {len(contributors)} contributors; name the "
-                               f"annotator the Codex credits with --annotator")
+    tname, target, submitted, pinned, annotator = _checked(root, target_ref, from_snapshot, claims,
+                                                           annotator=annotator)
 
     existing = None
     p = col.shard_dir_of(root, name) / col.CODEX_FILE
