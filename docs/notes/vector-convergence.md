@@ -52,30 +52,45 @@ choosing between two admitted versions; it does not enter here.
 Among equivalent versions of the same chunks, every peer applies the
 same total order, so the network converges on one:
 
-1. **Adoption:** the number of distinct peer keys that have accepted the
+1. **Checks:** the number of distinct keys whose passing `vectors-sample`
+   attestations cover the version — a better-checked version wins
+   (review, 2026-10-19).
+2. **Adoption:** the number of distinct peer keys that have accepted the
    version and list it in their digests, a key counted only once its
    listing is at least one digest interval old — 04 §4.6's rule for
-   daughters, unchanged.
-2. **Hysteresis:** the survivor changes only when a rival exceeds it by
+   daughters, unchanged. Not age: age says nothing about checks.
+3. **Hysteresis:** the survivor changes only when a rival exceeds it by
    twenty percent for three consecutive digest intervals, as this peer
    observes them (04 §4.6), so a choice does not flap while news spreads.
-3. **Tie:** the lower version name (the lowest bundle id it contains),
-   which every peer computes from the same bytes.
+4. **Tie:** see §7 — an input the producer cannot choose.
 
 The order is a deterministic function of signed, content-addressed
 inputs and of digests every peer receives; two peers that have seen the
 same digests choose the same survivor, which is the convergence property
-of a last-writer-wins register with a total order, with "adoption, then
-id" in place of a timestamp.
+of a last-writer-wins register with a total order, with "checks, then
+adoption" in place of a timestamp.
 
-## 5. What a peer does with a losing version
+**Scope.** Two versions from the same run are byte-identical (invariant
+12) and never compete; the rule is for different runs and engines, each
+admitted by the gate. The operator's 0.995 CPU-twin line admits an
+ENGINE and plays no part in choosing between two admitted versions.
 
-- It fetches the survivor's bundles (04 §4.3), runs them through its
-  ladder (03 §3.5) like any bundle, and swaps their rows in for the
-  loser's, one bundle at a time, delete-then-insert (invariant 2).
-- The loser is kept only as what it already produced: the
-  `vectors-sample` attestation naming both. Its rows go; its bundles stop
-  being seeded once the survivor's are held here.
+## 5. What a peer does with a losing version — lazily
+
+RULE 1: equivalent rows serve search identically, so **no peer rewrites
+rows only to converge**. The survivor decides what a peer SEEDS and
+ANNOUNCES for the part:
+
+- A peer holding the loser keeps its rows, stops seeding the loser, and
+  seeds the survivor once it holds it; it fetches the survivor's bundles
+  only when it would move that part anyway — a re-share, a new peer
+  asking, a rewrite of the part for another reason.
+- When rows are swapped, it is through the ladder (03 §3.5), one bundle
+  at a time, delete-then-insert (invariant 2), every byte drawn from the
+  transfer budget (invariant 5) and counted as maintenance with its own
+  scheduling numbers (scheduling.md §6).
+- The loser is kept as what it already produced: the `vectors-sample`
+  attestation naming both.
 - If the survivor is later flagged (03 §3.6), the next version in the
   order takes its place — 04 §4.5's existing replacement rule.
 - Nothing published is deleted (docs/01): a losing version is no longer
@@ -91,6 +106,17 @@ interval — a cost that scales with the parts that HAVE competing
 versions, never with the corpus (CLAUDE.md engineering rules).
 
 ## 7. Open
+
+- **The tie-break must be an input the producer cannot choose.** The
+  lowest bundle id is grindable: a producer controls its signed bytes and
+  can re-sign until its id is low. Any hash over producer-controlled bytes
+  stays grindable, and 09 §9.1's sampling seed is chosen by each verifier,
+  not public randomness. Candidate: the lowest `H(bundle_id ‖ hash of the
+  collection's first snapshot published after the bundle)` — unknown when
+  the bundle is made, the same for every peer, at the cost of settling a
+  tie only at the next snapshot. The stake is bounded either way: a tie
+  only chooses between EQUIVALENT versions, so gaming it buys nothing but
+  having one's own equivalent bytes served.
 
 - A version's adoption is only as good as the digests: minted keys
   inflate it, as 04 §4.6 says for daughters; the bound is the same (the
