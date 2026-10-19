@@ -41,6 +41,17 @@ it left open is below.
   `embed = "p2p"` once it is gated — Perugia runs everything instead of
   the CLI loop, the node retires its nightly cron — each measured against
   its CLI pass first.
+- **Wikidata, built to the create** (2026-10-19 night, [wikidata-build-plan.md](wikidata-build-plan.md)):
+  the plugin `wikidata` is registered — the dump reader, the pack and
+  label table in one resumable pass, the vendored textifier with our own
+  value formatter (D4 revised: Python, no service), the chunker
+  `wikidata-text` at the tokens of a pinned tokenizer (D6:
+  `tokenizers==0.22.1`), the slicing `range=`, the acquisition spec of
+  the dated dump. The recipe is a template with four values only the node
+  can give (the tokenizer's sha256, the weights digest, the stated run of
+  the jina-v3 task, `work.tokens`), asked of München; `hold collection
+  create wikidata` runs on the node once they are in, then the 103 GB
+  fetch and the pack pass (hours, resumable).
 - **`hold embedder calibrate`** is a stub: it wants two builds of one model
   to compare (step 3).
 - **Normattiva, what the second part left** (2026-10-12,
