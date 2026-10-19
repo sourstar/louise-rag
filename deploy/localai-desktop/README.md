@@ -37,6 +37,17 @@ run without it. Measured on this card: bit-identical run to run, across
 fresh loads, for bge-m3 F16 and Qwen3-Embedding Q4_K_M
 (docs/notes/approved-encoders.md, 2026-10-18).
 
+**After every deploy** (once München's full suite has passed the commit —
+docs/notes/STATUS.md, "the deploy gate"): `sh deploy/localai-desktop/smoke.sh
+<env file> <sha>`. It checks only what this machine adds: one image in
+worker, web and VeGa; the web at localhost and at the Tailscale address
+peers dial; the worker's first round, run check and tracebacks; every
+collection's copy state; LocalAI's backends; the card through /dev/dxg and
+librocdxg; invariant 12 in every card model's YAML AND live (three
+identical requests and a reversed order, bit-identical, through Louise's
+own client); the pinned peers from the worker; the socket count
+(dht-flood.md); free space on D:. Exit 1 on any FAIL.
+
 **What it does not have yet:** louise-python (MADLAD, MedCPT on torch
 ROCm, 23.8 GB image, not pushed), so the chat model translates and pubmed's
 MedCPT models are absent. LocalAI's GPU panel names the card "AMD GPU" (a
