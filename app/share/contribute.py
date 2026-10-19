@@ -23,7 +23,13 @@ bundled, accepted by its own ladder, and announced.
   had (74 % of its first pass; p2p-review-open-issues.md §1). The cost is
   the challenge rows per shard that has vectors (sixteen texts) and one
   read of each open shard's records; rendezvous then assigns only what
-  nobody holds.
+  nobody holds. ONE VERSION WHERE ONE EXISTS: a shard whose bundle a live
+  neighbour both claims (digest `coverage`) and offers (digest `members`)
+  is left to the fetch beat (app/share/accept.py `from_digests`), which
+  takes that bundle in and compares it with the vectors held here
+  ("duplicates are checks"); with many holders joining a network, each
+  bundling what it holds would make as many versions of every part, and a
+  version that exists and is served is reused, not remade (RULE 1).
 - WORK: `hold vectors build` over the shards this peer leads
   (app/hold/vectors_build.py), then `hold vectors export` of each
   (app/hold/export.py) into
@@ -225,6 +231,26 @@ def announce(con, codex, snapshot: sn.Snapshot, header: dict[str, Any], member: 
     return eid
 
 
+def offered_elsewhere(codex, con, node_con, *, now: float) -> dict[str, list[str]]:
+    """Per open shard id, the bundle ids a live neighbour both CLAIMS for it
+    (its digest's `coverage`, folded into the map as `claimed_by`) and
+    OFFERS (its digest's `members`), and this peer has neither accepted nor
+    refused — what `accept.from_digests` takes in at the fetch beat. A
+    holder leaves such a shard to that fetch rather than bundling a second
+    version of it."""
+    if node_con is None:
+        return {}
+    from app.share import accept
+    offered = {p["bundle_id"] for p, _hints in accept.listed_bundles(node_con, codex, con, now=now)}
+    if not offered:
+        return {}
+    out: dict[str, list[str]] = {}
+    for r in cov.rows(con):
+        if r["bundle_id"] in offered and not r["accepted_at"] and r["claimed_by"]:
+            out.setdefault(r["shard"], []).append(r["bundle_id"])
+    return out
+
+
 def _bundle_shard(root: Path, name: str, codex, snapshot: sn.Snapshot, shard: sn.Shard, *, key, own_key: str,
                   embed, vectors_for, con, node_con, now: float, say, out: dict[str, Any],
                   serving: bool, held: bool) -> bool:
@@ -309,8 +335,8 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
     mine, others = open_shards(codex, snapshot, con, me=own_key, live=me_live, now=now)
     out: dict[str, Any] = {"snapshot_id": snapshot.snapshot_id, "peers": len(me_live),
                            "mine": [f"{s.slice}/{s.n:05d}" for s in mine], "built": 0,
-                           "held": [], "probed": 0, "bundles": [], "accepted": [], "refused": [],
-                           "events": 0, "unannounced": 0, "interrupted": False}
+                           "held": [], "probed": 0, "left_to_fetch": [], "bundles": [], "accepted": [],
+                           "refused": [], "events": 0, "unannounced": 0, "interrupted": False}
     common = dict(key=key, own_key=own_key, embed=embed, vectors_for=vectors_for, con=con,
                   node_con=node_con, now=now, say=say, out=out, serving=serving)
     if not mine and not others:
@@ -322,16 +348,26 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
     # RULE 1 — what this peer already holds for a shard another peer leads is
     # bundled first, whoever leads it: no GPU, and the leader embeds only
     # what still lacks a bundle (04 §4.5, amended 2026-10-19)
+    elsewhere = offered_elsewhere(codex, con, node_con, now=now) if others else {}
     for shard in others:
         if stop is not None and stop.is_set():
             out["interrupted"] = True
             break
+        sid = f"{shard.slice}/{shard.n:05d}"
+        if cov.shard_id(codex, sid) in elsewhere:
+            # a version exists and is served: the fetch beat takes it in and
+            # compares it with what is held here — not a second version
+            out["left_to_fetch"].append(sid)
+            continue
         out["probed"] += 1
         if _bundle_shard(root, name, codex, snapshot, shard, held=True, **common):
-            out["held"].append(f"{shard.slice}/{shard.n:05d}")
+            out["held"].append(sid)
     if out["held"]:
         say(f"[{name}] share contribute: {len(out['held'])} of {out['probed']} open shard(s) led elsewhere "
             f"bundled from vectors held here, no GPU spent (RULE 1)")
+    if out["left_to_fetch"]:
+        say(f"[{name}] share contribute: {len(out['left_to_fetch'])} open shard(s) left to the fetch beat: a "
+            f"neighbour offers a bundle for each (one version where one exists)")
     if not mine:
         if not out["interrupted"]:
             say(f"[{name}] share contribute: no open shard this peer leads among {len(me_live)} peer(s)")

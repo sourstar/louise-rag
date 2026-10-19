@@ -337,3 +337,48 @@ def test_the_command_announces_where_the_file_shares_and_the_mode_seeds(ready, m
         assert louise._serves_here(root, "gutenberg", node_con) is True
         held.unlink()
         assert louise._serves_here(root, "gutenberg", node_con) is False, "no file: not shared"
+
+
+def test_a_holder_leaves_a_shard_whose_bundle_a_neighbour_offers_to_the_fetch(ready):
+    """One version where one exists (04 §4.5, amended 2026-10-19): with many
+    holders joining, each bundling what it holds would make as many versions
+    of every part. A shard whose bundle a live neighbour both claims and
+    offers is left to the fetch beat; a claim nobody serves is not."""
+    from app.hold import land as landing, vectors_build as vb
+    from app.share import messages
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    vb.build(codex, shards=list(snapshot.shards),
+             records_for=lambda s: landing.records_for(root, "gutenberg", snapshot, f"{s.slice}/{s.n:05d}", None),
+             vectors_for=kw["vectors_for"], embed=kw["embed"], write=kw["write"], batch=2)
+    shards = [f"{s.slice}/{s.n:05d}" for s in snapshot.shards]
+    assert len(shards) >= 2
+    offered_sid, claimed_only_sid = shards[0], shards[1]
+    now = time.time()
+    files = [[f, "sha256:" + "a" * 64, 10] for f in sorted(mem.BUNDLE_FILES)]
+    from app.hold import shard as shard_mod
+    bid_offered, bid_claimed = "sha256:" + "b" * 64, "sha256:" + "c" * 64
+    member = {"name": f"bundle-{codex.space_segment}-{'b' * 64}", "root": shard_mod.member_root(
+        tuple(shard_mod.MemberFile(p, r, b) for p, r, b in files)), "bytes": 40, "files": files}
+    entry = {"collection_id": codex.collection_id, "lineage_id": codex.collection_id, "title": "g",
+             "snapshot_id": snapshot.snapshot_id, "snapshot_hash": snapshot.hash, "codex_hash": "sha256:" + "2" * 64,
+             "license": "green", "privacy": "public", "members": [member],
+             "coverage": [{"shard": cov.shard_id(codex, offered_sid), "bundles": [bid_offered]},
+                          {"shard": cov.shard_id(codex, claimed_only_sid), "bundles": [bid_claimed]}]}
+    digest = messages.digest_body(key=PEER_KEY, address="http://10.0.0.7:30042", neighbours=[],
+                                  benchmarks=[], collections=[entry], now=now)
+    peers.record_digest(kw["node_con"], {**digest, "peer_port": 6881}, now=now)
+    assert cov.fold_claims(kw["con"], codex, [digest]) == 2
+    live = [rendezvous.Peer(OUR_KEY, 1000.0), rendezvous.Peer(PEER_KEY, 1e12)]
+    said: list[str] = []
+    out = contribute.once(root, "gutenberg", codex, live=live, log=said.append, **kw)
+    assert out["left_to_fetch"] == [offered_sid], "claimed AND offered: the fetch beat's"
+    assert out["held"] == [s for s in shards if s != offered_sid], \
+        "a claim nobody serves does not stop the holder; the rest is bundled"
+    assert out["probed"] == len(shards) - 1 and any("left to the fetch beat" in s for s in said)
+    # once this peer holds (or refused) that bundle, the shard is its own business again
+    cov.record(kw["con"], bundle_id=bid_offered, shard=cov.shard_id(codex, offered_sid), producer=PEER_KEY,
+               uids=[], chunks=0, tiers={"T0": "fail"}, source=cov.FETCHED, accepted_at=None)
+    out = contribute.once(root, "gutenberg", codex, live=live, **kw)
+    assert out["left_to_fetch"] == [] and out["held"] == [offered_sid]

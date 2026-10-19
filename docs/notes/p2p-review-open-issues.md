@@ -117,10 +117,35 @@ Expected: tens of minutes once, then only the ~150 parts the node holds
 nothing of, every pass, until their leaders close them. If that residual
 costs more than a minute a pass, memoise the empty probes per snapshot.
 
-Open, unchanged: *who BUNDLES* is now everyone who holds; whether a
-whole collection's worth of held vectors should instead be declared as
-genesis-style coverage (one statement, no 1,600 bundles) was not taken up
-— bundles are what travel, and 2,400 per collection is 04 §4.5's budget.
+**The general case, not two peers** (operator, 2026-10-19): with many
+holders joining a network, each bundling what it holds would make as many
+versions of every part. So a shard whose bundle a live neighbour both
+claims (`coverage`) and offers (`members`) is left to the fetch beat,
+which takes that bundle in and compares it with the vectors held here
+("duplicates are checks"); a version that exists and is served is reused,
+not remade — RULE 1 at network scale, and one version per part by
+construction wherever one exists. A claim nobody serves does not stop a
+holder (§7). 04 §4.5 says so.
+
+Open, unchanged: whether a whole collection's worth of held vectors
+should instead be declared as genesis-style coverage (one statement, no
+1,600 bundles) was not taken up — bundles are what travel, and 2,400 per
+collection is 04 §4.5's budget.
+
+### The principles, checked (operator, 2026-10-19: RULE 1, no wheel reinvented, standards, the general case)
+
+- Nothing new on the wire: the attestation pull is 09 §9.9's existing
+  message; bundles and attestations are found in the digest's existing
+  `members` and `coverage`; the stall and the deferral are a client's
+  policy over libtorrent's swarm, which keeps its own peer timeouts.
+- Bytes are reused, never remade: held vectors become bundles; a served
+  version is fetched rather than duplicated; nothing is re-embedded.
+- Standards: BitTorrent v2 torrents and the mainline DHT carry the bytes
+  as before; the convergence proposal maps to RFC 9745 / RFC 8594 and
+  stays a decision for after the measurement.
+- Scale: every new per-beat cost is bounded by digest arrivals or a
+  backoff, never by the corpus; the one cost to time on the node is the
+  first contribute pass (above).
 
 ### 2. The embed stage ignored rendezvous — closed before the review (f85a606)
 

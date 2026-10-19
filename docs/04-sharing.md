@@ -497,7 +497,12 @@ embeds only what still lacks an accepted bundle. The node held 91 % of
 gutenberg's vectors and announced none, every coverage map showed 0 %,
 and a new peer's first pass re-embedded parts the node had (74 % of its
 chunks). Who EMBEDS a part is rendezvous's question; who BUNDLES vectors
-already held is everyone's who holds them.
+already held is everyone's who holds them — with one restraint, so that
+many holders joining a network do not make as many versions of every
+part: a part whose bundle a live neighbour both claims and offers is
+left to the fetch, which takes that bundle in and compares it with the
+vectors held here ("duplicates are checks", below); a version that exists
+and is served is reused, not remade.
 
 **Weight and eligibility.** The weight is the peer's benchmark for this
 collection's space — the `benchmarks` entry of its digest whose
