@@ -24,3 +24,19 @@ def test_bundles_mount_comes_in_once_ro_in_web():
     assert c["services"]["web"]["environment"] == {"SHARDS_ROOT": "/shards"}, "no variable is touched"
     assert len(said) == 2
     assert abm.fm.apply(c, shared=abm.BUNDLES, env={}) == [], "a second run changes nothing"
+
+
+def test_set_timezone_sets_tz_in_web_and_worker_only():
+    """deploy/16f/set_timezone.py: TZ in web and worker, no mount touched, idempotent
+    (2026-10-19: the containers ran in UTC and 07 §7.8's schedule is local time)."""
+    vols = ["/mnt/ssd4/apps/louise-rag/data:/data"]
+    c = {"services": {"web": {"volumes": list(vols), "environment": {}},
+                      "worker": {"volumes": list(vols), "environment": {"SHARDS_ROOT": "/shards"}},
+                      "gpu-probe": {"image": "x"}}}
+    said = abm.fm.apply(c, shared=(), env={"TZ": "Europe/Rome"})
+    assert c["services"]["web"]["environment"] == {"TZ": "Europe/Rome"}
+    assert c["services"]["worker"]["environment"] == {"SHARDS_ROOT": "/shards", "TZ": "Europe/Rome"}
+    assert c["services"]["web"]["volumes"] == vols and c["services"]["worker"]["volumes"] == vols
+    assert c["services"]["gpu-probe"] == {"image": "x"}, "only web and worker"
+    assert len(said) == 2
+    assert abm.fm.apply(c, shared=(), env={"TZ": "Europe/Rome"}) == []
