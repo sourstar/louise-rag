@@ -14,7 +14,7 @@ measurements still owed. The gutenberg graph is called `gutenberg-graph`.*
 | D1 | the official Wikidata JSON entity dump (`dumps.wikimedia.org/wikidatawiki/entities/<date>/wikidata-<date>-all.json.bz2`), the current one | `origin.form`: the dump, not the HF corpus (its cleaner drops `snaktype`, statement ids, `datatype`, badges, `modified`, `lastrevid`); `cutoff_rule: dated-dumps`; items AND properties (the lexeme dump is separate and not taken) |
 | D2 | no bulk import of Wikimedia's vectors; ask Wikimedia for the chunk texts; meanwhile embed nothing in bulk | no `kind: "archive"` credit at creation (the Codex is written once: an archive adopted later needs a daughter); the collection embeds through the worker like any other, at night |
 | D3 | one layer; the language list a parameter; a language added = a daughter | see §3: the carry-by-hash rule of 06 §6.3 does the rest |
-| D4 | dates and coordinates formatted by Wikibase's `wbformatvalue` in a PINNED image beside the parser; unreachable = deferral | the image digests in the Codex `profile` |
+| D4 | ~~Wikibase's `wbformatvalue` in a pinned image~~ **REVISED 2026-10-19 (operator: "D4 Python")**: dates, coordinates and quantities formatted by a deterministic Python formatter of our own (`app/plugins/wikidata/format.py`), vendored beside the textifier; no service beside the parser | the text is a pure function of the dump and the plugin's code (invariant 3); the formatter's version is the parser's; byte parity with Wikimedia's own texts is not sought (D2 never relied on it) |
 | D5 | gutenberg-graph = an annotations collection amended (A-K1..K4) | written into 02 §2.10, 05 §5.5, 09 §9.5/§9.8/§9.14 when its build starts, after wikidata |
 | D6 | `tokenizers` (Hugging Face, Rust) in the platform image, pinned | the chunker cuts at tokens of jina-v3's tokenizer |
 
@@ -62,7 +62,8 @@ look labels up; the record's `sections` must already hold the text.
 `parse()` therefore reads the entity's bytes AND a **label table** of the
 same dump — a derived, local artefact the plugin builds in its first
 streaming pass (`labels.sqlite`: id → label per language, descriptions
-not needed) — and the formatter of D4. Two consequences, both amendments
+not needed) — and formats dates, coordinates and quantities itself (D4,
+revised: `format.py`, no service). Two consequences, both amendments
 (06 §6.4, §3 below): `origin_hash` still covers the entity's own line
 (the unit a query returns), and a verifier reproducing a record needs the
 same dump's label table, which the snapshot pins by naming the dump
@@ -126,9 +127,9 @@ only after it exists (memory: keys-registered-only).
   origin": the plugin builds a derived table of the pinned origin (the
   label table) and names, in `origin.form`, what of the text comes from
   it; `origin_hash` keeps covering the document's own bytes; a verifier
-  reproduces the record from the same dump. And "a parser that runs a
-  pinned service beside it" (the formatter): its image digests are in the
-  Codex `profile`, and an unreachable service is a deferral.
+  reproduces the record from the same dump. The clause "a parser that
+  runs a pinned service beside it" is WITHDRAWN with D4's revision: no
+  service, the formatter is code.
 - **02 §2.7** — adding a language is a daughter whose records gain a
   section: the recut is carried by chunk hash (06 §6.3), so the mother's
   vectors stay and only the new language is embedded. No new rule, one
@@ -144,9 +145,15 @@ only after it exists (memory: keys-registered-only).
 3. The plugin: dump reader (streaming, truncated-stream safe), pack and
    label table, `discover`/`fetch`, ids, pruning; tests on dump-shaped
    fixtures (three real entities from the node's probe).
-4. The textifier vendored (BSD-3 and MIT notices kept), the formatter
-   client with a `null` fallback for tests and deferral in production;
-   `parse` producing the sections; `records-vs-origin` on the sample.
+4. ✔ (2026-10-19 night) The textifier vendored (BSD-3 notice kept;
+   `textify.py`: the dataclasses and `to_text` as theirs, the normaliser
+   adapted — labels from a callable over the label table, aliases in dump
+   order, a missing value label rendered as the id) and the formatter of
+   our own (`format.py`: time by precision and calendar, coordinates in
+   DMS by precision, quantities with their unit label; en/de/fr/es/it
+   month names, ISO elsewhere) — tests over the real entities. Still to
+   do here: `parse` producing the sections; `records-vs-origin` on the
+   sample.
 5. The chunker and the tokenizer (D6: `tokenizers` in requirements and
    the image); the acquisition spec (dated dumps, `max_conns` 2, the
    checksums file of the dump directory); the recipe TOML.
@@ -204,5 +211,25 @@ only after it exists (memory: keys-registered-only).
   Deutschland e. V., 2025) and WikidataTextEmbedding @ c9dc819 (106M, of
   which evaluation/ is 106M; src 74K; MIT, Jonathan Fraine, 2024). The
   textifier's `src` is what gets vendored; asked for its files.
-- Still owed: the multi-stream check over a larger span; entities per
-  10⁷-id range; chunks per entity from a textifier run on the 968.
+- ✔ Multi-stream: the first 64 MiB hold ONE stream header (BZh91AY&SY
+  at offset 0), 840 byte-aligned block magics, no end-of-stream marker —
+  a single-stream file of many blocks. The fetch stays one Range-resumable
+  download; parallel decompression would need a block-level bit search
+  (lbzip2) or the .gz, neither taken.
+- ✔ The two repositories' trees are on the branch `probe/wikidata-sources`
+  (1b65fb3; never merged). München's reading: the textification is
+  `src/Textifier/WikibaseTextifier.py` (12,918 B) + `JSONNormalizer.py`;
+  time and coordinate values were formatted by POSTing `wbformatvalue` to
+  a running Wikibase (hence their MariaDB + MediaWiki) — D4 revised to a
+  formatter of our own; labels came from `LazyLabelFactory` (Action API +
+  MariaDB cache) — ours from the dump's label table; the rank filter
+  keeps the preferred statements of a property where any is preferred,
+  else the normal ones, drops deprecated; external ids on, qualifiers on,
+  references off; aliases were deduplicated through a `set`, so their
+  order was NOT deterministic — ours keep the dump's order. Chunking is
+  in WikidataTextEmbedding `src/utils.py chunk_item_text` (label +
+  description + aliases + the sticky P31 claims + the largest run of
+  further claims that fits 1,024 tokens, binary search; a single over-long
+  claim trimmed by tokenizer offsets).
+- Still owed: entities per 10⁷-id range; chunks per entity from a run of
+  our textifier over the 968.
