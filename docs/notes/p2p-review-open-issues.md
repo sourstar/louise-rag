@@ -393,6 +393,72 @@ under all" checks accept both modes; the partition filter runs under
 `p2p` only. Step 2 — publishing inside the worker, retiring the cron and
 the pause — stays open (scheduling.md §6 first).
 
+### 11. 418 duplicate holder bundles on the node — WITHDRAWN (operator: "I agree")
+
+München's measurement of the first holder day: the pass bundled 418
+partially held parts a second time after each restart — a new id each
+time, `created_at` being in the signed header, the same `content_digest`
+— 2,491,650 redundant chunks, 12.1 GiB on tank, and every peer taking the
+node's offers fetches both copies to find them identical. dd58729 (§1,
+"exclude claimed records") stops it for the future; for the 418 the spec
+already had the tool: 03 §3.6's `withdraw` attestation — a producer
+retracts its own bundles, peers drop them, no key is burned. Nothing
+published is deleted, so a wrong bundle is never recalled; a *redundant*
+one is retracted by its producer's own word, which is exactly what the
+attestation is for.
+
+Built: `app/share/withdraw.py` and `louise dev withdraw-duplicates
+<collection> [--dry-run] [--yes]` (07 §7.3). Per part, this producer's
+accepted bundles sharing a `content_digest`; the earliest stays; ONE
+attestation (`check` and `result` `withdraw`, `detail.bundles` the ids,
+09 §9.8) is written at the attestation path, published as an event for
+the beat to forward (`attest.publish`), and the withdrawn directories and
+coverage rows go from the producer — its vectors stay, the kept bundle
+covers them. Every peer acts at its fetch beat (`accept.beat` →
+`withdraw.drop_withdrawn`): a held bundle the attestation names loses its
+row and directory when the SIGNER IS ITS PRODUCER (the header's
+`producer_pubkey`, else the row's) and nobody else's; its vectors go only
+where no other accepted bundle of the part claims their records (a
+duplicate's stay; a faulty bundle's chunks "return to without vectors").
+A digest that still claims and offers a withdrawn bundle (a neighbour
+that has not acted yet) does not bring it back: the listing skips a
+bundle whose known producer withdrew it; one whose producer is not known
+here yet is fetched header first (a few KB), the producer recorded, the
+rows never fetched. `offered_elsewhere` leaves withdrawn offers out, so a
+holder is not left waiting on one. A withdraw signed by a stranger
+withdraws nothing — the general case has strangers' keys in the event
+stream, and an attestation is only verified, not trusted, until §9.2's
+trust file says so. Copy state and trust ignore the attestation (neither
+a pass nor a fail). Tests: tests/share/test_withdraw.py (5).
+
+To run on the node, once: `louise dev withdraw-duplicates gutenberg
+--dry-run` (lists the 418 pairs, writes nothing), then `--yes` under the
+cron's pause (it takes the collection's lock). Perugia drops what it took
+of the 418 at the beat after the attestation reaches it.
+
+### 12. A led part a neighbour already offers was re-embedded — FIXED (Perugia's find)
+
+Perugia's first contribute pass under 6d3084b (15:39–16:04 CEST, 1,500 s):
+`probed 780, mine 636, left_to_fetch 156, held 1, built 576 chunks`. Its
+probe afterwards: 632 of the 636 `mine` parts had a neighbour's bundle
+offered — a fetched, unaccepted coverage row — and only 4 were truly
+unheld. `open_shards` counts a part open until a bundle is ACCEPTED here,
+and §1's "one version where one exists" check (`offered_elsewhere`) ran
+only for parts led ELSEWHERE: a led part whose bundle the node's holder
+pass had offered an hour before went to the GPU. Fixed in
+`contribute.once`: the check runs for both lists; a led part a live
+neighbour both claims and offers is `left_to_fetch` too, and the fetch
+beat takes it in; a part with a claim nobody serves, or none, is built as
+before. Test: `test_a_leader_leaves_a_led_shard_whose_bundle_a_neighbour_offers_to_the_fetch`.
+Perugia stopped contribute at 16:04 (SIGTERM, `interrupted: true`, 07
+§7.7) until this is deployed.
+
+Perugia's intake since the operator's `ack --origin-unchecked` (13:27Z):
+116 bundles, 665,823 chunks by 13:52Z (4.8 bundles/min); no deferred,
+stalled or refused lines; the node's digest 1,096,042 bytes. Coverage at
+13:52Z: 1,255 offered-unaccepted rows over 881 parts, 114 fetched and
+accepted in one beat, 8 local.
+
 ### Still open after the review
 
 - **Vector convergence** ([vector-convergence.md](vector-convergence.md),

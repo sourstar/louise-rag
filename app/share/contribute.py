@@ -231,7 +231,7 @@ def announce(con, codex, snapshot: sn.Snapshot, header: dict[str, Any], member: 
     return eid
 
 
-def offered_elsewhere(codex, con, node_con, *, now: float) -> dict[str, list[str]]:
+def offered_elsewhere(codex, con, node_con, *, now: float, skip=None) -> dict[str, list[str]]:
     """Per open shard id, the bundle ids a live neighbour both CLAIMS for it
     (its digest's `coverage`, folded into the map as `claimed_by`) and
     OFFERS (its digest's `members`), and this peer has neither accepted nor
@@ -241,7 +241,7 @@ def offered_elsewhere(codex, con, node_con, *, now: float) -> dict[str, list[str
     if node_con is None:
         return {}
     from app.share import accept
-    offered = {p["bundle_id"] for p, _hints in accept.listed_bundles(node_con, codex, con, now=now)}
+    offered = {p["bundle_id"] for p, _hints in accept.listed_bundles(node_con, codex, con, now=now, skip=skip)}
     if not offered:
         return {}
     out: dict[str, list[str]] = {}
@@ -379,7 +379,8 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
     # RULE 1 — what this peer already holds for a shard another peer leads is
     # bundled first, whoever leads it: no GPU, and the leader embeds only
     # what still lacks a bundle (04 §4.5, amended 2026-10-19)
-    elsewhere = offered_elsewhere(codex, con, node_con, now=now) if others else {}
+    from app.share import withdraw as withdraw_mod
+    elsewhere = offered_elsewhere(codex, con, node_con, now=now, skip=withdraw_mod.withdrawn(root, name, codex))
     for shard in others:
         if stop is not None and stop.is_set():
             out["interrupted"] = True
@@ -396,18 +397,26 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
     if out["held"]:
         say(f"[{name}] share contribute: {len(out['held'])} of {out['probed']} open shard(s) led elsewhere "
             f"bundled from vectors held here, no GPU spent (RULE 1)")
-    if out["left_to_fetch"]:
-        say(f"[{name}] share contribute: {len(out['left_to_fetch'])} open shard(s) left to the fetch beat: a "
-            f"neighbour offers a bundle for each (one version where one exists)")
+    def _fetch_line() -> None:
+        if out["left_to_fetch"]:
+            say(f"[{name}] share contribute: {len(out['left_to_fetch'])} open shard(s) left to the fetch beat: a "
+                f"neighbour offers a bundle for each (one version where one exists)")
     if not mine:
         if not out["interrupted"]:
             say(f"[{name}] share contribute: no open shard this peer leads among {len(me_live)} peer(s)")
+        _fetch_line()
         return out
     for shard in mine:
         sid = f"{shard.slice}/{shard.n:05d}"
         if stop is not None and stop.is_set():
             out["interrupted"] = True
             break
+        if cov.shard_id(codex, sid) in elsewhere:
+            # led here, but a version exists and is served: the fetch beat
+            # takes it in — not the GPU (Perugia, 2026-10-19: 632 of 636 led
+            # parts had a neighbour's bundle offered and were re-embedded)
+            out["left_to_fetch"].append(sid)
+            continue
         built = vb.build(codex, shards=[shard],
                          records_for=lambda s: landing.records_for(root, name, snapshot,
                                                                    f"{s.slice}/{s.n:05d}", None),
@@ -423,4 +432,5 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
             say(f"[{name}] share contribute: {sid}: built, and this peer holds no vector of it to export")
         elif got == "claimed":
             say(f"[{name}] share contribute: {sid}: every record held is in a bundle made here already")
+    _fetch_line()
     return out

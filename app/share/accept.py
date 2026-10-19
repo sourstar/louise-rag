@@ -146,16 +146,40 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     known = cov.row(con, bundle_id)
     if known and known["accepted_at"]:
         return {"outcome": "held", "bundle_id": bundle_id}
+    from app.share import withdraw as withdraw_mod
+    withdrawn = withdraw_mod.withdrawn(root, name, codex).get(bundle_id) or frozenset()
+    if withdrawn and known and withdraw_mod.by_producer({bundle_id: withdrawn}, bundle_id, known["producer"]):
+        return {"outcome": "ignored", "bundle_id": bundle_id, "why": "withdrawn by its producer (09 §9.8)"}
     staging = root / name / "state" / holdings.STAGING
     staged_dir = staging / member.name
-    for t in member.torrents():
-        if transport.landed_whole(staged_dir / t.path, t.length, t.root):
-            continue                                # whole from an earlier beat; a holed one is fetched on
-        landed_at = transport.fetch_file(session, torrent=t, member=member.name, staging=staging,
-                                         hints=hints, stop=stop, log=log)
-        if landed_at != staged_dir / t.path:            # libtorrent's layout differed: ours
-            (staged_dir / t.path).parent.mkdir(parents=True, exist_ok=True)
-            landed_at.replace(staged_dir / t.path)
+    torrents = member.torrents()
+    if withdrawn:
+        # some key withdrew this id and its producer is not known here yet:
+        # the header (a few KB) says whose it is before the rows are fetched
+        torrents = tuple(sorted(torrents, key=lambda t: t.path != "header.json"))
+    for t in torrents:
+        if not transport.landed_whole(staged_dir / t.path, t.length, t.root):
+            landed_at = transport.fetch_file(session, torrent=t, member=member.name, staging=staging,
+                                             hints=hints, stop=stop, log=log)
+            if landed_at != staged_dir / t.path:            # libtorrent's layout differed: ours
+                (staged_dir / t.path).parent.mkdir(parents=True, exist_ok=True)
+                landed_at.replace(staged_dir / t.path)
+        if withdrawn and t.path == "header.json":
+            try:
+                header = json.loads((staged_dir / t.path).read_bytes())
+                producer = str(header.get("producer_pubkey") or "") or None
+            except (OSError, ValueError, AttributeError):
+                producer = None
+            if withdraw_mod.by_producer({bundle_id: withdrawn}, bundle_id, producer):
+                # the producer's word: not fetched, not judged; the row names
+                # the producer so the listing never asks for it again
+                cov.record(con, bundle_id=bundle_id, shard=cov.shard_id(codex, str(
+                    header.get("shard") or payload.get("shard") or "x/00000")), producer=producer, uids=[],
+                    chunks=0, tiers={}, source=cov.FETCHED, accepted_at=None)
+                shutil.rmtree(staged_dir, ignore_errors=True)
+                say(f"[{name}] share: bundle {bundle_id[:23]}… withdrawn by its producer {producer[:23]}…: "
+                    f"not taken in (03 §3.6)")
+                return {"outcome": "ignored", "bundle_id": bundle_id, "why": "withdrawn by its producer (09 §9.8)"}
     for f in member.files:
         got = shard_mod.pieces_root_of(staged_dir / f.path)
         if got != f.root:
@@ -577,15 +601,22 @@ def _digest_fingerprint(node_con, *, now: float) -> tuple:
     return tuple((r[0], r[1]) for r in rows)
 
 
-def listed_bundles(node_con, codex, con, *, now: float) -> list[tuple[dict[str, Any], list[tuple[str, int]]]]:
+def listed_bundles(node_con, codex, con, *, now: float,
+                   skip: dict[str, frozenset[str]] | None = None
+                   ) -> list[tuple[dict[str, Any], list[tuple[str, int]]]]:
     """`(payload, hints)` for every bundle member a live neighbour's digest
     offers for the collection that this peer has not accepted — the payload
     in the `bundle` event's shape (09 §9.9), from the member's name, root,
-    bytes and files; the hints the swarms of the neighbours offering it."""
+    bytes and files; the hints the swarms of the neighbours offering it.
+    `skip`: bundle id -> the keys that withdrew it (`withdraw.withdrawn`);
+    one whose producer is known here and among them is never asked for;
+    one whose producer is not known yet is, and `take` reads its header
+    first."""
     from urllib.parse import urlsplit
-    from app.share import peers
+    from app.share import peers, withdraw as withdraw_mod
     prefix = f"bundle-{codex.space_segment}-"
     found: dict[str, tuple[dict[str, Any], list[tuple[str, int]]]] = {}
+    skip = skip or {}
     for n in peers.neighbours(node_con, now=now):
         d = peers.digest_of(node_con, n["key"]) or {}
         port = d.get("peer_port")
@@ -608,6 +639,8 @@ def listed_bundles(node_con, codex, con, *, now: float) -> list[tuple[dict[str, 
                 known = cov.row(con, bundle_id)
                 if known and (known["accepted_at"] or any(v == "fail" for v in known["tiers"].values())):
                     continue                # accepted here already, or refused by this peer's ladder
+                if known and withdraw_mod.by_producer(skip, bundle_id, known["producer"]):
+                    continue                # withdrawn by its producer (03 §3.6)
                 payload = {"collection": codex.collection_id, "space_id": codex.space_id,
                            "snapshot_id": e.get("snapshot_id"), "shard": None, "uids": [],
                            "bundle_id": bundle_id, "root": m.get("root"), "bytes": m.get("bytes"),
@@ -623,6 +656,7 @@ def from_digests(collections, cons: dict, node_con, *, session_factory, root: Pa
     here, taken in as its event would have had it taken. The digests are
     read when one arrived since the last read, or after `transport.BACKOFF_S`;
     a bundle nobody served waits that long before it is asked for again."""
+    from app.share import withdraw as withdraw_mod
     global _digests_read
     now = time.time() if now is None else now
     out = {"accepted": 0, "refused": 0, "ignored": 0, "held": 0, "deferred": 0, "offered": 0}
@@ -637,7 +671,8 @@ def from_digests(collections, cons: dict, node_con, *, session_factory, root: Pa
             continue
         if stop is not None and stop.is_set():
             break
-        offered = listed_bundles(node_con, codex, cons[c.name], now=now)
+        offered = listed_bundles(node_con, codex, cons[c.name], now=now,
+                                 skip=withdraw_mod.withdrawn(root, c.name, codex))
         out["offered"] += len(offered)
         for payload, hints in offered:
             if stop is not None and stop.is_set():
@@ -710,6 +745,26 @@ def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop
                 and c.codex.privacy == "public"
         except Exception:   # noqa: BLE001 — a gate error withholds
             return False
+    # what producers withdrew (03 §3.6; 09 §9.8) goes first: a bundle held
+    # here loses its row and its directory, its vectors where no other bundle
+    # claims the records — and is never asked for again below
+    from app.share import withdraw as withdraw_mod
+    for c in collections:
+        codex = getattr(c, "codex", None)
+        if codex is None or cons.get(c.name) is None:
+            continue
+        try:
+            def _delete(ids, c=c):
+                from app import embeddings
+                from app.hold import records as rec
+                local = rec.local_collection(root, c.name, c.codex)
+                return embeddings.delete_chunks(ids, collection=local)
+            got = withdraw_mod.drop_withdrawn(root, c.name, codex, cons[c.name], delete_chunks=_delete, log=log)
+            if got["dropped"] or got["not_the_producer"]:
+                out.setdefault("withdrawn", {})[c.name] = got
+        except Exception as e:   # noqa: BLE001 — one collection, not the beat
+            if log:
+                log(f"[{c.name}] withdraw: {type(e).__name__}: {e}"[:300])
     for ev in pending(node_con):
         if stop is not None and stop.is_set():
             break

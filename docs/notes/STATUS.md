@@ -26,9 +26,15 @@ it left open is below.
   bundles are pulled from digests, not only carried by events; a pinned
   address wins over the declared one; a fetch nobody serves is deferred
   and bounded, never hung; a bundle is announced only where it is served
-  and a fetched public collection is shared. Still open there: vector
-  convergence (measure first), `share contribute` under the worker's
-  lock (a scheduling change), a leecher's `records-vs-origin`.
+  and a fetched public collection is shared. Deployed on the node 16:00
+  CEST; its first holder day bundled 1,296 parts (7.9 M chunks) with no
+  GPU and, after each restart, 418 parts a second time — withdrawn by the
+  producer's own `withdraw` attestation (03 §3.6; `dev
+  withdraw-duplicates`, note §11; operator's decision). Perugia's first
+  pass re-embedded led parts the node already offered (note §12, fixed).
+  Still open there: vector convergence (measure first), `share contribute`
+  under the worker's lock (a scheduling change), a leecher's
+  `records-vs-origin`.
 - **`hold embedder calibrate`** is a stub: it wants two builds of one model
   to compare (step 3).
 - **Normattiva, what the second part left** (2026-10-12,

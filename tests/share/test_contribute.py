@@ -421,3 +421,52 @@ def test_a_part_completed_by_its_leader_gets_a_bundle_of_the_new_records_only(re
     said: list[str] = []
     third = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)], log=said.append, **kw)
     assert sid not in third["mine"] and not any(b["shard"] == sid for b in third["bundles"])
+
+
+def test_a_leader_leaves_a_led_shard_whose_bundle_a_neighbour_offers_to_the_fetch(ready):
+    """Perugia, 2026-10-19: 632 of the 636 parts it led had a neighbour's
+    bundle offered (the node's holder pass) and were re-embedded — the offer
+    check ran only for shards led elsewhere. A led shard a live neighbour
+    both claims and offers is the fetch beat's too (RULE 1); one with a claim
+    nobody serves, or none, is built."""
+    from app.hold import shard as shard_mod
+    from app.share import messages
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    shards = [f"{s.slice}/{s.n:05d}" for s in snapshot.shards]
+    assert len(shards) >= 2
+    offered_sid = shards[0]
+    now = time.time()
+    files = [[f, "sha256:" + "a" * 64, 10] for f in sorted(mem.BUNDLE_FILES)]
+    bid = "sha256:" + "b" * 64
+    member = {"name": f"bundle-{codex.space_segment}-{'b' * 64}", "root": shard_mod.member_root(
+        tuple(shard_mod.MemberFile(p, r, b) for p, r, b in files)), "bytes": 40, "files": files}
+    entry = {"collection_id": codex.collection_id, "lineage_id": codex.collection_id, "title": "g",
+             "snapshot_id": snapshot.snapshot_id, "snapshot_hash": snapshot.hash, "codex_hash": "sha256:" + "2" * 64,
+             "license": "green", "privacy": "public", "members": [member],
+             "coverage": [{"shard": cov.shard_id(codex, offered_sid), "bundles": [bid]}]}
+    digest = messages.digest_body(key=PEER_KEY, address="http://10.0.0.7:30042", neighbours=[],
+                                  benchmarks=[], collections=[entry], now=now)
+    peers.record_digest(kw["node_con"], {**digest, "peer_port": 6881}, now=now)
+    assert cov.fold_claims(kw["con"], codex, [digest]) == 1
+    # this peer so heavy that it leads every shard; the neighbour is live
+    live = [rendezvous.Peer(OUR_KEY, 1e12), rendezvous.Peer(PEER_KEY, 1.0)]
+    embed_calls: list[int] = []
+    real_embed = kw["embed"]
+
+    def counted(texts):
+        embed_calls.append(len(texts))
+        return real_embed(texts)
+    said: list[str] = []
+    out = contribute.once(root, "gutenberg", codex, live=live, log=said.append, **{**kw, "embed": counted})
+    assert out["mine"] == shards, "the fixture: this peer leads everything"
+    assert out["left_to_fetch"] == [offered_sid], "led here, offered there: the fetch beat's, not the GPU's"
+    assert {b["shard"] for b in out["bundles"]} == set(shards) - {offered_sid} and out["built"] > 0
+    assert not any(b["shard"] == offered_sid for b in out["bundles"]) and any("left to the fetch beat" in s for s in said)
+    # once the offered bundle is held (or refused) here, the shard is this peer's again
+    cov.record(kw["con"], bundle_id=bid, shard=cov.shard_id(codex, offered_sid), producer=PEER_KEY,
+               uids=[], chunks=0, tiers={"T0": "fail"}, source=cov.FETCHED, accepted_at=None)
+    again = contribute.once(root, "gutenberg", codex, live=live, **kw)
+    assert again["left_to_fetch"] == [] and again["mine"] == [offered_sid] and again["built"] > 0
+    assert [b["shard"] for b in again["bundles"]] == [offered_sid]

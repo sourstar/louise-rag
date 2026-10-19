@@ -1228,6 +1228,26 @@ the old directory set aside as `state/bundles.moved-<time>` for the
 operator to delete, the link put in its place. `rename` and `forget` follow
 the link as they do the SHARD's.
 
+`dev withdraw-duplicates <collection> [--dry-run] [--yes]` (amended
+2026-10-19, operator) is the producer's side of 03 §3.6's `withdraw`, for
+the one case met so far: this peer's accepted bundles that share a
+`content_digest` with another of its own for the same part (the holder pass
+bundled 418 partially held parts again after every restart, a new id each
+time since `created_at` is in the signed header). It lists the pairs, keeps
+the earliest of each, and — asked, or `--yes` — writes ONE attestation
+(`check` and `result` `withdraw`, `detail.bundles` the ids, 09 §9.8), keeps
+it at the attestation path, publishes it as an event for the beat to
+forward, and removes the withdrawn directories and coverage rows here; the
+vectors stay, the kept bundle covers them. Every peer acts on it at its
+fetch beat: a held bundle the attestation names loses its row and its
+directory when the signer is its producer and nobody else's word, and its
+vectors go only where no other accepted bundle of the part claims their
+records (a duplicate's stay; a faulty bundle's chunks return to *without
+vectors*, 03 §3.6); its digests and `bundle` events never bring a withdrawn
+bundle back. Takes the collection's lock; exit 2 without `--yes` off a
+terminal, or when the process cannot name its image (an attestation names
+it).
+
 A deposit collection (02 §2.9) has the same tree, and its `shard/` holds
 only `codex.json` and the calibration member. Its `origin/` holds the
 deposits, byte-exact — one directory per deposit, named by its deposit
