@@ -1,4 +1,4 @@
-# wikidata and gutenberg-wd-kg — how they become Louise collections
+# wikidata and gutenberg-graph — how they become Louise collections
 
 *Plan, 2026-10-18 (night, unattended). The design is
 [wikidata-plugins.md](wikidata-plugins.md) (the operator's, with what was
@@ -14,7 +14,7 @@ is built from what waits for a decision.*
 | **D2** | **The archive's vectors.** 85.7 % reproduce exactly; ~14 % are vectors of an older text (their cache keeps vectors of entities whose `modified` did not move). | Promise 8: carrying them all is a wrong artefact that passes every check. | **Ask Wikimedia for the chunk texts** (Philippe Saade, Wikidata talk:Embedding_Project): with them a `verbatim` layer carries 100 % (the wikivec precedent). Meanwhile embed nothing in bulk. Failing that, embed it ourselves (53.7 M chunks: ~41 nights at batch 32). |
 | **D3** | **Languages and layers.** An entity is one record in every language; the design adds languages one at a time. | Invariant 1: one chunker per layer, every document in exactly ONE layer; the chunker is in `space_id`. | One layer whose chunker cuts the record's text in each of a declared **language list** (a chunker parameter); chunk ids carry the language. A language added = a new chunker parameter = a new Codex in the lineage, with **amendment A-W1**: a chunker whose output for every record is a superset of its mother's (only new languages' chunks added) carries the mother's vectors as they are (RULE 1), and embeds only the new language. |
 | **D4** | **Dates and coordinates.** Their text formats them through a pinned Wikibase (`wbformatvalue`, mw1.44.0). | A chunker that calls a service is new to the platform. | The formatter as a **pinned image** the chunker runs beside it (digests in the chunker's parameters), deferral when it is unreachable (never an error on a document), and a Python port only if it is proven equal over every distinct value of the corpus. |
-| **D5** | **gutenberg-wd-kg's shape** (§4): an annotations collection, amended. | Wire format (09 §9.5, §9.14) and 02 §2.10. | Amendment A-K1..K4 below. |
+| **D5** | **gutenberg-graph's shape** (§4): an annotations collection, amended. | Wire format (09 §9.5, §9.14) and 02 §2.10. | Amendment A-K1..K4 below. |
 | **D6** — DECIDED 2026-10-18 (operator: "Yes match it, if in the future they fix it") | **A new dependency: `tokenizers`** (Hugging Face's, Rust, no torch) in the platform image. The chunker cuts at 1,024 tokens of jina-v3's tokenizer; the app has no real tokenizer today (`_est_tokens` is chars/4). | CLAUDE.md: new dependencies, ask first. | Add it, pinned. The alternative, asking the encoder backend to tokenize, makes chunking depend on the GPU service. |
 
 ## 2. wikidata — the mapping
@@ -55,7 +55,7 @@ From legal-collection-template.md §11–12, STATUS "Lessons", and memory.
 | Licence gate before the first byte | CC0 corpus = green; the encoder's NC licence on the card |
 | `dev carry` MOVE took a live collection offline for 10 h | `--copy` always |
 
-## 4. gutenberg-wd-kg — an annotations collection, amended
+## 4. gutenberg-graph — an annotations collection, amended
 
 02 §2.10 already has the kind: claims made by a method about another
 collection's records, shared, adopted, checked; no space, no origin to

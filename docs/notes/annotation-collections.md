@@ -229,7 +229,7 @@ before any write. Inputs: the works measurement's `records.jsonl` and
 the classical `coverage.json` on the node (`/root/xlate-classical/out/`).
 
 The operator's "gutenberg graph collection" (2026-10-19 evening) is NOT
-these: it is `gutenberg-wd-kg`, the sibling of gutenberg and wikidata
+these: it is `gutenberg-graph`, the sibling of gutenberg and wikidata
 ([wikidata-plugins.md](wikidata-plugins.md), [wikidata-implementation.md](wikidata-implementation.md)),
 which waits on the wikidata collection and decisions D1–D5.
 
