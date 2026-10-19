@@ -113,3 +113,29 @@ def test_the_kind_is_encoded_in_the_native_id_and_recovered():
     # the numeric order the parts rule needs: every item before every property, each in number order
     nids = sorted((int(ids.native_id_of(e)) for e in ("Q42", "Q5", "P31", "Q149999999", "P1")))
     assert [ids.entity_id_of(n) for n in nids] == ["Q5", "Q42", "Q149999999", "P1", "P31"]
+
+
+SAMPLE = Path(__file__).parent / "fixtures" / "wikidata-mini" / "dump-sample.jsonl"
+
+
+def test_the_real_dump_head_reads_as_the_node_saw_it(tmp_path):
+    """Two entities from the node's probe of `latest-all.json.bz2`
+    (20261012), byte for byte, framed as the dump is: `[`, every line
+    ending `,`, the stream cut before `]` — a Range read. The reader
+    yields both, tolerates the cut, and keeps what the parser must handle
+    (wikidata-build-plan.md §5): a float coordinate, statement ids of
+    mixed case within one item, a commonswiki Category sitelink."""
+    data = SAMPLE.read_bytes()
+    assert data.startswith(b"[\n") and not data.rstrip().endswith(b"]")
+    path = write_dump(tmp_path / "wikidata-20261012-all.json", data)
+    got, result = dump.read_all(path)
+    assert [e.obj["id"] for e in got] == ["Q2711", "Q3331"] and result.entities == 2
+    assert not result.complete, "no closing bracket: a cut stream"
+    for e in got:
+        assert not e.raw.endswith(b",") and json.loads(e.raw) == e.obj
+    q3331 = got[1]
+    assert b'"latitude":45.772677777778' in q3331.raw and b'"precision":2.7777777777778e-06' in q3331.raw
+    sids = [s["id"] for ss in q3331.obj["claims"].values() for s in ss]
+    assert any(s.startswith("Q3331$") for s in sids) and any(s.startswith("q3331$") for s in sids)
+    assert q3331.obj["sitelinks"]["commonswiki"]["title"].startswith("Category:")
+    assert ids.native_id_of("Q3331") == "3331" and ids.kind_of("Q3331") == "item"

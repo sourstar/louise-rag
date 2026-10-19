@@ -170,3 +170,39 @@ only after it exists (memory: keys-registered-only).
 - entities per 10⁷-id range and chunks per entity (from the probe's
   textifier run on a sample), for `shard_records`;
 - that the two repositories clone at the pinned commits, with licences.
+
+### Answered by München, 2026-10-19 evening (read-only, from the node)
+
+- Dated directories: 20261007, 20261009, 20261012, 20261014, 20261016.
+  Only 20261012 is a full run; 20261014 is lexemes + truthy-BETA and
+  20261016 lexemes-BETA only. `latest-all.json.bz2` IS 20261012:
+  103,409,622,204 B, Last-Modified 13 Oct 2026 07:58:53 GMT, md5
+  `7afa3658634fb291fb5c8672631d3fb9`, `Accept-Ranges: bytes`; the
+  directory's `md5sums` (401 B) and `sha1sums` (449 B) are the checksum
+  files the acquisition spec names. The .gz is 156.5 GB; the RDF forms
+  are larger still. So the fetch is ~103 GB and the spec's
+  `cutoff_rule: dated-dumps` must take the newest directory that holds an
+  `all.json.bz2`, not the newest directory.
+- Framing, from an 8 MB Range (24 s): one bz2 stream so far (the
+  multi-stream question is still open — the head alone cannot answer
+  it), ratio ~9.2, line 0 is `[`, one entity per line, EVERY line ending
+  `,` (the reader strips it; the last line's absence of a comma is not
+  relied on). 968 complete entities, all items, Q31…Q8269 — no property
+  this early; JSON sizes min 2,300, median 48,042, max 2,309,540 B.
+- Pitfalls the parser must handle (fixtures: `tests/fixtures/wikidata-mini/dump-sample.jsonl`,
+  Q2711 and Q3331 byte for byte):
+  - P625 `globecoordinate` carries FLOATS (`45.772677777778`,
+    `2.7777777777778e-06`): 09 §9.1 hashes no float, so the record writer
+    renders coordinates as decimal strings from the dump's own JSON text
+    (repr of the parsed float is not the origin's text — keep the text);
+  - statement ids differ in case within one item (`Q3331$…` and
+    `q3331$…`): compared case-insensitively, kept as written;
+  - `sitelinks` include `commonswiki` `Category:…` titles — not an
+    article, kept under `extra.sitelinks` like the rest.
+- Repositories cloned on the node at the pinned commits, tarred without
+  `.git`: WikidataTextifier @ 0befd7c (22K; BSD 3-Clause, Wikimedia
+  Deutschland e. V., 2025) and WikidataTextEmbedding @ c9dc819 (106M, of
+  which evaluation/ is 106M; src 74K; MIT, Jonathan Fraine, 2024). The
+  textifier's `src` is what gets vendored; asked for its files.
+- Still owed: the multi-stream check over a larger span; entities per
+  10⁷-id range; chunks per entity from a textifier run on the 968.
