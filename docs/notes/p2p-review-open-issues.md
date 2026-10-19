@@ -656,6 +656,23 @@ the pass ends its unit). Test:
 The mine path still chunks a led part's records to find its pending
 chunks (`vectors_build.pending`) — that is the build's own work.
 
+Measured by Perugia the same evening: `held 0` on both passes (the
+exclusion holds). Probe phase 23 min on 0118423, under 3 min on a894a3f
+(container start included). The 0118423 pass, stopped after two built
+parts (SIGTERM took 5 s, exit 130): probed 869, claimed 211,
+left_to_fetch 30, built 1,265 chunks, 3 bundles accepted and announced
+(da/00001 584 chunks — 8 embedded, 576 this peer's own from the stopped
+15:39 pass, never bundled; de/00001 790; de/00002 467), each disjoint
+from the node's copy by the union (da/00001: 5,231 + 584 = 5,815 of
+5,815, closed). Rate 790 chunks in 373 s bundle to bundle ≈ 127 chunks a
+minute. Remaining led work at 20:10: 530 open parts with no offer
+(311,364 chunks), 96 partial with only the deprecated twin offered
+(55,413), 4 whole parts — about 366,800 chunks, about 48 hours at that
+rate: the intake turned most "offered" parts into accepted partial node
+copies whose completions are Perugia's. Coverage by union 5,679,122 of
+10,477,214. The a894a3f pass runs since 20:16:55 CEST (claimed 237 of
+895 probed).
+
 ### Still open after the review
 
 - **Vector convergence** ([vector-convergence.md](vector-convergence.md),
