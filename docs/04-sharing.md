@@ -505,7 +505,16 @@ many holders joining a network do not make as many versions of every
 part: a part whose bundle a live neighbour both claims and offers is
 left to the fetch, which takes that bundle in and compares it with the
 vectors held here ("duplicates are checks", below); a version that exists
-and is served is reused, not remade.
+and is served is reused, not remade. A producer that nonetheless finds two
+equivalent copies of a part among its own bundles (one `content_digest`)
+keeps one CURRENT and deprecates the rest (03 §3.6; 09 §9.8): it serves
+them a day longer for fetches in flight, lists them apart in its digest
+(09 §9.9 `deprecated_members`), and nobody starts a fetch of one — unless
+the current copy is offered by nobody live, or came back nobody-served,
+when a deprecated copy, valid and equivalent, is the fallback. Two
+equivalent copies held together count a part's coverage once: summed, two
+copies of a partial part would read as the whole part and its leader
+would never embed the rest. *(Operator, 2026-10-19.)*
 
 **Weight and eligibility.** The weight is the peer's benchmark for this
 collection's space — the `benchmarks` entry of its digest whose

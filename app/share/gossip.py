@@ -145,12 +145,22 @@ def entries(root: Path, collections) -> list[dict[str, Any]]:
         # served (2026-10-18; 04 §4.2 "announcing what you do not serve would
         # be a lie")
         members = [m for m in members if seeder.serves(c, m.name)]
+        # a bundle its producer deprecated is still served for a while and
+        # listed apart, so no peer starts a fetch of it (operator, 2026-10-19)
+        deprecated_members: list = []
+        if shared and codex.space is not None:
+            from app.share import deprecate
+            try:
+                members, deprecated_members = deprecate.split_members(root, c.name, codex, members)
+            except Exception:   # noqa: BLE001 — an unreadable map: offered as before
+                pass
         try:
             lid = lineage_id(codex, resolve)
         except Exception:   # noqa: BLE001 — a chain this node cannot follow: the root is itself
             lid = codex.collection_id
         out.append(messages.collection_entry(codex, snap, members, codex_bytes=codex_bytes,
-                                             lineage_id=lid, coverage=coverage_of(root, c.name)))
+                                             lineage_id=lid, coverage=coverage_of(root, c.name),
+                                             deprecated_members=deprecated_members))
     return out
 
 

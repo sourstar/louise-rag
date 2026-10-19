@@ -1216,7 +1216,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | `check` | string | yes | the check, below |
 | `seed` | 64 hex or null | yes | the 32-byte seed of §9.1's sampler; `null` for an exhaustive or deterministic check |
 | `shards` | list of strings | yes | the parts the check ran on, as `"<collection_id>/<space>/<slice>/<n>"` for a vector check and `"<collection_id>/<slice>/<n>"` for a record check, sorted; `[]` for a check without parts; the key keeps the old word |
-| `result` | `"pass"` · `"fail"` · `"forgery"` · `"withdraw"` · `"supersedes"` | yes | |
+| `result` | `"pass"` · `"fail"` · `"forgery"` · `"withdraw"` · `"deprecate"` · `"supersedes"` | yes | |
 | `detail` | object | yes | per check, below; `{}` when the check has none |
 | `platform_image` | id | yes | the image the verifier ran; when it differs from the Codex's and `check` is `records-vs-origin` with `result: "pass"`, the attestation is the equivalence proof of 03 §3.4 |
 | `encoder_engine`, `encoder_weights` | id or null | yes | the engine (`engine_id`, §9.3) and weights used, for a statistical check and for a `forgery` proof (03 §3.5 has the proof carry the encoder: the recomputed hash means nothing without the encoder that made it; *amended 2026-10-07*); `null` otherwise |
@@ -1245,6 +1245,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | `merge` | exact | `{other: collection_id}` — two daughters' snapshots have one hash (04 §4.6); `snapshot_hash` is that hash |
 | `forgery` | proof | `{chunk_id, producer: key, bundle: id, claimed: id, recomputed: id, text: string or null, content_hash: BLAKE2b-128}` — `claimed` and `recomputed` are `H` over the vector as big-endian `space.dtype` bytes; `text` is the chunk's text, or `null` on a red-class collection, whose `content_hash` stands in for it |
 | `withdraw` | producer's own | `{bundles: [id…]}` — the signer retracts its own bundles; `result: "withdraw"` |
+| `deprecate` | producer's own | `{bundles: {deprecated_id: current_id, …}}` — the signer marks copies of its own REDUNDANT beside an equivalent one it keeps (one `content_digest`, §9.7); `result: "deprecate"`. Unlike `withdraw` the copies are valid: peers keep serving them a day longer (07 §7.3) and list them under `deprecated_members` (§9.9), never start a fetch of one, finish a fetch in flight past half its bytes, fall back to one when the current copy is offered by nobody, and count two equivalent copies held together once (04 §4.5). Only the producer's own signature deprecates its bundle. *Added 2026-10-19, operator* |
 | `supersedes` | claim | `{superseded: collection_id, evaluation: <the Codex's evaluation block>}` — a sister claims a better score; `result: "supersedes"` |
 
 A failing statistical attestation lists the failing chunk ids in
@@ -1313,7 +1314,8 @@ A collection entry:
 | `codex_hash` | id | yes | `H` of the bytes of the `codex.json` THIS peer holds (§9.3). A `codex.json` pulled from this peer whose bytes hash otherwise is dropped: the pull path answers with stored bytes and no signature (below), so this is what makes it self-verifying. It is per-peer and not an identity — two honest peers may hold the same `collection_id` under different titles, hence different `codex_hash` (02 §2.1) — so it is compared only against the digest that advertised it |
 | `license`, `privacy` | string | yes | the Codex's classes, so a receiver can skip what it may not take |
 | `members` | list of `{name, root, bytes}` | yes | every member offered — what this peer SERVES, the narrowing of `share --slices/--kinds` applied, so a fetcher defers what no digest offers (04 §4.3, amended 2026-10-19) — by name (§9.16); a record part's root is the snapshot's, a bundle's root is its member root. A member no snapshot lists — a bundle, a text index — carries `files: [[path, root, bytes], …]` in path byte order as well, from which a fetcher computes each file's torrent (§9.16); the member root is `H` over that list. *Added 2026-10-07, migration step 9e: without it a bundle's four infohashes do not follow from the event or the entry* |
-| `coverage` | list of `{shard, bundles: [id…]}` | yes | per part `"<collection_id>/<space>/<slice>/<n>"`, the bundle ids this peer has accepted through T0–T3, sorted |
+| `coverage` | list of `{shard, bundles: [id…]}` | yes | per part `"<collection_id>/<space>/<slice>/<n>"`, the bundle ids this peer has accepted through T0–T3, sorted — a deprecated copy held is among them (it is this peer's coverage of the part) |
+| `deprecated_members` | list, as `members` | no | bundles their producer deprecated (§9.8 `deprecate`) that this peer still serves: listed apart so that nobody starts a fetch of one, present only when there are any — a reader that does not know the key sees the entry it always saw, and simply never falls back to one. *Added 2026-10-19, operator* |
 
 A `restricted` collection appears only in digests sent to keys on the
 sender's allow list; a `never-share` collection appears in none.

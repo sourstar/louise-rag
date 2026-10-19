@@ -1050,57 +1050,64 @@ def cmd_dev_mark_embedded(a) -> int:
     return 0
 
 
-def cmd_dev_withdraw_duplicates(a) -> int:
-    """`louise dev withdraw-duplicates <collection>` (03 §3.6; 09 §9.8): this
-    peer's accepted bundles that share a `content_digest` with another of
-    its own for the same part — the holder pass bundled 418 partially held
-    parts again after every restart (operator, 2026-10-19) — withdrawn: one
-    attestation naming the later of each pair, published for peers to drop
-    them, the directories and rows gone here. Takes the collection's lock."""
+def cmd_dev_deprecate_duplicates(a) -> int:
+    """`louise dev deprecate-duplicates <collection>` (03 §3.6; 09 §9.8;
+    operator, 2026-10-19): this peer's accepted bundles that share a
+    `content_digest` with another of its own for the same part — the holder
+    pass bundled 418 partially held parts again after every restart — the
+    later of each pair DEPRECATED: one attestation pairing each with the
+    kept copy, published for peers; nothing removed here — the copies are
+    served one more day (`deprecate.KEEP_S`) for fetches in flight, never
+    offered for a new one, and go at the beat after the window. Takes the
+    collection's lock."""
     from app import identity
     from app.bundles import keys as node_keys
     from app.hold import equivalence, records as rec
-    from app.share import peers, seeder, withdraw as withdraw_mod
+    from app.share import deprecate as deprecate_mod, peers, seeder, withdraw as withdraw_mod
     name, codex = col.resolve(a.root, a.collection)
     try:
         key = node_keys.load_signing_key()
         own_key = identity.own()
     except Exception as e:   # noqa: BLE001
-        raise CodexError(f"a withdraw is signed and this peer has no key: {e}") from None
+        raise CodexError(f"a deprecation is signed and this peer has no key: {e}") from None
     image = equivalence.running_image()
     if not image:
         raise CodexError("this process does not know the image it runs (LOUISE_PLATFORM_IMAGE): an attestation "
-                         "names it (09 §9.8), so nothing is withdrawn")
+                         "names it (09 §9.8), so nothing is deprecated")
     snapshot = seeder.current_snapshot(col.shard_dir_of(a.root, name))
     if snapshot is None:
         raise CodexError(f"{name}: no snapshot in the SHARD")
     local = rec.local_collection(a.root, name, codex)
     from app import db as _db
     with _closing(_db.connect(local)) as con:
-        pairs = withdraw_mod.duplicates(a.root, name, codex, con, own_key=own_key)
-        for d in pairs:
-            print(f"  {d['shard'].rsplit('/', 2)[1]}/{d['shard'].rsplit('/', 1)[1]}  keep {d['keep'][:23]}…  "
-                  f"withdraw {', '.join(b[:23] + '…' for b in d['withdraw'])}  ({d['chunks']} chunks)", file=sys.stderr)
-        ids = [b for d in pairs for b in d["withdraw"]]
-        summary = {"collection": name, "parts": len(pairs), "bundles": len(ids),
-                   "chunks": sum(d["chunks"] for d in pairs)}
-        if not ids or a.dry_run:
-            _print({**summary, "withdrawn": False})
+        already = deprecate_mod.deprecated(a.root, name, codex)
+        groups = [dict(d, withdraw=[b for b in d["withdraw"] if not deprecate_mod.by_producer(already, b, own_key)])
+                  for d in withdraw_mod.duplicates(a.root, name, codex, con, own_key=own_key)]
+        groups = [d for d in groups if d["withdraw"]]        # stated already: not stated twice
+        for d in groups:
+            print(f"  {d['shard'].rsplit('/', 2)[1]}/{d['shard'].rsplit('/', 1)[1]}  current {d['keep'][:23]}…  "
+                  f"deprecate {', '.join(b[:23] + '…' for b in d['withdraw'])}  ({d['chunks']} chunks)",
+                  file=sys.stderr)
+        pairs = {b: d["keep"] for d in groups for b in d["withdraw"]}
+        summary = {"collection": name, "parts": len(groups), "bundles": len(pairs),
+                   "chunks": sum(d["chunks"] for d in groups)}
+        if not pairs or a.dry_run:
+            _print({**summary, "deprecated": False})
             return 0
         if not a.yes:
-            reply = _ask(f"Withdraw {len(ids)} duplicate bundle(s) over {len(pairs)} part(s) of {name}? Peers "
-                         f"drop them; the kept bundles cover the same chunks. [y/N] ")
+            reply = _ask(f"Deprecate {len(pairs)} duplicate copy(ies) over {len(groups)} part(s) of {name}? They stay "
+                         f"served for a day and are never offered for a new fetch. [y/N] ")
             if reply not in ("y", "yes"):
-                print("not withdrawn; nothing was written", file=sys.stderr)
+                print("not deprecated; nothing was written", file=sys.stderr)
                 return 2
-        _take_write_lock(a.root, name, "dev withdraw-duplicates")
+        _take_write_lock(a.root, name, "dev deprecate-duplicates")
         with _closing(peers.connect()) as node_con:
-            out = withdraw_mod.publish(a.root, name, codex, snapshot, ids, key=key, own_key=own_key, con=con,
-                                       node_con=node_con, platform_image=image,
-                                       log=lambda m: print(m, file=sys.stderr))
-        _print({**summary, "withdrawn": True, **out,
-                "note": "the worker forwards the attestation at its next beat; the seeder stops serving the "
-                        "withdrawn bundles within a minute"})
+            out = deprecate_mod.publish(a.root, name, codex, snapshot, pairs, key=key, own_key=own_key, con=con,
+                                        node_con=node_con, platform_image=image,
+                                        log=lambda m: print(m, file=sys.stderr))
+        _print({**summary, "deprecated": True, **out,
+                "note": "the worker forwards the attestation at its next beat; the digest lists the copies under "
+                        "deprecated_members from its next send; they are removed at the beat after keep_until"})
     return 0
 
 
@@ -2501,9 +2508,10 @@ def cmd_vectors_show(a) -> int:
     # the manifest opened for READING what the map says, ack or no ack: an
     # inspection, not a use (invariant 9 gates the stages, not `show`)
     with _closing(cov.manifest(a.root, name)) as mcon:
+        from app.share import deprecate
         out = cov.show(codex, snapshot, mcon,
                        attestations=copy_state.attestations(a.root, name, codex),
-                       peers=live, now=now)
+                       peers=live, now=now, redundant=deprecate.redundant_here(a.root, name, codex, mcon))
     _print(out)
     return 0
 
@@ -4255,12 +4263,13 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(p); p.add_argument("collection")
     p.add_argument("--dry-run", action="store_true", help="count them and mark nothing")
     p.set_defaults(fn=cmd_dev_mark_embedded)
-    p = dverbs.add_parser("withdraw-duplicates", help="this peer's bundles that duplicate another of its own for a "
-                                                      "part, withdrawn (03 §3.6; 09 §9.8); writes, asks first")
+    p = dverbs.add_parser("deprecate-duplicates", help="this peer's bundles that duplicate another of its own for a "
+                                                       "part, deprecated (03 §3.6; 09 §9.8): served one more day, "
+                                                       "never offered for a new fetch; writes, asks first")
     root_arg(p); p.add_argument("collection")
     p.add_argument("--yes", action="store_true", help="no question (07 §7.7: required without a terminal)")
-    p.add_argument("--dry-run", action="store_true", help="list the pairs and withdraw nothing")
-    p.set_defaults(fn=cmd_dev_withdraw_duplicates)
+    p.add_argument("--dry-run", action="store_true", help="list the pairs and deprecate nothing")
+    p.set_defaults(fn=cmd_dev_deprecate_duplicates)
     p = dverbs.add_parser("migrate", help="schema changes to a state database; writes; never runs on its own")
     mverbs = p.add_subparsers(dest="what", required=True)
     p = mverbs.add_parser("schema", help="apply pending schema changes to a collection's state database")

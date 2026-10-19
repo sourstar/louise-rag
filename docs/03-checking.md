@@ -760,6 +760,18 @@ ids (09 §9.8); peers drop those bundles, their chunks return to
 dropped vector. A miss found on a withdrawn bundle's vector is not a
 forgery.
 
+A producer that finds it has made two EQUIVALENT bundles of a part —
+one `content_digest`, as the holder pass did 418 times after restarts
+(2026-10-19) — has nothing wrong to retract: it keeps one copy *current*
+and publishes a `deprecate` attestation pairing each other copy with it
+(09 §9.8). A deprecated copy is valid, only redundant: its holder keeps
+serving it for a day so that a fetch in flight can finish, lists it apart
+in its digest (09 §9.9), and removes it after the window only where it
+holds the current copy too; a peer whose only copy of the part is the
+deprecated one keeps it. Nobody starts a fetch of a deprecated copy while
+the current one is offered; when the current one is offered by nobody,
+the deprecated copy is the fallback (04 §4.5). *(Operator, 2026-10-19.)*
+
 Two compliant bundles for one chunk are not a conflict. The first
 accepted vector is stored and searched; the second is compared with it
 and the comparison is published as a `vectors-sample` attestation

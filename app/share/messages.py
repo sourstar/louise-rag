@@ -59,9 +59,13 @@ def check_time(body: dict[str, Any], *, now: float, max_age_s: float | None = No
 # ---- bodies -------------------------------------------------------------------------
 
 def collection_entry(codex, snapshot: sn.Snapshot | None, members, *, codex_bytes: bytes,
-                     lineage_id: str, coverage=()) -> dict[str, Any]:
-    """One digest entry (09 §9.9): the collection as THIS peer holds it."""
-    return {
+                     lineage_id: str, coverage=(), deprecated_members=()) -> dict[str, Any]:
+    """One digest entry (09 §9.9): the collection as THIS peer holds it.
+    `deprecated_members`: bundles their producer deprecated, still served
+    for a while and listed apart so nobody starts a fetch of one; present
+    only when there are any (a reader that does not know the key sees the
+    entry it always saw)."""
+    out = {
         "collection_id": codex.collection_id,
         "lineage_id": lineage_id,
         "title": codex.descriptive.title,
@@ -73,6 +77,9 @@ def collection_entry(codex, snapshot: sn.Snapshot | None, members, *, codex_byte
         "members": [m.to_dict() for m in members],
         "coverage": list(coverage),
     }
+    if deprecated_members:
+        out["deprecated_members"] = [m.to_dict() for m in deprecated_members]
+    return out
 
 
 def digest_body(*, key: str, address: str, neighbours: list[dict[str, str]],

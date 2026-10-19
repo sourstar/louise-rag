@@ -6,7 +6,11 @@ bundles that share a `content_digest` for a part; `publish` writes and
 publishes one `withdraw` attestation and drops them here; a peer holding
 a withdrawn bundle drops it at the beat when the attestation's signer is
 its producer, its vectors only where no other bundle claims the records;
-digests and events never bring a withdrawn bundle back."""
+digests and events never bring a withdrawn bundle back. (The producer's
+command for DUPLICATES is `dev deprecate-duplicates`, tests/share/
+test_deprecate.py: a duplicate is valid, only redundant — operator,
+2026-10-19; `withdraw` has no command yet, `hold vectors check --drop`
+is the spec's.)"""
 import json
 import time
 
@@ -208,38 +212,3 @@ def test_digests_and_events_never_bring_a_withdrawn_bundle_back(ready):
     assert withdraw.drop_withdrawn(root, "gutenberg", codex, kw["con"], delete_chunks=lambda ids: 0)["dropped"] == 0
     # and a holder leading or probing the part is not left waiting for a withdrawn offer
     assert contribute.offered_elsewhere(codex, kw["con"], kw["node_con"], now=now, skip=ids) == {}
-
-
-def _json(capsys):
-    text = capsys.readouterr().out
-    return json.loads(text[text.index("{"):])
-
-
-def test_the_dev_command_lists_asks_and_withdraws(ready, monkeypatch, capsys):
-    from app import identity, louise
-    from app.bundles import keys as node_keys
-    root, snapshot, codex, kw = ready
-    first = _alone(root, codex, snapshot, kw)
-    sid, kept = first["bundles"][0]["shard"], first["bundles"][0]["bundle_id"]
-    dup = _second_version(root, codex, snapshot, kw, sid, later=int(time.time()) + 3600)
-    monkeypatch.setattr(node_keys, "load_signing_key", lambda path=None: OURS)
-    monkeypatch.setattr(identity, "own", lambda: OUR_KEY)
-    monkeypatch.delenv("LOUISE_PLATFORM_IMAGE", raising=False)
-    assert louise.main(["dev", "withdraw-duplicates", "gutenberg", "--root", str(root), "--yes"]) == 2, \
-        "an attestation names the image: without it nothing is withdrawn"
-    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", IMAGE)
-    assert louise.main(["dev", "withdraw-duplicates", "gutenberg", "--root", str(root), "--dry-run"]) == 0
-    out = _json(capsys)
-    assert out == {"collection": "gutenberg", "parts": 1, "bundles": 1, "chunks": first["bundles"][0]["chunks"],
-                   "withdrawn": False}
-    assert cov.row(kw["con"], dup) is not None, "a dry run withdraws nothing"
-    assert louise.main(["dev", "withdraw-duplicates", "gutenberg", "--root", str(root)]) == 2, \
-        "no terminal: --yes is required (07 §7.7)"
-    capsys.readouterr()
-    assert louise.main(["dev", "withdraw-duplicates", "gutenberg", "--root", str(root), "--yes"]) == 0
-    out = _json(capsys)
-    assert out["withdrawn"] is True and out["bundles"] == [dup] and out["dropped_here"] == 1
-    assert cov.row(kw["con"], dup) is None and cov.row(kw["con"], kept)["accepted_at"]
-    assert withdraw.withdrawn(root, "gutenberg", codex) == {dup: frozenset({OUR_KEY})}
-    assert louise.main(["dev", "withdraw-duplicates", "gutenberg", "--root", str(root), "--yes"]) == 0
-    assert _json(capsys)["bundles"] == 0, "nothing left: nothing written"

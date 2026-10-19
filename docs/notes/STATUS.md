@@ -28,9 +28,11 @@ it left open is below.
   and bounded, never hung; a bundle is announced only where it is served
   and a fetched public collection is shared. Deployed on the node 16:00
   CEST; its first holder day bundled 1,296 parts (7.9 M chunks) with no
-  GPU and, after each restart, 418 parts a second time — withdrawn by the
-  producer's own `withdraw` attestation (03 §3.6; `dev
-  withdraw-duplicates`, note §11; operator's decision). Perugia's first
+  GPU and, after each restart, 418 parts a second time — DEPRECATED by
+  the producer's own `deprecate` attestation (03 §3.6, 09 §9.8; `dev
+  deprecate-duplicates`; note §11 with the design's open points): kept
+  and served a day longer, never offered for a new fetch, the fallback
+  when the current copy is gone (operator's design, 2026-10-19). Perugia's first
   pass re-embedded led parts the node already offered (note §12, fixed).
   Still open there: vector convergence (measure first), `share contribute`
   under the worker's lock (a scheduling change), a leecher's

@@ -146,12 +146,30 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     known = cov.row(con, bundle_id)
     if known and known["accepted_at"]:
         return {"outcome": "held", "bundle_id": bundle_id}
-    from app.share import withdraw as withdraw_mod
+    from app.share import deprecate as deprecate_mod, withdraw as withdraw_mod
     withdrawn = withdraw_mod.withdrawn(root, name, codex).get(bundle_id) or frozenset()
     if withdrawn and known and withdraw_mod.by_producer({bundle_id: withdrawn}, bundle_id, known["producer"]):
         return {"outcome": "ignored", "bundle_id": bundle_id, "why": "withdrawn by its producer (09 §9.8)"}
     staging = root / name / "state" / holdings.STAGING
     staged_dir = staging / member.name
+    deprecated_as = deprecate_mod.statement(deprecate_mod.deprecated(root, name, codex), bundle_id,
+                                            (known or {}).get("producer"))
+    if deprecated_as is not None and not payload.get("deprecated"):
+        # its producer deprecated it and this is not the fallback's listing
+        # (an event, a stale digest): a fetch in flight is finished when at
+        # least half its bytes landed, else dropped for the current copy —
+        # which, held here already, makes any of it pointless (RULE 1)
+        current = deprecated_as[0]
+        cur_row = cov.row(con, current)
+        fraction = deprecate_mod.staged_fraction(staged_dir, member)
+        if (cur_row and cur_row["accepted_at"]) or fraction < 0.5:
+            shutil.rmtree(staged_dir, ignore_errors=True)
+            return {"outcome": "ignored", "bundle_id": bundle_id,
+                    "why": f"deprecated by its producer for {current[:23]}…"
+                           + ("; the current copy is held here" if cur_row and cur_row["accepted_at"]
+                              else f"; {fraction:.0%} landed, dropped for the current copy")}
+        say(f"[{name}] share: bundle {bundle_id[:23]}… deprecated while fetching, {fraction:.0%} landed: "
+            f"finished rather than dropped (operator, 2026-10-19)")
     torrents = member.torrents()
     if withdrawn:
         # some key withdrew this id and its producer is not known here yet:
@@ -595,6 +613,13 @@ def reproduce_claims(root: Path, collections, node_con, *, own_key: str | None =
 
 #: bundle id -> not before: a digest-offered bundle nobody served waits this long
 _digest_backoff: dict[str, float] = {}
+#: bundle id -> until: its last fetch came back nobody-served; while this
+#: holds, a deprecated equivalent of it may be fetched instead (deprecate.py)
+_nobody_served: dict[str, float] = {}
+
+
+def nobody_served_until() -> dict[str, float]:
+    return _nobody_served
 #: the digests last read: (fingerprint of (key, last_digest) over the neighbours, when)
 _digests_read: tuple[tuple, float] | None = None
 
@@ -607,7 +632,9 @@ def _digest_fingerprint(node_con, *, now: float) -> tuple:
 
 
 def listed_bundles(node_con, codex, con, *, now: float,
-                   skip: dict[str, frozenset[str]] | None = None
+                   skip: dict[str, frozenset[str]] | None = None,
+                   deprecated: dict[str, dict[str, tuple[str, float]]] | None = None,
+                   nobody: dict[str, float] | None = None,
                    ) -> list[tuple[dict[str, Any], list[tuple[str, int]]]]:
     """`(payload, hints)` for every bundle member a live neighbour's digest
     offers for the collection that this peer has not accepted — the payload
@@ -616,12 +643,42 @@ def listed_bundles(node_con, codex, con, *, now: float,
     `skip`: bundle id -> the keys that withdrew it (`withdraw.withdrawn`);
     one whose producer is known here and among them is never asked for;
     one whose producer is not known yet is, and `take` reads its header
-    first."""
+    first. `deprecated`: `deprecate.deprecated`'s map — a digest's
+    `deprecated_members` are never asked for while a live neighbour offers
+    the current equivalent under `members` and it is not held here; one is
+    (payload `deprecated: true`, `current`) when no neighbour offers the
+    current, or its last fetch came back nobody-served (`nobody`): the
+    operator's corner case, a valid copy where the current one is gone."""
     from urllib.parse import urlsplit
-    from app.share import peers, withdraw as withdraw_mod
+    from app.share import deprecate as deprecate_mod, peers, withdraw as withdraw_mod
     prefix = f"bundle-{codex.space_segment}-"
     found: dict[str, tuple[dict[str, Any], list[tuple[str, int]]]] = {}
+    fallback: dict[str, tuple[dict[str, Any], list[tuple[str, int]]]] = {}
     skip = skip or {}
+    deprecated = deprecated or {}
+    nobody = nobody or {}
+
+    def _member(m, e, into):
+        if not isinstance(m, dict) or not isinstance(m.get("name"), str) \
+                or not m["name"].startswith(prefix) or not isinstance(m.get("files"), list):
+            return
+        bundle_id = "sha256:" + m["name"][len(prefix):]
+        if len(bundle_id) != 71:
+            return
+        if bundle_id in into:
+            if hint is not None and hint not in into[bundle_id][1]:
+                into[bundle_id][1].append(hint)
+            return
+        known = cov.row(con, bundle_id)
+        if known and (known["accepted_at"] or any(v == "fail" for v in known["tiers"].values())):
+            return                      # accepted here already, or refused by this peer's ladder
+        if known and withdraw_mod.by_producer(skip, bundle_id, known["producer"]):
+            return                      # withdrawn by its producer (03 §3.6)
+        payload = {"collection": codex.collection_id, "space_id": codex.space_id,
+                   "snapshot_id": e.get("snapshot_id"), "shard": None, "uids": [],
+                   "bundle_id": bundle_id, "root": m.get("root"), "bytes": m.get("bytes"),
+                   "files": m["files"]}
+        into[bundle_id] = (payload, [hint] if hint is not None else [])
     for n in peers.neighbours(node_con, now=now):
         d = peers.digest_of(node_con, n["key"]) or {}
         port = d.get("peer_port")
@@ -631,26 +688,26 @@ def listed_bundles(node_con, codex, con, *, now: float,
             if not isinstance(e, dict) or e.get("collection_id") != codex.collection_id:
                 continue
             for m in e.get("members", []) or []:
-                if not isinstance(m, dict) or not isinstance(m.get("name"), str) \
-                        or not m["name"].startswith(prefix) or not isinstance(m.get("files"), list):
-                    continue
-                bundle_id = "sha256:" + m["name"][len(prefix):]
-                if len(bundle_id) != 71:
-                    continue
-                if bundle_id in found:
-                    if hint is not None and hint not in found[bundle_id][1]:
-                        found[bundle_id][1].append(hint)
-                    continue
-                known = cov.row(con, bundle_id)
-                if known and (known["accepted_at"] or any(v == "fail" for v in known["tiers"].values())):
-                    continue                # accepted here already, or refused by this peer's ladder
-                if known and withdraw_mod.by_producer(skip, bundle_id, known["producer"]):
-                    continue                # withdrawn by its producer (03 §3.6)
-                payload = {"collection": codex.collection_id, "space_id": codex.space_id,
-                           "snapshot_id": e.get("snapshot_id"), "shard": None, "uids": [],
-                           "bundle_id": bundle_id, "root": m.get("root"), "bytes": m.get("bytes"),
-                           "files": m["files"]}
-                found[bundle_id] = (payload, [hint] if hint is not None else [])
+                _member(m, e, found)
+            for m in e.get("deprecated_members", []) or []:
+                _member(m, e, fallback)
+    # a stale `members` entry for a bundle its producer deprecated is not a
+    # new fetch either; the fallback below decides
+    for bid in [b for b in found if deprecate_mod.by_producer(deprecated, b, (cov.row(con, b) or {}).get("producer"))
+                or b in deprecated]:
+        fallback.setdefault(bid, found.pop(bid))
+    for bid, (payload, hints) in fallback.items():
+        info = deprecate_mod.statement(deprecated, bid, (cov.row(con, bid) or {}).get("producer"))
+        if info is None:
+            continue                    # deprecated by a digest's word alone: this peer has not read why
+        current = info[0]
+        cur_row = cov.row(con, current)
+        if cur_row and cur_row["accepted_at"]:
+            continue                    # the current copy is held: its rows are here already (RULE 1)
+        if current in found and nobody.get(current, 0.0) <= now:
+            continue                    # the current copy is offered and fetchable: that one, not this
+        payload = dict(payload, deprecated=True, current=current)
+        found[bid] = (payload, hints)
     return list(found.values())
 
 
@@ -661,7 +718,7 @@ def from_digests(collections, cons: dict, node_con, *, session_factory, root: Pa
     here, taken in as its event would have had it taken. The digests are
     read when one arrived since the last read, or after `transport.BACKOFF_S`;
     a bundle nobody served waits that long before it is asked for again."""
-    from app.share import withdraw as withdraw_mod
+    from app.share import deprecate as deprecate_mod, withdraw as withdraw_mod
     global _digests_read
     now = time.time() if now is None else now
     out = {"accepted": 0, "refused": 0, "ignored": 0, "held": 0, "deferred": 0, "offered": 0}
@@ -677,7 +734,8 @@ def from_digests(collections, cons: dict, node_con, *, session_factory, root: Pa
         if stop is not None and stop.is_set():
             break
         offered = listed_bundles(node_con, codex, cons[c.name], now=now,
-                                 skip=withdraw_mod.withdrawn(root, c.name, codex))
+                                 skip=withdraw_mod.withdrawn(root, c.name, codex),
+                                 deprecated=deprecate_mod.deprecated(root, c.name, codex), nobody=_nobody_served)
         out["offered"] += len(offered)
         for payload, hints in offered:
             if stop is not None and stop.is_set():
@@ -700,12 +758,17 @@ def from_digests(collections, cons: dict, node_con, *, session_factory, root: Pa
                 if log:
                     log(f"[{c.name}] share: bundle {bid[:23]}… a digest offers: {type(e).__name__}: {e}"[:400])
                 if isinstance(e, transport.TransportError) and transport.nobody_served(str(e)):
+                    # remembered: a deprecated equivalent may be fetched meanwhile
+                    _nobody_served[bid] = now + 4 * transport.BACKOFF_S
                     break                                   # nobody serves it now: the rest can wait
                 continue
+            _nobody_served.pop(bid, None)
             out[got["outcome"]] += 1
             if got["outcome"] == "accepted" and log:
                 log(f"[{c.name}] share: bundle {bid[:23]}… taken in from a digest's offer, its event "
-                    f"never seen here (04 §4.5)")
+                    f"never seen here (04 §4.5)"
+                    + (f" — a DEPRECATED copy, its current one {str(payload.get('current'))[:23]}… being "
+                       f"offered by nobody (fallback)" if payload.get("deprecated") else ""))
     return out
 
 
@@ -767,6 +830,12 @@ def beat(collections, cons: dict, node_con, *, session_factory, root: Path, stop
             got = withdraw_mod.drop_withdrawn(root, c.name, codex, cons[c.name], delete_chunks=_delete, log=log)
             if got["dropped"] or got["not_the_producer"]:
                 out.setdefault("withdrawn", {})[c.name] = got
+            # a deprecated copy past its keep window, its current one held
+            # here too, goes (operator, 2026-10-19; vectors untouched)
+            from app.share import deprecate as deprecate_mod
+            gone = deprecate_mod.expire(root, c.name, codex, cons[c.name], now=now, log=log)
+            if gone["expired"]:
+                out.setdefault("deprecated_expired", {})[c.name] = gone["expired"]
         except Exception as e:   # noqa: BLE001 — one collection, not the beat
             if log:
                 log(f"[{c.name}] withdraw: {type(e).__name__}: {e}"[:300])

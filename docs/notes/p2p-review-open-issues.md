@@ -393,48 +393,121 @@ under all" checks accept both modes; the partition filter runs under
 `p2p` only. Step 2 — publishing inside the worker, retiring the cron and
 the pause — stays open (scheduling.md §6 first).
 
-### 11. 418 duplicate holder bundles on the node — WITHDRAWN (operator: "I agree")
+### 11. 418 duplicate holder bundles on the node — DEPRECATED, not withdrawn (operator's design)
 
 München's measurement of the first holder day: the pass bundled 418
 partially held parts a second time after each restart — a new id each
 time, `created_at` being in the signed header, the same `content_digest`
 — 2,491,650 redundant chunks, 12.1 GiB on tank, and every peer taking the
 node's offers fetches both copies to find them identical. dd58729 (§1,
-"exclude claimed records") stops it for the future; for the 418 the spec
-already had the tool: 03 §3.6's `withdraw` attestation — a producer
-retracts its own bundles, peers drop them, no key is burned. Nothing
-published is deleted, so a wrong bundle is never recalled; a *redundant*
-one is retracted by its producer's own word, which is exactly what the
-attestation is for.
+"exclude claimed records") stops it for the future.
 
-Built: `app/share/withdraw.py` and `louise dev withdraw-duplicates
-<collection> [--dry-run] [--yes]` (07 §7.3). Per part, this producer's
-accepted bundles sharing a `content_digest`; the earliest stays; ONE
-attestation (`check` and `result` `withdraw`, `detail.bundles` the ids,
-09 §9.8) is written at the attestation path, published as an event for
-the beat to forward (`attest.publish`), and the withdrawn directories and
-coverage rows go from the producer — its vectors stay, the kept bundle
-covers them. Every peer acts at its fetch beat (`accept.beat` →
-`withdraw.drop_withdrawn`): a held bundle the attestation names loses its
-row and directory when the SIGNER IS ITS PRODUCER (the header's
-`producer_pubkey`, else the row's) and nobody else's; its vectors go only
-where no other accepted bundle of the part claims their records (a
-duplicate's stay; a faulty bundle's chunks "return to without vectors").
-A digest that still claims and offers a withdrawn bundle (a neighbour
-that has not acted yet) does not bring it back: the listing skips a
-bundle whose known producer withdrew it; one whose producer is not known
-here yet is fetched header first (a few KB), the producer recorded, the
-rows never fetched. `offered_elsewhere` leaves withdrawn offers out, so a
-holder is not left waiting on one. A withdraw signed by a stranger
-withdraws nothing — the general case has strangers' keys in the event
-stream, and an attestation is only verified, not trusted, until §9.2's
-trust file says so. Copy state and trust ignore the attestation (neither
-a pass nor a fail). Tests: tests/share/test_withdraw.py (5).
+For the 418 I first built 03 §3.6's `withdraw` (763a309: `app/share/
+withdraw.py`, the receiving side at the beat, `tests/share/test_withdraw.
+py`). The operator then set the design: a redundant copy is VALID, so it
+is **deprecated**, not withdrawn — "even when a seeder is holding more
+equivalent copies, only one must be without the deprecated tag; keep the
+deprecated copies for a while, allowing a leecher to decide whether to
+complete the fetching or drop it; a leecher must ignore deprecated
+copies for new fetchings; think about the corner case in which a
+non-deprecated piece is not available anymore but deprecated ones still
+are"; retention one day ("we have a lot of deprecated copies to get rid
+of"). `withdraw` stays as built for its spec'd case (a faulty bundle;
+peers drop it and its vectors; no command yet, `hold vectors check
+--drop` is the spec's); the CLI `dev withdraw-duplicates` was removed
+before anyone ran it.
 
-To run on the node, once: `louise dev withdraw-duplicates gutenberg
---dry-run` (lists the 418 pairs, writes nothing), then `--yes` under the
-cron's pause (it takes the collection's lock). Perugia drops what it took
-of the 418 at the beat after the attestation reaches it.
+Built (`app/share/deprecate.py`; 03 §3.6, 04 §4.5, 07 §7.3, 09 §9.8 and
+§9.9 amended):
+
+- **The statement.** `dev deprecate-duplicates <collection> [--dry-run]
+  [--yes]`: per part, this producer's accepted bundles sharing a
+  `content_digest`; the earliest is the CURRENT copy; one `deprecate`
+  attestation (`check` and `result` `deprecate`, `detail.bundles =
+  {deprecated_id: current_id}`), signed, kept at the attestation path,
+  published as an event. Nothing is removed by the command. Peers derive
+  "deprecated" from the attestations they hold (`deprecated()`, cached
+  with them); only the producer's own signature counts (`by_producer`).
+- **The seeder.** Keeps serving deprecated copies; its digest lists them
+  under `deprecated_members`, not `members` (`gossip.entries` →
+  `split_members`; a stranger's deprecation changes nothing). After
+  `KEEP_S` = 1 day a holder removes a deprecated copy at its fetch beat
+  only where it also holds the current one (`expire`; vectors untouched,
+  the current copy covers them). A peer whose only copy of the part is
+  deprecated keeps it indefinitely and serves it as deprecated: it is its
+  coverage, and the network's fallback.
+- **The leecher.** `listed_bundles` never asks for a `deprecated_members`
+  entry while a live neighbour offers the current equivalent under
+  `members` and it is not held here; a stale `members` entry for a
+  deprecated id is treated the same. **Fallback** (the operator's corner
+  case): a deprecated copy is listed, flagged `deprecated: true` with its
+  `current`, when no live neighbour offers the current one, or the
+  current's last fetch came back nobody-served (`accept._nobody_served`,
+  4 × BACKOFF_S). **In flight:** `take` finishes a fetch of a bundle
+  deprecated meanwhile when at least half its bytes landed (`staged_
+  fraction`), drops the partial otherwise or when the current copy is
+  held here; the fallback's listing is a fetch like any other.
+- **Counting.** `coverage.shards_view(redundant=)`: a deprecated copy
+  accepted beside its current one counts toward nothing
+  (`redundant_here`), threaded through `show`, `leaders`/`open_shards`,
+  `leading.skip_test`, the Library card and `hold vectors show`. The
+  defect it fixes is older than deprecation — see the open points.
+
+Tests: tests/share/test_deprecate.py (7), test_coverage unchanged.
+
+**To run on the node, once, under the pause:** `louise dev
+deprecate-duplicates gutenberg --dry-run` (the 418 pairs, nothing
+written), then `--yes` with LOUISE_PLATFORM_IMAGE set. The copies leave
+the digest's `members` at its next send, Perugia stops asking for them,
+and the node removes them at the beat after one day. Tank gets its 12.1
+GiB back a day later, not at once.
+
+**Open points of the deprecation design** (operator: "log any issue
+about deprecated design for further improvement"):
+
+1. *Equivalent bundles from DIFFERENT producers inflate `covered` too.*
+   `shards_view` sums the chunks of every accepted bundle of a part and
+   caps at the part's size; two producers' copies of 60 % of a part read
+   as the whole part, and the leader never embeds the rest. "Duplicates
+   are checks" (04 §4.5) makes this the normal case with many peers. The
+   `redundant` set fixes the deprecated case only. The honest count is
+   by distinct record — `possession.json` per bundle, or `uid_first`/
+   `uid_last` ranges in the row — and should be measured before it is
+   built (reading 1,600 possession files per view is a cost that scales
+   with the map).
+2. *A deprecated copy held alone is kept and served forever.* Nothing
+   prunes it once the current copy is widely held; that needs a view of
+   who holds what across the swarm (the digests' `coverage` gives it)
+   and a rule for "widely".
+3. *The fallback's two signals are coarse.* "No live neighbour offers the
+   current" misses a live seeder that lists it and does not serve it
+   until one nobody-served attempt (BACKOFF_S later); the nobody-served
+   memory is per process (lost at a restart) and lasts 4 × BACKOFF_S.
+4. *The half-landed rule is a heuristic on file sizes.* libtorrent sizes
+   a file before filling it, so `staged_fraction` is an upper bound; a
+   fetch that is 50 % sized and 10 % written is finished. Piece-level
+   progress from the session would be exact.
+5. *A deprecated copy whose attestation a peer has not read yet is never
+   fetched* — not even as a fallback (it cannot know the equivalence).
+   The hourly pull closes the gap within an hour; a `deprecated_members`
+   entry could carry the current id to close it at once (a wire
+   addition).
+6. *One hop only.* If the current copy is itself later deprecated or
+   withdrawn, chains are not followed: a leecher falling back to copy B
+   whose current A is deprecated for C fetches B when C is unavailable
+   only if it holds both attestations and A is not offered.
+7. *Older readers* never see `deprecated_members` and so never fall
+   back; a stale `members` listing by an older seeder is handled.
+8. *`KEEP_S` is a code constant* (one day), not in the collection file;
+   the digest grows by the deprecated entries (418 × ~200 B) for that
+   day.
+9. *The producer's own `expire` needs the beat*: on the node the worker's
+   beat runs `expire`; the cron CLI does not. The 418 go at the first
+   beat after the window, not at a fixed time.
+10. *`redundant_here` costs two point queries per deprecated id* (in
+    chunks of 400) at each `shards_view` rebuild — 836 rows for the
+    418, once a REBUILD_S at most; fine today, a list-sized cost by
+    the engineering rules if deprecations pile up.
 
 ### 12. A led part a neighbour already offers was re-embedded — FIXED (Perugia's find)
 

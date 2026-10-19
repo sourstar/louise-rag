@@ -214,7 +214,12 @@ def skip_test(collection, con, *, root: Path | None = None, now: float | None = 
             with _cache_lock:
                 _cache[key] = (now, fp, skips)
         else:
-            leaders = contribute.leaders(codex, snapshot, con, live=live, now=now) \
+            from app.share import deprecate
+            # deprecated copies held beside their current one count toward no
+            # part (04 §4.5); named only when there are any
+            redundant = deprecate.redundant_here(root, collection.name, codex, con)
+            extra = {"redundant": redundant} if redundant else {}
+            leaders = contribute.leaders(codex, snapshot, con, live=live, now=now, **extra) \
                 if snapshot is not None else {}
             skips = build(codex, snapshot, leaders=leaders, me=own_key, live=live)
             with _cache_lock:

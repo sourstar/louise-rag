@@ -122,7 +122,7 @@ def _ranking_leader(ranking: Sequence[rendezvous.Peer], shard_rows: list[dict[st
 
 
 def _leading(codex, snapshot: sn.Snapshot, con, *, live: Sequence[rendezvous.Peer],
-             now: float, record_open: bool) -> list[tuple[str, rendezvous.Peer | None]]:
+             now: float, record_open: bool, redundant=()) -> list[tuple[str, rendezvous.Peer | None]]:
     """(shard id, current leader) of every open shard, in snapshot order —
     04 §4.5's ordering with the grace cascade. `record_open` writes a shard's
     first-open time when this peer sees it open for the first time (the
@@ -136,7 +136,7 @@ def _leading(codex, snapshot: sn.Snapshot, con, *, live: Sequence[rendezvous.Pee
         by_shard.setdefault(r["shard"], []).append(r)
     tokens = {cov.shard_id(codex, f"{s.slice}/{s.n:05d}"): int(s.tokens) for s in snapshot.shards}
     out: list[tuple[str, rendezvous.Peer | None]] = []
-    for v in cov.shards_view(codex, snapshot, all_rows, now=now):
+    for v in cov.shards_view(codex, snapshot, all_rows, now=now, redundant=redundant):
         if not v["open"]:
             continue
         if record_open and v["shard"] not in opened:   # first seen open here: the window starts
@@ -152,11 +152,12 @@ def _leading(codex, snapshot: sn.Snapshot, con, *, live: Sequence[rendezvous.Pee
 
 
 def leaders(codex, snapshot: sn.Snapshot, con, *, live: Sequence[rendezvous.Peer],
-            now: float | None = None) -> dict[str, str | None]:
+            now: float | None = None, redundant=()) -> dict[str, str | None]:
     """Every open shard's current leader key (None: no eligible peer). Read-only."""
     now = time.time() if now is None else now
     return {sid: (lead.key if lead is not None else None)
-            for sid, lead in _leading(codex, snapshot, con, live=live, now=now, record_open=False)}
+            for sid, lead in _leading(codex, snapshot, con, live=live, now=now, record_open=False,
+                                      redundant=redundant)}
 
 
 def _shard_of(snapshot: sn.Snapshot, sid: str) -> sn.Shard:
@@ -165,14 +166,15 @@ def _shard_of(snapshot: sn.Snapshot, sid: str) -> sn.Shard:
 
 
 def open_shards(codex, snapshot: sn.Snapshot, con, *, me: str, live: Sequence[rendezvous.Peer],
-                now: float | None = None) -> tuple[list[sn.Shard], list[sn.Shard]]:
+                now: float | None = None, redundant=()) -> tuple[list[sn.Shard], list[sn.Shard]]:
     """`(led, others)`: the open shards whose current leader is this peer,
     and the open shards it does not lead — led by another live peer, or by
     nobody eligible. Records each shard's first-open time (the window
-    starts there)."""
+    starts there). `redundant`: deprecated copies held beside their current
+    one, counted toward no part (`deprecate.redundant_here`)."""
     now = time.time() if now is None else now
     led, others = [], []
-    for sid, lead in _leading(codex, snapshot, con, live=live, now=now, record_open=True):
+    for sid, lead in _leading(codex, snapshot, con, live=live, now=now, record_open=True, redundant=redundant):
         (led if lead is not None and lead.key == me else others).append(_shard_of(snapshot, sid))
     return led, others
 
@@ -232,7 +234,8 @@ def announce(con, codex, snapshot: sn.Snapshot, header: dict[str, Any], member: 
     return eid
 
 
-def offered_elsewhere(codex, con, node_con, *, now: float, skip=None) -> dict[str, list[str]]:
+def offered_elsewhere(codex, con, node_con, *, now: float, skip=None, deprecated=None,
+                      nobody=None) -> dict[str, list[str]]:
     """Per open shard id, the bundle ids a live neighbour both CLAIMS for it
     (its digest's `coverage`, folded into the map as `claimed_by`) and
     OFFERS (its digest's `members`), and this peer has neither accepted nor
@@ -242,7 +245,8 @@ def offered_elsewhere(codex, con, node_con, *, now: float, skip=None) -> dict[st
     if node_con is None:
         return {}
     from app.share import accept
-    offered = {p["bundle_id"] for p, _hints in accept.listed_bundles(node_con, codex, con, now=now, skip=skip)}
+    offered = {p["bundle_id"] for p, _hints in accept.listed_bundles(node_con, codex, con, now=now, skip=skip,
+                                                                     deprecated=deprecated, nobody=nobody)}
     if not offered:
         return {}
     out: dict[str, list[str]] = {}
@@ -369,7 +373,10 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
         raise ContributeRefused(f"{name}: not contributing yet — " + "; ".join(reasons))
     assert snapshot is not None and own_key is not None
     me_live = list(live)
-    mine, others = open_shards(codex, snapshot, con, me=own_key, live=me_live, now=now)
+    from app.share import accept, deprecate as deprecate_mod
+    deprecated = deprecate_mod.deprecated(root, name, codex)
+    redundant = deprecate_mod.redundant_here(root, name, codex, con, deprecated)
+    mine, others = open_shards(codex, snapshot, con, me=own_key, live=me_live, now=now, redundant=redundant)
     out: dict[str, Any] = {"snapshot_id": snapshot.snapshot_id, "peers": len(me_live),
                            "mine": [f"{s.slice}/{s.n:05d}" for s in mine], "built": 0,
                            "held": [], "probed": 0, "left_to_fetch": [], "bundles": [], "accepted": [],
@@ -387,7 +394,8 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
     # bundled first, whoever leads it: no GPU, and the leader embeds only
     # what still lacks a bundle (04 §4.5, amended 2026-10-19)
     from app.share import withdraw as withdraw_mod
-    elsewhere = offered_elsewhere(codex, con, node_con, now=now, skip=withdraw_mod.withdrawn(root, name, codex))
+    elsewhere = offered_elsewhere(codex, con, node_con, now=now, skip=withdraw_mod.withdrawn(root, name, codex),
+                                  deprecated=deprecated, nobody=accept.nobody_served_until())
     for shard in others:
         if stop is not None and stop.is_set():
             out["interrupted"] = True

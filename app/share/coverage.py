@@ -26,7 +26,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Collection, Any, Iterable, Sequence
 
 from app.hold import snapshot as sn
 from app.share import messages, rendezvous
@@ -252,10 +252,13 @@ def _grace_seconds(codex) -> float:
 
 def shards_view(codex, snapshot: sn.Snapshot | None, all_rows: list[dict[str, Any]], *,
                 peers: Sequence[rendezvous.Peer] = (), opened: dict[str, str] | None = None,
-                now: float | None = None) -> list[dict[str, Any]]:
+                now: float | None = None, redundant: Collection[str] = ()) -> list[dict[str, Any]]:
     """09 §9.10's `shards`: per record shard of the snapshot, the chunks it
     has, the chunks accepted here, whether it is open, and — with the live
-    peers given — the leader and the end of its grace window (04 §4.5)."""
+    peers given — the leader and the end of its grace window (04 §4.5).
+    `redundant`: accepted bundles counted toward nothing — a deprecated
+    copy held beside its current equivalent (`deprecate.redundant_here`):
+    two equal copies of a partial part summed read as the whole part."""
     if snapshot is None:
         return []
     now = time.time() if now is None else now
@@ -270,7 +273,7 @@ def shards_view(codex, snapshot: sn.Snapshot | None, all_rows: list[dict[str, An
         sid = shard_id(codex, f"{s.slice}/{s.n:05d}")
         mine = by_shard.get(sid, [])
         accepted = [r for r in mine if r["accepted_at"]]
-        covered = min(int(s.chunks), sum(r["chunks"] for r in accepted))
+        covered = min(int(s.chunks), sum(r["chunks"] for r in accepted if r["bundle_id"] not in redundant))
         is_open = covered < int(s.chunks)
         leader = window_ends = None
         if is_open and peers:
@@ -452,12 +455,13 @@ def live_peers(codex, node_con, *, now: float, own_key: str | None = None,
 
 
 def show(codex, snapshot: sn.Snapshot | None, con, *, attestations: Iterable[dict[str, Any]] = (),
-         peers: Sequence[rendezvous.Peer] = (), now: float | None = None) -> dict[str, Any]:
+         peers: Sequence[rendezvous.Peer] = (), now: float | None = None,
+         redundant: Collection[str] = ()) -> dict[str, Any]:
     """What `hold vectors show --json` prints (09 §9.10)."""
     now = time.time() if now is None else now
     all_rows = rows(con)
     attestations = list(attestations)
-    view = shards_view(codex, snapshot, all_rows, peers=peers, opened=opened_at(con), now=now)
+    view = shards_view(codex, snapshot, all_rows, peers=peers, opened=opened_at(con), now=now, redundant=redundant)
     work = signed_work(codex, snapshot, all_rows, attestations, now=now)
     return {
         "collection_id": codex.collection_id,
