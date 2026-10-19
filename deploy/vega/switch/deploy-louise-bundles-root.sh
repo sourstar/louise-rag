@@ -172,7 +172,8 @@ say "7. BUNDLES_ROOT set; the other live collections adopted; the SSD copy gone;
 for c in ix-louise-rag-web-1 ix-louise-rag-worker-1; do
   v=$(docker exec "$c" printenv BUNDLES_ROOT || true); echo "$c BUNDLES_ROOT=$v"; [ "$v" = "/bundles" ]
 done
-for c in gutenberg normattiva pubmed-v8 wikipedia gutenberg-same-work gutenberg-works; do
+for c in $(ls "$ROOT/data/collections" | grep -v "^_"); do
+  [ -f "$ROOT/config/collections/$c.toml" ] || continue          # a live collection only, whatever its name today
   echo "-- adopt-bundles $c"
   docker exec ix-louise-rag-worker-1 python -m app.louise dev adopt-bundles "$c" 2>&1 | grep -v acquire_enabled | tail -4
 done

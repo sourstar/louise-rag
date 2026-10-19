@@ -316,3 +316,28 @@ def test_the_command_creates_it_and_show_prints_what_it_annotates(tmp_path, monk
     copy_state.reset_cache()
     assert louise.main(["hold", "collection", "show", "same", "--root", str(tmp_path)]) == 0
     assert json.loads(capsys.readouterr().out)["state"] == "in-use"
+
+
+def test_create_promotes_across_filesystems_when_the_shard_lives_elsewhere(tmp_path, monkeypatch):
+    """Since 2026-10-12 a collection's `shard/` is a link to /shards/<name> on
+    other storage than `state/`, where create stages its parts: a rename
+    cannot cross (EXDEV), and the first create after the move failed half way
+    (2026-10-19, gutenberg-book-editions). The parts are promoted whole by a
+    copy beside the target, as every SHARD writer does (`shard.promote`)."""
+    import errno
+    import os
+    real = os.replace
+
+    def no_cross(src, dst, *a, **k):
+        if "annotations-build" in str(src) and "annotations-build" not in str(dst):
+            raise OSError(errno.EXDEV, "Invalid cross-device link", str(src))
+        return real(src, dst, *a, **k)
+
+    a_target(tmp_path)
+    monkeypatch.setattr(os, "replace", no_cross)
+    codex, snap = make(tmp_path)
+    d = col.shard_dir_of(tmp_path, "pubmed-same-work")
+    (shard,) = snap.shards
+    assert shard_mod.pieces_root_of(d / shard.path) == shard.root, "the part arrived whole"
+    assert not (tmp_path / "pubmed-same-work" / "state" / "annotations-build").exists(), "staging gone"
+    assert not list(d.rglob(".*.promote")), "no temporary left beside the part"
