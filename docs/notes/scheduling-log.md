@@ -527,3 +527,15 @@ measured on Perugia: chunks/min of the embed stage; minutes from a part's
 last document to its bundle's announcement; the publisher's pass duration
 and the budget hits ("interrupted at the budget" lines); duplicate bundles
 (expect 0: the held path leaves out claimed rows).
+
+**The node too** (operator, the same night): gutenberg goes from
+`on-demand` + the 23:00–07:00 cron contribute under `node pause` to
+`embed = "p2p"` under the worker, the cron retired. One check first,
+München's: under p2p the embedder is kept loaded while the mode runs
+everything — by day too — and on 2026-10-14 the 4B embedder held all
+night had the chat model evicted on every Ask. If the card does not
+hold both, the knob is the MODE (run everything at night, seed-only by
+day), never a pause of the collection. BEFORE from the last complete
+nightly cron pass (chunks, minutes, chunks/min, bundles, cold starts);
+AFTER from the first night's embed-stage and "publish:" lines, and no
+part bundled by both peers.

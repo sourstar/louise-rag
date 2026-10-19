@@ -34,9 +34,13 @@ it left open is below.
   and served a day longer, never offered for a new fetch, the fallback
   when the current copy is gone (operator's design, 2026-10-19). Perugia's first
   pass re-embedded led parts the node already offered (note §12, fixed).
-  Still open there: vector convergence (measure first), `share contribute`
-  under the worker's lock (a scheduling change), a leecher's
-  `records-vs-origin`.
+  Still open there: vector convergence (measure first), a leecher's
+  `records-vs-origin`. `share contribute` under the worker's lock is
+  BUILT (2026-10-19 night, 56b8a50: the PUBLISHER, scheduling-log.md):
+  the operator's decision is that both peers switch gutenberg to
+  `embed = "p2p"` once it is gated — Perugia runs everything instead of
+  the CLI loop, the node retires its nightly cron — each measured against
+  its CLI pass first.
 - **`hold embedder calibrate`** is a stub: it wants two builds of one model
   to compare (step 3).
 - **Normattiva, what the second part left** (2026-10-12,
