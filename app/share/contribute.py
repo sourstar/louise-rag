@@ -330,9 +330,17 @@ def _bundle_shard(root: Path, name: str, codex, snapshot: sn.Snapshot, shard: sn
                     f"digest's coverage now, offered as a member once it serves")
         else:
             failed = [t.tier for t in report.tiers if t.failed]
-            out["refused"].append(f"{sid}: {b['bundle_id'][:23]}… refused at {failed}")
-            say(f"[{name}] share contribute: {sid}: own bundle refused at {failed} — not "
-                f"announced; the vectors stay here for `vectors check`")
+            # the clause that failed, not the tier alone: lang=en/00043 was
+            # "refused at ['T0']" twice on the node and nobody could say why
+            # (München, 2026-10-19)
+            why = "; ".join(f"{t.tier}: {t.why}" for t in report.tiers if t.failed)
+            refused_rows = len(report.refused)
+            out["refused"].append(f"{sid}: {b['bundle_id'][:23]}… refused at {failed} — {why}"
+                                  + (f"; {refused_rows} row(s) refused: {report.refused[0][1]}" if refused_rows else ""))
+            say(f"[{name}] share contribute: {sid}: own bundle refused at {failed} — {why}"
+                + (f"; {refused_rows} row(s) refused, e.g. {report.refused[0][0]}: {report.refused[0][1]}"
+                   if refused_rows else "")
+                + " — not announced; the vectors stay here for `vectors check`")
     shutil.rmtree(scratch, ignore_errors=True)
     return "exported"
 

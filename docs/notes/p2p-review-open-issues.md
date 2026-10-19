@@ -151,20 +151,32 @@ as the node had embedded it, and the coverage view's "1,139 open" after
 the pass means 1,139 parts with SOME chunks lacking a bundle, not 1,139
 uncovered parts; their leaders embed the rest.
 
-**A redundancy found in the mine phase, fixed (dd58729):** completing a
-part the node had bundled from held vectors (en/00081: 6,407 held, 2,942
-embedded) exported the WHOLE part again — a second bundle re-shipping the
-6,407 chunks beside the 2,942, from the same producer: not wrong (coverage
-caps at the part's chunks, a taker compares the overlap and finds
-identical rows) but about twice the bytes on tank and on the wire for
-every partially held part, some 23 GB over the 693 led parts. The
-operator's rule is minimum redundancy. `share contribute` now leaves out
-of an export the records this producer's accepted bundles for the part
-already claim (`possession.json`), so the second bundle carries the new
-records only and a part is never bundled twice by one producer. Six
-overlapping bundles went out before München stopped contribute (15:39);
-they stay — nothing published is deleted — and cost nothing but their
-bytes.
+**A redundancy found and fixed (dd58729), measured by München on the
+node:** 418 parts carried TWO accepted bundles of this node's, 415 pairs
+with identical chunk counts (`lang=af/00001` 1,116 and 1,116; `de/00001`
+4,778 and 4,778; …) — 2,491,650 redundant chunks, 12.1 GiB on tank, all
+published. Cause: the holder pass bundles every OPEN part it holds vectors
+for, and a partially held part (the node had 91 % of gutenberg's vectors,
+spread over most parts) stays open after its holder bundle, so each pass
+after a restart (39fd6e2 → 0292807 → 6d3084b) bundled the same held
+records again under a new id (`created_at` is in the signed header). My
+first reading — the mine phase re-shipping a holder bundle's chunks — was
+wrong: the parts the node leads were never holder-bundled, and a built
+bundle is such a part's first and whole one (en/00081, 9,349 chunks, one
+bundle). The fix is the same rule either way: an export leaves out the
+records this producer's accepted bundles for the part already claim
+(`possession.json`), so a re-run logs "every record held is in a bundle
+made here already" and makes nothing; München confirms on the first pass
+after 8f6d99f. The 418 later duplicates stay published for now —
+"nothing published is deleted" — and are the operator's decision, below.
+
+**Two bundles refused by the node's own ladder:** both `lang=en/00043`, at
+T0, in passes 1 and 3; the log named the tier and not the clause.
+Hypothesis (München): a record embedded only in part (a book interrupted
+mid-way) whose held chunk set is not what `chunks` derives — T0's
+per-record rule; the mine phase's built bundle for the part (13,651
+chunks) was then accepted. The refusal log now names the failing clause
+and the first refused row.
 
 **Open, the general case: the digest's size.** The node's digest entries
 grew from 64,938 to 409,873 bytes of canonical JSON with 599 members and
