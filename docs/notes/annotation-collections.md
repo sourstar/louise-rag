@@ -227,6 +227,22 @@ before any write. Inputs: the works measurement's `records.jsonl` and
 `wiki_map.json` live on the dev PC (`tools/measure/out/onelang/`, 2026-10-09);
 the classical `coverage.json` on the node (`/root/xlate-classical/out/`).
 
+**Done the same evening (München, 358ae68 on the node since 20:45 CEST,
+the operator's yes in that session):** the two forgotten; ONE collection
+`gutenberg-book-editions`, codex `sha256:182cd5f0717b1893a8c5e48af971ac3c
+cc459004600d2b16c142d7214dca7023`, title "Gutenberg: the versions of a
+work — editions and translations", 4,387 claims about gutenberg from
+2026-09 (4,357 Wikidata, 19 editions notes, 11 of the matcher's after the
+review left 46 out), 6,073 books in 1,696 works, one part, snapshot
+2026-09 `sha256:bb4ea454…`; `hold check` roots, records, license,
+signature PASS; `share = true` since 20:51 ("3 torrent(s) of snapshot
+2026-09 served"). Found on the way: `create` renamed its parts from the
+SSD staging into the SHARD on tank with `os.replace` and failed with
+EXDEV — fixed on main (d895a08: `shard.promote`), merged into the deploy
+branch. Open: the worker logged "job 1 (deposit) started … done" right
+after the create; nothing in `create annotations` submits a job, so who
+asked is to be read off the job row.
+
 The operator's "gutenberg graph collection" (2026-10-19 evening) is NOT
 these: it is `gutenberg-graph`, the sibling of gutenberg and wikidata
 ([wikidata-plugins.md](wikidata-plugins.md), [wikidata-implementation.md](wikidata-implementation.md)),
