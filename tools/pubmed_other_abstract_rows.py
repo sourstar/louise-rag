@@ -45,7 +45,9 @@ def main(argv: list[str] | None = None) -> int:
     a = p.parse_args(argv)
     root = cols.louise_root() / "collections"
     name, codex = col.resolve(root, a.collection)
-    snaps = sorted((col.shard_dir_of(root, name) / "snapshots").glob("*.json"))
+    # the latest snapshot, never its signature beside it (`<id>.sig.json`)
+    snaps = sorted(p for p in (col.shard_dir_of(root, name) / "snapshots").glob("*.json")
+                   if not p.name.endswith(".sig.json"))
     snap = land.snapshot_named(root, name, snaps[-1].stem)
     tree = col.shard_dir_of(root, name)
     ids: list[str] = []
