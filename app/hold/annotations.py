@@ -473,7 +473,11 @@ def write_snapshot(shard_tree: Path, staging: Path, codex: Codex,
     for entry in list(shards) + list(relations):
         dst = shard_tree / entry.path
         dst.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(staging / entry.path, dst)
+        # the SHARD lives on other storage than `state/` since 2026-10-12
+        # (shard -> /shards/<name>, tank): a rename cannot cross, and the first
+        # create after the move failed with EXDEV (2026-10-19). `promote` copies
+        # beside the target and renames there, whole or not at all
+        shard_mod.promote(staging / entry.path, dst)
     shutil.rmtree(staging)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(snap.canonical())
