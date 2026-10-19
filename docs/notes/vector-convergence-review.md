@@ -135,6 +135,20 @@ is left.
     be retired after its sunset, the pairwise `vectors-sample` attestation
     staying as its record. The operator's to decide in the review.
 
+**The operator's position (2026-10-19, relayed by the AMD session):** "in
+theory the most-seeded version is the one that survives". Adoption — the
+distinct keys that accepted a version and list it — IS the seeding count,
+every completed fetch making the fetcher a seeder (04 §4.3); so adoption
+ranks first and checks and provenance only break ties. That is (B) made
+deterministic, and it removes §2's availability flaw: the survivor is the
+version most peers already hold. Two things to carry into the session:
+- minted keys inflate the count; with equivalence required first, the
+  worst case is still an equivalent version served (04 §4.6's bound);
+- an archive's rows are not seeded by peers — each importer fetches them
+  from the origin — so "most seeded" must say whether an archive's version
+  counts its importers (do digests list `genesis:` coverage? to check in
+  app/share/gossip.py and 09 §9.9) or stands outside the count.
+
 **Recommendation:** fix rendezvous (queued), then measure the parts with
 more than one version across live peers. If they are few, (A) or (B). If
 the network is meant to rejoin after partitions as a matter of course,
