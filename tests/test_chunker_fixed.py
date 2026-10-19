@@ -111,8 +111,11 @@ def test_an_overlap_at_or_above_the_window_is_refused():
 def test_fixed_is_registered_and_book_is_untouched():
     assert chunking._CHUNKERS[chunking.FIXED] is chunking.chunk_fixed
     assert chunking._CHUNKERS[chunking.BOOK] is chunking.chunk_book
+    # wikidata-text (2026-10-19): the Wikidata plugin's own chunker, a token
+    # window of a pinned tokenizer at the textifier's statement boundaries
+    # (06 §6.3); it enters only the spaces that declare it
     assert set(chunking._CHUNKERS) == {"book", "fixed", "verbatim",
-                                       "abstract", "cdc", "akn_article"}
+                                       "abstract", "cdc", "akn_article", "wikidata-text"}
 
 
 def test_every_chunker_takes_the_same_shape():

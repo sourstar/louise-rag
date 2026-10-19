@@ -132,7 +132,10 @@ def test_only_wikipedia_is_mutable_today():
                if src.mutability == Mutability.MUTABLE}
     # normattiva (2026-09-14): consolidated law is revised in place — and it
     # declares its own chunker, akn_article, so it does NOT get CDC
-    assert mutable == {"wikipedia", "normattiva"}
+    # wikidata (2026-10-19): an entity is revised in place between dumps (a
+    # dated dump is immutable, the collection pins one) — and it declares its
+    # own chunker, wikidata-text, so it does NOT get CDC either
+    assert mutable == {"wikipedia", "normattiva", "wikidata"}
     assert chunking.chunker_name(
         collections_mod.PLUGIN_REGISTRY["normattiva"].chunking_profile,
         Mutability.MUTABLE) == chunking.AKN_ARTICLE
