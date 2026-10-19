@@ -228,6 +228,48 @@
   </div>
 </div>
 {% endfor %}
+{# 02 §2.10: annotations collections — claims about another collection's
+   records, held, checked and shared like any collection and never
+   ingested, embedded or ranked. No stage bar, no encoder, no profile:
+   none applies. The Ask tab attaches their claims to the target's hits
+   ("also:"); they are not a search leg and are not selectable there. #}
+{% for a in annotations %}
+<div class="panel" data-collection="{{ a.name }}" data-kind="annotations">
+  <h2>{{ a.name }} <span class="badge">annotations</span></h2>
+  <div>
+    {% if a.target %}
+    <span class="badge lapis" title="target collection_id {{ a.target_id }}">annotates: {{ a.target }}</span>
+    {% else %}
+    <span class="badge brass" title="{{ a.target_id }}">annotates a collection this node does not hold</span>
+    {% endif %}
+    <span class="badge brass" title="the target snapshot the claims were checked against; a claim is attached to no answer read from an earlier one (02 §2.10)">from snapshot: {{ a.from_snapshot }}</span>
+    {% if a.license.class %}
+    <span class="badge {{ 'err' if a.license.needs_ack else 'ok' }}">license: <span class="lic-{{ a.license.class }}">{{ a.license.class }}</span>{{ ' — ack needed' if a.license.needs_ack else (' ✓' if a.license.ok else '') }}</span>
+    {% endif %}
+    {% if a.copy_state and a.copy_state.state != 'in-use' %}
+    <span class="badge {{ 'err' if a.copy_state.enforced else 'brass' }}" title="{{ a.copy_state.reasons | join(' · ') }}">{{ a.copy_state.state }}{{ '' if a.copy_state.enforced else ' (reported only)' }}</span>
+    {% elif a.copy_state and a.copy_state.reasons %}
+    <span class="badge brass" title="{{ a.copy_state.reasons | join(' · ') }}">tests open — in use by decision</span>
+    {% endif %}
+  </div>
+  {% if a.title %}<div class="note"><b>{{ a.title }}</b>{% if a.summary %} — {{ a.summary }}{% endif %}</div>{% endif %}
+  <div class="note">
+    {% if a.claims is not none %}{{ a.claims|num }} claim{{ '' if a.claims == 1 else 's' }} in snapshot {{ a.snapshot }}{% else %}{{ a.note }}{% endif %}
+    · kinds: {{ a.kinds | join(', ') }}
+    · <code title="collection_id">{{ a.collection_id }}</code>
+  </div>
+  <div class="row">
+    <div>
+      <label title="serve this collection's claims and their edges as members (04 §4.3)">
+        <input type="checkbox" {{ 'checked' if a.share }}
+               onchange="setShare('{{ a.name }}', this.checked, '')"> shared</label>
+    </div>
+  </div>
+  <div class="actions">
+    <button onclick="removeCollection('{{ a.name }}')">remove…</button>
+  </div>
+</div>
+{% endfor %}
 </div>
 <input type="file" id="bundle-file" accept=".tar.gz,.tgz,application/gzip" style="display:none">
 

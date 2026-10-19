@@ -197,6 +197,18 @@ def _collection_or_404(name: str) -> collections_mod.Collection:
     return c
 
 
+def _held_or_404(name: str) -> collections_mod.Collection:
+    """A collection the node HOLDS — one the worker runs, or an annotations
+    collection (02 §2.10), which `load_all` leaves out because it is never
+    ingested or embedded. For the controls both have: sharing, removal."""
+    c = collections_mod.by_name(name)
+    if c is None:
+        c = next((a for a in collections_mod.load_annotations() if a.name == name), None)
+    if c is None:
+        raise HTTPException(404, f"no such collection: {name!r}")
+    return c
+
+
 def _spec_or_400(collection: collections_mod.Collection):
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
     if spec is None:
@@ -1739,6 +1751,53 @@ def _collection_shelf(collection: collections_mod.Collection,
     }
 
 
+def _annotations_shelf(collection, served: list) -> dict:
+    """The Library's card for an annotations collection (02 §2.10): what it
+    annotates and from which target snapshot, how many claims its current
+    snapshot holds, its copy state and whether this node shares it. No
+    stage, no encoder, no profile: none applies. Never raises — a SHARD
+    that cannot be read says so on the card."""
+    from .hold import collection as col
+    from .share import seeder
+    codex = collection.codex
+    target = codex.annotates
+    root = collections_mod.louise_root() / "collections"
+    # the target's local name: a collection the worker serves, else one the
+    # node holds without serving (`show` reads the tree, 09 §9.3)
+    target_name = next((c.name for c in served
+                        if getattr(c.codex, "collection_id", None) == target.collection_id), None)
+    if target_name is None:
+        try:
+            target_name = col.show(root, collection.name)["annotates"]["target"]
+        except Exception:  # noqa: BLE001
+            target_name = None
+    snapshot_id, claims, note = None, None, None
+    try:
+        snap = seeder.current_snapshot(col.shard_dir_of(root, collection.name))
+        if snap is not None:
+            snapshot_id, claims = snap.snapshot_id, snap.records
+        else:
+            note = "no snapshot yet"
+    except Exception as e:  # noqa: BLE001
+        note = f"{type(e).__name__}: {e}"
+    return {
+        "name": collection.name,
+        "title": collection.title or codex.descriptive.title,
+        "summary": codex.descriptive.summary,
+        "collection_id": codex.collection_id,
+        "target": target_name,
+        "target_id": target.collection_id,
+        "from_snapshot": target.from_snapshot,
+        "snapshot": snapshot_id,
+        "claims": claims,
+        "note": note,
+        "kinds": list(collection.kinds or ()),
+        "share": collection.share,
+        "license": _license_state(collection),
+        "copy_state": _copy_state(collection),
+    }
+
+
 def _genesis_state(con, collection, counts=None, fetched=None) -> dict | None:
     """Provenance visibility for pre-embedded data: is a genesis archive
     declared, how much of the collection did it cover — and, for a REMOTE
@@ -1946,9 +2005,16 @@ def library_page(request: Request):
     # "waiting for the operator".
     worker_state = node_state.worker_state()
     shelves = [_collection_shelf(c, measured, worker_state) for c in collections]
+    # 02 §2.10: the annotations collections this node holds — held, checked
+    # and shared like any collection, never ingested, embedded or ranked, so
+    # `load_all` leaves them out and the shelf's stages do not apply. Shown
+    # on their own cards: a collection the Ask tab attaches claims from
+    # must be visible where the operator looks for collections (2026-10-19).
+    annotations = [_annotations_shelf(a, collections) for a in collections_mod.load_annotations()]
     return TEMPLATES.TemplateResponse(request, "library.html", {
         "active": "library",
         "shelves": shelves,
+        "annotations": annotations,
         # oldest cached count on the page — a stale bar should look stale
         "counts_age": max((s["counts_age"] for s in shelves), default=0),
         "plugins": sorted(collections_mod.PLUGIN_REGISTRY),
@@ -2494,7 +2560,7 @@ def collection_remove(name: str):
     deleted). Data on disk is NEVER touched — the manifest, FTS index and
     vector table stay where they are and are reported back, so removal is
     reversible by renaming the file back."""
-    collection = _collection_or_404(name)
+    collection = _held_or_404(name)
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
         raise HTTPException(400, f"{name!r} has no TOML file to retire")
@@ -2597,8 +2663,11 @@ def collection_share(name: str, body: ShareBody):
     Sharing off while the embed mode is `p2p` switches the mode to `all`
     in the same rewrite — p2p publishes, and a node that does not share
     publishes nothing; the Library asked before sending (2026-10-19)."""
-    collection = _collection_or_404(name)
-    embed_mode = collection.embed_mode_default
+    collection = _held_or_404(name)
+    # an annotations collection embeds nothing: no [encoder], no embed mode
+    # (02 §2.10) — the rewrite carries neither, as its file never had them
+    annotations = collections_mod.is_annotations(collection)
+    embed_mode = None if annotations else collection.embed_mode_default
     changed_mode = False
     if not body.share and embed_mode == "p2p":
         embed_mode, changed_mode = "all", True
@@ -2611,7 +2680,7 @@ def collection_share(name: str, body: ShareBody):
         manifest=collection.manifest_path, fts=collection.fts_dir,
         lancedb=collection.lance_dir, license_ack=collection.license_ack,
         genesis_archive=collection.genesis_archive,
-        embed=collections_mod.recipe_for(collection),
+        embed=None if annotations else collections_mod.recipe_for(collection),
         embed_mode=embed_mode, layers=collection.layers,
         snapshot=collection.snapshot,
         extras=collection.extras, peer_source=collection.peer_source,

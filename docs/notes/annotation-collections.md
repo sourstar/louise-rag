@@ -286,3 +286,21 @@ not already one work: 4,387 claims (4,376 + 11; the other 5 correct pairs are
 implied once the first of each group is in), 6,073 books in 1,696 works,
 against 6,060 in 1,694. That is what the collection the operator approved
 holds, with `share = true`, replacing both.
+
+### The Library shows it (2026-10-19, evening)
+
+The operator, with `gutenberg-book-editions` shared: "I don't see the
+collection, nor the annotations type". `library_page` built its shelves
+from `load_all()`, which leaves annotations collections out because the
+worker never ingests or embeds them — so the web showed nothing of a
+collection the Ask tab attaches claims from. The Library now lists
+`load_annotations()` on cards of their own (`web._annotations_shelf`,
+badge `annotations`): the target's local name, the target snapshot the
+claims hold from, the claims count of the current snapshot, the copy
+state, the licence, the share toggle and remove — no stage bar, no
+encoder, no profile, since none applies. The share and remove routes
+resolve a held collection (`_held_or_404`), and sharing an annotations
+collection rewrites its file with no `[encoder]` and no `embed`. The Ask
+tab is unchanged by design: an annotations collection is not a search
+leg (02 §2.10, 05 §5.1) and is not selectable there; its claims appear
+on the target's hits as "also:".

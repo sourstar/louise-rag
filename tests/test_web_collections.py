@@ -292,3 +292,60 @@ def test_all_p2p_comes_with_sharing_and_sharing_off_takes_p2p_back_to_all_local(
     # the card carries the two axes and the file's word
     r = client.get("/admin/library", headers={"X-Admin-Token": "sekrit"})
     assert r.status_code == 200 and "all p2p" in r.text and "all local" in r.text and "shared" in r.text
+
+
+def _an_annotations_collection(monkeypatch):
+    """A held target (pubmed) and an annotations collection about it, on
+    this test's node (tests/hold/test_annotations.py's helpers)."""
+    from app.bundles import keys as node_keys
+    from tests.hold.conftest import KEY
+    from tests.hold.test_annotations import a_target, make
+    monkeypatch.setattr(node_keys, "load_signing_key", lambda *a, **k: KEY)
+    root = collections_mod.louise_root() / "collections"
+    a_target(root)
+    codex, snap = make(root)
+    return codex, snap
+
+
+def test_the_library_shows_an_annotations_collection_on_its_own_card(client, monkeypatch):
+    """02 §2.10: an annotations collection is held and shared like any
+    collection but never ingested or embedded, so `load_all` leaves it out
+    — and the Library showed nothing of it (operator, 2026-10-19: "I don't
+    see the collection, nor the annotations type"). Its card names the
+    target, the target snapshot the claims hold from and the claims count;
+    it has no stage bar, no encoder and no profile."""
+    codex, snap = _an_annotations_collection(monkeypatch)
+    assert "pubmed-same-work" not in [c.name for c in collections_mod.load_all()]
+    r = client.get("/admin/library")
+    assert r.status_code == 200
+    html = r.text
+    card = html[html.index('data-collection="pubmed-same-work"'):]
+    card = card[:card.index('<input type="file" id="bundle-file"')]
+    assert 'data-kind="annotations"' in card
+    assert '<span class="badge">annotations</span>' in card
+    assert "annotates: pubmed" in card and "from snapshot: 2026-08" in card
+    assert "2 claims in snapshot 2026-09" in card
+    assert "kinds: records, relations" in card
+    assert codex.collection_id in card
+    # the served collection's controls do not apply here
+    head = card[:card.index("remove…")]
+    assert "grow profile" not in head and "embed mode" not in head and "setEmbedMode" not in head
+
+
+def test_sharing_an_annotations_collection_writes_its_file_without_an_encoder(client, monkeypatch):
+    """The Library's share toggle reaches an annotations collection (its
+    route resolved names through `load_all` only, a 404 here) and the
+    rewrite carries no `[encoder]` and no `embed`: it has neither."""
+    _an_annotations_collection(monkeypatch)
+    toml_path = collections_mod.config_toml_path("pubmed-same-work")
+    assert "share = true" not in toml_path.read_text(encoding="utf-8")
+    r = client.post("/admin/library/pubmed-same-work/share", json={"share": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["share"] is True and r.json()["embed_mode_changed"] is False
+    text = toml_path.read_text(encoding="utf-8")
+    assert "share = true" in text and "[encoder]" not in text and "embed =" not in text
+    (held,) = collections_mod.load_annotations()
+    assert held.share is True and held.embed is None
+    r = client.post("/admin/library/pubmed-same-work/share", json={"share": False})
+    assert r.status_code == 200
+    assert "share = false" in toml_path.read_text(encoding="utf-8")
