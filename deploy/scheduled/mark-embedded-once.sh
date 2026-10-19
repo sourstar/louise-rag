@@ -1,18 +1,19 @@
 #!/bin/bash
-# mark.sh — the one-off reconcile of documents contribute embedded and never
-# marked (ea59c1b `dev mark-embedded`), under the node's pause of gutenberg.
+# mark2.sh — 457077b's `dev mark-embedded` (one scan of the table): the
+# documents contribute embedded and never marked. Dry run first (no lock);
+# the run under the node's pause of gutenberg, only if the dry run finds a
+# plausible count (measured 2026-10-19: 363 complete of 372 with rows).
 set -u
 W=ix-louise-rag-worker-1
-exec >>/root/mark-embedded.log 2>&1
+exec >>/root/mark2.log 2>&1
+lou() { docker exec $W python -m app.louise "$@" 2>&1 | grep -v acquire_enabled; return ${PIPESTATUS[0]}; }
 echo "== $(date '+%F %T')"
-docker exec $W python -m app.louise dev mark-embedded gutenberg --dry-run 2>&1 | grep -v acquire_enabled
-docker exec $W python -m app.louise node pause gutenberg >/dev/null && echo paused
-for i in $(seq 1 60); do
-  docker exec $W python -m app.louise dev mark-embedded gutenberg 2>&1 | grep -v acquire_enabled > /tmp/mark.out; rc=${PIPESTATUS[0]}
-  cat /tmp/mark.out
-  grep -q "held by the node" /tmp/mark.out || break
-  sleep 10
-done
-echo "mark-embedded exit $rc $(date '+%T')"
-docker exec $W python -m app.louise node resume gutenberg >/dev/null && echo resumed
+t=$(date +%s); lou dev mark-embedded gutenberg --dry-run | tee /tmp/mark-dry.out; echo "dry run $(( $(date +%s) - t )) s"
+n=$(python3 -c "import json; t=open('/tmp/mark-dry.out').read(); print(json.loads(t[t.rindex('\n{')+1:] if '\n{' in t else t[t.index('{'):]).get('complete_unmarked', -1))")
+echo "complete_unmarked $n"
+if [ "$n" -lt 300 ] || [ "$n" -gt 450 ]; then echo "NOT PLAUSIBLE: nothing marked"; echo MARK DONE; exit 2; fi
+lou node pause gutenberg >/dev/null && echo paused
+for i in $(seq 1 60); do t=$(date +%s); out=$(lou dev mark-embedded gutenberg); rc=$?; echo "$out"; echo "$out" | grep -q "held by the node" || break; sleep 10; done
+echo "run exit $rc, $(( $(date +%s) - t )) s"
+lou node resume gutenberg >/dev/null && echo resumed
 echo MARK DONE
