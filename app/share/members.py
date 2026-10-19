@@ -245,18 +245,22 @@ def bundle_member(space: str, bundle_dir: Path) -> Member:
     return Member(f"bundle-{shard_mod.check_space(space)}-{bundle_dir.name}", files, base=bundle_dir)
 
 
-def bundle_members(state_dir: Path, space: str) -> list[Member]:
-    """Every bundle this peer holds for the space under
-    `state/bundles/<space>/<slice>/<NNNNN>/<bundle_id hex>/` (09 §9.7),
-    whole — a directory missing one of the four files is no bundle."""
+def bundle_dirs(state_dir: Path, space: str) -> list[Path]:
+    """The directory of every whole bundle this peer holds for the space,
+    `state/bundles/<space>/<slice>/<NNNNN>/<bundle_id hex>/` (09 §9.7) —
+    a listing and a stat per file, no hashing; a directory missing one of
+    the four files is no bundle."""
     base = Path(state_dir) / "bundles" / space
-    out: list[Member] = []
     if not base.is_dir():
-        return out
-    for d in sorted(p for p in base.glob("*/*/*") if p.is_dir()):
-        if all((d / f).is_file() for f in BUNDLE_FILES):
-            out.append(bundle_member(space, d))
-    return out
+        return []
+    return [d for d in sorted(p for p in base.glob("*/*/*") if p.is_dir())
+            if all((d / f).is_file() for f in BUNDLE_FILES)]
+
+
+def bundle_members(state_dir: Path, space: str) -> list[Member]:
+    """Every bundle this peer holds for the space, as members with their
+    roots (`bundle_dirs`, each file hashed)."""
+    return [bundle_member(space, d) for d in bundle_dirs(state_dir, space)]
 
 
 def members_of(snapshot, *, shard_dir: Path | None = None) -> tuple[Member, ...]:

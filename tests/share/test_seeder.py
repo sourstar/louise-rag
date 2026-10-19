@@ -269,3 +269,60 @@ def test_the_digest_offers_what_is_served_not_every_member_held(node, monkeypatc
     c = collections_mod.by_name(c.name)
     (entry,) = gossip.entries(node, [c])
     assert [m["name"] for m in entry["members"]] == [f"records-{SLICE}"]
+
+
+def test_a_bundle_that_lands_after_the_publish_is_served_without_rehashing_the_rest(node, monkeypatch):  # noqa: F811
+    """Live on the node, 2026-10-19 (p2p-review-open-issues.md §8): 331
+    bundles made after the seeder's publish were offered in the digest and
+    announced, and none was seeded — `sync` published only on a snapshot or
+    selection change. Now the held bundles are listed at most once a minute,
+    a change republishes, and a publish within a snapshot hashes only what
+    is new."""
+    from app.share import gossip
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    assert codex.space is not None
+    con = db.connect(c)
+    state = node / c.name / "state"
+    monkeypatch.setattr(seeder, "_last_bundle_scan", {})
+    built: list[str] = []
+    real = seeder.build_torrent
+
+    def counted(member_dir, torrent, out_dir):
+        built.append(torrent.path)
+        return real(member_dir, torrent, out_dir)
+    monkeypatch.setattr(seeder, "build_torrent", counted)
+    t0 = 1_800_000_000.0
+    assert seeder.sync([c], {c.name: con}, con, "running", now=t0)["published"] == [c.name]
+    assert len(seeding.read_published(con)) == 2 and len(built) == 2
+    first = seeder.served(con)["bundles"]
+    assert first == seeder.bundles_fingerprint(state, codex.space_segment)
+    assert seeder.sync([c], {c.name: con}, con, "running", now=t0 + 10)["published"] == [], "nothing changed"
+    # a bundle lands (share contribute, or accept) after the publish
+    bdir = state / "bundles" / codex.space_segment / SLICE / "00001" / ("b" * 64)
+    bdir.mkdir(parents=True)
+    for f in mem.BUNDLE_FILES:
+        (bdir / f).write_bytes(f.encode() * 50)
+    assert seeder.sync([c], {c.name: con}, con, "running", now=t0 + 20)["published"] == [], \
+        "within the scan interval: not listed yet"
+    assert seeder.sync([c], {c.name: con}, con, "running", now=t0 + 70)["published"] == [c.name], \
+        "a minute on: the held set changed, served again"
+    published = seeding.read_published(con)
+    assert len(published) == 6 and len(built) == 6, "the bundle's four files hashed, the two records not again"
+    assert {e["member"] for e in published} == {f"records-{SLICE}", f"bundle-{codex.space_segment}-{'b' * 64}"}
+    assert seeder.served(con)["bundles"] != first
+    (entry,) = gossip.entries(node, [c])
+    assert {m["name"] for m in entry["members"]} == {e["member"] for e in published}, \
+        "the digest offers exactly what is served"
+    assert seeder.sync([c], {c.name: con}, con, "running", now=t0 + 140)["published"] == [], "the same set: nothing"
+    # the bundle goes (an operator's hand): served again without it, its torrents gone
+    import shutil
+    shutil.rmtree(bdir)
+    assert seeder.sync([c], {c.name: con}, con, "running", now=t0 + 210)["published"] == [c.name]
+    published = seeding.read_published(con)
+    assert len(published) == 2 and len(built) == 6, "nothing hashed again"
+    assert not any("b" * 64 in p.name for p in (state / "share" / "torrents").glob("*.torrent")), \
+        "no torrent of a member no longer held"
+    # the seeding thread picks the published list up as it is
+    quiet_sessions(monkeypatch)
+    seeding.tick([c], {c.name: con}, con, "running")
+    assert len(seeding._seeder._handles) == 2

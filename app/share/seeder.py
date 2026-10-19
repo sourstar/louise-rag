@@ -39,6 +39,9 @@ TORRENTS_DIR = "torrents"
 CONTROL_KEY = "share_served"          # per collection: what the worker publishes now
 ANNOUNCE_EVERY_S = 15 * 60            # a DHT announcement lives about that long
 _last_announce: dict[bytes, float] = {}
+#: the held bundles are listed for a change at most this often per collection
+BUNDLE_SCAN_S = 60.0
+_last_bundle_scan: dict[str, float] = {}
 
 
 def current_snapshot(shard_dir: Path) -> sn.Snapshot | None:
@@ -69,6 +72,18 @@ def _place(share_root: Path, snapshot_id: str, member: str, rel_path: str,
     except OSError:
         link.symlink_to(target.resolve())
     return share_root / snapshot_id / member
+
+
+def bundles_fingerprint(state_dir: Path, space: str | None) -> str | None:
+    """The set of whole bundles held for the space, as one hash over their
+    directory names (09 §9.7: the name is the bundle id) — what `sync`
+    compares with the published set. A listing and stats, never a hash of
+    a file. None for a collection without a space."""
+    if not space:
+        return None
+    import hashlib
+    names = "\n".join(d.name for d in mem.bundle_dirs(Path(state_dir), space))
+    return "sha256:" + hashlib.sha256(names.encode("utf-8")).hexdigest()
 
 
 def build_torrent(member_dir: Path, torrent: mem.Torrent, out_dir: Path) -> Path | None:
@@ -126,7 +141,16 @@ def publish(collection, snapshot: sn.Snapshot, shard_dir: Path, state_dir: Path,
     entries the worker's seeder serves (app/acquire/seeding.py
     `record_published`'s shape, plus the member, its path, the snapshot).
     The list REPLACES what an earlier snapshot published, and the earlier
-    torrents' files go, so nothing of a past snapshot is started again."""
+    torrents' files go, so nothing of a past snapshot is started again.
+
+    INCREMENTAL within a snapshot (2026-10-19): an entry published before
+    for this snapshot whose torrent file and link are still in place is
+    kept as it is, not hashed again — so a bundle that lands after the
+    first publish costs its own four files, never the 3,170 of gutenberg.
+    Until then `sync` published only on a snapshot or selection change,
+    and every bundle made after that was offered and announced but never
+    seeded: 331 of the node's, each a 120 s wait for whoever asked
+    (p2p-review-open-issues.md §8)."""
     from app.acquire import seeding
     share_root = Path(state_dir) / SHARE_DIR
     torrents_dir = share_root / TORRENTS_DIR
@@ -134,11 +158,15 @@ def publish(collection, snapshot: sn.Snapshot, shard_dir: Path, state_dir: Path,
     refused: list[str] = []
     members = list(mem.members_of(snapshot, shard_dir=shard_dir))
     codex = getattr(collection, "codex", None)
-    if codex is not None and codex.space is not None:
+    space = codex.space_segment if codex is not None and codex.space is not None else None
+    if space is not None:
         # the bundles this peer holds for the space (09 §9.7, §9.16): served
         # from state/bundles/, never from the SHARD. An annotations collection
         # has no space and so no bundles (02 §2.10)
-        members += mem.bundle_members(Path(state_dir), codex.space_segment)
+        members += mem.bundle_members(Path(state_dir), space)
+    previous = {(e.get("member"), e.get("path")): e for e in seeding.read_published(con)
+                if e.get("snapshot_id") == snapshot.snapshot_id}
+    kept = 0
     for member in members:
         if not serves(collection, member.name):
             continue                                     # narrowed out (`share --slices/--kinds`)
@@ -146,6 +174,13 @@ def publish(collection, snapshot: sn.Snapshot, shard_dir: Path, state_dir: Path,
         if not all((base / f.path).is_file() for f in member.files):
             continue                                     # a slice this copy does not hold
         for t in member.torrents():
+            old = previous.get((member.name, t.path))
+            if old is not None and old.get("info_hash") == t.infohash[7:] \
+                    and Path(str(old.get("torrent_path"))).is_file() \
+                    and (share_root / snapshot.snapshot_id / member.name / t.path).exists():
+                entries.append(old)                      # published before, in place: not hashed again
+                kept += 1
+                continue
             member_dir = _place(share_root, snapshot.snapshot_id, member.name, t.path,
                                 base / t.path)
             torrent_path = build_torrent(member_dir, t, torrents_dir)
@@ -179,11 +214,12 @@ def publish(collection, snapshot: sn.Snapshot, shard_dir: Path, state_dir: Path,
     db.set_control(con, CONTROL_KEY, json.dumps({
         "snapshot_id": snapshot.snapshot_id, "snapshot_hash": snapshot.hash,
         "selection": selection(collection),
+        "bundles": bundles_fingerprint(state_dir, space),
         "torrents": len(entries), "refused": refused, "at": time.time()}))
     if log is not None:
         log(f"[{collection.name}] share: {len(entries)} torrent(s) of snapshot "
-            f"{snapshot.snapshot_id} served" + (f"; {len(refused)} file(s) refused, not "
-                                                 f"what the snapshot says: {refused}" if refused else ""))
+            f"{snapshot.snapshot_id} served ({len(entries) - kept} new)"
+            + (f"; {len(refused)} file(s) refused, not what the snapshot says: {refused}" if refused else ""))
     return entries
 
 
@@ -375,9 +411,20 @@ def sync(collections, cons: dict, control_con, worker_state: str, *,
         if snap is None:
             continue
         now_served = served(con)
+        space = c.codex.space_segment if c.codex is not None and c.codex.space is not None else None
+        held_bundles = None
+        if space is not None and now_served is not None:
+            # a bundle landed since the last publish — made here or taken in
+            # — is offered and announced, so it must be served: the held set
+            # is listed at most once a BUNDLE_SCAN_S (a listing, no hashing)
+            t = time.time() if now is None else now
+            if t - _last_bundle_scan.get(c.name, 0.0) >= BUNDLE_SCAN_S:
+                _last_bundle_scan[c.name] = t
+                held_bundles = bundles_fingerprint(state_dir, space)
         if now_served is None or now_served.get("snapshot_id") != snap.snapshot_id \
-                or now_served.get("selection", selection(c)) != selection(c):
-            # a narrowing changed while the snapshot did not: served again
+                or now_served.get("selection", selection(c)) != selection(c) \
+                or (held_bundles is not None and now_served.get("bundles") != held_bundles):
+            # a narrowing or the held bundles changed while the snapshot did not: served again
             publish(c, snap, shard_dir, state_dir, con, log)
             out["published"].append(c.name)
         if seeds and session is not None and port:

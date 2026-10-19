@@ -219,6 +219,35 @@ fixed:
   have; digests are re-read only when one arrived or after
   `BACKOFF_S`, and a bundle nobody served waits that long.
 
+### 8. Bundles made after the publish were never seeded — FOUND LIVE, FIXED
+
+Measured by the München session on 39fd6e2, minutes after the node's
+deploy: the digest offered 331 `bundle-…` members (that day's `share
+contribute`), and the seeder served none — its published list was the
+3,170 torrents of 2026-10-18 22:10, before any bundle existed.
+`seeder.sync` published only when the snapshot id or the selection
+changed, while `gossip.entries` read the held bundles live. Every fetch of
+a node bundle was a 120 s "no metadata"; Perugia's deploy was held before
+it took the offers in. Pre-existing — it is why the node's fetch of
+Perugia's bundle failed too (§7) — and exposed the moment bundles were
+offered and taken in from digests. Fixed:
+- `publish` is incremental within a snapshot: an entry published before
+  whose torrent and link are in place is kept, not hashed again; a bundle
+  landing costs its own four files, never gutenberg's 3,170;
+- `sync` lists the held bundles at most once a minute per collection
+  (`bundles_fingerprint`, a listing and stats, no hashing) and publishes
+  when the set differs from the published one; the control row records
+  it. Test: a bundle landing after the publish is served a minute later
+  with four files hashed and the records not again; the digest offers
+  exactly what is served; a removed bundle's torrents go.
+
+**Storage (München, for the operator):** the bundles rest in
+`collections/<c>/state/bundles` on the node's SSD — 9.7 GB at 5,206 B per
+chunk, about 55 GB for gutenberg alone, beside the same vectors in Lance.
+The node's placement rule puts them on tank; a `/bundles` dataset with a
+per-collection symlink as `/shards` was done, or a `BUNDLES_ROOT` the way
+`SHARDS_ROOT` works, is München's proposal. Not a platform change here.
+
 ### Still open after the review
 
 - **Vector convergence** ([vector-convergence.md](vector-convergence.md),
