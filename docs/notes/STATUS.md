@@ -265,7 +265,7 @@ architecture session's tests and failed at import on the node's image
 - **Perugia** deploys a commit München has passed without rerunning the
   suite: same code, same image build; what differs is the machine. It
   runs its own smoke checks (the web answers, the worker's first round,
-  `louise health`) and reports those.
+  `louise node health`) and reports those.
 - A difference between the two containers that lets a test pass in one
   and fail in the other is itself a defect to fix (tonight's:
   tests/test_invariant_guards.py now refuses a multipart route unless

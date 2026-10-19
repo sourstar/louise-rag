@@ -105,6 +105,19 @@ def _row(collection, report, refusal: str | None, paused: set[str]) -> dict[str,
             "integrity_violated": violated, "doing": doing, "stages": stages}
 
 
+def _publish(c) -> dict[str, Any]:
+    """The publisher's last pass per collection (app/worker.py `_publisher`),
+    the `publish:<name>` control rows."""
+    import json
+    out: dict[str, Any] = {}
+    for r in c.execute("SELECT key, value FROM control WHERE key LIKE 'publish:%'"):
+        try:
+            out[str(r["key"])[len("publish:"):]] = json.loads(r["value"])
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def show() -> dict[str, Any]:
     from app import collections as collections_mod, health, node_state
     got = collections_mod.load_all(skip_unreadable=True)
@@ -126,4 +139,6 @@ def show() -> dict[str, Any]:
             "disk": disk_guard.status(loaded),
             "collections": rows,
             "jobs": node_state.peek(_jobs, [], table="jobs"),
+            # the publisher's last pass per shared collection (07 §7.8 "all p2p")
+            "publish": node_state.peek(_publish, {}, table="control"),
             "last_round": last_round(loaded)}

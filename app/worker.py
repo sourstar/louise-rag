@@ -4237,6 +4237,8 @@ PUBLISH_BEAT_S = config.PUBLISH_BEAT_S
 #: the publisher's last pass per collection, for whoever asks; written by the
 #: publisher thread, read by node show / the Library — a summary a pass, not telemetry per unit
 _publish_state: dict[str, dict] = {}
+#: the control row `publish:<collection>` in node.sqlite carries the same summary
+PUBLISH_KEY = "publish:"
 #: what the publisher said once per collection and will not repeat until it changes
 _publish_said: dict[str, str] = {}
 
@@ -4296,6 +4298,7 @@ def _publisher_beat(budget_s: float | None = None) -> dict[str, dict]:
     at 06:00 under on-demand, not at the next night's flip (the node's
     choice, 2026-10-19). Returns the passes made, by collection. Never
     raises; a refusal or a deferral is said once per collection."""
+    from contextlib import closing
     from .hold import embedder as emb
     from .share import contribute
     budget_s = config.PUBLISH_BUDGET_S if budget_s is None else budget_s
@@ -4332,6 +4335,13 @@ def _publisher_beat(budget_s: float | None = None) -> dict[str, dict]:
                 "awaiting": len(out.get("awaiting", [])), "left_to_fetch": len(out.get("left_to_fetch", [])),
                 "accepted": len(out.get("accepted", [])), "refused": len(out.get("refused", [])),
                 "announced": out.get("events", 0), "interrupted": bool(out.get("interrupted"))}
+            # the last pass, for `node show` in another process (app/node_show.py):
+            # a summary a pass, in the node's store
+            try:
+                with closing(node_state.connect()) as ncon:
+                    db.set_control(ncon, f"{PUBLISH_KEY}{c.name}", json.dumps(_publish_state[c.name], sort_keys=True))
+            except Exception:   # noqa: BLE001 — telemetry
+                pass
             _publish_said.pop(c.name, None)
             done[c.name] = out
             if out.get("bundles") or out.get("refused"):

@@ -64,6 +64,10 @@ def test_the_beat_publishes_what_the_embed_stage_finished_and_only_under_p2p(rea
             assert len(peers.to_forward(node_con)) == 1
         state = worker._publish_state["gutenberg"]
         assert (state["bundled"], state["awaiting"], state["announced"], state["interrupted"]) == (1, len(shards) - 1, 1, False)
+        # the same summary in the node's store, where `node show` reads it from another process
+        from app import node_show
+        shown = node_show.show()["publish"]
+        assert shown["gutenberg"]["bundled"] == 1 and shown["gutenberg"]["announced"] == 1
         events = [r["message"] for r in db.connect(local).execute(
             "SELECT message FROM events WHERE message LIKE '%publish:%' ORDER BY id")]
         assert any("1 part(s) bundled from vectors held here" in m for m in events), events
