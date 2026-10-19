@@ -28,6 +28,12 @@ EXEMPT = {
     "deposit": "parse reads `.deposit.json` (the client's file name, the deposit time, a URL) "
                "beside the file fetch hashes. Louise writes it once, at the deposit, and a deposit "
                "collection publishes no record (02 §2.9): there is no origin to verify against.",
+    "wikidata": "parse reads the dump's LABEL TABLE (app/plugins/wikidata/pack.py, labels.sqlite) beside "
+                "the entity's own line that fetch hashes: an entity's text names other entities' labels, "
+                "which are other lines of the SAME dump. 06 §6.4 (amended 2026-10-19): the table is a derived "
+                "artefact of the pinned origin, `origin_hash` covers the entity's line — the unit a query "
+                "returns — and a verifier rebuilds the table from the same dump (`origin.spec.files` pins "
+                "it) before reproducing a record; `origin.form` says which part of the text comes from it.",
 }
 
 #: plugins whose module tests call `assert_covered` (tests/test_origin_coverage.py

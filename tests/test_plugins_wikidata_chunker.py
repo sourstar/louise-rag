@@ -125,3 +125,19 @@ def test_the_slicing_scheme_is_the_id_range():
     assert slicing.slice_hint("wikidata", {"native_id": "149999999"}) == "range=14"
     assert slicing.slice_hint("wikidata", {"native_id": str(ids.PROPERTY_BASE + 2)}) == "range=100"
     assert scheme.describe == {"keys": ["range"], "range": {"field": "native_id", "bin": 10_000_000, "properties": 100}}
+
+
+def test_a_layer_without_its_tokenizer_is_refused_before_a_codex_is_minted():
+    with pytest.raises(layers.LayerError, match="sha256"):
+        layers.parse_layers([{"chunker": "wikidata-text", "params": {"max_tokens": 1024}}], where="t")
+    with pytest.raises(layers.LayerError, match="sha256"):
+        layers.parse_layers([{"chunker": "wikidata-text", "params": {"max_tokens": 1024, "tokenizer": "abc"}}], where="t")
+    with pytest.raises(layers.LayerError, match="max_tokens"):
+        layers.parse_layers([{"chunker": "wikidata-text", "params": {"max_tokens": 4, "tokenizer": SHA}}], where="t")
+    layers.check_params({"tokens": 1000}, chunker="fixed", where="t")       # other chunkers: unchanged
+    # the plugin's default layer carries no tokenizer: a recipe must name one
+    from app.hold import template
+    (layer,) = template.default_layers(template.source_for("wikidata"))
+    assert layer.chunker.id == "wikidata-text" and "tokenizer" not in layer.chunker.params
+    with pytest.raises(layers.LayerError, match="recipe states it"):
+        layers.check_params(layer.chunker.params, chunker=layer.chunker.id, where="layers[0]")

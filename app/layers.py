@@ -25,6 +25,7 @@ Rules:
     field:<name>=<value>  documents whose record field — a top-level field,
                        or `extra.<key>` — has that value (06 §6.3)
 """
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -135,6 +136,28 @@ def check_input(value: Any, *, chunker: str, where: str) -> None:
                 f"({', '.join(PAIR_CHUNKERS)}), not on {chunker!r}")
 
 
+_SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def check_params(params: Any, *, chunker: str, where: str) -> None:
+    """Refuse a layer whose chunker cannot run on its params — they are inside
+    `space_id`, so a layer that validates and then fails at the first chunk
+    is a Codex minted for nothing. `wikidata-text` (06 §6.3) names its
+    tokenizer by sha256 and cuts at a positive `max_tokens`; the other
+    chunkers check their own at cut time, as before."""
+    if not isinstance(params, dict):
+        raise LayerError(f"{where}: params is a table")
+    if chunker == chunking.WIKIDATA_TEXT:
+        tok = params.get("tokenizer")
+        if not isinstance(tok, str) or not _SHA256.match(tok):
+            raise LayerError(f"{where}: a {chunker} layer names its tokenizer by the sha256 of its "
+                             f"tokenizer.json (`params.tokenizer = \"sha256:<64 hex>\"`); a recipe states it, the "
+                             f"plugin pins no file (06 §6.3)")
+        mt = params.get("max_tokens")
+        if not isinstance(mt, int) or isinstance(mt, bool) or mt < 16:
+            raise LayerError(f"{where}: a {chunker} layer's max_tokens is an integer of at least 16, got {mt!r}")
+
+
 def _field_value(row, name: str):
     """A record field by 06 §6.3's name: a top-level field, or
     `extra.<key>`. Returns None when the row cannot answer."""
@@ -175,8 +198,7 @@ def parse_layers(raw, *, where: str) -> tuple[Layer, ...] | None:
         rule = str(entry.get("rule", "default"))
         check_rule(rule, where=f"{where}: layers[{i}]")
         params = entry.get("params", {})
-        if not isinstance(params, dict):
-            raise LayerError(f"{where}: layers[{i}]: params is a table")
+        check_params(params, chunker=name, where=f"{where}: layers[{i}]")
         form = entry.get("input", INPUT_TEXT)
         check_input(form, chunker=name, where=f"{where}: layers[{i}]")
         out.append(Layer(chunker=name, version=chunking.chunk_version_for(name),

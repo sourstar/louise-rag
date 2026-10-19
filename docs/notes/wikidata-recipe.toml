@@ -1,0 +1,100 @@
+# Wikidata — every item and property of the official JSON entity dump, one
+# record each, its text per language by the vendored textifier
+# (docs/notes/wikidata-build-plan.md; app/plugins/wikidata). TEMPLATE,
+# 2026-10-19 night: nothing is created until `hold collection create` runs
+# ON THE NODE, because `create` mints a PERMANENT collection_id and space_id
+# from these bytes and four of them can only be read there — each marked
+# <<...>> below:
+#
+#   layers[0].chunker.params.tokenizer  sha256 of jina-v3's tokenizer.json at
+#                                       the pinned revision (the image fetches
+#                                       the file into TOKENIZERS_DIR at build)
+#   space.encoder.weights               sha256 over the weights folder
+#                                       (09 §9.3) of jinaai/jina-embeddings-v3
+#                                       ab036b0 + remote code bd55a5e
+#   space.encoder.engine.*              the stated run of the louise-python
+#                                       `jina-v3` task behind VeGa, read with
+#                                       `hold embedder run --encoder ... --api
+#                                       vega --model vega-jina-v3`
+#   work.tokens                         from the throughput measured on the B70
+#
+# Then, on the node:
+#
+#   hold collection create wikidata --recipe wikidata-recipe.toml \
+#       --name wikidata --platform-image <the running image's digest> \
+#       --encoder http://192.168.178.10:30286 --api vega --embed-model vega-jina-v3 \
+#       --query-model vega-jina-v3-query
+#
+# The licence is GREEN (CC0): no acknowledgement. The corpus folder is
+# /corpora/wikidata; the fetch is the dated dump of the snapshot the file
+# pins (`snapshot = "20261012"` in collections/wikidata.toml), 103.4 GB over
+# at most two connections, verified against the run's md5sums; the first
+# scan builds the pack and the label table in one streaming pass (hours;
+# resumable at a chunk of 100,000 entities):
+#
+#   hold records fetch wikidata --profile all
+#
+# INVARIANT 12 before any vector: the jina-v3 run's determinism measured on
+# the card (torch's controls are not in the VeGa wrapper's DETERMINISM table
+# yet — approved-encoders.md), the calibration set embedded over several
+# loads and orders, every vector bit-identical.
+
+[descriptive]
+title = "Wikidata — items and properties, as text"
+summary = "Every item and property of Wikidata's JSON entity dump as one record: its labels, descriptions, aliases, statements with qualifiers, and sitelinks kept whole; a text rendering per language for search, built from the dump alone. CC0."
+
+# D3: one layer, the language list a parameter; a language added is a
+# daughter collection (02 §2.7). The chunker is Wikimedia's cut over the
+# textifier's statements at 1,024 tokens of jina-v3's tokenizer (06 §6.3).
+[[layers]]
+rule = "default"
+[layers.chunker]
+id = "wikidata-text"
+version = 1
+[layers.chunker.params]
+max_tokens = 1024
+tokenizer = "<<sha256:the tokenizer.json of jinaai/jina-embeddings-v3 at ab036b0>>"
+
+[space]
+# jina-embeddings-v3, the Matryoshka cut Wikimedia used (dim 512), f16,
+# mean pooling, normalised; `cut: tokens` at the chunker's window
+dim = 512
+dtype = "f16"
+ctx = 1024
+pooling = "mean"
+normalise = true
+cut = "tokens"
+tolerance = "0.95"
+epoch = "0"
+evaluation = ""
+
+[space.encoder]
+weights = "<<sha256:the weights folder of jinaai/jina-embeddings-v3 at ab036b0 (remote code bd55a5e)>>"
+label = "jinaai/jina-embeddings-v3 (ab036b0; adapter retrieval.passage; LocalAI's louise-python jina-v3 task, torch XPU, behind VeGa; the node's card)"
+
+# an asymmetric space: the same weights with the retrieval.query adapter for questions
+[space.query]
+instruction = ""
+[space.query.encoder]
+weights = "<<the same sha256 as space.encoder.weights>>"
+label = "jinaai/jina-embeddings-v3 (ab036b0; adapter retrieval.query)"
+
+[space.encoder.engine]
+name = "<<localai/louise-python-jina-v3 as the stated run names it>>"
+build = "<<from `hold embedder run`>>"
+image = "<<sha256:... from `hold embedder run`>>"
+args = ["<<from `hold embedder run`>>"]
+device = "Intel(R) Arc(TM) Pro B70 Graphics"
+
+[space.encoder.engine.env]
+GGML_SYCL_ENABLE_DNN = "0"
+
+[work]
+# tokens per month this collection asks of a contributor's encoder (04 §4.5);
+# from the throughput measured on the B70 (45 chunks/s at fp32 batch 32 in
+# Wikimedia's own figures) — MEASURE on the node's run before pinning
+tokens = 2000000000
+
+[validation]
+sample = 512
+checks = ["roots", "chunks", "calibration", "records-vs-origin"]

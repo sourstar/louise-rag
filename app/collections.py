@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .plugins import deposit, embedded, gutenberg, normattiva, pubmed, wikipedia
+from .plugins import deposit, embedded, gutenberg, normattiva, pubmed, wikidata, wikipedia
 from .plugins.base import CorpusSource
 
 # `genome` and `packed` are boxed in attic/ (operator, 2026-09-14): kept for
@@ -25,6 +25,7 @@ PLUGIN_REGISTRY: dict[str, CorpusSource] = {
     "gutenberg": gutenberg.SOURCE,
     "normattiva": normattiva.SOURCE,
     "pubmed": pubmed.SOURCE,
+    "wikidata": wikidata.SOURCE,
     "wikipedia": wikipedia.SOURCE,
 }
 

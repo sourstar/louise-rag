@@ -122,7 +122,7 @@ def test_a_recipe_may_declare_a_layer_s_input():
 
 def test_every_plugin_template_defaults_to_text():
     from app.hold import template
-    for name in ("gutenberg", "pubmed", "wikipedia", "normattiva"):
+    for name in ("gutenberg", "pubmed", "wikipedia", "normattiva", "wikidata"):
         for l in template.default_layers(template.source_for(name)):
             assert l.input is None or l.input == TEXT
             assert l.form == "text"

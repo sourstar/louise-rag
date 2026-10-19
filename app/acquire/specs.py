@@ -402,10 +402,80 @@ NORMATTIVA_SPEC = AcquisitionSpec(
 )
 
 
+# ---- Wikidata (docs/notes/wikidata-build-plan.md D1; app/plugins/wikidata) ----
+
+#: the full entity dump of 20261012 as dumps.wikimedia.org listed it on
+#: 2026-10-19 (München's probe): 103.4 GB bz2; the checksum files beside it
+_WIKIDATA_DUMP_BYTES = 103_409_622_204
+_WIKIDATA_CHECKSUM_BYTES = 401 + 449
+_WIKIDATA_DIR = "wikidatawiki/entities"
+
+
+def _wikidata_files(snapshot: str) -> tuple[RemoteFile, ...]:
+    """The dated directory's full JSON dump and its two checksum files
+    (`wikidata-<date>-md5sums.txt`, `-sha1sums.txt`: every file of the run
+    with its digest — the acquisition verifies the dump against them). A
+    dated path is immutable: the same URL serves the same bytes, which is
+    what pins a snapshot (D1); `latest-all.json.bz2` is the opposite and is
+    never fetched."""
+    base = f"{_WIKIDATA_DIR}/{snapshot}/wikidata-{snapshot}"
+    return (RemoteFile(rel_path=f"{base}-all.json.bz2"),
+            RemoteFile(rel_path=f"{base}-md5sums.txt"),
+            RemoteFile(rel_path=f"{base}-sha1sums.txt"))
+
+
+def wikidata_snapshots(timeout: float = 30.0, *, probe: int = 6) -> tuple[str, ...]:
+    """The dump dates that hold a FULL JSON dump, newest first. Not every
+    dated directory does: 20261014 held lexemes and the truthy RDF, 20261016
+    lexemes only (München, 2026-10-19), so the newest directory is not the
+    newest dump — each of the newest `probe` directories is listed and kept
+    only where `wikidata-<date>-all.json.bz2` is among its files."""
+    import httpx
+    headers = {"User-Agent": _WIKI_USER_AGENT}
+    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        r = client.get(f"https://dumps.wikimedia.org/{_WIKIDATA_DIR}/", headers=headers)
+        r.raise_for_status()
+        dates = sorted({m for m in re.findall(r'href="(\d{8})/"', r.text) if _SNAPSHOT_RE.match(m)}, reverse=True)
+        out = []
+        for date in dates[:probe]:
+            listing = client.get(f"https://dumps.wikimedia.org/{_WIKIDATA_DIR}/{date}/", headers=headers)
+            if listing.status_code != 200:
+                continue
+            if f"wikidata-{date}-all.json.bz2" in listing.text:
+                out.append(date)
+    return tuple(out)
+
+
+WIKIDATA_SPEC = AcquisitionSpec(
+    source_id="wikidata",
+    transport=Transport.HTTPS,
+    endpoints=(
+        Endpoint(transport=Transport.HTTPS, url="https://dumps.wikimedia.org",
+                 max_conns=2,   # dumps.wikimedia.org etiquette: max 2 connections
+                 static_files=()),  # dated only: a collection pins a snapshot (D1)
+    ),
+    # one file holds every entity; documents are counted as the pack is built
+    layout="single-file",
+    filters=("*-all.json.bz2", "*-md5sums.txt", "*-sha1sums.txt"),
+    # the run's own checksum files travel with the dump (`-md5sums.txt`); the
+    # engine's sidecar check wants `<file>.md5`, which this origin does not
+    # publish — the pack build verifies the dump against the listed md5 instead
+    checksums=ChecksumSource(kind="none"),
+    delta=DeltaSpec(mode="dated-dumps"),
+    snapshot_files=_wikidata_files,
+    snapshot_index=wikidata_snapshots,
+    profiles={"all": Filter()},
+    all_profile="all",
+    estimated_bytes={"all": _WIKIDATA_DUMP_BYTES + _WIKIDATA_CHECKSUM_BYTES},
+    license_class=LicenseClass.GREEN,            # CC0: no terms to acknowledge
+)
+
+
 ACQUIRE_REGISTRY: dict[str, AcquisitionSpec] = {
     "embedded": EMBEDDED_SPEC,
     "gutenberg": GUTENBERG_SPEC,
     "normattiva": NORMATTIVA_SPEC,
     "pubmed": PUBMED_SPEC,
+    "wikidata": WIKIDATA_SPEC,
     "wikipedia": WIKIPEDIA_SPEC,
 }

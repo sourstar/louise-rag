@@ -85,7 +85,7 @@ def recipe(**over) -> dict:
 # ---- what the plugin declares ---------------------------------------------
 
 def test_every_plugin_declares_what_6_1_requires():
-    for name in ("gutenberg", "pubmed", "wikipedia", "embedded", "normattiva"):
+    for name in ("gutenberg", "pubmed", "wikipedia", "embedded", "normattiva", "wikidata"):
         s = template.source_for(name)
         assert s.protocol_version == 1
         assert s.PARSER_VERSION >= 1

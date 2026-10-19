@@ -1171,7 +1171,7 @@ def _validate_layers(codex: Codex) -> None:
     # list is inside `space_id`, so that silence produces vectors under an
     # id promising a different cut, which is invariant 1's failure mode and
     # undetectable from outside.
-    from ..layers import LayerError, check_input, check_rule
+    from ..layers import LayerError, check_input, check_params, check_rule
     for i, l in enumerate(codex.layers):
         try:
             check_rule(l.rule, where=f"layers[{i}]")
@@ -1179,6 +1179,9 @@ def _validate_layers(codex: Codex) -> None:
             # is inside `space_id` (09 §9.3, amended 2026-10-08)
             if codex.version >= INPUT_VERSION:
                 check_input(l.input, chunker=l.chunker.id, where=f"layers[{i}]")
+            # and the params a chunker cannot run without (wikidata-text's
+            # tokenizer, 2026-10-19): inside `space_id` too
+            check_params(l.chunker.params, chunker=l.chunker.id, where=f"layers[{i}]")
         except LayerError as e:
             raise CodexError(str(e)) from None
     seen = [l.chunker.id for l in codex.layers]
