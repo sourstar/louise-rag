@@ -70,18 +70,21 @@ def _strip_line(line: bytes) -> bytes:
 
 
 def iter_entities(stream: BinaryIO, *, start_index: int = 0, result: ReadResult | None = None,
-                  tolerate_truncation: bool = True) -> Iterator[Entity]:
+                  tolerate_truncation: bool = True, skip: int = 0) -> Iterator[Entity]:
     """The entities of an open dump stream, in order. `result` is filled
     as the read goes: `complete` when the array's `]` is seen,
     `truncated_at` when the stream ends before it (an EOFError of the
     decompressor, or an incomplete last line) — tolerated by default, so a
     probe's head yields what it holds; a build that must read the whole
-    dump passes `tolerate_truncation=False` and gets `DumpError`."""
+    dump passes `tolerate_truncation=False` and gets `DumpError`. `skip`
+    passes over the first entity lines WITHOUT parsing them — a resumed
+    pack build pays the decompression again, never the JSON (pack.py)."""
     result = result if result is not None else ReadResult()
     reader = stream                       # bz2/gzip/plain files all read lines; no second buffer over them
     index = start_index
     opened = False
     consumed = 0
+    to_skip = skip
     try:
         while True:
             line = reader.readline()
@@ -108,6 +111,10 @@ def iter_entities(stream: BinaryIO, *, start_index: int = 0, result: ReadResult 
             if s == b"]" or s == b"],":
                 result.complete = True
                 break
+            if to_skip > 0 and line.endswith(b"\n") and _strip_line(line):
+                to_skip -= 1
+                index += 1
+                continue
             if not line.endswith(b"\n"):
                 # the last line of a cut stream: incomplete unless it parses
                 raw = _strip_line(line)
