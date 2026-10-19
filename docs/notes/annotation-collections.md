@@ -202,30 +202,36 @@ note measured:
   Confidence 1. These two can be the same language: `same-work` there
   means editions of one work, which is what grouping needs.
 
-Not created on the node yet (the operator's step): `python -m
-tools.annotations_from_works records.jsonl wiki_map.json --out
-claims.jsonl`, then `louise hold collection create annotations
---annotates gutenberg --from-snapshot <gutenberg's current snapshot>
---claims claims.jsonl --name gutenberg-works`. Nothing in gutenberg is
-rebuilt (RULE 1). Until it exists the search groups nothing on gutenberg
-and the fusion fixes stand alone.
-**The operator's task, 2026-10-19 evening — "Start implementing the
-gutenberg graph collection."** Read as this collection: the edges over
-gutenberg's records that the search and `louise_traverse` follow. The
-plan, with the operator: ONE collection, `gutenberg-works`, holding both
-claim sets — the works (Wikidata and PG's editions notes, 4,376) and the
-classical matcher's pairs (357) — merged by `tools/annotations_merge.py`
-(a pair stated twice keeps the higher confidence; `same-work` and
-`translation-of` over one pair both stay), measured by `hold collection
-create annotations --dry-run` (the claims checked against gutenberg's
-current snapshot exactly as the write would, counted, nothing written),
-then created on the node, checked, shared (the digest lists it; Perugia
-fetches it like any collection) and verified with `ask traverse
-<uid>` and a title query grouped on it. Nothing in gutenberg is rebuilt
-(RULE 1). What this does not do: origin-stated edges (book → author,
-book → subject from PG's RDF) as a relations member of gutenberg itself,
-which would re-issue gutenberg's snapshot — asked of the operator, not
-assumed.
+**On the node since the unattended run of 2026-10-10** (München, read-only,
+2026-10-19 evening — this paragraph had said "not created yet"): two
+annotations collections, both annotating gutenberg `sha256:7340dde6…` from
+snapshot 2026-09, both `kinds = ["records", "relations"]`, `embed = off`,
+`share = false` (so no peer holds them yet), their bundle folders linked
+under `/bundles`:
+
+- `gutenberg-works`, codex `sha256:102cdf11…`: 4,376 claims (4,357
+  Wikidata, 19 editions notes) over 6,060 books — the works above;
+- `gutenberg-same-work`, codex `sha256:0dbf3721…`: 261 claims — the
+  classical matcher at `--min-confidence 0.95` (the wikidata and title
+  tiers, 17/17 on the check), not the default cut's 357.
+
+Regenerated to scratch the same day for a check: the works tool gives
+4,376 again; the matcher's default cut 357; the two files share 86
+unordered pairs. Open for the operator: whether the classical collection
+moves to the default cut (357) or the two merge (`tools/annotations_merge.py`,
+2026-10-19: a pair stated twice keeps the higher confidence) — either is a
+NEW snapshot of an annotations collection, which `hold annotations update`
+does not write yet, never a recreate of these; and whether to set `share =
+true` so peers group works too. `hold collection create annotations
+--dry-run` (2026-10-19) measures a claims file against the target snapshot
+before any write. Inputs: the works measurement's `records.jsonl` and
+`wiki_map.json` live on the dev PC (`tools/measure/out/onelang/`, 2026-10-09);
+the classical `coverage.json` on the node (`/root/xlate-classical/out/`).
+
+The operator's "gutenberg graph collection" (2026-10-19 evening) is NOT
+these: it is `gutenberg-wd-kg`, the sibling of gutenberg and wikidata
+([wikidata-plugins.md](wikidata-plugins.md), [wikidata-implementation.md](wikidata-implementation.md)),
+which waits on the wikidata collection and decisions D1–D5.
 
 - **A target with other annotation collections.** Several annotations
   collections on one target each attach their own facts, labelled by
