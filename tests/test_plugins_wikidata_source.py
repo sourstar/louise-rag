@@ -74,6 +74,8 @@ def test_a_stopped_pass_resumes_at_the_chunk_without_parsing_what_it_has(tmp_pat
     meta = pack.build(dump, languages=("en",), chunk=2, stop=lambda: True)
     assert not meta["complete"] and meta["chunks"] == 1 and meta["entities"] == 2
     assert [p.name for p in pack.chunk_files(dump)] == ["00000.parquet"]
+    with pytest.raises(pack.PackError, match="same"):
+        pack.build(dump, languages=("en",), chunk=3)          # a resume keeps the chunk it started with
     # the resume skips two lines unparsed: count the json loads
     real = json.loads
 
@@ -86,8 +88,6 @@ def test_a_stopped_pass_resumes_at_the_chunk_without_parsing_what_it_has(tmp_pat
     assert meta["complete"] and meta["chunks"] == 3 and meta["entities"] == 6
     assert calls["n"] == 4, "the two entities of the complete chunk were skipped, not parsed"
     assert [pack.line(dump, i)[:20] for i in range(6)] == [l[:20] for l in entity_lines()]
-    with pytest.raises(pack.PackError, match="same"):
-        pack.build(dump, languages=("en",), chunk=3)
 
 
 def test_a_truncated_dump_builds_no_complete_pack(tmp_path):
