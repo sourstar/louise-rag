@@ -1,0 +1,1 @@
+"""WikidataTextEmbedding local source package."""

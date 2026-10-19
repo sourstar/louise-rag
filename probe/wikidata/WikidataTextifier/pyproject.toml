@@ -1,0 +1,47 @@
+[project]
+name = "WikidataTextifier"
+version = "0.1.0"
+description = "Transforms Wikidata/Wikibase entities into text representations."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.116.1",
+    "gunicorn>=23.0.0",
+    "pymysql>=1.1.2",
+    "rdflib>=7.5.0",
+    "requests>=2.32.4",
+    "sqlalchemy>=2.0.41",
+    "uvicorn>=0.35.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "ruff>=0.9.0"
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+exclude = ["data/mysql"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # Pyflakes (catches undefined names, unused imports, etc.)
+    "I",   # isort (import sorting)
+    "D",   # pydocstyle (function/class documentation)
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "wikidatatextifier",
+]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests"
+]
