@@ -302,6 +302,18 @@ the old directory set aside as `state/bundles.moved-<time>`; a scratch of
 a dead export not carried. 07 §7.8 amended;
 deploy/16f/flatten_mounts.py knows the mount and the variable.
 
+**Deployed on the node 13:40 CEST** (München; 6d3084b = cab58c7's code;
+full suite there: 4,695 passed, 1 skipped): `BUNDLES_ROOT=/bundles` in web
+and worker, set by flatten_mounts.py; `adopt-bundles` answered "linked
+already" for gutenberg and "linked" (0 files) for normattiva, pubmed-v8,
+wikipedia, gutenberg-same-work and gutenberg-works; tank/apps/louise-bundles
+16.4 GB, 655 gutenberg bundles; the 14 GB SSD copy deleted (operator).
+First publish after the restart: "5790 torrent(s) … served (8 new)" =
+3,170 + 4 × 655 — every earlier entry kept across the restart, none
+rehashed. Holder pass 2 (13:14–13:39, SIGTERMed by the deploy): probed
+165, held 165, accepted 168; 655 holder bundles in all so far. The pass
+runs continuously until 17:00 (operator: heavy lifting allowed until then).
+
 **Perugia's DHT, measured** (39fd6e2, 10:10–11:00Z, inside the worker
 container, 1,637 member files + 7 bundles): udp 1, udp6 0, tcp 2–6 — no
 flood on the peer either.
