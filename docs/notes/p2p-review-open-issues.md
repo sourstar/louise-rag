@@ -122,12 +122,34 @@ checks". Perugia's contribute resumes after the node's holder pass is
 through, and is the measurement of what rendezvous leaves to a second GPU
 once every held part is offered.
 
-**To measure on the node's first pass** (CLAUDE.md: time every new
-per-round cost): 1,612 open parts × (one 5 MB part read + one
-`vectors_by_chunk_id` over ~6,000 ids) + 16 challenge rows per part held.
-Expected: tens of minutes once, then only the ~150 parts the node holds
-nothing of, every pass, until their leaders close them. If that residual
-costs more than a minute a pass, memoise the empty probes per snapshot.
+**The node's first holder pass, measured** (München; 39fd6e2 then
+0292807, 12:09–13:13 CEST, SIGTERMed by the deploy, exit 130): 422 open
+parts probed, 422 held, 431 bundles accepted = 2,466,415 chunks, 0 chunks
+embedded ("chunk(s) to embed" lines: none), 0 refused, mine 693 (the
+parts rendezvous gives the node among 3 live peers), ~6.7 bundles a
+minute. Resumed at 13:14; the remaining ~1,040 held parts take about
+2.5 h more. The prediction stood: tens of minutes per few hundred parts,
+no GPU but the challenge rows. The residual probe cost per pass (the
+parts the node holds nothing of) is measured once the pass is through.
+
+**Seeding after the fixes (München, 0292807, 13:14 CEST):** first publish
+"5118 torrent(s) of snapshot 2026-09 served (1948 new)" = 3,170 + 4 × 487
+bundles; 35 s later "5126 served (8 new)" — two bundles contribute had
+just made: incremental. Warm: `bundle_members` 495 bundles in 0.23 s
+(was 8.1 s); `gossip.entries` 2.15 s; offered-not-served 6 (the bundles
+of the last minute — `BUNDLE_SCAN_S`'s lag, by design), served-not-offered
+0. No failed digest since the start.
+
+**Open, the general case: the digest's size.** The node's digest entries
+grew from 64,938 to 409,873 bytes of canonical JSON with 599 members and
+482 coverage rows for gutenberg, heading for ~1.3 MB at 1,600 bundles —
+each bundle member carries its four files' roots (09 §9.9, so a fetcher
+computes the torrents without asking). Hourly per neighbour, under the
+UP budget's DELTA class and `gossip.TIMEOUT_S` = 10 s per post. To
+measure when the pass is through: the post time to Perugia at the full
+size. If it matters, the standard remedy is `Content-Encoding: gzip` on
+the POST (RFC 9110) before any change to what a digest says; hex digests
+compress about 2×.
 
 **The general case, not two peers** (operator, 2026-10-19): with many
 holders joining a network, each bundling what it holds would make as many
