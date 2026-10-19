@@ -530,12 +530,20 @@ and the budget hits ("interrupted at the budget" lines); duplicate bundles
 
 **The node too** (operator, the same night): gutenberg goes from
 `on-demand` + the 23:00–07:00 cron contribute under `node pause` to
-`embed = "p2p"` under the worker, the cron retired. One check first,
-München's: under p2p the embedder is kept loaded while the mode runs
-everything — by day too — and on 2026-10-14 the 4B embedder held all
-night had the chat model evicted on every Ask. If the card does not
-hold both, the knob is the MODE (run everything at night, seed-only by
-day), never a pause of the collection. BEFORE from the last complete
-nightly cron pass (chunks, minutes, chunks/min, bundles, cold starts);
-AFTER from the first night's embed-stage and "publish:" lines, and no
-part bundled by both peers.
+`embed = "p2p"` under the worker, the cron retired. München's VRAM
+check (22:4x CEST): the card holds 31.9 GiB; the 4B embedder resident
+9,450 MiB; one RAG answer beside it peaks at 18.9 GiB (chat 7,441,
+translator 6,424, reranker 1,664); LocalAI's watchdog threshold is 68 %
+(21.7 GiB) and at 20:26Z it evicted the translator and an OpenVINO
+embedder at 85 %. Embedder + chat + reranker ≈ 58 % fit; a non-English
+Ask adds the translator and the 2026-10-14 pattern returns, softened.
+MÜNCHEN'S CHOICE: the knob is WHEN gutenberg embeds — `embed = "p2p"`
+22:30–06:00 and `on-demand` by day through the existing set-embed.sh
+flip (cron 5/6 re-pointed; cron 9/10, the contribute start/stop and the
+pause, retire); the mode stays run-everything, so acquisition, the
+catalogue and the other collections run all day, and the quiet hours
+hold. The publisher is therefore gated on `share`, not on `p2p`: the
+parts the night finished leave in the morning. BEFORE from tonight's
+contribute window on 0624b18 (chunks, minutes, chunks/min, bundles,
+cold starts); AFTER from the first night on the publisher, and no part
+bundled by both peers.

@@ -513,9 +513,9 @@ reader needs at the command line:
   one read of each such part's records), then takes the parts this
   peer currently leads, builds and shares them, and exits instead
   of looping until stopped. The worker runs the same pass without the
-  build as its PUBLISHER under `embed = "p2p"` (§7.8, *amended
-  2026-10-19*); the command is for a node whose worker does not run the
-  collection, since both need its writer lock. A bundle is announced with its event only
+  build as its PUBLISHER for every shared collection it runs (§7.8,
+  *amended 2026-10-19*); the command is for a node whose worker does not
+  run the collection, since both need its writer lock. A bundle is announced with its event only
   where this peer SERVES the collection — `share = true` in its file and
   a mode that seeds; otherwise it is accepted here, listed under the
   digest's coverage, and offered as a member once this peer serves
@@ -1180,12 +1180,14 @@ this node, with the cascade, and publishes as it goes — the embed stage
 does the first and the worker's PUBLISHER the second (*amended
 2026-10-19*): on its own thread, every `PUBLISH_BEAT_S`, where the mode
 embeds, the open parts whose vectors the node holds are bundled through
-the node's own ladder, recorded in the coverage map and, where the node
-serves the collection, announced; a pass is bounded by
-`PUBLISH_BUDGET_S` and resumes at the next beat. It is `share
-contribute`'s pass without the build, run under the lock the worker
-already holds, so a node no longer has to pause a collection to publish
-it. `share` says what
+the node's own ladder, recorded in the coverage map and announced; a
+pass is bounded by `PUBLISH_BUDGET_S` and resumes at the next beat. It
+is `share contribute`'s pass without the build, run under the lock the
+worker already holds, so a node no longer has to pause a collection to
+publish it — and it runs for EVERY shared collection whatever its
+`embed` says, since sharing means every embedding held leaves as
+bundles (below): the parts a night under `p2p` finished leave in the
+morning under `on-demand`, not at the next night's flip. `share` says what
 this node makes AVAILABLE — its records, and every embedding it holds as
 bundles (04 §4.3), whatever `embed` says and wherever the vectors came
 from; a node whose embed is `off` still bundles what an archive or an

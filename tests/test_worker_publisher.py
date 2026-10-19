@@ -1,8 +1,8 @@
-"""The worker's publisher (app/worker.py `_publisher`; 07 §7.8 "all p2p",
-2026-10-19): where the mode embeds, every collection this worker runs
-under `embed = "p2p"` gets a publish-only contribute pass — the open parts
-whose vectors the node holds, bundled and announced — one collection at a
-time, bounded by a budget and resumable. Until then publishing was the
+"""The worker's publisher (app/worker.py `_publisher`; 07 §7.8, 2026-10-19):
+where the mode embeds, every SHARED collection this worker runs gets a
+publish-only contribute pass — the open parts whose vectors the node
+holds, bundled and announced, whatever its embed mode says — one
+collection at a time, bounded by a budget and resumable. Until then publishing was the
 `share contribute` command's alone, which cannot run while the worker
 holds the collection's lock, so a node published only paused."""
 import time
@@ -67,11 +67,19 @@ def test_the_beat_publishes_what_the_embed_stage_finished_and_only_under_p2p(rea
         events = [r["message"] for r in db.connect(local).execute(
             "SELECT message FROM events WHERE message LIKE '%publish:%' ORDER BY id")]
         assert any("1 part(s) bundled from vectors held here" in m for m in events), events
-        # all local: the embed stage embeds everything itself and nothing is published by this thread
-        _set_mode(local, "all")
-        assert worker._publisher_beat() == {}
-        # a mode that does not embed publishes nothing
+        # whatever `embed` says, a shared collection's held vectors are published (07 §7.8:
+        # share = every embedding it holds, as bundles): under all local or on-demand the
+        # pass finds the first part closed by its bundle and nothing new to bundle
+        for mode in ("all", "lazy", "off"):
+            _set_mode(local, mode)
+            again = worker._publisher_beat()
+            assert list(again) == ["gutenberg"] and again["gutenberg"]["bundles"] == [], mode
         _set_mode(local, "p2p")
+        # not shared: nothing leaves (04 §4.2)
+        monkeypatch.setattr(collections_mod, "load_all", lambda *a, **k: [replace(local, share=False)])
+        assert worker._publisher_beat() == {}
+        monkeypatch.setattr(collections_mod, "load_all", lambda *a, **k: [local])
+        # a mode that does not embed publishes nothing
         node_state.set_worker_state("seed-only")
         assert worker._publisher_beat() == {}
         # a collection this worker does not run (another writer holds it) is left alone

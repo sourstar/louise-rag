@@ -4283,9 +4283,15 @@ def _publish_pass(collection, codex, con, *, stop, log) -> dict:
 
 
 def _publisher_beat(budget_s: float | None = None) -> dict[str, dict]:
-    """One beat of the publisher: every collection this worker runs (holds
-    the lock of) under `embed = "p2p"`, where the mode embeds, gets a pass
-    bounded by `budget_s`. Returns the passes made, by collection. Never
+    """One beat of the publisher: every SHARED public collection this worker
+    runs (holds the lock of), where the mode embeds, gets a pass bounded by
+    `budget_s`. Shared, not "p2p": `share` says what the node makes
+    available — every embedding it holds, as bundles, whatever `embed`
+    says (07 §7.8; a node whose embed is off still bundles what an archive
+    or an earlier run gave it) — and `p2p` only adds the build, which is the
+    embed stage's. So the parts a night under p2p finished at 05:58 leave
+    at 06:00 under on-demand, not at the next night's flip (the node's
+    choice, 2026-10-19). Returns the passes made, by collection. Never
     raises; a refusal or a deferral is said once per collection."""
     from .hold import embedder as emb
     from .share import contribute
@@ -4308,11 +4314,11 @@ def _publisher_beat(budget_s: float | None = None) -> dict[str, dict]:
         codex = getattr(c, "codex", None)
         if codex is None or getattr(codex, "privacy", "public") != "public":
             continue
+        if not getattr(c, "share", False):
+            continue                         # 04 §4.2: nothing leaves a node that does not serve it
         con = None
         try:
             con = db.connect(c)
-            if _effective_embed_mode(c, con) != "p2p":
-                continue
 
             def say(m: str, _con=con) -> None:
                 db.log_event(_con, "info", "share", m[:500])
@@ -4350,10 +4356,11 @@ def _publisher() -> None:
     """07 §7.8 "all p2p": "embeds the parts rendezvous gives this node, with
     the cascade, and publishes as it goes". The embed stage does the first
     (`_backfill_rows` under "p2p", app/share/leading.py); this thread does
-    the second: every PUBLISH_BEAT_S, where the mode embeds, the open parts
-    whose vectors this node holds are bundled and announced
-    (`_publish_pass`), one collection at a time, each pass bounded by
-    PUBLISH_BUDGET_S and resumable. Its own thread: a pass reads parts and
+    the second, for every SHARED collection whatever its embed mode: every
+    PUBLISH_BEAT_S, where the mode embeds, the open parts whose vectors
+    this node holds are bundled and announced (`_publish_pass`), one
+    collection at a time, each pass bounded by PUBLISH_BUDGET_S and
+    resumable. Its own thread: a pass reads parts and
     hashes bundles for minutes, and would idle a pipeline thread or the
     GPU loop (scheduling.md §1). Until 2026-10-19 publishing was the
     `share contribute` command's alone, which needs the collection's
