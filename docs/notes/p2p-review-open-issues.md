@@ -608,6 +608,14 @@ uids — a third copy, re-signed. Two defects:
    and `union` to every view: `show`, `leaders`/`open_shards`,
    `leading.skip_test`, the Library card, `hold vectors show`.
 
+Measured on the node (München, 0118423 deployed 19:20 CEST): `hold
+vectors show gutenberg` before, on the sum — covered 5,714,993 of
+10,477,214 chunks, 1,479 parts open, 158 closed; after, on the union —
+covered 5,677,748 (−37,245), 1,523 open, 114 closed: the 44 parts the
+sum had closed over Perugia's copies are open again. The first `show`
+read the multi-bundle parts' files once, 26 s; the second, 1 s from the
+cache.
+
 Perugia's 44 copies: `dev deprecate-duplicates` now also finds this
 peer's bundles whose CHUNK rows equal another producer's earlier bundle
 (`deprecate.foreign_duplicates`: identical `possession.json`, then the
