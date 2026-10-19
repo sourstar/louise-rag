@@ -410,6 +410,9 @@ def test_a_bundle_a_digest_offers_is_taken_in_without_its_event(node, monkeypatc
         cov.record(con, bundle_id=bid, shard=f"{cid}/{'a' * 16}/lang=af/00001", producer=PEER_KEY, uids=[],
                    chunks=3, tiers={}, source=cov.FETCHED, accepted_at=messages.time_text(now))
         assert accept.listed_bundles(ncon, codex, con, now=now) == [], "accepted here: not asked for"
+        cov.record(con, bundle_id=bid, shard=f"{cid}/{'a' * 16}/lang=af/00001", producer=PEER_KEY, uids=[],
+                   chunks=0, tiers={"T0": "pass", "T1": "fail"}, source=cov.FETCHED, accepted_at=None)
+        assert accept.listed_bundles(ncon, codex, con, now=now) == [], "refused by this peer's ladder: not asked for again"
         con.execute("DELETE FROM coverage")
         # the beat: taken in through `take`, read once per digest arrival, backed off when nobody serves
         taken: list[dict] = []

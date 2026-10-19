@@ -587,8 +587,8 @@ def listed_bundles(node_con, codex, con, *, now: float) -> list[tuple[dict[str, 
                         found[bundle_id][1].append(hint)
                     continue
                 known = cov.row(con, bundle_id)
-                if known and known["accepted_at"]:
-                    continue                                    # accepted here already
+                if known and (known["accepted_at"] or any(v == "fail" for v in known["tiers"].values())):
+                    continue                # accepted here already, or refused by this peer's ladder
                 payload = {"collection": codex.collection_id, "space_id": codex.space_id,
                            "snapshot_id": e.get("snapshot_id"), "shard": None, "uids": [],
                            "bundle_id": bundle_id, "root": m.get("root"), "bytes": m.get("bytes"),
