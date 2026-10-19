@@ -592,6 +592,15 @@ def fetch(root: Path, ref: str, *, snapshot_id: str | None = None,
                        encoder_keys=encoder_keys)
             out["from"] = source.address
             out["tried"] = tried
+            # the attestations the sharer holds for it, with the collection
+            # (04 §4.2 pull attestations): a peer that joins after a check
+            # otherwise never receives the records-vs-origin that `share
+            # contribute` wants (2026-10-19, p2p-review-open-issues.md §3)
+            try:
+                from app.share import attest as attest_mod
+                out["attestations"] = attest_mod.pull(root, out["name"], chain[0][0], p, [source], log=log)
+            except Exception as e:   # noqa: BLE001 — held already; the beat pulls again within the hour
+                out["attestations"] = {"error": f"{type(e).__name__}: {e}"[:200]}
             out["pre_ack"] = True
             out["note"] = ("codex.json and snapshots/* held; the members — records, terms, "
                            "calibration — are the second brick of step 9d")

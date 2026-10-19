@@ -10,6 +10,8 @@ from nacl import signing
 
 from app.hold import envelope as env
 from app.hold.codex import canonical_json
+from app import identity as identity_mod
+from app.bundles import keys as node_keys_mod
 from app.share import attest, gossip, messages, peers
 from tests.deposit.test_deposit_identity import node  # noqa: F401
 from tests.share.test_messages import PEER, PEER_KEY, a_shard
@@ -160,3 +162,93 @@ def test_the_command_checks_then_publishes_each_attestation_once(isolated_config
     with peers.connect() as con:
         n = len(attest.published(con))
         assert 2 <= n <= 3 and len(peers.to_forward(con)) == n, "one event per attestation published"
+
+
+def test_the_hourly_pull_asks_the_neighbours_that_list_the_collection_once_an_interval(node, tmp_path, monkeypatch):  # noqa: F811
+    """04 §4.2 / §4.7: attestations reach a peer from the events that carry
+    them AND from `pull attestations`; the worker's beat pulls once an
+    interval from the neighbours whose digest lists the collection, from
+    the newest attestation it holds less one interval."""
+    from fastapi.testclient import TestClient
+    from app import api
+    from app.share import fetch
+    from tests.share.test_fetch import SHARER
+    codex, name, d, snap = a_shard(node)
+    fetcher = tmp_path / "fetcher" / "collections"
+    fetcher.mkdir(parents=True)
+    client = TestClient(api.app)
+    out = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=client, key=OURS, own_key=OUR_KEY)
+    fname = out["name"]
+    assert out["attestations"]["kept"] == 0, "the node's version-1 bodies name no collection"
+    # the node's check runs after the peer joined: only the pull can bring it
+    late = an_attestation(codex, OTHER, check="records-vs-origin", time_text=messages.time_text(time.time()))
+    attest.attestation_path(node, name, codex, env.body_id(late["body"])).write_bytes(canonical_json(late))
+
+    class C:
+        def __init__(self):
+            self.name, self.codex = fname, codex
+    now = time.time()
+    monkeypatch.setattr(attest, "_last_pull_at", 0.0)
+    with peers.connect() as con:
+        assert attest.pull_due(fetcher, [C()], key=OURS, own_key=OUR_KEY, con=con, now=now, client=client) == {}, \
+            "no neighbour lists it: nobody to ask"
+        entry = {"collection_id": codex.collection_id, "lineage_id": codex.collection_id, "title": "t",
+                 "snapshot_id": "2026-08", "snapshot_hash": snap.hash, "codex_hash": "sha256:" + "2" * 64,
+                 "license": "green", "privacy": "public", "members": [], "coverage": []}
+        peers.record_digest(con, messages.digest_body(key=PEER_KEY, address=SHARER, neighbours=[], benchmarks=[],
+                                                      collections=[entry], now=now), now=now)
+        monkeypatch.setattr(attest, "_last_pull_at", 0.0)
+        said: list[str] = []
+        got = attest.pull_due(fetcher, [C()], key=OURS, own_key=OUR_KEY, con=con, now=now, client=client,
+                              log=said.append)
+        assert got[fname]["kept"] == 1 and got[fname]["asked"] == 1 and got[fname]["ids"] == [env.body_id(late["body"])]
+        assert attest.attestation_path(fetcher, fname, codex, env.body_id(late["body"])).is_file()
+        assert any("1 attestation(s) pulled" in s for s in said)
+        assert attest.pull_due(fetcher, [C()], key=OURS, own_key=OUR_KEY, con=con, now=now + 60, client=client) is None, \
+            "once an interval"
+        got = attest.pull_due(fetcher, [C()], key=OURS, own_key=OUR_KEY, con=con, now=now + peers.INTERVAL_S + 1,
+                              client=client)
+        assert got[fname]["kept"] == 0 and got[fname]["seen"] >= 1, "asked again an hour on, nothing new kept"
+    # the beat runs it when the digest is due, with the digest's key
+    monkeypatch.setattr(node_keys_mod, "load_signing_key", lambda path=None: OURS)
+    monkeypatch.setattr(identity_mod, "own", lambda: OUR_KEY)
+    monkeypatch.setattr(gossip, "_last_digest_at", 0.0)
+    monkeypatch.setattr(attest, "_last_pull_at", 0.0)
+    fake = FakeClient()
+    out = gossip.beat([], now=now, client=fake, force=True)
+    assert out["digest"]["sent"] == 1 and out["attestations"] == {}, "no collection held on the node side: nothing to pull"
+
+
+def test_republish_publishes_this_key_s_held_attestations_without_a_check(isolated_config, tmp_path, corpus_dir,
+                                                                           monkeypatch, capsys):
+    from app import identity, louise
+    from app.bundles import keys as node_keys
+    from app.hold import collection as col
+    from tests.hold.test_vectors_export import build_shard
+    monkeypatch.delenv("EMBED_URL", raising=False)
+    root, snapshot = build_shard(tmp_path, corpus_dir, records_per_shard=2)
+    monkeypatch.setattr(node_keys, "load_signing_key", lambda path=None: OURS)
+    monkeypatch.setattr(identity, "own", lambda: OUR_KEY)
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", "sha256:" + "1f" * 32)
+    codex = col.read(root, "gutenberg")
+    # held: two of this key's (one from a check that ran before any publish, as
+    # the node's 2026-10-11 run), one of another key's
+    mine = [an_attestation(codex, OURS, check="roots", time_text="2026-10-11T21:13:00Z"),
+            an_attestation(codex, OURS, check="records-vs-origin", time_text="2026-10-11T21:13:01Z")]
+    theirs = an_attestation(codex, OTHER, check="chunks", time_text="2026-10-11T21:13:02Z")
+    for envelope in mine + [theirs]:
+        p = attest.attestation_path(root, "gutenberg", codex, env.body_id(envelope["body"]))
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(canonical_json(envelope))
+    capsys.readouterr()
+    assert louise.main(["share", "attest", "gutenberg", "--root", str(root), "--republish"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["republish"] is True and out["held_by_this_key_unpublished"] == 2
+    assert sorted(out["published"]) == sorted(env.body_id(e["body"]) for e in mine) and out["already"] == []
+    with peers.connect() as con:
+        pending = peers.to_forward(con)
+        assert len(pending) == 2 and {p["envelope"]["body"]["payload"]["body"]["check"] for p in pending} == \
+            {"roots", "records-vs-origin"}, "this key's two, as events; the other key's is not this peer's to publish"
+    assert louise.main(["share", "attest", "gutenberg", "--root", str(root), "--republish"]) == 0
+    again = json.loads(capsys.readouterr().out)
+    assert again["published"] == [] and again["held_by_this_key_unpublished"] == 0, "never twice"

@@ -1375,17 +1375,30 @@ def cmd_share_attest(a) -> int:
     check` with the named checks and a fresh seed, then every attestation
     it wrote published as an `attestation` event for the worker's beat to
     forward — once each; an attestation published before is never
-    republished. Exit 0 when nothing failed, 1 when a check did."""
+    republished. Exit 0 when nothing failed, 1 when a check did.
+    `--republish`: no check; this key's held attestations that no event of
+    this peer ever carried are published now (added 2026-10-19: a peer that
+    joined after the node's checks could not contribute until the node's
+    operator published them by hand)."""
     from app import identity
     from app.bundles import keys as node_keys
     from app.share import attest as attest_mod, peers
-    name, codex, snapshot, seed, report = run_check(a)
     try:
         key = node_keys.load_signing_key()
         own_key = identity.own()
     except Exception as e:   # noqa: BLE001 — a peer with no key attests nothing (07 §7.8)
         raise CodexError(f"share attest publishes signed events and this peer has no key: "
                          f"{e}") from None
+    if getattr(a, "republish", False):
+        name, codex = col.resolve(a.root, a.collection)
+        with _closing(peers.connect()) as con:
+            ids = attest_mod.own_unpublished(a.root, name, codex, own_key=own_key, con=con)
+            out = attest_mod.publish(a.root, name, codex, ids, key=key, own_key=own_key, con=con,
+                                     log=lambda m: print(m, file=sys.stderr))
+        _print({"republish": True, "held_by_this_key_unpublished": len(ids), **out,
+                "note": "the worker forwards the events to every neighbour at its next beat"})
+        return 0
+    name, codex, snapshot, seed, report = run_check(a)
     with _closing(peers.connect()) as con:
         out = attest_mod.publish(a.root, name, codex, list(report.attestations.values()),
                                  key=key, own_key=own_key, con=con,
@@ -4205,6 +4218,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--origin", dest="origin_dir", metavar="DIR",
                    help="an origin base to re-fetch and re-parse from (records-vs-origin)")
     p.add_argument("--origin-mib", type=int, metavar="N")
+    p.add_argument("--republish", action="store_true",
+                   help="no check: publish this key's held attestations that were never published (04 §4.2)")
     p.set_defaults(fn=cmd_share_attest)
     p = shverbs.add_parser("peers", help="who this peer knows; a peer given by hand")
     pverbs = p.add_subparsers(dest="peers_verb", required=True)

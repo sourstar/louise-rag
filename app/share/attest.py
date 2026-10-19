@@ -14,6 +14,19 @@ kept beside its catalogue.
   collection — is written at 09 §9.8's path if absent, where
   copy_state, vitality and the trust level read it. Events of the other
   types are left for the bricks that act on them.
+- PULL (`pull`, 04 §4.2 `pull attestations`; 04 §4.7 "from the events that
+  carry them and from `pull attestations`"): the attestations a neighbour
+  holds for a collection, asked for and kept the same way. Events are
+  forwarded once and kept seven days, so a peer that joined after a check
+  never received its attestation and could not contribute — `share
+  contribute` wants a `records-vs-origin` for the snapshot (04 §4.5) — until
+  the node's operator republished it by hand (2026-10-19,
+  p2p-review-open-issues.md §3). The pull is the recovery path: `share
+  fetch` runs it from the peer it held the collection from, and the
+  worker's beat runs it once an interval, per collection, from the
+  neighbours whose digest lists the collection.
+- REPUBLISH (`--republish`): this key's held attestations that were never
+  published as events, published now without rerunning the check.
 """
 from __future__ import annotations
 
@@ -95,6 +108,141 @@ def publish(root: Path, name: str, codex, attestation_ids: Iterable[str], *, key
         if log:
             log(f"[{name}] share attest: {body.get('check')} {body.get('result')} published as "
                 f"{eid[:23]}…")
+    return out
+
+
+def own_unpublished(root: Path, name: str, codex, *, own_key: str, con) -> list[str]:
+    """`share attest --republish`: the ids of this key's held attestations
+    for the collection that no event of this peer ever carried."""
+    from app import copy_state
+    done = published(con)
+    bodies = copy_state.attestations(root, name, codex)
+    return sorted(env.body_id(b) for b in bodies if b.get("key") == own_key and env.body_id(b) not in done)
+
+
+# ---- pulling --------------------------------------------------------------------------
+
+def keep(root: Path, name: str, codex, envelope: dict[str, Any], *, suffix: str = "pulled"
+         ) -> tuple[str, bool] | None:
+    """An attestation envelope for the collection, verified, written at
+    09 §9.8's path if absent: `(id, written)`; None when it does not verify
+    or names another collection."""
+    try:
+        att = env.verify(env.ATTESTATION, envelope)
+    except (env.SignatureError, CodexError, TypeError, KeyError, ValueError):
+        return None
+    if att.get("collection_id") != codex.collection_id:
+        return None
+    aid = env.body_id(att)
+    p = attestation_path(root, name, codex, aid)
+    if p.is_file():
+        return aid, False
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f".{p.name}.{suffix}")
+    tmp.write_bytes(canonical_json(envelope))
+    tmp.replace(p)
+    return aid, True
+
+
+def newest_held(root: Path, name: str, codex) -> str | None:
+    """The `time` of the newest attestation held for the collection, or None."""
+    from app import copy_state
+    times = [str(b.get("time") or "") for b in copy_state.attestations(root, name, codex)]
+    times = [t for t in times if t]
+    return max(times) if times else None
+
+
+def since_for(root: Path, name: str, codex) -> str | None:
+    """What a periodic pull asks for: everything after the newest held
+    attestation less one interval — an overlap, so two attestations in one
+    second are not split by the boundary; None when nothing is held."""
+    newest = newest_held(root, name, codex)
+    if newest is None:
+        return None
+    try:
+        return messages.time_text(messages.parse_time(newest) - peers.INTERVAL_S)
+    except messages.MessageError:
+        return None
+
+
+def pull(root: Path, name: str, codex, puller, sources, *, since: str | None = None,
+         log: Callable[[str], None] | None = None) -> dict[str, Any]:
+    """04 §4.2's `pull attestations(collection_id, since)` from each source
+    in turn; every envelope that verifies and names the collection is kept
+    at 09 §9.8's path. A source that does not answer is skipped — a pull
+    that does not connect is a deferral, retried at the next interval."""
+    from app.share import fetch as fetch_mod
+    root = Path(root)
+    out: dict[str, Any] = {"kept": 0, "seen": 0, "asked": 0, "unreachable": 0, "refused": 0}
+    kept_ids: list[str] = []
+    for source in sources:
+        out["asked"] += 1
+        try:
+            items = puller.pull(source, "attestations", codex.collection_id, since=since)
+        except fetch_mod.Unreachable:
+            out["unreachable"] += 1
+            continue
+        except CodexError as e:                    # a lie (banned by the puller), a refusal
+            out["refused"] += 1
+            if log:
+                log(f"[{name}] share: attestations from {source.address}: {e}"[:300])
+            continue
+        for _path, data in items:
+            out["seen"] += 1
+            try:
+                envelope = json.loads(data)
+            except ValueError:
+                continue
+            got = keep(root, name, codex, envelope)
+            if got is not None and got[1]:
+                out["kept"] += 1
+                kept_ids.append(got[0])
+    if log and out["kept"]:
+        log(f"[{name}] share: {out['kept']} attestation(s) pulled from {out['asked'] - out['unreachable']} "
+            f"neighbour(s) and kept (04 §4.2)")
+    out["ids"] = kept_ids
+    return out
+
+
+def listing_sources(node_con, codex, *, now: float) -> list:
+    """The neighbours whose digest lists the collection or its lineage —
+    the ones a periodic pull asks, never the peer list blind."""
+    from app.share import fetch as fetch_mod
+    return [s for s in fetch_mod.sources(node_con, codex.collection_id, now=now) if s.entry]
+
+
+_last_pull_at = 0.0
+
+
+def pull_due(root: Path, collections, *, key, own_key: str, con, now: float, client=None, stop=None,
+             log: Callable[[str], None] | None = None, force: bool = False) -> dict[str, Any] | None:
+    """The worker's hourly pull (04 §4.2): once an interval, for every Codex
+    collection held, from the neighbours whose digest lists it, everything
+    after the newest attestation held here. None when not due; else per
+    collection what `pull` said. Cost: one signed POST per (collection,
+    listing neighbour) per hour, kilobytes."""
+    global _last_pull_at
+    if not force and now - _last_pull_at < peers.INTERVAL_S:
+        return None
+    _last_pull_at = now
+    from app.share import fetch as fetch_mod
+    puller = fetch_mod.Puller(key=key, own_key=own_key, client=client, stop=stop, con=con, log=log, now=now)
+    out: dict[str, Any] = {}
+    for c in collections:
+        codex = getattr(c, "codex", None)
+        if codex is None:
+            continue
+        if stop is not None and stop.is_set():
+            break
+        sources = listing_sources(con, codex, now=now)
+        if not sources:
+            continue
+        try:
+            out[c.name] = pull(root, c.name, codex, puller, sources,
+                               since=since_for(root, c.name, codex), log=log)
+        except Exception as e:   # noqa: BLE001 — one collection, not the beat
+            if log:
+                log(f"[{c.name}] share: attestation pull: {type(e).__name__}: {e}"[:300])
     return out
 
 

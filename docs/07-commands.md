@@ -484,8 +484,14 @@ reader needs at the command line:
   event (09 §9.9) announcing a snapshot newer than the one held here is
   answered by pulling it, with its chain, from the announcer — a peer
   whose digest gave its address — and the members follow at the next
-  beat. *(Flags added 2026-10-06 with migration step 9d; the worker's
-  pull 2026-10-07.)*
+  beat. The attestations the sharer holds for the collection come with
+  it, by `pull attestations` (04 §4.2), and the worker pulls them again
+  once an interval from every neighbour whose digest lists the
+  collection, from the newest one held here less one interval: an
+  attestation travels as an event forwarded once and kept seven days, so
+  a peer that joined after a check never received it and could not
+  contribute (2026-10-19). *(Flags added 2026-10-06 with migration step
+  9d; the worker's pull 2026-10-07; the attestation pull 2026-10-19.)*
 - **`share contribute`.** Chooses parts by 04 §4.5, on a collection
   whose `roots` and `chunks` pass on the parts this peer holds and for
   whose snapshot a `records-vs-origin` attestation exists; then `hold
@@ -539,7 +545,11 @@ reader needs at the command line:
   where the copy's state, the trust level and vitality read it (03
   §3.6; 04 §4.7); one for a collection not held here is not kept. Takes
   `hold check`'s flags (`--checks`, `--seed`, `--sample`, `--snapshot`,
-  `--origin`). *(2026-10-06, migration step 9e.)*
+  `--origin`). `--republish` runs no check: this key's held attestations
+  that no event of this peer ever carried are published now, once each —
+  for a check that ran before the peer had neighbours, whose attestations
+  a newcomer would otherwise have to pull (above). *(2026-10-06, migration
+  step 9e; `--republish` 2026-10-19.)*
 - **`share peers`.** `add` is one of the two bootstraps, beside
   `platform.toml [peers]` (§7.8) — it writes that list, each address
   once, and with `--key` pins the address to a key (04 §4.2: a digest

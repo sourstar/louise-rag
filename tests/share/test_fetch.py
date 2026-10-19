@@ -374,3 +374,38 @@ def test_a_slice_asked_for_is_named_as_the_snapshot_lists_it(node, fetcher, monk
     assert louise.main(args + ["2023"]) == 2
     assert "year=2023" in capsys.readouterr().err
     assert louise.main(args + ["year=2023"]) == 0
+
+
+def test_fetch_pulls_the_attestations_the_sharer_holds_with_the_collection(node, fetcher):  # noqa: F811
+    """04 §4.2 `pull attestations`, 2026-10-19: attestations travelled only
+    as events, so a peer that joined after the node's checks could not
+    contribute (no records-vs-origin for the snapshot) until the node's
+    operator republished them by hand. `share fetch` pulls what the sharer
+    holds, with the collection."""
+    from app import copy_state
+    from app.share import attest
+    from tests.share.test_attest import an_attestation
+    codex, name, d, snap = a_shard(node)
+    held = [an_attestation(codex, OTHER, check="records-vs-origin", time_text="2026-10-11T21:13:00Z"),
+            an_attestation(codex, OTHER, check="roots", time_text="2026-10-11T21:14:00Z")]
+    for envelope in held:
+        p = attest.attestation_path(node, name, codex, env.body_id(envelope["body"]))
+        p.write_bytes(canonical_json(envelope))
+    client = TestClient(api.app)
+    out = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=client,
+                      key=OURS, own_key=OUR_KEY, encoder="http://models:1/upstream/x")
+    got = out["attestations"]
+    assert (got["asked"], got["seen"], got["kept"], got["unreachable"]) == (1, 4, 2, 0), \
+        "the two naming the collection kept; a_shard's two version-1 bodies name none and are not"
+    fname = out["name"]
+    for envelope in held:
+        p = attest.attestation_path(fetcher, fname, codex, env.body_id(envelope["body"]))
+        assert json.loads(p.read_bytes()) == envelope
+    bodies = copy_state.attestations(fetcher, fname, codex)
+    assert any(b["check"] == "records-vs-origin" and b["result"] == "pass" for b in bodies), \
+        "what `share contribute` wants is here (04 §4.5)"
+    again = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=client,
+                        key=OURS, own_key=OUR_KEY, encoder="http://models:1/upstream/x")
+    assert again["attestations"]["kept"] == 0 and again["attestations"]["seen"] == 4, "held already: nothing twice"
+    assert attest.newest_held(fetcher, fname, codex) == "2026-10-11T21:14:00Z"
+    assert attest.since_for(fetcher, fname, codex) == "2026-10-11T20:14:00Z", "one interval of overlap"

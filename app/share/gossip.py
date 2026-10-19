@@ -364,6 +364,16 @@ def beat(collections, *, now: float | None = None, client=None,
     out["digest"]["recipients"] = recipients
     if due:
         _last_digest_at, _sent_to = now, frozenset(recipients)
+        # the attestations the neighbours hold and this peer missed as events
+        # (04 §4.2 pull attestations; p2p-review-open-issues.md §3), once an
+        # interval, from the neighbours whose digest lists each collection
+        try:
+            with closing(peers.connect()) as con:
+                out["attestations"] = attest_mod.pull_due(root, collections, key=key, own_key=own_key, con=con,
+                                                          now=now, client=client, stop=stop, log=log)
+        except Exception as e:   # noqa: BLE001 — a pull is a recovery path; the beat is done
+            if log:
+                log(f"attestation pull: {type(e).__name__}: {e}"[:300])
     else:
         _sent_to = _sent_to | frozenset(recipients)
     return out
