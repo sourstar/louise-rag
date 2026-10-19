@@ -33,6 +33,9 @@ def test_per_collection_mounts_leave_and_the_shared_roots_come_in():
         assert {"/data", "/exports", "/corpora", "/shards", "/corpora-custom/gutenberg"} <= set(targets)
         assert svc["environment"]["SHARDS_ROOT"] == "/shards"
         assert svc["environment"]["ORIGINS_ROOT"] == "/corpora"
+        assert svc["environment"]["BUNDLES_ROOT"] == "/bundles" and "/bundles" in targets
+    assert "/mnt/tank/apps/louise-bundles:/bundles:ro" in web["volumes"], "the web never reads a bundle"
+    assert "/mnt/tank/apps/louise-bundles:/bundles" in worker["volumes"]
     assert "/mnt/tank/louise-corpora:/corpora:ro" in web["volumes"], "web reads origins only"
     assert "/mnt/tank/louise-corpora:/corpora" in worker["volumes"]
     assert web["environment"]["ADMIN_TOKEN_FILE"] == "/x", "nothing else is touched"

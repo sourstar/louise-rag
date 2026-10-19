@@ -26,8 +26,11 @@ PER_COLLECTION = re.compile(r"^/data/collections/[^/]+/(origin|shard)(/.*)?$")
 #: (host, container, read-only in `web`)
 SHARED = (("/mnt/tank/louise-corpora", "/corpora", True),
           ("/mnt/tank/apps/louise-shard", "/shards", False),
-          ("/mnt/tank/media/public/books/project_gutenberg", "/corpora-custom/gutenberg", True))
-ENV = {"SHARDS_ROOT": "/shards", "ORIGINS_ROOT": "/corpora"}
+          ("/mnt/tank/media/public/books/project_gutenberg", "/corpora-custom/gutenberg", True),
+          # the bundles (09 §9.7): a second copy of the vectors, on tank with
+          # the SHARDs (operator, 2026-10-19); the web never reads them
+          ("/mnt/tank/apps/louise-bundles", "/bundles", True))
+ENV = {"SHARDS_ROOT": "/shards", "ORIGINS_ROOT": "/corpora", "BUNDLES_ROOT": "/bundles"}
 SERVICES = ("web", "worker")
 
 

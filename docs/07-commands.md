@@ -1196,7 +1196,17 @@ with `SHARDS_ROOT` and `ORIGINS_ROOT` set (environment: this node's
 paths), `create` makes `<name>/shard` a link to `<SHARDS_ROOT>/<name>` and
 `<name>/origin` a link to `<ORIGINS_ROOT>/<name>`; a custom origin is
 linked by hand. The paths above, which every manifest stores, do not move,
-and a new collection needs no new mount.
+and a new collection needs no new mount. With `BUNDLES_ROOT` set (amended
+2026-10-19, operator), `<name>/state/bundles` is likewise a link to
+`<BUNDLES_ROOT>/<name>`: the bundles a peer makes and takes in (09 §9.7)
+are a second copy of the vectors its table holds — about 5 KB a chunk, some
+55 GB for Gutenberg — and rest with the SHARDs on the bulk storage, not on
+the disk that keeps what queries read. An existing collection's bundles
+move there with `dev adopt-bundles <collection>`: copied with their sizes
+and times (the seeder's root cache stays valid), verified byte for byte,
+the old directory set aside as `state/bundles.moved-<time>` for the
+operator to delete, the link put in its place. `rename` and `forget` follow
+the link as they do the SHARD's.
 
 A deposit collection (02 §2.9) has the same tree, and its `shard/` holds
 only `codex.json` and the calibration member. Its `origin/` holds the

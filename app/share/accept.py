@@ -228,13 +228,32 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     if final.is_dir():
         shutil.rmtree(staged_dir, ignore_errors=True)
     else:
-        staged_dir.replace(final)
+        _move_dir(staged_dir, final)
     say(f"[{name}] share: bundle {bundle_id[:23]}… from {report.producer[:23]}… accepted — "
         f"{written} chunks landed"
         + (f", {len(duplicate['compared'])} compared with what was held: {duplicate['result']}"
            if duplicate else "") + "; served from here now")
     return {"outcome": "accepted", "bundle_id": bundle_id, "written": written,
             "producer": report.producer, "dir": str(final), "duplicate": duplicate}
+
+
+def _move_dir(src: Path, dst: Path) -> None:
+    """`src` becomes `dst`: one rename on one filesystem; across two —
+    staging on the SSD, `state/bundles` a link to `BUNDLES_ROOT` on the bulk
+    storage (07 §7.8, 2026-10-19) — a copy beside `dst` and one rename, so
+    `dst` is whole or absent, never half (invariant 2); `src` goes after."""
+    try:
+        src.replace(dst)
+        return
+    except OSError as e:
+        import errno
+        if e.errno != errno.EXDEV:
+            raise
+    landing = dst.with_name(f".{dst.name}.landing")
+    shutil.rmtree(landing, ignore_errors=True)
+    shutil.copytree(src, landing)
+    landing.replace(dst)
+    shutil.rmtree(src, ignore_errors=True)
 
 
 def compare_duplicate(root: Path, name: str, codex, snapshot, report, header: dict[str, Any], *, con,

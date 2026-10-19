@@ -83,6 +83,11 @@ def plan(root: Path, old: str, new: str) -> dict[str, Any]:
     if shards and t is not None and t.name == old and Path(os.path.normpath(t.parent)) == \
             Path(os.path.normpath(shards)):
         moves["shard"] = [str(t), str(t.with_name(new))]
+    bundles = os.getenv("BUNDLES_ROOT", "").strip()
+    t = _link_target(src / "state" / col.BUNDLES_DIR)
+    if bundles and t is not None and t.name == old and Path(os.path.normpath(t.parent)) == \
+            Path(os.path.normpath(bundles)):
+        moves["bundles"] = [str(t), str(t.with_name(new))]
     origins = os.getenv("ORIGINS_ROOT", "").strip()
     t = _link_target(src / "origin")
     if origins and t is not None and t.name == old and Path(os.path.normpath(t.parent)) == \
@@ -159,7 +164,8 @@ def rename(root: Path, old: str, new: str, *, dry_run: bool = False) -> dict[str
     (state / MARKER).write_text(json.dumps(moves, sort_keys=True), encoding="utf-8")
     done: dict[str, Any] = {}
     # 1. the shared folders, then the links that name them
-    for kind, link_name in (("shard", col.SHARD_DIR), ("origin", "origin")):
+    for kind, link_name in (("shard", col.SHARD_DIR), ("origin", "origin"),
+                            ("bundles", f"state/{col.BUNDLES_DIR}")):
         if kind in moves:
             a, b = Path(moves[kind][0]), Path(moves[kind][1])
             done[kind] = _move(a, b)

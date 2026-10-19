@@ -1011,6 +1011,15 @@ def cmd_dev_tool(a) -> int:
     return int(rc or 0)
 
 
+def cmd_dev_adopt_bundles(a) -> int:
+    """`louise dev adopt-bundles <collection>` (07 §7.8, 2026-10-19): the
+    collection's `state/bundles` copied under `<BUNDLES_ROOT>/<name>`,
+    verified, set aside, and linked the way `create` links a new one."""
+    name, _codex = col.resolve(a.root, a.collection)
+    _print(col.adopt_bundles_root(a.root, name, log=lambda m: print(m, file=sys.stderr)))
+    return 0
+
+
 def cmd_dev_migrate_schema(a) -> int:
     """`louise dev migrate schema [<collection>]`: pending schema changes
     applied to a collection's state database (tools/migrate_manifest.py),
@@ -4144,6 +4153,10 @@ def build_parser() -> argparse.ArgumentParser:
         p = dverbs.add_parser(verb, help=what, add_help=False)
         p.add_argument("rest", nargs=argparse.REMAINDER, help="the instrument's own flags")
         p.set_defaults(fn=cmd_dev_tool)
+    p = dverbs.add_parser("adopt-bundles", help="an existing collection's state/bundles moved under BUNDLES_ROOT "
+                                                "and linked, as a new collection's is; writes (07 §7.8)")
+    root_arg(p); p.add_argument("collection")
+    p.set_defaults(fn=cmd_dev_adopt_bundles)
     p = dverbs.add_parser("migrate", help="schema changes to a state database; writes; never runs on its own")
     mverbs = p.add_subparsers(dest="what", required=True)
     p = mverbs.add_parser("schema", help="apply pending schema changes to a collection's state database")

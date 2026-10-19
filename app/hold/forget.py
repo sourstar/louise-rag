@@ -100,7 +100,7 @@ def forget(root: Path, name: str, *, kinds=None, dry_run: bool = False,
     #    an origin folder goes too unless another held collection links it
     #    (both Normattiva collections read /corpora/normattiva)
     for link_name, env in ((shard_mod.SHARD_DIR if hasattr(shard_mod, "SHARD_DIR") else "shard",
-                            "SHARDS_ROOT"), ("origin", "ORIGINS_ROOT")):
+                            "SHARDS_ROOT"), ("origin", "ORIGINS_ROOT"), ("state/bundles", "BUNDLES_ROOT")):
         link = base / link_name
         shared_root = os.getenv(env, "").strip()
         if not (shared_root and link.is_symlink()):

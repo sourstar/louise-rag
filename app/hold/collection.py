@@ -135,7 +135,98 @@ def link_shared_roots(root: Path, name: str) -> bool:
         target.mkdir(parents=True, exist_ok=True)
         base.mkdir(parents=True, exist_ok=True)
         link.symlink_to(target, target_is_directory=True)
+    # the bundles this peer makes and takes in (09 §9.7) are a second copy of
+    # the vectors Lance holds — 5,206 B a chunk, ~55 GB for gutenberg — and
+    # belong on the bulk storage with the SHARDs, not on the SSD that keeps
+    # what queries read (operator, 2026-10-19): `<name>/state/bundles` ->
+    # `<BUNDLES_ROOT>/<name>`; an existing collection's move there is
+    # `adopt_bundles_root`
+    bundles = os.getenv("BUNDLES_ROOT", "").strip()
+    link = base / "state" / BUNDLES_DIR
+    if bundles and not link.exists() and not link.is_symlink():
+        target = Path(bundles) / name
+        target.mkdir(parents=True, exist_ok=True)
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target, target_is_directory=True)
     return linked
+
+
+#: under a collection's state/: where its bundles rest (09 §9.7)
+BUNDLES_DIR = "bundles"
+
+
+def adopt_bundles_root(root: Path, name: str, *, log=None) -> dict:
+    """`louise dev adopt-bundles <collection>`: an existing collection's
+    `state/bundles` moved under `<BUNDLES_ROOT>/<name>` and replaced by the
+    link `link_shared_roots` makes for a new one — copy (sizes and mtimes
+    kept, so `state/share/bundle-roots.json` stays valid), verify every
+    file by size and SHA-256, then the directory set aside as
+    `state/bundles.moved-<time>` for the operator to delete once the node
+    serves from the new place, and the link put in its place. Resumable:
+    a file already there at its size and mtime is not copied again; a
+    run interrupted before the link leaves the directory where it was."""
+    import hashlib
+    import os
+    import shutil
+    import time
+    say = log or (lambda *_a: None)
+    bundles = os.getenv("BUNDLES_ROOT", "").strip()
+    if not bundles:
+        raise CodexError("BUNDLES_ROOT is not set: nowhere to move the bundles to (07 §7.8)")
+    base = dir_of(Path(root), name)
+    if not base.is_dir():
+        raise CodexError(f"{name!r} is not held under {root}")
+    link = base / "state" / BUNDLES_DIR
+    target = Path(bundles) / name
+    if link.is_symlink():
+        return {"collection": name, "status": "linked already", "target": os.readlink(link)}
+    if not link.exists():
+        target.mkdir(parents=True, exist_ok=True)
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target, target_is_directory=True)
+        return {"collection": name, "status": "linked", "target": str(target), "files": 0}
+    files = [f for f in sorted(link.rglob("*"))
+             if f.is_file() and not any(part.startswith(".export-") for part in f.parts)]
+    copied = kept = 0
+    moved_bytes = 0
+    for f in files:
+        rel = f.relative_to(link)
+        dst = target / rel
+        st = f.stat()
+        try:
+            there = dst.stat()
+            if there.st_size == st.st_size and there.st_mtime_ns == st.st_mtime_ns:
+                kept += 1
+                continue
+        except OSError:
+            pass
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dst.with_name(f".{dst.name}.adopt")
+        shutil.copy2(f, tmp)
+        os.replace(tmp, dst)
+        copied += 1
+        moved_bytes += st.st_size
+    for f in files:
+        rel = f.relative_to(link)
+        dst = target / rel
+        if dst.stat().st_size != f.stat().st_size or _sha256(dst) != _sha256(f):
+            raise CodexError(f"{dst} differs from {f} after the copy: nothing linked, nothing set aside")
+    aside = link.with_name(f"{BUNDLES_DIR}.moved-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}")
+    os.rename(link, aside)
+    link.symlink_to(target, target_is_directory=True)
+    say(f"[{name}] bundles: {len(files)} file(s) ({moved_bytes} bytes copied, {kept} already there) now under "
+        f"{target}; the old directory kept at {aside} until the operator deletes it")
+    return {"collection": name, "status": "moved", "target": str(target), "files": len(files),
+            "copied": copied, "already_there": kept, "bytes_copied": moved_bytes, "kept_aside": str(aside)}
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _normalise(cid: str) -> str:

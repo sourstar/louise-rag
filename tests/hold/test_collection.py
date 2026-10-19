@@ -324,3 +324,77 @@ def test_a_shared_root_folder_that_already_holds_files_is_never_linked_over(tmp_
     (tmp_path / "shards" / "gutenberg" / "stray").write_text("x")
     with pytest.raises(CodexError, match="already holds files"):
         col.create(node / "collections", codex, name="gutenberg")
+
+
+def test_with_bundles_root_a_new_collection_links_its_bundles(tmp_path, codex, monkeypatch):
+    """Operator, 2026-10-19: the bundles are a second copy of the vectors and
+    rest on the bulk storage with the SHARDs — `<name>/state/bundles` ->
+    `<BUNDLES_ROOT>/<name>`, made with the collection."""
+    node = tmp_path / "data"
+    monkeypatch.setenv("LOUISE_ROOT", str(node))
+    monkeypatch.setenv("SHARDS_ROOT", str(tmp_path / "shards"))
+    monkeypatch.setenv("BUNDLES_ROOT", str(tmp_path / "bundles"))
+    root = node / "collections"
+    col.create(root, codex, name="gutenberg")
+    link = root / "gutenberg" / "state" / "bundles"
+    assert link.is_symlink() and link.resolve() == (tmp_path / "bundles" / "gutenberg").resolve()
+    col.create(root, codex, name="gutenberg")
+    assert link.is_symlink(), "idempotent"
+    other = tmp_path / "elsewhere"
+    col.create(other, codex, name="gutenberg")
+    assert not (other / "gutenberg" / "state" / "bundles").exists(), "another root is untouched"
+
+
+def test_adopt_bundles_moves_an_existing_collection_s_bundles_verified_and_links(tmp_path, codex, monkeypatch, capsys):
+    """`dev adopt-bundles`: what München did by hand for gutenberg (11 GB,
+    2026-10-19) — copy with sizes and times kept, verify, set the old
+    directory aside, link. The seeder's root cache stays valid: nothing is
+    hashed again."""
+    import json
+    import os
+    from app import louise
+    from app.share import members as mem
+    node = tmp_path / "data"
+    monkeypatch.setenv("LOUISE_ROOT", str(node))
+    root = node / "collections"
+    col.create(root, codex, name="gutenberg")                    # before BUNDLES_ROOT: a real directory
+    state = root / "gutenberg" / "state"
+    space = codex.space_segment
+    for hexname in ("a" * 64, "b" * 64):
+        d = state / "bundles" / space / "lang=af" / "00001" / hexname
+        d.mkdir(parents=True)
+        for f in mem.BUNDLE_FILES:
+            (d / f).write_bytes(f.encode() * 40 + hexname[:1].encode())
+    (state / "bundles" / ".export-999-00002").mkdir()             # a scratch of a run that died: not carried
+    (state / "bundles" / ".export-999-00002" / "x").write_bytes(b"x")
+    hashed: list[str] = []
+    real = mem.shard_mod.pieces_root_of
+    monkeypatch.setattr(mem.shard_mod, "pieces_root_of", lambda p: (hashed.append(str(p)), real(p))[1])
+    before = mem.bundle_members(state, space)
+    assert len(hashed) == 8 and (state / "share" / mem.ROOTS_CACHE).is_file()
+    with pytest.raises(CodexError, match="BUNDLES_ROOT is not set"):
+        col.adopt_bundles_root(root, "gutenberg")
+    monkeypatch.setenv("BUNDLES_ROOT", str(tmp_path / "bundles"))
+    capsys.readouterr()
+    assert louise.main(["dev", "adopt-bundles", "gutenberg", "--root", str(root)]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "moved" and out["files"] == 8 and out["copied"] == 8 and out["already_there"] == 0
+    link = state / "bundles"
+    assert link.is_symlink() and os.readlink(link) == str(tmp_path / "bundles" / "gutenberg")
+    aside = Path(out["kept_aside"])
+    assert aside.is_dir() and aside.name.startswith("bundles.moved-") and len(list(aside.rglob("header.json"))) == 2, \
+        "the old directory kept for the operator"
+    after = mem.bundle_members(state, space)
+    assert [m.name for m in after] == [m.name for m in before] and [m.root for m in after] == [m.root for m in before]
+    assert len(hashed) == 8, "sizes and times kept: the root cache holds, nothing hashed again"
+    assert not (tmp_path / "bundles" / "gutenberg" / ".export-999-00002").exists(), "scratch is not carried"
+    again = col.adopt_bundles_root(root, "gutenberg")
+    assert again["status"] == "linked already"
+    # a collection with no bundles yet is simply linked
+    col.create(root, codex.__class__.loads(codex.canonical()) if hasattr(codex.__class__, "loads") else codex,
+               name="gutenberg")
+    (root / "fresh").mkdir()
+    (root / "fresh" / "state").mkdir()
+    monkeypatch.setattr(col, "dir_of", lambda r, n: Path(r) / n)
+    fresh = col.adopt_bundles_root(root, "fresh")
+    assert fresh["status"] == "linked" and (root / "fresh" / "state" / "bundles").is_symlink()

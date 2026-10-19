@@ -264,12 +264,25 @@ offered and taken in from digests. Fixed:
   and a digest, none; a third bundle, four; a moved file, its bundle
   again; a broken cache, everything once.
 
-**Storage (München, for the operator):** the bundles rest in
-`collections/<c>/state/bundles` on the node's SSD — 9.7 GB at 5,206 B per
-chunk, about 55 GB for gutenberg alone, beside the same vectors in Lance.
-The node's placement rule puts them on tank; a `/bundles` dataset with a
-per-collection symlink as `/shards` was done, or a `BUNDLES_ROOT` the way
-`SHARDS_ROOT` works, is München's proposal. Not a platform change here.
+**Storage — DECIDED (operator, 2026-10-19) and BUILT:** the bundles rested
+in `collections/<c>/state/bundles` on the node's SSD — 9.7 GB at 5,206 B
+per chunk, about 55 GB for gutenberg alone, beside the same vectors in
+Lance. They move to tank: a dataset `tank/apps/louise-bundles` mounted as
+`/bundles` (worker rw, web ro, as `/shards`), gutenberg's directory moved
+by hand (München: rsync, verify, `state/bundles -> /bundles/gutenberg`),
+and the code half the way `SHARDS_ROOT` works: with `BUNDLES_ROOT` set,
+`create` links `<name>/state/bundles` to `<BUNDLES_ROOT>/<name>`; `rename`
+and `forget` follow the link; `accept.take` lands a bundle across
+filesystems whole or not at all (copy beside, one rename); `dev
+adopt-bundles <collection>` moves an existing collection's bundles —
+sizes and times kept, so the root cache holds; verified byte for byte;
+the old directory set aside as `state/bundles.moved-<time>`; a scratch of
+a dead export not carried. 07 §7.8 amended;
+deploy/16f/flatten_mounts.py knows the mount and the variable.
+
+**Perugia's DHT, measured** (39fd6e2, 10:10–11:00Z, inside the worker
+container, 1,637 member files + 7 bundles): udp 1, udp6 0, tcp 2–6 — no
+flood on the peer either.
 
 ### 9. A digest refused at a restart cost an hour — FIXED (Perugia's find)
 

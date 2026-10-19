@@ -444,3 +444,33 @@ def test_a_bundle_a_digest_offers_is_taken_in_without_its_event(node, monkeypatc
         assert len(taken) == 3, "asked for again once the backoff has passed"
         assert accept.listed_bundles(ncon, types.SimpleNamespace(collection_id="sha256:" + "f" * 64,
                                                                  space_id="x", space_segment="a" * 16), con, now=now) == []
+
+
+def test_a_bundle_lands_whole_across_filesystems_when_state_bundles_is_a_link(tmp_path, monkeypatch):
+    """BUNDLES_ROOT (07 §7.8, 2026-10-19): staging on one filesystem, the
+    bundles on another — a rename fails with EXDEV; the bundle is copied
+    beside its place and renamed in, whole or absent (invariant 2)."""
+    import errno
+    from pathlib import Path
+    src = tmp_path / "staging" / "bundle-x"
+    src.mkdir(parents=True)
+    for f in mem.BUNDLE_FILES:
+        (src / f).write_bytes(f.encode())
+    dst = tmp_path / "bundles" / "x" / "y" / ("d" * 64)
+    dst.parent.mkdir(parents=True)
+    real = Path.replace
+
+    def across(self, target):
+        if self == src:
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        return real(self, target)
+    monkeypatch.setattr(Path, "replace", across)
+    accept._move_dir(src, dst)
+    assert sorted(p.name for p in dst.iterdir()) == sorted(mem.BUNDLE_FILES) and not src.exists()
+    assert not dst.with_name(f".{dst.name}.landing").exists()
+    # on one filesystem: the one rename
+    src2 = tmp_path / "staging" / "bundle-y"
+    src2.mkdir()
+    (src2 / "a").write_bytes(b"a")
+    accept._move_dir(src2, tmp_path / "bundles" / "z")
+    assert (tmp_path / "bundles" / "z" / "a").is_file() and not src2.exists()

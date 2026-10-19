@@ -122,3 +122,30 @@ def test_forget_takes_its_own_origin_folder_when_nobody_else_links_it(node):
     tmp, root, cfg, codex = node
     forget_mod.forget(root, "old")
     assert not (tmp / "corpora" / "old").exists() and not (tmp / "shards" / "old").exists()
+
+
+def test_the_bundles_folder_under_bundles_root_follows_a_rename_and_a_forget(tmp_path, codex, monkeypatch):
+    """07 §7.8, 2026-10-19: `<name>/state/bundles` -> `<BUNDLES_ROOT>/<name>`
+    moves with the name as the SHARD folder does, and goes with `forget`."""
+    from app.hold import forget as forget_mod
+    data = tmp_path / "data"
+    monkeypatch.setenv("LOUISE_ROOT", str(data))
+    monkeypatch.setenv("SHARDS_ROOT", str(tmp_path / "shards"))
+    monkeypatch.setenv("BUNDLES_ROOT", str(tmp_path / "bundles"))
+    cfg = tmp_path / "config"
+    (cfg / "collections").mkdir(parents=True)
+    monkeypatch.setenv("CONFIG_DIR", str(cfg))
+    root = data / "collections"
+    col.create(root, codex, name="old")
+    (cfg / "collections" / "old.toml").write_text(f'codex = "{codex.collection_id}"\n', encoding="utf-8")
+    bundle = root / "old" / "state" / "bundles" / codex.space_segment / "lang=af" / "00001" / ("c" * 64)
+    bundle.mkdir(parents=True)
+    (bundle / "header.json").write_bytes(b"{}")
+    assert (tmp_path / "bundles" / "old" / codex.space_segment).is_dir(), "written through the link"
+    out = rn.rename(root, "old", "new")
+    assert out["done"]["bundles"] == "moved"
+    assert os.readlink(root / "new" / "state" / "bundles") == str(tmp_path / "bundles" / "new")
+    assert (tmp_path / "bundles" / "new" / codex.space_segment / "lang=af" / "00001" / ("c" * 64) / "header.json").is_file()
+    assert not (tmp_path / "bundles" / "old").exists()
+    gone = forget_mod.forget(root, "new")
+    assert str(tmp_path / "bundles" / "new") in gone["removed"] and not (tmp_path / "bundles" / "new").exists()
