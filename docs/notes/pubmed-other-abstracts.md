@@ -60,6 +60,19 @@ archive rows. A random 12 of them:
   `&amp;nbsp;` and `&gt;`, and LaTeX quotes.
 
 Every one is a vector of a text that is not the record's, so every one is
-embedded again (`dev drop-rows` on `differs.txt`). At chunk 35's rate that
-is about 700 k rows, 2 % of the archive's. The run over chunks 0–36 started
-09:39.
+embedded again (`dev drop-rows` on `differs.txt`).
+
+All 37 chunks (09:39–11:58, 39,993,653 of our rows fingerprinted): 142,540
+texts differ, 0.4 %. Chunk 35 is the worst; the 2 % it suggested was wrong by
+five times. Chunks 0–10 and 13–27 differ by 0.01–0.2 %. Chunks 11–12
+(6,936 and 27,633) and 28–36 (7,000–22,000 each) differ more. Why those
+chunks differ more was not measured; chunk 35's sample is the only breakdown.
+Only
+**60,947** of the differing rows are an archive's. The rest are rows we
+embedded ourselves from our record's text, which are right whatever NCBI
+read. Those 60,947 were dropped and their documents reset at 12:00 on
+2026-10-19, to be embedded again in the 23:00 pass.
+
+"Not in our table" grows from chunk 19 on, to 16,244 in chunk 35. Those are
+PMIDs NCBI embedded that our records do not hold or that are out of scope;
+nothing is compared for them.

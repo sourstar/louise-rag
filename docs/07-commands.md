@@ -77,8 +77,8 @@ louise hold
                                                                        (signed with the node's key when there is one) and the file; prints its id. `--dry-run`
                                                                        (2026-10-19) checks the file against S exactly as the write would and prints the counts
                                                                        (claims, target records named, by type and method), writing nothing. Several claims
-                                                                       files for one collection are merged first with `tools/annotations_merge.py` (a pair
-                                                                       stated twice keeps the higher confidence)
+                                                                       files for one collection are merged first with `tools/annotations_merge.py` (the
+                                                                       wikidata claims whole, a matcher claim only where its books are not one work yet)
               derive <codex> [--space-from CODEX | --space FILE | --encoder-weights D --engine FILE] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
                                                                        a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
                                                                        Prints what would be inherited — vectors, coverage, credits — and waits for --accept;

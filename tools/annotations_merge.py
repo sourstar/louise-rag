@@ -1,78 +1,87 @@
-"""Several claims files into one, for ONE annotations collection
-(02 §2.10; docs/notes/annotation-collections.md). Operator, 2026-10-19:
-"the gutenberg graph collection" — gutenberg's works (Wikidata and PG's
-editions notes, `annotations_from_works.py`) and the classical matcher's
-same-work pairs (`annotations_from_matches.py`) as one collection of edges.
+"""One annotations collection for gutenberg's versions of a work (operator,
+2026-10-19: "both collections belong to the same one"): the wikidata claims
+(`tools/annotations_from_works.py`) and the classical matcher's
+(`tools/annotations_from_matches.py`) as one claims file for `louise hold
+collection create annotations` (07 §7.3).
 
-    python -m tools.annotations_merge works.jsonl classical.jsonl --out claims.jsonl
+    python -m tools.annotations_merge works.jsonl matches.jsonl --out claims.jsonl
 
-The claims reader refuses a claim made twice — the same pair, either way
-round for `same-work` — so where two files state one pair, the claim with
-the HIGHER confidence is kept (the first file's on a tie); `same-work` and
-`translation-of` over one pair are two claims and both stay. Every claim
-is checked as the reader checks it, so a refused line is refused here, by
-file and line. The output is sorted by (subject, object, type) bytes, as
-the tools write theirs, and the summary names what came from where.
+The wikidata claims go in whole. A matcher claim goes in only when the
+pair's two books are not already one work by the wikidata claims, through any
+chain of them: the wikidata claims are stars on a work's lowest ebook, so a
+matched pair inside one work states nothing new, and the same pair twice is
+refused by `create` anyway. On 2026-10-19 that kept 16 of the matcher's 261
+claims at the 0.95 cut, once the 45 adaptations and one unverified pair were
+left out: 13 more books, two more works (annotation-collections.md, "The
+review of 2026-10-19"). Every claim keeps its own method, evidence and
+confidence; nothing is rewritten.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import sys
-from collections import Counter
-from decimal import Decimal
 from pathlib import Path
-from typing import Any
-
-from app.hold import annotations as ann
 
 
-def merge(files: list[tuple[str, bytes]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """`(claims, summary)`; `files` are `(label, bytes)`."""
-    kept: dict[tuple, tuple[str, dict[str, Any]]] = {}
-    summary: dict[str, Any] = {"files": {}, "kept": 0, "dropped": {}, "by_type": {}, "by_method": {}}
-    for label, data in files:
-        n = 0
-        for i, raw in enumerate(data.split(b"\n"), 1):
-            raw = raw[:-1] if raw.endswith(b"\r") else raw
-            if not raw.strip():
-                continue
-            try:
-                c = ann.check_claim(json.loads(raw), f"{label} line {i}")
-            except ValueError as e:
-                raise ann.AnnotationsError(f"{label} line {i}: not JSON ({e})") from None
-            n += 1
-            k = ann._pair_key(c)
-            held = kept.get(k)
-            if held is None or Decimal(c["confidence"]) > Decimal(held[1]["confidence"]):
-                if held is not None:
-                    summary["dropped"][held[0]] = summary["dropped"].get(held[0], 0) + 1
-                kept[k] = (label, c)
-            else:
-                summary["dropped"][label] = summary["dropped"].get(label, 0) + 1
-        summary["files"][label] = n
-    out = sorted((c for _l, c in kept.values()),
-                 key=lambda c: (c["subject"].encode(), c["object"].encode(), c["type"].encode()))
-    summary["kept"] = len(out)
-    summary["by_type"] = dict(sorted(Counter(c["type"] for c in out).items()))
-    summary["by_method"] = dict(sorted(Counter(
-        c["method"]["kind"] + (f":{c['method']['id']}" if c["method"]["kind"] == "matcher" else "")
-        for c in out).items()))
-    summary["from"] = dict(sorted(Counter(l for l, _c in kept.values()).items()))
-    return out, summary
+def _lines(path: Path) -> list[bytes]:
+    return [line for line in path.read_bytes().split(b"\n") if line.strip()]
+
+
+class _Works:
+    """The works the claims join, by union-find over their (subject, object) pairs."""
+
+    def __init__(self) -> None:
+        self.parent: dict[str, str] = {}
+
+    def find(self, x: str) -> str:
+        self.parent.setdefault(x, x)
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def join(self, a: str, b: str) -> None:
+        self.parent[self.find(a)] = self.find(b)
+
+    def together(self, a: str, b: str) -> bool:
+        return a in self.parent and b in self.parent and self.find(a) == self.find(b)
+
+
+def merge(works: list[bytes], matches: list[bytes]) -> tuple[list[bytes], dict]:
+    """(the merged lines — the wikidata claims as they were, then the matcher
+    claims that add a link, each line's bytes unchanged — and a summary)."""
+    w = _Works()
+    for line in works:
+        c = json.loads(line)
+        w.join(c["subject"], c["object"])
+    before = {"books": len(w.parent), "works": len({w.find(u) for u in w.parent})}
+    added: list[bytes] = []
+    inside = 0
+    for line in matches:
+        c = json.loads(line)
+        if w.together(c["subject"], c["object"]):
+            inside += 1
+            continue
+        added.append(line)
+        w.join(c["subject"], c["object"])
+    after = {"books": len(w.parent), "works": len({w.find(u) for u in w.parent})}
+    return works + added, {"claims": len(works) + len(added), "from_works": len(works),
+                           "from_matches": len(added), "matches_already_one_work": inside,
+                           "before": before, "after": after}
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("files", nargs="+", type=Path, help="claims files, JSON Lines; the first wins a tie")
-    ap.add_argument("--out", type=Path, required=True, help="the merged claims file to write (JSON Lines)")
+    ap.add_argument("works", type=Path, help="annotations_from_works.py's claims")
+    ap.add_argument("matches", type=Path, help="annotations_from_matches.py's claims")
+    ap.add_argument("--out", type=Path, required=True, help="the merged claims file (JSON Lines)")
     a = ap.parse_args(argv)
-    claims, summary = merge([(str(p), p.read_bytes()) for p in a.files])
-    a.out.write_bytes(b"".join(json.dumps(c, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
-                               for c in claims))
-    print(json.dumps(summary, indent=2, sort_keys=True))
+    lines, summary = merge(_lines(a.works), _lines(a.matches))
+    a.out.write_bytes(b"".join(line + b"\n" for line in lines))
+    print(json.dumps(summary, indent=1), file=sys.stderr)
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

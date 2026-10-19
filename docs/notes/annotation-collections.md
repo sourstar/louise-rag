@@ -218,11 +218,10 @@ under `/bundles`:
 Regenerated to scratch the same day for a check: the works tool gives
 4,376 again; the matcher's default cut 357; the two files share 86
 unordered pairs. Open for the operator: whether the classical collection
-moves to the default cut (357) or the two merge (`tools/annotations_merge.py`,
-2026-10-19: a pair stated twice keeps the higher confidence) — either is a
-NEW snapshot of an annotations collection, which `hold annotations update`
-does not write yet, never a recreate of these; and whether to set `share =
-true` so peers group works too. `hold collection create annotations
+moves to the default cut (357) or the two merge (`tools/annotations_merge.py`:
+the wikidata claims whole, a matcher claim only where its books are not one
+work yet) — decided the same evening, below ("The review of 2026-10-19"):
+one merged collection, `share = true`, replacing both. `hold collection create annotations
 --dry-run` (2026-10-19) measures a claims file against the target snapshot
 before any write. Inputs: the works measurement's `records.jsonl` and
 `wiki_map.json` live on the dev PC (`tools/measure/out/onelang/`, 2026-10-09);
@@ -237,6 +236,37 @@ which waits on the wikidata collection and decisions D1–D5.
   collections on one target each attach their own facts, labelled by
   collection id. Nothing merges them, deliberately — two ANNOTATORS stay
   two collections; one annotator's two claim files are one collection
-  (`annotations_merge.py`).
+  (`annotations_merge.py`; the operator, 2026-10-19: "both collections belong
+  to the same one").
 - **Scale.** The claim index is in memory per copy. That is fine for
   thousands of claims. Millions would want the manifest instead.
+
+## The review of 2026-10-19: adaptations are not versions
+
+The node holds both instances: `gutenberg-works` (4,376 wikidata claims,
+renamed `gutenberg-book-editions` on 2026-10-19) and `gutenberg-same-work`
+(261 matcher claims, the 0.95 cut). Both are `share = false`. Of the 261,
+199 join two books the wikidata claims already make one work. The other 62
+were reviewed by hand, with titles and creators:
+
+| verdict | pairs |
+|---|---|
+| a full translation (Vitruvius; *Mysterium Arcae Boulé*; Agamemnon in rhyming verse) | 3 |
+| one contains a part of the other (Chapman's *Odysseys* and each Greek volume; *Antigone* in *Plays of Sophocles*; Caesar I–IV and V–VIII; Plato's *Apology* and *Crito*; Persius in the four satirists) | 13 |
+| unverified (two collections of Cicero's orations) | 1 |
+| an adaptation: retellings and children's versions (Church, Havell, *Boys' and Girls' Plutarch*), Housman's Lysistrata paraphrase, and Campe's Latin *Robinson* against Defoe's novel | 41 |
+| another work (Campe's *Robinson* against Defoe's *Further Adventures*) | 4 |
+
+The title tier cannot tell a translation from an adaptation; the 17/17 hand
+check had sampled none. So `tools/annotations_from_matches.py` now leaves a
+pair out when a title marks an adaptation, or when the la/el book has a
+creator the English record lacks (`--records`), and takes hand verdicts from
+`--exclude` (`annotation-review-2026-10-19.json`: the Cicero pair). On the
+same input it leaves out exactly those 46 and nothing else.
+
+The operator: "both collections belong to the same one". `tools/annotations_merge.py`
+takes the wikidata claims whole and the matcher claims whose two books are
+not already one work: 4,387 claims (4,376 + 11; the other 5 correct pairs are
+implied once the first of each group is in), 6,073 books in 1,696 works,
+against 6,060 in 1,694. That is what the collection the operator approved
+holds, with `share = true`, replacing both.
