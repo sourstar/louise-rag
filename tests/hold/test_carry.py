@@ -637,6 +637,29 @@ def test_a_moved_sources_empty_manifest_does_not_undo_the_move(pair):
     assert not (root / "old" / "state" / "manifest.sqlite").exists(), "the stray goes"
 
 
+
+def test_drop_rows_drops_and_marks_the_documents_to_embed_again(pair):
+    """02 §2.4's remedy as `dev drop-rows`: unlike `vectors check --drop`, which
+    leaves an empty row, the documents are embedded again; an id the table
+    does not hold is no work."""
+    root, uids, ids = _carried(pair)
+    coll, _kept = _provenance(root, uids, ids)
+    out = carry.drop_rows(root, "new", [ids[0], ids[3], "gutenberg:99999:0:1"], window=1,
+                          log=quiet)
+    assert (out["asked"], out["dropped"], out["documents_reset"], out["verified"]) ==         (3, 2, 2, True)
+    books = [int(u.split(":")[1]) for u in uids]
+    left = set(embeddings.chunk_ids_of_books(books, collection=coll))
+    assert ids[0] not in left and ids[3] not in left and len(left) == len(ids) - 2
+    con = db.connect(coll)
+    try:
+        done = dict(con.execute("SELECT uid, embed_done FROM documents").fetchall())
+        assert (done[uids[0]], done[uids[1]], done[uids[2]]) == (0, 0, 1)
+        prov = {r[0] for r in con.execute("SELECT chunk_id FROM chunk_verification")}
+        assert ids[0] not in prov and ids[3] not in prov, "their provenance goes with them"
+    finally:
+        con.close()
+
+
 # ---- A1d: an origin that only adds files; a source with no records ----------
 
 def _with_file(c, rel="added/page_props.sql.gz"):

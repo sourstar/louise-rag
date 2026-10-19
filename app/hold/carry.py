@@ -871,24 +871,8 @@ def recut(root, to_ref: str, *, budget: int, apply: bool = False, window: int = 
                 f"documents again; {archive_rows} archive row(s) over it stay; nothing "
                 f"written (--yes)")
             return {**out, "apply": False}
-        drop.sort()
-        reset = 0
-        for i in range(0, len(drop), window):
-            part_ids = drop[i:i + window]
-            uids = sorted({c.rsplit(":", 2)[0] for c in part_ids})
-            # step 1: the documents marked not done FIRST; a bundle's provenance
-            # of the dropped rows goes with them (ledger.clear_verification)
-            con.execute("BEGIN IMMEDIATE")
-            con.execute(f"UPDATE documents SET embed_done=0 WHERE uid IN "
-                        f"({','.join('?' * len(uids))})", uids)
-            con.execute(f"DELETE FROM chunk_verification WHERE chunk_id IN "
-                        f"({','.join('?' * len(part_ids))})", part_ids)
-            con.execute("COMMIT")
-            reset += len(uids)
-            # step 2: the rows, under the vector write lock
-            embeddings.delete_chunks(part_ids, collection=coll, lock_con=con)
-            if (i // window) % 200 == 0:
-                log(f"[carry] {name}: recut {i + len(part_ids)}/{len(drop)} row(s)")
+        reset = _drop_and_reset(con, coll, drop, window=window,
+                                log=lambda m: log(f"[carry] {name}: recut {m}"))
     finally:
         con.close()
     rows_now = embeddings.stats(coll)["vectors"]
@@ -901,4 +885,63 @@ def recut(root, to_ref: str, *, budget: int, apply: bool = False, window: int = 
         raise CarryMismatch(
             f"{name}: the table holds {rows_now} rows, {before} - {len(drop)} expected; run "
             f"the recut again (it recomputes what is left)")
+    return out
+
+
+def _drop_and_reset(con, coll, ids: list[str], *, window: int,
+                    log: Callable[[str], None]) -> int:
+    """`ids`' rows dropped and their documents marked to embed again, a window
+    of rows at a time, each in two steps that can be repeated: the reset
+    committed FIRST (a document marked not done whose rows still exist is
+    embedded again, never lost), with a bundle's provenance of the rows; then
+    the rows, under the vector write lock. Returns the documents reset."""
+    from app import embeddings
+    ids = sorted(ids)
+    reset = 0
+    for i in range(0, len(ids), window):
+        part_ids = ids[i:i + window]
+        uids = sorted({c.rsplit(":", 2)[0] for c in part_ids})
+        con.execute("BEGIN IMMEDIATE")
+        con.execute(f"UPDATE documents SET embed_done=0 WHERE uid IN "
+                    f"({','.join('?' * len(uids))})", uids)
+        con.execute(f"DELETE FROM chunk_verification WHERE chunk_id IN "
+                    f"({','.join('?' * len(part_ids))})", part_ids)
+        con.execute("COMMIT")
+        reset += len(uids)
+        embeddings.delete_chunks(part_ids, collection=coll, lock_con=con)
+        if (i // window) % 200 == 0:
+            log(f"{i + len(part_ids)}/{len(ids)} row(s)")
+    return reset
+
+
+def drop_rows(root, ref: str, ids: list[str], *, window: int = WINDOW,
+              log: Callable[[str], None] = print) -> dict[str, Any]:
+    """02 §2.4's remedy for rows that are not this space's function — an
+    archive's vector of an input other than the one its record cuts to — with
+    their documents embedded again, which `vectors check --drop` (an empty
+    row, no re-embed) does not do. `louise dev drop-rows`. The caller holds
+    the collection's write lock. Rows not in the table are no work."""
+    from . import collection as col, records as rec
+    from app import db, embeddings
+
+    name, codex = col.resolve(Path(root), ref)
+    coll = rec.local_collection(Path(root), name, codex)
+    want = set(ids)
+    present = want & set(embeddings.chunk_ids_of_books(
+        {int(c.rsplit(":", 3)[1]) for c in want}, collection=coll))
+    before = embeddings.stats(coll)["vectors"]
+    con = db.connect(coll)
+    try:
+        reset = _drop_and_reset(con, coll, sorted(present), window=window,
+                                log=lambda m: log(f"[drop] {name}: {m}"))
+    finally:
+        con.close()
+    now = embeddings.stats(coll)["vectors"]
+    out = {"collection": name, "asked": len(set(ids)), "dropped": len(present),
+           "documents_reset": reset, "vectors": now, "verified": now == before - len(present)}
+    log(f"[drop] {name}: dropped {len(present)} row(s), {reset} document(s) to embed again; "
+        f"the table holds {now} (was {before})")
+    if not out["verified"]:
+        raise CarryMismatch(f"{name}: the table holds {now} rows, {before} - {len(present)} "
+                            f"expected; run it again")
     return out

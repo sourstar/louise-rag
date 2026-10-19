@@ -1027,6 +1027,26 @@ def cmd_dev_migrate_schema(a) -> int:
     return 0
 
 
+def cmd_dev_drop_rows(a) -> int:
+    """`louise dev drop-rows <collection> --ids FILE [--yes]` (02 §2.4's remedy,
+    07 §7.3): the rows FILE lists (one chunk id a line) dropped and their
+    documents embedded again — for rows that are not the space's function,
+    found by a check or a scan. The collection's write lock held. A dry run
+    without --yes. Writes; never runs on its own."""
+    from app.hold import carry as carry_mod
+    name, _ = col.resolve(a.root, a.collection)
+    ids = sorted({line.strip() for line in Path(a.ids).read_text(encoding="utf-8").splitlines()
+                  if line.strip()})
+    if not a.yes:
+        print(f"[drop] would drop {len(ids)} row(s) of {name} and embed their documents "
+              f"again (--yes)", file=sys.stderr)
+        return 0
+    _take_write_lock(a.root, name, "louise dev drop-rows", exit_code=2)
+    _print(carry_mod.drop_rows(a.root, name, ids,
+                               log=lambda m: print(m, file=sys.stderr)))
+    return 0
+
+
 def cmd_dev_carry(a) -> int:
     """`louise dev carry <from> <to> [--copy] [--keep producer:<archive>] --yes`
     (07 §7.3; docs/notes/v5-migration.md G1, G2; amendment A1): the source's
@@ -4095,6 +4115,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", dest="dry_run", help="report the changes, write nothing")
     p.add_argument("--no-backup", action="store_true", dest="no_backup", help="no .bak copy of the file first")
     p.set_defaults(fn=cmd_dev_migrate_schema)
+    p = dverbs.add_parser("drop-rows", help="the rows a file lists dropped and their documents "
+                                            "embedded again (02 §2.4's remedy); writes only with "
+                                            "--yes (the collection's lock)")
+    root_arg(p)
+    p.add_argument("collection")
+    p.add_argument("--ids", required=True, metavar="FILE", help="one chunk id a line")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(fn=cmd_dev_drop_rows)
     p = dverbs.add_parser("carry", help="a collection's manifest, text index and vector table into a new "
                                         "collection with the same records (amendment A1); writes "
                                         "only with --yes (both collections' locks)")
