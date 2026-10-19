@@ -271,6 +271,19 @@ The node's placement rule puts them on tank; a `/bundles` dataset with a
 per-collection symlink as `/shards` was done, or a `BUNDLES_ROOT` the way
 `SHARDS_ROOT` works, is München's proposal. Not a platform change here.
 
+### 9. A digest refused at a restart cost an hour — FIXED (Perugia's find)
+
+The peer's first digest after its redeploy (10:07:13Z) hit the node while
+the node itself restarted: `ConnectError`, counted as the interval's
+send, and the next attempt reached the node at 11:07. With many peers,
+restarts are the common case. An address the digest did not reach is now
+retried after `RETRY_S` (60 s), then two, four, eight minutes, capped at
+the interval; a peer that stays down costs one refused connection per
+step. Test: the unreached peer gets the digest a minute on, the reached
+one not again; a peer that stays down is tried at 60, 120, 240, 480 s.
+The attestation pull keeps its hourly cadence (04 §4.2: a pull that does
+not connect is retried at the next interval; it is a recovery path).
+
 ### Still open after the review
 
 - **Vector convergence** ([vector-convergence.md](vector-convergence.md),

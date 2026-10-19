@@ -35,6 +35,14 @@ _last_digest_at = 0.0
 # hour (2026-10-07). It is then in the set, so a failed send is retried at
 # the interval, never every beat.
 _sent_to: frozenset[str] = frozenset()
+# An address this interval's digest did NOT reach: retried with a backoff —
+# RETRY_S, doubling, capped at the interval — not an hour later. A peer
+# restarting at the moment the digest came (the node, 2026-10-19 12:06 CEST)
+# cost the Perugia peer a full interval of invisibility: its digest was
+# refused and counted as the interval's send. A peer that is down costs one
+# refused connection a minute, then every two, four, eight…
+RETRY_S = 60.0
+_retry_at: dict[str, tuple[float, float]] = {}          # address -> (not before, this delay)
 
 
 def own_address(cfg=None) -> str:
@@ -246,11 +254,13 @@ def _post(url: str, payload: dict[str, Any], *, client=None,
 
 def send_digest(envelope: dict[str, Any], recipients: list[str], *, client=None,
                 stop: threading.Event | None = None,
-                log: Callable[[str], None] | None = None) -> dict[str, int]:
+                log: Callable[[str], None] | None = None) -> dict[str, Any]:
     """To every address, each once; a failure is logged and the address is
-    tried again at the next interval (04 §4.2: deferred and retried). A
-    stop ends the round where it stands."""
+    tried again with a backoff (`beat`; 04 §4.2: deferred and retried). A
+    stop ends the round where it stands. `unreached` names the addresses
+    the digest did not reach."""
     sent, failed = 0, 0
+    unreached: list[str] = []
     for address in recipients:
         try:
             code, _ = _post(f"{address.rstrip('/')}/api/share/digest/share", envelope,
@@ -259,6 +269,7 @@ def send_digest(envelope: dict[str, Any], recipients: list[str], *, client=None,
                 sent += 1
             else:
                 failed += 1
+                unreached.append(address)
                 if log:
                     log(f"digest to {address}: HTTP {code}")
         except TransferAborted:
@@ -266,9 +277,10 @@ def send_digest(envelope: dict[str, Any], recipients: list[str], *, client=None,
             break
         except Exception as e:   # noqa: BLE001 — one peer away is not the round's failure
             failed += 1
+            unreached.append(address)
             if log:
                 log(f"digest to {address}: {type(e).__name__}: {e}"[:200])
-    return {"sent": sent, "failed": failed}
+    return {"sent": sent, "failed": failed, "unreached": unreached}
 
 
 def forward_events(*, client=None, now: float | None = None, stop: threading.Event | None = None,
@@ -336,7 +348,8 @@ def beat(collections, *, now: float | None = None, client=None,
     due = force or now - _last_digest_at >= peers.INTERVAL_S
     if not due:
         with closing(peers.connect()) as con:
-            fresh = [r for r in peers.recipients(con, now=now) if r not in _sent_to]
+            fresh = [r for r in peers.recipients(con, now=now)
+                     if r not in _sent_to or (r in _retry_at and _retry_at[r][0] <= now)]
         if not fresh:
             return out
     try:
@@ -362,6 +375,13 @@ def beat(collections, *, now: float | None = None, client=None,
                             address=own_address(), now=now, port=peer_port())
     out["digest"] = send_digest(envelope, recipients, client=client, stop=stop, log=log)
     out["digest"]["recipients"] = recipients
+    unreached = set(out["digest"].pop("unreached", ()))
+    for r in recipients:
+        if r in unreached:
+            delay = min(peers.INTERVAL_S, _retry_at[r][1] * 2) if r in _retry_at else RETRY_S
+            _retry_at[r] = (now + delay, delay)
+        else:
+            _retry_at.pop(r, None)
     if due:
         _last_digest_at, _sent_to = now, frozenset(recipients)
         # the attestations the neighbours hold and this peer missed as events

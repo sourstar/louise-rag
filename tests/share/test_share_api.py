@@ -175,3 +175,53 @@ def test_the_beat_forwards_an_event_once_to_the_neighbours_and_never_back(node, 
     assert [u for u, _ in fake.posts] == ["http://other.test/api/share/event/share"]
     assert fake.posts[0][1]["hops"] == 7 and fake.posts[0][1]["body"] == body
     assert gossip.beat([], now=now, client=fake)["forwarded"] == 0, "forwarded once"
+
+
+def test_a_digest_that_did_not_reach_a_peer_is_retried_with_a_backoff_not_an_hour_later(node, monkeypatch):  # noqa: F811
+    """Perugia, 2026-10-19: its digest after a redeploy was refused — the
+    node was restarting at that moment — and counted as the interval's
+    send, so the next reached the node an hour later. A failed address is
+    retried after RETRY_S, then two, four… up to the interval."""
+    monkeypatch.setattr(node_keys, "load_signing_key", lambda path=None: OURS)
+    monkeypatch.setattr(identity, "own", lambda: OUR_KEY)
+    monkeypatch.setattr(gossip, "_last_digest_at", 0.0)
+    monkeypatch.setattr(gossip, "_sent_to", frozenset())
+    monkeypatch.setattr(gossip, "_retry_at", {})
+    now = time.time()
+    with peers.connect() as con:
+        for key, address in ((PEER_KEY, "http://peer.test"), (env.key_text(signing.SigningKey(bytes([9]) * 32).verify_key),
+                                                              "http://down.test")):
+            peers.record_digest(con, messages.digest_body(key=key, address=address, neighbours=[], benchmarks=[],
+                                                          collections=[], now=now), now=now)
+
+    class Flaky(FakeClient):
+        down = True
+
+        def post(self, url, content=None, headers=None):
+            if url.startswith("http://down.test") and self.down:
+                raise ConnectionError("[Errno 111] Connection refused")
+            return super().post(url, content, headers)
+    fake = Flaky()
+    out = gossip.beat([], now=now, client=fake, force=True)
+    assert (out["digest"]["sent"], out["digest"]["failed"]) == (1, 1) and "unreached" not in out["digest"]
+    assert gossip.beat([], now=now + 15, client=fake)["digest"] is None, "within the backoff: not every beat"
+    fake.down = False
+    out = gossip.beat([], now=now + gossip.RETRY_S + 1, client=fake)
+    assert out["digest"]["recipients"] == ["http://down.test"] and out["digest"]["sent"] == 1, \
+        "the one that was not reached, a minute on — not an hour"
+    assert gossip.beat([], now=now + gossip.RETRY_S + 30, client=fake)["digest"] is None, "reached: in the interval's set"
+    # a peer that stays down costs one refused connection a minute, then two, four…
+    fake.down = True
+    monkeypatch.setattr(gossip, "_last_digest_at", 0.0)
+    t = now + 7200
+    gossip.beat([], now=t, client=fake, force=True)
+    tries = [t]
+    for step in range(1, 400):
+        at = t + step * 15
+        got = gossip.beat([], now=at, client=fake)
+        if got["digest"] is not None and "http://down.test" in got["digest"]["recipients"]:
+            tries.append(at)
+        if len(tries) == 5:
+            break
+    gaps = [b - a for a, b in zip(tries, tries[1:])]
+    assert gaps == [60, 120, 240, 480], gaps
