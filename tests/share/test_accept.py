@@ -92,6 +92,12 @@ def test_a_staged_file_at_full_length_with_holes_is_fetched_on_not_refused_as_th
 def test_the_survivor_takes_the_announced_bundle_in_and_serves_it(ready, tmp_path, monkeypatch):
     quiet_sessions(monkeypatch)
     root, snapshot, codex, kw = ready
+    # the fetcher's vector store is this test's tmp_path: the disk floor
+    # (app/disk_guard.py) is the host's business, not what is tested here —
+    # a runner with 29 GiB free deferred every bundle (2026-10-19)
+    from app import config
+    monkeypatch.setattr(config, "VECTORS_MIN_FREE_GB", 0.0)
+    monkeypatch.setattr(config, "VECTORS_MIN_FREE_FRACTION", 0.0)
     for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
         attested(root, codex, snapshot, check=check, key=key)
     sshard = col.shard_dir_of(root, "gutenberg")
