@@ -184,7 +184,8 @@ if [ -d "$OLD" ]; then
   echo "deleting $OLD ($(du -sh "$OLD" | cut -f1)): its copy on tank checksummed equal at the move"
   rm -rf "$OLD"
 fi
-/root/louise-scheduled/contribute.sh start gutenberg; tail -1 /root/louise-scheduled/contribute.log
+# quiet hours (23:00-07:00 is contribute's window, cron 9/10): START_CONTRIBUTE=0 leaves it to the cron
+if [ "${START_CONTRIBUTE:-1}" = 1 ]; then /root/louise-scheduled/contribute.sh start gutenberg; tail -1 /root/louise-scheduled/contribute.log; fi
 echo
 echo "DEPLOYED $COMMIT. src.old/ and louise-rag:pre-$COMMIT are the way back."
 echo "Watch the worker's first minutes:"
