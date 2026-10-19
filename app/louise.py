@@ -1686,6 +1686,7 @@ def cmd_share_contribute(a) -> int:
                     results[name] = contrib.once(
                         a.root, name, codex, key=key, own_key=own_key, embed=embed,
                         vectors_for=lambda ids: embeddings.vectors_by_chunk_id(ids, collection=local),
+                        held_books=lambda ids: embeddings.books_with_vectors(ids, collection=local),
                         write=lambda rows: embeddings.upsert_chunks(rows, collection=local,
                                                                     dtype=codex.space.dtype),
                         live=live, con=mcon, node_con=node_con, now=now, stop=stop,
@@ -4485,7 +4486,9 @@ def main(argv=None) -> int:
         # Perugia, 2026-10-19)
         try:
             import faulthandler
-            faulthandler.register(signal.SIGUSR1, all_threads=True, chain=True)
+            # chain=False: chained, the default action for SIGUSR1 ran after
+            # the dump and TERMINATED the pass (exit 138; Perugia, 2026-10-19)
+            faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
         except (ValueError, OSError, AttributeError, RuntimeError):
             pass
     argv = list(sys.argv[1:] if argv is None else argv)

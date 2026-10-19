@@ -1171,6 +1171,42 @@ def vectors_by_chunk_id(chunk_ids, collection=None) -> dict[str, list]:
 BOOK_COLUMN_NAME = "book_id"
 
 
+def books_with_vectors(native_ids, collection=None) -> set[int]:
+    """Of these documents (their `book_id`s), the ones with at least one
+    vector here — the indexed `book_id` filter, the `book_id` column alone,
+    no chunk id derived. The holder pass asks this BEFORE it chunks a
+    part's documents: chunking whole books in pure Python to learn that
+    nothing of them is held cost Perugia 9.5 minutes a pass (2026-10-19)."""
+    books = sorted({int(b) for b in native_ids})
+    if not books:
+        return set()
+    db = _conn(collection)
+    if TABLE not in db.table_names():
+        return set()
+    tbl = db.open_table(TABLE)
+    out: set[int] = set()
+
+    def _ask(part: list[int]) -> None:
+        if not part:
+            return
+        try:
+            rows = (tbl.search().where(f"{BOOK_COLUMN_NAME} IN ({','.join(str(b) for b in part)})",
+                                       prefilter=True)
+                    .select([BOOK_COLUMN_NAME]).limit(_RESUME_SCAN_MAX).to_list())
+        except Exception:                       # noqa: BLE001 — a store that cannot answer holds nothing
+            return
+        found = {int(r[BOOK_COLUMN_NAME]) for r in rows}
+        if len(rows) >= _RESUME_SCAN_MAX and len(part) > 1:
+            # the answer was cut: ask in halves until every book is seen
+            _ask(part[:len(part) // 2])
+            _ask(part[len(part) // 2:])
+            return
+        out.update(found)
+    for i in range(0, len(books), 200):
+        _ask(books[i:i + 200])
+    return out
+
+
 @dataclass
 class EmbedCounts:
     """What one write took from the encoder and what it kept (RULE 1).

@@ -527,3 +527,62 @@ def test_the_build_marks_the_documents_it_completed_embedded_and_the_reconcile_c
     assert louise.main(["dev", "mark-embedded", "gutenberg", "--root", str(root)]) == 0
     text = capsys.readouterr().out
     assert json.loads(text[text.index("{"):])["candidates"] == 0, "nothing unmarked: the table is not even scanned"
+
+
+def test_the_held_path_chunks_only_the_documents_it_holds_vectors_for_and_stops_between_them(ready, monkeypatch):
+    """Perugia, 2026-10-19: the held path chunked every document of every
+    probed part in pure Python before knowing whether any row was unclaimed
+    — 9.5 minutes a pass with nothing to bundle, and a SIGTERM waited it
+    out. The unclaimed documents are asked of the vector table by book id
+    first; only those with a vector are chunked; a stop set between two
+    documents ends the export with nothing written."""
+    import threading
+    from app import embeddings, layers as layers_mod
+    from app.hold import land as landing, records as rec, vectors_build as vb
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    local = rec.local_collection(root, "gutenberg", codex)
+    shards = [f"{s.slice}/{s.n:05d}" for s in snapshot.shards]
+    held_sid, bare_sid = shards[0], shards[1]
+    held_records = landing.records_for(root, "gutenberg", snapshot, held_sid, None)
+    # vectors for the first record of the first part only
+    vb.build(codex, shards=[snapshot.shards[0]], records_for=lambda s: held_records[:1],
+             vectors_for=kw["vectors_for"], embed=kw["embed"], write=kw["write"], batch=2)
+    books = embeddings.books_with_vectors([int(r["native_id"]) for s in shards
+                                           for r in landing.records_for(root, "gutenberg", snapshot, s, None)],
+                                          collection=local)
+    assert books == {int(held_records[0]["native_id"])}, "one book has vectors; the lookup names it, no chunk derived"
+    assert embeddings.books_with_vectors([], collection=local) == set()
+    chunked: list[str] = []
+    real = layers_mod.chunks_for_document
+
+    def counted(codex_, row, sections):
+        chunked.append(row["uid"])
+        return real(codex_, row, sections)
+    monkeypatch.setattr(layers_mod, "chunks_for_document", counted)
+    heavy = rendezvous.Peer(PEER_KEY, 1e12)
+    held_books = lambda ids: embeddings.books_with_vectors(ids, collection=local)   # noqa: E731
+    out = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0), heavy],
+                          held_books=held_books, **kw)
+    assert out["held"] == [held_sid] and out["probed"] == len(shards)
+    assert set(chunked) <= {held_records[0]["uid"]}, "the bare part's books were never chunked; nor the other record's"
+    # a stop set once the first document is chunked: the export ends between documents, nothing written
+    chunked.clear()
+    stop = threading.Event()
+    kw["con"].execute("DELETE FROM coverage")
+    for d in (root / "gutenberg" / "state" / "bundles").glob("*"):
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+    vb.build(codex, shards=[snapshot.shards[0]], records_for=lambda s: held_records,
+             vectors_for=kw["vectors_for"], embed=kw["embed"], write=kw["write"], batch=2)
+
+    def stopping(codex_, row, sections):
+        stop.set()
+        return real(codex_, row, sections)
+    monkeypatch.setattr(layers_mod, "chunks_for_document", stopping)
+    out = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0), heavy],
+                          held_books=held_books, stop=stop, **kw)
+    assert out["interrupted"] and out["held"] == [] and out["bundles"] == []
+    assert not list((root / "gutenberg" / "state" / "bundles").glob(".export-*")), "the scratch is gone"
+    assert cov.rows(kw["con"]) == []

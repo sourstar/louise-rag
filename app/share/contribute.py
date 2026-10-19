@@ -283,20 +283,48 @@ def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | 
 
 def _bundle_shard(root: Path, name: str, codex, snapshot: sn.Snapshot, shard: sn.Shard, *, key, own_key: str,
                   embed, vectors_for, con, node_con, now: float, say, out: dict[str, Any],
-                  serving: bool, held: bool) -> str:
-    """One shard's held vectors — the records this producer's bundles do not
-    claim yet — exported into bundles, each through this peer's own
+                  serving: bool, held: bool, held_books=None, stop=None) -> str:
+    """One shard's held vectors — the records no accepted bundle held here
+    claims yet — exported into bundles, each through this peer's own
     ladder, recorded in the map and, serving, announced. Returns
-    `"exported"`, `"nothing"` (this peer holds no vector of the shard) or
-    `"claimed"` (everything it holds is in a bundle it already made)."""
+    `"exported"`, `"nothing"` (this peer holds no vector of the shard),
+    `"claimed"` (everything it holds is in a bundle held here already) or
+    `"interrupted"` (a stop between two documents; nothing written).
+
+    DECIDED BEFORE ANY CHUNKING when `held_books` is given: the unclaimed
+    records' documents are asked of the vector table by `book_id`, and only
+    those with a vector here are chunked to list their chunk ids — chunking
+    a part's whole books in pure Python to find nothing held cost 9.5
+    minutes a pass and waited out every SIGTERM (Perugia, 2026-10-19)."""
     sid = f"{shard.slice}/{shard.n:05d}"
     scratch = root / name / "state" / "bundles" / f".export-{os.getpid()}-{shard.n:05d}"
     shutil.rmtree(scratch, ignore_errors=True)
     claimed = claimed_uids(root, name, codex, con, sid, own_key=own_key)
+    only = None
+    if held_books is not None:
+        records = landing.records_for(root, name, snapshot, sid, None)
+        unclaimed = [r for r in records if r["uid"] not in claimed]
+        if not unclaimed:
+            return "claimed" if claimed else "nothing"
+
+        def _book(r) -> int | None:
+            try:
+                return int(r.get("native_id") or str(r["uid"]).rsplit(":", 1)[-1])
+            except (TypeError, ValueError):
+                return None
+        books = {b for b in (_book(r) for r in unclaimed) if b is not None}
+        with_vectors = held_books(sorted(books)) if books else set()
+        only = frozenset(r["uid"] for r in unclaimed if _book(r) in with_vectors)
+        if not only:
+            return "claimed" if claimed else "nothing"
     try:
         exported = exp.export(root, name, shard=sid, dest=scratch, vectors_for=vectors_for,
                               embed=embed, key=key, snapshot_id=snapshot.snapshot_id,
-                              exclude_uids=claimed)
+                              exclude_uids=claimed, only_uids=only, stop=stop)
+    except exp.ExportInterrupted:
+        shutil.rmtree(scratch, ignore_errors=True)
+        out["interrupted"] = True
+        return "interrupted"
     except exp.NothingHeld:
         return "claimed" if claimed else "nothing"
     except exp.ExportError as e:
@@ -364,7 +392,7 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
          live: Sequence[rendezvous.Peer], con, node_con, now: float | None = None, stop=None,
          log: Callable[[str], None] | None = None, batch: int = 64,
          before_write: Callable[[], None] | None = None, serving: bool = True,
-         collection=None) -> dict[str, Any]:
+         collection=None, held_books=None) -> dict[str, Any]:
     """One pass (07 §7.3 `--once`): first the vectors this peer already
     holds for the open shards it does not lead, bundled (no GPU beyond the
     challenge rows); then the shards this peer leads, built, exported,
@@ -389,7 +417,7 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
                            "refused": [], "events": 0, "unannounced": 0, "interrupted": False,
                            "marked": 0, "claimed": []}
     common = dict(key=key, own_key=own_key, embed=embed, vectors_for=vectors_for, con=con,
-                  node_con=node_con, now=now, say=say, out=out, serving=serving)
+                  node_con=node_con, now=now, say=say, out=out, serving=serving, held_books=held_books, stop=stop)
     if not mine and not others:
         say(f"[{name}] share contribute: no open shard among {len(me_live)} peer(s)")
         return out
@@ -414,6 +442,8 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
             continue
         out["probed"] += 1
         got = _bundle_shard(root, name, codex, snapshot, shard, held=True, **common)
+        if got == "interrupted":
+            break
         if got == "exported":
             out["held"].append(sid)
         elif got == "claimed":
@@ -466,6 +496,8 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
             out["interrupted"] = True
             break
         got = _bundle_shard(root, name, codex, snapshot, shard, held=False, **common)
+        if got == "interrupted":
+            break
         if got == "nothing":
             out["refused"].append(f"{sid}: built and nothing held to export")
             say(f"[{name}] share contribute: {sid}: built, and this peer holds no vector of it to export")

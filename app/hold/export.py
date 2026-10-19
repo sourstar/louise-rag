@@ -79,6 +79,11 @@ class ExportError(CodexError):
     """The shard cannot be exported as a conformant bundle."""
 
 
+class ExportInterrupted(ExportError):
+    """A stop asked for between two documents of a shard (07 §7.7): nothing
+    was written, the caller finishes its unit by not starting this one."""
+
+
 class NothingHeld(ExportError):
     """This peer holds no vector for any record of the shard: nothing to
     export. Named, so `share contribute` can tell a part it holds nothing
@@ -127,7 +132,8 @@ def rows_for(codex, records: Sequence[dict],
 
 def grouped(codex, records: Sequence[dict],
             vectors_for: Callable[[list[str]], dict[str, list]],
-            exclude_uids: set[str] | frozenset[str] | None = None,
+            exclude_uids: set[str] | frozenset[str] | None = None, *,
+            only_uids: set[str] | frozenset[str] | None = None, stop=None,
             ) -> list[tuple[str, str, list[tuple[str, list]]]]:
     """`(uid, content_hash, its held chunk rows)`, one entry per record —
     the records in `exclude_uids` left out: those this producer's accepted
@@ -150,6 +156,12 @@ def grouped(codex, records: Sequence[dict],
         uid = rec["uid"]
         if exclude_uids and uid in exclude_uids:
             continue
+        if only_uids is not None and uid not in only_uids:
+            continue                      # no vector of it here: nothing to chunk for (RULE 1)
+        if stop is not None and stop.is_set():
+            # the unit is the document (07 §7.7): chunking a shard's books is
+            # minutes of pure Python a SIGTERM used to wait out (2026-10-19)
+            raise ExportInterrupted("stopped between two documents; nothing written")
         sections = [tuple(s) for s in rec.get("sections") or []]
         row = {"uid": uid, "native_id": rec.get("native_id", 0)}
         ids = [c["id"] for c in layers_mod.chunks_for_document(codex, row, sections)]
@@ -220,7 +232,8 @@ def challenge_rows(codex, embed, member: Path | None = None) -> list[tuple[str, 
 def export(root, ref: str, *, shard: str, dest, vectors_for, embed, key,
            snapshot_id: str | None = None, created_at: int | None = None,
            max_chunks: int = BUNDLE_CHUNKS,
-           exclude_uids: set[str] | frozenset[str] | None = None) -> dict[str, Any]:
+           exclude_uids: set[str] | frozenset[str] | None = None,
+           only_uids: set[str] | frozenset[str] | None = None, stop=None) -> dict[str, Any]:
     """Write one shard's bundles into `dest` (a DIRECTORY, 09 §9.7).
 
     ONE BUNDLE PER SHARD is the common case and `dest` is then the bundle
@@ -258,7 +271,7 @@ def export(root, ref: str, *, shard: str, dest, vectors_for, embed, key,
 
     entry = _shard_of(snapshot, shard)
     records = _records(shard_dir, entry)
-    entries = grouped(codex, records, vectors_for, exclude_uids)
+    entries = grouped(codex, records, vectors_for, exclude_uids, only_uids=only_uids, stop=stop)
     if not entries:
         if exclude_uids:
             raise NothingHeld(

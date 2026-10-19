@@ -637,6 +637,25 @@ left are the ones the node covers only partially — their completion is
 the leader's work, small per part (the missing chunks only), and now
 counted right.
 
+**Perugia's first 0118423 pass, two more (19:43 CEST).** (a) SIGUSR1
+TERMINATED the pass: `faulthandler.register(..., chain=True)` ran the
+default action after the dump (exit 138). `chain=False`. (b) The stacks it
+printed named the frame of the 9.5-minute wait — and of 9412219's 15
+minutes after SIGTERM: `_bundle_shard` → `export.grouped` →
+`layers.chunks_for_document` → `chunking._fixed_windows`: the held path
+re-chunked every document of every probed part in pure Python before
+knowing whether any row was unclaimed, and with every accepted bundle's
+uids excluded most parts end `claimed`, so the chunking bought nothing;
+no stop check inside. Now `_bundle_shard` asks the vector table BY BOOK
+ID which unclaimed documents have a vector here
+(`embeddings.books_with_vectors`, the indexed `book_id` filter, the one
+column, no chunk id derived) and chunks only those; and `export.grouped`
+checks the stop between documents (`ExportInterrupted`: nothing written,
+the pass ends its unit). Test:
+`test_the_held_path_chunks_only_the_documents_it_holds_vectors_for_and_stops_between_them`.
+The mine path still chunks a led part's records to find its pending
+chunks (`vectors_build.pending`) — that is the build's own work.
+
 ### Still open after the review
 
 - **Vector convergence** ([vector-convergence.md](vector-convergence.md),
