@@ -4229,6 +4229,143 @@ def _node_line(stage: str):
     return log
 
 
+#: how often the publisher looks for finished led parts (config.PUBLISH_BEAT_S)
+PUBLISH_BEAT_S = config.PUBLISH_BEAT_S
+#: the publisher's last pass per collection, for whoever asks; written by the
+#: publisher thread, read by node show / the Library — a summary a pass, not telemetry per unit
+_publish_state: dict[str, dict] = {}
+#: what the publisher said once per collection and will not repeat until it changes
+_publish_said: dict[str, str] = {}
+
+
+class _Until:
+    """A stop that is also a deadline: `once` and `export` ask `is_set()`
+    between units, so a pass yields at its budget and the next beat resumes
+    (CLAUDE.md: a pipeline thread never waits without a bound)."""
+
+    def __init__(self, deadline: float, stop: threading.Event):
+        self.deadline, self.stop = deadline, stop
+
+    def is_set(self) -> bool:
+        return self.stop.is_set() or time.monotonic() >= self.deadline
+
+
+def _publish_pass(collection, codex, con, *, stop, log) -> dict:
+    """One publisher pass over `collection` (app/share/contribute.py `once`,
+    `build=False`): the open parts whose vectors this node holds — the
+    embed stage's output under `embed = "p2p"`, and anything held before —
+    bundled, through this node's own ladder, recorded in the coverage map
+    and, where this node serves the collection, announced. No GPU beyond
+    each bundle's sixteen challenge rows (09 §9.7)."""
+    from contextlib import closing
+    from . import encoder_use, identity
+    from .bundles import keys as node_keys
+    from .share import contribute, coverage as cov, peers
+    root = collections_mod.louise_root() / "collections"
+    key = node_keys.load_signing_key()
+    own = identity.own()
+    recipe = collections_mod.recipe_for(collection)
+    embed, _before_write = encoder_use.callables(codex, recipe, root=root, name=collection.name, stop=stop,
+                                                 holder=encoder_use.holder("publisher"), log=log)
+    now = time.time()
+    # 04 §4.2: announced only where it is served — the file shares and the mode seeds
+    serving = bool(getattr(collection, "share", False)) and \
+        node_state.runs(node_state.worker_state(), node_state.SEED)
+    with closing(peers.connect()) as node_con:
+        live = cov.live_peers(codex, node_con, now=now, own_key=own,
+                              own_benchmarks=cov.own_benchmarks(root, collection.name, codex, own))
+        return contribute.once(
+            root, collection.name, codex, key=key, own_key=own, embed=embed,
+            vectors_for=lambda ids: embeddings.vectors_by_chunk_id(ids, collection=collection),
+            held_books=lambda ids: embeddings.books_with_vectors(ids, collection=collection),
+            write=None, live=live, con=con, node_con=node_con, now=now, stop=stop, log=log,
+            batch=config.EMBED_SLICE_CHUNKS, serving=serving, collection=collection, build=False)
+
+
+def _publisher_beat(budget_s: float | None = None) -> dict[str, dict]:
+    """One beat of the publisher: every collection this worker runs (holds
+    the lock of) under `embed = "p2p"`, where the mode embeds, gets a pass
+    bounded by `budget_s`. Returns the passes made, by collection. Never
+    raises; a refusal or a deferral is said once per collection."""
+    from .hold import embedder as emb
+    from .share import contribute
+    budget_s = config.PUBLISH_BUDGET_S if budget_s is None else budget_s
+    done: dict[str, dict] = {}
+    try:
+        mode = node_state.worker_state()
+        if not node_state.runs(mode, node_state.EMBED):
+            return done
+        collections = collections_mod.load_all()
+        paused = node_state.paused_collections()
+    except Exception:   # noqa: BLE001 — the next beat
+        return done
+    for c in collections:
+        if _stop.is_set():
+            break
+        # the worker runs it (its lock is held here) and the operator has not paused it
+        if c.name in paused or c.name not in _locks:
+            continue
+        codex = getattr(c, "codex", None)
+        if codex is None or getattr(codex, "privacy", "public") != "public":
+            continue
+        con = None
+        try:
+            con = db.connect(c)
+            if _effective_embed_mode(c, con) != "p2p":
+                continue
+
+            def say(m: str, _con=con) -> None:
+                db.log_event(_con, "info", "share", m[:500])
+            out = _publish_pass(c, codex, con, stop=_Until(time.monotonic() + budget_s, _stop), log=say)
+            _publish_state[c.name] = {
+                "at": time.time(), "snapshot": out.get("snapshot_id"), "peers": out.get("peers"),
+                "probed": out.get("probed", 0), "bundled": len(out.get("held", [])),
+                "awaiting": len(out.get("awaiting", [])), "left_to_fetch": len(out.get("left_to_fetch", [])),
+                "accepted": len(out.get("accepted", [])), "refused": len(out.get("refused", [])),
+                "announced": out.get("events", 0), "interrupted": bool(out.get("interrupted"))}
+            _publish_said.pop(c.name, None)
+            done[c.name] = out
+            if out.get("bundles") or out.get("refused"):
+                say(f"[{c.name}] publish: {len(out['held'])} part(s) bundled from vectors held here, "
+                    f"{len(out['accepted'])} accepted, {out['events']} announced, {len(out['refused'])} refused; "
+                    f"{len(out['awaiting'])} led part(s) await the embed stage, "
+                    f"{len(out['left_to_fetch'])} left to the fetch"
+                    + (" — interrupted at the budget, resumes next beat" if out.get("interrupted") else ""))
+        except (contribute.ContributeRefused, emb.GateDeferred) as e:
+            if _publish_said.get(c.name) != str(e) and con is not None:
+                _publish_said[c.name] = str(e)
+                db.log_event(con, "info", "share", f"[{c.name}] publish: not this beat — {e}"[:500])
+        except Exception as e:   # noqa: BLE001 — one collection, not the thread
+            why = f"{type(e).__name__}: {e}"
+            if _publish_said.get(c.name) != why:
+                _publish_said[c.name] = why
+                _node_line("publish")(f"{c.name}: pass failed: {why}")
+        finally:
+            if con is not None:
+                con.close()
+    return done
+
+
+def _publisher() -> None:
+    """07 §7.8 "all p2p": "embeds the parts rendezvous gives this node, with
+    the cascade, and publishes as it goes". The embed stage does the first
+    (`_backfill_rows` under "p2p", app/share/leading.py); this thread does
+    the second: every PUBLISH_BEAT_S, where the mode embeds, the open parts
+    whose vectors this node holds are bundled and announced
+    (`_publish_pass`), one collection at a time, each pass bounded by
+    PUBLISH_BUDGET_S and resumable. Its own thread: a pass reads parts and
+    hashes bundles for minutes, and would idle a pipeline thread or the
+    GPU loop (scheduling.md §1). Until 2026-10-19 publishing was the
+    `share contribute` command's alone, which needs the collection's
+    writer lock — the lock this worker holds for as long as it runs the
+    collection — so a node could publish only with the collection paused."""
+    while not _stop.wait(PUBLISH_BEAT_S):
+        try:
+            _publisher_beat()
+        except Exception:   # noqa: BLE001 — never the thread
+            pass
+
+
 def _settle_runs_for_search() -> None:
     """03 §3.3: a kept statement is re-checked once per process before the
     vector leg relies on it, and the re-check ran only inside the embed
@@ -4573,6 +4710,10 @@ def run_forever():
     # the runs of collections that hold vectors and do not embed here,
     # settled for search (03 §3.3; `_settle_runs_for_search`)
     threading.Thread(target=_settle_runs_for_search, name="settle-runs", daemon=True).start()
+    # 07 §7.8 "all p2p", the publishing half: the open parts whose vectors
+    # this node holds, bundled and announced as the embed stage finishes
+    # them (`_publisher`); its own thread, a pass is minutes of IO and hashing
+    threading.Thread(target=_publisher, name="publisher", daemon=True).start()
     # 03 §3.2: the plan, once per cadence per collection, in a child process,
     # one at a time (app/scheduled_checks.py)
     from . import scheduled_checks

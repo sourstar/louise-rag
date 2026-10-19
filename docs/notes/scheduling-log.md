@@ -492,3 +492,38 @@ tests/test_embedder_release.py). To be measured on Perugia over one
 contribute pass: shutdown count (expect 0 while embedding), chunks/min
 (expect the same 142 or slightly better). On the node: cold starts in
 contribute-gutenberg.log over one night's pass (expect 0, against 12).
+
+### 2026-10-19 — the publisher: contribute's pass as a worker stage under its lock (07 §7.8 "all p2p") — PREPARED, not deployed
+
+`worker._publisher` / `_publisher_beat` / `_publish_pass`;
+`contribute.once(build=False)`; knobs `PUBLISH_BEAT_S` 300, `PUBLISH_BUDGET_S`
+600. Operator's go, 2026-10-19 night ("tell me when I can run everything on
+Perugia"). Review: the architecture session; the Perugia session measures.
+
+**Why.** The worker holds a collection's writer lock for as long as it runs
+it and `share contribute` needs the same lock, so a node published only
+with the collection paused (the node: a cron CLI under `node pause
+gutenberg`, 23:00–07:00; Perugia: the CLI loop with the worker in
+acquire-only). "Run everything" on Perugia would have taken the lock, ended
+the CLI loop and embedded led parts into local vectors nothing bundled.
+
+**Scenario / before (Perugia, the CLI loop, 2026-10-19).** gutenberg
+`embed = "off"`, worker acquire-only, `share contribute` (pid 524) on
+vega-qwen3-embedding-4b over DXG: the a894a3f pass, 6,725 s, built 15,669
+chunks in ~109 min of embedding ≈ **143 chunks/min**, 28 bundles (28
+accepted, 0 refused, 28 announced), held 0, claimed 237, left_to_fetch 0.
+
+**Expected after (Perugia under "run everything", gutenberg `embed =
+"p2p"`, `share = true`, the CLI loop stopped).** The embed stage embeds
+the led parts' documents by the worker's own batching (chunks/min to be
+compared with the 143 of the CLI build); the publisher bundles each led
+part as its vectors complete, within one `PUBLISH_BEAT_S` of the last
+document, so coverage on the node's map rises in steps of a part rather
+than at the end of a CLI pass. The publisher's own cost per beat: one
+`once` pass with no build — `claimed_uids`/coverage reads, one records
+read per probed part, sixteen challenge rows embedded per bundle — the
+held path's measured costs (the row of the same day above). To be
+measured on Perugia: chunks/min of the embed stage; minutes from a part's
+last document to its bundle's announcement; the publisher's pass duration
+and the budget hits ("interrupted at the budget" lines); duplicate bundles
+(expect 0: the held path leaves out claimed rows).

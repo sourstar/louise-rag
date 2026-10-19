@@ -1591,78 +1591,31 @@ def _serves_here(root, name: str, node_con) -> bool:
 
 
 def _lease_holder(command: str) -> str:
-    """Who holds an encoder lease: the command and its process, so a second
-    run of the same command is another holder and the end of one releases
-    only its own (app/node_state.py `encoder_leases`)."""
-    import os
-    return f"{command} pid {os.getpid()}"
+    from app import encoder_use
+    return encoder_use.holder(command)
 
 
 def _leasing(embed, recipe, *, holder: str):
-    """`embed`, renewing the ENCODER LEASE before each batch (Perugia,
-    2026-10-19): the worker's sweep of idle embedders judged a GPU-bound
-    backend idle by its CPU share and stopped it under a running `share
-    contribute` seven times, a 19 s cold start each. A lease in node.sqlite
-    names the (server, model) a process outside the worker is embedding
-    with; the sweep leaves it alone while the lease lives, and it expires
-    on its own if the process dies. One row replaced per batch — cheaper
-    than the batch by orders of magnitude; a store that cannot be written
-    never stops the embed."""
-    from app import model_load, node_state
-    server = model_load.server_of(recipe.url)
-    model = getattr(recipe, "model", None)
-    if not model:
-        return embed
-
-    def leased(chunks):
-        try:
-            node_state.lease_encoder(server, model, holder)
-        except Exception as e:   # noqa: BLE001 — the lease is a courtesy to the sweep, not a gate
-            print(f"louise: encoder lease not written ({type(e).__name__}: {e}); the worker's "
-                  f"sweep may unload {model} between batches", file=sys.stderr)
-        return embed(chunks)
-    return leased
+    from app import encoder_use
+    return encoder_use.leasing(embed, recipe, holder=holder)
 
 
 def _release_lease(holder: str) -> None:
-    from app import node_state
-    try:
-        node_state.release_encoder(holder)
-    except Exception:   # noqa: BLE001 — it expires on its own
-        pass
+    from app import encoder_use
+    encoder_use.release(holder)
 
 
 def _embedding_callables(root, name: str, codex, *, stop, holder: str | None = None):
-    """What `vectors build` embeds with (03 §3.3): the collection's own
-    encoder through its recipe and, for a collection gated per answer, the
-    guard that stands between a batch's answers and its write. Raises
-    `embedder.GateDeferred` when the encoder is not there to ask. `holder`
-    names the encoder lease the batches renew (`_leasing`)."""
-    from app import embeddings
-    from app.hold import embedder as emb, runs as hold_runs
-    by_run = hold_runs.applies(codex)
+    """What `share contribute` embeds with (03 §3.3; app/encoder_use.py):
+    the collection's own encoder through its recipe and, for a collection
+    gated per answer, the guard that stands between a batch's answers and
+    its write. Raises `embedder.GateDeferred` when the encoder is not there
+    to ask. `holder` names the encoder lease the batches renew."""
+    from app import encoder_use
     recipe = _recipe_for(codex, name)
-    seen: set = set()
-
-    def embed(chunks):
-        seen.clear()
-        try:
-            # each chunk in its layer's form (input forms, 09 §9.3)
-            if by_run:
-                return embeddings.embed_chunks(codex, chunks, recipe=recipe, runs=seen)
-            return embeddings.embed_chunks(codex, chunks, recipe=recipe)
-        except Exception as e:                   # noqa: BLE001
-            raise emb.GateDeferred(f"the encoder at {recipe.url} could not embed: {e}") from e
-    embed = _leasing(embed, recipe, holder=holder or _lease_holder("embed"))
-
-    before_write = None
-    if by_run:
-        from app import run_check
-
-        def before_write():
-            run_check.guard(root, name, codex, recipe, set(seen), stop=stop.is_set,
-                            log=lambda m: print(m, file=sys.stderr))
-    return embed, before_write
+    return encoder_use.callables(codex, recipe, root=root, name=name, stop=stop,
+                                 holder=holder or _lease_holder("embed"),
+                                 log=lambda m: print(m, file=sys.stderr))
 
 
 def cmd_share_contribute(a) -> int:

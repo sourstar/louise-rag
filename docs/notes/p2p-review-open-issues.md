@@ -689,6 +689,12 @@ copies whose completions are Perugia's. Coverage by union 5,679,122 of
   it (23:00–07:00), stopping acquisition and the catalogue meanwhile.
   The worker should run contribute itself, as a stage under its lock —
   a scheduling change: docs/notes/scheduling.md §6 first, with numbers.
+  *Built 2026-10-19 night (operator's go): the PUBLISHER,
+  `worker._publisher` — `contribute.once(build=False)` every
+  `PUBLISH_BEAT_S` under `embed = "p2p"` where the mode embeds, bounded by
+  `PUBLISH_BUDGET_S`; the embed stage embeds the led parts, the publisher
+  bundles and announces them. scheduling-log.md row; to be measured on
+  Perugia before it runs everything.*
 - **A `docker exec` CLI is SIGKILLed by the deploy's stop** (München 5b:
   exit 137, not 07 §7.7's 130). Deploy script, not platform code.
 - **Perugia's `records-vs-origin`** is *inconclusive* without an origin

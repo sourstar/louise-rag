@@ -392,11 +392,19 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
          live: Sequence[rendezvous.Peer], con, node_con, now: float | None = None, stop=None,
          log: Callable[[str], None] | None = None, batch: int = 64,
          before_write: Callable[[], None] | None = None, serving: bool = True,
-         collection=None, held_books=None) -> dict[str, Any]:
+         collection=None, held_books=None, build: bool = True) -> dict[str, Any]:
     """One pass (07 §7.3 `--once`): first the vectors this peer already
     holds for the open shards it does not lead, bundled (no GPU beyond the
     challenge rows); then the shards this peer leads, built, exported,
-    accepted by its own ladder and — `serving` — announced."""
+    accepted by its own ladder and — `serving` — announced.
+
+    `build=False` is the WORKER'S PUBLISHER (2026-10-19; 07 §7.8 "all
+    p2p": "publishes as it goes"): nothing is built — the worker's embed
+    stage writes the led shards' vectors under `embed = "p2p"` — and the
+    shards this peer leads go through the held path like the others, so
+    what the embed stage has finished leaves as bundles; a led shard with
+    no vector held yet is `awaiting` the embed stage. `write` and
+    `before_write` are not used then."""
     root = Path(root)
     now = time.time() if now is None else now
     say = log or (lambda *_a: None)
@@ -415,7 +423,7 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
                            "mine": [f"{s.slice}/{s.n:05d}" for s in mine], "built": 0,
                            "held": [], "probed": 0, "left_to_fetch": [], "bundles": [], "accepted": [],
                            "refused": [], "events": 0, "unannounced": 0, "interrupted": False,
-                           "marked": 0, "claimed": []}
+                           "marked": 0, "claimed": [], "awaiting": []}
     common = dict(key=key, own_key=own_key, embed=embed, vectors_for=vectors_for, con=con,
                   node_con=node_con, now=now, say=say, out=out, serving=serving, held_books=held_books, stop=stop)
     if not mine and not others:
@@ -462,6 +470,32 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
     if not mine:
         if not out["interrupted"]:
             say(f"[{name}] share contribute: no open shard this peer leads among {len(me_live)} peer(s)")
+        _fetch_line()
+        return out
+    if not build:
+        # PUBLISH ONLY: the led shards bundled from what is held — the embed
+        # stage's output — never built here; a neighbour's offered version is
+        # left to the fetch beat as for any shard
+        for shard in mine:
+            sid = f"{shard.slice}/{shard.n:05d}"
+            if stop is not None and stop.is_set():
+                out["interrupted"] = True
+                break
+            if cov.shard_id(codex, sid) in elsewhere:
+                out["left_to_fetch"].append(sid)
+                continue
+            out["probed"] += 1
+            got = _bundle_shard(root, name, codex, snapshot, shard, held=True, **common)
+            if got == "interrupted":
+                break
+            if got == "exported":
+                out["held"].append(sid)
+            elif got == "claimed":
+                out["claimed"].append(sid)
+            else:
+                out["awaiting"].append(sid)            # no vector held yet: the embed stage's turn
+        if out["awaiting"]:
+            say(f"[{name}] publish: {len(out['awaiting'])} led shard(s) hold no vector yet — the embed stage's")
         _fetch_line()
         return out
     for shard in mine:

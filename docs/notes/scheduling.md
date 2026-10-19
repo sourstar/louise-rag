@@ -30,6 +30,7 @@ the part that prevents the seventh.
 | **pipeline thread**, one per collection (`_pipeline_worker`) | that collection's rdf/fts (rdf also commits each batch's catalog-index entries, app/catalog.py, before the marks), its archive passes, and — when the collection `owns_own_embed` (its encoder is its own container) — its embed step | touch another collection's manifest, index or Lance table |
 | **index maintainer** (one thread, `_index_maintainer`, at `nice 10` like the parse pool — and the pylance runtime it creates with it) | the vector index and the `book_id` index of every collection, one at a time; and each collection's catalog-index BACKFILL (app/catalog.py) until it is complete, in rowid windows, `CATALOG_BACKFILL_BUDGET_S` per turn | run on a pipeline thread (a refresh took 41 minutes and idled wikivec), hold a manifest write transaction while it works |
 | **stats publisher** | telemetry, the seeding table | do any pipeline work |
+| **publisher** (one thread, `_publisher`, every `PUBLISH_BEAT_S`) | under `embed = "p2p"`, where the mode embeds: the open parts whose vectors the node holds, bundled, laddered, recorded and announced (`contribute.once(build=False)`), one collection at a time, each pass bounded by `PUBLISH_BUDGET_S` and resumable | embed anything beyond a bundle's sixteen challenge rows; run on a pipeline thread (a pass is minutes of part reads and hashing) |
 | **discovery scan** (one thread per collection, on demand) | enumerating the corpus into the manifest in batches | hold the write lock across a whole scan |
 | **acquisition** (background, budgeted) | fetching corpus and archive bytes | bypass the transfer manager's budget |
 | **parse pool** (`app/parallel.py`, spawned children at `nice 10`) | fetch/parse/chunk per document, metadata, SHARD record lines, `prepare` prefetches | write ANYTHING — every writer stays in the worker |
@@ -454,7 +455,8 @@ two minutes — and is never again the only witness that a GPU is busy.
 | the parse pool | `app/parallel.py` |
 | archive passes, the same-function proof, coverage | `app/bundles/genesis.py`, `genesis_fetch.py` |
 | vector + `book_id` indexes, maintenance | `app/vector_index.py` |
-| the embedder sweep and the encoder leases that hold it off | `app/worker.py` (`_sweep_unheld_embedders`), `app/node_state.py` (`encoder_leases`), `app/louise.py` (`_leasing`) |
+| the embedder sweep and the encoder leases that hold it off | `app/worker.py` (`_sweep_unheld_embedders`), `app/node_state.py` (`encoder_leases`), `app/encoder_use.py` |
+| the publisher: finished led parts bundled and announced under "all p2p" | `app/worker.py` (`_publisher`, `_publisher_beat`, `_publish_pass`), `app/share/contribute.py` (`once(build=False)`) |
 | the knobs | `app/config.py` (`WORKER_*`, `FTS_BATCH_*`, `RDF_BATCH_DOCS`, `GENESIS_*`, `PARSE_*`, `VECTOR_INDEX_*`) |
 | the history and the incidents | `docs/architecture-v2.md` §17 amendments 37, 38, 42, 45, 47–51; `docs/STATUS.md` |
 

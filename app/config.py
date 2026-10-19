@@ -270,6 +270,12 @@ REINDEX_PROBE_TARGET_S = float(os.getenv("REINDEX_PROBE_TARGET_S", "0.1"))
 # finished — the next call carries on from the cursor. Measured live
 # before it existed: 105-153 s per call on pubmed, for nothing found.
 BACKFILL_WALK_BUDGET_S = float(os.getenv("BACKFILL_WALK_BUDGET_S", "1.0"))
+#: the worker's PUBLISHER (app/worker.py `_publisher`; 07 §7.8 "all p2p"):
+#: how often it looks for finished led parts to bundle and announce, and
+#: how long one pass may run before it yields (resumable: the next pass
+#: re-derives what is open and unclaimed)
+PUBLISH_BEAT_S = float(os.getenv("PUBLISH_BEAT_S", "300"))
+PUBLISH_BUDGET_S = float(os.getenv("PUBLISH_BUDGET_S", "600"))
 
 # ---- model work by priority (app/dispatch.py; docs/notes/scheduling.md §12)
 # How long a reading of the node's interactive claim is reused in-process.

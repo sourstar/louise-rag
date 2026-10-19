@@ -586,3 +586,46 @@ def test_the_held_path_chunks_only_the_documents_it_holds_vectors_for_and_stops_
     assert out["interrupted"] and out["held"] == [] and out["bundles"] == []
     assert not list((root / "gutenberg" / "state" / "bundles").glob(".export-*")), "the scratch is gone"
     assert cov.rows(kw["con"]) == []
+
+
+def test_a_publish_only_pass_bundles_the_led_shards_it_holds_and_builds_nothing(ready):
+    """The worker's publisher (07 §7.8 "all p2p", 2026-10-19): under `embed =
+    "p2p"` the embed stage writes the led shards' vectors; a pass with
+    `build=False` bundles what is held — led or not — and builds nothing. A
+    led shard with no vector yet is awaiting the embed stage; the GPU sees
+    only each bundle's challenge rows."""
+    from app.hold import export as exp, land as landing, vectors_build as vb
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    shards = [f"{s.slice}/{s.n:05d}" for s in snapshot.shards]
+    # the embed stage has finished the first shard and not touched the rest
+    first = snapshot.shards[0]
+    vb.build(codex, shards=[first],
+             records_for=lambda s: landing.records_for(root, "gutenberg", snapshot, f"{s.slice}/{s.n:05d}", None),
+             vectors_for=kw["vectors_for"], embed=kw["embed"], write=kw["write"], batch=2)
+    embed_calls: list[int] = []
+    real_embed = kw["embed"]
+
+    def counted(texts):
+        embed_calls.append(len(texts))
+        return real_embed(texts)
+
+    def never_write(rows):
+        raise AssertionError("a publish-only pass writes no vector")
+    alone = [rendezvous.Peer(OUR_KEY, 1000.0)]
+    local = db.connect  # noqa: F841 — the fixture's connection is kw["con"]
+    out = contribute.once(root, "gutenberg", codex, live=alone, build=False,
+                          held_books=lambda ids: embeddings.books_with_vectors(ids, collection=rec.local_collection(root, "gutenberg", codex)),
+                          **{**kw, "embed": counted, "write": never_write})
+    assert out["mine"] == shards, "alone, this peer leads everything"
+    assert out["built"] == 0 and out["held"] == [shards[0]], "the finished shard bundled, nothing built"
+    assert out["awaiting"] == shards[1:], "the rest await the embed stage"
+    assert len(out["accepted"]) == len(out["bundles"]) == 1 and out["bundles"][0]["from"] == "held"
+    assert embed_calls and all(n <= exp.CHALLENGE_N for n in embed_calls), "challenge rows only"
+    assert out["events"] == 1, "announced"
+    # the next pass: the first shard is closed by its bundle; nothing new to bundle
+    again = contribute.once(root, "gutenberg", codex, live=alone, build=False,
+                            **{**kw, "embed": counted, "write": never_write})
+    assert again["held"] == [] and again["bundles"] == [] and shards[0] not in again["mine"]
+    assert again["awaiting"] == shards[1:]
