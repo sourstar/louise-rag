@@ -12,7 +12,9 @@ by libtorrent from the file; it is REFUSED when the infohash libtorrent
 computes differs from the one 09 §9.16's info dictionary gives for the
 snapshot's (path, length, root): a file that is not what the snapshot says
 it is is not served. Every served snapshot is announced under its
-collection key and its lineage key (04 §4.2) through the session's DHT.
+collection key and its lineage key, and under its swarm key with the
+swarm's port (04 §4.2), through the session's DHT; a member torrent is
+never announced by its own infohash (app/acquire/seeding.py).
 
 A `hold` command never opens a port (07 §7.4): `share <collection>` only
 writes the desired state, `share = true` in the collection's file, and
@@ -202,6 +204,17 @@ def keys_for(codex, snapshot: sn.Snapshot, resolve) -> list[bytes]:
             mem.lineage_key(_lineage_id(codex, resolve), snapshot.snapshot_id)]
 
 
+def swarm_port(session, configured: int | None) -> int | None:
+    """The port the swarm key is announced with: `[node] peer_port` as peers
+    reach it (07 §7.8), else the session's own listening port."""
+    if configured:
+        return configured
+    try:
+        return int(session.listen_port()) or None
+    except Exception:   # noqa: BLE001 — a session that names no port announces no swarm
+        return None
+
+
 def announce(session, keys: list[bytes], port: int, *, now: float | None = None) -> int:
     """Each key announced through the DHT, once per ANNOUNCE_EVERY_S; how
     many were announced now. A session with the DHT off announces nothing."""
@@ -330,18 +343,22 @@ def with_annotations(collections, cons: dict) -> tuple[list, dict]:
 
 
 def sync(collections, cons: dict, control_con, worker_state: str, *,
-         session=None, port: int | None = None, now: float | None = None,
-         log: Callable[[str], None] | None = None) -> dict[str, Any]:
+         session=None, port: int | None = None, peer_port: int | None = None,
+         now: float | None = None, log: Callable[[str], None] | None = None) -> dict[str, Any]:
     """One beat of the worker's seeding thread, before app/acquire/seeding
     ticks: publish the current snapshot of every collection that wants
     serving and is not yet published at that snapshot; unpublish one that
-    stopped wanting it; announce the served keys when the mode seeds. The
-    annotations collections held are among them (`with_annotations`)."""
+    stopped wanting it; announce the served keys when the mode seeds — the
+    collection and lineage keys with `port`, where the peer messages
+    answer, and the swarm key with the swarm's (04 §4.2): three per
+    snapshot, however many members it has. The annotations collections
+    held are among them (`with_annotations`)."""
     from app import collections as collections_mod, node_state
     from app.hold import collection as col
     collections, cons = with_annotations(collections, cons)
     root = collections_mod.louise_root() / "collections"
-    out: dict[str, Any] = {"published": [], "unpublished": [], "announced": 0, "pointers": 0}
+    out: dict[str, Any] = {"published": [], "unpublished": [], "announced": 0, "swarm": 0,
+                           "pointers": 0}
     seeds = node_state.runs(worker_state, node_state.SEED)
     for c in collections:
         con = cons.get(c.name)
@@ -366,6 +383,10 @@ def sync(collections, cons: dict, control_con, worker_state: str, *,
         if seeds and session is not None and port:
             keys = keys_for(c.codex, snap, col.resolver(root))
             out["announced"] += announce(session, keys, port, now=now)
+            sport = swarm_port(session, peer_port)
+            if sport:
+                out["swarm"] += announce(session, [mem.swarm_key(c.codex.collection_id, snap.snapshot_id)],
+                                         sport, now=now)
             try:
                 out["pointers"] += int(publish_pointer(c, session, now=now, log=log))
             except Exception as e:   # noqa: BLE001 — a put that fails never stops the beat

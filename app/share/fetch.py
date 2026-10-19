@@ -184,6 +184,38 @@ def _find_dht(session, ref: str, *, now, wait_s, sleep, clock) -> list[Source]:
     return [Source(_http_address(ip, port)) for ip, port in sorted(answers[newest])]
 
 
+def find_swarm(session, collection_id: str, snapshot_id: str, *, wait_s: float = DHT_WAIT_S,
+               sleep: Callable[[float], None] = time.sleep,
+               clock: Callable[[], float] = time.monotonic) -> list[tuple[str, int]]:
+    """`(host, port)` of the swarms announced under the snapshot's swarm key
+    (04 §4.2): where its members are served. A member torrent is never
+    announced by its own infohash, so this is how a fetcher no digest told
+    of a swarm finds one."""
+    from app.acquire import transport_torrent as tt
+    from app.share.seeder import _lt
+    want = _lt().sha1_hash(mem.swarm_key(collection_id, snapshot_id))
+    found: set[tuple[str, int]] = set()
+    with tt.dht_alerts(session):
+        session.dht_get_peers(want)
+        deadline = clock() + wait_s
+        grace: float | None = None
+        while clock() < deadline:
+            for a in tt.pop_alerts(session):
+                if type(a).__name__ != "dht_get_peers_reply_alert":
+                    continue
+                try:
+                    if a.info_hash.to_bytes() == want.to_bytes():
+                        found.update((str(ip), int(port)) for ip, port in a.peers())
+                except Exception:   # noqa: BLE001 — an alert of another shape says nothing
+                    continue
+            if found and grace is None:
+                grace = clock() + DHT_GRACE_S
+            if grace is not None and clock() >= grace:
+                break
+            sleep(0.25)
+    return sorted(found)
+
+
 # ---- pulling ------------------------------------------------------------------------
 
 def _account_down(n: int) -> None:

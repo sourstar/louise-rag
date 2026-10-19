@@ -165,6 +165,25 @@ def test_the_keys_are_announced_once_per_interval_and_only_when_the_mode_seeds(n
     assert seeder.sync([c], {c.name: con}, con, "seed-only", session=s, port=30042)["announced"] == 1
 
 
+def test_the_swarm_key_is_announced_with_the_swarms_port_three_keys_per_snapshot(node, monkeypatch):  # noqa: F811
+    """04 §4.2: the members' swarms are found under the snapshot's swarm key,
+    announced with the swarm's port — not by each member's own infohash,
+    which put 3,170 announcements on the DHT for one collection and filled a
+    router's NAT table (docs/notes/dht-flood.md). The announcements a
+    snapshot costs do not grow with its members."""
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    con = db.connect(c)
+    monkeypatch.setattr(seeder, "_last_announce", {})
+    s = FakeSession()
+    got = seeder.sync([c], {c.name: con}, con, "running", session=s, port=30042, peer_port=6881)
+    swarm = mem.swarm_key(codex.collection_id, "2026-08")
+    assert len(swarm) == 20 and swarm not in seeder.keys_for(codex, snap, col.resolver(node))
+    assert got["announced"] == 1 and got["swarm"] == 1
+    assert s.calls == [(mem.collection_key(codex.collection_id, "2026-08"), 30042, 0), (swarm, 6881, 0)],         "the peer messages' port under the collection key, the swarm's under the swarm key"
+    assert seeder.sync([c], {c.name: con}, con, "running", session=s, port=30042, peer_port=6881)["swarm"] == 0,         "once per interval"
+    assert seeder.swarm_port(s, None) is None, "a session that names no port announces no swarm"
+
+
 # ---- who is served ------------------------------------------------------------------
 
 def test_a_copy_in_quarantine_or_not_wanting_it_is_not_served(node, monkeypatch):  # noqa: F811

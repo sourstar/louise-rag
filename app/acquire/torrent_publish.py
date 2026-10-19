@@ -169,13 +169,21 @@ def _info_hash(info) -> str:
     return str(info.info_hash())
 
 
-def seed(torrent_path: Path, corpus_dir: Path):
+def seed(torrent_path: Path, corpus_dir: Path, *, announce: bool = True):
     """Start serving an already-published torrent from the files on disk.
 
     The handle joins the process-global session, so it keeps seeding for as
     long as the worker runs. libtorrent re-checks the pieces against the
     corpus first, which is also a free integrity audit of what this node
     claims to hold.
+
+    `announce=False` keeps the torrent off the DHT and local discovery: a
+    SHARD member is found under its snapshot's two keys (04 §4.2) and dialled
+    by address, never by its own infohash. libtorrent announces every torrent
+    it holds on its own, every interval, and a torrent that is not
+    auto-managed is outside `active_dht_limit`: 3,170 gutenberg members kept
+    ~10k UDP flows open and filled the router's NAT table
+    (docs/notes/dht-flood.md).
     """
     from .transport_torrent import get_session
 
@@ -195,6 +203,8 @@ def seed(torrent_path: Path, corpus_dir: Path):
     # auto-managed torrent the Seeder paused.
     params.flags &= ~lt.torrent_flags.auto_managed
     params.flags &= ~lt.torrent_flags.paused
+    if not announce:
+        params.flags |= lt.torrent_flags.disable_dht | lt.torrent_flags.disable_lsd
     return get_session().add_torrent(params)
 
 

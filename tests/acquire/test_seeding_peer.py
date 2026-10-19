@@ -142,3 +142,38 @@ def test_network_page_has_a_real_seeding_table(isolated_config):
     html = web.TEMPLATES.env.get_template("network.html").render(request=None, active="network")
     assert "seed-table" in html and "seed-scope" in html
     assert "d.seeding" in html, "the page consumes the seeding rows from the stream"
+
+
+def test_a_shard_member_is_seeded_off_the_dht_and_a_published_corpus_on_it(
+        tmp_path, isolated_config, monkeypatch):
+    """libtorrent announces every torrent it holds by its own infohash, and a
+    not-auto-managed seed is outside `active_dht_limit`: 3,170 gutenberg
+    members kept ~10k UDP flows open and filled the router's NAT table
+    (docs/notes/dht-flood.md). A SHARD member is found under its snapshot's
+    keys (04 §4.2), so it is seeded with the DHT and local discovery off; a
+    published corpus, which strangers fetch by magnet, keeps both."""
+    from app.acquire import torrent_publish, transport_torrent as tt
+
+    c = _collection(tmp_path)
+    monkeypatch.setattr(tt, "_session", None)
+    monkeypatch.setattr(tt, "_session_lock", __import__("threading").Lock())
+    monkeypatch.setattr(tt, "session_settings", lambda: {
+        "listen_interfaces": "127.0.0.1:0", "enable_dht": False, "enable_lsd": False,
+        "enable_upnp": False, "enable_natpmp": False, "alert_mask": 0})
+    entries = []
+    for name in ("corpus", "member"):
+        root = tmp_path / name / "data"
+        root.mkdir(parents=True)
+        (root / "000.parquet").write_bytes(name.encode() * 40_000)
+        out = tmp_path / f"{name}.torrent"
+        published = torrent_publish.publish_corpus(root, out, piece_size=16 * 1024)
+        entry = {**published.as_catalog_entry(), "torrent_path": str(out), "root": str(root)}
+        entries.append({**entry, "member": "records", "path": "000.parquet"} if name == "member" else entry)
+    seeder = seeding.Seeder()
+    quiet = int(lt.torrent_flags.disable_dht) | int(lt.torrent_flags.disable_lsd)
+    flags = {}
+    for e in entries:
+        assert seeder.ensure(c, e)
+        flags["member" in e] = int(seeder._handles[e.get("info_hash") or e["torrent_path"]].flags())
+    assert flags[True] & quiet == quiet, "a SHARD member is never announced by its own infohash"
+    assert flags[False] & quiet == 0, "a published corpus stays findable by magnet"

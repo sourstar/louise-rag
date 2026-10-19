@@ -12,6 +12,11 @@ it left open is below.
 
 ## Open after the migration
 
+- **The DHT is OFF on the node** (2026-10-19, [dht-flood.md](dht-flood.md)).
+  libtorrent announced each of 3,170 seeded member torrents by its own
+  infohash, and ~10k UDP flows filled the router's NAT table. The fix: the
+  swarm key, and member torrents off the DHT (04 §4.2, amended). Open:
+  deploy it, turn `[dht] enabled` back on, and record an hour of conntrack.
 - **`hold embedder calibrate`** is a stub: it wants two builds of one model
   to compare (step 3).
 - **Normattiva, what the second part left** (2026-10-12,

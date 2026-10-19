@@ -76,6 +76,19 @@ to the root comes with the Codex, the snapshot names every record member
 with its root and size, and from those three the member's torrent and
 infohash follow (§4.3). From one address, everything.
 
+**The swarm key** (amended 2026-10-19, operator). The members' swarms are
+found under a third key per snapshot, the first 20 bytes of
+`H(collection_id ‖ snapshot_id ‖ "swarm")`, which a sharer announces with
+the port its swarm listens on (07 §7.8 `[node] peer_port`); a fetcher
+dials what it finds there and what digests name (09 §9.9 `peer_port`). A
+member's torrent is NEVER announced by its own infohash, in the DHT or by
+local discovery: a sharer's announcements are three keys per snapshot,
+however many members it serves. They were one per file until then, and
+3,170 gutenberg members kept about ten thousand UDP flows open on the
+node and filled the home router's NAT table, cutting every device in the
+house off (docs/notes/dht-flood.md). A cost that grows with the parts
+served is a denial of service by design.
+
 For a certified collection the certifier also publishes a signed pointer
 to the current snapshot under its own key — there the single writer is
 the point — with the anchor URL as fallback. The pointer names the

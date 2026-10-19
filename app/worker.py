@@ -4266,6 +4266,7 @@ def _stats_publisher() -> None:
                                   node_state.worker_state(node_con),
                                   session=_tt.get_session() if _tt._session is not None else None,
                                   port=share_gossip.own_port(),     # [node] address's, as peers reach it
+                                  peer_port=share_gossip.peer_port(),   # the swarm's, for its key
                                   log=lambda m: db.log_event(con, "info", "share", m[:500]))
             except Exception:   # noqa: BLE001 — telemetry must never kill the worker
                 pass

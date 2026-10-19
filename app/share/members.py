@@ -126,6 +126,14 @@ def lineage_key(lineage_id: str, snapshot_id: str) -> bytes:
     return key(lineage_id, snapshot_id)
 
 
+def swarm_key(collection_id: str, snapshot_id: str) -> bytes:
+    """Where the swarms serving (collection, snapshot)'s members are found,
+    announced with the swarm's port (04 §4.2). A member is never announced
+    by its own infohash: thousands of parts were thousands of announcements
+    and filled a router's NAT table (docs/notes/dht-flood.md)."""
+    return key(collection_id, snapshot_id, "swarm")
+
+
 def weights_key(weights: str) -> bytes:
     """Where any peer holding an encoder's weights announces (04 §4.3)."""
     return key(weights)

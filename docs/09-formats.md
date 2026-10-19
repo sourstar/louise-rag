@@ -2064,7 +2064,8 @@ which deliberately rests outside the SHARD (§9.7), the path is relative to
 the bundle directory instead, so its member root is a function of the
 bundle alone; no `private`
 flag, no comment, no creation date, no creator, no announce list — the
-swarm is found through the DHT and the peer messages. The infohash is
+swarm is found under the snapshot's swarm key and by the digests'
+`peer_port`, never by the infohash in the DHT (below). The infohash is
 SHA-256 of the bencoded info dictionary, truncated to 20 bytes where the
 DHT needs 20; the piece layers are exchanged in the swarm. A member of
 several files is that many torrents. Nothing is served from a torrent
@@ -2081,7 +2082,11 @@ holds (04 §4.3); an engine's is the first 20 bytes of `H` of its
 `image` digest, under which any peer holding that image announces; a
 sharer announces its peer-message port under both for every snapshot it
 serves (04 §4.2). What a searcher finds there is an address that speaks
-§9.9.
+§9.9. The swarm key is the first 20 bytes of
+`H(collection_id ‖ snapshot_id ‖ "swarm")`, under which a sharer announces
+its swarm's port for every snapshot it serves; what is found there is
+where the snapshot's member torrents are served. No member torrent is
+announced by its own infohash (amended 2026-10-19, 04 §4.2).
 
 **Worked example.** PubMed, snapshot `2026-08`, member
 `records-year=1975-1979`: seven files `records/year=1975-1979/00001.jsonl.zst`

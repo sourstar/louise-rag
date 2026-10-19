@@ -98,7 +98,10 @@ class Seeder:
                 return True
         from .torrent_publish import seed
         root = Path(entry.get("root") or collection.corpus_dir)
-        handle = seed(torrent_path, root)
+        # a SHARD member (app/share/seeder.py's entries name one) is found
+        # under its snapshot's keys and dialled by address, never announced
+        # by its own infohash: the DHT costs per collection, not per part
+        handle = seed(torrent_path, root, announce="member" not in entry)
         with self._lock:
             self._handles[key] = handle
             self._meta[key] = {**entry, "collection": collection.name}

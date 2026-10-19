@@ -13,8 +13,10 @@ after the fact, as for every transport that cannot be metered per byte
 next beat resumes from the pieces staging holds (07 §7.7). The ack gate
 (04 §4.4): until this peer's acknowledgement exists, the only member
 fetched of a yellow or red collection is `terms`. The swarm is reached
-through the DHT when the session has it, and through the peers whose
-digests name a `peer_port` for the collection.
+through the peers whose digests name a `peer_port` for the collection, and,
+when the session has the DHT, through those announced under the
+snapshot's swarm key (04 §4.2) — never by a member's own infohash, which
+no seeder announces.
 """
 from __future__ import annotations
 
@@ -36,6 +38,31 @@ RATE_REFRESH_S = 5.0
 RECONNECT_EVERY = 20             # polls between peer-hint connects while waiting for metadata
 BACKOFF_S = 15 * 60.0            # a collection nobody served waits this long before the next try
 CONTROL_KEY = "share_fetch"      # per collection: the last beat's account
+#: (collection_id, snapshot_id) -> (the swarms found under its swarm key, when)
+_swarms: dict[tuple[str, str], tuple[list[tuple[str, int]], float]] = {}
+
+
+def _has_dht(session) -> bool:
+    try:
+        return bool(session.get_settings().get("enable_dht"))
+    except Exception:   # noqa: BLE001 — a session that cannot say has none to probe
+        return False
+
+
+def swarm_hints(session, collection_id: str, snapshot_id: str, *, now: float) -> list[tuple[str, int]]:
+    """The swarms announced under the snapshot's swarm key, probed at most
+    once per announcement interval — the probe waits up to the DHT's bound,
+    and a beat that found nobody does not wait again until announcements
+    could have changed."""
+    if session is None or not _has_dht(session):
+        return []
+    held = _swarms.get((collection_id, snapshot_id))
+    if held is not None and held[1] + seeder.ANNOUNCE_EVERY_S > now:
+        return held[0]
+    from app.share import fetch
+    found = fetch.find_swarm(session, collection_id, snapshot_id)
+    _swarms[(collection_id, snapshot_id)] = (found, now)
+    return found
 BEAT_S = 15.0
 
 
@@ -282,6 +309,11 @@ def fetch_members(root: Path, name: str, codex, *, slices, kinds, ack_missing: b
             if log:
                 log(f"[{name}] share fetch: {out['waiting']}")
             return out
+    hints = list(hints)
+    for h in swarm_hints(session, snap.collection_id, snap.snapshot_id,
+                         now=time.time() if now is None else now):
+        if h not in hints:
+            hints.append(h)
     from app.transfer.manager import Direction, get_manager
     with get_manager().bind(Priority.DELTA, Direction.DOWN, stop=stop):
         for m, f in (todo if max_files is None else todo[:max_files]):

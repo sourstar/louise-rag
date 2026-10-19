@@ -39,3 +39,27 @@ for those records alone, and a new Codex carried by A1c (`--rebuilt`,
 `--reconcile`): ~64 k documents embedded again, every other vector kept.
 Which other abstracts count (PIP only, every type, the English one first) is
 the operator's to say.
+
+## The residual misses: NCBI's texts against ours (2026-10-19)
+
+The POPLINE rows were found by vectors. Every other archive row whose text
+differs from our record is found by text: `tools/medcpt_text_compare.py`
+fingerprints both sides after the normalisation MedCPT's uncased tokenizer
+applies (case, accents, whitespace) and lists the archive's rows that
+differ.
+
+Chunk 35 (2023): 995,815 NCBI texts. 957,327 are the same, 22,244 differ
+(2.2 %), and 16,244 are not in our table. Of those that differ, 19,483 are
+archive rows. A random 12 of them:
+
+- **3 are revisions since NCBI's run:** a retitled paper (35231123,
+  35982541, with its abstract rewritten) and a copyright year that moved
+  (35925699).
+- **9 differ in characters the tokenizer does not fold:** U+2212 minus or
+  an em dash where NCBI has `-`, curly vs straight quotes, NCBI's literal
+  `&amp;nbsp;` and `&gt;`, and LaTeX quotes.
+
+Every one is a vector of a text that is not the record's, so every one is
+embedded again (`dev drop-rows` on `differs.txt`). At chunk 35's rate that
+is about 700 k rows, 2 % of the archive's. The run over chunks 0–36 started
+09:39.
