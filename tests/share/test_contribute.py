@@ -382,3 +382,42 @@ def test_a_holder_leaves_a_shard_whose_bundle_a_neighbour_offers_to_the_fetch(re
                uids=[], chunks=0, tiers={"T0": "fail"}, source=cov.FETCHED, accepted_at=None)
     out = contribute.once(root, "gutenberg", codex, live=live, **kw)
     assert out["left_to_fetch"] == [] and out["held"] == [offered_sid]
+
+
+def test_a_part_completed_by_its_leader_gets_a_bundle_of_the_new_records_only(ready):
+    """Operator, 2026-10-19: minimum redundancy. The node's mine phase
+    re-shipped the 6,407 chunks of a holder bundle beside the 2,942 it had
+    just embedded. A further export of a part leaves out the records this
+    producer's accepted bundles already claim."""
+    import json
+    from app.hold import land as landing, vectors_build as vb
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    shard = snapshot.shards[0]
+    sid = f"{shard.slice}/{shard.n:05d}"
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    assert len(records) >= 2, "the fixture: two records per shard"
+    # held: the first record embedded here already, as under embed = "all"
+    vb.build(codex, shards=[shard], records_for=lambda s: records[:1], vectors_for=kw["vectors_for"],
+             embed=kw["embed"], write=kw["write"], batch=2)
+    heavy = rendezvous.Peer(PEER_KEY, 1e12)
+    first = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0), heavy], **kw)
+    assert sid in first["held"]
+    (b1,) = [b for b in first["bundles"] if b["shard"] == sid]
+    claimed = contribute.claimed_uids(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY)
+    assert claimed == {records[0]["uid"]}
+    # then this peer leads the part: it embeds the rest and bundles only that
+    second = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)], **kw)
+    assert sid in second["mine"] and second["built"] > 0
+    (b2,) = [b for b in second["bundles"] if b["shard"] == sid]
+    p1 = json.loads((contribute.bundle_dir(root, "gutenberg", codex, sid, b1["bundle_id"]) / "possession.json").read_bytes())
+    p2 = json.loads((contribute.bundle_dir(root, "gutenberg", codex, sid, b2["bundle_id"]) / "possession.json").read_bytes())
+    assert set(p1).isdisjoint(p2) and set(p1) | set(p2) == {r["uid"] for r in records}, \
+        "the second bundle carries the new records only; together they cover the part once"
+    view = {v["shard"]: v for v in cov.show(codex, snapshot, kw["con"])["shards"]}[cov.shard_id(codex, sid)]
+    assert view["covered"] == view["chunks"] == b1["chunks"] + b2["chunks"] and not view["open"]
+    # nothing new: a third pass bundles nothing for the part and says so
+    said: list[str] = []
+    third = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)], log=said.append, **kw)
+    assert sid not in third["mine"] and not any(b["shard"] == sid for b in third["bundles"])

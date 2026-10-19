@@ -251,24 +251,47 @@ def offered_elsewhere(codex, con, node_con, *, now: float) -> dict[str, list[str
     return out
 
 
+def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str) -> frozenset[str]:
+    """The uids this producer's accepted bundles for the shard already claim
+    (their `possession.json`, 09 §9.7): what a further export of the shard
+    leaves out, so a part bundled from held vectors and then completed by
+    its leader costs a bundle of the new records only, never the part
+    twice (RULE 1; operator, 2026-10-19: minimum redundancy)."""
+    import json
+    out: set[str] = set()
+    for r in cov.rows(con, shard=cov.shard_id(codex, sid)):
+        if not r["accepted_at"] or r["producer"] != own_key:
+            continue
+        p = bundle_dir(root, name, codex, sid, r["bundle_id"]) / "possession.json"
+        try:
+            out.update(json.loads(p.read_bytes()).keys())
+        except (OSError, ValueError, AttributeError):
+            continue                               # a bundle not here (set aside, moved): claims nothing
+    return frozenset(out)
+
+
 def _bundle_shard(root: Path, name: str, codex, snapshot: sn.Snapshot, shard: sn.Shard, *, key, own_key: str,
                   embed, vectors_for, con, node_con, now: float, say, out: dict[str, Any],
-                  serving: bool, held: bool) -> bool:
-    """One shard's held vectors exported into bundles, each through this
-    peer's own ladder, recorded in the map and — serving — announced.
-    False when this peer holds no vector of the shard (nothing exported)."""
+                  serving: bool, held: bool) -> str:
+    """One shard's held vectors — the records this producer's bundles do not
+    claim yet — exported into bundles, each through this peer's own
+    ladder, recorded in the map and, serving, announced. Returns
+    `"exported"`, `"nothing"` (this peer holds no vector of the shard) or
+    `"claimed"` (everything it holds is in a bundle it already made)."""
     sid = f"{shard.slice}/{shard.n:05d}"
     scratch = root / name / "state" / "bundles" / f".export-{os.getpid()}-{shard.n:05d}"
     shutil.rmtree(scratch, ignore_errors=True)
+    claimed = claimed_uids(root, name, codex, con, sid, own_key=own_key)
     try:
         exported = exp.export(root, name, shard=sid, dest=scratch, vectors_for=vectors_for,
-                              embed=embed, key=key, snapshot_id=snapshot.snapshot_id)
+                              embed=embed, key=key, snapshot_id=snapshot.snapshot_id,
+                              exclude_uids=claimed)
     except exp.NothingHeld:
-        return False
+        return "claimed" if claimed else "nothing"
     except exp.ExportError as e:
         out["refused"].append(f"{sid}: {e}")
         say(f"[{name}] share contribute: {sid}: {e}")
-        return True
+        return "exported"
     what = "held" if held else "built"
     for b in exported["bundles"]:
         final = bundle_dir(root, name, codex, sid, b["bundle_id"])
@@ -311,7 +334,7 @@ def _bundle_shard(root: Path, name: str, codex, snapshot: sn.Snapshot, shard: sn
             say(f"[{name}] share contribute: {sid}: own bundle refused at {failed} — not "
                 f"announced; the vectors stay here for `vectors check`")
     shutil.rmtree(scratch, ignore_errors=True)
-    return True
+    return "exported"
 
 
 def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vectors_for, write,
@@ -360,7 +383,7 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
             out["left_to_fetch"].append(sid)
             continue
         out["probed"] += 1
-        if _bundle_shard(root, name, codex, snapshot, shard, held=True, **common):
+        if _bundle_shard(root, name, codex, snapshot, shard, held=True, **common) == "exported":
             out["held"].append(sid)
     if out["held"]:
         say(f"[{name}] share contribute: {len(out['held'])} of {out['probed']} open shard(s) led elsewhere "
@@ -386,7 +409,10 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
         if built.interrupted:
             out["interrupted"] = True
             break
-        if not _bundle_shard(root, name, codex, snapshot, shard, held=False, **common):
+        got = _bundle_shard(root, name, codex, snapshot, shard, held=False, **common)
+        if got == "nothing":
             out["refused"].append(f"{sid}: built and nothing held to export")
             say(f"[{name}] share contribute: {sid}: built, and this peer holds no vector of it to export")
+        elif got == "claimed":
+            say(f"[{name}] share contribute: {sid}: every record held is in a bundle made here already")
     return out

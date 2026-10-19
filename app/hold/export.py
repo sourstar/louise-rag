@@ -127,8 +127,15 @@ def rows_for(codex, records: Sequence[dict],
 
 def grouped(codex, records: Sequence[dict],
             vectors_for: Callable[[list[str]], dict[str, list]],
+            exclude_uids: set[str] | frozenset[str] | None = None,
             ) -> list[tuple[str, str, list[tuple[str, list]]]]:
-    """`(uid, content_hash, its held chunk rows)`, one entry per record.
+    """`(uid, content_hash, its held chunk rows)`, one entry per record —
+    the records in `exclude_uids` left out: those this producer's accepted
+    bundles for the part already claim (`possession.json`), so a part
+    bundled from held vectors and then completed by its leader gets a
+    second bundle of the NEW records only, not the whole part again
+    (2026-10-19: the node's mine phase re-shipped the 6,407 chunks of a
+    holder bundle beside the 2,942 it had just embedded).
 
     The grouping exists because a bundle is SPLIT on record boundaries
     (`parts` below) and not on a row count: `possession.json` maps a uid
@@ -141,6 +148,8 @@ def grouped(codex, records: Sequence[dict],
     per_uid: dict[str, list[str]] = {}
     for rec in records:
         uid = rec["uid"]
+        if exclude_uids and uid in exclude_uids:
+            continue
         sections = [tuple(s) for s in rec.get("sections") or []]
         row = {"uid": uid, "native_id": rec.get("native_id", 0)}
         ids = [c["id"] for c in layers_mod.chunks_for_document(codex, row, sections)]
@@ -210,7 +219,8 @@ def challenge_rows(codex, embed, member: Path | None = None) -> list[tuple[str, 
 
 def export(root, ref: str, *, shard: str, dest, vectors_for, embed, key,
            snapshot_id: str | None = None, created_at: int | None = None,
-           max_chunks: int = BUNDLE_CHUNKS) -> dict[str, Any]:
+           max_chunks: int = BUNDLE_CHUNKS,
+           exclude_uids: set[str] | frozenset[str] | None = None) -> dict[str, Any]:
     """Write one shard's bundles into `dest` (a DIRECTORY, 09 §9.7).
 
     ONE BUNDLE PER SHARD is the common case and `dest` is then the bundle
@@ -248,8 +258,12 @@ def export(root, ref: str, *, shard: str, dest, vectors_for, embed, key,
 
     entry = _shard_of(snapshot, shard)
     records = _records(shard_dir, entry)
-    entries = grouped(codex, records, vectors_for)
+    entries = grouped(codex, records, vectors_for, exclude_uids)
     if not entries:
+        if exclude_uids:
+            raise NothingHeld(
+                f"every record of {shard} this peer holds vectors for is in a bundle it "
+                f"already made ({len(exclude_uids)} record(s) claimed); nothing new to export")
         raise NothingHeld(
             f"this peer holds no vectors for any record of {shard}; there is "
             f"nothing to export. A bundle carries what a peer PRODUCED, so an "
