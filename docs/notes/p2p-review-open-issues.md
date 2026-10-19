@@ -454,10 +454,11 @@ Perugia stopped contribute at 16:04 (SIGTERM, `interrupted: true`, 07
 §7.7) until this is deployed.
 
 Perugia's intake since the operator's `ack --origin-unchecked` (13:27Z):
-116 bundles, 665,823 chunks by 13:52Z (4.8 bundles/min); no deferred,
-stalled or refused lines; the node's digest 1,096,042 bytes. Coverage at
-13:52Z: 1,255 offered-unaccepted rows over 881 parts, 114 fetched and
-accepted in one beat, 8 local.
+116 bundles, 665,823 chunks by 13:52Z; the first hour 287 bundles,
+1,687,191 chunks — 4.8 bundles/min, ~28 k chunks/min, no deferred,
+stalled or refused lines, 12–19 TCP sockets; the node's digest 1,096,042
+bytes. Coverage at 13:52Z: 1,255 offered-unaccepted rows over 881 parts,
+114 fetched and accepted, 8 local.
 
 ### Still open after the review
 
