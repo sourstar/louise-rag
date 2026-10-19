@@ -451,3 +451,35 @@ embeds about its benchmark share of the open parts; a leader that publishes
 nothing within `grace_days` loses its parts to the next in line (the cascade,
 noticed within an hour). To be measured on the first node that runs it:
 chunks embedded per peer per day against its share, and the duplicate rate.
+
+### 2026-10-19 — the embedder sweep honours an encoder lease (pitfall 17) — PREPARED, not deployed
+
+`worker._sweep_unheld_embedders`; `node_state.encoder_leases`;
+`louise._leasing` on `share contribute` and `hold vectors build`. Found and
+measured by the Perugia session, read-only, during the a894a3f contribute
+pass; review: the architecture session.
+
+**Scenario.** Perugia: gutenberg `embed = "off"`, `share contribute`
+(CLI) embedding de/00041 and de/00045 with vega-qwen3-embedding-4b on
+LocalAI (AMD RX 9060 XT over DXG), 11,480 chunks in 81 min ≈ 142/min,
+GPU at 100 %; worker mode running, nothing else embedding.
+
+**Before.** `/system` cpu_percent of the backend, every 10 s for 3 min
+(18 samples): 2.05, 0.63, 1.05, 0, 1.04, 2.51, 1.07, 1.57, 0, 0.71,
+1.03, 1.91, 0, 1.07, 1.09, 1.45, 0.76, 0 — exactly 0.0 one sample in
+four while embedding. Sweep log "unloaded: idle or named by no held
+collection" at 18:29, 18:31, 18:43, 18:49, 19:11, 19:33, 19:39Z (and
+the 18:18 start-up run check): each a LocalAI "Backend process stopped
+… exitCode=0" + `/backend/shutdown 200`, then "BackendLoader starting"
+on the contribute's next request and its answer 19 s later. Cost
+7 × 19 s ≈ 2.2 min of 3.4 h (~1 %) plus a fresh load each time; no
+non-200, no retry, no defer line anywhere.
+
+**Expected after.** No "unloaded" line for a model under lease while a
+contribute runs; `/backend/shutdown` only for a model no process is
+embedding with; a lease a killed process left gone within 600 s. Cost
+of the fix: one `INSERT OR REPLACE` per batch (seconds apart), one
+SELECT per settle beat over a table of a handful of rows (plan-checked:
+tests/test_embedder_release.py). To be measured on Perugia over one
+contribute pass: shutdown count (expect 0 while embedding), chunks/min
+(expect the same 142 or slightly better).

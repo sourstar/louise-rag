@@ -1590,11 +1590,54 @@ def _serves_here(root, name: str, node_con) -> bool:
     return share and seeds
 
 
-def _embedding_callables(root, name: str, codex, *, stop):
+def _lease_holder(command: str) -> str:
+    """Who holds an encoder lease: the command and its process, so a second
+    run of the same command is another holder and the end of one releases
+    only its own (app/node_state.py `encoder_leases`)."""
+    import os
+    return f"{command} pid {os.getpid()}"
+
+
+def _leasing(embed, recipe, *, holder: str):
+    """`embed`, renewing the ENCODER LEASE before each batch (Perugia,
+    2026-10-19): the worker's sweep of idle embedders judged a GPU-bound
+    backend idle by its CPU share and stopped it under a running `share
+    contribute` seven times, a 19 s cold start each. A lease in node.sqlite
+    names the (server, model) a process outside the worker is embedding
+    with; the sweep leaves it alone while the lease lives, and it expires
+    on its own if the process dies. One row replaced per batch — cheaper
+    than the batch by orders of magnitude; a store that cannot be written
+    never stops the embed."""
+    from app import model_load, node_state
+    server = model_load.server_of(recipe.url)
+    model = getattr(recipe, "model", None)
+    if not model:
+        return embed
+
+    def leased(chunks):
+        try:
+            node_state.lease_encoder(server, model, holder)
+        except Exception as e:   # noqa: BLE001 — the lease is a courtesy to the sweep, not a gate
+            print(f"louise: encoder lease not written ({type(e).__name__}: {e}); the worker's "
+                  f"sweep may unload {model} between batches", file=sys.stderr)
+        return embed(chunks)
+    return leased
+
+
+def _release_lease(holder: str) -> None:
+    from app import node_state
+    try:
+        node_state.release_encoder(holder)
+    except Exception:   # noqa: BLE001 — it expires on its own
+        pass
+
+
+def _embedding_callables(root, name: str, codex, *, stop, holder: str | None = None):
     """What `vectors build` embeds with (03 §3.3): the collection's own
     encoder through its recipe and, for a collection gated per answer, the
     guard that stands between a batch's answers and its write. Raises
-    `embedder.GateDeferred` when the encoder is not there to ask."""
+    `embedder.GateDeferred` when the encoder is not there to ask. `holder`
+    names the encoder lease the batches renew (`_leasing`)."""
     from app import embeddings
     from app.hold import embedder as emb, runs as hold_runs
     by_run = hold_runs.applies(codex)
@@ -1610,6 +1653,7 @@ def _embedding_callables(root, name: str, codex, *, stop):
             return embeddings.embed_chunks(codex, chunks, recipe=recipe)
         except Exception as e:                   # noqa: BLE001
             raise emb.GateDeferred(f"the encoder at {recipe.url} could not embed: {e}") from e
+    embed = _leasing(embed, recipe, holder=holder or _lease_holder("embed"))
 
     before_write = None
     if by_run:
@@ -1657,6 +1701,7 @@ def cmd_share_contribute(a) -> int:
         except (ValueError, OSError):                # not the main thread
             pass
     locked: set[str] = set()
+    holder = _lease_holder("share contribute")
 
     def one_pass() -> dict:
         results: dict[str, object] = {}
@@ -1676,7 +1721,7 @@ def cmd_share_contribute(a) -> int:
             # `contribute` asked: 2026-10-08)
             licensing.require_ack(local, use="its text is embedded and shared as bundles")
             copy_state.require_in_use(a.root, name, codex, local, use="contributing vectors for it")
-            embed, before_write = _embedding_callables(a.root, name, codex, stop=stop)
+            embed, before_write = _embedding_callables(a.root, name, codex, stop=stop, holder=holder)
             now = __import__("time").time()
             with _closing(peers.connect()) as node_con:
                 live = cov.live_peers(codex, node_con, now=now, own_key=own_key,
@@ -1712,6 +1757,8 @@ def cmd_share_contribute(a) -> int:
     except emb.GateDeferred as e:
         print(f"louise: deferred: {e}", file=sys.stderr)
         return 3
+    finally:
+        _release_lease(holder)
 
 
 # ---- ask (07 §7.3; 05) ----------------------------------------------------------------
@@ -2649,6 +2696,7 @@ def cmd_vectors_build(a) -> int:
         shards = sorted(snapshot.shards, key=lambda s: (s.slice, s.n))
 
     embed = None
+    holder = _lease_holder("hold vectors build")
     if not a.dry_run:
         try:
             recipe = _recipe_for(codex, name)
@@ -2668,6 +2716,7 @@ def cmd_vectors_build(a) -> int:
             except Exception as e:                   # noqa: BLE001
                 raise emb.GateDeferred(
                     f"the encoder at {recipe.url} could not embed: {e}") from e
+        embed = _leasing(embed, recipe, holder=holder)
 
     stop = threading.Event()
     before_write = None
@@ -2699,6 +2748,8 @@ def cmd_vectors_build(a) -> int:
     except emb.GateDeferred as e:
         print(f"louise: deferred: {e}", file=sys.stderr)
         return 3
+    finally:
+        _release_lease(holder)
 
     what = "would embed" if a.dry_run else "embedded"
     print(f"{out.chunks_written if not a.dry_run else out.chunks_seen} "

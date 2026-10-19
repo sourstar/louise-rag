@@ -361,6 +361,29 @@ WATCH A MODE ON THE NODE after deploying it: 153 requests per 30 s
 running, 31 in the 40 s after the switch, 0 after that, 108 a minute
 after "run everything". The suite could not have shown the first number.
 
+**17. "Idle" read off a signal the work does not move.** The sweep of
+on-demand embedders (`_sweep_unheld_embedders`, every settle beat)
+unloads a `vega-` model named only by collections that do not embed
+everything once LocalAI's `/system` has shown its backend at 0.0 % CPU
+for two beats. On Perugia (AMD, DXG) `share contribute` — a process
+the worker does not run, on a collection whose mode is "off" — embedded
+non-stop at 142 chunks/min with the GPU at 100 % while the backend's
+CPU read 0–2.5 %, exactly 0.0 one sample in four. Two zero beats in a
+row came every half hour: seven `/backend/shutdown` in 3.4 h, each a
+19 s cold start the next request waited out (~1 % of the pass, and a
+fresh load each time). Nothing failed, nothing retried, and the log said
+"idle".
+
+→ A process embedding outside the worker says so: an ENCODER LEASE in
+`state/node.sqlite` (`node_state.lease_encoder`, one row per server,
+model and holder, renewed before every batch, `ENCODER_LEASE_TTL_S` =
+600 s, released when the command ends; `louise._leasing` wraps the
+embed callable of `share contribute` and `hold vectors build`). The
+sweep skips a leased model however idle it reads. A lease a dead process
+left expires on its own, so the model is freed within the TTL. The CPU
+signal stays for what it can tell — a query encoder nobody has asked in
+two minutes — and is never again the only witness that a GPU is busy.
+
 ## 6. Before you change the scheduler — the checklist
 
 1. **Read the worker log as a time series first.** It is the first
@@ -430,6 +453,7 @@ after "run everything". The suite could not have shown the first number.
 | the parse pool | `app/parallel.py` |
 | archive passes, the same-function proof, coverage | `app/bundles/genesis.py`, `genesis_fetch.py` |
 | vector + `book_id` indexes, maintenance | `app/vector_index.py` |
+| the embedder sweep and the encoder leases that hold it off | `app/worker.py` (`_sweep_unheld_embedders`), `app/node_state.py` (`encoder_leases`), `app/louise.py` (`_leasing`) |
 | the knobs | `app/config.py` (`WORKER_*`, `FTS_BATCH_*`, `RDF_BATCH_DOCS`, `GENESIS_*`, `PARSE_*`, `VECTOR_INDEX_*`) |
 | the history and the incidents | `docs/architecture-v2.md` §17 amendments 37, 38, 42, 45, 47–51; `docs/STATUS.md` |
 

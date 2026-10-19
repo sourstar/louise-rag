@@ -35,6 +35,7 @@ a node held at acquire-only back into a running one, encoder and all, on
 every deploy. Do not "fix" it.
 """
 import sqlite3
+import time
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +43,20 @@ from pathlib import Path
 from . import config, db
 
 _SCHEMA = "CREATE TABLE IF NOT EXISTS control (key TEXT PRIMARY KEY, value TEXT)"
+#: ENCODER LEASES (Perugia, 2026-10-19): a process embedding documents with
+#: a runner's model that the worker does not run itself — `share contribute`,
+#: `hold vectors build` — says so here, renewed per batch, so the worker's
+#: sweep of idle embedders (worker._sweep_unheld_embedders) leaves the model
+#: alone. The sweep judged "idle" by the backend's CPU share, which a
+#: GPU-bound backend shows as 0.0 one sample in four while embedding
+#: non-stop: seven shutdowns in 3.4 h, a 19 s cold start each. A lease
+#: expires on its own, so a killed process frees the model within the TTL.
+_LEASES = ("CREATE TABLE IF NOT EXISTS encoder_leases (server TEXT NOT NULL, model TEXT NOT NULL, "
+           "holder TEXT NOT NULL, until REAL NOT NULL, PRIMARY KEY (server, model, holder))")
+#: how long a lease outlives its last renewal: longer than any one batch
+#: (the largest book is hours of them, but a batch is seconds), shorter
+#: than the idle unload is worth waiting for
+ENCODER_LEASE_TTL_S = 600.0
 
 # ---- what each mode runs -------------------------------------------------------
 #
@@ -117,7 +132,50 @@ def connect() -> sqlite3.Connection:
     db.wal(con)                        # two openers of a fresh file: the loser waits
     con.execute("PRAGMA busy_timeout=60000")
     con.execute(_SCHEMA)
+    con.execute(_LEASES)
     return con
+
+
+def lease_encoder(server: str, model: str, holder: str, *, ttl_s: float = ENCODER_LEASE_TTL_S,
+                  con: sqlite3.Connection | None = None, now: float | None = None) -> None:
+    """`holder` is using `model` on `server` now; the sweep leaves it alone
+    until `now + ttl_s` unless renewed. One row per (server, model, holder),
+    replaced on renewal — a write per batch, never a growing table."""
+    until = (time.time() if now is None else now) + ttl_s
+    row = (server, model, holder, until)
+    if con is not None:
+        con.execute("INSERT OR REPLACE INTO encoder_leases (server, model, holder, until) "
+                    "VALUES (?, ?, ?, ?)", row)
+        return
+    with closing(connect()) as c:
+        c.execute("INSERT OR REPLACE INTO encoder_leases (server, model, holder, until) "
+                  "VALUES (?, ?, ?, ?)", row)
+
+
+def release_encoder(holder: str, *, con: sqlite3.Connection | None = None) -> None:
+    """Every lease `holder` holds goes: the command ended."""
+    if con is not None:
+        con.execute("DELETE FROM encoder_leases WHERE holder=?", (holder,))
+        return
+    with closing(connect()) as c:
+        c.execute("DELETE FROM encoder_leases WHERE holder=?", (holder,))
+
+
+def leased_encoders(con: sqlite3.Connection | None = None,
+                    now: float | None = None) -> set[tuple[str, str]]:
+    """The (server, model) pairs some process is embedding with now;
+    expired leases are dropped on the way. The table holds a handful of
+    rows at most, read once a settle beat."""
+    now = time.time() if now is None else now
+
+    def read(c):
+        c.execute("DELETE FROM encoder_leases WHERE until <= ?", (now,))
+        return {(r["server"], r["model"]) for r in
+                c.execute("SELECT server, model FROM encoder_leases WHERE until > ?", (now,))}
+    if con is not None:
+        return read(con)
+    with closing(connect()) as c:
+        return read(c)
 
 
 def worker_state(con: sqlite3.Connection | None = None) -> str:

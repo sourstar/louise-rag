@@ -503,7 +503,11 @@ reader needs at the command line:
 - **`share contribute`.** Chooses parts by 04 §4.5, on a collection
   whose `roots` and `chunks` pass on the parts this peer holds and for
   whose snapshot a `records-vs-origin` attestation exists; then `hold
-  vectors build`, then `share` of the bundles. `--once` first bundles
+  vectors build`, then `share` of the bundles. While either embeds it
+  holds an ENCODER LEASE in `state/node.sqlite` (renewed per batch,
+  expiring on its own; *amended 2026-10-19*), so the worker's sweep of
+  idle embedders leaves the model alone — a GPU-bound backend reads idle
+  by CPU while it embeds. `--once` first bundles
   the vectors this peer already holds for every open part it does not
   lead (04 §4.5, amended 2026-10-19: no GPU beyond the challenge rows;
   one read of each such part's records), then takes the parts this

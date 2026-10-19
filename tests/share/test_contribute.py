@@ -179,7 +179,7 @@ def test_the_command_runs_a_pass_per_collection_under_the_lock(ready, monkeypatc
     monkeypatch.setattr(node_keys, "load_signing_key", lambda path=None: OURS)
     monkeypatch.setattr(identity, "own", lambda: OUR_KEY)
     monkeypatch.setattr(louise, "_embedding_callables",
-                        lambda root_, name, codex_, stop: (kw["embed"], None))
+                        lambda root_, name, codex_, stop, holder=None: (kw["embed"], None))
     calls: list[dict] = []
 
     def fake_once(root_, name, codex_, **kwargs):

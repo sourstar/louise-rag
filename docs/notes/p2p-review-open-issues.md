@@ -742,3 +742,12 @@ until; renewed per batch) that the sweep honours, or the sweep reads an
 in-flight request signal from LocalAI instead of CPU. Until then: a
 contribute on a node whose worker does not embed runs beside a sweep
 that may ask its encoder to stop.
+
+*Measured and fixed the same night.* Perugia's samples: cpu_percent
+0–2.5 %, exactly 0.0 one in four, GPU at 100 %; LocalAI's log shows the
+seven shutdowns were real ("Backend process stopped", then a 19 s
+reload on the next request), ~1 % of the pass. Fix: the encoder lease
+(`node_state.encoder_leases`; `louise._leasing` on `share contribute`
+and `hold vectors build`; the sweep skips a leased model) —
+scheduling.md pitfall 17, scheduling-log.md row of 2026-10-19. To
+verify on Perugia: no shutdown while a contribute runs.

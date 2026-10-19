@@ -3833,6 +3833,15 @@ def _sweep_unheld_embedders(collections, con=None) -> list[str]:
             continue
         if r:
             kept |= {m for m in (r.model, getattr(r, "query_model", None)) if m}
+    # a process the worker does not run — `share contribute`, `hold vectors
+    # build` — embedding with a model says so in node.sqlite, renewed per
+    # batch (node_state.lease_encoder; Perugia, 2026-10-19: the backend's
+    # CPU share reads 0.0 one sample in four while the GPU embeds non-stop,
+    # and the sweep stopped a busy encoder seven times, 19 s a cold start)
+    try:
+        leased = node_state.leased_encoders()
+    except Exception:   # noqa: BLE001 — the store unreadable: no lease known, as before
+        leased = set()
     gone: list[str] = []
     idle: list[str] = []
     for server in sorted(servers):
@@ -3840,7 +3849,7 @@ def _sweep_unheld_embedders(collections, con=None) -> list[str]:
         if busy is None:
             continue
         for m in sorted(busy):
-            if not m.startswith(EMBEDDER_PREFIX) or m in kept:
+            if not m.startswith(EMBEDDER_PREFIX) or m in kept or (server, m) in leased:
                 _idle_beats.pop((server, m), None)
                 continue
             if m not in named:
