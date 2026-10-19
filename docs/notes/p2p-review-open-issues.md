@@ -140,6 +140,32 @@ just made: incremental. Warm: `bundle_members` 495 bundles in 0.23 s
 of the last minute — `BUNDLE_SCAN_S`'s lag, by design), served-not-offered
 0. No failed digest since the start.
 
+**The holder pass, complete** (München, 13:40–15:20 CEST, pass 3): 713
+probed, 709 held, 715 accepted, ~7 bundles a minute, none embedded; today's
+three passes made 1,296 holder bundles, 1,378 gutenberg bundles on tank.
+Two bundles failed the node's own ladder and were kept unannounced (their
+parts and reasons: München's log; to record). Then the mine phase: 693
+parts the node leads among 3 peers, each partially held — the node had
+91 % of gutenberg's vectors, so a holder bundle covers a part only as far
+as the node had embedded it, and the coverage view's "1,139 open" after
+the pass means 1,139 parts with SOME chunks lacking a bundle, not 1,139
+uncovered parts; their leaders embed the rest.
+
+**A redundancy found in the mine phase, fixed (dd58729):** completing a
+part the node had bundled from held vectors (en/00081: 6,407 held, 2,942
+embedded) exported the WHOLE part again — a second bundle re-shipping the
+6,407 chunks beside the 2,942, from the same producer: not wrong (coverage
+caps at the part's chunks, a taker compares the overlap and finds
+identical rows) but about twice the bytes on tank and on the wire for
+every partially held part, some 23 GB over the 693 led parts. The
+operator's rule is minimum redundancy. `share contribute` now leaves out
+of an export the records this producer's accepted bundles for the part
+already claim (`possession.json`), so the second bundle carries the new
+records only and a part is never bundled twice by one producer. Six
+overlapping bundles went out before München stopped contribute (15:39);
+they stay — nothing published is deleted — and cost nothing but their
+bytes.
+
 **Open, the general case: the digest's size.** The node's digest entries
 grew from 64,938 to 409,873 bytes of canonical JSON with 599 members and
 482 coverage rows for gutenberg, heading for ~1.3 MB at 1,600 bundles —
