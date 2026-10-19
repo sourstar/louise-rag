@@ -31,13 +31,14 @@ Open: how a holder's bundles of non-led parts interact with the leader's
 window and the cascade; whether genesis-style "coverage declared by a
 holder" is the better form for a whole collection's worth of vectors.
 
-## 2. The embed stage ignored rendezvous — fixed, not deployed
+## 2. The embed stage ignored rendezvous — fixed, deployed
 
 `embed = "all"` embedded every part, beside peers contributing the parts
 they lead. Option 1 (the node's gutenberg embed set to on-demand, cron jobs
 5/6 disabled) is live; option 2 (`share.leading`: the stage leaves another
-live peer's parts to it) is pushed as 45535ea + 2e28bbf, reviewed, NOT
-deployed — the operator's word after this review. Numbers in
+live peer's parts to it, 45535ea + 2e28bbf, reviewed) is deployed on the
+node as f85a606 since 2026-10-19 10:34, so the review runs on the latest
+code (operator). The Perugia peer still runs the image before it. Numbers in
 scheduling-log.md (2026-10-19).
 
 ## 3. A missed attestation cannot be recovered
@@ -62,9 +63,12 @@ the self-declared one (amends 04 §4.2 / 09 §9.9).
 
 The node's ~3,170 seeded member torrents each announced on the DHT: ~10k
 UDP flows filled the FRITZ!Box NAT table and took the house offline
-(2026-10-19). DHT off on both peers; the node's fix (member torrents with
-`disable_dht|disable_lsd`, one per-snapshot swarm key) is 0cf9d68, pushed,
-not deployed.
+(2026-10-19). The node's fix (member torrents with `disable_dht|disable_lsd`,
+one per-snapshot swarm key) is 0cf9d68, deployed in f85a606: DHT back on at
+the node since 10:35, 73–110 flows in all against 14,194 before
+(dht-flood.md). Seeding is now LIMITED by the UP budget, not only counted
+(c455393); the node's `[budget] up_max` is 20 Mbit from 17:00. The Perugia
+peer keeps its DHT off until it runs that code.
 
 ## 6. A served slice list can silently stall a fetch
 
