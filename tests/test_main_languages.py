@@ -143,7 +143,7 @@ def test_the_response_names_the_main_languages_and_lists_only_their_translations
     monkeypatch.setattr(retrieval.refs, "get_store", lambda: None)
     monkeypatch.setattr(retrieval.refs.RESOLVER, "resolve", lambda q, s: [])
     monkeypatch.setattr(retrieval, "_attach_metadata_and_enqueue", lambda con, c, h: None)
-    monkeypatch.setattr(retrieval, "_one_hit_per_work", lambda ranked, c, plan, show_in: ranked)
+    monkeypatch.setattr(retrieval, "_one_hit_per_work", lambda ranked, c, plan, show_in, annotations=None: ranked)
     monkeypatch.setattr(llm, "language_restriction", lambda q: llm.Reading([], q, "en"))
     monkeypatch.setattr(llm, "translate_query",
                         lambda q, langs: {lang_: f"[{lang_}] {q}" for lang_ in langs})
