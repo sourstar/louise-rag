@@ -522,11 +522,11 @@ def test_the_version_selection_that_reads_the_corpus_is_no_longer_run(tmp_path, 
     source = inspect.getsource(worker._backfill_rows)
     assert "_REEMBED_SQL" not in source, "the selection that reads the corpus is not run"
     assert source.count("_REEMBED_WINDOWED") == 2, "the version walk is windowed in BOTH branches"
-    # four pages in all: the version walk in each branch, the new walk in the
-    # archive branch — which is the one the archive's spans bound — and the
-    # new walk by the cursor when another peer leads some parts (04 §4.5),
-    # whose skipped head would otherwise block the plain walk
-    assert source.count("_cursor_page") == 4
+    # three pages in all: the version walk in each branch, and the new walk in
+    # the archive branch — which is the one the archive's spans bound. When
+    # another peer leads some parts the no-archive new walk is `_lead_walk`,
+    # on the scope index, never a rowid window (review of 45535ea)
+    assert source.count("_cursor_page") == 3
 
 
 def test_the_prefetch_probe_walks_forward_from_the_current_document(tmp_path):
@@ -744,13 +744,67 @@ def test_a_window_whose_candidates_are_all_skipped_does_not_stall_the_walk(tmp_p
     skip = {int(r["native_id"]) for r in con.execute("SELECT native_id FROM documents")
             if int(r["native_id"]) < 32_000}
     _skipping(monkeypatch, skip)
-    _fixed_windows(monkeypatch, 1000)
     monkeypatch.setattr(config, "BACKFILL_WALK_BUDGET_S", 60.0)
     rows = worker._backfill_rows(con, c, 5)
     assert rows and all(int(r["native_id"]) >= 32_000 for r in rows), \
-        "the skipped windows are walked past, not returned"
-    key = (str(c.manifest_path), "new")
-    assert worker._backfill_cursor[key][1] == int(rows[0]["rid"]) - 1
+        "the skipped head is walked past, not returned"
+    key = str(c.manifest_path)
+    assert worker._lead_cursor[key][0] == int(rows[0]["rid"]) - 1, "resume FROM the first kept row"
+    again = worker._backfill_rows(con, c, 5)
+    assert again[0]["uid"] == rows[0]["uid"], "deferred, not embedded: selected again"
+
+
+def test_the_skip_walk_reads_the_candidates_never_the_table(tmp_path, monkeypatch):
+    """BLOCKING in the review of 45535ea: a rowid-window walk reads every
+    row of the table per sweep — the 2026-09-19 pubmed regression at 30M
+    rows. The walk goes along the scope index from a cursor: what it reads
+    is the CANDIDATES (skipped ones included), whatever the table's size."""
+    c, con = _all_ready(tmp_path)
+    _embedded_bulk(con, 20_000)                    # 20k embedded rows: not candidates
+    con.executemany(
+        "INSERT INTO documents(uid, source, native_id, path, in_scope, rdf_done, fts_done, "
+        "embed_done) VALUES(?,?,?,?,1,1,1,0)",
+        [(f"gutenberg:{i}", "gutenberg", str(i), f"/nowhere/{i}") for i in range(90_000, 90_300)])
+    con.commit()
+    candidates = con.execute("SELECT COUNT(*) FROM documents WHERE in_scope=1 AND rdf_done=1 "
+                             "AND fts_done=1 AND embed_done=0").fetchone()[0]
+    _skipping(monkeypatch, set(range(0, 100_000)))  # every candidate is another peer's
+    monkeypatch.setattr(config, "BACKFILL_WALK_BUDGET_S", 60.0)
+    worker.reset_backfill_cursors()
+    sql = worker._BACKFILL_SQL.format(covered="")
+    plan = _plan(con, sql, (config.MAX_RETRIES, -1, 512))
+    assert "idx_documents_scope" in plan and "TEMP B-TREE" not in plan, plan
+    read = []
+    real = con.execute
+
+    class Counting:
+        def __getattr__(self, name):
+            return getattr(con, name)
+
+        def execute(self, s, p=()):
+            cur = real(s, p)
+            if s == sql:
+                rows = cur.fetchall()
+                read.append(len(rows))
+                return type("R", (), {"fetchall": lambda self_: rows})()
+            return cur
+    assert worker._backfill_rows(Counting(), c, 5) == []
+    assert sum(read) == candidates, f"read {sum(read)} rows for {candidates} candidates"
+    assert worker._lead_cursor[str(c.manifest_path)][2] is not None, "an empty sweep: idle"
+    read.clear()
+    assert worker._backfill_rows(Counting(), c, 5) == [] and read == [], \
+        "inside the idle TTL an empty sweep is not repeated"
+
+
+def test_the_version_walk_leaves_another_peers_parts_too(tmp_path, monkeypatch):
+    c, con = _all_ready(tmp_path)
+    con.execute("UPDATE documents SET embed_done=1, embed_version=?", (config.EMBED_VERSION - 1,))
+    con.commit()
+    ids = sorted(int(r["native_id"]) for r in con.execute("SELECT native_id FROM documents"))
+    _skipping(monkeypatch, {ids[0]})
+    monkeypatch.setattr(config, "BACKFILL_WALK_BUDGET_S", 60.0)
+    picked = {int(r["native_id"]) for r in worker._backfill_rows(con, c, 100)}
+    assert picked == set(ids[1:]), "a version bump re-embeds only what this peer leads"
 
 
 def test_no_peer_leading_elsewhere_leaves_the_backfill_as_it_was(tmp_path, monkeypatch):

@@ -828,23 +828,82 @@ def _kept_window(con, sql: str, start: int, end: int, params: tuple, n: int, kee
     return out[:n]
 
 
+#: manifest path -> (cursor rowid, found in this sweep, idle since) — the walk
+#: over the candidates when some are another peer's (`_lead_walk`)
+_lead_cursor: dict[str, tuple[int, bool, float | None]] = {}
+_lead_cursor_lock = threading.Lock()
+#: rows read per step of `_lead_walk`
+_LEAD_PAGE = 512
+
+
+def _lead_walk(con, key: str, limit: int, keep, deadline: float) -> list:
+    """The new walk when some candidates are another peer's (04 §4.5): ON
+    THE SCOPE INDEX, by rowid from a cursor — the plain walk's prefix
+    (in_scope, rdf_done, fts_done, embed_done=0) with `rowid>?`, so a sweep
+    reads the CANDIDATES, skipped ones included, and never the rest of the
+    table (review of 45535ea: a rowid-window walk would read every row per
+    sweep — the 2026-09-19 pubmed regression at 30M rows).
+
+    The cursor resumes from the first row kept (a deferred one is selected
+    again); a sweep that reaches the end having found work restarts at once
+    from the top (documents below the cursor may have become candidates);
+    one that found nothing waits `_BACKFILL_CURSOR_TTL_S` from its end. A
+    call stops at `deadline` and the sweep carries on at the next."""
+    sql = _BACKFILL_SQL.format(covered="")
+    with _lead_cursor_lock:
+        pos, found, idle = _lead_cursor.get(key, (-1, False, None))
+    if idle is not None:
+        if time.time() - idle < _BACKFILL_CURSOR_TTL_S:
+            return []
+        pos, found, idle = -1, False, None
+    out: list = []
+    restarted = False
+    state = (pos, found, None)
+    while True:
+        rows = con.execute(sql, (config.MAX_RETRIES, pos, max(_LEAD_PAGE, limit))).fetchall()
+        for r in rows:
+            if keep(r):
+                out.append(r)
+                if len(out) >= limit:
+                    break
+        if out:
+            state = (int(out[0]["rid"]) - 1, True, None)
+            break
+        if not rows:                               # the end of the candidates
+            if found and not restarted:
+                pos, found, restarted = -1, False, True
+                continue
+            state = (-1, False, time.time())
+            break
+        pos = int(rows[-1]["rid"])
+        if time.monotonic() >= deadline:
+            state = (pos, found, None)
+            break
+    with _lead_cursor_lock:
+        _lead_cursor[key] = state
+    return out[:limit]
+
+
 def _backfill_rows(con, collection, limit: int) -> list:
     """Dense backfill candidates under "all": new documents first, then
     version-driven re-embeds — both cursor-paged when an archive is
     declared, both walked from the start otherwise.
 
     A shared collection's open parts that ANOTHER live peer leads (04 §4.5)
-    are left to it (`share.leading`): their documents are not candidates
-    here, and the new walk then goes by the cursor, so a skipped head
-    never blocks it. No peer, no lead elsewhere: exactly as before."""
+    are left to it (`share.leading`), in both walks: their documents are not
+    candidates here, and the new walk then goes along the scope index from a
+    cursor (`_lead_walk`), so a skipped head never blocks it and a sweep
+    costs the candidates, never the table. No peer, no lead elsewhere:
+    exactly as before."""
     ranges = _covered_ranges(con, collection)
     key = str(collection.manifest_path) if collection is not None else ""
     if collection is not None:
         _remember_label(key, collection.name)
     from app.share import leading
     skip = leading.skip_test(collection, con) if collection is not None else None
+    keep = None if skip is None else (lambda r: not skip(r))
     if not ranges:
-        if skip is None:
+        if keep is None:
             # THE NEW WALK STAYS UNBOUNDED, and must: its index prefix
             # (in_scope, rdf_done, fts_done, embed_done=0) IS the candidate set,
             # so it lands on the first candidate or on nothing, and a document
@@ -852,15 +911,8 @@ def _backfill_rows(con, collection, limit: int) -> list:
             rows = con.execute(_BACKFILL_SQL.format(covered=""),
                                (config.MAX_RETRIES, -1, limit)).fetchall()
         else:
-            # …except when some candidates are another peer's: they would be
-            # that head every round, so the walk goes by the cursor
-            new_sql = _BACKFILL_WINDOWED.format(covered="")
-            rows = _cursor_page(
-                con, key, "new",
-                lambda start, end, n: _kept_window(con, new_sql, start, end,
-                                                   (config.MAX_RETRIES,), n,
-                                                   lambda r: not skip(r)),
-                limit, time.monotonic() + config.BACKFILL_WALK_BUDGET_S)
+            rows = _lead_walk(con, key, limit, keep,
+                              time.monotonic() + config.BACKFILL_WALK_BUDGET_S)
         # THE VERSION WALK IS WINDOWED HERE TOO. Its prefix ends at
         # embed_done=1, which is EVERY embedded document, and `embed_version`
         # is then tested row by row — so with no archive this read the whole
@@ -870,11 +922,11 @@ def _backfill_rows(con, collection, limit: int) -> list:
         # the document already has a vector — so it may wait for the sweep,
         # which is exactly what the archive branch below already does.
         if len(rows) < limit:
+            ver_sql = _REEMBED_WINDOWED
             rows += _cursor_page(
                 con, key, "ver",
-                lambda start, end, n: con.execute(
-                    _REEMBED_WINDOWED, (start, end, config.EMBED_VERSION,
-                                        config.MAX_RETRIES, n)).fetchall(),
+                lambda start, end, n: _window_page(
+                    con, ver_sql, start, end, (config.EMBED_VERSION, config.MAX_RETRIES), n, keep),
                 limit - len(rows),
                 time.monotonic() + config.BACKFILL_WALK_BUDGET_S)
         return rows
@@ -883,27 +935,32 @@ def _backfill_rows(con, collection, limit: int) -> list:
     # ONE budget for the whole call, both walks: a call that finds nothing
     # must cost a bounded slice of the encoder's turn, never a sweep
     deadline = time.monotonic() + config.BACKFILL_WALK_BUDGET_S
-    if skip is None:
-        def new_page(start, end, n):
-            return con.execute(new_sql, (start, end, config.MAX_RETRIES, *params, n)).fetchall()
-    else:
-        def new_page(start, end, n):
-            return _kept_window(con, new_sql, start, end, (config.MAX_RETRIES, *params), n,
-                                lambda r: not skip(r))
-    rows = _cursor_page(con, key, "new", new_page, limit, deadline)
+    rows = _cursor_page(
+        con, key, "new",
+        lambda start, end, n: _window_page(con, new_sql, start, end,
+                                           (config.MAX_RETRIES, *params), n, keep),
+        limit, deadline)
     if len(rows) < limit:
         archive = bundle_genesis.ARCHIVES.get(collection.genesis_archive or "")
         if archive is not None and archive.local:
             rows += _residual_rows(con, collection, limit - len(rows),
                                    {r["uid"] for r in rows})
     if len(rows) < limit:
+        ver_sql = _REEMBED_WINDOWED
         rows += _cursor_page(
             con, key, "ver",
-            lambda start, end, n: con.execute(
-                _REEMBED_WINDOWED, (start, end, config.EMBED_VERSION,
-                                    config.MAX_RETRIES, n)).fetchall(),
+            lambda start, end, n: _window_page(
+                con, ver_sql, start, end, (config.EMBED_VERSION, config.MAX_RETRIES), n, keep),
             limit - len(rows), deadline)
     return rows
+
+
+def _window_page(con, sql: str, start: int, end: int, params: tuple, n: int, keep) -> list:
+    """One rowid window of a windowed walk: as it was with no filter, paged
+    through `_kept_window` when some candidates are another peer's."""
+    if keep is None:
+        return con.execute(sql, (start, end, *params, n)).fetchall()
+    return _kept_window(con, sql, start, end, params, n, keep)
 
 
 #: a LOCAL archive's residuals, by primary key: bounded by the residual set
@@ -1008,6 +1065,8 @@ def _cursor_page(con, key: str, kind: str, query, limit: int, deadline: float) -
 def reset_backfill_cursors() -> None:
     with _backfill_cursor_lock:
         _backfill_cursor.clear()
+    with _lead_cursor_lock:
+        _lead_cursor.clear()
 
 
 def _ingest_pending(con) -> bool:
