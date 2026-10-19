@@ -248,6 +248,14 @@
     <li><b>Pinned facts are not search results.</b> Entity lookups appear
       as their own blocks above the ranked hits: they are never ranked,
       never fused with passages, and carry no <b>[n]</b> citation.</li>
+    <li><b>Annotations consulted</b> is the second chip row: one chip per
+      annotations collection held here (02 §2.10), named with the
+      collection it annotates. On, its work claims group a work's editions
+      into one hit ("also in:") and its claims appear beside each hit
+      ("also:"); off, the search runs as if the node did not hold it. An
+      annotations collection is never a search leg of its own. Both chip
+      rows are remembered in this browser between searches: a collection
+      turned off stays off until turned on again, a new one starts on.</li>
     <li><b>Show results in …</b> translates with the node's own local
       model, not an external service: the translation model (MADLAD-400,
       <code>TRANSLATE_URL</code>) where the node has one — about a second for
@@ -329,10 +337,17 @@
     <b>off</b> — never embed; <b>on-demand</b> — embed only what queries
     actually touch (a priority queue fed by search misses; stored as
     <code>"lazy"</code> in the TOML and API, kept for compatibility);
-    <b>all</b> — background-backfill everything in scope. The priority
-    queue always outranks the backfill, so a user-requested document
-    embeds first. Set the mode via <code>POST /api/scope</code> (see
-    <a href="#api">HTTP API</a>).
+    <b>all</b> ("all local") — background-backfill everything in scope,
+    whoever leads a part, its duplicates becoming checks; <b>all p2p</b>
+    (stored as <code>"p2p"</code>) — embed only the parts rendezvous gives
+    this node among the live peers (04 §4.5) and <i>publish as it goes</i>:
+    the worker's <b>publisher</b> bundles and announces each part as its
+    vectors complete, every five minutes, for every <i>shared</i>
+    collection whatever its mode — so all p2p needs sharing on, and the
+    Library asks before writing either. The priority queue always outranks
+    the backfill, so a user-requested document embeds first. Set the mode
+    via the collection's drop-down (written to its file) or
+    <code>POST /api/scope</code> (see <a href="#api">HTTP API</a>).
   </p>
   <h2 style="margin-top:14px">What the mode actually controls</h2>
   <p class="note">
@@ -729,6 +744,19 @@ louise hold vectors show &lt;collection&gt;     # coverage, producers</pre>
     a shell:
   </p>
   <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE [--space-from &lt;collection&gt;]</pre>
+  <p class="note">
+    <b>The annotations type</b> (02 §2.10) is in the same drop-down and
+    takes no recipe: a name, the held collection it annotates with the
+    target snapshot its claims hold from (prefilled with the one held
+    now), an optional title, summary and annotator, and the claims file
+    (JSON Lines, one claim per line). <i>Check claims</i> runs the check
+    and writes nothing; <i>Create</i> runs the same check, refuses with the
+    reason on a failing claim, and queues the create for the worker, which
+    signs the first snapshot. Such a collection has no space and no
+    encoder: it is held, checked and shared like any other, and its card
+    in the Library shows what it annotates and how many claims it holds.
+  </p>
+  <pre class="cli">louise hold collection create annotations --annotates &lt;collection&gt; --from-snapshot &lt;id&gt; --claims FILE --name &lt;name&gt; [--dry-run]</pre>
   <p class="note">
     It embeds the calibration set with the encoder the recipe names, writes
     the Codex into the collection's SHARD, prints its id, and writes the
