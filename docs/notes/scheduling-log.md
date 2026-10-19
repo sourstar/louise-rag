@@ -475,6 +475,14 @@ on the contribute's next request and its answer 19 s later. Cost
 7 × 19 s ≈ 2.2 min of 3.4 h (~1 %) plus a fresh load each time; no
 non-200, no retry, no defer line anywhere.
 
+**The node too** (München, 2026-10-19 22:00): the node's gutenberg is
+`embed = "on-demand"`, not "all" — the model its nightly contribute uses
+is named by no collection that embeds everything, so the same sweep
+unloads it there: contribute-gutenberg.log counts **12 cold starts
+today**, and the worker log shows sweeps of vega-bge-m3 and
+vega-dar-legal-it at 21:56. The commit's note that the change is inert on
+the node was wrong; the lease matters on both peers.
+
 **Expected after.** No "unloaded" line for a model under lease while a
 contribute runs; `/backend/shutdown` only for a model no process is
 embedding with; a lease a killed process left gone within 600 s. Cost
@@ -482,4 +490,5 @@ of the fix: one `INSERT OR REPLACE` per batch (seconds apart), one
 SELECT per settle beat over a table of a handful of rows (plan-checked:
 tests/test_embedder_release.py). To be measured on Perugia over one
 contribute pass: shutdown count (expect 0 while embedding), chunks/min
-(expect the same 142 or slightly better).
+(expect the same 142 or slightly better). On the node: cold starts in
+contribute-gutenberg.log over one night's pass (expect 0, against 12).

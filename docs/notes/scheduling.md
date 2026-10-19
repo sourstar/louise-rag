@@ -372,7 +372,8 @@ CPU read 0–2.5 %, exactly 0.0 one sample in four. Two zero beats in a
 row came every half hour: seven `/backend/shutdown` in 3.4 h, each a
 19 s cold start the next request waited out (~1 % of the pass, and a
 fresh load each time). Nothing failed, nothing retried, and the log said
-"idle".
+"idle". The node has the same case: its gutenberg embeds on demand, and
+its nightly contribute paid 12 cold starts in one day.
 
 → A process embedding outside the worker says so: an ENCODER LEASE in
 `state/node.sqlite` (`node_state.lease_encoder`, one row per server,
