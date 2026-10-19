@@ -146,14 +146,18 @@ for c in cm.load_all():
     except Exception as e:
         print('ERROR', r.model, type(e).__name__, str(e)[:120].replace(chr(10), ' '))
 " > "${TMPDIR:-/tmp}/smoke-embed.$$" 2>&1
+  # the client logs to the same stream (a cold start, a run check): verdicts only
+  grep -qE '^(identical|DIFFER|ERROR) ' "${TMPDIR:-/tmp}/smoke-embed.$$" \
+    || fail "determinism: probe gave no verdict: $(tail -1 "${TMPDIR:-/tmp}/smoke-embed.$$" | cut -c1-150)"
   while read -r verdict model rest; do
     case "$verdict" in
       identical) pass "determinism: $model bit-identical over 3 requests and a reversed order (dim $rest)";;
       DIFFER) fail "determinism: $model vectors differ between identical requests (invariant 12)";;
       ERROR) fail "determinism: $model probe failed: $rest";;
-      *) fail "determinism: probe failed: $(echo "$verdict $model $rest" | cut -c1-150)";;
     esac
-  done < "${TMPDIR:-/tmp}/smoke-embed.$$"
+  done <<EOF
+$(grep -E '^(identical|DIFFER|ERROR) ' "${TMPDIR:-/tmp}/smoke-embed.$$")
+EOF
   rm -f "${TMPDIR:-/tmp}/smoke-embed.$$"
 fi
 
