@@ -483,6 +483,16 @@ today**, and the worker log shows sweeps of vega-bge-m3 and
 vega-dar-legal-it at 21:56. The commit's note that the change is inert on
 the node was wrong; the lease matters on both peers.
 
+**Deployed 2026-10-19 22:28 CEST on both peers (0624b18, München's gate:
+4,756 passed).** The node at 22:32: one row, `http://192.168.178.10:30286 |
+vega-qwen3-embedding-4b | share contribute pid 379 | until 22:41:02`,
+renewed per batch; no new worker line kinds. One cold start remains that
+is not the sweep's: the start-up run check unloads the 4B ("embed is
+'lazy', not 'all'") before the contribute has its lease, and the
+contribute then waits for the writer lock behind the worker's on-demand
+embed unit (1 document, 337 chunks, 22:30:34) — the pause-wrapper cost
+the publisher retires. Counts over the night follow.
+
 **Expected after.** No "unloaded" line for a model under lease while a
 contribute runs; `/backend/shutdown` only for a model no process is
 embedding with; a lease a killed process left gone within 600 s. Cost
