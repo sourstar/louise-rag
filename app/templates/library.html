@@ -128,7 +128,7 @@
     <div class="spine"><span style="width:{{ (100*c.embed_done/indexable)|round(1) if indexable else 0 }}%;background:var(--lapis)"></span></div></div>
   <div class="note">
     delta freshness: {{ c.last_discover_text }} ·
-    {% if c.embed_mode == 'all' %}
+    {% if c.embed_mode in ('all', 'p2p') %}
       {# backfill selects from the manifest directly and never touches the
          lazy queue, so the queue count is always 0 here and says nothing #}
       {% if c.embed_in_flight %}dense backfill: <b>{{ c.embed_in_flight }}</b> document{{ '' if c.embed_in_flight == 1 else 's' }} being encoded now, {{ c.embed_waiting }} awaiting the encoder
@@ -184,15 +184,34 @@
       {# persistent: writes embed_mode into the collection's TOML (Tier-2
          desired state, like create/ack) AND the runtime scope for
          immediate effect — it survives restarts #}
-      <select onchange="setEmbedMode('{{ c.name }}', this.value)"
-              title="what the LOCAL encoder does — saved to collections/{{ c.name }}.toml">
-        {# display name "on-demand"; the STORED value stays "lazy" (TOML /
+      <select onchange="setEmbedMode('{{ c.name }}', this.value, {{ 'true' if c.share else 'false' }})"
+              title="what this node's encoder spends — all local: every part itself; all p2p: the parts rendezvous gives this node, published as it goes (04 §4.5) — saved to collections/{{ c.name }}.toml">
+        {# display names; the STORED values stay "lazy" / "all" / "p2p" (TOML /
            API compatibility — same pattern as plugin display labels) #}
-        {% for m, label in [('off', 'off'), ('lazy', 'on-demand'), ('all', 'all')] %}
+        {% for m, label in [('off', 'off'), ('lazy', 'on-demand'), ('all', 'all local'), ('p2p', 'all p2p')] %}
         <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ label }}</option>
         {% endfor %}
-      </select></div>
+      </select>
+      {% if c.p2p is not none %}
+      {# the OTHER axis, independent of the encoder's: what this node makes
+         available — its records and every embedding it holds, as bundles
+         (04 §4.3). The two meet in one place only: all p2p needs sharing,
+         and the page asks before writing either pair (07 §7.8, 2026-10-19) #}
+      <label title="serve this collection's records and the embeddings held here as bundles (04 §4.3); all p2p needs it">
+        <input type="checkbox" {{ 'checked' if c.share }}
+               onchange="setShare('{{ c.name }}', this.checked, '{{ c.embed_mode_file or '' }}')"> shared</label>
+      {% endif %}</div>
   </div>
+  {% if c.embed_mode_note %}
+  <div class="note"><span class="badge err">runs as all local</span> {{ c.embed_mode_note }}</div>
+  {% endif %}
+  {% if c.p2p is not none %}
+  <div class="note" title="the bounty list is the open parts of the current snapshot (04 §4.5); a part is covered by the bundles accepted here (09 §9.10)">
+    p2p: {{ c.p2p.covered_pct }} % of chunks covered by bundles ·
+    bounty list {{ c.p2p.open|num }} open of {{ c.p2p.parts|num }} part{{ '' if c.p2p.parts == 1 else 's' }}{% if c.p2p.leads is not none %}, this node leads {{ c.p2p.leads|num }}, {{ c.p2p.left|num }} left to {{ c.p2p.peers - 1 if c.p2p.peers > 0 else 0 }} peer{{ '' if c.p2p.peers == 2 else 's' }}{% endif %} ·
+    {{ c.p2p.from_here|num }} chunk{{ '' if c.p2p.from_here == 1 else 's' }} bundled here, {{ c.p2p.from_peers|num }} taken from peers
+  </div>
+  {% endif %}
   <div class="actions">
     <button class="primary" onclick="openGrow('{{ c.name }}')">grow profile…</button>
     <button onclick="libReset('{{ c.name }}','errors')">clear errors &amp; retry</button>
@@ -283,10 +302,21 @@ async function libDiscover(name,quiet){
   try{await postJSON('/admin/library/'+name+'/discover',{})}catch(e){toast('rescan failed: '+e);return}
   if(!quiet){toast('rescanned '+name);location.reload()}
 }
-async function setEmbedMode(name,mode){
-  try{await postJSON('/admin/library/'+name+'/embed-mode',{mode});
-    toast(name+': embed mode → '+mode+' — saved to collections/'+name+'.toml')}
+const EMBED_LABELS={off:'off',lazy:'on-demand',all:'all local',p2p:'all p2p'};
+async function setEmbedMode(name,mode,shared){
+  // all p2p publishes what it embeds, so it comes with sharing: asked, never done behind the operator's back (07 §7.8)
+  if(mode==='p2p'&&!shared&&!confirm(name+': all p2p publishes the bundles it embeds, so sharing will be enabled for this collection. Proceed?')){location.reload();return}
+  try{const d=await postJSON('/admin/library/'+name+'/embed-mode',{mode});
+    toast(name+': embed mode → '+(EMBED_LABELS[mode]||mode)+(d.share_enabled?' — sharing enabled':'')+' — saved to collections/'+name+'.toml');
+    if(d.share_enabled){location.reload()}}
   catch(e){toast('embed mode failed: '+e);location.reload()}
+}
+async function setShare(name,on,mode){
+  if(!on&&mode==='p2p'&&!confirm(name+' embeds in all p2p mode, which publishes what it embeds; disabling sharing switches it to all local. Proceed?')){location.reload();return}
+  try{const d=await postJSON('/admin/library/'+name+'/share',{share:on});
+    toast(name+': sharing '+(on?'on':'off')+(d.embed_mode_changed?' — embed mode → all local':'')+' — saved to collections/'+name+'.toml');
+    if(d.embed_mode_changed){location.reload()}}
+  catch(e){toast('sharing failed: '+e);location.reload()}
 }
 async function libReset(name,stage){
   try{const d=await postJSON('/admin/library/'+name+'/reset',{stage});

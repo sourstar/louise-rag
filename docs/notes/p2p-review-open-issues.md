@@ -331,6 +331,30 @@ one not again; a peer that stays down is tried at 60, 120, 240, 480 s.
 The attestation pull keeps its hourly cadence (04 §4.2: a pull that does
 not connect is retried at the next interval; it is a recovery path).
 
+### 10. The embed drop-down: all local / all p2p, and sharing as its own axis — BUILT (step 1)
+
+Operator's design (2026-10-19), from the question "is a p2p embed mode
+planned?": the Library's `embed` drop-down reads `off`, `on-demand`, `all
+local`, `all p2p`; the file and the API carry `off | lazy | all | p2p`.
+`all` embeds every part itself again, whoever leads it (its duplicates
+are checks); `p2p` is the partition of 04 §4.5 — the parts rendezvous
+gives this node, with the cascade — which this morning's deploy had put
+under `all`. Sharing is the other axis and independent: with sharing on,
+everything the node holds is served and bundled whatever `embed` says;
+every node takes peers' bundles in. The one meeting point: `p2p`
+publishes, so it needs sharing — the page asks (two confirmations:
+setting `all p2p` with sharing off enables sharing; disabling sharing
+under `all p2p` switches to `all local`; proceed or abort), the server
+writes both in one file rewrite, and a hand-edited file saying `p2p` with
+`share = false` runs as `all` and its card says so. The card shows the
+two axes beside the drop-down: the bounty list (open parts, parts this
+node leads and leaves to peers, from `contribute.leaders`, cached 120 s)
+and availability (chunks bundled here, chunks taken from peers, from the
+coverage map). 07 §7.8 and 04 §4.5 amended. The worker's six "backfill
+under all" checks accept both modes; the partition filter runs under
+`p2p` only. Step 2 — publishing inside the worker, retiring the cron and
+the pause — stays open (scheduling.md §6 first).
+
 ### Still open after the review
 
 - **Vector convergence** ([vector-convergence.md](vector-convergence.md),

@@ -442,7 +442,10 @@ right size for it.
 
 ## 4.5 Sharing the work
 
-Every peer holding a collection's records may embed a part of them. The
+Every peer holding a collection's records may embed a part of them — a
+node takes the partition below under `embed = "p2p"` in its collection
+file, and embeds every part itself under `all` (07 §7.8; amended
+2026-10-19, operator). The
 question is how peers avoid choosing the same part without anyone
 assigning parts, and how a peer that starts and stops does not waste the
 others' time. The unit in which the work travels is the **bundle**

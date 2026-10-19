@@ -145,3 +145,47 @@ def test_a_new_collection_another_writer_holds_is_not_opened(tmp_path, monkeypat
     assert [c.name for c in worker._sync_collections([], cons, {}, pipeline=False)] == [added.name]
     assert Path(added.manifest_path).exists()
     cons[added.name].close()
+
+
+def test_the_fourth_mode_p2p_is_read_with_its_display_names(isolated_config, data_dir, config_dir):
+    """07 §7.8, 2026-10-19: `all` is "all local", `p2p` is "all p2p"; the
+    file carries the tokens, the Library the names, and both spellings read."""
+    codex_collection("pp", louise_root=data_dir, config_dir=config_dir, toml_extra='embed = "p2p"\nshare = true\n')
+    c = collections_mod.by_name("pp")
+    assert c.embed_mode_default == "p2p" and c.embed_mode_note is None and c.share is True
+    codex_collection("pq", louise_root=data_dir, config_dir=config_dir, toml_extra='embed = "all p2p"\nshare = true\n')
+    assert collections_mod.by_name("pq").embed_mode_default == "p2p"
+    codex_collection("al", louise_root=data_dir, config_dir=config_dir, toml_extra='embed = "all local"\n')
+    assert collections_mod.by_name("al").embed_mode_default == "all"
+    assert collections_mod.EMBED_MODE_LABELS == {"off": "off", "lazy": "on-demand", "all": "all local", "p2p": "all p2p"}
+    assert "p2p" in collections_mod.EMBEDDING_MODES and "p2p" in collections_mod.BACKFILL_MODES
+
+
+def test_p2p_without_sharing_runs_as_all_local_and_says_so(isolated_config, data_dir, config_dir):
+    """p2p publishes what it embeds; a node that does not share publishes
+    nothing. The Library asks before writing the pair; a file edited by hand
+    to the pair runs as all local, and the card says why."""
+    codex_collection("ph", louise_root=data_dir, config_dir=config_dir, toml_extra='embed = "p2p"\nshare = false\n')
+    c = collections_mod.by_name("ph")
+    assert c.embed_mode_default == "all" and c.share is False
+    assert c.embed_mode_note and "share = false" in c.embed_mode_note and "all local" in c.embed_mode_note
+    assert collections_mod.effective_embed_mode("p2p", True, "x") == ("p2p", None)
+    assert collections_mod.effective_embed_mode("all", False, "x") == ("all", None)
+
+
+def test_the_embed_stage_leaves_parts_to_peers_under_p2p_only(isolated_config, data_dir, config_dir, monkeypatch):
+    """The partition of 04 §4.5 is `p2p`'s; `all` embeds every part itself."""
+    from app import db, worker
+    from app.share import leading
+    codex_collection("pw", louise_root=data_dir, config_dir=config_dir, toml_extra='embed = "p2p"\nshare = true\n')
+    c = collections_mod.by_name("pw")
+    asked: list[str] = []
+    monkeypatch.setattr(leading, "skip_test", lambda collection, con, **kw: (asked.append(collection.name), None)[1])
+    con = db.connect(c)
+    for mode, expect in (("all", []), ("p2p", ["pw"]), ("lazy", [])):
+        asked.clear()
+        scope = db.get_scope(con)
+        scope["embed_mode"] = mode
+        db.set_scope(con, scope)
+        worker._backfill_rows(con, c, 5)
+        assert asked == expect, f"under {mode!r}"

@@ -220,6 +220,8 @@ _UNPOPULATED: dict[str, str] = {
                 "refuses a snapshot the Codex does not pin",
     "peer_source": "`_codex_collection` never reads it: 07 §7.8's file has no "
                    "such key, and since 2026-10-08 every file is a Codex file",
+    "embed_mode_note": "derived at load — `embed = \"p2p\"` with `share = false` runs as "
+                       "`all` and this says so (07 §7.8, 2026-10-19); never a file key",
 }
 
 

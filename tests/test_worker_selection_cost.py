@@ -718,15 +718,34 @@ def _all_ready(tmp_path):
     return c, con
 
 
+def _p2p(con, mode: str = "p2p"):
+    """The partition of 04 §4.5 is `embed = "p2p"`'s ("all p2p", 07 §7.8,
+    2026-10-19); under `all` ("all local") a node embeds every part itself."""
+    scope = dict(db.get_scope(con), embed_mode=mode)
+    db.set_scope(con, scope)
+    return scope
+
+
 def test_backfill_leaves_the_parts_another_peer_leads(tmp_path, monkeypatch):
     c, con = _all_ready(tmp_path)
     ids = sorted(int(r["native_id"]) for r in con.execute("SELECT native_id FROM documents"))
     assert len(ids) >= 2
     _skipping(monkeypatch, {ids[0]})
+    scope = _p2p(con)
     picked = {int(r["native_id"]) for r in worker._backfill_rows(con, c, 100)}
     assert picked == set(ids[1:]), "the peer's part is its to embed"
-    scope = dict(db.get_scope(con), embed_mode="all")
     assert {int(r["native_id"]) for r in worker._embed_candidates(con, scope, 100, c)} == set(ids[1:])
+
+
+def test_all_local_embeds_every_part_whoever_leads_it(tmp_path, monkeypatch):
+    """`all` ("all local"): the partition is not consulted; the duplicates
+    are the verification budget (04 §4.5; 07 §7.8, 2026-10-19)."""
+    c, con = _all_ready(tmp_path)
+    ids = sorted(int(r["native_id"]) for r in con.execute("SELECT native_id FROM documents"))
+    _skipping(monkeypatch, {ids[0]})
+    scope = _p2p(con, "all")
+    assert {int(r["native_id"]) for r in worker._backfill_rows(con, c, 100)} == set(ids)
+    assert {int(r["native_id"]) for r in worker._embed_candidates(con, scope, 100, c)} == set(ids)
 
 
 def test_a_window_whose_candidates_are_all_skipped_does_not_stall_the_walk(tmp_path, monkeypatch):
@@ -734,6 +753,7 @@ def test_a_window_whose_candidates_are_all_skipped_does_not_stall_the_walk(tmp_p
     that head every round, and the collection would never progress. With a
     filter the walk goes by the cursor and moves past a skipped window."""
     c, con = _all_ready(tmp_path)
+    _p2p(con)
     _embedded_bulk(con, 0)
     con.execute("UPDATE documents SET embed_done=0")
     con.executemany(
@@ -760,6 +780,7 @@ def test_the_skip_walk_reads_the_candidates_never_the_table(tmp_path, monkeypatc
     rows. The walk goes along the scope index from a cursor: what it reads
     is the CANDIDATES (skipped ones included), whatever the table's size."""
     c, con = _all_ready(tmp_path)
+    _p2p(con)
     _embedded_bulk(con, 20_000)                    # 20k embedded rows: not candidates
     con.executemany(
         "INSERT INTO documents(uid, source, native_id, path, in_scope, rdf_done, fts_done, "
@@ -798,6 +819,7 @@ def test_the_skip_walk_reads_the_candidates_never_the_table(tmp_path, monkeypatc
 
 def test_the_version_walk_leaves_another_peers_parts_too(tmp_path, monkeypatch):
     c, con = _all_ready(tmp_path)
+    _p2p(con)
     con.execute("UPDATE documents SET embed_done=1, embed_version=?", (config.EMBED_VERSION - 1,))
     con.commit()
     ids = sorted(int(r["native_id"]) for r in con.execute("SELECT native_id FROM documents"))

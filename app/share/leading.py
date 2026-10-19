@@ -5,7 +5,10 @@ stage's half of rendezvous.
 embed stage under `embed = "all"` used to embed EVERY part, so a node
 duplicated what the peers leading the other parts were embedding, and their
 bundles landed as checks, not saved work (2026-10-19: the node embedded all
-of gutenberg beside two contributing peers). Here, per collection:
+of gutenberg beside two contributing peers). The partition is now the
+setting `embed = "p2p"` ("all p2p", 07 §7.8; operator, 2026-10-19), and
+`all` ("all local") embeds every part again, by choice. Here, per
+collection:
 
 - the open parts whose current leader — 04 §4.5's ordering with its grace
   cascade, `contribute.leaders` — is ANOTHER live peer are left to it;

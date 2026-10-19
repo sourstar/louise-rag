@@ -1678,6 +1678,13 @@ def _collection_shelf(collection: collections_mod.Collection,
 
     return {
         "embed_mode": db.get_scope(con)["embed_mode"],
+        # the file's word and the file's `share`, for the Library's two
+        # controls and their confirmations; the note when the file's pair is
+        # one the node will not run as written (07 §7.8, 2026-10-19)
+        "embed_mode_file": collection.embed_mode_default,
+        "embed_mode_note": getattr(collection, "embed_mode_note", None),
+        "share": bool(getattr(collection, "share", False)),
+        "p2p": _p2p_summary(collection),
         "name": collection.name, "plugin": collection.plugin,
         "plugin_label": _plugin_label(collection.plugin),
         "stage_rates": stage_rates,
@@ -2526,9 +2533,14 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
     because the UI now edits desired state rather than the DB pretending to
     be it; POST /api/scope remains the runtime-only override for anyone who
     wants one."""
-    if body.mode not in ("off", "lazy", "all"):
-        raise HTTPException(400, "mode must be off | lazy | all")
+    if body.mode not in collections_mod.EMBED_MODES:
+        raise HTTPException(400, "mode must be off | lazy | all | p2p")
     collection = _collection_or_404(name)
+    # "all p2p" publishes what it embeds, so it comes with sharing on: the
+    # Library asked before sending (07 §7.8, 2026-10-19); the two settings
+    # are written in one file rewrite, and the response says what changed
+    share = True if body.mode == "p2p" else collection.share
+    share_enabled = share and not collection.share
     # TOML FIRST — a file write never loses a lock race. The old order
     # wrote the runtime scope first, and on a manifest under continuous
     # pipeline writes that raised "database is locked" BEFORE the TOML was
@@ -2548,7 +2560,7 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
         snapshot=collection.snapshot,
         extras=collection.extras, peer_source=collection.peer_source,
         title=collection.title, slices=collection.slices,
-        kinds=collection.kinds, share=collection.share,
+        kinds=collection.kinds, share=share,
         reranker=collection.reranker, source=collection.source,
         share_slices=collection.share_slices, share_kinds=collection.share_kinds)
     # Runtime scope + event log are BEST-EFFORT immediacy on top of the
@@ -2568,10 +2580,121 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
     except sqlite3.OperationalError:
         applied_now = False
     return {"ok": True, "embed_mode": body.mode, "persisted": True,
-            "applied_now": applied_now,
+            "applied_now": applied_now, "share": share, "share_enabled": share_enabled,
             "note": None if applied_now else
             "saved to the TOML; the manifest is busy, so the worker applies "
             "it within a round"}
+
+
+class ShareBody(BaseModel):
+    share: bool
+
+
+@admin_router.post("/library/{name}/share")
+def collection_share(name: str, body: ShareBody):
+    """The Library's sharing control (07 §7.8 `share`; 04 §4.3): written to
+    the collection's file, where the seeder reads it at its next sync.
+    Sharing off while the embed mode is `p2p` switches the mode to `all`
+    in the same rewrite — p2p publishes, and a node that does not share
+    publishes nothing; the Library asked before sending (2026-10-19)."""
+    collection = _collection_or_404(name)
+    embed_mode = collection.embed_mode_default
+    changed_mode = False
+    if not body.share and embed_mode == "p2p":
+        embed_mode, changed_mode = "all", True
+    toml_path = collections_mod.config_toml_path(name)
+    _write_collection_toml(
+        toml_path, codex=_codex_id(collection),
+        plugin=collection.plugin, profile=collection.profile,
+        acquire_enabled=collection.acquire_enabled,
+        corpus_dir=collection.corpus_dir,
+        manifest=collection.manifest_path, fts=collection.fts_dir,
+        lancedb=collection.lance_dir, license_ack=collection.license_ack,
+        genesis_archive=collection.genesis_archive,
+        embed=collections_mod.recipe_for(collection),
+        embed_mode=embed_mode, layers=collection.layers,
+        snapshot=collection.snapshot,
+        extras=collection.extras, peer_source=collection.peer_source,
+        title=collection.title, slices=collection.slices,
+        kinds=collection.kinds, share=body.share,
+        reranker=collection.reranker, source=collection.source,
+        share_slices=collection.share_slices, share_kinds=collection.share_kinds)
+    applied_now = True
+    if changed_mode:
+        try:
+            con = db.connect(collection)
+            con.execute("PRAGMA busy_timeout=2000")
+            scope = db.get_scope(con)
+            scope["embed_mode"] = embed_mode
+            db.set_scope(con, scope)
+            db.log_event(con, "info", "control",
+                         f"sharing off for {name!r} via admin UI: embed mode p2p -> 'all' "
+                         f"(written to {toml_path.name}: permanent)")
+        except sqlite3.OperationalError:
+            applied_now = False
+    return {"ok": True, "share": body.share, "embed_mode": embed_mode, "embed_mode_changed": changed_mode,
+            "persisted": True, "applied_now": applied_now}
+
+
+_p2p_cache: dict[str, tuple[float, dict | None]] = {}
+_P2P_TTL_S = 120.0
+
+
+def _p2p_summary(collection) -> dict | None:
+    """The Library card's two axes beside the embed drop-down (07 §7.8,
+    2026-10-19): the bounty list — open parts, the parts this node leads and
+    leaves to peers — and availability — chunks from bundles made here and
+    taken from peers. From the coverage map and the digests (09 §9.10; 04
+    §4.5), the same functions the command line prints; at most once a
+    `_P2P_TTL_S` per collection (the leader ordering is ~0.4 s for 1,600
+    parts). None for a collection without a Codex or a snapshot."""
+    import time as _time
+    from contextlib import closing
+    codex = getattr(collection, "codex", None)
+    if codex is None or getattr(codex, "space", None) is None:
+        return None
+    key = str(collection.manifest_path)
+    hit = _p2p_cache.get(key)
+    now = _time.time()
+    if hit is not None and now - hit[0] < _P2P_TTL_S:
+        return hit[1]
+    out: dict | None = None
+    try:
+        from app.hold import collection as col
+        from app.share import contribute, coverage as cov, peers, seeder
+        root = collections_mod.louise_root() / "collections"
+        snap = seeder.current_snapshot(col.shard_dir_of(root, collection.name))
+        if snap is not None and (root / collection.name / "state" / "manifest.sqlite").is_file():
+            with closing(cov.manifest(root, collection.name)) as mcon:
+                rows = cov.rows(mcon)
+                view = cov.shards_view(codex, snap, rows, now=now)
+                chunks = sum(v["chunks"] for v in view)
+                covered = sum(v["covered"] for v in view)
+                accepted = [r for r in rows if r["accepted_at"]]
+                out = {"parts": len(view), "open": sum(1 for v in view if v["open"]),
+                       "covered_pct": round(100.0 * covered / chunks, 1) if chunks else 0.0,
+                       "from_here": sum(r["chunks"] for r in accepted if r["source"] == cov.LOCAL),
+                       "from_peers": sum(r["chunks"] for r in accepted if r["source"] != cov.LOCAL),
+                       "leads": None, "left": None, "peers": 0}
+                try:
+                    from app import identity
+                    own = identity.own()
+                except Exception:   # noqa: BLE001 — the web may hold no key: the bounty line stays
+                    own = None
+                if own:
+                    with closing(peers.connect()) as ncon:
+                        ncon.execute("PRAGMA busy_timeout = 250")
+                        live = cov.live_peers(codex, ncon, now=now, own_key=own,
+                                              own_benchmarks=cov.own_benchmarks(root, collection.name, codex, own))
+                    out["peers"] = len(live)
+                    if live and out["open"]:
+                        lead = contribute.leaders(codex, snap, mcon, live=live, now=now)
+                        out["leads"] = sum(1 for k in lead.values() if k == own)
+                        out["left"] = sum(1 for k in lead.values() if k is not None and k != own)
+    except Exception:   # noqa: BLE001 — a card line, never a failed page
+        out = None
+    _p2p_cache[key] = (now, out)
+    return out
 
 
 @admin_router.get("/library/{name}/terms")

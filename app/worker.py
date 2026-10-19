@@ -884,13 +884,13 @@ def _lead_walk(con, key: str, limit: int, keep, deadline: float) -> list:
     return out[:limit]
 
 
-def _backfill_rows(con, collection, limit: int) -> list:
-    """Dense backfill candidates under "all": new documents first, then
-    version-driven re-embeds — both cursor-paged when an archive is
+def _backfill_rows(con, collection, limit: int, mode: str | None = None) -> list:
+    """Dense backfill candidates under "all" and "p2p": new documents first,
+    then version-driven re-embeds — both cursor-paged when an archive is
     declared, both walked from the start otherwise.
 
-    A shared collection's open parts that ANOTHER live peer leads (04 §4.5)
-    are left to it (`share.leading`), in both walks: their documents are not
+    Under "p2p" a shared collection's open parts that ANOTHER live peer leads
+    (04 §4.5) are left to it (`share.leading`), in both walks: their documents are not
     candidates here, and the new walk then goes along the scope index from a
     cursor (`_lead_walk`), so a skipped head never blocks it and a sweep
     costs the candidates, never the table. No peer, no lead elsewhere:
@@ -900,7 +900,11 @@ def _backfill_rows(con, collection, limit: int) -> list:
     if collection is not None:
         _remember_label(key, collection.name)
     from app.share import leading
-    skip = leading.skip_test(collection, con) if collection is not None else None
+    # the partition is `embed = "p2p"`'s ("all p2p", 07 §7.8); under `all`
+    # ("all local") this node embeds every part itself, whoever leads it
+    if mode is None:
+        mode = db.get_scope(con).get("embed_mode")
+    skip = leading.skip_test(collection, con) if collection is not None and mode == "p2p" else None
     keep = None if skip is None else (lambda r: not skip(r))
     if not ranges:
         if keep is None:
@@ -1088,7 +1092,7 @@ def _next_book(con, scope, embed_allowed=True, collection=None):
     if collection is not None and not _license_allows(con, collection, "indexing"):
         return None, None
     # 1. priority embeds (lazy queue), regardless of backfill mode
-    if embed_allowed and scope["embed_mode"] in ("lazy", "all"):
+    if embed_allowed and scope["embed_mode"] in collections_mod.EMBEDDING_MODES:
         r = con.execute(_QUEUE_ELIGIBLE,
                         (config.MAX_RETRIES, config.EMBED_VERSION, 1)).fetchone()
         if r:
@@ -1142,10 +1146,10 @@ def _next_book(con, scope, embed_allowed=True, collection=None):
     r = _next_reindex(con, collection)
     if r:
         return "fts", r
-    # 4. dense backfill only in 'all' mode — coverage-aware (amendment 38):
+    # 4. dense backfill only under all / p2p — coverage-aware (amendment 38):
     # what a declared archive can still deliver is not the encoder's
-    if embed_allowed and scope["embed_mode"] == "all":
-        rows = _backfill_rows(con, collection, 1)
+    if embed_allowed and scope["embed_mode"] in collections_mod.BACKFILL_MODES:
+        rows = _backfill_rows(con, collection, 1, mode=scope["embed_mode"])
         if rows:
             return "embed", rows[0]
     return None, None
@@ -1157,7 +1161,7 @@ def _next_embed(con, scope, collection=None):
     (lazy queue) and 4 (backfill under 'all'), so the two selectors can
     never claim the same document: a document is embed-eligible only after
     its fts commit, and a pipeline thread never touches it again after that."""
-    if scope["embed_mode"] not in ("lazy", "all"):
+    if scope["embed_mode"] not in collections_mod.EMBEDDING_MODES:
         return None, None
     # INVARIANT 9 GATES EMBEDDING TOO — it is use of the corpus. _next_book
     # gates its round; this selector, which the main loop uses whenever
@@ -1171,8 +1175,8 @@ def _next_embed(con, scope, collection=None):
     if r:
         return "embed", r
     con.execute(_QUEUE_CLEANUP, (config.MAX_RETRIES,))
-    if scope["embed_mode"] == "all":
-        rows = _backfill_rows(con, collection, 1)
+    if scope["embed_mode"] in collections_mod.BACKFILL_MODES:
+        rows = _backfill_rows(con, collection, 1, mode=scope["embed_mode"])
         if rows:
             return "embed", rows[0]
     return None, None
@@ -1204,13 +1208,13 @@ def _embed_candidates(con, scope, limit: int, collection=None):
     marked = encoder_timeouts.waiting(place) if place else 0
     want = limit + marked
     rows = []
-    if scope["embed_mode"] in ("lazy", "all"):
+    if scope["embed_mode"] in collections_mod.EMBEDDING_MODES:
         rows += con.execute(
             _QUEUE_ELIGIBLE,
             (config.MAX_RETRIES, config.EMBED_VERSION, want)).fetchall()
-    if len(rows) < want and scope["embed_mode"] == "all":
+    if len(rows) < want and scope["embed_mode"] in collections_mod.BACKFILL_MODES:
         seen = {r["uid"] for r in rows}
-        rows += [r for r in _backfill_rows(con, collection, want)
+        rows += [r for r in _backfill_rows(con, collection, want, mode=scope["embed_mode"])
                  if r["uid"] not in seen][: want - len(rows)]
     if marked:
         rows = [r for r in rows if not encoder_timeouts.passed_over(place, r["uid"])]
@@ -3640,7 +3644,7 @@ def _producer_step(con, collection) -> bool:
     none to do now — switched off, unlicensed, its encoder failing its
     baseline, or its vector table under maintenance: each a deferral."""
     scope = db.get_scope(con)
-    if scope["embed_mode"] not in ("lazy", "all"):
+    if scope["embed_mode"] not in collections_mod.EMBEDDING_MODES:
         return False
     if not _license_allows(con, collection, "embedding"):
         return False
@@ -3764,7 +3768,7 @@ def _release_embedder(collection, con=None, others=None, reason: str = "") -> bo
     whose mode IS "all" uses the same model on the same runner. It loads
     again on the next request (a search, an on-demand embed). True when
     unloaded; never raises."""
-    if _effective_embed_mode(collection, con) == "all":
+    if _effective_embed_mode(collection, con) in collections_mod.BACKFILL_MODES:
         return False
     try:
         recipe = collections_mod.recipe_for(collection)
@@ -3784,7 +3788,7 @@ def _release_embedder(collection, con=None, others=None, reason: str = "") -> bo
         except Exception:   # noqa: BLE001
             continue
         if o and model_load.server_of(o.url) == server and o.model == recipe.model \
-                and _effective_embed_mode(other) == "all":
+                and _effective_embed_mode(other) in collections_mod.BACKFILL_MODES:
             return False
     done = model_load.unload(recipe.url, recipe.model)
     if done and con is not None:
@@ -3828,7 +3832,7 @@ def _sweep_unheld_embedders(collections, con=None) -> list[str]:
     # the models some collection on "all" names: those stay, idle or not
     kept: set[str] = set()
     for c in collections:
-        if _effective_embed_mode(c) != "all":
+        if _effective_embed_mode(c) not in collections_mod.BACKFILL_MODES:
             continue
         try:
             r = collections_mod.recipe_for(c)

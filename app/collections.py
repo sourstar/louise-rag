@@ -267,8 +267,16 @@ def recipe_for(collection) -> EmbedRecipe:
 # retrieval uses — amendment 6). `embed_mode` in the collection TOML is the
 # Tier-2 desired state; the Library's override is Tier 3 and lasts until the
 # worker next applies the TOML (restart, or a TOML edit) — invariant 10.
-EMBED_MODES = ("off", "lazy", "all")
+EMBED_MODES = ("off", "lazy", "all", "p2p")
 DEFAULT_EMBED_MODE = "lazy"
+#: the modes under which this node's encoder embeds at all, and the two
+#: under which it backfills: `all` every part itself ("all local"), `p2p`
+#: the parts rendezvous gives it, publishing as it goes ("all p2p"; 04 §4.5,
+#: 07 §7.8, operator 2026-10-19). The Library shows the display names; the
+#: file and the API carry these tokens, as `lazy` for on-demand.
+EMBEDDING_MODES = ("lazy", "all", "p2p")
+BACKFILL_MODES = ("all", "p2p")
+EMBED_MODE_LABELS = {"off": "off", "lazy": "on-demand", "all": "all local", "p2p": "all p2p"}
 
 
 @dataclass(frozen=True)
@@ -340,6 +348,10 @@ class Collection:
     # `share_kinds`; 04 §4.3): what serving is narrowed to; None = all held
     share_slices: tuple[str, ...] | None = None
     share_kinds: tuple[str, ...] | None = None
+    #: why `embed_mode_default` is not what the file says: `embed = "p2p"`
+    #: with `share = false` runs as `all` — p2p publishes what it embeds, and
+    #: a node that does not share can publish nothing (07 §7.8, 2026-10-19)
+    embed_mode_note: str | None = None
 
     def plugin_instance(self) -> CorpusSource:
         inner = PLUGIN_REGISTRY[self.plugin]
@@ -518,7 +530,8 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
     else:
         corpus = defaults["corpus_dir"] if new_shape else config.CORPUS_DIR
 
-    embed_mode = _embed_mode(raw.get("embed", raw.get("embed_mode")), path)
+    embed_mode, embed_note = effective_embed_mode(
+        _embed_mode(raw.get("embed", raw.get("embed_mode")), path), share, where)
     from . import layers as layers_mod
     return Collection(
         name=name,
@@ -529,6 +542,7 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
         plugin=codex.plugin,
         profile=profile,
         embed_mode_default=embed_mode,
+        embed_mode_note=embed_note,
         corpus_dir=corpus,
         manifest_path=d / "state" / "manifest.sqlite",
         fts_dir=d / "index",
@@ -619,7 +633,8 @@ def load_annotations() -> list:
 #: (CLAUDE.md), so a Codex TOML is written in THEIR word and canonicalised
 #: here rather than the rename being done under a running node mid-
 #: migration. Retiring `lazy` belongs with the other old names, step 12.
-_EMBED_MODE_ALIASES = {"on-demand": "lazy"}
+_EMBED_MODE_ALIASES = {"on-demand": "lazy", "all local": "all", "all-local": "all",
+                       "all p2p": "p2p", "all-p2p": "p2p"}
 
 
 def _embed_mode(value, path: Path) -> str | None:
@@ -628,9 +643,20 @@ def _embed_mode(value, path: Path) -> str | None:
     mode = _EMBED_MODE_ALIASES.get(str(value), str(value))
     if mode not in EMBED_MODES:
         raise ValueError(
-            f"{path}: embed must be one of off | on-demand | all "
+            f"{path}: embed must be one of off | on-demand | all | p2p "
             f"(07 §7.8), got {value!r}")
     return mode
+
+
+def effective_embed_mode(mode: str | None, share: bool, where: str) -> tuple[str | None, str | None]:
+    """`(the mode the node runs, why it is not the file's)`: `p2p` with
+    sharing off runs as `all` — the Library asks before writing either
+    pair, so this is for a file edited by hand (07 §7.8, 2026-10-19)."""
+    if mode == "p2p" and not share:
+        return "all", (f"{where}: embed = \"p2p\" with share = false — p2p embedding publishes what it "
+                       f"embeds and sharing is off, so the node embeds as all local until one of the "
+                       f"two changes")
+    return mode, None
 
 
 #: 02 §2.6: "The kinds are closed, and `--kinds` (07 §7.3) takes their names."

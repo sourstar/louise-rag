@@ -1072,7 +1072,9 @@ codex  = "sha256:…"                            # the collection_id this name h
 title  = "PubMed"                              # optional: overrides descriptive.title for this peer's own listing; never published
 slices = ["year=1975-1979", "year=1980-1984"]  # or "all"; a list is PART of the collection, held by `share fetch --slice` (§7.3)
 kinds  = ["records", "vectors"]
-embed  = "on-demand"                           # off | on-demand | all: what the node spends, never what search uses
+embed  = "on-demand"                           # off | on-demand | all | p2p: what the node's encoder spends, never what search uses;
+                                               # all = every part itself ("all local"), p2p = the parts rendezvous gives this node,
+                                               # published as it goes ("all p2p", 04 §4.5) — p2p needs share = true (below; 2026-10-19)
 share  = true
 share_slices = ["year=1980-1984"]              # optional: serving narrowed to these slices (`share --slices`); absent = all held
 share_kinds  = ["records"]                     # optional: and these member kinds (`share --kinds`); terms, validation,
@@ -1145,6 +1147,24 @@ keeps its fused order and says so (05 §5.6). `embed
 = on-demand` computes vectors lazily, for the chunks a search needs; a
 vector computed that way is bundled and shared like any other. Search
 runs over whatever vectors exist regardless of the mode.
+
+**Two axes, one meeting point** (amended 2026-10-19, operator). `embed`
+says what this node's ENCODER spends: `all` ("all local" in the Library)
+embeds every part itself, whoever leads it, and its duplicates become
+checks (04 §4.5); `p2p` ("all p2p") embeds the parts rendezvous gives
+this node, with the cascade, and publishes as it goes. `share` says what
+this node makes AVAILABLE — its records, and every embedding it holds as
+bundles (04 §4.3), whatever `embed` says and wherever the vectors came
+from; a node whose embed is `off` still bundles what an archive or an
+earlier run gave it, and every node takes peers' bundles in. The two
+meet in one place: `p2p` publishes, so it needs `share = true`. The
+Library asks before writing either pair — setting `all p2p` with sharing
+off enables sharing; disabling sharing under `all p2p` switches the mode
+to `all local`; proceed or abort — and a file edited by hand to say
+`p2p` with `share = false` runs as `all`, shown as such on its card.
+Beside the drop-down the card reads the two axes: the bounty list (the
+open parts of the current snapshot, the parts this node leads and leaves
+to peers) and availability (chunks bundled here, chunks taken from peers).
 
 An `[encoder]` URL names a model and never a device. Where the model
 runs is the model container's placement, and a change of device is a

@@ -259,3 +259,36 @@ def test_collection_management_requires_admin(client):
                   "/admin/library/gutenberg/bundle/export",
                   "/admin/library/gutenberg/bundle/import"):
         assert client.post(path, json={}).status_code == 401, path
+
+
+def test_all_p2p_comes_with_sharing_and_sharing_off_takes_p2p_back_to_all_local(client):
+    """07 §7.8, 2026-10-19: two independent controls, one meeting point. The
+    page asks; the server writes both settings in one file rewrite."""
+    collection = collections_mod.default_collection()
+    assert collection.share is False
+    r = client.post("/admin/library/gutenberg/embed-mode", json={"mode": "p2p"})
+    assert r.status_code == 200 and r.json()["share"] is True and r.json()["share_enabled"] is True
+    c = collections_mod.by_name("gutenberg")
+    assert c.embed_mode_default == "p2p" and c.share is True and c.embed_mode_note is None
+    text = collections_mod.config_toml_path("gutenberg").read_text(encoding="utf-8")
+    assert 'embed = "p2p"' in text and "share = true" in text
+    assert db.get_scope(db.connect(c))["embed_mode"] == "p2p"
+    # sharing off under p2p: the mode goes back to all local in the same write
+    r = client.post("/admin/library/gutenberg/share", json={"share": False})
+    assert r.status_code == 200 and r.json() == {**r.json(), "share": False, "embed_mode": "all",
+                                                 "embed_mode_changed": True}
+    c = collections_mod.by_name("gutenberg")
+    assert c.embed_mode_default == "all" and c.share is False and c.embed_mode_note is None
+    assert db.get_scope(db.connect(c))["embed_mode"] == "all", "the runtime scope follows"
+    # sharing on and off under another mode touches the mode not at all
+    r = client.post("/admin/library/gutenberg/share", json={"share": True})
+    assert r.json()["embed_mode_changed"] is False and collections_mod.by_name("gutenberg").share is True
+    r = client.post("/admin/library/gutenberg/embed-mode", json={"mode": "all"})
+    assert r.json()["share"] is True and r.json()["share_enabled"] is False
+    r = client.post("/admin/library/gutenberg/share", json={"share": False})
+    assert r.json()["embed_mode"] == "all" and collections_mod.by_name("gutenberg").share is False
+    assert client.post("/admin/library/gutenberg/embed-mode", json={"mode": "all p2p"}).status_code == 400, \
+        "the API carries the token, the page the name"
+    # the card carries the two axes and the file's word
+    r = client.get("/admin/library", headers={"X-Admin-Token": "sekrit"})
+    assert r.status_code == 200 and "all p2p" in r.text and "all local" in r.text and "shared" in r.text
