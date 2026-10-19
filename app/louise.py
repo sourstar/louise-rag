@@ -1011,14 +1011,19 @@ def cmd_dev_tool(a) -> int:
     return int(rc or 0)
 
 
-def cmd_dev_mark_embedded(a) -> int:
+def cmd_dev_mark_embedded(a) -> int:  # noqa: C901
     """`louise dev mark-embedded <collection>`: the one-off reconcile for the
     documents `share contribute`'s build embedded and never marked (372 on
-    the node, 2026-10-19) — per shard of the current snapshot, the records
-    whose every chunk has a vector here and whose row says `embed_done =
-    0`, marked as the embed stage marks them. Takes the collection's lock.
-    Per shard one lookup of its chunk ids: the snapshot's size, once."""
-    from app import db as _db, embed_marks, embeddings
+    the node, 2026-10-19). ONE scan of the vector table's `id` column,
+    keeping the ids of the candidate documents (`embed_done = 0`), then per
+    shard of the snapshot the candidates whose every layer-derived chunk id
+    is among them, marked as the embed stage marks them. The first form
+    looked the chunk ids up per shard — 1,600 lookups over a 10.5 M-row
+    table, 54 minutes and no end in sight (München) — a cost of shards ×
+    table; this one is the table once plus the shards once. Takes the
+    collection's lock unless `--dry-run`; progress on stderr."""
+    import time
+    from app import db as _db, embed_marks, embeddings, layers as layers_mod
     from app.hold import land as landing, records as rec
     from app.share import seeder
     name, codex = col.resolve(a.root, a.collection)
@@ -1028,24 +1033,49 @@ def cmd_dev_mark_embedded(a) -> int:
     local = rec.local_collection(a.root, name, codex)
     if not a.dry_run:
         _take_write_lock(a.root, name, "dev mark-embedded")
-    vectors_for = lambda ids: embeddings.vectors_by_chunk_id(ids, collection=local)  # noqa: E731
-    out = {"collection": name, "shards": 0, "complete_unmarked": 0, "marked": 0, "dry_run": bool(a.dry_run)}
+    out = {"collection": name, "candidates": 0, "rows_scanned": 0, "shards": 0, "complete_unmarked": 0,
+           "marked": 0, "dry_run": bool(a.dry_run)}
+    t0 = time.time()
     with _closing(_db.connect(local)) as con:
+        candidates = {r["uid"] for r in con.execute(
+            "SELECT uid FROM documents WHERE in_scope=1 AND embed_done=0 AND error IS NULL").fetchall()}
+        out["candidates"] = len(candidates)
+        if not candidates:
+            _print(out)
+            return 0
+        held: dict[str, set[str]] = {}
+        for batch in embeddings.scan_columns(local, ("id",)):
+            ids = batch.column("id").to_pylist()
+            out["rows_scanned"] += len(ids)
+            for cid in ids:
+                uid = cid.rsplit(":", 2)[0] if isinstance(cid, str) else None
+                if uid in candidates:
+                    held.setdefault(uid, set()).add(cid)
+            if out["rows_scanned"] % (65_536 * 16) < 65_536:
+                print(f"  scanned {out['rows_scanned']:,} rows, {len(held):,} candidate(s) with vectors, "
+                      f"{time.time() - t0:.0f} s", file=sys.stderr)
+        print(f"  table scanned: {out['rows_scanned']:,} rows in {time.time() - t0:.0f} s; "
+              f"{len(held):,} of {len(candidates):,} candidate(s) have vectors", file=sys.stderr)
         for shard in snapshot.shards:
             sid = f"{shard.slice}/{shard.n:05d}"
-            records = landing.records_for(a.root, name, snapshot, sid, None)
             out["shards"] += 1
-            if a.dry_run:
-                uids = embed_marks.complete_uids(codex, records, vectors_for)
-                for i in range(0, len(uids), 500):
-                    part = uids[i:i + 500]
-                    out["complete_unmarked"] += con.execute(
-                        f"SELECT COUNT(*) FROM documents WHERE embed_done=0 AND uid IN "
-                        f"({','.join('?' * len(part))})", part).fetchone()[0]
-            else:
-                n = embed_marks.mark_complete(con, local, codex, records, vectors_for)
-                out["complete_unmarked"] += n
-                out["marked"] += n
+            records = [r for r in landing.records_for(a.root, name, snapshot, sid, None) if r["uid"] in held]
+            complete = []
+            for r in records:
+                row = {"uid": r["uid"], "native_id": r.get("native_id", 0)}
+                sections = [tuple(x) for x in r.get("sections") or []]
+                wanted = [c["id"] for c in layers_mod.chunks_for_document(codex, row, sections)]
+                if wanted and all(c in held[r["uid"]] for c in wanted):
+                    complete.append(r["uid"])
+            if not complete:
+                continue
+            out["complete_unmarked"] += len(complete)
+            if not a.dry_run:
+                out["marked"] += embed_marks.mark_embedded(con, local, complete, synced=False)
+            if out["shards"] % 200 == 0:
+                print(f"  {out['shards']} shard(s): {out['complete_unmarked']} complete and unmarked so far",
+                      file=sys.stderr)
+    out["seconds"] = round(time.time() - t0, 1)
     _print(out)
     return 0
 
@@ -1089,8 +1119,10 @@ def cmd_dev_deprecate_duplicates(a) -> int:
                   f"deprecate {', '.join(b[:23] + '…' for b in d['withdraw'])}  ({d['chunks']} chunks)",
                   file=sys.stderr)
         pairs = {b: d["keep"] for d in groups for b in d["withdraw"]}
-        summary = {"collection": name, "parts": len(groups), "bundles": len(pairs),
-                   "chunks": sum(d["chunks"] for d in groups)}
+        # `parts` are distinct parts; a part held as two bundles, both
+        # duplicated, is one part and two groups (en/00013 on the node)
+        summary = {"collection": name, "parts": len({d["shard"] for d in groups}), "groups": len(groups),
+                   "bundles": len(pairs), "chunks": sum(d["chunks"] for d in groups)}
         if not pairs or a.dry_run:
             _print({**summary, "deprecated": False})
             return 0

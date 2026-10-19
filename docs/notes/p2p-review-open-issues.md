@@ -559,8 +559,23 @@ shard's build, the records whose every chunk now has a vector
 (`complete_uids`: the chunks through the layers, the vectors asked of the
 table, never `documents.chunks`), interrupted or not. The one-off
 reconcile for the 372: `louise dev mark-embedded gutenberg [--dry-run]`
-(07 §7.3), per shard of the snapshot. Tests: tests/share/test_contribute.py,
+(07 §7.3). Its first form looked the chunk ids up per shard — 1,600
+lookups over a 10.5 M-row Lance table; München's dry run ran 54 minutes
+at 124 % CPU, 3.3 GB RSS, and was stopped — a cost of shards × table.
+Now ONE scan of the table's `id` column keeping the candidates' ids
+(`embed_done = 0`: 7,8xx documents on the node), then the shards once
+(carry.py learnt the same lesson on pubmed: ~16 h of lookups against a
+minute's scan). Tests: tests/share/test_contribute.py,
 tests/hold/test_embed_marks.py.
+
+The node's deprecation run (München, 17:23 CEST): the dry run counted
+421 copies over 418 parts, 2,461,390 chunks — three parts (en/00013,
+en/00062, en/00221) were held as two bundles each, both duplicated, and
+München's hand count had summed their second originals too. One
+attestation (`sha256:ceb60b9f…`, published as event `sha256:6628720b…`),
+served until 2026-10-20T16:20:40Z. Digest after: members 1,092,
+deprecated_members 421, coverage 973, 1,087,077 bytes. Tank unchanged
+(35.1 G used, 7.46 T free): the copies go a day later.
 
 München's other finding: the en/00043 T0 hypothesis (a chunks = 0 record
 in `possession.json` with no rows) does not hold — `export.grouped` skips

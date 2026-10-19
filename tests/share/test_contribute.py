@@ -515,8 +515,8 @@ def test_the_build_marks_the_documents_it_completed_embedded_and_the_reconcile_c
     assert louise.main(["dev", "mark-embedded", "gutenberg", "--root", str(root), "--dry-run"]) == 0
     text = capsys.readouterr().out
     dry = json.loads(text[text.index("{"):])
-    assert dry == {"collection": "gutenberg", "shards": len(snapshot.shards), "complete_unmarked": len(uids),
-                   "marked": 0, "dry_run": True}
+    assert dry["complete_unmarked"] == dry["candidates"] == len(uids) and dry["marked"] == 0 and dry["dry_run"]
+    assert dry["shards"] == len(snapshot.shards) and dry["rows_scanned"] > 0
     assert all(r["embed_done"] == 0 for r in con.execute("SELECT embed_done FROM documents").fetchall())
     assert louise.main(["dev", "mark-embedded", "gutenberg", "--root", str(root)]) == 0
     text = capsys.readouterr().out
@@ -526,4 +526,4 @@ def test_the_build_marks_the_documents_it_completed_embedded_and_the_reconcile_c
     # nothing left: the second run marks nothing
     assert louise.main(["dev", "mark-embedded", "gutenberg", "--root", str(root)]) == 0
     text = capsys.readouterr().out
-    assert json.loads(text[text.index("{"):])["marked"] == 0
+    assert json.loads(text[text.index("{"):])["candidates"] == 0, "nothing unmarked: the table is not even scanned"

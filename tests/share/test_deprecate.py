@@ -263,8 +263,8 @@ def test_the_dev_command_lists_asks_and_deprecates(ready, monkeypatch, capsys):
         text = capsys.readouterr().out
         return json.loads(text[text.index("{"):])
     assert louise.main(["dev", "deprecate-duplicates", "gutenberg", "--root", str(root), "--dry-run"]) == 0
-    assert out() == {"collection": "gutenberg", "parts": 1, "bundles": 1, "chunks": cov.row(kw["con"], dup)["chunks"],
-                     "deprecated": False}
+    assert out() == {"collection": "gutenberg", "parts": 1, "groups": 1, "bundles": 1,
+                     "chunks": cov.row(kw["con"], dup)["chunks"], "deprecated": False}
     assert louise.main(["dev", "deprecate-duplicates", "gutenberg", "--root", str(root)]) == 2, "no terminal: --yes"
     capsys.readouterr()
     assert louise.main(["dev", "deprecate-duplicates", "gutenberg", "--root", str(root), "--yes"]) == 0
@@ -274,6 +274,6 @@ def test_the_dev_command_lists_asks_and_deprecates(ready, monkeypatch, capsys):
         assert contribute.bundle_dir(root, "gutenberg", codex, sid, b).is_dir() and cov.row(kw["con"], b)["accepted_at"]
     assert set(deprecate.deprecated(root, "gutenberg", codex)) == {dup}
     assert louise.main(["dev", "deprecate-duplicates", "gutenberg", "--root", str(root), "--yes"]) == 0
-    assert out() == {"collection": "gutenberg", "parts": 0, "bundles": 0, "chunks": 0, "deprecated": False}, \
+    assert out() == {"collection": "gutenberg", "parts": 0, "groups": 0, "bundles": 0, "chunks": 0, "deprecated": False}, \
         "the pair still exists on disk (the copy goes after the window) and is stated once"
     assert deprecate.header_pairs(root, "gutenberg", codex, kw["con"], own_key=OUR_KEY) == {}
