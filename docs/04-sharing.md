@@ -505,16 +505,30 @@ many holders joining a network do not make as many versions of every
 part: a part whose bundle a live neighbour both claims and offers is
 left to the fetch, which takes that bundle in and compares it with the
 vectors held here ("duplicates are checks", below); a version that exists
-and is served is reused, not remade. A producer that nonetheless finds two
+and is served is reused, not remade. And a holder bundles only the
+vectors it EMBEDDED and nobody bundled: the records every accepted bundle
+held here claims, whoever produced it, are left out of its export — rows
+landed from another producer's bundle are that producer's, and bundling
+them again would be a third copy signed as one's own (a peer did exactly
+that for 44 parts of the node's rows, 2026-10-19).
+
+**A part's coverage is the union of its bundles' chunk ids, never a
+sum** *(amended 2026-10-19)*. With one accepted bundle a part is covered
+for that bundle's chunks; with several — a producer's duplicate, a
+re-signed copy, two producers' independent embeddings — for the chunks
+their ids cover TOGETHER (`counting.union_counts`, cached per part on its
+bundle set). Summed and capped, two bundles of 6,327 chunks over the same
+records read as all 6,607 of lang=en/00160, the part closed, and the 280
+chunks nobody had embedded would never have been assigned again. A producer that nonetheless finds two
 equivalent copies of a part among its own bundles (one `content_digest`)
 keeps one CURRENT and deprecates the rest (03 §3.6; 09 §9.8): it serves
 them a day longer for fetches in flight, lists them apart in its digest
 (09 §9.9 `deprecated_members`), and nobody starts a fetch of one — unless
 the current copy is offered by nobody live, or came back nobody-served,
-when a deprecated copy, valid and equivalent, is the fallback. Two
-equivalent copies held together count a part's coverage once: summed, two
-copies of a partial part would read as the whole part and its leader
-would never embed the rest. *(Operator, 2026-10-19.)*
+when a deprecated copy, valid and equivalent, is the fallback. A peer
+that finds it re-signed another producer's rows deprecates its copy in
+favour of the original the same way (the current copy may be another
+producer's). *(Operator, 2026-10-19.)*
 
 **Weight and eligibility.** The weight is the peer's benchmark for this
 collection's space — the `benchmarks` entry of its digest whose

@@ -1240,8 +1240,12 @@ write. Per shard of the current snapshot, one lookup of its chunk ids.
 this peer's accepted bundles that share a `content_digest` with another of
 its own for the same part (the holder pass bundled 418 partially held
 parts again after every restart, a new id each time since `created_at` is
-in the signed header). It lists the pairs, keeps the earliest of each as
-the CURRENT copy, and — asked, or `--yes` — writes ONE attestation
+in the signed header), and this peer's bundles whose CHUNK rows equal an
+accepted bundle of another producer made earlier (`content_digest` covers
+the challenge rows too, which each producer embeds itself; a peer
+re-signed 44 parts of the node's rows, 2026-10-19). It lists the pairs,
+keeps the earliest of each as the CURRENT copy, and — asked, or `--yes`
+— writes ONE attestation
 (`check` and `result` `deprecate`, `detail.bundles` pairing each
 deprecated id with its current one, 09 §9.8), keeps it at the attestation
 path and publishes it as an event for the beat to forward. NOTHING is

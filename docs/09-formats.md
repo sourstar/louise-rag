@@ -1245,7 +1245,7 @@ run — *inconclusive* (03 §3.1) — produces no attestation.
 | `merge` | exact | `{other: collection_id}` — two daughters' snapshots have one hash (04 §4.6); `snapshot_hash` is that hash |
 | `forgery` | proof | `{chunk_id, producer: key, bundle: id, claimed: id, recomputed: id, text: string or null, content_hash: BLAKE2b-128}` — `claimed` and `recomputed` are `H` over the vector as big-endian `space.dtype` bytes; `text` is the chunk's text, or `null` on a red-class collection, whose `content_hash` stands in for it |
 | `withdraw` | producer's own | `{bundles: [id…]}` — the signer retracts its own bundles; `result: "withdraw"` |
-| `deprecate` | producer's own | `{bundles: {deprecated_id: current_id, …}}` — the signer marks copies of its own REDUNDANT beside an equivalent one it keeps (one `content_digest`, §9.7); `result: "deprecate"`. Unlike `withdraw` the copies are valid: peers keep serving them a day longer (07 §7.3) and list them under `deprecated_members` (§9.9), never start a fetch of one, finish a fetch in flight past half its bytes, fall back to one when the current copy is offered by nobody, and count two equivalent copies held together once (04 §4.5). Only the producer's own signature deprecates its bundle. *Added 2026-10-19, operator* |
+| `deprecate` | producer's own | `{bundles: {deprecated_id: current_id, …}}` — the signer marks copies of its own REDUNDANT beside an equivalent one it keeps (one `content_digest`, §9.7); `result: "deprecate"`. Unlike `withdraw` the copies are valid: peers keep serving them a day longer (07 §7.3) and list them under `deprecated_members` (§9.9), never start a fetch of one, finish a fetch in flight past half its bytes, fall back to one when the current copy is offered by nobody, and count two equivalent copies held together once (04 §4.5). Only the producer's own signature deprecates its bundle; the current copy may be another producer's (a peer that re-signed rows it landed defers to the original). *Added 2026-10-19, operator* |
 | `supersedes` | claim | `{superseded: collection_id, evaluation: <the Codex's evaluation block>}` — a sister claims a better score; `result: "supersedes"` |
 
 A failing statistical attestation lists the failing chunk ids in
@@ -1430,8 +1430,11 @@ bundle and is printed by `hold vectors show --json`.
 | `source` | `"local"` · `"fetched"` · `"archive"` | who produced the vectors from this peer's view |
 | `verified_on_use` | integer | chunks of it T4 has re-embedded and confirmed |
 
-Derived from the rows, per part: `covered` — chunks with an accepted
-row; `open` — the part has any chunk without one; the leader and the
+Derived from the rows, per part: `covered` — the chunks the accepted
+bundles' chunk ids cover TOGETHER, the union read from the held
+`vectors.parquet` files where a part has more than one accepted bundle
+and the row's `chunks` where it has one (04 §4.5, amended 2026-10-19: a
+sum closed a part over a gap); `open` — the part has any chunk without one; the leader and the
 grace window of 04 §4.5. A coverage claim in a neighbour's digest is
 recorded beside these as `claimed_by: [key…]` per bundle and counts for
 nothing until the bundle is fetched and accepted here.

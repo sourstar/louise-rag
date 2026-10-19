@@ -1093,7 +1093,7 @@ def cmd_dev_deprecate_duplicates(a) -> int:
     from app import identity
     from app.bundles import keys as node_keys
     from app.hold import equivalence, records as rec
-    from app.share import deprecate as deprecate_mod, peers, seeder, withdraw as withdraw_mod
+    from app.share import coverage as cov, deprecate as deprecate_mod, peers, seeder, withdraw as withdraw_mod
     name, codex = col.resolve(a.root, a.collection)
     try:
         key = node_keys.load_signing_key()
@@ -1119,10 +1119,24 @@ def cmd_dev_deprecate_duplicates(a) -> int:
                   f"deprecate {', '.join(b[:23] + '…' for b in d['withdraw'])}  ({d['chunks']} chunks)",
                   file=sys.stderr)
         pairs = {b: d["keep"] for d in groups for b in d["withdraw"]}
+        # and this peer's copies of ANOTHER producer's earlier bundle — the
+        # same chunk rows re-signed (Perugia, 2026-10-19: 44 of the node's)
+        foreign = deprecate_mod.foreign_duplicates(a.root, name, codex, con, own_key=own_key,
+                                                   log=lambda m: print(m, file=sys.stderr))
+        foreign = {b: c for b, c in foreign.items() if not deprecate_mod.by_producer(already, b, own_key)}
+        shards = {d["shard"] for d in groups}
+        chunks = sum(d["chunks"] for d in groups)
+        for b, c in foreign.items():
+            r = cov.row(con, b)
+            shards.add(r["shard"])
+            chunks += int(r["chunks"] or 0)
+            print(f"  {r['shard'].rsplit('/', 2)[1]}/{r['shard'].rsplit('/', 1)[1]}  current {c[:23]}… (another "
+                  f"producer's)  deprecate {b[:23]}…  ({r['chunks']} chunks)", file=sys.stderr)
+            pairs[b] = c
         # `parts` are distinct parts; a part held as two bundles, both
         # duplicated, is one part and two groups (en/00013 on the node)
-        summary = {"collection": name, "parts": len({d["shard"] for d in groups}), "groups": len(groups),
-                   "bundles": len(pairs), "chunks": sum(d["chunks"] for d in groups)}
+        summary = {"collection": name, "parts": len(shards), "groups": len(groups), "foreign": len(foreign),
+                   "bundles": len(pairs), "chunks": chunks}
         if not pairs or a.dry_run:
             _print({**summary, "deprecated": False})
             return 0
@@ -1680,7 +1694,9 @@ def cmd_share_contribute(a) -> int:
     try:
         if a.once:
             _print(one_pass())
-            return 0
+            # 07 §7.7: a signal finishes the unit and exits 130 — `--once`
+            # returned 0 after SIGTERM (Perugia, 2026-10-19)
+            return 130 if stop.is_set() else 0
         while not stop.is_set():
             out = one_pass()
             print(json.dumps(out, sort_keys=True), file=sys.stderr)
@@ -2540,10 +2556,10 @@ def cmd_vectors_show(a) -> int:
     # the manifest opened for READING what the map says, ack or no ack: an
     # inspection, not a use (invariant 9 gates the stages, not `show`)
     with _closing(cov.manifest(a.root, name)) as mcon:
-        from app.share import deprecate
+        from app.share import counting
         out = cov.show(codex, snapshot, mcon,
                        attestations=copy_state.attestations(a.root, name, codex),
-                       peers=live, now=now, redundant=deprecate.redundant_here(a.root, name, codex, mcon))
+                       peers=live, now=now, **counting.view_kwargs(a.root, name, codex, mcon))
     _print(out)
     return 0
 
@@ -4455,6 +4471,16 @@ def main(argv=None) -> int:
 
     if hasattr(signal, "SIGPIPE"):
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # `| head` is not an error
+    if hasattr(signal, "SIGUSR1"):
+        # a command that cannot say where it is: SIGUSR1 prints every
+        # thread's stack to stderr and goes on (a SIGTERM'd contribute spent
+        # 15 minutes somewhere nobody could name, no py-spy in the image —
+        # Perugia, 2026-10-19)
+        try:
+            import faulthandler
+            faulthandler.register(signal.SIGUSR1, all_threads=True, chain=True)
+        except (ValueError, OSError, AttributeError, RuntimeError):
+            pass
     argv = list(sys.argv[1:] if argv is None else argv)
     if len(argv) >= 2 and argv[0] == "share" and argv[1] not in _SHARE_VERBS:
         argv.insert(1, "collection")              # `share <collection>` (07 §7.3)

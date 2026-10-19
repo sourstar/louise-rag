@@ -89,10 +89,13 @@ def publish(root: Path, name: str, codex, snapshot, pairs: Mapping[str, str], *,
         if dep == cur:
             raise ValueError(f"{dep[:23]}…: a bundle cannot be its own current equivalent")
         rows = {b: cov.row(con, b) for b in (dep, cur)}
-        for b, r in rows.items():
-            if r is None or r["producer"] != own_key or not r["accepted_at"]:
-                raise ValueError(f"{b[:23]}…: not an accepted bundle of this peer's — a producer deprecates only "
-                                 f"its own (09 §9.8)")
+        if rows[dep] is None or rows[dep]["producer"] != own_key or not rows[dep]["accepted_at"]:
+            raise ValueError(f"{dep[:23]}…: not an accepted bundle of this peer's — a producer deprecates only "
+                             f"its own (09 §9.8)")
+        if rows[cur] is None or not rows[cur]["accepted_at"]:
+            # the current copy may be ANOTHER producer's: a peer that re-signed
+            # rows it landed deprecates its copy in favour of the original
+            raise ValueError(f"{cur[:23]}…: not a bundle accepted here — the current copy must be held")
         if rows[dep]["shard"] != rows[cur]["shard"]:
             raise ValueError(f"{dep[:23]}… and {cur[:23]}… cover different parts")
         shards.append(rows[dep]["shard"])
@@ -259,6 +262,72 @@ def expire(root: Path, name: str, codex, con, *, now: float | None = None, keep_
         if log:
             log(f"[{name}] deprecate: copy {dep[:23]}… of {_sid(r['shard'])} removed after its keep window; the "
                 f"current copy {cur[:23]}… is held here (vectors untouched)")
+    return out
+
+
+def rows_digest(bundle_dir: Path) -> str | None:
+    """The digest of a held bundle's CHUNK rows alone — `content_digest`
+    (09 §9.7) covers the challenge rows too, which every producer embeds
+    itself, so two producers' copies of the same vectors never share it.
+    Read through `vectors.read` (the files verified) ; None when not here."""
+    from app.hold import bundle as bd, vectors as vec
+    try:
+        header, rows, _possession, _bid = vec.read(bundle_dir)
+        n = int(header["challenge"]["n"])
+        return bd.content_digest(int(header["dim"]), vec.chunks_of(rows, n), header["dtype"])
+    except Exception:   # noqa: BLE001 — not here, or not a bundle
+        return None
+
+
+def foreign_duplicates(root: Path, name: str, codex, con, *, own_key: str,
+                       log: Callable[[str], None] | None = None) -> dict[str, str]:
+    """`{my_bundle: their_bundle}`: this peer's accepted bundles whose chunk
+    rows equal those of an accepted bundle of ANOTHER producer for the same
+    part, made earlier — rows landed from that bundle and re-signed as this
+    peer's (Perugia, 2026-10-19: 44 bundles of the node's rows; the held
+    path excluded only its own bundles' uids), not independent evidence.
+    The cheap test first (identical `possession.json`), the rows' digest
+    then; a one-off's cost, never a round's."""
+    root = Path(root)
+    by_shard: dict[str, list[dict[str, Any]]] = {}
+    for r in cov.rows(con):
+        if r["accepted_at"]:
+            by_shard.setdefault(r["shard"], []).append(r)
+    out: dict[str, str] = {}
+    for shard, rs in by_shard.items():
+        mine = [r for r in rs if r["producer"] == own_key]
+        theirs = [r for r in rs if r["producer"] and r["producer"] != own_key]
+        if not mine or not theirs:
+            continue
+        sid = _sid(shard)
+
+        def _possession(bid: str) -> bytes | None:
+            try:
+                return (contribute.bundle_dir(root, name, codex, sid, bid) / "possession.json").read_bytes()
+            except OSError:
+                return None
+
+        def _created(bid: str) -> int:
+            try:
+                return int(json.loads((contribute.bundle_dir(root, name, codex, sid, bid) / "header.json")
+                                      .read_bytes()).get("created_at") or 0)
+            except (OSError, ValueError, AttributeError):
+                return 0
+        for m in mine:
+            pm = _possession(m["bundle_id"])
+            if pm is None:
+                continue
+            dm = None
+            for t in sorted(theirs, key=lambda r: _created(r["bundle_id"])):
+                if _possession(t["bundle_id"]) != pm or _created(t["bundle_id"]) >= _created(m["bundle_id"]):
+                    continue
+                dm = rows_digest(contribute.bundle_dir(root, name, codex, sid, m["bundle_id"])) if dm is None else dm
+                if dm is not None and dm == rows_digest(contribute.bundle_dir(root, name, codex, sid, t["bundle_id"])):
+                    out[m["bundle_id"]] = t["bundle_id"]
+                    if log:
+                        log(f"[{name}] deprecate: {sid}: this peer's {m['bundle_id'][:23]}… carries the chunk rows "
+                            f"of {t['producer'][:23]}…'s earlier {t['bundle_id'][:23]}…")
+                    break
     return out
 
 

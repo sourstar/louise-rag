@@ -465,16 +465,10 @@ GiB back a day later, not at once.
 **Open points of the deprecation design** (operator: "log any issue
 about deprecated design for further improvement"):
 
-1. *Equivalent bundles from DIFFERENT producers inflate `covered` too.*
-   `shards_view` sums the chunks of every accepted bundle of a part and
-   caps at the part's size; two producers' copies of 60 % of a part read
-   as the whole part, and the leader never embeds the rest. "Duplicates
-   are checks" (04 §4.5) makes this the normal case with many peers. The
-   `redundant` set fixes the deprecated case only. The honest count is
-   by distinct record — `possession.json` per bundle, or `uid_first`/
-   `uid_last` ranges in the row — and should be measured before it is
-   built (reading 1,600 possession files per view is a cost that scales
-   with the map).
+1. ~~*Equivalent bundles from DIFFERENT producers inflate `covered`
+   too.*~~ FIXED the same evening, found live by Perugia (§14): the
+   count is the union of the accepted bundles' chunk ids
+   (`app/share/counting.py`), cached per part on its bundle set.
 2. *A deprecated copy held alone is kept and served forever.* Nothing
    prunes it once the current copy is widely held; that needs a view of
    who holds what across the swarm (the digests' `coverage` gives it)
@@ -565,7 +559,11 @@ at 124 % CPU, 3.3 GB RSS, and was stopped — a cost of shards × table.
 Now ONE scan of the table's `id` column keeping the candidates' ids
 (`embed_done = 0`: 7,8xx documents on the node), then the shards once
 (carry.py learnt the same lesson on pubmed: ~16 h of lookups against a
-minute's scan). Tests: tests/share/test_contribute.py,
+minute's scan). Run on the node (München, 18:44 CEST, 457077b): dry run
+candidates 7,471, rows 9,581,988, shards 1,637, complete and unmarked
+429, 117.5 s; the run under the pause marked 429 in 74.1 s — 429 rather
+than 363 because the 16:00–17:00 mine phase had completed more documents
+since the count. Tests: tests/share/test_contribute.py,
 tests/hold/test_embed_marks.py.
 
 The node's deprecation run (München, 17:23 CEST): the dry run counted
@@ -582,6 +580,54 @@ in `possession.json` with no rows) does not hold — `export.grouped` skips
 a record it holds no row for, so such a record is in neither. The
 refusal stays unexplained; f3d2633's log line names the clause if it
 recurs, and en/00043 has an accepted built bundle now.
+
+### 14. The held path re-signed another producer's rows; the coverage sum closed parts over a gap — FIXED (Perugia's find, BLOCKING)
+
+Perugia's first pass on 9412219 (18:22 CEST) accepted and announced 44
+"held" bundles and embedded nothing: their vectors were the node's,
+landed from its bundles. lang=en/00160 (6,607 chunks): the node's pair
+of 6,327 each and Perugia's 68a8b614… of the same 6,327 and the same
+uids — a third copy, re-signed. Two defects:
+
+1. **The held path** excluded only THIS producer's accepted bundles' uids
+   (`claimed_uids`), so rows landed from another producer's bundle were
+   exported as one's own. Now the uids of EVERY accepted bundle held for
+   the part are excluded, whoever produced it: a holder bundles what it
+   embedded and nobody bundled. The pass JSON's `claimed` lists the
+   probed parts that held nothing to bundle for that reason.
+2. **The count.** `shards_view` summed the chunks of every accepted
+   bundle and capped at the part: 6,327 + 6,327 → 6,607, the part
+   closed with 280 chunks embedded by nobody, and rendezvous would never
+   assign it again. 9412219's `redundant` set covered a producer's own
+   deprecated copies only. Now a part with several accepted bundles is
+   covered for the UNION of their chunk ids, read from the held
+   `vectors.parquet` files (challenge rows left out) and cached per part
+   on its sorted bundle ids (`state/share/coverage-union.json`); a
+   bundle whose files are not here counts for nothing (open is noise,
+   closed over a gap is a loss). `counting.view_kwargs` hands `redundant`
+   and `union` to every view: `show`, `leaders`/`open_shards`,
+   `leading.skip_test`, the Library card, `hold vectors show`.
+
+Perugia's 44 copies: `dev deprecate-duplicates` now also finds this
+peer's bundles whose CHUNK rows equal another producer's earlier bundle
+(`deprecate.foreign_duplicates`: identical `possession.json`, then the
+chunk rows' digest — `content_digest` differs, each producer embedding
+its own challenge rows) and `publish` accepts a current copy of another
+producer. Perugia runs it once the fix is deployed there; the node, which
+took the 44 in as duplicates (compared, not stored), removes them at the
+beat after the window as it holds the originals.
+
+Two more from the same pass: `share contribute --once` returned 0 after
+SIGTERM (07 §7.7 says 130) — fixed; and the process spent 15 minutes
+after its last log line, pure Python, sys-heavy, RSS growing 4 MB per 5
+s, with no py-spy in the image to name the frame — `louise` now
+registers SIGUSR1 to print every thread's stack (`faulthandler`), so the
+next such wait is named, not guessed. Perugia's `mine 635 /
+left_to_fetch 34` after the 16:05 probe's 632 offered: by 18:22 the
+intake had accepted most of the node's offers, so the open led parts
+left are the ones the node covers only partially — their completion is
+the leader's work, small per part (the missing chunks only), and now
+counted right.
 
 ### Still open after the review
 

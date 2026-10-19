@@ -2661,14 +2661,14 @@ def _p2p_summary(collection) -> dict | None:
     out: dict | None = None
     try:
         from app.hold import collection as col
-        from app.share import contribute, coverage as cov, deprecate, peers, seeder
+        from app.share import contribute, counting, coverage as cov, peers, seeder
         root = collections_mod.louise_root() / "collections"
         snap = seeder.current_snapshot(col.shard_dir_of(root, collection.name))
         if snap is not None and (root / collection.name / "state" / "manifest.sqlite").is_file():
             with closing(cov.manifest(root, collection.name)) as mcon:
                 rows = cov.rows(mcon)
                 view = cov.shards_view(codex, snap, rows, now=now,
-                                       redundant=deprecate.redundant_here(root, collection.name, codex, mcon))
+                                       **counting.view_kwargs(root, collection.name, codex, mcon, rows))
                 chunks = sum(v["chunks"] for v in view)
                 covered = sum(v["covered"] for v in view)
                 accepted = [r for r in rows if r["accepted_at"]]

@@ -122,7 +122,7 @@ def _ranking_leader(ranking: Sequence[rendezvous.Peer], shard_rows: list[dict[st
 
 
 def _leading(codex, snapshot: sn.Snapshot, con, *, live: Sequence[rendezvous.Peer],
-             now: float, record_open: bool, redundant=()) -> list[tuple[str, rendezvous.Peer | None]]:
+             now: float, record_open: bool, redundant=(), union=None) -> list[tuple[str, rendezvous.Peer | None]]:
     """(shard id, current leader) of every open shard, in snapshot order —
     04 §4.5's ordering with the grace cascade. `record_open` writes a shard's
     first-open time when this peer sees it open for the first time (the
@@ -136,7 +136,7 @@ def _leading(codex, snapshot: sn.Snapshot, con, *, live: Sequence[rendezvous.Pee
         by_shard.setdefault(r["shard"], []).append(r)
     tokens = {cov.shard_id(codex, f"{s.slice}/{s.n:05d}"): int(s.tokens) for s in snapshot.shards}
     out: list[tuple[str, rendezvous.Peer | None]] = []
-    for v in cov.shards_view(codex, snapshot, all_rows, now=now, redundant=redundant):
+    for v in cov.shards_view(codex, snapshot, all_rows, now=now, redundant=redundant, union=union):
         if not v["open"]:
             continue
         if record_open and v["shard"] not in opened:   # first seen open here: the window starts
@@ -152,12 +152,12 @@ def _leading(codex, snapshot: sn.Snapshot, con, *, live: Sequence[rendezvous.Pee
 
 
 def leaders(codex, snapshot: sn.Snapshot, con, *, live: Sequence[rendezvous.Peer],
-            now: float | None = None, redundant=()) -> dict[str, str | None]:
+            now: float | None = None, redundant=(), union=None) -> dict[str, str | None]:
     """Every open shard's current leader key (None: no eligible peer). Read-only."""
     now = time.time() if now is None else now
     return {sid: (lead.key if lead is not None else None)
             for sid, lead in _leading(codex, snapshot, con, live=live, now=now, record_open=False,
-                                      redundant=redundant)}
+                                      redundant=redundant, union=union)}
 
 
 def _shard_of(snapshot: sn.Snapshot, sid: str) -> sn.Shard:
@@ -166,7 +166,7 @@ def _shard_of(snapshot: sn.Snapshot, sid: str) -> sn.Shard:
 
 
 def open_shards(codex, snapshot: sn.Snapshot, con, *, me: str, live: Sequence[rendezvous.Peer],
-                now: float | None = None, redundant=()) -> tuple[list[sn.Shard], list[sn.Shard]]:
+                now: float | None = None, redundant=(), union=None) -> tuple[list[sn.Shard], list[sn.Shard]]:
     """`(led, others)`: the open shards whose current leader is this peer,
     and the open shards it does not lead — led by another live peer, or by
     nobody eligible. Records each shard's first-open time (the window
@@ -174,7 +174,8 @@ def open_shards(codex, snapshot: sn.Snapshot, con, *, me: str, live: Sequence[re
     one, counted toward no part (`deprecate.redundant_here`)."""
     now = time.time() if now is None else now
     led, others = [], []
-    for sid, lead in _leading(codex, snapshot, con, live=live, now=now, record_open=True, redundant=redundant):
+    for sid, lead in _leading(codex, snapshot, con, live=live, now=now, record_open=True, redundant=redundant,
+                              union=union):
         (led if lead is not None and lead.key == me else others).append(_shard_of(snapshot, sid))
     return led, others
 
@@ -256,16 +257,21 @@ def offered_elsewhere(codex, con, node_con, *, now: float, skip=None, deprecated
     return out
 
 
-def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str) -> frozenset[str]:
-    """The uids this producer's accepted bundles for the shard already claim
-    (their `possession.json`, 09 §9.7): what a further export of the shard
-    leaves out, so a part bundled from held vectors and then completed by
-    its leader costs a bundle of the new records only, never the part
-    twice (RULE 1; operator, 2026-10-19: minimum redundancy)."""
+def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | None = None) -> frozenset[str]:
+    """The uids EVERY accepted bundle held here for the shard already claims
+    (their `possession.json`, 09 §9.7), whoever produced it: what a further
+    export of the shard leaves out. A holder bundles the vectors it
+    EMBEDDED and nobody bundled — never the rows it landed from another
+    producer's bundle, which would be a third copy signed as its own
+    (Perugia, 2026-10-19: 44 bundles of the node's rows); and a part
+    bundled from held vectors and then completed by its leader costs a
+    bundle of the new records only, never the part twice (RULE 1;
+    operator, 2026-10-19: minimum redundancy). `own_key` is kept for the
+    callers that pass it and narrows nothing."""
     import json
     out: set[str] = set()
     for r in cov.rows(con, shard=cov.shard_id(codex, sid)):
-        if not r["accepted_at"] or r["producer"] != own_key:
+        if not r["accepted_at"]:
             continue
         p = bundle_dir(root, name, codex, sid, r["bundle_id"]) / "possession.json"
         try:
@@ -373,15 +379,15 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
         raise ContributeRefused(f"{name}: not contributing yet — " + "; ".join(reasons))
     assert snapshot is not None and own_key is not None
     me_live = list(live)
-    from app.share import accept, deprecate as deprecate_mod
+    from app.share import accept, counting, deprecate as deprecate_mod
     deprecated = deprecate_mod.deprecated(root, name, codex)
-    redundant = deprecate_mod.redundant_here(root, name, codex, con, deprecated)
-    mine, others = open_shards(codex, snapshot, con, me=own_key, live=me_live, now=now, redundant=redundant)
+    view = counting.view_kwargs(root, name, codex, con)
+    mine, others = open_shards(codex, snapshot, con, me=own_key, live=me_live, now=now, **view)
     out: dict[str, Any] = {"snapshot_id": snapshot.snapshot_id, "peers": len(me_live),
                            "mine": [f"{s.slice}/{s.n:05d}" for s in mine], "built": 0,
                            "held": [], "probed": 0, "left_to_fetch": [], "bundles": [], "accepted": [],
                            "refused": [], "events": 0, "unannounced": 0, "interrupted": False,
-                           "marked": 0}
+                           "marked": 0, "claimed": []}
     common = dict(key=key, own_key=own_key, embed=embed, vectors_for=vectors_for, con=con,
                   node_con=node_con, now=now, say=say, out=out, serving=serving)
     if not mine and not others:
@@ -407,11 +413,18 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
             out["left_to_fetch"].append(sid)
             continue
         out["probed"] += 1
-        if _bundle_shard(root, name, codex, snapshot, shard, held=True, **common) == "exported":
+        got = _bundle_shard(root, name, codex, snapshot, shard, held=True, **common)
+        if got == "exported":
             out["held"].append(sid)
+        elif got == "claimed":
+            out["claimed"].append(sid)         # every row held is in a bundle held here already, anyone's
     if out["held"]:
         say(f"[{name}] share contribute: {len(out['held'])} of {out['probed']} open shard(s) led elsewhere "
             f"bundled from vectors held here, no GPU spent (RULE 1)")
+    if out["claimed"]:
+        say(f"[{name}] share contribute: {len(out['claimed'])} of {out['probed']} open shard(s) led elsewhere hold "
+            f"only rows an accepted bundle already carries: nothing to bundle (a holder bundles what it embedded "
+            f"and nobody bundled)")
     def _fetch_line() -> None:
         if out["left_to_fetch"]:
             say(f"[{name}] share contribute: {len(out['left_to_fetch'])} open shard(s) left to the fetch beat: a "

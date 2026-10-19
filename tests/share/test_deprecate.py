@@ -13,9 +13,9 @@ import time
 import pytest
 
 from app import embeddings
-from app.hold import envelope as env
+from app.hold import envelope as env, export as exp
 from app.share import accept, attest, contribute, coverage as cov, deprecate, holdings, members as mem, \
-    messages, peers
+    messages, peers, rendezvous
 from tests.share.test_contribute import attested, ready  # noqa: F401
 from tests.share.test_messages import PEER, PEER_KEY
 from tests.share.test_share_api import OURS, OUR_KEY
@@ -263,7 +263,7 @@ def test_the_dev_command_lists_asks_and_deprecates(ready, monkeypatch, capsys):
         text = capsys.readouterr().out
         return json.loads(text[text.index("{"):])
     assert louise.main(["dev", "deprecate-duplicates", "gutenberg", "--root", str(root), "--dry-run"]) == 0
-    assert out() == {"collection": "gutenberg", "parts": 1, "groups": 1, "bundles": 1,
+    assert out() == {"collection": "gutenberg", "parts": 1, "groups": 1, "foreign": 0, "bundles": 1,
                      "chunks": cov.row(kw["con"], dup)["chunks"], "deprecated": False}
     assert louise.main(["dev", "deprecate-duplicates", "gutenberg", "--root", str(root)]) == 2, "no terminal: --yes"
     capsys.readouterr()
@@ -274,6 +274,147 @@ def test_the_dev_command_lists_asks_and_deprecates(ready, monkeypatch, capsys):
         assert contribute.bundle_dir(root, "gutenberg", codex, sid, b).is_dir() and cov.row(kw["con"], b)["accepted_at"]
     assert set(deprecate.deprecated(root, "gutenberg", codex)) == {dup}
     assert louise.main(["dev", "deprecate-duplicates", "gutenberg", "--root", str(root), "--yes"]) == 0
-    assert out() == {"collection": "gutenberg", "parts": 0, "groups": 0, "bundles": 0, "chunks": 0, "deprecated": False}, \
+    assert out() == {"collection": "gutenberg", "parts": 0, "groups": 0, "foreign": 0, "bundles": 0, "chunks": 0,
+                     "deprecated": False}, \
         "the pair still exists on disk (the copy goes after the window) and is stated once"
     assert deprecate.header_pairs(root, "gutenberg", codex, kw["con"], own_key=OUR_KEY) == {}
+
+
+def _foreign_copy(root, snapshot, codex, kw, sid, *, created_at: int) -> str:
+    """Another producer's bundle of the same vectors (what a peer lands from
+    the node), accepted here as fetched."""
+    scratch = root / "gutenberg" / "state" / "bundles" / ".export-foreign"
+    got = exp.export(root, "gutenberg", shard=sid, dest=scratch, vectors_for=kw["vectors_for"], embed=kw["embed"],
+                     key=PEER, snapshot_id=snapshot.snapshot_id, created_at=created_at)
+    (b,) = got["bundles"]
+    final = contribute.bundle_dir(root, "gutenberg", codex, sid, b["bundle_id"])
+    final.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(b["path"], final)
+    header = json.loads((final / "header.json").read_bytes())
+    cov.record(kw["con"], bundle_id=b["bundle_id"], shard=cov.shard_id(codex, sid), producer=PEER_KEY,
+               uids=header["uids"], chunks=b["chunks"], tiers={t: "pass" for t in cov.TIERS}, source=cov.FETCHED,
+               accepted_at="2026-10-19T12:00:00Z")
+    return b["bundle_id"]
+
+
+def test_a_holder_never_rebundles_rows_it_landed_from_another_producer_s_bundle(ready):
+    """Perugia, 2026-10-19: the held path exported the node's rows, landed
+    from its bundles, as 44 bundles of its own — a third copy, re-signed.
+    The uids of EVERY accepted bundle held for the part are left out of an
+    export, whoever produced it: a holder bundles what it embedded and
+    nobody bundled."""
+    from app.hold import land as landing, vectors_build as vb
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    shards = [f"{s.slice}/{s.n:05d}" for s in snapshot.shards]
+    landed_sid = shards[0]
+    # the part the node covers partially (en/00160: 6,327 of 6,607): this
+    # peer holds exactly the rows it landed from the node's bundle — the
+    # first record's — and the part stays open for the rest
+    vb.build(codex, shards=list(snapshot.shards),
+             records_for=lambda s: landing.records_for(root, "gutenberg", snapshot, f"{s.slice}/{s.n:05d}", None)[
+                 :1 if f"{s.slice}/{s.n:05d}" == landed_sid else None],
+             vectors_for=kw["vectors_for"], embed=kw["embed"], write=kw["write"], batch=2)
+    theirs = _foreign_copy(root, snapshot, codex, kw, landed_sid, created_at=int(time.time()) - 3600)
+    view = {v["shard"]: v for v in cov.shards_view(codex, snapshot, cov.rows(kw["con"]))}[cov.shard_id(codex, landed_sid)]
+    assert view["open"] and view["covered"] < view["chunks"], "the fixture: the part is open, partially covered"
+    claimed = contribute.claimed_uids(root, "gutenberg", codex, kw["con"], landed_sid)
+    assert claimed == set(json.loads((contribute.bundle_dir(root, "gutenberg", codex, landed_sid, theirs)
+                                      / "possession.json").read_bytes())), "another producer's bundle claims"
+    heavy = rendezvous.Peer(PEER_KEY, 1e12)
+    said: list[str] = []
+    out = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0), heavy],
+                          log=said.append, **kw)
+    assert landed_sid not in out["held"] and set(out["held"]) == set(shards) - {landed_sid}
+    assert not any(b["shard"] == landed_sid for b in out["bundles"]), "no third copy of the part"
+    assert out["claimed"] == [landed_sid] and any("nothing to bundle" in s for s in said)
+    assert {r["producer"] for r in cov.rows(kw["con"], shard=cov.shard_id(codex, landed_sid))} == {PEER_KEY}
+
+
+def test_a_part_s_coverage_is_the_union_of_its_bundles_chunk_ids_never_a_sum(ready, monkeypatch):
+    """Perugia, 2026-10-19: lang=en/00160, 6,607 chunks; the node's copy and
+    a re-signed copy of 6,327 each summed to 6,607 — closed with 280 chunks
+    embedded by nobody. Several accepted bundles of a part count the chunks
+    their ids cover TOGETHER, cached per part on its bundle set."""
+    from app.share import counting
+    root, snapshot, codex, kw, sid, kept, dup = _pair(ready)
+    s = snapshot.shards[0]
+    rows = cov.rows(kw["con"])
+    one = cov.row(kw["con"], kept)["chunks"]
+    union = counting.union_counts(root, "gutenberg", codex, rows)
+    assert union == {cov.shard_id(codex, sid): one}, "two equal copies: one copy's chunks; single-bundle parts absent"
+    view = {v["shard"]: v for v in cov.shards_view(codex, snapshot, rows, union=union)}[cov.shard_id(codex, sid)]
+    assert view["covered"] == one
+    # a third producer's copy over the same rows changes nothing
+    theirs = _foreign_copy(root, snapshot, codex, kw, sid, created_at=int(time.time()) - 7200)
+    rows = cov.rows(kw["con"])
+    assert counting.union_counts(root, "gutenberg", codex, rows)[cov.shard_id(codex, sid)] == one
+    # the defect, for the record: the sum reads as more than the part has
+    assert sum(r["chunks"] for r in rows if r["shard"] == cov.shard_id(codex, sid)) == 3 * one > int(s.chunks) \
+        or one == int(s.chunks)
+    # cached on the bundle set: the files are not read again
+    cache = counting._cache_path(root, "gutenberg")
+    assert cache.is_file() and json.loads(cache.read_bytes())[cov.shard_id(codex, sid)]["bundles"] == sorted([kept, dup, theirs])
+    monkeypatch.setattr(counting, "chunk_ids_of", lambda d: (_ for _ in ()).throw(AssertionError("read again")))
+    assert counting.union_counts(root, "gutenberg", codex, rows)[cov.shard_id(codex, sid)] == one
+    monkeypatch.undo()
+    # a bundle whose files are not here counts for nothing (a part left open, never closed over a gap)
+    shutil.rmtree(contribute.bundle_dir(root, "gutenberg", codex, sid, theirs))
+    kw["con"].execute("DELETE FROM coverage WHERE bundle_id=?", (dup,))
+    rows = cov.rows(kw["con"])
+    said: list[str] = []
+    got = counting.union_counts(root, "gutenberg", codex, rows, log=said.append)
+    assert got[cov.shard_id(codex, sid)] == one and any("not readable here" in m for m in said)
+    # the view's kwargs, as every caller takes them
+    view_kw = counting.view_kwargs(root, "gutenberg", codex, kw["con"])
+    assert set(view_kw) == {"redundant", "union"} and view_kw["union"] == got
+    shown = cov.show(codex, snapshot, kw["con"], **view_kw)
+    assert shown["covered"] <= shown["chunks"]
+
+
+def test_a_copy_of_another_producer_s_rows_is_deprecated_in_favour_of_the_original(ready, monkeypatch, capsys):
+    """Perugia's 44 (2026-10-19): this peer's bundles whose chunk rows equal
+    an accepted bundle of another producer, made earlier. `content_digest`
+    differs (each producer embeds its own challenge rows), so the chunk rows'
+    digest decides; the current copy may be another producer's."""
+    root, snapshot, codex, kw = ready
+    first = _alone(root, codex, snapshot, kw)
+    sid, mine = first["bundles"][0]["shard"], first["bundles"][0]["bundle_id"]
+    other_sid, other_mine = first["bundles"][1]["shard"], first["bundles"][1]["bundle_id"]
+    theirs = _foreign_copy(root, snapshot, codex, kw, sid, created_at=int(time.time()) - 7200)
+    h_mine = json.loads((contribute.bundle_dir(root, "gutenberg", codex, sid, mine) / "header.json").read_bytes())
+    h_theirs = json.loads((contribute.bundle_dir(root, "gutenberg", codex, sid, theirs) / "header.json").read_bytes())
+    assert h_mine["uids"] == h_theirs["uids"]
+    assert deprecate.rows_digest(contribute.bundle_dir(root, "gutenberg", codex, sid, mine)) == \
+        deprecate.rows_digest(contribute.bundle_dir(root, "gutenberg", codex, sid, theirs))
+    said: list[str] = []
+    assert deprecate.foreign_duplicates(root, "gutenberg", codex, kw["con"], own_key=OUR_KEY, log=said.append) == \
+        {mine: theirs}
+    assert any("carries the chunk rows of" in m for m in said)
+    # a later copy of theirs is not the original: nothing to defer to
+    later = _foreign_copy(root, snapshot, codex, kw, other_sid, created_at=int(time.time()) + 7200)
+    assert other_mine not in deprecate.foreign_duplicates(root, "gutenberg", codex, kw["con"], own_key=OUR_KEY)
+    kw["con"].execute("DELETE FROM coverage WHERE bundle_id=?", (later,))
+    # publish accepts a current copy of another producer; the row of mine stays until the window ends
+    out = deprecate.publish(root, "gutenberg", codex, snapshot, {mine: theirs}, key=OURS, own_key=OUR_KEY,
+                            con=kw["con"], node_con=kw["node_con"], platform_image=IMAGE)
+    assert out["bundles"] == [mine] and set(deprecate.deprecated(root, "gutenberg", codex)) == {mine}
+    assert deprecate.redundant_here(root, "gutenberg", codex, kw["con"]) == {mine}
+    assert deprecate.expire(root, "gutenberg", codex, kw["con"], now=time.time() + deprecate.KEEP_S + 1) == \
+        {"expired": 1, "kept": 0}
+    assert not contribute.bundle_dir(root, "gutenberg", codex, sid, mine).exists() and cov.row(kw["con"], theirs)
+    # the command finds the same, and reports it apart
+    from app import identity, louise
+    from app.bundles import keys as node_keys
+    theirs2 = _foreign_copy(root, snapshot, codex, kw, other_sid, created_at=int(time.time()) - 7200)
+    monkeypatch.setattr(node_keys, "load_signing_key", lambda path=None: OURS)
+    monkeypatch.setattr(identity, "own", lambda: OUR_KEY)
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", IMAGE)
+    assert louise.main(["dev", "deprecate-duplicates", "gutenberg", "--root", str(root), "--dry-run"]) == 0
+    text = capsys.readouterr().out
+    got = json.loads(text[text.index("{"):])
+    assert got["foreign"] == 1 and got["groups"] == 0 and got["bundles"] == 1 and got["parts"] == 1
+    assert louise.main(["dev", "deprecate-duplicates", "gutenberg", "--root", str(root), "--yes"]) == 0
+    assert set(deprecate.deprecated(root, "gutenberg", codex)) == {mine, other_mine}
+    assert deprecate.deprecated(root, "gutenberg", codex)[other_mine][OUR_KEY][0] == theirs2

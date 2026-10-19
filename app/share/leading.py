@@ -214,11 +214,14 @@ def skip_test(collection, con, *, root: Path | None = None, now: float | None = 
             with _cache_lock:
                 _cache[key] = (now, fp, skips)
         else:
-            from app.share import deprecate
-            # deprecated copies held beside their current one count toward no
-            # part (04 §4.5); named only when there are any
-            redundant = deprecate.redundant_here(root, collection.name, codex, con)
-            extra = {"redundant": redundant} if redundant else {}
+            from app.share import counting
+            # a part is counted once whatever covers it (04 §4.5: the union
+            # of its bundles' chunk ids; deprecated copies toward nothing);
+            # named only when there is something to name
+            try:
+                extra = {k: v for k, v in counting.view_kwargs(root, collection.name, codex, con).items() if v}
+            except Exception:   # noqa: BLE001 — the sum, as before: a count that fails disables no skip
+                extra = {}
             leaders = contribute.leaders(codex, snapshot, con, live=live, now=now, **extra) \
                 if snapshot is not None else {}
             skips = build(codex, snapshot, leaders=leaders, me=own_key, live=live)
