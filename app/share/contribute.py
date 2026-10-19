@@ -98,10 +98,12 @@ def _ranking_leader(ranking: Sequence[rendezvous.Peer], shard_rows: list[dict[st
     return ranking[0]
 
 
-def shards_i_lead(codex, snapshot: sn.Snapshot, con, *, me: str,
-                  live: Sequence[rendezvous.Peer], now: float | None = None) -> list[sn.Shard]:
-    """The open shards whose current leader is this peer."""
-    now = time.time() if now is None else now
+def _leading(codex, snapshot: sn.Snapshot, con, *, live: Sequence[rendezvous.Peer],
+             now: float, record_open: bool) -> list[tuple[str, rendezvous.Peer | None]]:
+    """(shard id, current leader) of every open shard, in snapshot order —
+    04 §4.5's ordering with the grace cascade. `record_open` writes a shard's
+    first-open time when this peer sees it open for the first time (the
+    window starts there); the embed stage reads only (app/share/leading.py)."""
     all_rows = cov.rows(con)
     opened = cov.opened_at(con)
     limit = cov.period_seconds(codex.work.per)
@@ -109,22 +111,39 @@ def shards_i_lead(codex, snapshot: sn.Snapshot, con, *, me: str,
     by_shard: dict[str, list[dict[str, Any]]] = {}
     for r in all_rows:
         by_shard.setdefault(r["shard"], []).append(r)
-    out = []
+    tokens = {cov.shard_id(codex, f"{s.slice}/{s.n:05d}"): int(s.tokens) for s in snapshot.shards}
+    out: list[tuple[str, rendezvous.Peer | None]] = []
     for v in cov.shards_view(codex, snapshot, all_rows, now=now):
         if not v["open"]:
             continue
-        if v["shard"] not in opened:            # first seen open here: the window starts
+        if record_open and v["shard"] not in opened:   # first seen open here: the window starts
             con.execute("INSERT OR IGNORE INTO coverage_shards(shard, opened_at) VALUES(?,?)",
                         (v["shard"], messages.time_text(now)))
             opened[v["shard"]] = messages.time_text(now)
-        work = rendezvous.ShardWork(v["shard"], int(next(
-            s.tokens for s in snapshot.shards
-            if cov.shard_id(codex, f"{s.slice}/{s.n:05d}") == v["shard"])))
-        ranking = rendezvous.ranking(work, live, limit)
+        ranking = rendezvous.ranking(rendezvous.ShardWork(v["shard"], tokens[v["shard"]]),
+                                     live, limit)
         lead = _ranking_leader(ranking, by_shard.get(v["shard"], []), opened.get(v["shard"]),
                                now=now, grace_s=grace_s)
+        out.append((v["shard"], lead))
+    return out
+
+
+def leaders(codex, snapshot: sn.Snapshot, con, *, live: Sequence[rendezvous.Peer],
+            now: float | None = None) -> dict[str, str | None]:
+    """Every open shard's current leader key (None: no eligible peer). Read-only."""
+    now = time.time() if now is None else now
+    return {sid: (lead.key if lead is not None else None)
+            for sid, lead in _leading(codex, snapshot, con, live=live, now=now, record_open=False)}
+
+
+def shards_i_lead(codex, snapshot: sn.Snapshot, con, *, me: str,
+                  live: Sequence[rendezvous.Peer], now: float | None = None) -> list[sn.Shard]:
+    """The open shards whose current leader is this peer."""
+    now = time.time() if now is None else now
+    out = []
+    for sid, lead in _leading(codex, snapshot, con, live=live, now=now, record_open=True):
         if lead is not None and lead.key == me:
-            slice_, n = v["shard"].rsplit("/", 2)[1:]
+            slice_, n = sid.rsplit("/", 2)[1:]
             out.append(next(s for s in snapshot.shards if s.slice == slice_ and s.n == int(n)))
     return out
 

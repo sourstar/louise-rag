@@ -413,3 +413,41 @@ peak between samples). Worker RSS **2.26 GB at 40 min** uptime, against 4.2 GB
 at 55 min before the snapshot fix. Nothing is due again until a new snapshot
 or a month. Not measured: the pipeline's docs/s during the runs (only
 gutenberg's rdf scan had work, too little to read a difference from).
+
+---
+
+### 2026-10-19 — the embed stage leaves another peer's parts to it (04 §4.5) — PREPARED, not deployed
+
+`app/share/leading.py`; `worker._backfill_rows`; `contribute.leaders` (the
+cascade, read-only, shared with `shards_i_lead`). Under `embed = "all"` a
+shared collection's open parts whose rendezvous leader is ANOTHER live peer
+are not embed candidates here; the new walk then goes by the cursor so the
+skipped head never blocks it. Review: the NAS session.
+
+**Scenario.** Measured read-only on the Perugia peer's gutenberg manifest
+(snapshot 2026-09, 1,637 parts, 79,583 documents — the node's snapshot,
+byte-identical members) with three live peers at their benchmarks: this
+peer 1,856 tok/s (its gate, run 9ab03cb2), the node 3,200 (modelled from
+its B70 rows), the laptop 1,500 (assumed). Node mode running, gutenberg
+embed off here (the stage was not exercised live).
+
+**Before.** The node embedded every gutenberg part under "all" (its log,
+2026-10-19 00:00: batches of ~900–1,500 chunks, beside two contributing
+peers whose bundles would only have been checks).
+
+**Measured (the new code's own paths, `/d/louise-work/measure_leading.py`).**
+- Index build — `contribute.leaders` + the bisection tables: median
+  **434 ms**, max 468 ms, for 1,635 open parts; at most once a `REBUILD_S`
+  (60 s) and only when the snapshot, the live set, the coverage rows or the
+  hour change. Scales with parts, not documents.
+- Lookup: **0.71 µs** a document. Left to the other two: 56,597 (71 %);
+  this peer leads 474 of 1,635 parts (29 %, its benchmark share 28 %).
+- One backfill page: plain 0.15 ms, filtered ≤ 1.75 ms (20k-row windows),
+  ≤ 0.61 ms (200k); plan `SEARCH documents USING INTEGER PRIMARY KEY
+  (rowid>? AND rowid<?)`.
+
+**Expected after (when a node runs "all" beside contributing peers).** Each
+embeds about its benchmark share of the open parts; a leader that publishes
+nothing within `grace_days` loses its parts to the next in line (the cascade,
+noticed within an hour). To be measured on the first node that runs it:
+chunks embedded per peer per day against its share, and the duplicate rate.

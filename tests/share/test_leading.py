@@ -1,0 +1,159 @@
+"""app/share/leading.py — the embed stage leaves to another live peer the
+open parts it leads (04 §4.5). Every doubt embeds: the worst case is the
+old duplicate, never a gap."""
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from app.share import leading, rendezvous
+
+ME, PEER = "ed25519:" + "aa" * 32, "ed25519:" + "bb" * 32
+LIVE = [rendezvous.Peer(ME, 1000.0), rendezvous.Peer(PEER, 1000.0)]
+
+
+def _codex(keys=("lang",), unknown="lang=unknown", order="numeric"):
+    slicing = {"keys": list(keys), "order": order, "shard_records": 50}
+    if unknown:
+        slicing["unknown"] = unknown
+    return SimpleNamespace(collection_id="sha256:c0", space_segment="5ac3c5810f2cd56a",
+                           slicing=slicing)
+
+
+def _shard(slice_, n, first, last):
+    return SimpleNamespace(slice=slice_, n=n, first_id=str(first), last_id=str(last))
+
+
+SNAPSHOT = SimpleNamespace(snapshot_id="2026-09", shards=[
+    _shard("lang=en", 1, 10, 500), _shard("lang=en", 2, 501, 900),
+    _shard("lang=fr", 1, 400, 700),          # overlaps en's ids: slices are per key
+    _shard("lang=unknown", 1, 5, 9000),
+])
+
+
+def _sid(codex, slice_, n):
+    return f"{codex.collection_id}/{codex.space_segment}/{slice_}/{n:05d}"
+
+
+def _leaders(codex, **lead):
+    """lead: '<slice>/<n>' -> key, every other shard closed (absent)."""
+    return {_sid(codex, *k.rsplit("/", 1)[:1], int(k.rsplit("/", 1)[1])): v for k, v in lead.items()}
+
+
+def test_a_part_another_live_peer_leads_is_skipped_and_ours_is_not():
+    c = _codex()
+    s = leading.build(c, SNAPSHOT, leaders=_leaders(c, **{"lang=en/1": PEER, "lang=en/2": ME}),
+                      me=ME, live=LIVE)
+    assert s is not None and s.skipped_parts == 1
+    assert s.skips("100", "en") is True, "en part 1: the peer's"
+    assert s.skips("600", "en") is False, "en part 2: ours"
+    assert s.skips("600", "fr") is False, "fr's part is closed here, nobody leads it"
+    assert s.skips("950", "en") is False, "no part holds the id: embedded"
+
+
+def test_the_slice_column_decides_between_overlapping_slices():
+    c = _codex()
+    s = leading.build(c, SNAPSHOT, leaders=_leaders(c, **{"lang=fr/1": PEER, "lang=en/1": ME}),
+                      me=ME, live=LIVE)
+    assert s.skips("450", "fr") is True and s.skips("450", "en") is False
+    assert s.skips_row({"native_id": "450", "lang": "fr"}) is True
+
+
+def test_without_the_slice_an_id_two_slices_could_hold_is_embedded():
+    c = _codex(keys=("year",), unknown=None)            # no manifest column names the slice
+    s = leading.build(c, SNAPSHOT, leaders=_leaders(c, **{"lang=fr/1": PEER}), me=ME, live=LIVE)
+    assert leading.slice_column(c) is None
+    assert s.skips("450") is False, "en and fr both hold 450: only the record knows — embed"
+    s2 = leading.build(c, SimpleNamespace(snapshot_id="x", shards=SNAPSHOT.shards[:3]),
+                       leaders=_leaders(c, **{"lang=en/1": PEER}), me=ME, live=LIVE)
+    assert s2.skips("100") is True, "one slice can hold 100: its part decides"
+
+
+def test_a_record_with_no_language_is_in_the_unknown_slice():
+    c = _codex()
+    s = leading.build(c, SNAPSHOT, leaders=_leaders(c, **{"lang=unknown/1": PEER}), me=ME, live=LIVE)
+    assert s.skips("100", None) is True and s.skips("100", "") is True
+    assert s.skips("100", "en") is False
+
+
+@pytest.mark.parametrize("me, live", [
+    (None, LIVE),                                      # no key: leads nothing, skips nothing
+    (ME, [rendezvous.Peer(PEER, 1000.0)]),              # not live (no benchmark yet)
+    (ME, [rendezvous.Peer(ME, 1000.0)]),                # alone: everything is ours (04 §4.1)
+])
+def test_a_node_that_cannot_lead_skips_nothing(me, live):
+    c = _codex()
+    assert leading.build(c, SNAPSHOT, leaders=_leaders(c, **{"lang=en/1": PEER}),
+                         me=me, live=live) is None
+
+
+def test_nothing_led_elsewhere_means_no_filter_at_all():
+    c = _codex()
+    assert leading.build(c, SNAPSHOT, leaders=_leaders(c, **{"lang=en/1": ME}), me=ME,
+                         live=LIVE) is None, "the stage runs exactly as before"
+
+
+def test_an_id_the_order_cannot_place_is_embedded():
+    c = _codex()
+    s = leading.build(c, SNAPSHOT, leaders=_leaders(c, **{"lang=en/1": PEER}), me=ME, live=LIVE)
+    assert s.skips("not-a-number", "en") is False
+
+
+def test_a_lookup_is_one_bisection_never_a_walk_over_the_parts(monkeypatch):
+    """COST: with the slice known, one slice is searched, by bisection — a
+    lookup does not grow with the number of parts (CLAUDE.md engineering
+    rules)."""
+    c = _codex()
+    shards = [_shard("lang=en", i, i * 100, i * 100 + 99) for i in range(1, 2001)]
+    snap = SimpleNamespace(snapshot_id="big", shards=shards)
+    lead = {_sid(c, "lang=en", i): (PEER if i % 2 else ME) for i in range(1, 2001)}
+    s = leading.build(c, snap, leaders=lead, me=ME, live=LIVE)
+    calls = []
+    real = leading.Skips._part_in
+    monkeypatch.setattr(leading.Skips, "_part_in",
+                        lambda self, name, k: calls.append(name) or real(self, name, k))
+    assert s.skips("150", "en") is True and s.skips("250", "en") is False
+    assert calls == ["lang=en", "lang=en"], "one slice per lookup"
+    real_bisect = leading.bisect.bisect_right
+    probes = []
+    monkeypatch.setattr(leading.bisect, "bisect_right",
+                        lambda a, x: probes.append(1) or real_bisect(a, x))
+    s.skips("199950", "en")
+    assert len(probes) == 1
+
+
+def test_the_hot_path_reads_no_digest_within_the_rebuild_interval(monkeypatch, tmp_path):
+    """The embed stage asks every round; digests, statements and the coverage
+    map are read at most once a REBUILD_S."""
+    from app.share import contribute, coverage as cov
+    leading.reset_cache()
+    c = _codex()
+    coll = SimpleNamespace(codex=c, name="gutenberg", manifest_path=tmp_path / "m.sqlite")
+    reads = []
+    monkeypatch.setattr(cov, "live_peers", lambda *a, **k: reads.append(1) or LIVE)
+    monkeypatch.setattr(cov, "own_benchmarks", lambda *a, **k: [])
+    monkeypatch.setattr(contribute, "leaders",
+                        lambda codex, snap, con, live, now: _leaders(codex, **{"lang=en/1": PEER}))
+
+    class Con:
+        def execute(self, *a):
+            return SimpleNamespace(fetchone=lambda: (0, None))
+    kw = dict(root=tmp_path, own_key=ME, snapshot=SNAPSHOT, node_con=object())
+    f = leading.skip_test(coll, Con(), now=1000.0, **kw)
+    assert f is not None and f({"native_id": "100", "lang": "en"}) is True
+    assert leading.skip_test(coll, Con(), now=1030.0, **kw) is not None
+    assert reads == [1], "within REBUILD_S: the cache, no digest read"
+    leading.skip_test(coll, Con(), now=1000.0 + leading.REBUILD_S + 1, **kw)
+    assert reads == [1, 1], "past REBUILD_S: the inputs are read again"
+    leading.reset_cache()
+
+
+def test_any_failure_to_read_the_inputs_skips_nothing(monkeypatch, tmp_path):
+    from app.share import coverage as cov
+    leading.reset_cache()
+    coll = SimpleNamespace(codex=_codex(), name="g", manifest_path=tmp_path / "m")
+    monkeypatch.setattr(cov, "own_benchmarks", lambda *a, **k: 1 / 0)
+    assert leading.skip_test(coll, object(), root=tmp_path, own_key=ME, snapshot=SNAPSHOT) is None
+    assert leading.skip_test(SimpleNamespace(codex=None, name="x"), object()) is None
+    leading.reset_cache()
