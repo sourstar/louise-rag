@@ -88,7 +88,12 @@ branch; every amendment to a numbered document is dated 2026-10-19 in
 place. Measured facts came from the node (München session: f85a606 live,
 DHT on since 10:35, 49–110 conntrack flows) and the Perugia peer (image
 from 6934e99, contribute paused, gutenberg complete). Tests: 195 in
-tests/share pass; the full suite's run is in the review's report.*
+tests/share pass; the full suite (4,688 tests, four workers) passed but
+for the host's disk floor — 27–29 GiB free under app/disk_guard.py's
+32 GiB refused every vector import in tests/bundles and tests/integration,
+all of which pass with `VECTORS_MIN_FREE_GB=0` — and two tests that fail
+on the base commit too in that container (no `rsync` binary; the web
+subprocess cannot bind).*
 
 ### 1. Held vectors are invisible — DECIDED: a holder bundles what it holds (8d3f40d)
 
