@@ -493,6 +493,18 @@ contribute then waits for the writer lock behind the worker's on-demand
 embed unit (1 document, 337 chunks, 22:30:34) — the pause-wrapper cost
 the publisher retires. Counts over the night follow.
 
+**Perugia, after (0624b18, pass 20:31–20:41Z, stopped by SIGTERM for the
+23:00 shutdown, exit 130 in 14 s).** Worker "unloaded: idle…" lines during
+the pass: **0** (seven in the 3.4 h before). LocalAI "Backend process
+stopped … 4b": **1**, at 20:29:34Z — the worker's start-up run check
+("embed is 'off'"), before the pass; during the pass **0**. The lease row
+(`host.docker.internal:30286 | vega-qwen3-embedding-4b | share contribute
+pid 216`) appeared with the first batch, renewed (until 20:46 → 20:50),
+and was gone 2 s after exit — released by the command. Rate over 7 min of
+embedding: no slowdown seen; too short against the 143/min to be the
+figure (the bundles mixed vectors of the earlier stop). The row stays
+open for the next long pass and for the node's night.
+
 **Expected after.** No "unloaded" line for a model under lease while a
 contribute runs; `/backend/shutdown` only for a model no process is
 embedding with; a lease a killed process left gone within 600 s. Cost
