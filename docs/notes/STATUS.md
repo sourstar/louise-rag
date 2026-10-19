@@ -1,6 +1,6 @@
 # Project status
 
-**Last updated: 2026-10-07.** What exists, what is designed but unbuilt,
+**Last updated: 2026-10-19.** What exists, what is designed but unbuilt,
 and what is deliberately not being built. Read this before planning work.
 
 **The specification moved.** `docs/README.md` and the nine numbered
@@ -12,11 +12,23 @@ it left open is below.
 
 ## Open after the migration
 
-- **The DHT is OFF on the node** (2026-10-19, [dht-flood.md](dht-flood.md)).
-  libtorrent announced each of 3,170 seeded member torrents by its own
-  infohash, and ~10k UDP flows filled the router's NAT table. The fix: the
-  swarm key, and member torrents off the DHT (04 §4.2, amended). Open:
-  deploy it, turn `[dht] enabled` back on, and record an hour of conntrack.
+- **The DHT is back ON at the node** (2026-10-19 10:35, [dht-flood.md](dht-flood.md)):
+  libtorrent had announced each of 3,170 seeded member torrents by its own
+  infohash, and ~10k UDP flows filled the router's NAT table. The fix — the
+  swarm key, member torrents off the DHT (04 §4.2, amended) — is deployed
+  (f85a606); 49–110 conntrack flows since, against 14,194 before.
+- **The P2P review** (2026-10-19,
+  [p2p-review-open-issues.md](p2p-review-open-issues.md), "The review"):
+  seven gaps found when the second GPU peer joined, five fixed on the
+  review branch with amendments to 04 §4.2/§4.3/§4.5, 07 §7.3 and 09 §9.9
+  — a holder bundles the vectors it already holds whoever leads the part
+  (the node's 91 % of gutenberg becomes coverage); attestations and
+  bundles are pulled from digests, not only carried by events; a pinned
+  address wins over the declared one; a fetch nobody serves is deferred
+  and bounded, never hung; a bundle is announced only where it is served
+  and a fetched public collection is shared. Still open there: vector
+  convergence (measure first), `share contribute` under the worker's
+  lock (a scheduling change), a leecher's `records-vs-origin`.
 - **`hold embedder calibrate`** is a stub: it wants two builds of one model
   to compare (step 3).
 - **Normattiva, what the second part left** (2026-10-12,

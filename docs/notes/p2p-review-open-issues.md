@@ -78,3 +78,153 @@ a peer fetching every slice waited forever on the first part nobody served
 fires. Fixed by serving all slices (2026-10-19); the stall itself is open:
 a wanted part that no neighbour's digest offers should be deferred and
 said, not waited on.
+
+---
+
+## The review (2026-10-19, the operator's dedicated session)
+
+*What was decided and built for each item, with its commit on the review
+branch; every amendment to a numbered document is dated 2026-10-19 in
+place. Measured facts came from the node (München session: f85a606 live,
+DHT on since 10:35, 49–110 conntrack flows) and the Perugia peer (image
+from 6934e99, contribute paused, gutenberg complete). Tests: 195 in
+tests/share pass; the full suite's run is in the review's report.*
+
+### 1. Held vectors are invisible — DECIDED: a holder bundles what it holds (8d3f40d)
+
+The node had 9,536,499 of 10,477,214 gutenberg chunks locally (91.0 %) and
+25 of 1,637 parts covered (1.2 %) after a night of `share contribute`,
+because contribute bundled held vectors only for the parts it LED.
+`contribute.once` now walks the open parts this peer does not lead first
+and exports what it holds for each — the challenge rows are the only GPU;
+one read of each open part's records is the only I/O — then builds the
+parts it leads. 04 §4.5 amended ("What a peer already holds, it bundles").
+The first bundle is the claim, so a holder's bundle closes the part for
+the leader too; a partial holding leaves the rest to the leader, whose
+`vb.build` embeds only what still lacks a vector after the import. No
+change to the cascade: a holder's bundle does not renew the leader's
+window, it closes chunks.
+
+**To measure on the node's first pass** (CLAUDE.md: time every new
+per-round cost): 1,612 open parts × (one 5 MB part read + one
+`vectors_by_chunk_id` over ~6,000 ids) + 16 challenge rows per part held.
+Expected: tens of minutes once, then only the ~150 parts the node holds
+nothing of, every pass, until their leaders close them. If that residual
+costs more than a minute a pass, memoise the empty probes per snapshot.
+
+Open, unchanged: *who BUNDLES* is now everyone who holds; whether a
+whole collection's worth of held vectors should instead be declared as
+genesis-style coverage (one statement, no 1,600 bundles) was not taken up
+— bundles are what travel, and 2,400 per collection is 04 §4.5's budget.
+
+### 2. The embed stage ignored rendezvous — closed before the review (f85a606)
+
+### 3. A missed attestation cannot be recovered — FIXED (d072051)
+
+`pull attestations` (09 §9.9) had a server and no client. Now: `share
+fetch` pulls the sharer's attestations with the collection; the worker's
+gossip beat pulls once an interval per collection from the neighbours
+whose digest lists it, from the newest attestation held less one
+interval (`attest.pull_due`); `share attest --republish` publishes this
+key's held, never-published attestations without rerunning the check.
+07 §7.3 amended. What stays true: a leecher with no origin copy cannot
+run `records-vs-origin` itself (Perugia: *inconclusive*, "no origin to
+re-fetch from"); it contributes on the node's attestation, as 04 §4.5
+allows ("its own or another key's").
+
+### 4. The declared address — FIXED: the pinned address wins (176be6c)
+
+`peers.record_digest` records a digest from a pinned key at the address
+`[peers.pins]` binds to it; the digest is kept whole and `share peers
+show` names the declared address beside the recorded one. Digests,
+events, pulls and swarm hints all read the recorded address, so one pin
+fixes all four. 04 §4.2 and 09 §9.9 amended. Perugia had the pin and the
+node still had to change what it declares; with this, the pin alone
+suffices.
+
+### 5. The DHT flood — closed before the review (0cf9d68, f85a606)
+
+### 6. A served slice list stalls a fetch — FIXED, three ways (f8d708b)
+
+Root cause, from Perugia's record: `fetch_file` counted one connected
+peer as "answered" and the metadata bound never fired; the beat never
+returned; the control row kept the previous beat's account. Now:
+- a second bound, `STALL_TIMEOUT_S` = 300 s with no byte after a peer
+  answered — "stalled"; `nobody_served()` names both phrases for the
+  beats' backoff;
+- a wanted member no neighbour's digest offers, when the swarm key found
+  no swarm either, is **deferred and said**, once per member, never
+  waited on; the beat backs off until a digest offers it or names a
+  swarm (04 §4.3 amended);
+- the beat writes a `running` control row before the fetch, so a stuck
+  beat is visible;
+- and the cause on the node's side: `gossip.entries` listed every member
+  held while the seeder served two slices. The digest now offers what
+  `seeder.serves` says (09 §9.9 amended: `members` is what the sender
+  serves).
+
+### 7. A bundle announced from a peer that serves nothing — NEW, FIXED (8d3f40d, a990821)
+
+Found by the München session during the review: Perugia's digest
+listed coverage for 2 bundles and `members: []`; its bundle events sent
+the node into 120 s "no metadata" waits (10:38, 10:40). Two causes, both
+fixed:
+- `share fetch` wrote `share = false`, against 04 §4.3 ("sharing is
+  automatic after a completed fetch unless the file says `share =
+  false`"); it now writes `share = true` for a public collection. **The
+  Perugia peer's existing file still says false: run `louise share
+  gutenberg` there once** (or edit the file), and its records and
+  bundles are served from the next seeder sync.
+- `share contribute` announced a `bundle` event whatever the peer
+  served. It announces only where this peer serves the collection
+  (`share = true` and a mode that seeds, `louise._serves_here`);
+  otherwise the bundle is accepted here, listed under the digest's
+  `coverage`, and offered under `members` once this peer serves. 04 §4.5
+  amended.
+- And the recovery path for a missed `bundle` event, the same gap as §3
+  for vectors: `accept.from_digests` takes in every bundle a neighbour's
+  digest offers (a `bundle-<space>-<id>` member with its files) that
+  this peer has not accepted, through `accept.take` as the event would
+  have; digests are re-read only when one arrived or after
+  `BACKOFF_S`, and a bundle nobody served waits that long.
+
+### Still open after the review
+
+- **Vector convergence** ([vector-convergence.md](vector-convergence.md),
+  [vector-convergence-review.md](vector-convergence-review.md)): not
+  decided here. The review's recommendation stands — fix rendezvous
+  (done, §2) and the held-vector gap (done, §1), then MEASURE the parts
+  with more than one announced version across the live peers before
+  choosing (A), (B) or (C). With §1 built, the node's bundles will be the
+  first version of 1,612 parts and Perugia's 3 bundles the second of 3;
+  "duplicates are checks" (04 §4.5) covers that scale.
+- **`share contribute` needs the collection's writer lock** (München 5a,
+  Perugia 6b): the worker holds it for the collection's life, so the
+  node runs contribute as a cron CLI with `node pause gutenberg` around
+  it (23:00–07:00), stopping acquisition and the catalogue meanwhile.
+  The worker should run contribute itself, as a stage under its lock —
+  a scheduling change: docs/notes/scheduling.md §6 first, with numbers.
+- **A `docker exec` CLI is SIGKILLed by the deploy's stop** (München 5b:
+  exit 137, not 07 §7.7's 130). Deploy script, not platform code.
+- **Perugia's `records-vs-origin`** is *inconclusive* without an origin
+  copy; it now receives the node's attestation (§3). Whether a leecher
+  should sample the origin over the network (`--origin` as a URL) is
+  06 §6.2's etiquette question, not taken up.
+- **The dev-PC peer** (ed25519:9f7c969c…) lists gutenberg with
+  `coverage []`, `members []`: the same `share = false` as Perugia.
+- **The node's `share_slices`** was removed on 2026-10-19 to unstick
+  Perugia; with §6 it can be narrowed again safely.
+
+### Deploy order (the node first, then the peers)
+
+1. Node (München): deploy the branch; nothing to run by hand — the next
+   `share contribute` pass bundles the held vectors (watch its duration
+   and the digest size: ~1,600 bundle members and coverage rows); the
+   next digest offers the served members only.
+2. Perugia: deploy; `louise share gutenberg` once (or set `share = true`);
+   contribute may resume — its first pass will probe 1,6xx open parts
+   and hold nothing of most of them, then lead what rendezvous gives it
+   (the node now bundles ~1,470 parts from held vectors within a pass
+   or two, so most parts close before Perugia embeds them).
+3. Both: `share peers add <address> --key <key>` for the other, so the
+   pin — not the declared address — is what contact uses (§4).

@@ -15,7 +15,7 @@ What is here, and why it is kept:
 | `scheduling.md` | the worker's scheduling model, the measured costs, and every pitfall that has cost a rework — read before touching what runs when |
 | `scheduling-log.md` | one row per deployed scheduling change: the scenario it ran under and what it measured, before and after. Append-only, and filled in before the deploy — a throughput number without its scenario is not evidence |
 | `calibration.md`, `calibration.live.md`, `approved-encoders.md` | how the tolerance was measured, and which encoder builds were found compliant on which hardware |
-| `p2p-review-open-issues.md` | the P2P gaps found on 2026-10-19 (held vectors invisible to the network — 90.9 % of gutenberg —, missed attestations, self-declared addresses, DHT flood, slice stalls), input for the architecture review |
+| `p2p-review-open-issues.md` | the P2P gaps found on 2026-10-19 when the second GPU peer joined (held vectors invisible to the network — 91 % of gutenberg —, missed attestations, self-declared addresses, DHT flood, slice stalls, bundles announced from a peer that serves nothing), and the review that fixed five of them the same day: what was decided, built and amended, what stays open, the deploy order |
 | `vector-convergence.md` | proposal (2026-10-19): equivalent versions of the same vectors converge on one, by 04 §4.6's adoption rule and a total order — amends 02 §2.4–2.5, 04 §4.5 once reviewed |
 | `measuring.md` | how to measure without producing a number that gets quoted wrong: the existing harnesses, the deployed configuration, the disk, the labels — read before measuring anything |
 | `phase1-integration-notes.md`, `upstream-rust-stemmers-greek.md` | postmortems: what went wrong, what it cost, what was changed |
