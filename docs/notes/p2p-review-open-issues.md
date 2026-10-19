@@ -713,3 +713,32 @@ copies whose completions are Perugia's. Coverage by union 5,679,122 of
    or two, so most parts close before Perugia embeds them).
 3. Both: `share peers add <address> --key <key>` for the other, so the
    pin — not the declared address — is what contact uses (§4).
+
+### 15. The embedder sweep does not know an out-of-process user (Perugia, 2026-10-19)
+
+Perugia's worker logged "embedder(s) vega-qwen3-embedding-4b unloaded:
+idle or named by no held collection, and no collection that names them
+embeds everything" seven times from 18:16Z, while `louise share
+contribute` — a CLI process — was embedding with that model at ~142
+chunks/min. LocalAI showed no reload and the rate held, so nothing
+visible was lost; the statement was still false, and the mechanism is
+wrong for this deployment.
+
+`worker._sweep_unheld_embedders` (every settle beat) unloads a `vega-*`
+model named only by collections whose embed mode is not all/p2p once it
+has been idle for two beats, "idle" being LocalAI `/system`'s
+`process.cpu_percent == 0.0` (`model_load.activity`). Two blind spots
+met on Perugia: a GPU-bound backend (DXG/ROCm) can burn ~0 % CPU while
+embedding, and the only user of the encoder was a process the worker
+does not run, on a collection whose mode is "off". `/backend/shutdown`
+was asked seven times; whether LocalAI refused it with requests in
+flight or reloaded invisibly is what the log will say.
+
+Measurements asked of Perugia (read-only): `/system` sampled during a
+contribute; LocalAI's log at one of the seven timestamps; the TOML's
+`embed`. Fix to choose with them, under scheduling.md §6: the contribute
+CLI takes an ENCODER LEASE in `state/node.sqlite` (model, holder,
+until; renewed per batch) that the sweep honours, or the sweep reads an
+in-flight request signal from LocalAI instead of CPU. Until then: a
+contribute on a node whose worker does not embed runs beside a sweep
+that may ask its encoder to stop.
