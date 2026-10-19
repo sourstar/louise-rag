@@ -37,6 +37,8 @@ from app.share import rendezvous
 #: the index is reconsidered at most this often (the coverage map changes per
 #: accepted bundle, the live set per digest interval — both far slower)
 REBUILD_S = 60.0
+#: the bound on reading node.sqlite (the digests) from the embed selection
+NODE_DB_TIMEOUT_MS = 250
 
 
 @dataclass(frozen=True)
@@ -197,6 +199,9 @@ def skip_test(collection, con, *, root: Path | None = None, now: float | None = 
             own = cov.own_benchmarks(root, collection.name, codex, own_key)
             if node_con is None:
                 with closing(peers.connect()) as nc:
+                    # a pipeline thread never waits without a bound: a locked
+                    # node.sqlite costs NODE_DB_TIMEOUT_MS, then skips nothing
+                    nc.execute(f"PRAGMA busy_timeout = {int(NODE_DB_TIMEOUT_MS)}")
                     live = cov.live_peers(codex, nc, now=now, own_key=own_key, own_benchmarks=own)
             else:
                 live = cov.live_peers(codex, node_con, now=now, own_key=own_key, own_benchmarks=own)
@@ -212,6 +217,11 @@ def skip_test(collection, con, *, root: Path | None = None, now: float | None = 
             with _cache_lock:
                 _cache[key] = (now, fp, skips)
     except Exception:   # noqa: BLE001 — any doubt embeds (module docstring)
+        # cached like a success: a locked node.sqlite or an unreadable digest
+        # costs its timeout once a REBUILD_S, never every round (review of
+        # 45535ea)
+        with _cache_lock:
+            _cache[key] = (now, ("unreadable",), None)
         return None
     return None if skips is None else skips.skips_row
 

@@ -157,3 +157,45 @@ def test_any_failure_to_read_the_inputs_skips_nothing(monkeypatch, tmp_path):
     assert leading.skip_test(coll, object(), root=tmp_path, own_key=ME, snapshot=SNAPSHOT) is None
     assert leading.skip_test(SimpleNamespace(codex=None, name="x"), object()) is None
     leading.reset_cache()
+
+
+def test_a_failure_is_cached_like_a_success_not_retried_every_round(monkeypatch, tmp_path):
+    """BLOCKING in the review of 45535ea: a locked node.sqlite or an
+    unreadable digest cost its busy timeout every round. Now once a REBUILD_S."""
+    from app.share import coverage as cov
+    leading.reset_cache()
+    coll = SimpleNamespace(codex=_codex(), name="g", manifest_path=tmp_path / "m")
+    tries = []
+    monkeypatch.setattr(cov, "own_benchmarks", lambda *a, **k: tries.append(1) or 1 / 0)
+    kw = dict(root=tmp_path, own_key=ME, snapshot=SNAPSHOT)
+    assert leading.skip_test(coll, object(), now=1000.0, **kw) is None
+    assert leading.skip_test(coll, object(), now=1010.0, **kw) is None
+    assert tries == [1], "within REBUILD_S the failure is not retried"
+    leading.skip_test(coll, object(), now=1000.0 + leading.REBUILD_S + 1, **kw)
+    assert tries == [1, 1]
+    leading.reset_cache()
+
+
+def test_the_node_database_is_read_under_a_short_bound(monkeypatch, tmp_path):
+    """A pipeline thread never waits without a bound (CLAUDE.md)."""
+    from app.share import coverage as cov, peers
+    leading.reset_cache()
+    pragmas = []
+
+    class NodeCon:
+        def execute(self, s, *a):
+            pragmas.append(s)
+
+        def close(self):
+            pass
+    monkeypatch.setattr(peers, "connect", lambda: NodeCon())
+    monkeypatch.setattr(cov, "own_benchmarks", lambda *a, **k: [])
+    monkeypatch.setattr(cov, "live_peers", lambda *a, **k: [])
+    coll = SimpleNamespace(codex=_codex(), name="g", manifest_path=tmp_path / "m")
+
+    class Con:
+        def execute(self, *a):
+            return SimpleNamespace(fetchone=lambda: (0, None))
+    leading.skip_test(coll, Con(), root=tmp_path, own_key=ME, snapshot=SNAPSHOT)
+    assert pragmas == [f"PRAGMA busy_timeout = {leading.NODE_DB_TIMEOUT_MS}"]
+    leading.reset_cache()
