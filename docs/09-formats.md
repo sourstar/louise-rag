@@ -1297,7 +1297,7 @@ the peer list (04 §4.2).
 | `version` | `2` | yes | version 1 is this object with `encoder_image`, the engine's image digest alone, in place of `encoder_engine` in `benchmarks` |
 | `key` | key | yes | the sender |
 | `time` | time | yes | |
-| `address` | string | yes | where the sender answers pulls: `https://host:port` |
+| `address` | string | yes | where the sender answers pulls: `https://host:port`. A receiver whose `[peers.pins]` binds an address to the sender's key records the sender at THAT address and uses it for digests, events, pulls and swarm dials; the declared one is kept only as what the digest said (04 §4.2, amended 2026-10-19) |
 | `neighbours` | list of `{key, address}` | yes | up to sixteen live neighbours |
 | `benchmarks` | list | yes | `{space_id, encoder_engine, encoder_weights, tokens_per_s: integer}`, one per space, for the validated run this peer contributes with (03 §3.3, §9.12). Keyed by space because that is how 04 §4.5 reads it: a peer with no entry for a collection's space is unscored for that collection. For a space whose collections are Codex version 2, whose one statement names the encoder's image and no run (§9.12, body version 1), the row carries `encoder_image` in place of `encoder_engine` — amended 2026-10-07, so that version-2 collections can be led under rendezvous at all; a receiver reads `space_id` and `tokens_per_s` either way |
 | `collections` | list | yes | one entry per collection held, below |

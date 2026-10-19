@@ -238,3 +238,44 @@ def test_the_announced_port_is_the_one_peers_reach(node, monkeypatch):  # noqa: 
     assert gossip.own_address() == "http://192.168.178.10:30042"
     p.write_text('[node]\naddress = "https://louise.example.org"\n', encoding="utf-8")
     assert gossip.own_port() == 443
+
+
+def test_a_pinned_address_wins_over_the_one_the_digest_declares(node, monkeypatch):  # noqa: F811
+    """Live, 2026-10-18: the node declared its LAN address; the Perugia peer,
+    off that LAN and holding the node's tailnet address by hand, recorded
+    the declared one from the digest and sent every digest, pull and swarm
+    dial there — `ConnectTimeout` until the node changed what it declares
+    (04 §4.2, amended 2026-10-19: the hand-given address wins)."""
+    from app.share import fetch, transport
+    platform_config.platform_path().write_text(
+        f'[peers]\naddresses = ["http://100.75.37.54:30042"]\n'
+        f'[peers.pins]\n"http://100.75.37.54:30042" = "{PEER_KEY}"\n', encoding="utf-8")
+    now = time.time()
+    entry = {"collection_id": CID, "lineage_id": CID, "title": "g", "snapshot_id": "2026-09",
+             "snapshot_hash": "sha256:" + "1" * 64, "codex_hash": "sha256:" + "2" * 64,
+             "license": "green", "privacy": "public", "members": [], "coverage": []}
+    client = TestClient(api.app)
+    declared = {**digest(PEER_KEY, "http://192.168.178.10:30042", collections=[entry], now=now),
+                "peer_port": 6881}
+    r = client.post("/api/share/digest/share", json=env.sign(env.DIGEST, declared, PEER))
+    assert r.status_code == 200
+    with peers.connect() as con:
+        assert peers.neighbours(con, now=now) == [{"key": PEER_KEY, "address": "http://100.75.37.54:30042"}], \
+            "recorded at the pinned address, not the declared one"
+        assert peers.digest_of(con, PEER_KEY)["address"] == "http://192.168.178.10:30042", \
+            "the digest itself is kept whole"
+        assert transport.hints_for(con, CID, now=now) == [("100.75.37.54", 6881)], "the swarm is dialled there too"
+        assert [s.address for s in fetch.sources(con, CID, now=now)] == ["http://100.75.37.54:30042"]
+        assert peers.recipients(con, now=now) == ["http://100.75.37.54:30042"]
+        shown = peers.show(con, now=now)
+        (p,) = [x for x in shown["peers"] if x["key"] == PEER_KEY]
+        assert (p["address"], p["declared"], p["pinned"]) == (
+            "http://100.75.37.54:30042", "http://192.168.178.10:30042", True)
+        # a key nobody pinned is recorded where its digest says, as before
+        other = {**digest(OTHER_KEY, "http://10.0.0.8:30042", now=now)}
+        peers.record_digest(con, other, now=now)
+        assert {"key": OTHER_KEY, "address": "http://10.0.0.8:30042"} in peers.neighbours(con, now=now)
+        (o,) = [x for x in peers.show(con, now=now)["peers"] if x["key"] == OTHER_KEY]
+        assert o["declared"] is None
+    assert peers.pinned_address(PEER_KEY) == "http://100.75.37.54:30042"
+    assert peers.pinned_address(OTHER_KEY) is None

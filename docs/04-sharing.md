@@ -138,8 +138,14 @@ digest from a key never seen before is accepted on the strength of its
 signature alone — identity is the key, not the address, and the aggregate
 limit of 08 §8.2 bounds what a flood of fresh keys can cost. An address
 added by hand may pin a key; a digest from that address under another
-key is discarded and logged. Ordinary keys do not rotate; a lost key is a
-new key.
+key is discarded and logged, and a digest FROM the pinned key is recorded
+at the pinned address whatever address it declares — the hand-given
+address is the one this peer can reach, and the declared one is kept
+only as what the digest said *(amended 2026-10-19, P2P review: the node
+declared its LAN address; a peer off that LAN, holding the node's tailnet
+address by hand, sent every digest, pull and swarm dial to the declared
+one and reached nothing until the node changed what it declares)*.
+Ordinary keys do not rotate; a lost key is a new key.
 
 **Pulls.** The messages are `digest`, `event`, `pull codex`, `pull
 snapshot` and `pull attestations(collection_id, since)` (09 §9.9); every

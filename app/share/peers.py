@@ -55,15 +55,20 @@ def connect() -> sqlite3.Connection:
 
 # ---- peers ------------------------------------------------------------------------
 
-def record_digest(con, body: dict[str, Any], *, now: float) -> None:
+def record_digest(con, body: dict[str, Any], *, now: float, cfg=None) -> None:
     """A verified digest from `body['key']`: the peer is seen, at the
-    address its digest names; its digest is kept whole for the catalogue
-    and the coverage map (9d, 9e)."""
+    address its digest names — or at the address `[peers.pins]` binds to
+    its key, which wins (04 §4.2, amended 2026-10-19): the node declared
+    its LAN address, and a peer off that LAN that held the right address
+    by hand sent its digests, its pulls and its swarm dials to the
+    declared one and reached nothing (2026-10-18). Its digest is kept
+    whole for the catalogue and the coverage map (9d, 9e)."""
+    address = pinned_address(body["key"], cfg) or body.get("address")
     con.execute(
         "INSERT INTO peers(key, address, first_seen, last_digest, digest) VALUES(?,?,?,?,?) "
         "ON CONFLICT(key) DO UPDATE SET address=excluded.address, "
         "last_digest=excluded.last_digest, digest=excluded.digest",
-        (body["key"], body.get("address"), now, now, json.dumps(body, sort_keys=True)))
+        (body["key"], address, now, now, json.dumps(body, sort_keys=True)))
 
 
 def peer(con, key: str) -> dict[str, Any] | None:
@@ -173,6 +178,23 @@ def pinned_key(address: Any, cfg=None) -> str | None:
         return cfg.peers.pins.get(platform_config.normalise_address(address))
     except Exception:   # noqa: BLE001 — an address that is not one pins nothing
         return None
+
+
+def pinned_address(key: str, cfg=None) -> str | None:
+    """The address `[peers.pins]` binds to this key, if any: the one given
+    by hand, which a receiver records in place of the one the key's digest
+    declares (04 §4.2, amended 2026-10-19). A key pinned at several
+    addresses is recorded at the first in the peer list's order."""
+    from app import platform_config
+    try:
+        cfg = cfg or platform_config.load()
+        pins = dict(cfg.peers.pins)
+    except Exception:   # noqa: BLE001 — no file, or one that does not load: no pin
+        return None
+    for a in list(cfg.peers.addresses) + sorted(pins):
+        if pins.get(a) == key:
+            return a
+    return None
 
 
 def peer_list(cfg=None) -> list[dict[str, Any]]:
@@ -287,6 +309,9 @@ def show(con, *, now: float, cfg=None) -> dict[str, Any]:
         out_peers.append({
             "key": row["key"],
             "address": row.get("address"),
+            # what its digest declared, when a pin put the key at another address
+            "declared": (digest or {}).get("address")
+            if digest and (digest or {}).get("address") != row.get("address") else None,
             "last_digest": messages.time_text(row["last_digest"]) if row.get("last_digest") else None,
             "neighbour": bool(row.get("last_digest") and row["last_digest"] >= now - NEIGHBOUR_WINDOW_S
                               and row.get("address") and not banned),
