@@ -105,6 +105,36 @@ is left.
 - **(C) The proposal, amended as above.** Deterministic, observable, lazy;
   the cost is a rule in 02 §2.4/§2.5 and 04 §4.5 and its tests.
 
+- **(D) The operator's "darwinism" (2026-10-19):** a peer holding BOTH
+  versions, having compared them, marks the loser *deprecated*, pointing to
+  the alternative; another peer may then drop it and restart its fetch on
+  the successor; seeders refuse the deprecated version to new peers after a
+  first deadline and delete it after a second. "Don't reinvent the wheel if
+  something solving this requirement already exists and works properly."
+  - The wheel exists: HTTP's deprecation lifecycle — `Deprecation` (RFC 9745),
+    `Sunset` (RFC 8594) and the `successor-version` link (RFC 5829) — is
+    exactly "deprecated as of T1, gone at T2, use this instead". Take the
+    three fields and their meaning verbatim, on the deprecated bundle's
+    entry in the digest (09 §9.9): no new message.
+  - BitTorrent's own answer, a signed mutable pointer to the new version
+    (BEP 46 over the DHT; BEP 39 by feed), does what the signed, gossiped
+    digest already does — not needed.
+  - The deadlines have a unit already: the Codex's `grace_days`, the window
+    of the cascade and of staging (04 §4.3, §4.5) — say 1× to refuse new
+    uploads, 2× to delete, or the operator's numbers.
+  - "Once the peer has both" is the pairwise equivalence §2 asks for: only
+    a peer holding both can compare them.
+  - It still needs (C)'s deterministic order, or two peers deprecate each
+    other's version and the network flips; and a newcomer runs the ladder
+    on the successor before it drops what it holds (a flag is one peer's
+    word).
+  - **It meets promise 7** (docs/01, "Nothing published is deleted"): a
+    bundle is a published, signed artefact. The promise exists so a WRONG
+    artefact is never recalled, only superseded; two equivalent versions
+    are both right. The amendment to name: an equivalent vector version may
+    be retired after its sunset, the pairwise `vectors-sample` attestation
+    staying as its record. The operator's to decide in the review.
+
 **Recommendation:** fix rendezvous (queued), then measure the parts with
 more than one version across live peers. If they are few, (A) or (B). If
 the network is meant to rejoin after partitions as a matter of course,
