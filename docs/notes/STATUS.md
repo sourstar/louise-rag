@@ -309,6 +309,16 @@ numbers owed AFTER. Also today: a landed bundle marks its part's documents
 embedded (Perugia's card read 57 % with 93 % of the vectors held), and the
 offer says when a collection cannot be taken yet (no snapshot served).
 
+### 2026-10-20: the node's ZFS ARC capped at 16 GiB (operator)
+
+During the 99 GB copy of wikidata's pack to the fast drive the ARC, uncapped
+(`zfs_arc_max = 0` on a 61 GB host), held 34 GiB and left 0.4 GiB available;
+Qwen3's and bge-m3's loads failed at 22:01–22:02 CEST (backend exit −1, a
+cooldown) and gutenberg's vector leg was withheld for minutes (München).
+Operator, 22:5x: "Cap at 16GB" — `zfs_arc_max = 17179869184`, set at
+runtime and as a TrueNAS post-init command so it survives a reboot. Owed
+from München: c_max and MemAvailable after, and the time.
+
 ### 2026-10-20: a fast drive for derived data — LOUISE_CACHE_DIR (operator)
 
 "A cache folder on a fast drive, like nvme or ssd, to be used for such
