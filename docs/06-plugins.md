@@ -398,6 +398,17 @@ holds 1.32× the distinct article texts of the latest ones, not 6×. The
 map stays local — the peer keeps the hash of every chunk text it holds a
 vector for — so nothing new travels.
 
+*Amended 2026-10-21 (invariant 12, RULE 1):* a holder stands for a text
+only while its own vectors are current — made at the current embed
+version, not marked for replacement — and only while the row under its
+chunk id still holds that text. The hash table names whichever record
+wrote a text last and says nothing of the run that made its vector;
+when a collection's vectors are made again (`hold vectors reembed`,
+07 §7.3) every holder still points at a vector being replaced, and
+carrying one would mark a record re-embedded with the old run's bytes.
+So a re-embed crosses records too: a text shared by versions is encoded
+once, by the first version re-embedded, and carried from it to the rest.
+
 Chunking is a pure function of the cleaned text and the layer's chunker
 version. Two peers with the same platform image cut the same document
 into the same chunks with the same ids, or a check fails and names the

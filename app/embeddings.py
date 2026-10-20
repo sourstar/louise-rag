@@ -1120,16 +1120,45 @@ def cross_carry(con, collection, chunks, carry: dict, *, exclude_book: int) -> i
                              f"WHERE text_hash IN ({marks}) AND native_id<>?",
                              [*part, int(exclude_book)]):
             found[bytes(r[0])] = r[1]
+    if found:
+        current = _current_holders(con, found.values())
+        found = {h: cid for h, cid in found.items() if _uid_of_chunk(cid) in current}
     if not found:
         return 0
-    vectors = vectors_by_chunk_id(list(found.values()), collection)
+    held = _by_chunk_id(list(found.values()), collection, with_text=True)
     n = 0
     for h, cid in found.items():
-        v = vectors.get(cid)
-        if v is not None:
-            carry[h] = v
+        got = held.get(cid)
+        if got is not None and chunk_text_hash(got[0]) == h:
+            carry[h] = got[1]
             n += 1
     return n
+
+
+def _uid_of_chunk(chunk_id: str) -> str:
+    """`{uid}:{seq}:{version}` -> `uid` (app/chunking.py)."""
+    return chunk_id.rsplit(":", 2)[0]
+
+
+def _current_holders(con, chunk_ids) -> set[str]:
+    """Of the documents holding these chunks, the uids whose own vectors are
+    current — the ones `may_reuse` would let keep them (amended 2026-10-21).
+    `chunk_hashes` names whichever document wrote a text last and says
+    nothing of the run that made its vector: after `hold vectors reembed`,
+    or an EMBED_VERSION bump, every holder still points at a vector being
+    replaced, and carrying one would mark a document re-embedded with the
+    old run's bytes. By uid, the manifest's primary key: bounded by this
+    document's chunks."""
+    uids = sorted({_uid_of_chunk(c) for c in chunk_ids})
+    out: set[str] = set()
+    for i in range(0, len(uids), 500):
+        part = uids[i:i + 500]
+        marks = ",".join("?" for _ in part)
+        for uid, version in con.execute(
+                f"SELECT uid, embed_version FROM documents WHERE uid IN ({marks})", part):
+            if may_reuse({"embed_version": version}):
+                out.add(uid)
+    return out
 
 
 def _held_columns(at: "pa.Table"):
@@ -1164,6 +1193,13 @@ def vectors_by_chunk_id(chunk_ids, collection=None) -> dict[str, list]:
     which also means this works for a chunk whose document row has since
     been deleted.
     """
+    return _by_chunk_id(chunk_ids, collection)
+
+
+def _by_chunk_id(chunk_ids, collection=None, *, with_text: bool = False) -> dict:
+    """`vectors_by_chunk_id`'s read: id -> vector, or, `with_text`, id ->
+    (text, vector) — what `cross_carry` needs to see that a holder's row
+    still holds the text its hash was recorded for."""
     ids = list(chunk_ids)
     if not ids:
         return {}
@@ -1182,8 +1218,9 @@ def vectors_by_chunk_id(chunk_ids, collection=None) -> dict[str, list]:
     if TABLE not in db.table_names():
         return {}
     want = set(ids)
-    out: dict[str, list] = {}
+    out: dict = {}
     tbl = db.open_table(TABLE)
+    columns = ["id", "text", "vector"] if with_text else ["id", "vector"]
     # In batches: the predicate is a literal string, so a very large IN
     # list is a very large query, and Lance parses it per call.
     books_list = sorted(books)
@@ -1192,12 +1229,13 @@ def vectors_by_chunk_id(chunk_ids, collection=None) -> dict[str, list]:
         try:
             rows = (tbl.search().where(f"{BOOK_COLUMN_NAME} IN ({chunk})",
                                        prefilter=True)
-                    .select(["id", "vector"]).limit(_RESUME_SCAN_MAX).to_list())
+                    .select(columns).limit(_RESUME_SCAN_MAX).to_list())
         except Exception:                       # noqa: BLE001
             return out
         for r in rows:
             if r["id"] in want:
-                out[r["id"]] = list(r["vector"])
+                v = list(r["vector"])
+                out[r["id"]] = (r["text"], v) if with_text else v
     return out
 
 
@@ -1276,6 +1314,36 @@ def may_reuse(row) -> bool:
     except (KeyError, IndexError):
         return False
     return not version or int(version) == config.EMBED_VERSION
+
+
+#: The `embed_version` of a document whose vectors must be made again by the
+#: encoder that serves its collection now (`hold vectors reembed`): below
+#: every real version, so the embed stage's version walk (`embed_version<?`)
+#: selects it and `may_reuse` keeps nothing of it — and not 0, which
+#: `may_reuse` reads as "never completed" and resumes.
+REPLACED_VERSION = -1
+
+
+def mark_for_reembed(con, *, window: int = 50_000) -> int:
+    """Every embedded document of this manifest marked REPLACED_VERSION;
+    returns how many. In rowid windows, one BEGIN IMMEDIATE each, so the
+    worker's writes interleave — a 40M-row manifest is never one long
+    write. The vectors keep serving search until each document's are
+    replaced; marking again starts the re-embed over."""
+    top = con.execute("SELECT MAX(rowid) FROM documents").fetchone()[0] or 0
+    n = 0
+    for start in range(0, top, window):
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            cur = con.execute("UPDATE documents SET embed_version=? "
+                              "WHERE rowid>? AND rowid<=? AND embed_done=1",
+                              (REPLACED_VERSION, start, start + window))
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        n += cur.rowcount
+    return n
 
 
 def _reusable(chunk: dict) -> bool:
@@ -1396,9 +1464,12 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
         if versioned:
             record_chunk_hashes(lock_con, book_id, chunks)
         return len(chunks)          # already complete; nothing to embed
-    if versioned and reuse:
+    if versioned:
         # 06 §6.3 (amended 2026-10-12): the articles this version shares with
-        # another version of its Work keep their vectors
+        # another version of its Work keep their vectors — also when this
+        # document may not keep its OWN (amended 2026-10-21, a re-embed):
+        # `cross_carry` takes a text only from a holder whose vectors are
+        # current, so what it carries is what the encoder would make now
         crossed = cross_carry(lock_con, collection, todo, carry, exclude_book=int(book_id))
         if counts is not None and crossed:
             counts.crossed += crossed

@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 
-from app import collections as collections_mod, db, discovery, embeddings, fts, retrieval, validity, worker
+from app import collections as collections_mod, config, db, discovery, embeddings, fts, retrieval, validity, worker
 from app.plugins.normattiva import source as nsrc
 from tests.test_normattiva import (BUILT, RD206_O, RD206_R, RD206_REPEALED, SARD, SARD_MEMBERS,
                                    _nid, _zip)
@@ -317,6 +317,70 @@ def test_a_later_version_carries_the_vectors_of_the_articles_it_shares(versioned
     assert con.execute("SELECT COUNT(*) FROM chunk_hashes").fetchone()[0] >= len(texts[V12_ID])
     last = con.execute("SELECT message FROM events WHERE stage='embed' ORDER BY id DESC LIMIT 1").fetchone()[0]
     assert "from other versions" in last
+
+
+def test_a_reembed_carries_a_text_only_from_a_document_already_re_embedded(versioned, monkeypatch):
+    """`hold vectors reembed` (06 §6.3, amended 2026-10-21): every vector is
+    made again, a text shared by versions once — and never carried from a
+    vector being replaced, though every holder still names one."""
+    c, con, _ = versioned
+    _run(con, c, "rdf", "fts", "embed")
+    old, new = [1.0] + [0.0] * 7, [0.0, 1.0] + [0.0] * 6
+    calls: list = []
+
+    def counting(items, recipe=None, **kw):
+        calls.extend(items)
+        return [list(new) for _ in items]
+    monkeypatch.setattr(embeddings, "_embed_texts", counting)
+    embedded = con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0]
+    assert embeddings.mark_for_reembed(con, window=1) == embedded, "every window, every document"
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_version=?",
+                       (embeddings.REPLACED_VERSION,)).fetchone()[0] == embedded
+    picked = {int(r["native_id"]) for r in con.execute(
+        worker._REEMBED_WINDOWED, (0, 1 << 62, config.EMBED_VERSION, config.MAX_RETRIES, 100))}
+    assert {O_ID, V11_ID, V12_ID} <= picked, "the version walk selects them"
+    rows = {int(r["native_id"]): r for r in con.execute("SELECT * FROM documents")}
+    assert not embeddings.may_reuse(rows[V11_ID])
+    chunks = {nid: worker._load_chunks(rows[nid], c) for nid in (O_ID, V11_ID, V12_ID)}
+
+    def embed(nid):
+        before = len(calls)
+        worker.stage_embed(con, con.execute("SELECT * FROM documents WHERE native_id=?",
+                                            (str(nid),)).fetchone(), c)
+        if con.in_transaction:
+            con.execute("COMMIT")
+        return len(calls) - before
+    assert embed(V11_ID) == len(chunks[V11_ID]), "the others hold the old run's vectors: nothing carried"
+    v11 = {ch["text"] for ch in chunks[V11_ID]}
+    assert embed(O_ID) == sum(1 for ch in chunks[O_ID] if ch["text"] not in v11), \
+        "what the re-embedded 2001 version shares is carried from it"
+    o = {ch["text"] for ch in chunks[O_ID]}
+    assert embed(V12_ID) == sum(1 for ch in chunks[V12_ID] if ch["text"] not in v11 | o)
+    tbl = embeddings._conn(c).open_table(embeddings.TABLE)
+    for nid in (O_ID, V11_ID, V12_ID):
+        got = tbl.search().where(f"book_id = {nid}", prefilter=True).limit(500).to_list()
+        assert len(got) == len(chunks[nid])
+        assert all(list(r["vector"]) == new for r in got), "no vector of the replaced run survives"
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE native_id IN (?,?,?) AND embed_version=?",
+                       (str(O_ID), str(V11_ID), str(V12_ID), config.EMBED_VERSION)).fetchone()[0] == 3
+
+
+def test_a_holder_rewritten_since_its_hash_stands_for_nothing(versioned):
+    """`chunk_hashes` names a chunk id; the row under that id must still hold
+    the text the hash was recorded for, or nothing is carried from it."""
+    c, con, _ = versioned
+    _run(con, c, "rdf", "fts", "embed")
+    row = con.execute("SELECT * FROM documents WHERE native_id=?", (str(O_ID),)).fetchone()
+    a, b = [ch for ch in worker._load_chunks(row, c)][:2]
+    assert a["text"] != b["text"]
+    probe = [{"id": "normattiva:1:0:1", "text": a["text"]}]
+    carry: dict = {}
+    assert embeddings.cross_carry(con, c, probe, carry, exclude_book=1) == 1, "the holder as written"
+    con.execute("UPDATE chunk_hashes SET chunk_id=? WHERE text_hash=?",
+                (b["id"], embeddings.chunk_text_hash(a["text"])))
+    carry = {}
+    assert embeddings.cross_carry(con, c, probe, carry, exclude_book=1) == 0
+    assert carry == {}
 
 
 # ---- closing a chain from outside it (review §3.2, case 2) ----------------------

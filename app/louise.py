@@ -2666,6 +2666,32 @@ def cmd_vectors_validity_columns(a) -> int:
     return 0
 
 
+def cmd_vectors_reembed(a) -> int:
+    """`hold vectors reembed <collection>`: every vector of the collection
+    made again by the encoder that serves it now — for vectors a run made
+    that does not give back its own bytes (CLAUDE.md invariant 12;
+    Normattiva's DAR-legal-it, 2026-10-21: 1 in 4 repeats bit-identical).
+    Every embedded document is marked `embeddings.REPLACED_VERSION`; the
+    embed stage's version walk selects it and keeps nothing of its own
+    (`may_reuse`), and in a versioned collection a text another document
+    has already re-embedded is carried from that one, never from a vector
+    being replaced (06 §6.3, amended 2026-10-21). The old vectors serve
+    search until each document's are replaced. Needs no lock: windows of
+    rowids, one transaction each. The worker's version walk finds them
+    within an hour, at once when it next starts."""
+    from app import db, embeddings
+    from app.hold import collection as col, records as rec
+
+    name, codex = col.resolve(a.root, a.collection)
+    local = rec.local_collection(a.root, name, codex)
+    con = db.connect(local)
+    n = embeddings.mark_for_reembed(con)
+    _print({"collection": name, "marked": n,
+            "next": "the embed stage re-embeds them: within the hour, at once on the "
+                    "worker's next start"})
+    return 0
+
+
 def cmd_vectors_build(a) -> int:
     """`hold vectors build` — this peer's own chunks, embedded here.
 
@@ -4342,6 +4368,12 @@ def build_parser() -> argparse.ArgumentParser:
                                "every vector kept; then `hold index build --vector`")
     root_arg(p); p.add_argument("collection")
     p.set_defaults(fn=cmd_vectors_validity_columns)
+    p = vverbs.add_parser("reembed",
+                          help="every vector made again by the encoder that serves the "
+                               "collection now: documents marked, the embed stage replaces "
+                               "them; a versioned collection's shared texts once each")
+    root_arg(p); p.add_argument("collection")
+    p.set_defaults(fn=cmd_vectors_reembed)
 
     key = nouns.add_parser("key", help="this peer's key, the trust list, a certifier's anchor")
     kverbs = key.add_subparsers(dest="verb", required=True)

@@ -382,6 +382,14 @@ reader needs at the command line:
 - **`vectors check`.** Is `hold check --checks vectors-sample` over this
   peer's own vectors; `--drop` turns a failing row into an empty one
   (02 §2.4) so the coverage map stops claiming it.
+- **`vectors reembed`.** Every vector of a collection made again by the
+  encoder that serves it now — for vectors whose run does not give back
+  its own bytes (invariant 12). It marks every embedded document; the
+  embed stage's version walk replaces each document's vectors, keeping
+  none of its own, and in a versioned collection carries a text from a
+  document already re-embedded (06 §6.3, amended 2026-10-21). The old
+  vectors serve search until replaced. No lock: the marks are written in
+  windows of rows, one transaction each, beside the running node.
 - **`vectors validity-columns`.** The repair for a versioned collection
   (05 §5.1's validity) whose vector table was written without its three
   columns: the table is rebuilt in place with the columns read from the
