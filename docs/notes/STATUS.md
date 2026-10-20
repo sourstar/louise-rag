@@ -284,6 +284,19 @@ recorded in the report, not a refusal (03 §3.5 amended;
 structural T0 failure still refuse. The four parts re-ladder at the
 publisher's next pass after the deploy.
 
+### 2026-10-20: jina-v3 reproduces its own bytes with torch's deterministic switch; the wikidata recipe is filled
+
+München, on the third louise-python tree (-20261020c): with torch's
+defaults 204 of 512 calibration texts came back bit-identical over two
+fresh loads and two shuffled orders — the short texts differed; with
+`LOUISE_TORCH_DETERMINISTIC=1` (the task's switch, in the model's env, so the
+stated run carries it) the document model is 512/512. Throughput 2,016
+tokens/s warm. docs/notes/wikidata-recipe.toml is filled from the two
+stated runs byte for byte (document `bec9c3a0…`, query `dd90f8d4…`, image
+`1807f280…`) and `work.tokens` set to 1.7 G a month from the measured rate
+at eight hours a day — the one chosen number, inside collection_id, for
+the operator to confirm. Create follows the query model's 512/512.
+
 ### 2026-10-20: pubmed-v8 is `pubmed` (operator; München, 08:24–08:35Z)
 
 Its 39,994,988 documents all done (rdf, fts, embed), as the operator's

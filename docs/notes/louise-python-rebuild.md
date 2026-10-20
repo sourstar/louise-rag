@@ -210,9 +210,15 @@ invariant 12 open for DAR); pubmed document PASS 16/16 run `8f828fd7…`,
 fingerprint `0eb32880…` unchanged across four trees; query `bf2224e3…`;
 MADLAD 42/42, rerank bit-equal. The two jina YAMLs at context_size 1,024
 with `LOUISE_TORCH_DETERMINISTIC=1`: document run `bec9c3a0…`, query run
-`dd90f8d4…`, weights `f0f752ae…` = the installer's. The 512-text
-measurement WITH the window and the env set runs on this tree; its
-result decides whether jina-v3 is the collection's encoder.
+`dd90f8d4…`, weights `f0f752ae…` = the installer's. **Invariant 12 WITH
+the window (1,024) and the env set, document model: 512/512 bit-identical
+over 2 fresh loads × 2 shuffled passes (2,048 vectors), 08:53–09:09Z, 974
+s.** The query model's run started 09:12:58Z. Throughput, warm, one text
+per call through VeGa: 512 texts in 110.28 s, median 0.104 s, p95 0.183 s;
+222,345 tokens a pass → 2,016 tokens/s (the first pass after a load is
+slower: kernel JIT per new shape). The two stated runs' JSON (VeGa's own
+output: /root/jina-v3/run-document-c.json, run-query-c.json on the node)
+are in docs/notes/wikidata-recipe.toml byte for byte.
 
 | item | value |
 |---|---|

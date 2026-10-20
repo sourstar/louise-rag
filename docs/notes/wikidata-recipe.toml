@@ -1,22 +1,23 @@
 # Wikidata — every item and property of the official JSON entity dump, one
 # record each, its text per language by the vendored textifier
-# (docs/notes/wikidata-build-plan.md; app/plugins/wikidata). TEMPLATE,
-# 2026-10-19 night: nothing is created until `hold collection create` runs
-# ON THE NODE, because `create` mints a PERMANENT collection_id and space_id
-# from these bytes and four of them can only be read there — each marked
-# <<...>> below:
+# (docs/notes/wikidata-build-plan.md; app/plugins/wikidata). Written as a
+# TEMPLATE on 2026-10-19 night; FILLED 2026-10-20 from the node, by München
+# (louise-python-rebuild.md §5): `create` mints a PERMANENT collection_id and
+# space_id from these bytes, so every value below is one read on the node:
 #
 #   layers[0].chunker.params.tokenizer  sha256 of jina-v3's tokenizer.json at
-#                                       the pinned revision (the image fetches
-#                                       the file into TOKENIZERS_DIR at build)
-#   space.encoder.weights               sha256 over the weights folder
-#                                       (09 §9.3) of jinaai/jina-embeddings-v3
-#                                       ab036b0 + remote code bd55a5e
-#   space.encoder.engine.*              the stated run of the louise-python
-#                                       `jina-v3` task behind VeGa, read with
-#                                       `hold embedder run --encoder ... --api
-#                                       vega --model vega-jina-v3`
+#                                       ab036b0 (f59925fc…)
+#   space.encoder.weights               the weights folder deploy/jina-embeddings-v3/
+#                                       fetch.py writes (f0f752ae…)
+#   space.encoder.engine, space.query.encoder.engine
+#                                       the two stated runs on tree louise-python-20261020c
+#                                       (document run bec9c3a0…, query run dd90f8d4…),
+#                                       `hold embedder run --api vega --model vega-jina-v3
+#                                       [--query]`, re-serialised sort_keys/compact;
+#                                       the task's context_size is the space's ctx (the
+#                                       text's window; the instruction rides on top)
 #   work.tokens                         from the throughput measured on the B70
+#                                       (2,016 tokens/s warm, one text per call)
 #
 # Then, on the node:
 #
@@ -34,10 +35,13 @@
 #
 #   hold records fetch wikidata --profile all
 #
-# INVARIANT 12 before any vector: the jina-v3 run's determinism measured on
-# the card (torch's controls are not in the VeGa wrapper's DETERMINISM table
-# yet — approved-encoders.md), the calibration set embedded over several
-# loads and orders, every vector bit-identical.
+# INVARIANT 12, MEASURED (München, 2026-10-20, approved-encoders.md "torch"):
+# torch's defaults do NOT reproduce on the B70 (204/512 texts bit-identical,
+# the short texts the ones that differ); with LOUISE_TORCH_DETERMINISTIC=1 in
+# the model's env — carried by the stated run below — the document model is
+# 512/512 bit-identical over 2 fresh loads × 2 shuffled passes (2,048
+# vectors, 974 s). The query model's measurement: see approved-encoders.md
+# before `create` (it must read 512/512 too).
 
 [descriptive]
 title = "Wikidata — items and properties, as text"
@@ -79,21 +83,73 @@ instruction = ""
 weights = "sha256:f0f752aea9e660f8120e2cb7ae32377794c45e53bfbeee3f1f6ecf36d7c0c572"  # the same folder, the retrieval.query adapter is the engine's option
 label = "jinaai/jina-embeddings-v3 (ab036b0; adapter retrieval.query)"
 
+# The stated run of the DOCUMENT side, byte for byte (09 §9.3): LocalAI's
+# louise-python backend, tree -20261020c (deploy/localai/backends/louise-python,
+# the jina-v3 task of deploy/jina-embeddings-v3/server.py), behind VeGa.
+# `create` holds the endpoint's stated run to these values, or creates nothing.
 [space.encoder.engine]
-name = "<<localai/louise-python-jina-v3 as the stated run names it>>"
-build = "<<from `hold embedder run`>>"
-image = "<<sha256:... from `hold embedder run`>>"
-args = ["<<from `hold embedder run`>>"]
+name = "localai/louise-python-20261020c"
+build = "1807f28089ff"
+image = "sha256:1807f28089ff51d8c2806efd77e1aef204b57be4faed0ff14dff965835c7cca4"
+args = ["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"]
 device = "Intel(R) Arc(TM) Pro B70 Graphics"
 
 [space.encoder.engine.env]
-GGML_SYCL_ENABLE_DNN = "0"
+# invariant 12: torch's deterministic algorithms, switched on by the task
+# (measured: 204/512 without, 512/512 with — approved-encoders.md)
+LOUISE_TORCH_DETERMINISTIC = "1"
+NEO_CACHE_DIR = "/data/louise-cache/neo-cache"
+
+[space.encoder.engine.options]
+ContextSize = 1024
+Embeddings = true
+FlashAttention = "auto"
+MMap = true
+Model = "weights/jina-embeddings-v3"
+ModelFile = "${WEIGHTS}"
+ModelPath = "${MODELS}"
+NBatch = 1
+Options = ["task:jina-v3", "device:xpu", "adapter:retrieval.passage", "dim:512"]
+Threads = 6
+
+# The QUERY side: the same tree and weights, the retrieval.query adapter —
+# another engine (the adapter is a load option), the same space.
+[space.query.encoder.engine]
+name = "localai/louise-python-20261020c"
+build = "1807f28089ff"
+image = "sha256:1807f28089ff51d8c2806efd77e1aef204b57be4faed0ff14dff965835c7cca4"
+args = ["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"]
+device = "Intel(R) Arc(TM) Pro B70 Graphics"
+
+[space.query.encoder.engine.env]
+LOUISE_TORCH_DETERMINISTIC = "1"
+NEO_CACHE_DIR = "/data/louise-cache/neo-cache"
+
+[space.query.encoder.engine.options]
+ContextSize = 1024
+Embeddings = true
+FlashAttention = "auto"
+MMap = true
+Model = "weights/jina-embeddings-v3"
+ModelFile = "${WEIGHTS}"
+ModelPath = "${MODELS}"
+NBatch = 1
+Options = ["task:jina-v3", "device:xpu", "adapter:retrieval.query", "dim:512"]
+Threads = 6
 
 [work]
-# tokens per month this collection asks of a contributor's encoder (04 §4.5);
-# from the throughput measured on the B70 (45 chunks/s at fp32 batch 32 in
-# Wikimedia's own figures) — MEASURE on the node's run before pinning
-tokens = 2000000000
+# The ONGOING work per month that keeps the collection active (04 §4.7),
+# in tokens of jina-v3's tokenizer. MEASURED THROUGHPUT, the node's B70,
+# 2026-10-20 (München): 512 calibration texts in 110.28 s warm, one text per
+# call through VeGa at window 1,024 — 222,345 tokens per pass = 2,016
+# tokens/s (median 0.104 s/call, p95 0.183 s). The plan's formula (tokens
+# per month from the measured throughput) at eight hours a day for thirty
+# days: 2,016 × 3,600 × 8 × 30 = 1.74 G; written as 1.7 G. A holder that
+# embeds or checks this much a month keeps the collection active; less, and
+# it shows dormant — true information (04 §4.7). Inside collection_id: fixed
+# for the collection's life.
+tokens = 1700000000
+per = "P1M"
 
 [validation]
 sample = 512
