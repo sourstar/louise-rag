@@ -587,15 +587,14 @@ def _catalog_variant(collection, hits: list[dict], query: str, restrict: dict) -
     not one per record: per record it cost pubmed 160–758 ms a query, fifty
     lookups over 40 M chunks (München, 2026-10-20); one query costs it
     136–492 ms cold, 23–42 ms warm. The hits come sorted by score, then
-    chunk id (`fts.search`), so a record's first hit is its best-scoring
-    chunk and, among chunks of EQUAL score, the smallest chunk id. That is
-    not always what a query of its own returned: `fts.search` sorts only
-    what tantivy hands back, and at `limit=1` tantivy picks among equal
-    scores arbitrarily. Measured on the node over 498 queries, the records
-    and their order were identical, and the chunk carrying a record differed
-    in 18 (gutenberg titles; e.g. `75472:4` then, `75472:10` now). A record
-    absent from a FULL answer is asked alone (that one pick is tantivy's
-    again); one absent from a short answer has no matching chunk."""
+    `fts.tie_key` — the record's uid, then the chunk's place in it — with a
+    tie at the cut read whole (`fts.search`, 2026-10-20), so a record's
+    first hit is its best-scoring chunk and, among chunks of EQUAL score,
+    its earliest: the same chunk a query of its own returns, on every peer.
+    (Before that fix 18 of 498 captured queries carried a record by another
+    chunk of equal score — tantivy's pick among ties, and the id string's
+    order: München.) A record absent from a FULL answer is asked alone; one
+    absent from a short answer has no matching chunk."""
     groups = set(fts.existing_groups(collection))
     window = restrict.get("validity")
     kw = {"validity": window} if window else {}
