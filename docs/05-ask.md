@@ -17,6 +17,15 @@ the fused list is what the reader sees. How many buckets the vector
 leg probes is set on the node (07 §7.8); probing changes recall, never
 what a returned result is.
 
+**The catalogue is a variant of the text leg** (*amended 2026-10-20*, query
+campaign, docs/notes/query-campaign.md). A record's title, creators and
+subjects are indexed apart from its parts (the catalogue), and its ranked
+records go to the fusion as one more variant of the text leg — in the
+catalogue's order, each carried by its chunk the query's words match best,
+else its first — with the reader's own words. Until then a title reached
+a book only through the book's own text: "War and Peace" was not in the
+top 100 though the book is held, and anthologies quoting a title won.
+
 **What a search reads.** For each collection, a search reads the
 newest snapshot whose members the peer holds for the slices it holds.
 A part re-issued under that snapshot is read in its newest version

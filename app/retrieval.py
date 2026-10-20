@@ -552,6 +552,55 @@ def _best_rank(lists: list[list[dict]], limit: int) -> list[dict]:
     return [h for _, h in ordered][:limit]
 
 
+#: 05 §5.1 (amended 2026-10-20): the source of the text leg's catalogue
+#: variant — a record's title, creators and subjects (app/catalog.py)
+CATALOG_SOURCE = "catalog"
+#: the legacy prompt's "[catalog matches]" block reads at most this many
+CATALOG_PROMPT = 10
+
+
+def _seq_of(chunk_id: str) -> int:
+    try:
+        return int(str(chunk_id).rsplit(":", 2)[1])
+    except (IndexError, ValueError):
+        return 1 << 30
+
+
+def _catalog_variant(collection, hits: list[dict], query: str, restrict: dict) -> list[dict]:
+    """05 §5.1 (amended 2026-10-20; query campaign, docs/notes/
+    query-campaign.md): the catalogue's ranked records as ONE MORE VARIANT
+    of the text leg, in the catalogue's order, each carried by a chunk of
+    its own — the one the query's words match best in that record, else
+    its first. Until today the catalogue's hits reached only the legacy
+    prompt: "War and Peace" missed the top 100 though 2600 is held and
+    indexed, because a title reached a book only through its own text and
+    anthologies quoting it won. A variant, not a leg (invariant 4: ranked
+    lists answering one question are fused; §5.2: a variant is a query, not
+    a leg) — it casts the text leg's one vote per rank. A versioned
+    collection's window takes no fallback chunk: a record whose matching
+    chunk is outside it is left to the other lists."""
+    groups = set(fts.existing_groups(collection))
+    window = restrict.get("validity")
+    out: list[dict] = []
+    for h in hits:
+        try:
+            bid = int(h["book_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        group = fts.group_for(h.get("lang") or "")
+        if group not in groups:
+            continue
+        kw = {"validity": window} if window else {}
+        best = fts.search(group, query, limit=1, collection=collection, book_ids=[bid], **kw)
+        chunk = best[0] if best else None
+        if chunk is None and not window:
+            chunks = fts.book_chunks(group, bid, collection=collection)
+            chunk = min(chunks, key=lambda c: _seq_of(c["chunk_id"])) if chunks else None
+        if chunk is not None:
+            out.append({**chunk, "score": 0.0, "source": CATALOG_SOURCE})
+    return out
+
+
 def _search_one_collection(con, collection, query: str, k: int, mode: str, translate: bool,
                             entity_ids: list[str], plan: LanguagePlan | None = None,
                             depth: int = 0, book_ids: set[int] | None = None,
@@ -591,7 +640,8 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
     # A leg starts only while the caller is still there (app/cancel.py).
     cancel.checkpoint()
     t0 = time.time()
-    catalog_hits = (catalog_search(con, core, langs=plan.only, collection=collection)
+    # as deep as the text leg's other variants: it is one of them (§5.1)
+    catalog_hits = (catalog_search(con, core, limit=max(k, depth, 20), langs=plan.only, collection=collection)
                     if mode in ("hybrid", "catalog") else [])
     if book_ids:
         catalog_hits = [h for h in catalog_hits if int(h.get("book_id", -1)) in book_ids]
@@ -628,6 +678,14 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                     if q == core:
                         own.add(len(lists))      # the user's own words: first on a tie
                     lists.append(hits)
+        if catalog_hits:
+            # 05 §5.1 (amended 2026-10-20): the catalogue, one more variant
+            # of the text leg, run with the reader's own words
+            cancel.checkpoint()
+            variant = _catalog_variant(collection, catalog_hits, core, restrict)
+            if variant:
+                own.add(len(lists))
+                lists.append(variant)
         timings["fts"] = round((time.time() - t0) * 1000, 1)
 
     if mode in ("hybrid", "dense"):
@@ -702,7 +760,7 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                 m["rrf"] += ENTITY_BOOST
         merged.sort(key=lambda x: (-x["rrf"], record_of(x)))
 
-    return {"catalog": catalog_hits, "merged": merged, "translations": plan.translations,
+    return {"catalog": catalog_hits[:CATALOG_PROMPT], "merged": merged, "translations": plan.translations,
             "timings": timings, "scope": scope, "vector_leg": vector_leg,
             "filtered": len(book_ids) if book_ids is not None else None}
 

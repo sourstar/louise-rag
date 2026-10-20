@@ -147,3 +147,45 @@ def test_the_search_marks_the_variant_that_is_the_query_as_typed(isolated_config
     out = retrieval._search_one_collection(db.connect(c), c, "whaling", 5, "fts", True, set())
     assert seen == {"own": {1}, "query_lang": "en"}, "the English list's variant is the query itself"
     assert [retrieval.record_of(m) for m in out["merged"]] == ["g:9", "g:1"]
+
+
+def test_a_title_the_catalogue_finds_is_a_variant_of_the_text_leg(isolated_config, monkeypatch):
+    """Query campaign, 2026-10-20: "War and Peace" missed the top 100 though
+    2600 is held, indexed and embedded — the catalogue's hits (title,
+    creators, subjects) reached only the legacy prompt, and the text leg
+    indexes chunk text alone, so anthologies quoting the title won. The
+    catalogue is now one more variant of the text leg, in its own order,
+    each record carried by its best-matching chunk (else its first); it
+    casts the leg's one vote per rank, as the user's own words."""
+    c = collections_mod.default_collection()
+    monkeypatch.setattr(fts, "existing_groups", lambda collection=None: ["en"])
+    monkeypatch.setattr(fts, "group_languages", lambda g, collection=None: ["en"])
+    monkeypatch.setattr(fts, "group_for", lambda lang: "en")
+    monkeypatch.setattr(llm, "language_restriction", lambda q: ([], q))
+    monkeypatch.setattr(llm, "translate_query", lambda q, langs: {})
+    anthology = h("gutenberg:900", 4, "fts:en")
+
+    def search(group, q, limit=20, collection=None, langs=None, book_ids=None, validity=None):
+        if book_ids == [2600]:
+            return []                                  # the title's words are not in the book's text
+        if book_ids == [77]:
+            return [h("gutenberg:77", 12, "fts:en")]
+        return [anthology] if not book_ids else []
+    monkeypatch.setattr(fts, "search", search)
+    monkeypatch.setattr(fts, "book_chunks", lambda group, bid, collection=None:
+                        [h(f"gutenberg:{bid}", s, "fts:en") for s in (5, 0, 3)])
+    monkeypatch.setattr(retrieval, "catalog_search", lambda con, q, limit=10, langs=None, collection=None:
+                        [{"book_id": 2600, "title": "War and Peace", "lang": "en"},
+                         {"book_id": 77, "title": "War and Peace (abridged)", "lang": "en"}]
+                        + [{"book_id": 1000 + i, "title": f"x{i}", "lang": "en"} for i in range(30)])
+    monkeypatch.setattr(retrieval.embeddings, "search_records", lambda *a, **k: [])
+    from app import language_plan
+    plan = language_plan.plan("War and Peace", [c], False)
+    out = retrieval._search_one_collection(db.connect(c), c, "War and Peace", 5, "hybrid", False, set(), plan)
+    by_uid = {retrieval.record_of(m): m for m in out["merged"]}
+    assert by_uid["gutenberg:2600"]["leg_ranks"]["text"] == 1, "the title's record: the text leg's first"
+    assert by_uid["gutenberg:2600"]["chunk_id"] == "gutenberg:2600:0:1", "no matching chunk: its first"
+    assert by_uid["gutenberg:77"]["chunk_id"] == "gutenberg:77:12:1", "its best-matching chunk"
+    assert "catalog" in by_uid["gutenberg:2600"]["sources"]
+    assert by_uid["gutenberg:900"]["leg_ranks"]["text"] == 2, "the anthology: the text variant's first, tied, by uid"
+    assert len(out["catalog"]) == retrieval.CATALOG_PROMPT, "the legacy prompt's block is as before"
