@@ -721,9 +721,22 @@ wikidata cpu heavy lifting").** The scan runs continuously on the node
 from now to its end — ~4 h of it done in today's window, ~11 h left at
 133,000 entities/min — and the CPU steps after it (records build, first
 snapshot, the gate's checks) run on the node too; crons 11 and 12 and the
-17:00 one-off go. gutenberg stays on-demand. Owed from München: the
-scan's position and rate now, the ETA, df for the pack's filesystem now
-and at the end, the build's and the snapshot's wall clock.
+17:00 one-off go. gutenberg stays on-demand.
+
+**MEASURED (München, 15:06:48 CEST).** Crons 11/12 disabled (not deleted:
+a flip back is one command), the 17:00 one-off cancelled; wikidata was
+never paused (only pubmed is). Position: 167 parts × 100,000 =
+16,700,000 entities, 5,753,591 pruned (34 %), pack 15 GB on tank
+(labels.sqlite 1.10 GB + 0.32 GB WAL). Rate 16.7 M in 129.7 min since
+12:57:05 = **~128,800 entities/min**, steady against the first 12 min's
+133,000. ETA at ~120 M entities (the May dump's count; this dump's total
+is known only at the end): ~103 M left ≈ 13.4 h → **about 04:30 CEST,
+21 Oct**. The pack grows ~7 GB/h, so ~110 GB at the end; tank/louise-
+corpora 790 G used, 7.32 T free. Still owed: df at the end, the build's
+and the snapshot's wall clock. The clean gutenberg p2p figure does not
+exist: the DAR measurement sat on the card 12:57–13:2x and gutenberg went
+on-demand at 13:09:54; the only clean number is the BEFORE, 204
+chunks/min (11:57–12:56).
 
 ### 2026-10-20 — a peer leads only where it embeds and shares; a switch releases its parts (operator) — PREPARED
 
