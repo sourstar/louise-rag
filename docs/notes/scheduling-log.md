@@ -674,6 +674,19 @@ untouched.
 
 **BEFORE.** The night rows above (contribute: 196 chunks/min, 150
 bundles; the lease night) and today's one-off 08:00–17:00 p2p window.
+
+**MEASURED, and ENDED by the operator.** p2p all day ran 08:18:57 →
+13:09:54 CEST. The last clean hour (11:57–12:56): 11,914 chunks in 58.4
+min = **204 chunks/min** on the node; Perugia's intake took the node's
+bundles as fast as they came (its own 175 chunks/min beside, 93 % of the
+vectors held by 12:10Z, "0 left to the fetch"). At 13:09:54 the operator
+switched gutenberg to `on-demand` from the Library (one batch in the
+following hour: 2,919 chunks for 5 documents a query touched), and at
+14:xx confirmed it: **"München should stay silent now, on-demand only."**
+The node's gutenberg stays `on-demand`; 751,795 chunks in 6,022 documents
+(7 %) remain unembedded on both peers until queries touch them or the
+operator says otherwise. Perugia's "slow fetch" of the afternoon was this:
+nothing left to take, and nothing new made.
 **AFTER.** The first full p2p day: chunks/min by hour, bundles published,
 cold starts (expected 0: the embedder is held), WatchDog lines, and Ask
 latency when one is asked.
