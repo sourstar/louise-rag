@@ -223,6 +223,54 @@ def test_slices_are_reassembled_as_one_from_pylist_would_cut_them(tmp_path):
     assert (tmp_path / "a.parquet").read_bytes() == (tmp_path / "b.parquet").read_bytes()
 
 
+def test_with_a_cache_the_pack_lives_there_keyed_on_the_dumps_resolved_path(tmp_path, monkeypatch):
+    """The operator, 2026-10-20: a cache folder on a fast drive. The pack and
+    its label table go to `<CACHE_DIR>/wikidata-pack/<path key>/<dump name>/`;
+    unset, beside the dump as before."""
+    dump = a_dump(tmp_path / "origin")
+    assert pack.pack_dir(dump) == dump.parent / ".pack" / dump.name, "no cache: beside the dump"
+    monkeypatch.setattr(pack.config, "CACHE_DIR", tmp_path / "nvme")
+    d = pack.pack_dir(dump)
+    assert d.is_relative_to(tmp_path / "nvme" / "wikidata-pack") and d.name == dump.name
+    other = a_dump(tmp_path / "elsewhere")
+    assert other.name == dump.name and pack.pack_dir(other) != d, "the same name in another place: another pack"
+    link = tmp_path / "linked"
+    link.symlink_to(dump.parent.parent.parent.parent, target_is_directory=True)
+    via = link / dump.relative_to(dump.parent.parent.parent.parent)
+    assert pack.pack_dir(via) == d, "the same file through a link: the same pack"
+    meta = pack.build(dump, languages=("en",), chunk=4, workers=1)
+    assert meta["complete"] and (d / "meta.json").is_file() and (d / "labels.sqlite").is_file()
+    assert not (dump.parent / ".pack").exists(), "nothing written beside the dump"
+    assert pack.labels(dump)("Q42", "en") == "Douglas Adams"
+
+
+def test_a_pack_built_beside_the_dump_is_adopted_into_the_cache_and_resumes_there(tmp_path, monkeypatch):
+    """The node built a third of the pack beside the dump on tank before the
+    cache existed: set the cache, and the next pass copies it over and goes on
+    from its last chunk — nothing rebuilt (RULE 1)."""
+    dump = a_dump(tmp_path / "origin")
+    first = pack.build(dump, languages=("en",), chunk=2, workers=1, stop=lambda: True)
+    assert not first["complete"] and first["chunks"] == 1
+    beside = dump.parent / ".pack" / dump.name
+    monkeypatch.setattr(pack.config, "CACHE_DIR", tmp_path / "nvme")
+    said = []
+    calls = {"n": 0}
+    real = json.loads
+
+    def counting(s, *a, **k):
+        if isinstance(s, (bytes, bytearray)):
+            calls["n"] += 1
+        return real(s, *a, **k)
+    monkeypatch.setattr(dump_mod.json, "loads", counting)
+    meta = pack.build(dump, languages=("en",), chunk=2, workers=1, log=said.append)
+    assert meta["complete"] and meta["chunks"] == 3
+    assert calls["n"] == 4, "resumed after the adopted chunk: its two entities were not parsed again"
+    assert any("adopted into the fast drive" in s for s in said)
+    assert (pack.pack_dir(dump) / "00000.parquet").read_bytes() == (beside / "00000.parquet").read_bytes()
+    assert (beside / "meta.json").is_file(), "the copy beside the dump is left for the operator"
+    assert pack.is_complete(dump, ("en",))
+
+
 def test_the_pass_follows_the_parse_pools_size(monkeypatch):
     monkeypatch.setattr(pack.config, "PARSE_PROCESSES", 11)
     assert pack.processes() == 11

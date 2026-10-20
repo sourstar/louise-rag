@@ -99,8 +99,39 @@ class PackError(RuntimeError):
     """The pack cannot be built or read as the dump stands."""
 
 
-def pack_dir(dump: Path) -> Path:
+def _beside(dump: Path) -> Path:
     return Path(dump).parent / PACK_DIRNAME / Path(dump).name
+
+
+def pack_dir(dump: Path) -> Path:
+    """Where the dump's pack is: on the node's fast drive when one is named
+    (`derived.place`, operator 2026-10-20 — the label table is read at
+    random, ~15 lookups a document, and from tank's spinning disks that was
+    the whole cost of a parse), else beside the dump as before."""
+    from app import derived
+    place = derived.place("wikidata-pack", dump)
+    return _beside(dump) if place is None else place / Path(dump).name
+
+
+def adopt_beside(dump: Path, *, log: Callable[[str], None] | None = None) -> bool:
+    """A pack built beside the dump before the fast drive was named, carried
+    there once (`derived.adopt`: whole or not at all; the original left for
+    the operator), so the pass resumes from its last chunk and nothing is
+    rebuilt (RULE 1). A directory there without a meta.json holds no pack
+    (a pass that started before the copy finished) and is replaced."""
+    import shutil
+    from app import derived
+    target, old = pack_dir(dump), _beside(dump)
+    if target == old or _meta_path(target).is_file() or not _meta_path(old).is_file():
+        return False
+    if target.exists():
+        shutil.rmtree(target)
+    t0 = time.monotonic()
+    done = derived.adopt(old, target)
+    if done and log is not None:
+        log(f"[wikidata] pack: {Path(dump).name}: adopted into the fast drive {target} from {old} "
+            f"in {time.monotonic() - t0:.0f} s (left in place there)")
+    return done
 
 
 def _signature(dump: Path) -> tuple[int, int]:
@@ -129,6 +160,7 @@ def _meta_matches(meta: dict[str, Any] | None, dump: Path, languages: tuple[str,
 
 def is_complete(dump: Path, languages: tuple[str, ...]) -> bool:
     """The pack covers the whole dump as it is now."""
+    adopt_beside(dump)
     meta = read_meta(dump)
     return _meta_matches(meta, dump, languages) and bool(meta.get("complete"))
 
@@ -290,6 +322,7 @@ def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[st
     the pass's processes (default `processes()`); 1 is the serial pass."""
     dump = Path(dump)
     say = log or (lambda m: None)
+    adopt_beside(dump, log=say)
     d = pack_dir(dump)
     d.mkdir(parents=True, exist_ok=True)
     size, mtime = _signature(dump)
