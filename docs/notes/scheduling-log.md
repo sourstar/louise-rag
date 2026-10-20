@@ -638,3 +638,20 @@ embed chunks/min over an hour with no index build inside; gate waited vs
 served. The node too (München): the same intake runs when it takes
 Perugia's bundles.
 
+### 2026-10-20 — the node's gutenberg embeds p2p all day (operator) — asked of München
+
+**Change.** Operator, 2026-10-20 ("queries are for testing only so far, no
+production environment"): gutenberg on the node goes from `p2p` 22:30–06:00
+and `on-demand` by day (cron 5/6, München's VRAM choice of 2026-10-19) to
+`embed = "p2p"` all day; cron 5 and 6 disabled; cron 7/8 (pubmed-v8's
+nights) untouched. The known cost is accepted: the 4B embedder (9,450 MiB)
+resident all day beside chat (7,441) and the reranker (1,664) is 58 % of
+the card; a non-English Ask adds the translator (6,424) and crosses
+LocalAI's 68 % watchdog, which evicts models mid-answer (2026-10-14).
+
+**BEFORE.** The night rows above (contribute: 196 chunks/min, 150
+bundles; the lease night) and today's one-off 08:00–17:00 p2p window.
+**AFTER.** The first full p2p day: chunks/min by hour, bundles published,
+cold starts (expected 0: the embedder is held), WatchDog lines, and Ask
+latency when one is asked.
+
