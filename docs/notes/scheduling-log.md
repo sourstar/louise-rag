@@ -882,12 +882,19 @@ Duplicates: 23 bundles on 22 parts, every one a completion of a part the
 node has bundles on; counting the node's copy once, 21 of 22 parts are
 disjoint (en/00267: node 6,013 + Perugia 153 + 328 = union 6,494). Open
 parts 1,237 (1,249 at 13:19Z), covered 9,785,118 of 10,477,214; leader
-field node 721 / Perugia 516. **Open: en/01192** — a node bundle of
-6,924 chunks accepted on Perugia, but the union reads 963 of 7,676,
-exactly Perugia's new bundle: the node's files are not readable there
-(`counting.chunk_ids_of` → None, "covering nothing" by design), so the
-walk will re-embed 6,713 chunks the node holds. `deprecate.expire`
-removes a copy only when its current equivalent is accepted here, and
-deletes the row with the files, so that is not the path; facts asked of
-Perugia (rows, files, deprecation statements, the node's digest) before
-a fix.
+field node 721 / Perugia 516. **en/01192, resolved the same afternoon**:
+a node bundle of 6,924 chunks accepted on Perugia on 2026-10-19's compare
+path had no files; the union read 963 of 7,676 (Perugia's own re-signing
+of the node's rows) and the walk would have re-embedded 6,713 chunks the
+node holds. c993199 takes such a bundle again (Perugia 15:16Z: 60705a18
+brought 5,570 chunks it did not hold), e688b89 lets the union cache see
+the files arrive. **Second hour (Perugia, 15:15–16:15Z, 678450f):** 8,015
+chunks, **133.6 chunks/min**, 2 bundles taken again, 0 errors; publisher
+2 and 4 parts a pass, "6 led part(s) await the embed stage", 0 left to
+the fetch. Union after the recompute (16:23Z): en/01192 6,931 (963 before
+— so 956 of Perugia's 963 were the node's rows, re-signed; 7 new),
+en/00689 7,094 (7,057), en/00043 29,097 and en/00219 41,924 unchanged;
+no part with an unreadable bundle left — the two "present but
+unreadable" were stale entries. 8710eed deployed on Perugia 16:15Z, no
+cache folder (all its drives are NVMe, operator), nothing in
+state/refused-bundles.
