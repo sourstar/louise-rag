@@ -271,6 +271,40 @@ def test_a_pack_built_beside_the_dump_is_adopted_into_the_cache_and_resumes_ther
     assert pack.is_complete(dump, ("en",))
 
 
+def test_reads_stay_beside_the_dump_until_the_adopted_pack_has_landed(tmp_path, monkeypatch):
+    """2026-10-20: the fts stage read the fast drive while the ~100 GB copy
+    ran, and two documents were marked "not in its pack". The pack is read
+    where it IS: beside the dump until the copy's rename lands, then there;
+    a pack file missing where it is read is the node's condition — deferred
+    (PlatformMissing), across the parse pool too — never the entity's."""
+    from app import parallel, worker
+    from app.chunking import PlatformMissing
+    dump = a_dump(tmp_path / "origin")
+    pack.build(dump, languages=("en",), chunk=2, workers=1)
+    beside = dump.parent / ".pack" / dump.name
+    monkeypatch.setattr(pack.config, "CACHE_DIR", tmp_path / "nvme")
+    target = pack._target(dump)
+    assert target != beside and pack.pack_dir(dump) == beside, "not adopted yet: read beside"
+    target.mkdir(parents=True)                         # a place being filled holds no meta.json
+    assert pack.pack_dir(dump) == beside
+    target.rmdir()
+    assert pack.adopt_beside(dump) and pack.pack_dir(dump) == target, "landed: read there"
+    src = WikidataSource(languages=("en",))
+    ref = next(iter(src.discover(DiscoverState(corpus_root=tmp_path, state_dir=_state(tmp_path)))))
+    (target / "00000.parquet").unlink()               # before any read: a chunk read once is cached
+    with pytest.raises(PlatformMissing):
+        src.fetch(ref)
+    with pytest.raises(PlatformMissing) as crossed:
+        parallel.raise_for({"type": "PlatformMissing", "msg": "the pack cannot be read"})
+    assert worker.platform_missing(crossed.value), "the worker defers what crossed the pool"
+
+
+def _state(tmp_path):
+    d = tmp_path / "state"
+    d.mkdir(exist_ok=True)
+    return d
+
+
 def test_the_pass_follows_the_parse_pools_size(monkeypatch):
     monkeypatch.setattr(pack.config, "PARSE_PROCESSES", 11)
     assert pack.processes() == 11

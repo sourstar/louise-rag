@@ -103,14 +103,28 @@ def _beside(dump: Path) -> Path:
     return Path(dump).parent / PACK_DIRNAME / Path(dump).name
 
 
-def pack_dir(dump: Path) -> Path:
-    """Where the dump's pack is: on the node's fast drive when one is named
-    (`derived.place`, operator 2026-10-20 — the label table is read at
+def _target(dump: Path) -> Path:
+    """Where the dump's pack belongs: on the node's fast drive when one is
+    named (`derived.place`, operator 2026-10-20 — the label table is read at
     random, ~15 lookups a document, and from tank's spinning disks that was
     the whole cost of a parse), else beside the dump as before."""
     from app import derived
     place = derived.place("wikidata-pack", dump)
     return _beside(dump) if place is None else place / Path(dump).name
+
+
+def pack_dir(dump: Path) -> Path:
+    """Where the dump's pack IS: its place (`_target`) once a pack is there,
+    or — while the one built beside the dump has not been carried yet
+    (`adopt_beside`: ~100 GB, many minutes, renamed whole at the end) —
+    beside the dump. A reader never meets a place still being filled: on
+    2026-10-20 the fts stage read the fast drive while the copy ran, and
+    two documents were marked "not in its pack" ("Failed to open local
+    file") before wikidata was paused. Two stats a call."""
+    target, old = _target(dump), _beside(dump)
+    if target != old and not _meta_path(target).is_file() and _meta_path(old).is_file():
+        return old
+    return target
 
 
 def adopt_beside(dump: Path, *, log: Callable[[str], None] | None = None) -> bool:
@@ -121,7 +135,7 @@ def adopt_beside(dump: Path, *, log: Callable[[str], None] | None = None) -> boo
     (a pass that started before the copy finished) and is replaced."""
     import shutil
     from app import derived
-    target, old = pack_dir(dump), _beside(dump)
+    target, old = _target(dump), _beside(dump)
     if target == old or _meta_path(target).is_file() or not _meta_path(old).is_file():
         return False
     if target.exists():

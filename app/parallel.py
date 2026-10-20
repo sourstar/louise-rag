@@ -188,6 +188,12 @@ def raise_for(err: dict):
     from .plugins.base import UnindexableDocument
     if err.get("type") == "UnindexableDocument":
         raise UnindexableDocument(err.get("msg", ""))
+    if err.get("type") in ("PlatformMissing", "TokenizerMissing"):
+        # the node's condition, deferred by the worker (`worker.platform_missing`
+        # keys on the CLASS): a RuntimeError naming it in its message was an
+        # error on every document that crossed the pool (2026-10-20)
+        from .chunking import PlatformMissing
+        raise PlatformMissing(f"{err.get('type')}: {err.get('msg')}")
     raise RuntimeError(f"{err.get('type')}: {err.get('msg')}")
 
 

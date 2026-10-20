@@ -138,8 +138,15 @@ class WikidataSource:
         dump, index = split_locator(ref.locator)
         try:
             data = pack.line(dump, index)
-        except (pack.PackError, FileNotFoundError, OSError) as e:
+        except pack.PackError as e:
             raise UnindexableDocument(f"entity {index} of {dump.name} not in its pack: {e}") from e
+        except OSError as e:
+            # the pack's FILE is not where it is read from — a cache being
+            # carried, a drive not mounted: the node's condition, never the
+            # entity's (2026-10-20). Deferred, not marked (CLAUDE.md)
+            from app.chunking import PlatformMissing
+            raise PlatformMissing(f"the pack of {dump.name} cannot be read at "
+                                  f"{pack.pack_dir(dump)}: {e}") from e
         return RawDoc(ref=ref, raw_hash=hashlib.blake2b(data, digest_size=16).hexdigest(), data=data)
 
     def parse(self, raw: RawDoc) -> CanonicalDoc:
