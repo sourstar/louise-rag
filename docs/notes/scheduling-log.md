@@ -716,6 +716,15 @@ entities: ~15 h — today's window plus two nights. gutenberg's rate
 during the scan is confounded by the DAR measurement on the card; a clean
 figure follows.
 
+**Windows lifted (operator, 2026-10-20, later: "München can do the
+wikidata cpu heavy lifting").** The scan runs continuously on the node
+from now to its end — ~4 h of it done in today's window, ~11 h left at
+133,000 entities/min — and the CPU steps after it (records build, first
+snapshot, the gate's checks) run on the node too; crons 11 and 12 and the
+17:00 one-off go. gutenberg stays on-demand. Owed from München: the
+scan's position and rate now, the ETA, df for the pack's filesystem now
+and at the end, the build's and the snapshot's wall clock.
+
 ### 2026-10-20 — a peer leads only where it embeds and shares; a switch releases its parts (operator) — PREPARED
 
 **Change.** The digest carries a space's benchmark only for collections
