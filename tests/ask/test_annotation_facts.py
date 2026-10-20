@@ -128,3 +128,36 @@ def test_traverse_follows_an_annotations_collection_s_edges_resolved_against_its
     assert set(mine) == {("pubmed:1", "pubmed:2", "annotations:same-work"),
                          ("pubmed:3", "pubmed:1", "annotations:translation-of")}
     assert all(e["resolved"] for e in mine.values()), "held in the target it annotates"
+
+
+def test_a_records_twin_of_the_target_takes_its_claims_and_a_rebuilt_one_does_not(tmp_path):
+    """02 §2.4 A1f (gutenberg, 2026-10-20): a collection that holds the
+    target's records byte for byte by a carry — its own state/carry.json says
+    so — takes the claims about them, for facts and work groups alike; a
+    collection without that proof, or after a REBUILT carry, takes none."""
+    import json
+    from app.ask import works
+    target, tcoll, held, _ = setup(tmp_path)
+    twin = "sha256:" + "7a" * 32
+
+    def attached(marker=None):
+        path = tmp_path / "pubmed" / "state" / "carry.json"
+        path.unlink(missing_ok=True)
+        if marker is not None:
+            path.write_text(json.dumps({"from": target.collection_id, "to": twin, **marker}))
+        lists, source_of, contexts = a_list(tcoll, target)
+        contexts["pubmed"]["collection_id"] = twin
+        facts.attach(lists, source_of, contexts, root=tmp_path, collections=[held])
+        return {f["record"]["uid"] for f in lists[0]["hits"][0]["annotations"]}
+
+    assert attached() == set(), "another collection's claims: none"
+    assert attached({"done": True, "mode": "move"}) == {"pubmed:2", "pubmed:3"}
+    assert attached({"done": False, "mode": "move"}) == set(), "a carry not finished proves nothing"
+    assert attached({"done": True, "mode": "copy", "rebuilt": True}) == set(), \
+        "rebuilt records are not the source's"
+    (tmp_path / "pubmed" / "state" / "carry.json").write_text(
+        json.dumps({"done": True, "mode": "move", "from": target.collection_id, "to": twin}))
+    twin_coll = SimpleNamespace(name="pubmed", manifest_path=tcoll.manifest_path,
+                                codex=SimpleNamespace(collection_id=twin))
+    assert works._ids_of(twin_coll) == (twin, target.collection_id)
+    assert [a.name for a in works._usable(twin_coll, [held])] == ["pubmed-same-work"]

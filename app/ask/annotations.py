@@ -89,6 +89,23 @@ def _target_rows(collection, uids: Iterable[str]) -> dict[str, dict[str, Any]]:
     return out
 
 
+def answers_for(root, name: str, collection_id: str | None) -> tuple[str, ...]:
+    """The collection ids an annotations target may name for the collection
+    held as `name`: its own, and the one a same-records carry brought its
+    records from (`carry.records_twin_of`, its own `state/carry.json`) —
+    claims about those records are claims about these (02 §2.4 A1f)."""
+    from app.hold import carry
+    twin = carry.records_twin_of(Path(root) / name / "state")
+    return tuple(dict.fromkeys(i for i in (collection_id, twin) if i))
+
+
+def target_among(codex, ids: Iterable[str]):
+    """The annotations Codex's target entry naming the first of `ids` it
+    annotates, or None."""
+    from app.hold.codex import target_for
+    return next((t for i in ids if (t := target_for(codex, i)) is not None), None)
+
+
 def attach(lists: list[dict[str, Any]], source_of: dict[int, Any], contexts: dict[str, dict],
            *, root: Path, collections=None) -> list[dict[str, Any]]:
     """Every hit gets `annotations` — `[]` where no held claim names its
@@ -105,8 +122,9 @@ def attach(lists: list[dict[str, Any]], source_of: dict[int, Any], contexts: dic
     if not held or not by_coll:
         return []
     withheld, usable = [], []
-    targets = {contexts[n]["collection_id"] for n in by_coll if n in contexts}
-    from app.hold.codex import target_for, targets_of
+    targets = {i for n in by_coll if n in contexts
+               for i in answers_for(root, n, contexts[n]["collection_id"])}
+    from app.hold.codex import targets_of
     for a in held:
         if not any(t.collection_id in targets for t in targets_of(a.codex)):
             continue                    # about nothing this search returned: not consulted
@@ -120,8 +138,9 @@ def attach(lists: list[dict[str, Any]], source_of: dict[int, Any], contexts: dic
     from app.hold import collection as col
     for name, hits in by_coll.items():
         ctx = contexts.get(name) or {}
+        ids = answers_for(root, name, ctx.get("collection_id"))
         mine = [a for a in usable
-                if (t := target_for(a.codex, ctx.get("collection_id"))) is not None
+                if (t := target_among(a.codex, ids)) is not None
                 and ann.applies_from(t.from_snapshot, ctx.get("snapshot_id"))]
         if not mine:
             continue

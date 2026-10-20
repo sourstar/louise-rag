@@ -60,6 +60,23 @@ class CarryMismatch(CodexError):
     exit_code = 1
 
 
+def records_twin_of(state_dir) -> str | None:
+    """The collection whose records this one holds byte for byte BY A CARRY:
+    the source's collection_id from this collection's own marker, when the
+    carry finished and was not `--rebuilt` — such a carry refuses unless the
+    records and the latest snapshot's parts are the source's (A1). None
+    otherwise. Local state, what this peer proved here: an annotations
+    collection about the source applies to its records twin (gutenberg's
+    A1f twin, 2026-10-20: the editions' claims named the old Codex)."""
+    try:
+        held = json.loads((Path(state_dir) / MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if held.get("done") and not held.get("rebuilt") and held.get("from"):
+        return str(held["from"])
+    return None
+
+
 # ---- what must agree -------------------------------------------------------
 
 def space_differences(a: Codex, b: Codex) -> list[str]:

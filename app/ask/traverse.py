@@ -218,12 +218,15 @@ def walk(con, codex, snapshot, start: str, *, relation: str | None = None, depth
 def _targets_of(root: Path, codex) -> list[tuple[str, Any]]:
     """(name, Codex) of each collection an annotations Codex annotates and
     this peer holds (several at Codex version 9, 09 §9.3)."""
+    from app.ask.annotations import answers_for
     from app.hold import collection as col
     from app.hold.codex import targets_of
     want = {t.collection_id for t in targets_of(codex)}
     if not want:
         return []
-    return [(n, c) for n, c in col.list_named(root) if c.collection_id in want]
+    # a held records twin of a target is one too (02 §2.4 A1f; annotations.answers_for)
+    return [(n, c) for n, c in col.list_named(root)
+            if want & set(answers_for(root, n, c.collection_id))]
 
 
 def _target_of(root: Path, codex) -> tuple[str, Any] | None:
