@@ -154,12 +154,15 @@ Threads = 6
 # 2026-10-20 (München): 512 calibration texts in 110.28 s warm, one text per
 # call through VeGa at window 1,024 — 222,345 tokens per pass = 2,016
 # tokens/s (median 0.104 s/call, p95 0.183 s). The plan's formula (tokens
-# per month from the measured throughput) at eight hours a day for thirty
-# days: 2,016 × 3,600 × 8 × 30 = 1.74 G; written as 1.7 G. A holder that
-# embeds or checks this much a month keeps the collection active; less, and
-# it shows dormant — true information (04 §4.7). Inside collection_id: fixed
-# for the collection's life.
-tokens = 1700000000
+# per month from the measured throughput) at the ACTIVE COUNT the operator
+# set, two hours a day (2026-10-20; eight hours was proposed and changed
+# before the create), for thirty days: 2,016 × 3,600 × 2 × 30 = 435 M;
+# written as 430 M. A holder that embeds or checks this much a month keeps
+# the collection active; less, and it shows dormant — true information (04
+# §4.7). Once the embedding is done, a monthly check over parts whose listed
+# tokens total this much keeps it active (04 §4.7: attestations count).
+# Inside collection_id: fixed for the collection's life.
+tokens = 430000000
 per = "P1M"
 
 [validation]
