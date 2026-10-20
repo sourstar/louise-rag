@@ -74,7 +74,7 @@ if [ ! -e "$ROOT/config/collections/$NEW.toml" ]; then
     --query-encoder "$ENCODER" --query-model "$MODEL" --calibration-from "$OLD" | grep -v warn:config
 fi
 $L node pause "$NEW" | grep -v warn:config || true
-TWIN=$(docker exec "$W" python -c "import json; print(json.load(open('/data/collections/$NEW/shard/codex.json'))['collection_id'])")
+TWIN=$(docker exec "$W" python -c "from app.hold import codex as cx; print(cx.loads(open('/data/collections/$NEW/shard/codex.json', 'rb').read()).collection_id)")
 echo "twin: $TWIN"
 
 say "4. its origin is $OLD's (the same books, never fetched again)"
@@ -121,7 +121,7 @@ fi
 
 say "9. the held file: the old one's settings, the new Codex"
 F="$ROOT/config/collections/$OLD.toml"
-CODEX=$(docker exec "$W" python -c "import json; print(json.load(open('/data/collections/$OLD/shard/codex.json'))['collection_id'])")
+CODEX=$(docker exec "$W" python -c "from app.hold import codex as cx; print(cx.loads(open('/data/collections/$OLD/shard/codex.json', 'rb').read()).collection_id)")
 cp -p "$F" "$ROOT/config/$OLD.toml.created-$TODAY"
 sed "s|^codex = \".*\"|codex = \"$CODEX\"|" "$ROOT/config/collections/$OLD.toml.superseded-$TODAY" > "$F.tmp"
 mv "$F.tmp" "$F"
