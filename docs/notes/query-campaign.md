@@ -117,6 +117,40 @@ Chosen: the model's documented default, in its own format
 (`Instruct: <task>\nQuery:`). It is better on titles and level on
 descriptions, and no wording of ours is pinned.
 
+## Run 3 — the API's as-typed path, and the catalogue as a leg (2026-10-20, night)
+
+Deployed: f4cee56 at 20:48 (the catalogue as a text variant), 79098b6 at
+21:02, and the A1f twin of gutenberg live at 21:45:40 (sha256:d913cceb…,
+Qwen3's default query instruction). Campaign on f4cee56: 37 of 40. The
+three failures were "War and Peace" and the two descriptions.
+
+**Why "War and Peace" still failed.** The API runs the query as typed in
+all 17 language groups, each a variant of the text leg. Seventeen records
+tie at best rank 1, seventeen at 2, seventeen at 3, so the catalogue's
+rank 4 (2600) sat at text position 57, fused rank 113. The 10-09 captured
+legs were the Ask page's translated variants, so the replay of run 2 never
+saw this flood. a46042b makes the catalogue a leg of its own.
+
+**Measured on the API's own path.** In the live web process, after the
+re-pin: translate false, limit 10, depth 50. The lists entering
+`_merge_rrf` were captured and the search stopped there, before the reranker
+and any write. All 491 queries had their vector leg. They were replayed
+under each tree (`tools/measure/astyped_rescore.py`). Pre-rerank:
+
+| | titles (40) MRR | R@1 | R@10 | R@50 | descriptive (451) MRR | R@1 | R@10 | R@50 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 79098b6, catalogue a variant | 0.595 | 0.475 | 0.850 | 0.975 | 0.328 | 0.195 | 0.570 | 0.812 |
+| **a46042b, catalogue a leg** | **0.738** | **0.600** | **0.950** | **1.000** | 0.328 | 0.195 | 0.570 | 0.812 |
+
+- Titles: 17 better, 5 worse, each worse by one or two places (1 → 2,
+  1 → 3, 5 → 6). "War and Peace": absent from the top 50 → 4. "Pride and
+  Prejudice" 3 → 3, "Alice's Adventures in Wonderland" 1 → 1.
+- Descriptive: identical, no catalogue hit.
+- Against run 2's captured legs (0.219 / 0.397 descriptive, a different
+  path and the bare vector leg), the descriptive numbers here include the
+  instruction. A same-path comparison of bare against instructed is the
+  probe of run 2.
+
 ### Fixed in this run
 
 A broad exclusion was refused (§5.7: the postings hold values of at most
