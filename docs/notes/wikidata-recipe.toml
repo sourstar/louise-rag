@@ -170,9 +170,26 @@ Threads = 6
 tokens = 430000000
 per = "P1M"
 
+# The plan (03 §3.2; 09 §9.3): every check a text collection can carry, as
+# normattiva's; the sampled checks draw 5 % of the parts (about 275 of the
+# ~5,500 parts of 20,000 entities). `sample = 512` was a template remnant the
+# Codex refuses — a sample is a fraction of parts per check, never a count —
+# found by the pre-check 2026-10-20 before any card time was spent.
 [validation]
-sample = 512
-checks = ["roots", "chunks", "calibration", "records-vs-origin"]
+checks = ["roots", "records", "chunks", "records-vs-origin", "license", "signature", "calibration", "vectors-sample"]
+required = []
+
+[validation.sample.records]
+shards = "0.05"
+
+[validation.sample.chunks]
+shards = "0.05"
+
+[validation.sample."vectors-sample"]
+shards = "0.05"
+
+[validation.sample."records-vs-origin"]
+shards = "0.05"
 
 # THE ORIGIN (06 §6.2, §6.4; 09 §9.17; invariant 11's record of the form
 # taken and why). Added 2026-10-20 after München's pre-check: `create`
