@@ -388,8 +388,13 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
                        now: str | None = None,
                        embed_query=None,
                        space_version: int | None = None,
-                       pairs: bytes | None = None) -> Codex:
+                       pairs: bytes | None = None,
+                       calibration_from: Path | None = None) -> Codex:
     """`hold collection create <plugin> --recipe FILE` (06 §6.6, 07 §7.3).
+
+    `calibration_from`: a held collection's SHARD whose document-side
+    reference vectors and envelope are reused (`_reused_calibration`, RULE
+    1) — only the query side is embedded.
 
     `pairs`: the bytes of a PAIR space's calibration set — 512 title-and-
     abstract pairs drawn from the collection's records by
@@ -463,9 +468,14 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
     _dry_build(plugin, recipe, platform_image=platform_image, credits=credits,
                space_version=space_version, needs_query=needs_query)
 
-    vectors, envelope, vectors_hash, envelope_hash = cal.build_member(
-        texts, embed, normalise=bool(space.get("normalise")),
-        dim=int(space["dim"]))
+    reused = (_reused_calibration(Path(calibration_from), recipe, set_id)
+              if calibration_from is not None else None)
+    if reused is not None:
+        vectors, envelope, vectors_hash, envelope_hash = reused
+    else:
+        vectors, envelope, vectors_hash, envelope_hash = cal.build_member(
+            texts, embed, normalise=bool(space.get("normalise")),
+            dim=int(space["dim"]))
     if needs_query:
         query_vectors, query_hash = cal.build_query_member(
             texts, embed_query, instruction=query.get("instruction") or None,
@@ -481,6 +491,46 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
     write_terms(d, codex, plugin,
                 terms_path=(recipe.get("license") or {}).get("terms_path"))
     return created
+
+
+def _document_side(space: dict[str, Any]) -> dict[str, Any]:
+    """A space block without its query side and without what `create`
+    computes: what a document's vector — and so the calibration's
+    `vectors` and `envelope` — is a function of."""
+    s = json.loads(json.dumps(space))
+    for k in ("query", "envelope"):
+        s.pop(k, None)
+    for k in ("vectors", "query_vectors"):
+        (s.get("calibration") or {}).pop(k, None)
+    return s
+
+
+def _reused_calibration(shard_dir: Path, recipe: dict[str, Any], set_id: str):
+    """RULE 1 (2026-10-20; gutenberg's A1f twin, 02 §2.4): the document
+    side's reference vectors and envelope of a held Codex, reused where the
+    recipe's space is that Codex's in everything but its query side — the
+    set, the document encoder's weights AND engine, the cut, every other
+    field. Invariant 12 makes them the bytes `build_member` computes with
+    that engine, so the Codex written is the one a by-the-book `create`
+    running that engine writes; only the query side is embedded. Refused,
+    naming the difference, otherwise: a reuse asked for never falls back to
+    embedding unannounced, and never reuses another computation's vectors."""
+    from . import calibration as cal, shard as shard_mod
+    src = cx.loads((shard_dir / "codex.json").read_bytes())
+    mine, theirs = _document_side(recipe["space"]), _document_side(src.to_dict()["space"])
+    diff = sorted(k for k in set(mine) | set(theirs) if mine.get(k) != theirs.get(k))
+    if diff or src.space.calibration.set != set_id:
+        raise CodexError(
+            f"--calibration-from {src.collection_id}: the document side differs in "
+            f"{', '.join(diff) or 'calibration.set'} — its reference vectors are another "
+            f"computation's, and nothing is reused (keep the document engine to reuse them)")
+    if cal.form(src) == "pair":
+        raise CodexError(f"--calibration-from {src.collection_id}: a pair space's member "
+                         f"carries its pairs; reuse is for text spaces")
+    member = shard_dir / shard_mod.calibration_paths(set_id)[0]
+    v, e = cal.read_member(member, expect_vectors=src.space.calibration.vectors,
+                           expect_envelope=src.space.envelope)
+    return v, e, src.space.calibration.vectors, src.space.envelope
 
 
 #: what stands in for the three reference hashes in a dry build: a digest in

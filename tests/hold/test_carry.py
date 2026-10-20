@@ -514,6 +514,45 @@ def test_a_query_instruction_alone_is_crossed_and_every_row_kept(pair):
     assert "query.instruction" not in str(e.value), "named as crossed, not as refused"
 
 
+def test_create_reuses_a_held_twins_document_reference_and_embeds_only_the_query_side(pair):
+    """RULE 1 (A1f's twin, 2026-10-20): `calibration_from` reuses the document
+    side's reference vectors and envelope of a held Codex whose space is the
+    recipe's but for its query side; the Codex written is byte for byte the
+    one a by-the-book create computes, and another document side is refused."""
+    from tools import recipe_from_codex as rfc
+    root, _old, new = pair
+    twin_recipe = rfc.recipe_of(new)
+    twin_recipe["space"]["query"]["instruction"] = "Instruct: find the book\nQuery:"
+
+    def no_document_embedding(texts):
+        raise AssertionError("the document side is reused, never embedded")
+    asked: list[str] = []
+
+    def query_embed(texts):
+        asked.extend(texts)
+        return fake_query_embed(texts)
+    twin = col.create_from_recipe(root, "gutenberg", twin_recipe, platform_image=PLATFORM,
+                                  embed=no_document_embedding, embed_query=query_embed,
+                                  name="twin", key=KEY, now=NOW,
+                                  calibration_from=col.shard_dir_of(root, "new"))
+    assert asked and all(t.startswith("Instruct: find the book\nQuery:") for t in asked)
+    assert twin.space.calibration.vectors == new.space.calibration.vectors
+    assert twin.space.envelope == new.space.envelope
+    assert twin.space.calibration.query_vectors != new.space.calibration.query_vectors
+    book = col.create_from_recipe(root.parent / "by-the-book", "gutenberg", json.loads(json.dumps(twin_recipe)),
+                                  platform_image=PLATFORM, embed=fake_embed,
+                                  embed_query=fake_query_embed, name="twin", key=KEY, now=NOW)
+    assert book.canonical() == twin.canonical(), "indistinguishable from a by-the-book create"
+
+    other = rfc.recipe_of(new)
+    other["space"]["encoder"]["weights"] = "sha256:" + "5e" * 32
+    with pytest.raises(CodexError, match="document side differs in encoder"):
+        col.create_from_recipe(root, "gutenberg", other, platform_image=PLATFORM,
+                               embed=no_document_embedding, embed_query=fake_query_embed,
+                               name="other", key=KEY, now=NOW,
+                               calibration_from=col.shard_dir_of(root, "new"))
+
+
 def test_keeping_only_an_archives_vectors_lets_the_weights_differ(pair):
     """A1b (2026-10-10, pubmed): the kept rows are the archive producer's, made
     by neither Codex's encoder file, so the weights check does not apply when

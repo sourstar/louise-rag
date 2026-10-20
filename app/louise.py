@@ -129,7 +129,8 @@ def cmd_create(a) -> int:
                               calibration_set=getattr(a, "calibration_set", None),
                               api=getattr(a, "api", None),
                               embed_model=getattr(a, "embed_model", None),
-                              query_model=getattr(a, "query_model", None))
+                              query_model=getattr(a, "query_model", None),
+                              calibration_from=getattr(a, "calibration_from", None))
     print(f"held: {held}", file=sys.stderr)
     print(codex.collection_id)
     return 0
@@ -361,7 +362,8 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                 space_from: str | None = None, encoder: str | None = None,
                 query_encoder: str | None = None, name: str | None = None,
                 calibration_set: str | None = None, api: str | None = None,
-                embed_model: str | None = None, query_model: str | None = None):
+                embed_model: str | None = None, query_model: str | None = None,
+                calibration_from: str | None = None):
     """`hold collection create <plugin> --recipe FILE` — for the command
     line and for its route alike (07 §7.4: the web interface is a client of
     the same function, not a second implementation). Returns the Codex and
@@ -446,7 +448,11 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                                                                   models[1], api=api, query=True)
                                                 if query_encoder else None),
                                    space_version=source.version if space_from else None,
-                                   credits=credits, pairs=pairs)
+                                   credits=credits, pairs=pairs,
+                                   # RULE 1: a held twin's document-side reference reused
+                                   calibration_from=(col.shard_dir_of(
+                                       Path(root), col.resolve(root, calibration_from)[0])
+                                       if calibration_from else None))
     if space_from and (codex.space.envelope,
                        codex.space.calibration.vectors) != drifted:
         print(f"warning: --space-from {space_from} recorded reference "
@@ -3847,6 +3853,11 @@ def build_parser() -> argparse.ArgumentParser:
                         "tools/build_pair_calibration_set.py drew from the collection's "
                         "records, whose sha256 the recipe names as space.calibration.set "
                         "(09 §9.12); the member carries it")
+    p.add_argument("--calibration-from", default=None, metavar="NAME",
+                   help="a held collection whose document-side reference vectors and "
+                        "envelope the new Codex reuses (RULE 1): its space must be the "
+                        "recipe's but for the query side, the document engine included; "
+                        "only the query side is embedded")
     # `create annotations` (02 §2.10): claims about another collection's records
     p.add_argument("--annotates", default=None, metavar="COLLECTION", action="append",
                    help="create annotations: the collection the claims are about (id, prefix or name); "
