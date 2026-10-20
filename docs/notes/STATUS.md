@@ -284,6 +284,27 @@ recorded in the report, not a refusal (03 §3.5 amended;
 structural T0 failure still refuse. The four parts re-ladder at the
 publisher's next pass after the deploy.
 
+### 2026-10-20: the bounty list has no leader (operator); a peer leads only where it embeds and shares
+
+Two corrections to how open parts are shared, both from the first full p2p
+day (gutenberg, node + Perugia + the dev PC's idle peer). (1) The digest
+carries a space's benchmark only for collections with `embed = p2p | all`
+and `share = true`; a neighbour offering no member of a collection is not
+scored for it; a mode or sharing switch sends a digest at once — the idle
+peer led 355 open parts by a benchmark alone, the on-demand node 485 more,
+all waiting a seven-day grace window. (2) The operator's correction of the
+model itself: "for the bounty list THERE IS NO LEADER" — any peer may embed
+any open part; rendezvous is the ORDER a peer walks the list, widened one
+rank when a round finds nothing (`leading.widen`), and the only part left
+aside is one another producer is visibly on (`contribute.visibly_on`, a
+bundle within `3 × tokens / w`). The `grace_days` cascade on embedding is
+gone; `leader` in `hold vectors show` is the first of the ordering,
+information only. 04 §4.5, 07 §7.8, 09 §9.9, §9.10 amended;
+[scheduling-log.md](scheduling-log.md) has the measured BEFORE and the
+numbers owed AFTER. Also today: a landed bundle marks its part's documents
+embedded (Perugia's card read 57 % with 93 % of the vectors held), and the
+offer says when a collection cannot be taken yet (no snapshot served).
+
 ### 2026-10-20: the Library's remove — forget a copy, retire a build (operator's bug on Perugia)
 
 A collection taken from the offer, removed in the Library and taken again
