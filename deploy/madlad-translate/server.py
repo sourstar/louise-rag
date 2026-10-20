@@ -165,12 +165,34 @@ def handle(translator: Translator, body, max_items: int = 512) -> tuple[int, obj
                  "peak_mb": getattr(translator, "peak_mb", None)}
 
 
+#: Invariant 12 for torch, the same switch as DAR-legal-it's and jina-v3's
+#: (deploy/dar-legal-it/server.py): set in the MODEL's env, so the stated run
+#: carries it. louise-python refuses to load this task without it (operator,
+#: 2026-10-20: a backend that is not bit-exact on reprocessing is not used).
+DETERMINISM_ENV = "LOUISE_TORCH_DETERMINISTIC"
+
+
+def determinism(torch_mod, environ=None) -> bool:
+    """torch's deterministic algorithms and oneDNN's deterministic primitives,
+    when the model's env asks; an op with no deterministic kernel then fails
+    the request rather than answering from one that may not reproduce."""
+    environ = os.environ if environ is None else environ
+    if environ.get(DETERMINISM_ENV, "").strip().lower() not in ("1", "true", "yes"):
+        return False
+    torch_mod.use_deterministic_algorithms(True)
+    mkldnn = getattr(getattr(torch_mod, "backends", None), "mkldnn", None)
+    if mkldnn is not None and hasattr(mkldnn, "deterministic"):
+        mkldnn.deterministic = True
+    return True
+
+
 def load(model_id: str, device: str, dtype_name: str, beams: int | None = None):
     """The real model: (count, generate, known, languages, release). `beams`
     is the load call's (the LocalAI backend's option); unset, BEAMS from the
     environment, else one."""
     import torch
     from transformers import AutoTokenizer, T5ForConditionalGeneration
+    determinism(torch)                      # before any kernel is chosen
     dtype = getattr(torch, dtype_name)
     tok = AutoTokenizer.from_pretrained(model_id)
     # STRAIGHT ONTO THE DEVICE. Loaded into host memory and then moved, the

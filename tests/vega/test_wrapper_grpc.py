@@ -89,17 +89,17 @@ def make_node(tmp_path, stubs, vega):
     def make(*, pairs=False, receipt_timeout_s=2.0, socket=None, tokenizer=False,
              cuts=None, token_ids=False) -> Node:
         backends = tmp_path / "backends"
-        real = backends / "fake-embed"
+        real = backends / "fake-llama-cpp"
         real.mkdir(parents=True)
         run_sh = real / "run.sh"
         run_sh.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{FAKE}" "$@"\n')
         run_sh.chmod(0o755)
         (real / "metadata.json").write_text(json.dumps(
-            {"name": "fake-embed", "version": "v4.11.0", "digest": DIGEST}))
-        pkg = backends / "vega-fake-embed"
+            {"name": "fake-llama-cpp", "version": "v4.11.0", "digest": DIGEST}))
+        pkg = backends / "vega-fake-llama-cpp"
         pkg.mkdir()
         (pkg / "vega.json").write_text(json.dumps(
-            {"backend": "fake-embed", "receipts_socket": str(socket or vega.socket),
+            {"backend": "fake-llama-cpp", "receipts_socket": str(socket or vega.socket),
              **({"cuts": cuts} if cuts else {})}))
         weights = tmp_path / "models" / "fake.bin"
         weights.parent.mkdir()
@@ -116,7 +116,7 @@ def make_node(tmp_path, stubs, vega):
         options = {"Model": "fake.bin", "ModelFile": str(weights),
                    "ModelPath": str(weights.parent), "ContextSize": 512, "Embeddings": True,
                    "RopeFreqBase": 10000.5,
-                   "Options": ["device:cpu", "pairs:true"] if pairs else ["device:cpu"],
+                   "Options": ["device:cpu", "pairs:true", "parallel:1"] if pairs else ["device:cpu", "parallel:1"],
                    "EnvVars": {"VEGA_TEST_ENV": "on"}}
         models = {"vega-fake": localai_fake.Model(f"127.0.0.1:{running.port}", options)}
         api = FastAPI()
@@ -145,7 +145,7 @@ def test_tagged_texts_come_back_with_receipts_and_the_run_is_what_was_launched(m
     engine = run["engine"]
     assert engine["image"] == vw.tree_digest(node.real_run_sh.parent) != DIGEST, \
         "the files installed, never the registry's digest"
-    assert engine["name"] == "localai/fake-embed" and engine["build"] == "v4.11.0"
+    assert engine["name"] == "localai/fake-llama-cpp" and engine["build"] == "v4.11.0"
     assert engine["args"] == ["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"], \
         "relative to the backend, whose bytes image names (09 §9.3)"
     assert engine["env"] == {"VEGA_TEST_ENV": "on"} and engine["device"] == "cpu"
@@ -371,15 +371,15 @@ def _start(tmp_path, stubs, make_node_dirs):
 
 def _package(tmp_path, metadata):
     backends = tmp_path / "backends"
-    real = backends / "fake-embed"
+    real = backends / "fake-llama-cpp"
     real.mkdir(parents=True)
     run_sh = real / "run.sh"
     run_sh.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{FAKE}" "$@"\n')
     run_sh.chmod(0o755)
     (real / "metadata.json").write_text(json.dumps(metadata))
-    pkg = backends / "vega-fake-embed"
+    pkg = backends / "vega-fake-llama-cpp"
     pkg.mkdir()
-    (pkg / "vega.json").write_text(json.dumps({"backend": "fake-embed",
+    (pkg / "vega.json").write_text(json.dumps({"backend": "fake-llama-cpp",
                                                "receipts_socket": str(tmp_path / "r.sock")}))
     return pkg
 
@@ -387,7 +387,7 @@ def _package(tmp_path, metadata):
 def test_the_wrapper_starts_as_localai_starts_it_and_stops_on_sigterm(tmp_path, stubs):
     import signal
     import subprocess
-    pkg = _package(tmp_path, {"name": "fake-embed", "version": "v1", "digest": DIGEST})
+    pkg = _package(tmp_path, {"name": "fake-llama-cpp", "version": "v1", "digest": DIGEST})
     (tmp_path / "backend.log").touch()
     proc, port = _start(tmp_path, stubs, pkg)
     try:
@@ -413,8 +413,8 @@ def test_the_wrapper_starts_as_localai_starts_it_and_stops_on_sigterm(tmp_path, 
 
 
 def test_a_directory_that_is_no_backend_refuses_to_start(tmp_path, stubs):
-    pkg = _package(tmp_path, {"name": "fake-embed", "version": "v1"})
-    (pkg.parent / "fake-embed" / "run.sh").unlink()
+    pkg = _package(tmp_path, {"name": "fake-llama-cpp", "version": "v1"})
+    (pkg.parent / "fake-llama-cpp" / "run.sh").unlink()
     proc, _port = _start(tmp_path, stubs, pkg)
     assert proc.wait(timeout=20) == 2
     assert "no run.sh" in proc.stderr.read()

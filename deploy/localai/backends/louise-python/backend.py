@@ -21,7 +21,8 @@ asking it to load another is refused, never a second model on the card.
 from __future__ import annotations
 
 import importlib
-from typing import Any, Callable
+import os
+from typing import Any, Callable, Mapping
 
 import louise_backend as lb
 
@@ -34,6 +35,31 @@ TASKS = {"dar-legal-it": "task_dar_legal_it",
 TASK = "task"
 #: the calls LocalAI may make of a model; a task answers those it defines
 CALLS = ("Embedding", "Predict", "Rerank")
+
+#: CLAUDE.md invariant 12 FAIL-CLOSED (operator, 2026-10-20: "a backend that
+#: does not produce bit exact results upon reprocessing the same data cannot be
+#: used under any circumstances"). A torch task loads only with torch's
+#: deterministic switch in the model's env — each task's model code reads it
+#: (torch.use_deterministic_algorithms, oneDNN's deterministic primitives:
+#: DAR-legal-it was 1/4 bit-identical against itself without it, jina-v3 went
+#: from 204/512 to 512/512 with it) — and an OpenVINO task, which offers no
+#: deterministic mode, does not load at all. The rule of VeGa's wrapper
+#: (deploy/vega/vega_wrapper.py `determinism_lacks`), here too for a model the
+#: wrapper is not in front of.
+DETERMINISM_ENV = "LOUISE_TORCH_DETERMINISTIC"
+TORCH_TASKS = frozenset({"dar-legal-it", "madlad", "jina-v3"})
+
+
+def determinism_refusal(task: str, environ: Mapping[str, str]) -> str | None:
+    """Why `task` may not load under `environ` — None when it may."""
+    if task not in TORCH_TASKS:
+        return (f"{TASK}:{task} runs on OpenVINO, which offers no deterministic mode (CLAUDE.md "
+                f"invariant 12): a backend whose answers are not shown to come back bit for bit "
+                f"is not loaded")
+    if environ.get(DETERMINISM_ENV, "").strip() != "1":
+        return (f"{TASK}:{task} loads only with {DETERMINISM_ENV}=1 in the model's env (CLAUDE.md "
+                f"invariant 12): torch's defaults do not give back their own bytes")
+    return None
 
 
 def split_task(options: list[str]) -> tuple[str, list[str]]:
@@ -62,9 +88,14 @@ class _Load:
 
 class Servicer:
     def __init__(self, pb: Any, status: Any, *,
-                 load_module: Callable[[str], Any] = importlib.import_module) -> None:
+                 load_module: Callable[[str], Any] = importlib.import_module,
+                 environ: Mapping[str, str] | None = None,
+                 check_determinism: bool = True) -> None:
         self.pb, self.status = pb, status
         self._import = load_module
+        self.environ = os.environ if environ is None else environ
+        # False only where a test exercises the routing of a task the rule refuses
+        self.check_determinism = check_determinism
         self.task: str | None = None
         self.inner: Any = None
 
@@ -74,6 +105,9 @@ class Servicer:
     def LoadModel(self, request, context):  # noqa: N802
         try:
             task, rest = split_task(list(request.Options))
+            why = determinism_refusal(task, self.environ) if self.check_determinism else None
+            if why:
+                raise lb.LoadError(why)
             if self.task is not None and task != self.task:
                 raise lb.LoadError(f"this process serves {TASK}:{self.task}; a model of "
                                    f"{TASK}:{task} is another process")

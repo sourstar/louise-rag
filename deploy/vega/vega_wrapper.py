@@ -676,6 +676,65 @@ def determinism_env(backend_name: str) -> dict[str, str]:
     return out
 
 
+#: Invariant 12 FAIL-CLOSED (operator, 2026-10-20: "a backend that does not
+#: produce bit exact results upon reprocessing the same data cannot be used
+#: under any circumstances"; "VeGa wrapper MUST ensure determinism for ANY
+#: backend"). Every family this wrapper can launch has a CONTRACT — what makes
+#: its runs give back their own bytes — and a run that does not hold it is
+#: never stated, on any device; a family with no contract is refused.
+#: Measured on the node the same night (louise-rerank-bge, 20 documents, three
+#: fresh loads, two orders): at parallel:4 the order moved 16 of 20 scores; at
+#: parallel:1 with GGML_SYCL_ENABLE_DNN=0 every score came back bit-identical.
+#:   llama.cpp     one sequence at a time (`parallel:1`: sequences batched
+#:                 together change each other's sums), and on a card its
+#:                 vendor's mode (DETERMINISM; CUDA's cuBLAS needs none).
+#:                 Vulkan offers no mode; a card run naming no vendor is unknown.
+#:   louise-python torch's deterministic algorithms, which its torch tasks
+#:                 switch on from the model's env; its OpenVINO tasks
+#:                 (medcpt-article, medcpt-rerank) offer no mode.
+TORCH_DETERMINISM = {"LOUISE_TORCH_DETERMINISTIC": "1"}
+TORCH_TASKS = frozenset({"dar-legal-it", "madlad", "jina-v3"})
+NO_MODE = frozenset({"vulkan"})
+
+
+def _option_values(canon: loadopts.Canon, key: str) -> list[str]:
+    return [str(o).partition(":")[2].strip() for o in canon.options.get("Options") or ()
+            if str(o).partition(":")[0].strip() == key]
+
+
+def determinism_lacks(backend_name: str, canon: loadopts.Canon, device: str) -> list[str]:
+    """What a run on `backend_name` lacks of its family's determinism
+    contract — `[]` when it holds it. A family with no contract, or a run its
+    family cannot make reproducible, raises: it is never stated."""
+    tokens = set(re.split(r"[-_]", backend_name.lower()))
+    if "llama" in tokens:
+        lacks = [] if _option_values(canon, "parallel") == ["1"] else \
+            ["option parallel:1 (one sequence at a time)"]
+        if device != CPU:
+            if tokens & NO_MODE:
+                raise loadopts.Unstatable(
+                    f"{backend_name} offers no deterministic mode on a card (CLAUDE.md invariant "
+                    f"12): its runs cannot be shown to give back their own bytes")
+            vendor = determinism_env(backend_name)
+            if not vendor and not any(t.startswith("cuda") for t in tokens):
+                raise loadopts.Unstatable(
+                    f"{backend_name} names no vendor whose deterministic mode the wrapper knows "
+                    f"(CLAUDE.md invariant 12): a card run on it is refused")
+            lacks += [f"env {k}={v}" for k, v in sorted(vendor.items()) if canon.env.get(k) != v]
+        return lacks
+    if "python" in tokens:
+        tasks = _option_values(canon, "task")
+        task = tasks[0] if len(tasks) == 1 else None
+        if task not in TORCH_TASKS:
+            raise loadopts.Unstatable(
+                f"{backend_name} task {task!r} has no deterministic mode the wrapper knows (CLAUDE.md "
+                f"invariant 12; OpenVINO offers none): it is refused")
+        return [f"env {k}={v}" for k, v in sorted(TORCH_DETERMINISM.items()) if canon.env.get(k) != v]
+    raise loadopts.Unstatable(
+        f"no determinism contract for the backend {backend_name} (CLAUDE.md invariant 12): a "
+        f"backend whose runs are not shown to give back their own bytes is refused")
+
+
 def state_run(*, backend: RealBackend, canon: loadopts.Canon, environ: Mapping[str, str],
               device: str, pci: str | None, weights: str, tree: str, runtime: list[str],
               sys_root: Path = Path("/sys"), proc_root: Path = Path("/proc"),
@@ -686,16 +745,14 @@ def state_run(*, backend: RealBackend, canon: loadopts.Canon, environ: Mapping[s
     The build is the install record's declared `version`, else the tree's
     short form (`short_build`) — never the uri's tag, which moves.
 
-    A card run without its vendor's deterministic mode in the model's `env`
-    is refused (invariant 12): a vector that the same card would not
-    reproduce from the same input is not stated as a run."""
-    if device != CPU:
-        absent = sorted(f"{k}={v}" for k, v in determinism_env(backend.name).items()
-                        if canon.env.get(k) != v)
-        if absent:
-            raise loadopts.Unstatable(
-                f"the run is on a card without its vendor's deterministic mode (CLAUDE.md "
-                f"invariant 12): the model's YAML must set env {', '.join(absent)}")
+    A run that does not hold its backend's determinism contract is refused,
+    on any device (invariant 12, fail-closed: `determinism_lacks`): an answer
+    the same engine would not reproduce from the same input is not stated."""
+    lacks = determinism_lacks(backend.name, canon, device)
+    if lacks:
+        raise loadopts.Unstatable(
+            f"the run does not hold its backend's determinism contract (CLAUDE.md invariant "
+            f"12): the model's YAML must set {', '.join(lacks)}")
     missing = sorted(k for k, v in canon.env.items() if environ.get(k) != v)
     if missing:
         raise loadopts.Unstatable(f"the backend does not carry the environment it was loaded "

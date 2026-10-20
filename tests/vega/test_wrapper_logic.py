@@ -471,6 +471,9 @@ LOAD = json.dumps({"Model": "bge-m3.gguf", "ModelFile": "/models/bge-m3.gguf",
                    "ModelPath": "/models", "ContextSize": 8192, "Embeddings": True,
                    "RopeFreqBase": 10000.5, "Options": ["pairs:true"],
                    "EnvVars": {"NEO_CACHE_DIR": "/state/neo-cache"}})
+#: a load that holds llama.cpp's determinism contract (one sequence at a time;
+#: invariant 12 fail-closed, 2026-10-20) — what the run-stating tests load
+LOAD_RUN = json.dumps(json.loads(LOAD) | {"Options": ["pairs:true", "parallel:1"]})
 
 
 def test_the_options_are_canonical_as_rage_writes_them():
@@ -484,8 +487,8 @@ def test_the_options_are_canonical_as_rage_writes_them():
 
 
 def test_the_run_is_what_the_wrapper_launched(tmp_path):
-    backend = vw.real_backend(_backend_dir(tmp_path))
-    canon = vw.canon_from_protojson(LOAD)
+    backend = vw.real_backend(_backend_dir(tmp_path, name="fake-llama-cpp"))
+    canon = vw.canon_from_protojson(LOAD_RUN)
     tree = vw.tree_digest(backend.directory)
     rid, run = vw.state_run(backend=backend, canon=canon,
                             environ={"NEO_CACHE_DIR": "/state/neo-cache"}, device="cpu",
@@ -493,7 +496,7 @@ def test_the_run_is_what_the_wrapper_launched(tmp_path):
     assert rid == runs_mod.run_id(run)
     assert run["driver"] == "cpu" and run["weights"] == "sha256:" + "11" * 32
     assert run["engine"] == {
-        "name": "localai/fake-embed", "build": "v4.11.0", "variant": None, "image": tree,
+        "name": "localai/fake-llama-cpp", "build": "v4.11.0", "variant": None, "image": tree,
         "args": ["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"],
         "env": {"NEO_CACHE_DIR": "/state/neo-cache"}, "device": "cpu",
         "options": canon.options}
@@ -507,8 +510,8 @@ def test_the_run_is_a_valid_codex_engine(tmp_path):
     """The run's engine is signed into a calibration statement, whose
     validator reads `image` as `sha256:<64 hex>` (app/hold/codex.py)."""
     from app.hold.codex import _validate_engine, engine_from_dict
-    backend = vw.real_backend(_backend_dir(tmp_path))
-    _rid, run = vw.state_run(backend=backend, canon=vw.canon_from_protojson(LOAD),
+    backend = vw.real_backend(_backend_dir(tmp_path, name="fake-llama-cpp"))
+    _rid, run = vw.state_run(backend=backend, canon=vw.canon_from_protojson(LOAD_RUN),
                              environ={"NEO_CACHE_DIR": "/state/neo-cache"}, device="cpu",
                              pci=None, weights="sha256:" + "11" * 32,
                              tree=vw.tree_digest(backend.directory), runtime=[])
@@ -516,9 +519,9 @@ def test_the_run_is_a_valid_codex_engine(tmp_path):
 
 
 def test_an_upgrade_is_a_new_run_and_a_reinstall_of_the_same_bytes_is_not(tmp_path):
-    d = _backend_dir(tmp_path, {"name": "fake-embed", "uri": "quay.io/x:latest-y",
+    d = _backend_dir(tmp_path, {"name": "fake-llama-cpp", "uri": "quay.io/x:latest-y",
                                 "digest": DIGEST})
-    backend, canon = vw.real_backend(d), vw.canon_from_protojson(LOAD)
+    backend, canon = vw.real_backend(d), vw.canon_from_protojson(LOAD_RUN)
     env = {"NEO_CACHE_DIR": "/state/neo-cache"}
 
     def stated():
@@ -529,7 +532,7 @@ def test_an_upgrade_is_a_new_run_and_a_reinstall_of_the_same_bytes_is_not(tmp_pa
     rid, run = stated()
     assert run["engine"]["build"] == vw.short_build(run["engine"]["image"]), \
         "no declared version: the tree's short form, never the uri's moving tag"
-    (d / "metadata.json").write_text(json.dumps({"name": "fake-embed", "uri": "quay.io/x:z",
+    (d / "metadata.json").write_text(json.dumps({"name": "fake-llama-cpp", "uri": "quay.io/x:z",
                                                  "digest": "sha256:" + "ef" * 32}))
     assert stated()[0] == rid
     (d / "run.sh").write_text("#!/bin/sh\n# upgraded\n")
@@ -537,13 +540,16 @@ def test_an_upgrade_is_a_new_run_and_a_reinstall_of_the_same_bytes_is_not(tmp_pa
 
 
 def test_the_driver_lines_are_the_runs_runtime(tmp_path):
-    backend = vw.real_backend(_backend_dir(tmp_path))
+    backend = vw.real_backend(_backend_dir(tmp_path, name="fake-sycl-llama-cpp"))
     sys_root, proc_root = tmp_path / "sys", tmp_path / "proc"
     (sys_root / "module" / "xe").mkdir(parents=True)
     (proc_root / "sys" / "kernel").mkdir(parents=True)
     (proc_root / "sys" / "kernel" / "osrelease").write_text("6.18.0\n")
-    _rid, run = vw.state_run(backend=backend, canon=vw.canon_from_protojson(LOAD),
-                             environ={"NEO_CACHE_DIR": "/state/neo-cache"}, device="Arc",
+    _rid, run = vw.state_run(backend=backend, canon=vw.canon_from_protojson(json.dumps(
+                                 json.loads(LOAD_RUN) | {"EnvVars": {"NEO_CACHE_DIR": "/state/neo-cache",
+                                                                     "GGML_SYCL_ENABLE_DNN": "0"}})),
+                             environ={"NEO_CACHE_DIR": "/state/neo-cache", "GGML_SYCL_ENABLE_DNN": "0"},
+                             device="Arc",
                              pci=None, weights="sha256:" + "11" * 32,
                              tree=vw.tree_digest(backend.directory),
                              runtime=["libze_intel_gpu.so.1.15.39122 sha256:" + "aa" * 32],
@@ -562,8 +568,8 @@ def test_each_stack_names_its_vendors_deterministic_mode(name, env):
     assert vw.determinism_env(name) == env
 
 
-def _load_with(env):
-    return vw.canon_from_protojson(json.dumps(json.loads(LOAD) | {"EnvVars": env}))
+def _load_with(env, options=("pairs:true", "parallel:1")):
+    return vw.canon_from_protojson(json.dumps(json.loads(LOAD) | {"EnvVars": env, "Options": list(options)}))
 
 
 @pytest.mark.parametrize("name, env", [
@@ -721,3 +727,55 @@ def test_without_a_receipts_service_the_tree_is_a_deferral_of_its_own(tmp_path):
     c = vw.ReceiptClient(tmp_path / "nobody.sock")
     with pytest.raises(vw.Unavailable, match="tree was not acknowledged"):
         c.publish_tree(vw.manifest_digest(manifest), manifest, timeout_s=0.3)
+
+
+# ---- invariant 12 fail-closed (operator, 2026-10-20): ANY backend ----------------
+
+def _run_kw(tmp_path, name, device="the card"):
+    backend = vw.real_backend(_backend_dir(tmp_path, name=name))
+    return dict(backend=backend, device=device, pci=None, weights="sha256:" + "11" * 32,
+                tree=vw.tree_digest(backend.directory), runtime=[], card_driver_line="dxg 1")
+
+
+@pytest.mark.parametrize("device", ["the card", "cpu"])
+def test_llama_cpp_runs_one_sequence_at_a_time_on_any_device(tmp_path, device):
+    """Measured: louise-rerank-bge at parallel:4 moved 16 of 20 scores with
+    the documents' order; at parallel:1 none moved."""
+    env = {"GGML_SYCL_ENABLE_DNN": "0"} if device != "cpu" else {}
+    kw = _run_kw(tmp_path, "intel-sycl-f16-llama-cpp", device)
+    for options in (("parallel:4",), ()):
+        with pytest.raises(loadopts.Unstatable, match="invariant 12.*parallel:1"):
+            vw.state_run(canon=_load_with(env, options), environ=env, **kw)
+    vw.state_run(canon=_load_with(env, ("parallel:1",)), environ=env, **kw)
+
+
+@pytest.mark.parametrize("name, why", [
+    ("vulkan-llama-cpp", "offers no deterministic mode"),
+    ("llama-cpp", "names no vendor"),
+    ("fake-embed", "no determinism contract"),
+    ("stablediffusion-ggml", "no determinism contract"),
+])
+def test_a_backend_without_a_known_contract_is_refused(tmp_path, name, why):
+    with pytest.raises(loadopts.Unstatable, match=why):
+        vw.state_run(canon=_load_with({}, ("parallel:1",)), environ={}, **_run_kw(tmp_path, name))
+
+
+def test_a_cuda_card_run_needs_no_vendor_env(tmp_path):
+    vw.state_run(canon=_load_with({}, ("parallel:1",)), environ={},
+                 **_run_kw(tmp_path, "cuda12-llama-cpp"))
+
+
+@pytest.mark.parametrize("device", ["the card", "cpu"])
+def test_louise_python_torch_tasks_need_torchs_switch_and_openvino_is_refused(tmp_path, device):
+    kw = _run_kw(tmp_path, "louise-python-20261020c", device)
+    on = {"LOUISE_TORCH_DETERMINISTIC": "1"}
+    for task in ("dar-legal-it", "madlad", "jina-v3"):
+        with pytest.raises(loadopts.Unstatable, match="invariant 12.*LOUISE_TORCH_DETERMINISTIC=1"):
+            vw.state_run(canon=_load_with({}, (f"task:{task}", "device:xpu")), environ={}, **kw)
+        _rid, run = vw.state_run(canon=_load_with(on, (f"task:{task}", "device:xpu")), environ=on, **kw)
+        assert run["engine"]["env"] == on
+    for task in ("medcpt-article", "medcpt-rerank"):
+        with pytest.raises(loadopts.Unstatable, match="no deterministic mode"):
+            vw.state_run(canon=_load_with(on, (f"task:{task}", "device:xpu")), environ=on, **kw)
+    with pytest.raises(loadopts.Unstatable, match="no deterministic mode"):
+        vw.state_run(canon=_load_with(on, ("device:xpu",)), environ=on, **kw)

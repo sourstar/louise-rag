@@ -544,15 +544,22 @@ python_backend = _dispatcher()
 UNIMPLEMENTED = SimpleNamespace(**vars(STATUS), UNIMPLEMENTED="UNIMPLEMENTED")
 
 
-def _combined(made: list | None = None, **servicers):
+#: the model env every torch task loads with (invariant 12, fail-closed 2026-10-20)
+DETERMINISTIC = {"LOUISE_TORCH_DETERMINISTIC": "1"}
+
+
+def _combined(made: list | None = None, *, environ=DETERMINISTIC, check_determinism=True,
+              **servicers):
     """The dispatcher with each task's Servicer handed in: the real classes of
-    the backends it replaces, with their stand-in models."""
+    the backends it replaces, with their stand-in models. `check_determinism`
+    False only to exercise the ROUTING of a task the rule refuses."""
     made = [] if made is None else made
 
     def load_module(name):
         made.append(name)
         return SimpleNamespace(Servicer=servicers[name])
-    return python_backend.Servicer(PB, UNIMPLEMENTED, load_module=load_module)
+    return python_backend.Servicer(PB, UNIMPLEMENTED, load_module=load_module, environ=environ,
+                                   check_determinism=check_determinism)
 
 
 def test_every_task_is_the_backend_it_replaces_copied_by_the_dockerfile():
@@ -621,7 +628,7 @@ def test_a_refused_load_leaves_nothing_loaded(tmp_path):
 
 
 def test_a_call_the_task_does_not_answer_is_unimplemented(tmp_path):
-    s = _combined(task_medcpt_rerank=lambda pb, st: _medcpt(tmp_path))
+    s = _combined(check_determinism=False, task_medcpt_rerank=lambda pb, st: _medcpt(tmp_path))
     r = s.LoadModel(load_call(_medcpt_dir(tmp_path), options=["task:medcpt-rerank"],
                               context_size=512, batch=4), None)
     assert r.success, r.message
@@ -636,7 +643,7 @@ def test_madlad_and_the_article_encoder_answer_through_it_as_before(tmp_path):
     got = json.loads(m.Predict(SimpleNamespace(Prompt=json.dumps(
         {"items": [{"text": "ave", "to": "it"}]})), Context()).message)
     assert got["translations"] == ["<2it>|AVE"]
-    a = _combined(task_medcpt_article=lambda pb, st: _article())
+    a = _combined(check_determinism=False, task_medcpt_article=lambda pb, st: _article())
     assert a.LoadModel(load_call(_medcpt_dir(tmp_path),
                                  options=["pairs:true", "task:medcpt-article"],
                                  context_size=512), None).success
@@ -741,6 +748,38 @@ def test_each_staged_model_on_louise_python_is_a_load_its_task_accepts():
         lb.options(rest, tasks[task].KNOWN, tasks[task].DEFAULTS)
         seen.add(task)
     assert seen == set(tasks), "each live task serves a staged model"
+
+
+def test_a_torch_task_loads_only_with_torchs_deterministic_switch(tmp_path):
+    """CLAUDE.md invariant 12, fail-closed (operator, 2026-10-20): torch's
+    defaults do not give back their own bytes (DAR-legal-it 1/4 against itself)."""
+    for environ in ({}, {"LOUISE_TORCH_DETERMINISTIC": "0"}):
+        r = _combined(environ=environ, task_dar_legal_it=lambda pb, st: _dar()).LoadModel(
+            load_call(tmp_path, options=["device:cpu", "task:dar-legal-it"], context_size=8192), None)
+        assert not r.success and "LOUISE_TORCH_DETERMINISTIC=1" in r.message
+    r = _combined(task_dar_legal_it=lambda pb, st: _dar()).LoadModel(
+        load_call(tmp_path, options=["device:cpu", "task:dar-legal-it"], context_size=8192), None)
+    assert r.success, r.message
+    assert python_backend.TORCH_TASKS == {"dar-legal-it", "madlad", "jina-v3"}
+
+
+@pytest.mark.parametrize("task", ["medcpt-article", "medcpt-rerank"])
+def test_an_openvino_task_is_never_loaded(tmp_path, task):
+    """OpenVINO offers no deterministic mode: refused, with the switch or without."""
+    made: list = []
+    r = _combined(made).LoadModel(load_call(_medcpt_dir(tmp_path), options=[f"task:{task}"],
+                                            context_size=512, batch=4), None)
+    assert not r.success and "OpenVINO" in r.message and made == [], "refused before it is imported"
+
+
+def test_madlad_switches_torch_to_its_deterministic_algorithms():
+    madlad = _exec("madlad_server_under_test", ROOT / "deploy" / "madlad-translate" / "server.py")
+    calls = []
+    torch = SimpleNamespace(use_deterministic_algorithms=calls.append,
+                            backends=SimpleNamespace(mkldnn=SimpleNamespace(deterministic=False)))
+    assert madlad.determinism(torch, {}) is False and calls == []
+    assert madlad.determinism(torch, {"LOUISE_TORCH_DETERMINISTIC": "1"}) is True
+    assert calls == [True] and torch.backends.mkldnn.deterministic is True
 
 
 # ---- jina-v3: wikidata's encoder, a louise-python task of its own ------------------------
