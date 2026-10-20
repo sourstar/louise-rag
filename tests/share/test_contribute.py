@@ -702,7 +702,7 @@ def test_an_own_export_the_ladder_refuses_is_set_aside_not_served_and_not_export
     ladder refused at T0 every pass — 26 copies in ten hours — and every
     copy sat in state/bundles, which the seeder serves and the digest offers
     whole, so "not announced" was not true and Perugia fetched them all. A
-    refused export is set aside under state/share/refused, the part is not
+    refused export is set aside under state/refused-bundles, the part is not
     exported again for REFUSED_RETRY_S, and refused copies left under
     state/bundles by earlier code are swept aside at the next pass."""
     import dataclasses
@@ -739,7 +739,20 @@ def test_an_own_export_the_ladder_refuses_is_set_aside_not_served_and_not_export
     assert out["refused_recently"] == [shards[1]], "its refusal is fresh: not exported again"
     assert out["bundles"] and out["refused"] and not out["accepted"]
     assert mem.bundle_dirs(state, codex.space_segment) == [], "a refused export is not among the served bundles"
-    assert len(list((state / "share" / "refused").rglob("header.json"))) == len(out["bundles"]) + 1, "plus the swept one"
+    assert len(list((state / contribute.REFUSED_DIRNAME).rglob("header.json"))) == len(out["bundles"]) + 1, \
+        "plus the swept one"
+    # the seeder owns state/share: a sync removes every directory there but the
+    # torrents and the current snapshot's (seeder.sync) — the copies set aside
+    # must survive it, or the day's hold has no mtime to read (the node, 678450f)
+    for old in (state / seeder.SHARE_DIR).iterdir() if (state / seeder.SHARE_DIR).is_dir() else []:
+        if old.is_dir() and old.name not in (seeder.TORRENTS_DIR, snapshot.snapshot_id):
+            import shutil
+            shutil.rmtree(old)
+    assert len(list((state / contribute.REFUSED_DIRNAME).rglob("header.json"))) == len(out["bundles"]) + 1, \
+        "the set-aside copies are outside the seeder's directory"
+    assert not contribute.refused_dir(root, "gutenberg", codex, shards[1], old_bid).is_relative_to(
+        state / seeder.SHARE_DIR) and not contribute.refused_dir(
+        root, "gutenberg", codex, shards[1], old_bid).is_relative_to(state / "bundles")
     rows = [r for r in cov.rows(kw["con"]) if r["source"] == cov.LOCAL]
     assert rows and all(r["accepted_at"] is None and r["tiers"]["T0"] == "fail" for r in rows)
     assert any("set aside, not served, not announced" in s for s in said)

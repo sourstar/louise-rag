@@ -263,13 +263,23 @@ def bundle_dir(root: Path, name: str, codex, shard: str, bundle_id: str) -> Path
 REFUSED_RETRY_S = 24 * 3600.0
 
 
+#: under `state/`, beside `bundles/` and `share/` and inside neither
+REFUSED_DIRNAME = "refused-bundles"
+
+
 def refused_dir(root: Path, name: str, codex, shard: str, bundle_id: str) -> Path:
-    """`state/share/refused/<space>/<slice>/<NNNNN>/<bundle_id hex>/`: an own
+    """`state/refused-bundles/<space>/<slice>/<NNNNN>/<bundle_id hex>/`: an own
     export this peer's ladder refused, kept for `vectors check` OUTSIDE
     `state/bundles/` — which the seeder serves and the digest offers whole
     (`members.bundle_dirs`), so a refused bundle left there was "not
-    announced" in the log and fetched by every neighbour all the same."""
-    return (Path(root) / name / "state" / "share" / "refused" / codex.space_segment / shard
+    announced" in the log and fetched by every neighbour all the same — and
+    outside `state/share/`, which the seeder OWNS: every sync removes each
+    directory there but `torrents` and the current snapshot's, and
+    `share --stop` removes it whole. Under `state/share/refused/` (678450f)
+    the node's first pass set 27 copies aside and the next sync deleted them,
+    and with them the mtime the day's hold is read from (München,
+    2026-10-20)."""
+    return (Path(root) / name / "state" / REFUSED_DIRNAME / codex.space_segment / shard
             / shard_mod._hex(bundle_id))
 
 
