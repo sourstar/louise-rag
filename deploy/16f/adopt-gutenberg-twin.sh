@@ -19,9 +19,9 @@
 # Resumable: run it again after a stop.
 set -euo pipefail
 
-: "${TWIN:?the twin's collection_id, as the node published it}"
-: "${NODE_URL:?the node's address for share fetch --from}"
-: "${W:?this peer's worker container}"
+: "${TWIN:?the collection_id of the twin, as the node published it}"
+: "${NODE_URL:?the address of the node, for share fetch --from}"
+: "${W:?the worker container of this peer}"
 L="docker exec $W python -m app.louise"
 OLD=gutenberg
 NEW=gutenberg-qi
