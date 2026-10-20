@@ -209,3 +209,41 @@ def test_a_deferred_document_stays_eligible_for_backfill(collection, monkeypatch
     stage, picked = worker._next_embed(con, db.get_scope(con))
     assert stage == "embed" and picked["uid"] == "g:1", \
         "a deferred document must still be selectable next round"
+
+
+# ---------------- a platform file missing: deferred, never the document's ----------------
+
+def test_a_missing_platform_file_defers_every_document_and_says_it_once(collection, monkeypatch):
+    """wikidata, 2026-10-20: the pinned tokenizer was not in the image (no
+    Dockerfile step fetched it) and the fts stage wrote an error on 506
+    documents, each out of every selection until a human cleared it. A file
+    or package the PLATFORM must carry is the platform's fault: the
+    document is untouched, the stage defers, and one line says why."""
+    from app.plugins.wikidata import chunker as wd
+    worker._platform_said.clear()
+    missing = wd.TokenizerMissing("tokenizer sha256:f599… is not in /opt/louise/tokenizers")
+    assert worker.platform_missing(missing) and worker.transient_failure(missing)
+    try:
+        try:
+            raise missing
+        except wd.TokenizerMissing as inner:
+            raise RuntimeError("the parse pool's child failed") from inner
+    except RuntimeError as wrapped:
+        assert worker.platform_missing(wrapped), "anywhere in the chain"
+    assert not worker.platform_missing(wd.ChunkerError("max_tokens must be positive")), \
+        "a layer's own fault stays the document's"
+    con = db.connect(collection)
+    row = _doc(con, fts_done=0)
+    row2 = _doc(con, uid="g:2", fts_done=0)
+
+    def fails(*a, **k):
+        raise missing
+    monkeypatch.setitem(worker.STAGES, "fts", fails)
+    assert worker._execute_step(con, collection, "fts", row) is False
+    assert worker._execute_step(con, collection, "fts", row2) is False
+    for uid in ("g:1", "g:2"):
+        after = con.execute("SELECT error, retries, fts_done FROM documents WHERE uid=?", (uid,)).fetchone()
+        assert (after["error"], after["retries"], after["fts_done"]) == (None, 0, 0)
+    said = [r["message"] for r in con.execute("SELECT message FROM events WHERE level='warn' AND stage='fts'")]
+    assert len(said) == 1 and "platform is missing" in said[0], said
+    worker._platform_said.clear()

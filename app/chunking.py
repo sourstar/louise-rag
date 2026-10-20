@@ -82,6 +82,16 @@ class ChunkerError(ValueError):
     """A layer does not give a chunker what it needs."""
 
 
+class PlatformMissing(RuntimeError):
+    """A file or package the PLATFORM must carry is not on this node — a
+    tokenizer the image was to fetch, a library it was to install. Nothing
+    is wrong with the document being processed: the worker DEFERS it and
+    says why, never writes an error on it (CLAUDE.md, "deferral is not
+    failure"; wikidata, 2026-10-20: 506 documents errored for a tokenizer
+    no Dockerfile step had fetched, each out of every selection until a
+    human cleared it). The deploy that brings the file heals every one."""
+
+
 def _fixed_windows(uid: str, native_id, chapters, version,
                    max_chars: int, overlap_chars: int):
     """The windows themselves, shared by `book` and `fixed` so that the two

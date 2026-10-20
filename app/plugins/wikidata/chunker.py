@@ -40,8 +40,17 @@ _ATTR_MARK = ":\n- "
 _LINE = "\n- "
 
 
+from app.chunking import PlatformMissing  # noqa: E402
+
+
 class ChunkerError(ValueError):
     """The layer's params or the tokenizer they name are not usable."""
+
+
+class TokenizerMissing(ChunkerError, PlatformMissing):
+    """The pinned tokenizer is not on this node, or not the bytes pinned, or
+    the library that reads it is not installed: the platform's fault, never
+    the document's (app/chunking.py `PlatformMissing`)."""
 
 
 # ---- the tokenizer, by sha256 ---------------------------------------------------------------
@@ -76,15 +85,15 @@ def tokenizer_for(sha256: str) -> Any:
         raise ChunkerError(f"the layer's `tokenizer` is the sha256 of a tokenizer.json, not {sha256!r}")
     path = Path(config.TOKENIZERS_DIR) / f"{sha256[7:]}.json"
     if not path.is_file():
-        raise ChunkerError(f"tokenizer {sha256} is not in {config.TOKENIZERS_DIR} (the platform image "
+        raise TokenizerMissing(f"tokenizer {sha256} is not in {config.TOKENIZERS_DIR} (the platform image "
                            f"fetches it at build; set TOKENIZERS_DIR where it is)")
     found = sha256_of(path)
     if found != sha256:
-        raise ChunkerError(f"{path} is {found}, the layer names {sha256}: not the pinned tokenizer")
+        raise TokenizerMissing(f"{path} is {found}, the layer names {sha256}: not the pinned tokenizer")
     try:
         from tokenizers import Tokenizer
     except ImportError as e:   # pragma: no cover — the image carries it (D6)
-        raise ChunkerError(f"the `tokenizers` package is not installed: {e}") from e
+        raise TokenizerMissing(f"the `tokenizers` package is not installed: {e}") from e
     tok = Tokenizer.from_file(str(path))
     register(sha256, tok)
     return tok

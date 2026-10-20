@@ -2921,6 +2921,40 @@ def _endpoint_busy_holds(collection) -> bool:
         encoder_timeouts.endpoint_of(_recipe_or_none(collection))) > 0
 
 
+#: (collection, stage) -> when its platform-missing deferral was last said
+_platform_said: dict[tuple[str, str], float] = {}
+PLATFORM_SAY_EVERY_S = 600.0
+
+
+def platform_missing(exc: BaseException) -> bool:
+    """Is a file or package the platform must carry missing (app/chunking.py
+    `PlatformMissing`), anywhere in the exception's chain? By class, and by
+    name for one that crossed the parse pool's pickling."""
+    from app.chunking import PlatformMissing
+    seen: set[int] = set()
+    e: BaseException | None = exc
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if isinstance(e, PlatformMissing) or any(c.__name__ in ("PlatformMissing", "TokenizerMissing")
+                                                 for c in type(e).__mro__):
+            return True
+        e = e.__cause__ or e.__context__
+    return False
+
+
+def _say_platform_missing(con, collection, stage: str, exc: BaseException) -> None:
+    """Once per PLATFORM_SAY_EVERY_S per collection and stage: every document
+    of the stage defers for the same reason, and one line says it."""
+    key = (str(getattr(collection, "manifest_path", "") or getattr(collection, "name", "")), stage)
+    now = time.monotonic()
+    if now - _platform_said.get(key, -PLATFORM_SAY_EVERY_S) < PLATFORM_SAY_EVERY_S:
+        return
+    _platform_said[key] = now
+    db.log_event(con, "warn", stage,
+                 f"{stage} deferred — the platform is missing what it needs ({exc}); no document "
+                 f"is marked: the deploy that brings it resumes them all")
+
+
 def transient_failure(exc: BaseException) -> bool:
     """The moment's fault, not the document's: the encoder away or busy,
     the manifest or the vector store held by another writer. ONE test for
@@ -2935,7 +2969,7 @@ def transient_failure(exc: BaseException) -> bool:
     stays selectable, while `backend_gate.embed_allowed` gates the new run
     at once or pauses the collection's embedding and says why."""
     return (endpoint_unavailable(exc) or manifest_contended(exc)
-            or vector_store_contended(exc) or run_not_validated(exc)
+            or vector_store_contended(exc) or run_not_validated(exc) or platform_missing(exc)
             # the vector table lacks the validity columns the collection
             # declares: the TABLE's state, repaired once by `hold vectors
             # validity-columns`; every document defers until then (2026-10-13)
@@ -3073,6 +3107,12 @@ def _execute_step(con, collection, stage, row) -> bool:
             db.log_event(con, "warn", stage,
                          f"{stage} deferred — encoder unreachable ({e}); "
                          f"the document is untouched and will be retried")
+            return False
+        if platform_missing(e):
+            # a file or package the PLATFORM must carry is missing (a
+            # tokenizer the image was to fetch): the same for every
+            # document, the fault of none — deferred, said once a while
+            _say_platform_missing(con, collection, stage, e)
             return False
         if isinstance(e, plugin_base.UnindexableDocument):
             # a CORPUS fact surfaced mid-stage (the mirror ships no text for
