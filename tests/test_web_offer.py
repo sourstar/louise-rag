@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import api, collections as collections_mod, config, jobs
-from app.share import catalogue, peers
+from app.share import catalogue, messages, peers
 from tests.deposit.test_deposit_identity import node  # noqa: F401
 from tests.hold.conftest import pubmed
 from tests.share.test_messages import PEER_KEY
@@ -22,9 +22,21 @@ def client(node, monkeypatch):  # noqa: F811
         yield c
 
 
-def announced(codex):
+def announced(codex, *, snapshot_id="2026-10"):
+    """A Codex in the catalogue AND a live neighbour's digest serving a
+    snapshot of it — what makes an entry takeable (offer.takeable). With
+    `snapshot_id=None` the neighbour merely announces it, as the node's
+    wikidata was while its scan ran (Perugia, 2026-10-20)."""
+    now = time.time()
     con = peers.connect()
-    catalogue.record(con, [codex], announced_by=PEER_KEY, now=time.time())
+    catalogue.record(con, [codex], announced_by=PEER_KEY, now=now)
+    body = messages.digest_body(
+        key=PEER_KEY, address="http://peer.test:8742", neighbours=[], benchmarks=[],
+        collections=[{"collection_id": codex.collection_id, "lineage_id": codex.collection_id,
+                      "title": codex.descriptive.title, "snapshot_id": snapshot_id,
+                      "members": ["records-all"] if snapshot_id else [],
+                      "license": codex.license.cls, "privacy": codex.privacy}], now=now)
+    peers.record_digest(con, body, now=now)
     con.close()
 
 
@@ -145,3 +157,21 @@ def test_the_encoder_is_decided_from_what_the_node_knows(client, monkeypatch):
     # without a collection: the server alone, for the create form
     s = client.get("/api/encoders/suggest").json()
     assert s["url"] == "http://localai:30286" and not s["resolved"] and s["models"]
+
+
+def test_a_collection_nobody_serves_a_snapshot_of_is_not_takeable_and_the_take_says_why(client, monkeypatch):
+    """Perugia, 2026-10-20: the node's wikidata was in the offer with snapshot
+    None and 0 members (created, its scan running); taking it failed in the
+    worker with "holds no snapshot", a message nobody can act on. The card
+    shows why and no take button; the route refuses up front, in the words
+    the card shows."""
+    codex = pubmed()
+    announced(codex, snapshot_id=None)
+    monkeypatch.setattr(jobs, "submit", lambda kind, args: pytest.fail("nothing is queued"))
+    (entry,) = client.get("/api/share/offer/show").json()["offered"]
+    assert entry["takeable"] is False and "none of which holds a snapshot of it yet" in entry["waiting"]
+    page = client.get("/admin/library").text
+    assert "not yet takeable" in page and f"openTake('{codex.collection_id}')" not in page
+    r = client.post("/api/share/fetch", json={"collection_id": codex.collection_id, "name": "wd"})
+    assert r.status_code == 409 and "cannot be taken yet" in r.json()["detail"] \
+        and "still building it" in r.json()["detail"]

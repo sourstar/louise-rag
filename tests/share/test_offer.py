@@ -120,3 +120,25 @@ def test_a_collection_a_live_digest_lists_is_offered_even_before_its_codex_arriv
     # held: gone, whichever source named it
     assert offer.offered(con, {codex.collection_id}, now=now) == []
     con.close()
+
+
+def test_an_entry_is_takeable_only_while_a_live_neighbour_serves_a_snapshot_of_it(node):  # noqa: F811
+    """Perugia, 2026-10-20: a digest lists what its sender created, snapshot
+    or not; `share fetch` of an entry with none fails at the peer. The offer
+    says so first, in plain words, per entry and for the route's check."""
+    now = time.time()
+    con = peers.connect()
+    building, served_ = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+    digest(con, PEER_KEY, "http://peer.test:8742",
+           [{"collection_id": building, "lineage_id": building, "title": "Wikidata", "snapshot_id": None,
+             "members": [], "license": "green", "privacy": "public"},
+            {"collection_id": served_, "lineage_id": served_, "title": "PubMed", "snapshot_id": "2026-10",
+             "members": ["records-x"], "license": "green", "privacy": "public"}], now=now)
+    by_id = {o["collection_id"]: o for o in offer.offered(con, set(), now=now)}
+    assert by_id[served_]["takeable"] is True and by_id[served_]["waiting"] == ""
+    assert by_id[building]["takeable"] is False
+    assert "announced by 1 live peer, none of which holds a snapshot of it yet" in by_id[building]["waiting"]
+    assert offer.takeable([]) == (False, offer.takeable([])[1]) and "no live neighbour serves it now" in offer.takeable([])[1]
+    assert offer.can_take(served_, now=now) == (True, "")
+    assert offer.can_take(building, now=now)[0] is False
+    con.close()

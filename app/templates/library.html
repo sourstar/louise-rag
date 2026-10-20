@@ -320,7 +320,11 @@
       {% if o.first_seen %}<span class="badge brass" title="announced by {{ o.announced_by or '?' }}">first seen {{ o.first_seen }}</span>{% endif %}
     </div>
     <div class="note"><code title="collection_id">{{ o.collection_id }}</code>{% if o.relation != 'root' %} · {{ o.relation }} <code>{{ o.lineage_id[:23] }}…</code>{% endif %}{% if not o.codex_known %} · <span title="its digest names it; the Codex itself is pulled when you take it">Codex not yet pulled</span>{% endif %}</div>
+    {% if o.takeable|default(true) %}
     <div class="actions"><button class="primary" onclick="openTake('{{ o.collection_id }}')">take…</button></div>
+    {% else %}
+    <div class="note"><span class="badge brass">not yet takeable</span> {{ o.waiting }}</div>
+    {% endif %}
   </div>
   {% endfor %}
 </div>

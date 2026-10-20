@@ -69,6 +69,24 @@ def served_by(con, *, now: float) -> dict[str, list[dict[str, Any]]]:
     return {cid: e["served_by"] for cid, e in announced_in_digests(con, now=now).items()}
 
 
+def takeable(served: list[dict[str, Any]]) -> tuple[bool, str]:
+    """Can this collection be taken NOW — does some live neighbour serve a
+    SNAPSHOT of it? A digest lists a collection its sender merely created
+    (the node's wikidata, snapshot None, 0 members, while its scan runs):
+    `share fetch` of such an entry fails at the peer ("holds no snapshot"),
+    a message nobody can act on (Perugia, 2026-10-20). So the offer says it
+    first, in plain words, and the Library shows no take button."""
+    live = [s for s in served if s.get("snapshot_id")]
+    if live:
+        return True, ""
+    if served:
+        return False, (f"announced by {len(served)} live peer{'s' if len(served) != 1 else ''}, none of "
+                       f"which holds a snapshot of it yet — its maker is still building it; it can be "
+                       f"taken once a snapshot exists")
+    return False, ("no live neighbour serves it now — only its description is known; it can be "
+                   "taken once a peer that holds it is online")
+
+
 def cli_for(collection_id: str) -> str:
     return (f"louise share fetch {collection_id} [--slice …] [--kinds records,vectors] "
             f"[--encoder URL] [--name N]")
@@ -111,6 +129,7 @@ def offered(con, held: set[str], *, now: float) -> list[dict[str, Any]]:
             "codex_known": c is not None,         # the Codex itself is pulled by the take when not
             "cli": cli_for(cid),
         })
+        out[-1]["takeable"], out[-1]["waiting"] = takeable(out[-1]["served_by"])
     # served by the most live peers first, then the oldest announcement;
     # a superseded Codex after every current one
     out.sort(key=lambda o: (o["superseded_by"] is not None, -len(o["served_by"]),
@@ -133,6 +152,14 @@ def announced(collection_id: str, *, now: float | None = None) -> bool:
         if catalogue.codex_of(con, collection_id) is not None:
             return True
         return collection_id in announced_in_digests(con, now=peers.now() if now is None else now)
+
+
+def can_take(collection_id: str, *, now: float | None = None) -> tuple[bool, str]:
+    """`takeable` for one collection, as the take's route asks before it
+    queues anything: (True, "") or (False, why — in plain words)."""
+    with closing(peers.connect()) as con:
+        served = announced_in_digests(con, now=peers.now() if now is None else now).get(collection_id, {})
+        return takeable(served.get("served_by") or [])
 
 
 def in_catalogue(collection_id: str) -> bool:

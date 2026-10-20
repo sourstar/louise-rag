@@ -580,6 +580,12 @@ def share_fetch(body: ShareFetchBody):
         raise HTTPException(409, f"no live neighbour's digest lists {cid[:23]}… and no Codex of it is in the "
                                  f"catalogue: it is not in the offer; `louise share fetch {cid} --from ADDRESS` "
                                  f"takes it from a peer given by hand")
+    ok, why = offer.can_take(cid)
+    if not ok:
+        # said here, before anything is queued, in the words the card shows —
+        # not after a worker's fetch fails with "holds no snapshot" (Perugia,
+        # 2026-10-20, the node's wikidata while its scan runs)
+        raise HTTPException(409, f"this collection cannot be taken yet: {why}")
     name = body.name.strip()
     if name and collections_mod.by_name(name) is not None:
         raise HTTPException(409, f"{name!r} is a collection this node already holds; choose another local name")
