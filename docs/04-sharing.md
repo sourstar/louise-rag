@@ -669,6 +669,11 @@ offers — and the part is not exported again for a day (*amended
 26 copies in ten hours, each left where the seeder served it and each
 fetched by Perugia).
 
+A bundle of a space the collection admits (02 §2.4, A1f: the space before a
+query instruction was added) is the collection's bundle as it is: offered,
+fetched and filed under its own space segment, `bundle-<that segment>-<id>`,
+beside the new space's (*amended 2026-10-20*).
+
 **How a bundle travels.** A bundle is a member (§4.3): its producer
 announces it with a `bundle` event naming the collection, space,
 snapshot, part, chunk range, bundle id, root and size, and lists it in

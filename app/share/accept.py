@@ -108,6 +108,16 @@ def newer_snapshots(root: Path, collections, node_con, *, client=None, key=None,
     return out
 
 
+def _segment_for(codex, payload: dict[str, Any]) -> str:
+    """The segment a bundle is offered and filed under: its own space's when
+    that is admitted here (A1f), else this space's."""
+    from app.hold.codex import segment_of
+    sid = payload.get("space_id")
+    if isinstance(sid, str) and sid != codex.space_id and sid in (getattr(codex, "admitted_spaces", ()) or ()):
+        return segment_of(sid)
+    return codex.space_segment
+
+
 def member_of(payload: dict[str, Any], space: str) -> mem.Member | None:
     """The bundle member the event describes, from its file list; None when
     the list is missing or not what 09 §9.16 shapes."""
@@ -139,7 +149,7 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     root = Path(root)
     now = time.time() if now is None else now
     say = log or (lambda *_a: None)
-    member = member_of(payload, codex.space_segment)
+    member = member_of(payload, _segment_for(codex, payload))
     if member is None:
         return {"outcome": "ignored", "why": "no file list the event's root agrees with"}
     bundle_id = str(payload["bundle_id"])
@@ -217,7 +227,7 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     # the bundle's shard is the header's (09 §9.7): a digest's member entry
     # names none, an event's may; the header has been read and is signed
     final = contribute.bundle_dir(root, name, codex, str(header.get("shard") or payload.get("shard") or "x/00000"),
-                                  bundle_id)
+                                  bundle_id, space=_segment_for(codex, {"space_id": header.get("space_id")}))
     snapshot = landing.snapshot_named(root, name, header["snapshot_id"])
     records = landing.records_for(root, name, snapshot, header["shard"], header["uids"])
     mine = {r["uid"]: r["content_hash"] for r in records}
@@ -689,7 +699,11 @@ def listed_bundles(node_con, codex, con, *, now: float,
     operator's corner case, a valid copy where the current one is gone."""
     from urllib.parse import urlsplit
     from app.share import deprecate as deprecate_mod, peers, withdraw as withdraw_mod
-    prefix = f"bundle-{codex.space_segment}-"
+    from app.hold.codex import segment_of
+    # every admitted segment (A1f): a bundle keeps its own space's name
+    by_prefix = {f"bundle-{codex.space_segment}-": codex.space_id}
+    for sid in (getattr(codex, "admitted_spaces", ()) or ())[1:]:
+        by_prefix[f"bundle-{segment_of(sid)}-"] = sid
     found: dict[str, tuple[dict[str, Any], list[tuple[str, int]]]] = {}
     fallback: dict[str, tuple[dict[str, Any], list[tuple[str, int]]]] = {}
     skip = skip or {}
@@ -697,8 +711,10 @@ def listed_bundles(node_con, codex, con, *, now: float,
     nobody = nobody or {}
 
     def _member(m, e, into):
-        if not isinstance(m, dict) or not isinstance(m.get("name"), str) \
-                or not m["name"].startswith(prefix) or not isinstance(m.get("files"), list):
+        if not isinstance(m, dict) or not isinstance(m.get("name"), str) or not isinstance(m.get("files"), list):
+            return
+        prefix = next((p for p in by_prefix if m["name"].startswith(p)), None)
+        if prefix is None:
             return
         bundle_id = "sha256:" + m["name"][len(prefix):]
         if len(bundle_id) != 71:
@@ -714,7 +730,7 @@ def listed_bundles(node_con, codex, con, *, now: float,
             return                      # accepted here already, its files here (else: taken again)
         if known and withdraw_mod.by_producer(skip, bundle_id, known["producer"]):
             return                      # withdrawn by its producer (03 §3.6)
-        payload = {"collection": codex.collection_id, "space_id": codex.space_id,
+        payload = {"collection": codex.collection_id, "space_id": by_prefix[prefix],
                    "snapshot_id": e.get("snapshot_id"), "shard": None, "uids": [],
                    "bundle_id": bundle_id, "root": m.get("root"), "bytes": m.get("bytes"),
                    "files": m["files"]}

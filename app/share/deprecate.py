@@ -209,8 +209,8 @@ def split_members(root: Path, name: str, codex, members, con=None):
     ids = deprecated(root, name, codex)
     if not ids:
         return list(members), []
-    space = codex.space_segment
-    candidates = {m.name: _id_of(m.name, space) for m in members}
+    segs = contribute.segments_of(codex)
+    candidates = {m.name: next((b for b in (_id_of(m.name, s) for s in segs) if b), None) for m in members}
     hit = {n: b for n, b in candidates.items() if b in ids}
     if not hit:
         return list(members), []

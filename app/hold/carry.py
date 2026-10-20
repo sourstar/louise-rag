@@ -98,6 +98,54 @@ def _empty_dir(p: Path) -> bool:
     return not p.exists() or (p.is_dir() and not any(p.iterdir()))
 
 
+#: A1f (2026-10-20): what a carry into a space that ADMITS the source's
+#: (`Codex.admitted_spaces`: the same document vectors) also moves — the
+#: bundles, filed under their own space segment, and the seeder's state
+#: (torrents, the bundle roots cache, the coverage union)
+SHARED_STATE = ("bundles", "share")
+
+
+def _move_state(src: Path, dst: Path) -> str:
+    """`src` (a directory, or the link to `BUNDLES_ROOT/<name>` it may be)
+    renamed to `dst`, the link as a link. An empty `dst` — a directory, or
+    a link to an empty one that `create` made — goes first; a non-empty one
+    is refused. Repeatable: `src` gone and `dst` there is an earlier run."""
+    if not src.exists() and not src.is_symlink():
+        return "present" if dst.exists() or dst.is_symlink() else "absent"
+    if dst.is_symlink():
+        target = dst.resolve()
+        if target.is_dir() and any(target.iterdir()):
+            raise CodexError(f"carry: {dst} links to {target}, which is not empty; a carry never overwrites")
+        dst.unlink()
+        if target.is_dir():
+            target.rmdir()
+    elif dst.is_dir():
+        if any(dst.iterdir()):
+            raise CodexError(f"carry: {dst} is not empty; a carry never overwrites")
+        dst.rmdir()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(src, dst)
+    return "moved"
+
+
+def _rekey_union(share: Path, old_prefix: str, new_prefix: str) -> int:
+    """The coverage union's cache keyed on the new collection's shard ids —
+    the same parts and bundles, so nothing is read again (RULE 1)."""
+    from app.share import counting
+    p = share / counting.CACHE
+    try:
+        got = json.loads(p.read_bytes())
+    except (OSError, ValueError):
+        return 0
+    if not isinstance(got, dict):
+        return 0
+    out = {(new_prefix + k[len(old_prefix):] if k.startswith(old_prefix) else k): v for k, v in got.items()}
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_bytes(json.dumps(out, sort_keys=True).encode())
+    os.replace(tmp, p)
+    return sum(1 for k in got if k.startswith(old_prefix))
+
+
 def _documents(manifest: Path) -> int | None:
     if not manifest.is_file():
         return None
@@ -291,6 +339,10 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
                 f"{from_name}'s ({a.snapshot_id}) names — seed it first "
                 f"(`hold snapshot create {to_name} --shards-from {from_name}`)")
 
+    # A1f: the target admits the source's space (only the query instruction
+    # was added) — its bundles, coverage rows and seeder state are the
+    # target's too, by the book, and travel with the table
+    shares = src.space_id != to.space_id and src.space_id in (getattr(to, "admitted_spaces", ()) or ())
     sp, tp = _paths(root, from_name), _paths(root, to_name)
     marker = tp["state"] / MARKER
     claim = {"from": src.collection_id, "to": to.collection_id,
@@ -324,8 +376,10 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         plan["documents"] = _documents(sp["manifest"])
         if not apply:
             log(f"[carry] {from_name} → {to_name}: would {claim['mode']} the manifest "
-                f"({plan['documents']} documents), index/ and lance/, and re-pin to "
-                f"{to.space_id[:23]}…; nothing written (--yes)")
+                f"({plan['documents']} documents), index/ and lance/"
+                + (", state/bundles and state/share — the bundles, coverage rows and torrents "
+                   "too (A1f: the same document vectors)" if shares and not copy else "")
+                + f", and re-pin to {to.space_id[:23]}…; nothing written (--yes)")
             return plan
         _checkpoint(sp["manifest"])
         for suffix in ("", *_COMPANIONS):            # an empty target's own manifest goes
@@ -379,12 +433,21 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
             f"{from_name}'s manifest {src_docs}: the copy is not the source's. Nothing is "
             f"marked done; pause both collections and run the carry again")
 
-    cleared = _repin(tp["manifest"], src, to)
+    if shares and not copy:
+        for k in SHARED_STATE:
+            done[k] = _move_state(sp["state"] / k, tp["state"] / k)
+        _rekey_union(tp["state"] / "share", cov_prefix(src), cov_prefix(to))
+    elif shares:
+        log(f"[carry] {from_name} → {to_name}: --copy leaves state/bundles and state/share with "
+            f"{from_name}; the coverage rows are carried")
+    cleared = _repin(tp["manifest"], src, to, keep_coverage=shares)
     plan.update(done=done, coverage_rows_cleared=cleared, documents=_documents(tp["manifest"]))
     marker.write_text(json.dumps({**claim, "done": True}, sort_keys=True), encoding="utf-8")
     log(f"[carry] {from_name} → {to_name}: manifest {done['manifest']}, index/ "
-        f"{done['index']}, lance/ {done['lance']}; space re-pinned to "
-        f"{to.space_id[:23]}…; {cleared} coverage row(s) of {from_name} cleared. Before "
+        f"{done['index']}, lance/ {done['lance']}"
+        + (f", state/bundles {done.get('bundles')}, state/share {done.get('share')}" if shares and not copy else "")
+        + f"; space re-pinned to {to.space_id[:23]}…; {cleared} coverage row(s) of {from_name} "
+        + ("re-keyed to it (A1f)" if shares else "cleared") + ". Before "
         + (f"use: `hold records build {to_name}`, `hold snapshot create {to_name}`, then "
            f"`dev carry {from_name} {to_name} --reconcile` (A1c) — or, where {from_name} "
            f"holds no records, `dev carry {from_name} {to_name} --resign` (A1d)" if rebuilt else
@@ -628,9 +691,18 @@ def _resign_proof(coll, con, *, seed: str, n: int) -> dict[str, Any]:
             "without_vectors": without, "mismatched": mismatched}
 
 
-def _repin(manifest: Path, src: Codex, to: Codex) -> int:
+def cov_prefix(codex: Codex) -> str:
+    """`<collection_id>/<space>/`: the prefix of every shard id of a collection."""
+    from app.share import coverage as cov
+    return cov.shard_id(codex, "")
+
+
+def _repin(manifest: Path, src: Codex, to: Codex, *, keep_coverage: bool = False) -> int:
     """The `space` row to `to`'s Codex, and `src`'s coverage rows gone, in
-    one transaction. Repeatable: a second run finds nothing to clear."""
+    one transaction — or, `keep_coverage` (A1f: `to` admits `src`'s space,
+    the same document vectors), re-keyed to `to`'s shard ids, so the parts
+    the network covered stay covered and nothing is embedded or bundled
+    again. Repeatable: a second run finds nothing to clear or re-key."""
     from app.share import coverage as cov
     con = sqlite3.connect(manifest, timeout=60, isolation_level=None)
     try:
@@ -645,7 +717,13 @@ def _repin(manifest: Path, src: Codex, to: Codex) -> int:
         prefix = cov.shard_id(src, "")                # "<collection_id>/<space>/"
         like = prefix.replace("%", r"\%").replace("_", r"\_") + "%"
         for t in ("coverage", "coverage_shards"):
-            if t in tables:
+            if t not in tables:
+                continue
+            if keep_coverage:
+                cleared += con.execute(f"UPDATE {t} SET shard = ? || substr(shard, ?) "
+                                       f"WHERE shard LIKE ? ESCAPE '\\'",
+                                       (cov.shard_id(to, ""), len(prefix) + 1, like)).rowcount
+            else:
                 cleared += con.execute(f"DELETE FROM {t} WHERE shard LIKE ? ESCAPE '\\'",
                                        (like,)).rowcount
         con.execute("COMMIT")

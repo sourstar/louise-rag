@@ -435,6 +435,12 @@ class Encoder:
         return {"image": self.image, "weights": self.weights, "label": self.label}
 
 
+def segment_of(space_id: str) -> str:
+    """The first 16 hexadecimal digits of a space id (§9.3): the `<space>`
+    segment of a path or a member name."""
+    return str(space_id).split(":", 1)[1][:16]
+
+
 @dataclass(frozen=True)
 class Query:
     """An asymmetric space's query side; both null in a symmetric space."""
@@ -930,6 +936,9 @@ class Codex:
         sp = self.space
         if sp is None:
             return None                                 # type: ignore[return-value]
+        return self._space_id_of(sp)
+
+    def _space_id_of(self, sp: "Space") -> str:
         if self.version >= ENGINE_VERSION:
             encoder: dict[str, Any] = {"weights": sp.encoder.weights}
             query = sp.query.to_dict()
@@ -957,7 +966,32 @@ class Codex:
         """The `<space>` segment of a path or a member name: the first 16
         hexadecimal digits of `space_id` (§9.3); None without a space."""
         sid = self.space_id
-        return None if sid is None else sid.split(":", 1)[1][:16]  # type: ignore[return-value]
+        return None if sid is None else segment_of(sid)  # type: ignore[return-value]
+
+    @property
+    def admitted_spaces(self) -> tuple[str, ...]:
+        """The spaces whose DOCUMENT vectors are this space's, own first
+        (A1f, 02 §2.4, 03 §3.5; RULE 1, 2026-10-20): the query instruction is
+        prepended to queries only, so a space that differs from this one by
+        its instruction alone has the same document vectors byte for byte —
+        here, the space of this Codex with `query.instruction` null.
+        gutenberg's re-pin with Qwen3's instruction would otherwise have
+        re-exported and re-seeded 43 GB of bundles, and every peer fetched
+        them again, for the same bytes. Computable by anyone from this Codex
+        alone; empty without a space."""
+        sid = self.space_id
+        if sid is None:
+            return ()
+        sp = self.space
+        if sp.query.instruction is None:
+            return (sid,)
+        bare = self._space_id_of(replace(sp, query=replace(sp.query, instruction=None)))
+        return (sid,) if bare == sid else (sid, bare)
+
+    @property
+    def admitted_segments(self) -> tuple[str, ...]:
+        """`admitted_spaces` as path and member-name segments, own first."""
+        return tuple(segment_of(s) for s in self.admitted_spaces)
 
     @property
     def relation(self) -> str:

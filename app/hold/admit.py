@@ -146,7 +146,9 @@ def check_admissible(codex, header: dict, *, credits_admit=None) -> None:
     Everything here is a property of the HEADER, so it costs nothing and
     runs before a single vector is looked at.
     """
-    if header["space_id"] != codex.space_id:
+    # A1f: a space differing from this one by its query instruction alone has
+    # the same document vectors (codex.admitted_spaces)
+    if header["space_id"] not in (codex.admitted_spaces or (codex.space_id,)):
         raise AdmitError(
             f"the bundle is for space {header['space_id'][:23]}… and this "
             f"collection is {codex.space_id[:23]}…. No vector crosses a space "

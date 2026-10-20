@@ -405,7 +405,8 @@ def v2_benchmark(root, name: str, codex, own_key: str | None) -> dict[str, Any] 
         body = emb.read_statement(json.loads(path.read_bytes()))
     except Exception:   # noqa: BLE001 — absent, unreadable or not verifying: no row
         return None
-    if body.get("key") != own_key or body.get("space_id") != codex.space_id or not runs.passing(body, codex):
+    if body.get("key") != own_key or body.get("space_id") not in (codex.admitted_spaces or (codex.space_id,)) \
+            or not runs.passing(body, codex):
         return None
     try:
         return emb.benchmarks_entry(body)
@@ -453,7 +454,7 @@ def live_peers(codex, node_con, *, now: float, own_key: str | None = None,
         if not offers:
             continue
         for b in d.get("benchmarks", []) or []:
-            if isinstance(b, dict) and b.get("space_id") == codex.space_id:
+            if isinstance(b, dict) and b.get("space_id") in (codex.admitted_spaces or (codex.space_id,)):
                 try:
                     w = float(b.get("tokens_per_s") or 0)
                 except (TypeError, ValueError):
@@ -463,7 +464,8 @@ def live_peers(codex, node_con, *, now: float, own_key: str | None = None,
                 break
     if own_key:
         for b in own_benchmarks:
-            if b.get("space_id") == codex.space_id and float(b.get("tokens_per_s") or 0) > 0:
+            if b.get("space_id") in (codex.admitted_spaces or (codex.space_id,)) \
+                    and float(b.get("tokens_per_s") or 0) > 0:
                 out.append(rendezvous.Peer(own_key, float(b["tokens_per_s"])))
                 break
     return out

@@ -74,15 +74,16 @@ def _place(share_root: Path, snapshot_id: str, member: str, rel_path: str,
     return share_root / snapshot_id / member
 
 
-def bundles_fingerprint(state_dir: Path, space: str | None) -> str | None:
-    """The set of whole bundles held for the space, as one hash over their
-    directory names (09 §9.7: the name is the bundle id) — what `sync`
-    compares with the published set. A listing and stats, never a hash of
-    a file. None for a collection without a space."""
+def bundles_fingerprint(state_dir: Path, space: "str | tuple[str, ...] | None") -> str | None:
+    """The set of whole bundles held for the space — or every admitted
+    segment (A1f) — as one hash over their directory names (09 §9.7: the
+    name is the bundle id): what `sync` compares with the published set. A
+    listing and stats, never a hash of a file. None without a space."""
     if not space:
         return None
     import hashlib
-    names = "\n".join(d.name for d in mem.bundle_dirs(Path(state_dir), space))
+    spaces = (space,) if isinstance(space, str) else tuple(space)
+    names = "\n".join(d.name for s in spaces for d in mem.bundle_dirs(Path(state_dir), s))
     return "sha256:" + hashlib.sha256(names.encode("utf-8")).hexdigest()
 
 
@@ -158,14 +159,22 @@ def publish(collection, snapshot: sn.Snapshot, shard_dir: Path, state_dir: Path,
     refused: list[str] = []
     members = list(mem.members_of(snapshot, shard_dir=shard_dir))
     codex = getattr(collection, "codex", None)
-    space = codex.space_segment if codex is not None and codex.space is not None else None
-    if space is not None:
+    from app.share import contribute
+    for space in contribute.segments_of(codex):
         # the bundles this peer holds for the space (09 §9.7, §9.16): served
-        # from state/bundles/, never from the SHARD. An annotations collection
+        # from state/bundles/, never from the SHARD — under every admitted
+        # segment, each bundle under its own (A1f). An annotations collection
         # has no space and so no bundles (02 §2.10)
         members += mem.bundle_members(Path(state_dir), space)
-    previous = {(e.get("member"), e.get("path")): e for e in seeding.read_published(con)
-                if e.get("snapshot_id") == snapshot.snapshot_id}
+    # what was published before, for ANY snapshot: a file whose (member, path,
+    # infohash) is the same is the same torrent, so its .torrent is kept and
+    # only its link is placed under this snapshot — a twin collection's first
+    # publish (A1f) re-hashes nothing (RULE 1)
+    previous: dict[tuple, dict[str, Any]] = {}
+    for e in seeding.read_published(con):
+        k = (e.get("member"), e.get("path"))
+        if k not in previous or e.get("snapshot_id") == snapshot.snapshot_id:
+            previous[k] = e
     kept = 0
     for member in members:
         if not serves(collection, member.name):
@@ -176,9 +185,18 @@ def publish(collection, snapshot: sn.Snapshot, shard_dir: Path, state_dir: Path,
         for t in member.torrents():
             old = previous.get((member.name, t.path))
             if old is not None and old.get("info_hash") == t.infohash[7:] \
-                    and Path(str(old.get("torrent_path"))).is_file() \
-                    and (share_root / snapshot.snapshot_id / member.name / t.path).exists():
-                entries.append(old)                      # published before, in place: not hashed again
+                    and Path(str(old.get("torrent_path"))).is_file():
+                if old.get("snapshot_id") == snapshot.snapshot_id \
+                        and (share_root / snapshot.snapshot_id / member.name / t.path).exists():
+                    entries.append(old)                  # published before, in place: not hashed again
+                    kept += 1
+                    continue
+                # published under another snapshot (a twin's first publish):
+                # the same torrent, its link placed anew — no hash pass
+                member_dir = _place(share_root, snapshot.snapshot_id, member.name, t.path, base / t.path)
+                root = member_dir / t.path if "/" not in t.path else member_dir
+                entries.append({**old, "root": str(root), "snapshot_id": snapshot.snapshot_id,
+                                "collection_id": snapshot.collection_id, "member_root": member.root})
                 kept += 1
                 continue
             member_dir = _place(share_root, snapshot.snapshot_id, member.name, t.path,
@@ -214,7 +232,7 @@ def publish(collection, snapshot: sn.Snapshot, shard_dir: Path, state_dir: Path,
     db.set_control(con, CONTROL_KEY, json.dumps({
         "snapshot_id": snapshot.snapshot_id, "snapshot_hash": snapshot.hash,
         "selection": selection(collection),
-        "bundles": bundles_fingerprint(state_dir, space),
+        "bundles": bundles_fingerprint(state_dir, contribute.segments_of(codex) or None),
         "torrents": len(entries), "refused": refused, "at": time.time()}))
     if log is not None:
         log(f"[{collection.name}] share: {len(entries)} torrent(s) of snapshot "
@@ -411,7 +429,8 @@ def sync(collections, cons: dict, control_con, worker_state: str, *,
         if snap is None:
             continue
         now_served = served(con)
-        space = c.codex.space_segment if c.codex is not None and c.codex.space is not None else None
+        from app.share import contribute
+        space = contribute.segments_of(c.codex) or None
         held_bundles = None
         if space is not None and now_served is not None:
             # a bundle landed since the last publish — made here or taken in

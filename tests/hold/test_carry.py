@@ -782,3 +782,68 @@ def test_resign_is_for_a_source_without_records(pair):
     carry.carry(root, "old", "re", rebuilt=True, copy=True, apply=True, log=quiet)
     with pytest.raises(CodexError, match="--reconcile"):
         carry.resign(root, "old", "re", log=quiet)
+
+
+def test_an_instruction_twin_admits_its_predecessors_bundles_and_carries_the_share(pair):
+    """A1f extended to the share (RULE 1; München, 2026-10-20): gutenberg's
+    43 GB of bundles are for the space without the instruction, and by the
+    book the twin would re-export, re-seed and re-fetch every one for the
+    same bytes. The twin ADMITS the predecessor's space (T0, the statements);
+    its bundles stay filed under their own segment, found by `bundle_dir`,
+    served and listed under every admitted segment; the carry moves
+    state/bundles and state/share and re-keys the coverage rows and the
+    union cache instead of clearing them."""
+    from app.hold import admit as adm
+    from app.share import contribute, counting, coverage as cov, members as mem
+    root, old, _new = pair
+    plain = old                                      # the live Codex, version 4 as the node's
+    instructed = _create(root, "instructed", space_version=4, over={"space": {**SPACE, "query": {
+        **SPACE["query"], "instruction": "Instruct: find the book\nQuery:"}}})
+    assert instructed.admitted_spaces == (instructed.space_id, plain.space_id)
+    assert instructed.admitted_segments == (instructed.space_segment, plain.space_segment)
+    assert plain.admitted_spaces == (plain.space_id,), "no instruction: its own space only"
+    # T0 admits the predecessor's bundle, and nothing else
+    header = {"space_id": plain.space_id, "dim": instructed.space.dim, "dtype": instructed.space.dtype,
+              "producer_pubkey": "ed25519:" + "aa" * 32}
+    adm.check_admissible(instructed, header)
+    with pytest.raises(adm.AdmitError, match="another space"):
+        adm.check_admissible(plain, {**header, "space_id": instructed.space_id})
+    with pytest.raises(adm.AdmitError):
+        adm.check_admissible(instructed, {**header, "space_id": "sha256:" + "5e" * 32})
+    rec.write_validation(root, "instructed")
+    out = seed.seed_shards(root, "instructed", "old", log=quiet)
+    sn.create(root, "instructed", snapshot_id=out["snapshot_id"], log=quiet)
+    _vectors(root, old)                              # old's table and one coverage row of its own
+    # one bundle of old's space, its coverage row and the seeder's union cache
+    bid = "sha256:" + "b0" * 32
+    held = contribute.bundle_dir(root, "old", plain, "lang=en/00001", bid)
+    held.mkdir(parents=True)
+    for f in mem.BUNDLE_FILES:
+        (held / f).write_bytes(f.encode())
+    con = db.connect(_local(root, "old"))
+    cov.record(con, bundle_id=bid, shard=cov.shard_id(plain, "lang=en/00001"), producer="k", uids=[], chunks=3,
+               tiers={"T0": "pass"}, source="fetched", accepted_at="2026-10-20T10:00:00Z")
+    con.close()
+    share = root / "old" / "state" / "share"
+    share.mkdir(parents=True, exist_ok=True)
+    (share / counting.CACHE).write_text(json.dumps({cov.shard_id(plain, "lang=en/00001"): {"bundles": [bid],
+                                                                                           "covered": 3}}))
+    said: list[str] = []
+    dry = carry.carry(root, "old", "instructed", apply=False, log=said.append)
+    assert any("state/bundles and state/share" in s for s in said) and dry["apply"] is False
+    out = carry.carry(root, "old", "instructed", apply=True, log=said.append)
+    assert out["done"]["bundles"] == "moved" and out["done"]["share"] == "moved"
+    assert not (root / "old" / "state" / "bundles").exists()
+    found = contribute.bundle_dir(root, "instructed", instructed, "lang=en/00001", bid)
+    assert found.is_dir() and found.parent.parent.parent.name == plain.space_segment, "filed under its own segment"
+    state = root / "instructed" / "state"
+    assert [d for s in contribute.segments_of(instructed) for d in mem.bundle_dirs(state, s)] == [found]
+    assert contribute.bundle_dir(root, "instructed", instructed, "lang=en/00002", "sha256:" + "c1" * 32).parent \
+        .parent.parent.name == instructed.space_segment, "a new export goes under the twin's own segment"
+    con = sqlite3.connect(state / "manifest.sqlite")
+    shards = {r[0] for r in con.execute("SELECT shard FROM coverage")}
+    con.close()
+    assert shards == {cov.shard_id(instructed, "lang=en/00001")}, "re-keyed, not cleared"
+    assert out["coverage_rows_cleared"] == 2 and any("re-keyed to it (A1f)" in s for s in said)
+    union = json.loads((state / "share" / counting.CACHE).read_text())
+    assert list(union) == [cov.shard_id(instructed, "lang=en/00001")]

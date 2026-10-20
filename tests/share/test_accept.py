@@ -501,3 +501,40 @@ def test_a_bundle_lands_whole_across_filesystems_when_state_bundles_is_a_link(tm
     (src2 / "a").write_bytes(b"a")
     accept._move_dir(src2, tmp_path / "bundles" / "z")
     assert (tmp_path / "bundles" / "z" / "a").is_file() and not src2.exists()
+
+
+def test_a_twin_lists_and_takes_its_predecessors_bundles_under_their_own_segment(node, monkeypatch, tmp_path):  # noqa: F811
+    """A1f (2026-10-20): a neighbour that still offers a bundle of the space
+    before the query instruction — `bundle-<that segment>-<hex>` — is listed
+    by the twin with that space, so the take asks for the same member and
+    torrents and files it under that segment; another space's is not."""
+    import types
+    from app.share import messages
+    cid = "sha256:" + "0" * 64
+    own, pred = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+    codex = types.SimpleNamespace(collection_id=cid, space_id=own, space_segment="a" * 16, privacy="public",
+                                  admitted_spaces=(own, pred), admitted_segments=("a" * 16, "b" * 16))
+    d = tmp_path / ("c" * 64)
+    d.mkdir()
+    for f in mem.BUNDLE_FILES:
+        (d / f).write_bytes(f.encode() * 10)
+    theirs = mem.bundle_member("b" * 16, d)
+    foreign = mem.bundle_member("f" * 16, d)
+    entry = {"collection_id": cid, "lineage_id": cid, "title": "g", "snapshot_id": "2026-09",
+             "snapshot_hash": "sha256:" + "1" * 64, "codex_hash": "sha256:" + "2" * 64, "license": "green",
+             "privacy": "public", "members": [theirs.to_dict(), foreign.to_dict()]}
+    now = time.time()
+    import sqlite3
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    cov.ensure_schema(con)
+    with peers.connect() as ncon:
+        body = messages.digest_body(key=PEER_KEY, address="http://10.0.0.7:30042", neighbours=[], benchmarks=[],
+                                    collections=[entry], now=now)
+        peers.record_digest(ncon, {**body, "peer_port": 6881}, now=now)
+        (only,) = accept.listed_bundles(ncon, codex, con, now=now)
+    payload, _hints = only
+    assert payload["space_id"] == pred and payload["bundle_id"] == "sha256:" + "c" * 64, "another space's: not listed"
+    assert accept._segment_for(codex, payload) == "b" * 16
+    assert accept.member_of(payload, accept._segment_for(codex, payload)).name == theirs.name, "the same member"
+    assert accept._segment_for(codex, {"space_id": "sha256:" + "f" * 64}) == "a" * 16

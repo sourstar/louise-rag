@@ -161,7 +161,9 @@ def entries(root: Path, collections) -> list[dict[str, Any]]:
         if shared and codex.space is not None:
             # the bundles this peer holds for the space, served from state/
             # (09 §9.7, §9.16): offered beside the snapshot's members
-            members += mem.bundle_members(root / c.name / "state", codex.space_segment)
+            from app.share import contribute as contribute_mod
+            for seg in contribute_mod.segments_of(codex):
+                members += mem.bundle_members(root / c.name / "state", seg)
         # what `share --slices/--kinds` narrowed out is not served, so it is
         # not offered: the node listed every member held while serving two
         # slices, and a peer wanting every slice hung on the first part nobody

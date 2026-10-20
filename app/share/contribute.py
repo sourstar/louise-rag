@@ -250,10 +250,32 @@ def shards_i_lead(codex, snapshot: sn.Snapshot, con, *, me: str,
     return open_shards(codex, snapshot, con, me=me, live=live, now=now)[0]
 
 
-def bundle_dir(root: Path, name: str, codex, shard: str, bundle_id: str) -> Path:
-    """09 §9.7: `state/bundles/<space>/<slice>/<NNNNN>/<bundle_id hex>/`."""
-    return (Path(root) / name / "state" / "bundles" / codex.space_segment / shard
-            / shard_mod._hex(bundle_id))
+def bundle_dir(root: Path, name: str, codex, shard: str, bundle_id: str, *, space: str | None = None) -> Path:
+    """09 §9.7: `state/bundles/<space>/<slice>/<NNNNN>/<bundle_id hex>/`.
+    A bundle is filed under ITS OWN header's space segment (`space`), so its
+    member name and torrents never change; without `space`, the bundle held
+    under any admitted segment (A1f: the space before a query instruction
+    was added, `codex.admitted_segments`), else this space's — a stat per
+    extra segment, none for a Codex with one."""
+    base = Path(root) / name / "state" / "bundles"
+    hexid = shard_mod._hex(bundle_id)
+    if space is not None:
+        return base / space / shard / hexid
+    segments = tuple(getattr(codex, "admitted_segments", ()) or ()) or (codex.space_segment,)
+    if len(segments) > 1:
+        for seg in segments:
+            d = base / seg / shard / hexid
+            if d.is_dir():
+                return d
+    return base / segments[0] / shard / hexid
+
+
+def segments_of(codex) -> tuple[str, ...]:
+    """The space segments a collection's bundles are filed and offered under:
+    its own, and with A1f its predecessor's (`codex.admitted_segments`)."""
+    if codex is None or getattr(codex, "space", None) is None:
+        return ()
+    return tuple(getattr(codex, "admitted_segments", ()) or ()) or (codex.space_segment,)
 
 
 #: an own export this peer's ladder refused is not exported again before

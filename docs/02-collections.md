@@ -665,7 +665,14 @@ its query runs are validated against them before the vector leg answers (03
 §3.3), and `vectors-sample` passes before use, as for any carry. Gutenberg is
 the case: its Qwen3-Embedding queries had been encoded without the instruction
 the model expects, and fragments of a line outranked the books
-(docs/notes/query-campaign.md).
+(docs/notes/query-campaign.md). **The share crosses with the table**
+(*same day*): a space whose Codex states an instruction ADMITS the space
+that Codex would have without it — the same document vectors, computable by
+anyone from the Codex alone (`admitted_spaces`). Its bundles pass T0 (03
+§3.5), stay filed and offered under their own space segment, so no torrent
+changes and nobody fetches them again; the carry moves `state/bundles` and
+`state/share` too and re-keys the coverage rows to the new collection
+instead of clearing them. Gutenberg's 43 GB of bundles are the case.
 
 The **calibration** block is the contract for anyone who wants to
 contribute vectors. The calibration set is corpus-independent: a fixed
