@@ -625,16 +625,30 @@ shows.
 An abandoned part loses
 minutes, not an hour, and the coverage map shows progress rather than
 promises. Rendezvous yields a full ordering of eligible peers per part,
-not just a winner; if the top peer has published nothing within the
-Codex's `grace_days`, the second proceeds. No claim, no confirmation, no
-arbiter — the first bundle is the claim. Exactly: a part is *open*
-while any chunk in it has no accepted bundle; its leader is the top
-eligible peer; the leader's claim is renewed by each bundle it publishes
-for the part; the window runs from the later of the moment the part
-became open and the leader's last accepted bundle; when it expires the
-next peer in the ordering leads and embeds only the chunks that still
-lack an accepted bundle. Every bundle names its chunk range, and the
-coverage map is the set of accepted bundles per part (02 §2.5, 09 §9.10).
+not just a winner. No claim, no confirmation, no
+arbiter — the first bundle is the claim. **The open parts are a bounty
+list, and a bounty has no leader** (*amended 2026-10-20*, operator: "for
+the bounty list there is no leader"). Exactly: a part is *open* while any
+chunk in it has no accepted bundle, and any peer may embed any open
+part. The ordering is the ORDER in which a peer walks the list — first
+the parts where it ranks first, then those where it ranks second, and so
+on — so that peers with work ahead of them rarely meet on a part; it is
+never a fence. A peer with capacity never waits: when nothing is left
+among the parts at its current rank it proceeds to the next, and the one
+thing it leaves aside, at any rank, is a part another producer is visibly
+on — a bundle of theirs for it accepted within the time the part takes at
+their rate (`3 × tokens / w`, the eligibility margin: a producer bundles
+every fifteen thousand chunks, so progress shows within hours). A part
+with only days-old bundles, or none, is anyone's. Two peers that meet on a
+part make a check, not a loss (below). Until this amendment the top peer
+of the ordering held a part for `grace_days` before the next could start,
+and the first gutenberg day left 840 open parts waiting a week behind two
+peers that would never embed them. The first peer of the ordering is still
+shown — `hold vectors show`'s `leader`, the publisher's "parts this node is
+first for" — as information, never as a right. `grace_days` remains the
+window of the fetch's assignment (below) and of the benchmark rule
+(above). Every bundle names its chunk range, and the coverage map is the
+set of accepted bundles per part (02 §2.5, 09 §9.10).
 
 **How a bundle travels.** A bundle is a member (§4.3): its producer
 announces it with a `bundle` event naming the collection, space,

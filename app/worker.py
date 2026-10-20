@@ -917,6 +917,12 @@ def _backfill_rows(con, collection, limit: int, mode: str | None = None) -> list
         else:
             rows = _lead_walk(con, key, limit, keep,
                               time.monotonic() + config.BACKFILL_WALK_BUDGET_S)
+            if not rows:
+                # 04 §4.5 (2026-10-20): nothing left among the parts at this
+                # rank — the bounty list has no leader, so the next rank's
+                # parts are this peer's at the next round; never idle while
+                # open parts remain
+                leading.widen(collection)
         # THE VERSION WALK IS WINDOWED HERE TOO. Its prefix ends at
         # embed_done=1, which is EVERY embedded document, and `embed_version`
         # is then tested row by row — so with no archive this read the whole
@@ -956,6 +962,8 @@ def _backfill_rows(con, collection, limit: int, mode: str | None = None) -> list
             lambda start, end, n: _window_page(
                 con, ver_sql, start, end, (config.EMBED_VERSION, config.MAX_RETRIES), n, keep),
             limit - len(rows), deadline)
+    if not rows and keep is not None:
+        leading.widen(collection)             # as above, the archive-bounded walk
     return rows
 
 

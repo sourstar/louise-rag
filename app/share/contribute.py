@@ -102,23 +102,63 @@ def preconditions(root: Path, name: str, codex, snapshot: sn.Snapshot | None, *,
 
 def _ranking_leader(ranking: Sequence[rendezvous.Peer], shard_rows: list[dict[str, Any]],
                     opened_at: str | None, *, now: float, grace_s: float) -> rendezvous.Peer | None:
-    """04 §4.5's cascade: the top eligible peer leads; its window runs from
-    the later of the shard's opening and its last accepted bundle; when it
-    has run out with no bundle, the next in the ordering leads, its window
-    starting where the last one ended. When every window has run out the
-    cascade starts over at the top. With no opening known, the top leads."""
-    if not ranking:
-        return None
-    since = messages.parse_time(opened_at) if opened_at else None
-    for p in ranking:
-        last = [messages.parse_time(r["accepted_at"]) for r in shard_rows
-                if r["accepted_at"] and r["producer"] == p.key]
-        mine = max(last) if last else None
-        start = max(x for x in (since, mine) if x is not None) if (since is not None or mine is not None) else None
-        if start is None or now < start + grace_s:
-            return p
-        since = start + grace_s
-    return ranking[0]
+    """The FIRST in a part's ordering — `hold vectors show`'s `leader`, the
+    publisher's "led parts". 04 §4.5 (amended 2026-10-20, operator: "for
+    the bounty list there is no leader"): the ordering is an order of work,
+    not an owner, and no grace window gates embedding any more — a peer with
+    capacity walks the open parts in its own order (`work_order`). Until
+    then this walked a cascade of `grace_days` windows, seven days each, and
+    a peer whose first-ranked parts were done idled while 840 open parts
+    waited on peers that would never embed them (2026-10-20)."""
+    return ranking[0] if ranking else None
+
+
+def visibly_on(ranking: Sequence[rendezvous.Peer], shard_rows: list[dict[str, Any]], tokens: int,
+               *, me: str, now: float, margin: float = rendezvous.DEFAULT_MARGIN) -> str | None:
+    """The OTHER live producer that is visibly at work on the part: one whose
+    bundle for it was accepted here within the time the part takes at its
+    rate (`3 × tokens / w`, 04 §4.5's own margin — a producer bundles every
+    fifteen thousand chunks, so progress shows within hours), else None.
+    Days-old bundles are a claim nobody renews: the part is anyone's."""
+    rate = {p.key: p.benchmark for p in ranking}
+    for r in shard_rows:
+        who = r.get("producer")
+        if not who or who == me or not r.get("accepted_at") or who not in rate:
+            continue
+        window = max(float(tokens) / rate[who] * margin, 1.0) if rate[who] > 0 else 0.0
+        if now - messages.parse_time(r["accepted_at"]) <= window:
+            return who
+    return None
+
+
+def work_order(codex, snapshot: sn.Snapshot, con, *, me: str, live: Sequence[rendezvous.Peer],
+               now: float | None = None, redundant=(), union=None) -> dict[str, int | None]:
+    """04 §4.5 (amended 2026-10-20): THE BOUNTY LIST AS THIS PEER WALKS IT.
+    Every open part → this peer's rank in its ordering (1 = first), or None
+    where the part is left aside for now: another producer is visibly on it
+    (`visibly_on`), or this peer is not eligible for it. The embed stage
+    takes rank 1 first and widens to the next rank when nothing is left at
+    the current one (app/share/leading.py) — it never waits for anyone, and
+    two peers meeting on a part make a check, not a loss ("duplicates are
+    checks"). Read-only."""
+    now = time.time() if now is None else now
+    all_rows = cov.rows(con)
+    limit = cov.period_seconds(codex.work.per)
+    by_shard: dict[str, list[dict[str, Any]]] = {}
+    for r in all_rows:
+        by_shard.setdefault(r["shard"], []).append(r)
+    tokens = {cov.shard_id(codex, f"{s.slice}/{s.n:05d}"): int(s.tokens) for s in snapshot.shards}
+    out: dict[str, int | None] = {}
+    for v in cov.shards_view(codex, snapshot, all_rows, now=now, redundant=redundant, union=union):
+        if not v["open"]:
+            continue
+        ranking = rendezvous.ranking(rendezvous.ShardWork(v["shard"], tokens[v["shard"]]), live, limit)
+        rows_ = by_shard.get(v["shard"], [])
+        if visibly_on(ranking, rows_, tokens[v["shard"]], me=me, now=now) is not None:
+            out[v["shard"]] = None
+            continue
+        out[v["shard"]] = rendezvous.rank_of(me, ranking)
+    return out
 
 
 def _leading(codex, snapshot: sn.Snapshot, con, *, live: Sequence[rendezvous.Peer],

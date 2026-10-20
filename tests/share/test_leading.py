@@ -133,8 +133,8 @@ def test_the_hot_path_reads_no_digest_within_the_rebuild_interval(monkeypatch, t
     reads = []
     monkeypatch.setattr(cov, "live_peers", lambda *a, **k: reads.append(1) or LIVE)
     monkeypatch.setattr(cov, "own_benchmarks", lambda *a, **k: [])
-    monkeypatch.setattr(contribute, "leaders",
-                        lambda codex, snap, con, live, now: _leaders(codex, **{"lang=en/1": PEER}))
+    monkeypatch.setattr(contribute, "work_order",
+                        lambda codex, snap, con, me, live, now: {_sid(codex, "lang=en", 1): 2})
 
     class Con:
         def execute(self, *a):
@@ -199,3 +199,71 @@ def test_the_node_database_is_read_under_a_short_bound(monkeypatch, tmp_path):
     leading.skip_test(coll, Con(), root=tmp_path, own_key=ME, snapshot=SNAPSHOT)
     assert pragmas == [f"PRAGMA busy_timeout = {leading.NODE_DB_TIMEOUT_MS}"]
     leading.reset_cache()
+
+
+# ---- 04 §4.5, amended 2026-10-20: the bounty list has no leader ------------------------------------------------
+
+def test_ranks_walk_the_bounty_list_first_rank_first_and_widen_when_it_is_empty():
+    """A part where this peer ranks second is left for now, not for ever:
+    once nothing is left at rank 1, `widen` admits rank 2. A part left
+    aside (None: someone visibly on it, or not eligible) stays aside."""
+    c = _codex()
+    ranks = {_sid(c, "lang=en", 1): 1, _sid(c, "lang=en", 2): 2, _sid(c, "lang=fr", 1): None}
+    s1 = leading.build(c, SNAPSHOT, ranks=ranks, me=ME, live=LIVE, rank_limit=1)
+    assert s1.skips("100", "en") is False and s1.skips("600", "en") is True and s1.skips("450", "fr") is True
+    assert (s1.rank_limit, s1.max_rank, s1.skipped_parts) == (1, 2, 2)
+    s2 = leading.build(c, SNAPSHOT, ranks=ranks, me=ME, live=LIVE, rank_limit=2)
+    assert s2.skips("600", "en") is False, "rank 2 admitted"
+    assert s2.skips("450", "fr") is True, "left aside at any rank"
+    assert s2.skipped_parts == 1
+    # the 2026-10-19 form still reads: the first peer's parts are rank 1, the others' rank 2
+    s3 = leading.build(c, SNAPSHOT, leaders=_leaders(c, **{"lang=en/1": PEER, "lang=en/2": ME}), me=ME, live=LIVE)
+    assert s3.skips("100", "en") is True and s3.skips("600", "en") is False
+
+
+def test_widen_moves_the_stage_to_the_next_rank_and_a_changed_view_starts_again(monkeypatch, tmp_path):
+    from app.share import contribute, coverage as cov
+    leading.reset_cache()
+    c = _codex()
+    coll = SimpleNamespace(codex=c, name="g", manifest_path=tmp_path / "m.sqlite")
+    monkeypatch.setattr(cov, "live_peers", lambda *a, **k: LIVE)
+    monkeypatch.setattr(cov, "own_benchmarks", lambda *a, **k: [])
+    ranks = {_sid(c, "lang=en", 1): 2, _sid(c, "lang=en", 2): 3}
+    monkeypatch.setattr(contribute, "work_order", lambda codex, snap, con, me, live, now: ranks)
+    fp = {"n": 0}
+
+    class Con:
+        def execute(self, *a):
+            return SimpleNamespace(fetchone=lambda: (fp["n"], None))
+    kw = dict(root=tmp_path, own_key=ME, snapshot=SNAPSHOT, node_con=object())
+    f = leading.skip_test(coll, Con(), now=1000.0, **kw)
+    assert f({"native_id": "100", "lang": "en"}) is True and f({"native_id": "600", "lang": "en"}) is True, "rank 1 only"
+    assert leading.widen(coll) == 2 and leading.rank_limit_of(coll) == 2
+    f = leading.skip_test(coll, Con(), now=1001.0, **kw)
+    assert f({"native_id": "100", "lang": "en"}) is False and f({"native_id": "600", "lang": "en"}) is True
+    assert leading.widen(coll) == 3
+    assert leading.skip_test(coll, Con(), now=1002.0, **kw) is None, "every open part admitted: no filter"
+    assert leading.widen(coll) == 3, "the deepest rank: no further"
+    # a bundle lands (the coverage changed): past REBUILD_S the view is rebuilt and
+    # the walk starts again at rank 1
+    fp["n"] = 1
+    f = leading.skip_test(coll, Con(), now=1002.0 + leading.REBUILD_S + 1, **kw)
+    assert leading.rank_limit_of(coll) == 1 and f({"native_id": "100", "lang": "en"}) is True
+    leading.reset_cache()
+
+
+def test_a_producer_is_visibly_on_a_part_only_within_the_parts_time_at_its_rate():
+    from app.share import contribute, messages
+    ranking = [rendezvous.Peer(PEER, 100.0), rendezvous.Peer(ME, 50.0)]
+    tokens = 30_000                                    # 300 s at 100 tokens/s, ×3 = 900 s
+    now = 10_000.0
+    rows = [{"producer": PEER, "accepted_at": messages.time_text(now - 600)}]
+    assert contribute.visibly_on(ranking, rows, tokens, me=ME, now=now) == PEER
+    rows = [{"producer": PEER, "accepted_at": messages.time_text(now - 1000)}]
+    assert contribute.visibly_on(ranking, rows, tokens, me=ME, now=now) is None, "older than its window: anyone's"
+    rows = [{"producer": ME, "accepted_at": messages.time_text(now - 10)}]
+    assert contribute.visibly_on(ranking, rows, tokens, me=ME, now=now) is None, "my own bundle is not someone else"
+    rows = [{"producer": "ed25519:" + "cc" * 32, "accepted_at": messages.time_text(now - 10)}]
+    assert contribute.visibly_on(ranking, rows, tokens, me=ME, now=now) is None, "a producer not live is not on it"
+    assert rendezvous.rank_of(ME, ranking) == 2 and rendezvous.rank_of(PEER, ranking) == 1
+    assert rendezvous.rank_of("ed25519:" + "cc" * 32, ranking) is None

@@ -1468,8 +1468,10 @@ Derived from the rows, per part: `covered` — the chunks the accepted
 bundles' chunk ids cover TOGETHER, the union read from the held
 `vectors.parquet` files where a part has more than one accepted bundle
 and the row's `chunks` where it has one (04 §4.5, amended 2026-10-19: a
-sum closed a part over a gap); `open` — the part has any chunk without one; the leader and the
-grace window of 04 §4.5. A coverage claim in a neighbour's digest is
+sum closed a part over a gap); `open` — the part has any chunk without one; `leader` — the
+first peer of the part's rendezvous ordering, information and not a right (04 §4.5, *amended
+2026-10-20*: the open parts are a bounty list any peer may embed; `window_ends` is null
+since no grace window gates embedding). A coverage claim in a neighbour's digest is
 recorded beside these as `claimed_by: [key…]` per bundle and counts for
 nothing until the bundle is fetched and accepted here.
 

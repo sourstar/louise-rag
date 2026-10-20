@@ -105,6 +105,17 @@ def ranking(shard: ShardWork, peers: Iterable[Peer], limit_seconds: float,
     return sorted(elig, key=lambda p: (-score(p, shard), p.key))
 
 
+def rank_of(me: str, ranking: Sequence[Peer]) -> int | None:
+    """`me`'s place in a part's ordering, from 1; None when not eligible for
+    it. 04 §4.5 (amended 2026-10-20): the ordering is the ORDER a peer works
+    through the open parts — first the parts where it is first, then those
+    where it is second — never a fence."""
+    for i, p in enumerate(ranking, 1):
+        if p.key == me:
+            return i
+    return None
+
+
 def leader(shard: ShardWork, peers: Iterable[Peer], limit_seconds: float,
            margin: float = DEFAULT_MARGIN) -> Peer | None:
     r = ranking(shard, peers, limit_seconds, margin)

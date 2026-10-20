@@ -743,3 +743,30 @@ Perugia leads every open part — about 700,000 chunks, ~40 h at its 283
 chunks/min — and the node takes Perugia's bundles in. AFTER numbers owed:
 Perugia's led parts and chunks/min the hour after the deploy; the node's
 intake of Perugia's bundles.
+
+### 2026-10-20 — the bounty list has no leader: the embed stage walks the open parts by rank (operator) — PREPARED
+
+**Change.** 04 §4.5 amended at the operator's word ("for the bounty list
+THERE IS NO LEADER"): any peer may embed any open part; rendezvous gives
+each peer the ORDER (rank 1 parts, then rank 2, …); the stage widens to
+the next rank when a round finds nothing at the current one
+(`leading.widen`, called by `_backfill_rows` under p2p), and starts again
+at rank 1 when the live set or the coverage changes; a part is left aside
+only while another producer is visibly on it (a bundle of theirs within
+`3 × tokens / w`, `contribute.visibly_on`). The `grace_days` cascade on
+embedding is gone (`_ranking_leader` is the first of the ordering,
+information for `hold vectors show` and the publisher).
+
+**MEASURED BEFORE (Perugia 12:25Z).** 1,062 open parts in its view: 424
+its own at rank 1 (250,908 chunks pending), 638 the node's — the node on
+on-demand since 13:09:54 CEST, so they wait `grace_days` = 7; the stage
+skipped 3,244 of 5,994 unembedded documents as "led elsewhere"; Perugia
+embedding 283 chunks/min at full GPU with ~2,750 documents of its own
+left, i.e. hours from idling beside 600,000 open chunks.
+
+**EXPECTED AFTER.** Perugia exhausts rank 1, widens, and continues on the
+node's parts without a pause; the node (on-demand) and peer2 (no
+benchmark, no member offered) are not in the ordering at all after the
+same deploy. Owed: Perugia's chunks/min and "led parts await" over the
+hour after the deploy, and the count of parts where two producers'
+bundles meet (the duplicates-as-checks budget, 03 §3.6: under a tenth).

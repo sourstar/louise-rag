@@ -1213,8 +1213,9 @@ off enables sharing; disabling sharing under `all p2p` switches the mode
 to `all local`; proceed or abort — and a file edited by hand to say
 `p2p` with `share = false` runs as `all`, shown as such on its card.
 Beside the drop-down the card reads the two axes: the bounty list (the
-open parts of the current snapshot, the parts this node leads and leaves
-to peers) and availability (chunks bundled here, chunks taken from peers).
+open parts of the current snapshot — any peer may embed any of them, 04
+§4.5; the parts this node is first for, and those it leaves to the fetch)
+and availability (chunks bundled here, chunks taken from peers).
 
 An `[encoder]` URL names a model and never a device. Where the model
 runs is the model container's placement, and a change of device is a
