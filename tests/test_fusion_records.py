@@ -185,11 +185,11 @@ def test_a_title_the_catalogue_finds_is_a_variant_of_the_text_leg(isolated_confi
     plan = language_plan.plan("War and Peace", [c], False)
     out = retrieval._search_one_collection(db.connect(c), c, "War and Peace", 5, "hybrid", False, set(), plan)
     by_uid = {retrieval.record_of(m): m for m in out["merged"]}
-    assert by_uid["gutenberg:2600"]["leg_ranks"]["text"] == 1, "the title's record: the text leg's first"
+    assert by_uid["gutenberg:2600"]["leg_ranks"] == {"catalog": 1}, "the title's record: the catalogue leg's first"
     assert by_uid["gutenberg:2600"]["chunk_id"] == "gutenberg:2600:0:1", "no matching chunk: its first"
     assert by_uid["gutenberg:77"]["chunk_id"] == "gutenberg:77:12:1", "its best-matching chunk"
     assert "catalog" in by_uid["gutenberg:2600"]["sources"]
-    assert by_uid["gutenberg:900"]["leg_ranks"]["text"] == 2, "the anthology: the text variant's first, tied, by uid"
+    assert by_uid["gutenberg:900"]["leg_ranks"]["text"] == 1, "the anthology: the text leg's first, its own vote"
     assert len(out["catalog"]) == retrieval.CATALOG_PROMPT, "the legacy prompt's block is as before"
     assert len(lookups) == 1 and len(lookups[0]) == 32, "one text query for every record of the group, not 32"
 
@@ -215,3 +215,18 @@ def test_the_catalogue_lookup_asks_a_crowded_out_record_alone_and_keeps_each_rec
     got = retrieval._catalog_variant(None, [{"book_id": i, "lang": "en"} for i in (2, 1, 3)], "q", {})
     assert [c["chunk_id"] for c in got] == ["g:2:9:1", "g:1:4:1", "g:3:7:1"], "the catalogue's order, each its best"
     assert calls == [[2, 1, 3], [3]] and all(c["source"] == "catalog" for c in got)
+
+
+def test_the_catalogue_is_a_leg_seventeen_language_groups_cannot_bury():
+    """München, live 2026-10-20: the API sends the query as typed to all 17
+    language groups; as a text variant the catalogue's rank 4 ("War and
+    Peace", 2600) sat behind 17 × 3 groups' ranks 1–3 — text position 57,
+    fused 113. As its own leg it casts one vote per rank like the others."""
+    groups = [[h(f"g:{1000 + 10 * i + r}", 0, f"fts:l{i}") for r in range(3)] for i in range(17)]
+    catalogue = [h("g:7", 0, "catalog"), h("g:8", 0, "catalog"), h("g:9", 0, "catalog"), h("g:2600", 0, "catalog")]
+    dense = [h(f"g:{500 + r}", 0, "dense") for r in range(10)]
+    merged = retrieval._merge_rrf(groups + [catalogue, dense], own=set(range(18)))
+    order = [retrieval.record_of(m) for m in merged]
+    assert order.index("g:2600") < 12, order[:15]
+    m = next(m for m in merged if retrieval.record_of(m) == "g:2600")
+    assert m["leg_ranks"] == {"catalog": 4} and m["sources"] == ["catalog"]

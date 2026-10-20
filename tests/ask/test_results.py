@@ -55,13 +55,14 @@ def test_the_lists_are_per_space_and_a_result_carries_what_5_3_says(node, monkey
     (r,) = out["lists"][0]["hits"]
     assert (r["collection_id"], r["lineage_id"], r["snapshot_id"], r["uid"], r["chunk_id"], r["layer"], r["rank"]) == \
         (codex.collection_id, codex.collection_id, "2026-08", "pubmed:37000021", "pubmed:37000021:0:1", "abstract", 1)
-    assert r["legs"] == {"text": 2, "vector": 1} and r["trust_level"] == "unverified" and r["certification"] is None
+    assert r["legs"] == {"text": 2, "vector": 1, "catalog": None} and r["trust_level"] == "unverified" and r["certification"] is None
     assert r["verified_on_use"] == "imported" and r["producer_key"] == "ed25519:" + "a" * 64
     assert "text" not in r and r["origin_url"] and "37000021" in r["origin_url"], "red: the origin's page, never the text"
     assert r["figures"] is None and r["reranked"] is True
     g1, g2 = out["lists"][1]["hits"]
     assert (g1["rank"], g2["rank"]) == (1, 2) and g1["text"] == "It is a truth"
-    assert g1["legs"] == {"text": 1, "vector": None} and g2["legs"] == {"text": None, "vector": 1}
+    assert g1["legs"] == {"text": 1, "vector": None, "catalog": None} \
+        and g2["legs"] == {"text": None, "vector": 1, "catalog": None}
     assert g1["verified_on_use"] == "local" and g1["producer_key"] is None, "no key on this test peer"
     assert g1["collection_id"] is None and g1["trust_level"] == "unverified", "a collection with no Codex"
     assert out["withheld"] == [{"collection": "x", "reason": "quarantine"}]

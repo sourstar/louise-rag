@@ -127,7 +127,7 @@ def result_of(collection, ctx: dict[str, Any], hit: dict[str, Any], rank: int, *
         "collection_id": ctx["collection_id"], "lineage_id": ctx["lineage_id"],
         "snapshot_id": ctx["snapshot_id"], "uid": _uid(collection, hit),
         "chunk_id": hit.get("chunk_id"), "layer": _layer(collection, hit), "rank": rank,
-        "legs": {"text": legs.get("text"), "vector": legs.get("vector")},
+        "legs": {"text": legs.get("text"), "vector": legs.get("vector"), "catalog": legs.get("catalog")},
         "trust_level": ctx["trust_level"], "certification": ctx["certification"],
         "verified_on_use": verification,
         "producer_key": own_key if producer in (None, "local") else producer,

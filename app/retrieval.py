@@ -92,7 +92,7 @@ def record_of(hit: dict) -> str:
 
 #: 05 §5.1's leg order, for the one tie it leaves open: a record ranked
 #: equally by both legs carries the text leg's best chunk
-_LEGS = ("text", "vector")
+_LEGS = ("text", "vector", "catalog")
 
 
 def _merge_rrf(lists: list[list[dict]], depth: int | None = None, *,
@@ -160,7 +160,12 @@ def _merge_rrf(lists: list[list[dict]], depth: int | None = None, *,
                 continue                  # a later chunk of a record this list already ranked
             seen.add(uid)
             rank = len(seen)
-            leg = "vector" if h["source"] == "dense" else "text"
+            # 05 §5.1 (amended 2026-10-20): the catalogue is an index of its
+            # own — titles, creators, subjects — and so a leg of its own: as
+            # a variant of the text leg its rank 4 sat behind seventeen
+            # language groups' ranks 1–3 ("War and Peace": fused rank 113)
+            leg = ("vector" if h["source"] == "dense"
+                   else "catalog" if h["source"] == CATALOG_SOURCE else "text")
             key = (rank, li not in own,
                    query_lang is None or (h.get("lang") or "").lower() != query_lang)
             mine = best.setdefault(uid, {})
@@ -552,8 +557,8 @@ def _best_rank(lists: list[list[dict]], limit: int) -> list[dict]:
     return [h for _, h in ordered][:limit]
 
 
-#: 05 §5.1 (amended 2026-10-20): the source of the text leg's catalogue
-#: variant — a record's title, creators and subjects (app/catalog.py)
+#: 05 §5.1 (amended 2026-10-20): the source of the catalogue leg — a
+#: record's title, creators and subjects (app/catalog.py)
 CATALOG_SOURCE = "catalog"
 #: the legacy prompt's "[catalog matches]" block reads at most this many
 CATALOG_PROMPT = 10
@@ -571,15 +576,17 @@ def _seq_of(chunk_id: str) -> int:
 
 def _catalog_variant(collection, hits: list[dict], query: str, restrict: dict) -> list[dict]:
     """05 §5.1 (amended 2026-10-20; query campaign, docs/notes/
-    query-campaign.md): the catalogue's ranked records as ONE MORE VARIANT
-    of the text leg, in the catalogue's order, each carried by a chunk of
-    its own — the one the query's words match best in that record, else
-    its first. Until today the catalogue's hits reached only the legacy
-    prompt: "War and Peace" missed the top 100 though 2600 is held and
-    indexed, because a title reached a book only through its own text and
-    anthologies quoting it won. A variant, not a leg (invariant 4: ranked
-    lists answering one question are fused; §5.2: a variant is a query, not
-    a leg) — it casts the text leg's one vote per rank. A versioned
+    query-campaign.md): the catalogue's ranked records as the CATALOGUE
+    LEG, in the catalogue's order, each carried by a chunk of its own — the
+    one the query's words match best in that record, else its first. Until
+    today the catalogue's hits reached only the legacy prompt: "War and
+    Peace" missed the top 100 though 2600 is held and indexed, because a
+    title reached a book only through its own text and anthologies quoting
+    it won. First made a variant of the text leg; on the API's path (the
+    query as typed to all seventeen language groups) its rank 4 sat behind
+    seventeen groups' ranks 1–3, fused rank 113 (München, live) — the
+    catalogue is another index, so another leg (invariant 4: fused by RRF,
+    one vote per rank). A versioned
     collection's window takes no fallback chunk: a record whose matching
     chunk is outside it is left to the other lists.
 
@@ -712,8 +719,8 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                         own.add(len(lists))      # the user's own words: first on a tie
                     lists.append(hits)
         if catalog_hits:
-            # 05 §5.1 (amended 2026-10-20): the catalogue, one more variant
-            # of the text leg, run with the reader's own words
+            # 05 §5.1 (amended 2026-10-20): the catalogue leg, run with the
+            # reader's own words
             cancel.checkpoint()
             variant = _catalog_variant(collection, catalog_hits, core, restrict)
             if variant:

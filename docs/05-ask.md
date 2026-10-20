@@ -17,14 +17,18 @@ the fused list is what the reader sees. How many buckets the vector
 leg probes is set on the node (07 §7.8); probing changes recall, never
 what a returned result is.
 
-**The catalogue is a variant of the text leg** (*amended 2026-10-20*, query
-campaign, docs/notes/query-campaign.md). A record's title, creators and
-subjects are indexed apart from its parts (the catalogue), and its ranked
-records go to the fusion as one more variant of the text leg — in the
+**The catalogue is a third index and a leg of its own** (*amended
+2026-10-20*, query campaign, docs/notes/query-campaign.md). A record's
+title, creators and subjects are indexed apart from its parts (the
+catalogue), and its ranked records go to the fusion as a third leg — in the
 catalogue's order, each carried by its chunk the query's words match best,
-else its first — with the reader's own words. Until then a title reached
-a book only through the book's own text: "War and Peace" was not in the
-top 100 though the book is held, and anthologies quoting a title won.
+else its first — one vote per rank, as the other two. Until then a title
+reached a book only through the book's own text: "War and Peace" was not
+in the top 100 though the book is held, and anthologies quoting a title
+won. Made first a variant of the text leg, its rank 4 sat behind seventeen
+language groups' ranks 1–3 when the query went to every group as typed
+(fused rank 113). A result's `legs` (§5.3) names `catalog` beside `text`
+and `vector`.
 
 **A leg's list is the same on every peer with the same members**
 (*amended 2026-10-20*). Equal scores order by the record's uid bytes, then
