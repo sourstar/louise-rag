@@ -141,8 +141,12 @@ def book_ids_for(codex, index_dir: Path, filters: dict[str, Any] | None, *, snap
                                   f"{value!r} is deeper — filter by {sep.join(value.split(sep)[:depth])!r}")
             total = (cache.get("values") or {}).get(value, 0)
             if total > MAX_IDS:
-                raise FilterError(f"{field!r} = {value!r} admits {total} records, more than the {MAX_IDS} the "
-                                  f"legs take as a prefilter; narrow it (05 §5.2)")
+                # an exclusion names the value it removes: "'lang' = 'en' admits" read, for
+                # {"not": "en"}, as if the filter had asked for English (query campaign, 2026-10-20)
+                said = (f"excluding {field!r} = {value!r} needs its {total} records" if negate
+                        else f"{field!r} = {value!r} admits {total} records")
+                raise FilterError(f"{said}, more than the {MAX_IDS} the legs take as a prefilter; "
+                                  f"narrow it (05 §5.2)")
             ids = _ids(pcon, field, value, tree_sep=sep)
             if negate:
                 drop |= ids

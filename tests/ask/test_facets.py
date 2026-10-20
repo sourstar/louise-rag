@@ -108,8 +108,11 @@ def test_every_cost_is_bounded_a_field_too_wide_is_said_not_counted(tmp_path, mo
     pcon.close()
     assert facets.cached(idx, "lang", snapshot_id="2026-08")["postings"] == {"built": True, "rows": 1, "values": 1,
                                                                              "broad": 1}
-    with pytest.raises(filters.FilterError, match="narrow it"):
+    with pytest.raises(filters.FilterError, match="'lang' = 'en' admits 3 records.*narrow it"):
         filters.book_ids_for(codex, idx, {"lang": "en"}, snapshot_id="2026-08")
+    # an exclusion of a broad value is refused too, and says it was an exclusion
+    with pytest.raises(filters.FilterError, match="excluding 'lang' = 'en' needs its 3 records.*narrow it"):
+        filters.book_ids_for(codex, idx, {"subjects": "Humans", "lang": {"not": "en"}}, snapshot_id="2026-08")
     assert filters.book_ids_for(codex, idx, {"lang": "de"}, snapshot_id="2026-08") == {3}
     # past the rows bound no postings are written for the field, and the cache says why
     monkeypatch.setattr(filters, "MAX_IDS", 20_000)
