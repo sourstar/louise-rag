@@ -13,6 +13,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl git rsync 
 ADD https://raw.githubusercontent.com/pciutils/pciids/7bdf1c772c2a2253c8eba2fefaa5681e2f145ba1/pci.ids /usr/share/louise/pci.ids
 RUN echo "865e934f10d84ab72951b410b0b21d53a7a4c6f4b051c722bdf62833ef5ffb4b  /usr/share/louise/pci.ids" \
         | sha256sum -c - && chmod 644 /usr/share/louise/pci.ids
+# The tokenizers a layer's chunker cuts by, under TOKENIZERS_DIR as
+# <sha256>.json (app/plugins/wikidata/chunker.py: `wikidata-text` cuts at
+# the encoder's own tokens, D6), pinned by commit and checksum:
+# jina-embeddings-v3's tokenizer.json at ab036b0. The build plan said the
+# image fetched it and no step did: 506 wikidata documents were errored on
+# the node, 2026-10-20 ("tokenizer … is not in /opt/louise/tokenizers").
+ADD https://huggingface.co/jinaai/jina-embeddings-v3/resolve/ab036b023d30b4d1138c4c3bfa9f0c445ab455d6/tokenizer.json /opt/louise/tokenizers/f59925fcb90c92b894cb93e51bb9b4a6105c5c249fe54ce1c704420ac39b81af.json
+RUN echo "f59925fcb90c92b894cb93e51bb9b4a6105c5c249fe54ce1c704420ac39b81af  /opt/louise/tokenizers/f59925fcb90c92b894cb93e51bb9b4a6105c5c249fe54ce1c704420ac39b81af.json" \
+        | sha256sum -c - && chmod 644 /opt/louise/tokenizers/*.json
 WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
