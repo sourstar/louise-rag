@@ -548,6 +548,16 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
     out: dict[str, Any] = {}
     if not node_state.runs(worker_state, node_state.FETCH):
         return out
+    # a collection the operator paused takes nothing in — no member, no
+    # bundle, no withdrawal or expiry: "runs nothing for it" (07 §7.8).
+    # München, 2026-10-20: the paused, emptied gutenberg was refilled by
+    # twelve "taken again" bundles between the re-pin's carry and rename
+    try:
+        paused = node_state.paused_collections(node_con) if node_con is not None else node_state.paused_collections()
+    except Exception:   # noqa: BLE001 — unreadable: nothing is taken this beat
+        return out
+    if paused:
+        collections = [c for c in collections if getattr(c, "name", None) not in paused]
     root = Path(root) if root is not None else collections_mod.louise_root() / "collections"
     for c in collections:
         if not wants_fetching(c):

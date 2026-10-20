@@ -491,3 +491,33 @@ def test_the_beat_reads_what_the_digests_offer_writes_a_running_row_and_backs_of
         assert len(calls) == 3 and calls[-1][0] == {(member.name, member.root)}, \
             "a digest offering the member ends the backoff and names it"
         assert transport.offered_by_neighbours(ncon, "sha256:" + "f" * 64, now=t + 60) is None
+
+
+def test_a_paused_collection_takes_nothing_in(node, monkeypatch):  # noqa: F811
+    """München, 2026-10-20: a per-collection pause did not stop the fetch
+    beat — the paused, emptied gutenberg was refilled with twelve bundles
+    between the re-pin's carry and its rename. A paused collection takes no
+    member and no bundle; the others go on."""
+    from app import collections as collections_mod, louise, node_state
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    louise._set_held_selection(collections_mod.config_toml_path(c.name), "all", ("records",))
+    c = collections_mod.by_name(c.name)
+    for name in ("_complete", "_next_try", "_tried_hints"):
+        monkeypatch.setattr(transport, name, {})
+    fetched: list[str] = []
+    bundled: list[list[str]] = []
+    monkeypatch.setattr(transport, "fetch_members", lambda root, name, *a, **k: fetched.append(name) or
+                        {"errors": [], "promoted": [], "missing": 0, "stopped": False, "deferred": []})
+    monkeypatch.setattr("app.share.accept.beat", lambda cols, *a, **k: bundled.append([x.name for x in cols]) or {})
+    for p in (d / "records").rglob("*.jsonl.zst"):
+        p.unlink()
+    con = db.connect(c)
+    node_state.set_paused(c.name, True)
+    ncon = peers.connect()                           # the node database, its peers and control tables
+    kw = dict(worker_state="running", session_factory=lambda: None, root=node)
+    transport.beat([c], {c.name: con}, ncon, now=1000.0, **kw)
+    assert fetched == [] and bundled == [[]], "paused: nothing fetched, no bundle taken"
+    node_state.set_paused(c.name, False)
+    transport.beat([c], {c.name: con}, ncon, now=2000.0, **kw)
+    assert fetched == [c.name] and bundled[-1] == [c.name]
+    ncon.close()
