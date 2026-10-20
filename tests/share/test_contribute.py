@@ -662,3 +662,36 @@ def test_the_job_order_is_the_bounty_list_as_this_peer_takes_it(ready):
     alone = contribute.job_order(codex, snapshot, con, me=OUR_KEY, live=live[:1], now=now)
     assert set(alone) == set(sids) and alone == sorted(
         sids, key=lambda s: -rendezvous.score(me, rendezvous.ShardWork(s, tokens[s])))
+
+
+def test_a_part_with_another_producers_bundle_accepted_but_not_here_is_left_to_the_fetch_not_re_signed(ready):
+    """Perugia, 2026-10-20 (en/01192): rows accepted on the compare path had
+    no files; `claimed_uids` read nothing from them, so the held path
+    re-signed the node's rows as this peer's (963 chunks over a bundle of
+    6,924). Another producer's accepted row without its files leaves the
+    part to the fetch, which takes the bundle again; this peer's own
+    fileless rows claim nothing, as before — nobody else may hold them."""
+    from app.hold import land as landing, vectors_build as vb
+    from app.share import messages
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    shard = snapshot.shards[0]
+    sid = f"{shard.slice}/{shard.n:05d}"
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    vb.build(codex, shards=[shard], records_for=lambda s: records[:1], vectors_for=kw["vectors_for"],
+             embed=kw["embed"], write=kw["write"], batch=2)
+    now = time.time()
+    ghost = "sha256:" + "e" * 64
+    cov.record(kw["con"], bundle_id=ghost, shard=cov.shard_id(codex, sid), producer=PEER_KEY, uids=[], chunks=1,
+               tiers={"T0": "pass"}, source=cov.FETCHED, accepted_at=messages.time_text(now))
+    own_ghost = "sha256:" + "d" * 64
+    cov.record(kw["con"], bundle_id=own_ghost, shard=cov.shard_id(codex, sid), producer=OUR_KEY, uids=[], chunks=1,
+               tiers={"T0": "pass"}, source=cov.LOCAL, accepted_at=messages.time_text(now))
+    assert contribute.unreadable_bundles(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY) == [ghost]
+    said: list[str] = []
+    out = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)], log=said.append, **kw)
+    assert sid in out["unreadable"] and not any(b["shard"] == sid for b in out["bundles"])
+    assert any("left to the fetch, which takes them again" in s and sid in s for s in said)
+    # the other parts are bundled as before
+    assert out["bundles"] or len(snapshot.shards) == 1

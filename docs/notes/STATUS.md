@@ -309,6 +309,21 @@ numbers owed AFTER. Also today: a landed bundle marks its part's documents
 embedded (Perugia's card read 57 % with 93 % of the vectors held), and the
 offer says when a collection cannot be taken yet (no snapshot served).
 
+### 2026-10-20: an accepted bundle without its files is taken again, never re-signed (Perugia's find)
+
+en/01192 on Perugia: a node bundle of 6,924 chunks accepted 2026-10-19 on
+the compare path (every chunk held already) had no files; the union read
+963 of 7,676 — Perugia's own re-signing of the node's rows — and the walk
+would have re-embedded 6,713 chunks the node holds; 4 such parts, 45,197
+chunks. Now `accept.files_here` decides: the fetch beat lists and takes
+such a bundle again (`listed_bundles`, `take`), and the publisher leaves a
+part with another producer's fileless row to that fetch
+(`contribute.unreadable_bundles`), re-signing nothing; this peer's own
+fileless rows claim nothing, as before. 04 §4.5 amended. Open, München's
+to report: the node published en/00219 seven times (38,273 chunks each)
+and en/00043 eight times within an hour — the homogeneous T0-warning
+parts; whether its own rows lack their files is the first question.
+
 ### 2026-10-20: a taken copy tests itself as its parts land (Perugia's find)
 
 gutenberg-book-editions, taken at 11:59Z, read "quarantine (reported only)"

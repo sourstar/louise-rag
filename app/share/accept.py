@@ -32,7 +32,7 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from app.hold import collection as col, shard as shard_mod, envelope as env, snapshot as sn
 from app.hold.codex import CodexError, canonical_json
@@ -144,8 +144,12 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
         return {"outcome": "ignored", "why": "no file list the event's root agrees with"}
     bundle_id = str(payload["bundle_id"])
     known = cov.row(con, bundle_id)
-    if known and known["accepted_at"]:
+    if known and known["accepted_at"] and files_here(root, name, codex, known):
         return {"outcome": "held", "bundle_id": bundle_id}
+    if known and known["accepted_at"]:
+        # accepted here, its files not: taken again (RULE 1 — the rows are
+        # held, the compare path lands nothing; the files come back)
+        say(f"[{name}] share: bundle {bundle_id[:23]}… accepted here but its files are not: taken again")
     from app.share import deprecate as deprecate_mod, withdraw as withdraw_mod
     withdrawn = withdraw_mod.withdrawn(root, name, codex).get(bundle_id) or frozenset()
     if withdrawn and known and withdraw_mod.by_producer({bundle_id: withdrawn}, bundle_id, known["producer"]):
@@ -649,10 +653,26 @@ def _digest_fingerprint(node_con, *, now: float) -> tuple:
     return tuple((r[0], r[1]) for r in rows)
 
 
+def files_here(root: Path, name: str, codex, row: Mapping[str, Any]) -> bool:
+    """Does the bundle a coverage row names have its files under 09 §9.7's
+    directory here? Perugia, 2026-10-20: rows accepted on 2026-10-19's
+    compare path (every chunk held already) had NO files — the union then
+    counted them as covering nothing (en/01192: a node bundle of 6,924
+    chunks, the part read 963 of 7,676), the publisher's held path found
+    their uids unclaimed and re-signed them, and the walk would have
+    re-embedded 6,713 chunks the node holds. A row without its files is a
+    hole the fetch fills, never a cover and never a claim."""
+    from app.share import contribute
+    d = contribute.bundle_dir(root, name, codex, "/".join(str(row["shard"]).rsplit("/", 2)[1:]),
+                              str(row["bundle_id"]))
+    return (d / "vectors.parquet").is_file() and (d / "possession.json").is_file()
+
+
 def listed_bundles(node_con, codex, con, *, now: float,
                    skip: dict[str, frozenset[str]] | None = None,
                    deprecated: dict[str, dict[str, tuple[str, float]]] | None = None,
                    nobody: dict[str, float] | None = None,
+                   root: Path | None = None, name: str | None = None,
                    ) -> list[tuple[dict[str, Any], list[tuple[str, int]]]]:
     """`(payload, hints)` for every bundle member a live neighbour's digest
     offers for the collection that this peer has not accepted — the payload
@@ -688,8 +708,10 @@ def listed_bundles(node_con, codex, con, *, now: float,
                 into[bundle_id][1].append(hint)
             return
         known = cov.row(con, bundle_id)
-        if known and (known["accepted_at"] or any(v == "fail" for v in known["tiers"].values())):
-            return                      # accepted here already, or refused by this peer's ladder
+        if known and any(v == "fail" for v in known["tiers"].values()):
+            return                      # refused by this peer's ladder
+        if known and known["accepted_at"] and (root is None or name is None or files_here(root, name, codex, known)):
+            return                      # accepted here already, its files here (else: taken again)
         if known and withdraw_mod.by_producer(skip, bundle_id, known["producer"]):
             return                      # withdrawn by its producer (03 §3.6)
         payload = {"collection": codex.collection_id, "space_id": codex.space_id,
@@ -753,7 +775,8 @@ def from_digests(collections, cons: dict, node_con, *, session_factory, root: Pa
             break
         offered = listed_bundles(node_con, codex, cons[c.name], now=now,
                                  skip=withdraw_mod.withdrawn(root, c.name, codex),
-                                 deprecated=deprecate_mod.deprecated(root, c.name, codex), nobody=_nobody_served)
+                                 deprecated=deprecate_mod.deprecated(root, c.name, codex), nobody=_nobody_served,
+                                 root=root, name=c.name)
         out["offered"] += len(offered)
         for payload, hints in offered:
             if stop is not None and stop.is_set():

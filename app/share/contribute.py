@@ -300,7 +300,7 @@ def announce(con, codex, snapshot: sn.Snapshot, header: dict[str, Any], member: 
 
 
 def offered_elsewhere(codex, con, node_con, *, now: float, skip=None, deprecated=None,
-                      nobody=None) -> dict[str, list[str]]:
+                      nobody=None, root: Path | None = None, name: str | None = None) -> dict[str, list[str]]:
     """Per open shard id, the bundle ids a live neighbour both CLAIMS for it
     (its digest's `coverage`, folded into the map as `claimed_by`) and
     OFFERS (its digest's `members`), and this peer has neither accepted nor
@@ -311,7 +311,8 @@ def offered_elsewhere(codex, con, node_con, *, now: float, skip=None, deprecated
         return {}
     from app.share import accept
     offered = {p["bundle_id"] for p, _hints in accept.listed_bundles(node_con, codex, con, now=now, skip=skip,
-                                                                     deprecated=deprecated, nobody=nobody)}
+                                                                     deprecated=deprecated, nobody=nobody,
+                                                                     root=root, name=name)}
     if not offered:
         return {}
     out: dict[str, list[str]] = {}
@@ -345,6 +346,22 @@ def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | 
     return frozenset(out)
 
 
+def unreadable_bundles(root: Path, name: str, codex, con, sid: str, *, own_key: str | None) -> list[str]:
+    """The bundle ids OTHER producers' accepted rows for the shard name whose
+    files are not here (`accept.files_here`). Their uids cannot be read, so
+    the held path cannot tell what they claim; the part is left to the
+    fetch, which takes them again — never re-signed (Perugia, 2026-10-20:
+    en/01192, 963 chunks re-signed over a node bundle of 6,924 whose files
+    the compare path never stored). This peer's own rows without files
+    claim nothing and are re-bundled: nobody else may hold them."""
+    from app.share import accept
+    out = []
+    for r in cov.rows(con, shard=cov.shard_id(codex, sid)):
+        if r["accepted_at"] and r["producer"] and r["producer"] != own_key and not accept.files_here(root, name, codex, r):
+            out.append(str(r["bundle_id"]))
+    return out
+
+
 def _bundle_shard(root: Path, name: str, codex, snapshot: sn.Snapshot, shard: sn.Shard, *, key, own_key: str,
                   embed, vectors_for, con, node_con, now: float, say, out: dict[str, Any],
                   serving: bool, held: bool, held_books=None, stop=None) -> str:
@@ -363,6 +380,13 @@ def _bundle_shard(root: Path, name: str, codex, snapshot: sn.Snapshot, shard: sn
     sid = f"{shard.slice}/{shard.n:05d}"
     scratch = root / name / "state" / "bundles" / f".export-{os.getpid()}-{shard.n:05d}"
     shutil.rmtree(scratch, ignore_errors=True)
+    missing = unreadable_bundles(root, name, codex, con, sid, own_key=own_key)
+    if missing:
+        out.setdefault("unreadable", []).append(sid)
+        say(f"[{name}] share contribute: {sid}: {len(missing)} accepted bundle(s) of another producer "
+            f"without their files here ({', '.join(m[:23] + '…' for m in missing[:3])}): left to the fetch, "
+            f"which takes them again; nothing re-signed")
+        return "claimed"
     claimed = claimed_uids(root, name, codex, con, sid, own_key=own_key)
     only = None
     if held_books is not None:
@@ -492,7 +516,7 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
                            "mine": [f"{s.slice}/{s.n:05d}" for s in mine], "built": 0,
                            "held": [], "probed": 0, "left_to_fetch": [], "bundles": [], "accepted": [],
                            "refused": [], "events": 0, "unannounced": 0, "interrupted": False,
-                           "marked": 0, "claimed": [], "awaiting": []}
+                           "marked": 0, "claimed": [], "awaiting": [], "unreadable": []}
     common = dict(key=key, own_key=own_key, embed=embed, vectors_for=vectors_for, con=con,
                   node_con=node_con, now=now, say=say, out=out, serving=serving, held_books=held_books, stop=stop)
     if not mine and not others:
@@ -505,7 +529,8 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
     # bundled first, whoever leads it: no GPU, and the leader embeds only
     # what still lacks a bundle (04 §4.5, amended 2026-10-19)
     from app.share import withdraw as withdraw_mod
-    elsewhere = offered_elsewhere(codex, con, node_con, now=now, skip=withdraw_mod.withdrawn(root, name, codex),
+    elsewhere = offered_elsewhere(codex, con, node_con, now=now, root=root, name=name,
+                                  skip=withdraw_mod.withdrawn(root, name, codex),
                                   deprecated=deprecated, nobody=accept.nobody_served_until())
     for shard in others:
         if stop is not None and stop.is_set():

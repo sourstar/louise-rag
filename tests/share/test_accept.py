@@ -417,6 +417,26 @@ def test_a_bundle_a_digest_offers_is_taken_in_without_its_event(node, monkeypatc
         cov.record(con, bundle_id=bid, shard=f"{cid}/{'a' * 16}/lang=af/00001", producer=PEER_KEY, uids=[],
                    chunks=3, tiers={}, source=cov.FETCHED, accepted_at=messages.time_text(now))
         assert accept.listed_bundles(ncon, codex, con, now=now) == [], "accepted here: not asked for"
+        # Perugia, 2026-10-20 (en/01192): accepted here WITHOUT its files — a row the compare
+        # path wrote — it is listed and taken again; with its files, held
+        root = tmp_path / "root"
+        row = cov.row(con, bid)
+        assert accept.files_here(root, "g", codex, row) is False
+        (again,) = accept.listed_bundles(ncon, codex, con, now=now, root=root, name="g")
+        assert again[0]["bundle_id"] == bid
+        said: list[str] = []
+        monkeypatch.setattr(transport, "fetch_file",
+                            lambda *a, **k: (_ for _ in ()).throw(transport.TransportError("sentinel: fetched again")))
+        with pytest.raises(transport.TransportError, match="fetched again"):
+            accept.take(root, "g", codex, again[0], session=None, con=con, node_con=None, log=said.append)
+        assert any("accepted here but its files are not: taken again" in s for s in said)
+        here = contribute.bundle_dir(root, "g", codex, "lang=af/00001", bid)
+        here.mkdir(parents=True)
+        for f in ("vectors.parquet", "possession.json"):
+            (here / f).write_bytes(b"x")
+        assert accept.files_here(root, "g", codex, row) is True
+        assert accept.listed_bundles(ncon, codex, con, now=now, root=root, name="g") == [], "its files here: held"
+        assert accept.take(root, "g", codex, again[0], session=None, con=con, node_con=None)["outcome"] == "held"
         cov.record(con, bundle_id=bid, shard=f"{cid}/{'a' * 16}/lang=af/00001", producer=PEER_KEY, uids=[],
                    chunks=0, tiers={"T0": "pass", "T1": "fail"}, source=cov.FETCHED, accepted_at=None)
         assert accept.listed_bundles(ncon, codex, con, now=now) == [], "refused by this peer's ladder: not asked for again"

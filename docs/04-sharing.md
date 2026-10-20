@@ -654,6 +654,14 @@ window of the fetch's assignment (below) and of the benchmark rule
 (above). Every bundle names its chunk range, and the coverage map is the
 set of accepted bundles per part (02 §2.5, 09 §9.10).
 
+A bundle accepted here whose FILES are not here — a row written when every
+chunk of it was held already, or a directory lost — covers nothing and
+claims nothing: the peer takes it again from a neighbour that offers it,
+and a holder leaves such a part to that fetch rather than bundling rows
+it cannot tell from the bundle's (*amended 2026-10-20*: Perugia re-signed
+963 chunks over a node bundle of 6,924 whose files its compare path had
+never stored, and the walk would have re-embedded the rest).
+
 **How a bundle travels.** A bundle is a member (§4.3): its producer
 announces it with a `bundle` event naming the collection, space,
 snapshot, part, chunk range, bundle id, root and size, and lists it in
