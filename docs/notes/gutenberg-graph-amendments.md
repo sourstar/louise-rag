@@ -145,6 +145,11 @@ A WIRE-FORMAT CHANGE: the operator decides; nothing exists until then.
 - **The agreement floor for `model` methods is MEASURED first**, on the
   first 1,000 GLiNER mentions re-run twice, and set from that number —
   never a value written before the measurement.
-- Order: as §"The order, if approved" says; nothing of it before the
-  wikidata collection exists (wikidata-build-plan.md §4).
+- Order: as §"The order, if approved" says. **Step 1 is written
+  (2026-10-20):** 09 §9.3 (version 9, `annotates` list, `slicing.container`),
+  §9.5 (the three claim types and their keys, the `model` method, "The file
+  (B): Parquet"), §9.14 (the three edges), §9.18; 02 §2.10; 05 §5.3, §5.5;
+  03 §3.2 (`model-agreement`). Steps 2–3 (the code) follow; steps 4–5 (the
+  methods over gutenberg against wikidata's vectors) after the wikidata
+  collection exists.
 

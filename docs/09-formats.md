@@ -271,7 +271,7 @@ number written as a decimal string is marked *decimal*.
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-codex"` | yes | |
-| `version` | `6` · `7` · `8` | yes | the Codex format version (§9.18). Version 8 is written for a space that declares the token cut (`cut`, below) alone (*amended 2026-10-18*, docs/notes/char-cut-truncation.md): it is the version-6 object with `space.cut`, its engines backend engines, and no other Codex is ever written at 8, so no Codex, space or `collection_id` already written moves; it is not an annotations Codex and carries no `annotates`. Version 7 is written for an ANNOTATIONS Codex alone (02 §2.10; *amended 2026-10-09*, docs/notes/annotation-collections.md): it is this object with `annotates`, `space` and `work` null and `layers` `[]`, and no other Codex is ever written at 7, so no Codex, space or `collection_id` already written moves. Version 5 is this object with no backend engine (below, *the engine*), and a Codex none of whose engines is a backend engine is written at 5, so no Codex, space, engine or `collection_id` already written moves and an argv engine or one RAGE stated keeps its bytes (*amended 2026-10-08*, docs/notes/vega.md); `space_from` copies a version-5 `space` into a version-5 Codex unchanged. Version 4 is this object with no layer carrying `input` — a layer of a version-4 Codex reads as `{"form": "text"}`, but writing the key into it would change its bytes and so its `collection_id` and `space_id`, so a version-4 Codex keeps both; `space_from` copying from a Codex below version 5 writes version 4, so that the copy's `space_id` is the source's (*amended 2026-10-08*, docs/notes/input-forms.md). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
+| `version` | `6` · `7` · `8` · `9` | yes | the Codex format version (§9.18). Version 9 (*amended 2026-10-20*, docs/notes/gutenberg-graph-amendments.md, operator's decisions A-K1–A-K4) is this object with `slicing.container` (below) and, for an annotations Codex, `annotates` as a LIST of targets; it is written for a Codex that declares `container: "parquet"`, for an annotations Codex with more than one target, and for one whose claims use the `mention`, `relation` or `community` type — and for no other, so no Codex, space or `collection_id` already written moves (the two annotations collections of 2026-10-09 keep version 7 and their bytes). A version-9 annotations Codex writes `annotates` as a list even of one target. Version 8 is written for a space that declares the token cut (`cut`, below) alone (*amended 2026-10-18*, docs/notes/char-cut-truncation.md): it is the version-6 object with `space.cut`, its engines backend engines, and no other Codex is ever written at 8, so no Codex, space or `collection_id` already written moves; it is not an annotations Codex and carries no `annotates`. Version 7 is written for an ANNOTATIONS Codex alone (02 §2.10; *amended 2026-10-09*, docs/notes/annotation-collections.md): it is this object with `annotates`, `space` and `work` null and `layers` `[]`, and no other Codex is ever written at 7, so no Codex, space or `collection_id` already written moves. Version 5 is this object with no backend engine (below, *the engine*), and a Codex none of whose engines is a backend engine is written at 5, so no Codex, space, engine or `collection_id` already written moves and an argv engine or one RAGE stated keeps its bytes (*amended 2026-10-08*, docs/notes/vega.md); `space_from` copies a version-5 `space` into a version-5 Codex unchanged. Version 4 is this object with no layer carrying `input` — a layer of a version-4 Codex reads as `{"form": "text"}`, but writing the key into it would change its bytes and so its `collection_id` and `space_id`, so a version-4 Codex keeps both; `space_from` copying from a Codex below version 5 writes version 4, so that the copy's `space_id` is the source's (*amended 2026-10-08*, docs/notes/input-forms.md). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
 | `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
@@ -308,7 +308,7 @@ number written as a decimal string is marked *decimal*.
 | ↳ `kind: "archive"` | | | a pre-embedded archive whose vectors this collection carries — zero or more, one per archive, `archive` naming it. Expanded from the platform's registry by the recipe's `archives`. `coverage` is load-bearing and not merely compliance: 06 §6.3's `archive:<id>` layer rule reads it to decide which layer a document falls in, and NO OTHER KIND is read there. The archive's SIGNING KEYS are deliberately NOT here: they are in the registry (06 §6.6), because a key is a changeable local fact — lost, rotated, or issued years after a collection was created (§9.2, "a lost key is a new key") — and freezing one into `collection_id` would fork the identity every time one moved, while blocking a collection from ever adopting an archive that started signing after it was written |
 | ↳ `kind: "community"` | | | the peers who embed for this collection, as ONE collective and never as a roster. At most one entry, present exactly when `embedding` is `"open"` or `"endorsed"` and absent when it is `"certifier-only"` — so it is derived from a field already in the Codex rather than declared, and a collection that accepts no community vectors credits none. `archive` and `license` are null, `coverage` is `"all"` |
 | `profile` | object or null | yes | plugin-defined descriptor, opaque and hashed (an ELI profile: `{eli: {jurisdiction, work_pattern, …}}`). One key the platform reads (*amended 2026-10-12*): `validity: {kind: "versions-per-work", from: "<record field>", work: "<record field>"}` declares a VERSIONED collection — every version of a Work is a record, `from` names the field holding the start of its validity (`extra.vigenza_from`), `work` the field naming the Work (`extra.eli_work`); a search then answers a date by validity and shows one version per Work by default (05 §5.1, 07 §7.3). The end of a version's validity is derived by the peer and is in no record |
-| `annotates` | object | version 7 only | `{collection_id: id, from_snapshot: snapshot id}` — the TARGET collection an annotations collection makes claims about, and the target snapshot the claims were checked against and hold from (02 §2.10; *amended 2026-10-09*). Required and non-null at version 7; ABSENT, never null, below it — like an engine's `options`, so that every Codex already written keeps its bytes. An annotations Codex is also fixed in the rest: `plugin` `"annotations"`; `origin.spec` `{source_id: "annotations", nonce: <32 hex digits>}`, `unit` `"file"`, `cutoff_rule` `"record-date"`; `record_line` 1; `modality` `"text"`; `erasure` `append-only` or `retractable`; `privacy` `public` or `restricted`; `publication` and `embedding` `"open"`; `facets` `[]`; `credits` exactly one `corpus` entry, the annotator; every lineage field, `derivation`, `certifier`, `content` and `profile` null; and `validation.checks` drawn from `roots`, `records`, `license`, `signature`. Anything else is refused |
+| `annotates` | object (version 7) · list (version 9) | annotations Codex only | `{collection_id: id, from_snapshot: snapshot id}` — the TARGET collection an annotations collection makes claims about, and the target snapshot the claims were checked against and hold from (02 §2.10; *amended 2026-10-09*). At version 9 (*amended 2026-10-20*) a LIST of such objects in a fixed order, one per target — gutenberg-graph annotates gutenberg (the text) and wikidata (the entities); a claim's end names its target by the uid's plugin prefix, so no index is carried in the claim. Required and non-null at version 7; ABSENT, never null, below it — like an engine's `options`, so that every Codex already written keeps its bytes. An annotations Codex is also fixed in the rest: `plugin` `"annotations"`; `origin.spec` `{source_id: "annotations", nonce: <32 hex digits>}`, `unit` `"file"`, `cutoff_rule` `"record-date"`; `record_line` 1; `modality` `"text"`; `erasure` `append-only` or `retractable`; `privacy` `public` or `restricted`; `publication` and `embedding` `"open"`; `facets` `[]`; `credits` exactly one `corpus` entry, the annotator; every lineage field, `derivation`, `certifier`, `content` and `profile` null; and `validation.checks` drawn from `roots`, `records`, `license`, `signature`. Anything else is refused |
 
 The relations are exclusive in this way: a daughter has `continues` and
 `continues_through`; a sister has `derived_from` and, when it was made with
@@ -349,7 +349,8 @@ names).
 | `keys` | list of strings | yes | slice keys in path order: `["year"]`, `["lang", "pages"]`, `[]` for one slice `all` |
 | `<key>` | object | one per key | for a year key: `{field, bins}` — `field` names the record field read (`date`), `bins` is the list below; for an id-range key: `{field, bin: integer}` — the record's `native_id` divided by `bin`; for a language key: `{field: "lang"}` |
 | `unknown` | string | yes | the slice a record joins when the key cannot be read: `"year=unknown"` |
-| `shard_records` | integer | yes | records per part: 30,000 for PubMed, 2,000 for Wikipedia, 50 for Gutenberg |
+| `shard_records` | integer | yes | records per part: 30,000 for PubMed, 2,000 for Wikipedia, 50 for Gutenberg; 1,000,000 for a claims collection in Parquet (below) |
+| `container` | `"jsonl"` · `"parquet"` | version 9 | the record parts' file form (§9.5 "The file"): the zstd-framed JSONL of every collection so far, or one Parquet file per part. ABSENT, never null, below version 9, and read as `"jsonl"`; written at version 9 for every collection kind that declares it (*amended 2026-10-20*, operator: Parquet parts offered to every collection, not to annotations collections alone). Inside `collection_id`: the container is part of what a part's bytes are, though not of what its records are — `records_root` does not depend on it |
 | `order` | `"bytes"` · `"numeric"` | yes | how records sort within a slice: UTF-8 byte order of `native_id`, or integer order of it |
 
 The `bins` grammar, evaluated in list order over a year `Y`: `"<N"` —
@@ -896,18 +897,29 @@ The claim, an object with exactly these keys:
 
 | key | type | meaning |
 |---|---|---|
-| `type` | `"same-work"` · `"translation-of"` | `same-work`: the two records are versions of one work in different languages, and neither is said to be the other's source; `translation-of`: the subject translates the object |
-| `subject`, `object` | uid | records of the annotated collection, different from each other |
-| `subject_lang`, `object_lang` | string | ISO 639 or `"und"`: the languages of the two versions. For `translation-of`, `object_lang` is the source language and `subject_lang` the target language |
-| `method` | object | `{kind: "matcher", id: string, version: integer}`, `{kind: "wikidata"}` or `{kind: "human"}` — how the claim was made |
+| `type` | `"same-work"` · `"translation-of"` · `"mention"` · `"relation"` · `"community"` | `same-work`: the two records are versions of one work in different languages, and neither is said to be the other's source; `translation-of`: the subject translates the object. *Amended 2026-10-20* (version 9; docs/notes/gutenberg-graph-amendments.md A-K1): `mention`: a span of a chunk of the text target names an entity of the entity target; `relation`: an entity stands in a relation to another, read from a chunk; `community`: a set of entities the method groups, with its summary |
+| `subject`, `object` | uid, chunk or canonical id | for `same-work` and `translation-of`: two records of the annotated collection, different from each other. For `mention`: `subject` a CHUNK of the text target, `{uid, chunk_id, text_hash}` — `text_hash` the BLAKE2b-128 of the chunk's text as the target's chunker cut it (06 §6.3), the hash every stored chunk already carries — and `object` an entity as a canonical id `<namespace>:<id>` (`wikidata:Q42`). For `relation`: both ends entities as canonical ids. For `community`: `subject` `{id: <string the method mints>, level: integer}` and `object` null (A-K2) |
+| `subject_lang`, `object_lang` | string | ISO 639 or `"und"`: the languages of the two versions. For `translation-of`, `object_lang` is the source language and `subject_lang` the target language. REQUIRED for `same-work` and `translation-of`; ABSENT for the three types of 2026-10-20 — an entity has no one language, and a chunk's is its record's |
+| `start`, `end`, `surface` | integer, integer, string | `mention` only: code-point offsets into the chunk's text, `end` exclusive, and the text between them, so a reader shows the mention without the chunk |
+| `relation`, `evidence_chunk` | canonical id, chunk | `relation` only: the property as a canonical id (`wikidata:P50`), and the chunk `{uid, chunk_id, text_hash}` the relation was read from |
+| `members`, `summary` | list of canonical ids, string | `community` only: the members, sorted, no duplicates, at least two; and the method's text about them |
+| `method` | object | `{kind: "matcher", id: string, version: integer}`, `{kind: "wikidata"}` or `{kind: "human"}` — how the claim was made. *Amended 2026-10-20*: `{kind: "model", id: string, version: integer, model: <sha256 of the weights>, prompt: <sha256 of the prompt text>, temperature: "0"}` for a model whose output is not bit-exact — what a verifier re-runs (03 §3.2 `model-agreement`) |
 | `evidence` | object | what the method matched on; method-defined, no floats |
 | `confidence` | decimal | its maker's confidence, `0` to `1` |
 | `contributor` | string | who makes the claim |
-| `subject_hash`, `object_hash` | BLAKE2b-128 | the two records' `content_hash` in `target_snapshot`, read from the parts that snapshot lists when the claim is written. A claim about a record that snapshot does not hold is refused |
-| `target_snapshot` | snapshot id | the annotated collection's snapshot the claim was checked against; the first is the Codex's `annotates.from_snapshot` |
+| `subject_hash`, `object_hash` | BLAKE2b-128 | the two records' `content_hash` in `target_snapshot`, read from the parts that snapshot lists when the claim is written. A claim about a record that snapshot does not hold is refused. For a chunk end, the hash of the chunk's RECORD; the chunk's own `text_hash` is in the end itself. For a `community`, `object_hash` is null |
+| `target_snapshot` | snapshot id | the annotated collection's snapshot the claim was checked against; the first is the Codex's `annotates.from_snapshot`. With several targets (version 9) the snapshot of the target the SUBJECT belongs to; the object's target snapshot is the Codex's `annotates` entry for it |
 
 One claim per pair and type. A `same-work` pair is the same claim either
-way round.
+way round. For the types of 2026-10-20 the claim is identified by its ends
+and its own keys: (`type`, `subject`, `object`, `start`, `end`) for a
+mention, (`type`, `subject`, `object`, `relation`) for a relation,
+(`type`, `id`, `level`) for a community; at version 9 the claims are
+numbered from 1 in the byte order of that identifying tuple's canonical
+JSON (§9.1), and the two older types' tuple is (`subject`, `object`,
+`type`) as before. Rules carried over: no floats anywhere (`confidence`
+and any score a method states are decimal strings); strings NFC;
+`edge_type` is `annotations:<type>`.
 
 **Pointer records.** A red-class collection's records member is the same
 line with `sections: []` and `extra.origin_url` set; every other field,
@@ -917,7 +929,28 @@ the origin (04 §4.4) and is never a member. The `records` check
 recomputes `content_hash` only where the text is; on a pointer part it
 checks the presence and form of the two hashes and nothing else.
 
-**The file.** The lines are concatenated in record order and compressed
+**The file (B): Parquet** (*amended 2026-10-20*, operator's decision A-K4,
+docs/notes/gutenberg-graph-amendments.md; a Codex whose
+`slicing.container` is `"parquet"`, version 9, §9.3). At 10⁸–10⁹ claims a
+JSONL part of 50,000 records is tens of thousands of parts, and the
+snapshot's `shards` list alone is hundreds of megabytes every peer reads.
+A Parquet part is `<NNNNN>.parquet` beside the record parts' path rule
+above: one row per record in record order, one column per key of the
+record line in the line's key order, every nested value (`creators`,
+`subjects`, `keys`, `extra`, `sections`) as its canonical JSON text (§9.1)
+in a string column, so that the LINE is a pure function of the row;
+zstd-compressed columns; row groups of 1,000 records; the row group
+metadata (its first row's `uid`) is the seek index, so there is no
+skippable frame. `records_root` and `root` are computed exactly as for a
+JSONL part, over the canonical line bytes rendered from each row — a
+Parquet part and a JSONL part of the same records have the same
+`records_root`, because the hashes never depended on the container. The
+`records` check reads either; `hold records show` renders lines from
+either. Offered to every collection kind, chosen per collection in its
+Codex and fixed for its life.
+
+**The file (A): zstd frames**, every collection so far. The lines are
+concatenated in record order and compressed
 as independent zstd frames of 1,000 records each (the last frame
 shorter), zstd 1.5.x at level 9 as pinned by the platform image, no
 dictionary, no checksum flag, content size written in each frame header.
@@ -1956,6 +1989,18 @@ uids of the collection the Codex's `annotates` names, so `from` is a record
 of THAT collection and the part is the one holding the claim. The edge is
 the annotator's explicit statement, which is what 05 §5.5 asks of an edge.
 
+*Amended 2026-10-20* (A-K2, A-K3): the three claim types of 2026-10-20
+make these edges, each in the part holding the claim. A `mention`: `from`
+= the chunk's RECORD uid (a chunk is not a uid), `to` = the entity's
+canonical id, `type` `annotations:mention`. A `relation`: `from` = the
+subject entity's uid in the entity target (`wikidata:<native_id>` — an
+entity is a record of a collection the Codex annotates, which is what
+lets `from` be a record), `to` = the object's canonical id, `type`
+`annotations:relation`; the property stays in the claim, not in the edge.
+A `community` has no edge of its own: its members are edges `from` each
+member's record uid `to` the community claim's own uid
+(`annotations:<n>`), `type` `annotations:member-of`.
+
 Edges are sorted by (`from` bytes, `type` bytes, `to` bytes); the
 direction is from → to as the source states it.
 
@@ -2234,7 +2279,7 @@ names one schema, the one its section fixes:
 
 | kind | version | section |
 |---|---|---|
-| `louise-codex` | 8 | §9.3 (5 since 2026-10-08: a layer's `input`; 6 since 2026-10-08: a backend engine, and written for a Codex that carries one alone — every other is written at 5; 7 since 2026-10-09: `annotates`, written for an annotations Codex alone, 02 §2.10; 8 since 2026-10-18: `space.cut`, written for a space that declares the token cut alone) |
+| `louise-codex` | 9 | §9.3 (5 since 2026-10-08: a layer's `input`; 6 since 2026-10-08: a backend engine, and written for a Codex that carries one alone — every other is written at 5; 7 since 2026-10-09: `annotates`, written for an annotations Codex alone, 02 §2.10; 8 since 2026-10-18: `space.cut`, written for a space that declares the token cut alone; 9 since 2026-10-20: `slicing.container`, `annotates` as a list, the claim types `mention`, `relation`, `community` — written for a Codex that declares one of them alone) |
 | `louise-snapshot` | 2 | §9.4 |
 | `louise-snapshot-sig` | 1 | §9.4 |
 | record line | 2 | §9.5 |

@@ -1356,6 +1356,13 @@ What it does **not** have:
   - "An annotation fits a collection from a snapshot date onwards, by
     design": a claim is attached to no answer read from an earlier target
     snapshot.
+  - *Amended 2026-10-20* (operator; `notes/gutenberg-graph-amendments.md`
+    A-K3): at Codex version 9 `annotates` is a LIST of such targets in a
+    fixed order — gutenberg-graph annotates gutenberg, the text its
+    mentions are read from, and wikidata, the entities they name. A
+    claim's end belongs to the target its uid's plugin prefix says. The
+    version is inside `collection_id`, so the two collections of 2026-10-09
+    keep version 7 and their bytes (09 §9.3).
 - `plugin` is `annotations`: the claims' uids are `annotations:<n>` and
   their relation types are `annotations:<type>`.
 - `origin.spec` is `{source_id: "annotations", nonce}`, the deposit rule
@@ -1406,6 +1413,27 @@ A deterministic method re-checks by running again and publishing the
 annotations collection's next snapshot with new hashes. A reading peer
 compares hashes and never re-runs a method.
 
+**Three more claim types, and ends that are chunks or entities**
+(*amended 2026-10-20*, operator's decisions A-K1–A-K4; 09 §9.5 fixes the
+keys). `mention`: a span of a CHUNK of the text target names an entity of
+the entity target — `subject` is the chunk `{uid, chunk_id, text_hash}`,
+`object` a canonical id (`wikidata:Q42`, a namespace a reference source
+registers, 06 §6.5), with `start`, `end` and `surface`. `relation`: two
+entities in a relation named by a property (`wikidata:P50`), with the
+chunk it was read from as evidence. `community`: a set of entities the
+method grouped, with a level and a summary. The time rule above holds per
+chunk for a mention: it is `current` while the chunk's `text_hash` is the
+one it was made against and `stale` once the record's text moved under it
+(a re-cut moves chunk ids and hashes); `subject_hash` keeps covering the
+record. Their edges are 09 §9.14's.
+
+**Methods whose output is not bit-exact** (*amended 2026-10-20*): a
+`model` method names its weights and its prompt by hash and runs at
+temperature 0. Its claims are not re-checked by hash: a verifier RE-RUNS a
+seeded sample of them and counts agreement — the plan's `model-agreement`
+check (03 §3.2) — against a floor measured for the method before its first
+collection, never written before the measurement (operator: the first
+1,000 mentions re-run twice set it).
 **Holding it.** Its collection file (07 §7.8) names no `[encoder]` and
 holds `kinds = ["records", "relations"]`. Its copy leaves quarantine
 (03 §3.6) when this peer's own `roots` have passed and its licence is

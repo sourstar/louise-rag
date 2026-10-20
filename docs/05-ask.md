@@ -294,7 +294,7 @@ The fields, with their values:
 | `producer_key` | the key that signed the chunk's vector — this peer's own key for `local` |
 | `text` or `origin_url` | the chunk's text; for a red-class collection the origin's page and never the text |
 | `figures` | the plates whose `[Illustration…]` markers fall inside this chunk, in order: `{hash, media_type, caption, state}` — NEVER the bytes. `null` where the collection carries no figures at all, `[]` where this chunk has none. `state` is `held` · `not-held` · `not-carried`, below |
-| `annotations` | the claims an annotations collection held here makes about this record (02 §2.10; *amended 2026-10-09*), `[]` where none does. Each entry is `{collection_id, snapshot_id, claim, type, relation, role, record: {uid, title, lang, held}, subject_lang, object_lang, method, confidence, contributor, state, trust_level}`. `record` is the record at the claim's other end, as the target holds it, and `role` is this record's end, `subject` or `object`. `state` is `current`, `stale` or `unknown`, below |
+| `annotations` | the claims an annotations collection held here makes about this record (02 §2.10; *amended 2026-10-09*), `[]` where none does. Each entry is `{collection_id, snapshot_id, claim, type, relation, role, record: {uid, title, lang, held}, subject_lang, object_lang, method, confidence, contributor, state, trust_level}`. `record` is the record at the claim's other end, as the target holds it, and `role` is this record's end, `subject` or `object`. *Amended 2026-10-20*: a `mention` entry carries `chunk_id`, `start`, `end` and `surface`, so the reader places it in the chunk it was read from and highlights it; a `relation` is attached at either entity's record; a `community` is a fact beside each member (02 §2.10, 09 §9.5). `state` is `current`, `stale` or `unknown`, below |
 | `editions` | present only on a work's one hit (below; *amended 2026-10-09*): the work's other records, `{uid, title, lang, held, rank, chunk_id}` — `rank` and `chunk_id` where the record was in the list before the grouping, `null` where it was not |
 | `freshness` | present only on request: `current` · `newer-at-source` · `unreachable` · `unavailable` — the last when the plugin has no per-record current form for this record (one read from a static archive, a copy built before records carried a content hash), said rather than guessed (*amended 2026-10-07*) |
 | `reranked` | whether the list's order is the reranker's (§5.6) or the fused order |
@@ -523,7 +523,12 @@ typed `annotations:<type>`, for example `annotations:same-work` or
 annotates, so `from` there is a record of the TARGET, not of the
 annotations collection; its part is the part holding the claim. This
 section's rule holds unchanged: the edges are explicit in their
-collection's source.
+collection's source. *Amended 2026-10-20*: with several targets (02
+§2.10) a `mention`'s edge runs from the chunk's record to the entity, a
+`relation`'s from the subject entity's record to the object entity, and a
+community's members point at the community claim (09 §9.14); an entity
+end is resolved against the entity target held here and stays a canonical
+id where it is not held.
 
 `louise_traverse` follows them like any edge and resolves them against the
 target held here: holding the annotations collection is asking for it. They

@@ -284,6 +284,19 @@ recorded in the report, not a refusal (03 §3.5 amended;
 structural T0 failure still refuse. The four parts re-ladder at the
 publisher's next pass after the deploy.
 
+### 2026-10-20: gutenberg-graph, step 1 — the specification amendments written
+
+The operator's decisions of the day (two targets, Parquet parts for every
+collection, a measured agreement floor) are in the documents, dated: 09
+§9.3 Codex version 9 (`annotates` as a list, `slicing.container`), §9.5
+the `mention`, `relation` and `community` claims with their keys and the
+`model` method, "The file (B): Parquet" beside the zstd frames, §9.14 the
+three edges, §9.18; 02 §2.10; 05 §5.3 and §5.5; 03 §3.2 `model-agreement`
+([gutenberg-graph-amendments.md](gutenberg-graph-amendments.md), "The
+order"). Nothing is built yet: step 2 is app/hold/annotations.py and the
+Parquet parts, step 3 the Ask side, steps 4–5 the methods once the wikidata
+collection exists.
+
 ### 2026-10-20: jina-v3 reproduces its own bytes with torch's deterministic switch; the wikidata recipe is filled
 
 München, on the third louise-python tree (-20261020c): with torch's
