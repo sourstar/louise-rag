@@ -997,3 +997,39 @@ def test_the_origin_check_serialises_only_the_records_it_compares(checkable, cor
     # each compared record is serialised twice — the copy's line and the
     # re-parse's — and a record of a file not read, never
     assert len(made) == 2 * o.detail["compared"] and o.detail["compared"] < o.detail["records"]
+
+
+# ---- 03 §3.6 test 1, run by the peer itself as parts land (2026-10-20) ---
+
+def test_the_parts_a_fetch_lands_are_checked_and_attested_at_once(checkable):
+    """Perugia, 2026-10-20: a copy taken from the offer sat in quarantine for
+    2.5 h — "roots not yet run on this peer" — until someone typed `hold
+    check`. The fetch beat now runs the copy's own roots, records and chunks
+    over the parts it just promoted and attests them; the copy state reads
+    them. The cost is the parts landed: only the named part is covered."""
+    from app import copy_state
+    from app.hold import envelope as env
+    root, snapshot, codex = checkable
+    first = f"{snapshot.shards[0].slice}/{snapshot.shards[0].n:05d}"
+    assert chk.landed_checks(codex) == ("roots", "records", "chunks")
+    assert chk.part_name(f"records/{first}.jsonl.zst") == first and chk.part_name("calibration/x") is None
+    # no key: checked, not attested
+    got = chk.attest_landed(root, "gutenberg", codex, snapshot, [f"records/{first}.jsonl.zst"],
+                            key=None, platform_image=PLATFORM, now=NOW)
+    assert got["parts"] == [first] and got["results"] == {"roots": chk.PASS, "records": chk.PASS, "chunks": chk.PASS}
+    assert got["attestations"] == {} and "no key" in got["why"]
+    assert not (root / "gutenberg" / "state" / "attestations").exists()
+    # with the key and the image: three attestations, each over the landed part alone
+    got = chk.attest_landed(root, "gutenberg", codex, snapshot, [first], key=KEY, platform_image=PLATFORM, now=NOW)
+    assert set(got["attestations"]) == {"roots", "records", "chunks"} and got["why"] == ""
+    bodies = copy_state.attestations(root, "gutenberg", codex)
+    own = env.key_text(KEY.verify_key)
+    for check in ("roots", "records", "chunks"):
+        passed, latest = bodies.of(own, check)
+        assert passed and latest["shards"] == [f"{codex.collection_id}/{first}"], check
+    state = copy_state.evaluate(root, "gutenberg", codex, licence="acknowledged", key=own)
+    (t,) = [t for t in state.tests if t.name == "roots-and-chunks"]
+    assert t.status == copy_state.PASSED, t.detail
+    # nothing landed: nothing run
+    assert chk.attest_landed(root, "gutenberg", codex, snapshot, ["calibration/x.safetensors"],
+                             key=KEY, platform_image=PLATFORM)["why"] == "no record part landed"

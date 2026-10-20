@@ -243,12 +243,20 @@ def test_record_shards_promoted_ask_for_a_scan_at_once(node, monkeypatch):  # no
     monkeypatch.setattr(transport, "fetch_members",
                         lambda *a, **k: {"errors": [], "promoted": landed.pop(0), "missing": 0})
     asked = []
+    checked = []
+    from app.hold import check as chk
+    monkeypatch.setattr(chk, "attest_landed", lambda root, name, codex, snap, parts, **kw: checked.append(
+        (name, list(parts), kw.get("key") is not None)) or {"parts": parts, "results": {"roots": "pass"},
+                                                            "attestations": {}, "why": "no key"})
     con = db.connect(c)
     kw = dict(worker_state="running", session_factory=lambda: None, root=node, on_promoted=asked.append)
     transport.beat([c], {c.name: con}, None, now=1000.0, **kw)
     assert asked == [], "no record shard landed: nothing to scan"
+    assert checked == [], "no record shard landed: nothing to check"
     transport.beat([c], {c.name: con}, None, now=1015.0, **kw)
     assert asked == [c.name]
+    # 03 §3.6 test 1 (2026-10-20): the copy's own checks run over the part that landed, at once
+    assert checked == [(c.name, ["records/lang=en/00001.jsonl.zst"], False)]
 
 
 class _LaggingDisk:

@@ -309,6 +309,16 @@ numbers owed AFTER. Also today: a landed bundle marks its part's documents
 embedded (Perugia's card read 57 % with 93 % of the vectors held), and the
 offer says when a collection cannot be taken yet (no snapshot served).
 
+### 2026-10-20: a taken copy tests itself as its parts land (Perugia's find)
+
+gutenberg-book-editions, taken at 11:59Z, read "quarantine (reported only)"
+for 2.5 h: "roots not yet run on this peer — cleared by `louise hold check
+…`", and nothing was going to run it. Now the fetch beat runs the copy's
+own `roots`, `records` and (with a space) `chunks` over each part it
+promotes and writes the attestations (`check.attest_landed`,
+`transport._attest_landed`); the cost is the parts landed, never the
+collection. 03 §3.6 amended. `hold check` by hand stays the same check.
+
 ### 2026-10-20: the Library's remove — forget a copy, retire a build (operator's bug on Perugia)
 
 A collection taken from the offer, removed in the Library and taken again

@@ -1140,6 +1140,66 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
                   tuple(outcomes))
 
 
+def landed_checks(codex) -> tuple[str, ...]:
+    """What 03 §3.6's first test asks of a part this peer holds: `roots` and
+    `chunks` for a collection with a space, `roots` alone for an annotations
+    collection (its parts cut no chunks) — and `records` beside either, the
+    cheap check of the bytes just landed (invariant 11's `origin_hash`)."""
+    if getattr(codex, "annotates", None) is not None:
+        return ("roots", "records")
+    return ("roots", "records", "chunks")
+
+
+def part_name(path: str) -> str | None:
+    """`records/<slice>/<NNNNN>.<container suffix>` → `<slice>/<NNNNN>`, the
+    name `only_shards` takes; None for any other member file."""
+    text = str(path)
+    if not text.startswith("records/"):
+        return None
+    rel = text[len("records/"):]
+    for suffix in shard_mod.PART_SUFFIX.values():
+        if rel.endswith(suffix):
+            rel = rel[:-len(suffix)]
+            break
+    return rel if rel.count("/") == 1 else None
+
+
+def attest_landed(root, name: str, codex, snapshot: snap.Snapshot, parts: Sequence[str], *,
+                  key=None, platform_image: str | None = None, now: str | None = None,
+                  log=None) -> dict[str, Any]:
+    """A fetched copy's OWN checks over the parts that just landed (03 §3.6,
+    test 1 — amended 2026-10-20): `landed_checks` run on `parts` alone and
+    attested where this peer can sign and knows its image. Until today
+    nothing ran them after a take: a copy taken from the offer sat in
+    quarantine, "roots not yet run on this peer", until someone typed `hold
+    check` (Perugia, gutenberg-book-editions, 2.5 h). The cost is the
+    parts landed, never the collection: roots is one hash pass over each,
+    records one decode, chunks one re-cut. Returns the results per check,
+    the attestation ids written, and why nothing was written if so."""
+    import os
+    import re
+    wanted = [p for p in (part_name(x) if str(x).startswith("records/") else
+                          (str(x) if re.fullmatch(r"[^/]+/\d{5}", str(x)) else None) for x in parts) if p]
+    out: dict[str, Any] = {"parts": wanted, "results": {}, "attestations": {}, "why": ""}
+    if not wanted:
+        out["why"] = "no record part landed"
+        return out
+    report = run(root, name, codex, snapshot, seed=os.urandom(32), checks=landed_checks(codex),
+                 only_shards=wanted, log=log)
+    out["results"] = {o.check: o.result for o in report.outcomes}
+    if key is None:
+        out["why"] = "this peer has no key: checked, not attested (07 §7.8)"
+    elif platform_image is None:
+        out["why"] = ("this process does not know its image (LOUISE_PLATFORM_IMAGE): "
+                      "checked, not attested (09 §9.8)")
+    elif any(o.attestable for o in report.outcomes):
+        from datetime import datetime, timezone
+        when = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        out["attestations"] = write_attestations(root, name, report, codex, snapshot, key,
+                                                 platform_image=platform_image, now=when)
+    return out
+
+
 def attestation(outcome: Outcome, codex, snapshot: snap.Snapshot, key, *,
                 platform_image: str, now: str) -> dict[str, Any]:
     """09 §9.8's body, signed under `louise/attestation/v1`."""

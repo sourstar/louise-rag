@@ -938,7 +938,12 @@ A copy leaves quarantine when, on this peer:
    budget (04 §4.3).
 
 All five are the peer's own work, against the Codex and the origin,
-needing nobody's word. They are possible because a copy carries what
+needing nobody's word. **The first runs by itself** (*amended
+2026-10-20*): the fetch runs `roots`, `records` and `chunks` over each
+part the moment it lands and attests them, so a taken copy is tested as
+it arrives — until then nothing ran them after a take, and a copy taken
+from the offer sat in quarantine for hours, "roots not yet run on this
+peer", waiting for a `hold check` nobody had been told to type. They are possible because a copy carries what
 they need — the Codex with its calibration member, the signed snapshot
 with every part's roots, the terms — which is also why a collection
 without them cannot be created (06 §6.6) and what makes one shareable:

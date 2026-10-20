@@ -616,7 +616,14 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
         except Exception:   # noqa: BLE001 — the account is a courtesy
             pass
         out[c.name] = got
-        if on_promoted is not None and any(str(p).startswith("records/") for p in got.get("promoted", ())):
+        landed = [p for p in got.get("promoted", ()) if str(p).startswith("records/")]
+        if landed:
+            # 03 §3.6 test 1 (2026-10-20): the copy's own roots, records and
+            # chunks over the parts that just landed, attested — a taken
+            # copy otherwise sat in quarantine until someone typed `hold
+            # check` (Perugia, gutenberg-book-editions, 2.5 h)
+            _attest_landed(root, c, snap, landed, log=log)
+        if on_promoted is not None and landed:
             # 9f: a fetched collection reads its shards (app/plugins/shard.py),
             # and the shards that just landed wait for no six-hour interval
             # — the second peer held its records with an empty manifest
@@ -640,6 +647,31 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
             if log:
                 log(f"[warn:share] bundles: {type(e).__name__}: {e}"[:400])
     return out
+
+
+def _attest_landed(root: Path, c, snap, landed: list, *, log: Callable[[str], None] | None = None) -> dict | None:
+    """`check.attest_landed` for one beat's record parts, with this peer's
+    key and image where it has them; one log line; never the beat's error."""
+    from app.hold import check as chk, equivalence
+    key = None
+    try:
+        from app.bundles import keys as node_keys
+        key = node_keys.load_signing_key()
+    except Exception:   # noqa: BLE001 — no key: checked, not attested
+        key = None
+    try:
+        got = chk.attest_landed(root, c.name, c.codex, snap, landed, key=key,
+                                platform_image=equivalence.running_image())
+    except Exception as e:   # noqa: BLE001 — the parts are held; `hold check` runs the same by hand
+        if log:
+            log(f"[{c.name}] share fetch: checks over the landed part(s) failed to run — "
+                f"{type(e).__name__}: {e}"[:400])
+        return None
+    if log:
+        verdicts = ", ".join(f"{k} {v.upper()}" for k, v in got["results"].items())
+        tail = f"attested {len(got['attestations'])}" if got["attestations"] else got["why"]
+        log(f"[{c.name}] share fetch: {len(got['parts'])} part(s) landed — {verdicts}; {tail}")
+    return got
 
 
 def loop(stop, *, beat_s: float = BEAT_S, log: Callable[[str], None] = print,
