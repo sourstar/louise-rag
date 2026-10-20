@@ -80,3 +80,28 @@ def test_the_worker_routes_a_hangup_to_its_stop(monkeypatch):
     with pytest.raises(_Done):
         worker.run_forever()
     assert installed == {s: worker._handle_sigterm for s in _SIGNALS}, installed
+
+
+def test_the_worker_dumps_every_threads_stack_on_sigusr1_and_goes_on(monkeypatch):
+    """Perugia, 2026-10-20: a worker at 98 % CPU with the GPU idle could not
+    say where it was, and SIGUSR1 — the CLI's instrument — would have killed
+    it. The worker registers the same handler: every thread, chain=False
+    (chained, the default action ran after the dump and terminated the
+    process, exit 138), and a registration that fails never stops a start."""
+    import faulthandler
+    import signal
+
+    from app import worker
+
+    seen = {}
+
+    def register(sig, file=None, all_threads=True, chain=False):
+        seen.update(sig=sig, all_threads=all_threads, chain=chain)
+    monkeypatch.setattr(faulthandler, "register", register)
+    assert worker._register_stack_dump() is True
+    assert seen == {"sig": signal.SIGUSR1, "all_threads": True, "chain": False}
+
+    def refuses(*a, **k):
+        raise RuntimeError("no signal support in this thread")
+    monkeypatch.setattr(faulthandler, "register", refuses)
+    assert worker._register_stack_dump() is False, "never a reason not to start"

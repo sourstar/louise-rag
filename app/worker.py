@@ -4643,6 +4643,23 @@ def _job_runner() -> None:
         con.close()
 
 
+def _register_stack_dump() -> bool:
+    """SIGUSR1 prints every thread's stack to stderr and the worker goes on
+    — the same instrument `louise` (the CLI) carries: a worker at 98 % CPU
+    with the GPU idle could not say where it was, and a SIGUSR1 would have
+    KILLED it (Perugia, 2026-10-20; no py-spy in the image). `chain=False`:
+    chained, the default action ran after the dump and terminated the
+    process (exit 138; Perugia, 2026-10-19). Never a reason not to start."""
+    if not hasattr(signal, "SIGUSR1"):
+        return False
+    try:
+        import faulthandler
+        faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
+        return True
+    except (ValueError, OSError, AttributeError, RuntimeError):
+        return False
+
+
 def run_forever():
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)
@@ -4650,6 +4667,7 @@ def run_forever():
     # worker run from a terminal that goes away would otherwise die by the
     # default SIGHUP and leave rsync writing with nobody to stop it
     signal.signal(signal.SIGHUP, _handle_sigterm)
+    _register_stack_dump()
     from . import jobs, run_check
     all_collections = collections_mod.load_all()
     # the record of which kept statements THIS start has re-checked, which
