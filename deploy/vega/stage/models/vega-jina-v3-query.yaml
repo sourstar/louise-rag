@@ -1,0 +1,31 @@
+# vega-jina-v3-query — the wikidata collection's QUERY encoder: the same weights folder as
+# vega-jina-v3 with the retrieval.query adapter (an asymmetric space, 02 §2.4: `space.query.encoder`
+# is the same weights digest and another engine, since the adapter is a load option and so part of
+# the engine, not of the space). The task prepends the adapter's own instruction ("Represent the
+# query for retrieving evidence documents: "), so the Codex's `space.query.instruction` is null —
+# Louise adds nothing. Width 512, normalised, context_size the model's 8,192 (see vega-jina-v3.yaml
+# for why not ctx). NOT pinned: a query encoder answers searches and embeds no corpus.
+# JSON, which is YAML.
+{
+  "name": "vega-jina-v3-query",
+  "backend": "vega-louise-python",
+  "embeddings": true,
+  "pinned": false,
+  "context_size": 8192,
+  "threads": 6,
+  "gpu_layers": 0,
+  "parameters": {
+    "model": "weights/jina-embeddings-v3",
+    "batch": 1,
+    "seed": 0
+  },
+  "options": [
+    "task:jina-v3",
+    "device:xpu",
+    "adapter:retrieval.query",
+    "dim:512"
+  ],
+  "env": {
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  }
+}

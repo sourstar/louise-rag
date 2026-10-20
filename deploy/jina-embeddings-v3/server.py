@@ -41,6 +41,12 @@ from pathlib import Path
 WIDTHS = (32, 64, 128, 256, 512, 768, 1024)
 #: what the backend may keep reserved between texts (as DAR-legal-it's)
 RELEASE_ABOVE = 3 << 30
+#: Invariant 12 (ENCODER DETERMINISM) for torch: its controls are CALLS, not a
+#: vendor's env var, so the MODEL's env switches them on here and the stated run
+#: carries the switch (docs/notes/approved-encoders.md, "Bitwise reproducibility,
+#: by vendor": torch is measured first, with this unset, then with it set). Unset,
+#: torch runs with its defaults — the baseline the measurement compares against.
+DETERMINISM_ENV = "LOUISE_TORCH_DETERMINISTIC"
 
 
 def hub_cache(model_dir: str) -> str:
@@ -71,6 +77,21 @@ def release(torch_mod, device: str, above: int = RELEASE_ABOVE) -> bool:
         return True
     except Exception:   # noqa: BLE001 — memory housekeeping never fails a text
         return False
+
+
+def determinism(torch_mod, environ=None) -> bool:
+    """torch's deterministic algorithms and oneDNN's deterministic primitives, when
+    the model's env asks. An op with no deterministic kernel then FAILS the text
+    rather than answering from one that may not reproduce (warn_only stays False):
+    the measurement sees it, and a vector nobody can reproduce is never written."""
+    environ = os.environ if environ is None else environ
+    if environ.get(DETERMINISM_ENV, "").strip().lower() not in ("1", "true", "yes"):
+        return False
+    torch_mod.use_deterministic_algorithms(True)
+    mkldnn = getattr(getattr(torch_mod, "backends", None), "mkldnn", None)
+    if mkldnn is not None and hasattr(mkldnn, "deterministic"):
+        mkldnn.deterministic = True
+    return True
 
 
 def sdpa_forward(self, qkv, causal=None, key_padding_mask=None):
@@ -109,6 +130,7 @@ def build_encoder(model_dir: str, device: str, adapter: str, dim: int, max_token
     import torch
     from transformers import AutoModel
 
+    determinism(torch)
     model = AutoModel.from_pretrained(model_dir, trust_remote_code=True).to(device).eval()
     use_sdpa(model)
     adapters = getattr(model.config, "lora_adaptations", None) or ()

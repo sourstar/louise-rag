@@ -110,6 +110,7 @@ cannot be a cross-peer property.
 | Intel oneDNN | yes | "on a given platform" | `set_deterministic` — API only, no env var |
 | Intel oneMKL | CNR | fixed thread count; GPU since 2024.1, BLAS-3 under OpenMP offload | `MKL_CBWR` |
 | CPU (llama.cpp) | none offered | — | — |
+| torch (`louise-python`: XPU today, CUDA elsewhere) | by calls, not a vendor env var | the same device and torch build; **not yet measured bit-exact on any model here** — DAR-legal-it was 1/4 bit-identical against itself on 2026-10-17 (max abs 8.2e-8) | `torch.use_deterministic_algorithms(True)` + `torch.backends.mkldnn.deterministic` (oneDNN's `set_deterministic`), switched on by the MODEL's env `LOUISE_TORCH_DETERMINISTIC=1` (deploy/jina-embeddings-v3/server.py) so the stated run carries it; CUDA adds `CUBLAS_WORKSPACE_CONFIG=:4096:8`. Measured first with it unset, then set — louise-python-rebuild.md §4 |
 
 Notes:
 

@@ -920,3 +920,23 @@ def test_the_cross_device_export_is_what_the_check_read_in_its_order():
     r.embed(["text a", ("Title", "Abstract")])
     assert r.export() == [{"chunk": "a", "input": "text a", "stored": [1.0, 0.0]},
                           {"chunk": "p", "input": ["Title", "Abstract"], "stored": [0.0, 1.0]}]
+
+
+def test_jina_v3_switches_torch_determinism_on_from_the_models_env_only():
+    """Invariant 12 for torch: the controls are calls, so the MODEL's env switches
+    them on (and the stated run carries the switch); unset, torch's defaults —
+    the baseline the measurement compares against (docs/notes/louise-python-rebuild.md §4)."""
+    jina = _exec("jina_v3_determinism", ROOT / "deploy" / "jina-embeddings-v3" / "server.py")
+    calls: list = []
+    fake = SimpleNamespace(use_deterministic_algorithms=lambda flag: calls.append(flag),
+                           backends=SimpleNamespace(mkldnn=SimpleNamespace(deterministic=False)))
+    assert jina.determinism(fake, {}) is False
+    assert jina.determinism(fake, {"LOUISE_TORCH_DETERMINISTIC": "0"}) is False
+    assert calls == [] and fake.backends.mkldnn.deterministic is False
+    assert jina.determinism(fake, {jina.DETERMINISM_ENV: "1"}) is True
+    assert calls == [True] and fake.backends.mkldnn.deterministic is True
+    # a torch build without oneDNN's flag: the algorithms call alone, no error
+    bare = SimpleNamespace(use_deterministic_algorithms=lambda flag: calls.append(flag),
+                           backends=SimpleNamespace())
+    assert jina.determinism(bare, {jina.DETERMINISM_ENV: "true"}) is True
+    assert calls == [True, True]

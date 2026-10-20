@@ -1,0 +1,37 @@
+# vega-jina-v3 — the wikidata collection's DOCUMENT encoder (docs/notes/wikidata-build-plan.md
+# §2 "The space"): jinaai/jina-embeddings-v3 at ab036b0 with its remote code bd55a5e, the folder
+# deploy/jina-embeddings-v3/fetch.py writes, on torch XPU through louise-python's `jina-v3` task
+# (deploy/jina-embeddings-v3/server.py), behind VeGa. Adapter retrieval.passage, Matryoshka
+# width 512 (Wikimedia's vectors), the vector normalised by the task (layout FINAL).
+# context_size is the MODEL's 8,192 and not the space's ctx of 1,024: the task tokenizes the
+# adapter's instruction ("Represent the document for retrieval: ") in front of the text and
+# truncates the pair at context_size, so a 1,024-token chunk under a context_size of 1,024 would
+# lose its tail; the platform's token cut (`cut: tokens`, Codex version 8) already holds every
+# input to ctx. NOT pinned until the collection embeds with it (then `pinned: true`, as
+# vega-dar-legal-it). The weights: /mnt/ssd5/apps/models/jina-embeddings-v3, under the one
+# read-only weights mount. env: NEO_CACHE_DIR as every XPU model's; LOUISE_TORCH_DETERMINISTIC
+# is added ONLY if the invariant-12 measurement needs it (docs/notes/louise-python-rebuild.md §5).
+# JSON, which is YAML.
+{
+  "name": "vega-jina-v3",
+  "backend": "vega-louise-python",
+  "embeddings": true,
+  "pinned": false,
+  "context_size": 8192,
+  "threads": 6,
+  "gpu_layers": 0,
+  "parameters": {
+    "model": "weights/jina-embeddings-v3",
+    "batch": 1,
+    "seed": 0
+  },
+  "options": [
+    "task:jina-v3",
+    "device:xpu",
+    "adapter:retrieval.passage",
+    "dim:512"
+  ],
+  "env": {
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  }
+}

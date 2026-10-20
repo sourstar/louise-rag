@@ -284,6 +284,22 @@ recorded in the report, not a refusal (03 §3.5 amended;
 structural T0 failure still refuse. The four parts re-ladder at the
 publisher's next pass after the deploy.
 
+### 2026-10-20: jina-v3's folder, its YAMLs and the rebuild runbook
+
+München reported the tokenizer's sha256 (`f59925fc…`) and that the other
+three wikidata values wait on a `louise-python` rebuild (the live tree has
+no `jina-v3` task) and on a defined weights folder. Written:
+deploy/jina-embeddings-v3/fetch.py (the folder — weights at ab036b0, remote
+code at bd55a5e as an offline Hub cache of REGULAR files, every file
+checked against the commit's tree; prints the weights digest),
+deploy/vega/stage/models/vega-jina-v3{,-query}.yaml (context_size the
+model's 8,192: the task prepends the adapter's instruction before
+truncating), the torch determinism hook `LOUISE_TORCH_DETERMINISTIC` in
+the task's server (invariant 12: measured first, unset then set), and
+[louise-python-rebuild.md](louise-python-rebuild.md), the runbook for the
+heavy window: build, install beside, gate per collection, fall back by
+YAML, then jina-v3's bit-exactness before any collection uses it.
+
 ### 2026-10-13: JuriFindIT acknowledged — the operator, for the legal pilot
 
 The operator acknowledged the JuriFindIT question set's licence,

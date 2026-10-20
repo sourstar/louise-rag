@@ -170,7 +170,7 @@ only after it exists (memory: keys-registered-only).
    minted. The recipe is a TEMPLATE, docs/notes/wikidata-recipe.toml, with
    four values only the node can give (marked <<...>>): the tokenizer's
    sha256, the weights digest, the stated run, `work.tokens`.
-6. The jina-v3 task installed on the node; the calibration set embedded;
+6. The jina-v3 task installed on the node (2026-10-20: the weights folder by deploy/jina-embeddings-v3/fetch.py — the five weight files and the ten remote-code modules as regular files, checked against the commits' trees and the layer's tokenizer sha256, the digest printed; the YAMLs deploy/vega/stage/models/vega-jina-v3*.yaml; the backend rebuild by docs/notes/louise-python-rebuild.md, München's heavy window; the tokenizer's sha256 is in: `f59925fc…`); the calibration set embedded;
    determinism measured; `hold collection create wikidata`; the first
    fetch (~100 GB to tank) and build (the pass over 1.5 TB of JSON:
    measured, resumable at entity granularity).
