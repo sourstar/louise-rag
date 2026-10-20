@@ -125,13 +125,23 @@ def build_encoder(model_dir: str, device: str, adapter: str, dim: int, max_token
     """(encode(text) -> unit vector of `dim`, dim)."""
     if dim not in WIDTHS:
         raise ValueError(f"width {dim}: one of {WIDTHS}")
-    os.environ["HF_HUB_CACHE"] = hub_cache(model_dir)
+    cache = hub_cache(model_dir)
+    os.environ["HF_HUB_CACHE"] = cache
     os.environ["HF_HUB_OFFLINE"] = os.environ["TRANSFORMERS_OFFLINE"] = "1"
     import torch
     from transformers import AutoModel
 
     determinism(torch)
-    model = AutoModel.from_pretrained(model_dir, trust_remote_code=True).to(device).eval()
+    # `cache_dir` EXPLICITLY: LocalAI starts every backend with TRANSFORMERS_CACHE,
+    # HF_HOME and HUGGINGFACE_HUB_CACHE set to its models directory, and
+    # transformers' `cached_file` takes TRANSFORMERS_CACHE over HF_HUB_CACHE —
+    # so the env above alone sent the remote-code lookup to /models and, offline,
+    # "couldn't find them in the cached files" (München, 2026-10-20, under
+    # LocalAI; the same load outside LocalAI worked). A YAML env would have put
+    # TRANSFORMERS_CACHE into the stated run and left the defect for every
+    # other LocalAI.
+    model = AutoModel.from_pretrained(model_dir, trust_remote_code=True,
+                                      cache_dir=cache).to(device).eval()
     use_sdpa(model)
     adapters = getattr(model.config, "lora_adaptations", None) or ()
     if adapter not in adapters:

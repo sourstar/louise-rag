@@ -15,6 +15,7 @@ import importlib.util
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -730,14 +731,16 @@ def test_each_staged_model_on_louise_python_is_a_load_its_task_accepts():
         text = "\n".join(l for l in path.read_text(encoding="utf-8").splitlines()
                          if not l.lstrip().startswith("#"))
         body = json.loads(text)
-        if body["backend"] not in ("louise-python", "vega-louise-python"):
+        # the tree is installed BESIDE its predecessor under a dated name, and a
+        # rebuild moves the YAML's backend line to it (louise-python-rebuild.md §2)
+        if not re.fullmatch(r"(vega-)?louise-python(-\d{8}[a-z]?)?", body["backend"]):
             assert not body["backend"].startswith(("louise-", "vega-louise-")), \
                 f"{path.name}: on a retired per-model backend"
             continue
         task, rest = python_backend.split_task(body["options"])
         lb.options(rest, tasks[task].KNOWN, tasks[task].DEFAULTS)
         seen.add(task)
-    assert seen >= set(tasks) - {"jina-v3"}, "each live task serves a model (jina-v3: none yet)"
+    assert seen == set(tasks), "each live task serves a staged model"
 
 
 # ---- jina-v3: wikidata's encoder, a louise-python task of its own ------------------------
@@ -940,3 +943,63 @@ def test_jina_v3_switches_torch_determinism_on_from_the_models_env_only():
                            backends=SimpleNamespace())
     assert jina.determinism(bare, {jina.DETERMINISM_ENV: "true"}) is True
     assert calls == [True, True]
+
+
+def test_jina_v3_loads_the_remote_code_from_the_folders_cache_whatever_the_env_says(tmp_path, monkeypatch):
+    """München, 2026-10-20: LocalAI starts every backend with TRANSFORMERS_CACHE,
+    HF_HOME and HUGGINGFACE_HUB_CACHE = /models, and transformers' `cached_file`
+    takes TRANSFORMERS_CACHE over the HF_HUB_CACHE the server sets — so the
+    remote code under `<weights>/hf-cache` was never found and, offline, the
+    load failed. `cache_dir` is passed EXPLICITLY, and the env LocalAI sets
+    is left as it is (it would otherwise enter the stated run)."""
+    import types
+    jina = _exec("jina_v3_cache_dir", ROOT / "deploy" / "jina-embeddings-v3" / "server.py")
+    (tmp_path / "hf-cache").mkdir()
+    monkeypatch.setenv("TRANSFORMERS_CACHE", "/models")
+    monkeypatch.setenv("HF_HOME", "/models")
+    monkeypatch.setenv("HUGGINGFACE_HUB_CACHE", "/models")
+    seen: dict = {}
+
+    class Attn:                                   # what `use_sdpa` looks for, by class name
+        causal, softmax_scale = False, 1.0
+    Attn.__name__ = "SelfAttention"
+
+    class Model:
+        config = SimpleNamespace(lora_adaptations=["retrieval.query", "retrieval.passage"])
+
+        def to(self, device):
+            seen["device"] = device
+            return self
+
+        def eval(self):
+            return self
+
+        def modules(self):
+            return [Attn()]
+
+        def encode(self, texts, **kw):
+            seen["encode"] = kw
+            return [[3.0, 4.0] + [0.0] * (kw["truncate_dim"] - 2)]
+
+    def from_pretrained(path, **kw):
+        seen["path"], seen["kw"] = path, kw
+        return Model()
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.no_grad = lambda: __import__("contextlib").nullcontext()
+    fake_torch.use_deterministic_algorithms = lambda flag: seen.setdefault("det", []).append(flag)
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.AutoModel = SimpleNamespace(from_pretrained=from_pretrained)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+
+    encode, dim = jina.build_encoder(str(tmp_path), "cpu", "retrieval.passage", 512, 8192)
+    assert seen["path"] == str(tmp_path)
+    assert seen["kw"] == {"trust_remote_code": True, "cache_dir": str(tmp_path / "hf-cache")}
+    assert os.environ["TRANSFORMERS_CACHE"] == "/models", "LocalAI's env is left as it is"
+    assert os.environ["HF_HUB_CACHE"] == str(tmp_path / "hf-cache") and os.environ["HF_HUB_OFFLINE"] == "1"
+    assert dim == 512 and encode("a text")[:2] == [0.6, 0.8]
+    assert seen["encode"] == {"task": "retrieval.passage", "truncate_dim": 512, "max_length": 8192}
+    assert "det" not in seen, "determinism stays off unless the model's env asks"
+    with pytest.raises(ValueError, match="adapter"):
+        jina.build_encoder(str(tmp_path), "cpu", "classification", 512, 8192)

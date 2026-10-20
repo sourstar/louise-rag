@@ -1,3 +1,6 @@
+# backend: the louise-python tree installed BESIDE its predecessor under a dated name
+# (docs/notes/louise-python-rebuild.md §2.3–2.4); -20261020b is the rebuild with the jina-v3
+# cache_dir fix, live 2026-10-20. A rebuild changes this line and nothing else.
 # vega-jina-v3-query — the wikidata collection's QUERY encoder: the same weights folder as
 # vega-jina-v3 with the retrieval.query adapter (an asymmetric space, 02 §2.4: `space.query.encoder`
 # is the same weights digest and another engine, since the adapter is a load option and so part of
@@ -8,7 +11,7 @@
 # JSON, which is YAML.
 {
   "name": "vega-jina-v3-query",
-  "backend": "vega-louise-python",
+  "backend": "vega-louise-python-20261020b",
   "embeddings": true,
   "pinned": false,
   "context_size": 8192,

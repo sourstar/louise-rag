@@ -82,7 +82,10 @@ and the switch is one YAML line per model with a backup beside it
    --model <m>` for each of the live models (the run id, the engine's
    `image`), and the receipts service's tree for that image
    (`GET /vega/trees/<image>`, saved to a file) — `hold embedder tree-diff
-   BEFORE AFTER` names what moved if a gate fails.
+   BEFORE AFTER` names what moved if a gate fails. The node's louise-vega
+   (`vega:bb9bf61`) has no `/vega/trees` route yet (404): a per-file sha256
+   list of each installed tree (`find … -type f | xargs sha256sum`) is the
+   record instead, and `diff` of the two lists the diff.
 
 ## 2. In the window
 
@@ -104,7 +107,10 @@ Order matters; each step waits for the one before.
    (or `louise-python-20261020` for the two non-VeGa models), with a
    `.bak-20261020` copy beside each file and the line-count check
    backends-20261017.sh does. Nothing else in the YAMLs moves.
-5. **The gate, per collection**: `louise hold embedder check normattiva`,
+5. **The gate, per collection**: `louise node pause <collection>` FIRST
+   for each — `hold embedder check` takes the collection's write lock, and
+   `node pause` alone (step 1) keeps the locks held (München, 2026-10-20) —
+   then `louise hold embedder check normattiva`,
    `louise hold embedder check pubmed-v8` — each loads its model on the new
    tree, states the run, and must print PASS 16/16 with worst 1.000000 as
    on 2026-10-17 (a worst below 1 on the same code is itself a finding:
@@ -165,6 +171,18 @@ is assumed:
    recipe template asks.
 
 ## 5. What to report
+
+**First run, 2026-10-20 06:59–07:07Z (München), tree `louise-python-20261020`:**
+node paused 8 min, mode restored; installed tree = the image's files
+(40,257); engine image `9eb8807c…` → `a05518c6…`; normattiva PASS 16/16
+worst 1.000000, run `d92bb5ad…` (was `f849f99d…`), 10,846 tok/s; pubmed-v8
+document PASS 16/16 worst 1.000000, run `972ee3d7…` (was `5c3df300…`),
+18,776 tok/s, query run `bf2224e3…` unchanged; MADLAD 42/42 and the
+reranker identical before×2/after×2. Nothing re-embedded (RULE 1 held).
+jina-v3 FAILED TO LOAD on that tree: transformers took LocalAI's
+TRANSFORMERS_CACHE over the HF_HUB_CACHE the server set and looked for
+the remote code in /models (fixed: `cache_dir=` passed explicitly, tree
+`-20261020b`).
 
 | item | value |
 |---|---|

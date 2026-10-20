@@ -1,3 +1,6 @@
+# backend: the louise-python tree installed BESIDE its predecessor under a dated name
+# (docs/notes/louise-python-rebuild.md §2.3–2.4); -20261020b is the rebuild with the jina-v3
+# cache_dir fix, live 2026-10-20. A rebuild changes this line and nothing else.
 # louise-rerank-medcpt — staged in the LocalAI app (docs/notes/vega.md §12), beside
 # the live RAGE; no Louise collection uses it yet. MedCPT's cross-encoder on
 # OpenVINO, `Rerank` at /v1/rerank (Jina's shape), an ordinary model (no VeGa).
@@ -7,7 +10,7 @@
 # JSON, which is YAML.
 {
   "name": "louise-rerank-medcpt",
-  "backend": "louise-python",
+  "backend": "louise-python-20261020b",
   "reranking": true,
   "context_size": 512,
   "threads": 6,
