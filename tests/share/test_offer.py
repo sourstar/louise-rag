@@ -9,7 +9,7 @@ from app.hold import envelope as env
 from app.share import catalogue, messages, offer, peers
 from tests.deposit.test_deposit_identity import node  # noqa: F401
 from tests.hold.conftest import pubmed
-from tests.share.test_messages import PEER, PEER_KEY
+from tests.share.test_messages import PEER_KEY
 
 OTHER = env.key_text(__import__("nacl").signing.SigningKey(b"\x09" * 32).verify_key)
 
