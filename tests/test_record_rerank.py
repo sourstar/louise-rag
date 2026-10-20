@@ -164,3 +164,34 @@ def test_the_rerank_order_replaces_the_fused_one_or_fused_with_it_by_reciprocal_
     assert fused[:2] == [1, 0] or fused.index(0) < retrieval._rerank_order(scores, fuse=False).index(0)
     assert sorted(fused) == list(range(6)) and fused[-1] == 5
     assert retrieval.RERANK_FUSE is False, "not switched until measured"
+
+
+def test_the_catalogues_first_record_keeps_the_first_place_after_the_reranker(monkeypatch):
+    """05 §5.6 (amended 2026-10-21, query campaign run 4): a biography whose
+    passage names "Moby Dick" outscores the novel's own pages; the record the
+    catalogue leg ranks first — the novel, by its title — stays first.
+    Measured on 40 titles: MRR 0.578 → 0.782 after the reranker."""
+    novel = h("gutenberg:2701", 3, "dense", "Call me Ishmael. Some years ago")
+    novel[retrieval.MATCHED] = [dict(novel)]
+    novel[retrieval.HEAD] = "Moby Dick; Or, The Whale — Melville, Herman"
+    novel["leg_ranks"] = {"vector": 4, "catalog": 1}
+    life = h("gutenberg:78016", 9, "dense", "Moby Dick, his whale book, was written at Arrowhead")
+    life[retrieval.MATCHED] = [dict(life)]
+    life[retrieval.HEAD] = "Herman Melville — Weaver, Raymond"
+    life["leg_ranks"] = {"vector": 1}
+    def prefers_the_biography(url, json=None, timeout=None, headers=None, **_kw):   # noqa: A002
+        rows = [{"index": i, "relevance_score": 0.9 if "Arrowhead" in d else 0.1}
+                for i, d in enumerate(json["documents"])]
+        return httpx.Response(200, request=httpx.Request("POST", url), json={"results": rows})
+    monkeypatch.setattr(retrieval.httpc, "post", prefers_the_biography)
+    ranked, ok = retrieval._rerank_list("Moby Dick", [life, novel], RECIPE, 8.0, 50)
+    assert ok and [r["book_id"] for r in ranked] == [2701, 78016]
+    assert ranked[1]["rerank_score"] > ranked[0]["rerank_score"], "the reranker preferred the biography"
+    assert retrieval.CATALOG_FIRST is True
+
+
+def test_without_a_catalogue_first_record_the_reranker_order_stands():
+    head = [{"leg_ranks": {"vector": 1}}, {"leg_ranks": {"text": 2, "catalog": 3}}, {}]
+    assert retrieval._catalog_first([2, 0, 1], head) == [2, 0, 1], "rank 3 in the catalogue moves nothing"
+    head[1]["leg_ranks"]["catalog"] = 1
+    assert retrieval._catalog_first([2, 0, 1], head) == [1, 2, 0]

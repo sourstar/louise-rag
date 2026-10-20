@@ -285,6 +285,24 @@ def _rerank_budget_s(depth: int = RERANK_TOP_N) -> float:
 RERANK_FUSE = False
 
 
+#: 05 §5.6 (amended 2026-10-21; query campaign run 4): after the reranker, the
+#: record the CATALOGUE leg ranks first — whose title, creators or subjects
+#: hold every word of the query best — keeps the first place. The reranker
+#: judges passages, and a biography's passage that names "Moby Dick" beats
+#: the novel's own pages. Measured post-rerank on the API's path with a
+#: bit-exact reranker, 40 labelled titles (tools/measure/rerank_variants.py):
+#: MRR 0.578 → 0.782, R@1 0.425 → 0.700, R@10 0.925 → 0.975. RERANK_FUSE gave
+#: 0.720 / 0.575 / 1.000 and missed the operator's bar (MRR 0.738). A query
+#: with no catalogue hit — every descriptive one measured — is untouched.
+CATALOG_FIRST = True
+
+
+def _catalog_first(order: list[int], head: list[dict]) -> list[int]:
+    """`order` with the catalogue leg's rank-1 record of `head` moved first."""
+    first = next((i for i in order if (head[i].get("leg_ranks") or {}).get(CATALOG_SOURCE) == 1), None)
+    return order if first is None else [first] + [i for i in order if i != first]
+
+
 def _rerank_order(scores: list[float], *, fuse: bool) -> list[int]:
     """The order of `scores`' candidates (each index its position in the
     fused order): by the reranker's score, best first — or, `fuse`, by
@@ -376,6 +394,8 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
     ranked = []
     order = _rerank_order([best[i][0] for i in range(len(head))], fuse=RERANK_FUSE) \
         if set(best) == set(range(len(head))) else sorted(best, key=lambda i: (-best[i][0], i))
+    if CATALOG_FIRST:
+        order = _catalog_first(order, head)
     for i in order:
         score, c = best[i]
         h = dict(head[i])

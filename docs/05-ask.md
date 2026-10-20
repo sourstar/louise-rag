@@ -604,6 +604,22 @@ as it grows with the depth. The reranker's modality must be
 the collection's (`modality` in the Codex, §2.1): a text cross-encoder
 scoring DNA is a category error, refused at boot, not a quality knob.
 
+**The catalogue's first record keeps the first place** (*amended
+2026-10-21*, docs/notes/query-campaign.md run 4). After the reranker's
+order, the record the catalogue leg (§5.1) ranks first moves to position
+1, and nothing else moves. The reranker judges passages: a biography's
+passage that names "Moby Dick" beat the novel's own pages, and once the
+instructed vector leg brought books about a work among the candidates,
+titles fell from MRR 0.738 before the reranker to 0.578 after it.
+Measured post-rerank on the API's path with a bit-exact reranker, 40
+labelled titles:
+- the catalogue's first record first: MRR **0.782**, R@1 0.700, R@10 0.975;
+- the reranker's order fused with the fused order by reciprocal rank: 0.720,
+  0.575, 1.000;
+- the reranker's order alone: 0.578, 0.425, 0.925.
+A query whose catalogue leg ranks nothing, every descriptive query
+measured, keeps the reranker's order.
+
 If the reranker is unreachable, refuses, or exceeds the node's latency
 budget (07 §7.8) — set for the default depth of 50, and given to a
 deeper list in proportion, so 300 candidates have six times as long —
