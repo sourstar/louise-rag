@@ -517,7 +517,7 @@ thousand chunks whose production took about half a GPU-hour.
 
 | tier | check | cost | catches |
 |---|---|---|---|
-| **T0 algebraic** | dimension compared four ways — bundle header, vector column width, the Codex's `space.dim`, the local table — and dtype match the space; unit norm; no NaN, no duplicates; for every record, the bundle's set of chunk ids equals the set `chunks` derives locally, or the record is refused whole; the bundle's mean vector has cosine ≥ 0.5 to the envelope's mean, and the 2nd and 98th PERCENTILES of the per-dimension standard-deviation ratios lie within four tenths and twice the envelope's (§3.3) — a percentile and not an extremum, for the reason below, and both literals measured rather than guessed | tens of ms, CPU | missing normalisation, random or foreign vectors, a wrong chunk geometry; sanity only, never a security control |
+| **T0 algebraic** | dimension compared four ways — bundle header, vector column width, the Codex's `space.dim`, the local table — and dtype match the space; unit norm; no NaN, no duplicates; for every record, the bundle's set of chunk ids equals the set `chunks` derives locally, or the record is refused whole; the bundle's mean vector has cosine ≥ 0.5 to the envelope's mean, and the 2nd and 98th PERCENTILES of the per-dimension standard-deviation ratios lie within four tenths and twice the envelope's (§3.3) — a percentile and not an extremum, for the reason below, and both literals measured rather than guessed; a bundle OUTSIDE the envelope whose T2 passes is admitted with the envelope's verdict recorded as a WARNING (below, 2026-10-20) | tens of ms, CPU | missing normalisation, random or foreign vectors, a wrong chunk geometry; sanity only, never a security control |
 | **T1 geometric** | each vector's cosine profile against the calibration vectors, recorded as evidence; sampled (vector, probe, probe) triples must be geometrically realisable, which real vectors cannot fail and mis-decoded bytes do; and, for `fixed` layers, consecutive chunks overlap by construction, so their cosine must sit in a band measured on the local text — the 1st to 99th percentile of the same statistic over the vectors this peer already holds for that layer, not run until it holds a thousand such pairs or when the bundle has fewer than eight adjacent pairs; for `cdc`, `abstract` and `verbatim` layers the band does not exist and is not run | under a second, CPU | wrong dtype or shape, shuffled or perturbed vectors |
 | **T2 challenge** | golden (text, vector) pairs — the calibration set's first sixteen texts and their reference vectors — re-embedded by the producer into the bundle header (09 §9.7); passes on the calibration quorum; no age rule | none for the importer | misconfiguration — proof of a correct oven, not of each loaf; not a security control |
 | **T3 spot recompute** | sixteen chunks chosen by the importer's private randomness, re-embedded with the importer's own compliant encoder; fails when fewer than twelve reach `tolerance` or the median is below it — the calibration quorum reused. In a DERIVED space (02 §2.7) the importer embeds with the SOURCE space's encoder and applies the declared derivation before comparing, because a derived space may have no encoder that emits it natively — a truncation at a width the model never publishes — and re-embedding is then impossible by definition | a few seconds, GPU — under one percent of production | bulk substitution: a wrong model, a wrong quantisation, a bundle mostly garbage |
@@ -686,6 +686,27 @@ will.
 The band admits honest work; it is not a wall against dishonest work. The
 first honest bundle it refuses is evidence to re-measure rather than to
 widen.
+
+**T2 is the envelope's tie-breaker (operator, 2026-10-20).** The first
+honest bundles the band refused arrived on 2026-10-20: four of the node's
+own `gutenberg` parts, built by its validated run, at a 2nd percentile
+of 0.289 to 0.392 and one mean-vector cosine of 0.4981 — HOMOGENEOUS
+parts, fifty books of one kind in one language under one chunker, which
+spread narrower than 512 probe texts drawn across everything and lean
+away from the probes' mean — while T2's challenge rows passed on every
+one. The literals above were measured over 300 chunks drawn across whole
+corpora, never over one part, and a part is a smaller, narrower sample.
+So a bundle outside the envelope whose T2 PASSES is admitted: T0 is
+recorded as passed with the envelope's verdict as its warning
+(`Tier.warning`, `stats.envelope = "warning"`), the importer's log says
+what it saw, and the attestation's vocabulary (09 §9.7: pass, fail,
+skipped) does not change. T2 SKIPPED is not T2 passed — a peer holding no
+calibration member has no tie-breaker and the envelope's verdict stands —
+and a structural failure (duplicates, width, NaN, norm) is never
+overruled and still ends the ladder. The literals are not widened: they
+remain the measured band for a whole-corpus sample, and the part-level
+distribution over the node's accepted bundles is the measurement that
+would move them (docs/notes/p2p-review-open-issues.md §16).
 
 A stricter test than a percentile exists and is worth naming, since a
 peer may already have it: one aggregate decision over the whole

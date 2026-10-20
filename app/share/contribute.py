@@ -359,6 +359,11 @@ def _bundle_shard(root: Path, name: str, codex, snapshot: sn.Snapshot, shard: sn
         out["bundles"].append(entry)
         if report.ok:
             out["accepted"].append(b["bundle_id"])
+            for tier, warning in report.warnings:
+                # admitted, and the log says what the overruled clause saw
+                # (03 §3.5: T2 is the envelope's tie-breaker, 2026-10-20)
+                say(f"[{name}] share contribute: {sid}: bundle {b['bundle_id'][:23]}… "
+                    f"WARNING at {tier}: {warning}")
             if serving:
                 announce(node_con, codex, snapshot, {**header, "bundle_id": b["bundle_id"]}, member,
                          key=key, own_key=own_key, now=at)

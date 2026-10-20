@@ -271,6 +271,19 @@ architecture session's tests and failed at import on the node's image
   tests/test_invariant_guards.py now refuses a multipart route unless
   the package is declared).
 
+### 2026-10-20: T2 is T0's envelope tie-breaker
+
+Four of the node's own `gutenberg` parts (lang=en/00043 twice, 00219,
+00220) were refused by T0's envelope in the night of 2026-10-19/20 —
+homogeneous parts, 2nd percentile 0.289–0.392, one cosine 0.4981 — with
+T2 passing on every one
+([p2p-review-open-issues.md](p2p-review-open-issues.md) §16). Operator
+decision: an envelope failure on a bundle whose T2 passes is a WARNING
+recorded in the report, not a refusal (03 §3.5 amended;
+`app/hold/admit.py`). The literals are not widened; T2 SKIPPED and a
+structural T0 failure still refuse. The four parts re-ladder at the
+publisher's next pass after the deploy.
+
 ### 2026-10-13: JuriFindIT acknowledged — the operator, for the legal pilot
 
 The operator acknowledged the JuriFindIT question set's licence,

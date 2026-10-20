@@ -763,7 +763,7 @@ spinning 2.8 cores was never unloaded — the idle test is now the last
 request recorded by the embeddings client (`encoder_use`), the CPU
 signal gone (pitfall 17's addendum).
 
-### 16. T0's envelope literals refuse homogeneous parts of a validated engine (München, 2026-10-20)
+### 16. T0's envelope literals refuse homogeneous parts of a validated engine — DECIDED: T2 is the tie-breaker (München, 2026-10-20)
 
 Four of the node's own bundles, built by its validated run of
 vega-qwen3-embedding-4b over gutenberg parts in the night of 2026-10-19/20,
@@ -812,3 +812,20 @@ in the order I would try them:
 Until decided, the four parts are the node's open parts that no leader
 can close; the cascade hands them on and every peer refuses them the
 same way.
+
+**Decided (operator, 2026-10-20): option 3.** An envelope failure on a
+bundle whose T2 passes is a WARNING in the report, not a refusal: T0 is
+recorded as passed with the envelope's reasons as `Tier.warning`
+(`stats.envelope = "warning"`, `Report.warnings`), the ladder goes on to
+T3, and the share log says what the overruled clause saw on both the own
+and the fetched path. T2 SKIPPED (no calibration member held) or FAIL
+leaves the refusal, and a structural T0 failure still ends the ladder —
+only the envelope half is offered to T2 (`app/hold/admit.py`
+`envelope_only`, `overruled`, `judge`; tests/hold/test_admit.py, four
+cases). The coverage row and the attestation still say `T0: pass`: 09
+§9.7's vocabulary did not change, so no wire format moved. 03 §3.5
+amended (T0 row and "T2 is the envelope's tie-breaker"). The literals
+are NOT widened; option 1 — the part-level distribution over the node's
+~1,450 accepted bundles — stays the measurement that would move them.
+The node's four parts re-ladder at the publisher's next pass after the
+deploy and get coverage. CLOSED.

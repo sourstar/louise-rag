@@ -236,6 +236,11 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
         say(f"[{name}] share: bundle {bundle_id[:23]}… from {report.producer[:23]}… refused at "
             f"{failed}; set aside")
         return {"outcome": "refused", "bundle_id": bundle_id, "why": f"refused at {failed}"}
+    for tier, warning in report.warnings:
+        # admitted, and the log says what the overruled clause saw (03 §3.5:
+        # T2 is the envelope's tie-breaker, 2026-10-20)
+        say(f"[{name}] share: bundle {bundle_id[:23]}… from {report.producer[:23]}… "
+            f"WARNING at {tier}: {warning}")
     local = None
     if write is None or vectors_for is None:
         local = rec.local_collection(root, name, codex)

@@ -70,10 +70,41 @@ class Tier:
     verdict: str
     why: str
     stats: dict[str, Any] = field(default_factory=dict)
+    #: A clause that failed and was OVERRULED by a later tier (T0's
+    #: envelope by T2, below): the tier PASSES and this says what it saw.
+    warning: str = ""
 
     @property
     def failed(self) -> bool:
         return self.verdict == FAIL
+
+
+def envelope_only(t: Tier) -> bool:
+    """Did T0 fail on nothing but the envelope? The structural half —
+    duplicates, shape, NaN, norm — returns before any statistic is taken
+    and carries no `envelope` stat; only the envelope half marks one."""
+    return t.tier == T0 and t.failed and t.stats.get("envelope") == "outside"
+
+
+def overruled(t0: Tier, t2: Tier) -> Tier:
+    """T2 is the envelope's tie-breaker (operator, 2026-10-20; 03 §3.5).
+
+    A bundle outside the envelope whose challenge rows pass was made by
+    this space's oven on a HOMOGENEOUS part — fifty books of one kind
+    cut by one chunker spread narrower than 512 probe texts drawn across
+    everything, and their mean leans away from the probes' (the node's
+    lang=en/00043, 00219, 00220: p2 0.289–0.392, one cosine 0.4981).
+    The literals were measured over whole corpora, never over one part
+    (03 §3.5, 2026-09-09), and T0 is "sanity only, never a security
+    control". So the verdict is recorded and the bundle is admitted: the
+    tier PASSES with the envelope's reasons as its warning, and
+    `stats["envelope"]` says so.
+    """
+    return Tier(T0, PASS,
+                f"{t0.stats.get('rows', '?')} rows OUTSIDE the space's envelope "
+                f"({t0.why}) — a WARNING, not a refusal: T2's challenge rows "
+                f"pass ({t2.why}), so the oven is this space's",
+                {**t0.stats, "envelope": "warning"}, warning=t0.why)
 
 
 @dataclass(frozen=True)
@@ -98,6 +129,12 @@ class Report:
 
     def tier(self, name: str) -> Tier | None:
         return next((t for t in self.tiers if t.tier == name), None)
+
+    @property
+    def warnings(self) -> tuple[tuple[str, str], ...]:
+        """`(tier, what it saw)` for every clause a later tier overruled —
+        the bundle is admitted, and the log must still say this."""
+        return tuple((t.tier, t.warning) for t in self.tiers if t.warning)
 
 
 # --------------------------------------------------------------------------
@@ -225,7 +262,10 @@ def tier0(codex, accepted, envelope) -> Tier:
                                        ("cosine", "p_lo", "p_hi",
                                         "ratio_min", "ratio_max")}}
     if not verdict["passed"]:
-        return Tier(T0, FAIL, "; ".join(verdict["reasons"]), stats)
+        # `envelope: outside` is what lets `judge` tell this failure from
+        # a structural one: only this half may be overruled by T2.
+        return Tier(T0, FAIL, "; ".join(verdict["reasons"]),
+                    {**stats, "envelope": "outside"})
     return Tier(T0, PASS,
                 f"{len(accepted)} rows inside the space's envelope "
                 f"(cosine {verdict['cosine']:.3f})", stats)
@@ -438,10 +478,19 @@ def judge(codex, header: dict, rows, possession: dict[str, str], bundle_id: str,
         header, rows, possession, dict(mine or {}))
     padded = before - len(accepted)
 
-    tiers = [tier0(codex, accepted, envelope)]
-    if not tiers[0].failed:
-        tiers.append(tier1(codex, accepted, reference))
-        tiers.append(tier2(codex, challenge, reference))
+    t0 = tier0(codex, accepted, envelope)
+    tiers = [t0]
+    # A STRUCTURAL T0 failure ends the ladder: a NaN or a duplicate is a
+    # defect no later tier should have to look past. An ENVELOPE failure
+    # does not — T1 and T2 run, and a passing T2 overrules it (above).
+    # T2 SKIPPED is not T2 passed: a peer holding no calibration member has
+    # no tie-breaker, and the envelope's verdict stands.
+    if not t0.failed or envelope_only(t0):
+        t1 = tier1(codex, accepted, reference)
+        t2 = tier2(codex, challenge, reference)
+        if t0.failed and t2.verdict == PASS:
+            tiers[0] = overruled(t0, t2)
+        tiers.extend((t1, t2))
         if not any(t.failed for t in tiers):
             tiers.append(tier3(codex, accepted, text_of=text_of or (lambda _c: None),
                                embed=embed, seed=seed))

@@ -327,6 +327,107 @@ def test_foreign_vectors_are_refused_at_T0(made):
     bad = admit.tier0(codex, foreign, env)
     assert bad.failed, bad.why
     assert "cosine" in bad.why
+    # and it is marked as the ENVELOPE half failing, which is what lets
+    # `judge` offer it to T2 (below) where a structural failure gets nothing
+    assert bad.stats["envelope"] == "outside"
+    assert admit.envelope_only(bad)
+    assert not admit.envelope_only(admit.Tier(admit.T0, admit.FAIL, "3 duplicate chunk id(s)"))
+
+
+# ---- T2 is the envelope's tie-breaker (operator, 2026-10-20) --------------
+
+def outside(reason="2nd percentile of the deviation ratios 0.289 < 0.4"):
+    """An envelope verdict that refuses, in `envelope_verdict`'s shape —
+    the node's lang=en/00043, which T0 refused twice while T2 passed."""
+    return {"passed": False, "reasons": [reason], "cosine": 0.71,
+            "p_lo": 0.289, "p_hi": 1.2, "ratio_min": 0.1, "ratio_max": 1.9}
+
+
+def force_outside(monkeypatch):
+    """The mini corpus cuts three chunks and never reaches the envelope, so
+    the gate is lowered and the verdict forced: what these tests judge is
+    the ladder's COMPOSITION, not the statistic (that is above)."""
+    monkeypatch.setattr(admit, "ENVELOPE_MIN_ROWS", 1)
+    monkeypatch.setattr(admit.cal, "envelope_verdict", lambda m, e: outside())
+
+
+def wrong_oven(made, tmp_path):
+    """The bundle of `test_T2_fails…`: the vectors are ours, the challenge
+    answered by ANOTHER encoder."""
+    root, snapshot, codex, dest, store, ids = made
+    from app.hold import export as exp
+    out = tmp_path / "wrong-oven"
+    exp.export(root, "gutenberg", shard=first_shard(snapshot), dest=out,
+               vectors_for=lambda w: {i: store[i] for i in w if i in store},
+               embed=lambda t: space_embed(t, dim=codex.space.dim, tag=b"other"),
+               key=KEY)
+    return out
+
+
+def test_an_envelope_failure_is_a_warning_when_T2_passes(made, monkeypatch):
+    """Issue 16: four of the node's own HOMOGENEOUS parts, built by its
+    validated run, fell outside literals measured over whole corpora while
+    their challenge rows passed. T2 proves the oven and T0 is sanity only
+    (03 §3.5), so the envelope's verdict is recorded as a WARNING and the
+    bundle is admitted — T0 passes, says what it saw, and the ladder goes
+    on to T3."""
+    force_outside(monkeypatch)
+    r = run(made)
+    assert r.ok, [(t.tier, t.verdict, t.why) for t in r.tiers]
+    t0 = r.tier("T0")
+    assert t0.verdict == admit.PASS
+    assert t0.stats["envelope"] == "warning"
+    assert "0.289 < 0.4" in t0.warning
+    assert "WARNING" in t0.why and "0.289 < 0.4" in t0.why
+    assert r.warnings == (("T0", t0.warning),)
+    assert r.tier("T2").verdict == admit.PASS
+    assert r.tier("T3") is not None, "the ladder went on past T2"
+    assert len(r.admitted) == len(run(made).admitted) > 0
+    # the coverage row and the attestation record the tier as PASSED: 09
+    # §9.7's vocabulary is pass/fail/skipped and did not change
+    from app.share import coverage as cov
+    assert cov._tiers_of(r)["T0"] == "pass"
+
+
+def test_an_envelope_failure_stands_when_T2_fails(made, tmp_path, monkeypatch):
+    """The wrong oven outside the envelope has no tie-breaker: refused at
+    T0 AND T2, both named, nothing admitted, no warning (a warning is an
+    overruled clause, and nothing overruled this one)."""
+    force_outside(monkeypatch)
+    root, snapshot, codex, _, _, _ = made
+    ref, env = reference_and_envelope(codex)
+    r = admit.admit(codex, wrong_oven(made, tmp_path), envelope=env, reference=ref,
+                    mine=mine_of(root, snapshot, first_shard(snapshot)))
+    assert not r.ok
+    assert r.tier("T0").failed and r.tier("T0").stats["envelope"] == "outside"
+    assert r.tier("T2").failed
+    assert r.tier("T3") is None
+    assert r.admitted == ()
+    assert r.warnings == ()
+
+
+def test_an_envelope_failure_stands_when_T2_is_skipped(made, monkeypatch):
+    """A peer holding no calibration member has no tie-breaker. SKIPPED is
+    not PASSED (§3.5: a tier that could not run is recorded as not run),
+    and the envelope's verdict stands."""
+    force_outside(monkeypatch)
+    r = run(made, reference=None)
+    assert not r.ok
+    assert r.tier("T0").failed
+    assert r.tier("T2").verdict == admit.SKIPPED
+    assert r.admitted == ()
+    assert r.warnings == ()
+
+
+def test_a_structural_T0_failure_ends_the_ladder(made, monkeypatch):
+    """Only the envelope half may be overruled. A NaN, a duplicate, a wrong
+    width: T1 and T2 are not run at all, whatever they would have said."""
+    monkeypatch.setattr(admit, "tier0", lambda codex, accepted, env: admit.Tier(
+        admit.T0, admit.FAIL, "1 row(s) carry a NaN or an infinity"))
+    r = run(made)
+    assert not r.ok
+    assert [t.tier for t in r.tiers] == ["T0"]
+    assert r.admitted == ()
 
 
 def test_T2_fails_when_the_producers_encoder_is_not_this_space(made, tmp_path):
