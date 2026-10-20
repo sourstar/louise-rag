@@ -762,3 +762,53 @@ second find: the CPU figure was the VeGa wrapper's, and an idle encoder
 spinning 2.8 cores was never unloaded — the idle test is now the last
 request recorded by the embeddings client (`encoder_use`), the CPU
 signal gone (pitfall 17's addendum).
+
+### 16. T0's envelope literals refuse homogeneous parts of a validated engine (München, 2026-10-20)
+
+Four of the node's own bundles, built by its validated run of
+vega-qwen3-embedding-4b over gutenberg parts in the night of 2026-10-19/20,
+were refused by T0's envelope test (03 §3.5; `app/hold/calibration.py`
+`ENVELOPE_COS_MIN = 0.5`, `ENVELOPE_BAND = (0.4, 2.0)`, `ENVELOPE_QUANTILE = 2`):
+
+| part | clause |
+|---|---|
+| lang=en/00043 (twice) | p2 of the deviation ratios 0.289 < 0.4; then 0.392 < 0.4 |
+| lang=en/00219 | mean-vector cosine 0.4981 < 0.5; p2 0.301 < 0.4 |
+| lang=en/00220 | p2 0.315 < 0.4 |
+
+The engine is correct (its run passed the calibration gate; T2's
+challenge rows pass on every one of these bundles) and the parts are not
+garbage: they are HOMOGENEOUS — fifty books of one kind in one language
+cut by one chunker — so their per-dimension spread is narrower than the
+512 calibration texts' and their mean leans away from the calibration
+mean. The literals were measured on 2026-09-09 over 300 chunks drawn
+across a whole corpus (03 §3.5's six runs), never over one part; a part
+is a smaller, narrower sample, and the 2nd percentile of 2,560 ratios
+is a fragile statistic on it. The effect: those parts get NO coverage —
+the producer's bundle is refused at its own ladder, "the vectors stay
+here for `vectors check`", and no other peer will produce a different
+answer with the same engine. 150 of 154 passed, so ~2.6 % of parts are
+structurally unpublishable today.
+
+A spec gap, not a node fault, and a decision for the operator. Options,
+in the order I would try them:
+
+1. **Measure first** (CLAUDE.md): the envelope statistics of every bundle
+   the node has accepted (the T0 reports in its attestations carry
+   `cosine`, `p_lo`, `p_hi`) — the distribution over ~1,450 bundles says
+   where a part-level band sits; the four refused ones are its tail.
+2. **A part-level band**, measured, in the spec: the same test with
+   literals for a PART (the 2nd percentile allowed down to ~0.25 where a
+   whole-corpus sample allows 0.4), or the quantile moved to the 5th.
+   The literals live in the Codex? No — `space.envelope` is the mean and
+   deviation (09 §9.12); the band is the platform's code, so a change is
+   a platform change for every collection, not a new Codex.
+3. **T2 as the tie-breaker**: a T0 envelope failure on a bundle whose T2
+   challenge rows pass is recorded as a warning in the report, not a
+   refusal — T0 is "sanity only, never a security control" (03 §3.5),
+   and T2 proves the oven. The cheapest change and the one that keeps
+   the literals as measured.
+
+Until decided, the four parts are the node's open parts that no leader
+can close; the cascade hands them on and every peer refuses them the
+same way.

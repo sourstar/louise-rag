@@ -516,6 +516,20 @@ hand (`POST /backend/shutdown`): 0.03 % CPU, 5.7 GB page cache. Fix the
 same night: the sweep's idle test is the last request any process made
 (`encoder_use`, written by the embeddings client), not CPU.
 
+**The node, after — the night 2026-10-19/20 on 0624b18 (the lease; the
+CLI contribute under the pause, 22:31:03 → 06:00:28, 449 min).** Cold
+starts in contribute-gutenberg.log: **0** (12 the day before). The lease
+row present and renewed during the pass, none after; the worker unloaded
+the 4B at 06:01:46, 78 s after the pass — the intended idle unload — and
+not once during the night; overnight the sweep unloaded only
+vega-dar-legal-it (every ~30 min) and MedCPT after pubmed's 06:00 flip.
+The pass: probed 832, mine 643, claimed 827, held 1, left_to_fetch 0,
+built **88,165 chunks in 449 min = 196 chunks/min** (90,732 "to embed"
+over 144 parts, the last interrupted), 150 bundles accepted and
+announced (974,949 chunks in the built ones), 4 refused — all by T0's
+envelope test on the node's own validated run (open issue §16 of the
+review note). The row for the LEASE is complete on both peers.
+
 **Expected after.** No "unloaded" line for a model under lease while a
 contribute runs; `/backend/shutdown` only for a model no process is
 embedding with; a lease a killed process left gone within 600 s; an
@@ -562,6 +576,16 @@ measured on Perugia: chunks/min of the embed stage; minutes from a part's
 last document to its bundle's announcement; the publisher's pass duration
 and the budget hits ("interrupted at the budget" lines); duplicate bundles
 (expect 0: the held path leaves out claimed rows).
+
+**DEPLOYED on the node 2026-10-20 06:19:30 CEST (033efb7, München's
+gate: 4,793 passed; staged tests 14 + 5 + 127).** The switch: cron 5
+`set-embed.sh gutenberg p2p on-demand` at 06:00 and cron 6 the reverse at
+22:30, both enabled; cron 9/10 (contribute + pause) disabled; gutenberg
+not paused; no CLI contribute; the loader's effective mode under
+`p2p`/`share = true` is `p2p`; today's one-off 08:00–17:00 window flips
+gutenberg to p2p (and pubmed-v8 to all) in place of a contribute. BEFORE
+for this row: the night above (196 chunks/min, 150 bundles). AFTER: the
+first p2p night, with LocalAI's WatchDog lines.
 
 **The node too** (operator, the same night): gutenberg goes from
 `on-demand` + the 23:00–07:00 cron contribute under `node pause` to
