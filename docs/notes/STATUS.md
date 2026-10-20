@@ -284,6 +284,20 @@ recorded in the report, not a refusal (03 §3.5 amended;
 structural T0 failure still refuse. The four parts re-ladder at the
 publisher's next pass after the deploy.
 
+### 2026-10-20: the offer — a peer chooses what it fetches (operator)
+
+`app/share/offer.py`: the catalogue minus what is held, each entry with
+the Codex's own words and the live neighbours serving it; `louise share
+offer`, `GET /api/share/offer/show`, and the Library's "Offered by peers"
+with a *take…* dialog that queues `share fetch` for the worker
+(`app/jobs.py` SHARE_FETCH, every mode; `POST /api/share/fetch`) with the
+slices, kinds and encoder chosen. 04 §4.2 and 07 §7.3/§7.4 amended. The
+decisions of the day beside it: the folder delete is the operator's to run
+(München's auto mode refuses irreversible deletes outright); gutenberg-graph
+gets two targets (Codex version 9), Parquet parts for EVERY collection, and
+a measured agreement floor (gutenberg-graph-amendments.md); pubmed-v8's
+40 M unbundled chunks publish after the wikidata work.
+
 ### 2026-10-20: the bundle intake's quadratic hard split (pitfall 18)
 
 Perugia's py-spy dump on its first morning as a full peer: the worker's

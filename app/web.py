@@ -2060,10 +2060,18 @@ def library_page(request: Request):
     # on their own cards: a collection the Ask tab attaches claims from
     # must be visible where the operator looks for collections (2026-10-19).
     annotations = [_annotations_shelf(a, collections) for a in collections_mod.load_annotations()]
+    # 04 §4.2: the OFFER — what neighbours announce and this node does not
+    # hold; the operator chooses what to take (operator, 2026-10-20)
+    try:
+        from .share import offer
+        offered = offer.offered_for_node()
+    except Exception:   # noqa: BLE001 — no node.sqlite yet, a catalogue that does not read: the page still renders
+        offered = []
     return TEMPLATES.TemplateResponse(request, "library.html", {
         "active": "library",
         "shelves": shelves,
         "annotations": annotations,
+        "offered": offered,
         # the Add panel's annotations type (02 §2.10): the collections a new
         # one can annotate, each with the snapshot its claims would hold from
         "annotatable": _annotatable(collections),

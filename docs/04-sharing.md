@@ -178,6 +178,18 @@ their ids and their verification facts.
 Announcing what you do not serve would be a lie, and serving without
 announcing has no audience; Louise has one verb for both, `share`.
 
+**The offer, and the choice** *(amended 2026-10-20, operator)*. What
+neighbours announce and this peer does not hold is its OFFER: the
+catalogue's entries minus the collections held, each with the Codex's
+own description, its licence and privacy class, and the live neighbours
+whose digest serves it. `share offer` lists it and the Library shows it
+("Offered by peers"); taking one is `share fetch`, which the Library
+queues for the node (07 §7.4) with the slices and kinds chosen. A peer
+chooses what it fetches: nothing is fetched that was not chosen, and an
+entry nobody live serves is shown as such and waits for a digest that
+offers it (§4.3). A Codex another entry `continues` or `replaces` is
+shown superseded, never hidden.
+
 ## 4.3 Moving bytes
 
 A collection is shared as one torrent collection whose members are

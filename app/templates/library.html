@@ -273,6 +273,40 @@
 </div>
 <input type="file" id="bundle-file" accept=".tar.gz,.tgz,application/gzip" style="display:none">
 
+{# 04 §4.2: THE OFFER — the collections neighbours announce that this node
+   does not hold (its catalogue minus what it holds), with who serves each.
+   Taking one is `share fetch`, queued for the worker (app/jobs.py
+   SHARE_FETCH): the Codex and snapshots are pulled and the collection is
+   held with the slices and kinds chosen here; the members follow at the
+   worker's fetch beat. A yellow or red collection then asks for its
+   acknowledgement before any member moves (invariant 9). A peer chooses
+   what it fetches; nothing is fetched that was not chosen (operator,
+   2026-10-20). `louise share offer` lists the same. #}
+<div class="panel" id="offer">
+  <h2>Offered by peers <span class="badge">{{ offered|length }}</span></h2>
+  <div class="note">What live neighbours announce and this node does not hold. Nothing is fetched
+    that was not chosen here or with <code>louise share fetch</code>; <code>louise share offer</code>
+    lists the same. A collection taken here appears above once its Codex and snapshots are held;
+    its records and bundles follow at the worker's next fetch beat.</div>
+  {% if not offered %}<div class="note">Nothing is offered that this node does not already hold.</div>{% endif %}
+  {% for o in offered %}
+  <div class="panel" data-offer="{{ o.collection_id }}"{% if o.superseded_by %} style="opacity:.65"{% endif %}>
+    <h2>{{ o.title or o.plugin or 'untitled' }} <span class="badge">{{ o.plugin or '?' }}</span>
+      {% if o.superseded_by %}<span class="badge brass" title="continued or replaced by {{ o.superseded_by }}">superseded</span>{% endif %}</h2>
+    {% if o.summary %}<div class="note">{{ o.summary }}</div>{% endif %}
+    <div>
+      {% if o.license %}<span class="badge" title="licence class (04 §4.4): yellow and red ask for an acknowledgement before any member moves">license: <span class="lic-{{ o.license }}">{{ o.license }}</span></span>{% endif %}
+      {% if o.privacy %}<span class="badge">{{ o.privacy }}</span>{% endif %}
+      {% if o.publication and o.publication != 'open' %}<span class="badge lapis">{{ o.publication }}</span>{% endif %}
+      <span class="badge {{ 'ok' if o.served_by else 'brass' }}" title="{% for s in o.served_by %}{{ s.key[:23] }}… at {{ s.address }} — snapshot {{ s.snapshot_id }}, {{ s.members }} member{{ '' if s.members == 1 else 's' }}{% if not loop.last %} · {% endif %}{% else %}no live neighbour serves it now: a take waits for a digest that offers it{% endfor %}">served by {{ o.served_by|length }} live peer{{ '' if o.served_by|length == 1 else 's' }}</span>
+      <span class="badge brass" title="announced by {{ o.announced_by or '?' }}">first seen {{ o.first_seen }}</span>
+    </div>
+    <div class="note"><code title="collection_id">{{ o.collection_id }}</code>{% if o.relation != 'root' %} · {{ o.relation }} in lineage <code>{{ o.lineage_id[:23] }}…</code>{% endif %}</div>
+    <div class="actions"><button class="primary" onclick="openTake('{{ o.collection_id }}')">take…</button></div>
+  </div>
+  {% endfor %}
+</div>
+
 <div class="panel">
   <h2>Add a collection</h2>
   {# 07 §7.6: the web interface's new collection IS `hold collection
@@ -593,6 +627,54 @@ async function createAnnotations(){
       ${esc(d.claims)} claims in snapshot ${esc(d.snapshot)}${d.signed?', signed':', unsigned (no node key)'} — file <b>${esc(d.held)}</b>; not shared until you turn sharing on.</div>
       <pre class="cli">${esc(d.cli)}</pre>`;
     setTimeout(()=>location.reload(),2500);
+  }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
+}
+// 04 §4.2 THE OFFER: taking a collection a peer announces — `share fetch`,
+// queued for the worker, which signs the pulls (app/jobs.py SHARE_FETCH).
+const OFFER={{ offered|tojson }};
+function openTake(cid){
+  const o=OFFER.find(x=>x.collection_id===cid); if(!o)return;
+  showModal(`<h2>Take ${esc(o.title||o.plugin||cid.slice(0,23))}</h2>
+    <div class="note">The Codex and its snapshots are pulled from a peer that serves it and the collection is held
+      here with what you choose below; the worker fetches the members at its next beat. A yellow or red
+      collection asks for its license acknowledgement before any member moves.</div>
+    <div class="row">
+      <div><label>Local name (default: the plugin's)</label><input id="tk_name" placeholder="${esc(o.plugin||'')}"></div>
+      <div><label>Slices: <code>all</code>, or names as the snapshot lists them, comma-separated</label><input id="tk_slices" value="all"></div>
+      <div><label>Kinds</label>
+        <label><input type="checkbox" id="tk_records" checked> records</label>
+        <label><input type="checkbox" id="tk_vectors"> vectors (the bundles peers accepted)</label></div>
+      <div><label>Encoder URL (optional: where this node reaches the Codex's encoder)</label><input id="tk_encoder" placeholder="http://nas:30437"></div>
+      <div><label>API</label><input id="tk_api" placeholder="openai"></div>
+      <div><label>Embed model / query model (a URL that names no model)</label><input id="tk_embed_model" placeholder="embed model"> <input id="tk_query_model" placeholder="query model"></div>
+      <div><label>Snapshot (optional; default: the latest the peer holds)</label><input id="tk_snapshot"></div>
+    </div>
+    <div class="actions">
+      <button class="primary" onclick="takeOffer('${esc(cid)}')">Take</button>
+      <button onclick="hideModal()">Cancel</button>
+    </div>
+    <pre class="cli">${esc(o.cli)}</pre>
+    <div id="tk_result"></div>`);
+}
+async function takeOffer(cid){
+  const v=id=>document.getElementById(id).value.trim();
+  const slicesText=v('tk_slices');
+  const kinds=[];
+  if(document.getElementById('tk_records').checked)kinds.push('records');
+  if(document.getElementById('tk_vectors').checked)kinds.push('vectors');
+  if(!kinds.length){toast('choose at least one kind');return}
+  const body={collection_id:cid,name:v('tk_name'),
+    slices:(slicesText===''||slicesText==='all')?'all':slicesText.split(',').map(s=>s.trim()).filter(Boolean),
+    kinds,encoder:v('tk_encoder'),api:v('tk_api'),embed_model:v('tk_embed_model'),query_model:v('tk_query_model'),snapshot:v('tk_snapshot')};
+  const box=document.getElementById('tk_result');
+  box.innerHTML='<div class="note">queued for the worker…</div>';
+  try{const q=await postJSON('/api/share/fetch',body);
+    box.innerHTML=`<div class="note">queued as job ${esc(q.id)}</div><pre class="cli">${esc(q.cli)}</pre>`;
+    const j=await waitForJob(q.id,s=>{box.innerHTML+='<div class="note">'+esc(s)+'</div>'});
+    const d=j.result||{};
+    const sel=d.selection||{};
+    box.innerHTML=`<div class="note">Held <b>${esc(d.name||'?')}</b> from ${esc(d.from||'a peer')}: slices ${esc(JSON.stringify(sel.slices||'all'))}, kinds ${esc(JSON.stringify(sel.kinds||[]))}. ${esc(d.note||'')}</div>`;
+    setTimeout(()=>location.reload(),3000);
   }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
 }
 // What needs the node's private key runs in the worker (app/jobs.py): the

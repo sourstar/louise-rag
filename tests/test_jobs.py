@@ -180,3 +180,47 @@ def test_an_annotations_create_runs_in_any_mode(con, monkeypatch):
     job_id = jobs.submit(jobs.CREATE_ANNOTATIONS, {"name": "pubmed-same-work"})
     done = jobs.run_next(con, "paused", log=quiet)
     assert done.id == job_id and done.state == jobs.DONE and done.result == {"name": "pubmed-same-work"}
+
+
+def test_a_share_fetch_runs_in_every_mode_and_is_the_command(con, monkeypatch, tmp_path):
+    """04 §4.2 the offer: the Library's take is `share fetch`, queued. It
+    moves a few KB and embeds nothing, so it runs whatever the node's mode;
+    the job calls the command's own function and writes the selection as
+    the command does — one implementation (07 §7.4)."""
+    from app import louise
+    from app.share import fetch as fetch_mod
+    from app import db
+    for mode in db.WORKER_STATES:
+        assert jobs.SHARE_FETCH in jobs.kinds_allowed(mode), mode
+    seen = {}
+
+    def fetch(root, ref, **kw):
+        seen["fetch"] = (root, ref, kw)
+        f = tmp_path / "pubmed.toml"
+        f.write_text('name = "pubmed"\n', encoding="utf-8")
+        return {"name": "pubmed", "file": str(f), "shard": str(tmp_path), "from": "http://peer.test"}
+    monkeypatch.setattr(fetch_mod, "fetch", fetch)
+    monkeypatch.setattr(louise, "_check_slices", lambda out, slices: seen.setdefault("checked", slices))
+    def selection(path, slices, kinds):
+        seen["selection"] = (path, slices, kinds)
+        return {"slices": list(slices) if slices != "all" else "all", "kinds": list(kinds)}
+    monkeypatch.setattr(louise, "_set_held_selection", selection)
+    out = jobs._share_fetch({"collection_id": "sha256:" + "a" * 64, "name": "pubmed-here",
+                             "slices": ["year=2024"], "kinds": ["records", "vectors"],
+                             "encoder": "http://nas:30437", "api": "openai", "embed_model": "", "query_model": "",
+                             "snapshot": ""})
+    root, ref, kw = seen["fetch"]
+    assert ref == "sha256:" + "a" * 64 and kw["name"] == "pubmed-here" and kw["encoder"] == "http://nas:30437"
+    assert kw["encoder_keys"] == {"api": "openai", "embed_model": None, "query_model": None}
+    assert kw["snapshot_id"] is None
+    assert seen["checked"] == ("year=2024",)
+    assert seen["selection"] == (str(tmp_path / "pubmed.toml"), ("year=2024",), ("records", "vectors"))
+    assert out["selection"] == {"slices": ["year=2024"], "kinds": ["records", "vectors"]}
+    assert out["cli"] == ("louise share fetch sha256:" + "a" * 64 + " --slice year=2024 --kinds records,vectors "
+                          "--encoder http://nas:30437 --name pubmed-here")
+    # the defaults the Library sends: every slice, records
+    out = jobs._share_fetch({"collection_id": "sha256:" + "b" * 64})
+    assert seen["selection"][1:] == ("all", ("records",)) and out["cli"].endswith("--kinds records")
+    assert jobs.run(jobs.Job(id=1, kind=jobs.SHARE_FETCH, args={"collection_id": "sha256:" + "c" * 64},
+                             state=jobs.QUEUED, created=0.0, started=None, finished=None, result=None,
+                             error=None))["name"] == "pubmed"

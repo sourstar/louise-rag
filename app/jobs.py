@@ -42,6 +42,11 @@ CREATE, EXPORT = "collection-create", "bundle-export"
 #: which only the worker holds — and embeds NOTHING, so unlike CREATE it
 #: runs in every mode (2026-10-19).
 CREATE_ANNOTATIONS = "annotations-create"
+#: `share fetch` as the Library queues it (04 §4.2 the offer; operator,
+#: 2026-10-20): the Codex and snapshots pulled and the collection held with
+#: the slices and kinds chosen; the members follow at the worker's fetch
+#: beat. Runs in every mode — it moves a few KB and embeds nothing.
+SHARE_FETCH = "share-fetch"
 #: A deposit collection's writes, queued by the web's LocalAGI routes (07
 #: §7.4): the web process must not write a collection's indexes, because
 #: tantivy allows ONE writer per index directory and the worker keeps its
@@ -50,7 +55,7 @@ CREATE_ANNOTATIONS = "annotations-create"
 #: that is embedding a calibration set for minutes; in every mode, because
 #: an agent writing its memory is not the node's background work.
 DEPOSIT = "deposit"
-KINDS = (CREATE, CREATE_ANNOTATIONS, EXPORT, DEPOSIT)
+KINDS = (CREATE, CREATE_ANNOTATIONS, EXPORT, DEPOSIT, SHARE_FETCH)
 
 #: A deposit job's row names a key, and 02 §2.9 lets nothing name an erased
 #: deposit: the web deletes the row when it has read the result (`forget`),
@@ -135,8 +140,8 @@ def get(job_id: int) -> Job | None:
 def kinds_allowed(mode: str) -> tuple[str, ...]:
     """What the general job thread may run in this mode. Deposits are not
     among them: they have a thread of their own (`serve_deposits`)."""
-    return ((CREATE, CREATE_ANNOTATIONS, EXPORT) if node_state.runs(mode, node_state.EMBED)
-            else (CREATE_ANNOTATIONS, EXPORT))
+    return ((CREATE, CREATE_ANNOTATIONS, EXPORT, SHARE_FETCH) if node_state.runs(mode, node_state.EMBED)
+            else (CREATE_ANNOTATIONS, EXPORT, SHARE_FETCH))
 
 
 def waiting_because(job: Job, mode: str) -> str | None:
@@ -323,7 +328,40 @@ def run(job: Job) -> dict[str, Any]:
         return _export(job.id, job.args)
     if job.kind == DEPOSIT:
         return _deposit(job.args)
+    if job.kind == SHARE_FETCH:
+        return _share_fetch(job.args)
     raise ValueError(f"unknown job kind {job.kind!r}")
+
+
+def _share_fetch(args: dict[str, Any]) -> dict[str, Any]:
+    """`share fetch <collection>` (07 §7.3; 04 §4.2, §4.3) as the Library
+    queued it from the offer: the same function the command calls, then the
+    selection written into the collection's file exactly as the command
+    writes it — one implementation, two callers (07 §7.4)."""
+    from . import louise
+    from .share import fetch as fetch_mod
+    root = louise._default_root()
+    root.mkdir(parents=True, exist_ok=True)
+    encoder = args.get("encoder") or None
+    keys = {"api": louise.check_api(args.get("api") or None),
+            "embed_model": args.get("embed_model") or None,
+            "query_model": args.get("query_model") or None}
+    out = fetch_mod.fetch(root, args["collection_id"], snapshot_id=args.get("snapshot") or None,
+                          encoder=encoder, encoder_keys=keys, name=args.get("name") or None,
+                          log=lambda m: None)
+    slices = args.get("slices") or "all"
+    slices = "all" if slices == "all" else tuple(str(s) for s in slices)
+    kinds = tuple(str(k) for k in (args.get("kinds") or ("records",)))
+    louise._check_slices(out, slices)
+    out["selection"] = louise._set_held_selection(out["file"], slices, kinds)
+    out["note"] = ("the worker fetches the members the file asks for at its next beat; "
+                   "`hold collection show` lists the holdings")
+    out["cli"] = (f"louise share fetch {args['collection_id']}"
+                  + ("" if slices == "all" else " --slice " + " ".join(slices))
+                  + f" --kinds {','.join(kinds)}"
+                  + (f" --encoder {encoder}" if encoder else "")
+                  + (f" --name {args['name']}" if args.get("name") else ""))
+    return out
 
 
 def _deposit(args: dict[str, Any]) -> dict[str, Any]:

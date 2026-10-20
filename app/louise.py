@@ -1336,7 +1336,7 @@ def cmd_node_resume(a) -> int:
 
 
 #: 07 §7.3 writes `share <collection>`: the collection stands where a verb would
-_SHARE_VERBS = ("collection", "fetch", "contribute", "attest", "peers", "-h", "--help")
+_SHARE_VERBS = ("collection", "fetch", "contribute", "attest", "peers", "-h", "--help", "offer")
 
 
 def cmd_share(a) -> int:
@@ -1403,6 +1403,22 @@ def cmd_share(a) -> int:
             "note": "the worker serves and announces it at its next beat; "
                     "`hold collection show` names the state it publishes"})
     return 0
+
+
+def _check_slices(out: dict, slices) -> None:
+    """A SLICE BY ITS NAME, as the snapshot just pulled lists it (07 §7.8):
+    `--slice la` matched no member and fetched no part (2026-10-12). Shared
+    by `share fetch` and the Library's take (app/jobs.py)."""
+    if slices == "all":
+        return
+    from app.share import seeder as seeder_mod
+    snap = seeder_mod.current_snapshot(Path(out["shard"])) if out.get("shard") else None
+    known = sorted({s.slice for s in snap.shards}) if snap is not None else None
+    bad = [v for v in slices if known is not None and v not in known]
+    if bad:
+        hint = [k for k in known if any(k.endswith("=" + b) for b in bad)]
+        raise CodexError(f"--slice names {bad}, which snapshot {snap.snapshot_id} does not "
+                         f"list; a slice is named as it is listed, e.g. {hint or known[:3]}")
 
 
 def _set_held_selection(path, slices, kinds) -> dict:
@@ -1472,17 +1488,7 @@ def cmd_share_fetch(a) -> int:
     out = fetch_mod.fetch(a.root, ref, snapshot_id=a.snapshot, from_address=getattr(a, "from_", None),
                           encoder=a.encoder, encoder_keys=encoder_keys, name=a.name, session=session,
                           log=lambda m: print(m, file=sys.stderr))
-    if slices != "all":
-        # A SLICE BY ITS NAME, as the snapshot just pulled lists it (07 §7.8):
-        # `--slice la` matched no member and fetched no part (2026-10-12)
-        from app.share import seeder as seeder_mod
-        snap = seeder_mod.current_snapshot(Path(out["shard"])) if out.get("shard") else None
-        known = sorted({s.slice for s in snap.shards}) if snap is not None else None
-        bad = [v for v in slices if known is not None and v not in known]
-        if bad:
-            hint = [k for k in known if any(k.endswith("=" + b) for b in bad)]
-            raise CodexError(f"--slice names {bad}, which snapshot {snap.snapshot_id} does not "
-                             f"list; a slice is named as it is listed, e.g. {hint or known[:3]}")
+    _check_slices(out, slices)
     out["selection"] = _set_held_selection(out["file"], slices, kinds)
     if a.here:
         if not locked:
@@ -1840,6 +1846,18 @@ def cmd_key_anchor(a) -> int:
     _print({"collection_id": codex.collection_id, "certifier": codex.certifier.key,
             "anchor": codex.certifier.anchor, **st})
     return {"anchored": 0, "stale": 0, "mismatch": 2}.get(st["state"], 3)
+
+
+def cmd_share_offer(a) -> int:
+    """`share offer` (07 §7.3; 04 §4.2): the collections neighbours announce
+    that this node does not hold — the catalogue minus what is held — with
+    who serves each; `share fetch` takes one. The Library's "Offered by
+    peers" reads the same function (app/share/offer.py)."""
+    from app.share import offer
+    _print({"offered": offer.offered_for_node(),
+            "note": "`share fetch <collection id> [--slice …] [--kinds …] [--encoder URL]` takes one; "
+                    "nothing is fetched that was not chosen"})
+    return 0
 
 
 def cmd_share_peers(a) -> int:
@@ -4430,6 +4448,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--republish", action="store_true",
                    help="no check: publish this key's held attestations that were never published (04 §4.2)")
     p.set_defaults(fn=cmd_share_attest)
+    p = shverbs.add_parser("offer", help="the collections neighbours announce that this node does not hold, "
+                                         "and who serves each (04 §4.2); `fetch` takes one")
+    p.set_defaults(fn=cmd_share_offer)
     p = shverbs.add_parser("peers", help="who this peer knows; a peer given by hand")
     pverbs = p.add_subparsers(dest="peers_verb", required=True)
     q = pverbs.add_parser("add", help="a peer given by hand: into platform.toml [peers] (07 §7.8)")

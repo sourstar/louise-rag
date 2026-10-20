@@ -51,7 +51,7 @@ def read_chain(payload: dict[str, Any]) -> list[cx.Codex]:
                          f"{chain[0].collection_id}")
     ids = {c.collection_id for c in chain}
     for c in chain:
-        for ref in (c.continues, c.derived_from, c.replaces.collection_id if c.replaces else None):
+        for ref in (c.continues, c.derived_from, c.replaces.codex if c.replaces else None):
             if ref and ref not in ids:
                 raise CodexError(f"the chain lacks {ref}, which {c.collection_id} comes from")
     return chain

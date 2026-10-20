@@ -429,6 +429,78 @@ def node_show_route():
     return node_show.show()
 
 
+@app.get("/api/share/offer/show", dependencies=[Depends(auth.require_admin)])
+def share_offer_show():
+    """`louise share offer` (07 §7.3; 04 §4.2): the collections neighbours
+    announce that this node does not hold, with who serves each."""
+    from .share import offer
+    return {"offered": offer.offered_for_node()}
+
+
+class ShareFetchBody(BaseModel):
+    collection_id: str
+    name: str = ""
+    slices: list[str] | str = "all"
+    kinds: list[str] = Field(default_factory=lambda: ["records"])
+    encoder: str = ""
+    api: str = ""
+    embed_model: str = ""
+    query_model: str = ""
+    snapshot: str = ""
+
+
+@app.post("/api/share/fetch", dependencies=[Depends(auth.require_admin)])
+def share_fetch(body: ShareFetchBody):
+    """`louise share fetch <collection>` as the Library queues it from the
+    offer (07 §7.4; 04 §4.2, operator 2026-10-20): the flags are the body's
+    keys. Refused at once (409) when nobody announced the collection — the
+    command's `--from ADDRESS` takes one from a peer given by hand — when the
+    name is a collection this node already holds, or when the encoder's
+    model keys do not read (07 §7.8). Otherwise QUEUED for the worker (202),
+    which holds the node key the pulls are signed with (app/jobs.py), and
+    `GET /api/jobs/<id>` follows it."""
+    from . import jobs, louise
+    from .hold.codex import CodexError
+    from .share import offer
+    cid = body.collection_id.strip()
+    if not cid.startswith("sha256:"):
+        raise HTTPException(409, "a collection is taken by its id (sha256:…), as the offer lists it")
+    if not offer.in_catalogue(cid):
+        raise HTTPException(409, f"nobody announced {cid[:23]}… to this node: it is not in the offer; "
+                                 f"`louise share fetch {cid} --from ADDRESS` takes it from a peer given by hand")
+    name = body.name.strip()
+    if name and collections_mod.by_name(name) is not None:
+        raise HTTPException(409, f"{name!r} is a collection this node already holds; choose another local name")
+    slices = body.slices
+    if isinstance(slices, str):
+        slices = slices.strip()
+        if slices and slices != "all":
+            raise HTTPException(409, "slices is \"all\" or a list of slice names as the snapshot lists them")
+        slices = "all"
+    else:
+        slices = [s.strip() for s in slices if s and s.strip()] or "all"
+    kinds = [k.strip() for k in body.kinds if k and k.strip()]
+    if not kinds:
+        raise HTTPException(409, "kinds names at least one member kind (records, vectors)")
+    encoder = body.encoder.strip()
+    try:
+        louise.check_api(body.api.strip() or None)
+        if encoder:
+            louise.model_keys(encoder, embed_model=body.embed_model.strip() or None,
+                              query_model=body.query_model.strip() or None)
+    except CodexError as e:
+        raise HTTPException(409, str(e)) from None
+    args = {"collection_id": cid, "name": name, "slices": slices, "kinds": kinds,
+            "encoder": encoder, "api": body.api.strip(), "embed_model": body.embed_model.strip(),
+            "query_model": body.query_model.strip(), "snapshot": body.snapshot.strip()}
+    job_id = jobs.submit(jobs.SHARE_FETCH, args)
+    return JSONResponse(status_code=202, content={
+        "id": job_id, "collection_id": cid, "args": args,
+        "cli": (f"louise share fetch {cid}" + ("" if slices == "all" else " --slice " + " ".join(slices))
+                + f" --kinds {','.join(kinds)}" + (f" --encoder {encoder}" if encoder else "")
+                + (f" --name {name}" if name else ""))})
+
+
 @app.get("/api/jobs/{job_id}", dependencies=[Depends(auth.require_admin)])
 def job_status(job_id: int):
     """A job the web queued for the worker (app/jobs.py): its state, its

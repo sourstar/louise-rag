@@ -177,6 +177,7 @@ louise share
   attest <collection> [--checks …]                                     check, shared
   peers show                                                           who this peer knows, what they hold
   peers add <address> [--key <key>]                                    a peer given by hand; --key pins its key
+  offer                                                                the collections neighbours announce that this node does not hold, and who serves each (04 §4.2); `fetch` takes one (added 2026-10-20)
 
 louise ask
   search <query> [--collections …] [--space …] [--limit N] [--rerank-depth N] [--as-of DATE] [--freshness] [--translate [--all-languages]] [--filter FACET=VALUE | --filter FACET=!VALUE …]
@@ -695,6 +696,17 @@ Without it the same check runs first (a refusal is the 409 above and
 queues nothing), then the create is queued for the worker (202) like
 `create` — it signs the first snapshot — but it embeds nothing, so it
 runs in every mode. The Library's *new collection* offers the type.
+
+*Amended 2026-10-20 (operator).* The offer (04 §4.2) is `GET
+/api/share/offer/show` — `share offer` — and taking a collection from it
+is `POST /api/share/fetch` — `share fetch <collection>` with the flags
+as the body's keys (`collection_id`, `name`, `slices` as `"all"` or a
+list, `kinds`, `encoder`, `api`, `embed_model`, `query_model`,
+`snapshot`). A collection nobody announced, a local name already held,
+or encoder keys that do not read are refused at once (409) and queue
+nothing; otherwise the fetch is queued for the worker (202), which signs
+the pulls, runs in every mode, and `GET /api/jobs/<id>` follows it. The
+Library's *Offered by peers* is a client of both.
 
 **One route is not JSON, and it is the only one.**
 
