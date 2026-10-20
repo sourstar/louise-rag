@@ -346,9 +346,10 @@ def _share_fetch(args: dict[str, Any]) -> dict[str, Any]:
     keys = {"api": louise.check_api(args.get("api") or None),
             "embed_model": args.get("embed_model") or None,
             "query_model": args.get("query_model") or None}
+    embed = louise.check_embed_mode(args.get("embed") or None)
     out = fetch_mod.fetch(root, args["collection_id"], snapshot_id=args.get("snapshot") or None,
                           encoder=encoder, encoder_keys=keys, name=args.get("name") or None,
-                          log=lambda m: None)
+                          embed=embed, log=lambda m: None)
     slices = args.get("slices") or "all"
     slices = "all" if slices == "all" else tuple(str(s) for s in slices)
     kinds = tuple(str(k) for k in (args.get("kinds") or ("records",)))
@@ -360,6 +361,7 @@ def _share_fetch(args: dict[str, Any]) -> dict[str, Any]:
                   + ("" if slices == "all" else " --slice " + " ".join(slices))
                   + f" --kinds {','.join(kinds)}"
                   + (f" --encoder {encoder}" if encoder else "")
+                  + (f" --embed {embed}" if embed != "off" else "")
                   + (f" --name {args['name']}" if args.get("name") else ""))
     return out
 

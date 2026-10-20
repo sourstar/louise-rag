@@ -523,10 +523,27 @@ def model_keys(encoder: str, query_encoder: str | None = None, *,
                    if query_model else embed)
 
 
+#: 07 §7.8's embed modes as the FILE spells them (`on-demand`, not the
+#: runtime's `lazy`; app/collections.py canonicalises on read)
+HELD_EMBED_MODES = ("off", "on-demand", "all", "p2p")
+
+
+def check_embed_mode(embed: str | None) -> str:
+    """`--embed MODE` / the Library's choice, as the collection file writes
+    it; absent is `off` — nothing spent until the operator says."""
+    mode = (embed or "off").strip()
+    if mode == "lazy":
+        mode = "on-demand"
+    if mode not in HELD_EMBED_MODES:
+        raise CodexError(f"embed is one of {', '.join(HELD_EMBED_MODES)} (07 §7.8), got {embed!r}")
+    return mode
+
+
 def _write_held_file(root, codex, encoder: str | None = None,
                      query_encoder: str | None = None, *, source: str | None = None,
                      api: str = "openai", embed_model: str | None = None,
-                     query_model: str | None = None, share: bool = False) -> Path:
+                     query_model: str | None = None, share: bool = False,
+                     embed: str = "off") -> Path:
     """07 §7.8: `hold collection create` writes `collections/<name>.toml`,
     and the file existing is the collection being held.
 
@@ -548,7 +565,16 @@ def _write_held_file(root, codex, encoder: str | None = None,
 
     A name holds one collection for its life: a file already naming this
     Codex is left alone, and one naming another is refused.
+
+    `embed` (07 §7.8; `share fetch --embed`, the Library's take, 2026-10-20):
+    what this node's encoder spends on the collection — `off` unless said.
+    `p2p` publishes, so it needs sharing: asked for on a collection that is
+    not shared, it is written as `all`, which is how the worker would run it
+    anyway (07 §7.8: "a file … p2p with share = false runs as all").
     """
+    embed = check_embed_mode(embed)
+    if embed == "p2p" and not share:
+        embed = "all"
     path = _held_file(root, col.name_of(root, codex.collection_id))
     if path.exists():
         with open(path, "rb") as f:
@@ -572,7 +598,7 @@ def _write_held_file(root, codex, encoder: str | None = None,
                    # an annotations collection has relations and no vectors (02 §2.10)
                    + ('kinds = ["records", "relations"]\n' if cx.is_annotations(codex)
                       else 'kinds = ["records", "vectors"]\n')
-                   + 'embed = "off"\n'
+                   + f'embed = "{embed}"\n'
                    + f"share = {'true' if share else 'false'}\n"
                    # 07 §7.8 `source`: a fetched collection reads its documents
                    # from the shards it holds (app/plugins/shard.py)
@@ -1506,6 +1532,7 @@ def cmd_share_fetch(a) -> int:
                    query_model=encoder_keys["query_model"])
     out = fetch_mod.fetch(a.root, ref, snapshot_id=a.snapshot, from_address=getattr(a, "from_", None),
                           encoder=a.encoder, encoder_keys=encoder_keys, name=a.name, session=session,
+                          embed=check_embed_mode(getattr(a, "embed", None)),
                           log=lambda m: print(m, file=sys.stderr))
     _check_slices(out, slices)
     out["selection"] = _set_held_selection(out["file"], slices, kinds)
@@ -4449,6 +4476,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="probe the DHT under the collection and lineage keys when no peer is known")
     p.add_argument("--encoder", default=None, metavar="URL",
                    help="where this node reaches the Codex's encoder, into the collection's file")
+    p.add_argument("--embed", default=None, choices=("off", "on-demand", "all", "p2p"),
+                   help="what this node's encoder spends on it (07 §7.8), into the file: off (default; "
+                        "take peers' vectors only), on-demand, all, p2p (its share of the parts, "
+                        "published; needs sharing, which a public collection has)")
     _encoder_key_args(p)
     p.add_argument("--name", default=None, help="the local name; default: the plugin's")
     p.set_defaults(fn=cmd_share_fetch)

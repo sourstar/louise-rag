@@ -462,7 +462,7 @@ def held_snapshots(root: Path, collection_id: str) -> dict[str, str]:
 
 def hold(root: Path, chain: list[tuple[cx.Codex, bytes]], pulled: list[Pulled], *,
          name: str | None = None, encoder: str | None = None,
-         encoder_keys: dict[str, Any] | None = None) -> dict[str, Any]:
+         encoder_keys: dict[str, Any] | None = None, embed: str = "off") -> dict[str, Any]:
     """The Codex into the SHARD (validated against its mother from the
     chain), the chain's other Codexes under state/chain/, every signed
     snapshot into the SHARD with its sidecar merged by union, an unsigned
@@ -515,7 +515,7 @@ def hold(root: Path, chain: list[tuple[cx.Codex, bytes]], pulled: list[Pulled], 
     # collection, unless the file says otherwise — so the file says so
     held_file = louise._write_held_file(root, head, encoder, source="shard",
                                         share=getattr(head, "privacy", "public") == "public",
-                                        **(encoder_keys or {}))
+                                        embed=embed, **(encoder_keys or {}))
     newest = pulled[0]
     return {
         "collection_id": head.collection_id, "name": cname, "chain": len(chain),
@@ -533,7 +533,7 @@ def fetch(root: Path, ref: str, *, snapshot_id: str | None = None,
           encoder_keys: dict[str, Any] | None = None,
           name: str | None = None, client=None, stop=None, session=None,
           now: float | None = None, log: Callable[[str], None] | None = None,
-          key=None, own_key: str | None = None) -> dict[str, Any]:
+          key=None, own_key: str | None = None, embed: str = "off") -> dict[str, Any]:
     """`share fetch <collection>` as far as the first brick goes: the
     pre-acknowledgement set — codex.json and snapshots/* — pulled from the
     first peer that answers honestly, and the collection held. `ref` is a
@@ -592,7 +592,7 @@ def fetch(root: Path, ref: str, *, snapshot_id: str | None = None,
                     log(f"share fetch: {e}"[:500])
                 continue
             out = hold(root, chain, pulled, name=name, encoder=encoder,
-                       encoder_keys=encoder_keys)
+                       encoder_keys=encoder_keys, embed=embed)
             out["from"] = source.address
             out["tried"] = tried
             # the attestations the sharer holds for it, with the collection

@@ -450,6 +450,8 @@ class ShareFetchBody(BaseModel):
     embed_model: str = ""
     query_model: str = ""
     snapshot: str = ""
+    #: 07 §7.8's embed mode for the file: what this node's encoder spends
+    embed: str = "off"
 
 
 @app.post("/api/share/fetch", dependencies=[Depends(auth.require_admin)])
@@ -487,16 +489,26 @@ def share_fetch(body: ShareFetchBody):
     if not kinds:
         raise HTTPException(409, "kinds names at least one member kind (records, vectors)")
     encoder = body.encoder.strip()
+    if not encoder:
+        # a file naming no [encoder] is refused by the worker as non-compliant
+        # (07 §7.8; operator 2026-09-18): a take without one would hold a
+        # collection this node can neither search nor embed. The command
+        # allows it for the operator who edits the file by hand; the Library
+        # does not.
+        raise HTTPException(409, "name where this node reaches the collection's encoder (the server "
+                                 "address, its protocol and the model names): a collection file naming "
+                                 "no [encoder] is refused as non-compliant and the collection is not "
+                                 "served (07 §7.8)")
     try:
         louise.check_api(body.api.strip() or None)
-        if encoder:
-            louise.model_keys(encoder, embed_model=body.embed_model.strip() or None,
-                              query_model=body.query_model.strip() or None)
+        louise.model_keys(encoder, embed_model=body.embed_model.strip() or None,
+                          query_model=body.query_model.strip() or None)
+        embed = louise.check_embed_mode(body.embed.strip() or None)
     except CodexError as e:
         raise HTTPException(409, str(e)) from None
     args = {"collection_id": cid, "name": name, "slices": slices, "kinds": kinds,
             "encoder": encoder, "api": body.api.strip(), "embed_model": body.embed_model.strip(),
-            "query_model": body.query_model.strip(), "snapshot": body.snapshot.strip()}
+            "query_model": body.query_model.strip(), "snapshot": body.snapshot.strip(), "embed": embed}
     job_id = jobs.submit(jobs.SHARE_FETCH, args)
     return JSONResponse(status_code=202, content={
         "id": job_id, "collection_id": cid, "args": args,

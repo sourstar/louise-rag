@@ -212,7 +212,7 @@ def test_a_share_fetch_runs_in_every_mode_and_is_the_command(con, monkeypatch, t
     root, ref, kw = seen["fetch"]
     assert ref == "sha256:" + "a" * 64 and kw["name"] == "pubmed-here" and kw["encoder"] == "http://nas:30437"
     assert kw["encoder_keys"] == {"api": "openai", "embed_model": None, "query_model": None}
-    assert kw["snapshot_id"] is None
+    assert kw["snapshot_id"] is None and kw["embed"] == "off"
     assert seen["checked"] == ("year=2024",)
     assert seen["selection"] == (str(tmp_path / "pubmed.toml"), ("year=2024",), ("records", "vectors"))
     assert out["selection"] == {"slices": ["year=2024"], "kinds": ["records", "vectors"]}
@@ -221,6 +221,9 @@ def test_a_share_fetch_runs_in_every_mode_and_is_the_command(con, monkeypatch, t
     # the defaults the Library sends: every slice, records
     out = jobs._share_fetch({"collection_id": "sha256:" + "b" * 64})
     assert seen["selection"][1:] == ("all", ("records",)) and out["cli"].endswith("--kinds records")
+    # the embed mode travels into the file and the command line
+    out = jobs._share_fetch({"collection_id": "sha256:" + "b" * 64, "embed": "p2p"})
+    assert seen["fetch"][2]["embed"] == "p2p" and out["cli"].endswith("--kinds records --embed p2p")
     assert jobs.run(jobs.Job(id=1, kind=jobs.SHARE_FETCH, args={"collection_id": "sha256:" + "c" * 64},
                              state=jobs.QUEUED, created=0.0, started=None, finished=None, result=None,
                              error=None))["name"] == "pubmed"

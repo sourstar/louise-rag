@@ -410,3 +410,26 @@ def test_fetch_pulls_the_attestations_the_sharer_holds_with_the_collection(node,
     assert again["attestations"]["kept"] == 0 and again["attestations"]["seen"] == 4, "held already: nothing twice"
     assert attest.newest_held(fetcher, fname, codex) == "2026-10-11T21:14:00Z"
     assert attest.since_for(fetcher, fname, codex) == "2026-10-11T20:14:00Z", "one interval of overlap"
+
+
+def test_the_held_file_carries_the_embed_mode_asked_for_and_p2p_needs_sharing(node, fetcher):  # noqa: F811
+    """07 §7.8, `share fetch --embed` / the Library's take (operator,
+    2026-10-20): what this node's encoder spends is the taker's choice,
+    `off` unless said; `p2p` publishes, so on a collection that is not
+    shared it is written as `all`, which is how the worker runs it anyway."""
+    from app import louise
+    from tests.hold.conftest import a_root, pubmed
+    codex = a_root(fetcher, pubmed())
+    held = louise._write_held_file(fetcher, codex, "http://localai:8080", source="shard",
+                                   embed_model="m", share=True, embed="p2p")
+    assert 'embed = "p2p"' in held.read_text(encoding="utf-8")
+    held.unlink()
+    held = louise._write_held_file(fetcher, codex, "http://localai:8080", source="shard",
+                                   embed_model="m", share=False, embed="p2p")
+    assert 'embed = "all"' in held.read_text(encoding="utf-8")
+    held.unlink()
+    held = louise._write_held_file(fetcher, codex, "http://localai:8080", source="shard", embed_model="m")
+    assert 'embed = "off"' in held.read_text(encoding="utf-8")
+    assert louise.check_embed_mode("lazy") == "on-demand" and louise.check_embed_mode(None) == "off"
+    with pytest.raises(Exception, match="embed is one of"):
+        louise.check_embed_mode("sometimes")

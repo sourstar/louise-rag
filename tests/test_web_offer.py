@@ -58,10 +58,22 @@ def test_taking_from_the_offer_queues_share_fetch_with_the_choice(client, monkey
     assert args == {"collection_id": codex.collection_id, "name": "pubmed-here",
                     "slices": ["year=2024", "year=2025"], "kinds": ["records", "vectors"],
                     "encoder": "http://nas:30437", "api": "openai", "embed_model": "m",
-                    "query_model": "q", "snapshot": ""}
-    # the defaults: every slice, records, no encoder
-    r = client.post("/api/share/fetch", json={"collection_id": codex.collection_id})
+                    "query_model": "q", "snapshot": "", "embed": "off"}
+    # the defaults: every slice, records, nothing spent on embedding
+    r = client.post("/api/share/fetch", json={"collection_id": codex.collection_id,
+                                              "encoder": "http://nas:30437", "embed_model": "m"})
     assert r.status_code == 202 and queued[1][1]["slices"] == "all" and queued[1][1]["kinds"] == ["records"]
+    assert queued[1][1]["embed"] == "off"
+    # the embed mode is the taker's (07 §7.8; operator 2026-10-20: "what about the p2p embedding?")
+    r = client.post("/api/share/fetch", json={"collection_id": codex.collection_id, "embed": "p2p",
+                                              "encoder": "http://nas:30437", "embed_model": "m"})
+    assert r.status_code == 202 and queued[2][1]["embed"] == "p2p"
+    r = client.post("/api/share/fetch", json={"collection_id": codex.collection_id, "embed": "sometimes",
+                                              "encoder": "http://nas:30437", "embed_model": "m"})
+    assert r.status_code == 409 and "embed is one of" in r.text
+    # no encoder: the collection would be refused as non-compliant — refused here instead, queued nothing
+    r = client.post("/api/share/fetch", json={"collection_id": codex.collection_id})
+    assert r.status_code == 409 and "no [encoder]" in r.text and len(queued) == 3
 
 
 def test_what_cannot_be_taken_is_refused_at_once_and_queues_nothing(client, monkeypatch):
