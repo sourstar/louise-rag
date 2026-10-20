@@ -335,10 +335,14 @@ chunks. Now `accept.files_here` decides: the fetch beat lists and takes
 such a bundle again (`listed_bundles`, `take`), and the publisher leaves a
 part with another producer's fileless row to that fetch
 (`contribute.unreadable_bundles`), re-signing nothing; this peer's own
-fileless rows claim nothing, as before. 04 §4.5 amended. Open, München's
-to report: the node published en/00219 seven times (38,273 chunks each)
-and en/00043 eight times within an hour — the homogeneous T0-warning
-parts; whether its own rows lack their files is the first question.
+fileless rows claim nothing, as before. 04 §4.5 amended. Perugia's deploy
+(15:14Z) showed the re-take working — 60705a18 brought 5,570 chunks this
+peer did not hold — and a defect in the fix: the union cache, keyed on the
+part's bundle ids, never saw the files arrive under the same id, so
+en/01192 stayed at 963 and open; the entry now records which bundles were
+unreadable and whether their file existed, and is recomputed when that
+changes (`counting._entry_stands`). The node's seven copies of en/00219:
+the entry below.
 
 ### 2026-10-20: a taken copy tests itself as its parts land (Perugia's find)
 

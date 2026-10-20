@@ -365,7 +365,27 @@ def test_a_part_s_coverage_is_the_union_of_its_bundles_chunk_ids_never_a_sum(rea
     rows = cov.rows(kw["con"])
     said: list[str] = []
     got = counting.union_counts(root, "gutenberg", codex, rows, log=said.append)
-    assert got[cov.shard_id(codex, sid)] == one and any("not readable here" in m for m in said)
+    assert got[cov.shard_id(codex, sid)] == one and any("not readable here" in m and "absent" in m for m in said)
+    entry = json.loads(cache.read_bytes())[cov.shard_id(codex, sid)]
+    assert entry["unreadable"] == 1 and entry["missing"] == {theirs: False}
+    # Perugia, 2026-10-20 (en/01192): the files come back under the same id (a re-take) — the
+    # entry keyed on the ids alone never saw them; now it is recomputed
+    shutil.copytree(contribute.bundle_dir(root, "gutenberg", codex, sid, kept),
+                    contribute.bundle_dir(root, "gutenberg", codex, sid, theirs))
+    got = counting.union_counts(root, "gutenberg", codex, rows)
+    entry = json.loads(cache.read_bytes())[cov.shard_id(codex, sid)]
+    assert got[cov.shard_id(codex, sid)] == one and entry["unreadable"] == 0 and entry["missing"] == {}
+    # present but unreadable (en/00043): counted as nothing, named, and read once — not every call
+    (contribute.bundle_dir(root, "gutenberg", codex, sid, theirs) / "vectors.parquet").write_bytes(b"garbage")
+    cache.unlink()
+    said = []
+    got = counting.union_counts(root, "gutenberg", codex, rows, log=said.append)
+    entry = json.loads(cache.read_bytes())[cov.shard_id(codex, sid)]
+    assert got[cov.shard_id(codex, sid)] == one and entry["missing"] == {theirs: True}
+    assert any(theirs[:23] in m and "present" in m for m in said)
+    monkeypatch.setattr(counting, "chunk_ids_of", lambda d: (_ for _ in ()).throw(AssertionError("read again")))
+    assert counting.union_counts(root, "gutenberg", codex, rows)[cov.shard_id(codex, sid)] == one
+    monkeypatch.undo()
     # the view's kwargs, as every caller takes them
     view_kw = counting.view_kwargs(root, "gutenberg", codex, kw["con"])
     assert set(view_kw) == {"redundant", "union"} and view_kw["union"] == got
