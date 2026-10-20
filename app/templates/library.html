@@ -282,14 +282,18 @@
    acknowledgement before any member moves (invariant 9). A peer chooses
    what it fetches; nothing is fetched that was not chosen (operator,
    2026-10-20). `louise share offer` lists the same. #}
+{# a render without `offered` (a test's, a page that passes less) shows an
+   empty offer — never an Undefined handed to tojson (München's gate,
+   2026-10-20); the filter at each use, since a `set` in this block is not
+   seen by the scripts block #}
 <div class="panel" id="offer">
-  <h2>Offered by peers <span class="badge">{{ offered|length }}</span></h2>
+  <h2>Offered by peers <span class="badge">{{ offered|default([], true)|length }}</span></h2>
   <div class="note">What live neighbours announce and this node does not hold. Nothing is fetched
     that was not chosen here or with <code>louise share fetch</code>; <code>louise share offer</code>
     lists the same. A collection taken here appears above once its Codex and snapshots are held;
     its records and bundles follow at the worker's next fetch beat.</div>
-  {% if not offered %}<div class="note">Nothing is offered that this node does not already hold.</div>{% endif %}
-  {% for o in offered %}
+  {% if not offered|default([], true) %}<div class="note">Nothing is offered that this node does not already hold.</div>{% endif %}
+  {% for o in offered|default([], true) %}
   <div class="panel" data-offer="{{ o.collection_id }}"{% if o.superseded_by %} style="opacity:.65"{% endif %}>
     <h2>{{ o.title or o.plugin or 'untitled' }} <span class="badge">{{ o.plugin or '?' }}</span>
       {% if o.superseded_by %}<span class="badge brass" title="continued or replaced by {{ o.superseded_by }}">superseded</span>{% endif %}</h2>
@@ -631,7 +635,7 @@ async function createAnnotations(){
 }
 // 04 §4.2 THE OFFER: taking a collection a peer announces — `share fetch`,
 // queued for the worker, which signs the pulls (app/jobs.py SHARE_FETCH).
-const OFFER={{ offered|tojson }};
+const OFFER={{ offered|default([], true)|tojson }};
 function openTake(cid){
   const o=OFFER.find(x=>x.collection_id===cid); if(!o)return;
   showModal(`<h2>Take ${esc(o.title||o.plugin||cid.slice(0,23))}</h2>
