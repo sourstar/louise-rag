@@ -753,6 +753,15 @@ deploy on the node at once (supersedes "at the scan's end"); the pass
 resumes at the last committed chunk (≈ entity 22–25 M). Owed: the rate
 after the deploy and the new ETA.
 
+**DEPLOYED on the node 17:17:38 CEST (678450f, image sha256:1416795f…,
+gate PASSED 4,876 / 1 skipped).** The pack resumed at chunk 344 (34.4 M
+entities); `lbzip2 -n 11` at ~860 % CPU through the skip phase, the box
+~99 % busy, mostly nice'd. Rate and ETA follow once new chunks commit.
+Same deploy, the publisher: the sweep set 27 refused own copies aside
+(27, not 26: one more refused row elsewhere); served dirs now en/00219 2,
+en/00043 4. The seeder's sync then deleted the set-aside tree
+(state/share is the seeder's) — cf430b5 moves it to state/refused-bundles.
+
 ### 2026-10-20 — a peer leads only where it embeds and shares; a switch releases its parts (operator) — PREPARED
 
 **Change.** The digest carries a space's benchmark only for collections

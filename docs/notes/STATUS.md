@@ -323,7 +323,15 @@ earlier passes are swept there at the next pass (`sweep_refused`), and a
 part whose own export was refused is not exported again for
 `REFUSED_RETRY_S` (24 h) — the vectors stay for `hold vectors check`. A
 part genuinely failing T0 now costs one copy a day, not one a pass. 04
-§4.5 amended.
+§4.5 amended. Deployed on the node 17:17:38 CEST (678450f): the sweep set
+27 aside — and the seeder's next sync DELETED them: `seeder.sync` removes
+every directory under `state/share/` but `torrents` and the current
+snapshot's, and `share --stop` removes the tree whole (München). The 27
+were refused duplicates (vectors in the table, rows keep the refusal);
+München moved the directory to `state/refused-bundles/` (cf430b5), under
+neither seeder-owned tree, test extended. Known limit: a refused row whose
+directory is gone carries no time, so the day's hold does not apply to it
+— the two parts concerned are closed, so nothing re-exports today.
 
 ### 2026-10-20: an accepted bundle without its files is taken again, never re-signed (Perugia's find)
 
