@@ -322,11 +322,9 @@ and carries an existing cache in once (`adopt`: whole or not at all,
 `*.tmp` left out, the original left). pubmed's pack and wikipedia's
 page-props pack follow it here; the wikidata pack is München's (pack_dir
 through `derived.place`), with the node's env `LOUISE_CACHE_DIR=/data/cache`
-(NVMe, 571 GB free) at the scan's end. Perugia sets it too (operator: "that
-pc has only nvme") with its 8710eed deploy — nothing moves there today,
-gutenberg has no derived pack, but a pubmed or wikidata copy taken later
-lands its pack on the fast drive unasked. 07 §7.8 and CLAUDE.md invariant 6
-amended.
+(NVMe, 571 GB free) at the scan's end. Perugia leaves it unset (operator:
+an all-NVMe PC gains nothing from a second place for the same cache). 07
+§7.8 and CLAUDE.md invariant 6 amended.
 
 ### 2026-10-20: a refused own export is set aside and not retried for a day (München's facts on the node)
 
