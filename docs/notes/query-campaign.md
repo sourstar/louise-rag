@@ -151,6 +151,26 @@ under each tree (`tools/measure/astyped_rescore.py`). Pre-rerank:
   instruction. A same-path comparison of bare against instructed is the
   probe of run 2.
 
+**After the reranker: a regression on titles (0a2c6ef live, 22:41).** The
+campaign: 33 of 40. The 40 labelled titles through the API (limit 10, one
+hit per work): MRR **0.579**, R@1 0.425, R@3 0.700, R@10 0.925, against
+0.738 / 0.600 / 0.950 at R@10 for the same path before the reranker. The
+instructed vector leg now brings books ABOUT a work into the candidates
+(biographies, criticism, anthologies), and the reranker prefers their
+passages to the work's own. "Moby Dick" shows a Melville biography,
+Harper's and a critic. "Pride and Prejudice" shows Famous Reviews and two
+Austen studies. "War and Peace" goes from fused 4 to shown 10, behind four
+books on Tolstoy. The run-2 reranker measurement (titles 0.660, 2026-10-10)
+was on another path and the bare vector leg. Open for decision.
+
+The two Spanish edition tests that failed are the §5.3 rule at work. For
+"Don Quijote de la Mancha, el ingenioso hidalgo" the plan reads no
+language: the function-word guess abstains against the 56 languages held,
+Catalan and Galician among them. With the language unknown, English is
+preferred, and an English edition (77095) now ranks. A limitation of the
+guess ("ingenioso" and "hidalgo" are Spanish-only words, but it reads
+function words only), not of the grouping.
+
 ### Fixed in this run
 
 A broad exclusion was refused (§5.7: the postings hold values of at most
