@@ -102,6 +102,113 @@ def test_a_truncated_dump_builds_no_complete_pack(tmp_path):
     assert [q.name for q in pack.chunk_files(p)] == ["00000.parquet"], "the complete chunk is kept for the resume"
 
 
+# ---- the pass on several processes (the operator, 2026-10-20: "squeeze everything from the cpu") ----
+
+def _pack_bytes(dump: Path) -> dict:
+    """Everything a pack is: its meta, each chunk file's bytes, the label rows."""
+    import sqlite3
+    d = pack.pack_dir(dump)
+    meta = json.loads((d / "meta.json").read_text())
+    meta.pop("mtime_ns"), meta.pop("size")            # two dumps' own signatures
+    con = sqlite3.connect(d / "labels.sqlite")
+    labels = con.execute("SELECT id, lang, label FROM label ORDER BY id, lang").fetchall()
+    con.close()
+    return {"meta": meta, "labels": labels,
+            "chunks": {p.name: p.read_bytes() for p in sorted(d.glob("*.parquet"))},
+            "stray": sorted(p.name for p in d.glob("*.tmp"))}
+
+
+@pytest.mark.parametrize("chunk", [2, 4, 6, 7])
+def test_the_parallel_pass_writes_the_serial_pass_byte_for_byte(tmp_path, chunk):
+    serial = a_dump(tmp_path / "serial")
+    parallel = a_dump(tmp_path / "parallel")
+    m1 = pack.build(serial, languages=("en", "fr"), chunk=chunk, workers=1)
+    said = []
+    m2 = pack.build(parallel, languages=("en", "fr"), chunk=chunk, workers=3, log=said.append)
+    assert m2["complete"] and m2["entities"] == m1["entities"] == 6 and m2["pruned"] == m1["pruned"] == 1
+    a, b = _pack_bytes(serial), _pack_bytes(parallel)
+    assert a["meta"] == b["meta"] and a["labels"] == b["labels"]
+    assert a["chunks"] == b["chunks"], "every chunk file the same bytes"
+    assert b["stray"] == [], "no tmp file left"
+    assert "3 processes" in said[-1]
+
+
+def test_a_stopped_parallel_pass_resumes_at_its_last_committed_chunk(tmp_path):
+    serial = a_dump(tmp_path / "serial")
+    parallel = a_dump(tmp_path / "parallel")
+    pack.build(serial, languages=("en",), chunk=2, workers=1)
+    meta = pack.build(parallel, languages=("en",), chunk=2, workers=2, stop=lambda: True)
+    assert not meta["complete"] and meta["chunks"] == 1 and meta["entities"] == 2, \
+        "stopped after the first commit, as the serial pass stops"
+    assert [p.name for p in pack.chunk_files(parallel)] == ["00000.parquet"]
+    assert not list(pack.pack_dir(parallel).glob("*.tmp")), "the uncommitted chunk's tmp is gone"
+    meta = pack.build(parallel, languages=("en",), chunk=2, workers=2)
+    assert meta["complete"] and meta["chunks"] == 3
+    assert _pack_bytes(parallel) == _pack_bytes(serial)
+
+
+def test_a_truncated_dump_stops_the_parallel_pass_with_its_complete_chunks_kept(tmp_path):
+    lines = entity_lines()
+    d = tmp_path / "wikidatawiki" / "entities" / "20261012"
+    d.mkdir(parents=True)
+    p = d / "wikidata-20261012-all.json.bz2"
+    p.write_bytes(bz2.compress(b"[\n" + b",\n".join(lines[:5]) + b",\n"))
+    with pytest.raises(pack.PackError, match="truncated"):
+        pack.build(p, languages=("en",), chunk=2, workers=2)
+    assert not pack.is_complete(p, ("en",))
+    assert [q.name for q in pack.chunk_files(p)] == ["00000.parquet", "00001.parquet"]
+
+
+def test_a_line_that_is_not_json_is_the_dumps_error_on_the_parallel_pass_too(tmp_path):
+    lines = entity_lines()
+    dump = a_dump(tmp_path, lines=lines[:3] + [b'{"id": "Q9", broken'] + lines[3:])
+    with pytest.raises(dump_mod.DumpError, match="entity 3: not JSON"):
+        pack.build(dump, languages=("en",), chunk=2, workers=2)
+    assert [q.name for q in pack.chunk_files(dump)] == ["00000.parquet"], "the chunks before it committed"
+
+
+def test_iter_lines_frames_the_dump_as_iter_entities_does(tmp_path):
+    dump = a_dump(tmp_path)
+    for skip in (0, 2, 6):
+        with dump_mod.open_dump(dump) as f:
+            want = [(e.index, e.raw) for e in dump_mod.iter_entities(f, skip=skip)]
+        r = dump_mod.ReadResult()
+        with dump_mod.open_dump(dump) as f:
+            got = list(dump_mod.iter_lines(f, skip=skip, result=r))
+        assert got == want and r.complete
+
+
+def test_lbzip2_on_the_path_decompresses_the_same_bytes(tmp_path, monkeypatch):
+    """A stand-in `lbzip2` (python's bz2 behind its flags) on the PATH: the
+    pass reads its stdout and writes the same pack as the serial pass."""
+    import sys
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    called = tmp_path / "called"
+    (bin_dir / "lbzip2").write_text(
+        f"#!{sys.executable}\nimport bz2, sys, pathlib\n"
+        f"pathlib.Path({str(called)!r}).write_text(' '.join(sys.argv[1:]))\n"
+        "sys.stdout.buffer.write(bz2.decompress(open(sys.argv[-1], 'rb').read()))\n")
+    (bin_dir / "lbzip2").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{__import__('os').environ['PATH']}")
+    serial = a_dump(tmp_path / "serial")
+    parallel = a_dump(tmp_path / "parallel")
+    pack.build(serial, languages=("en",), chunk=4, workers=1)
+    assert pack.build(parallel, languages=("en",), chunk=4, workers=2)["complete"]
+    assert called.read_text().startswith("-d -c -n 2 "), "lbzip2 was asked, with the pass's processes"
+    assert _pack_bytes(parallel) == _pack_bytes(serial)
+
+
+def test_the_pass_follows_the_parse_pools_size(monkeypatch):
+    monkeypatch.setattr(pack.config, "PARSE_PROCESSES", 11)
+    assert pack.processes() == 11
+    monkeypatch.setattr(pack.config, "PARSE_PROCESSES", 1)
+    assert pack.processes() == 1, "the test suite's serial path"
+    monkeypatch.setattr(pack, "_parallel_failed", True)
+    monkeypatch.setattr(pack.config, "PARSE_PROCESSES", 11)
+    assert pack.processes() == 1, "after a failed pool, this process goes serial"
+
+
 def test_discover_fetch_and_parse_over_the_pack(tmp_path):
     dump = a_dump(tmp_path)
     src = WikidataSource(languages=("en", "fr"))

@@ -24,21 +24,44 @@ stream (bz2 does not seek) and SKIPPING the lines of complete chunks
 without parsing them — decompression alone, about a fifth of the pass.
 Like PubMed's pack a cache, never a member, never exchanged; a dump of
 another size, mtime or PACK_VERSION rebuilds it.
+
+ON EVERY CORE (2026-10-20, the operator: "squeeze everything from the
+cpu"). The serial pass ran at ~29 MB/s of JSON on one core of twelve —
+measured on the node: bz2 decompresses at 76 MB/s, `json.loads` parses at
+48 MB/s, one after the other in one thread. With `config.PARSE_PROCESSES`
+> 1 (the parse pool's size; 1 in the test suite) the pass is split: THIS
+process decompresses and cuts the lines (`dump.iter_lines`, no parse), a
+pool of spawned children (never forked: the worker holds SQLite
+connections and threads; nice 10, as the parse pool's) each parses ONE
+WHOLE CHUNK and writes its Parquet to a tmp file, and this process commits
+the chunks strictly in order — labels, rename, meta — so the files, the
+labels and the resume point are the serial pass's, byte for byte. A child
+that fails or does not answer within `CHUNK_TIMEOUT_S` ends the pass at the
+last committed chunk (resumable, nothing lost; deferral, never an error)
+and the rest of this process's life runs serial. Decompression itself is
+one stream: `lbzip2` on the PATH decompresses it on several cores (the
+same bytes), else the standard library's bz2.
 """
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
+import shutil
 import sqlite3
+import subprocess
 import threading
 import time
 from collections import OrderedDict
+from concurrent.futures import Future, ProcessPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Iterator, Optional
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from app import config
 from app.plugins.wikidata import dump as dump_mod, ids
 
 PACK_VERSION = 1
@@ -50,6 +73,10 @@ ROW_GROUP = 1_000
 #: design's corpus left them out; invariant 11 allows pruning whole entities)
 PRUNED_CLASSES = frozenset({"Q13442814"})
 PACK_DIRNAME = ".pack"
+#: how long the pass waits for one child's chunk before it stops (resumable)
+CHUNK_TIMEOUT_S = 1800.0
+#: a failed pool turns the rest of this process's passes serial
+_parallel_failed = False
 
 SCHEMA = pa.schema([
     pa.field("index", pa.int64()),
@@ -143,11 +170,75 @@ def _row(entity: dump_mod.Entity, pruned: bool) -> dict[str, Any]:
             "pruned": pruned, "line": entity.raw}
 
 
+def _write_chunk(rows: list[dict[str, Any]], tmp: Path) -> None:
+    table = pa.Table.from_pylist(rows, schema=SCHEMA)
+    pq.write_table(table, tmp, compression="zstd", compression_level=3, row_group_size=ROW_GROUP)
+
+
+def _chunk_job(lines: list[bytes], start: int, languages: tuple[str, ...],
+               tmp: str) -> tuple[int, list[tuple[str, str, str]]]:
+    """In a child: one chunk's lines parsed exactly as the serial pass parses
+    them, its Parquet written to `tmp`. Returns (pruned, labels)."""
+    rows: list[dict[str, Any]] = []
+    labels: list[tuple[str, str, str]] = []
+    pruned_n = 0
+    for i, raw in enumerate(lines):
+        try:
+            obj = json.loads(raw)
+        except ValueError as e:
+            raise dump_mod.DumpError(f"entity {start + i}: not JSON ({e})") from None
+        if not isinstance(obj, dict) or not isinstance(obj.get("id"), str):
+            raise dump_mod.DumpError(f"entity {start + i}: an entity is an object with an `id`")
+        pruned = is_pruned(obj)
+        pruned_n += pruned
+        rows.append(_row(dump_mod.Entity(start + i, raw, obj), pruned))
+        labels.extend(_labels_of(obj, languages))
+    _write_chunk(rows, Path(tmp))
+    return pruned_n, labels
+
+
+def _child_nice() -> None:
+    try:
+        os.nice(10)
+    except (AttributeError, OSError):
+        pass
+
+
+def processes() -> int:
+    """The pass's worker processes: the parse pool's size (1 = serial)."""
+    return 1 if _parallel_failed else max(1, int(getattr(config, "PARSE_PROCESSES", 1)))
+
+
+@contextmanager
+def _decompressed(dump: Path, threads: int) -> Iterator[Any]:
+    """The dump's bytes: through `lbzip2` on several cores when it is on the
+    PATH (a non-zero exit is a stream it could not decode: truncated), else
+    `dump.open_dump`."""
+    exe = shutil.which("lbzip2") if str(dump).endswith(".bz2") else None
+    if exe is None:
+        with dump_mod.open_dump(dump) as f:
+            yield f
+        return
+    proc = subprocess.Popen([exe, "-d", "-c", "-n", str(max(1, threads)), str(dump)],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=1 << 20)
+    try:
+        yield proc.stdout
+    finally:
+        proc.stdout.close()
+        try:
+            proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
 def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[str], None] | None = None,
-          stop: Callable[[], bool] | None = None, chunk: int = CHUNK) -> dict[str, Any]:
+          stop: Callable[[], bool] | None = None, chunk: int = CHUNK,
+          workers: int | None = None) -> dict[str, Any]:
     """One streaming pass, or its continuation. Returns the meta written:
     `{complete, chunks, entities, pruned, ...}`; `complete` False when `stop`
-    ended the pass at a chunk boundary (resumable, nothing lost)."""
+    ended the pass at a chunk boundary (resumable, nothing lost). `workers`:
+    the pass's processes (default `processes()`); 1 is the serial pass."""
     dump = Path(dump)
     say = log or (lambda m: None)
     d = pack_dir(dump)
@@ -198,6 +289,13 @@ def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[st
 
     say(f"[wikidata] pack: {dump.name}: {'resuming after' if skip else 'starting;'} {skip} entities"
         if skip else f"[wikidata] pack: {dump.name}: starting")
+    n = processes() if workers is None else max(1, int(workers))
+    if n > 1:
+        try:
+            return _build_parallel(dump, d, meta, con, languages=languages, say=say, stop=stop,
+                                   chunk=chunk, workers=n, t0=t0)
+        finally:
+            con.close()
     with dump_mod.open_dump(dump) as stream:
         result = dump_mod.ReadResult()
         count = 0
@@ -231,6 +329,108 @@ def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[st
     say(f"[wikidata] pack: {dump.name}: complete — {meta['entities']} entities, {meta['pruned']} pruned, "
         f"{meta['chunks']} chunk file(s), {time.monotonic() - t0:.0f} s")
     return meta
+
+
+def _tmp_path(d: Path, chunk_no: int, token: str) -> Path:
+    """A parallel pass's own tmp name: a child left running by a timed-out
+    pass can never write into a later pass's file."""
+    return chunk_path(d, chunk_no).with_name(f"{chunk_no:05d}.parquet.{token}.tmp")
+
+
+def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Connection, *,
+                    languages: tuple[str, ...], say: Callable[[str], None],
+                    stop: Callable[[], bool] | None, chunk: int, workers: int, t0: float) -> dict[str, Any]:
+    """`build`'s pass on `workers` processes (module docstring): the same
+    files, labels and meta as the serial pass, committed in chunk order."""
+    global _parallel_failed
+    from concurrent.futures.process import BrokenProcessPool
+
+    done = int(meta["chunks"])
+    skip = done * chunk
+    state = {"next": done, "pruned": int(meta["pruned"])}
+    pending: dict[int, Future] = {}
+    token = f"{os.getpid()}-{time.monotonic_ns()}"
+    for stale in d.glob("*.parquet.*.tmp"):          # an earlier parallel pass's, never committed
+        stale.unlink(missing_ok=True)
+    ex = ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"),
+                             initializer=_child_nice)
+    hung = False
+
+    def write_meta() -> None:
+        tmp_meta = _meta_path(d).with_name("meta.json.tmp")
+        tmp_meta.write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
+        os.replace(tmp_meta, _meta_path(d))
+
+    def commit(chunk_no: int, fut: Future, *, final: bool) -> None:
+        pruned, labels = fut.result(timeout=CHUNK_TIMEOUT_S)
+        con.execute("BEGIN IMMEDIATE")
+        con.executemany("INSERT OR REPLACE INTO label (id, lang, label) VALUES (?, ?, ?)", labels)
+        con.execute("COMMIT")
+        os.replace(_tmp_path(d, chunk_no, token), chunk_path(d, chunk_no))
+        state["pruned"] += pruned
+        state["next"] = chunk_no + 1
+        if final:
+            meta.update(chunks=state["next"], pruned=state["pruned"], complete=True)
+        else:
+            meta.update(chunks=state["next"], entities=state["next"] * chunk, pruned=state["pruned"],
+                        complete=False)
+        write_meta()
+
+    def submit(chunk_no: int, lines: list[bytes], start: int) -> Future:
+        return ex.submit(_chunk_job, lines, start, languages, str(_tmp_path(d, chunk_no, token)))
+
+    try:
+        result = dump_mod.ReadResult()
+        batch: list[bytes] = []
+        batch_start = skip
+        chunk_no = done
+        with _decompressed(dump, workers) as stream:
+            for _index, raw in dump_mod.iter_lines(stream, result=result, skip=skip):
+                batch.append(raw)
+                if len(batch) < chunk:
+                    continue
+                pending[chunk_no] = submit(chunk_no, batch, batch_start)
+                batch_start += len(batch)
+                batch = []
+                chunk_no += 1
+                # commit in order what is done; wait for the oldest when every child is busy
+                while state["next"] in pending and (pending[state["next"]].done() or len(pending) >= workers):
+                    c = state["next"]
+                    commit(c, pending.pop(c), final=False)
+                    say(f"[wikidata] pack: {dump.name}: {state['next'] * chunk} entities, "
+                        f"{state['next']} chunk file(s), {time.monotonic() - t0:.0f} s")
+                    if stop is not None and stop():
+                        return meta
+        while pending:
+            c = state["next"]
+            commit(c, pending.pop(c), final=False)
+            say(f"[wikidata] pack: {dump.name}: {state['next'] * chunk} entities, "
+                f"{state['next']} chunk file(s), {time.monotonic() - t0:.0f} s")
+        if not result.complete:
+            if batch:
+                say(f"[wikidata] pack: {dump.name}: the stream ended {result.truncated_at or 'unexpectedly'}: "
+                    f"{len(batch)} entities of an incomplete chunk not written")
+            raise PackError(f"{dump.name}: the dump ended before its closing bracket (truncated download?)")
+        meta["entities"] = batch_start + len(batch)
+        if batch:
+            commit(chunk_no, submit(chunk_no, batch, batch_start), final=True)
+        else:
+            meta.update(pruned=state["pruned"], complete=True)
+            write_meta()
+        say(f"[wikidata] pack: {dump.name}: complete — {meta['entities']} entities, {meta['pruned']} pruned, "
+            f"{meta['chunks']} chunk file(s), {time.monotonic() - t0:.0f} s, {workers} processes")
+        return meta
+    except (BrokenProcessPool, TimeoutError) as e:
+        _parallel_failed = True
+        hung = isinstance(e, TimeoutError)
+        say(f"[wikidata] pack: {dump.name}: the pool failed ({type(e).__name__}: {e}); stopped after "
+            f"{meta['chunks']} chunk(s), resumable; the next pass of this process is serial")
+        return meta
+    finally:
+        # the running children finish (one chunk, bounded) unless one hung
+        ex.shutdown(wait=not hung, cancel_futures=True)
+        for c in pending:
+            _tmp_path(d, c, token).unlink(missing_ok=True)
 
 
 # ---- reading ---------------------------------------------------------------------------------

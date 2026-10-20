@@ -69,6 +69,67 @@ def _strip_line(line: bytes) -> bytes:
     return line.rstrip()
 
 
+def iter_lines(stream: BinaryIO, *, start_index: int = 0, result: ReadResult | None = None,
+               skip: int = 0) -> Iterator[tuple[int, bytes]]:
+    """`(index, raw)` for every entity line, in order, WITHOUT parsing it —
+    the framing of `iter_entities` (the `[`, the `]`, `skip`, a truncated
+    tail) for a pass that parses elsewhere (pack.py's worker processes). The
+    one line ever parsed here is a stream's last, unterminated one: whether
+    it parses decides between an entity and a cut download. A line that is
+    not an entity object is the parser's to refuse."""
+    result = result if result is not None else ReadResult()
+    index = start_index
+    opened = False
+    consumed = 0
+    to_skip = skip
+    try:
+        while True:
+            line = stream.readline()
+            if not line:
+                break
+            consumed += len(line)
+            if len(line) > MAX_LINE:
+                raise DumpError(f"a line of more than {MAX_LINE} bytes at entity {index}: not an entity dump")
+            s = line.strip()
+            if not opened:
+                if not s:
+                    continue
+                if s == b"[":
+                    opened = True
+                    continue
+                if s.startswith(b"["):
+                    opened = True
+                    line = line.lstrip()[1:]
+                    s = line.strip()
+                    if not s:
+                        continue
+                else:
+                    raise DumpError("the dump does not open with `[`: not a Wikidata entity dump")
+            if s == b"]" or s == b"],":
+                result.complete = True
+                break
+            if to_skip > 0 and line.endswith(b"\n") and _strip_line(line):
+                to_skip -= 1
+                index += 1
+                continue
+            raw = _strip_line(line)
+            if not line.endswith(b"\n"):
+                try:
+                    json.loads(raw)
+                except ValueError:
+                    result.truncated_at = consumed
+                    break
+            elif not raw:
+                continue
+            yield index, raw
+            index += 1
+            result.entities = index - start_index
+    except EOFError:
+        result.truncated_at = consumed
+    if not result.complete and result.truncated_at is None and opened:
+        result.truncated_at = consumed
+
+
 def iter_entities(stream: BinaryIO, *, start_index: int = 0, result: ReadResult | None = None,
                   tolerate_truncation: bool = True, skip: int = 0) -> Iterator[Entity]:
     """The entities of an open dump stream, in order. `result` is filled
