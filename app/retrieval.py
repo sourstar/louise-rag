@@ -274,6 +274,30 @@ def _rerank_budget_s(depth: int = RERANK_TOP_N) -> float:
     return base * max(1.0, depth / RERANK_TOP_N)
 
 
+#: 05 §5.6, a candidate under measurement (2026-10-20, query campaign run 3):
+#: False — the reranker's order replaces the fused one (as specified); True —
+#: the reranker is ONE MORE VOTE, its order fused with the fused order by
+#: reciprocal rank (`_rerank_order`). Titles fell from MRR 0.738 before the
+#: reranker to 0.579 after it once the instructed vector leg brought books
+#: ABOUT a work among the 50 ("Moby Dick": a Melville biography first). Not
+#: switched until München's post-rerank measurement of titles AND
+#: descriptive decides.
+RERANK_FUSE = False
+
+
+def _rerank_order(scores: list[float], *, fuse: bool) -> list[int]:
+    """The order of `scores`' candidates (each index its position in the
+    fused order): by the reranker's score, best first — or, `fuse`, by
+    1/(K + fused rank) + 1/(K + reranker rank), ties by the reranker's rank
+    then the fused one (RRF_K, as `_merge_rrf`)."""
+    by_score = sorted(range(len(scores)), key=lambda i: (-scores[i], i))
+    if not fuse:
+        return by_score
+    rerank_rank = {i: r for r, i in enumerate(by_score, 1)}
+    return sorted(range(len(scores)), key=lambda i: (-(1.0 / (RRF_K + i + 1) + 1.0 / (RRF_K + rerank_rank[i])),
+                                                     rerank_rank[i], i))
+
+
 def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
                  depth: int = RERANK_TOP_N) -> tuple[list[dict], bool]:
     """05 §5.6 for ONE ranked list: the reranker re-orders its top `depth`
@@ -350,7 +374,9 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
         if i not in best or scores[t] > best[i][0]:
             best[i] = (scores[t], c)
     ranked = []
-    for i in sorted(best, key=lambda i: (-best[i][0], i)):
+    order = _rerank_order([best[i][0] for i in range(len(head))], fuse=RERANK_FUSE) \
+        if set(best) == set(range(len(head))) else sorted(best, key=lambda i: (-best[i][0], i))
+    for i in order:
         score, c = best[i]
         h = dict(head[i])
         if c.get("chunk_id") != h.get("chunk_id"):

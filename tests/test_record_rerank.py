@@ -149,3 +149,18 @@ def test_the_bookkeeping_never_leaves_the_search(monkeypatch):
     monkeypatch.setattr(retrieval.db, "get_scope", lambda con: {"embed_mode": "off"})
     retrieval._attach_metadata_and_enqueue(Con(), SimpleNamespace(plugin="g"), [hit])
     assert retrieval.MATCHED not in hit and retrieval.HEAD not in hit and "rrf" not in hit
+
+
+def test_the_rerank_order_replaces_the_fused_one_or_fused_with_it_by_reciprocal_rank():
+    """05 §5.6 as specified: the reranker's order replaces the fused one.
+    The candidate under measurement (query campaign run 3, 2026-10-20): the
+    reranker as one more vote, fused with the fused order by RRF — a book
+    the fusion ranks first and the reranker fifth is not pushed below four
+    books ABOUT it that only the reranker prefers."""
+    from app import retrieval
+    scores = [0.30, 0.90, 0.85, 0.80, 0.75, 0.10]      # the work first in the fused order; four studies of it next
+    assert retrieval._rerank_order(scores, fuse=False) == [1, 2, 3, 4, 0, 5]
+    fused = retrieval._rerank_order(scores, fuse=True)
+    assert fused[:2] == [1, 0] or fused.index(0) < retrieval._rerank_order(scores, fuse=False).index(0)
+    assert sorted(fused) == list(range(6)) and fused[-1] == 5
+    assert retrieval.RERANK_FUSE is False, "not switched until measured"
