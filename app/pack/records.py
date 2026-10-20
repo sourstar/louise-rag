@@ -23,6 +23,24 @@ frame_len bytes to the payload start, and decodes the index. The index:
      "uids": {uid: [frame, line], ...}}
 
 Frame offsets are absolute in the file, so a frame is one pread.
+
+THE OTHER CONTAINER (09 §9.5 "The file (B): Parquet", operator 2026-10-20;
+docs/notes/gutenberg-graph-amendments.md A-K4). A part whose path ends in
+`.parquet` is one Parquet file: one row per record in record order, one
+STRING column per key of the record line in the line's key order — a
+scalar (`uid`, `title`, `date`, …) as the string or null, a nested value
+(`creators`, `subjects`, `keys`, `sections`, `extra`, `figures`) as its
+compact JSON text — so that the §9.5 LINE is a pure function of the row
+(`line_of_row`, byte for byte `canonical_line`); zstd columns, row groups
+of FRAME_RECORDS, no statistics, the record and chunk counts in the
+schema metadata. The row group is the frame: `read_index` lists them as
+`[group, 0, 0, n, first_uid]` with the uid map built from the `uid`
+column, `read_frame` renders a row group's lines, and everything above
+them — `iter_records`, `read_record`, the caches, `dump_jsonl` — reads
+either container unchanged. `records_root` is over the records'
+`content_hash` values and so the same for both; `root` is the file's.
+The container is the Codex's to say (`slicing.container`, Codex version
+9) and the path's suffix to tell.
 """
 import hashlib
 import io
@@ -33,7 +51,7 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, Sequence
 
 import pyarrow as pa
 
@@ -43,6 +61,12 @@ SKIPPABLE_MAGIC = 0x184D2A5E
 TAG = b"LOUISE-PACK-IDX1"          # 16 bytes
 FOOTER = b"LPK1"
 SUFFIX = ".jsonl.zst"
+#: the Parquet container's suffix (09 §9.5 "The file (B)")
+PARQUET_SUFFIX = ".parquet"
+#: the record line's nested values: JSON text in their column
+NESTED_KEYS = frozenset({"creators", "subjects", "keys", "sections", "extra", "figures"})
+#: the schema metadata a Parquet part carries (the JSONL index's counts)
+_META_RECORDS, _META_CHUNKS = b"louise.records", b"louise.chunks"
 #: who compresses a part's bytes: the zstd pyarrow bundles (statically
 #: linked, its own version not exported), so the wheel's version names it.
 #: A snapshot's part entry carries it (09 §9.4 `writer`): a peer rebuilding
@@ -120,13 +144,12 @@ def keys_for_line(record_line: int) -> tuple[str, ...]:
             f"record_line is 1 or 2 (09 §9.5), got {record_line!r}") from None
 
 
-def canonical_line(record: dict, *, record_line: int = 1) -> bytes:
-    """The record as one JSON line: the shape's key order, compact, UTF-8.
+def is_parquet(path) -> bool:
+    """Which container a part's path names (09 §9.5)."""
+    return str(path).endswith(PARQUET_SUFFIX)
 
-    `record_line` defaults to 1 — the shape every collection that predates
-    the figures amendment writes, and the one a caller that has no Codex to
-    hand (a test fixture, `dev migrate pack`) means.
-    """
+
+def _ordered(record: dict, record_line: int) -> dict:
     keys = keys_for_line(record_line)
     ordered = {k: record.get(k) for k in keys}
     if record_line == 2 and ordered["figures"] is None:
@@ -134,7 +157,42 @@ def canonical_line(record: dict, *, record_line: int = 1) -> bytes:
         # shape 2, and a reader distinguishing "no plates" from "the writer
         # forgot" is a distinction the format does not offer.
         ordered["figures"] = []
+    return ordered
+
+
+def canonical_line(record: dict, *, record_line: int = 1) -> bytes:
+    """The record as one JSON line: the shape's key order, compact, UTF-8.
+
+    `record_line` defaults to 1 — the shape every collection that predates
+    the figures amendment writes, and the one a caller that has no Codex to
+    hand (a test fixture, `dev migrate pack`) means.
+    """
+    ordered = _ordered(record, record_line)
     return json.dumps(ordered, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+
+
+def _cell(key: str, value) -> str | None:
+    """A record value as its Parquet cell: nested values as the JSON text
+    the line writes for them, scalars as the string or null."""
+    if key in NESTED_KEYS:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ShardFormatError(f"{key}: a record line's scalar is a string or null (09 §9.5), "
+                               f"got {type(value).__name__} {value!r}")
+    return value
+
+
+def line_of_row(keys: Sequence[str], row: dict) -> bytes:
+    """09 §9.5's line from a Parquet row — the bytes `canonical_line` writes
+    for the record, without the newline (as `read_frame` returns lines)."""
+    parts = []
+    for k in keys:
+        v = row[k]
+        frag = v if k in NESTED_KEYS else json.dumps(v, ensure_ascii=False)
+        parts.append(json.dumps(k) + ":" + frag)
+    return ("{" + ",".join(parts) + "}").encode("utf-8")
 
 
 def content_hash(title: str, sections: list) -> str:
@@ -150,7 +208,8 @@ def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
                 frame_records: int = FRAME_RECORDS,
                 record_line: int = 1) -> ShardInfo:
     """Write `records` (dicts with RECORD_KEYS) as one shard, atomically
-    (tmp + rename). Records are written in the order given.
+    (tmp + rename). Records are written in the order given. A path ending
+    in `.parquet` is written in the other container (09 §9.5 "The file (B)").
 
     `record_line` comes from the collection's Codex and is 1 or 2 (09
     §9.5); it is the SHARD's, not the record's, so every line in a file is
@@ -158,6 +217,8 @@ def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
     """
     keys_for_line(record_line)          # refuse a bad line before any bytes
     path = Path(path)
+    if is_parquet(path):
+        return _write_parquet(path, records, level=level, row_group=frame_records, record_line=record_line)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     codec = _codec(level)
@@ -222,6 +283,102 @@ def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
     return ShardInfo(path=path, records=n_records, chunks=n_chunks,
                      bytes=path.stat().st_size, sha256=sha.hexdigest(),
                      first_uid=first_uid, last_uid=last_uid, id_min=id_min, id_max=id_max)
+
+
+def _write_parquet(path: Path, records: Iterable[dict], *, level: int, row_group: int,
+                   record_line: int) -> ShardInfo:
+    """09 §9.5 "The file (B)": the records as one Parquet file, atomically.
+    The same bytes for the same records under the same pyarrow (the
+    platform image pins it, as it pins the zstd of the frames), so honest
+    peers agree on `root` here too."""
+    import pyarrow.parquet as pq
+    keys = keys_for_line(record_line)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    cols: dict[str, list] = {k: [] for k in keys}
+    seen: set[str] = set()
+    n_records = n_chunks = 0
+    first_uid = last_uid = None
+    id_min = id_max = None
+    for record in records:
+        uid = record["uid"]
+        if uid in seen:
+            raise ShardFormatError(f"duplicate uid in shard: {uid}")
+        seen.add(uid)
+        ordered = _ordered(record, record_line)
+        for k in keys:
+            cols[k].append(_cell(k, ordered[k]))
+        n_records += 1
+        n_chunks += int(record.get("chunks") or 0)
+        first_uid = first_uid or uid
+        last_uid = uid
+        try:
+            nid = int(record.get("native_id"))
+            id_min = nid if id_min is None else min(id_min, nid)
+            id_max = nid if id_max is None else max(id_max, nid)
+        except (TypeError, ValueError):
+            pass
+    table = pa.table({k: pa.array(cols[k], type=pa.string()) for k in keys})
+    table = table.replace_schema_metadata({_META_RECORDS: str(n_records).encode(),
+                                           _META_CHUNKS: str(n_chunks).encode()})
+    try:
+        pq.write_table(table, tmp, compression="zstd", compression_level=level,
+                       row_group_size=row_group, use_dictionary=False, write_statistics=False,
+                       data_page_version="2.0", version="2.6")
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return ShardInfo(path=path, records=n_records, chunks=n_chunks, bytes=path.stat().st_size,
+                     sha256=sha256_of(path), first_uid=first_uid, last_uid=last_uid,
+                     id_min=id_min, id_max=id_max)
+
+
+def _parquet_file(path: Path):
+    import pyarrow.parquet as pq
+    try:
+        pf = pq.ParquetFile(path)
+    except (pa.ArrowInvalid, pa.ArrowException, OSError) as e:
+        raise ShardFormatError(f"{Path(path).name}: not a Parquet part ({e})") from None
+    names = pf.schema_arrow.names
+    if "uid" not in names or any(k not in names for k in RECORD_KEYS):
+        raise ShardFormatError(f"{Path(path).name}: a Parquet part has one column per key of the "
+                               f"record line (09 §9.5); this one has {', '.join(names)}")
+    return pf
+
+
+def _parquet_index(path: Path) -> "ShardIndex":
+    """The row groups as frames — `[group, 0, 0, n, first_uid]` — and the
+    uid map from the `uid` column alone, one small read per group."""
+    path = Path(path)
+    pf = _parquet_file(path)
+    frames: list[list] = []
+    uids: dict[str, list[int]] = {}
+    n = 0
+    for g in range(pf.metadata.num_row_groups):
+        col = pf.read_row_group(g, columns=["uid"]).column("uid").to_pylist()
+        frames.append([g, 0, 0, len(col), col[0] if col else None])
+        for i, uid in enumerate(col):
+            uids[uid] = [g, i]
+        n += len(col)
+    meta = pf.schema_arrow.metadata or {}
+    if meta.get(_META_RECORDS) is not None and int(meta[_META_RECORDS]) != n:
+        raise ShardFormatError(f"{path.name}: {n} rows, the file says {int(meta[_META_RECORDS])}")
+    return ShardIndex(path=path, mtime_ns=path.stat().st_mtime_ns, records=n,
+                      chunks=int(meta.get(_META_CHUNKS) or 0), frames=frames, uids=uids)
+
+
+def _parquet_frame(path: Path, index: "ShardIndex", k: int) -> list[bytes]:
+    """The lines of row group k, rendered from its rows."""
+    pf = _parquet_file(path)
+    _group, _, _, n, _first = index.frames[k]
+    table = pf.read_row_group(k)
+    keys = table.schema.names
+    lines = [line_of_row(keys, row) for row in table.to_pylist()]
+    if len(lines) != n:
+        raise ShardFormatError(f"{Path(path).name}: row group {k} holds {len(lines)} rows, index says {n}")
+    return lines
 
 
 def write_lines(path: Path, lines: Iterable[bytes], *, key_of, level: int = ZSTD_LEVEL,
@@ -301,8 +458,11 @@ class ShardIndex:
 
 
 def read_index(path: Path) -> ShardIndex:
-    """Parse the trailing skippable frame. Two small reads."""
+    """Parse the trailing skippable frame. Two small reads. A Parquet part's
+    index is its row groups (09 §9.5 "The file (B)")."""
     path = Path(path)
+    if is_parquet(path):
+        return _parquet_index(path)
     st = path.stat()
     with open(path, "rb") as f:
         if st.st_size < 16:
@@ -331,7 +491,10 @@ def read_index(path: Path) -> ShardIndex:
 
 
 def read_frame(path: Path, index: ShardIndex, k: int) -> list[bytes]:
-    """The lines of frame k (one pread + one decompress)."""
+    """The lines of frame k (one pread + one decompress); of row group k
+    for a Parquet part."""
+    if is_parquet(path):
+        return _parquet_frame(path, index, k)
     offset, csize, rsize, n, _first = index.frames[k]
     with open(path, "rb") as f:
         f.seek(offset)

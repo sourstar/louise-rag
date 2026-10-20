@@ -140,14 +140,25 @@ def shard_dir(collection_dir: Path) -> Path:
     return collection_dir / SHARD_DIR
 
 
-def shard_path(slice_: str, n: int, superseded_by: str | None = None) -> str:
-    """`records/<slice>/NNNNN.jsonl.zst`, and
-    `records/<slice>/NNNNN.<snapshot id>.jsonl.zst` for a superseded version:
-    a superseded shard keeps its old bytes beside the new ones, so every
-    snapshot in the chain stays servable and checkable (02 §2.2, 09 §9.5)."""
+#: the record parts' suffix per container (09 §9.5 "The file"; the Codex's
+#: `slicing.container`, version 9, `codex.container_of`)
+PART_SUFFIX = {"jsonl": ".jsonl.zst", "parquet": ".parquet"}
+
+
+def shard_path(slice_: str, n: int, superseded_by: str | None = None, container: str = "jsonl") -> str:
+    """`records/<slice>/NNNNN.jsonl.zst` — `.parquet` for a Parquet
+    collection — and `records/<slice>/NNNNN.<snapshot id>.jsonl.zst` for a
+    superseded version: a superseded shard keeps its old bytes beside the
+    new ones, so every snapshot in the chain stays servable and checkable
+    (02 §2.2, 09 §9.5)."""
     check_slice(slice_)
     tail = f".{superseded_by}" if superseded_by else ""
-    return f"records/{slice_}/{n:05d}{tail}.jsonl.zst"
+    try:
+        suffix = PART_SUFFIX[container]
+    except KeyError:
+        raise ValueError(f"a record part's container is one of {', '.join(PART_SUFFIX)} (09 §9.5), "
+                         f"got {container!r}") from None
+    return f"records/{slice_}/{n:05d}{tail}{suffix}"
 
 
 def relations_path(slice_: str, n: int) -> str:

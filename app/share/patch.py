@@ -64,7 +64,9 @@ class PatchError(CodexError):
 
 
 def part_of(path: str) -> str | None:
-    """`records/lang=en/00001.jsonl.zst` -> `lang=en/00001`; None for any other file."""
+    """`records/lang=en/00001.jsonl.zst` -> `lang=en/00001`; None for any other
+    file — a Parquet part (09 §9.5 "The file (B)", 2026-10-20) among them:
+    its rows are not lines to patch, so it is fetched whole."""
     if not path.startswith("records/") or not path.endswith(pack_records.SUFFIX):
         return None
     part = path[len("records/"):-len(pack_records.SUFFIX)]

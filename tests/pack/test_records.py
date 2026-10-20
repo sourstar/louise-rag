@@ -86,3 +86,77 @@ def test_canonical_line_and_content_hash_are_stable():
     assert records.content_hash("T", [("A", "b")]) == records.content_hash("T", [["A", "b"]])
     assert records.content_hash("T", [("A", "b")]) != records.content_hash("T", [("A", "c")])
     assert len(records.content_hash("T", [])) == 32
+
+
+# ---- the other container: Parquet (09 §9.5 "The file (B)", operator 2026-10-20) --------------------
+
+def _unicode_rec(i: int) -> dict:
+    r = _rec(i)
+    r.update(title=f"Dóc «{i}» — ﬁne \"quoted\" \\ back", creators=["Ærøskøbing, Ø.", "日本"],
+             subjects=["a/b", "c\td"], date=None, extra={"j": i, "s": "ü\n", "n": None, "l": [1, {"k": "v"}]},
+             sections=[["Ch 1", "τεχτ " * 2], ["", "empty title"]])
+    return r
+
+
+def test_a_parquet_part_reads_as_the_jsonl_part_does_and_writes_the_same_lines(tmp_path):
+    recs = [_unicode_rec(i) for i in range(1, 2501)]
+    jsonl, parquet = tmp_path / "00001.jsonl.zst", tmp_path / "00001.parquet"
+    a = records.write_shard(jsonl, recs, frame_records=1000)
+    b = records.write_shard(parquet, recs, frame_records=1000)
+    assert (b.records, b.chunks, b.first_uid, b.last_uid, b.id_min, b.id_max) == (
+        a.records, a.chunks, a.first_uid, a.last_uid, a.id_min, a.id_max) == (2500, 2500, "fake:1", "fake:2500", 1, 2500)
+    assert b.sha256 == records.sha256_of(parquet) and b.bytes == parquet.stat().st_size
+    assert parquet.read_bytes()[:4] == b"PAR1", "a Parquet file any tool opens"
+    # the same index shape: row groups as frames, the uid map
+    ix = records.read_index(parquet)
+    assert ix.records == 2500 and ix.chunks == 2500 and [f[3] for f in ix.frames] == [1000, 1000, 500]
+    assert [f[4] for f in ix.frames] == ["fake:1", "fake:1001", "fake:2001"]
+    assert ix.uids["fake:1001"] == [1, 0] and ix.uids["fake:2500"] == [2, 499]
+    # every line byte for byte the JSONL part's: the line is a pure function of the row
+    for k in range(3):
+        assert records.read_frame(parquet, ix, k) == records.read_frame(jsonl, records.read_index(jsonl), k)
+    assert [records.canonical_line(r)[:-1] for r in recs[:1000]] == records.read_frame(parquet, ix, 0)
+    # and so the readers above them
+    assert list(records.iter_records(parquet)) == list(records.iter_records(jsonl))
+    assert records.read_record(parquet, "fake:1777") == records.read_record(jsonl, "fake:1777")
+    out_a, out_b = io.BytesIO(), io.BytesIO()
+    assert records.dump_jsonl(jsonl, out_a) == records.dump_jsonl(parquet, out_b) == 2500
+    assert out_a.getvalue() == out_b.getvalue()
+    with pytest.raises(KeyError):
+        records.read_record(parquet, "fake:9999")
+    # the same bytes for the same records: `root` agrees between honest peers
+    again = tmp_path / "again.parquet"
+    records.write_shard(again, recs, frame_records=1000)
+    assert again.read_bytes() == parquet.read_bytes()
+    # record_line 2: `figures` a nested column, `[]` when none
+    two = tmp_path / "two.parquet"
+    records.write_shard(two, [_rec(1), dict(_rec(2), figures=[{"hash": "ab" * 16}])], record_line=2)
+    got = list(records.iter_records(two))
+    assert got[0]["figures"] == [] and got[1]["figures"] == [{"hash": "ab" * 16}]
+    assert list(got[0].keys()) == list(records.RECORD_KEYS_2)
+
+
+def test_a_parquet_part_refuses_what_the_line_cannot_carry_and_a_file_that_is_not_one(tmp_path):
+    with pytest.raises(records.ShardFormatError, match="duplicate uid"):
+        records.write_shard(tmp_path / "dup.parquet", [_rec(1), _rec(1)])
+    with pytest.raises(records.ShardFormatError, match="scalar is a string or null"):
+        records.write_shard(tmp_path / "int.parquet", [dict(_rec(1), native_id=1)])
+    assert not list(tmp_path.glob("*.parquet")), "nothing left behind"
+    bad = tmp_path / "bad.parquet"
+    bad.write_bytes(b"PAR1 not really")
+    with pytest.raises(records.ShardFormatError, match="not a Parquet part"):
+        records.read_index(bad)
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    pq.write_table(pa.table({"uid": ["a"], "other": ["b"]}), tmp_path / "cols.parquet")
+    with pytest.raises(records.ShardFormatError, match="one column per key"):
+        records.read_index(tmp_path / "cols.parquet")
+
+
+def test_the_part_path_names_the_container():
+    from app.hold import shard as shard_mod
+    assert shard_mod.shard_path("all", 3) == "records/all/00003.jsonl.zst"
+    assert shard_mod.shard_path("all", 3, container="parquet") == "records/all/00003.parquet"
+    assert shard_mod.shard_path("all", 3, "2026-09", container="parquet") == "records/all/00003.2026-09.parquet"
+    with pytest.raises(ValueError, match="container"):
+        shard_mod.shard_path("all", 3, container="csv")

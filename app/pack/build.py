@@ -330,6 +330,9 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
     # and it is inside `collection_id`, so it cannot vary within a build.
     record_line = int(getattr(getattr(collection, "codex", None),
                               "record_line", 1) or 1)
+    from app.hold.codex import container_of
+    from app.hold.shard import PART_SUFFIX
+    part_suffix = PART_SUFFIX[container_of(getattr(collection, "codex", None))]
     # How this source's ids sort within a slice (09 §9.3's `slicing.order`).
     # A plugin that has not declared it yet sorts by bytes, which is what
     # `slicing.SCHEMES` has always done for a slice with no numeric key.
@@ -378,7 +381,8 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
             nonlocal written, n_records, n_chunks, next_n
             if not buf:
                 return
-            rel = f"{RECORDS_DIR}/{slice_name}/{slicing.shard_name(next_n)}{records.SUFFIX}"
+            # the part's container (09 §9.5 "The file"): the Codex's, version 9
+            rel = f"{RECORDS_DIR}/{slice_name}/{slicing.shard_name(next_n)}{part_suffix}"
             info = records.write_shard(pack_dir / rel, buf, record_line=record_line)
             # 09 §9.5's figures container, `figures/<slice>/<NNNNN>.fig.zst`,
             # BEFORE the shard is recorded: the two are re-issued together

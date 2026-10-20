@@ -163,11 +163,23 @@ A WIRE-FORMAT CHANGE: the operator decides; nothing exists until then.
   (`--annotates`/`--from-snapshot` repeated, comma-separated in the API) and
   `--container`; every reader of `annotates` (show, the Library card, Ask's
   facts and works, traverse) reads the list. **Step 2b, Parquet parts, is
-  NOT built:** `slicing.container = "parquet"` is read and validated and
-  REFUSED at create (`cx.refuse_unbuilt_container`) until the writer exists
-  — `pack/records.py` dispatching on the part's suffix, `shard_path` and the
-  snapshot entry's `path` learning the container, `_part_file`, integrity's
-  and promotion's globs, the patch (a Parquet part is fetched whole).
+  written (2026-10-20):** `pack/records.py` writes and reads a `.parquet`
+  part behind the same API (`write_shard`/`read_index`/`read_frame`
+  dispatch on the suffix; a row group is a frame; `line_of_row` renders
+  09 §9.5's line byte for byte, so `records_root` is the JSONL twin's and
+  the same records give the same file bytes under the pinned pyarrow);
+  `shard_path(container=)`; the snapshot entry carries the container IN
+  MEMORY only (`Shard.container`, no wire key), set by the builders and by
+  `snapshot.load` from the `codex.json` beside the snapshot
+  (`container_beside`, cached per Codex file) — so `s.path` is right at
+  every one of the 78 sites that read it; the pack build names the part by
+  the Codex's container, promotion and integrity glob both suffixes, a
+  Parquet part is not patched (`patch.part_of` None: fetched whole); a
+  recipe's `[slicing] container` makes a version-9 Codex
+  (`template._version_with_container`; a `--space-from` copy below version
+  5 is refused). Tests: tests/pack/test_records.py (the container),
+  tests/hold/test_annotations.py (a claims collection in Parquet, checked),
+  tests/hold/test_build_and_snapshot.py (a gutenberg recipe in Parquet).
   Step 3 (the Ask side: the graph index `ClaimIndex.graph` is built, nothing
   attaches it yet; a community's `state_of` is `unknown`, it pins no record)
   and steps 4–5 after the wikidata collection exists.

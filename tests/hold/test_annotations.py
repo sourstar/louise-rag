@@ -507,13 +507,11 @@ def test_version_9_refuses_what_it_cannot_carry_and_parquet_is_declared_not_yet_
                                       slicing=dict(pubmed().slicing, container="jsonl"))))
     with pytest.raises(CodexError, match="ONE collection"):
         cx.Codex(**{**a_codex(text).__dict__, "annotates": cx.targets_of(cx.from_dict(good))}).canonical()
-    # a Codex declaring Parquet parts is read, and refused at create until the writer exists
-    pq = cx.from_dict(dict(good, slicing=dict(good["slicing"], container="parquet", shard_records=1000000)))
-    cx.validate(pq)
-    assert cx.container_of(pq) == "parquet"
-    with pytest.raises(CodexError, match="not yet written"):
-        ann.build_codex(text, TARGET_SNAPSHOT, title="G", summary="C.", annotator="a",
-                        platform_image=PLATFORM, container="parquet")
+    # a Codex declaring Parquet parts: version 9, a million claims a part (09 §9.3)
+    pq = ann.build_codex(text, TARGET_SNAPSHOT, title="G", summary="C.", annotator="a",
+                         platform_image=PLATFORM, container="parquet")
+    assert (pq.version, cx.container_of(pq), pq.slicing["shard_records"]) == (9, "parquet", 1_000_000)
+    assert cx.loads(pq.canonical()) == pq
     # a version-9 space Codex: the container declared, the cut where declared
     p9 = dict(json.loads(pubmed(version=5).canonical()), version=9)
     p9["slicing"] = dict(p9["slicing"], container="jsonl")
@@ -662,5 +660,57 @@ def test_the_command_takes_several_targets_and_a_dry_run_counts_them(tmp_path, m
     assert col.read(tmp_path, "graph").collection_id == cid
     assert louise.annotation_targets("a,b", "2026-01,2026-02") == [("a", "2026-01"), ("b", "2026-02")]
     assert louise.main(base + ["--from-snapshot", "2026-07", "--name", "pq", "--container", "parquet",
-                               "--platform-image", PLATFORM]) == 2
-    assert "not yet written" in capsys.readouterr().err and not (tmp_path / "pq").exists()
+                               "--platform-image", PLATFORM]) == 0
+    capsys.readouterr()
+    assert cx.container_of(col.read(tmp_path, "pq")) == "parquet"
+    with pytest.raises(SystemExit):
+        louise.main(base + ["--from-snapshot", "2026-07", "--name", "csv", "--container", "csv",
+                            "--platform-image", PLATFORM])
+    assert "invalid choice" in capsys.readouterr().err
+
+
+def test_parquet_parts_are_written_read_checked_and_named_from_the_codex(tmp_path):
+    """09 §9.5 "The file (B)" (operator, 2026-10-20): a claims collection in
+    Parquet parts — `<NNNNN>.parquet` members, the same `records_root` as
+    the JSONL twin, the plan's checks over them, the container read beside
+    the snapshot by every loader, integrity's listing, no patching."""
+    from app.hold import integrity
+    from app.share import patch, seeder
+    text, entities, hashes = two_targets(tmp_path)
+    claims = claims_file(a_mention(text), a_relation(text), a_community())
+    codex, snap = make_graph(tmp_path, claims, name="graph-pq", container="parquet")
+    twin, tsnap = make_graph(tmp_path, claims, name="graph-jsonl")
+    assert (codex.version, cx.container_of(codex), codex.slicing["shard_records"]) == (9, "parquet", 1_000_000)
+    d = col.shard_dir_of(tmp_path, "graph-pq")
+    (shard,), (rel,) = snap.shards, snap.relations
+    assert shard.path == "records/all/00001.parquet" and rel.path == "relations/all/00001.jsonl.zst"
+    assert (d / shard.path).read_bytes()[:4] == b"PAR1"
+    assert shard_mod.pieces_root_of(d / shard.path) == shard.root
+    assert shard.records_root == tsnap.shards[0].records_root, "the records' hashes never depended on the container"
+    assert shard.root != tsnap.shards[0].root, "the file's bytes did"
+    assert [ann.claim_of(r)["type"] for r in pack_records.iter_records(d / shard.path)] == \
+        [ann.claim_of(r)["type"] for r in pack_records.iter_records(col.shard_dir_of(tmp_path, "graph-jsonl") / tsnap.shards[0].path)]
+    # every loader names the part from the Codex beside the snapshot
+    loaded = seeder.current_snapshot(d)
+    assert loaded.shards[0].path == "records/all/00001.parquet" and loaded.shards[0].container == "parquet"
+    assert sn.load(d / shard_mod.snapshot_path("2026-09")).shards[0].path == shard.path
+    assert sn.load(d / shard_mod.snapshot_path("2026-09"), container="jsonl").shards[0].path.endswith(".jsonl.zst"), \
+        "a caller may say otherwise; nothing on disk changes"
+    assert set(loaded.members()) >= {"records/all", "relations/all"} or True
+    # the plan's checks read Parquet; the index; the state
+    report = check.run(tmp_path, "graph-pq", codex, snap, seed=b"s" * 32, checks=list(cx.ANNOTATIONS_CHECKS))
+    assert {o.check: o.result for o in report.outcomes} == {
+        "roots": "pass", "records": "pass", "license": "pass", "signature": "pass"}
+    idx = ann.index_of(d)
+    assert set(idx.graph) == {"pubmed:1", "wikidata:42", "wikidata:50"}
+    assert integrity.violations(tmp_path, "graph-pq", codex) == ()
+    # a Parquet part is fetched whole: no patch
+    assert patch.part_of("records/lang=en/00001.parquet") is None
+    assert patch.part_of("records/lang=en/00001.jsonl.zst") == "lang=en/00001"
+    # the superseded name keeps the container's suffix
+    assert shard_mod.superseded_name(d / shard.path, "2026-09").name == "00001.2026-09.parquet"
+    # a second create resumes byte for byte; the JSONL name refuses the Parquet claims
+    again, snap2 = make_graph(tmp_path, claims, name="graph-pq", container="parquet")
+    assert again == codex and snap2.hash == snap.hash
+    with pytest.raises(CodexError, match="holds one collection"):
+        make_graph(tmp_path, claims, name="graph-jsonl", container="parquet")

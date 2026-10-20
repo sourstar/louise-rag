@@ -463,7 +463,8 @@ def _part_file(shard_tree: Path, shard, current_id: str | None, snapshot_id: str
     newest = Path(shard_tree) / shard.path
     if current_id == snapshot_id:
         return newest if newest.is_file() else None
-    cands = [newest] + sorted(newest.parent.glob(f"{shard.n:05d}.*.jsonl.zst"))
+    suffix = shard_mod.PART_SUFFIX[shard.container]
+    cands = [newest] + sorted(newest.parent.glob(f"{shard.n:05d}.*{suffix}"))
     for p in cands:
         if p.is_file() and shard_mod.pieces_root_of(p) == shard.root:
             return p
@@ -748,19 +749,21 @@ def build_codex(target: Codex | None, from_snapshot: str | None, *, title: str, 
 # the SHARD
 
 def write_parts(shard_tree: Path, records: Sequence[dict[str, Any]], snapshot_id: str, *,
-                shard_records: int = SHARD_RECORDS):
+                shard_records: int = SHARD_RECORDS, container: str = cx.JSONL):
     """Record parts and their relations parts, `shard_records` (the Codex's
-    `slicing.shard_records`) per part, and the snapshot entries for both."""
+    `slicing.shard_records`) per part, in the Codex's `container` (09 §9.5
+    "The file": JSONL frames or Parquet), and the snapshot entries for
+    both. The relations parts are always JSONL (09 §9.14)."""
     from app.pack import records as pack_records
     from . import shard as shard_mod, records as rec, snapshot as sn
     shards, relations = [], []
     for n, start in enumerate(range(0, len(records), shard_records), 1):
         part = records[start:start + shard_records]
-        p = Path(shard_tree) / shard_mod.shard_path(SLICE, n)
+        p = Path(shard_tree) / shard_mod.shard_path(SLICE, n, container=container)
         pack_records.write_shard(p, part, record_line=1)
         raw = p.read_bytes()
         shards.append(sn.Shard(
-            slice=SLICE, n=n, root=shard_mod.pieces_root(raw),
+            slice=SLICE, n=n, root=shard_mod.pieces_root(raw), container=container,
             records_root=rec.records_root(r["content_hash"] for r in part),
             first_id=part[0]["native_id"], last_id=part[-1]["native_id"],
             records=len(part), chunks=0, chunks_root=rec.chunks_root([]), tokens=0,
@@ -817,7 +820,8 @@ def write_snapshot(shard_tree: Path, staging: Path, codex: Codex,
     if staging.exists():
         shutil.rmtree(staging)
     shards, relations = write_parts(staging, records, snapshot_id,
-                                    shard_records=int(codex.slicing.get("shard_records") or SHARD_RECORDS))
+                                    shard_records=int(codex.slicing.get("shard_records") or SHARD_RECORDS),
+                                    container=cx.container_of(codex))
     snap = sn.Snapshot(
         collection_id=codex.collection_id, snapshot_id=snapshot_id, previous=None,
         shards=shards,

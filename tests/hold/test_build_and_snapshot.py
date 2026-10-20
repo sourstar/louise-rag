@@ -568,3 +568,34 @@ def test_closed_parts_are_every_part_but_an_open_last():
                        shards=shards, delta=sn.Delta((), (), ()), files={})
     assert sn.closed_parts(snap, 2) == {"lang=en": {1: ("1", "9")}, "lang=fr": {1: ("3", "4")}}
     assert sn.closed_parts(None, 2) == {}
+
+
+def test_a_recipe_declaring_parquet_builds_parquet_parts_and_a_version_9_codex(
+        isolated_config, tmp_path, corpus_dir):
+    """09 §9.3 `slicing.container` (operator, 2026-10-20: Parquet parts
+    offered to every collection): the recipe declares it, the Codex is
+    version 9 with the same space, the build writes `.parquet` parts, the
+    snapshot names them, and a reload reads the container beside it."""
+    from app.hold import template
+    from app.pack import records as pack_records
+    sl = dict(template.default_slicing(template.source_for("gutenberg")))
+    root = _collection(tmp_path, slicing={**sl, "container": "parquet"})
+    codex = col.read(root, "gutenberg")
+    assert codex.version == 9 and codex.slicing["container"] == "parquet"
+    from app.hold import codex as cx
+    plain = dict(json.loads(codex.canonical()), version=cx.written_version(codex.space, cx.CODEX_VERSION))
+    plain["slicing"] = {k: v for k, v in plain["slicing"].items() if k != "container"}
+    assert cx.from_dict(plain).space_id == codex.space_id, "the container is outside space_id"
+    assert cx.from_dict(plain).collection_id != codex.collection_id, "and inside collection_id"
+    _build(root, corpus_dir, records_per_shard=2)
+    d = root / "gutenberg" / "shard"
+    parts = sorted(p.relative_to(d).as_posix() for p in (d / "records").rglob("*"))
+    assert parts == ["records/lang=en", "records/lang=en/00001.parquet", "records/lang=fr", "records/lang=fr/00001.parquet"]
+    assert list(pack_records.iter_records(d / "records/lang=en/00001.parquet"))
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-09", log=lambda *_: None)
+    assert [s.path for s in snap.shards] == ["records/lang=en/00001.parquet", "records/lang=fr/00001.parquet"]
+    for s in snap.shards:
+        assert shard_mod.pieces_root_of(d / s.path) == s.root
+    reloaded = sn.load(d / shard_mod.snapshot_path("2026-09"))
+    assert [s.path for s in reloaded.shards] == [s.path for s in snap.shards]
+    assert json.loads((d / "codex.json").read_bytes())["slicing"]["container"] == "parquet"

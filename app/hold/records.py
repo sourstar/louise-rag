@@ -480,7 +480,7 @@ def _ack_of(codex, state_dir):
 #: container with no shard (inert: nothing names it) rather than a shard
 #: whose plates are still in staging (published records naming plates the
 #: SHARD does not hold).
-_PROMOTED = (("figures", "*.fig.zst"), ("records", "*.jsonl.zst"))
+_PROMOTED = (("figures", "*.fig.zst"), ("records", "*.jsonl.zst"), ("records", "*.parquet"))
 
 
 def _promote_records(staging, shard_dir) -> int:

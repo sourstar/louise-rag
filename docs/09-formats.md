@@ -646,8 +646,8 @@ A part entry:
 | field | type | required | meaning |
 |---|---|---|---|
 | `slice` | string | yes | the slice name (§9.3) |
-| `n` | integer | yes | the part number within the slice, from 1; the file is `records/<slice>/<n as five digits>.jsonl.zst` |
-| `root` | id | yes | the BitTorrent v2 pieces root of the stored `.jsonl.zst` file (§9.5) |
+| `n` | integer | yes | the part number within the slice, from 1; the file is `records/<slice>/<n as five digits>.jsonl.zst` — `.parquet` for a collection whose Codex declares `slicing.container: "parquet"` (§9.3, §9.5 "The file (B)"; *amended 2026-10-20*). The entry carries no container key: the Codex says it, once |
+| `root` | id | yes | the BitTorrent v2 pieces root of the stored part file, `.jsonl.zst` or `.parquet` (§9.5) |
 | `records_root` | id | yes | SHA-256 over the part's `content_hash` values as raw 16-byte digests concatenated in record order |
 | `first_id`, `last_id` | string | yes | the `native_id` of the first and last record |
 | `records` | integer | yes | records in the part |
@@ -749,7 +749,7 @@ Its sidecar after two peers computed it and a third signed it later:
 
 ## 9.5 Record parts
 
-**Paths.** `records/<slice>/<NNNNN>.jsonl.zst` is the newest version of
+**Paths.** `records/<slice>/<NNNNN>.jsonl.zst` (`.parquet` under a Parquet Codex, §9.5 "The file (B)"; the superseded name below keeps the suffix) is the newest version of
 part `n` of the slice. When a snapshot re-issues the part, the file it
 supersedes is renamed `records/<slice>/<NNNNN>.<last snapshot id>.jsonl.zst`
 — the last snapshot in which those bytes were current — and kept, so
@@ -2083,7 +2083,7 @@ that `file_hash`: `{"file_hash":"4e1a…","format":"cades","signer":
 
 | name | files | root |
 |---|---|---|
-| `records-<slice>` | every `records/<slice>/<NNNNN>.jsonl.zst` of the current snapshot | per part, in the snapshot |
+| `records-<slice>` | every `records/<slice>/<NNNNN>.jsonl.zst` (or `.parquet`, §9.5) of the current snapshot | per part, in the snapshot |
 | `relations-<slice>` | `relations/<slice>/*.jsonl.zst` | per part, in the snapshot |
 | `figures-<slice>` | `figures/<slice>/*.fig.zst` | per part, in the snapshot |
 | `bundle-<space>-<bundle_id hex>` | the four bundle files | member root, in the bundle event and the digest |

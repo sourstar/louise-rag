@@ -135,11 +135,11 @@ GRAPH_VERSION = 9
 #: The two containers (09 §9.5); absent below GRAPH_VERSION means JSONL.
 JSONL, PARQUET = "jsonl", "parquet"
 CONTAINERS = (JSONL, PARQUET)
-#: What this build WRITES. Parquet parts are declared by the format
-#: (2026-10-20) and their writer is step 2b of the amendments note: a Codex
-#: declaring them is READ (a peer may hold one) and refused at CREATE, as
-#: `record_line` 2 is, rather than written with the other container.
-CONTAINERS_WRITABLE = (JSONL,)
+#: What this build WRITES: both, since 2026-10-20 (app/pack/records.py's
+#: Parquet writer, step 2b of docs/notes/gutenberg-graph-amendments.md). A
+#: container the format declared and the build could not yet write would be
+#: refused at CREATE here, as `record_line` 2 is, never written as the other.
+CONTAINERS_WRITABLE = CONTAINERS
 #: The plugin (uid prefix) of every annotations collection, as `deposit` is
 #: of every deposit collection; its relation types are `annotations:<type>`.
 ANNOTATIONS_PLUGIN = "annotations"
@@ -156,9 +156,8 @@ def refuse_unbuilt_container(container: str) -> str:
                          f"{container!r}")
     if container not in CONTAINERS_WRITABLE:
         raise CodexError(
-            f"record parts in {container!r} are declared by 09 §9.5 (2026-10-20) and not yet "
-            f"written by this build (docs/notes/gutenberg-graph-amendments.md, step 2b): "
-            f"declare {JSONL!r}, or wait for the writer")
+            f"record parts in {container!r} are declared by 09 §9.5 and not yet "
+            f"written by this build: declare {JSONL!r}, or wait for the writer")
     return container
 
 

@@ -95,8 +95,11 @@ def violations(root, name: str, codex) -> tuple[str, ...]:
         return cached[2]
     listed = _listed(root, name, codex)
     out = []
-    for p in sorted((shard_tree / "records").glob("*/*.jsonl.zst")):
-        if "." in p.name[: -len(".jsonl.zst")]:
+    from .shard import PART_SUFFIX
+    parts = [p for suffix in PART_SUFFIX.values() for p in (shard_tree / "records").glob(f"*/*{suffix}")]
+    for p in sorted(parts):
+        suffix = next(s for s in PART_SUFFIX.values() if p.name.endswith(s))
+        if "." in p.name[: -len(suffix)]:
             continue
         rel = p.relative_to(shard_tree).as_posix()
         try:

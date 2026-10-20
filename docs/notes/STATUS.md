@@ -300,9 +300,11 @@ Built on step 1's amendments: `app/hold/codex.py` reads and writes version 9
 `community` claims (a chunk end re-cut with the target's chunker and
 compared to its `text_hash`; an entity's canonical id mapped to its record
 through the plugin's id rule), writes 09 §9.14's three edges and takes
-several targets at create (CLI, API, job, Library card). Parquet parts (step
-2b) are declared, read and refused at create until their writer exists.
-Nothing already written moves: a one-target JSONL collection of the two
+several targets at create (CLI, API, job, Library card). Parquet parts
+(step 2b) are written and read: `app/pack/records.py` behind the same API,
+the part named from the Codex's `slicing.container` by every reader (the
+snapshot entry learns it from the `codex.json` beside the snapshot, no wire
+key), a recipe may declare it for any collection. Nothing already written moves: a one-target JSONL collection of the two
 2026-10-09 types is still version 7, byte for byte
 ([gutenberg-graph-amendments.md](gutenberg-graph-amendments.md), "Decided").
 Tests: tests/hold/test_annotations.py (+6), test_codex.py and

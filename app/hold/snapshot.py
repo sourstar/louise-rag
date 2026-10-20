@@ -47,10 +47,17 @@ class Shard:
     #: the zstd that compressed the file (09 §9.4, `records.WRITER`); ""
     #: — the key absent — in snapshots written before 2026-10-12
     writer: str = ""
+    #: NOT IN THE ENTRY (09 §9.4 carries no such key): the record parts'
+    #: container, the Codex's `slicing.container` (version 9, 09 §9.5), which
+    #: decides the part's suffix and so its member name. Set by whoever
+    #: builds the entry from a Codex, and by `load` from the `codex.json`
+    #: beside the snapshot; "jsonl" for every Codex below version 9.
+    container: str = field(default="jsonl", compare=False)
 
     @property
     def path(self) -> str:
-        return f"records/{self.slice}/{self.n:05d}.jsonl.zst"
+        from . import shard as shard_mod
+        return shard_mod.shard_path(self.slice, self.n, container=self.container)
 
     def to_dict(self) -> dict[str, Any]:
         out = {"slice": self.slice, "n": self.n, "root": self.root,
@@ -475,9 +482,10 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
     # `writer`: a part whose bytes the previous snapshot already listed was
     # compressed by whoever wrote it then; a new version by this platform
     from app.pack import records as pack_records
+    from .codex import container_of
     before = {(s.slice, s.n, s.root): s.writer for s in previous.shards} if previous else {}
     shards = tuple(
-        Shard(slice=r["slice"], n=r["n"], root=r["root"],
+        Shard(slice=r["slice"], n=r["n"], root=r["root"], container=container_of(codex),
               records_root=r["records_root"],
               first_id=r["first_native_id"], last_id=r["last_native_id"],
               records=r["records"], chunks=r["chunks"],
@@ -653,7 +661,38 @@ def _previous(shard_dir, snapshot_id: str):
     return prev, _content_hashes(shard_dir, prev.shards)
 
 
-def _load(raw: bytes) -> Snapshot:
+#: codex.json path -> (mtime_ns, container): the container read beside a
+#: snapshot, once per Codex file (keyed on the path, CLAUDE.md)
+_containers: dict[str, tuple[int, str]] = {}
+
+
+def container_beside(snapshot_path) -> str:
+    """The record parts' container of the collection whose SHARD holds this
+    snapshot file (`<shard>/snapshots/<id>.json` → `<shard>/codex.json`,
+    09 §9.3 `slicing.container`); "jsonl" where there is no Codex beside it
+    or it declares none. The Codex is the first file a SHARD holds and the
+    first a fetcher lands, so a snapshot read from a tree always finds it."""
+    import json
+    from pathlib import Path
+    p = Path(snapshot_path)
+    codex = p.parent.parent / "codex.json"
+    try:
+        mtime = codex.stat().st_mtime_ns
+    except OSError:
+        return "jsonl"
+    hit = _containers.get(str(codex))
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
+    try:
+        slicing = json.loads(codex.read_bytes()).get("slicing") or {}
+        container = str(slicing.get("container") or "jsonl") if isinstance(slicing, dict) else "jsonl"
+    except (OSError, ValueError, AttributeError):
+        container = "jsonl"
+    _containers[str(codex)] = (mtime, container)
+    return container
+
+
+def _load(raw: bytes, container: str = "jsonl") -> Snapshot:
     import json
     d = json.loads(raw)
     if d.get("kind") != SNAPSHOT_KIND:
@@ -663,7 +702,7 @@ def _load(raw: bytes) -> Snapshot:
     return Snapshot(
         collection_id=d["collection_id"], snapshot_id=d["snapshot_id"],
         previous=d["previous"],
-        shards=tuple(Shard(**s) for s in d["shards"]),
+        shards=tuple(Shard(**s, container=container) for s in d["shards"]),
         delta=Delta(tuple(d["delta"]["added"]), tuple(d["delta"]["changed"]),
                     tuple(Tombstone(**t) for t in d["delta"]["tombstoned"])),
         relations=tuple(RelationShard(**r) for r in d["relations"]),
@@ -674,26 +713,30 @@ def _load(raw: bytes) -> Snapshot:
         version=int(d["version"]))
 
 
-def load(path) -> Snapshot:
+def load(path, container: str | None = None) -> Snapshot:
     """A snapshot from its file. A file in canonical form (every file this
     platform writes) is read with its delta left in the file (`LazyDelta`)
-    and its hash taken from its bytes; anything else is parsed whole."""
+    and its hash taken from its bytes; anything else is parsed whole. The
+    parts' container is the Codex's beside the file (`container_beside`)
+    unless the caller says."""
     import mmap
     from pathlib import Path
     p = Path(path)
+    if container is None:
+        container = container_beside(p)
     with open(p, "rb") as f:
         if p.stat().st_size == 0:
-            return _load(b"")
+            return _load(b"", container)
         # mapped, not read: the file's pages are the page cache's, hashed
         # and searched in place, so a 709 MB snapshot costs no 709 MB copy
         with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as raw:
-            lazy = _load_lazy(p, raw)
+            lazy = _load_lazy(p, raw, container)
             if lazy is not None:
                 return lazy
-            return _load(raw[:])
+            return _load(raw[:], container)
 
 
-def _load_lazy(path, raw) -> Snapshot | None:
+def _load_lazy(path, raw, container: str = "jsonl") -> Snapshot | None:
     """Canonical JSON sorts its keys, so `delta` follows `collection_id`
     and is followed by `figures` (version 2) or `files` (version 1); its
     span is found by those two markers, which no uid or reason can hold.
@@ -724,7 +767,7 @@ def _load_lazy(path, raw) -> Snapshot | None:
         raise CodexError(f"unsupported snapshot version {d.get('version')!r}")
     snap = Snapshot(
         collection_id=d["collection_id"], snapshot_id=d["snapshot_id"], previous=d["previous"],
-        shards=tuple(Shard(**s) for s in d["shards"]),
+        shards=tuple(Shard(**s, container=container) for s in d["shards"]),
         delta=LazyDelta(path, start, end),             # type: ignore[arg-type]
         relations=tuple(RelationShard(**r) for r in d["relations"]),
         figures=tuple(FiguresShard(**f) for f in d.get("figures") or ()),
