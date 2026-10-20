@@ -263,6 +263,13 @@ are the ones that have drifted; prefer to add a test when you touch them.
   first benchmark. Read it before reading the code.
 
 ## Style
+- **A question to the operator has ONE shape** (operator, 2026-10-20,
+  after "Confirm or change work.tokens, 1.7 billion a month" went out
+  bare): (1) one line saying what the thing IS, in plain words, no
+  field name alone; (2) the choices as a short table with their effects;
+  (3) the recommendation, and what happens if the operator says nothing.
+  A question that does not fit that shape is not asked. Never re-ask a
+  decision already presented; decide and proceed.
 - **Answer at one fifth the length that feels right.** MANDATORY, and it
   binds explanations hardest — the finding, not the retelling. State the
   outcome, anything that needs a decision, and stop. No recap of work the
