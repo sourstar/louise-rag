@@ -125,7 +125,15 @@ def test_a_peer_fetches_a_member_by_the_infohash_it_computed_itself(node, monkey
         seeding.tick([c], {c.name: con}, con, "running")
         time.sleep(0.5)
     assert h.status().is_seeding, "the peer must complete from our seed"
-    assert (tmp_path / "leech" / member / path).read_bytes() == files[2]
+    # `is_seeding` says every piece is verified, not that libtorrent has laid
+    # the file out on disk yet: read right after it, the leech's file was
+    # missing once in the node's staged pre-check (2026-10-20) — wait for it,
+    # bounded, before comparing
+    landed = tmp_path / "leech" / member / path
+    deadline = time.time() + 30
+    while time.time() < deadline and not (landed.is_file() and landed.stat().st_size == len(files[2])):
+        time.sleep(0.1)
+    assert landed.read_bytes() == files[2]
     # a second beat changes nothing; stopping drops both torrents
     assert seeder.sync([c], {c.name: con}, con, "running")["published"] == []
     assert louise.main(["share", "collection", c.name, "--root", str(node), "--stop"]) == 0
