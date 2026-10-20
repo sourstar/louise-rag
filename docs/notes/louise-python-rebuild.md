@@ -159,6 +159,11 @@ is assumed:
    primitives on from it; an op with no deterministic kernel then fails
    the text, which the measurement will see) and measure again. The
    stated run carries the env, so the recipe's run is the one measured.
+   *RULE 1 (München, 2026-10-20): the UNSET row is measured once per
+   torch stack, not once per tree — a tree whose only change is the
+   task's `max_length` arithmetic computes the same kernels, so the
+   unset number of -20261020b (204/512) stands for -20261020c, and only
+   the SET measurement runs on the final tree.*
 4. Record both results in approved-encoders.md ("Bitwise reproducibility,
    by vendor", the torch row) with the numbers. A model that is not
    bit-identical under either setting is NOT the collection's encoder:
@@ -186,6 +191,28 @@ jina-v3 FAILED TO LOAD on that tree: transformers took LocalAI's
 TRANSFORMERS_CACHE over the HF_HUB_CACHE the server set and looked for
 the remote code in /models (fixed: `cache_dir=` passed explicitly, tree
 `-20261020b`).
+
+**Second run, 07:36–07:43Z, tree `-20261020b`** (the cache_dir fix): engine
+image `bc084cdb…`; normattiva PASS 16/16 worst 1.000000 run `9e0d9c48…`;
+pubmed document PASS 16/16 run `8c757355…`, query `bf2224e3…` unchanged;
+MADLAD 42/42, rerank bit-equal. jina-v3 loaded (cold 66.7 s / 46.3 s);
+VeGa refused every text tagged with the space's window of 1,024 against
+the YAML's context_size 8,192 (fixed: the window is the text's, the
+instruction on top — 2a535ca). Invariant 12, env UNSET, no window: **204
+of 512 texts bit-identical** over 2 fresh loads × 2 shuffled passes
+(2,952 s); the 308 that differ form blocks by text — not reproducible
+with torch's defaults.
+
+**Third run, 08:45–08:51Z, tree `-20261020c`** (the window fix): engine
+image `1807f280…`; normattiva PASS 16/16 run `db409240…` (its fingerprint
+`6283455f…`, the third value across three byte-identical DAR trees —
+invariant 12 open for DAR); pubmed document PASS 16/16 run `8f828fd7…`,
+fingerprint `0eb32880…` unchanged across four trees; query `bf2224e3…`;
+MADLAD 42/42, rerank bit-equal. The two jina YAMLs at context_size 1,024
+with `LOUISE_TORCH_DETERMINISTIC=1`: document run `bec9c3a0…`, query run
+`dd90f8d4…`, weights `f0f752ae…` = the installer's. The 512-text
+measurement WITH the window and the env set runs on this tree; its
+result decides whether jina-v3 is the collection's encoder.
 
 | item | value |
 |---|---|

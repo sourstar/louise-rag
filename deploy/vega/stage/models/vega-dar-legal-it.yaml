@@ -1,6 +1,6 @@
 # backend: the louise-python tree installed BESIDE its predecessor under a dated name
-# (docs/notes/louise-python-rebuild.md §2.3–2.4); -20261020b is the rebuild with the jina-v3
-# cache_dir fix, live 2026-10-20. A rebuild changes this line and nothing else.
+# (docs/notes/louise-python-rebuild.md §2.3–2.4); -20261020c is the rebuild with the jina-v3
+# window fix (context_size 1024, the instruction on top), live 2026-10-20 08:51Z. A rebuild changes this line and nothing else.
 # vega-dar-legal-it — the Italian legal collection's encoder (decided 2026-09-20;
 # memory/legal-encoder-decided). jurifindit/DAR-legal-it at revision
 # de7867e4d6b14a7da6e5fb4aee59cc543b9fa04a (unchanged since 2025-10-08, so the weights
@@ -14,7 +14,7 @@
 # the one read-only weights mount. JSON, which is YAML.
 {
   "name": "vega-dar-legal-it",
-  "backend": "vega-louise-python-20261020b",
+  "backend": "vega-louise-python-20261020c",
   "embeddings": true,
   "pinned": true,
   "context_size": 8192,

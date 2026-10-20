@@ -1,6 +1,6 @@
 # backend: the louise-python tree installed BESIDE its predecessor under a dated name
-# (docs/notes/louise-python-rebuild.md §2.3–2.4); -20261020b is the rebuild with the jina-v3
-# cache_dir fix, live 2026-10-20. A rebuild changes this line and nothing else.
+# (docs/notes/louise-python-rebuild.md §2.3–2.4); -20261020c is the rebuild with the jina-v3
+# window fix (context_size 1024, the instruction on top), live 2026-10-20 08:51Z. A rebuild changes this line and nothing else.
 # vega-jina-v3 — the wikidata collection's DOCUMENT encoder (docs/notes/wikidata-build-plan.md
 # §2 "The space"): jinaai/jina-embeddings-v3 at ab036b0 with its remote code bd55a5e, the folder
 # deploy/jina-embeddings-v3/fetch.py writes, on torch XPU through louise-python's `jina-v3` task
@@ -13,12 +13,15 @@
 # it in the model's own 8,192 window, so a 1,024-token chunk keeps its tail, as Wikimedia
 # embedded it. NOT pinned until the collection embeds with it (then `pinned: true`, as
 # vega-dar-legal-it). The weights: /mnt/ssd5/apps/models/jina-embeddings-v3, under the one
-# read-only weights mount. env: NEO_CACHE_DIR as every XPU model's; LOUISE_TORCH_DETERMINISTIC
-# is added ONLY if the invariant-12 measurement needs it (docs/notes/louise-python-rebuild.md §5).
-# JSON, which is YAML.
+# read-only weights mount. env: NEO_CACHE_DIR as every XPU model's, and LOUISE_TORCH_DETERMINISTIC
+# SET: measured UNSET on -20261020b (512 calibration texts, 2 fresh loads × 2 shuffled passes),
+# 204/512 bit-identical — torch's defaults do not reproduce on the B70, and the texts that
+# differ come in blocks by text, not by chance; with it set, measured on -20261020c
+# (docs/notes/approved-encoders.md, the torch row; louise-python-rebuild.md §5). The stated run
+# carries the env (invariant 12). JSON, which is YAML.
 {
   "name": "vega-jina-v3",
-  "backend": "vega-louise-python-20261020b",
+  "backend": "vega-louise-python-20261020c",
   "embeddings": true,
   "pinned": false,
   "context_size": 1024,
@@ -36,6 +39,7 @@
     "dim:512"
   ],
   "env": {
-    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache",
+    "LOUISE_TORCH_DETERMINISTIC": "1"
   }
 }

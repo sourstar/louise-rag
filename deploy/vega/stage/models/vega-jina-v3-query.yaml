@@ -1,6 +1,6 @@
 # backend: the louise-python tree installed BESIDE its predecessor under a dated name
-# (docs/notes/louise-python-rebuild.md §2.3–2.4); -20261020b is the rebuild with the jina-v3
-# cache_dir fix, live 2026-10-20. A rebuild changes this line and nothing else.
+# (docs/notes/louise-python-rebuild.md §2.3–2.4); -20261020c is the rebuild with the jina-v3
+# window fix (context_size 1024, the instruction on top), live 2026-10-20 08:51Z. A rebuild changes this line and nothing else.
 # vega-jina-v3-query — the wikidata collection's QUERY encoder: the same weights folder as
 # vega-jina-v3 with the retrieval.query adapter (an asymmetric space, 02 §2.4: `space.query.encoder`
 # is the same weights digest and another engine, since the adapter is a load option and so part of
@@ -8,11 +8,12 @@
 # query for retrieving evidence documents: "), so the Codex's `space.query.instruction` is null —
 # Louise adds nothing. Width 512, normalised, context_size the space's ctx 1,024 — the text's
 # window; the instruction rides on top (see vega-jina-v3.yaml). NOT pinned: a query encoder
-# answers searches and embeds no corpus.
+# answers searches and embeds no corpus. env as vega-jina-v3's: LOUISE_TORCH_DETERMINISTIC set
+# (torch's defaults measured not reproducible on the B70, 2026-10-20).
 # JSON, which is YAML.
 {
   "name": "vega-jina-v3-query",
-  "backend": "vega-louise-python-20261020b",
+  "backend": "vega-louise-python-20261020c",
   "embeddings": true,
   "pinned": false,
   "context_size": 1024,
@@ -30,6 +31,7 @@
     "dim:512"
   ],
   "env": {
-    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache",
+    "LOUISE_TORCH_DETERMINISTIC": "1"
   }
 }
