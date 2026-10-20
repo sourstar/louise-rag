@@ -438,11 +438,20 @@ def own_benchmarks(root, name: str, codex, own_key: str | None) -> list[dict[str
 def live_peers(codex, node_con, *, now: float, own_key: str | None = None,
                own_benchmarks: Sequence[dict[str, Any]] = ()) -> list[rendezvous.Peer]:
     """04 §4.5's live set for this collection's space: every neighbour whose
-    digest carries a benchmark for the space, and this peer with its own."""
+    digest carries a benchmark for the space AND offers a member of the
+    collection — a peer that serves nothing of it publishes no bundle (§4.5
+    "a producer that does not serve … announces no event") and so cannot
+    exercise a lead; the dev PC's peer, embed off and share off, led 355
+    open parts of gutenberg by its benchmark alone and they stalled
+    (München, 2026-10-20) — and this peer with its own."""
     from app.share import peers as peers_mod
     out: list[rendezvous.Peer] = []
     for n in peers_mod.neighbours(node_con, now=now):
         d = peers_mod.digest_of(node_con, n["key"]) or {}
+        offers = any(isinstance(e, dict) and e.get("collection_id") == codex.collection_id
+                     and e.get("members") for e in d.get("collections", []) or [])
+        if not offers:
+            continue
         for b in d.get("benchmarks", []) or []:
             if isinstance(b, dict) and b.get("space_id") == codex.space_id:
                 try:

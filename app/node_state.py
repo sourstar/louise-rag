@@ -271,6 +271,41 @@ def peek(read, absent, *, error=None, table: str = "control"):
         return error
 
 
+#: 04 §4.5 (amended 2026-10-20): a collection's embed mode or sharing
+#: switched → the next digest goes out at once, so the parts this peer led
+#: are released (or claimed) without waiting the hour. The web sets it, the
+#: worker's gossip beat takes it: through the control table, as the
+#: bandwidth override is, because they are two processes.
+DIGEST_REQUEST_KEY = "digest_requested"
+
+
+def request_digest(con: sqlite3.Connection | None = None) -> None:
+    if con is not None:
+        db.set_control(con, DIGEST_REQUEST_KEY, "1")
+        return
+    with closing(connect()) as c:
+        db.set_control(c, DIGEST_REQUEST_KEY, "1")
+        c.commit()
+
+
+def take_digest_request(con: sqlite3.Connection | None = None) -> bool:
+    """True once per request: read and cleared together."""
+    def take(c) -> bool:
+        if db.get_control(c, DIGEST_REQUEST_KEY) != "1":
+            return False
+        db.set_control(c, DIGEST_REQUEST_KEY, "")
+        return True
+    if con is not None:
+        return take(con)
+    try:
+        with closing(connect()) as c:
+            got = take(c)
+            c.commit()
+            return got
+    except sqlite3.Error:
+        return False
+
+
 def bandwidth_override(con: sqlite3.Connection | None = None) -> float | None:
     if con is not None:
         return db.get_bandwidth_override(con)

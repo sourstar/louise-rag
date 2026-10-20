@@ -1204,7 +1204,10 @@ this node makes AVAILABLE — its records, and every embedding it holds as
 bundles (04 §4.3), whatever `embed` says and wherever the vectors came
 from; a node whose embed is `off` still bundles what an archive or an
 earlier run gave it, and every node takes peers' bundles in. The two
-meet in one place: `p2p` publishes, so it needs `share = true`. The
+meet in one place: `p2p` publishes, so it needs `share = true`. Switching
+`embed` away from `p2p`/`all`, or `share` off, releases the parts this
+node leads under rendezvous: the next digest, sent at once, carries no
+benchmark for the space (04 §4.5, *amended 2026-10-20*). The
 Library asks before writing either pair — setting `all p2p` with sharing
 off enables sharing; disabling sharing under `all p2p` switches the mode
 to `all local`; proceed or abort — and a file edited by hand to say

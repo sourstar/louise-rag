@@ -573,6 +573,26 @@ peer's view and published no bundle for it within `grace_days` is not
 scored on that collection until a bundle from it is accepted, so an
 inflated number costs the collection one window, not one per part.
 
+**Who is scored at all** (*amended 2026-10-20*, operator: "switching
+embed mode from p2p to something else shall release the p2p embedding
+partial job of a peer"). A peer's digest carries a benchmark for a space
+only for the collections it embeds under rendezvous AND shares — `embed =
+"p2p"` or `"all"` with `share = true` in its file (07 §7.8); a mode that
+does not embed, or sharing off, means no bundle will ever come from it,
+and a benchmark alone had given the dev PC's idle peer 355 of gutenberg's
+open parts to lead (München, 2026-10-20). Switching a collection away
+from those modes, or its sharing off, therefore releases every part the
+peer leads: its next digest, sent at once on the switch rather than at
+the hour, names no benchmark for the space, and the others' rendezvous
+moves on to the next in the ordering, which embeds only the chunks that
+still lack an accepted bundle — the partial work the peer bundled stays
+and is taken in like any bundle. A receiver applies the same rule to what
+it hears: a neighbour whose digest offers no member of the collection is
+not scored for it, whatever benchmark it carries, so a peer running older
+code is excluded the same way. Switching to `p2p` or `all` with sharing
+on is the reverse: the next digest carries the benchmark, and the peer is
+scored from the others' next recomputation.
+
 **Partial publication.** A contributor emits a signed bundle **about
 every fifteen thousand chunks**, not at the end of the part — 09 §9.10's
 worked example is one part covered by two bundles of 14,800 and 15,200,

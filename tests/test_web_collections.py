@@ -394,3 +394,19 @@ def test_the_add_panel_offers_the_annotations_type_with_the_held_targets(client)
     assert '<option value="annotations">' in html
     assert 'id="na_target"' in html and '<option value="gutenberg" data-snapshot=' in html
     assert "/api/hold/collection/create-annotations" in html
+
+
+def test_a_mode_or_sharing_switch_asks_for_a_digest_at_once(client):
+    """04 §4.5 (operator, 2026-10-20): switching away from p2p releases the
+    parts this node leads — the next digest says so, and the switch asks
+    the worker's gossip beat to send it now, through the control table."""
+    from app import node_state
+    node_state.take_digest_request()                      # a clean slate
+    assert node_state.take_digest_request() is False
+    r = client.post("/admin/library/gutenberg/embed-mode", json={"mode": "lazy"})
+    assert r.status_code == 200, r.text
+    assert node_state.take_digest_request() is True and node_state.take_digest_request() is False, \
+        "one request, taken once"
+    r = client.post("/admin/library/gutenberg/share", json={"share": True})
+    assert r.status_code == 200, r.text
+    assert node_state.take_digest_request() is True

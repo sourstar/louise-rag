@@ -72,16 +72,39 @@ def own_port(cfg=None) -> int:
     return int(config.PORT)
 
 
+def leads(collection) -> bool:
+    """Does this peer EMBED the collection under rendezvous and PUBLISH what
+    it embeds — `embed = "p2p"` or `"all"` in its file, and `share = true`
+    (07 §7.8; 04 §4.5, amended 2026-10-20)? Only then is its benchmark for
+    the space in its digest, and only then is it scored for the collection's
+    parts. A peer whose mode does not embed (`off`, `on-demand`), or that
+    does not share, publishes no bundle and must lead nothing: the dev PC's
+    peer, embed off and share off, led 355 of gutenberg's open parts on the
+    strength of a benchmark alone, and they stalled (München, 2026-10-20).
+    Switching a collection away from p2p or all, or its sharing off, thus
+    RELEASES every part it leads: its next digest — sent at once on the
+    switch — carries no benchmark for the space, and the others' rendezvous
+    moves on to the next in the ordering, which embeds only what still
+    lacks a bundle; the partial work the peer bundled stays."""
+    from app import collections as collections_mod
+    share = bool(getattr(collection, "share", False))
+    mode, _why = collections_mod.effective_embed_mode(
+        getattr(collection, "embed_mode_default", None) or collections_mod.DEFAULT_EMBED_MODE,
+        share, getattr(collection, "name", "?"))
+    return share and mode in ("p2p", "all")
+
+
 def benchmarks(root: Path, collections, own_key: str | None) -> list[dict[str, Any]]:
     """One entry per space, from the statements this node signed (03 §3.3;
-    09 §9.9) — the latest run per space."""
+    09 §9.9) — the latest run per space — for the collections this peer
+    LEADS (`leads`): embeds under rendezvous and shares."""
     from app.hold import embedder as emb, runs
     out: dict[str, dict[str, Any]] = {}
     if own_key is None:
         return []
     for c in collections:
         codex = getattr(c, "codex", None)
-        if codex is None:
+        if codex is None or not leads(c):
             continue
         if not runs.applies(codex):
             # a version-2 collection: its one statement, the row in §9.9's
@@ -355,7 +378,9 @@ def beat(collections, *, now: float | None = None, client=None,
     out: dict[str, Any] = {"acted": acted, "claims": claims,
                            "forwarded": forward_events(client=client, now=now, stop=stop, log=log),
                            "digest": None}
-    due = force or now - _last_digest_at >= peers.INTERVAL_S
+    from app import node_state
+    requested = node_state.take_digest_request()
+    due = force or requested or now - _last_digest_at >= peers.INTERVAL_S
     if not due:
         with closing(peers.connect()) as con:
             fresh = [r for r in peers.recipients(con, now=now)

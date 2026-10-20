@@ -2758,6 +2758,13 @@ def collection_embed_mode(name: str, body: EmbedModeBody):
                      f"(written to {toml_path.name}: permanent)")
     except sqlite3.OperationalError:
         applied_now = False
+    # 04 §4.5 (2026-10-20): the switch releases or claims the parts this peer
+    # leads — the next digest says so, and it goes out at the worker's next
+    # beat rather than at the hour
+    try:
+        node_state.request_digest()
+    except Exception:   # noqa: BLE001 — the hourly digest says it anyway
+        pass
     return {"ok": True, "embed_mode": body.mode, "persisted": True,
             "applied_now": applied_now, "share": share, "share_enabled": share_enabled,
             "note": None if applied_now else
@@ -2814,6 +2821,10 @@ def collection_share(name: str, body: ShareBody):
                          f"(written to {toml_path.name}: permanent)")
         except sqlite3.OperationalError:
             applied_now = False
+    try:
+        node_state.request_digest()       # 04 §4.5: sharing on or off moves the lead
+    except Exception:   # noqa: BLE001
+        pass
     return {"ok": True, "share": body.share, "embed_mode": embed_mode, "embed_mode_changed": changed_mode,
             "persisted": True, "applied_now": applied_now}
 

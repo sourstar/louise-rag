@@ -25,8 +25,16 @@ def test_the_row_comes_from_this_node_s_passing_statement_alone(tmp_path):
     assert row == {"space_id": codex.space_id, "encoder_image": codex.space.encoder.image,
                    "encoder_weights": codex.space.encoder.weights, "tokens_per_s": 1000}
     assert cov.own_benchmarks(tmp_path, "gutenberg", codex, OWN) == [row]
-    assert gossip.benchmarks(tmp_path, [SimpleNamespace(name="gutenberg", codex=codex)], OWN) == [row], \
-        "the digest carries it"
+    leading = SimpleNamespace(name="gutenberg", codex=codex, embed_mode_default="p2p", share=True)
+    assert gossip.benchmarks(tmp_path, [leading], OWN) == [row], "the digest carries it"
+    # 04 §4.5 (2026-10-20): only where this peer embeds under rendezvous AND shares
+    for c in (SimpleNamespace(name="gutenberg", codex=codex, embed_mode_default="lazy", share=True),
+              SimpleNamespace(name="gutenberg", codex=codex, embed_mode_default="off", share=True),
+              SimpleNamespace(name="gutenberg", codex=codex, embed_mode_default="p2p", share=False),
+              SimpleNamespace(name="gutenberg", codex=codex, embed_mode_default="all", share=False),
+              SimpleNamespace(name="gutenberg", codex=codex)):
+        assert not gossip.leads(c) and gossip.benchmarks(tmp_path, [c], OWN) == [], (c.embed_mode_default if hasattr(c, "embed_mode_default") else "default")
+    assert gossip.leads(SimpleNamespace(name="gutenberg", codex=codex, embed_mode_default="all", share=True))
     assert cov.v2_benchmark(tmp_path, "gutenberg", codex, "ed25519:" + "0" * 64) is None, \
         "a statement another key signed is not this node's"
     _statement(tmp_path, codex, passed=0)
@@ -42,10 +50,22 @@ def test_a_neighbour_s_version_1_row_puts_it_in_the_live_set(node):  # noqa: F81
     now = time.time()
     row = {"space_id": codex.space_id, "encoder_image": codex.space.encoder.image,
            "encoder_weights": codex.space.encoder.weights, "tokens_per_s": 2436}
+    entry = {"collection_id": codex.collection_id, "lineage_id": codex.collection_id, "title": "PubMed",
+             "snapshot_id": "2026-10", "members": [{"name": "records-year=2024", "root": "sha256:" + "a" * 64,
+                                                    "bytes": 1}], "license": "red", "privacy": "public"}
     with peers.connect() as con:
         body = messages.digest_body(key=PEER_KEY, address="http://10.0.0.7:30042", neighbours=[],
-                                    benchmarks=[row], collections=[], now=now)
+                                    benchmarks=[row], collections=[entry], now=now)
         peers.record_digest(con, body, now=now)
         live = cov.live_peers(codex, con, now=now, own_key=OWN,
                               own_benchmarks=[{**row, "tokens_per_s": 96775}])
-    assert sorted((p.key, p.benchmark) for p in live) == sorted([(PEER_KEY, 2436.0), (OWN, 96775.0)])
+        assert sorted((p.key, p.benchmark) for p in live) == sorted([(PEER_KEY, 2436.0), (OWN, 96775.0)])
+        # 04 §4.5 (2026-10-20): a neighbour that offers no member of the collection is not
+        # scored, whatever benchmark its digest carries — it can publish no bundle
+        for silent in ([], [dict(entry, members=[])]):
+            body = messages.digest_body(key=PEER_KEY, address="http://10.0.0.7:30042", neighbours=[],
+                                        benchmarks=[row], collections=silent, now=now + 1)
+            peers.record_digest(con, body, now=now + 1)
+            live = cov.live_peers(codex, con, now=now + 1, own_key=OWN,
+                                  own_benchmarks=[{**row, "tokens_per_s": 96775}])
+            assert [p.key for p in live] == [OWN], silent

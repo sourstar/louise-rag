@@ -715,3 +715,31 @@ core (~92 % CPU), a part every 40–60 s, the first parts the largest
 entities: ~15 h — today's window plus two nights. gutenberg's rate
 during the scan is confounded by the DAR measurement on the card; a clean
 figure follows.
+
+### 2026-10-20 — a peer leads only where it embeds and shares; a switch releases its parts (operator) — PREPARED
+
+**Change.** The digest carries a space's benchmark only for collections
+with `embed = p2p | all` and `share = true` (gossip.leads); a neighbour
+whose digest offers no member of the collection is not scored (coverage
+.live_peers); a mode or sharing switch in the Library asks the gossip
+beat for a digest at once (node_state.request_digest) instead of at the
+hour. 04 §4.5, 07 §7.8, 09 §9.9 amended. Operator's rule: "switching
+embed mode from p2p to something else shall release the p2p embedding
+partial job of a peer".
+
+**MEASURED BEFORE (München, `hold vectors show gutenberg`, ~14:25 CEST;
+Perugia 12:25Z).** 1,259 open parts by union on the node. Leaders: the
+node 485 parts / 247,720 open chunks — on-demand since 13:09:54, so they
+stall; Perugia 419 / 229,840 — embedding at 283 chunks/min (20 min);
+9f7c969c… (louise-peer2 on the dev PC, embed off, share off, older code)
+355 / 224,603 — it has produced no bundle ever and never will; its digest
+carries a 1,477 tokens/s benchmark, which is why it leads. Without the
+change these 840 parts wait `grace_days` (7) for the cascade.
+
+**EXPECTED AFTER.** Once deployed on the node and Perugia: peer2 is
+dropped from both live sets at their next recomputation (it offers no
+member); the node's digest carries no gutenberg benchmark (on-demand), so
+Perugia leads every open part — about 700,000 chunks, ~40 h at its 283
+chunks/min — and the node takes Perugia's bundles in. AFTER numbers owed:
+Perugia's led parts and chunks/min the hour after the deploy; the node's
+intake of Perugia's bundles.
