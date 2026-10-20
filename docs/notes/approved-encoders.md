@@ -112,6 +112,36 @@ cannot be a cross-peer property.
 | CPU (llama.cpp) | none offered | — | — |
 | torch (`louise-python`: XPU today, CUDA elsewhere) | by calls, not a vendor env var | the same device and torch build. **MEASURED 2026-10-20, jina-v3 on the B70 (torch 2.14.0+xpu, tree -20261020b), torch's DEFAULTS: 204 of 512 calibration texts bit-identical over 2 fresh loads × 2 shuffled passes (2,048 vectors, 2,952 s); the 308 that differ form blocks by text (0–241, 448–511, 257, 273), so it is the input, not chance — NOT reproducible unset.** **With `LOUISE_TORCH_DETERMINISTIC=1` (tree -20261020c, window 1,024, node paused): the DOCUMENT model 512 of 512 bit-identical over 2 fresh loads × 2 shuffled passes (2,048 vectors, 974 s) — REPRODUCIBLE; the query model's run follows.** The texts that differed unset were the SHORT ones (0–241 average 48 tokens, 448–511 average 35; the long block 242–447, average 5,967 tokens, was identical but for two): small shapes reach kernels whose reduction order is not fixed by default. DAR-legal-it, the same stack: 1/4 bit-identical against itself on 2026-10-17 (max abs 8.2e-8), and its calibration fingerprint moved across three byte-identical trees (6d2c61d9…, 193d1cc8…, 6283455f…) while MedCPT's (OpenVINO) stayed 0eb32880… across four — the same switch is in its task now (deploy/dar-legal-it/server.py) and MEASURED next (operator, 2026-10-20). To notify upstream: upstream-bugs.md V1 | `torch.use_deterministic_algorithms(True)` + `torch.backends.mkldnn.deterministic` (oneDNN's `set_deterministic`), switched on by the MODEL's env `LOUISE_TORCH_DETERMINISTIC=1` (deploy/jina-embeddings-v3/server.py) so the stated run carries it; CUDA adds `CUBLAS_WORKSPACE_CONFIG=:4096:8`. Measured first with it unset, then set — louise-python-rebuild.md §4 |
 
+**2026-10-20, night: ANY backend, fail-closed (operator).** "A backend that
+does not produce bit exact results upon reprocessing the same data cannot be
+used under any circumstances"; "VeGa wrapper MUST ensure determinism for ANY
+backend". The audit of every model Louise uses found seven without their
+stack's mode: the reranker, chat, index-translate, MADLAD, DAR-legal-it (whose
+node tree predated its switch) and the two OpenVINO models. Measured on the
+node with a fresh LocalAI load each time (det_check: the same input, three
+fresh loads, two orders, compared as exact float reprs or text bytes):
+
+| model | settings | result |
+|---|---|---|
+| louise-rerank-bge (bge-reranker-v2-m3 F16, stock `intel-sycl-f16-llama-cpp`) | `parallel:4`, no DNN switch | NOT bit-exact: the order moved 16 of 20 scores |
+| the same | `GGML_SYCL_ENABLE_DNN=0`, `parallel:1`, `cache_ram:0`, applied by a LocalAI RESTART (the YAML is read at startup; an edit plus `/backend/shutdown` reloads the OLD config) | **BIT-EXACT**: 20 of 20 over 3 loads × 2 orders, batched and one candidate per request (56 ms a candidate) |
+| louise-chat-qwen3-8b (stock SYCL) | DNN=0, `parallel:1`, `cache_ram:0`, greedy (`top_k:1`, temperature 0) | NOT bit-exact: the first answer after a load differs from the later ones (from token ~25), and the later ones agree. `cache_prompt:false` in the request changes nothing |
+| index-translate-9b | DNN=0, `parallel:1`, `cache_ram:0` | bit-exact over 3 loads × 2 (an empty answer to a chat probe; the real path still to measure) |
+
+The rule is now code. `deploy/vega/vega_wrapper.py` `determinism_lacks`
+applies on ANY device:
+- llama.cpp needs `parallel:1`, and on a card its vendor's mode; Vulkan, or a
+  card run naming no known vendor, is refused;
+- louise-python's torch tasks need `LOUISE_TORCH_DETERMINISTIC=1`; its
+  OpenVINO tasks are refused;
+- any other family is refused.
+
+louise-python's dispatcher refuses the same for a model the wrapper is not
+in front of. Every model Louise uses goes behind the wrapper
+(deploy/16f/determinism-switch.sh). OpenVINO stays refused until it is
+measured bit-exact over loads and orders. MedCPT's fingerprint did stay
+0eb32880… across four trees, which says it may pass.
+
 Notes:
 
 - No vendor claims agreement across different hardware. NVIDIA's lapses even
