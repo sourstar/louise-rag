@@ -649,6 +649,13 @@ resident all day beside chat (7,441) and the reranker (1,664) is 58 % of
 the card; a non-English Ask adds the translator (6,424) and crosses
 LocalAI's 68 % watchdog, which evicts models mid-answer (2026-10-14).
 
+**Set 2026-10-20 10:18:57 CEST (08:18:57Z, München):** the file already
+said `embed = "p2p"` since the 08:00 window; cron 5 and 6 disabled; the
+one-off heavy-window2.sh stopped, so its 17:00 flips (gutenberg back to
+on-demand, pubmed-v8 all → on-demand) will not run — pubmed-v8 stays
+`all` until cron 8, both collections on the card this afternoon; cron 7/8
+untouched.
+
 **BEFORE.** The night rows above (contribute: 196 chunks/min, 150
 bundles; the lease night) and today's one-off 08:00–17:00 p2p window.
 **AFTER.** The first full p2p day: chunks/min by hour, bundles published,
