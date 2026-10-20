@@ -606,3 +606,35 @@ parts the night finished leave in the morning. BEFORE from tonight's
 contribute window on 0624b18 (chunks, minutes, chunks/min, bundles,
 cold starts); AFTER from the first night on the publisher, and no part
 bundled by both peers.
+
+### 2026-10-20 — the bundle intake's hard split cuts by index (pitfall 18) — PREPARED, not deployed
+
+**Change.** `chunking._fixed_windows`: a paragraph longer than the window
+is cut by index, not by re-slicing the remainder once per window; the
+output is byte-identical (the old loop is the oracle in
+tests/test_chunker_fixed.py). `land(cut_=…)`: the intake's one cut of
+the part serves the ladder's T3 and the landing; it was made twice.
+
+**Scenario.** Perugia (AMD RX 9060 XT, Docker Desktop over WSL2, the
+leecher): gutenberg `embed = "p2p"`, `share = true`, run everything;
+taking the node's bundles in while embedding its own led parts; the
+ivf_pq index build (1,745 s) inside the window too.
+
+**BEFORE (Perugia, 05:24–07:24Z on 033efb7/4e63103).** embed 58
+documents, 4,406 chunks in 72 min = **61 chunks/min** (the CLI
+contribute on the same card: 143); GPU GFX_ACTIVITY 0 % most of the
+time; worker 98 % CPU, the busy thread `share-fetch` at ~20 user + 80
+sys ticks/s, in `_fixed_windows` line 102 in both py-spy dumps; one
+50-book part (38,273 chunks) from T0 warning to accepted **18 min 28 s**
+(06:38:56 → 06:57:24); its twin, nothing to land, 30 s; gate waited
+7,412 s / served 3,249 s; embed producer idle in `skip_test →
+coverage.rows`. Here, on a Linux host: a 3.4 MB one-paragraph book
+0.136 s and 1,737 minor faults before, 0.005 s and 449 after; identical
+chunks.
+
+**AFTER (owed by Perugia on the deployed tip).** The next bundle's time
+from judged to accepted; sys ticks of `share-fetch` while it lands;
+embed chunks/min over an hour with no index build inside; gate waited vs
+served. The node too (München): the same intake runs when it takes
+Perugia's bundles.
+

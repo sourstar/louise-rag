@@ -398,6 +398,40 @@ itself writes `encoder_use (server, model, last_used)` in node.sqlite
 after every answer (rate-limited to one write per 5 s per model), from
 whichever process embeds: the worker, the web's search, a command.
 
+**18. A quadratic nobody saw, in the one Python thread that holds the
+GIL for minutes.** Perugia, the first morning as a full peer on
+4e63103: the embed stage at 61 chunks/min against the CLI's 143, the
+GPU idle, the worker at 98 % CPU — about 20 user and 80 SYSTEM ticks a
+second, no I/O. The py-spy sidecar (§7) put the busy thread not in the
+embed producer but in `share-fetch`, taking a fetched bundle in:
+`accept.take → land.cut → chunks_for_document → _fixed_windows`, line
+102, in both dumps a minute apart — the hard split of a paragraph longer
+than the window, which re-sliced the REMAINDER once per window (`p =
+p[step:]`). A 3.4 MB book without a blank line (CRLF text, verse) is
+~1,000 windows and 1.7 GB of fresh multi-megabyte strings, each
+page-faulted in: 0.14 s on a Linux host, where the allocator recycles
+the pages, and on Docker Desktop over WSL2, where every fault is the
+hypervisor's, 18.5 minutes for one 50-book part (06:38:56 → 06:57:24,
+38,273 chunks) with the GIL held throughout — so the embed producer,
+whose own selection is Python too (`skip_test → coverage.rows`), crawled,
+and the gate read "waited 7,412 s, served 3,249 s" with nobody else in
+it. And the part was cut TWICE per bundle: once for the ladder's T3
+(`text_of`), once again inside `land`.
+
+→ The hard split cuts by index — the same windows, the same bytes, the
+same ids (tests/test_chunker_fixed.py holds the old loop as the oracle,
+and a `tracemalloc` cost test pins the peak at the text plus a window):
+0.005 s for the same book, 27× faster here and the page-fault churn
+gone. `land(cut_=…)` takes the cut the intake already made. The lesson
+is pitfall 2's again in another coat: a cost that is a constant on the
+machine you measured on is a function of the allocator on another, and
+"pure Python, fast enough" is a claim about a platform. What is left
+open: the cut still runs in the intake thread under the GIL — a few
+seconds per part now; if Perugia's AFTER still shows the embed producer
+starved while a bundle lands, the cut moves to the parse pool
+(`app/parallel.py`, children at nice 10), as the embed stage's own
+chunking did in amendment 50.
+
 ## 6. Before you change the scheduler — the checklist
 
 1. **Read the worker log as a time series first.** It is the first

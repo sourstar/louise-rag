@@ -133,3 +133,18 @@ A WIRE-FORMAT CHANGE: the operator decides; nothing exists until then.
   collection (`slicing.container`)?
 - `model` methods: the agreement floor — measured on the first 1,000
   GLiNER mentions re-run twice, or set at a value now?
+
+## Decided (operator, 2026-10-20)
+
+- **Two targets.** A-K3's Codex version 9 and A-K4's `slicing.container`,
+  both inside `collection_id`: APPROVED. A relation claim's `from` may be
+  a wikidata record; relation edges exist in the graph.
+- **Parquet parts for EVERY collection** (`slicing.container`), not for
+  annotations collections alone. A wire-format change for every
+  collection kind; the operator decided it knowing so.
+- **The agreement floor for `model` methods is MEASURED first**, on the
+  first 1,000 GLiNER mentions re-run twice, and set from that number —
+  never a value written before the measurement.
+- Order: as §"The order, if approved" says; nothing of it before the
+  wikidata collection exists (wikidata-build-plan.md §4).
+

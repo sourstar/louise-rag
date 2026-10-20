@@ -160,7 +160,7 @@ def rows_to_write(codex, admitted, mine_cut: dict[str, dict],
 
 
 def land(codex, report, *, records: Sequence[dict],
-         write: Callable[[list[dict]], Any]) -> dict:
+         write: Callable[[list[dict]], Any], cut_: dict[str, dict] | None = None) -> dict:
     """Place an admitted report's rows and hand them to `write`.
 
     Refuses to write anything when the ladder failed: 03 §3.5's "refused
@@ -168,13 +168,19 @@ def land(codex, report, *, records: Sequence[dict],
     `admitted` in that case — this is the second lock on the same door,
     because a caller that ignored `ok` would otherwise write zero rows
     silently and report success.
+
+    `cut_`: the caller's own cut of the same records, when it has one —
+    the ladder's T3 needed it a moment ago (`text_of`), and cutting a
+    50-book part twice per bundle was half of the intake's CPU (Perugia,
+    2026-10-20). Absent, the records are cut here.
     """
     if not report.ok:
         failed = [t.tier for t in report.tiers if t.failed]
         raise LandError(
             f"the ladder refused this bundle at {', '.join(failed) or 'a tier'}; "
             f"nothing is written")
-    rows, unplaceable = rows_to_write(codex, report.admitted, cut(codex, records))
+    rows, unplaceable = rows_to_write(codex, report.admitted,
+                                      cut(codex, records) if cut_ is None else cut_)
     written = write(rows) if rows else 0
     return {"bundle_id": report.bundle_id, "producer": report.producer,
             "written": int(written or 0), "rows": len(rows),

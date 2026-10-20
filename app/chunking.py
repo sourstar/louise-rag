@@ -91,17 +91,31 @@ def _fixed_windows(uid: str, native_id, chapters, version,
     same chunk ids as `book` — and therefore what lets a Codex collection
     adopt the vectors a legacy pack already holds."""
     seq = 0
+    step = max_chars - overlap_chars
     for chapter_title, body in chapters:
         paras = [p for p in body.split("\n\n") if p.strip()]
         buf: list[str] = []
         size = 0
         for para in paras:
             p = para.strip()
-            # a single paragraph larger than the window gets hard-split
-            while len(p) > max_chars:
-                head, p = p[:max_chars], p[max_chars - overlap_chars:]
-                yield _mk(uid, native_id, seq, chapter_title, head, version)
+            # a single paragraph larger than the window gets hard-split — BY
+            # INDEX, never by re-slicing the remainder. `p = p[step:]` copied
+            # the rest of the paragraph once per window: a 3.4 MB book with no
+            # blank line (CRLF text, verse) is ~1,000 windows and 1.7 GB of
+            # fresh strings, each page-faulted in — 0.14 s here, and on
+            # Perugia (Docker Desktop over WSL2, where a page fault is the
+            # hypervisor's) ~80 % system time for 18 minutes per 50-book part
+            # on the bundle intake, the GIL held throughout and the embed
+            # producer starved (2026-10-20, py-spy; scheduling.md pitfall 18).
+            # Indexing yields the same windows — the same bytes, the same ids
+            # (tests/test_chunker_fixed.py pins it) — in 0.005 s.
+            start = 0
+            while len(p) - start > max_chars:
+                yield _mk(uid, native_id, seq, chapter_title, p[start:start + max_chars], version)
                 seq += 1
+                start += step
+            if start:
+                p = p[start:]
             if size + len(p) > max_chars and buf:
                 text = "\n\n".join(buf)
                 yield _mk(uid, native_id, seq, chapter_title, text, version)

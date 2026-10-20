@@ -829,3 +829,18 @@ are NOT widened; option 1 — the part-level distribution over the node's
 ~1,450 accepted bundles — stays the measurement that would move them.
 The node's four parts re-ladder at the publisher's next pass after the
 deploy and get coverage. CLOSED.
+
+### 17. The bundle intake re-cut the part quadratically and held the GIL for minutes (Perugia, 2026-10-20) — FIXED
+
+Found with the py-spy sidecar on the first morning as a full peer: the
+`share-fetch` thread at 100 % (80 % system) in `_fixed_windows`'s hard
+split, re-slicing a long paragraph's remainder once per window — 1.7 GB
+of allocations for one 3.4 MB book, 18.5 minutes for one 50-book part on
+Docker Desktop over WSL2 — with the GIL held, the embed producer starved
+and the GPU idle (61 chunks/min against the CLI's 143). The part was cut
+twice per bundle besides (the ladder's T3 and the landing). Fixed: the
+split cuts by index with byte-identical output (the old loop kept as the
+test's oracle), and `land` takes the intake's cut. scheduling.md pitfall
+18; scheduling-log.md row (AFTER owed by Perugia). Open: whether the cut
+still needs to leave the intake thread for the parse pool.
+

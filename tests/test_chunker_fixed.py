@@ -185,3 +185,89 @@ def test_a_bundle_refuses_the_legacy_bare_hex_space_id():
     with pytest.raises(BundleError, match="sha256:"):
         bd.check(header(space_id="41" * 16))     # the legacy form: bare, 32 hex
     bd.check(header())                            # the Codex's form passes
+
+
+# ---- the hard split cuts by index: the same windows, without the copies -------
+
+def _reference_windows(uid, native_id, chapters, version, max_chars, overlap_chars):
+    """`_fixed_windows` as it was until 2026-10-20 — the remainder re-sliced
+    once per window — kept here as the oracle the rewrite must equal byte
+    for byte: every pinned space id rests on these windows (invariant 3)."""
+    seq = 0
+    for chapter_title, body in chapters:
+        paras = [p for p in body.split("\n\n") if p.strip()]
+        buf, size = [], 0
+        for para in paras:
+            p = para.strip()
+            while len(p) > max_chars:
+                head, p = p[:max_chars], p[max_chars - overlap_chars:]
+                yield chunking._mk(uid, native_id, seq, chapter_title, head, version)
+                seq += 1
+            if size + len(p) > max_chars and buf:
+                text = "\n\n".join(buf)
+                yield chunking._mk(uid, native_id, seq, chapter_title, text, version)
+                seq += 1
+                tail = text[-overlap_chars:]
+                buf, size = [tail, p], len(tail) + len(p)
+            else:
+                buf.append(p)
+                size += len(p)
+        if buf:
+            yield chunking._mk(uid, native_id, seq, chapter_title, "\n\n".join(buf), version)
+            seq += 1
+
+
+@pytest.mark.parametrize("max_chars, overlap", [(3920, 400), (4000, 0), (100, 99), (1000, 120), (7, 3)])
+def test_the_index_hard_split_cuts_exactly_what_the_re_slicing_one_did(max_chars, overlap):
+    """The rewrite changes how the windows are produced, never which: a
+    one-paragraph book (CRLF text, verse, a dump's single line), paragraphs
+    straddling the window, a text that is an exact multiple, an empty tail,
+    overlap 0 and overlap at its maximum — identical ids, seqs and bytes."""
+    import random
+    rng = random.Random(max_chars * 1000 + overlap)
+    words = ["lorem", "ipsum", "dolor", "sit", "amet", "x", "consectetur"]
+
+    def para(n):
+        return " ".join(rng.choice(words) for _ in range(n))
+    books = [
+        [("One paragraph", para(4000))],                                   # the hard-split path alone
+        [("CRLF", "\r\n".join(para(30) for _ in range(300)))],             # no "\n\n": one paragraph
+        [("Exact", "y" * (max_chars * 3))],                                 # an exact multiple
+        [("Mixed", "\n\n".join(para(rng.randint(1, 900)) for _ in range(40)))],
+        [("Short", "a"), ("Empty", "   \n\n  "), ("Tail", "z" * (max_chars + 1))],
+    ]
+    for book in books:
+        want = ids(_reference_windows("g:7", 7, book, 3, max_chars, overlap))
+        got = ids(chunking._fixed_windows("g:7", 7, book, 3, max_chars, overlap))
+        assert got == want
+        assert [c["tokens"] for c in _reference_windows("g:7", 7, book, 3, max_chars, overlap)] == \
+            [c["tokens"] for c in chunking._fixed_windows("g:7", 7, book, 3, max_chars, overlap)]
+
+
+def test_a_one_paragraph_book_costs_its_own_size_in_memory_not_a_copy_per_window():
+    """The COST (scheduling.md pitfall 18). Re-slicing the remainder made a
+    3.4 MB book without a blank line into ~1,000 fresh multi-MB strings —
+    1.7 GB of allocations page-faulted in, 80 % system time on Perugia's
+    bundle intake for 18 minutes per part. By index, the peak is the text
+    plus one window: nothing is copied but the chunks themselves."""
+    import tracemalloc
+    text = "word " * 400_000                       # 2 MB, one paragraph
+
+    def peak_of(windows):
+        tracemalloc.start()
+        try:
+            tracemalloc.reset_peak()
+            before = tracemalloc.get_traced_memory()[0]
+            n = sum(1 for _ in windows("g:1", 1, [("B", text)], 1, 3920, 400))
+            return n, tracemalloc.get_traced_memory()[1] - before
+        finally:
+            tracemalloc.stop()
+    n_old, old = peak_of(_reference_windows)
+    n_new, new = peak_of(chunking._fixed_windows)
+    assert n_old == n_new > 500
+    # `strip()` copies the paragraph once in both (the text ends in a space);
+    # the old loop then held a second copy — the remainder — beside it at
+    # every window, and churned a thousand of them; the new one holds the
+    # paragraph and a window
+    assert old > 1.8 * len(text), f"the oracle's peak {old:,} should show the remainder copy"
+    assert new < 1.1 * len(text), f"peak {new:,} bytes over a {len(text):,}-byte paragraph"

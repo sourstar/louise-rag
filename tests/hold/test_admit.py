@@ -521,3 +521,33 @@ def test_the_T3_sample_is_drawn_with_this_peers_own_seed(made):
     run(made, text_of=spy, embed=lambda t: [], seed=b"\x09" * 32)
     assert first and seen and first != seen, \
         "two seeds drew the same sample; the draw is not seeded"
+
+
+def test_landing_reuses_the_callers_cut_and_cuts_once_otherwise(made, monkeypatch):
+    """Perugia, 2026-10-20: the intake cut a 50-book part twice per bundle —
+    once for the ladder's T3 (`text_of`) and once in `land` — in a thread
+    holding the GIL. `land(cut_=…)` takes the cut the caller has; without
+    one it cuts, exactly as before."""
+    from app.hold import land as landing
+    root, snapshot, codex, dest, store, ids = made
+    r = run(made)
+    assert r.ok
+    from app.hold import export as exp
+    from app.pack import records as pack_records
+    shard_tree = col.shard_dir_of(root, "gutenberg")
+    entry = exp._shard_of(snapshot, first_shard(snapshot))
+    records = list(pack_records.iter_records(shard_tree / entry.path))
+    cuts = []
+    real_cut = landing.cut
+
+    def counting(codex_, recs):
+        cuts.append(len(recs))
+        return real_cut(codex_, recs)
+    monkeypatch.setattr(landing, "cut", counting)
+    written = []
+    out = landing.land(codex, r, records=records, write=lambda rows: written.append(len(rows)) or len(rows))
+    assert cuts == [len(records)] and out["rows"] == len(r.admitted)
+    mine = real_cut(codex, records)
+    out2 = landing.land(codex, r, records=records, write=lambda rows: len(rows), cut_=mine)
+    assert cuts == [len(records)], "the caller's cut is used; nothing is cut again"
+    assert out2["rows"] == out["rows"] and out2["unplaceable"] == out["unplaceable"]

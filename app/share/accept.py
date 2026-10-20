@@ -266,10 +266,10 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
         if fresh:
             import dataclasses
             landed = landing.land(codex, dataclasses.replace(report, admitted=tuple(fresh)),
-                                  records=records, write=write)
+                                  records=records, write=write, cut_=cut)
             written = landed["written"]
     else:
-        landed = landing.land(codex, report, records=records, write=write)
+        landed = landing.land(codex, report, records=records, write=write, cut_=cut)
         written = landed["written"]
     node = adms.connect(root)
     try:

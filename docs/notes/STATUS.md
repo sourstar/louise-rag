@@ -284,6 +284,20 @@ recorded in the report, not a refusal (03 §3.5 amended;
 structural T0 failure still refuse. The four parts re-ladder at the
 publisher's next pass after the deploy.
 
+### 2026-10-20: the bundle intake's quadratic hard split (pitfall 18)
+
+Perugia's py-spy dump on its first morning as a full peer: the worker's
+`share-fetch` thread at 100 % CPU, 80 % system, in `_fixed_windows`'s
+hard split — the remainder of a long paragraph re-sliced once per window,
+1.7 GB of fresh strings for one 3.4 MB book, 18.5 min per 50-book part on
+Docker Desktop over WSL2 — the GIL held, the embed producer starved, the
+GPU idle (61 chunks/min against the CLI's 143). Fixed by cutting by index
+(byte-identical, the old loop kept as the test's oracle; 0.136 → 0.005 s
+here) and by landing from the intake's one cut instead of a second
+([scheduling.md](scheduling.md) pitfall 18; the log row's AFTER is owed
+by Perugia). The rate gap is the measurement that decides whether the cut
+must also leave the intake thread.
+
 ### 2026-10-20: wikidata-refs syncs from the plugin's pack
 
 `app/refs/wikidata.py` rewritten (ref_version 2): one row per entity
