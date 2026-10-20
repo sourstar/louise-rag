@@ -49,3 +49,31 @@ def test_complete_uids_asks_the_table_for_every_chunk_of_the_record(codex):
     got = embed_marks.complete_uids(codex, records, vectors_for)
     assert got == ["gutenberg:1", "gutenberg:3"], "every chunk held; nothing to embed; not the one missing a chunk"
     assert len(asked) == 1 and set(asked[0]) == set(ids["gutenberg:1"]) | set(ids["gutenberg:2"]), "one lookup"
+
+
+def test_a_landed_bundle_marks_the_documents_whose_every_chunk_is_now_here(isolated_config, codex):
+    """Perugia, 2026-10-20: 93 % of gutenberg's vectors held through fetched
+    bundles, the card said 57 % embedded — the landing marked nothing. From
+    the chunk ids landed and compared, no table read: the documents whose
+    every layer-derived chunk is among them are marked, the others not, the
+    already-marked left alone."""
+    from app import layers as layers_mod
+    con = db.connect()
+    records = [{"uid": "gutenberg:1", "native_id": 1, "sections": [["Chapter I", "one two three four five six seven eight nine ten " * 40]]},
+               {"uid": "gutenberg:2", "native_id": 2, "sections": [["Chapter I", "alpha beta gamma delta " * 60]]},
+               {"uid": "gutenberg:3", "native_id": 3, "sections": [["Chapter I", "short"]]}]
+    for r in records:
+        con.execute("INSERT INTO documents(uid, source, native_id, path, updated_at, embed_done) VALUES(?,?,?,?,?,?)",
+                    (r["uid"], "gutenberg", r["native_id"], f"{r['native_id']}.txt", 1, 1 if r["uid"] == "gutenberg:3" else 0))
+    ids = {r["uid"]: [c["id"] for c in layers_mod.chunks_for_document(
+        codex, {"uid": r["uid"], "native_id": r["native_id"]}, [tuple(s) for s in r["sections"]])] for r in records}
+    present = set(ids["gutenberg:1"]) | set(ids["gutenberg:2"][:-1]) | set(ids["gutenberg:3"])
+    assert embed_marks.mark_present(con, None, codex, records, present) == 1
+    done = {u: con.execute("SELECT embed_done, updated_at FROM documents WHERE uid=?", (u,)).fetchone() for u in ids}
+    assert done["gutenberg:1"]["embed_done"] == 1 and done["gutenberg:1"]["updated_at"] > 1
+    assert done["gutenberg:2"]["embed_done"] == 0, "a chunk still missing: not embedded"
+    assert (done["gutenberg:3"]["embed_done"], done["gutenberg:3"]["updated_at"]) == (1, 1), "already marked: untouched"
+    assert not con.in_transaction, "its own short transaction, committed"
+    # the rest of the part landing later completes the record
+    assert embed_marks.mark_present(con, None, codex, records, present | set(ids["gutenberg:2"])) == 1
+    con.close()

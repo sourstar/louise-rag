@@ -90,3 +90,29 @@ def mark_complete(con, collection, codex, records: Sequence[dict],
     if not uids:
         return 0
     return mark_embedded(con, collection, uids, synced=False)
+
+
+def mark_present(con, collection, codex, records: Sequence[dict], present: Iterable[str]) -> int:
+    """After a BUNDLE LANDS (app/share/accept.py `take`): the documents of
+    the part whose every chunk now has a vector here — `present` the chunk
+    ids the landing wrote or compared as duplicates, no table read — marked
+    as the embed stage marks its own, `embed_done = 0` rows only. The
+    Library's "embedded" figure read 57 % on a peer holding 93 % of the
+    vectors (Perugia, 2026-10-20): fetched bundles landed vectors and marked
+    nothing, so the count was the one-off `dev mark-embedded`'s last run.
+    One short manifest transaction, AFTER the durable vector write
+    (invariant 2): marking first is the one ordering that loses data."""
+    have = set(present)
+    own = not con.in_transaction
+    if own:
+        con.execute("BEGIN IMMEDIATE")
+    try:
+        n = mark_complete(con, collection, codex, records,
+                          lambda ids: {i: True for i in ids if i in have}, only_unmarked=True)
+        if own:
+            con.execute("COMMIT")
+        return n
+    except BaseException:
+        if own:
+            con.execute("ROLLBACK")
+        raise

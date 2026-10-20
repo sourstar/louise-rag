@@ -271,6 +271,19 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     else:
         landed = landing.land(codex, report, records=records, write=write, cut_=cut)
         written = landed["written"]
+    # the part's documents whose every chunk now has a vector here are
+    # EMBEDDED, whoever computed the vectors (app/embed_marks.py
+    # `mark_present`; Perugia, 2026-10-20: 93 % of the vectors held, the card
+    # said 57 %) — after the write, from the ids landed and compared, no
+    # table read; a manifest with no row for them yet (the shards not
+    # discovered) marks nothing, and `dev mark-embedded` reconciles later
+    from app import embed_marks
+    present = {cid for cid, _ in report.admitted} | set((duplicate or {}).get("compared") or ())
+    try:
+        marked = embed_marks.mark_present(con, local, codex, records, present)
+    except Exception as e:   # noqa: BLE001 — a mark is bookkeeping; the vectors are landed
+        marked = 0
+        say(f"[{name}] share: bundle {bundle_id[:23]}… landed, its documents not marked embedded: {e}")
     node = adms.connect(root)
     try:
         adms.record_reproduced(node, report.producer, ref=bundle_id, chunks=written)
@@ -282,10 +295,10 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     else:
         _move_dir(staged_dir, final)
     say(f"[{name}] share: bundle {bundle_id[:23]}… from {report.producer[:23]}… accepted — "
-        f"{written} chunks landed"
+        f"{written} chunks landed, {marked} document(s) now embedded"
         + (f", {len(duplicate['compared'])} compared with what was held: {duplicate['result']}"
            if duplicate else "") + "; served from here now")
-    return {"outcome": "accepted", "bundle_id": bundle_id, "written": written,
+    return {"outcome": "accepted", "bundle_id": bundle_id, "written": written, "marked": marked,
             "producer": report.producer, "dir": str(final), "duplicate": duplicate}
 
 
