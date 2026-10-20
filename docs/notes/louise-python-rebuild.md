@@ -55,8 +55,19 @@ and the switch is one YAML line per model with a backup beside it
    regular files (huggingface_hub's cache writes symbolic links, which
    `weights_digest` refuses), checks every file against the commit's tree
    and tokenizer.json against the `wikidata-text` layer's sha256, and
-   prints the **weights digest** — the recipe's `<<weights>>`. Report the
-   full commit it resolves `bd55a5e` to; it is pinned in full afterwards.
+   prints the **weights digest** — the recipe's `space.encoder.weights`.
+   **Done on the node 2026-10-20 (München)**: code commit
+   `bd55a5ec8e6c0fb1d6c26efb4b6a4a74ce8a88d3`, digest
+   `sha256:f0f752aea9e660f8120e2cb7ae32377794c45e53bfbeee3f1f6ecf36d7c0c572`
+   (16 files, 0 symlinks, 1.1 GB, equal to `app.vega.runs.weights_digest`
+   in the deployed image); both are pinned in fetch.py now, and a folder
+   with another digest is refused. The target already existed from the
+   2026-10-18 cosine measurement, with the files the layout excludes
+   (1_Pooling/, README.md, modules.json, custom_st.py,
+   config_sentence_transformers.json, the code's README and converter);
+   the installer refused it and München moved it aside as
+   `jina-embeddings-v3.pre-installer-20261018` — nothing deleted, the
+   operator's to remove.
 3. **The model YAMLs**: deploy/vega/stage/models/vega-jina-v3.yaml and
    vega-jina-v3-query.yaml, placed through the API as the others were
    (vega.md §12 — the call drops comments; the file goes back afterwards).
@@ -177,5 +188,6 @@ is assumed:
   backend was measured 1/4 bit-identical against ITSELF on 2026-10-17
   (max abs 8.2e-8): invariant 12 is open for every torch model, not only
   the new one, and the same measurement is owed there.
-- `CODE_COMMIT` in fetch.py is a seven-character pin checked as a prefix;
-  pinned in full once the first run reports what the Hub resolved.
+- `/mnt/ssd5/apps/models/jina-embeddings-v3.pre-installer-20261018` (1.1 GB,
+  the 2026-10-18 measurement's folder) is moved aside, not deleted: the
+  operator's to remove.

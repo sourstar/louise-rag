@@ -35,9 +35,9 @@ names too (D6), which ties the chunker's tokenizer to the encoder's.
 DEST is absent, empty, or a run of this script cut off: a file already
 whole is kept, a partial one is fetched again, anything else refuses.
 On success the folder's weights digest is printed (the algorithm of
-app/vega/runs.weights_digest, tests/test_jina_fetch.py keeps them equal);
-with --expect it is compared, so a second peer installing the folder
-refuses a different one. Standard library only; the proxy is the
+app/vega/runs.weights_digest, tests/test_jina_fetch.py keeps them equal)
+and compared with the one measured on the node (`WEIGHTS_DIGEST`, or
+--expect), so a second peer installing the folder refuses a different one. Standard library only; the proxy is the
 environment's (HTTPS_PROXY). A token (gated or rate-limited Hub) comes
 from a FILE, never an env value or an argument (invariant 8).
 """
@@ -64,9 +64,13 @@ WEIGHTS_FILES = ("config.json", "model.safetensors", "special_tokens_map.json",
 TOKENIZER_SHA256 = "f59925fcb90c92b894cb93e51bb9b4a6105c5c249fe54ce1c704420ac39b81af"
 
 CODE_REPO = "jinaai/xlm-roberta-flash-implementation"
-#: the commit docs/notes/wikidata-build-plan.md pins; the full id is resolved
-#: from the Hub and must begin with it
-CODE_COMMIT = "bd55a5e"
+#: the commit docs/notes/wikidata-build-plan.md pins as `bd55a5e`, in full as the
+#: node's first run resolved it (2026-10-20); the Hub must still resolve it so
+CODE_COMMIT = "bd55a5ec8e6c0fb1d6c26efb4b6a4a74ce8a88d3"
+#: the folder's weights digest, measured on the node 2026-10-20 (16 files, 1.1 GB)
+#: and equal to app.vega.runs.weights_digest's there: the recipe's `space.encoder.weights`.
+#: A folder this script writes anywhere else must have it, or it is refused.
+WEIGHTS_DIGEST = "sha256:f0f752aea9e660f8120e2cb7ae32377794c45e53bfbeee3f1f6ecf36d7c0c572"
 #: `modeling_lora` → `configuration_xlm_roberta`, `modeling_xlm_roberta` → `rotary`,
 #: `block`, `embedding`, `mha`, `mlp`, `xlm_padding`; `block` → `stochastic_depth`
 CODE_FILES = ("block.py", "configuration_xlm_roberta.py", "embedding.py", "mha.py", "mlp.py",
@@ -310,8 +314,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("dest", type=Path, help="the folder to write (the model's ModelFile)")
     ap.add_argument("--token-file", type=Path, default=None,
                     help="a file holding a Hugging Face token (never the token itself)")
-    ap.add_argument("--expect", default=None,
-                    help="the weights digest this folder must have (sha256:…)")
+    ap.add_argument("--expect", default=WEIGHTS_DIGEST,
+                    help="the weights digest this folder must have (default: the one "
+                         "measured on the node, WEIGHTS_DIGEST)")
     a = ap.parse_args(argv)
     token = a.token_file.read_text().strip() if a.token_file else None
     try:
@@ -324,7 +329,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"folder    {a.dest}")
     print(f"digest    {digest}")
     if a.expect and a.expect != digest:
-        print(f"refused: the folder's digest is not {a.expect}", file=sys.stderr)
+        print(f"refused: the folder's digest is not {a.expect} — not the folder the "
+              f"recipe names; nothing may use it", file=sys.stderr)
         return 2
     return 0
 

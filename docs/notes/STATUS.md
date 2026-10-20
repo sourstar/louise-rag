@@ -299,6 +299,12 @@ the task's server (invariant 12: measured first, unset then set), and
 [louise-python-rebuild.md](louise-python-rebuild.md), the runbook for the
 heavy window: build, install beside, gate per collection, fall back by
 YAML, then jina-v3's bit-exactness before any collection uses it.
+Installed on the node the same morning: code commit `bd55a5ec…`, weights
+digest `sha256:f0f752ae…` (16 files, 0 symlinks, equal to the platform's
+digest in the deployed image), both pinned in fetch.py and filled into the
+recipe template with the tokenizer's sha256; the 2026-10-18 measurement's
+folder, which held files the layout excludes, was refused and moved aside
+as `jina-embeddings-v3.pre-installer-20261018` (the operator's to remove).
 
 ### 2026-10-13: JuriFindIT acknowledged — the operator, for the legal pilot
 

@@ -27,7 +27,7 @@ def _exec(name: str, path: Path):
 fetch = _exec("jina_fetch_under_test", ROOT / "deploy" / "jina-embeddings-v3" / "fetch.py")
 server = _exec("jina_v3_under_fetch_test", ROOT / "deploy" / "jina-embeddings-v3" / "server.py")
 
-CODE_COMMIT = "bd55a5e" + "0" * 33
+CODE_COMMIT = fetch.CODE_COMMIT          # the full id, as the node resolved it
 
 
 def blob_id(data: bytes) -> str:
@@ -51,7 +51,8 @@ def test_the_layout_is_the_weights_at_the_root_and_the_code_as_an_offline_hub_ca
     # the import closure of modeling_lora, not the conversion script
     assert "modeling_lora.py" in fetch.CODE_FILES and "mha.py" in fetch.CODE_FILES
     assert "convert_roberta_weights_to_flash.py" not in fetch.CODE_FILES
-    assert len(fetch.WEIGHTS_COMMIT) == 40
+    assert len(fetch.WEIGHTS_COMMIT) == 40 and len(fetch.CODE_COMMIT) == 40
+    assert fetch.WEIGHTS_DIGEST.startswith("sha256:") and len(fetch.WEIGHTS_DIGEST) == 71
 
 
 # ---- the digest is the platform's -------------------------------------------------
@@ -227,8 +228,13 @@ def test_a_commit_missing_a_file_of_the_layout_is_refused(tmp_path, monkeypatch)
         fetch.install(tmp_path / "w", None, **hub)
 
 
-def test_main_compares_the_digest_it_was_told_to_expect(tmp_path, monkeypatch, capsys):
+def test_main_refuses_a_folder_whose_digest_is_not_the_nodes(tmp_path, monkeypatch, capsys):
+    """The digest is inside `space_id`: a second peer's folder is the node's
+    byte for byte or it is not the collection's encoder."""
+    monkeypatch.setattr(fetch, "install", lambda dest, token: (CODE_COMMIT, fetch.WEIGHTS_DIGEST))
+    assert fetch.main([str(tmp_path / "w")]) == 0
+    assert fetch.WEIGHTS_DIGEST in capsys.readouterr().out
     monkeypatch.setattr(fetch, "install", lambda dest, token: (CODE_COMMIT, "sha256:" + "1" * 64))
+    assert fetch.main([str(tmp_path / "w")]) == 2
+    assert "not the folder the recipe names" in capsys.readouterr().err
     assert fetch.main([str(tmp_path / "w"), "--expect", "sha256:" + "1" * 64]) == 0
-    assert fetch.main([str(tmp_path / "w"), "--expect", "sha256:" + "2" * 64]) == 2
-    assert "sha256:" + "1" * 64 in capsys.readouterr().out

@@ -53,7 +53,7 @@ id = "wikidata-text"
 version = 1
 [layers.chunker.params]
 max_tokens = 1024
-tokenizer = "<<sha256:the tokenizer.json of jinaai/jina-embeddings-v3 at ab036b0>>"
+tokenizer = "sha256:f59925fcb90c92b894cb93e51bb9b4a6105c5c249fe54ce1c704420ac39b81af"  # tokenizer.json of jinaai/jina-embeddings-v3 at ab036b0 (München, 2026-10-20)
 
 [space]
 # jina-embeddings-v3, the Matryoshka cut Wikimedia used (dim 512), f16,
@@ -69,14 +69,14 @@ epoch = "0"
 evaluation = ""
 
 [space.encoder]
-weights = "<<sha256:the weights folder of jinaai/jina-embeddings-v3 at ab036b0 (remote code bd55a5e)>>"
+weights = "sha256:f0f752aea9e660f8120e2cb7ae32377794c45e53bfbeee3f1f6ecf36d7c0c572"  # the folder deploy/jina-embeddings-v3/fetch.py writes: ab036b0 + remote code bd55a5ec…, measured on the node 2026-10-20
 label = "jinaai/jina-embeddings-v3 (ab036b0; adapter retrieval.passage; LocalAI's louise-python jina-v3 task, torch XPU, behind VeGa; the node's card)"
 
 # an asymmetric space: the same weights with the retrieval.query adapter for questions
 [space.query]
 instruction = ""
 [space.query.encoder]
-weights = "<<the same sha256 as space.encoder.weights>>"
+weights = "sha256:f0f752aea9e660f8120e2cb7ae32377794c45e53bfbeee3f1f6ecf36d7c0c572"  # the same folder, the retrieval.query adapter is the engine's option
 label = "jinaai/jina-embeddings-v3 (ab036b0; adapter retrieval.query)"
 
 [space.encoder.engine]
