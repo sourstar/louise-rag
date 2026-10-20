@@ -173,3 +173,16 @@ per = "P1M"
 [validation]
 sample = 512
 checks = ["roots", "chunks", "calibration", "records-vs-origin"]
+
+# THE ORIGIN (06 §6.2, §6.4; 09 §9.17; invariant 11's record of the form
+# taken and why). Added 2026-10-20 after München's pre-check: `create`
+# refuses a recipe without it rather than inventing an origin the records
+# could not be verified against. The acquisition spec is the plugin's
+# (app/acquire/specs.py, the dated dump's files with their published md5 and
+# sha1 sums; wikidata-build-plan.md D1), as normattiva's is.
+[origin]
+form = "the official Wikidata JSON entity dump, the dated run named by the snapshot (dumps.wikimedia.org/wikidatawiki/entities/<date>/wikidata-<date>-all.json.bz2, items and properties; the lexeme dump is separate and not taken), decompressed and read entity by entity — not the Hugging Face corpus built from it, whose cleaner drops snaktype, statement ids, datatype, badges, modified and lastrevid (invariant 11: we may not hold less than the origin gives), and not the live API, which has no dated form a verifier can re-fetch (wikidata-build-plan.md D1)"
+unit = "file"
+clock = "UTC"
+cutoff_rule = "dated-dumps"
+jurisdiction = ""
