@@ -117,10 +117,12 @@ def test_the_encoder_is_filled_from_what_the_node_knows_not_asked(client, monkey
     # a held collection in the same space: its names, nothing to choose
     held = SimpleNamespace(name="pubmed-local", codex=codex, url="http://vega:30286", api="vega",
                            model="vega-medcpt-article", query_model="vega-medcpt-query")
+    real_load_all = collections_mod.load_all
     monkeypatch.setattr(collections_mod, "load_all", lambda: [held])
     s = client.get("/api/encoders/suggest", params={"collection_id": codex.collection_id}).json()
     assert (s["known_from"], s["embed_model"], s["query_model"]) == ("pubmed-local", "vega-medcpt-article", "vega-medcpt-query")
     assert "nothing to choose" in s["note"]
+    monkeypatch.setattr(collections_mod, "load_all", real_load_all)
     # without a collection: the server alone, for the create form
     s = client.get("/api/encoders/suggest").json()
     assert s["url"] == "http://vega:30286" and s["known_from"] is None and s["models"]
