@@ -284,6 +284,22 @@ recorded in the report, not a refusal (03 §3.5 amended;
 structural T0 failure still refuse. The four parts re-ladder at the
 publisher's next pass after the deploy.
 
+### 2026-10-20: pubmed-v8 is `pubmed` (operator; München, 08:24–08:35Z)
+
+Its 39,994,988 documents all done (rdf, fts, embed), as the operator's
+condition asked. `hold collection rename pubmed-v8 pubmed`, exit 0, 11 min:
+the old v6 `pubmed` set aside first — `/data/collections/pubmed` →
+`pubmed-v6-retired`, `/shards/pubmed` (40 GB) → `/shards/pubmed-v6-retired`,
+its shard link re-pointed, nothing deleted — then directory, shard, bundles
+and held file moved, 39,994,988 `documents.path` and 2,668
+`fetch_files.local_path` rewritten in one transaction (the manifest's WAL
+is 24.8 GB after it; the next writer's checkpoints fold it back, a TRUNCATE
+checkpoint while paused gives the space back; ssd4 has ~570 GB free). The
+pause moved with it: `pubmed` is embed "all", PAUSED, for the operator to
+resume; cron 7/8 name `pubmed` and are disabled until the operator
+re-enables them. Its file keeps `share = false` until the 40 M-chunk
+publish is scheduled.
+
 ### 2026-10-20: the offer — a peer chooses what it fetches (operator)
 
 `app/share/offer.py`: the catalogue minus what is held, each entry with
