@@ -440,6 +440,80 @@ def share_offer_show():
     return {"offered": offer.offered_for_node()}
 
 
+def _models_at(url: str, timeout: float = 3.0) -> list[str]:
+    """The model names the node's model container serves (`GET /v1/models`,
+    the OpenAI shape LocalAI and VeGa answer); [] when it does not answer —
+    then the name is typed, as before."""
+    import httpx
+    try:
+        r = httpx.get(f"{url.rstrip('/')}/v1/models", timeout=timeout)
+        r.raise_for_status()
+        data = r.json().get("data") or []
+        return sorted({str(m.get("id")) for m in data if isinstance(m, dict) and m.get("id")})
+    except Exception:   # noqa: BLE001 — a suggestion, never a verdict
+        return []
+
+
+def suggest_encoder(codex) -> dict:
+    """What a collection's `[encoder]` should say on THIS node, from what the
+    node already knows (operator, 2026-10-20: "this is something already set
+    at a system level"): the model server is the node's — `VEGA_URL`, tier 1
+    — and the protocol with it; the model NAMES are the server's words for
+    the collection's fixed weights, taken from a held collection in the same
+    space when there is one (the same `space.encoder.weights`: its file
+    already says), else offered as the server's model list to pick from.
+    Nothing here is a default encoder (operator, 2026-09-18): the file still
+    names its own, and the create holds the server's stated run to the
+    Codex's engine and weights, so a wrong pick is refused, never written."""
+    url = (config.VEGA_URL or "").rstrip("/")
+    out = {"url": url, "api": "vega" if url else "", "embed_model": "", "query_model": "",
+           "known_from": None, "models": [], "note": ""}
+    space = getattr(codex, "space", None)
+    weights = getattr(getattr(space, "encoder", None), "weights", None)
+    qenc = getattr(getattr(space, "query", None), "encoder", None)
+    qweights = getattr(qenc, "weights", None) if qenc is not None else None
+    if weights:
+        for c in collections_mod.load_all():
+            cw = getattr(getattr(getattr(c.codex, "space", None), "encoder", None), "weights", None)
+            if cw == weights and getattr(c, "url", None):
+                out.update(url=c.url, api=c.api, embed_model=c.model,
+                           query_model=(c.query_model or c.model), known_from=c.name)
+                break
+    if out["url"]:
+        out["models"] = _models_at(out["url"])
+    if not out["url"]:
+        out["note"] = ("this node names no model server (VEGA_URL is unset): say where it reaches "
+                       "the collection's encoder")
+    elif out["known_from"]:
+        out["note"] = (f"the same encoder as your collection {out['known_from']!r}: its model names are "
+                       f"taken over, nothing to choose")
+    elif out["models"]:
+        out["note"] = ("pick the model on this node's server that runs the collection's encoder; the "
+                       "create holds the server's stated run to the collection's weights, so a wrong "
+                       "pick is refused, not written")
+    else:
+        out["note"] = ("this node's server lists no models to pick from: name the model it runs the "
+                       "collection's encoder under")
+    out["weights"] = {"document": weights, "query": qweights}
+    return out
+
+
+@app.get("/api/encoders/suggest", dependencies=[Depends(auth.require_admin)])
+async def encoders_suggest(collection_id: str = ""):
+    """The Library's take and create dialogs: the encoder block the node can
+    fill in by itself (`suggest_encoder`). With a collection id the Codex is
+    the catalogue's, where the offer has pulled it; without one, the server
+    and its models alone."""
+    from .share import catalogue, peers
+    from contextlib import closing
+    codex = None
+    cid = collection_id.strip()
+    if cid:
+        with closing(peers.connect()) as con:
+            codex = catalogue.codex_of(con, cid)
+    return await run_in_threadpool(suggest_encoder, codex)
+
+
 class ShareFetchBody(BaseModel):
     collection_id: str
     name: str = ""

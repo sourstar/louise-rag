@@ -364,7 +364,7 @@
       <input id="nc_space_from" placeholder="a held collection's name or id"></div>
     {# a collection names its own encoder — there is no default one
        (operator, 2026-09-18) — and the file it gets names this one #}
-    <div><label>Encoder (this node's endpoint)</label>
+    <div><label>Model server (this node's, filled in when it names one)</label>
       <input id="nc_encoder" placeholder="http://nas:30437"></div>
     {# the rest of the file's [encoder] (07 §7.8, amended 2026-10-09): a URL
        that names no model (LocalAI, api vega) needs the model named here #}
@@ -553,6 +553,20 @@ async function getJSON(url){
   const r=await fetch(url);const d=await r.json().catch(()=>({}));
   if(!r.ok)throw (d.detail||r.statusText);return d;
 }
+// the create form's encoder: this node's model server, when it names one
+(async()=>{
+  try{
+    const s=await getJSON('/api/encoders/suggest');
+    const enc=document.getElementById('nc_encoder'), api=document.getElementById('nc_api');
+    if(s.url&&enc&&!enc.value){enc.value=s.url; if(api) api.value=s.api;}
+    if(s.models&&s.models.length){
+      const list=document.createElement('datalist'); list.id='nc_models';
+      list.innerHTML=s.models.map(n=>`<option value="${esc(n)}">`).join('');
+      document.body.appendChild(list);
+      for(const id of ['nc_embed_model','nc_query_model']){const el=document.getElementById(id); if(el) el.setAttribute('list','nc_models');}
+    }
+  }catch(e){}
+})();
 // 07 §7.6: a new collection is `hold collection create --recipe FILE`,
 // through its route (07 §7.4) — the Codex and the collection file
 async function createCollection(){
@@ -565,7 +579,7 @@ async function createCollection(){
   const query_model=document.getElementById('nc_query_model').value.trim()||null;
   const box=document.getElementById('nc_result');
   if(!recipe.trim()){toast('paste the recipe');return}
-  if(!encoder){toast('name the encoder: a collection names its own');return}
+  if(!encoder){toast('name the encoder: a collection names its own (this node names no model server)');return}
   box.innerHTML='<div class="note">queued — the worker embeds the calibration set, then signs…</div>';
   try{
     const q=await postJSON('/api/hold/collection/create',{plugin,recipe,space_from,encoder,api,embed_model,query_model});
@@ -654,7 +668,7 @@ const TAKE_HELP=[
   ['Records','The texts and their metadata. Always needed to search or read.'],
   ['Vectors','The embeddings other peers already computed and signed, arriving as their bundles. Take them: every vector a peer already made is one this node need not compute, whatever mode is chosen below.'],
   ['Who computes the vectors','The embedding mode of this node for this collection (07 §7.8). p2p: this node embeds the parts the network assigns it, takes the rest from peers, and publishes what it embeds — the shared work; it needs sharing on, which a public collection has. Off: this node computes nothing and lives on the peers\' vectors alone. On demand: it embeds only the chunks a search touches. All: it embeds every part itself, whoever else does, and its duplicates become checks. Search runs over whatever vectors exist, whichever mode.'],
-  ['Encoder','REQUIRED. The encoder — the model that turns text into vectors — is fixed by the collection and is not a choice. What is asked is where THIS node reaches a server running it: the address (your model container: VeGa, LocalAI, RAGE …), the protocol it speaks, and the names that server gives the model for texts and for questions. Every question asked here is embedded with it, so without it the collection cannot be searched at all, and a file naming no encoder is refused by the node as non-compliant.'],
+  ['Encoder','Filled in by the node. The model that turns text into vectors is fixed by the collection; the server that runs it is this node\'s model container (VEGA_URL, set at the system level) — neither is a choice. The only thing the node may not know is the NAME its server runs that model under: it takes it from a collection you already hold in the same space, or offers the server\'s model list to pick from. The create holds the server\'s stated run to the collection\'s weights, so a wrong name is refused, never written. Every question asked here is embedded with this encoder too.'],
   ['Version','Which version of the collection: the latest the serving peer holds, unless you name an older snapshot id.'],
 ];
 function takeHelp(){
@@ -683,13 +697,12 @@ function openTake(cid){
         <label><input type="radio" name="tk_embed" value="all"> <b>all</b> — every part here, whoever else does; duplicates become checks</label></div>
       <div${help('Version')}><label>Version — empty: the latest the peer holds; or an older snapshot id</label><input id="tk_snapshot" placeholder="latest"></div>
     </div>
-    <div${help('Encoder')}>
-      <label><b>Encoder — required.</b> The model is fixed by the collection; say where this node reaches a server running it.
-        Questions are embedded with it too: without it the collection is refused and not searched.</label>
+    <div${help('Encoder')} id="tk_encoder_block">
+      <label><b>Encoder</b> — <span id="tk_encoder_note">asking this node what it knows…</span></label>
       <div class="row">
-        <div><label>Server address</label><input id="tk_encoder" placeholder="http://nas:30437"></div>
-        <div><label>Protocol it speaks</label><select id="tk_api"><option value="vega">vega</option><option value="openai">openai (LocalAI, RAGE)</option><option value="ollama">ollama</option></select></div>
-        <div><label>Model name on that server, for texts / for questions</label><input id="tk_embed_model" placeholder="for texts"> <input id="tk_query_model" placeholder="for questions (default: the same)"></div>
+        <div id="tk_server_row"><label>Model server</label><input id="tk_encoder" placeholder="http://nas:30437"></div>
+        <div id="tk_api_row"><label>Protocol it speaks</label><select id="tk_api"><option value="vega">vega</option><option value="openai">openai (LocalAI, RAGE)</option><option value="ollama">ollama</option></select></div>
+        <div><label>Model name on that server, for texts / for questions</label><span id="tk_models"><input id="tk_embed_model" placeholder="for texts"> <input id="tk_query_model" placeholder="for questions (default: the same)"></span></div>
       </div>
     </div>
     <div class="actions">
@@ -698,6 +711,27 @@ function openTake(cid){
     </div>
     <pre class="cli">${esc(o.cli)}</pre>
     <div id="tk_result"></div>`);
+  fillEncoder(cid);
+}
+// The encoder block from what the node knows (/api/encoders/suggest): the
+// server is the node's, the model names a held collection's or the server's
+// list. Typed only where the node knows nothing (operator, 2026-10-20).
+function modelField(id, names, chosen, placeholder){
+  if(!names.length) return `<input id="${id}" value="${esc(chosen||'')}" placeholder="${esc(placeholder)}">`;
+  const opts=names.map(n=>`<option value="${esc(n)}" ${n===chosen?'selected':''}>${esc(n)}</option>`).join('');
+  return `<select id="${id}">${chosen&&!names.includes(chosen)?`<option value="${esc(chosen)}" selected>${esc(chosen)}</option>`:''}${opts}</select>`;
+}
+async function fillEncoder(cid){
+  let s;
+  try{s=await getJSON('/api/encoders/suggest?collection_id='+encodeURIComponent(cid||''));}
+  catch(e){document.getElementById('tk_encoder_note').textContent='the node could not be asked ('+e+'); say where it reaches the encoder';return}
+  const note=document.getElementById('tk_encoder_note'); if(!note) return;
+  note.textContent=s.note||'';
+  if(s.url){
+    document.getElementById('tk_server_row').innerHTML=`<label>Model server (this node's)</label><input id="tk_encoder" value="${esc(s.url)}" readonly>`;
+    document.getElementById('tk_api_row').innerHTML=`<label>Protocol</label><input id="tk_api" value="${esc(s.api)}" readonly>`;
+    document.getElementById('tk_models').innerHTML=modelField('tk_embed_model',s.models,s.embed_model,'for texts')+' '+modelField('tk_query_model',s.models,s.query_model,'for questions (default: the same)');
+  }
 }
 async function takeOffer(cid){
   const v=id=>document.getElementById(id).value.trim();
