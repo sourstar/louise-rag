@@ -89,7 +89,16 @@ mounted (`tools/measure/catalog_rescore.py`). Pre-rerank, measured:
   501 ms (catalogue plus variant). On pubmed the variant alone adds 160–758 ms
   a query, 50 per-record `fts.search` calls over 40 M records. Every medical
   query filled all 50 catalogue slots through MeSH subjects, so pubmed's
-  order changes on every query, unmeasured: there is no labelled pubmed set.
+  order changes on every query. **That change stays unmeasured until a
+  labelled pubmed set exists.**
+- 1f800e8 asks one text query per language group. Re-captured on the node
+  with its code, pubmed's variant costs 136–492 ms cold (median 235) and
+  23–42 ms warm (median 36); the catalogue's own lookup is median 362 ms
+  cold, 40 ms warm. Gutenberg's variant: median 28 ms. The records and
+  their order are identical to 2efe665's in 498 of 498 queries. The chunk
+  carrying a record differs in 18 (gutenberg titles), among chunks of
+  equal score. The per-record `limit=1` had taken tantivy's arbitrary
+  pick, and the batched answer sorts the tie by chunk id (`fts.search`).
 
 **Cause 2, the instruction (A1f).** The vector leg alone, top 100 records,
 measured on the node (`tools/measure/query_instruction_probe.py`), the 39

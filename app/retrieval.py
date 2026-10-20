@@ -585,11 +585,17 @@ def _catalog_variant(collection, hits: list[dict], query: str, restrict: dict) -
 
     ONE text query per language group for all its records (`book_ids`),
     not one per record: per record it cost pubmed 160–758 ms a query, fifty
-    lookups over 40 M chunks (München, 2026-10-20). The hits come sorted as
-    each per-record query sorted them (score, then chunk id), so a record's
-    first hit is the chunk a query of its own would have returned; a record
-    absent from a FULL answer is asked alone, one absent from a short one
-    has no matching chunk."""
+    lookups over 40 M chunks (München, 2026-10-20); one query costs it
+    136–492 ms cold, 23–42 ms warm. The hits come sorted by score, then
+    chunk id (`fts.search`), so a record's first hit is its best-scoring
+    chunk and, among chunks of EQUAL score, the smallest chunk id. That is
+    not always what a query of its own returned: `fts.search` sorts only
+    what tantivy hands back, and at `limit=1` tantivy picks among equal
+    scores arbitrarily. Measured on the node over 498 queries, the records
+    and their order were identical, and the chunk carrying a record differed
+    in 18 (gutenberg titles; e.g. `75472:4` then, `75472:10` now). A record
+    absent from a FULL answer is asked alone (that one pick is tantivy's
+    again); one absent from a short answer has no matching chunk."""
     groups = set(fts.existing_groups(collection))
     window = restrict.get("validity")
     kw = {"validity": window} if window else {}
