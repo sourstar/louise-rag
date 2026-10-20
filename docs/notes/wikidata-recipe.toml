@@ -23,8 +23,12 @@
 #
 #   hold collection create wikidata --recipe wikidata-recipe.toml \
 #       --name wikidata --platform-image <the running image's digest> \
-#       --encoder http://192.168.178.10:30286 --api vega --embed-model vega-jina-v3 \
-#       --query-model vega-jina-v3-query
+#       --encoder http://192.168.178.10:30286 --query-encoder http://192.168.178.10:30286 \
+#       --api vega --embed-model vega-jina-v3 --query-model vega-jina-v3-query
+#
+#   (--query-encoder: the space names a query encoder, so its reference
+#   vectors are part of the Codex too, 09 §9.12 — the same VeGa endpoint,
+#   the query model by --query-model)
 #
 # The licence is GREEN (CC0): no acknowledgement. The corpus folder is
 # /corpora/wikidata; the fetch is the dated dump of the snapshot the file
@@ -79,9 +83,10 @@ label = "jinaai/jina-embeddings-v3 (ab036b0; adapter retrieval.passage; LocalAI'
 # an asymmetric space: the same weights with the retrieval.query adapter for questions
 [space.query]
 instruction = ""
+# No `label` here: 09 §9.3's query encoder is {weights, engine} — the label
+# is the document side's (attempt 3 of the create was refused for it, 2026-10-20)
 [space.query.encoder]
 weights = "sha256:f0f752aea9e660f8120e2cb7ae32377794c45e53bfbeee3f1f6ecf36d7c0c572"  # the same folder, the retrieval.query adapter is the engine's option
-label = "jinaai/jina-embeddings-v3 (ab036b0; adapter retrieval.query)"
 
 # The calibration set (09 §9.12): the platform's 512 texts, /srv/calibration/text.jsonl,
 # the same set both invariant-12 measurements of 2026-10-20 embedded 512/512;
