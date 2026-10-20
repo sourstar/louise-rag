@@ -1851,6 +1851,7 @@ def _annotations_shelf(collection, served: list) -> dict:
         "note": note,
         "kinds": list(collection.kinds or ()),
         "share": collection.share,
+        "source": getattr(collection, "source", "origin"),
         "license": _license_state(collection),
         "copy_state": _copy_state(collection),
     }
@@ -2624,12 +2625,43 @@ def new_collection_create():
 
 
 @admin_router.post("/library/{name}/remove")
-def collection_remove(name: str):
-    """Removing = retiring the TOML (renamed aside with a timestamp, never
-    deleted). Data on disk is NEVER touched — the manifest, FTS index and
-    vector table stay where they are and are reported back, so removal is
-    reversible by renaming the file back."""
+def collection_remove(name: str, body: "RemoveBody | None" = None):
+    """Two removals, the Library asks which (operator, 2026-10-20, on
+    Perugia: a copy taken from the offer, removed, and taken again under
+    another name was refused as "already held here as 'annotations'" — the
+    retired directory still held its Codex):
+
+    - `retire` (the default for a collection built HERE from a corpus):
+      the TOML is renamed aside with a timestamp, never deleted; the data
+      on disk is NEVER touched — manifest, FTS index, vector table stay and
+      are reported back, so it is reversible by renaming the file back.
+      While retired, the collection's id stays bound to this name: taking
+      it again under another name is refused (07 §7.8).
+    - `forget` (the default for a copy TAKEN FROM PEERS, `source = "shard"`):
+      `hold collection forget` through the worker — the one writer, which
+      retires the collection's threads first — removes this node's copy and
+      its state (app/hold/forget.py), so the collection can be taken again
+      under any name. Its bytes are the peers' to serve again. A node whose
+      worker is not running is told the command to run by hand."""
     collection = _held_or_404(name)
+    mode = (body.mode if body is not None and body.mode else None) or (
+        "forget" if getattr(collection, "source", "origin") == "shard" else "retire")
+    if mode not in ("retire", "forget"):
+        raise HTTPException(400, "mode is \"retire\" (keep the data; restorable) or \"forget\" "
+                                 "(remove this node's copy and its state)")
+    if mode == "forget":
+        from .hold import deposit
+        try:
+            out = deposit.via_worker("forget", name, kinds=[])
+        except deposit.DepositError as e:
+            raise HTTPException(409, f"{e} — `louise hold collection forget {name} --yes --here` removes "
+                                     f"it in this process when no worker runs") from None
+        con = db.connect()
+        db.log_event(con, "info", "control",
+                     f"collection {name!r} forgotten via admin UI: this node's copy and its state removed")
+        return {"ok": True, "mode": "forget", **out,
+                "note": "This node's copy and its state are gone; the collection can be taken again, "
+                        "under any name, from the peers that serve it."}
     toml_path = collections_mod.config_toml_path(name)
     if not toml_path.exists():
         raise HTTPException(400, f"{name!r} has no TOML file to retire")
@@ -2639,13 +2671,20 @@ def collection_remove(name: str):
     db.log_event(con, "info", "control",
                  f"collection {name!r} removed via admin UI (TOML retired to "
                  f"{retired.name}; data kept on disk)")
-    return {"ok": True, "retired_toml": str(retired),
+    return {"ok": True, "mode": "retire", "retired_toml": str(retired),
             "data_kept": {"manifest": str(collection.manifest_path),
                            "fts": str(collection.fts_dir),
                            "lancedb": str(collection.lance_dir)},
             "note": "The worker stops ingesting it within one round (no "
                      "restart). To restore, rename the retired file back to "
-                     + toml_path.name + "."}
+                     + toml_path.name + ". While retired, its id stays bound to this name: to take "
+                     "it again under another name, forget it instead."}
+
+
+class RemoveBody(BaseModel):
+    """`/admin/library/{name}/remove`: `retire` or `forget`; absent, the
+    default for the collection's `source` (above)."""
+    mode: str = ""
 
 
 class EmbedModeBody(BaseModel):

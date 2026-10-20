@@ -224,7 +224,7 @@
     {% endif %}
     <button onclick="exportBundle('{{ c.name }}')">export bundle</button>
     <button onclick="importBundle('{{ c.name }}')">import bundle…</button>
-    <button onclick="removeCollection('{{ c.name }}')">remove…</button>
+    <button onclick="removeCollection('{{ c.name }}', '{{ c.source }}')">remove…</button>
   </div>
 </div>
 {% endfor %}
@@ -269,7 +269,7 @@
     </div>
   </div>
   <div class="actions">
-    <button onclick="removeCollection('{{ a.name }}')">remove…</button>
+    <button onclick="removeCollection('{{ a.name }}', '{{ a.source }}')">remove…</button>
   </div>
 </div>
 {% endfor %}
@@ -734,10 +734,16 @@ async function waitForJob(id,onState){
     await new Promise(r=>setTimeout(r,2000));
   }
 }
-async function removeCollection(name){
+// Two removals, in plain words, the default by where the collection came
+// from (operator, 2026-10-20: a copy removed and taken again under another
+// name was refused — "retire" had kept its directory, and so its id).
+async function removeCollection(name, source){
+  const copy=(source==='shard');
   showModal(`<h2>Remove ${esc(name)}?</h2>
-    <div class="note">The TOML is retired (restorable); manifest, lexical index
-      and vectors stay on disk. Type the collection name to confirm.</div>
+    <div class="note">${copy?'This collection was taken from peers: its data is theirs to serve again.':'This collection was built here from a corpus.'}</div>
+    <label><input type="radio" name="rm_mode" value="forget" ${copy?'checked':''}> <b>Forget</b> — remove this node's copy and its state. It can be taken again later, under any name.</label>
+    <label><input type="radio" name="rm_mode" value="retire" ${copy?'':'checked'}> <b>Retire</b> — stop running it; keep everything on disk (manifest, index, vectors). Restorable by renaming its file back. While retired, its id stays bound to this name: taking it again under another name is refused.</label>
+    <div class="note">Type the collection name to confirm.</div>
     <input id="rm_confirm" placeholder="${esc(name)}">
     <div class="actions">
       <button class="primary" onclick="doRemove('${esc(name)}')">Remove</button>
@@ -746,9 +752,11 @@ async function removeCollection(name){
 }
 async function doRemove(name){
   if(document.getElementById('rm_confirm').value.trim()!==name){toast('name does not match');return}
+  const mode=(document.querySelector('input[name="rm_mode"]:checked')||{}).value||'';
   try{
-    const d=await postJSON('/admin/library/'+name+'/remove',{});
-    toast('removed; TOML retired to '+d.retired_toml);hideModal();location.reload();
+    const d=await postJSON('/admin/library/'+name+'/remove',{mode});
+    toast(d.mode==='forget'?'forgotten: this node\'s copy and its state are gone':'retired; TOML renamed to '+d.retired_toml);
+    hideModal();location.reload();
   }catch(e){toast('remove failed: '+e)}
 }
 async function exportBundle(name){

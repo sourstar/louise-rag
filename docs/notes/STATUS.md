@@ -284,6 +284,20 @@ recorded in the report, not a refusal (03 §3.5 amended;
 structural T0 failure still refuse. The four parts re-ladder at the
 publisher's next pass after the deploy.
 
+### 2026-10-20: the Library's remove — forget a copy, retire a build (operator's bug on Perugia)
+
+A collection taken from the offer, removed in the Library and taken again
+under another name was refused: "already held here as 'annotations'". The
+Library's remove only RETIRED the file and kept `collections/<name>/shard/`
+with its Codex, which `write` reads as held. Now the Library asks, in plain
+words, and defaults by `source`: a copy taken from peers (`source =
+"shard"`) is FORGOTTEN — `hold collection forget` through the worker, the
+copy and its state gone, takeable again under any name; a collection built
+here is retired as before, restorable by renaming the file back, its id
+bound to the name meanwhile. The refusal names the way out. The take dialog
+of the same day asks who computes the vectors (off | on-demand | all | p2p)
+and requires the encoder, which a question needs as much as an embedding.
+
 ### 2026-10-20: the wikidata collection EXISTS on the node
 
 Created 10:39:28–10:57:00Z by München from recipe 1de5d1c

@@ -73,6 +73,40 @@ def test_remove_retires_toml_and_keeps_data(client):
     assert collections_mod.by_name("temp1") is None
 
 
+def test_removing_a_copy_taken_from_peers_forgets_it_through_the_worker(client, monkeypatch):
+    """Operator, 2026-10-20 (Perugia): a copy taken from the offer, removed,
+    and taken again under another name was refused — retiring kept its
+    directory and so its id. A `source = "shard"` collection is FORGOTTEN by
+    default (`hold collection forget`, through the worker, the one writer);
+    a collection built here is retired, as before; the body may say either."""
+    from app.hold import deposit
+    codex_collection("copy1", louise_root=config.DATA_DIR,
+                     config_dir=collections_mod.collections_dir().parent)
+    p = collections_mod.config_toml_path("copy1")
+    p.write_text(p.read_text(encoding="utf-8") + '\nsource = "shard"\n', encoding="utf-8")
+    assert collections_mod.by_name("copy1").source == "shard"
+    asked = []
+    monkeypatch.setattr(deposit, "via_worker",
+                        lambda op, name, **kw: asked.append((op, name, kw)) or {"collection": name, "removed": ["x"]})
+    r = client.post("/admin/library/copy1/remove")
+    assert r.status_code == 200, r.text
+    assert r.json()["mode"] == "forget" and asked == [("forget", "copy1", {"kinds": []})]
+    assert collections_mod.config_toml_path("copy1").exists(), "the worker removes the file; here it was mocked"
+    # asked to retire instead, a copy is retired
+    r = client.post("/admin/library/copy1/remove", json={"mode": "retire"})
+    assert r.status_code == 200 and r.json()["mode"] == "retire" and len(asked) == 1
+    assert not collections_mod.config_toml_path("copy1").exists()
+    # a collection built here: retire by default, forget on request, a bad mode refused
+    assert client.post("/admin/library/gutenberg/remove", json={"mode": "sometimes"}).status_code == 400
+    r = client.post("/admin/library/gutenberg/remove", json={"mode": "forget"})
+    assert r.status_code == 200 and asked[-1][1] == "gutenberg"
+    # no worker: the command to run by hand
+    monkeypatch.setattr(deposit, "via_worker",
+                        lambda op, name, **kw: (_ for _ in ()).throw(deposit.DepositError("the worker has not done it yet")))
+    r = client.post("/admin/library/gutenberg/remove", json={"mode": "forget"})
+    assert r.status_code == 409 and "--here" in r.text
+
+
 def test_removing_the_last_collection_leaves_zero_collections(client):
     """Louise2, 2026-08-26: the operator could not delete every collection.
     Removing the last file retires it: zero collections, data kept, and

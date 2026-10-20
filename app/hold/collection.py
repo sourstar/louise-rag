@@ -77,8 +77,10 @@ def write(root: Path, codex: Codex, mother: Codex | None = None, *,
         if held.collection_id == codex.collection_id:
             if name and name != held_name:
                 raise CodexError(
-                    f"{codex.collection_id} is already held here as "
-                    f"{held_name!r}; a collection has one local name")
+                    f"{codex.collection_id} is already held here as {held_name!r} (its directory "
+                    f"under collections/ — if its file was retired, restore it, or `louise hold "
+                    f"collection forget {held_name}` removes this node's copy so it can be taken "
+                    f"again under any name); a collection has one local name (07 §7.8)")
             return shard_dir_of(root, held_name)
     name = check_name(name) if name else default_name(root, codex)
     d = shard_dir_of(root, name)
