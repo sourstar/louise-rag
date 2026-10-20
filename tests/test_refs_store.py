@@ -98,3 +98,57 @@ def test_refs_db_follows_the_data_dir_at_call_time(tmp_path, monkeypatch):
     assert (tmp_path / "data" / "refs.db").is_file()
     monkeypatch.setattr(config, "REFS_DB_PATH", tmp_path / "explicit.db")
     assert config.refs_db_path() == tmp_path / "explicit.db"
+
+
+def test_a_table_whose_shape_moved_is_recreated_only_while_empty(tmp_path):
+    """`get_store()` creates every registered table at the first open, so a
+    source whose schema changed before any sync leaves an EMPTY table of the
+    old shape behind (wikidata-refs, 2026-10-20: `key` → `id` as the primary
+    key). Empty, it is re-created; holding rows, it is refused by name."""
+    from app.plugins.base import RefColumn, RefSchema, RefTable
+    con = refs.connect(tmp_path / "refs.db")
+    con.execute("CREATE TABLE t_moved (id TEXT, lang TEXT, label TEXT, key TEXT PRIMARY KEY)")
+    schema = RefSchema(source_id="moved", tables=(RefTable(
+        name="t_moved", columns=(RefColumn("id", "TEXT"), RefColumn("label", "TEXT")), primary_key="id"),))
+    refs_store.ensure_schema(con, schema)
+    assert [r[1] for r in con.execute("PRAGMA table_info('t_moved')")] == ["id", "label"]
+    con.execute("INSERT INTO t_moved (id, label) VALUES ('a', 'b')")
+    other = RefSchema(source_id="moved", tables=(RefTable(
+        name="t_moved", columns=(RefColumn("id", "TEXT"), RefColumn("kind", "TEXT")), primary_key="id"),))
+    import pytest
+    with pytest.raises(refs_store.RefSchemaError, match="t_moved.*1 row"):
+        refs_store.ensure_schema(con, other)
+    assert con.execute("SELECT count(*) FROM t_moved").fetchone()[0] == 1, "nothing dropped"
+
+
+def test_a_sync_cut_off_keeps_its_batches_and_is_not_recorded_as_done(tmp_path):
+    """One transaction per batch: a 10⁸-row sync (wikidata) that dies keeps
+    what it wrote — every row an upsert by key, so the next sync writes the
+    same rows again — and ref_meta, written last, does not say it finished,
+    so the next sync is not skipped."""
+    from app.plugins.base import RefColumn, RefRecordBatch, RefSchema, RefSyncState as S, RefTable
+
+    class Dies:
+        source_id, ref_version = "dies", 1
+
+        def schema(self):
+            return RefSchema(source_id="dies", tables=(RefTable(
+                name="t_dies", columns=(RefColumn("id", "TEXT"), RefColumn("v", "TEXT")), primary_key="id"),))
+
+        def sync(self, state):
+            yield RefRecordBatch(table="t_dies", rows=({"id": "1", "v": "a"}, {"id": "2", "v": "b"}))
+            raise OSError("the disk went away")
+
+    import pytest
+    con = refs.connect(tmp_path / "refs.db")
+    with pytest.raises(OSError):
+        refs_store.sync_source(con, Dies(), S(ref_root=tmp_path))
+    assert con.execute("SELECT count(*) FROM t_dies").fetchone()[0] == 2
+    assert con.execute("SELECT count(*) FROM ref_meta WHERE source_id='dies'").fetchone()[0] == 0
+
+    class Whole(Dies):
+        def sync(self, state):
+            yield RefRecordBatch(table="t_dies", rows=({"id": "1", "v": "a"}, {"id": "2", "v": "b"}, {"id": "3", "v": "c"}))
+    assert refs_store.sync_source(con, Whole(), S(ref_root=tmp_path)) == {"skipped": False, "rows": 3}
+    assert con.execute("SELECT count(*) FROM t_dies").fetchone()[0] == 3
+    assert refs_store.sync_source(con, Whole(), S(ref_root=tmp_path))["skipped"] is True

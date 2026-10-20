@@ -284,6 +284,20 @@ recorded in the report, not a refusal (03 §3.5 amended;
 structural T0 failure still refuse. The four parts re-ladder at the
 publisher's next pass after the deploy.
 
+### 2026-10-20: wikidata-refs syncs from the plugin's pack
+
+`app/refs/wikidata.py` rewritten (ref_version 2): one row per entity
+keyed by its id (`wikidata_entity(id, kind, lang, label)`), synced from
+the newest complete pack's `labels.sqlite` under `<ref_root>/wikidata`,
+through `louise dev refs-sync --src <collections root>` as normattiva-refs
+is; `ask lookup wikidata:Q42` returns the fact with its label. The store
+(`app/refs/store.py`) commits per batch and asks a source that knows its
+input for its mtime (`input_mtime`), and re-creates an EMPTY table whose
+declared shape moved — `get_store()` had created the old shape on every
+node at the first open — while refusing a non-empty one by name. No
+resolver over labels and the table's size on the node are the two open
+points ([wikidata-build-plan.md](wikidata-build-plan.md) §2).
+
 ### 2026-10-20: jina-v3's folder, its YAMLs and the rebuild runbook
 
 München reported the tokenizer's sha256 (`f59925fc…`) and that the other

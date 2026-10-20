@@ -115,10 +115,29 @@ contribute, as DAR-legal-it). `corpus_provider` "Wikidata contributors
 (Wikimedia Foundation)", attribution the CC0 statement.
 
 **Reference source.** `wikidata-refs` registers the namespace `wikidata`
-(QIDs and PIDs); table `entity(id TEXT pk, type TEXT, label TEXT)` for
-the languages of the Codex, synced from the plugin's label table of the
-current snapshot (06 §6.5: node-local, never a member). Keys are written
-only after it exists (memory: keys-registered-only).
+(QIDs and PIDs); table `wikidata_entity(id TEXT pk, kind, lang, label)`,
+one row per entity with ONE label — the first of the pack's languages
+that has one, `mul` last, the preference the plugin's `title` follows —
+synced from the plugin's own label table (`labels.sqlite` beside the
+dump) of the newest dump under `<ref_root>/wikidata` whose pack is
+COMPLETE (06 §6.5: node-local, never a member). Keys are written only
+after it exists (memory: keys-registered-only). *Built 2026-10-20
+(app/refs/wikidata.py; ref_version 2 — the first shape keyed `Q42|en`
+and no lookup by canonical id could reach it):* `louise dev refs-sync
+--src <collections root>` syncs it, as it syncs `normattiva-refs` from
+`<ref_root>/normattiva`; the store commits per batch of 50,000 (a 10⁸-row
+sync cut off keeps its rows and is not recorded as done) and re-syncs when
+the pack's meta or label table is newer than the last sync. `ask lookup
+wikidata:Q42` is the fact; the `keys` restriction (05 §5.2) is what the
+namespace buys. OPEN, two decisions: (1) NO RESOLVER — a label typed in
+a question is not resolved to an entity: the gene resolver's in-memory
+dictionary does not exist at 10⁸ entities, and an exact-label index is
+several GB on /data; gutenberg-graph's entity linking goes through the
+collection's VECTORS by design, not this table. (2) SIZE: the table
+duplicates the pack's labels (one language, ~10⁸ rows, order of 5 GB in
+refs.db) — measure after the first node sync before deciding whether
+refs.db should ATTACH the pack's table instead. Multi-language labels
+stay in the pack; the row carries one.
 
 ## 3. Spec amendments
 

@@ -102,7 +102,7 @@ def _entity(refs: RefLookup, table: str, row: dict) -> Entity:
     return — one construction, so the two cannot disagree on a fact."""
     owner = refs.owner_of(table)
     return Entity(entity_id=f"{owner}:{row[refs.pk_of(table)]}", kind=table,
-                  source_id=owner, label=row.get("significance") or row.get("name"))
+                  source_id=owner, label=row.get("significance") or row.get("name") or row.get("label"))
 
 
 class DictResolver:

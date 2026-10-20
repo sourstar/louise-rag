@@ -43,3 +43,14 @@ def test_a_malformed_id_is_refused(bad):
     with pytest.raises(lookup.LookupError_) as e:
         lookup.split(bad)
     assert e.value.exit_code == 2
+
+
+def test_a_namespace_is_found_through_the_source_that_registers_it():
+    """06 §6.5: a namespace is owned by the reference source that registers
+    it — `wikidata` by `wikidata-refs`, `urn`/`eli`/`akn` by `normattiva-refs`
+    — and a source with no list owns the namespace of its own name."""
+    assert lookup.owner_of_namespace("wikidata") == "wikidata-refs"
+    assert lookup.owner_of_namespace("urn") == "normattiva-refs"
+    assert lookup.owner_of_namespace("eli") == "normattiva-refs"
+    assert lookup.owner_of_namespace("hgnc") == "hgnc"
+    assert lookup.owner_of_namespace("nowhere") == "nowhere"

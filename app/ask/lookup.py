@@ -35,20 +35,35 @@ def lookup(canonical: str, *, store=None) -> dict[str, Any]:
     from app import refs
     ns, native = split(canonical)
     store = store or refs.get_store()
+    owner = owner_of_namespace(ns)
     facts: list[dict[str, Any]] = []
     for table in store.tables():
         try:
-            if store.owner_of(table) != ns:
+            if store.owner_of(table) != owner:
                 continue
             row = store.get(table, native)
         except Exception:   # noqa: BLE001 — a table that cannot be read holds no fact
             continue
         if row:
-            facts.append({"entity_id": f"{ns}:{native}", "kind": table, "source_id": ns,
-                          "ref_version": _version(store, ns),
-                          "label": row.get("significance") or row.get("name") or row.get("symbol"),
+            facts.append({"entity_id": f"{ns}:{native}", "kind": table, "source_id": owner,
+                          "ref_version": _version(store, owner),
+                          "label": row.get("significance") or row.get("name") or row.get("symbol")
+                          or row.get("label"),
                           "fields": dict(row)})
     return {"facts": facts, "unresolved": [] if facts else [f"{ns}:{native}"]}
+
+
+def owner_of_namespace(ns: str) -> str:
+    """The reference source that REGISTERS the namespace (06 §6.5). A source
+    owning one namespace names it by its own id (`hgnc`); one owning several
+    lists them (`normattiva-refs`: urn, eli, akn; `wikidata-refs`: wikidata),
+    and a lookup must find the table through the registration, not through
+    a name that happens to match."""
+    from app import refs
+    for source_id, source in refs.REFS_REGISTRY.items():
+        if ns in tuple(getattr(source, "namespaces", ()) or ()):
+            return source_id
+    return ns
 
 
 def _version(store, source_id: str) -> str | None:
