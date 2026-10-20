@@ -165,12 +165,14 @@ def test_a_title_the_catalogue_finds_is_a_variant_of_the_text_leg(isolated_confi
     monkeypatch.setattr(llm, "translate_query", lambda q, langs: {})
     anthology = h("gutenberg:900", 4, "fts:en")
 
+    lookups: list[list[int]] = []
+
     def search(group, q, limit=20, collection=None, langs=None, book_ids=None, validity=None):
-        if book_ids == [2600]:
-            return []                                  # the title's words are not in the book's text
-        if book_ids == [77]:
-            return [h("gutenberg:77", 12, "fts:en")]
-        return [anthology] if not book_ids else []
+        if not book_ids:
+            return [anthology]
+        lookups.append(list(book_ids))
+        # 2600: the title's words are not in the book's text; 77: one chunk matches
+        return [h("gutenberg:77", 12, "fts:en")] if 77 in book_ids else []
     monkeypatch.setattr(fts, "search", search)
     monkeypatch.setattr(fts, "book_chunks", lambda group, bid, collection=None:
                         [h(f"gutenberg:{bid}", s, "fts:en") for s in (5, 0, 3)])
@@ -189,3 +191,27 @@ def test_a_title_the_catalogue_finds_is_a_variant_of_the_text_leg(isolated_confi
     assert "catalog" in by_uid["gutenberg:2600"]["sources"]
     assert by_uid["gutenberg:900"]["leg_ranks"]["text"] == 2, "the anthology: the text variant's first, tied, by uid"
     assert len(out["catalog"]) == retrieval.CATALOG_PROMPT, "the legacy prompt's block is as before"
+    assert len(lookups) == 1 and len(lookups[0]) == 32, "one text query for every record of the group, not 32"
+
+
+def test_the_catalogue_lookup_asks_a_crowded_out_record_alone_and_keeps_each_records_best_chunk(monkeypatch):
+    """The batched answer is sorted as a per-record query would be, so a
+    record's first hit is its best chunk; when the answer is full, a record
+    absent from it is asked alone; when short, an absent one has no match."""
+    monkeypatch.setattr(fts, "existing_groups", lambda collection=None: ["en"])
+    monkeypatch.setattr(fts, "group_for", lambda lang: "en")
+    monkeypatch.setattr(retrieval, "CATALOG_CHUNKS_PER_RECORD", 2)
+    calls: list[list[int]] = []
+
+    def search(group, q, limit=20, collection=None, book_ids=None, validity=None):
+        calls.append(list(book_ids))
+        if book_ids == [3]:
+            return [h("g:3", 7, "fts:en")]
+        # a full answer (3 records × 2 = 6 hits) for records 1 and 2: record 3 crowded out
+        return [h("g:1", 4, "fts:en"), h("g:1", 2, "fts:en"), h("g:2", 9, "fts:en"), h("g:1", 0, "fts:en"),
+                h("g:2", 1, "fts:en"), h("g:1", 6, "fts:en")]
+    monkeypatch.setattr(fts, "search", search)
+    monkeypatch.setattr(fts, "book_chunks", lambda *a, **k: pytest.fail("every record has a matching chunk"))
+    got = retrieval._catalog_variant(None, [{"book_id": i, "lang": "en"} for i in (2, 1, 3)], "q", {})
+    assert [c["chunk_id"] for c in got] == ["g:2:9:1", "g:1:4:1", "g:3:7:1"], "the catalogue's order, each its best"
+    assert calls == [[2, 1, 3], [3]] and all(c["source"] == "catalog" for c in got)

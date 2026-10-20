@@ -557,6 +557,9 @@ def _best_rank(lists: list[list[dict]], limit: int) -> list[dict]:
 CATALOG_SOURCE = "catalog"
 #: the legacy prompt's "[catalog matches]" block reads at most this many
 CATALOG_PROMPT = 10
+#: the catalogue variant's chunk lookup asks one text query per language
+#: group for all its records at once, this many chunk hits per record deep
+CATALOG_CHUNKS_PER_RECORD = 8
 
 
 def _seq_of(chunk_id: str) -> int:
@@ -578,21 +581,46 @@ def _catalog_variant(collection, hits: list[dict], query: str, restrict: dict) -
     lists answering one question are fused; §5.2: a variant is a query, not
     a leg) — it casts the text leg's one vote per rank. A versioned
     collection's window takes no fallback chunk: a record whose matching
-    chunk is outside it is left to the other lists."""
+    chunk is outside it is left to the other lists.
+
+    ONE text query per language group for all its records (`book_ids`),
+    not one per record: per record it cost pubmed 160–758 ms a query, fifty
+    lookups over 40 M chunks (München, 2026-10-20). The hits come sorted as
+    each per-record query sorted them (score, then chunk id), so a record's
+    first hit is the chunk a query of its own would have returned; a record
+    absent from a FULL answer is asked alone, one absent from a short one
+    has no matching chunk."""
     groups = set(fts.existing_groups(collection))
     window = restrict.get("validity")
-    out: list[dict] = []
+    kw = {"validity": window} if window else {}
+    wanted: list[tuple[int, str]] = []
+    by_group: dict[str, list[int]] = {}
     for h in hits:
         try:
             bid = int(h["book_id"])
         except (KeyError, TypeError, ValueError):
             continue
         group = fts.group_for(h.get("lang") or "")
-        if group not in groups:
+        if group not in groups or bid in by_group.get(group, ()):
             continue
-        kw = {"validity": window} if window else {}
-        best = fts.search(group, query, limit=1, collection=collection, book_ids=[bid], **kw)
-        chunk = best[0] if best else None
+        wanted.append((bid, group))
+        by_group.setdefault(group, []).append(bid)
+    best: dict[tuple[int, str], dict | None] = {}
+    for group, ids in by_group.items():
+        limit = len(ids) * CATALOG_CHUNKS_PER_RECORD
+        got = fts.search(group, query, limit=limit, collection=collection, book_ids=ids, **kw)
+        for c in got:
+            best.setdefault((int(c["book_id"]), group), c)
+        if len(got) >= limit:
+            # a full answer: a record crowded out by others' chunks is asked alone
+            for bid in ids:
+                if (bid, group) not in best:
+                    one = fts.search(group, query, limit=1, collection=collection, book_ids=[bid], **kw)
+                    if one:
+                        best[(bid, group)] = one[0]
+    out: list[dict] = []
+    for bid, group in wanted:
+        chunk = best.get((bid, group))
         if chunk is None and not window:
             chunks = fts.book_chunks(group, bid, collection=collection)
             chunk = min(chunks, key=lambda c: _seq_of(c["chunk_id"])) if chunks else None
