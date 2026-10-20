@@ -399,6 +399,25 @@ def book_chunks(group: str, book_id: int, collection=None) -> list[dict]:
 
 _QUERY_STRIP = re.compile(r'[\^\[\]{}~/\\:!()"*]')
 
+#: a tie group at the cut is read whole up to this many hits beyond `limit`
+#: (times `limit`): bounded, so a query whose thousands of chunks score the
+#: same costs a bounded read
+TIE_READ_FACTOR = 8
+
+
+def tie_key(chunk_id: str) -> tuple:
+    """Equal scores order by the record's uid bytes, then the chunk's place
+    in its record — the earliest first — then the id itself. A chunk id is
+    `<uid>:<seq>:<version>` (app/chunking.py); the string alone put
+    `5097:133:` before `5097:1:` and `g:10:` before `g:1:` (München,
+    2026-10-20)."""
+    text = str(chunk_id)
+    parts = text.rsplit(":", 2)
+    try:
+        return (parts[0].encode("utf-8"), int(parts[1]), text)
+    except (IndexError, ValueError):
+        return (text.encode("utf-8"), 0, text)
+
 def search(group: str, query: str, limit: int = 20, collection=None,
            book_ids: list[int] | None = None, langs: list[str] | None = None,
            validity: dict | None = None) -> list[dict]:
@@ -442,7 +461,20 @@ def search(group: str, query: str, limit: int = 20, collection=None,
             for f in validity_mod.fts_filters(idx.schema, validity):
                 q = tantivy.Query.boolean_query([(tantivy.Occur.Must, q), (tantivy.Occur.Must, f)])
         searcher = idx.searcher()
-        hits = searcher.search(q, limit).hits
+        # 05 §5.1 (amended 2026-10-20): a leg's list is the same list on
+        # every peer with the same members. Tantivy returns the top `limit`
+        # in its own order among EQUAL scores, which depends on how the
+        # index was built: a tie group straddling the cut was cut
+        # arbitrarily (München). One hit past the cut says whether the group
+        # straddles it; if so it is read whole (bounded), then sorted, then
+        # cut.
+        n = limit + 1
+        cap = max(limit + 1, limit * TIE_READ_FACTOR)
+        while True:
+            hits = searcher.search(q, n).hits
+            if len(hits) < n or n >= cap or hits[-1][0] < hits[limit - 1][0]:
+                break
+            n = min(n * 2, cap)
         out = []
         for score, addr in hits:
             doc = searcher.doc(addr)
@@ -458,9 +490,9 @@ def search(group: str, query: str, limit: int = 20, collection=None,
         # Tantivy doesn't guarantee stable tie-breaking for exactly-equal
         # BM25 scores across separately-built indexes (observed directly:
         # identical scores, swapped order between runs) — re-sort with a
-        # deterministic secondary key so results are reproducible.
-        out.sort(key=lambda h: (-h["score"], h["chunk_id"]))
-        return out
+        # deterministic secondary key so results are reproducible, then cut.
+        out.sort(key=lambda h: (-h["score"], tie_key(h["chunk_id"])))
+        return out[:limit]
     except Exception:
         return []
 

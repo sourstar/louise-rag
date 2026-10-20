@@ -26,6 +26,13 @@ else its first — with the reader's own words. Until then a title reached
 a book only through the book's own text: "War and Peace" was not in the
 top 100 though the book is held, and anthologies quoting a title won.
 
+**A leg's list is the same on every peer with the same members**
+(*amended 2026-10-20*). Equal scores order by the record's uid bytes, then
+the chunk's place in its record, the earliest first; a group of equal
+scores that straddles a list's cut is read whole (bounded) before the list
+is cut. An index returns equal scores in the order it was built in, which
+differs between peers.
+
 **What a search reads.** For each collection, a search reads the
 newest snapshot whose members the peer holds for the slices it holds.
 A part re-issued under that snapshot is read in its newest version
