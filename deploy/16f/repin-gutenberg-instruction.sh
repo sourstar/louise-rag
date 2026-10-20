@@ -55,7 +55,10 @@ $L node pause "$OLD" | grep -v warn:config || true
 say "2. the recipe: the live Codex's, the instruction set, the query run stated now"
 REC="$ROOT/config/recipes/$NEW.json"
 if [ ! -e "$REC" ]; then
-  $L hold embedder run --encoder "$ENCODER" --api vega --model "$MODEL" --query 2>/dev/null > /tmp/$NEW-run-query.json
+  # the JSON alone: a cold load logs its line on stdout first (2026-10-20)
+  $L hold embedder run --encoder "$ENCODER" --api vega --model "$MODEL" --query 2>/dev/null \
+    | sed -n '/^{/,$p' > /tmp/$NEW-run-query.json
+  python3 -c "import json,sys; json.load(open(sys.argv[1]))" /tmp/$NEW-run-query.json
   docker cp /tmp/$NEW-run-query.json "$W:/tmp/run-query.json"
   docker exec -w /srv "$W" python -m tools.recipe_from_codex /data/collections/$OLD/shard/codex.json \
     /tmp/$NEW.json --instruction "$INSTRUCTION" --query-engine /tmp/run-query.json
