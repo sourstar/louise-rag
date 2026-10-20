@@ -1014,3 +1014,18 @@ def test_jina_v3_loads_the_remote_code_from_the_folders_cache_whatever_the_env_s
     assert "det" not in seen, "determinism stays off unless the model's env asks"
     with pytest.raises(ValueError, match="adapter"):
         jina.build_encoder(str(tmp_path), "cpu", "classification", 512, 1024)
+
+
+def test_dar_legal_it_switches_torch_determinism_on_from_the_models_env_only():
+    """Invariant 12 for DAR-legal-it, the same switch as jina-v3's: it was 1/4
+    bit-identical against itself on 2026-10-17 and its fingerprint moved across
+    three byte-identical trees; the MODEL's env switches torch's deterministic
+    algorithms on, so the stated run carries it (operator, 2026-10-20: test it)."""
+    server = dar_backend.dar_legal_it
+    calls: list = []
+    fake = SimpleNamespace(use_deterministic_algorithms=lambda flag: calls.append(flag),
+                           backends=SimpleNamespace(mkldnn=SimpleNamespace(deterministic=False)))
+    assert server.determinism(fake, {}) is False and calls == []
+    assert server.determinism(fake, {server.DETERMINISM_ENV: "1"}) is True
+    assert calls == [True] and fake.backends.mkldnn.deterministic is True
+    assert server.DETERMINISM_ENV == "LOUISE_TORCH_DETERMINISTIC", "one switch for every torch task"

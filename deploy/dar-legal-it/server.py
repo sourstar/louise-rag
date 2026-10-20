@@ -58,17 +58,42 @@ def release(torch_mod, device: str, above: int = RELEASE_ABOVE) -> bool:
         return False
 
 
+#: Invariant 12 (ENCODER DETERMINISM) for torch, the same switch as the jina-v3
+#: task's (deploy/jina-embeddings-v3/server.py): set in the MODEL's env, so the
+#: stated run carries it. DAR-legal-it on the B70 was 1/4 bit-identical against
+#: itself (2026-10-17) and its calibration fingerprint moved across three
+#: byte-identical trees (2026-10-20); jina-v3 on the same stack went from
+#: 204/512 to 512/512 with it (approved-encoders.md, the torch row). Unset,
+#: torch's defaults — the baseline the measurement compares against.
+DETERMINISM_ENV = "LOUISE_TORCH_DETERMINISTIC"
+
+
+def determinism(torch_mod, environ=None) -> bool:
+    """torch's deterministic algorithms and oneDNN's deterministic primitives,
+    when the model's env asks; an op with no deterministic kernel then fails
+    the text rather than answering from one that may not reproduce."""
+    import os
+    environ = os.environ if environ is None else environ
+    if environ.get(DETERMINISM_ENV, "").strip().lower() not in ("1", "true", "yes"):
+        return False
+    torch_mod.use_deterministic_algorithms(True)
+    mkldnn = getattr(getattr(torch_mod, "backends", None), "mkldnn", None)
+    if mkldnn is not None and hasattr(mkldnn, "deterministic"):
+        mkldnn.deterministic = True
+    return True
+
+
 def build_encoder(model_dir: str, device: str, max_seq: int):
+    import torch
     from sentence_transformers import SentenceTransformer
 
+    determinism(torch)                      # before any kernel is chosen
     model = SentenceTransformer(
         model_dir, device=device, trust_remote_code=True,
         model_kwargs={"attn_implementation": "sdpa"},
         config_kwargs={"use_memory_efficient_attention": False,
                        "unpad_inputs": False})
     model.max_seq_length = max_seq
-
-    import torch
 
     def encode(batch: list[str]) -> list[list[float]]:
         vectors = model.encode(batch, batch_size=len(batch),
