@@ -174,10 +174,54 @@ def _write_chunk(table: pa.Table, tmp: Path) -> None:
     pq.write_table(table, tmp, compression="zstd", compression_level=3, row_group_size=ROW_GROUP)
 
 
+#: Arrow's binary chunk limit (kBinaryMemoryLimit): `from_pylist` starts a new
+#: chunk at the value that would take the current one past it
+_BINARY_LIMIT = 2**31 - 2
+
+
+def _split_points(lengths: Iterable[int], limit: int = _BINARY_LIMIT) -> list[int]:
+    """Where `from_pylist` cuts a binary column of these value lengths."""
+    out: list[int] = []
+    cum = 0
+    for i, n in enumerate(lengths):
+        if cum + n > limit:
+            out.append(i)
+            cum = 0
+        cum += n
+    return out
+
+
+def _as_serial_table(tables: list[pa.Table], limit: int = _BINARY_LIMIT) -> pa.Table:
+    """A chunk's slices as the table the serial pass builds with ONE
+    `from_pylist`: one chunk per column, and `line` cut exactly where
+    from_pylist cuts it. The Parquet writer's pages follow the chunks: the
+    same content cut elsewhere is other bytes — measured on the node,
+    chunk 00000 (3.5 GB of JSON, cut at row 61,707): slices concatenated
+    gave sha256 743458c0…, this gives the serial pass's 655c8fe2…."""
+    import pyarrow.compute as pc
+
+    t = pa.concat_tables(tables)
+    cols = []
+    for name in t.column_names:
+        c = t.column(name)
+        if name != "line":
+            cols.append(c.combine_chunks())
+            continue
+        lengths = pc.binary_length(c).to_pylist() if len(c) else []
+        bounds = [0, *_split_points(lengths, limit), len(c)]
+        cols.append(pa.chunked_array([c.slice(a, b - a).combine_chunks() for a, b in zip(bounds, bounds[1:])],
+                                     type=pa.binary()))
+    return pa.Table.from_arrays(cols, schema=SCHEMA)
+
+
+def _write_slices(tables: list[pa.Table], tmp: Path) -> None:
+    _write_chunk(_as_serial_table(tables), tmp)
+
+
 #: entities per child task: a chunk is cut into these so a task is ~1/10 of
 #: a chunk's bytes (a chunk of 100,000 is 1.0–1.3 GB of JSON on the node,
 #: 2026-10-20 — eleven children each holding a whole one would need ~30 GB)
-SUB = 10_000
+SUB = 5_000
 
 
 def _rows_job(lines: list[bytes], start: int,
@@ -420,8 +464,7 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
         except BaseException:
             closed.appendleft((chunk_no, futs))
             raise
-        table = pa.concat_tables(tables)
-        writing.append((chunk_no, writer.submit(_write_chunk, table, _tmp_path(d, chunk_no, token)),
+        writing.append((chunk_no, writer.submit(_write_slices, tables, _tmp_path(d, chunk_no, token)),
                         pruned_n, labels, final))
         return True
 

@@ -199,6 +199,30 @@ def test_lbzip2_on_the_path_decompresses_the_same_bytes(tmp_path, monkeypatch):
     assert _pack_bytes(parallel) == _pack_bytes(serial)
 
 
+def test_slices_are_reassembled_as_one_from_pylist_would_cut_them(tmp_path):
+    """A chunk's `line` column past Arrow's 2 GiB binary limit is cut by
+    `from_pylist` at the value that would overflow, and the Parquet pages
+    follow the cut (node, 2026-10-20: chunk 00000 at row 61,707). The slices'
+    table is cut by the same rule; here with a small limit."""
+    assert pack._split_points([5, 5, 5], limit=10) == [2], "a value that would pass the limit starts a chunk"
+    assert pack._split_points([10, 1], limit=10) == [1], "a value that reaches it exactly stays"
+    assert pack._split_points([3] * 4, limit=100) == []
+    rows = [{"index": i, "id": f"Q{i}", "kind": "item", "native_id": str(i), "modified": "",
+             "lastrevid": i, "pruned": False, "line": b"x" * (3 + i % 4)} for i in range(40)]
+    slices = [pack.pa.Table.from_pylist(rows[i:i + 7], schema=pack.SCHEMA) for i in range(0, 40, 7)]
+    whole = pack._as_serial_table(slices)
+    assert [c.num_chunks for c in whole.columns] == [1] * 8, "under the limit: one chunk a column"
+    assert whole.equals(pack.pa.Table.from_pylist(rows, schema=pack.SCHEMA))
+    cut = pack._as_serial_table(slices, limit=50)
+    lengths = [len(r["line"]) for r in rows]
+    want = pack._split_points(lengths, limit=50)
+    got = list(__import__("itertools").accumulate(len(c) for c in cut.column("line").chunks))[:-1]
+    assert got == want and cut.equals(whole), "cut where the rule cuts, the same content"
+    pack._write_chunk(whole, tmp_path / "a.parquet")
+    pack._write_slices(slices, tmp_path / "b.parquet")
+    assert (tmp_path / "a.parquet").read_bytes() == (tmp_path / "b.parquet").read_bytes()
+
+
 def test_the_pass_follows_the_parse_pools_size(monkeypatch):
     monkeypatch.setattr(pack.config, "PARSE_PROCESSES", 11)
     assert pack.processes() == 11
