@@ -738,6 +738,21 @@ exist: the DAR measurement sat on the card 12:57–13:2x and gutenberg went
 on-demand at 13:09:54; the only clean number is the BEFORE, 204
 chunks/min (11:57–12:56).
 
+**The pass on every core (München, 3781e8f + eb74d95, operator: "squeeze
+everything from the cpu").** `pack.build(workers=)`: this process
+decompresses and cuts lines (lbzip2 on the PATH, else bz2), children at
+nice 10 parse and write whole chunks, this process commits in chunk
+order; files, labels and the resume point byte for byte the serial
+pass's (tests at four chunk sizes); a failed or hung child stops the pass
+at the last commit and the process goes serial. Measured on the node,
+first 120,000 entities (3,517 MB of JSON) beside the live scan: serial
+43.5 MB/s; 11 processes with bz2 68.5 MB/s; 11 processes + lbzip2
+**195.3 MB/s (6,663 entities/s)**; the live serial scan does ~29 MB/s.
+Plan: gate eb74d95 on a gate image rebuilt from the new Dockerfile,
+deploy on the node at once (supersedes "at the scan's end"); the pass
+resumes at the last committed chunk (≈ entity 22–25 M). Owed: the rate
+after the deploy and the new ETA.
+
 ### 2026-10-20 — a peer leads only where it embeds and shares; a switch releases its parts (operator) — PREPARED
 
 **Change.** The digest carries a space's benchmark only for collections
@@ -837,3 +852,24 @@ covered 9,783,255 of 10,477,214 chunks; leader field node 721 / Perugia
 end, ~04:30 CEST), which under the walk only orders Perugia's parts. The
 hour's numbers (chunks/min against 283, rounds and idle rounds, parts
 where two producers' bundles meet, "led parts await") due ~14:20Z.
+
+**AFTER (Perugia, 13:18–14:18Z, read 14:18:59Z).** 8,496 chunks
+embedded, 0 reused, **141.6 chunks/min** — the clean BEFORE is 138
+(62a098d) and 143 (the CLI), not 283, which counted the reused-heavy
+rounds right after `dev mark-embedded`: the rule costs nothing. 18
+rounds, selections 1–50 documents, **0 idle rounds**, 9 "led elsewhere"
+lines, 0 errors. Publisher every ~6.7 min: 2 parts bundled per pass, all
+accepted and announced, "3 led part(s) await the embed stage" steady.
+Duplicates: 23 bundles on 22 parts, every one a completion of a part the
+node has bundles on; counting the node's copy once, 21 of 22 parts are
+disjoint (en/00267: node 6,013 + Perugia 153 + 328 = union 6,494). Open
+parts 1,237 (1,249 at 13:19Z), covered 9,785,118 of 10,477,214; leader
+field node 721 / Perugia 516. **Open: en/01192** — a node bundle of
+6,924 chunks accepted on Perugia, but the union reads 963 of 7,676,
+exactly Perugia's new bundle: the node's files are not readable there
+(`counting.chunk_ids_of` → None, "covering nothing" by design), so the
+walk will re-embed 6,713 chunks the node holds. `deprecate.expire`
+removes a copy only when its current equivalent is accepted here, and
+deletes the row with the files, so that is not the path; facts asked of
+Perugia (rows, files, deprecation statements, the node's digest) before
+a fix.
