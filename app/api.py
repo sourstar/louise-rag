@@ -454,78 +454,110 @@ def _models_at(url: str, timeout: float = 3.0) -> list[str]:
         return []
 
 
+def node_model_server(held=None) -> tuple[str, str]:
+    """(url, api) of THIS node's model server, from what the node already
+    knows (operator, 2026-10-20: "something already set at a system
+    level"): the address the held collections' `[encoder]` blocks share —
+    on the node LocalAI at :30286, five files, one address — else the
+    platform's `[deposit] encoder`. NOT `VEGA_URL`: that is the receipts
+    service beside the model server (:30439; München, 2026-10-20), which
+    answers no model. ("", "") when the node knows none."""
+    from collections import Counter
+    held = collections_mod.load_all() if held is None else held
+    seen = Counter((c.url.rstrip("/"), c.api) for c in held
+                   if getattr(c, "url", None) and getattr(c, "api", None))
+    if seen:
+        return seen.most_common(1)[0][0]
+    try:
+        from . import platform_config
+        dep = platform_config.load().deposit
+        if dep.encoder:
+            return dep.encoder.rstrip("/"), dep.api or "openai"
+    except Exception:   # noqa: BLE001 — no platform.toml: the node knows no server
+        pass
+    return "", ""
+
+
 def suggest_encoder(codex) -> dict:
-    """What a collection's `[encoder]` should say on THIS node, from what the
-    node already knows (operator, 2026-10-20: "this is something already set
-    at a system level"): the model server is the node's — `VEGA_URL`, tier 1
-    — and the protocol with it; the model NAMES are the server's words for
-    the collection's fixed weights, taken from a held collection in the same
-    space when there is one (the same `space.encoder.weights`: its file
-    already says), else offered as the server's model list to pick from.
-    Nothing here is a default encoder (operator, 2026-09-18): the file still
-    names its own, and the create holds the server's stated run to the
-    Codex's engine and weights, so a wrong pick is refused, never written."""
-    url = (config.VEGA_URL or "").rstrip("/")
-    out = {"url": url, "api": "vega" if url else "", "embed_model": "", "query_model": "",
-           "known_from": None, "models": [], "note": ""}
+    """What a collection's `[encoder]` says on THIS node, decided by the node
+    (RULE 2): the model server is the node's (`node_model_server`); the model
+    NAMES are taken from a held collection in the same space (the same
+    `space.encoder.weights`: its file already says). `resolved` is whether
+    the node can embed and search this collection as it stands; when it
+    cannot, `missing` says in plain words what would supply it. `models` is
+    the server's list, for the command line and the create form. Nothing
+    here is a default encoder (operator, 2026-09-18): the file still names
+    its own, and the create holds the server's stated run to the Codex's
+    weights, so a wrong name is refused, never written."""
+    held = collections_mod.load_all()
+    url, api = node_model_server(held)
+    out = {"url": url, "api": api, "embed_model": "", "query_model": "",
+           "known_from": None, "models": [], "resolved": False, "missing": "", "note": ""}
     space = getattr(codex, "space", None)
     weights = getattr(getattr(space, "encoder", None), "weights", None)
     qenc = getattr(getattr(space, "query", None), "encoder", None)
     qweights = getattr(qenc, "weights", None) if qenc is not None else None
+    label = getattr(getattr(space, "encoder", None), "label", "") or ""
     if weights:
-        for c in collections_mod.load_all():
+        for c in held:
             cw = getattr(getattr(getattr(c.codex, "space", None), "encoder", None), "weights", None)
             if cw == weights and getattr(c, "url", None):
-                out.update(url=c.url, api=c.api, embed_model=c.model,
-                           query_model=(c.query_model or c.model), known_from=c.name)
+                out.update(url=c.url.rstrip("/"), api=c.api, embed_model=c.model,
+                           query_model=(c.query_model or c.model), known_from=c.name, resolved=True)
                 break
     if out["url"]:
         out["models"] = _models_at(out["url"])
-    if not out["url"]:
-        out["note"] = ("this node names no model server (VEGA_URL is unset): say where it reaches "
-                       "the collection's encoder")
-    elif out["known_from"]:
-        out["note"] = (f"the same encoder as your collection {out['known_from']!r}: its model names are "
-                       f"taken over, nothing to choose")
-    elif out["models"]:
-        out["note"] = ("pick the model on this node's server that runs the collection's encoder; the "
-                       "create holds the server's stated run to the collection's weights, so a wrong "
-                       "pick is refused, not written")
+    if codex is None:
+        out["note"] = "the collection's description is pulled when it is taken; the encoder is decided then"
+    elif out["resolved"]:
+        out["note"] = (f"the same encoder as your collection {out['known_from']!r}: this node embeds "
+                       f"and searches it as it does that one")
+    elif not out["url"]:
+        out["missing"] = ("this node knows no model server yet (no collection names one, and the "
+                          "platform's [deposit] names no encoder)")
+        out["note"] = "held, not searched here: " + out["missing"]
     else:
-        out["note"] = ("this node's server lists no models to pick from: name the model it runs the "
-                       "collection's encoder under")
+        out["missing"] = (f"no model on this node's server ({out['url']}) is known to run this "
+                          f"collection's encoder ({label or 'weights ' + str(weights)[:23] + '…'}); "
+                          f"install it there, and this node embeds and searches the collection")
+        out["note"] = "held, not searched here: " + out["missing"]
     out["weights"] = {"document": weights, "query": qweights}
     return out
 
 
 @app.get("/api/encoders/suggest", dependencies=[Depends(auth.require_admin)])
 async def encoders_suggest(collection_id: str = ""):
-    """The Library's take and create dialogs: the encoder block the node can
-    fill in by itself (`suggest_encoder`). With a collection id the Codex is
-    the catalogue's, where the offer has pulled it; without one, the server
-    and its models alone."""
-    from .share import catalogue, peers
-    from contextlib import closing
+    """The Library's take and create dialogs: the encoder block the node
+    decides by itself (`suggest_encoder`, RULE 2). With a collection id the
+    Codex is the catalogue's, where the offer has pulled it; without one,
+    the server and its models alone."""
     codex = None
     cid = collection_id.strip()
     if cid:
-        with closing(peers.connect()) as con:
-            codex = catalogue.codex_of(con, cid)
+        codex = await run_in_threadpool(_catalogue_codex, cid)
     return await run_in_threadpool(suggest_encoder, codex)
+
+
+def _catalogue_codex(cid: str):
+    from contextlib import closing
+    from .share import catalogue, peers
+    with closing(peers.connect()) as con:
+        return catalogue.codex_of(con, cid)
 
 
 class ShareFetchBody(BaseModel):
     collection_id: str
     name: str = ""
     slices: list[str] | str = "all"
-    kinds: list[str] = Field(default_factory=lambda: ["records"])
+    kinds: list[str] = Field(default_factory=lambda: ["records", "vectors"])
     encoder: str = ""
     api: str = ""
     embed_model: str = ""
     query_model: str = ""
     snapshot: str = ""
-    #: 07 §7.8's embed mode for the file: what this node's encoder spends
-    embed: str = "off"
+    #: 07 §7.8's embed mode for the file: what this node's encoder spends;
+    #: "" = decided by the node (p2p where it can embed, off where it cannot)
+    embed: str = ""
 
 
 @app.post("/api/share/fetch", dependencies=[Depends(auth.require_admin)])
@@ -562,32 +594,36 @@ def share_fetch(body: ShareFetchBody):
     kinds = [k.strip() for k in body.kinds if k and k.strip()]
     if not kinds:
         raise HTTPException(409, "kinds names at least one member kind (records, vectors)")
-    encoder = body.encoder.strip()
+    encoder, api = body.encoder.strip(), body.api.strip()
+    embed_model, query_model = body.embed_model.strip(), body.query_model.strip()
+    missing = ""
     if not encoder:
-        # a file naming no [encoder] is refused by the worker as non-compliant
-        # (07 §7.8; operator 2026-09-18): a take without one would hold a
-        # collection this node can neither search nor embed. The command
-        # allows it for the operator who edits the file by hand; the Library
-        # does not.
-        raise HTTPException(409, "name where this node reaches the collection's encoder (the server "
-                                 "address, its protocol and the model names): a collection file naming "
-                                 "no [encoder] is refused as non-compliant and the collection is not "
-                                 "served (07 §7.8)")
+        # PLUG AND PLAY (RULE 2): the node decides its encoder block — its
+        # model server and the model names a held collection in the same
+        # space already uses. Where it cannot, the collection is held without
+        # one (the worker then says so and serves nothing of it) and the
+        # answer says what would supply it; the take never asks a form.
+        s = suggest_encoder(_catalogue_codex(cid))
+        if s["resolved"]:
+            encoder, api, embed_model, query_model = s["url"], s["api"], s["embed_model"], s["query_model"]
+        else:
+            missing = s["missing"] or "the node could not decide the encoder"
     try:
-        louise.check_api(body.api.strip() or None)
-        louise.model_keys(encoder, embed_model=body.embed_model.strip() or None,
-                          query_model=body.query_model.strip() or None)
-        embed = louise.check_embed_mode(body.embed.strip() or None)
+        louise.check_api(api or None)
+        if encoder:
+            louise.model_keys(encoder, embed_model=embed_model or None, query_model=query_model or None)
+        embed = louise.check_embed_mode(body.embed.strip() or ("p2p" if encoder else "off"))
     except CodexError as e:
         raise HTTPException(409, str(e)) from None
     args = {"collection_id": cid, "name": name, "slices": slices, "kinds": kinds,
-            "encoder": encoder, "api": body.api.strip(), "embed_model": body.embed_model.strip(),
-            "query_model": body.query_model.strip(), "snapshot": body.snapshot.strip(), "embed": embed}
+            "encoder": encoder, "api": api, "embed_model": embed_model,
+            "query_model": query_model, "snapshot": body.snapshot.strip(), "embed": embed}
     job_id = jobs.submit(jobs.SHARE_FETCH, args)
     return JSONResponse(status_code=202, content={
-        "id": job_id, "collection_id": cid, "args": args,
+        "id": job_id, "collection_id": cid, "args": args, "missing": missing,
         "cli": (f"louise share fetch {cid}" + ("" if slices == "all" else " --slice " + " ".join(slices))
                 + f" --kinds {','.join(kinds)}" + (f" --encoder {encoder}" if encoder else "")
+                + (f" --embed {embed}" if embed != "off" else "")
                 + (f" --name {name}" if name else ""))})
 
 

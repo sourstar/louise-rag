@@ -41,39 +41,56 @@ def test_the_offer_route_and_the_library_section(client):
     assert "take…" in page.text and "louise share offer" in page.text
 
 
-def test_taking_from_the_offer_queues_share_fetch_with_the_choice(client, monkeypatch):
+def test_taking_from_the_offer_is_plug_and_play_the_node_decides_the_rest(client, monkeypatch):
+    """RULE 2 (operator, 2026-10-20): the user chooses the local name; the
+    node decides the encoder (its model server, the names a held collection
+    in the same space uses), takes the whole collection, texts and peers'
+    vectors, and embeds p2p where it can — off, with the reason, where it
+    cannot. Explicit fields still work for the command line's callers."""
+    from types import SimpleNamespace
     codex = pubmed()
     announced(codex)
     queued = []
     monkeypatch.setattr(jobs, "submit", lambda kind, args: queued.append((kind, args)) or 7)
-    r = client.post("/api/share/fetch", json={
-        "collection_id": codex.collection_id, "name": "pubmed-here",
-        "slices": ["year=2024", "year=2025"], "kinds": ["records", "vectors"],
-        "encoder": "http://nas:30437", "api": "openai", "embed_model": "m", "query_model": "q"})
+    monkeypatch.setattr(api, "_models_at", lambda url: [])
+    # this node holds a collection in the same space: everything decided
+    held = SimpleNamespace(name="pubmed-local", codex=codex, url="http://localai:30286", api="vega",
+                           model="vega-medcpt-article", query_model="vega-medcpt-query")
+
+    def holding(*items):
+        # `load_all(skip_unreadable=True)` is the worker's shape, (served, unreadable)
+        return lambda **kw: (list(items), []) if kw.get("skip_unreadable") else list(items)
+    monkeypatch.setattr(collections_mod, "load_all", holding(held))
+    r = client.post("/api/share/fetch", json={"collection_id": codex.collection_id, "name": "pubmed-here"})
     assert r.status_code == 202, r.text
-    assert r.json()["id"] == 7
-    assert "--slice year=2024 year=2025" in r.json()["cli"] and "--kinds records,vectors" in r.json()["cli"]
     (kind, args), = queued
     assert kind == jobs.SHARE_FETCH
-    assert args == {"collection_id": codex.collection_id, "name": "pubmed-here",
-                    "slices": ["year=2024", "year=2025"], "kinds": ["records", "vectors"],
-                    "encoder": "http://nas:30437", "api": "openai", "embed_model": "m",
-                    "query_model": "q", "snapshot": "", "embed": "off"}
-    # the defaults: every slice, records, nothing spent on embedding
-    r = client.post("/api/share/fetch", json={"collection_id": codex.collection_id,
-                                              "encoder": "http://nas:30437", "embed_model": "m"})
-    assert r.status_code == 202 and queued[1][1]["slices"] == "all" and queued[1][1]["kinds"] == ["records"]
-    assert queued[1][1]["embed"] == "off"
-    # the embed mode is the taker's (07 §7.8; operator 2026-10-20: "what about the p2p embedding?")
-    r = client.post("/api/share/fetch", json={"collection_id": codex.collection_id, "embed": "p2p",
-                                              "encoder": "http://nas:30437", "embed_model": "m"})
-    assert r.status_code == 202 and queued[2][1]["embed"] == "p2p"
+    assert args == {"collection_id": codex.collection_id, "name": "pubmed-here", "slices": "all",
+                    "kinds": ["records", "vectors"], "encoder": "http://localai:30286", "api": "vega",
+                    "embed_model": "vega-medcpt-article", "query_model": "vega-medcpt-query",
+                    "snapshot": "", "embed": "p2p"}
+    assert r.json()["missing"] == "" and "--embed p2p" in r.json()["cli"]
+    # no collection with this ENCODER here (another's weights): held without an encoder,
+    # embed off, the reason said — the server is still known from the other file
+    other_weights = SimpleNamespace(space=SimpleNamespace(encoder=SimpleNamespace(weights="sha256:" + "ee" * 32)))
+    monkeypatch.setattr(collections_mod, "load_all", holding(SimpleNamespace(
+        name="other", codex=other_weights, url="http://localai:30286", api="vega",
+        model="vega-x", query_model="vega-x")))
+    r = client.post("/api/share/fetch", json={"collection_id": codex.collection_id})
+    assert r.status_code == 202
+    assert queued[1][1]["encoder"] == "" and queued[1][1]["embed"] == "off"
+    assert "no model on this node's server (http://localai:30286)" in r.json()["missing"]
+    # the command line's caller may say everything itself
+    r = client.post("/api/share/fetch", json={
+        "collection_id": codex.collection_id, "name": "pubmed-cli",
+        "slices": ["year=2024", "year=2025"], "kinds": ["records"],
+        "encoder": "http://nas:30437", "api": "openai", "embed_model": "m", "query_model": "q", "embed": "all"})
+    assert r.status_code == 202
+    assert queued[2][1]["slices"] == ["year=2024", "year=2025"] and queued[2][1]["embed"] == "all"
+    assert "--slice year=2024 year=2025" in r.json()["cli"] and "--kinds records" in r.json()["cli"]
     r = client.post("/api/share/fetch", json={"collection_id": codex.collection_id, "embed": "sometimes",
                                               "encoder": "http://nas:30437", "embed_model": "m"})
-    assert r.status_code == 409 and "embed is one of" in r.text
-    # no encoder: the collection would be refused as non-compliant — refused here instead, queued nothing
-    r = client.post("/api/share/fetch", json={"collection_id": codex.collection_id})
-    assert r.status_code == 409 and "no [encoder]" in r.text and len(queued) == 3
+    assert r.status_code == 409 and "embed is one of" in r.text and len(queued) == 3
 
 
 def test_what_cannot_be_taken_is_refused_at_once_and_queues_nothing(client, monkeypatch):
@@ -95,37 +112,36 @@ def test_what_cannot_be_taken_is_refused_at_once_and_queues_nothing(client, monk
     assert anon.post("/api/share/fetch", json={"collection_id": codex.collection_id}).status_code in (401, 403)
 
 
-def test_the_encoder_is_filled_from_what_the_node_knows_not_asked(client, monkeypatch):
+def test_the_encoder_is_decided_from_what_the_node_knows(client, monkeypatch):
     """Operator, 2026-10-20: "this is something already set at a system
-    level". The model server is the node's (VEGA_URL); the model names come
-    from a held collection in the same space, else the server's list."""
+    level". The model server is the address the held files share (LocalAI
+    on the node; VEGA_URL is the receipts service, which answers no model);
+    the names come from a held collection in the same space. Where the node
+    knows nothing, it says what is missing — it never asks a form."""
     from types import SimpleNamespace
+    from app import platform_config
     codex = pubmed()
     announced(codex)
-    # no model server named: nothing to fill, the note says so
-    monkeypatch.setattr(config, "VEGA_URL", "")
     monkeypatch.setattr(api, "_models_at", lambda url: ["vega-medcpt-article", "vega-medcpt-query", "vega-bge-m3"])
-    r = client.get("/api/encoders/suggest", params={"collection_id": codex.collection_id})
-    assert r.status_code == 200 and r.json()["url"] == "" and "VEGA_URL" in r.json()["note"]
-    # the node's server: filled in, with its model list to pick from
-    monkeypatch.setattr(config, "VEGA_URL", "http://vega:30286/")
-    r = client.get("/api/encoders/suggest", params={"collection_id": codex.collection_id})
-    s = r.json()
-    assert (s["url"], s["api"], s["known_from"]) == ("http://vega:30286", "vega", None)
-    assert s["models"] == ["vega-medcpt-article", "vega-medcpt-query", "vega-bge-m3"] and "pick the model" in s["note"]
-    assert s["weights"]["document"] == codex.space.encoder.weights
-    # a held collection in the same space: its names, nothing to choose
-    held = SimpleNamespace(name="pubmed-local", codex=codex, url="http://vega:30286", api="vega",
-                           model="vega-medcpt-article", query_model="vega-medcpt-query")
-    real_load_all = collections_mod.load_all
-    monkeypatch.setattr(collections_mod, "load_all", lambda: [held])
+    # nothing held, no platform encoder: the node knows no server
+    monkeypatch.setattr(collections_mod, "load_all", lambda **kw: ([], []) if kw.get("skip_unreadable") else [])
+    monkeypatch.setattr(platform_config, "load", lambda: SimpleNamespace(deposit=SimpleNamespace(encoder=None, api="openai")))
     s = client.get("/api/encoders/suggest", params={"collection_id": codex.collection_id}).json()
-    assert (s["known_from"], s["embed_model"], s["query_model"]) == ("pubmed-local", "vega-medcpt-article", "vega-medcpt-query")
-    assert "nothing to choose" in s["note"]
-    monkeypatch.setattr(collections_mod, "load_all", real_load_all)
+    assert s["url"] == "" and not s["resolved"] and "knows no model server" in s["missing"]
+    # the platform's deposit encoder names the server; no collection in the space: the model is missing
+    monkeypatch.setattr(platform_config, "load", lambda: SimpleNamespace(deposit=SimpleNamespace(encoder="http://localai:30286/", api="vega")))
+    s = client.get("/api/encoders/suggest", params={"collection_id": codex.collection_id}).json()
+    assert (s["url"], s["api"], s["resolved"]) == ("http://localai:30286", "vega", False)
+    assert s["models"] == ["vega-medcpt-article", "vega-medcpt-query", "vega-bge-m3"]
+    assert "install it there" in s["missing"] and s["weights"]["document"] == codex.space.encoder.weights
+    # a held collection in the same space: the server is its, the names are its, nothing to choose
+    held = SimpleNamespace(name="pubmed-local", codex=codex, url="http://localai:30286", api="vega",
+                           model="vega-medcpt-article", query_model="vega-medcpt-query")
+    monkeypatch.setattr(collections_mod, "load_all", lambda **kw: ([held], []) if kw.get("skip_unreadable") else [held])
+    s = client.get("/api/encoders/suggest", params={"collection_id": codex.collection_id}).json()
+    assert (s["resolved"], s["known_from"], s["embed_model"], s["query_model"]) == (
+        True, "pubmed-local", "vega-medcpt-article", "vega-medcpt-query")
+    assert s["missing"] == "" and "embeds and searches it" in s["note"]
     # without a collection: the server alone, for the create form
     s = client.get("/api/encoders/suggest").json()
-    assert s["url"] == "http://vega:30286" and s["known_from"] is None and s["models"]
-    # the dialog asks the node, and the create form takes the server
-    page = client.get("/admin/library").text
-    assert "/api/encoders/suggest" in page and "Model server (this node's" in page
+    assert s["url"] == "http://localai:30286" and not s["resolved"] and s["models"]

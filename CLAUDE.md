@@ -17,6 +17,21 @@ choice, not an exception to ask about. A spec rule that forces a
 recomputation where an identical result can be kept is changed, not
 obeyed. Name the amendment.
 
+## RULE 2 — THE INTERFACES HIDE THE COMPLEXITY. EVERYTHING IS PLUG AND PLAY
+
+*(Operator, 2026-10-20, verbatim: "Claude is too stupid to understand that
+hiding complexity to the regular user is the main goal of the user
+interfaces." It stands until the operator changes this statement.)*
+
+A regular user chooses what only they can know — a local name — and
+nothing else. Everything the system can determine, it determines: its
+model server, the model names for a collection's encoder, what to take,
+how to embed, which version. Where it cannot determine something, it does
+not ask a form; it proceeds with what it has and says in plain words what
+is missing and what would supply it. Choices for operators live in the
+command line, not in the Library's dialogs. A dialog that asks for a
+server address, a protocol, a model name or a Codex field is a defect.
+
 ## Before any work
 - Read docs/README.md and the numbered documents it lists (01–09), in
   order. They are the specification; the vocabulary they fix (docs/01,

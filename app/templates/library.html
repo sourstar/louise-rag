@@ -290,6 +290,17 @@
    2026-10-20); the filter at each use, since a `set` in this block is not
    seen by the scripts block #}
 <div class="panel" id="offer">
+  {# RULE 2: a collection held but not served is shown here with its reason in plain words #}
+  {% if refused|default([], true) %}
+  <h2>Held, not served <span class="badge err">{{ refused|length }}</span></h2>
+  {% for r in refused|default([], true) %}
+  <div class="panel" data-collection="{{ r.name }}" data-kind="refused">
+    <h2>{{ r.name }} <span class="badge err">waiting</span></h2>
+    <div class="note">{{ r.reason }}</div>
+    <div class="note">Its texts and the peers' vectors may still arrive; nothing is searched or embedded here until the reason above is gone.</div>
+  </div>
+  {% endfor %}
+  {% endif %}
   <h2>Offered by peers <span class="badge">{{ offered|default([], true)|length }}</span></h2>
   <div class="note">What live neighbours announce and this node does not hold. Nothing is fetched
     that was not chosen here or with <code>louise share fetch</code>; <code>louise share offer</code>
@@ -653,107 +664,53 @@ async function createAnnotations(){
 // 04 §4.2 THE OFFER: taking a collection a peer announces — `share fetch`,
 // queued for the worker, which signs the pulls (app/jobs.py SHARE_FETCH).
 const OFFER={{ offered|default([], true)|tojson }};
-// Every field in plain words (operator, 2026-10-20, twice: "the local name
-// is the only understandable entry"; "only if you want to embed yourself —
-// what does it mean? what about the p2p embedding?"). What the collection
-// FIXES — its texts, its encoder model, its id — is shown, never asked. What
-// is asked: a local name, which slices, which members, WHO COMPUTES THE
-// VECTORS this node holds (07 §7.8's embed modes, p2p among them) and WHERE
-// this node reaches the encoder — required: a file naming none is refused
-// as non-compliant, and the question asked at search time is embedded with
-// the same encoder. The "?" opens the same text as a popup.
-const TAKE_HELP=[
-  ['Local name','How this collection is called on this node: in the menus, on the command line, in the folder under collections/. Nothing else depends on it. Default: the kind of collection (its plugin).'],
-  ['What to take','A collection is cut into slices (a language, a range of years) and each slice into parts. "All" takes every slice. Or name the slices you want, comma-separated, as the collection\'s snapshot lists them; the rest is not fetched and not searched here.'],
-  ['Records','The texts and their metadata. Always needed to search or read.'],
-  ['Vectors','The embeddings other peers already computed and signed, arriving as their bundles. Take them: every vector a peer already made is one this node need not compute, whatever mode is chosen below.'],
-  ['Who computes the vectors','The embedding mode of this node for this collection (07 §7.8). p2p: this node embeds the parts the network assigns it, takes the rest from peers, and publishes what it embeds — the shared work; it needs sharing on, which a public collection has. Off: this node computes nothing and lives on the peers\' vectors alone. On demand: it embeds only the chunks a search touches. All: it embeds every part itself, whoever else does, and its duplicates become checks. Search runs over whatever vectors exist, whichever mode.'],
-  ['Encoder','Filled in by the node. The model that turns text into vectors is fixed by the collection; the server that runs it is this node\'s model container (VEGA_URL, set at the system level) — neither is a choice. The only thing the node may not know is the NAME its server runs that model under: it takes it from a collection you already hold in the same space, or offers the server\'s model list to pick from. The create holds the server\'s stated run to the collection\'s weights, so a wrong name is refused, never written. Every question asked here is embedded with this encoder too.'],
-  ['Version','Which version of the collection: the latest the serving peer holds, unless you name an older snapshot id.'],
-];
-function takeHelp(){
-  showModal(`<h2>Taking a collection — what the fields mean</h2>
-    ${TAKE_HELP.map(([k,v])=>`<div class="note"><b>${esc(k)}</b> — ${esc(v)}</div>`).join('')}
-    <div class="actions"><button onclick="hideModal()">Close</button></div>`);
-}
+// RULE 2 (operator, 2026-10-20): the take is PLUG AND PLAY. The user chooses
+// the local name and nothing else; the node decides the rest — the whole
+// collection (every slice, its texts and the peers' vectors, the latest
+// version), its own model server and the model names it already uses for
+// this encoder, embedding in p2p where it can embed and off where it cannot
+// — and says in plain words what it decided and what, if anything, is
+// missing (/api/encoders/suggest). The command line keeps every choice.
 function openTake(cid){
   const o=OFFER.find(x=>x.collection_id===cid); if(!o)return;
-  const help=k=>{const h=TAKE_HELP.find(x=>x[0]===k);return h?` title="${esc(h[1])}"`:''};
-  showModal(`<h2>Take ${esc(o.title||o.plugin||cid.slice(0,23))} <button type="button" onclick="takeHelp()" title="what the fields mean">?</button></h2>
-    <div class="note">Fixed by the collection's maker, not asked here: its texts, its encoder model, its id
-      <code title="collection_id">${esc(cid.slice(0,23))}…</code>. You choose what this node does with it.
-      Its description and versions are pulled from a peer that serves it; the members follow at the worker's
-      next fetch. A yellow or red collection asks for its license acknowledgement before any text moves.</div>
+  showModal(`<h2>Take ${esc(o.title||o.plugin||cid.slice(0,23))}</h2>
     <div class="row">
-      <div${help('Local name')}><label>Local name — what this node calls it (default: ${esc(o.plugin||'the plugin')})</label><input id="tk_name" placeholder="${esc(o.plugin||'')}"></div>
-      <div${help('What to take')}><label>What to take — <code>all</code>, or slice names comma-separated (a language, a period)</label><input id="tk_slices" value="all"></div>
-      <div><label>Members</label>
-        <label${help('Records')}><input type="checkbox" id="tk_records" checked> the records (the texts)</label>
-        <label${help('Vectors')}><input type="checkbox" id="tk_vectors" checked> the vectors peers already computed (their bundles)</label></div>
-      <div${help('Who computes the vectors')}><label>Who computes the vectors this node holds</label>
-        <label><input type="radio" name="tk_embed" value="p2p" checked> <b>p2p</b> — this node embeds its share of the parts, takes the rest from peers, publishes what it embeds</label>
-        <label><input type="radio" name="tk_embed" value="off"> <b>off</b> — nothing computed here; the peers' vectors only</label>
-        <label><input type="radio" name="tk_embed" value="on-demand"> <b>on demand</b> — only the chunks a search touches</label>
-        <label><input type="radio" name="tk_embed" value="all"> <b>all</b> — every part here, whoever else does; duplicates become checks</label></div>
-      <div${help('Version')}><label>Version — empty: the latest the peer holds; or an older snapshot id</label><input id="tk_snapshot" placeholder="latest"></div>
+      <div><label>Name on this node (the only thing to choose; default: ${esc(o.plugin||'the plugin')})</label><input id="tk_name" placeholder="${esc(o.plugin||'')}"></div>
     </div>
-    <div${help('Encoder')} id="tk_encoder_block">
-      <label><b>Encoder</b> — <span id="tk_encoder_note">asking this node what it knows…</span></label>
-      <div class="row">
-        <div id="tk_server_row"><label>Model server</label><input id="tk_encoder" placeholder="http://nas:30437"></div>
-        <div id="tk_api_row"><label>Protocol it speaks</label><select id="tk_api"><option value="vega">vega</option><option value="openai">openai (LocalAI, RAGE)</option><option value="ollama">ollama</option></select></div>
-        <div><label>Model name on that server, for texts / for questions</label><span id="tk_models"><input id="tk_embed_model" placeholder="for texts"> <input id="tk_query_model" placeholder="for questions (default: the same)"></span></div>
-      </div>
-    </div>
+    <div class="note" id="tk_plan">Asking this node what it will do…</div>
     <div class="actions">
       <button class="primary" onclick="takeOffer('${esc(cid)}')">Take</button>
       <button onclick="hideModal()">Cancel</button>
     </div>
-    <pre class="cli">${esc(o.cli)}</pre>
     <div id="tk_result"></div>`);
-  fillEncoder(cid);
+  explainTake(cid, o);
 }
-// The encoder block from what the node knows (/api/encoders/suggest): the
-// server is the node's, the model names a held collection's or the server's
-// list. Typed only where the node knows nothing (operator, 2026-10-20).
-function modelField(id, names, chosen, placeholder){
-  if(!names.length) return `<input id="${id}" value="${esc(chosen||'')}" placeholder="${esc(placeholder)}">`;
-  const opts=names.map(n=>`<option value="${esc(n)}" ${n===chosen?'selected':''}>${esc(n)}</option>`).join('');
-  return `<select id="${id}">${chosen&&!names.includes(chosen)?`<option value="${esc(chosen)}" selected>${esc(chosen)}</option>`:''}${opts}</select>`;
-}
-async function fillEncoder(cid){
+async function explainTake(cid, o){
+  const box=document.getElementById('tk_plan'); if(!box) return;
   let s;
-  try{s=await getJSON('/api/encoders/suggest?collection_id='+encodeURIComponent(cid||''));}
-  catch(e){document.getElementById('tk_encoder_note').textContent='the node could not be asked ('+e+'); say where it reaches the encoder';return}
-  const note=document.getElementById('tk_encoder_note'); if(!note) return;
-  note.textContent=s.note||'';
-  if(s.url){
-    document.getElementById('tk_server_row').innerHTML=`<label>Model server (this node's)</label><input id="tk_encoder" value="${esc(s.url)}" readonly>`;
-    document.getElementById('tk_api_row').innerHTML=`<label>Protocol</label><input id="tk_api" value="${esc(s.api)}" readonly>`;
-    document.getElementById('tk_models').innerHTML=modelField('tk_embed_model',s.models,s.embed_model,'for texts')+' '+modelField('tk_query_model',s.models,s.query_model,'for questions (default: the same)');
+  try{s=await getJSON('/api/encoders/suggest?collection_id='+encodeURIComponent(cid));}
+  catch(e){box.textContent='The whole collection is taken: its texts and the vectors peers already computed, the latest version. The node decides the encoder when it has pulled the description.';return}
+  const lines=['The whole collection is taken: every slice, its texts and the vectors peers already computed, the latest version.'];
+  if(s.resolved){
+    lines.push(`Search and embedding: ready. ${esc(s.note)}. This node embeds its share of the parts and takes the rest from peers (p2p).`);
+  }else if(!o.codex_known){
+    lines.push('The encoder is decided once the description is pulled; if this node runs it, search and embedding are ready at once.');
+  }else{
+    lines.push(`Search and embedding on this node: NOT YET. ${esc(s.missing||s.note)}. Until then the collection is held — its texts and the peers\' vectors arrive — and the Library shows it as waiting.`);
   }
+  box.innerHTML=lines.map(l=>`<div>${l}</div>`).join('');
 }
 async function takeOffer(cid){
-  const v=id=>document.getElementById(id).value.trim();
-  const slicesText=v('tk_slices');
-  const kinds=[];
-  if(document.getElementById('tk_records').checked)kinds.push('records');
-  if(document.getElementById('tk_vectors').checked)kinds.push('vectors');
-  if(!kinds.length){toast('choose at least one kind');return}
-  if(!v('tk_encoder')){toast('name where this node reaches the encoder: without it the collection is refused and not searched');return}
-  const embed=(document.querySelector('input[name="tk_embed"]:checked')||{}).value||'off';
-  const body={collection_id:cid,name:v('tk_name'),
-    slices:(slicesText===''||slicesText==='all')?'all':slicesText.split(',').map(s=>s.trim()).filter(Boolean),
-    kinds,encoder:v('tk_encoder'),api:v('tk_api'),embed_model:v('tk_embed_model'),query_model:v('tk_query_model'),snapshot:v('tk_snapshot'),embed};
+  const name=document.getElementById('tk_name').value.trim();
   const box=document.getElementById('tk_result');
   box.innerHTML='<div class="note">queued for the worker…</div>';
-  try{const q=await postJSON('/api/share/fetch',body);
+  try{const q=await postJSON('/api/share/fetch',{collection_id:cid,name});
     box.innerHTML=`<div class="note">queued as job ${esc(q.id)}</div><pre class="cli">${esc(q.cli)}</pre>`;
     const j=await waitForJob(q.id,s=>{box.innerHTML+='<div class="note">'+esc(s)+'</div>'});
     const d=j.result||{};
-    const sel=d.selection||{};
-    box.innerHTML=`<div class="note">Held <b>${esc(d.name||'?')}</b> from ${esc(d.from||'a peer')}: slices ${esc(JSON.stringify(sel.slices||'all'))}, kinds ${esc(JSON.stringify(sel.kinds||[]))}. ${esc(d.note||'')}</div>`;
-    setTimeout(()=>location.reload(),3000);
+    box.innerHTML=`<div class="note">Held as <b>${esc(d.name||'?')}</b> from ${esc(d.from||'a peer')}. ${esc(d.note||'')}</div>`
+      +(q.missing?`<div class="note" style="color:var(--err)">Not searched here yet: ${esc(q.missing)}</div>`:'');
+    setTimeout(()=>location.reload(),3500);
   }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
 }
 // What needs the node's private key runs in the worker (app/jobs.py): the

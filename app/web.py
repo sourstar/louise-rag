@@ -2077,8 +2077,13 @@ def library_page(request: Request):
         offered = offer.offered_for_node()
     except Exception:   # noqa: BLE001 — no node.sqlite yet, a catalogue that does not read: the page still renders
         offered = []
+    # RULE 2: a collection held but not served — its file names no encoder
+    # this node runs, or another refusal — is shown HERE with the reason in
+    # plain words, where the operator looks, not only on the System page
+    refused = [{"name": r.name, "reason": r.reason} for r in collections_mod.refusals()]
     return TEMPLATES.TemplateResponse(request, "library.html", {
         "active": "library",
+        "refused": refused,
         "shelves": shelves,
         "annotations": annotations,
         "offered": offered,
