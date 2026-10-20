@@ -367,10 +367,14 @@ part's bundle ids, never saw the files arrive under the same id, so
 en/01192 stayed at 963 and open; the entry now records which bundles were
 unreadable and whether their file existed, and is recomputed when that
 changes (`counting._entry_stands`). After the recompute en/01192 reads
-6,931 — the node's 6,924 and 7 of Perugia's 963: the other 956 were the
-node's rows, re-signed. `dev deprecate-duplicates` now finds such a
-SUBSET copy too (every record and chunk row of it in an earlier bundle of
-another producer, vector for vector) and deprecates it for the original.
+6,931 — the node's 6,924 and 7 more of Perugia's 963. The 956 shared
+chunks are NOT re-signed rows: Perugia's walk embedded them itself while
+the fileless row made the part look open (its 9b66fe5b against the node's
+60705a18: 0 of 972 rows bit-identical, cosine min 0.997850, median
+0.999051) — an independent duplicate, a check (04 §4.5), the GPU time the
+defect cost. `dev deprecate-duplicates` now also finds a SUBSET copy
+(every record and chunk row in an earlier bundle of another producer,
+vector for vector, 274d461) — and rightly left this one alone.
 The node's seven copies of en/00219: the entry below.
 
 ### 2026-10-20: a taken copy tests itself as its parts land (Perugia's find)

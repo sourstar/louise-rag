@@ -891,8 +891,10 @@ brought 5,570 chunks it did not hold), e688b89 lets the union cache see
 the files arrive. **Second hour (Perugia, 15:15–16:15Z, 678450f):** 8,015
 chunks, **133.6 chunks/min**, 2 bundles taken again, 0 errors; publisher
 2 and 4 parts a pass, "6 led part(s) await the embed stage", 0 left to
-the fetch. Union after the recompute (16:23Z): en/01192 6,931 (963 before
-— so 956 of Perugia's 963 were the node's rows, re-signed; 7 new),
+the fetch. Union after the recompute (16:23Z): en/01192 6,931 (963 before;
+the 956 shared chunks are Perugia's OWN embedding of chunks the node also
+embedded — 0 of 972 rows bit-identical, cosine min 0.997850 — not
+re-signed rows: the fileless row's cost in GPU time, a check),
 en/00689 7,094 (7,057), en/00043 29,097 and en/00219 41,924 unchanged;
 no part with an unreadable bundle left — the two "present but
 unreadable" were stale entries. 8710eed deployed on Perugia 16:15Z, no
