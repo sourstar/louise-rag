@@ -149,7 +149,26 @@ A WIRE-FORMAT CHANGE: the operator decides; nothing exists until then.
   (2026-10-20):** 09 §9.3 (version 9, `annotates` list, `slicing.container`),
   §9.5 (the three claim types and their keys, the `model` method, "The file
   (B): Parquet"), §9.14 (the three edges), §9.18; 02 §2.10; 05 §5.3, §5.5;
-  03 §3.2 (`model-agreement`). Steps 2–3 (the code) follow; steps 4–5 (the
-  methods over gutenberg against wikidata's vectors) after the wikidata
-  collection exists.
+  03 §3.2 (`model-agreement`). **Step 2a is written (2026-10-20):** Codex
+  GRAPH_VERSION 9 in app/hold/codex.py (`slicing.container` required at 9,
+  `annotates` a tuple in memory — `targets_of`, `target_for`, `container_of`
+  are THE readers — written as an object at 7 and a list at 9; the cut
+  present where declared at 9); app/hold/annotations.py checks the three
+  claim types to the key (`check_claim`, `ends_of`, `identity_key`), pins a
+  chunk end by RE-CUTTING its record with the target's chunker
+  (`_check_chunk`: the chunk exists, hashes to `text_hash`, holds the
+  mention's `surface`), maps an entity's canonical id to its record uid
+  (`entity_uid`, the wikidata id rule), writes the three edges, numbers the
+  claims by `identity_tuple` at 9, and `create` takes several targets
+  (`--annotates`/`--from-snapshot` repeated, comma-separated in the API) and
+  `--container`; every reader of `annotates` (show, the Library card, Ask's
+  facts and works, traverse) reads the list. **Step 2b, Parquet parts, is
+  NOT built:** `slicing.container = "parquet"` is read and validated and
+  REFUSED at create (`cx.refuse_unbuilt_container`) until the writer exists
+  — `pack/records.py` dispatching on the part's suffix, `shard_path` and the
+  snapshot entry's `path` learning the container, `_part_file`, integrity's
+  and promotion's globs, the patch (a Parquet part is fetched whole).
+  Step 3 (the Ask side: the graph index `ClaimIndex.graph` is built, nothing
+  attaches it yet; a community's `state_of` is `unknown`, it pins no record)
+  and steps 4–5 after the wikidata collection exists.
 

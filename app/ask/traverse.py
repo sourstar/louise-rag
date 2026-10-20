@@ -215,19 +215,26 @@ def walk(con, codex, snapshot, start: str, *, relation: str | None = None, depth
     return out
 
 
-def _target_of(root: Path, codex) -> tuple[str, Any] | None:
-    """(name, Codex) of the collection an annotations Codex annotates, held here."""
+def _targets_of(root: Path, codex) -> list[tuple[str, Any]]:
+    """(name, Codex) of each collection an annotations Codex annotates and
+    this peer holds (several at Codex version 9, 09 §9.3)."""
     from app.hold import collection as col
-    want = getattr(getattr(codex, "annotates", None), "collection_id", None)
-    if want is None:
-        return None
-    return next(((n, c) for n, c in col.list_named(root) if c.collection_id == want), None)
+    from app.hold.codex import targets_of
+    want = {t.collection_id for t in targets_of(codex)}
+    if not want:
+        return []
+    return [(n, c) for n, c in col.list_named(root) if c.collection_id in want]
 
 
-def _annotates_plugin(root: Path, codex) -> str | None:
-    """The plugin whose uids an annotations collection's edges join."""
-    t = _target_of(root, codex)
-    return t[1].plugin if t else None
+def _target_of(root: Path, codex) -> tuple[str, Any] | None:
+    """(name, Codex) of the first held collection an annotations Codex annotates."""
+    held = _targets_of(root, codex)
+    return held[0] if held else None
+
+
+def _annotates_plugins(root: Path, codex) -> set[str]:
+    """The plugins whose uids an annotations collection's edges join."""
+    return {c.plugin for _, c in _targets_of(root, codex)}
 
 
 def traverse(id_: str, *, relation: str | None = None, depth: int = 1, collection: str | None = None,
@@ -249,7 +256,7 @@ def traverse(id_: str, *, relation: str | None = None, depth: int = 1, collectio
         targets = [(name, codex)]
     else:
         targets = [(n, c) for n, c in col.list_named(root)]
-        owned = [(n, c) for n, c in targets if c.plugin == prefix or _annotates_plugin(root, c) == prefix]
+        owned = [(n, c) for n, c in targets if c.plugin == prefix or prefix in _annotates_plugins(root, c)]
         targets = owned or targets
     edges: list[dict[str, Any]] = []
     searched = []
@@ -272,9 +279,7 @@ def traverse(id_: str, *, relation: str | None = None, depth: int = 1, collectio
                     # 02 §2.10: an annotations collection's edges join records
                     # of the collection it annotates, so they are resolved
                     # against it — asked for by holding the annotations
-                    target = _target_of(root, codex)
-                    with Elsewhere(root, held + ([target] if target else []),
-                                   tuple(unheld)) as against:
+                    with Elsewhere(root, held + _targets_of(root, codex), tuple(unheld)) as against:
                         edges.extend(walk(con, codex, snapshot, id_, relation=relation,
                                           depth=depth, elsewhere=against))
                 else:

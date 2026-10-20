@@ -473,7 +473,8 @@ def _create_annotations(args: dict[str, Any]) -> dict[str, Any]:
     root = louise._default_root()
     root.mkdir(parents=True, exist_ok=True)
     codex, snap = ann.create(
-        root, args["name"], target_ref=args["annotates"], from_snapshot=args["from_snapshot"],
+        root, args["name"], targets=louise.annotation_targets(args["annotates"], args["from_snapshot"]),
+        container=args.get("container") or "jsonl",
         claims=claims, platform_image=louise.preflight_create({}, args.get("platform_image")),
         title=args.get("title") or None, summary=args.get("summary") or None,
         annotator=args.get("annotator") or None, snapshot_id=args.get("snapshot") or None,

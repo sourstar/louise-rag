@@ -42,7 +42,7 @@ CODEX_VERSION = 5
 #: so inside `collection_id` — changing it does not upgrade a collection, it
 #: names a different one" (§9.3). So 1 and 2 are read forever and never
 #: rewritten.
-CODEX_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8)
+CODEX_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9)
 
 #: THE ENGINE AMENDMENT (0d85f7f; 02 §2.4, 09 §9.3). From this version a
 #: space's encoder is `{weights, engine, label}`: the ENGINE the reference
@@ -114,12 +114,52 @@ ANNOTATIONS_VERSION = 7
 CUT_VERSION = 8
 #: The one value `cut` takes (09 §9.3); "characters" is what its absence means.
 TOKEN_CUT = "tokens"
+
+#: THE GRAPH AMENDMENT (operator, 2026-10-20; 09 §9.3, §9.5, §9.14, §9.18;
+#: docs/notes/gutenberg-graph-amendments.md, A-K1–A-K4). From this version a
+#: Codex declares its record parts' CONTAINER, `slicing.container` —
+#: `"jsonl"`, the zstd-framed lines of every collection so far, or
+#: `"parquet"`, one Parquet file per part (09 §9.5 "The file") — REQUIRED at
+#: this version and an unknown key below it, where it reads as JSONL; an
+#: annotations Codex carries `annotates` as a LIST of targets (gutenberg-graph
+#: annotates gutenberg's text AND wikidata's entities), a list even of one;
+#: and its claims may be of the `mention`, `relation` and `community` types
+#: (app/hold/annotations.py). Written for a Codex that declares one of them
+#: ALONE — a Parquet container, several targets, a graph claim type — so no
+#: Codex, space or `collection_id` already written moves: the annotations
+#: collections of 2026-10-09 stay 7. At this version `space.cut` is present
+#: where declared and absent otherwise (a Parquet collection need not cut by
+#: tokens); `annotates` is present exactly on an annotations Codex (the one
+#: whose `space` is null), a list of at least one target.
+GRAPH_VERSION = 9
+#: The two containers (09 §9.5); absent below GRAPH_VERSION means JSONL.
+JSONL, PARQUET = "jsonl", "parquet"
+CONTAINERS = (JSONL, PARQUET)
+#: What this build WRITES. Parquet parts are declared by the format
+#: (2026-10-20) and their writer is step 2b of the amendments note: a Codex
+#: declaring them is READ (a peer may hold one) and refused at CREATE, as
+#: `record_line` 2 is, rather than written with the other container.
+CONTAINERS_WRITABLE = (JSONL,)
 #: The plugin (uid prefix) of every annotations collection, as `deposit` is
 #: of every deposit collection; its relation types are `annotations:<type>`.
 ANNOTATIONS_PLUGIN = "annotations"
 #: The backend's directory, as a backend engine's `args` write it.
 BACKEND_PLACEHOLDER = "${BACKEND}"
 _BACKEND_PREFIX = BACKEND_PLACEHOLDER + "/"
+
+
+def refuse_unbuilt_container(container: str) -> str:
+    """The container a creator asked for, or the refusal: `validate` reads
+    every declared container, this build writes JSONL alone."""
+    if container not in CONTAINERS:
+        raise CodexError(f"slicing.container is one of {', '.join(CONTAINERS)} (09 §9.5), got "
+                         f"{container!r}")
+    if container not in CONTAINERS_WRITABLE:
+        raise CodexError(
+            f"record parts in {container!r} are declared by 09 §9.5 (2026-10-20) and not yet "
+            f"written by this build (docs/notes/gutenberg-graph-amendments.md, step 2b): "
+            f"declare {JSONL!r}, or wait for the writer")
+    return container
 
 
 def is_backend_args(args: Any) -> bool:
@@ -745,10 +785,14 @@ class Codex:
     #: `None` exactly when `version` is 1 — §9.3: "Version 1 is this
     #: object without `record_line`".
     record_line: int | None = None
-    #: 09 §9.3's `annotates` — present (and non-null) exactly at
-    #: ANNOTATIONS_VERSION, ABSENT from the object below it, so that no
-    #: Codex already written changes a byte.
-    annotates: Annotates | None = None
+    #: 09 §9.3's `annotates` — the TARGETS, as a tuple: present (and
+    #: non-null) exactly at ANNOTATIONS_VERSION, where it is ONE target
+    #: written as an object, and on a GRAPH_VERSION annotations Codex, where
+    #: it is a LIST of targets in a fixed order (amended 2026-10-20); ABSENT
+    #: from the object everywhere else, so that no Codex already written
+    #: changes a byte. A bare `Annotates` is accepted and kept as a 1-tuple,
+    #: so every construction written for one target still reads.
+    annotates: tuple[Annotates, ...] | None = None
 
     def __post_init__(self) -> None:
         """`record_line` follows `version`, so no construction has to spell
@@ -773,6 +817,11 @@ class Codex:
                              f"this build reads "
                              f"{', '.join(str(v) for v in CODEX_VERSIONS)}")
         object.__setattr__(self, "layers", _layers_at(self.layers, self.version))
+        a = self.annotates
+        if isinstance(a, Annotates):
+            object.__setattr__(self, "annotates", (a,))
+        elif a is not None:
+            object.__setattr__(self, "annotates", tuple(a))
 
     # ---- the object ---------------------------------------------------------
 
@@ -822,9 +871,16 @@ class Codex:
             # null, is a different object that no reader accepts.
             out["record_line"] = self.record_line
         if self.version == ANNOTATIONS_VERSION:
-            # ABSENT at every other version, never null: a Codex carrying the
-            # key would be an object nobody else hashes the same (09 §9.18)
-            out["annotates"] = None if self.annotates is None else self.annotates.to_dict()
+            # ABSENT at every other version below GRAPH_VERSION, never null: a
+            # Codex carrying the key would be an object nobody else hashes the
+            # same (09 §9.18); ONE target, written as an object
+            if self.annotates is not None and len(self.annotates) != 1:
+                raise CodexError(f"a version {ANNOTATIONS_VERSION} Codex annotates ONE collection; "
+                                 f"several targets are version {GRAPH_VERSION}'s list (09 §9.3)")
+            out["annotates"] = None if not self.annotates else self.annotates[0].to_dict()
+        elif self.version >= GRAPH_VERSION and self.annotates is not None:
+            # a LIST, even of one target (09 §9.3, amended 2026-10-20)
+            out["annotates"] = [a.to_dict() for a in self.annotates]
         return out
 
     def identity_dict(self) -> dict[str, Any]:
@@ -990,6 +1046,32 @@ def is_annotations(codex: Any) -> bool:
     return getattr(codex, "annotates", None) is not None
 
 
+def targets_of(codex: Any) -> tuple[Annotates, ...]:
+    """The collections an annotations Codex annotates, in the Codex's order
+    (one at ANNOTATIONS_VERSION, a list at GRAPH_VERSION); `()` for any
+    other Codex. THE way to read `annotates`: a reader that takes the field
+    for one object breaks on the first two-target Codex."""
+    a = getattr(codex, "annotates", None)
+    if a is None:
+        return ()
+    # one target as an object: a Codex constructed before 2026-10-20, or a
+    # test double in that shape
+    return tuple(a) if isinstance(a, (tuple, list)) else (a,)
+
+
+def target_for(codex: Any, collection_id: str) -> Annotates | None:
+    """The target entry naming `collection_id`, or None when the Codex does
+    not annotate that collection."""
+    return next((t for t in targets_of(codex) if t.collection_id == collection_id), None)
+
+
+def container_of(codex: Any) -> str:
+    """09 §9.5: the record parts' container — `slicing.container` from
+    GRAPH_VERSION, JSONL below it, where the key is unknown."""
+    slicing = getattr(codex, "slicing", None) or {}
+    return str(slicing.get("container") or JSONL) if isinstance(slicing, dict) else JSONL
+
+
 def corrective_epoch(replaced_codex_id: str) -> str:
     """The epoch that makes a corrective sister's space fresh even when its
     encoder, layers and cleaning equal her mother's (02 §2.7). Her own
@@ -1039,6 +1121,7 @@ def validate(codex: Codex, mother: Codex | None = None) -> None:
         raise CodexError("origin.form records which origin form was taken and why "
                          "(06 §6.4); it is not optional")
 
+    _validate_container(codex)
     if codex.version == ANNOTATIONS_VERSION or codex.annotates is not None:
         _validate_annotations(codex)
         return
@@ -1076,24 +1159,54 @@ def validate(codex: Codex, mother: Codex | None = None) -> None:
 ANNOTATIONS_CHECKS = ("roots", "records", "license", "signature")
 
 
+def _validate_container(codex: Codex) -> None:
+    """09 §9.3, §9.5 (GRAPH_VERSION): `slicing.container` is declared exactly
+    from version 9 — required there, one of the two containers — and an
+    unknown key below it, where a Codex already written reads as JSONL."""
+    slicing = codex.slicing if isinstance(codex.slicing, dict) else {}
+    has = "container" in slicing
+    if codex.version >= GRAPH_VERSION:
+        if not has or slicing["container"] not in CONTAINERS:
+            raise CodexError(
+                f"a version {GRAPH_VERSION} Codex declares its record parts' container, "
+                f"slicing.container {' or '.join(repr(c) for c in CONTAINERS)} (09 §9.3, §9.5); "
+                f"this one says {slicing.get('container') if has else 'nothing'!r}")
+    elif has:
+        raise CodexError(
+            f"slicing.container is carried from Codex version {GRAPH_VERSION} (09 §9.3, amended "
+            f"2026-10-20); a version {codex.version} Codex already written cannot be moved — "
+            f"adding the key names a different collection")
+
+
 def _validate_annotations(codex: Codex) -> None:
-    """02 §2.10's rules for an annotations Codex (09 §9.3, amended 2026-10-09).
+    """02 §2.10's rules for an annotations Codex (09 §9.3, amended 2026-10-09
+    and 2026-10-20).
 
     Every field present, as for any Codex; what differs is fixed here, so
     that two annotators writing the same recipe write the same bytes and no
     annotations Codex can pretend to a space, a lineage or a plan it cannot
-    have."""
-    if codex.version != ANNOTATIONS_VERSION or codex.annotates is None:
+    have. One target at ANNOTATIONS_VERSION; a list of distinct targets at
+    GRAPH_VERSION."""
+    if codex.version not in (ANNOTATIONS_VERSION, GRAPH_VERSION) or not codex.annotates:
         raise CodexError(
-            f"`annotates` is carried exactly at Codex version {ANNOTATIONS_VERSION}, and a "
-            f"version {ANNOTATIONS_VERSION} Codex is an annotations Codex (09 §9.3)")
-    a = codex.annotates
-    if not _DIGEST_RE.match(a.collection_id or ""):
-        raise CodexError("annotates.collection_id is the target's collection_id, "
-                         f"sha256:<64 hex>; got {a.collection_id!r}")
-    if not _SNAPSHOT_ID_RE.match(a.from_snapshot or ""):
-        raise CodexError("annotates.from_snapshot is a target snapshot id, YYYY-MM or "
-                         f"YYYY-Www (09 §9.4); got {a.from_snapshot!r}")
+            f"`annotates` is carried at Codex version {ANNOTATIONS_VERSION} (one target) and "
+            f"{GRAPH_VERSION} (a list of targets), and a version {ANNOTATIONS_VERSION} Codex is "
+            f"an annotations Codex (09 §9.3)")
+    if codex.version == ANNOTATIONS_VERSION and len(codex.annotates) != 1:
+        raise CodexError(f"a version {ANNOTATIONS_VERSION} Codex annotates ONE collection; several "
+                         f"targets are version {GRAPH_VERSION}'s list (09 §9.3, amended 2026-10-20)")
+    seen: set[str] = set()
+    for i, a in enumerate(codex.annotates):
+        where = "annotates" if codex.version == ANNOTATIONS_VERSION else f"annotates[{i}]"
+        if not _DIGEST_RE.match(a.collection_id or ""):
+            raise CodexError(f"{where}.collection_id is the target's collection_id, "
+                             f"sha256:<64 hex>; got {a.collection_id!r}")
+        if not _SNAPSHOT_ID_RE.match(a.from_snapshot or ""):
+            raise CodexError(f"{where}.from_snapshot is a target snapshot id, YYYY-MM or "
+                             f"YYYY-Www (09 §9.4); got {a.from_snapshot!r}")
+        if a.collection_id in seen:
+            raise CodexError(f"{where}: {a.collection_id} is annotated twice; one entry per target")
+        seen.add(a.collection_id)
     if codex.plugin != ANNOTATIONS_PLUGIN:
         raise CodexError(f"an annotations Codex's plugin is {ANNOTATIONS_PLUGIN!r}: its "
                          f"uids and its relation types are `annotations:` (02 §2.10)")
@@ -1323,7 +1436,9 @@ def _validate_encoder_shape(codex: Codex) -> None:
     # THE CUT (09 §9.3, CUT_VERSION): declared exactly at version 8, which is
     # written for it alone; the cut is the encoder's, so its engines are
     # backend engines behind VeGa's wrapper
-    if (sp.cut is not None) != (codex.version == CUT_VERSION):
+    if ((sp.cut is not None and codex.version < CUT_VERSION)
+            or (sp.cut is None and codex.version == CUT_VERSION)):
+        # at GRAPH_VERSION the cut is present where declared (09 §9.3, 2026-10-20)
         raise CodexError(
             f"space.cut is declared exactly in a version {CUT_VERSION} Codex, which is "
             f"written for a space that declares the token cut alone (09 §9.3, §9.18); "
@@ -1740,7 +1855,8 @@ _TOP = ("kind", "version", "descriptive", "plugin", "origin", "toolchain",
 #: 09 §9.3: "Version 1 is this object without `record_line`."
 _TOP_V1 = tuple(k for k in _TOP if k != "record_line")
 #: 09 §9.3, amended 2026-10-09: an annotations Codex (version 7) is this
-#: object WITH `annotates`.
+#: object WITH `annotates`; at GRAPH_VERSION (2026-10-20) the key is present
+#: exactly on an annotations Codex, as a list.
 _TOP_V7 = _TOP + ("annotates",)
 
 
@@ -1762,12 +1878,17 @@ def from_dict(d: dict[str, Any]) -> Codex:
             "§9.3). A Codex already written stays 1 and cannot be moved: "
             "`version` is inside `collection_id`, so adding the key does not "
             "upgrade a collection, it names a different one")
-    _only(d, _TOP_V7 if version == ANNOTATIONS_VERSION else _TOP if version >= 2 else _TOP_V1,
-          "codex")
-    annotations = version == ANNOTATIONS_VERSION
+    graph = version >= GRAPH_VERSION
+    _only(d, (_TOP_V7 if version == ANNOTATIONS_VERSION or (graph and "annotates" in d)
+              else _TOP if version >= 2 else _TOP_V1), "codex")
+    annotations = version == ANNOTATIONS_VERSION or (graph and "annotates" in d)
     if (d["space"] is None or d["work"] is None) and not annotations:
         raise CodexError(f"space and work are null only on an annotations Codex "
-                         f"(version {ANNOTATIONS_VERSION}, 09 §9.3)")
+                         f"(version {ANNOTATIONS_VERSION}, or {GRAPH_VERSION} with `annotates`; "
+                         f"09 §9.3)")
+    if graph and annotations and d["space"] is not None:
+        raise CodexError(f"a version {GRAPH_VERSION} Codex carries `annotates` exactly when it is "
+                         f"an annotations Codex, whose space is null (09 §9.3, amended 2026-10-20)")
 
     record_line = d.get("record_line")
     if version >= 2 and record_line not in RECORD_LINES:
@@ -1785,10 +1906,11 @@ def from_dict(d: dict[str, Any]) -> Codex:
         sp = _only(d["space"], ("encoder", "dim", "dtype", "ctx", "pooling",
                                 "normalise", "query", "tolerance", "calibration",
                                 "envelope", "epoch", "evaluation")
-                   + (("cut",) if version >= CUT_VERSION else ()), "space")
+                   + (("cut",) if version == CUT_VERSION or (graph and "cut" in d["space"]) else ()),
+                   "space")
         # 09 §9.3: `cut` from version 8, required there; below it an unknown
-        # key, which `_only` has refused
-        if version >= CUT_VERSION and sp.get("cut") != TOKEN_CUT:
+        # key, which `_only` has refused; at GRAPH_VERSION present where declared
+        if "cut" in sp and sp.get("cut") != TOKEN_CUT:
             raise CodexError(f"a version {CUT_VERSION} Codex's space declares its cut, "
                              f"\"cut\": \"{TOKEN_CUT}\" (09 §9.3); this one says "
                              f"{sp.get('cut')!r}")
@@ -1803,12 +1925,20 @@ def from_dict(d: dict[str, Any]) -> Codex:
                 f"{'its ENGINE — {weights, engine, label}' if version >= ENGINE_VERSION else 'its IMAGE — {image, weights, label}'}"
                 f" (09 §9.3); this one carries the other shape")
     wk = None if d["work"] is None else _only(d["work"], ("tokens", "per"), "work")
-    an = None
-    if annotations:
+    an: list[dict[str, Any]] | None = None
+    if annotations and not graph:
         if not isinstance(d["annotates"], dict):
             raise CodexError(f"a version {ANNOTATIONS_VERSION} Codex is an annotations Codex "
                              f"and names what it annotates (09 §9.3)")
-        an = _only(d["annotates"], ("collection_id", "from_snapshot"), "annotates")
+        an = [_only(d["annotates"], ("collection_id", "from_snapshot"), "annotates")]
+    elif annotations:
+        # 09 §9.3, amended 2026-10-20: a LIST of targets, at least one, even of one
+        if not isinstance(d["annotates"], list) or not d["annotates"]:
+            raise CodexError(f"a version {GRAPH_VERSION} annotations Codex carries `annotates` as a "
+                             f"list of targets, at least one (09 §9.3, amended 2026-10-20); got "
+                             f"{type(d['annotates']).__name__}")
+        an = [_only(t, ("collection_id", "from_snapshot"), f"annotates[{i}]")
+              if isinstance(t, dict) else _bad_target(i, t) for i, t in enumerate(d["annotates"])]
     va = _only(d["validation"], ("checks", "sample", "required"), "validation")
     li = _only(d["license"], ("class", "terms_sha256"), "license")
     up = _only(d["update"], ("cadence", "day", "grace_days"), "update")
@@ -1850,8 +1980,14 @@ def from_dict(d: dict[str, Any]) -> Codex:
         profile=d["profile"],
         version=version,
         record_line=record_line,
-        annotates=None if an is None else Annotates(an["collection_id"], an["from_snapshot"]),
+        annotates=None if an is None else tuple(Annotates(t["collection_id"], t["from_snapshot"])
+                                                 for t in an),
     )
+
+
+def _bad_target(i: int, t: Any) -> dict[str, Any]:
+    raise CodexError(f"annotates[{i}] is {{collection_id, from_snapshot}} (09 §9.3), got "
+                     f"{type(t).__name__}")
 
 
 def _layer(l: dict[str, Any], i: int, version: int = CODEX_VERSION) -> Layer:

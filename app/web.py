@@ -292,12 +292,14 @@ def _ask_annotations() -> list[dict]:
     amended 2026-10-19): each with the local name of the collection it
     annotates, so the chip can say what it is about. Never raises: a
     collection whose target this node does not hold is still listed."""
+    from .hold.codex import targets_of
     served = {getattr(c.codex, "collection_id", None): c.name for c in collections_mod.load_all()}
     out = []
     for a in collections_mod.load_annotations():
-        target = a.codex.annotates
-        out.append({"name": a.name, "target": served.get(target.collection_id),
-                    "from_snapshot": target.from_snapshot,
+        targets = targets_of(a.codex)
+        names = [served.get(t.collection_id) for t in targets]
+        out.append({"name": a.name, "target": " + ".join(n for n in names if n) or None,
+                    "from_snapshot": ", ".join(t.from_snapshot for t in targets),
                     "title": a.title or a.codex.descriptive.title})
     return out
 
@@ -1807,19 +1809,23 @@ def _annotations_shelf(collection, served: list) -> dict:
     stage, no encoder, no profile: none applies. Never raises — a SHARD
     that cannot be read says so on the card."""
     from .hold import collection as col
+    from .hold.codex import targets_of
     from .share import seeder
     codex = collection.codex
-    target = codex.annotates
+    targets = targets_of(codex)
+    target = targets[0]
     root = collections_mod.louise_root() / "collections"
-    # the target's local name: a collection the worker serves, else one the
+    # each target's local name: a collection the worker serves, else one the
     # node holds without serving (`show` reads the tree, 09 §9.3)
-    target_name = next((c.name for c in served
-                        if getattr(c.codex, "collection_id", None) == target.collection_id), None)
-    if target_name is None:
+    names = [next((c.name for c in served
+                   if getattr(c.codex, "collection_id", None) == t.collection_id), None) for t in targets]
+    if any(n is None for n in names):
         try:
-            target_name = col.show(root, collection.name)["annotates"]["target"]
+            shown = col.show(root, collection.name)["targets"]
+            names = [n or s["target"] for n, s in zip(names, shown)]
         except Exception:  # noqa: BLE001
-            target_name = None
+            pass
+    target_name = names[0]
     snapshot_id, claims, note = None, None, None
     try:
         snap = seeder.current_snapshot(col.shard_dir_of(root, collection.name))
@@ -1837,6 +1843,9 @@ def _annotations_shelf(collection, served: list) -> dict:
         "target": target_name,
         "target_id": target.collection_id,
         "from_snapshot": target.from_snapshot,
+        # every target (09 §9.3, amended 2026-10-20: a list at version 9)
+        "targets": [{"target": n, "target_id": t.collection_id, "from_snapshot": t.from_snapshot}
+                    for t, n in zip(targets, names)],
         "snapshot": snapshot_id,
         "claims": claims,
         "note": note,

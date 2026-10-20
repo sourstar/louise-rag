@@ -71,7 +71,7 @@ louise hold
                                                                        (amended 2026-10-08)
               create deposit --name N [--encoder URL [--api A] [--embed-model M] [--query-model M]] [--space-from CODEX | --space FILE]
                                                                        a deposit collection (02 §2.9): no recipe; the node's deposit encoder unless one is named
-              create annotations --annotates C --from-snapshot S --claims FILE --name N [--title T] [--summary S] [--annotator A] [--snapshot ID] [--dry-run]
+              create annotations --annotates C --from-snapshot S [--annotates C2 --from-snapshot S2 …] --claims FILE --name N [--title T] [--summary S] [--annotator A] [--snapshot ID] [--container jsonl|parquet] [--dry-run]
                                                                        an annotations collection (02 §2.10; amended 2026-10-09): no recipe, no encoder; each claim's
                                                                        target hashes read from C's snapshot S; writes the parts, the relations, the first snapshot
                                                                        (signed with the node's key when there is one) and the file; prints its id. `--dry-run`

@@ -237,12 +237,15 @@
 <div class="panel" data-collection="{{ a.name }}" data-kind="annotations">
   <h2>{{ a.name }} <span class="badge">annotations</span></h2>
   <div>
-    {% if a.target %}
-    <span class="badge lapis" title="target collection_id {{ a.target_id }}">annotates: {{ a.target }}</span>
+    {# one badge per target: several at Codex version 9 (02 §2.10, amended 2026-10-20) #}
+    {% for t in a.targets|default([a], true) %}
+    {% if t.target %}
+    <span class="badge lapis" title="target collection_id {{ t.target_id }}">annotates: {{ t.target }}</span>
     {% else %}
-    <span class="badge brass" title="{{ a.target_id }}">annotates a collection this node does not hold</span>
+    <span class="badge brass" title="{{ t.target_id }}">annotates a collection this node does not hold</span>
     {% endif %}
-    <span class="badge brass" title="the target snapshot the claims were checked against; a claim is attached to no answer read from an earlier one (02 §2.10)">from snapshot: {{ a.from_snapshot }}</span>
+    <span class="badge brass" title="the target snapshot the claims were checked against; a claim is attached to no answer read from an earlier one (02 §2.10)">from snapshot: {{ t.from_snapshot }}</span>
+    {% endfor %}
     {% if a.license.class %}
     <span class="badge {{ 'err' if a.license.needs_ack else 'ok' }}">license: <span class="lic-{{ a.license.class }}">{{ a.license.class }}</span>{{ ' — ack needed' if a.license.needs_ack else (' ✓' if a.license.ok else '') }}</span>
     {% endif %}

@@ -349,7 +349,7 @@ CLAIMS_MAX_BYTES = 256 * 1024 * 1024
 async def hold_collection_create_annotations(
         request: Request, name: str = "", annotates: str = "", from_snapshot: str = "",
         title: str = "", summary: str = "", annotator: str = "", snapshot: str = "",
-        platform_image: str = "", dry_run: bool = False):
+        platform_image: str = "", dry_run: bool = False, container: str = "jsonl"):
     """`louise hold collection create annotations` as one route (07 §7.4;
     02 §2.10), the Library's *new collection* of the annotations type
     (2026-10-19). The flags are QUERY parameters and the claims file is the
@@ -389,6 +389,8 @@ async def hold_collection_create_annotations(
                                  "JSON claim per line)")
     root = louise._default_root()
     try:
+        # several targets: comma-separated, one snapshot per target (02 §2.10, 2026-10-20)
+        targets = louise.annotation_targets(annotates, from_snapshot)
         if not dry_run:
             louise.preflight_create({}, platform_image or None)
             from .hold import collection as hold_col
@@ -397,14 +399,14 @@ async def hold_collection_create_annotations(
                 raise CodexError(f"a collection named {name!r} is already held: a name holds one "
                                  f"collection for its life (07 §7.8)")
         preview = await run_in_threadpool(
-            ann.preview, root, target_ref=annotates, from_snapshot=from_snapshot,
+            ann.preview, root, targets=targets, container=container.strip() or "jsonl",
             claims=data, annotator=annotator or None)
     except (ann.AnnotationsError, CodexError, ValueError, FileNotFoundError) as e:
         raise HTTPException(409, str(e)) from None
     cli = (f"louise hold collection create annotations --annotates {annotates} "
            f"--from-snapshot {from_snapshot} --claims FILE --name {name or '<name>'}")
     for flag, value in (("--title", title), ("--summary", summary), ("--annotator", annotator),
-                        ("--snapshot", snapshot)):
+                        ("--snapshot", snapshot), ("--container", container if container != "jsonl" else "")):
         if value:
             cli += f" {flag} {value!r}"
     if dry_run:
@@ -415,6 +417,7 @@ async def hold_collection_create_annotations(
     saved.write_bytes(data)
     job_id = jobs.submit(jobs.CREATE_ANNOTATIONS, {
         "name": name, "annotates": annotates, "from_snapshot": from_snapshot,
+        "container": container.strip() or "jsonl",
         "title": title, "summary": summary, "annotator": annotator,
         "snapshot": snapshot, "platform_image": platform_image or None,
         "claims_path": str(saved), "cli": cli})

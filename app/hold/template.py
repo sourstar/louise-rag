@@ -263,10 +263,30 @@ def _facet(d: dict[str, Any]) -> Facet:
 
 def _check_slicing(block: dict[str, Any]) -> dict[str, Any]:
     """A slice name that a `<space>` segment could also be would give two
-    members one name (09 §9.16), and the `unknown` slice is a slice."""
+    members one name (09 §9.16), and the `unknown` slice is a slice. A
+    `container` (09 §9.5, 2026-10-20) is one of the two and one this build
+    writes — a recipe declaring one makes a GRAPH_VERSION Codex."""
     if "unknown" in block:
         check_slice(str(block["unknown"]))
+    if "container" in block:
+        codex_mod.refuse_unbuilt_container(str(block["container"]))
     return block
+
+
+def _version_with_container(version: int, slicing: dict[str, Any]) -> int:
+    """09 §9.3: a Codex declaring `slicing.container` is written at
+    GRAPH_VERSION, which keeps every space id a version-5-or-later Codex
+    has (the layers carry `input`, the cut is present where declared); a
+    `--space-from` copy of a space below the input-forms amendment cannot
+    carry one without moving that space, and is refused."""
+    if "container" not in slicing:
+        return version
+    if version < codex_mod.INPUT_VERSION:
+        raise TemplateError(
+            f"slicing.container needs Codex version {codex_mod.GRAPH_VERSION}, and this space is copied "
+            f"from a version {version} Codex whose layers carry no `input`: raising it would move the "
+            f"space (02 §2.7). Drop the container or do not copy the space")
+    return codex_mod.GRAPH_VERSION
 
 
 # --------------------------------------------------------------------------
@@ -539,7 +559,9 @@ def from_recipe(plugin: str, recipe: dict[str, Any], *,
                 if "facets" in recipe else default_facets(source)),
         credits=build_credits(source, credits, _embedding),
         profile=recipe.get("profile", default_profile(source)),
-        version=codex_mod.written_version(space, _version_for(space_version, image_shaped)),
+        version=_version_with_container(
+            codex_mod.written_version(space, _version_for(space_version, image_shaped)),
+            recipe.get("slicing") or {}),
         record_line=_record_line(recipe),
     )
     _refuse_a_loosened_class(source, codex)

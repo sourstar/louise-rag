@@ -271,7 +271,7 @@ number written as a decimal string is marked *decimal*.
 | field | type | required | meaning |
 |---|---|---|---|
 | `kind` | `"louise-codex"` | yes | |
-| `version` | `6` · `7` · `8` · `9` | yes | the Codex format version (§9.18). Version 9 (*amended 2026-10-20*, docs/notes/gutenberg-graph-amendments.md, operator's decisions A-K1–A-K4) is this object with `slicing.container` (below) and, for an annotations Codex, `annotates` as a LIST of targets; it is written for a Codex that declares `container: "parquet"`, for an annotations Codex with more than one target, and for one whose claims use the `mention`, `relation` or `community` type — and for no other, so no Codex, space or `collection_id` already written moves (the two annotations collections of 2026-10-09 keep version 7 and their bytes). A version-9 annotations Codex writes `annotates` as a list even of one target. Version 8 is written for a space that declares the token cut (`cut`, below) alone (*amended 2026-10-18*, docs/notes/char-cut-truncation.md): it is the version-6 object with `space.cut`, its engines backend engines, and no other Codex is ever written at 8, so no Codex, space or `collection_id` already written moves; it is not an annotations Codex and carries no `annotates`. Version 7 is written for an ANNOTATIONS Codex alone (02 §2.10; *amended 2026-10-09*, docs/notes/annotation-collections.md): it is this object with `annotates`, `space` and `work` null and `layers` `[]`, and no other Codex is ever written at 7, so no Codex, space or `collection_id` already written moves. Version 5 is this object with no backend engine (below, *the engine*), and a Codex none of whose engines is a backend engine is written at 5, so no Codex, space, engine or `collection_id` already written moves and an argv engine or one RAGE stated keeps its bytes (*amended 2026-10-08*, docs/notes/vega.md); `space_from` copies a version-5 `space` into a version-5 Codex unchanged. Version 4 is this object with no layer carrying `input` — a layer of a version-4 Codex reads as `{"form": "text"}`, but writing the key into it would change its bytes and so its `collection_id` and `space_id`, so a version-4 Codex keeps both; `space_from` copying from a Codex below version 5 writes version 4, so that the copy's `space_id` is the source's (*amended 2026-10-08*, docs/notes/input-forms.md). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
+| `version` | `6` · `7` · `8` · `9` | yes | the Codex format version (§9.18). Version 9 (*amended 2026-10-20*, docs/notes/gutenberg-graph-amendments.md, operator's decisions A-K1–A-K4) is this object with `slicing.container` (below) and, for an annotations Codex, `annotates` as a LIST of targets; it is written for a Codex that declares `container: "parquet"`, for an annotations Codex with more than one target, and for one whose claims use the `mention`, `relation` or `community` type — and for no other, so no Codex, space or `collection_id` already written moves (the two annotations collections of 2026-10-09 keep version 7 and their bytes). A version-9 annotations Codex writes `annotates` as a list even of one target, and a version-9 Codex carries `annotates` exactly when it is an annotations Codex (its `space` null); its `space.cut` is present where the token cut is declared and absent otherwise, since a Parquet collection need not cut by tokens. Version 8 is written for a space that declares the token cut (`cut`, below) alone (*amended 2026-10-18*, docs/notes/char-cut-truncation.md): it is the version-6 object with `space.cut`, its engines backend engines, and no other Codex is ever written at 8, so no Codex, space or `collection_id` already written moves; it is not an annotations Codex and carries no `annotates`. Version 7 is written for an ANNOTATIONS Codex alone (02 §2.10; *amended 2026-10-09*, docs/notes/annotation-collections.md): it is this object with `annotates`, `space` and `work` null and `layers` `[]`, and no other Codex is ever written at 7, so no Codex, space or `collection_id` already written moves. Version 5 is this object with no backend engine (below, *the engine*), and a Codex none of whose engines is a backend engine is written at 5, so no Codex, space, engine or `collection_id` already written moves and an argv engine or one RAGE stated keeps its bytes (*amended 2026-10-08*, docs/notes/vega.md); `space_from` copies a version-5 `space` into a version-5 Codex unchanged. Version 4 is this object with no layer carrying `input` — a layer of a version-4 Codex reads as `{"form": "text"}`, but writing the key into it would change its bytes and so its `collection_id` and `space_id`, so a version-4 Codex keeps both; `space_from` copying from a Codex below version 5 writes version 4, so that the copy's `space_id` is the source's (*amended 2026-10-08*, docs/notes/input-forms.md). Version 3 is this object with no engine carrying `options` — so a version-3 `space` is a valid version-4 one, and `space_from` copies it into a version-4 Codex unchanged (operator, 2026-10-03). Version 2 is this object with `space.encoder`, and a non-null `space.query.encoder`, as `{image, weights, label}` — the engine's image digest alone in place of the engine — that `image` inside `space_id`, and no `space.calibration.query_vectors`; version 1 is version 2 without `record_line`. A Codex already written stays at its version and cannot be moved, because `version` is inside the canonical bytes and so inside `collection_id` — changing it does not upgrade a collection, it names a different one. Version 2 is WRITTEN in one case only: a Codex whose `space` is copied with `space_from` (02 §2.7) from a version-2 Codex keeps that shape and that version, so its `space_id` is the source's — in the shape of version 3 and later the image leaves `space_id` and the copy would be another space, every vector of the source inadmissible to it. A version-2 space is never stated anew (operator, 2026-09-21) |
 | `descriptive` | object | yes | `{title: string, summary: string}` — for people. The one key outside `collection_id`; covered by `codex_hash`; displayed, never used to sort, merge or resolve (08 §8.2). `title` is one line; `summary` is one short paragraph. Neither may be empty |
 | `plugin` | string | yes | the plugin's `source_id` (06 §6.1); the uid prefix |
 | `origin` | object | yes | the origin block, below |
@@ -350,7 +350,7 @@ names).
 | `<key>` | object | one per key | for a year key: `{field, bins}` — `field` names the record field read (`date`), `bins` is the list below; for an id-range key: `{field, bin: integer}` — the record's `native_id` divided by `bin`; for a language key: `{field: "lang"}` |
 | `unknown` | string | yes | the slice a record joins when the key cannot be read: `"year=unknown"` |
 | `shard_records` | integer | yes | records per part: 30,000 for PubMed, 2,000 for Wikipedia, 50 for Gutenberg; 1,000,000 for a claims collection in Parquet (below) |
-| `container` | `"jsonl"` · `"parquet"` | version 9 | the record parts' file form (§9.5 "The file"): the zstd-framed JSONL of every collection so far, or one Parquet file per part. ABSENT, never null, below version 9, and read as `"jsonl"`; written at version 9 for every collection kind that declares it (*amended 2026-10-20*, operator: Parquet parts offered to every collection, not to annotations collections alone). Inside `collection_id`: the container is part of what a part's bytes are, though not of what its records are — `records_root` does not depend on it |
+| `container` | `"jsonl"` · `"parquet"` | version 9 | the record parts' file form (§9.5 "The file"): the zstd-framed JSONL of every collection so far, or one Parquet file per part. ABSENT, never null, below version 9, where a Codex reads as `"jsonl"`; REQUIRED at version 9, which is written for every collection kind that declares it (*amended 2026-10-20*, operator: Parquet parts offered to every collection, not to annotations collections alone). Inside `collection_id`: the container is part of what a part's bytes are, though not of what its records are — `records_root` does not depend on it |
 | `order` | `"bytes"` · `"numeric"` | yes | how records sort within a slice: UTF-8 byte order of `native_id`, or integer order of it |
 
 The `bins` grammar, evaluated in list order over a year `Y`: `"<N"` —
@@ -907,7 +907,7 @@ The claim, an object with exactly these keys:
 | `evidence` | object | what the method matched on; method-defined, no floats |
 | `confidence` | decimal | its maker's confidence, `0` to `1` |
 | `contributor` | string | who makes the claim |
-| `subject_hash`, `object_hash` | BLAKE2b-128 | the two records' `content_hash` in `target_snapshot`, read from the parts that snapshot lists when the claim is written. A claim about a record that snapshot does not hold is refused. For a chunk end, the hash of the chunk's RECORD; the chunk's own `text_hash` is in the end itself. For a `community`, `object_hash` is null |
+| `subject_hash`, `object_hash` | BLAKE2b-128 | the two records' `content_hash` in `target_snapshot`, read from the parts that snapshot lists when the claim is written. A claim about a record that snapshot does not hold is refused. For a chunk end, the hash of the chunk's RECORD; the chunk's own `text_hash` is in the end itself. For a `community` BOTH are null — it has no record at either end; its members are checked held when it is written and not pinned |
 | `target_snapshot` | snapshot id | the annotated collection's snapshot the claim was checked against; the first is the Codex's `annotates.from_snapshot`. With several targets (version 9) the snapshot of the target the SUBJECT belongs to; the object's target snapshot is the Codex's `annotates` entry for it |
 
 One claim per pair and type. A `same-work` pair is the same claim either
@@ -929,28 +929,8 @@ the origin (04 §4.4) and is never a member. The `records` check
 recomputes `content_hash` only where the text is; on a pointer part it
 checks the presence and form of the two hashes and nothing else.
 
-**The file (B): Parquet** (*amended 2026-10-20*, operator's decision A-K4,
-docs/notes/gutenberg-graph-amendments.md; a Codex whose
-`slicing.container` is `"parquet"`, version 9, §9.3). At 10⁸–10⁹ claims a
-JSONL part of 50,000 records is tens of thousands of parts, and the
-snapshot's `shards` list alone is hundreds of megabytes every peer reads.
-A Parquet part is `<NNNNN>.parquet` beside the record parts' path rule
-above: one row per record in record order, one column per key of the
-record line in the line's key order, every nested value (`creators`,
-`subjects`, `keys`, `extra`, `sections`) as its canonical JSON text (§9.1)
-in a string column, so that the LINE is a pure function of the row;
-zstd-compressed columns; row groups of 1,000 records; the row group
-metadata (its first row's `uid`) is the seek index, so there is no
-skippable frame. `records_root` and `root` are computed exactly as for a
-JSONL part, over the canonical line bytes rendered from each row — a
-Parquet part and a JSONL part of the same records have the same
-`records_root`, because the hashes never depended on the container. The
-`records` check reads either; `hold records show` renders lines from
-either. Offered to every collection kind, chosen per collection in its
-Codex and fixed for its life.
-
-**The file (A): zstd frames**, every collection so far. The lines are
-concatenated in record order and compressed
+**The file (A): zstd frames**, every collection so far, and every Codex
+below version 9. The lines are concatenated in record order and compressed
 as independent zstd frames of 1,000 records each (the last frame
 shorter), zstd 1.5.x at level 9 as pinned by the platform image, no
 dictionary, no checksum flag, content size written in each frame header.
@@ -977,6 +957,27 @@ header included), so a reader takes the last 8 bytes, seeks back
  "frames": [[offset, csize, rsize, n, first_uid], …],     -- absolute file offset, compressed and raw sizes, lines, first uid
  "uids": {uid: [frame, line], …}}                          -- in record order
 ```
+
+**The file (B): Parquet** (*amended 2026-10-20*, operator's decision A-K4,
+docs/notes/gutenberg-graph-amendments.md; a Codex whose
+`slicing.container` is `"parquet"`, version 9, §9.3). At 10⁸–10⁹ claims a
+JSONL part of 50,000 records is tens of thousands of parts, and the
+snapshot's `shards` list alone is hundreds of megabytes every peer reads.
+A Parquet part is `<NNNNN>.parquet` beside the record parts' path rule
+above: one row per record in record order, one column per key of the
+record line in the line's key order, every nested value (`creators`,
+`subjects`, `keys`, `extra`, `sections`) as its canonical JSON text (§9.1)
+in a string column, so that the LINE is a pure function of the row;
+zstd-compressed columns; row groups of 1,000 records; the row group
+metadata (its first row's `uid`) is the seek index, so there is no
+skippable frame. `records_root` is computed exactly as for a JSONL part —
+over the records' `content_hash` values (*Roots*, below) — so a Parquet
+part and a JSONL part of the same records have the same `records_root`:
+the record hashes never depended on the container. `root` is the pieces
+root of the Parquet file's bytes, as of any stored file. The `records`
+check reads either container; `hold records show` renders the §9.5 line
+from a row. Offered to every collection kind, chosen per collection in its
+Codex and fixed for its life.
 
 **Roots.** `root` is the BitTorrent v2 pieces root of the stored file
 (BEP 52): leaves are SHA-256 of consecutive 16 KiB blocks of the file,

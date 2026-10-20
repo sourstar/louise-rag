@@ -284,6 +284,22 @@ recorded in the report, not a refusal (03 §3.5 amended;
 structural T0 failure still refuse. The four parts re-ladder at the
 publisher's next pass after the deploy.
 
+### 2026-10-20: gutenberg-graph, step 2a — Codex version 9, the three claim types, several targets
+
+Built on step 1's amendments: `app/hold/codex.py` reads and writes version 9
+(`slicing.container`, `annotates` as a list — `targets_of` is the one reader),
+`app/hold/annotations.py` checks and pins `mention`, `relation` and
+`community` claims (a chunk end re-cut with the target's chunker and
+compared to its `text_hash`; an entity's canonical id mapped to its record
+through the plugin's id rule), writes 09 §9.14's three edges and takes
+several targets at create (CLI, API, job, Library card). Parquet parts (step
+2b) are declared, read and refused at create until their writer exists.
+Nothing already written moves: a one-target JSONL collection of the two
+2026-10-09 types is still version 7, byte for byte
+([gutenberg-graph-amendments.md](gutenberg-graph-amendments.md), "Decided").
+Tests: tests/hold/test_annotations.py (+6), test_codex.py and
+test_backend_engine.py (version 10 is the unknown one now).
+
 ### 2026-10-20: gutenberg-graph, step 1 — the specification amendments written
 
 The operator's decisions of the day (two targets, Parquet parts for every

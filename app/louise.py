@@ -206,8 +206,10 @@ def cmd_create_annotations(a) -> int:
     if a.recipe:
         raise CodexError("create annotations takes no --recipe: its Codex is fixed by 02 §2.10 "
                          "and named by the flags")
+    targets = annotation_targets(a.annotates, a.from_snapshot)
+    container = getattr(a, "container", None) or "jsonl"
     if getattr(a, "dry_run", False):
-        _print(ann.preview(a.root, target_ref=a.annotates, from_snapshot=a.from_snapshot,
+        _print(ann.preview(a.root, targets=targets, container=container,
                            claims=Path(a.claims).read_bytes(), annotator=a.annotator))
         return 0
     key = None
@@ -218,12 +220,29 @@ def cmd_create_annotations(a) -> int:
         print("no node key: the snapshot is written unsigned, and `signature` stays "
               "inconclusive until a key signs it", file=sys.stderr)
     codex, snap = ann.create(
-        a.root, a.name, target_ref=a.annotates, from_snapshot=a.from_snapshot,
+        a.root, a.name, targets=targets, container=container,
         claims=Path(a.claims).read_bytes(), platform_image=preflight_create({}, a.platform_image),
         title=a.title, summary=a.summary, annotator=a.annotator, snapshot_id=a.snapshot,
         key=key, now=_utc_now(), log=lambda m: print(m, file=sys.stderr))
     print(codex.collection_id)
     return 0
+
+
+def annotation_targets(annotates, from_snapshot) -> list[tuple[str, str]]:
+    """`--annotates C --from-snapshot S`, repeated once per target (02 §2.10,
+    amended 2026-10-20), as (collection, snapshot) pairs in the order given;
+    a comma-separated value is the API's spelling of the same list."""
+    def items(v) -> list[str]:
+        if v is None:
+            return []
+        parts = v if isinstance(v, (list, tuple)) else [v]
+        return [x.strip() for p in parts for x in str(p).split(",") if x.strip()]
+    refs, snaps = items(annotates), items(from_snapshot)
+    if len(refs) != len(snaps):
+        raise CodexError(f"create annotations names {len(refs)} collection(s) with --annotates and "
+                         f"{len(snaps)} snapshot(s) with --from-snapshot: one --from-snapshot per "
+                         f"--annotates, in the same order (02 §2.10)")
+    return list(zip(refs, snaps))
 
 
 def cmd_create_deposit(a) -> int:
@@ -3802,11 +3821,16 @@ def build_parser() -> argparse.ArgumentParser:
                         "records, whose sha256 the recipe names as space.calibration.set "
                         "(09 §9.12); the member carries it")
     # `create annotations` (02 §2.10): claims about another collection's records
-    p.add_argument("--annotates", default=None, metavar="COLLECTION",
-                   help="create annotations: the collection the claims are about (id, prefix or name)")
-    p.add_argument("--from-snapshot", default=None, dest="from_snapshot", metavar="ID",
+    p.add_argument("--annotates", default=None, metavar="COLLECTION", action="append",
+                   help="create annotations: the collection the claims are about (id, prefix or name); "
+                        "repeat for several targets (02 §2.10, amended 2026-10-20), each with its "
+                        "own --from-snapshot in the same order")
+    p.add_argument("--from-snapshot", default=None, dest="from_snapshot", metavar="ID", action="append",
                    help="create annotations: the target snapshot the claims are checked against "
-                        "and hold from (the Codex's annotates.from_snapshot)")
+                        "and hold from (the Codex's annotates.from_snapshot); one per --annotates")
+    p.add_argument("--container", default=None, choices=("jsonl", "parquet"),
+                   help="create annotations: the record parts' container (09 §9.5, 2026-10-20); "
+                        "jsonl unless said, and parquet is declared but not yet written")
     p.add_argument("--claims", default=None, metavar="FILE",
                    help="create annotations: JSON Lines, one claim per line (09 §9.5, amended "
                         "2026-10-09)")

@@ -131,8 +131,9 @@ def _usable(collection, annotations: Iterable | None) -> list:
     if codex is None:
         return []
     from app.ask import annotations as facts
+    from app.hold.codex import target_for
     held = facts._held(annotations)
-    return [a for a in held if a.codex.annotates.collection_id == codex.collection_id
+    return [a for a in held if target_for(a.codex, codex.collection_id) is not None
             and facts._withheld(a) is None]
 
 
@@ -157,8 +158,9 @@ def work_groups(collection, uids: Sequence[str], *, root: Path | None = None,
     except Exception:   # noqa: BLE001 — no snapshot named: no claim applies (05 §5.3)
         snap = None
     read = snap.snapshot_id if snap is not None else None
+    from app.hold.codex import target_for
     indexes = [ann.index_of(col.shard_dir_of(root, a.name)) for a in usable
-               if ann.applies_from(a.codex.annotates.from_snapshot, read)]
+               if ann.applies_from(target_for(a.codex, collection.codex.collection_id).from_snapshot, read)]
     if not indexes:
         return {}, {}
     parent: dict[str, str] = {}

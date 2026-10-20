@@ -1092,19 +1092,35 @@ def show(root: Path, ref: str) -> dict[str, Any]:
         "refused": None,
         # 02 §2.10: what an annotations collection makes claims about, and the
         # target snapshot they hold from; null on every other collection
+        # the FIRST target as the 2026-10-09 object, `targets` every one in the
+        # Codex's order (09 §9.3, amended 2026-10-20: a list at version 9)
         "annotates": (None if codex.annotates is None else
-                      {**codex.annotates.to_dict(), "target": _target_name(root, codex)}),
+                      {**codex.annotates[0].to_dict(), "target": _target_names(root, codex)[0]}),
+        "targets": [{**t.to_dict(), "target": n}
+                    for t, n in zip(codex.annotates or (), _target_names(root, codex))],
         "codex": json.loads(codex.canonical()),
     }
 
 
-def _target_name(root: Path, codex: Codex) -> str | None:
-    """The local name of the collection an annotations Codex annotates, when
-    this peer holds it."""
+def _target_names(root: Path, codex: Codex) -> list[str | None]:
+    """The local names of the collections an annotations Codex annotates,
+    in its order — None for one this peer does not hold."""
+    from .codex import targets_of
+    wanted = [t.collection_id for t in targets_of(codex)]
+    if not wanted:
+        return []
+    names: dict[str, str] = {}
     for name, held in _held(root):
-        if held.collection_id == codex.annotates.collection_id:
-            return name
-    return None
+        if held.collection_id in wanted:
+            names[held.collection_id] = name
+    return [names.get(cid) for cid in wanted]
+
+
+def _target_name(root: Path, codex: Codex) -> str | None:
+    """The local name of the (first) collection an annotations Codex
+    annotates, when this peer holds it."""
+    names = _target_names(root, codex)
+    return names[0] if names else None
 
 
 def migrate(root: Path, name: str, *, apply: bool = False) -> dict:

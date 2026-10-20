@@ -19,9 +19,9 @@ from tests.hold.conftest import KEY, NOW, PLATFORM, pubmed
 TARGET_SNAPSHOT = "2026-08"
 
 
-def a_target(root: Path, name: str = "pubmed", texts=("one", "two", "three", "four")):
+def a_target(root: Path, name: str = "pubmed", texts=("one", "two", "three", "four"), **over):
     """A held target: a green Codex, one record part, a snapshot."""
-    target = col.create(root, pubmed(license=License("green", None)), name=name)
+    target = col.create(root, pubmed(license=License("green", None), **over), name=name)
     d = col.shard_dir_of(root, name)
     records = []
     for i, t in enumerate(texts, 1):
@@ -212,7 +212,7 @@ def test_a_claim_about_a_record_the_target_snapshot_does_not_hold_refuses_the_fi
         ann.create(tmp_path, "x", target_ref="pubmed", from_snapshot="2026-07",
                    claims=claims_file(a_claim()), platform_image=PLATFORM, log=lambda m: None)
     codex, _ = make(tmp_path, claims=claims_file(a_claim(subject_hash=hashes["pubmed:1"])))
-    assert codex.annotates.from_snapshot == TARGET_SNAPSHOT
+    assert cx.targets_of(codex)[0].from_snapshot == TARGET_SNAPSHOT     # a tuple since 2026-10-20
 
 
 def test_an_annotations_collection_cannot_annotate_another(tmp_path):
@@ -367,3 +367,300 @@ def test_create_promotes_across_filesystems_when_the_shard_lives_elsewhere(tmp_p
     assert shard_mod.pieces_root_of(d / shard.path) == shard.root, "the part arrived whole"
     assert not (tmp_path / "pubmed-same-work" / "state" / "annotations-build").exists(), "staging gone"
     assert not list(d.rglob(".*.promote")), "no temporary left beside the part"
+
+
+# ---- the graph amendment (operator, 2026-10-20): three claim types, several targets ----------------
+# docs/notes/gutenberg-graph-amendments.md A-K1–A-K4; 02 §2.10, 09 §9.3, §9.5, §9.14
+
+from app import layers as layers_mod                      # noqa: E402
+from app.hold.records import order_key                     # noqa: E402
+
+ENTITIES = {"Q42": "Douglas Adams", "Q50": "Eumenes", "P31": "instance of"}
+
+
+def an_entity_target(root: Path, name: str = "wikidata"):
+    """A held entity target: a green Codex whose plugin is `wikidata`, its
+    records' uids `wikidata:<native_id>` (Q42 → 42, P31 → 1000000031)."""
+    from app.plugins.wikidata import ids
+    target = col.create(root, pubmed(license=License("green", None), plugin="wikidata"), name=name)
+    d = col.shard_dir_of(root, name)
+    order = (target.slicing or {}).get("order", "bytes")
+    records = []
+    for eid, label in ENTITIES.items():
+        nid = ids.native_id_of(eid)
+        sections = [["description", f"{label}, an entity"]]
+        records.append({"uid": f"wikidata:{nid}", "native_id": nid, "lang": "mul", "title": label,
+                        "creators": [], "date": None, "subjects": [], "keys": [eid],
+                        "sections": sections, "extra": {}, "origin": f"dump#{eid}",
+                        "content_hash": rec.content_hash(label, [tuple(s) for s in sections]),
+                        "origin_hash": "cd" * 16})
+    records.sort(key=lambda r: order_key(r["native_id"], order))
+    p = d / shard_mod.shard_path("all", 1)
+    pack_records.write_shard(p, records)
+    raw = p.read_bytes()
+    shard = sn.Shard(slice="all", n=1, root=shard_mod.pieces_root(raw),
+                     records_root=rec.records_root(r["content_hash"] for r in records),
+                     first_id=records[0]["native_id"], last_id=records[-1]["native_id"], records=len(records),
+                     chunks=len(records), chunks_root="sha256:" + "33" * 32, tokens=512 * len(records),
+                     bytes=len(raw))
+    snap = sn.Snapshot(collection_id=target.collection_id, snapshot_id="2026-07", previous=None,
+                       shards=(shard,), delta=sn.Delta(tuple(r["uid"] for r in records), (), ()), files={})
+    (d / "snapshots").mkdir(exist_ok=True)
+    (d / shard_mod.snapshot_path("2026-07")).write_bytes(snap.canonical())
+    return target, {r["uid"]: r["content_hash"] for r in records}
+
+
+def a_chunk(target, uid: str, text: str) -> tuple[dict, str]:
+    """The first chunk of a record as the target's chunker cuts it — the
+    chunk end `{uid, chunk_id, text_hash}` and its text."""
+    i = uid.split(":", 1)[1]
+    chunks = layers_mod.chunks_for_document(target, {"uid": uid, "native_id": i}, [("Abstract", text)])
+    c = chunks[0]
+    return {"uid": uid, "chunk_id": c["id"], "text_hash": ann.blake128(c["text"].encode())}, c["text"]
+
+
+MODEL = {"kind": "model", "id": "gliner-it", "version": 1, "model": "sha256:" + "aa" * 32,
+         "prompt": "sha256:" + "bb" * 32, "temperature": "0"}
+
+
+def a_mention(target, text="Douglas Adams wrote it", start=0, end=13, surface="Douglas Adams", **over):
+    end_, _ = a_chunk(target, "pubmed:1", text)
+    c = {"type": "mention", "subject": end_, "object": "wikidata:Q42", "start": start, "end": end,
+         "surface": surface, "method": MODEL, "evidence": {"score": "0.91"}, "confidence": "0.9",
+         "contributor": "a graph builder"}
+    c.update(over)
+    return c
+
+
+def a_relation(target, **over):
+    end_, _ = a_chunk(target, "pubmed:1", "Douglas Adams wrote it")
+    c = {"type": "relation", "subject": "wikidata:Q42", "object": "wikidata:Q50", "relation": "wikidata:P31",
+         "evidence_chunk": end_, "method": MODEL, "evidence": {}, "confidence": "0.8",
+         "contributor": "a graph builder"}
+    c.update(over)
+    return c
+
+
+def a_community(**over):
+    c = {"type": "community", "subject": {"id": "c-7", "level": 0}, "object": None,
+         "members": ["wikidata:Q42", "wikidata:Q50"], "summary": "two entities", "method": MODEL,
+         "evidence": {}, "confidence": "0.6", "contributor": "a graph builder"}
+    c.update(over)
+    return c
+
+
+def two_targets(root):
+    text, hashes = a_target(root, texts=("Douglas Adams wrote it", "two", "three", "four"))
+    entities, ehashes = an_entity_target(root)
+    return text, entities, {**hashes, **ehashes}
+
+
+def make_graph(root, claims, name="graph", **kw):
+    return ann.create(root, name, targets=[("pubmed", TARGET_SNAPSHOT), ("wikidata", "2026-07")],
+                      claims=claims, platform_image=PLATFORM, snapshot_id="2026-09", key=KEY, now=NOW,
+                      nonce="0f" * 16, log=lambda m: None, **kw)
+
+
+def test_a_two_target_codex_is_version_9_with_a_list_and_a_container_and_round_trips(tmp_path):
+    text, entities, _ = two_targets(tmp_path)
+    codex = ann.build_codex(None, None, targets=[(text, TARGET_SNAPSHOT), (entities, "2026-07")],
+                            title="Graph", summary="Claims.", annotator="a", platform_image=PLATFORM,
+                            nonce="0f" * 16)
+    d = json.loads(codex.canonical())
+    assert d["version"] == 9 and d["slicing"]["container"] == "jsonl"
+    assert d["annotates"] == [{"collection_id": text.collection_id, "from_snapshot": TARGET_SNAPSHOT},
+                              {"collection_id": entities.collection_id, "from_snapshot": "2026-07"}]
+    assert cx.loads(codex.canonical()) == codex and cx.targets_of(codex) == codex.annotates
+    assert cx.target_for(codex, entities.collection_id).from_snapshot == "2026-07"
+    assert cx.container_of(codex) == "jsonl" and cx.container_of(text) == "jsonl"
+    # one target, old types, JSONL: still 7, the same bytes as before the amendment
+    one = a_codex(text)
+    assert one.version == 7 and "container" not in one.slicing and isinstance(one.annotates, tuple)
+    assert json.loads(one.canonical())["annotates"] == {"collection_id": text.collection_id,
+                                                        "from_snapshot": TARGET_SNAPSHOT}
+    # a graph claim type alone makes it 9, as a list of one
+    g = ann.build_codex(text, TARGET_SNAPSHOT, title="G", summary="C.", annotator="a",
+                        platform_image=PLATFORM, graph=True)
+    assert g.version == 9 and json.loads(g.canonical())["annotates"] == [one.annotates[0].to_dict()]
+
+
+def test_version_9_refuses_what_it_cannot_carry_and_parquet_is_declared_not_yet_written(tmp_path):
+    text, entities, _ = two_targets(tmp_path)
+    good = json.loads(ann.build_codex(None, None, targets=[(text, TARGET_SNAPSHOT), (entities, "2026-07")],
+                                      title="G", summary="C.", annotator="a", platform_image=PLATFORM,
+                                      nonce="0f" * 16).canonical())
+
+    def refused(match, **over):
+        with pytest.raises(CodexError, match=match):
+            cx.validate(cx.from_dict(dict(good, **over)))
+
+    refused("annotates\\[1\\].*twice", annotates=[good["annotates"][0], good["annotates"][0]])
+    refused("list of targets", annotates=good["annotates"][0])
+    refused("container", slicing={k: v for k, v in good["slicing"].items() if k != "container"})
+    refused("container", slicing=dict(good["slicing"], container="csv"))
+    # a version-7 Codex carries one target as an object and no container
+    v7 = json.loads(a_codex(text).canonical())
+    with pytest.raises(CodexError, match="container"):
+        cx.validate(cx.from_dict(dict(v7, slicing=dict(v7["slicing"], container="jsonl"))))
+    with pytest.raises(CodexError, match="cannot be moved"):
+        cx.validate(cx.from_dict(dict(json.loads(pubmed().canonical()),
+                                      slicing=dict(pubmed().slicing, container="jsonl"))))
+    with pytest.raises(CodexError, match="ONE collection"):
+        cx.Codex(**{**a_codex(text).__dict__, "annotates": cx.targets_of(cx.from_dict(good))}).canonical()
+    # a Codex declaring Parquet parts is read, and refused at create until the writer exists
+    pq = cx.from_dict(dict(good, slicing=dict(good["slicing"], container="parquet", shard_records=1000000)))
+    cx.validate(pq)
+    assert cx.container_of(pq) == "parquet"
+    with pytest.raises(CodexError, match="not yet written"):
+        ann.build_codex(text, TARGET_SNAPSHOT, title="G", summary="C.", annotator="a",
+                        platform_image=PLATFORM, container="parquet")
+    # a version-9 space Codex: the container declared, the cut where declared
+    p9 = dict(json.loads(pubmed(version=5).canonical()), version=9)
+    p9["slicing"] = dict(p9["slicing"], container="jsonl")
+    nine = cx.from_dict(p9)
+    cx.validate(nine)
+    assert nine.version == 9 and nine.space.cut is None and nine.space_id == pubmed(version=5).space_id, \
+        "the same space: version 9 adds nothing to space_id"
+    with pytest.raises(CodexError, match="exactly when it is an annotations"):
+        cx.from_dict(dict(p9, annotates=good["annotates"]))
+
+
+def test_the_three_graph_claim_types_are_checked_to_the_key(tmp_path):
+    text, entities, _ = two_targets(tmp_path)
+    plugins = ("pubmed", "wikidata")
+    ok = ann.read_claims(claims_file(a_mention(text), a_relation(text), a_community()), target_plugins=plugins)
+    assert [s.claim["type"] for s in ok] == ["mention", "relation", "community"]
+    assert ann.record_ends(ok[0].claim) == ["pubmed:1", "wikidata:42"]
+    assert ann.record_ends(ok[1].claim) == ["wikidata:42", "wikidata:50", "pubmed:1"]
+    assert ann.record_ends(ok[2].claim) == ["wikidata:42", "wikidata:50"]
+    assert ann.entity_uid("wikidata:P31") == "wikidata:1000000031" and ann.entity_uid("hgnc:5") == "hgnc:5"
+    for bad, match in (
+            (a_mention(text, subject_lang="en"), "unknown subject_lang"),
+            (a_mention(text, subject="pubmed:1"), "chunk of the text target"),
+            (a_mention(text, object="wikidata:42"), "not an entity's id"),
+            (a_mention(text, object="hgnc:5"), "not in a target's namespace"),
+            (a_mention(text, start=5, end=5), "end is after start"),
+            (a_mention(text, start=1.0), "decimal string"),
+            (a_mention(text, surface=""), "surface is the text"),
+            (a_mention(text, method={"kind": "model", "id": "g", "version": 1}), "model method is"),
+            (a_mention(text, method=dict(MODEL, temperature="0.7")), "temperature"),
+            (a_relation(text, relation="wikidata:Q5"), "not a property's id"),
+            (a_relation(text, object="wikidata:Q42"), "same entity"),
+            (a_relation(text, evidence_chunk={"uid": "pubmed:1"}), "chunk of the text target"),
+            (a_community(members=["wikidata:Q50", "wikidata:Q42"]), "sorted by bytes"),
+            (a_community(members=["wikidata:Q42"]), "at least two"),
+            (a_community(object="wikidata:Q42"), "no object"),
+            (a_community(subject={"id": "c"}), "id, level"),
+            (a_community(subject_hash="00" * 16), "pins no subject_hash") if False else
+            (a_claim(obj="wikidata:42"), "ONE target")):
+        with pytest.raises(ann.AnnotationsError, match=match):
+            ann.read_claims(claims_file(bad), target_plugins=plugins)
+    with pytest.raises(ann.AnnotationsError, match="same claim as line 1"):
+        ann.read_claims(claims_file(a_mention(text), a_mention(text, confidence="0.5")), target_plugins=plugins)
+    # the same span naming another entity, or another span, is another claim
+    assert len(ann.read_claims(claims_file(a_mention(text), a_mention(text, object="wikidata:Q50"),
+                                           a_mention(text, start=14, end=19, surface="wrote")),
+                               target_plugins=plugins)) == 3
+
+
+def test_create_with_two_targets_pins_chunks_and_entities_and_writes_the_three_edges(tmp_path):
+    text, entities, hashes = two_targets(tmp_path)
+    codex, snap = make_graph(tmp_path, claims_file(a_mention(text), a_relation(text), a_community(),
+                                                   a_claim("pubmed:2", "pubmed:3")), annotator="a graph builder")
+    assert codex.version == 9 and len(codex.annotates) == 2
+    d = col.shard_dir_of(tmp_path, "graph")
+    (shard,), (rel,) = snap.shards, snap.relations
+    records = list(pack_records.iter_records(d / shard.path))
+    claims = [ann.claim_of(r) for r in records]
+    # numbered in the byte order of each claim's identifying tuple as canonical JSON (09 §9.5)
+    keys = [cx.canonical_json(ann.identity_tuple(c)) for c in claims]
+    assert keys == sorted(keys) and [r["uid"] for r in records] == [f"annotations:{n}" for n in range(1, 5)]
+    by_type = {c["type"]: c for c in claims}
+    m, r, co, w = by_type["mention"], by_type["relation"], by_type["community"], by_type["same-work"]
+    assert (m["subject_hash"], m["object_hash"], m["target_snapshot"]) == (
+        hashes["pubmed:1"], hashes["wikidata:42"], TARGET_SNAPSHOT), "the chunk's RECORD and the entity's record"
+    assert (r["subject_hash"], r["object_hash"], r["target_snapshot"]) == (
+        hashes["wikidata:42"], hashes["wikidata:50"], "2026-07"), "pinned to the SUBJECT's target snapshot"
+    assert (co["subject_hash"], co["object_hash"], co["target_snapshot"]) == (None, None, "2026-07")
+    assert (w["subject_hash"], w["target_snapshot"]) == (hashes["pubmed:2"], TARGET_SNAPSHOT)
+    uid_of = {c["type"]: rr["uid"] for rr, c in zip(records, claims)}
+    edges = [(e["from"], e["type"], e["to"]) for e in pack_records.iter_records(d / rel.path)]
+    assert sorted(edges) == sorted([
+        ("pubmed:1", "annotations:mention", "wikidata:Q42"),
+        ("wikidata:42", "annotations:relation", "wikidata:Q50"),
+        ("wikidata:42", "annotations:member-of", uid_of["community"]),
+        ("wikidata:50", "annotations:member-of", uid_of["community"]),
+        ("pubmed:2", "annotations:same-work", "pubmed:3")])
+    assert edges == sorted(edges, key=lambda e: (e[0].encode(), e[1].encode(), e[2].encode()))
+    # what show, the index and the state make of it
+    shown = col.show(tmp_path, "graph")
+    assert shown["annotates"]["target"] == "pubmed" and [t["target"] for t in shown["targets"]] == ["pubmed", "wikidata"]
+    idx = ann.index_of(d)
+    assert set(idx.by_target) == {"pubmed:2", "pubmed:3"} and set(idx.graph) == {"pubmed:1", "wikidata:42", "wikidata:50"}
+    now = dict(hashes)
+    assert ann.state_of(m, now) == "current" and ann.state_of(co, now) == "unknown"
+    assert ann.state_of(r, dict(now, **{"wikidata:50": "00" * 16})) == "stale"
+    # the plan's checks pass; a second create resumes byte for byte
+    report = check.run(tmp_path, "graph", codex, snap, seed=b"s" * 32, checks=list(cx.ANNOTATIONS_CHECKS))
+    assert {o.check: o.result for o in report.outcomes} == {
+        "roots": "pass", "records": "pass", "license": "pass", "signature": "pass"}
+    again, snap2 = make_graph(tmp_path, claims_file(a_mention(text), a_relation(text), a_community(),
+                                                    a_claim("pubmed:2", "pubmed:3")), annotator="a graph builder")
+    assert again == codex and snap2.hash == snap.hash
+    with pytest.raises(CodexError, match="holds one collection"):
+        ann.create(tmp_path, "graph", target_ref="pubmed", from_snapshot=TARGET_SNAPSHOT,
+                   claims=claims_file(a_claim()), platform_image=PLATFORM, log=lambda m: None)
+
+
+def test_a_chunk_end_is_checked_against_the_text_this_peer_holds(tmp_path):
+    text, entities, _ = two_targets(tmp_path)
+    end_, chunk_text = a_chunk(text, "pubmed:1", "Douglas Adams wrote it")
+    assert chunk_text.startswith("Douglas Adams")
+    with pytest.raises(ann.AnnotationsError, match="made about other text"):
+        make_graph(tmp_path, claims_file(a_mention(text, subject=dict(end_, text_hash="00" * 16))))
+    with pytest.raises(ann.AnnotationsError, match="has no chunk"):
+        make_graph(tmp_path, claims_file(a_mention(text, subject=dict(end_, chunk_id="pubmed:1:99:1"))))
+    with pytest.raises(ann.AnnotationsError, match="surface .* is not the chunk's text"):
+        make_graph(tmp_path, claims_file(a_mention(text, surface="Douglas Adam")))
+    with pytest.raises(ann.AnnotationsError, match="does not hold: line 1: wikidata:99 \\(wikidata:Q99\\)"):
+        make_graph(tmp_path, claims_file(a_mention(text, object="wikidata:Q99")))
+    with pytest.raises(ann.AnnotationsError, match="pins no subject_hash"):
+        make_graph(tmp_path, claims_file(a_community(subject_hash="00" * 16)))
+    assert not (tmp_path / "graph").exists(), "refused before anything is written"
+    # the targets: one plugin twice, an annotations collection, a missing snapshot
+    with pytest.raises(ann.AnnotationsError, match="named twice"):
+        ann.create(tmp_path, "g2", targets=[("pubmed", TARGET_SNAPSHOT), ("pubmed", TARGET_SNAPSHOT)],
+                   claims=claims_file(a_claim()), platform_image=PLATFORM, log=lambda m: None)
+    a_target(tmp_path, name="pubmed-too", texts=("five",), cleaning_version=2)
+    with pytest.raises(ann.AnnotationsError, match="both 'pubmed' collections"):
+        ann.create(tmp_path, "g2", targets=[("pubmed", TARGET_SNAPSHOT), ("pubmed-too", TARGET_SNAPSHOT)],
+                   claims=claims_file(a_claim()), platform_image=PLATFORM, log=lambda m: None)
+    with pytest.raises(ann.AnnotationsError, match="names the snapshot"):
+        ann.create(tmp_path, "g2", targets=[("pubmed", TARGET_SNAPSHOT), ("wikidata", "")],
+                   claims=claims_file(a_claim()), platform_image=PLATFORM, log=lambda m: None)
+
+
+def test_the_command_takes_several_targets_and_a_dry_run_counts_them(tmp_path, monkeypatch, capsys):
+    from app import louise
+    from app.bundles import keys as node_keys
+    monkeypatch.setattr(node_keys, "load_signing_key", lambda *a, **k: KEY)
+    text, entities, _ = two_targets(tmp_path)
+    claims = tmp_path / "claims.jsonl"
+    claims.write_bytes(claims_file(a_mention(text), a_community()))
+    base = ["hold", "collection", "create", "annotations", "--root", str(tmp_path), "--claims", str(claims),
+            "--annotates", "pubmed", "--from-snapshot", TARGET_SNAPSHOT, "--annotates", "wikidata"]
+    assert louise.main(base + ["--name", "graph"]) == 2
+    assert "one --from-snapshot per --annotates" in capsys.readouterr().err
+    assert louise.main(base + ["--from-snapshot", "2026-07", "--name", "graph", "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert (preview["version"], preview["claims"], preview["written"]) == (9, 2, False)
+    assert [t["target"] for t in preview["targets"]] == ["pubmed", "wikidata"]
+    assert preview["by_method"] == {"model:gliner-it": 2} and preview["by_type"] == {"community": 1, "mention": 1}
+    assert louise.main(base + ["--from-snapshot", "2026-07", "--name", "graph", "--snapshot", "2026-09",
+                               "--platform-image", PLATFORM]) == 0
+    cid = capsys.readouterr().out.strip().splitlines()[-1]
+    assert col.read(tmp_path, "graph").collection_id == cid
+    assert louise.annotation_targets("a,b", "2026-01,2026-02") == [("a", "2026-01"), ("b", "2026-02")]
+    assert louise.main(base + ["--from-snapshot", "2026-07", "--name", "pq", "--container", "parquet",
+                               "--platform-image", PLATFORM]) == 2
+    assert "not yet written" in capsys.readouterr().err and not (tmp_path / "pq").exists()

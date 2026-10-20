@@ -106,8 +106,9 @@ def attach(lists: list[dict[str, Any]], source_of: dict[int, Any], contexts: dic
         return []
     withheld, usable = [], []
     targets = {contexts[n]["collection_id"] for n in by_coll if n in contexts}
+    from app.hold.codex import target_for, targets_of
     for a in held:
-        if a.codex.annotates.collection_id not in targets:
+        if not any(t.collection_id in targets for t in targets_of(a.codex)):
             continue                    # about nothing this search returned: not consulted
         why = _withheld(a)
         if why:
@@ -119,8 +120,9 @@ def attach(lists: list[dict[str, Any]], source_of: dict[int, Any], contexts: dic
     from app.hold import collection as col
     for name, hits in by_coll.items():
         ctx = contexts.get(name) or {}
-        mine = [a for a in usable if a.codex.annotates.collection_id == ctx.get("collection_id")
-                and ann.applies_from(a.codex.annotates.from_snapshot, ctx.get("snapshot_id"))]
+        mine = [a for a in usable
+                if (t := target_for(a.codex, ctx.get("collection_id"))) is not None
+                and ann.applies_from(t.from_snapshot, ctx.get("snapshot_id"))]
         if not mine:
             continue
         found = []
