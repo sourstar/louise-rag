@@ -292,8 +292,8 @@ offer`, `GET /api/share/offer/show`, and the Library's "Offered by peers"
 with a *take…* dialog that queues `share fetch` for the worker
 (`app/jobs.py` SHARE_FETCH, every mode; `POST /api/share/fetch`) with the
 slices, kinds and encoder chosen. 04 §4.2 and 07 §7.3/§7.4 amended. The
-decisions of the day beside it: the folder delete is the operator's to run
-(München's auto mode refuses irreversible deletes outright); gutenberg-graph
+decisions of the day beside it: the old jina folder was deleted by the operator on the node
+(München's auto mode refuses irreversible deletes outright, no prompt); gutenberg-graph
 gets two targets (Codex version 9), Parquet parts for EVERY collection, and
 a measured agreement floor (gutenberg-graph-amendments.md); pubmed-v8's
 40 M unbundled chunks publish after the wikidata work.

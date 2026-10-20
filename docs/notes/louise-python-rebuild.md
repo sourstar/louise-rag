@@ -207,5 +207,6 @@ the remote code in /models (fixed: `cache_dir=` passed explicitly, tree
   (max abs 8.2e-8): invariant 12 is open for every torch model, not only
   the new one, and the same measurement is owed there.
 - `/mnt/ssd5/apps/models/jina-embeddings-v3.pre-installer-20261018` (1.1 GB,
-  the 2026-10-18 measurement's folder) is moved aside, not deleted: the
-  operator's to remove.
+  the 2026-10-18 measurement's folder): moved aside by München, deleted by
+  the operator on the node, 2026-10-20 (München's auto mode refuses an
+  irreversible delete outright, with no prompt).
