@@ -134,7 +134,11 @@ def test_the_hot_path_reads_no_digest_within_the_rebuild_interval(monkeypatch, t
     monkeypatch.setattr(cov, "live_peers", lambda *a, **k: reads.append(1) or LIVE)
     monkeypatch.setattr(cov, "own_benchmarks", lambda *a, **k: [])
     monkeypatch.setattr(contribute, "work_order",
-                        lambda codex, snap, con, me, live, now: {_sid(codex, "lang=en", 1): 2})
+                        lambda codex, snap, con, me, live, now: {_sid(codex, "lang=en", 1): 2, _sid(codex, "lang=en", 2): 1,
+                                                                  _sid(codex, "lang=fr", 1): 1})
+    monkeypatch.setattr(contribute, "job_order",           # en/1 is third: beyond the two-job window
+                        lambda codex, snap, con, me, live, now: [_sid(codex, "lang=en", 2), _sid(codex, "lang=fr", 1),
+                                                                  _sid(codex, "lang=en", 1)])
 
     class Con:
         def execute(self, *a):
@@ -221,15 +225,43 @@ def test_ranks_walk_the_bounty_list_first_rank_first_and_widen_when_it_is_empty(
     assert s3.skips("100", "en") is True and s3.skips("600", "en") is False
 
 
-def test_widen_moves_the_stage_to_the_next_rank_and_a_changed_view_starts_again(monkeypatch, tmp_path):
+def test_the_stage_works_two_jobs_at_a_time_the_first_two_of_its_order():
+    """Operator, 2026-10-20: "up to 2 jobs at a time… no idle between jobs".
+    The order (`contribute.job_order`) is the open parts this peer may take,
+    best first; the window is its first JOBS, every other open part is left
+    for now, and a part left aside (None) is in no window."""
+    c = _codex()
+    en1, en2, fr1 = _sid(c, "lang=en", 1), _sid(c, "lang=en", 2), _sid(c, "lang=fr", 1)
+    ranks = {en1: 1, en2: 1, fr1: 2}
+    order = [en2, en1, fr1]                       # my score puts en2 before en1
+    assert leading.JOBS == 2
+    s = leading.build(c, SNAPSHOT, ranks=ranks, me=ME, live=LIVE, order=order, start=0)
+    assert (s.admitted, s.beyond, s.skipped_parts) == ((en2, en1), 1, 1)
+    assert s.skips("100", "en") is False and s.skips("600", "en") is False and s.skips("450", "fr") is True
+    s = leading.build(c, SNAPSHOT, ranks=ranks, me=ME, live=LIVE, order=order, start=2)
+    assert (s.admitted, s.beyond) == ((fr1,), 0)
+    assert s.skips("100", "en") is True and s.skips("600", "en") is True and s.skips("450", "fr") is False
+    s = leading.build(c, SNAPSHOT, ranks={**ranks, fr1: None}, me=ME, live=LIVE, order=[en2, en1], start=0)
+    assert s.skips("450", "fr") is True and s.beyond == 0 and s.skipped_parts == 1
+    # every open part in the window: nothing to skip
+    assert leading.build(c, SNAPSHOT, ranks={en1: 1, en2: 2}, me=ME, live=LIVE, order=[en1, en2], start=0) is None
+
+
+def test_widen_moves_the_window_down_the_order_and_a_changed_view_starts_again(monkeypatch, tmp_path):
+    """A round that finds nothing in its jobs (both embedded, their bundles
+    not yet accepted) admits the next JOBS of the order at once — no idle
+    round; a bundle accepted (a job done) or a digest rebuilds the view and
+    the window starts again at the head of the order."""
     from app.share import contribute, coverage as cov
     leading.reset_cache()
     c = _codex()
     coll = SimpleNamespace(codex=c, name="g", manifest_path=tmp_path / "m.sqlite")
     monkeypatch.setattr(cov, "live_peers", lambda *a, **k: LIVE)
     monkeypatch.setattr(cov, "own_benchmarks", lambda *a, **k: [])
-    ranks = {_sid(c, "lang=en", 1): 2, _sid(c, "lang=en", 2): 3}
-    monkeypatch.setattr(contribute, "work_order", lambda codex, snap, con, me, live, now: ranks)
+    en1, en2, fr1 = _sid(c, "lang=en", 1), _sid(c, "lang=en", 2), _sid(c, "lang=fr", 1)
+    monkeypatch.setattr(contribute, "work_order",
+                        lambda codex, snap, con, me, live, now: {en1: 1, en2: 2, fr1: 2})
+    monkeypatch.setattr(contribute, "job_order", lambda codex, snap, con, me, live, now: [en1, en2, fr1])
     fp = {"n": 0}
 
     class Con:
@@ -237,18 +269,24 @@ def test_widen_moves_the_stage_to_the_next_rank_and_a_changed_view_starts_again(
             return SimpleNamespace(fetchone=lambda: (fp["n"], None))
     kw = dict(root=tmp_path, own_key=ME, snapshot=SNAPSHOT, node_con=object())
     f = leading.skip_test(coll, Con(), now=1000.0, **kw)
-    assert f({"native_id": "100", "lang": "en"}) is True and f({"native_id": "600", "lang": "en"}) is True, "rank 1 only"
+    assert f({"native_id": "100", "lang": "en"}) is False and f({"native_id": "600", "lang": "en"}) is False
+    assert f({"native_id": "450", "lang": "fr"}) is True, "the third of the order waits"
+    assert leading.rank_limit_of(coll) == 0
     assert leading.widen(coll) == 2 and leading.rank_limit_of(coll) == 2
     f = leading.skip_test(coll, Con(), now=1001.0, **kw)
-    assert f({"native_id": "100", "lang": "en"}) is False and f({"native_id": "600", "lang": "en"}) is True
-    assert leading.widen(coll) == 3
-    assert leading.skip_test(coll, Con(), now=1002.0, **kw) is None, "every open part admitted: no filter"
-    assert leading.widen(coll) == 3, "the deepest rank: no further"
+    assert f({"native_id": "100", "lang": "en"}) is True and f({"native_id": "450", "lang": "fr"}) is False
+    assert leading.widen(coll) == 2, "nothing beyond the window: no further"
+    assert leading.skip_test(coll, Con(), now=1002.0, **kw)({"native_id": "450", "lang": "fr"}) is False
     # a bundle lands (the coverage changed): past REBUILD_S the view is rebuilt and
-    # the walk starts again at rank 1
+    # the window starts again at the head of the order
     fp["n"] = 1
     f = leading.skip_test(coll, Con(), now=1002.0 + leading.REBUILD_S + 1, **kw)
-    assert leading.rank_limit_of(coll) == 1 and f({"native_id": "100", "lang": "en"}) is True
+    assert leading.rank_limit_of(coll) == 0
+    assert f({"native_id": "100", "lang": "en"}) is False and f({"native_id": "450", "lang": "fr"}) is True
+    # the view unchanged past REBUILD_S: the window stands where widen put it
+    assert leading.widen(coll) == 2
+    f = leading.skip_test(coll, Con(), now=1002.0 + 2 * (leading.REBUILD_S + 1), **kw)
+    assert leading.rank_limit_of(coll) == 2 and f({"native_id": "450", "lang": "fr"}) is False
     leading.reset_cache()
 
 

@@ -297,7 +297,11 @@ model itself: "for the bounty list THERE IS NO LEADER" — any peer may embed
 any open part; rendezvous is the ORDER a peer walks the list, widened one
 rank when a round finds nothing (`leading.widen`), and the only part left
 aside is one another producer is visibly on (`contribute.visibly_on`, a
-bundle within `3 × tokens / w`). The `grace_days` cascade on embedding is
+bundle within `3 × tokens / w`). Then the operator's rule of the same
+afternoon: a peer works at most TWO parts at a time — the first two of its
+order (`contribute.job_order`, `leading.JOBS`), the next admitted the
+moment one yields nothing, so the card never idles between jobs and the
+others see it on at most two parts. The `grace_days` cascade on embedding is
 gone; `leader` in `hold vectors show` is the first of the ordering,
 information only. 04 §4.5, 07 §7.8, 09 §9.9, §9.10 amended;
 [scheduling-log.md](scheduling-log.md) has the measured BEFORE and the

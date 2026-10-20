@@ -131,34 +131,58 @@ def visibly_on(ranking: Sequence[rendezvous.Peer], shard_rows: list[dict[str, An
     return None
 
 
-def work_order(codex, snapshot: sn.Snapshot, con, *, me: str, live: Sequence[rendezvous.Peer],
-               now: float | None = None, redundant=(), union=None) -> dict[str, int | None]:
-    """04 §4.5 (amended 2026-10-20): THE BOUNTY LIST AS THIS PEER WALKS IT.
-    Every open part → this peer's rank in its ordering (1 = first), or None
-    where the part is left aside for now: another producer is visibly on it
-    (`visibly_on`), or this peer is not eligible for it. The embed stage
-    takes rank 1 first and widens to the next rank when nothing is left at
-    the current one (app/share/leading.py) — it never waits for anyone, and
-    two peers meeting on a part make a check, not a loss ("duplicates are
-    checks"). Read-only."""
-    now = time.time() if now is None else now
+def _walk(codex, snapshot: sn.Snapshot, con, *, me: str, live: Sequence[rendezvous.Peer],
+          now: float, redundant=(), union=None) -> list[tuple[str, int | None, float]]:
+    """Every open part as this peer sees it: (shard id, this peer's rank in
+    its ordering or None where the part is left aside — another producer
+    visibly on it, or this peer not eligible — and this peer's score for
+    it, the ordering's own number). Read-only."""
     all_rows = cov.rows(con)
     limit = cov.period_seconds(codex.work.per)
     by_shard: dict[str, list[dict[str, Any]]] = {}
     for r in all_rows:
         by_shard.setdefault(r["shard"], []).append(r)
     tokens = {cov.shard_id(codex, f"{s.slice}/{s.n:05d}"): int(s.tokens) for s in snapshot.shards}
-    out: dict[str, int | None] = {}
+    mine = next((p for p in live if p.key == me), None)
+    out: list[tuple[str, int | None, float]] = []
     for v in cov.shards_view(codex, snapshot, all_rows, now=now, redundant=redundant, union=union):
         if not v["open"]:
             continue
-        ranking = rendezvous.ranking(rendezvous.ShardWork(v["shard"], tokens[v["shard"]]), live, limit)
-        rows_ = by_shard.get(v["shard"], [])
-        if visibly_on(ranking, rows_, tokens[v["shard"]], me=me, now=now) is not None:
-            out[v["shard"]] = None
+        work = rendezvous.ShardWork(v["shard"], tokens[v["shard"]])
+        ranking = rendezvous.ranking(work, live, limit)
+        score = rendezvous.score(mine, work) if mine is not None and mine.benchmark > 0 else float("-inf")
+        if visibly_on(ranking, by_shard.get(v["shard"], []), tokens[v["shard"]], me=me, now=now) is not None:
+            out.append((v["shard"], None, score))
             continue
-        out[v["shard"]] = rendezvous.rank_of(me, ranking)
+        out.append((v["shard"], rendezvous.rank_of(me, ranking), score))
     return out
+
+
+def work_order(codex, snapshot: sn.Snapshot, con, *, me: str, live: Sequence[rendezvous.Peer],
+               now: float | None = None, redundant=(), union=None) -> dict[str, int | None]:
+    """04 §4.5 (amended 2026-10-20): THE BOUNTY LIST AS THIS PEER WALKS IT.
+    Every open part → this peer's rank in its ordering (1 = first), or None
+    where the part is left aside for now: another producer is visibly on it
+    (`visibly_on`), or this peer is not eligible for it. It never waits for
+    anyone, and two peers meeting on a part make a check, not a loss
+    ("duplicates are checks"). Read-only."""
+    now = time.time() if now is None else now
+    return {sid: rank for sid, rank, _ in _walk(codex, snapshot, con, me=me, live=live, now=now,
+                                                 redundant=redundant, union=union)}
+
+
+def job_order(codex, snapshot: sn.Snapshot, con, *, me: str, live: Sequence[rendezvous.Peer],
+              now: float | None = None, redundant=(), union=None) -> list[str]:
+    """The open parts this peer may take, in the order it takes them: by
+    rank, then by its own score (the ordering's number, highest first) —
+    rank-1 parts first, the ones it is most clearly first for before the
+    others. Parts left aside are not in it. The embed stage works the first
+    `leading.JOBS` of these at a time (operator, 2026-10-20: "up to 2 jobs at
+    a time… no idle between jobs")."""
+    now = time.time() if now is None else now
+    walked = _walk(codex, snapshot, con, me=me, live=live, now=now, redundant=redundant, union=union)
+    return [sid for sid, rank, _ in sorted((w for w in walked if w[1] is not None),
+                                           key=lambda w: (w[1], -w[2], w[0]))]
 
 
 def _leading(codex, snapshot: sn.Snapshot, con, *, live: Sequence[rendezvous.Peer],

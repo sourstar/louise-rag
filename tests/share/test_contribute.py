@@ -629,3 +629,36 @@ def test_a_publish_only_pass_bundles_the_led_shards_it_holds_and_builds_nothing(
                             **{**kw, "embed": counted, "write": never_write})
     assert again["held"] == [] and again["bundles"] == [] and shards[0] not in again["mine"]
     assert again["awaiting"] == shards[1:]
+
+
+def test_the_job_order_is_the_bounty_list_as_this_peer_takes_it(ready):
+    """04 §4.5 (amended 2026-10-20): `work_order` gives this peer's rank per
+    open part; `job_order` the parts it may take, in the order it takes them
+    — rank 1 first, within a rank by its own score, highest first — without
+    the parts another producer is visibly on. The embed stage works the
+    first two of these at a time (operator: "up to 2 jobs at a time")."""
+    from app.share import messages
+    root, snapshot, codex, kw = ready
+    con = cov.ensure_schema(kw["con"])
+    now = time.time()
+    live = [rendezvous.Peer(OUR_KEY, 1000.0), rendezvous.Peer(PEER_KEY, 1000.0)]
+    shards = [f"{s.slice}/{s.n:05d}" for s in snapshot.shards]
+    sids = [cov.shard_id(codex, s) for s in shards]
+    tokens = {cov.shard_id(codex, f"{s.slice}/{s.n:05d}"): int(s.tokens) for s in snapshot.shards}
+    assert len(sids) >= 2
+    ranks = contribute.work_order(codex, snapshot, con, me=OUR_KEY, live=live, now=now)
+    order = contribute.job_order(codex, snapshot, con, me=OUR_KEY, live=live, now=now)
+    assert set(ranks) == set(sids) == set(order) and set(ranks.values()) <= {1, 2}, "every part open, two eligible peers"
+    me = live[0]
+    assert order == sorted(sids, key=lambda s: (ranks[s], -rendezvous.score(me, rendezvous.ShardWork(s, tokens[s])), s))
+    assert [ranks[s] for s in order] == sorted(ranks[s] for s in order), "rank 1 first"
+    # the neighbour's bundle for the first part, accepted just now: visibly on it, left aside
+    cov.record(con, bundle_id="sha256:" + "b" * 64, shard=order[0], producer=PEER_KEY, uids=[], chunks=1,
+               tiers={"T0": "pass"}, source=cov.FETCHED, accepted_at=messages.time_text(now))
+    ranks2 = contribute.work_order(codex, snapshot, con, me=OUR_KEY, live=live, now=now)
+    order2 = contribute.job_order(codex, snapshot, con, me=OUR_KEY, live=live, now=now)
+    assert ranks2[order[0]] is None and order2 == order[1:]
+    # alone, every open part is this peer's, in its own order
+    alone = contribute.job_order(codex, snapshot, con, me=OUR_KEY, live=live[:1], now=now)
+    assert set(alone) == set(sids) and alone == sorted(
+        sids, key=lambda s: -rendezvous.score(me, rendezvous.ShardWork(s, tokens[s])))

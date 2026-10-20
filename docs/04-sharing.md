@@ -639,7 +639,11 @@ thing it leaves aside, at any rank, is a part another producer is visibly
 on — a bundle of theirs for it accepted within the time the part takes at
 their rate (`3 × tokens / w`, the eligibility margin: a producer bundles
 every fifteen thousand chunks, so progress shows within hours). A part
-with only days-old bundles, or none, is anyone's. Two peers that meet on a
+with only days-old bundles, or none, is anyone's. **A peer works at most
+two parts at a time** (operator, 2026-10-20): the first two of its order;
+when one completes it takes the next while the other is still running, so
+its card never idles between jobs, and the others see it on at most two
+parts. Two peers that meet on a
 part make a check, not a loss (below). Until this amendment the top peer
 of the ordering held a part for `grace_days` before the next could start,
 and the first gutenberg day left 840 open parts waiting a week behind two

@@ -48,6 +48,12 @@ from app.share import rendezvous
 #: the index is reconsidered at most this often (the coverage map changes per
 #: accepted bundle, the live set per digest interval — both far slower)
 REBUILD_S = 60.0
+#: 04 §4.5 (operator, 2026-10-20): a peer works at most this many open
+#: parts at a time — the first of its order (`contribute.job_order`); when
+#: one completes the next is admitted while the other is still running, so
+#: the card never idles between jobs, and the other peers see this one on at
+#: most two parts
+JOBS = 2
 #: the bound on reading node.sqlite (the digests) from the embed selection
 NODE_DB_TIMEOUT_MS = 250
 
@@ -72,9 +78,13 @@ class Skips:
     #: gutenberg's "lang=unknown")
     unknown_slice: str | None = None
     #: the rank this view admits up to, and the deepest rank any open part
-    #: gives this peer — `widen` stops there
+    #: gives this peer — `widen` stops there (the rank form, without an order)
     rank_limit: int = 1
     max_rank: int = 1
+    #: the job window (the order form): the parts admitted now, and how many
+    #: of the order lie beyond them — `widen` advances by JOBS until none do
+    admitted: tuple[str, ...] = ()
+    beyond: int = 0
 
     def _part_in(self, slice_name: str, k) -> _Part | None:
         got = self.slices.get(slice_name)
@@ -122,14 +132,19 @@ def slice_column(codex) -> str | None:
 
 def build(codex, snapshot, *, leaders: Mapping[str, str | None] | None = None, me: str | None,
           live: Sequence[rendezvous.Peer], ranks: Mapping[str, int | None] | None = None,
-          rank_limit: int = 1) -> Skips | None:
+          rank_limit: int = 1, order: Sequence[str] | None = None, start: int = 0,
+          jobs: int = JOBS) -> Skips | None:
     """The index, or None when nothing is to be skipped: no snapshot, this
     node not live, no other live peer, or nothing left aside. `ranks` maps
     an open part's shard id (`coverage.shard_id`) to this peer's rank in its
-    ordering, None where the part is left aside (`contribute.work_order`);
-    a part whose rank is above `rank_limit` is skipped for now. `leaders`
-    is the 2026-10-19 form — the part's first peer — read as rank 1 for
-    this peer's parts and 2 for the others."""
+    ordering, None where the part is left aside (`contribute.work_order`).
+    With `order` (`contribute.job_order`, the parts this peer may take in
+    the order it takes them) the window `order[start:start + jobs]` is
+    admitted and every other open part is skipped for now — the operator's
+    "up to 2 jobs at a time"; without it a part whose rank is above
+    `rank_limit` is skipped for now. `leaders` is the 2026-10-19 form — the
+    part's first peer — read as rank 1 for this peer's parts and 2 for the
+    others."""
     from app.hold.records import RecordsError, order_key
     from app.share import coverage as cov
     if snapshot is None or me is None:
@@ -139,7 +154,13 @@ def build(codex, snapshot, *, leaders: Mapping[str, str | None] | None = None, m
         return None
     if ranks is None:
         ranks = {sid: (1 if lead == me else 2) for sid, lead in (leaders or {}).items() if lead is not None}
-    order = (getattr(codex, "slicing", None) or {}).get("order", "bytes")
+    window: set[str] | None = None
+    beyond = 0
+    if order is not None:
+        start = max(0, min(int(start), len(order)))
+        window = set(order[start:start + max(1, int(jobs))])
+        beyond = max(0, len(order) - (start + max(1, int(jobs))))
+    id_order = (getattr(codex, "slicing", None) or {}).get("order", "bytes")
     by_slice: dict[str, list[_Part]] = {}
     skipped = 0
     deepest = 1
@@ -147,13 +168,16 @@ def build(codex, snapshot, *, leaders: Mapping[str, str | None] | None = None, m
         sid = cov.shard_id(codex, f"{s.slice}/{s.n:05d}")
         if sid in ranks:
             rank = ranks[sid]
-            is_skipped = rank is None or rank > rank_limit
+            if window is not None:
+                is_skipped = sid not in window          # the job window, or not now
+            else:
+                is_skipped = rank is None or rank > rank_limit
             if rank is not None:
                 deepest = max(deepest, rank)
         else:
             is_skipped = False               # closed, or not an open part this view knows
         try:
-            part = _Part(order_key(s.first_id, order), order_key(s.last_id, order), is_skipped)
+            part = _Part(order_key(s.first_id, id_order), order_key(s.last_id, id_order), is_skipped)
         except RecordsError:
             continue
         by_slice.setdefault(s.slice, []).append(part)
@@ -165,36 +189,36 @@ def build(codex, snapshot, *, leaders: Mapping[str, str | None] | None = None, m
         parts.sort(key=lambda p: p.lo)
         slices[name] = ([p.lo for p in parts], parts)
     unknown = (getattr(codex, "slicing", None) or {}).get("unknown")
-    return Skips(order=order, slice_column=slice_column(codex), slices=slices,
+    return Skips(order=id_order, slice_column=slice_column(codex), slices=slices,
                  skipped_parts=skipped, unknown_slice=unknown if isinstance(unknown, str) else None,
-                 rank_limit=rank_limit, max_rank=deepest)
+                 rank_limit=rank_limit, max_rank=deepest,
+                 admitted=tuple(sid for sid in (order or ()) if window is not None and sid in window),
+                 beyond=beyond)
 
 
 # ---- the worker's cached view ---------------------------------------------------
 
 _cache: dict[str, tuple[float, tuple, Skips | None]] = {}
 _cache_lock = threading.Lock()
-#: collection key -> the rank the stage currently admits (`widen`); 1 again
-#: whenever what decides the view changes
+#: collection key -> the start of the job window in this peer's order
+#: (`widen` advances it by JOBS); 0 again whenever what decides the view
+#: changes — a bundle accepted (a job done), a digest, the hour
 _rank_limit: dict[str, int] = {}
 
 
 def widen(collection) -> int:
-    """The embed stage found nothing left at the current rank: admit the next
-    one at the next build (the cache is dropped). Returns the new limit;
-    unchanged when the deepest rank is already admitted."""
+    """The embed stage found nothing in its current jobs: admit the next
+    JOBS of the order at the next build (the cache is dropped). Returns the
+    new start; unchanged when nothing lies beyond the window."""
     key = str(getattr(collection, "manifest_path", "") or getattr(collection, "name", ""))
     with _cache_lock:
         hit = _cache.get(key)
-        current = _rank_limit.get(key, 1)
-        if hit is not None and hit[2] is None:
-            return current                 # nothing is left aside: no rank to admit
-        deepest = hit[2].max_rank if hit is not None else None
-        if deepest is not None and current >= deepest:
-            return current
-        _rank_limit[key] = current + 1
+        current = _rank_limit.get(key, 0)
+        if hit is not None and (hit[2] is None or hit[2].beyond <= 0):
+            return current                 # nothing left aside, or nothing beyond: no further
+        _rank_limit[key] = current + JOBS
         _cache.pop(key, None)
-        return current + 1
+        return current + JOBS
 
 
 #: grace windows run in days (`update.grace_days`); a leader whose window
@@ -261,12 +285,12 @@ def skip_test(collection, con, *, root: Path | None = None, now: float | None = 
                 _cache[key] = (now, fp, skips)
         else:
             with _cache_lock:
-                # what decides the view moved (a digest, a bundle, the hour):
-                # the walk starts again at the first rank — unless the cache
-                # was dropped by `widen`, whose new limit stands
+                # what decides the view moved (a digest, a bundle — a job done
+                # — the hour): the walk starts again at the head of the order,
+                # unless the cache was dropped by `widen`, whose start stands
                 if hit is not None:
-                    _rank_limit[key] = 1
-                rank_limit = _rank_limit.get(key, 1)
+                    _rank_limit[key] = 0
+                start = _rank_limit.get(key, 0)
             from app.share import counting
             # a part is counted once whatever covers it (04 §4.5: the union
             # of its bundles' chunk ids; deprecated copies toward nothing);
@@ -277,7 +301,9 @@ def skip_test(collection, con, *, root: Path | None = None, now: float | None = 
                 extra = {}
             ranks = contribute.work_order(codex, snapshot, con, me=own_key, live=live, now=now, **extra) \
                 if snapshot is not None else {}
-            skips = build(codex, snapshot, ranks=ranks, me=own_key, live=live, rank_limit=rank_limit)
+            order = contribute.job_order(codex, snapshot, con, me=own_key, live=live, now=now, **extra) \
+                if snapshot is not None else []
+            skips = build(codex, snapshot, ranks=ranks, me=own_key, live=live, order=order, start=start)
             with _cache_lock:
                 _cache[key] = (now, fp, skips)
     except Exception:   # noqa: BLE001 — any doubt embeds (module docstring)
@@ -291,10 +317,10 @@ def skip_test(collection, con, *, root: Path | None = None, now: float | None = 
 
 
 def rank_limit_of(collection) -> int:
-    """The rank the stage admits for the collection now (tests, the card)."""
+    """Where the job window starts in this peer's order now (tests, the card)."""
     key = str(getattr(collection, "manifest_path", "") or getattr(collection, "name", ""))
     with _cache_lock:
-        return _rank_limit.get(key, 1)
+        return _rank_limit.get(key, 0)
 
 
 def reset_cache() -> None:

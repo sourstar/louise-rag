@@ -770,3 +770,37 @@ benchmark, no member offered) are not in the ordering at all after the
 same deploy. Owed: Perugia's chunks/min and "led parts await" over the
 hour after the deploy, and the count of parts where two producers'
 bundles meet (the duplicates-as-checks budget, 03 §3.6: under a tenth).
+
+### 2026-10-20 — two jobs at a time: the embed stage works the first two parts of its order (operator) — PREPARED
+
+**Change.** Operator, 2026-10-20: "You can take up to 2 jobs at a time, it
+means that upon completion of one you start the second having the time to
+get another job (no idle between jobs)". 04 §4.5 amended. The rank walk of
+the row above becomes a JOB WINDOW: `contribute.job_order` lists the open
+parts this peer may take in the order it takes them (rank 1 first, within
+a rank by its own score, highest first; parts another producer is visibly
+on are not in it), `leading.build(order=…, start=…)` admits
+`order[start:start + leading.JOBS]` (JOBS = 2) and leaves every other open
+part for now; `leading.widen` — called by `_backfill_rows` when a round
+finds nothing under p2p — moves the window down the order by JOBS; a
+bundle accepted (a job done), a digest or the hour rebuilds the view and
+the window starts again at the head. So while part A embeds, part B is
+admitted beside it; when A's last document is done the walk continues
+into B in the same round, and the next build (A's bundle accepted, A
+closed) admits C beside B — the card never idles between jobs, and the
+other peers see this one on at most two parts, instead of on every part
+of its rank at once (the row above: 424 rank-1 parts admitted together,
+walked in id order, so a second peer could only ever meet Perugia on the
+part its walk was in).
+
+**MEASURED BEFORE (Perugia 12:25Z, the row above).** 1,062 open parts,
+424 at rank 1, 283 chunks/min at full GPU; the stage admitted all 424 at
+once. Not yet measured: the rank walk of 99241f9 is gated, not deployed.
+
+**EXPECTED AFTER.** The same chunks/min (the GPU is the bound, not the
+selection — the window changes WHICH documents the backfill walk returns,
+not how many); zero idle rounds between parts; "led parts await" counts
+the parts beyond the window; two producers' bundles meet on at most the
+parts a peer entered after the other's last digest. Owed: Perugia's
+chunks/min, idle rounds and the duplicates count over the hour after the
+deploy, and the node's `hold vectors show` leader split.
