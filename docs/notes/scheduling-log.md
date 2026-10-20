@@ -793,7 +793,7 @@ same deploy. Owed: Perugia's chunks/min and "led parts await" over the
 hour after the deploy, and the count of parts where two producers'
 bundles meet (the duplicates-as-checks budget, 03 §3.6: under a tenth).
 
-### 2026-10-20 — two jobs at a time: the embed stage works the first two parts of its order (operator) — PREPARED
+### 2026-10-20 — two jobs at a time: the embed stage works the first two parts of its order (operator) — DEPLOYED on Perugia 13:18Z (cfab45e), measuring
 
 **Change.** Operator, 2026-10-20: "You can take up to 2 jobs at a time, it
 means that upon completion of one you start the second having the time to
@@ -826,3 +826,14 @@ the parts beyond the window; two producers' bundles meet on at most the
 parts a peer entered after the other's last digest. Owed: Perugia's
 chunks/min, idle rounds and the duplicates count over the hour after the
 deploy, and the node's `hold vectors show` leader split.
+
+**DEPLOYED (Perugia, 13:18Z / 15:18 CEST, cfab45e — PASSED by München,
+4,862 tests, 18 min 30 s; it carries 99241f9, 8cf5ead, cf6365e, 6578544
+too).** Smoke: 0 failures, bit-identical live. First round 13:19:08:
+"embedding 20 document(s), 2 submitted and 1 prepared at a time", rows
+returned, no stall. `hold vectors show gutenberg`: 1,249 open parts,
+covered 9,783,255 of 10,477,214 chunks; leader field node 721 / Perugia
+528 — the node still in the ordering until its own deploy (at the scan's
+end, ~04:30 CEST), which under the walk only orders Perugia's parts. The
+hour's numbers (chunks/min against 283, rounds and idle rounds, parts
+where two producers' bundles meet, "led parts await") due ~14:20Z.
