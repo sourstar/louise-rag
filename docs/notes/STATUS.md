@@ -284,6 +284,14 @@ recorded in the report, not a refusal (03 §3.5 amended;
 structural T0 failure still refuse. The four parts re-ladder at the
 publisher's next pass after the deploy.
 
+### 2026-10-20: pitfall 18 measured on Perugia — the embed stage back at CLI throughput under heavy intake
+
+62a098d, 08:55–09:55Z: 138 chunks/min (61 before, CLI 143) while 199
+bundles landed, judged → accepted 14 s against 18 min 28 s; the busy
+threads are LanceDB's native writers, not `share-fetch`
+([scheduling-log.md](scheduling-log.md), the pitfall-18 row). The cut
+stays in the intake thread.
+
 ### 2026-10-20: gutenberg-graph, step 2a — Codex version 9, the three claim types, several targets
 
 Built on step 1's amendments: `app/hold/codex.py` reads and writes version 9

@@ -607,7 +607,7 @@ contribute window on 0624b18 (chunks, minutes, chunks/min, bundles,
 cold starts); AFTER from the first night on the publisher, and no part
 bundled by both peers.
 
-### 2026-10-20 — the bundle intake's hard split cuts by index (pitfall 18) — PREPARED, not deployed
+### 2026-10-20 — the bundle intake's hard split cuts by index (pitfall 18) — DEPLOYED 62a098d, measured
 
 **Change.** `chunking._fixed_windows`: a paragraph longer than the window
 is cut by index, not by re-slicing the remainder once per window; the
@@ -632,11 +632,27 @@ coverage.rows`. Here, on a Linux host: a 3.4 MB one-paragraph book
 0.136 s and 1,737 minor faults before, 0.005 s and 449 after; identical
 chunks.
 
-**AFTER (owed by Perugia on the deployed tip).** The next bundle's time
-from judged to accepted; sys ticks of `share-fetch` while it lands;
-embed chunks/min over an hour with no index build inside; gate waited vs
-served. The node too (München): the same intake runs when it takes
-Perugia's bundles.
+**AFTER (Perugia, 08:55–09:55Z on 62a098d, worker up since 08:55:24Z, no
+index build inside, heavy intake running the whole hour).** embed 8,305
+chunks embedded + 15,446 reused = **138 chunks/min** (BEFORE 61; the CLI
+143 — the stage is at CLI throughput while taking bundles in). Intake:
+199 bundles accepted, 1,243,357 chunks landed 09:13:53–09:57:47Z, one
+bundle every 10–15 s; 9 with a T0 WARNING (the envelope tie-breaker),
+e.g. 64f89a08… judged → accepted **14 s** (warning 09:13:39, accepted
+09:13:53, "0 landed, 18,518 compared: pass") against 18 min 28 s before.
+Threads at ~10:00Z over 30 s while 7 bundles landed: the top four were
+LanceDB's native `lance_backgroun` (1,736/1,633/1,229/987 user ticks,
+14–30 sys — native writes that release the GIL); `share-fetch` not in the
+top four, py-spy idle in `fetch_file` (network); sys time gone — no WSL2
+page-fault storm. Gate 09:36 → 09:56Z: admitted 6,812 → 9,420, waited
++3,466 s, served +1,202 s — 1.7 s waited per 0.46 s served, the
+concurrency-2 submission queue on a `parallel:1` encoder, not contention
+(the stage is at CLI throughput). Publisher: 8 passes, 26 parts bundled
+from vectors held here, all accepted, 0 refused; "left to the fetch" 251
+→ 174. **Decision (architecture session):** the cut stays in the intake's
+thread; moving it to the parse pool was the fallback if the fix left the
+embed starved, and it did not. München's node, taking Perugia's bundles,
+still owes its own AFTER line.
 
 ### 2026-10-20 — the node's gutenberg embeds p2p all day (operator) — asked of München
 
