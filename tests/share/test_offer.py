@@ -84,3 +84,39 @@ def test_offered_for_node_subtracts_the_collections_held(node, monkeypatch):  # 
     monkeypatch.setattr(collections_mod, "load_annotations", lambda: [])
     assert offer.held_ids() == {held.collection_id}
     assert [o["collection_id"] for o in offer.offered_for_node(now=now)] == [other.collection_id]
+
+
+def test_a_collection_a_live_digest_lists_is_offered_even_before_its_codex_arrives(node):  # noqa: F811
+    """The operator, 2026-10-20: "I still don't see the list". Nobody sends a
+    `codex` event for a collection it merely holds, so the catalogue alone
+    showed nothing; the digests, hourly, name every collection a neighbour
+    holds and serves (09 §9.9) — THAT is the offer. Title, classes and the
+    servers come from the digest; the Codex's plugin and summary once one is
+    in the catalogue; the take pulls the Codex itself."""
+    now = time.time()
+    con = peers.connect()
+    cid = "sha256:" + "d" * 64
+    digest(con, PEER_KEY, "http://peer.test:8742",
+           [{"collection_id": cid, "lineage_id": cid, "title": "Normattiva", "snapshot_id": "2026-10",
+             "members": ["records-x"], "license": "yellow", "privacy": "public"}], now=now)
+    (only,) = offer.offered(con, set(), now=now)
+    assert (only["collection_id"], only["title"], only["license"], only["privacy"]) == \
+        (cid, "Normattiva", "yellow", "public")
+    assert only["plugin"] is None and only["codex_known"] is False and only["first_seen"] is None
+    assert only["served_by"] == [{"key": PEER_KEY, "address": "http://peer.test:8742",
+                                  "snapshot_id": "2026-10", "members": 1}]
+    assert only["relation"] == "root" and only["announced_by"] == PEER_KEY
+    assert offer.announced(cid, now=now) and not offer.in_catalogue(cid)
+    assert not offer.announced("sha256:" + "e" * 64, now=now)
+    # the Codex arrives (a codex event): the same entry, now with its plugin
+    codex = pubmed()
+    digest(con, PEER_KEY, "http://peer.test:8742",
+           [{"collection_id": codex.collection_id, "lineage_id": codex.collection_id, "title": "PubMed",
+             "snapshot_id": "2026-10", "members": [], "license": "green", "privacy": "public"}], now=now)
+    announce(con, codex, now=now)
+    (pm,) = offer.offered(con, set(), now=now)
+    assert pm["collection_id"] == codex.collection_id and pm["plugin"] == "pubmed" and pm["codex_known"]
+    assert pm["served_by"][0]["key"] == PEER_KEY and pm["first_seen"]
+    # held: gone, whichever source named it
+    assert offer.offered(con, {codex.collection_id}, now=now) == []
+    con.close()

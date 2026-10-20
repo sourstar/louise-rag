@@ -303,9 +303,9 @@
       {% if o.privacy %}<span class="badge">{{ o.privacy }}</span>{% endif %}
       {% if o.publication and o.publication != 'open' %}<span class="badge lapis">{{ o.publication }}</span>{% endif %}
       <span class="badge {{ 'ok' if o.served_by else 'brass' }}" title="{% for s in o.served_by %}{{ s.key[:23] }}… at {{ s.address }} — snapshot {{ s.snapshot_id }}, {{ s.members }} member{{ '' if s.members == 1 else 's' }}{% if not loop.last %} · {% endif %}{% else %}no live neighbour serves it now: a take waits for a digest that offers it{% endfor %}">served by {{ o.served_by|length }} live peer{{ '' if o.served_by|length == 1 else 's' }}</span>
-      <span class="badge brass" title="announced by {{ o.announced_by or '?' }}">first seen {{ o.first_seen }}</span>
+      {% if o.first_seen %}<span class="badge brass" title="announced by {{ o.announced_by or '?' }}">first seen {{ o.first_seen }}</span>{% endif %}
     </div>
-    <div class="note"><code title="collection_id">{{ o.collection_id }}</code>{% if o.relation != 'root' %} · {{ o.relation }} in lineage <code>{{ o.lineage_id[:23] }}…</code>{% endif %}</div>
+    <div class="note"><code title="collection_id">{{ o.collection_id }}</code>{% if o.relation != 'root' %} · {{ o.relation }} <code>{{ o.lineage_id[:23] }}…</code>{% endif %}{% if not o.codex_known %} · <span title="its digest names it; the Codex itself is pulled when you take it">Codex not yet pulled</span>{% endif %}</div>
     <div class="actions"><button class="primary" onclick="openTake('{{ o.collection_id }}')">take…</button></div>
   </div>
   {% endfor %}

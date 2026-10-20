@@ -465,9 +465,10 @@ def share_fetch(body: ShareFetchBody):
     cid = body.collection_id.strip()
     if not cid.startswith("sha256:"):
         raise HTTPException(409, "a collection is taken by its id (sha256:…), as the offer lists it")
-    if not offer.in_catalogue(cid):
-        raise HTTPException(409, f"nobody announced {cid[:23]}… to this node: it is not in the offer; "
-                                 f"`louise share fetch {cid} --from ADDRESS` takes it from a peer given by hand")
+    if not offer.announced(cid):
+        raise HTTPException(409, f"no live neighbour's digest lists {cid[:23]}… and no Codex of it is in the "
+                                 f"catalogue: it is not in the offer; `louise share fetch {cid} --from ADDRESS` "
+                                 f"takes it from a peer given by hand")
     name = body.name.strip()
     if name and collections_mod.by_name(name) is not None:
         raise HTTPException(409, f"{name!r} is a collection this node already holds; choose another local name")
