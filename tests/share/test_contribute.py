@@ -695,3 +695,61 @@ def test_a_part_with_another_producers_bundle_accepted_but_not_here_is_left_to_t
     assert any("left to the fetch, which takes them again" in s and sid in s for s in said)
     # the other parts are bundled as before
     assert out["bundles"] or len(snapshot.shards) == 1
+
+
+def test_an_own_export_the_ladder_refuses_is_set_aside_not_served_and_not_exported_again_for_a_day(ready, monkeypatch):
+    """München, 2026-10-20: the node's publisher re-exported two parts its own
+    ladder refused at T0 every pass — 26 copies in ten hours — and every
+    copy sat in state/bundles, which the seeder serves and the digest offers
+    whole, so "not announced" was not true and Perugia fetched them all. A
+    refused export is set aside under state/share/refused, the part is not
+    exported again for REFUSED_RETRY_S, and refused copies left under
+    state/bundles by earlier code are swept aside at the next pass."""
+    import dataclasses
+    from app.hold import admit as adm
+    from app.share import members as mem
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    state = root / "gutenberg" / "state"
+    shards = [f"{s.slice}/{s.n:05d}" for s in snapshot.shards]
+    assert len(shards) >= 2
+    # a refused copy of an EARLIER code's making, still under state/bundles: served until now
+    old_bid = "sha256:" + "c" * 64
+    old_dir = contribute.bundle_dir(root, "gutenberg", codex, shards[1], old_bid)
+    old_dir.mkdir(parents=True)
+    for f in mem.BUNDLE_FILES:
+        (old_dir / f).write_bytes(b"x")
+    cov.record(kw["con"], bundle_id=old_bid, shard=cov.shard_id(codex, shards[1]), producer=OUR_KEY, uids=[],
+               chunks=0, tiers={"T0": "fail"}, source=cov.LOCAL, accepted_at=None)
+    assert mem.bundle_dirs(state, codex.space_segment) == [old_dir], "served and offered, as on the node"
+    real = contribute._own_ladder
+
+    def refusing(root_, name_, codex_, snapshot_, where):
+        report, header = real(root_, name_, codex_, snapshot_, where)
+        tiers = tuple(adm.Tier("T0", adm.FAIL, "forced by the test") if t.tier == "T0" else t for t in report.tiers)
+        return dataclasses.replace(report, tiers=tiers), header
+    monkeypatch.setattr(contribute, "_own_ladder", refusing)
+    now = time.time()
+    said: list[str] = []
+    out = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)], now=now,
+                          log=said.append, **kw)
+    assert out["set_aside"] == 1 and not old_dir.exists() \
+        and contribute.refused_dir(root, "gutenberg", codex, shards[1], old_bid).is_dir()
+    assert out["refused_recently"] == [shards[1]], "its refusal is fresh: not exported again"
+    assert out["bundles"] and out["refused"] and not out["accepted"]
+    assert mem.bundle_dirs(state, codex.space_segment) == [], "a refused export is not among the served bundles"
+    assert len(list((state / "share" / "refused").rglob("header.json"))) == len(out["bundles"]) + 1, "plus the swept one"
+    rows = [r for r in cov.rows(kw["con"]) if r["source"] == cov.LOCAL]
+    assert rows and all(r["accepted_at"] is None and r["tiers"]["T0"] == "fail" for r in rows)
+    assert any("set aside, not served, not announced" in s for s in said)
+    # the next pass within the day: nothing exported for those parts, said once per part
+    again = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)], now=now + 600,
+                            log=said.append, **kw)
+    assert again["bundles"] == [] and set(again["refused_recently"]) == set(shards)
+    assert any("not exported again for 24 h" in s for s in said)
+    assert len([r for r in cov.rows(kw["con"]) if r["source"] == cov.LOCAL]) == len(rows), "no new copy"
+    # a day later: tried again (and refused again here, the ladder being forced)
+    later = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)],
+                            now=now + contribute.REFUSED_RETRY_S + 60, **kw)
+    assert later["bundles"] and later["refused_recently"] == []

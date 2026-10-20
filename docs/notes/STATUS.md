@@ -309,6 +309,22 @@ numbers owed AFTER. Also today: a landed bundle marks its part's documents
 embedded (Perugia's card read 57 % with 93 % of the vectors held), and the
 offer says when a collection cannot be taken yet (no snapshot served).
 
+### 2026-10-20: a refused own export is set aside and not retried for a day (München's facts on the node)
+
+The node published en/00219 seven times and en/00043 eight times in ten
+hours: its own ladder refused each export at T0 (the homogeneous-envelope
+clause, a warning since 4e63103), the refusal left the part open and the
+row at 0 chunks, every publisher pass exported it again under a new id,
+and every refused copy sat in `state/bundles/`, which the seeder serves
+and the digest offers whole — "not announced" in the log, fetched and
+compared by Perugia all the same (26 copies). Now a refused export goes to
+`state/share/refused/…` (`contribute.refused_dir`), refused copies of
+earlier passes are swept there at the next pass (`sweep_refused`), and a
+part whose own export was refused is not exported again for
+`REFUSED_RETRY_S` (24 h) — the vectors stay for `hold vectors check`. A
+part genuinely failing T0 now costs one copy a day, not one a pass. 04
+§4.5 amended.
+
 ### 2026-10-20: an accepted bundle without its files is taken again, never re-signed (Perugia's find)
 
 en/01192 on Perugia: a node bundle of 6,924 chunks accepted 2026-10-19 on

@@ -662,6 +662,13 @@ it cannot tell from the bundle's (*amended 2026-10-20*: Perugia re-signed
 963 chunks over a node bundle of 6,924 whose files its compare path had
 never stored, and the walk would have re-embedded the rest).
 
+A bundle a peer's OWN ladder refuses is set aside — kept for `hold
+vectors check`, outside the directory the seeder serves and the digest
+offers — and the part is not exported again for a day (*amended
+2026-10-20*: the node re-exported two refused parts every publisher pass,
+26 copies in ten hours, each left where the seeder served it and each
+fetched by Perugia).
+
 **How a bundle travels.** A bundle is a member (§4.3): its producer
 announces it with a `bundle` event naming the collection, space,
 snapshot, part, chunk range, bundle id, root and size, and lists it in

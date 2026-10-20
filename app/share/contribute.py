@@ -256,6 +256,91 @@ def bundle_dir(root: Path, name: str, codex, shard: str, bundle_id: str) -> Path
             / shard_mod._hex(bundle_id))
 
 
+#: an own export this peer's ladder refused is not exported again before
+#: this much time has passed — the vectors stay for `vectors check`
+#: meanwhile (München, 2026-10-20: the node re-exported two refused parts
+#: every publisher pass, 26 copies in ten hours)
+REFUSED_RETRY_S = 24 * 3600.0
+
+
+def refused_dir(root: Path, name: str, codex, shard: str, bundle_id: str) -> Path:
+    """`state/share/refused/<space>/<slice>/<NNNNN>/<bundle_id hex>/`: an own
+    export this peer's ladder refused, kept for `vectors check` OUTSIDE
+    `state/bundles/` — which the seeder serves and the digest offers whole
+    (`members.bundle_dirs`), so a refused bundle left there was "not
+    announced" in the log and fetched by every neighbour all the same."""
+    return (Path(root) / name / "state" / "share" / "refused" / codex.space_segment / shard
+            / shard_mod._hex(bundle_id))
+
+
+def _set_aside(src: Path, dst: Path, *, when: float) -> None:
+    """`src` becomes `dst`, whole or not at all (invariant 2), its mtime the
+    refusal's time; `state/bundles` may be a link to another filesystem."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        shutil.rmtree(src, ignore_errors=True)
+        return
+    try:
+        src.replace(dst)
+    except OSError:
+        landing_ = dst.with_name(f".{dst.name}.aside")
+        shutil.rmtree(landing_, ignore_errors=True)
+        shutil.copytree(src, landing_)
+        landing_.replace(dst)
+        shutil.rmtree(src, ignore_errors=True)
+    os.utime(dst, (when, when))
+
+
+def _own_refused_rows(con, codex, *, own_key: str | None, sid: str | None = None) -> list[dict[str, Any]]:
+    rows = cov.rows(con, shard=cov.shard_id(codex, sid)) if sid else cov.rows(con)
+    return [r for r in rows
+            if r["source"] == cov.LOCAL and not r["accepted_at"]
+            and (own_key is None or r["producer"] == own_key)
+            and any(v == "fail" for v in (r["tiers"] or {}).values())]
+
+
+def own_refusals(root: Path, name: str, codex, con, sid: str, *, own_key: str | None) -> list[tuple[str, float | None]]:
+    """`(bundle_id, when)` for this peer's exports of the shard that its own
+    ladder refused: LOCAL rows never accepted with a failing tier; `when`
+    the set-aside directory's mtime (the refusal's time), None when no
+    directory is here any more."""
+    out: list[tuple[str, float | None]] = []
+    for r in _own_refused_rows(con, codex, own_key=own_key, sid=sid):
+        when = None
+        for d in (refused_dir(root, name, codex, sid, r["bundle_id"]), bundle_dir(root, name, codex, sid, r["bundle_id"])):
+            try:
+                when = d.stat().st_mtime
+                break
+            except OSError:
+                continue
+        out.append((str(r["bundle_id"]), when))
+    return out
+
+
+def sweep_refused(root: Path, name: str, codex, con, *, own_key: str | None,
+                  say: Callable[[str], None] = lambda *_: None) -> int:
+    """Own refused exports still under `state/bundles/` — served and offered
+    until today — set aside with the mtime they had. Once per pass; costs
+    the refused rows, few."""
+    moved = 0
+    for r in _own_refused_rows(con, codex, own_key=own_key):
+        sid = "/".join(str(r["shard"]).rsplit("/", 2)[1:])
+        src = bundle_dir(root, name, codex, sid, r["bundle_id"])
+        if not src.is_dir():
+            continue
+        try:
+            when = src.stat().st_mtime
+        except OSError:
+            when = time.time()
+        _set_aside(src, refused_dir(root, name, codex, sid, r["bundle_id"]), when=when)
+        moved += 1
+    if moved:
+        say(f"[{name}] share contribute: {moved} own bundle(s) this peer's ladder refused set aside from the "
+            f"served directory — until now they were served and offered as members all the same "
+            f"(München, 2026-10-20: 26 copies of two parts, every one fetched by Perugia)")
+    return moved
+
+
 def calibration_tensors(root: Path, name: str, codex):
     """`(reference, envelope)` — 09 §9.12's two tensors of the calibration
     member this peer holds, what T0 and T2 are judged against."""
@@ -387,6 +472,14 @@ def _bundle_shard(root: Path, name: str, codex, snapshot: sn.Snapshot, shard: sn
             f"without their files here ({', '.join(m[:23] + '…' for m in missing[:3])}): left to the fetch, "
             f"which takes them again; nothing re-signed")
         return "claimed"
+    recent = [w for _, w in own_refusals(root, name, codex, con, sid, own_key=own_key)
+              if w is not None and now - w < REFUSED_RETRY_S]
+    if recent:
+        out.setdefault("refused_recently", []).append(sid)
+        say(f"[{name}] share contribute: {sid}: this peer's own export was refused by its ladder "
+            f"{int((now - max(recent)) // 60)} min ago; not exported again for {int(REFUSED_RETRY_S // 3600)} h "
+            f"— the vectors stay here for `vectors check`")
+        return "refused"
     claimed = claimed_uids(root, name, codex, con, sid, own_key=own_key)
     only = None
     if held_books is not None:
@@ -476,7 +569,11 @@ def _bundle_shard(root: Path, name: str, codex, snapshot: sn.Snapshot, shard: sn
             say(f"[{name}] share contribute: {sid}: own bundle refused at {failed} — {why}"
                 + (f"; {refused_rows} row(s) refused, e.g. {report.refused[0][0]}: {report.refused[0][1]}"
                    if refused_rows else "")
-                + " — not announced; the vectors stay here for `vectors check`")
+                + " — set aside, not served, not announced; the vectors stay here for `vectors check`; "
+                  f"not exported again for {int(REFUSED_RETRY_S // 3600)} h")
+            # OUT of state/bundles: the seeder serves and the digest offers
+            # every bundle directory there (München, 2026-10-20)
+            _set_aside(final, refused_dir(root, name, codex, sid, b["bundle_id"]), when=time.time())
     shutil.rmtree(scratch, ignore_errors=True)
     return "exported"
 
@@ -516,7 +613,9 @@ def once(root: Path, name: str, codex, *, key, own_key: str | None, embed, vecto
                            "mine": [f"{s.slice}/{s.n:05d}" for s in mine], "built": 0,
                            "held": [], "probed": 0, "left_to_fetch": [], "bundles": [], "accepted": [],
                            "refused": [], "events": 0, "unannounced": 0, "interrupted": False,
-                           "marked": 0, "claimed": [], "awaiting": [], "unreadable": []}
+                           "marked": 0, "claimed": [], "awaiting": [], "unreadable": [], "refused_recently": [],
+                           "set_aside": 0}
+    out["set_aside"] = sweep_refused(root, name, codex, con, own_key=own_key, say=say)
     common = dict(key=key, own_key=own_key, embed=embed, vectors_for=vectors_for, con=con,
                   node_con=node_con, now=now, say=say, out=out, serving=serving, held_books=held_books, stop=stop)
     if not mine and not others:
