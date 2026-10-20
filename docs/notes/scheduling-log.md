@@ -762,6 +762,15 @@ Same deploy, the publisher: the sweep set 27 refused own copies aside
 en/00043 4. The seeder's sync then deleted the set-aside tree
 (state/share is the seeder's) — cf430b5 moves it to state/refused-bundles.
 
+**Measured after the deploy (München).** 530,000 entities/min at 17:43
+CEST (39.9 M of ~120 M), ~730,000/min over 17:43–17:51 (45.7 M): 4.1–5.7×
+the serial 128,800. End of the scan expected ~19:30 CEST. Then the deploy
+of 8710eed (PASSED, 4,882 / 1 skipped: the wikidata pack on
+`derived.place`, LOUISE_CACHE_DIR=/data/cache on the node's NVMe,
+refused-bundles, the union cache) and phase 2 with the label table on the
+fast drive — owed: the adoption's wall clock for the ~60 GB pack and phase
+2's entities/s a core against 133–179 on tank.
+
 ### 2026-10-20 — a peer leads only where it embeds and shares; a switch releases its parts (operator) — PREPARED
 
 **Change.** The digest carries a space's benchmark only for collections
