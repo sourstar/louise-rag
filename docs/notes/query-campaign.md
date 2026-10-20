@@ -179,3 +179,41 @@ A broad exclusion was refused (§5.7: the postings hold values of at most
 "excluding 'lang' = 'en' needs its 63193 records"
 (`app/ask/filters.py`, `tests/ask/test_facets.py`). The campaign test passes
 once the node runs it.
+
+## Run 4 — three ways to keep the reranker from burying titles (2026-10-21, night)
+
+The operator's rule: adopt the variant that brings titles back to at least
+0.738 MRR and 0.950 R@10 after the reranker, without lowering the
+descriptive queries after the reranker; (b) first, (a) only if (b) loses
+descriptive. `tools/measure/rerank_variants.py` replays each query through
+the product's own `results.search` on the node, once per variant, with the
+reranker on and measured bit-exact (DNN=0, `parallel:1`, `cache_ram:0`).
+(b) is the product function itself, `retrieval._rerank_order` with
+`RERANK_FUSE = True`.
+
+| Titles (40), after the reranker | MRR | R@1 | R@3 | R@10 |
+|---|---:|---:|---:|---:|
+| base (the reranker's order) | 0.578 | 0.425 | 0.700 | 0.925 |
+| (a) the catalogue's first record first | **0.782** | 0.700 | 0.825 | 0.975 |
+| (b) RRF of the reranker's and the fused order | 0.720 | 0.575 | 0.825 | 1.000 |
+| (c) chunks cut to 300 characters | 0.625 | 0.450 | 0.725 | 1.000 |
+
+| Descriptive (the 347 of 451 reranked under all three) | MRR | R@1 | R@3 | R@10 |
+|---|---:|---:|---:|---:|
+| base | 0.411 | 0.308 | 0.467 | 0.671 |
+| (a) | 0.411 | 0.308 | 0.467 | 0.671 |
+| (b) | 0.378 | 0.256 | 0.441 | 0.692 |
+
+**(a) is adopted** (902ceb4, `retrieval.CATALOG_FIRST`, 05 §5.6). It clears
+the titles bar, and on the 376 descriptive queries the reranker answered it
+moved no rank at all: a descriptive query's catalogue leg rarely ranks the
+book first, and when it does the reranker already agrees. (b) misses the
+titles MRR and lowers the descriptive MRR by 0.033.
+
+The reranker gave no answer within its budget for 75 of the 451 descriptive
+queries, and (b)'s second call failed for 29 more. Those are left out of
+the tables. The failures grew over the run (1, 2, 5, 5, 9, 14, 13, 18, 8 per
+50 queries), and from 00:10 the card was shared with gutenberg's embedding
+(set to p2p in the Library then). This is a reranker budget under load, not
+a fault of any variant. Where the reranker gives no answer, the product
+shows the fused order, in which the catalogue is already one of the legs.
