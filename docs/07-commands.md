@@ -1279,6 +1279,22 @@ the old directory set aside as `state/bundles.moved-<time>` for the
 operator to delete, the link put in its place. `rename` and `forget` follow
 the link as they do the SHARD's.
 
+A fast drive for derived data (*amended 2026-10-20*, operator: "a cache
+folder on a fast drive, like nvme or ssd, to be used for such
+operations"): with `LOUISE_CACHE_DIR` set (environment: this node's path),
+every cache a plugin BUILDS FROM ITS ORIGIN and seeks in while it parses —
+pubmed's per-container pack, wikipedia's page-props pack, wikidata's pack
+and label table — lives under `<LOUISE_CACHE_DIR>/<kind>/<tag>/`, the tag
+the origin's resolved path (physical identity: two corpora may hold a
+file of one name). Such a cache is re-creatable and never exchanged; the
+archive it derives from, the SHARDs, the bundles and the state stay where
+they are. Unset, each cache stays beside its origin, as before. A cache
+already built beside its origin is carried in once, whole or not at all,
+and left where it was for the operator to delete; a plugin's own setting
+(`PUBMED_PACK_DIR`) wins where set. Measured on the node: wikidata's parse
+is ~95 % label lookups, 133–179 entities/s a core from the HDD pool while
+the scan writes, 1,763 from RAM.
+
 `dev mark-embedded <collection> [--dry-run]` (amended 2026-10-19): the
 documents whose every chunk has a vector here and whose manifest row still
 says `embed_done = 0`, marked as the embed stage marks them. The one-off

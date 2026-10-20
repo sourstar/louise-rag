@@ -126,7 +126,11 @@ are the ones that have drifted; prefer to add a test when you touch them.
    peer's LanceDB table (docs/09 §9.6; no per-part vectors file). Implicit rowids
    are load-bearing (the catalog index, `app/catalog.py`, is
    keyed on `documents.rowid`): nothing VACUUMs a manifest, and anything
-   that renumbers rowids must rebuild it. *Enforced: review.*
+   that renumbers rowids must rebuild it. DERIVED, re-creatable,
+   random-access data — a plugin's pack, a label table — goes under
+   `LOUISE_CACHE_DIR` (the fast drive) when set, keyed on the origin's
+   physical identity (`app/derived.py`); the archive and the authoritative
+   state never do (operator, 2026-10-20; docs/07 §7.8). *Enforced: review.*
 7. GPU BOUNDARY. The app never imports torch/CUDA/SYCL. All model access is
    HTTP (CHAT_URL / TRANSLATE_URL / RERANK_URL, and each collection's own
    [encoder] — there is no default encoder). Embedding calls go through the

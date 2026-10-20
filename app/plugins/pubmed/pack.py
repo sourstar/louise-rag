@@ -76,9 +76,20 @@ def open_container(path: Path):
 
 
 def pack_path(container: Path) -> Path:
-    base = config.PUBMED_PACK_DIR if config.PUBMED_PACK_DIR is not None \
-        else container.parent / ".pack"
-    return Path(base) / (container.name + SUFFIX)
+    """PUBMED_PACK_DIR when set; else the fast drive's `pubmed-pack/<tag of
+    the containers' folder>/` when the node names one (LOUISE_CACHE_DIR,
+    app/derived.py — a pack already built beside the containers is carried
+    there once); else `.pack/` beside the containers."""
+    name = container.name + SUFFIX
+    if config.PUBMED_PACK_DIR is not None:
+        return Path(config.PUBMED_PACK_DIR) / name
+    from app import derived
+    beside = container.parent / ".pack"
+    cached = derived.place("pubmed-pack", container.parent)
+    if cached is None:
+        return beside / name
+    derived.adopt(beside / name, cached / name)
+    return cached / name
 
 
 def _signature(container: Path) -> tuple[int, int]:

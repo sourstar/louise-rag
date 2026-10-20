@@ -14,6 +14,14 @@ CORPUS_MOUNTS_DIR = Path(os.getenv("CORPUS_MOUNTS_DIR", "/corpora"))
 # directory beside the containers (same volume as the archive); set this to
 # keep the working set on faster storage (STATUS 5i).
 PUBMED_PACK_DIR = Path(os.getenv("PUBMED_PACK_DIR")) if os.getenv("PUBMED_PACK_DIR") else None
+# The fast drive for DERIVED, re-creatable, random-access data (07 §7.8;
+# operator, 2026-10-20: "a cache folder on a fast drive, like nvme or ssd,
+# to be used for such operations"): the packs a plugin builds from its
+# origin and seeks in while it parses — pubmed's per-container pack,
+# wikipedia's page-props pack, wikidata's pack and label table — go under
+# it (app/derived.py), keyed on the origin's physical identity. Unset: each
+# stays beside its origin, as before. Identity tier: this node's path.
+CACHE_DIR = Path(os.getenv("LOUISE_CACHE_DIR")) if os.getenv("LOUISE_CACHE_DIR") else None
 #: the tokenizer files a token-cutting chunker names by sha256 (wikidata-text,
 #: 06 §6.3): `<dir>/<hex>.json`, fetched by the platform image at build from
 #: the Hub at a pinned revision and checked against the layer's sha256

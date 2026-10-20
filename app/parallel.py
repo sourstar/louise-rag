@@ -38,7 +38,7 @@ from . import config
 # config knobs a child must share with the parent: everything that shapes
 # a chunk, a record or a plugin's file access
 KNOBS = ("CHUNK_TOKENS", "CHUNK_OVERLAP", "CHUNK_VERSION", "CLEANING_VERSION",
-         "PUBMED_PACK_DIR", "CORPUS_DIR", "DATA_DIR")
+         "PUBMED_PACK_DIR", "CACHE_DIR", "CORPUS_DIR", "DATA_DIR")
 
 _lock = threading.Lock()
 _pool: ProcessPoolExecutor | None = None

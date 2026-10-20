@@ -170,15 +170,23 @@ def _signature(path: Path) -> tuple[int, int]:
 
 
 def _pack_dirs(props: Path) -> list[Path]:
-    return [props.parent / ".pack", Path(tempfile.gettempdir()) / "louise-page-props"]
+    """The fast drive's `wikipedia-page-props/<tag of the props' folder>/`
+    when the node names one (LOUISE_CACHE_DIR, app/derived.py), else
+    `.pack/` beside the props; then the temporary directory."""
+    from app import derived
+    first = derived.place("wikipedia-page-props", props.parent) or props.parent / ".pack"
+    return [first, Path(tempfile.gettempdir()) / "louise-page-props"]
 
 
 def _candidates(props: Path) -> list[Path]:
     # the temporary one is keyed by the origin's full path: two corpora can
     # hold a file of the same name (caches key on physical identity)
-    import hashlib
-    tag = hashlib.blake2b(str(props.resolve()).encode("utf-8"), digest_size=8).hexdigest() + "-"
+    from app import derived
+    tag = derived.tag(props) + "-"
     first, second = _pack_dirs(props)
+    beside = props.parent / ".pack" / (props.name + PACK_SUFFIX)
+    if first != beside.parent:
+        derived.adopt(beside, first / (props.name + PACK_SUFFIX))   # a pack built beside the props, carried once
     return [first / (props.name + PACK_SUFFIX), second / (tag + props.name + PACK_SUFFIX)]
 
 

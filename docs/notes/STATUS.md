@@ -309,6 +309,22 @@ numbers owed AFTER. Also today: a landed bundle marks its part's documents
 embedded (Perugia's card read 57 % with 93 % of the vectors held), and the
 offer says when a collection cannot be taken yet (no snapshot served).
 
+### 2026-10-20: a fast drive for derived data — LOUISE_CACHE_DIR (operator)
+
+"A cache folder on a fast drive, like nvme or ssd, to be used for such
+operations." München measured wikidata's parse at ~95 % label lookups in
+labels.sqlite beside the dump on tank (HDD): 133–179 entities/s a core
+cold while the scan writes, 430 warmed, 1,763 from RAM; phase 2 is ~78 M
+documents. `LOUISE_CACHE_DIR` (config.CACHE_DIR, identity tier, in the
+parse pool's knobs) names the drive; `app/derived.py` places every
+plugin's derived cache under `<kind>/<tag of the origin's resolved path>/`
+and carries an existing cache in once (`adopt`: whole or not at all,
+`*.tmp` left out, the original left). pubmed's pack and wikipedia's
+page-props pack follow it here; the wikidata pack is München's (pack_dir
+through `derived.place`), with the node's env `LOUISE_CACHE_DIR=/data/cache`
+(NVMe, 571 GB free) at the scan's end. 07 §7.8 and CLAUDE.md invariant 6
+amended.
+
 ### 2026-10-20: a refused own export is set aside and not retried for a day (München's facts on the node)
 
 The node published en/00219 seven times and en/00043 eight times in ten
