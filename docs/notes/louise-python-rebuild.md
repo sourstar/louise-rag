@@ -71,8 +71,11 @@ and the switch is one YAML line per model with a backup beside it
 3. **The model YAMLs**: deploy/vega/stage/models/vega-jina-v3.yaml and
    vega-jina-v3-query.yaml, placed through the API as the others were
    (vega.md §12 — the call drops comments; the file goes back afterwards).
-   `context_size` is the model's 8,192, not the space's ctx (the YAML says
-   why). Both NOT pinned.
+   `context_size` is the SPACE's ctx, 1,024: VeGa requires a `cut: tokens`
+   space's window to be the model's context_size, and the task adds the
+   adapter's instruction and the specials on top so a full chunk keeps its
+   tail (the first YAML said 8,192 and VeGa refused every text tagged
+   1,024 — München, 2026-10-20). Both NOT pinned.
 4. **The names**: the new tree `louise-python-20261020`, its wrapper
    `vega-louise-python-20261020`. The wrapper package is rebuilt for the
    new name (deploy/vega/stage/build_vega_package.sh, `BACKEND=

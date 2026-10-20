@@ -5,7 +5,9 @@ is there.
 
 The load call:
     ModelFile     the folder: the weights and, under hf-cache/, their remote code
-    ContextSize   the longest text in tokens (the model's 8,192)
+    ContextSize   the TEXT's window in tokens — the space's ctx (1,024 for wikidata), which
+                  VeGa requires of a `cut: tokens` space; the adapter's instruction and the
+                  specials ride on top of it in the model's own window (8,192)
     options       device:xpu|cuda|cpu (default xpu)
                   adapter:<one of the model's LoRA tasks> (default retrieval.passage;
                   a query encoder is its own model YAML with adapter:retrieval.query)

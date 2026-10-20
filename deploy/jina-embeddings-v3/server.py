@@ -39,6 +39,8 @@ from pathlib import Path
 
 #: the widths the model's Matryoshka training covers (its config)
 WIDTHS = (32, 64, 128, 256, 512, 768, 1024)
+#: `<s>` and `</s>` around every input, the tokenizer's own
+SPECIALS = 2
 #: what the backend may keep reserved between texts (as DAR-legal-it's)
 RELEASE_ABOVE = 3 << 30
 #: Invariant 12 (ENCODER DETERMINISM) for torch: its controls are CALLS, not a
@@ -121,8 +123,29 @@ def use_sdpa(model) -> int:
     return n
 
 
+def instruction_tokens(tokenizer, instruction: str) -> int:
+    """How many tokens the adapter's instruction costs, counted with the
+    model's own tokenizer and without the specials."""
+    if not instruction:
+        return 0
+    return len(tokenizer(instruction, add_special_tokens=False)["input_ids"])
+
+
 def build_encoder(model_dir: str, device: str, adapter: str, dim: int, max_tokens: int):
-    """(encode(text) -> unit vector of `dim`, dim)."""
+    """(encode(text) -> unit vector of `dim`, dim).
+
+    `max_tokens` is the TEXT's window — the space's `ctx`, which the
+    platform's chunker already cut every text to and which VeGa requires as
+    this model's `context_size` for a `cut: tokens` space
+    (docs/notes/char-cut-truncation.md §4: "the model's context_size is the
+    space's ctx"). The adapter's instruction and the two specials are the
+    model's own and ride ON TOP of it, so a window-filling chunk keeps its
+    tail: with `context_size` 1,024 the model is asked for 1,024 + the
+    instruction's tokens + 2, and no text token is ever cut here — which is
+    also how Wikimedia embedded its chunks (the instruction prepended, the
+    1,024-token chunk whole). München, 2026-10-20: a YAML at the model's
+    8,192 made VeGa refuse every text tagged with the space's 1,024.
+    """
     if dim not in WIDTHS:
         raise ValueError(f"width {dim}: one of {WIDTHS}")
     cache = hub_cache(model_dir)
@@ -146,10 +169,14 @@ def build_encoder(model_dir: str, device: str, adapter: str, dim: int, max_token
     adapters = getattr(model.config, "lora_adaptations", None) or ()
     if adapter not in adapters:
         raise ValueError(f"adapter {adapter!r}: the model has {', '.join(adapters)}")
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_dir)        # the folder's own files, offline
+    instruction = (getattr(model.config, "task_instructions", None) or {}).get(adapter, "")
+    max_length = max_tokens + instruction_tokens(tokenizer, instruction) + SPECIALS
 
     def encode(text: str) -> list[float]:
         with torch.no_grad():
-            (v,) = model.encode([text], task=adapter, truncate_dim=dim, max_length=max_tokens)
+            (v,) = model.encode([text], task=adapter, truncate_dim=dim, max_length=max_length)
         release(torch, device)
         return normalised(v)
 

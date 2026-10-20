@@ -990,16 +990,27 @@ def test_jina_v3_loads_the_remote_code_from_the_folders_cache_whatever_the_env_s
     fake_torch.use_deterministic_algorithms = lambda flag: seen.setdefault("det", []).append(flag)
     fake_transformers = types.ModuleType("transformers")
     fake_transformers.AutoModel = SimpleNamespace(from_pretrained=from_pretrained)
+    Model.config.task_instructions = {"retrieval.passage": "Represent the document for retrieval: ",
+                                      "retrieval.query": "Represent the query for retrieving evidence documents: "}
+
+    def tokenizer(text, add_special_tokens=True):
+        seen["tokenized"] = (text, add_special_tokens)
+        return {"input_ids": [1] * 7}           # the instruction's tokens, no specials
+    fake_transformers.AutoTokenizer = SimpleNamespace(from_pretrained=lambda path: tokenizer)
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
 
-    encode, dim = jina.build_encoder(str(tmp_path), "cpu", "retrieval.passage", 512, 8192)
+    encode, dim = jina.build_encoder(str(tmp_path), "cpu", "retrieval.passage", 512, 1024)
     assert seen["path"] == str(tmp_path)
     assert seen["kw"] == {"trust_remote_code": True, "cache_dir": str(tmp_path / "hf-cache")}
     assert os.environ["TRANSFORMERS_CACHE"] == "/models", "LocalAI's env is left as it is"
     assert os.environ["HF_HUB_CACHE"] == str(tmp_path / "hf-cache") and os.environ["HF_HUB_OFFLINE"] == "1"
     assert dim == 512 and encode("a text")[:2] == [0.6, 0.8]
-    assert seen["encode"] == {"task": "retrieval.passage", "truncate_dim": 512, "max_length": 8192}
+    # the TEXT's window is the load's context_size (the space's ctx); the
+    # adapter's instruction (7 tokens here) and the two specials ride on top,
+    # so a window-filling chunk keeps its tail (München, 2026-10-20)
+    assert seen["tokenized"] == ("Represent the document for retrieval: ", False)
+    assert seen["encode"] == {"task": "retrieval.passage", "truncate_dim": 512, "max_length": 1024 + 7 + 2}
     assert "det" not in seen, "determinism stays off unless the model's env asks"
     with pytest.raises(ValueError, match="adapter"):
-        jina.build_encoder(str(tmp_path), "cpu", "classification", 512, 8192)
+        jina.build_encoder(str(tmp_path), "cpu", "classification", 512, 1024)

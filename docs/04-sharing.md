@@ -188,7 +188,10 @@ queues for the node (07 §7.4) with the slices and kinds chosen. A peer
 chooses what it fetches: nothing is fetched that was not chosen, and an
 entry nobody live serves is shown as such and waits for a digest that
 offers it (§4.3). A Codex another entry `continues` or `replaces` is
-shown superseded, never hidden.
+shown superseded, never hidden. And because a peer chooses what it
+fetches, every PUBLIC collection a node holds is shared unless its
+operator says `share = false` in its file (07 §7.8): nothing a peer did
+not choose reaches it, and nothing a node holds is withheld by default.
 
 ## 4.3 Moving bytes
 

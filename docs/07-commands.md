@@ -454,8 +454,12 @@ reader needs at the command line:
   §3.6): what this peer has not tested it does not offer. `--stop`
   withdraws the announcement. It refuses (exit 2) a
   `never-share` collection and announces a `restricted` one to trust-list
-  peers only (04 §4.4). Sharing is automatic after a completed fetch for
-  a `public` collection unless its file says `share = false`.
+  peers only (04 §4.4). A `public` collection is shared unless its file
+  says `share = false` (operator, 2026-10-20: every collection shareable,
+  since a peer chooses what it fetches from the offer, 04 §4.2 — until
+  then a file that did not say read `false`, and only a fetched copy was
+  shared without asking); a restricted or never-share one is never shared
+  by default.
 - **`share fetch`.** Takes `codex.json`, `snapshots/*` and
   `LICENSE-TERMS` first — the members a peer may hold before an
   acknowledgement — then the members named; pieces are checked against
@@ -1111,7 +1115,8 @@ kinds  = ["records", "vectors"]
 embed  = "on-demand"                           # off | on-demand | all | p2p: what the node's encoder spends, never what search uses;
                                                # all = every part itself ("all local"), p2p = the parts rendezvous gives this node,
                                                # published as it goes ("all p2p", 04 §4.5) — p2p needs share = true (below; 2026-10-19)
-share  = true
+share  = true                                  # absent: true for a public Codex, false for restricted / never-share (2026-10-20);
+                                               # `share = false` switches a public collection off
 share_slices = ["year=1980-1984"]              # optional: serving narrowed to these slices (`share --slices`); absent = all held
 share_kinds  = ["records"]                     # optional: and these member kinds (`share --kinds`); terms, validation,
                                                # calibration and seals are served whatever it says (amended 2026-10-07)

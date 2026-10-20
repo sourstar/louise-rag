@@ -450,9 +450,14 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
     # predate the shape) but derived when absent (`codex_defaults`).
     #
     # A file in the OLD shape keeps the old defaults for what it leaves
-    # out: a file that never said `slices`, `kinds`, `share` or `title` is
-    # read exactly as it was before this existed, so no deployed collection
-    # starts fetching, importing or moving on upgrade.
+    # out: a file that never said `slices`, `kinds` or `title` is read
+    # exactly as it was before this existed, so no deployed collection
+    # starts fetching or importing on upgrade. `share` is the ONE exception,
+    # by operator decision (2026-10-20): a PUBLIC collection whose file does
+    # not say is shared — every collection shareable, now that a peer
+    # chooses what it fetches from the offer (04 §4.2) — and `share = false`
+    # in the file is the switch off. A restricted or never-share Codex is
+    # never shared by default (04 §4.4).
     where = str(path)
     _warn_deprecated(path, raw)
     new_shape = any(k in raw for k in _SPEC_FILE_ONLY_KEYS)
@@ -460,7 +465,9 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
     title = raw.get("title")
     if title is not None and not isinstance(title, str):
         raise ValueError(f"{where}: title is a string (07 §7.8), got {title!r}")
-    share = raw.get("share", False)
+    share = raw.get("share")
+    if share is None:
+        share = default_share(codex)
     if not isinstance(share, bool):
         raise ValueError(f"{where}: share is true or false (07 §7.8), got {share!r}")
     share_slices = _parse_share_list(raw.get("share_slices"), "share_slices", where)
@@ -584,7 +591,9 @@ def _annotations_collection(path: Path, raw: dict[str, Any], name: str, codex,
     title = raw.get("title")
     if title is not None and not isinstance(title, str):
         raise ValueError(f"{where}: title is a string (07 §7.8), got {title!r}")
-    share = raw.get("share", False)
+    share = raw.get("share")
+    if share is None:
+        share = default_share(codex)
     if not isinstance(share, bool):
         raise ValueError(f"{where}: share is true or false (07 §7.8), got {share!r}")
     share_slices = _parse_share_list(raw.get("share_slices"), "share_slices", where)
@@ -675,6 +684,16 @@ DEPRECATED_CODEX_KEYS = ("profile", "acquire_enabled", "genesis_archive",
 _SPEC_FILE_ONLY_KEYS = ("slices", "kinds", "share", "title")
 #: the member kinds `share --kinds` may narrow to (02 §2.6; 09 §9.16)
 SHARE_KINDS = ("records", "relations", "figures", "vectors", "bundle", "index")
+
+
+def default_share(codex) -> bool:
+    """What `share` means when a collection's file does not say (07 §7.8;
+    operator, 2026-10-20): a PUBLIC Codex collection is shared — every
+    collection shareable, since a peer chooses what it fetches from the
+    offer (04 §4.2) — and a restricted or never-share one is not. A legacy
+    collection without a Codex cannot be served at all and reads False."""
+    return getattr(codex, "privacy", None) == "public"
+
 
 
 def _parse_share_list(value, key: str, where) -> tuple[str, ...] | None:

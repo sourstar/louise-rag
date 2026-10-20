@@ -624,7 +624,7 @@ async function createAnnotations(){
     const j=await waitForJob(q.id,s=>{box.innerHTML+='<div class="note">'+esc(s)+'</div>'});
     const d=j.result;
     box.innerHTML=`<div class="note">Created <b>${esc(d.name)}</b>: <code>${esc(d.collection_id)}</code><br>
-      ${esc(d.claims)} claims in snapshot ${esc(d.snapshot)}${d.signed?', signed':', unsigned (no node key)'} — file <b>${esc(d.held)}</b>; not shared until you turn sharing on.</div>
+      ${esc(d.claims)} claims in snapshot ${esc(d.snapshot)}${d.signed?', signed':', unsigned (no node key)'} — file <b>${esc(d.held)}</b>; shared, as every public collection is unless its card says otherwise.</div>
       <pre class="cli">${esc(d.cli)}</pre>`;
     setTimeout(()=>location.reload(),2500);
   }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}

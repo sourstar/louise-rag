@@ -6,15 +6,16 @@
 # is the same weights digest and another engine, since the adapter is a load option and so part of
 # the engine, not of the space). The task prepends the adapter's own instruction ("Represent the
 # query for retrieving evidence documents: "), so the Codex's `space.query.instruction` is null —
-# Louise adds nothing. Width 512, normalised, context_size the model's 8,192 (see vega-jina-v3.yaml
-# for why not ctx). NOT pinned: a query encoder answers searches and embeds no corpus.
+# Louise adds nothing. Width 512, normalised, context_size the space's ctx 1,024 — the text's
+# window; the instruction rides on top (see vega-jina-v3.yaml). NOT pinned: a query encoder
+# answers searches and embeds no corpus.
 # JSON, which is YAML.
 {
   "name": "vega-jina-v3-query",
   "backend": "vega-louise-python-20261020b",
   "embeddings": true,
   "pinned": false,
-  "context_size": 8192,
+  "context_size": 1024,
   "threads": 6,
   "gpu_layers": 0,
   "parameters": {

@@ -189,3 +189,21 @@ def test_the_embed_stage_leaves_parts_to_peers_under_p2p_only(isolated_config, d
         db.set_scope(con, scope)
         worker._backfill_rows(con, c, 5)
         assert asked == expect, f"under {mode!r}"
+
+
+def test_a_public_collection_whose_file_does_not_say_is_shared(isolated_config, data_dir, config_dir):
+    """07 §7.8 (operator, 2026-10-20): every collection shareable, now that a
+    peer chooses what it fetches from the offer (04 §4.2). A public Codex
+    collection whose file is silent on `share` is shared; `share = false`
+    switches it off; a restricted or never-share Codex, or no Codex at all,
+    is never shared by default."""
+    from types import SimpleNamespace
+    codex_collection("sh", louise_root=data_dir, config_dir=config_dir)
+    c = collections_mod.by_name("sh")
+    assert c.codex.privacy == "public" and c.share is True
+    codex_collection("sf", louise_root=data_dir, config_dir=config_dir, toml_extra="share = false\n")
+    assert collections_mod.by_name("sf").share is False
+    assert collections_mod.default_share(SimpleNamespace(privacy="public")) is True
+    assert collections_mod.default_share(SimpleNamespace(privacy="restricted")) is False
+    assert collections_mod.default_share(SimpleNamespace(privacy="never-share")) is False
+    assert collections_mod.default_share(None) is False

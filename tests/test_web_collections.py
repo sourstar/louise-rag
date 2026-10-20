@@ -265,7 +265,11 @@ def test_all_p2p_comes_with_sharing_and_sharing_off_takes_p2p_back_to_all_local(
     """07 §7.8, 2026-10-19: two independent controls, one meeting point. The
     page asks; the server writes both settings in one file rewrite."""
     collection = collections_mod.default_collection()
-    assert collection.share is False
+    # a public collection whose file does not say is SHARED (operator,
+    # 2026-10-20: every collection shareable, a peer chooses what it fetches)
+    assert collection.share is True
+    r = client.post("/admin/library/gutenberg/share", json={"share": False})
+    assert r.status_code == 200 and collections_mod.by_name("gutenberg").share is False
     r = client.post("/admin/library/gutenberg/embed-mode", json={"mode": "p2p"})
     assert r.status_code == 200 and r.json()["share"] is True and r.json()["share_enabled"] is True
     c = collections_mod.by_name("gutenberg")
@@ -338,7 +342,8 @@ def test_sharing_an_annotations_collection_writes_its_file_without_an_encoder(cl
     rewrite carries no `[encoder]` and no `embed`: it has neither."""
     _an_annotations_collection(monkeypatch)
     toml_path = collections_mod.config_toml_path("pubmed-same-work")
-    assert "share = true" not in toml_path.read_text(encoding="utf-8")
+    assert "share = true" in toml_path.read_text(encoding="utf-8"), \
+        "created shared, as every public collection is (operator, 2026-10-20)"
     r = client.post("/admin/library/pubmed-same-work/share", json={"share": True})
     assert r.status_code == 200, r.text
     assert r.json()["share"] is True and r.json()["embed_mode_changed"] is False
