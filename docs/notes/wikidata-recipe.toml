@@ -83,6 +83,17 @@ instruction = ""
 weights = "sha256:f0f752aea9e660f8120e2cb7ae32377794c45e53bfbeee3f1f6ecf36d7c0c572"  # the same folder, the retrieval.query adapter is the engine's option
 label = "jinaai/jina-embeddings-v3 (ab036b0; adapter retrieval.query)"
 
+# The calibration set (09 §9.12): the platform's 512 texts, /srv/calibration/text.jsonl,
+# the same set both invariant-12 measurements of 2026-10-20 embedded 512/512;
+# the quorum as every other collection's (normattiva-recipe.toml). Added
+# 2026-10-20 after `create` refused the recipe without it (München, 09:55Z).
+[space.calibration]
+set = "sha256:7d06a2f6a4a773da01a517cb30571cac421753df3e30b20fca4716e5441fbf0f"
+
+[space.calibration.quorum]
+n = 16
+min_pass = 12
+
 # The stated run of the DOCUMENT side, byte for byte (09 §9.3): LocalAI's
 # louise-python backend, tree -20261020c (deploy/localai/backends/louise-python,
 # the jina-v3 task of deploy/jina-embeddings-v3/server.py), behind VeGa.
