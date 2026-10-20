@@ -366,8 +366,12 @@ peer did not hold — and a defect in the fix: the union cache, keyed on the
 part's bundle ids, never saw the files arrive under the same id, so
 en/01192 stayed at 963 and open; the entry now records which bundles were
 unreadable and whether their file existed, and is recomputed when that
-changes (`counting._entry_stands`). The node's seven copies of en/00219:
-the entry below.
+changes (`counting._entry_stands`). After the recompute en/01192 reads
+6,931 — the node's 6,924 and 7 of Perugia's 963: the other 956 were the
+node's rows, re-signed. `dev deprecate-duplicates` now finds such a
+SUBSET copy too (every record and chunk row of it in an earlier bundle of
+another producer, vector for vector) and deprecates it for the original.
+The node's seven copies of en/00219: the entry below.
 
 ### 2026-10-20: a taken copy tests itself as its parts land (Perugia's find)
 

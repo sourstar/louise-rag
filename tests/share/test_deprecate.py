@@ -438,3 +438,39 @@ def test_a_copy_of_another_producer_s_rows_is_deprecated_in_favour_of_the_origin
     assert louise.main(["dev", "deprecate-duplicates", "gutenberg", "--root", str(root), "--yes"]) == 0
     assert set(deprecate.deprecated(root, "gutenberg", codex)) == {mine, other_mine}
     assert deprecate.deprecated(root, "gutenberg", codex)[other_mine][OUR_KEY][0] == theirs2
+
+
+def test_a_re_signed_subset_of_another_producer_s_rows_is_deprecated_too(ready):
+    """Perugia, 2026-10-20 (en/01192): 956 chunks of the node's 6,924
+    re-signed as Perugia's, through a row whose files were missing; the
+    union with the node's copy added 7. A bundle of mine whose every record
+    and chunk row an EARLIER bundle of another producer carries, vector for
+    vector, is a copy of theirs — deprecated for it; one with a row of its
+    own, or a vector that differs, is not."""
+    from app.hold import land as landing
+    root, snapshot, codex, kw = ready
+    first = _alone(root, codex, snapshot, kw)
+    sid = first["bundles"][0]["shard"]
+    # the original: another producer's bundle of the whole part, made earlier
+    theirs = _foreign_copy(root, snapshot, codex, kw, sid, created_at=int(time.time()) - 7200)
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    assert len(records) >= 2
+    # mine: a later export of ONE of those records, as the held path made it
+    scratch = root / "gutenberg" / "state" / "bundles" / ".export-subset"
+    got = exp.export(root, "gutenberg", shard=sid, dest=scratch, vectors_for=kw["vectors_for"], embed=kw["embed"],
+                     key=OURS, snapshot_id=snapshot.snapshot_id, created_at=int(time.time()) + 60,
+                     only_uids=frozenset({records[0]["uid"]}))
+    (b,) = got["bundles"]
+    final = contribute.bundle_dir(root, "gutenberg", codex, sid, b["bundle_id"])
+    shutil.move(b["path"], final)
+    header = json.loads((final / "header.json").read_bytes())
+    cov.record(kw["con"], bundle_id=b["bundle_id"], shard=cov.shard_id(codex, sid), producer=OUR_KEY,
+               uids=header["uids"], chunks=b["chunks"], tiers={t: "pass" for t in cov.TIERS}, source=cov.LOCAL,
+               accepted_at="2026-10-20T13:45:16Z")
+    said: list[str] = []
+    found = deprecate.foreign_duplicates(root, "gutenberg", codex, kw["con"], own_key=OUR_KEY, log=said.append)
+    assert found.get(b["bundle_id"]) == theirs and any("(a subset of them)" in m for m in said)
+    # a vector that differs is not their row: not a copy
+    rows = deprecate._chunk_rows(final)
+    assert rows and set(rows) <= set(deprecate._chunk_rows(contribute.bundle_dir(root, "gutenberg", codex, sid, theirs)))
+    assert deprecate._within(b"{}", b"{}") is False and deprecate._within(b'{"a": "x"}', b'{"a": "y", "b": "z"}') is False

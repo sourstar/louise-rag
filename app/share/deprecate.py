@@ -279,6 +279,27 @@ def rows_digest(bundle_dir: Path) -> str | None:
         return None
 
 
+def _chunk_rows(bundle_dir: Path) -> dict[str, tuple] | None:
+    """chunk id -> its vector, the challenge rows left out; None when not here."""
+    from app.hold import vectors as vec
+    try:
+        header, rows, _possession, _bid = vec.read(bundle_dir)
+        return {cid: tuple(v) for cid, v in vec.chunks_of(rows, int(header["challenge"]["n"]))}
+    except Exception:   # noqa: BLE001 — not here, or not a bundle
+        return None
+
+
+def _within(mine: bytes, theirs: bytes) -> bool:
+    """Is every record `mine`'s possession names named by `theirs` with the
+    same content hash — the cheap test before a subset's rows are read."""
+    try:
+        pm, pt = json.loads(mine), json.loads(theirs)
+    except ValueError:
+        return False
+    return isinstance(pm, dict) and isinstance(pt, dict) and len(pm) < len(pt) \
+        and all(pt.get(u) == h for u, h in pm.items())
+
+
 def foreign_duplicates(root: Path, name: str, codex, con, *, own_key: str,
                        log: Callable[[str], None] | None = None) -> dict[str, str]:
     """`{my_bundle: their_bundle}`: this peer's accepted bundles whose chunk
@@ -287,7 +308,11 @@ def foreign_duplicates(root: Path, name: str, codex, con, *, own_key: str,
     peer's (Perugia, 2026-10-19: 44 bundles of the node's rows; the held
     path excluded only its own bundles' uids), not independent evidence.
     The cheap test first (identical `possession.json`), the rows' digest
-    then; a one-off's cost, never a round's."""
+    then; a one-off's cost, never a round's. A SUBSET counts too: every
+    record of mine in theirs with the same content hash, every chunk row of
+    mine in theirs with the same vector (Perugia, 2026-10-20: 956 chunks of
+    en/01192 re-signed over the node's 6,924, through a row whose files were
+    missing — the current copy, a superset, covers it whole)."""
     root = Path(root)
     by_shard: dict[str, list[dict[str, Any]]] = {}
     for r in cov.rows(con):
@@ -318,15 +343,29 @@ def foreign_duplicates(root: Path, name: str, codex, con, *, own_key: str,
             if pm is None:
                 continue
             dm = None
+            rows_m = None
             for t in sorted(theirs, key=lambda r: _created(r["bundle_id"])):
-                if _possession(t["bundle_id"]) != pm or _created(t["bundle_id"]) >= _created(m["bundle_id"]):
+                if _created(t["bundle_id"]) >= _created(m["bundle_id"]):
                     continue
-                dm = rows_digest(contribute.bundle_dir(root, name, codex, sid, m["bundle_id"])) if dm is None else dm
-                if dm is not None and dm == rows_digest(contribute.bundle_dir(root, name, codex, sid, t["bundle_id"])):
+                pt = _possession(t["bundle_id"])
+                if pt is None:
+                    continue
+                same = False
+                if pt == pm:
+                    dm = rows_digest(contribute.bundle_dir(root, name, codex, sid, m["bundle_id"])) if dm is None else dm
+                    same = dm is not None and dm == rows_digest(contribute.bundle_dir(root, name, codex, sid,
+                                                                                      t["bundle_id"]))
+                elif _within(pm, pt):
+                    rows_m = _chunk_rows(contribute.bundle_dir(root, name, codex, sid, m["bundle_id"])) \
+                        if rows_m is None else rows_m
+                    rows_t = _chunk_rows(contribute.bundle_dir(root, name, codex, sid, t["bundle_id"]))
+                    same = bool(rows_m) and rows_t is not None and all(rows_t.get(c) == v for c, v in rows_m.items())
+                if same:
                     out[m["bundle_id"]] = t["bundle_id"]
                     if log:
                         log(f"[{name}] deprecate: {sid}: this peer's {m['bundle_id'][:23]}… carries the chunk rows "
-                            f"of {t['producer'][:23]}…'s earlier {t['bundle_id'][:23]}…")
+                            f"of {t['producer'][:23]}…'s earlier {t['bundle_id'][:23]}…"
+                            + ("" if pt == pm else " (a subset of them)"))
                     break
     return out
 
