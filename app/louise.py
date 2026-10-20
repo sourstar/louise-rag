@@ -2968,9 +2968,20 @@ def run_check(a):
                   "runs in (LOUISE_PLATFORM_IMAGE, which the deploy sets), and an "
                   "attestation names it (09 §9.8)", file=sys.stderr)
         if key is not None and ran_in is not None:
-            written = chk.write_attestations(
-                a.root, name, report, codex, snapshot, key,
-                platform_image=ran_in, now=_utc_now())
+            # by identity at the end, not by the name the check started under
+            # (a scheduled check runs for up to half an hour; the gutenberg
+            # re-pin renamed its collection meanwhile, 2026-10-20)
+            name_now = col.where_now(a.root, name, codex.collection_id)
+            if name_now is None:
+                print(f"note: unattested — {name} is held under no name now (forgotten while it was "
+                      f"checked); nothing written", file=sys.stderr)
+            else:
+                if name_now != name:
+                    print(f"note: {name} was renamed {name_now} while it was checked; the attestations "
+                          f"are kept there", file=sys.stderr)
+                written = chk.write_attestations(
+                    a.root, name_now, report, codex, snapshot, key,
+                    platform_image=ran_in, now=_utc_now())
     report = dataclasses.replace(report, attestations=written)
     return name, codex, snapshot, seed, report
 

@@ -102,6 +102,9 @@ def path_for(root: Path, name: str, run_id: str, role: str = "document") -> Path
 def keep(root: Path, name: str, statement: dict[str, Any]) -> Path:
     """Write a statement, pass or fail, where its run and role put it."""
     body = statement["body"]
+    if not (Path(root) / name).is_dir():
+        raise CodexError(f"{Path(root) / name}: no such collection here (renamed or forgotten while its run "
+                         f"was tested); the statement is not kept, and the run is tested again")
     out = path_for(root, name, body["run"], body.get("role", "document"))
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(".json.tmp")

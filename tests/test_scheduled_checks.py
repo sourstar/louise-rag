@@ -15,6 +15,7 @@ NOW = 1_800_000_000.0
 
 def test_due_by_snapshot_and_by_cadence(tmp_path):
     codex = SimpleNamespace(update=SimpleNamespace(cadence="weekly"))
+    (tmp_path / "c").mkdir()                         # a record never creates the collection's folder
     assert not sc.due(tmp_path, "c", codex, None, now=NOW), "no snapshot: nothing to check"
     assert sc.due(tmp_path, "c", codex, "2026-W40", now=NOW), "never checked"
     sc.record(tmp_path, "c", "2026-W40", {"exit": 0, "outcome": "pass", "secs": 1.0}, now=NOW)
@@ -83,3 +84,45 @@ def test_the_worker_starts_the_runner_and_show_reports_the_last():
     from app import louise, worker
     assert "scheduled_checks.loop" in inspect.getsource(worker)
     assert "scheduled_check" in inspect.getsource(louise._show_shard)
+
+
+def test_a_collection_renamed_while_it_is_checked_is_recorded_under_its_new_name(isolated_config, monkeypatch):
+    """München, 2026-10-20: a 24-minute scheduled check started under
+    `gutenberg-qi`; the re-pin renamed it to `gutenberg` meanwhile, and the
+    check's end re-created `collections/gutenberg-qi/state/` BY NAME. The
+    report, the attestations and the run statements now follow the
+    collection's identity; a collection held under no name gets nothing,
+    and no folder is re-created."""
+    import shutil
+    import pytest
+    from app import collections as collections_mod, node_state
+    from app.hold import check as chk, collection as col, runs
+    from app.hold.codex import CodexError
+    from app.share import seeder
+    monkeypatch.setattr(seeder, "current_snapshot", lambda d: SimpleNamespace(snapshot_id="2026-09"))
+    monkeypatch.setattr(node_state, "peek_worker_state", lambda: "running")
+    root = collections_mod.louise_root() / "collections"
+    cid = col.read(root, "gutenberg").collection_id
+    assert col.where_now(root, "gutenberg", cid) == "gutenberg"
+
+    def renamed_meanwhile(c, stop):
+        shutil.move(str(root / "gutenberg"), str(root / "gutenberg-renamed"))
+        return {"exit": 0, "outcome": "pass", "secs": 1437.0, "report": None}
+    lines: list[str] = []
+    assert sc.turn(stop=lambda: False, log=lines.append, now=NOW, run=renamed_meanwhile) == "gutenberg"
+    assert not (root / "gutenberg").exists(), "the old name is not re-created"
+    assert sc.last(root, "gutenberg-renamed")["snapshot_id"] == "2026-09"
+    assert any("started as gutenberg, renamed meanwhile" in m for m in lines)
+    assert col.where_now(root, "gutenberg", cid) == "gutenberg-renamed"
+    # the writers a check's child uses refuse a folder that is gone
+    assert chk.write_attestations(root, "gutenberg", SimpleNamespace(outcomes=()), None, None, None,
+                                  platform_image="x", now="t") == {}
+    assert not (root / "gutenberg").exists()
+    with pytest.raises(CodexError, match="no such collection here"):
+        runs.keep(root, "gutenberg", {"body": {"run": "sha256:" + "a" * 64, "role": "document"}})
+    assert not (root / "gutenberg").exists()
+    with pytest.raises(FileNotFoundError):
+        sc.record(root, "gutenberg", "2026-09", {"outcome": "pass"}, now=NOW)
+    # held under no name: not recorded
+    shutil.rmtree(root / "gutenberg-renamed")
+    assert col.where_now(root, "gutenberg", cid) is None

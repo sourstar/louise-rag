@@ -122,7 +122,12 @@ def run_one(collection, *, stop: Callable[[], bool], timeout_s: float = TIMEOUT_
 
 
 def record(root: Path, name: str, snapshot_id: str, got: dict[str, Any], *, now: float) -> Path:
+    """The report, under the collection's state directory — which must
+    exist: a record never re-creates a collection by name (`turn` resolves
+    the name by identity first)."""
     p = state_path(root, name)
+    if not (Path(root) / name).is_dir():
+        raise FileNotFoundError(f"{Path(root) / name}: no such collection here; the report is not kept")
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps({"time": now, "snapshot_id": snapshot_id, **got}, sort_keys=True),
@@ -162,8 +167,18 @@ def turn(*, stop: Callable[[], bool], log: Callable[[str], None], now: float | N
         got = run(c, stop=stop)
         if got.get("outcome") == "stopped":
             return c.name                      # not recorded: it runs again at the next start
-        record(root, c.name, sid, got, now=t)
-        log(f"{c.name}: scheduled check {got['outcome']} in {got['secs']:.0f}s")
+        # by identity, not by the name the run started under: a collection
+        # renamed during a 24-minute check (the gutenberg re-pin) is recorded
+        # under its new name, one forgotten meanwhile not at all
+        from app.hold import collection as col
+        where = col.where_now(root, c.name, codex.collection_id)
+        if where is None:
+            log(f"{c.name}: scheduled check {got['outcome']} in {got['secs']:.0f}s — the collection is held "
+                f"under no name now (forgotten while it was checked); not recorded")
+            return c.name
+        record(root, where, sid, got, now=t)
+        log(f"{where}: scheduled check {got['outcome']} in {got['secs']:.0f}s"
+            + (f" (started as {c.name}, renamed meanwhile)" if where != c.name else ""))
         return c.name
     return None
 

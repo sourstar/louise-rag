@@ -339,6 +339,28 @@ def name_of(root: Path, ref: str) -> str:
     return resolve(root, ref)[0]
 
 
+def where_now(root: Path, name: str, collection_id: str) -> str | None:
+    """The local name that holds `collection_id` NOW: `name` while it still
+    does, the name it was renamed to, or None when it is held under none.
+    A writer that runs for a long time resolves its collection BY IDENTITY
+    when it writes, never by the name it started under (CLAUDE.md: key on
+    physical identity, never a name). München, 2026-10-20: a 24-minute
+    scheduled check started under `gutenberg-qi`, the re-pin renamed it to
+    `gutenberg` meanwhile, and the check's end re-created
+    `collections/gutenberg-qi/state/` by name — eight attestations, a run
+    statement and its report in a folder no collection read."""
+    try:
+        if read(root, name).collection_id == collection_id:
+            return name
+    except Exception:   # noqa: BLE001 — renamed or removed: by identity below
+        pass
+    try:
+        held, codex = resolve(root, collection_id)
+    except Exception:   # noqa: BLE001 — held under no name
+        return None
+    return held if codex.collection_id == collection_id else None
+
+
 def resolver(root: Path):
     def _resolve(cid: str) -> Codex | None:
         want = _normalise(cid)

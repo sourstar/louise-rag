@@ -1244,6 +1244,11 @@ def write_attestations(root, name: str, report: Report, codex,
     would publish nothing whenever one check was inconclusive.
     """
     out: dict[str, str] = {}
+    if not (Path(root) / name).is_dir():
+        # never re-create a collection by name: a long check whose collection
+        # was renamed or forgotten meanwhile writes nothing here (its caller
+        # resolves the name by identity, `collection.where_now`)
+        return out
     d = (Path(root) / name / "state" / "attestations" /
          shard_mod._hex(codex.collection_id))
     for o in report.outcomes:
