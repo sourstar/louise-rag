@@ -265,3 +265,21 @@ stay in the pack; the row carries one.
   claim trimmed by tokenizer offsets).
 - Still owed: entities per 10⁷-id range; chunks per entity from a run of
   our textifier over the 968.
+
+## Created (2026-10-20)
+
+The collection exists on the node since 10:57:00Z (München), recipe
+1de5d1c: `collection_id sha256:ed34502a…d176d`, `space_id
+sha256:bb514f97…2724`, Codex version 8 (the token cut; two stated runs of
+louise-python-20261020c behind VeGa), `work.tokens` 430,000,000 a month (the
+operator's active count: two hours a day at the measured 2,016 tokens/s).
+What the day cost: five refusals or pre-check failures of the recipe — the
+calibration set, `--query-encoder`, a `label` on the query encoder, the
+`[origin]` block, `sample = 512` — two of them AFTER 28 minutes of
+embedding; `create` now builds and validates the Codex with placeholder
+hashes before it asks the card (app/hold/collection.py `_dry_build`).
+`snapshot = "20261012"` lives in the held file: the Codex's origin.spec
+pins no files. Next: the fetch and the first streaming scan (§2), the first
+snapshot, the gate against the document run, then §4.5's model-identity
+check is done and gutenberg-graph's methods (gutenberg-graph-amendments.md,
+steps 4–5) can run against its vectors.

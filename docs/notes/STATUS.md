@@ -284,6 +284,24 @@ recorded in the report, not a refusal (03 §3.5 amended;
 structural T0 failure still refuse. The four parts re-ladder at the
 publisher's next pass after the deploy.
 
+### 2026-10-20: the wikidata collection EXISTS on the node
+
+Created 10:39:28–10:57:00Z by München from recipe 1de5d1c
+([wikidata-recipe.toml](wikidata-recipe.toml)), after five refused or
+pre-checked attempts of the day (no calibration set; no `--query-encoder`;
+a label on the query encoder; no origin block; `sample = 512`). The create
+now pre-checks the recipe before any embedding (2184639).
+`collection_id sha256:ed34502a2a6bf131131019e0a4415b53ea219a7cf36338a95c3ee2c8fb8d176d`,
+`space_id sha256:bb514f97156a252c14d853e86f520e477cff7bcdfa697420f705544616382724`,
+platform image `sha256:297f2fb5…` (ef2720a). Held file
+`collections/wikidata.toml`: kinds records + vectors, embed off, share off,
+`[encoder]` VeGa at 192.168.178.10:30286, vega-jina-v3 / vega-jina-v3-query;
+`snapshot = "20261012"` added by hand (the Codex's origin.spec pins no
+files, so the file names the dump). Quarantine until the first snapshot and
+the gate. Next: `hold records fetch wikidata --profile all` (103.4 GB, the
+pack and the label table in one streaming pass), then the first snapshot,
+then gutenberg-graph's steps 4–5 against it.
+
 ### 2026-10-20: pitfall 18 measured on Perugia — the embed stage back at CLI throughput under heavy intake
 
 62a098d, 08:55–09:55Z: 138 chunks/min (61 before, CLI 143) while 199
