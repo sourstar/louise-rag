@@ -42,6 +42,25 @@ def test_the_cut_twin_is_version_8_in_its_own_space(live, tmp_path):
         (set(b["space"]) - set(a["space"])) == {"cut"}, "nothing else in the space moves"
 
 
+def test_the_instruction_twin_moves_the_query_instruction_alone(live, tmp_path):
+    """A1f's target: the space's query prefix set, nothing else in the Codex moved."""
+    src, out = tmp_path / "codex.json", tmp_path / "recipe.json"
+    src.write_bytes(live.canonical())
+    instruction = "Instruct: Given a search for a book, retrieve passages of that book\nQuery:"
+    assert rfc.main([str(src), str(out), "--instruction", instruction]) == 0
+    recipe = json.loads(out.read_text(encoding="utf-8"))
+    twin = rfc.build(live, recipe)
+    assert twin.space.query.instruction == instruction and twin.space_id != live.space_id
+    a, b = live.to_dict(), twin.to_dict()
+    assert {k for k in a if a[k] != b.get(k)} == {"space"}
+    assert {k for k in a["space"] if a["space"][k] != b["space"][k]} == {"query"}
+    assert {k for k in a["space"]["query"] if a["space"]["query"][k] != b["space"]["query"][k]} == \
+        {"instruction"}
+    assert rfc.main([str(src), str(out), "--instruction", ""]) == 0
+    assert rfc.build(live, json.loads(out.read_text(encoding="utf-8"))).canonical() == live.canonical(), \
+        "an empty instruction is none, as the live Codex holds"
+
+
 def test_a_codex_that_is_not_a_root_has_no_recipe(live):
     from dataclasses import replace
     sister = replace(live, derived_from="sha256:" + "ab" * 32)

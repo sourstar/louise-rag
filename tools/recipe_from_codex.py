@@ -16,6 +16,12 @@ so nothing is lost or reworded in between (exit 1 otherwise).
 `--cut tokens`: the same recipe with its space declaring the token cut (09
 §9.3, Codex version 8), checked to build.
 
+`--instruction TEXT`: the same recipe with `space.query.instruction` set to
+TEXT ("" for none) — the query side's prefix, inside `space_id`, which no
+stored vector depends on (a carry crosses it, 02 §2.4 A1f): gutenberg's
+Qwen3 queries had been encoded without the instruction the model expects
+(docs/notes/query-campaign.md, 2026-10-20).
+
 `--engine RUN.json`, `--query-engine RUN.json`: a side's engine replaced by
 the run `hold embedder run` states for its endpoint now (`{run, engine,
 weights, driver}`), since `create` holds the reference to the run that
@@ -91,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--cut", choices=[cx.TOKEN_CUT], default=None)
     p.add_argument("--engine", type=Path, default=None, metavar="RUN.json")
     p.add_argument("--query-engine", type=Path, default=None, metavar="RUN.json")
+    p.add_argument("--instruction", default=None, metavar="TEXT")
     a = p.parse_args(argv)
     codex = cx.loads(a.codex.read_bytes())
     recipe = recipe_of(codex)
@@ -107,7 +114,9 @@ def main(argv: list[str] | None = None) -> int:
             with_run(recipe, json.loads(path.read_text(encoding="utf-8")), query=query)
     if a.cut:
         recipe["space"]["cut"] = a.cut
-    if a.cut or a.engine or a.query_engine:
+    if a.instruction is not None:
+        recipe["space"]["query"]["instruction"] = a.instruction or None
+    if a.cut or a.engine or a.query_engine or a.instruction is not None:
         twin = build(codex, recipe)
         cx.validate(twin)
         print(f"recipe: written for a version {twin.version} Codex in space "

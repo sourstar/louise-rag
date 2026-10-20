@@ -253,6 +253,15 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
     diff = space_differences(src, to)
     if keep:
         diff = [d for d in diff if d not in WEIGHTS_WITH_KEEP]
+    if "query.instruction" in diff:
+        # A1f (RULE 1, 2026-10-20): the instruction is prepended to QUERIES only
+        # (embeddings._asked), so no row of the table depends on it; the target's
+        # own calibration holds its query_vectors under the new instruction, and
+        # its query runs are validated against those before the leg answers
+        log(f"[carry] {from_name} → {to_name}: the query instruction differs "
+            f"({src.space.query.instruction!r} → {to.space.query.instruction!r}); no stored "
+            f"vector depends on it (A1f)")
+        diff = [d for d in diff if d != "query.instruction"]
     if "cut" in diff:
         if not recut:
             raise CodexError(

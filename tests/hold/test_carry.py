@@ -489,6 +489,31 @@ def test_a_collection_that_is_not_a_record_twin_is_refused(pair):
     assert why and "not a record twin" in why and "record_line" in why
 
 
+def test_a_query_instruction_alone_is_crossed_and_every_row_kept(pair):
+    """A1f (2026-10-20, gutenberg's Qwen3 queries): the instruction is prepended
+    to queries only, so the table's rows are the target's by the book; any
+    other difference beside it is still refused."""
+    root, old, _new = pair
+    instructed = _create(root, "instructed", over={"space": {**SPACE, "query": {
+        **SPACE["query"], "instruction": "Instruct: find the book\nQuery:"}}})
+    assert carry.space_differences(old, instructed) == ["query.instruction"]
+    assert old.space_id != instructed.space_id
+    rec.write_validation(root, "instructed")
+    out = seed.seed_shards(root, "instructed", "old", log=quiet)
+    sn.create(root, "instructed", snapshot_id=out["snapshot_id"], log=quiet)
+    _uids, ids = _vectors(root, old)
+    said: list[str] = []
+    out = carry.carry(root, "old", "instructed", apply=True, log=said.append)
+    assert any("A1f" in s for s in said) and out["done"]["lance"] == "moved"
+    assert embeddings.stats(_local(root, "instructed"))["vectors"] == len(ids)
+    both = _create(root, "both", over={"space": {**SPACE, "encoder": {
+        **SPACE["encoder"], "weights": "sha256:" + "5e" * 32}, "query": {
+        **SPACE["query"], "instruction": "Instruct: find another book\nQuery:"}}})
+    with pytest.raises(CodexError, match="encoder.weights") as e:
+        carry.carry(root, "instructed", "both", log=quiet)
+    assert "query.instruction" not in str(e.value), "named as crossed, not as refused"
+
+
 def test_keeping_only_an_archives_vectors_lets_the_weights_differ(pair):
     """A1b (2026-10-10, pubmed): the kept rows are the archive producer's, made
     by neither Codex's encoder file, so the weights check does not apply when

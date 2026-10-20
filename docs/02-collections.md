@@ -655,7 +655,17 @@ unless every input was embedded alone (a pair layer: one chunk per record,
 one document a request), where it had no neighbours and is dropped too;
 `vectors-sample` passes before use, as for any carry. PubMed is the case:
 of its 40.0M vectors, NCBI's 35.4M and the local ones within the budget stay,
-and ~778k are embedded again.
+and ~778k are embedded again. *Amendment A1f (RULE 1, 2026-10-20, operator's
+yes):* the space may also differ by its query side's instruction
+(`space.query.instruction`), and only that way. The instruction is prepended
+to queries alone; no stored vector was made with it, so every row is the
+target's by the book and stays (`louise dev carry`). The target's own
+calibration holds its `query_vectors` under the new instruction (09 §9.12),
+its query runs are validated against them before the vector leg answers (03
+§3.3), and `vectors-sample` passes before use, as for any carry. Gutenberg is
+the case: its Qwen3-Embedding queries had been encoded without the instruction
+the model expects, and fragments of a line outranked the books
+(docs/notes/query-campaign.md).
 
 The **calibration** block is the contract for anyone who wants to
 contribute vectors. The calibration set is corpus-independent: a fixed
