@@ -399,6 +399,11 @@ def _space_from_recipe(block: dict[str, Any],
             raise TemplateError(
                 "recipe: space.query.encoder names `weights` and, where it differs "
                 "from the document side's, an `engine` — not an image (09 §9.3)")
+        if "label" in qe:
+            raise TemplateError(
+                "recipe: space.query.encoder carries no label — 09 §9.3's query encoder "
+                "is {weights, engine}; the label is space.encoder's (the wikidata create "
+                "of 2026-10-20 was refused for this after embedding; now before)")
         # "the same, its own weights" (09 §9.3's worked example) is the
         # common case — one engine, two weights files — so a query encoder
         # that names no engine runs on the document side's.

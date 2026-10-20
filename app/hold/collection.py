@@ -430,9 +430,6 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
     # space's set is the one given, bound by the same hash.
     texts, pairs = _calibration_items(modality, set_id,
                                       _form_of_recipe(plugin, recipe), pairs)
-    vectors, envelope, vectors_hash, envelope_hash = cal.build_member(
-        texts, embed, normalise=bool(space.get("normalise")),
-        dim=int(space["dim"]))
 
     # AN ASYMMETRIC SPACE HAS TWO FUNCTIONS, and the Codex pins a reference
     # for each (09 §9.12, `query_vectors`): a bi-encoder pair such as MedCPT's
@@ -445,13 +442,29 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
     # amendment), and a member no field names would be a stray SHARD file
     image_shaped = (space_version is not None and space_version < cx.ENGINE_VERSION
                     and "image" in (space.get("encoder") or {}))
-    if query.get("encoder") and not image_shaped:
-        if embed_query is None:
-            raise CodexError(
-                "recipe: this space names a query encoder (space.query.encoder), "
-                "so its reference vectors are part of the Codex too "
-                "(space.calibration.query_vectors, 09 §9.12). Name the query "
-                "encoder's endpoint: `--query-encoder URL`")
+    needs_query = bool(query.get("encoder")) and not image_shaped
+    if needs_query and embed_query is None:
+        raise CodexError(
+            "recipe: this space names a query encoder (space.query.encoder), "
+            "so its reference vectors are part of the Codex too "
+            "(space.calibration.query_vectors, 09 §9.12). Name the query "
+            "encoder's endpoint: `--query-encoder URL`")
+    # THE SHAPE BEFORE THE CARD (München, 2026-10-20: the wikidata create was
+    # refused twice AFTER embedding both calibration sets — a missing
+    # --query-encoder, a `label` on the query encoder — 28 minutes of the
+    # card for what a parse catches in a second). The Codex is built once
+    # with placeholder hashes and read back through its own bytes, so every
+    # refusal `from_recipe`, `validate` and `from_dict` would make is made
+    # now; the placeholders never reach disk. RULE 1: the reference vectors
+    # are the same bytes every time (invariant 12), so refusing before them
+    # loses nothing and embedding before refusing gains nothing.
+    _dry_build(plugin, recipe, platform_image=platform_image, credits=credits,
+               space_version=space_version, needs_query=needs_query)
+
+    vectors, envelope, vectors_hash, envelope_hash = cal.build_member(
+        texts, embed, normalise=bool(space.get("normalise")),
+        dim=int(space["dim"]))
+    if needs_query:
         query_vectors, query_hash = cal.build_query_member(
             texts, embed_query, instruction=query.get("instruction") or None,
             normalise=bool(space.get("normalise")), dim=int(space["dim"]))
@@ -466,6 +479,26 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
     write_terms(d, codex, plugin,
                 terms_path=(recipe.get("license") or {}).get("terms_path"))
     return created
+
+
+#: what stands in for the three reference hashes in a dry build: a digest in
+#: shape, never written
+_PLACEHOLDER = "sha256:" + "00" * 32
+
+
+def _dry_build(plugin: str, recipe: dict[str, Any], *, platform_image: str, credits: tuple,
+               space_version: int | None, needs_query: bool) -> None:
+    """The recipe's Codex with placeholder hashes, validated and read back
+    from its own bytes — every refusal the real build would make, before
+    an encoder is called. Returns nothing: the dry Codex names no reference
+    and is not a collection."""
+    from . import template
+    dry = template.from_recipe(plugin, recipe, platform_image=platform_image,
+                               calibration=(_PLACEHOLDER, _PLACEHOLDER,
+                                            _PLACEHOLDER if needs_query else None),
+                               credits=credits, space_version=space_version)
+    cx.validate(dry)
+    cx.from_dict(json.loads(dry.canonical()))
 
 
 def _form_of_recipe(plugin: str, recipe: dict[str, Any]) -> str:

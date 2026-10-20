@@ -639,23 +639,48 @@ async function createAnnotations(){
 // 04 §4.2 THE OFFER: taking a collection a peer announces — `share fetch`,
 // queued for the worker, which signs the pulls (app/jobs.py SHARE_FETCH).
 const OFFER={{ offered|default([], true)|tojson }};
+// Every field in plain words (operator, 2026-10-20: "the local name is the
+// only understandable entry"): what is FIXED by the collection — its
+// encoder, its records, its id — is shown, never asked; what is asked is
+// what this node does with it. The "?" opens the same text as a popup.
+const TAKE_HELP=[
+  ['Local name','How this collection is called on this node: in the menus, on the command line, in the folder under collections/. Nothing else depends on it. Default: the kind of collection (its plugin).'],
+  ['What to take','A collection is cut into slices (a language, a range of years) and each slice into parts. "All" takes every slice. Or name the slices you want, comma-separated, as the collection\'s snapshot lists them; the rest is not fetched and not searched here.'],
+  ['Records','The texts and their metadata. Always needed to search or read.'],
+  ['Vectors','The embeddings other peers already computed and signed. Take them to search without running an encoder here; they arrive as the peers\' bundles.'],
+  ['Embed here (advanced)','Only if THIS node should compute vectors itself. The encoder is NOT a choice: the collection fixes its weights and its settings. What is asked is where this node reaches a server running that encoder — its address, the protocol it speaks, and the model names that server uses for texts and for questions. Leave it closed to search on the peers\' vectors alone.'],
+  ['Snapshot','Which version of the collection: the latest the serving peer holds, unless you name an older snapshot id.'],
+];
+function takeHelp(){
+  showModal(`<h2>Taking a collection — what the fields mean</h2>
+    ${TAKE_HELP.map(([k,v])=>`<div class="note"><b>${esc(k)}</b> — ${esc(v)}</div>`).join('')}
+    <div class="actions"><button onclick="hideModal()">Close</button></div>`);
+}
 function openTake(cid){
   const o=OFFER.find(x=>x.collection_id===cid); if(!o)return;
-  showModal(`<h2>Take ${esc(o.title||o.plugin||cid.slice(0,23))}</h2>
-    <div class="note">The Codex and its snapshots are pulled from a peer that serves it and the collection is held
-      here with what you choose below; the worker fetches the members at its next beat. A yellow or red
-      collection asks for its license acknowledgement before any member moves.</div>
+  const help=k=>{const h=TAKE_HELP.find(x=>x[0]===k);return h?` title="${esc(h[1])}"`:''};
+  showModal(`<h2>Take ${esc(o.title||o.plugin||cid.slice(0,23))} <button type="button" onclick="takeHelp()" title="what the fields mean">?</button></h2>
+    <div class="note">This collection is fixed by its maker: its texts, its encoder, its id
+      <code title="collection_id">${esc(cid.slice(0,23))}…</code>. You choose only what this node does with it.
+      Its description and versions are pulled from a peer that serves it; the texts follow at the worker's next
+      fetch. A yellow or red collection asks for its license acknowledgement before any text moves.</div>
     <div class="row">
-      <div><label>Local name (default: the plugin's)</label><input id="tk_name" placeholder="${esc(o.plugin||'')}"></div>
-      <div><label>Slices: <code>all</code>, or names as the snapshot lists them, comma-separated</label><input id="tk_slices" value="all"></div>
-      <div><label>Kinds</label>
-        <label><input type="checkbox" id="tk_records" checked> records</label>
-        <label><input type="checkbox" id="tk_vectors"> vectors (the bundles peers accepted)</label></div>
-      <div><label>Encoder URL (optional: where this node reaches the Codex's encoder)</label><input id="tk_encoder" placeholder="http://nas:30437"></div>
-      <div><label>API</label><input id="tk_api" placeholder="openai"></div>
-      <div><label>Embed model / query model (a URL that names no model)</label><input id="tk_embed_model" placeholder="embed model"> <input id="tk_query_model" placeholder="query model"></div>
-      <div><label>Snapshot (optional; default: the latest the peer holds)</label><input id="tk_snapshot"></div>
+      <div${help('Local name')}><label>Local name — what this node calls it (default: ${esc(o.plugin||'the plugin')})</label><input id="tk_name" placeholder="${esc(o.plugin||'')}"></div>
+      <div${help('What to take')}><label>What to take — <code>all</code>, or slice names comma-separated (a language, a period)</label><input id="tk_slices" value="all"></div>
+      <div><label>Take</label>
+        <label${help('Records')}><input type="checkbox" id="tk_records" checked> the records (the texts)</label>
+        <label${help('Vectors')}><input type="checkbox" id="tk_vectors"> the vectors peers already computed (search without an encoder here)</label></div>
+      <div${help('Snapshot')}><label>Version — empty: the latest the peer holds; or an older snapshot id</label><input id="tk_snapshot" placeholder="latest"></div>
     </div>
+    <details${help('Embed here (advanced)')}>
+      <summary>Embed here (advanced) — only if this node should compute vectors itself</summary>
+      <div class="note">The encoder is fixed by the collection; say where this node reaches a server running it.</div>
+      <div class="row">
+        <div><label>Server address</label><input id="tk_encoder" placeholder="http://nas:30437"></div>
+        <div><label>Protocol it speaks (openai, vega, localai …)</label><input id="tk_api" placeholder="openai"></div>
+        <div><label>Model name that server uses for texts / for questions</label><input id="tk_embed_model" placeholder="for texts"> <input id="tk_query_model" placeholder="for questions"></div>
+      </div>
+    </details>
     <div class="actions">
       <button class="primary" onclick="takeOffer('${esc(cid)}')">Take</button>
       <button onclick="hideModal()">Cancel</button>

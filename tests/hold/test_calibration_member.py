@@ -204,7 +204,7 @@ def test_an_encoder_that_returns_the_wrong_count_creates_nothing(tmp_path: Path)
     with pytest.raises(CalibrationError, match="returned 3 vectors"):
         col.create_from_recipe(tmp_path, "gutenberg", recipe(),
                                platform_image=PLATFORM,
-                               embed=lambda t: fake_embed(t[:3]),
+                               embed=lambda t: fake_embed(t[:3]), embed_query=fake_query_embed,
                                key=KEY, now=NOW)
     assert not list(tmp_path.iterdir())
 
@@ -213,7 +213,7 @@ def test_an_encoder_that_returns_the_wrong_dimension_creates_nothing(tmp_path: P
     with pytest.raises(CalibrationError, match=r"the space is \(512, 768\)"):
         col.create_from_recipe(tmp_path, "gutenberg", recipe(),
                                platform_image=PLATFORM,
-                               embed=lambda t: fake_embed(t, dim=384),
+                               embed=lambda t: fake_embed(t, dim=384), embed_query=fake_query_embed,
                                key=KEY, now=NOW)
     assert not list(tmp_path.iterdir())
 
@@ -354,3 +354,43 @@ def test_a_canonicalised_member_still_reads_as_safetensors(tmp_path: Path):
     codex, d = created(tmp_path)
     vectors, envelope = member_of(d, codex)
     assert vectors.shape == (cal.SIZE, DIM) and envelope.shape == (2, DIM)
+
+
+# ---- the shape is checked before the card is asked (München, 2026-10-20) ----
+
+def test_the_recipes_shape_is_refused_before_anything_is_embedded(tmp_path: Path):
+    """The wikidata create was refused twice AFTER embedding both calibration
+    sets — a missing --query-encoder, a `label` on the query encoder — 28
+    minutes of the card. Every refusal the Codex build would make is made
+    before an encoder is called."""
+    calls: list[str] = []
+
+    def counting(texts, **kw):
+        calls.append("document")
+        return fake_embed(texts, **kw)
+
+    def counting_query(texts, **kw):
+        calls.append("query")
+        return fake_query_embed(texts, **kw)
+
+    # no --query-encoder for a space that names a query encoder
+    with pytest.raises(CodexError, match="--query-encoder URL"):
+        col.create_from_recipe(tmp_path, "gutenberg", recipe(), platform_image=PLATFORM,
+                               embed=counting, embed_query=None, key=KEY, now=NOW)
+    # a label on the query encoder (09 §9.3: {weights, engine})
+    space = dict(recipe()["space"])
+    space["query"] = {"encoder": dict(space["query"]["encoder"], label="x"), "instruction": None}
+    with pytest.raises(TemplateError, match="carries no label"):
+        col.create_from_recipe(tmp_path, "gutenberg", recipe(space=space), platform_image=PLATFORM,
+                               embed=counting, embed_query=counting_query, key=KEY, now=NOW)
+    # a space whose dim is not a number: the Codex refuses it
+    space = dict(recipe()["space"], dim="seven")
+    with pytest.raises((CodexError, TypeError, ValueError)):
+        col.create_from_recipe(tmp_path, "gutenberg", recipe(space=space), platform_image=PLATFORM,
+                               embed=counting, embed_query=counting_query, key=KEY, now=NOW)
+    assert calls == [], "nothing was embedded for a recipe that cannot become a Codex"
+    assert not list(tmp_path.iterdir()), "nothing is created"
+    # a good recipe embeds once per side and creates
+    codex = col.create_from_recipe(tmp_path, "gutenberg", recipe(), platform_image=PLATFORM,
+                                   embed=counting, embed_query=counting_query, key=KEY, now=NOW)
+    assert calls == ["document", "query"] and codex.space.calibration.vectors != "sha256:" + "00" * 32
