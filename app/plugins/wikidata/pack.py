@@ -170,15 +170,21 @@ def _row(entity: dump_mod.Entity, pruned: bool) -> dict[str, Any]:
             "pruned": pruned, "line": entity.raw}
 
 
-def _write_chunk(rows: list[dict[str, Any]], tmp: Path) -> None:
-    table = pa.Table.from_pylist(rows, schema=SCHEMA)
+def _write_chunk(table: pa.Table, tmp: Path) -> None:
     pq.write_table(table, tmp, compression="zstd", compression_level=3, row_group_size=ROW_GROUP)
 
 
-def _chunk_job(lines: list[bytes], start: int, languages: tuple[str, ...],
-               tmp: str) -> tuple[int, list[tuple[str, str, str]]]:
-    """In a child: one chunk's lines parsed exactly as the serial pass parses
-    them, its Parquet written to `tmp`. Returns (pruned, labels)."""
+#: entities per child task: a chunk is cut into these so a task is ~1/10 of
+#: a chunk's bytes (a chunk of 100,000 is 1.0–1.3 GB of JSON on the node,
+#: 2026-10-20 — eleven children each holding a whole one would need ~30 GB)
+SUB = 10_000
+
+
+def _rows_job(lines: list[bytes], start: int,
+              languages: tuple[str, ...]) -> tuple[int, list[tuple[str, str, str]], pa.Table]:
+    """In a child: a slice of a chunk's lines parsed exactly as the serial
+    pass parses them. Returns (pruned, labels, the slice's rows as a table
+    of SCHEMA) — the parent writes the chunk's file from its slices."""
     rows: list[dict[str, Any]] = []
     labels: list[tuple[str, str, str]] = []
     pruned_n = 0
@@ -193,8 +199,7 @@ def _chunk_job(lines: list[bytes], start: int, languages: tuple[str, ...],
         pruned_n += pruned
         rows.append(_row(dump_mod.Entity(start + i, raw, obj), pruned))
         labels.extend(_labels_of(obj, languages))
-    _write_chunk(rows, Path(tmp))
-    return pruned_n, labels
+    return pruned_n, labels, pa.Table.from_pylist(rows, schema=SCHEMA)
 
 
 def _child_nice() -> None:
@@ -345,24 +350,39 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
     global _parallel_failed
     from concurrent.futures.process import BrokenProcessPool
 
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor, wait as wait_futures
+
     done = int(meta["chunks"])
     skip = done * chunk
+    sub = max(1, min(SUB, chunk))
+    #: slices submitted and not yet folded into a written chunk: bounded, so
+    #: the parent holds at most this many slices' lines (~SUB entities each)
+    max_slices = workers + 2
     state = {"next": done, "pruned": int(meta["pruned"])}
-    pending: dict[int, Future] = {}
+    closed: deque = deque()               # (chunk_no, [slice futures]) whose lines are all submitted
+    current: list[Future] = []            # the open chunk's slice futures
     token = f"{os.getpid()}-{time.monotonic_ns()}"
     for stale in d.glob("*.parquet.*.tmp"):          # an earlier parallel pass's, never committed
         stale.unlink(missing_ok=True)
     ex = ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"),
                              initializer=_child_nice)
+    writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wikidata-pack-writer")
+    writing: list[tuple[int, Future, int, list, bool]] = []   # at most one chunk being written
     hung = False
+
+    def in_flight() -> int:
+        return len(current) + sum(len(f) for _, f in closed)
 
     def write_meta() -> None:
         tmp_meta = _meta_path(d).with_name("meta.json.tmp")
         tmp_meta.write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
         os.replace(tmp_meta, _meta_path(d))
 
-    def commit(chunk_no: int, fut: Future, *, final: bool) -> None:
-        pruned, labels = fut.result(timeout=CHUNK_TIMEOUT_S)
+    def commit_written() -> None:
+        """The chunk the writer finished: labels, rename, meta — in order."""
+        chunk_no, fut, pruned, labels, final = writing.pop()
+        fut.result(timeout=CHUNK_TIMEOUT_S)
         con.execute("BEGIN IMMEDIATE")
         con.executemany("INSERT OR REPLACE INTO label (id, lang, label) VALUES (?, ?, ?)", labels)
         con.execute("COMMIT")
@@ -375,45 +395,81 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
             meta.update(chunks=state["next"], entities=state["next"] * chunk, pruned=state["pruned"],
                         complete=False)
         write_meta()
+        if not final:
+            say(f"[wikidata] pack: {dump.name}: {state['next'] * chunk} entities, "
+                f"{state['next']} chunk file(s), {time.monotonic() - t0:.0f} s")
+            if stop is not None and stop():          # as the serial pass: after each chunk
+                state["stopped"] = True
 
-    def submit(chunk_no: int, lines: list[bytes], start: int) -> Future:
-        return ex.submit(_chunk_job, lines, start, languages, str(_tmp_path(d, chunk_no, token)))
+    def write_head(final: bool = False) -> bool:
+        """The oldest closed chunk: its slices gathered in order, its file
+        handed to the writer thread; the chunk before it committed first.
+        False when `stop` asked after that commit: nothing more is started."""
+        if writing:
+            commit_written()               # in order, and before a later slice can raise
+            if state.get("stopped"):
+                return False
+        chunk_no, futs = closed.popleft()
+        pruned_n, labels, tables = 0, [], []
+        try:
+            for f in futs:
+                p, lab, t = f.result(timeout=CHUNK_TIMEOUT_S)
+                pruned_n += p
+                labels.extend(lab)
+                tables.append(t)
+        except BaseException:
+            closed.appendleft((chunk_no, futs))
+            raise
+        table = pa.concat_tables(tables)
+        writing.append((chunk_no, writer.submit(_write_chunk, table, _tmp_path(d, chunk_no, token)),
+                        pruned_n, labels, final))
+        return True
 
     try:
         result = dump_mod.ReadResult()
-        batch: list[bytes] = []
-        batch_start = skip
+        lines: list[bytes] = []
+        line_start = skip                  # the index of `lines[0]`
+        in_chunk = 0                       # lines of the open chunk submitted or held
         chunk_no = done
         with _decompressed(dump, workers) as stream:
             for _index, raw in dump_mod.iter_lines(stream, result=result, skip=skip):
-                batch.append(raw)
-                if len(batch) < chunk:
+                lines.append(raw)
+                in_chunk += 1
+                if len(lines) < sub and in_chunk < chunk:
                     continue
-                pending[chunk_no] = submit(chunk_no, batch, batch_start)
-                batch_start += len(batch)
-                batch = []
-                chunk_no += 1
-                # commit in order what is done; wait for the oldest when every child is busy
-                while state["next"] in pending and (pending[state["next"]].done() or len(pending) >= workers):
-                    c = state["next"]
-                    commit(c, pending.pop(c), final=False)
-                    say(f"[wikidata] pack: {dump.name}: {state['next'] * chunk} entities, "
-                        f"{state['next']} chunk file(s), {time.monotonic() - t0:.0f} s")
-                    if stop is not None and stop():
+                current.append(ex.submit(_rows_job, lines, line_start, languages))
+                line_start += len(lines)
+                lines = []
+                if in_chunk >= chunk:
+                    closed.append((chunk_no, current))
+                    current, in_chunk = [], 0
+                    chunk_no += 1
+                # bounded: fold the oldest closed chunk once too many slices are out
+                while closed and (in_flight() > max_slices or all(f.done() for f in closed[0][1])):
+                    if not write_head():
                         return meta
-        while pending:
-            c = state["next"]
-            commit(c, pending.pop(c), final=False)
-            say(f"[wikidata] pack: {dump.name}: {state['next'] * chunk} entities, "
-                f"{state['next']} chunk file(s), {time.monotonic() - t0:.0f} s")
+                if in_flight() > max_slices and current:
+                    wait_futures([current[0]], timeout=CHUNK_TIMEOUT_S)
+        while closed:
+            if not write_head():
+                return meta
+        if writing:
+            commit_written()
+            if state.get("stopped"):
+                return meta
         if not result.complete:
-            if batch:
+            if lines or current:
                 say(f"[wikidata] pack: {dump.name}: the stream ended {result.truncated_at or 'unexpectedly'}: "
-                    f"{len(batch)} entities of an incomplete chunk not written")
+                    f"{in_chunk} entities of an incomplete chunk not written")
             raise PackError(f"{dump.name}: the dump ended before its closing bracket (truncated download?)")
-        meta["entities"] = batch_start + len(batch)
-        if batch:
-            commit(chunk_no, submit(chunk_no, batch, batch_start), final=True)
+        meta["entities"] = line_start + len(lines)
+        if lines:
+            current.append(ex.submit(_rows_job, lines, line_start, languages))
+        if current:
+            closed.append((chunk_no, current))
+            current = []
+            write_head(final=True)
+            commit_written()
         else:
             meta.update(pruned=state["pruned"], complete=True)
             write_meta()
@@ -427,10 +483,13 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
             f"{meta['chunks']} chunk(s), resumable; the next pass of this process is serial")
         return meta
     finally:
-        # the running children finish (one chunk, bounded) unless one hung
+        # the running children finish (one slice, bounded) unless one hung
         ex.shutdown(wait=not hung, cancel_futures=True)
-        for c in pending:
-            _tmp_path(d, c, token).unlink(missing_ok=True)
+        writer.shutdown(wait=True)
+        for chunk_no, *_ in writing:
+            _tmp_path(d, chunk_no, token).unlink(missing_ok=True)
+        for chunk_no, _ in closed:
+            _tmp_path(d, chunk_no, token).unlink(missing_ok=True)
 
 
 # ---- reading ---------------------------------------------------------------------------------
