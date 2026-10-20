@@ -507,18 +507,16 @@ def model_keys(encoder: str, query_encoder: str | None = None, *,
 def _write_held_file(root, codex, encoder: str | None = None,
                      query_encoder: str | None = None, *, source: str | None = None,
                      api: str = "openai", embed_model: str | None = None,
-                     query_model: str | None = None, share: bool | None = None) -> Path:
+                     query_model: str | None = None, share: bool = False) -> Path:
     """07 §7.8: `hold collection create` writes `collections/<name>.toml`,
     and the file existing is the collection being held.
 
     It says what a new collection holds before anything is fetched: no
     slice yet (`records fetch` records the ones it takes, 07 §7.3), the
-    default kinds, nothing spent on embedding, and `share` as the Codex's
-    privacy says when the caller does not — a public collection is shared
-    (operator, 2026-10-20: every collection shareable, since a peer chooses
-    what it fetches; `collections.default_share`); `share fetch` said so
-    for a public collection since 2026-10-19 (04 §4.3; before that it wrote
-    `share = false`, and a peer's bundles and records were offered
+    default kinds, nothing spent on embedding, nothing shared unless
+    `share` says so — `share fetch` says so for a public collection, since
+    sharing is automatic after a completed fetch (04 §4.3; until 2026-10-19
+    it wrote `share = false`, and a peer's bundles and records were offered
     to nobody) — and the
     encoder it was created with, in `[encoder]`: a collection names its
     own, and a file that names none is refused (no default encoder,
@@ -547,9 +545,6 @@ def _write_held_file(root, codex, encoder: str | None = None,
         embed_model, query_model = model_keys(encoder, query_encoder,
                                               embed_model=embed_model,
                                               query_model=query_model)
-    if share is None:
-        from app import collections as collections_mod
-        share = collections_mod.default_share(codex)
     q = json.dumps                 # a TOML basic string, quotes and backslashes escaped
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".toml.tmp")

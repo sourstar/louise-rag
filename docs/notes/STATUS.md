@@ -291,15 +291,12 @@ the Codex's own words and the live neighbours serving it; `louise share
 offer`, `GET /api/share/offer/show`, and the Library's "Offered by peers"
 with a *take…* dialog that queues `share fetch` for the worker
 (`app/jobs.py` SHARE_FETCH, every mode; `POST /api/share/fetch`) with the
-slices, kinds and encoder chosen. 04 §4.2 and 07 §7.3/§7.4 amended. **And
-every public collection is shared by default** (operator, the same day,
-"now that a peer can decide"): a file that does not say `share` reads
-`true` for a public Codex (`collections.default_share`), `false` for a
-restricted or never-share one; `hold collection create` and the
-annotations create write it so; `share = false` in the file switches a
-collection off — the node's pubmed-v8 keeps its explicit `false` until the
-operator schedules its 40 M-chunk publish. The decisions of the day beside
-it: the old jina folder was deleted by the operator on the node
+slices, kinds and encoder chosen. 04 §4.2 and 07 §7.3/§7.4 amended.
+"Make every collection shareable" (operator, the same day) is the control,
+not the default: every Codex collection's card already carries the
+*shared* toggle, and the default stays OFF — a default of on was built
+and taken back the same hour on the operator's word ("share off by
+default is fine"); nothing deployed. The decisions of the day beside it: the old jina folder was deleted by the operator on the node
 (München's auto mode refuses irreversible deletes outright, no prompt); gutenberg-graph
 gets two targets (Codex version 9), Parquet parts for EVERY collection, and
 a measured agreement floor (gutenberg-graph-amendments.md); pubmed-v8's

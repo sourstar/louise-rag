@@ -86,8 +86,7 @@ def test_the_route_is_the_command(client):
     c = collections_mod.by_name("gutenberg")
     assert c.codex is not None and c.codex.collection_id == d["collection_id"]
     assert (c.slices, c.acquire_enabled, c.share, c.embed_mode_default) == \
-        ((), False, True, "off"), ("a new collection holds nothing and spends nothing — and is shared, "
-                                  "as every public collection is (operator, 2026-10-20)")
+        ((), False, False, "off"), "a new collection holds nothing and spends nothing"
 
     again = created(client, {"plugin": "gutenberg", "recipe": recipe(),
                              "encoder": ENC, "query_encoder": QENC})

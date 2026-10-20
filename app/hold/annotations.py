@@ -501,14 +501,11 @@ def write_held_file(root: Path, codex: Codex, name: str) -> Path:
                                f"for its life (07 §7.8)")
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".toml.tmp")
-    # shared as its privacy says (operator, 2026-10-20: every collection
-    # shareable, a peer chooses what it fetches — `collections.default_share`)
-    from app import collections as collections_mod
     tmp.write_text(f'codex = "{codex.collection_id}"\n'
                    'slices = "all"\n'
                    'kinds = ["records", "relations"]\n'
                    'embed = "off"\n'
-                   f"share = {'true' if collections_mod.default_share(codex) else 'false'}\n", encoding="utf-8")
+                   "share = false\n", encoding="utf-8")
     tmp.replace(path)
     return path
 
