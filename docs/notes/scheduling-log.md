@@ -678,3 +678,27 @@ bundles; the lease night) and today's one-off 08:00–17:00 p2p window.
 cold starts (expected 0: the embedder is held), WatchDog lines, and Ask
 latency when one is asked.
 
+### 2026-10-20 — the wikidata scan runs in the heavy windows (operator) — set, measuring
+
+**Change.** The first streaming pass over the 20261012 dump (the pack and
+the label table, resumable per 100,000 entities) runs only 22:30–06:00,
+and today also until 17:00: TrueNAS cron 11 pauses the collection at 06:00
+(`node pause wikidata`), cron 12 resumes it at 22:30, a one-off pause at
+17:00 today. The architecture session had decided "all day" under the
+operator's "no production environment"; the operator, asked by München,
+kept the window: WINDOWS ONLY.
+
+**Scenario.** The node, gutenberg `embed = "p2p"` all day beside it; the
+dump already on disk (fetched and md5-checked 04:49Z, adopted by the fetch
+at 11:00:30–11:04:50Z, nothing downloaded); the scan started by the
+worker's discover at create, 12:57:05 CEST.
+
+**BEFORE.** gutenberg 204 chunks/min (11,914 chunks, 11:57–12:56 CEST),
+no scan.
+
+**The scan.** 1,600,000 entities in 12 min = ~133,000 entities/min, one
+core (~92 % CPU), a part every 40–60 s, the first parts the largest
+(00000 357 MB, 00015 79 MB); 1.7 GB of pack after 16 parts. At ~120 M
+entities: ~15 h — today's window plus two nights. gutenberg's rate
+during the scan is confounded by the DAR measurement on the card; a clean
+figure follows.
