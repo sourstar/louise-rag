@@ -313,10 +313,12 @@ offer says when a collection cannot be taken yet (no snapshot served).
 
 Perugia is off for the night (operator); the node runs. Gutenberg's open
 parts get no new vectors meanwhile (the node's gutenberg is on-demand).
-1. Perugia adopts the node's twin d913cceb (deploy/16f/adopt-gutenberg-twin.sh
-   on 0a2c6ef or later, seed-only across the run, no scheduled check in
-   progress); then `quarantine_in_use_before` only if its own checks have
-   not run.
+1. Perugia (on 274d461, gutenberg p2p, adoption NOT run) deploys 0a2c6ef —
+   PASSED 4,898 and live on the node since 22:41:58 CEST — or a later
+   PASSED tip, then adopts the node's twin d913cceb
+   (deploy/16f/adopt-gutenberg-twin.sh, seed-only across the run, no
+   scheduled check in progress); `quarantine_in_use_before` only if its own
+   checks have not run.
 2. The reranker regression on titles (MRR 0.738 before it, 0.579 after):
    München measures (a) a catalogue rank-1 kept on top, (b) RRF of the
    reranker's order with the fused one (`retrieval.RERANK_FUSE`, dc36f1a,
