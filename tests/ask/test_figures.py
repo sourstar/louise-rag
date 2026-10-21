@@ -166,3 +166,19 @@ def test_every_mention_is_drawn_or_linked_in_order():
     assert all(g["href"] == "https://origin/x" for g in got[1:])
     assert [g["kind"] for g in mentions(text, None, link=None)] == ["none"] * 3, "said, never silent"
     assert mentions("no pictures here", figs, link="x") == []
+
+
+def test_a_picture_named_in_prose_links_the_documents_pictures():
+    """München, 2026-10-21: every marker was placed and held; what showed no
+    picture was prose about one elsewhere in the book."""
+    from app.ask.figures import mentions
+    got = mentions("His portrait forms the frontispiece of this book.", [], link="https://o/x", record_plates=12)
+    assert got == [{"kind": "link", "href": "https://o/x", "caption": "the document's 12 illustrations",
+                    "why": "the passage mentions a picture that is elsewhere in the document"}]
+    assert mentions("Portrait of Author | Frontispiece", None, link="https://o/x")[0]["caption"] == \
+        "the document's illustrations", "plates unknown (record not held here): still linked"
+    assert mentions("see Plate IV and Fig. 3", [], link="u", record_plates=4)[0]["kind"] == "link"
+    assert mentions("the frontispiece", [], link="u", record_plates=0) == [], "a document with no pictures"
+    assert mentions("a portrait of the sea, a map of the town", [], link="u", record_plates=5) == [], \
+        "ordinary words alone are not a mention"
+    assert mentions("the frontispiece", [], link=None, record_plates=3) == [], "no page to send to"

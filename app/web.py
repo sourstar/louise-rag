@@ -821,12 +821,14 @@ def _attach_plates(result: dict) -> None:
     shows the pictures for the rest."""
     from app.ask import figures as figures_mod
     for h in result.get("hits") or []:
-        if "[Illustration" not in str(h.get("text") or ""):
+        text = str(h.get("text") or "")
+        if "[Illustration" not in text and not figures_mod.PROSE.search(text):
             continue
         plugin = str(h.get("chunk_id", "")).split(":", 1)[0]
         link = reader.illustrated_url(plugin, {"native_id": h.get("book_id"), "lang": h.get("lang"),
                                                "title": h.get("title")}) or h.get("origin_url")
-        h["plates"] = figures_mod.mentions(h.get("text"), h.get("figures"), link=link)
+        h["plates"] = figures_mod.mentions(text, h.get("figures"), link=link,
+                                           record_plates=h.get("record_plates"))
 
 
 # ---------------- admin login (outside admin_router — must be reachable
