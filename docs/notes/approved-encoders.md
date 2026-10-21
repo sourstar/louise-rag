@@ -128,6 +128,28 @@ fresh loads, two orders, compared as exact float reprs or text bytes):
 | louise-chat-qwen3-8b (stock SYCL) | DNN=0, `parallel:1`, `cache_ram:0`, greedy (`top_k:1`, temperature 0) | NOT bit-exact: the first answer after a load differs from the later ones (from token ~25), and the later ones agree. `cache_prompt:false` in the request changes nothing |
 | index-translate-9b | DNN=0, `parallel:1`, `cache_ram:0` | bit-exact over 3 loads × 2 (an empty answer to a chat probe; the real path still to measure) |
 
+**2026-10-21, behind VeGa's fail-closed wrapper** (determinism-switch.sh, then
+one LocalAI restart per batch of YAMLs). Each row: 3 fresh loads, shuffled or
+reversed orders, every score or token compared as bytes.
+
+| model | settings | result |
+|---|---|---|
+| louise-rerank-bge, `vega-llama-cpp` (tokenizer probe), ctx 16,384 | DNN=0, `parallel:1` | NOT bit-exact: 1 of 20 scores, first pass after 2 of 3 loads |
+| the same, `vega-llama-cpp-gen` (no probe) | the same | NOT bit-exact |
+| the same | + `GGML_SYCL_ENABLE_OPT/GRAPH/FUSION=0`, flash attention off | BIT-EXACT, 3 runs of 3 × 2; 13–17 s for 50 candidates, 5.3 GB at ctx 16,384 (kept as `louise-rerank-bge-strict`, ctx 2,560) |
+| **louise-rerank-bge, ctx 2,560, batch/ubatch 2,560** | DNN=0, `parallel:1`, flash attention ON, OPT/GRAPH/FUSION default | **BIT-EXACT**: 20 × 3 × 2, and 50 real gutenberg candidates × 3 loads × 2 shuffled orders on two queries; 1.8–2.2 s for 50, 0.9–1.2 GB. The oversized context was what did not reproduce. In production since 2026-10-21 with the platform's window cut (05 §5.6, 2,048 tokens) |
+| louise-chat-qwen3-8b, `vega-llama-cpp-gen` | DNN=0, `parallel:1`, `cache_ram:0`, greedy | NOT bit-exact (as before: the answers after the first differ) |
+| the same | + `GGML_SYCL_ENABLE_OPT=0` | **BIT-EXACT**, 3 runs of 3 loads × 3 answers. Every switch off (OPT/GRAPH/FUSION=0, flash attention off) is NOT, 3 of 3 runs |
+| index-translate-9b, `vega-llama-cpp-gen` | DNN=0, `parallel:1` | BIT-EXACT, 3 loads × 3 greedy answers (a real translation) |
+| vega-dar-legal-it, louise-python-20261021a | `LOUISE_TORCH_DETERMINISTIC=1` | **BIT-EXACT**: 32 of normattiva's texts (24 spread + the 8 longest) × 3 fresh loads × 2 shuffled passes, 192 vectors; 20 of 20 re-embedded vectors equal to a fresh encode (float16) |
+| vega-medcpt-article-ov, louise-python-20261021b (OpenVINO) | `LOUISE_BITEXACT_MEASURED=louise-python-20261021b` | **BIT-EXACT**: 32 PubMed (title, abstract) pairs × 3 fresh loads × 2 shuffled passes, 192 vectors |
+| louise-rerank-medcpt, the same tree | the same | **BIT-EXACT**, 20 × 3 × 2 |
+
+Generative llama.cpp models (chat, translate) and rerankers need the
+`vega-llama-cpp-gen` package (`cuts: context_size`): the tokenizer probe of
+`vega-llama-cpp` embeds a text at load, and that killed a chat model's child
+(exit 1, LocalAI "connection refused").
+
 The rule is now code. `deploy/vega/vega_wrapper.py` `determinism_lacks`
 applies on ANY device:
 - llama.cpp needs `parallel:1`, and on a card its vendor's mode; Vulkan, or a
