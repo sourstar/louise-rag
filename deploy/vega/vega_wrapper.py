@@ -168,6 +168,7 @@ class Config:
     runtime_packages: tuple[str, ...] = RUNTIME_PACKAGES
     cuts: str = TOKENIZER
     amd_smi: Path | None = None           # WSL2: the dxg build of amd-smi (app/vega/dxg.py)
+    package: Path | None = None           # the wrapper package's directory (vega.json's)
 
 
 def load_config(path: Path, backends_root: Path) -> Config:
@@ -211,7 +212,7 @@ def load_config(path: Path, backends_root: Path) -> Config:
     directory = Path(backend) if backend.startswith("/") else Path(backends_root) / backend
     return Config(backend=directory, socket=Path(sock), cards=dict(cards),
                   runtime_packages=tuple(packages), cuts=cuts,
-                  amd_smi=Path(amd_smi) if amd_smi else None)
+                  amd_smi=Path(amd_smi) if amd_smi else None, package=Path(path).parent)
 
 
 @dataclass(frozen=True)
@@ -267,10 +268,41 @@ class FileDigests:
     mtimes, so mtime alone is not enough). A file that changes while it is
     read is refused, never named."""
 
-    def __init__(self) -> None:
+    def __init__(self, store: Path | None = None) -> None:
         self._known: dict[str, tuple[tuple[int, ...], int, str]] = {}
         self._lock = threading.Lock()
         self.reads: list[str] = []                    # physical paths read, in order
+        # KEPT ACROSS LOADS (`store`): LocalAI starts a new wrapper for every
+        # load, and an empty cache read the whole tree again each time — 8.3 GB
+        # of louise-python from tank, ~75 s of every MedCPT, DAR or MADLAD load
+        # (2026-10-21; the load itself 2.5 s). An entry stands only for a file
+        # whose identity is the one recorded, as in memory.
+        self.store = Path(store) if store is not None else None
+        if self.store is not None:
+            try:
+                raw = json.loads(self.store.read_text(encoding="utf-8"))
+                for path, (ident, size, sha) in raw.items():
+                    self._known[str(path)] = (tuple(int(x) for x in ident), int(size), str(sha))
+            except (OSError, ValueError, TypeError):
+                pass                                  # none kept, or unreadable: read the files
+
+    def save(self) -> None:
+        """The digests known, written beside the package for the next load
+        (atomically; a store that cannot be written only costs the reads)."""
+        if self.store is None:
+            return
+        with self._lock:
+            doc = {p: [list(i), size, sha] for p, (i, size, sha) in self._known.items()}
+        tmp = self.store.with_name(self.store.name + f".{os.getpid()}.tmp")
+        try:
+            tmp.write_text(json.dumps(doc, sort_keys=True), encoding="utf-8")
+            os.replace(tmp, self.store)
+        except OSError as e:
+            log(f"the file digests are not kept ({e}): the next load reads the files again")
+
+    def sha(self, path: Path | str) -> str:
+        """`sha256:<hex>` of a file: weights read through the same cache."""
+        return "sha256:" + self.read(path)[1]
 
     @staticmethod
     def _identity(st: os.stat_result) -> tuple[int, ...]:
@@ -297,6 +329,17 @@ class FileDigests:
             self._known[physical] = (ident, before.st_size, h.hexdigest())
             self.reads.append(physical)
         return before.st_size, h.hexdigest()
+
+
+#: the kept file digests, in the wrapper package's directory
+DIGEST_STORE = "file-digests.json"
+
+
+def _kept_weights_digest(path: Path, files: FileDigests) -> str:
+    """`runs.weights_digest` with its files read through `files`, then kept."""
+    out = runs.weights_digest(Path(path), file_digest=files.sha)
+    files.save()
+    return out
 
 
 def tree_manifest(root: Path, files: FileDigests | None = None) -> dict[str, dict[str, Any]]:
@@ -962,8 +1005,8 @@ class Gate:
                  files: FileDigests | None = None, amd_smi: dxg.AmdSmi | None = None) -> None:
         self.cfg, self.backend, self.child, self.receipts, self.pb = cfg, backend, child, receipts, pb
         self.environ = os.environ if environ is None else environ
-        self.hash_weights = hash_weights
         self.files = files if files is not None else FileDigests()
+        self.hash_weights = hash_weights
         self.procfs = procfs or ProcFS(proc_root)
         self.proc_root, self.sys_root, self.dpkg_status = proc_root, sys_root, dpkg_status
         self.amd_smi = amd_smi if amd_smi is not None else (
@@ -1000,6 +1043,7 @@ class Gate:
                 # the list is kept beside the digest: told to the receipts
                 # service once the run is, so a digest that moved can be diffed
                 manifest = tree_manifest(self.backend.directory, self.files)
+                self.files.save()
                 hashed["manifest"] = manifest
                 return manifest_digest(manifest, self.backend.directory)
 
@@ -1417,6 +1461,11 @@ def serve(cfg: Config, address: str, *, pb: Any, interceptors: Iterable[Any] = (
         options=sizes + [("grpc.initial_reconnect_backoff_ms", 100),
                          ("grpc.min_reconnect_backoff_ms", 100),
                          ("grpc.max_reconnect_backoff_ms", 1000)])
+    if "files" not in gate_kw:
+        # beside vega.json, in the package: one store per wrapper package
+        files = FileDigests(store=cfg.package / DIGEST_STORE if cfg.package else None)
+        gate_kw["files"] = files
+        gate_kw.setdefault("hash_weights", lambda p: _kept_weights_digest(p, files))
     gate = Gate(cfg, backend, child, ReceiptClient(cfg.socket, receipt_timeout_s), pb,
                 environ=environ, **gate_kw)
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=WORKERS), options=sizes,
