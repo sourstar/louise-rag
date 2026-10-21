@@ -84,3 +84,12 @@ def test_plates_that_cannot_be_placed_are_said_never_fatal(client, monkeypatch):
     html = _page(client, monkeypatch, place)
     assert "Moby Dick" in html
     assert "figures not placed: RuntimeError: container unreadable" in html
+
+
+def test_a_picture_named_in_prose_is_linked(client, monkeypatch):  # noqa: F811
+    def place(lists, source_of, contexts, root):
+        for h in lists[0]["hits"]:
+            h["figures"], h["record_plates"] = [], 7
+    html = _page(client, monkeypatch, place, text="His portrait forms the frontispiece of this book.")
+    assert 'href="https://www.gutenberg.org/cache/epub/2701/pg2701-images.html"' in html
+    assert "the document&#39;s 7 illustrations — at the source" in html

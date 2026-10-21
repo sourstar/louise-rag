@@ -164,6 +164,10 @@ def place(collection, codex, shard_tree: Path, snapshot, hits: list[dict[str, An
         if got is None:
             continue                          # not held as a record here: `[]`, as before
         record, shard = got
+        for h in hs:
+            # how many plates the whole document carries: a passage that
+            # talks about one placed elsewhere is linked to them (`mentions`)
+            h["record_plates"] = len(record.get("figures") or [])
         try:
             per_seq = for_record(collection, record, held_hashes(shard_tree, shard), red=red)
         except Exception:   # noqa: BLE001 — a record that will not re-chunk places nothing
@@ -230,7 +234,20 @@ _NOT_DRAWN = {"not-held": "this node has not fetched it yet",
               None: "this collection's records name no plates"}
 
 
-def mentions(text: str, figures: list | None, *, link: str | None) -> list[dict[str, Any]]:
+#: a picture named in prose, with no marker: "the frontispiece", "see
+#: plate IV", "Fig. 3", a list of illustrations — the picture is elsewhere
+#: in the document (München, 2026-10-21: 55261:6 "Portrait of Author |
+#: Frontispiece", 46415:234 "His portrait forms the frontispiece").
+#: Conservative on purpose: a word that is also ordinary prose ("portrait",
+#: "map", "picture") is not enough on its own.
+PROSE = re.compile(r"\b(?:illustrations?|illustrated|frontispiece|plates?\s+(?:[IVXLC]+|\d+)\b"
+                   r"|fig(?:ure)?s?\.?\s*\d+|illustrazion[ei]|tavol[ae]\s+(?:[IVXLC]+|\d+)"
+                   r"|planches?\s+(?:[IVXLC]+|\d+)|abbildungs?|tafel\s+(?:[IVXLC]+|\d+))",
+                   re.IGNORECASE)
+
+
+def mentions(text: str, figures: list | None, *, link: str | None,
+             record_plates: int | None = None) -> list[dict[str, Any]]:
     """Every picture the passage MENTIONS, in order — each `[Illustration…]`
     marker in its text — with the picture or a link to it (operator,
     2026-10-21: "either the link or the picture shall be present"). The
@@ -249,4 +266,10 @@ def mentions(text: str, figures: list | None, *, link: str | None) -> list[dict[
             continue
         why = _NOT_DRAWN.get(f.get("state") if f is not None else None, _NOT_DRAWN[None])
         out.append({"kind": "link" if link else "none", "href": link, "caption": caption, "why": why})
+    if not out and link and record_plates != 0 and PROSE.search(text):
+        # named in prose, placed elsewhere: the document's pictures, one link
+        # (`record_plates` 0: the document has none, and nothing is offered)
+        n = f"{record_plates} " if record_plates else ""
+        out.append({"kind": "link", "href": link, "caption": f"the document's {n}illustrations",
+                    "why": "the passage mentions a picture that is elsewhere in the document"})
     return out
