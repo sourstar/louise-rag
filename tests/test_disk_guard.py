@@ -12,8 +12,14 @@ Usage = namedtuple("Usage", "total used free")
 
 
 @pytest.fixture
-def collection(isolated_config, tmp_path):
+def collection(isolated_config, tmp_path, monkeypatch):
     disk_guard._signalled.clear()
+    # the floor these tests measure against is the DEFAULT one, set here: a
+    # run with VECTORS_MIN_FREE_GB=0 (a small container's disk) left nothing
+    # below it and four tests failed on the environment (Perugia's gate,
+    # 2026-10-21)
+    monkeypatch.setattr(config, "VECTORS_MIN_FREE_GB", 32.0)
+    monkeypatch.setattr(config, "VECTORS_MIN_FREE_FRACTION", 0.05)
     return collections_mod.Collection(
         name="dg", plugin="gutenberg", profile=None, embed_mode_default=None,
         corpus_dir=tmp_path / "corpus", manifest_path=tmp_path / "manifest.db",
