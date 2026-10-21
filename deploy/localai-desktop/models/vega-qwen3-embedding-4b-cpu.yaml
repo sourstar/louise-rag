@@ -1,0 +1,27 @@
+# The node's YAML (/mnt/ssd5/apps/localai/models), byte for byte in every
+# load option, without NEO_CACHE_DIR (Intel's compiler cache) and with the
+# AMD deterministic mode in env (CLAUDE.md invariant 12). A different
+# CPU TWIN (tools/cross_device_check.py): the same build with no card at all —
+# no layers, no op offload, and HIP shown no device.
+name: vega-qwen3-embedding-4b-cpu
+backend: vega-llama-cpp
+embeddings: true
+pinned: false
+context_size: 8192
+threads: 6
+gpu_layers: 0
+flash_attention: "on"
+mmap: true
+parameters:
+    model: weights/llama-embed/Qwen3-Embedding-4B-Q4_K_M.gguf
+    batch: 8192
+    seed: 0
+options:
+    - parallel:1
+    - pooling:last
+    - ubatch:8192
+    - no_op_offload:true
+env:
+    # CLAUDE.md invariant 12: rocBLAS without atomics, bit-identical run to run
+    ROCBLAS_DEFAULT_ATOMICS_MODE: "0"
+    HIP_VISIBLE_DEVICES: "-1"
