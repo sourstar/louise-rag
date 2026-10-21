@@ -39,7 +39,13 @@ def test_a_changed_file_is_read_again_and_only_it(tmp_path):
     first = vw.FileDigests(store=store)
     before = vw.tree_manifest(root, first)
     first.save()
-    (root / "lib" / "libggml.so").write_bytes(b"y" * 5000)   # same size, new bytes
+    lib = root / "lib" / "libggml.so"
+    st = lib.stat()
+    lib.write_bytes(b"y" * 5000)                              # same size, new bytes
+    # file times move on the kernel's tick: a rewrite inside the same tick as
+    # the first hash keeps mtime and ctime (it failed 3 of 3 that way in a
+    # container, 2026-10-21) — the write a real upgrade makes is later
+    os.utime(lib, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000))
     second = vw.FileDigests(store=store)
     after = vw.tree_manifest(root, second)
     assert second.reads == [os.path.realpath(root / "lib" / "libggml.so")]
