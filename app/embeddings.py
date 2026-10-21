@@ -642,7 +642,7 @@ def _asked(texts: list[str], recipe: "collections_mod.EmbedRecipe",
 
 def _embed_one_at_a_time(texts: list[Item], *, recipe: "collections_mod.EmbedRecipe",
                          query: bool = False, timeout: float = 300,
-                         runs: set | None = None) -> list[list[float]]:
+                         runs: set | None = None, asked: bool = False) -> list[list[float]]:
     """Each text ALONE in its request, in order, truncated as a chunk is, and
     the vectors AS THE ENDPOINT RETURNED THEM — not unit-normalised.
 
@@ -655,13 +655,13 @@ def _embed_one_at_a_time(texts: list[Item], *, recipe: "collections_mod.EmbedRec
     to measure batch invariance (03 §3.3)."""
     side = _side(recipe, query)
     return [_embed_batch([text], timeout, side, raw=True, runs=runs)[0]
-            for text in _asked(texts, side, query)]
+            for text in (texts if asked else _asked(texts, side, query))]
 
 
 def _embed_texts(texts: list[Item], timeout: float = 300, *,
                  recipe: "collections_mod.EmbedRecipe | None" = None,
                  query: bool = False, runs: set | None = None,
-                 raw: bool = False) -> list[list[float]]:
+                 raw: bool = False, asked: bool = False) -> list[list[float]]:
     """EMBED_CONCURRENCY sub-batches in flight; result order matches input.
 
     `recipe` is the collection's encoder (collections.recipe_for()), and it
@@ -677,7 +677,7 @@ def _embed_texts(texts: list[Item], timeout: float = 300, *,
             "_embed_texts: no encoder recipe — a collection names its own, and "
             "there is no default")
     recipe = _side(recipe, query)
-    texts = _asked(texts, recipe, query)
+    texts = texts if asked else _asked(texts, recipe, query)
 
     def one(b: list[Item]) -> list[list[float]]:
         # the two keywords only where asked for: a test's stand-in for
@@ -837,7 +837,7 @@ def embed_query(collection, text: str, *,
 def embed_calibration(recipe: "collections_mod.EmbedRecipe", texts: list[Item], *,
                       query: bool = False, timeout: float = 300,
                       runs: set | None = None, raw: bool = False,
-                      one_at_a_time: bool = False) -> list[list[float]]:
+                      one_at_a_time: bool = False, asked: bool = False) -> list[list[float]]:
     """Inputs that are NOT a collection's chunks, by design: the calibration
     set (09 §9.12) and its query vectors, the gate's batches and fingerprint,
     a backend's probes, a tool's sample. There is no layer to read a form
@@ -849,16 +849,26 @@ def embed_calibration(recipe: "collections_mod.EmbedRecipe", texts: list[Item], 
     `query` routes through the query side as a search does, and a query is
     one text in every space: a pair is refused there. `one_at_a_time` sends
     each input alone and returns it as the endpoint did (the fingerprint,
-    09 §9.12); `raw` skips unit normalisation."""
+    09 §9.12); `raw` skips unit normalisation.
+
+    `asked`: the texts are ALREADY as the query side receives them — the
+    gate and the re-check prefix `space.query.instruction` themselves
+    (hold/embedder.run_gate, hold/runs.recheck), as calibration built the
+    reference — so it is not prepended again. Until 2026-10-21 it was: every
+    query run was gated and re-checked on `instruction + instruction + text`,
+    a function no search runs (Perugia: the gate's worst 0.993243 against
+    0.997380 over all 512 texts sent once)."""
     if query and any(not isinstance(t, str) for t in texts):
         raise InputFormError("the query side embeds one text in every space; a "
                              "text pair is a document's form (09 §9.3, input forms)")
     if one_at_a_time:
         return _embed_one_at_a_time(texts, recipe=recipe, query=query,
-                                    timeout=timeout, runs=runs)
+                                    timeout=timeout, runs=runs, asked=asked)
     kw = _kw(timeout, runs, raw)
     if query:
         kw["query"] = True
+        if asked:
+            kw["asked"] = True
     return _embed_texts(texts, recipe=recipe, **kw)
 
 # A document with more chunks than this is not resumed by reading its text

@@ -81,7 +81,7 @@ def _stopping(stop: Callable[[], bool] | None, name: str) -> None:
 
 def answers(recipe, *, query: bool = False, how: str = "normalised",
             stop: Callable[[], bool] | None = None, name: str = "",
-            collection: Any = None) -> runs_mod.Answers:
+            collection: Any = None, asked: bool = True) -> runs_mod.Answers:
     """The node's embedding client as an `Answers`.
 
     `how`: "normalised" — what a write stores; "one" — each text alone, as
@@ -97,7 +97,13 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
     calibration pairs among them, as a check embeds them. Without it they
     are the calibration set, a probe or the gate's, each already in the
     space's form — a text, or a pair (`embeddings.embed_calibration`; 09
-    §9.12, amended 2026-10-08)."""
+    §9.12, amended 2026-10-08).
+
+    `asked` (the query side): the texts are already as the query side
+    receives them — the gate and the re-check prefix the space's instruction
+    themselves, as calibration did — so the client does not prefix it again
+    (2026-10-21: it did, and every query run was gated on the instruction
+    twice). A caller handing raw queries passes `asked=False`."""
     def normalised(texts: list[str], seen: set) -> list[list[float]]:
         out: list[list[float]] = []
         for i in range(0, len(texts), SLICE):
@@ -106,7 +112,8 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
             if collection is not None and not query:
                 out += embeddings.embed_chunks(collection, part, recipe=recipe, runs=seen)
             else:
-                out += embeddings.embed_calibration(recipe, part, query=query, runs=seen)
+                out += embeddings.embed_calibration(recipe, part, query=query, runs=seen,
+                                                    asked=asked)
         return out
 
     def one(texts: list[str], seen: set) -> list[list[float]]:
@@ -114,7 +121,7 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
         for text in texts:
             _stopping(stop, name)
             out += embeddings.embed_calibration(recipe, [text], query=query, runs=seen,
-                                                one_at_a_time=True)
+                                                one_at_a_time=True, asked=asked)
         return out
 
     def contribute(texts: list[str], seen: set) -> list[list[float]]:
@@ -122,13 +129,14 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
         lanes = max(1, min(int(getattr(recipe, "concurrency", 1) or 1), len(texts)))
         if lanes == 1:
             return embeddings.embed_calibration(recipe, texts, query=query,
-                                                raw=True, runs=seen)
+                                                raw=True, runs=seen, asked=asked)
         # as the worker does it: `lanes` documents in flight, each its own call
         groups = [list(range(k, len(texts), lanes)) for k in range(lanes)]
         with ThreadPoolExecutor(max_workers=lanes) as ex:
             parts = list(ex.map(
                 lambda idx: embeddings.embed_calibration(recipe, [texts[i] for i in idx],
-                                                         query=query, raw=True, runs=seen),
+                                                         query=query, raw=True, runs=seen,
+                                                         asked=asked),
                 groups))
         out: list[Any] = [None] * len(texts)
         for idx, vectors in zip(groups, parts):
@@ -514,7 +522,8 @@ def checking(root: Path, name: str, codex: Codex, recipe, *, role: str = "docume
         if role == "query":
             return lambda texts: embeddings.embed_calibration(recipe, texts, query=True)
         return lambda texts: embeddings.embed_chunks(codex, texts, recipe=recipe)
-    embed = answers(recipe, query=role == "query", collection=codex)
+    # a check's queries are raw: the client prefixes the instruction, as a search does
+    embed = answers(recipe, query=role == "query", collection=codex, asked=False)
 
     def fn(texts: list[str]) -> list[list[float]]:
         vectors = embed(texts)

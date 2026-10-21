@@ -248,8 +248,14 @@ stays the review line.
 |---|---|---|---|---|---|
 | Intel SYCL, Arc Pro B70 (München) | — | — | the reference | — | bit-identical |
 | AMD ROCm 7.2, RX 9060 XT (Perugia, 2026-10-18) | bge-m3 F16 | document | not recorded | 0.998362 / none | 512/512 |
-| AMD ROCm 7.2, RX 9060 XT (Perugia, 2026-10-21) | Qwen3-Embedding-4B Q4_K_M (gutenberg) | document | quorum of 16: 0.998837 / 0.999244 — whole set asked | — | 16/16 over 96 vectors |
-| the same | the same | query | quorum of 16: 0.993243 / 0.996924 — whole set asked | asked | the same |
+| AMD ROCm 7.2, RX 9060 XT (Perugia, 2026-10-21) | Qwen3-Embedding-4B Q4_K_M (gutenberg) | document | 0.996898 / 0.999151, 0 of 512 below 0.995 | — | 16/16 over 96 vectors |
+| the same | the same | query | 0.997380 / 0.998991, 0 of 512 below 0.995 | 40 of 512 texts: 0.995076 / 0.996992, 0 below 0.995 (the twin: ~13 s a text, 4B on 6 threads) | the same |
+
+The query row's first reading, the gate's 0.993243 / 0.996924, measured the
+instruction sent TWICE (fixed 2026-10-21, "the gate and the re-check send the
+query instruction once"): gate numbers on a query side with an instruction
+from before that commit are not this table's. The card is closer to the
+Intel reference (median 0.99899) than to its own CPU build (0.99699).
 | NVIDIA CUDA 13 | — | — | no card yet (deploy/localai-nvidia, README step 6) | — | — |
 
 *Published numbers, searched 2026-10-21 (operator: "check online"):* no

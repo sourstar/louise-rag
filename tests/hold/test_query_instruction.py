@@ -110,3 +110,69 @@ def test_search_sends_exactly_what_calibration_embedded(monkeypatch):
 
     assert sent == calibrated
     assert sent[0] == "Instruct: find statutes\nQuery: domanda 0"
+
+
+# ---- the gate and the re-check run the function search runs (2026-10-21) -----------------
+
+def _wire(monkeypatch, dim):
+    """The endpoint: records every input as it reaches the wire."""
+    sent: list[str] = []
+
+    class Answer:
+        status_code = 200
+
+        def __init__(self, n):
+            self.n = n
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"index": i, "embedding": [1.0] + [0.0] * (dim - 1)}
+                             for i in range(self.n)]}
+
+    def post(url, json=None, timeout=None, headers=None):
+        sent.extend(json["input"])
+        return Answer(len(json["input"]))
+
+    monkeypatch.setattr(embeddings.httpc, "post", post)
+    return sent
+
+
+def test_the_gate_and_the_recheck_send_the_instruction_once_as_calibration_did(monkeypatch):
+    """Perugia, 2026-10-21: the gate's query worst was 0.993243 on 16 texts,
+    and the same card against the same reference gave 0.997380 over all 512.
+    The gate prefixed the instruction (hold/embedder.run_gate), then the
+    client prefixed it again (embeddings._asked): every query run was gated
+    and re-checked on `instruction + instruction + text`, a function no search
+    runs, and every test held one link of the chain, never the chain."""
+    from app import run_check
+    from app.hold import embedder as emb, runs as hold_runs
+    codex = _bi_encoder("Instruct: find statutes\nQuery: ")    # a query run of its own
+    recipe = _recipe(codex)
+    items = [f"domanda {i}" for i in range(cal.SIZE)]
+
+    calibrated: list[str] = []
+    cal.build_query_member(items, lambda b: calibrated.extend(b) or fake_query_embed(b),
+                           instruction=codex.space.query.instruction, normalise=True,
+                           dim=codex.space.dim)
+    reference = [[1.0] + [0.0] * (codex.space.dim - 1)] * cal.SIZE
+
+    for how in ("normalised", "one", "contribute"):
+        sent = _wire(monkeypatch, codex.space.dim)
+        emb.run_gate(codex, reference=reference, role="query", items=items,
+                     embed=run_check.answers(recipe, query=True, how=how))
+        assert sent == calibrated, f"the gate's {how} path sends what calibration embedded"
+
+    sent = _wire(monkeypatch, codex.space.dim)
+    sampled = list(range(codex.space.calibration.n))
+    ok, _passed, _median = hold_runs.recheck(
+        codex, {"sampled": sampled}, reference=reference, role="query", items=items,
+        embed=run_check.answers(recipe, query=True))
+    assert ok and sent == [calibrated[i] for i in sampled], "the re-check too"
+
+    # and search, for the same texts, sends the same bytes (once)
+    sent = _wire(monkeypatch, codex.space.dim)
+    embeddings._embed_texts(items[:3], recipe=recipe, query=True)
+    assert sent == calibrated[:3]
+    assert sent[0].count("Instruct: find statutes") == 1
