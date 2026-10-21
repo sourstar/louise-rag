@@ -183,7 +183,7 @@ function rememberCounts(){try{localStorage.setItem('ask.counts',JSON.stringify(c
           document.getElementById('rerank-depth').value=c.rerank_depth;count('limit');count('rerank-depth')}
   }catch(e){}
 })();
-async function search(opts){
+async function search(){
   const q=document.getElementById('q').value.trim(); if(!q)return false;
   // the node's model answers one request at a time: a translation still
   // running for the OLD page would make this search wait behind it
@@ -202,18 +202,19 @@ async function search(opts){
                          show_in:selectedLang(),...counts()})});
   document.getElementById('results').innerHTML=await r.text();
   wireHits();
-  const t=applyLanguage(opts);
-  if(opts&&opts.shortOnly)await t;
+  applyLanguage();
   return true;
 }
 async function ask(){
   const want=selectedLang();
-  // THE ANSWER BEFORE THE ENTRIES. The model is one queue, and the entries
-  // in full are minutes of it: translated first, they would hold the
-  // answer back for all of that. So the titles and headings go first
-  // (seconds — the page is readable at a glance), then the answer, written
-  // directly in the chosen language, then the entries.
-  if(!await search({shortOnly:true}))return;
+  // THE ANSWER BEFORE THE ENTRIES (operator, 2026-10-21: the answer box
+  // first). The model is one queue, and the entries are minutes of it:
+  // the queue holds the page's ranks while the answer is written, directly
+  // in the chosen language, and goes on with the entries after it. Only an
+  // entry the reader opens meanwhile is translated at once.
+  tq.hold=true;
+  try{
+  if(!await search())return;
   const q=document.getElementById('q').value.trim();
   const pane=document.getElementById('answer-pane'), a=document.getElementById('answer');
   pane.style.display='block'; a.textContent='thinking…';
@@ -235,14 +236,16 @@ async function ask(){
   // and switching back to "original" restores it byte for byte
   answerRaw=a.textContent; answerLang=want; answerShown=want;
   linkCitations();
-  applyLanguage();       // the entries in full, now that the answer is out
+  }finally{tq.hold=false}
+  tqPump();              // the entries, now that the answer is out
 }
 // ---- translated content -------------------------------------------------
 //
 // THE RULE (operator, 2026-09-18): the language in the drop-down is the
 // language of the answer AND of every entry returned, the entries are
-// translated IN FULL, and changing it translates everything on the page
-// at once. "Everything" is every `.tr` element — titles, chapter and
+// translated IN FULL, and changing it translates everything on the page —
+// in the order it will be read (the queue below, operator 2026-10-21).
+// "Everything" is every `.tr` element — titles, chapter and
 // section headings, the entries' whole text, catalog titles — and the
 // answer. Authors, ids, the drawer's original and the page chrome never
 // change (STATUS 5j: a personal name is not translated in any language
@@ -252,7 +255,8 @@ async function ask(){
 // one request at a time, so a page is minutes of work; the words appear
 // as they are written instead — the first after about 2 s. The server
 // sends what it has cached first, then the short items, then each long
-// one in the order sent here: the answer, then the entries by rank.
+// one in the order sent here; the queue sends the answer alone, before
+// any entry, so nothing of an entry can come back ahead of it.
 //
 // Items are sent once per distinct (source language, text): two passages
 // of one book share its title and must not pay twice or come back
@@ -272,9 +276,54 @@ const SHORT_ITEM=400;
 
 function markers(t){const m=t.match(/\[\d+\]/g)||[];return m.slice().sort().join(',')}
 
+// ---- one queue, in the order of reading (operator, 2026-10-21) ----------
+//
+// The model writes one translation at a time, so what matters is WHICH
+// text it writes next. The goal is the illusion that everything is already
+// translated, by translating what the reader is most likely to read next:
+//
+//   0  the open reader's screen — a click on an entry or a reference moves
+//      the model there AT ONCE: whatever it was writing gives way (its
+//      finished items stay, the one it was writing is asked again later);
+//   1  then the screen below it, then the one above; as the reader scrolls,
+//      a whole screen ahead in the direction of the scroll (readerPlan);
+//   2  the answer box;
+//   3  the entries on screen, and a screen ahead in the direction the page
+//      is scrolled;
+//   4  every entry's VISIBLE text, by rank: title, chapter, and the part of
+//      the passage its clamp shows (cut at the end of a sentence);
+//   5  behind each entry, by rank: the rest of its passage ("more"), then
+//      what the reader would show first if it were opened (/read/…/screen).
+//
+// Work of a later rank never waits in front of an earlier one: a request
+// whose rank is beaten by new work (a click, a scroll) is aborted and the
+// plan is made again. Everything translated is kept here too (tq.cache),
+// so an entry opened after rank 5 has reached it paints with no request.
+const tq={job:null, ctl:null, planning:false, hold:false, failed:null, cache:new Map(),
+          inflight:new Set(), missed:new Set(), same:new Set(), answerMissed:false,
+          dir:1, lastY:0, timer:null, screens:new Map()};
+const READER_MIN_CHARS=1200;   // the reader window's floor when little text is on screen
+const PAGE_BATCH_ITEMS=12, PAGE_BATCH_CHARS=4000;
+const ckey=(lang,text)=>lang+'\u0001'+text;
+
 function stopTranslating(){
   ++langToken;                              // nothing from the old request may paint
+  tqAbort();
+}
+
+// the request in flight gives way: what it finished stays, the rest is
+// shown in the original again and stays pending (not missed)
+function tqAbort(){
+  const job=tq.job;
   if(langAbort){langAbort.abort();langAbort=null}   // and the model stops writing it
+  tq.ctl=null; tq.job=null;
+  if(!job)return;
+  for(const g of job.groups)for(const u of g.els){
+    if(g.kind==='reader'){if(rd.inflight.has(u)){rd.inflight.delete(u); readerPaint(u,()=>restoreUnit(u))}}
+    else if(tq.inflight.has(u)){tq.inflight.delete(u); restoreUnit(u)}
+  }
+  const a=document.getElementById('answer');
+  if(job.groups.some(g=>g.kind==='answer') && a.classList.contains('translating'))showAnswer(answerRaw,answerLang);
 }
 
 function langNote(text){
@@ -290,7 +339,7 @@ function langNote(text){
 }
 
 function restoreUnit(u){
-  u.textContent=u.dataset.orig; delete u.dataset.tl; u.classList.remove('translating');
+  u.textContent=u.dataset.orig; delete u.dataset.tl; delete u.dataset.parted; u.classList.remove('translating');
   if(u.dataset.otitle)u.title=u.dataset.otitle; else u.removeAttribute('title');
   const b=u.nextElementSibling; if(b&&b.classList.contains('translated-from'))b.remove();
 }
@@ -302,11 +351,12 @@ function markTranslated(u,text,lang){
   // the PUBLISHED text stays one hover away — the operator's "copy the
   // original title for reference" without switching the page back
   u.title='published as: '+u.dataset.orig+(u.dataset.otitle?' — '+u.dataset.otitle:'');
-  if(u.classList.contains('snip')){
+  const snip=u.classList.contains('snip')?u:(u.classList.contains('tr-part')?u.parentElement:null);
+  if(snip && !(snip.nextElementSibling&&snip.nextElementSibling.classList.contains('translated-from'))){
     const b=document.createElement('span'); b.className='badge translated-from';
     b.title='original in the provenance drawer';
     b.textContent='translated from '+(u.dataset.lang||'?');
-    u.parentElement.insertBefore(b,u.nextSibling);
+    snip.parentElement.insertBefore(b,snip.nextSibling);
   }
 }
 
@@ -315,104 +365,289 @@ function showAnswer(text,lang){
   a.classList.remove('translating'); a.textContent=text; answerShown=lang; linkCitations();
 }
 
-async function applyLanguage(opts){
-  const lang=selectedLang();
-  const shortOnly=!!(opts&&opts.shortOnly);
-  stopTranslating();
-  readerTranslate();        // the open document too, on its own request
-  const mine=langToken;
-  const units=[...document.querySelectorAll('#results .tr')];
-  const a=document.getElementById('answer');
-  const haveAnswer=answerRaw && document.getElementById('answer-pane').style.display!=='none';
+// A clamped passage in two: what its clamp shows, to the end of that
+// sentence, and the rest. The first is rank 4, the rest rank 5 — the
+// first lines are read at a glance, the rest only after "more".
+function splitSnip(s){
+  if(s.dataset.parted || (s.closest('.hit')||s).classList.contains('open'))return;
+  const t=s.dataset.orig, node=s.firstChild;
+  if(!node || node.nodeType!==3 || node.data!==t || s.scrollHeight<=s.clientHeight+1)return;
+  const bottom=s.getBoundingClientRect().bottom, r=document.createRange();
+  let lo=0, hi=t.length;               // the first character below the clamp
+  while(lo<hi){const m=(lo+hi)>>1; r.setStart(node,m); r.setEnd(node,m+1);
+    if(r.getBoundingClientRect().top>=bottom)hi=m; else lo=m+1}
+  const end=t.slice(lo).match(/^[\s\S]{0,300}?(?:[.!?;:…»"”](?=\s)|\n)/);
+  const cut=lo+(end?end[0].length:0);
+  if(cut<40 || cut>=t.length-40)return;  // a scrap on either side: one unit
+  s.textContent='';
+  for(const [txt,tail] of [[t.slice(0,cut),false],[t.slice(cut),true]]){
+    const p=document.createElement('span'); p.className='tr-part'+(tail?' tail':'');
+    p.dataset.orig=txt; p.dataset.otitle=''; p.dataset.lang=s.dataset.lang||'?'; p.textContent=txt;
+    s.appendChild(p);
+  }
+  s.dataset.parted='1';
+}
 
-  // Back to the original wherever the page shows another language, or a
-  // translation that was still being written when it was interrupted.
-  for(const u of units){
-    if(u.dataset.orig===undefined){u.dataset.orig=u.textContent; u.dataset.otitle=u.getAttribute('title')||''}
-    if(u.dataset.tl!==lang || !lang)restoreUnit(u);
+// the page's units, in document order: a split passage is its two parts
+function pageUnits(){
+  const out=[];
+  for(const u of document.querySelectorAll('#results .tr')){
+    if(u.dataset.parted)out.push(...u.querySelectorAll(':scope > .tr-part')); else out.push(u);
   }
-  if(haveAnswer && answerShown!==lang && answerShown!==answerLang)showAnswer(answerRaw,answerLang);
-  if(!lang){
-    langNote('');
-    if(haveAnswer)showAnswer(answerRaw,answerLang);   // byte for byte
-    return;
-  }
-  // A unit already IN the target language is not sent to the model: it
-  // would pay for a no-op and earn a "translated from it" badge on text
-  // that was always Italian.
+  return out;
+}
+
+function pagePending(u,lang){
+  const src=u.dataset.lang||'?';
+  return !!u.dataset.orig && !!u.dataset.orig.trim() && src!==lang && u.dataset.tl!==lang
+    && !tq.inflight.has(u) && !tq.missed.has(u) && !tq.same.has(u);
+}
+
+// on screen, or within one screen of it in the direction of the scroll; a
+// passage's hidden rest counts only once "more" has opened it
+function pageNear(u){
+  if(u.classList.contains('tail') && !(u.closest('.hit')||u).classList.contains('open'))return false;
+  const b=u.getBoundingClientRect(); if(!b.height)return false;
+  const h=window.innerHeight, lo=tq.dir>0?0:-h, hi=tq.dir>0?2*h:h;
+  return b.bottom>lo && b.top<hi;
+}
+
+function answerPending(lang){
+  return !!answerRaw && document.getElementById('answer-pane').style.display!=='none'
+    && answerShown!==lang && answerLang!==lang && !tq.answerMissed;
+}
+
+// everything already translated, painted without asking
+function tqFromCache(lang){
+  const paint=(u,set,via)=>{const v=tq.cache.get(ckey(lang,u.dataset.orig)); if(v===undefined)return;
+    via(u,()=>markTranslated(u,v,lang)); if(u.dataset.tl!==lang)set.add(u)};
+  for(const u of pageUnits())if(pagePending(u,lang))paint(u,tq.same,(u,f)=>f());
+  if(rd.doc && rd.lang===lang)for(const u of [rd.bar,...rd.units])if(readerPending(u))paint(u,rd.same,readerPaint);
+  if(answerPending(lang)){const v=tq.cache.get(ckey(lang,answerRaw));
+    if(v!==undefined && markers(v)===markers(answerRaw))showAnswer(v,lang)}
+}
+
+// one item per distinct (source language, text): two passages of one book
+// share its title and must not pay twice or come back disagreeing
+function tqGroups(units,kind){
   const groups=new Map();
   for(const u of units){
-    const src=u.dataset.lang||'?';
-    if(src===lang || u.dataset.tl===lang)continue;
-    if(shortOnly && u.dataset.orig.length>SHORT_ITEM)continue;
+    const src=kind==='reader'?rd.src:(u.dataset.lang||'?');
     const key=JSON.stringify([src,u.dataset.orig]);
     let g=groups.get(key);
-    if(!g){g={id:'t'+groups.size,text:u.dataset.orig,src:src,els:[]};groups.set(key,g)}
+    if(!g){g={id:kind[0]+groups.size,text:u.dataset.orig,src:src,els:[],kind};groups.set(key,g)}
     g.els.push(u);
   }
-  const byId=new Map([...groups.values()].map(g=>[g.id,g]));
-  const items=[];
-  answerNote='';
-  if(haveAnswer && !shortOnly && answerShown!==lang)
-    items.push({id:ANSWER_ID,text:answerRaw,src:answerLang||'?'});
-  for(const g of groups.values())items.push({id:g.id,text:g.text,src:g.src});
-  if(!items.length){langNote('');return}
+  return [...groups.values()];
+}
 
+function tqBatch(units){
+  const out=[]; let n=0;
+  for(const u of units){if(out.length>=PAGE_BATCH_ITEMS || (out.length && n>=PAGE_BATCH_CHARS))break;
+    out.push(u); n+=u.dataset.orig.length}
+  return out;
+}
+
+// What to translate next, by the ranks above — or {fetch:hit} when rank 5
+// first needs to know what a hit's reader would show. Pure planning: it
+// starts nothing.
+function tqPlan(lang){
+  tqFromCache(lang);
+  if(rd.doc && rd.lang===lang && lang!==rd.src){
+    const us=rd.units, [i0,i1]=readerVisible();
+    const plan=readerPlan(us.map(u=>u.dataset.orig.length),us.map(readerPending),
+                          i0,i1,rd.first,rd.dir,READER_MIN_CHARS);
+    const units=plan.units.map(i=>us[i]);
+    const bar=readerPending(rd.bar);
+    if(bar)units.unshift(rd.bar);
+    if(units.length)return {rank:(plan.visible||bar)?0:1, groups:tqGroups(units,'reader')};
+    rd.first=false;
+    readerNote('translated from '+rd.src+' as you read · the original on hover'
+               +(rd.missed.size?' · '+rd.missed.size+' passage(s) kept their original':''));
+  }
+  if(tq.hold)return null;                  // an answer is being written: the model is its
+  if(answerPending(lang))
+    return {rank:2, groups:[{id:ANSWER_ID,text:answerRaw,src:answerLang||'?',els:[],kind:'answer'}]};
+  const pend=pageUnits().filter(u=>pagePending(u,lang));
+  const near=pend.filter(pageNear);
+  if(near.length)return {rank:3, groups:tqGroups(tqBatch(near),'page')};
+  const shown=pend.filter(u=>!u.classList.contains('tail'));
+  if(shown.length)return {rank:4, groups:tqGroups(tqBatch(shown),'page')};
+  const hits=[...document.querySelectorAll('#hits .hit')];
+  for(const h of hits){
+    const tail=[...h.querySelectorAll('.tr-part.tail')].filter(u=>pagePending(u,lang));
+    const key=screenKey(h), scr=tq.screens.get(key);
+    if(scr===undefined)return {fetch:h};
+    const texts=(scr.texts||[]).filter(t=>t.trim() && scr.src!==lang && !tq.cache.has(ckey(lang,t))
+                                         && !tq.missed.has(ckey(lang,t)));
+    if(!tail.length && !texts.length)continue;
+    const groups=tqGroups(tail,'page');
+    for(const t of texts)groups.push({id:'s'+groups.length,text:t,src:scr.src,els:[],kind:'screen'});
+    return {rank:5, groups};
+  }
+  return null;
+}
+
+function screenKey(h){return [h.dataset.collection,h.dataset.book,h.dataset.cid].join('\u0001')}
+
+// the reader panel's size, in characters of text: what its first screen holds
+function readerScreenChars(){
+  const fs=parseFloat(getComputedStyle(document.body).fontSize)||14;
+  const w=(window.innerWidth<=900?window.innerWidth:Math.min(window.innerWidth*0.48,760))-32;
+  return Math.max(400,Math.round(w/(fs*0.5)*(window.innerHeight-60)/(fs*1.55)));
+}
+
+async function tqScreen(h){
+  const key=screenKey(h);
+  let scr={src:'?',texts:[]};
+  try{
+    const r=await fetch('/read/'+encodeURIComponent(h.dataset.collection)+'/'+encodeURIComponent(h.dataset.book)
+      +'/screen?chars='+readerScreenChars()+(h.dataset.cid?'&hl='+encodeURIComponent(h.dataset.cid):''));
+    if(r.ok){const j=await r.json(); scr={src:(j.lang||'?').toLowerCase(),texts:j.texts||[]}}
+  }catch(e){}
+  tq.screens.set(key,scr);
+}
+
+// the next request, if the model is free; nothing when there is nothing to do
+async function tqPump(){
+  if(tq.ctl || tq.planning)return;
+  const lang=selectedLang();
+  if(!lang || tq.failed===lang){tqIdle(lang);return}
+  tq.planning=true;
+  try{
+    for(;;){
+      const job=tqPlan(lang);
+      if(!job){tqIdle(lang);return}
+      if(job.fetch){await tqScreen(job.fetch); if(selectedLang()!==lang)return; continue}
+      tqRun(job,lang);
+      return;
+    }
+  }finally{tq.planning=false}
+}
+
+// new work may outrank the request in flight (a click, a scroll, "more")
+function tqKick(){
+  if(tq.ctl && tq.job){
+    const lang=selectedLang(), next=lang?tqPlan(lang):null;
+    if(!next || next.fetch || next.rank>=tq.job.rank)return;
+    tqAbort();
+  }
+  tqPump();
+}
+
+function tqIdle(lang){
+  if(!lang){langNote('');return}
+  if(tq.failed===lang){langNote('translation into '+lang+' unavailable — showing the originals');return}
+  const missed=pageUnits().filter(u=>tq.missed.has(u)).length, notes=[];
+  if(missed)notes.push(missed+' item(s) could not be translated — showing those originals');
+  if(answerNote)notes.push(answerNote);
+  langNote(notes.join(' · '));
+}
+
+async function tqRun(job,lang){
+  const mine=langToken, ctl=new AbortController();
+  tq.job=job; tq.ctl=ctl; langAbort=ctl;
+  const reader=job.rank<=1, a=document.getElementById('answer');
+  for(const g of job.groups)for(const u of g.els)(g.kind==='reader'?rd.inflight:tq.inflight).add(u);
+  if(reader)readerNote('translating into '+lang+' as you read…');
   // SAY SO BEFORE THE WAIT, NOT AFTER IT. One model call for a page of
   // passages measured 78 s on this node, and every word on screen stayed
   // exactly as it was for the whole of it — so switching language read as
   // doing nothing at all, which is what the operator reported (twice).
-  langNote('translating ' + items.length + ' item(s) into ' + lang
-           + '… each changes as it is written');
-
-  const ctl=new AbortController(); langAbort=ctl;
-  const acc={}; let failed=false, missed=0;
+  else langNote('translating into '+lang+' — what you are likely to read first, the rest as you go');
+  const byId=new Map(job.groups.map(g=>[g.id,g])), acc={};
+  const settle=(g,u,fn)=>{
+    if(g.kind==='reader'){rd.inflight.delete(u); readerPaint(u,fn)} else {tq.inflight.delete(u); fn()}};
+  const missedSet=g=>g.kind==='reader'?rd.missed:tq.missed, sameSet=g=>g.kind==='reader'?rd.same:tq.same;
+  let failed=false;
   try{
     const r=await fetch('/ask/translate/stream',{method:'POST',signal:ctl.signal,
-      headers:{'Content-Type':'application/json'},body:JSON.stringify({lang,items})});
-    const reader=r.body.getReader(), dec=new TextDecoder(); let buf='';
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({lang,items:job.groups.map(g=>({id:g.id,text:g.text,src:g.src}))})});
+    const rdr=r.body.getReader(), dec=new TextDecoder(); let buf='';
     for(;;){
-      const {done,value}=await reader.read(); if(done)break;
-      if(mine!==langToken)return;           // a later switch already won
+      const {done,value}=await rdr.read(); if(done)break;
+      if(mine!==langToken || tq.ctl!==ctl)return;   // given way, or a later switch won
       buf+=dec.decode(value,{stream:true});
       let i; while((i=buf.indexOf('\n'))>=0){
         const ln=buf.slice(0,i); buf=buf.slice(i+1); if(!ln.trim())continue;
         let m; try{m=JSON.parse(ln)}catch(e){continue}
-        if(m.done){failed=!!m.failed; missed=(m.missed||[]).filter(id=>id!==ANSWER_ID).length; continue}
-        if(m.id===ANSWER_ID){
+        if(m.done)continue;   // a request with nothing back: its items are missed, the queue goes on
+        const g=byId.get(m.id); if(!g)continue;
+        if(m.text!==undefined)tq.cache.set(ckey(lang,g.text),m.text);
+        if(g.kind==='answer'){
           if(m.delta!==undefined){acc[m.id]=(acc[m.id]||'')+m.delta; a.textContent=acc[m.id]; a.classList.add('translating')}
           else if(m.text!==undefined && markers(m.text)===markers(answerRaw))showAnswer(m.text,lang);
           else{
-            showAnswer(answerRaw,answerLang);
+            showAnswer(answerRaw,answerLang); tq.answerMissed=true;
             // the citations moved: the answer is worth less than its links
             if(m.text!==undefined)answerNote='the answer kept its original language — translating it '
                                              +'would have broken its [n] citations';
           }
           continue;
         }
-        const g=byId.get(m.id); if(!g)continue;
+        if(g.kind==='screen'){if(m.missed)tq.missed.add(ckey(lang,g.text)); continue}
         if(m.delta!==undefined){
           acc[m.id]=(acc[m.id]||'')+m.delta;
-          for(const u of g.els){u.textContent=acc[m.id]; u.classList.add('translating')}
-        }else if(m.text!==undefined){for(const u of g.els)markTranslated(u,m.text,lang)}
-        else if(m.missed){for(const u of g.els)restoreUnit(u)}
+          for(const u of g.els){const f=()=>{u.textContent=acc[m.id]; u.classList.add('translating')};
+            g.kind==='reader'?readerPaint(u,f):f()}
+        }else if(m.text!==undefined){
+          // the same text back (a name, a numeral) is done too: never asked again
+          for(const u of g.els){settle(g,u,()=>markTranslated(u,m.text,lang)); if(u.dataset.tl!==lang)sameSet(g).add(u)}
+        }else if(m.missed){for(const u of g.els){missedSet(g).add(u); settle(g,u,()=>restoreUnit(u))}}
       }
     }
   }catch(e){
-    if(mine!==langToken)return;             // aborted by a later switch or search
-    failed=true;
+    if(mine!==langToken || tq.ctl!==ctl)return;    // aborted: tqAbort restored its units
+    failed=true;                            // the model could not be reached
   }
-  if(mine!==langToken)return;
-  langAbort=null;
-  // whatever was still being written when the stream ended is not a translation
-  for(const g of groups.values())for(const u of g.els)if(u.dataset.tl!==lang)restoreUnit(u);
-  if(a.classList.contains('translating'))showAnswer(answerRaw,answerLang);
-  if(failed){langNote('translation into '+lang+' unavailable — showing the originals');return}
-  const notes=[];
-  if(missed)notes.push(missed+' item(s) could not be translated — showing those originals');
-  if(answerNote)notes.push(answerNote);
-  langNote(notes.join(' · '));
+  if(mine!==langToken || tq.ctl!==ctl)return;
+  tq.ctl=null; tq.job=null; langAbort=null;
+  // what the stream never finished is not a translation — and not asked again
+  for(const g of job.groups){
+    for(const u of g.els)if((g.kind==='reader'?rd.inflight:tq.inflight).has(u)){missedSet(g).add(u); settle(g,u,()=>restoreUnit(u))}
+    if(g.kind==='screen' && !tq.cache.has(ckey(lang,g.text)))tq.missed.add(ckey(lang,g.text));
+    if(g.kind==='answer' && answerShown!==lang){tq.answerMissed=true; if(a.classList.contains('translating'))showAnswer(answerRaw,answerLang)}
+  }
+  if(failed){
+    tq.failed=lang;
+    if(reader)readerNote('translation into '+lang+' unavailable — showing the original');
+  }
+  setTimeout(tqPump,0);
 }
+
+// the drop-down: the page and the open reader start over in the new
+// language; "original" restores every unit byte for byte
+function applyLanguage(){
+  const lang=selectedLang();
+  stopTranslating();
+  tq.failed=null; tq.missed=new Set(); tq.same=new Set(); tq.inflight=new Set(); tq.answerMissed=false;
+  answerNote='';
+  const a=document.getElementById('answer');
+  const haveAnswer=answerRaw && document.getElementById('answer-pane').style.display!=='none';
+  for(const u of document.querySelectorAll('#results .tr')){
+    if(u.dataset.orig===undefined){u.dataset.orig=u.textContent; u.dataset.otitle=u.getAttribute('title')||''}
+    if(u.dataset.parted){
+      // a split passage is whole again, unless every part is already in this language
+      const parts=[...u.querySelectorAll(':scope > .tr-part')];
+      if(!lang || parts.some(p=>p.dataset.tl!==lang))restoreUnit(u);
+    }else if(u.dataset.tl!==lang || !lang)restoreUnit(u);
+  }
+  if(haveAnswer && answerShown!==lang)showAnswer(answerRaw,answerLang);   // byte for byte
+  if(lang)for(const s of document.querySelectorAll('#results .snip.tr'))if(s.dataset.lang!==lang)splitSnip(s);
+  readerTranslate();
+  if(!lang){langNote('');return}
+  tqPump();
+}
+
+// the page scrolled: the screen ahead is in the direction of the scroll
+window.addEventListener('scroll',()=>{
+  const y=window.scrollY, d=y-tq.lastY; tq.lastY=y; if(!d)return;
+  tq.dir=d>0?1:-1;
+  if(!tq.timer)tq.timer=setTimeout(()=>{tq.timer=null; tqKick()},150);
+},{passive:true});
+// "more" shows a passage's rest: it is on screen now
+document.addEventListener('click',e=>{if(e.target.closest&&e.target.closest('#results .more'))setTimeout(tqKick,0)});
 // ---- reader panel ----
 function wireHits(){
   document.querySelectorAll('#hits .hit').forEach(h=>{
@@ -435,7 +670,7 @@ async function openReader(collection,book,cid,title){
     readerOpen();
   }catch(e){body.innerHTML='<div class="note">could not load the document: '+e+'</div>'}
 }
-function closeReader(){readerStop(); rd.doc=null; document.getElementById('reader').style.display='none'}
+function closeReader(){readerStop(); rd.doc=null; document.getElementById('reader').style.display='none'; tqPump()}
 
 // ---- the reader, translated as it is read ----
 //
@@ -444,13 +679,12 @@ function closeReader(){readerStop(); rd.doc=null; document.getElementById('reade
 // again below and above it, then, as the reader scrolls, more in the
 // direction of the scroll. The least model time for a translation nobody
 // waits on: a whole book is never sent, only a window around the eyes.
+// Its requests are the queue's ranks 0 and 1 (above): opening an entry
+// moves the model here at once (operator, 2026-10-21).
 //
-// One request at a time, and WHAT IS ON SCREEN WINS: a request still busy
-// with text off screen gives way when untranslated text comes into view.
 // A paragraph above the view that changes length would move the text being
 // read, so the view is held on its first visible paragraph (readerPaint).
-const READER_MIN_CHARS=1200;   // the window's floor when little text is on screen
-const rd={doc:null,bar:null,units:[],src:'?',lang:null,token:0,ctl:null,inflight:new Set(),
+const rd={doc:null,bar:null,units:[],src:'?',lang:null,inflight:new Set(),
           missed:new Set(),same:new Set(),first:true,dir:1,lastTop:0,timer:null};
 
 // What the next request carries, as indices into the document's units: the
@@ -501,9 +735,9 @@ function readerPaint(u,fn){
   if(a){const d=a.getBoundingClientRect().top-before; if(d){c.scrollTop+=d; rd.lastTop=c.scrollTop}}
 }
 
+// the open document's request, if one is in flight, gives way
 function readerStop(){
-  rd.token++;
-  if(rd.ctl){rd.ctl.abort(); rd.ctl=null}
+  if(tq.job && tq.job.groups.some(g=>g.kind==='reader'))tqAbort();
   for(const u of rd.inflight)readerPaint(u,()=>restoreUnit(u));
   rd.inflight.clear();
 }
@@ -534,79 +768,10 @@ function readerTranslate(){
     for(const u of [rd.bar,...rd.units])if(u.dataset.tl && u.dataset.tl!==lang)readerPaint(u,()=>restoreUnit(u));
   }
   if(!lang || lang===rd.src){readerNote('');return}
-  readerPump();
+  tqKick();                 // the shown text outranks anything the page is translating
 }
 
-function readerPump(){
-  if(!rd.doc || !rd.lang || rd.lang===rd.src)return;
-  const us=rd.units, [i0,i1]=readerVisible();
-  const plan=readerPlan(us.map(u=>u.dataset.orig.length),us.map(readerPending),
-                        i0,i1,rd.first,rd.dir,READER_MIN_CHARS);
-  if(rd.ctl){
-    if(!plan.visible)return;                          // the next pump takes it
-    for(let i=i0;i<=i1;i++)if(rd.inflight.has(us[i]))return;   // on screen already coming
-    readerStop();                                     // off-screen work gives way
-    return readerPump();
-  }
-  const units=plan.units.map(i=>us[i]);
-  if(readerPending(rd.bar))units.unshift(rd.bar);
-  if(!units.length){
-    rd.first=false;
-    readerNote('translated from '+rd.src+' as you read · the original on hover'
-               +(rd.missed.size?' · '+rd.missed.size+' passage(s) kept their original':''));
-    return;
-  }
-  readerRequest(units);
-}
-
-async function readerRequest(units){
-  const lang=rd.lang, src=rd.src, mine=++rd.token, ctl=new AbortController();
-  rd.ctl=ctl;
-  const groups=new Map();                  // one item per distinct text
-  for(const u of units){
-    rd.inflight.add(u);
-    let g=groups.get(u.dataset.orig);
-    if(!g){g={id:'r'+groups.size,text:u.dataset.orig,els:[]};groups.set(u.dataset.orig,g)}
-    g.els.push(u);
-  }
-  const byId=new Map([...groups.values()].map(g=>[g.id,g]));
-  readerNote('translating into '+lang+' as you read…');
-  const acc={}; let failed=false;
-  const settle=(u,fn)=>{rd.inflight.delete(u); readerPaint(u,fn)};
-  try{
-    const r=await fetch('/ask/translate/stream',{method:'POST',signal:ctl.signal,
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({lang,items:[...groups.values()].map(g=>({id:g.id,text:g.text,src}))})});
-    const reader=r.body.getReader(), dec=new TextDecoder(); let buf='';
-    for(;;){
-      const {done,value}=await reader.read(); if(done)break;
-      if(mine!==rd.token)return;
-      buf+=dec.decode(value,{stream:true});
-      let i; while((i=buf.indexOf('\n'))>=0){
-        const ln=buf.slice(0,i); buf=buf.slice(i+1); if(!ln.trim())continue;
-        let m; try{m=JSON.parse(ln)}catch(e){continue}
-        if(m.done){failed=!!m.failed; continue}
-        const g=byId.get(m.id); if(!g)continue;
-        if(m.delta!==undefined){
-          acc[m.id]=(acc[m.id]||'')+m.delta;
-          for(const u of g.els)readerPaint(u,()=>{u.textContent=acc[m.id]; u.classList.add('translating')});
-        }else if(m.text!==undefined){
-          // the same text back (a name, a numeral) is done too: never asked again
-          for(const u of g.els){settle(u,()=>markTranslated(u,m.text,lang)); if(u.dataset.tl!==lang)rd.same.add(u)}
-        }else if(m.missed){for(const u of g.els){rd.missed.add(u); settle(u,()=>restoreUnit(u))}}
-      }
-    }
-  }catch(e){
-    if(mine!==rd.token)return;             // given way to text on screen, or closed
-    failed=true;
-  }
-  if(mine!==rd.token)return;
-  rd.ctl=null;
-  // what the stream never finished is not a translation — and not asked again
-  for(const u of units)if(rd.inflight.has(u)){rd.missed.add(u); settle(u,()=>restoreUnit(u))}
-  if(failed){readerNote('translation into '+lang+' unavailable — showing the original');return}
-  readerPump();
-}
+function readerPump(){tqKick()}
 
 function readerScrolled(){
   const c=document.getElementById('reader-content'), d=c.scrollTop-rd.lastTop;

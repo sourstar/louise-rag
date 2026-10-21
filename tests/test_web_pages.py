@@ -323,6 +323,35 @@ def test_show_results_in_translates_content_only(client, monkeypatch):
     assert "results in their own language" in page, "the off switch stays in the chrome language"
 
 
+def test_the_first_screen_is_the_highlighted_chunk_then_its_neighbours():
+    """What the reader shows first when a hit is opened, to translate ahead
+    of the click (operator, 2026-10-21): the title (it heads the panel),
+    the highlighted chunk (the panel centres it), then below and above in
+    turn — the strings reader.html renders, chapter headings included."""
+    from app import reader
+    doc = {"header": {"title": "Book"},
+           "chunks": [{"chunk_id": f"b:{i}:1", "chapter": "I" if i < 3 else "II", "text": f"c{i} " * 10}
+                      for i in range(6)]}
+    # units as rendered: I, c0, c1, c2, II, c3, c4, c5 — c3 at index 5
+    assert reader.first_screen(doc, ["b:3:1"], 1) == ["Book", "c3 " * 10]
+    assert reader.first_screen(doc, ["b:3:1"], 61) == ["Book", "c3 " * 10, "c4 " * 10, "II"]
+    every = reader.first_screen(doc, ["b:3:1"], 10 ** 6)
+    assert sorted(every) == sorted(["Book", "I", "II"] + [f"c{i} " * 10 for i in range(6)])
+    assert reader.first_screen(doc, [], 31) == ["Book", "I", "c0 " * 10], "from the top when nothing is lit"
+
+
+def test_the_screen_route_serves_it_and_refuses_what_read_refuses(client):
+    _seed_one_book()
+    name = collections_mod.default_collection().name
+    r = client.get(f"/read/{name}/1/screen?hl=gutenberg:1:0:1&chars=50")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["lang"] == "en" and body["texts"][0] == "The Lighthouse Keeper"
+    assert any("lighthouse keeper lit the lamp" in t for t in body["texts"])
+    assert client.get(f"/read/{name}/999/screen").status_code == 404
+    assert client.get("/read/nope/1/screen").status_code == 404
+
+
 def test_the_answer_is_asked_in_the_chosen_language_not_translated_after():
     from app import retrieval
     result = {"hits": [], "facts": [], "catalog": []}
@@ -732,16 +761,21 @@ def test_authors_and_ids_are_not_given_a_translation_hook(client):
     assert "data-cid" not in authors_span and " tr" not in authors_span
 
 
-def test_the_switch_sends_everything_in_one_request(client):
-    """One request for the page — titles, headings, entries and the answer
-    — gathered before it is sent. A separate request per item would
-    multiply the wait by the number of hits."""
+def test_the_queue_translates_in_the_order_it_is_read(client):
+    """Operator, 2026-10-21 (superseding "everything in one request"): the
+    open reader's screen, its window, the answer box, the page's screen
+    ahead, every entry's visible text, then what is behind each entry — one
+    request at a time, planned in that order. The behaviour is checked in a
+    browser (tests/test_ask_translation_order_browser.py); here, the plan's
+    order in the page."""
     js = client.get("/ask").text
-    collect = js.index("document.querySelectorAll('#results .tr')")
-    the_answer = js.index("items.push({id:ANSWER_ID")
-    the_call = js.index("fetch('/ask/translate/stream'")
-    assert collect < the_call and the_answer < the_call, \
-        "every item is gathered BEFORE the single fetch"
+    plan = js[js.index("function tqPlan(lang){"):js.index("function screenKey(")]
+    steps = ["rank:(plan.visible||bar)?0:1", "if(tq.hold)return null", "rank:2", "rank:3", "rank:4",
+             "rank:5"]
+    at = [plan.index(x) for x in steps]
+    assert at == sorted(at), "reader, then the answer, then the page, then what is behind it"
+    assert "document.querySelectorAll('#results .tr')" in js
+    assert js.count("fetch('/ask/translate/stream'") == 1, "one place sends, for the page and the reader"
 
 
 def test_original_restores_the_published_text(client):
@@ -969,20 +1003,22 @@ def test_the_page_and_the_server_agree_on_what_is_short(client):
 
 def test_ask_writes_the_answer_before_translating_the_entries(client):
     """The model is one queue (OLLAMA_NUM_PARALLEL=1 on the node) and the
-    entries in full are minutes of it: translated first, they would hold
-    the answer back for all of that."""
+    entries are minutes of it: the queue holds the page while the answer is
+    written (operator, 2026-10-21: the answer box first)."""
     js = client.get("/ask").text
     body = js[js.index("async function ask()"):]
-    titles = body.index("search({shortOnly:true})")
+    hold = body.index("tq.hold=true")
+    search = body.index("await search()")
     answer = body.index("fetch('/v1/chat/completions'")
-    entries = body.index("applyLanguage();")
-    assert titles < answer < entries
+    release = body.index("tq.hold=false")
+    entries = body.index("tqPump();")
+    assert hold < search < answer < release < entries
 
 
 def test_a_new_search_or_switch_stops_the_translation_in_flight(client):
     js = client.get("/ask").text
     assert "langAbort.abort()" in js and "signal:ctl.signal" in js
-    search = js[js.index("async function search(opts)"):js.index("async function ask()")]
+    search = js[js.index("async function search()"):js.index("async function ask()")]
     assert search.index("stopTranslating()") < search.index("fetch('/ask/query'"), \
         "the model is freed before the search needs it"
 
@@ -1022,15 +1058,15 @@ def test_the_reader_is_translated_as_it_is_read(client):
     opener = js[js.index("async function openReader("):js.index("function closeReader(")]
     assert opener.index("fragment=1") < opener.index("readerOpen();"), "once the text is in"
     assert "readerStop()" in js[js.index("function closeReader("):js.index("function readerPlan(")]
-    apply = js[js.index("async function applyLanguage("):js.index("// ---- reader panel ----")]
+    apply = js[js.index("function applyLanguage("):js.index("// ---- reader panel ----")]
     assert "readerTranslate();" in apply, "the drop-down reaches the open document"
     plan = js[js.index("function readerPlan("):js.index("function readerNote(")]
     assert "if(vis.length)return" in plan, "what is on screen first"
     assert "first?[1,-1]:[dir]" in plan, "both sides at first, then the scroll's side"
     assert "addEventListener('scroll',readerScrolled" in js
     assert "overflow-anchor:none" in js, "the view is held by the page alone"
-    request = js[js.index("async function readerRequest("):js.index("function readerScrolled(")]
-    assert "'/ask/translate/stream'" in request
+    pump = js[js.index("function readerTranslate("):js.index("function readerScrolled(")]
+    assert "tqKick()" in pump, "the reader's requests are the queue's first ranks"
 
 
 def test_the_fan_out_badge_counts_in_good_english():

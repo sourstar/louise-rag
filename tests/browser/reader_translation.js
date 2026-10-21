@@ -10,8 +10,8 @@
 // translation endpoint is faked: it records what each request carries and
 // answers after DELAY ms. Prints one PASS/FAIL line per check; exit 0 only
 // when every check passes.
-const puppeteer = require('puppeteer-core');
 const fs = require('fs');
+const { launch } = require('./harness');
 const DIR = process.argv[2];
 const ASK = fs.readFileSync(DIR + '/ask.html', 'utf8');
 const FRAG = fs.readFileSync(DIR + '/fragment.html', 'utf8');
@@ -26,34 +26,29 @@ function check(ok, what, detail) {
 }
 
 (async () => {
-  const exe = process.env.PUPPETEER_EXECUTABLE_PATH
-    || ['/usr/bin/chromium', '/usr/bin/chromium-browser'].find(p => fs.existsSync(p));
-  const browser = await puppeteer.launch({ executablePath: exe, args: ['--no-sandbox', '--disable-gpu'],
-                                           headless: /headless-shell/.test(exe) ? 'shell' : true });
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1400, height: 900 });
-  await page.setRequestInterception(true);
+  const h = await launch({ width: 1400, height: 900 });
+  const page = h.page;
   const byReq = new Map();
-  page.on('request', req => {
-    const u = new URL(req.url());
+  h.route(req => {
+    const u = new URL(req.url);
     if (u.pathname === '/ask') return req.respond({ status: 200, contentType: 'text/html', body: ASK });
     if (u.pathname.startsWith('/read/')) return req.respond({ status: 200, contentType: 'text/html', body: FRAG });
     if (u.pathname === '/ask/translate/stream') {
-      const body = JSON.parse(req.postData());
+      const body = JSON.parse(req.postData);
       const rec = { i: reqs.length, t: Date.now(), lang: body.lang, units: body.items.map(i => name(i.text)), state: 'open' };
-      reqs.push(rec); byReq.set(req, rec);
+      reqs.push(rec); byReq.set(req.raw, rec);
       const out = body.items.map(i => JSON.stringify({ id: i.id, text: body.lang.toUpperCase() + ': ' + i.text + ' — tradotto con molta cura, parola per parola' })).join('\n')
         + '\n' + JSON.stringify({ done: true, failed: false, missed: [] }) + '\n';
       setTimeout(() => {
         if (rec.state !== 'open') return;
-        req.respond({ status: 200, contentType: 'application/x-ndjson', body: out })
+        Promise.resolve(req.respond({ status: 200, contentType: 'application/x-ndjson', body: out }))
           .then(() => { if (rec.state === 'open') rec.state = 'done'; }).catch(() => { rec.state = 'aborted'; });
       }, DELAY);
       return;
     }
     return req.respond({ status: 200, contentType: 'text/plain', body: '' });
   });
-  page.on('requestfailed', req => { const r = byReq.get(req); if (r) r.state = 'aborted'; });
+  h.onFailed(req => { const r = byReq.get(req); if (r) r.state = 'aborted'; });
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
 
@@ -90,7 +85,7 @@ function check(ok, what, detail) {
   };
 
   await page.goto('http://harness/ask');
-  await page.select('#lang', 'it');
+  await h.select('#lang', 'it');
   await page.evaluate(() => openReader('c', '1', 'b1:60', 'The Lighthouse'));
   await sleep(50);
   const s0 = await state();
@@ -165,7 +160,7 @@ function check(ok, what, detail) {
 
   // 6. another language starts over from the screen; "original" restores all
   const before6 = reqs.length;
-  await page.select('#lang', 'de');
+  await h.select('#lang', 'de');
   while (reqs.length === before6) await sleep(20);
   const s6 = await state();
   check(reqs[before6].lang === 'de' && JSON.stringify(reqs[before6].units) ===
@@ -174,14 +169,14 @@ function check(ok, what, detail) {
   await settle();
   check((await page.evaluate(() => rd.units.filter(u => u.textContent.startsWith('IT: ')).length)) === 0,
         'no Italian left after switching to German');
-  await page.select('#lang', 'original');
+  await h.select('#lang', 'original');
   await sleep(300);
   check(await page.evaluate(() => rd.units.every(u => u.textContent === u.dataset.orig)
         && document.getElementById('reader-title').textContent === 'The Lighthouse'),
         '"original" restores every unit byte for byte');
 
   check(errors.length === 0, 'no page errors', errors);
-  await browser.close();
+  await h.close();
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(2); });

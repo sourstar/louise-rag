@@ -180,3 +180,41 @@ def _pubmed_extra(row: dict) -> dict:
         return pack.record_fields(Path(container), index)
     except Exception:   # noqa: BLE001 — the line degrades to title/authors
         return {}
+
+
+def first_screen(doc: dict, highlights: list[str], chars: int) -> list[str]:
+    """The texts the reader panel shows first when this document is opened
+    at `highlights` — the units reader.html renders, as the page reads them
+    (the title, a chapter heading where the chapter changes, each chunk) —
+    so the Ask page can have them translated before the click (operator,
+    2026-10-21: "anticipate the most likely readings"). The panel centres
+    the first highlighted chunk: that chunk first, then its neighbours below
+    and above in turn until about `chars` characters; from the top when
+    nothing is highlighted. The title is first: it heads the panel too.
+    The strings are the rendered ones byte for byte, so a translation asked
+    for them is the one the opened reader finds."""
+    units: list[str] = []
+    centre = 0
+    chapter = None
+    for ch in doc.get("chunks") or []:
+        if ch.get("chapter") and ch["chapter"] != chapter:
+            chapter = ch["chapter"]
+            units.append(chapter)
+        if ch.get("chunk_id") in highlights and not centre:
+            centre = len(units)
+        units.append(ch.get("text") or "")
+    title = str((doc.get("header") or {}).get("title") or "")
+    out = [title] if title.strip() else []
+    if not units:
+        return out
+    order = [centre]
+    for step in range(1, len(units)):
+        order += [i for i in (centre + step, centre - step) if 0 <= i < len(units)]
+    total = 0
+    for i in order:
+        if total >= chars:
+            break
+        total += len(units[i])
+        if units[i].strip() and units[i] not in out:
+            out.append(units[i])
+    return out

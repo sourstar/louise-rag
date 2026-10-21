@@ -37,7 +37,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
@@ -640,6 +640,26 @@ def read_document(request: Request, collection: str, book_id: int,
         "active": "ask", "collection": c.name, "book_id": book_id,
         "doc": doc, "highlights": highlights, "fragment": bool(fragment),
         "plugin_label": _plugin_label(c.plugin)})
+
+
+@ask_router.get("/read/{collection}/{book_id}/screen")
+def read_screen(collection: str, book_id: int, hl: str = "", chars: int = 3000):
+    """What the reader panel shows first when this hit is opened, as the
+    texts to translate ahead of the click (reader.first_screen) — the Ask
+    page's third round of translation, after the answer and the entries'
+    visible text (operator, 2026-10-21). Open like `/read`, and refused
+    like it where the text is withheld (invariant 9)."""
+    from . import reader
+    c = reader.collection_by_name(collection)
+    if c is None:
+        raise HTTPException(404, f"no such collection: {collection}")
+    _refuse_withheld(c, "its text is read")
+    doc = reader.document(c, book_id)
+    if doc is None:
+        raise HTTPException(404, f"{collection} does not hold #{book_id}")
+    chars = max(200, min(int(chars), 20000))
+    return JSONResponse({"lang": (doc["header"].get("lang") or "?").lower(),
+                         "texts": reader.first_screen(doc, [h for h in hl.split(",") if h], chars)})
 
 
 @ask_router.get("/help", response_class=HTMLResponse)
