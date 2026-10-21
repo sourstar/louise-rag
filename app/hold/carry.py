@@ -905,8 +905,8 @@ def keep_producer_scan(root, to_ref: str, producer: str, *,
         kept = 0
         drop_ids: dict[int, list[str]] = {}      # book -> its unmarked ids
         seen = 0
-        for batch in tbl.to_lance().to_batches(columns=["id", embeddings.BOOK_COLUMN_NAME],
-                                               batch_size=SCAN_ROWS):
+        for batch in embeddings.scan_columns(coll, ["id", embeddings.BOOK_COLUMN_NAME],
+                                             batch_size=SCAN_ROWS):
             ids = batch.column(0).to_pylist()
             books = batch.column(1).to_pylist()
             marked: set[str] = set()
