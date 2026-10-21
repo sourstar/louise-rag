@@ -211,6 +211,25 @@ XT; captures in `D:\louise-captures` on the dev PC):
 | `tools/vega_cut_scan` at 1024 | 0 of 512 refused (3 before P2) |
 | granite, Qwen3-4B, Qwen3-8B, bge-m3 (`tools/vega_repro_check`) | 16/16 bit-identical each |
 
+**Cross-vendor deviation reference** *(operator, 2026-10-21: "once we have
+the numbers for Nvidia we can set a deviation threshold as a reference").*
+The threshold is SET from this table once its NVIDIA row is measured, not
+before: the worst honest cross-vendor deviation per model and role, with its
+margin stated. Each row costs nothing extra: `hold embedder check
+<collection>` embeds all 512 calibration texts and prints the `whole set`
+worst and median against the space's reference (the calibration member,
+made on the node's B70); the card-vs-own-CPU-twin column is the 0.995 review
+line above. Until then the space's `tolerance` is calibration's and 0.995
+stays the review line.
+
+| engine | model | role | vs the reference, 512 texts: worst / median | vs its own CPU twin: worst / below 0.995 | run to run |
+|---|---|---|---|---|---|
+| Intel SYCL, Arc Pro B70 (München) | — | — | the reference | — | bit-identical |
+| AMD ROCm 7.2, RX 9060 XT (Perugia, 2026-10-18) | bge-m3 F16 | document | not recorded | 0.998362 / none | 512/512 |
+| AMD ROCm 7.2, RX 9060 XT (Perugia, 2026-10-21) | Qwen3-Embedding-4B Q4_K_M (gutenberg) | document | quorum of 16: 0.998837 / 0.999244 — whole set asked | — | 16/16 over 96 vectors |
+| the same | the same | query | quorum of 16: 0.993243 / 0.996924 — whole set asked | asked | the same |
+| NVIDIA CUDA 13 | — | — | no card yet (deploy/localai-nvidia, README step 6) | — | — |
+
 **What this means for `tolerance`, which is the number it feeds.** The
 loosest HONEST deviation measured anywhere in this project is 4x10^-4 —
 Intel SYCL against AMD Vulkan, two different ISAs and two different

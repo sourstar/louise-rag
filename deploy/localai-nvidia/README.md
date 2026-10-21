@@ -47,7 +47,10 @@ ubuntu nvidia-smi` must list the card first.
    3 fresh loads × shuffled orders, every vector byte-identical; then
    `hold embedder run --encoder http://<host>:30286 --api vega --model <m>`
    states the run, and the space's calibration gate passes it once.
-   Record the result in docs/notes/approved-encoders.md.
+   Record the result in docs/notes/approved-encoders.md — the gate's
+   `whole set` worst and median per role, and the card against its own CPU
+   twin, are the NVIDIA row of "Cross-vendor deviation reference", from which
+   the operator's deviation threshold is set.
 
 **Determinism.** llama.cpp on CUDA: `parallel:1`, no vendor variable (cuBLAS
 takes no atomics by default). torch on CUDA: `LOUISE_TORCH_DETERMINISTIC=1`
