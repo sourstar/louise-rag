@@ -244,3 +244,39 @@ def test_where_every_input_was_alone_a_dense_row_is_dropped_not_refused(pair, mo
     books = [int(u.split(":")[1]) for u in uids]
     assert embeddings.chunk_ids_of_books(books, collection=_local(root, "tok")) == \
         [f"{uids[2]}:0:1"], "only the short Latin row stays"
+
+
+def test_recut_with_keep_crosses_the_cut_keeping_the_archives_rows_alone(pair, capsys):
+    """Wikipedia's parser-5 switch (2026-10-21): the cut and the weights move at
+    once, so only the archive's rows may stay — `--keep` drops every other row,
+    the shortened ones among them, and the recut pass has nothing left."""
+    import json
+    from app import louise
+    root, old, _new = pair
+    _tokens_target(root)
+    uids = _rows(root, old, {(0, 0): LONG, (1, 0): LONG, (2, 0): "short"})
+    con = db.connect(_local(root, "old"))
+    try:
+        con.execute("UPDATE documents SET embed_done=1")
+        con.execute("INSERT INTO chunk_verification(chunk_id, uid, state, producer) VALUES(?,?,?,?)",
+                    (f"{uids[1]}:0:1", uids[1], "imported", ARCHIVE))
+    finally:
+        con.close()
+    assert louise.main(["dev", "carry", "old", "tok", "--root", str(root), "--yes", "--recut",
+                        "--keep", "producer:medcpt-pubmed"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert "recut" not in printed and printed["keep"]["kept"] == 1
+    coll = _local(root, "tok")
+    books = [int(u.split(":")[1]) for u in uids]
+    assert embeddings.chunk_ids_of_books(books, collection=coll) == [f"{uids[1]}:0:1"], \
+        "the archive's row alone, though it was long"
+    marks = _marks(root, "tok")
+    assert marks[uids[0]] == 0 and marks[uids[2]] == 0 and marks[uids[1]] == 1
+
+
+def test_recut_with_rebuilt_needs_keep(pair, capsys):
+    from app import louise
+    root, _old, _new = pair
+    _tokens_target(root)
+    assert louise.main(["dev", "carry", "old", "tok", "--root", str(root), "--recut", "--rebuilt"]) != 0
+    assert "needs --keep" in capsys.readouterr().err

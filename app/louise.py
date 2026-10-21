@@ -1290,14 +1290,23 @@ def cmd_dev_carry(a) -> int:
         _print({"resign": carry_mod.resign(a.root, from_name, to_name, log=say)})
         return 0
     recut = getattr(a, "recut", False)
-    if recut and (producer or getattr(a, "rebuilt", False)):
-        raise CodexError("--recut stands alone: it drops the rows the character cut "
-                         "shortened, and keeps every other (A1e)")
+    # --recut WITH --keep (2026-10-21, wikipedia's parser-5 switch: the cut, the
+    # weights and the parser move at once): keeping only an archive's rows drops
+    # every row that is not the archive's — a superset of what the recut drops
+    # (rows NOT an archive's that the character cut shortened) — so the cut is
+    # crossed and the recut pass has nothing left to do. Without --keep, --recut
+    # stands alone, as before.
+    if recut and getattr(a, "rebuilt", False) and not producer:
+        raise CodexError("--recut with --rebuilt needs --keep producer:<archive>: on its own "
+                         "it drops the rows the character cut shortened and keeps every other (A1e)")
     out = {"carry": carry_mod.carry(a.root, from_name, to_name, copy=a.copy,
                                     apply=a.yes, keep=producer,
                                     rebuilt=getattr(a, "rebuilt", False), recut=recut,
                                     log=say)}
-    if recut:
+    if recut and producer:
+        say(f"[carry] the cut is crossed with --keep {a.keep}: only that archive's rows stay, "
+            f"so no row the character cut shortened is left to recut (A1e)")
+    elif recut:
         # the SOURCE's budget: the character cut its rows went through
         _, src_codex = col.resolve(a.root, from_name)
         out["recut"] = carry_mod.recut(a.root, to_name, budget=src_codex.space.ctx * 4,
