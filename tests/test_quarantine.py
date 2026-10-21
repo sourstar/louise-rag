@@ -846,6 +846,35 @@ def test_a_statement_changed_after_the_worker_re_checked_it_is_not_relied_on(
         run_check.check_query(collection, recipe, {R1})
 
 
+def test_a_statement_the_command_line_keeps_is_re_checked_by_the_worker_without_a_restart(
+        node, endpoint, tmp_path):
+    """München, live 2026-10-21: `hold embedder check gutenberg` kept a new
+    statement for the run the worker had re-checked; the worker knew the RUN
+    as re-checked, never re-checked the new statement, and the web withheld
+    the vector leg until the worker restarted (14:00-14:25). The worker now
+    looks again as soon as a kept statement changes, re-checks it, and tells
+    the web; writes wait for that re-check, a round at most."""
+    root, collection, codex = node
+    enforce(tmp_path)
+    recipe = collections_mod.recipe_for(collection)
+    con = db.connect(collection)
+    run_check.publish_rechecks()                       # the worker starts
+    assert backend_gate.embed_allowed(con, collection) is True
+    run_check.check_write(collection, recipe, {R1})
+
+    # the command line keeps a new statement for the same run (its own pass)
+    path = hold_runs.path_for(root, "gutenberg", R1)
+    body = dict(json.loads(path.read_bytes())["body"], time="2026-10-21T12:00:00Z")
+    path.write_bytes(canonical_json(env.sign(env.CALIBRATION, body, KEY)))
+    with pytest.raises(hold_runs.RunUnvalidated, match="not yet re-checked"):
+        run_check.check_write(collection, recipe, {R1})      # a write waits, deferred
+
+    assert backend_gate.embed_allowed(con, collection) is True   # the next round
+    run_check.check_write(collection, recipe, {R1})
+    _as_the_web(collection)
+    run_check.check_query(collection, recipe, {R1})    # no restart: the leg is back
+
+
 def test_a_command_line_process_does_not_replace_the_workers_record(node, endpoint, tmp_path):
     root, collection, codex = node
     run_check.publish_rechecks()

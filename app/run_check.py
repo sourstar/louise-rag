@@ -305,15 +305,20 @@ def signer(key=None) -> str | None:
 _me: list[str] = []
 
 
-#: (space, role, run) re-checked, or freshly gated, since THIS process
-#: started. A kept statement is relied on only once it is here (`recheck`).
-_rechecked: set[tuple[str, str, str]] = set()
+#: (space, role, run, the statement's digest) re-checked, or freshly gated,
+#: since THIS process started. A kept statement is relied on only once it is
+#: here (`recheck`) — THAT statement: one written since (a `hold embedder
+#: check` from the command line, 2026-10-21) is re-checked in its turn. Keyed
+#: on the run alone, the worker never re-checked the new one, and the web
+#: withheld the vector leg until the worker restarted (München, live).
+_rechecked: set[tuple[str, str, str, str]] = set()
 
 
 def _mark(codex: Codex, role: str, run_id: str, body: dict[str, Any]) -> None:
-    _rechecked.add((codex.space_id, role, run_id))
+    entry = (codex.space_id, role, run_id, _statement_digest(body))
+    _rechecked.add(entry)
     if _publishing:
-        _publish((codex.space_id, role, run_id, _statement_digest(body)))
+        _publish(entry)
 
 
 # ---- the worker's re-check record, for the web process (operator, 2026-09-28) ----
@@ -394,8 +399,9 @@ def worker_rechecked(codex: Codex, role: str, run_id: str, body: dict[str, Any])
     return (codex.space_id, role, run_id, _statement_digest(body)) in cached[1]
 
 
-def rechecked(codex: Codex, role: str, run_id: str) -> bool:
-    return (codex.space_id, role, run_id) in _rechecked
+def rechecked(codex: Codex, role: str, run_id: str, body: dict[str, Any]) -> bool:
+    """Has THIS process re-checked (or gated) exactly this statement?"""
+    return (codex.space_id, role, run_id, _statement_digest(body)) in _rechecked
 
 
 def recheck(root: Path, name: str, codex: Codex, recipe, run_id: str, *,
@@ -409,12 +415,12 @@ def recheck(root: Path, name: str, codex: Codex, recipe, run_id: str, *,
     peer for that run and space is set aside, and the caller gates the run
     from scratch. An answer from another run, or the encoder away:
     `GateDeferred` — nothing is decided, and it is asked again."""
-    if rechecked(codex, role, run_id):
-        return True
     body = runs_mod.statements_for_space(root, name, codex, role,
                                          signer=signer(key)).get(run_id)
     if body is None or not runs_mod.passing(body, codex):
         return True            # nothing kept to re-check; `check` decides
+    if rechecked(codex, role, run_id, body):
+        return True
     reference_vectors = reference(root, name, codex, role)
     embed = answers(recipe, query=role == "query", stop=stop, name=name)
     try:
@@ -553,8 +559,23 @@ def _where(collection) -> str:
     return str(runs_mod.directory(_root(), collection.name))
 
 
-#: place -> (allowed, reason, fresh until, the run the verdict is about)
-_verdicts: dict[str, tuple[bool, str, float, str | None]] = {}
+#: place -> (allowed, reason, fresh until, the run the verdict is about,
+#: the kept statements as they were when it was given — `_kept_stamp`)
+_verdicts: dict[str, tuple[bool, str, float, str | None, tuple]] = {}
+
+
+def _kept_stamp(collection) -> tuple:
+    """The collection's kept statements as the filesystem has them: (name,
+    size, mtime_ns) of each. A statement written since a verdict (the gate
+    run from the command line) is a reason to look again at once — to
+    re-check it and tell the web — not after PASS_TTL_S. One small
+    directory, read per round: a handful of entries, one per run and role."""
+    try:
+        with os.scandir(_where(collection)) as it:
+            return tuple(sorted((e.name, e.stat().st_size, e.stat().st_mtime_ns)
+                                for e in it if e.name.endswith(".json")))
+    except OSError:
+        return ()
 #: (space, endpoint) -> the lock of whoever is looking at that endpoint now
 _looking: dict[str, threading.Lock] = {}
 _guard = threading.Lock()
@@ -627,8 +648,10 @@ def check_write(collection, recipe, answered: set) -> None:
                        role="document", batched=batched(recipe))
         # A KEPT STATEMENT NOT YET RE-CHECKED IN THIS PROCESS is not relied
         # on: a deferral, and the stage's next `embed_allowed` re-checks it
+        kept = runs_mod.statements_for_space(_root(), collection.name, codex, "document",
+                                             signer=signer())
         for run_id in sorted(r for r in answered if r):
-            if not rechecked(codex, "document", run_id):
+            if run_id not in kept or not rechecked(codex, "document", run_id, kept[run_id]):
                 raise runs_mod.RunUnvalidated(
                     f"{collection.name}: run {run_id[:23]}… has a kept statement not "
                     f"yet re-checked since this process started; nothing is written "
@@ -680,7 +703,7 @@ def check_query(collection, recipe, answered: set) -> None:
                 f"{collection.name}: the {role} encoder's run {run_id[:23]}… FAILED the "
                 f"gate for this space: the vector leg is withheld and the text leg goes "
                 f"on (03 §3.3)", run_id, failed=True)
-        if not (rechecked(codex, role, run_id)
+        if not (rechecked(codex, role, run_id, body)
                 or worker_rechecked(codex, role, run_id, body)):
             raise runs_mod.RunUnvalidated(
                 f"{collection.name}: the {role} encoder's run {run_id[:23]}… has a kept "
@@ -763,7 +786,8 @@ def embed_allowed(con, collection, *, stop: Callable[[], bool] | None = None) ->
     # longer answers, however fresh it is: look again — for every collection
     # of the encoder, not only the one that noticed.
     now_answering = answering(collection).get("document")
-    if cached is not None and cached[2] > now and (
+    stamp = _kept_stamp(collection)
+    if cached is not None and cached[2] > now and cached[4] == stamp and (
             now_answering is None or cached[3] is None or cached[3] == now_answering):
         return cached[0]
     with _guard:
@@ -778,8 +802,11 @@ def embed_allowed(con, collection, *, stop: Callable[[], bool] | None = None) ->
 
         allowed, reason, run_id = _look(collection, stop, log)
         _look_at_the_query_side(collection, stop, log)
+        # stamped AFTER looking: a statement the look itself wrote (a gate)
+        # is not a reason to look again
         _verdicts[where] = (allowed, reason,
-                            now + (PASS_TTL_S if allowed else FAIL_TTL_S), run_id)
+                            now + (PASS_TTL_S if allowed else FAIL_TTL_S), run_id,
+                            _kept_stamp(collection))
         if cached is None or cached[0] != allowed or cached[1] != reason:
             db.log_event(con, "info" if allowed else "error", "run-check",
                          (f"[{collection.name}] embedding "
