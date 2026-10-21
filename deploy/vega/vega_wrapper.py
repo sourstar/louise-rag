@@ -572,6 +572,25 @@ ON_CARD_SHARE = 0.25
 OFF_CARD_MIB = 64
 
 
+def placement_holds(declared: str | None, device: str) -> None:
+    """The device read must be the one the options put the work on. A card
+    run whose card failed or went missing falls back to the CPU by itself —
+    llama.cpp with no HIP/CUDA/SYCL device, torch with none — and would be
+    stated as a NEW CPU run of the same model, an engine nobody measured
+    (CLAUDE.md invariant 12; Perugia, 2026-10-21: after its card hung, the
+    restarted backend ran on the CPU and the worker began gating that run).
+    A CPU twin says so in its options; options that leave it split (None)
+    are read, not checked."""
+    if declared == "card" and device == CPU:
+        raise loadopts.Unstatable(
+            "the options put the work on a card and the backend holds none: the card is "
+            "missing or has failed, and a CPU fallback is never stated as this model's run "
+            "(a CPU twin says so in its options)")
+    if declared == CPU and device != CPU:
+        raise loadopts.Unstatable(f"the options put the work on the CPU and the backend "
+                                  f"computes on {device}")
+
+
 #: torch's names for a card, as a louise-python task's `device:` option gives them
 TORCH_CARDS = ("cuda", "xpu")
 
@@ -1182,6 +1201,7 @@ class Gate:
                               on_nvidia if smi is not None else None)
                 device, pci = device_of(pids, self.cfg.cards, self.procfs, wsl_reader,
                                         None if smi is None else on_nvidia)
+                placement_holds(declared_placement(canon), device)
                 vendor = "cuda" if read_nvidia and device != CPU else None
                 on_wsl = self.procfs.holds(self.child.pid, WSL_GPU)
                 card_driver_line = (dxg.driver_line(amd_smi, pci)

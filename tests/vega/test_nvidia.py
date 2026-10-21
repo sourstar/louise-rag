@@ -246,9 +246,9 @@ def _smi_around_a_load(before: int, after: int, mig="[N/A]"):
     return run
 
 
-def _gate(tmp_path, stubs, smi, *, name="cuda12-llama-cpp"):
+def _gate(tmp_path, stubs, smi, *, name="cuda12-llama-cpp", **host):
     from tests.vega.test_wrapper_logic import _backend_dir
-    proc, sys_ = _nvidia_host(tmp_path)
+    proc, sys_ = _nvidia_host(tmp_path, **host)
     backend = vw.real_backend(_backend_dir(tmp_path, name=name))
     cfg = vw.load_config(_config(tmp_path, backend=name, cards=CARDS,
                                  nvidia_smi="/usr/bin/nvidia-smi"), tmp_path / "backends")
@@ -337,3 +337,14 @@ def test_a_card_in_mig_mode_states_no_run_a_slice_is_not_the_card(tmp_path, stub
     ok = stubs.pb.Result(success=True).SerializeToString()
     answer = stubs.pb.Result.FromString(gate.load_model(_load(tmp_path, stubs, NGPULayers=999), lambda raw: ok))
     assert not answer.success and "MIG" in answer.message and receipts.runs == []
+
+
+def test_a_card_model_that_fell_back_to_the_cpu_states_no_run(tmp_path, stubs):
+    """Perugia, 2026-10-21: the card hung; after a restart the same model ran
+    on the CPU, a new run nobody measured. A card that is gone leaves the
+    backend holding no /dev/nvidia<N>: read as the CPU, refused as such."""
+    gate, receipts = _gate(tmp_path, stubs, _smi_around_a_load(0, 0), fds=("/dev/null",))
+    ok = stubs.pb.Result(success=True).SerializeToString()
+    answer = stubs.pb.Result.FromString(gate.load_model(_load(tmp_path, stubs, NGPULayers=999), lambda raw: ok))
+    assert not answer.success and "missing or has failed" in answer.message
+    assert receipts.runs == [] and gate.loaded is None

@@ -464,6 +464,22 @@ def test_the_options_say_where_the_work_was_asked_to_go(layers, options, env, pl
     assert vw.declared_placement(vw.canon_from_protojson(json.dumps(load))) == placement
 
 
+@pytest.mark.parametrize("declared, device, refused", [
+    ("card", "cpu", "missing or has failed"),       # a card that fell back to the CPU
+    ("cpu", "Intel(R) Arc(TM) Pro B70 Graphics", "computes on"),
+    ("card", "Intel(R) Arc(TM) Pro B70 Graphics", None),
+    ("cpu", "cpu", None),
+    (None, "cpu", None),                            # split options: read, not checked
+    (None, "Intel(R) Arc(TM) Pro B70 Graphics", None),
+])
+def test_the_device_read_is_the_one_the_options_asked_for(declared, device, refused):
+    if refused is None:
+        vw.placement_holds(declared, device)
+    else:
+        with pytest.raises(loadopts.Unstatable, match=refused):
+            vw.placement_holds(declared, device)
+
+
 def test_the_config_names_amd_smi_by_absolute_path(tmp_path):
     cfg = vw.load_config(_config(tmp_path, amd_smi="/opt/rocm-wsl/bin/amd-smi"),
                          tmp_path / "backends")
