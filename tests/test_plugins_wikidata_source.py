@@ -349,6 +349,18 @@ def test_discover_fetch_and_parse_over_the_pack(tmp_path):
     assert list(src.discover(DiscoverState(corpus_root=tmp_path, state_dir=tmp_path / "state"))) == []
 
 
+def test_the_pack_beside_a_dump_is_never_taken_for_a_dump(tmp_path):
+    """The pack is a directory named after its dump, under `.pack/` beside it
+    (the node, 2026-10-21: discovery opened it as the newest dump and said the
+    dump was truncated)."""
+    from app.plugins.wikidata import pack
+    dump = a_dump(tmp_path, "20261012")
+    (dump.parent / pack.PACK_DIRNAME / dump.name).mkdir(parents=True)
+    (dump.parent / pack.PACK_DIRNAME / dump.name / "meta.json").write_text("{}")
+    assert find_dumps(tmp_path) == [dump]
+    assert find_dumps(tmp_path, "20261012") == [dump]
+
+
 def test_the_pinned_snapshot_alone_is_read_and_a_bad_dump_is_one_container_error(tmp_path):
     older = a_dump(tmp_path, "20261001", lines=entity_lines()[:2])
     newer = a_dump(tmp_path, "20261012")

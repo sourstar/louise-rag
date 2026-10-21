@@ -43,6 +43,13 @@ def find_dumps(corpus_root: Path, snapshot: str | None = None) -> list[Path]:
     root = Path(corpus_root)
     found = []
     for p in root.rglob("wikidata-*-all.json.*"):
+        # A DUMP IS A FILE, and never one inside a pack (2026-10-21): the pack
+        # beside a dump is a directory named after it (`.pack/<dump name>`),
+        # and taken for the newest dump it was opened as a bz2 stream, read
+        # nothing and said "the dump ended before its closing bracket
+        # (truncated download?)" — discovery stopped listing the collection
+        if not p.is_file() or pack.PACK_DIRNAME in p.relative_to(root).parts:
+            continue
         m = _DUMP_RE.match(p.name)
         if m and (snapshot is None or m.group(1) == snapshot):
             found.append((m.group(1), p))
