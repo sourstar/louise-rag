@@ -715,6 +715,7 @@ def _ask_result(body: AskQueryBody) -> dict:
                     h["origin_url"] = None
     _attach_annotations(result, body.annotations)
     _attach_figures(result)
+    _attach_plates(result)
     con = db.connect()   # query_log lives in the default collection's manifest regardless
     # .get, not [...]: when every collection is withheld `run_search`
     # returns {hits, withheld} with no `timings` at all, and a KeyError
@@ -810,6 +811,22 @@ def _attach_figures(result: dict) -> None:
         result["withheld"] = list(result.get("withheld") or []) + [
             {"collection": None, "collection_id": None, "shards": "all",
              "reason": f"figures not placed: {type(e).__name__}: {e}"[:300]}]
+
+
+def _attach_plates(result: dict) -> None:
+    """Every picture a hit's text mentions, drawn or linked (operator,
+    2026-10-21: "either the link or the picture shall be present"):
+    `figures.mentions` over the plates `_attach_figures` placed — none for
+    a collection whose records carry no plates — and the origin's page that
+    shows the pictures for the rest."""
+    from app.ask import figures as figures_mod
+    for h in result.get("hits") or []:
+        if "[Illustration" not in str(h.get("text") or ""):
+            continue
+        plugin = str(h.get("chunk_id", "")).split(":", 1)[0]
+        link = reader.illustrated_url(plugin, {"native_id": h.get("book_id"), "lang": h.get("lang"),
+                                               "title": h.get("title")}) or h.get("origin_url")
+        h["plates"] = figures_mod.mentions(h.get("text"), h.get("figures"), link=link)
 
 
 # ---------------- admin login (outside admin_router — must be reachable

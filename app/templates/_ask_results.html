@@ -135,20 +135,20 @@
      characters, and those were all that was ever translated. The block is
      clamped to a few lines so the list stays scannable; "more" opens it. #}
   <div class="sniprow"><span class="rank">[{{ loop.index }}]</span><div class="snip tr" data-cid="{{ h.chunk_id }}" data-lang="{{ h.lang or '?' }}" dir="auto" title="open the document at this passage">{{ h.text }}</div></div>
-  {# THE PLATES (05 §5.3; on this page since 2026-10-14): the pictures
-     whose markers fall inside this passage, placed beside it, never ranked.
-     A plate this node holds is drawn and opens full size; one the
-     collection carries but this node has not fetched yet, or one the
-     origin had and the collection does not admit, is named, not drawn. #}
-  {% if h.figures %}
+  {# THE PLATES (05 §5.3; on this page since 2026-10-14): every picture
+     the passage MENTIONS, in order, beside it, never ranked — drawn when
+     this node holds it, else a link to the origin's page that shows it,
+     saying why it is not drawn here (operator, 2026-10-21: "either the
+     link or the picture shall be present"). #}
+  {% if h.plates %}
   <div class="figures">
-    {% for f in h.figures %}
-    {% if f.state == 'held' %}{% set src = '/api/ask/figure?' ~ ({'collection': h.source_collection, 'uid': h.uid, 'hash': f.hash}|urlencode) %}
+    {% for f in h.plates %}
+    {% if f.kind == 'img' %}{% set src = '/api/ask/figure?' ~ ({'collection': h.source_collection, 'uid': h.uid, 'hash': f.hash}|urlencode) %}
     <figure class="plate"><a href="{{ src }}" target="_blank" rel="noopener" title="open the plate full size"><img src="{{ src }}" loading="lazy" alt="{{ f.caption or 'plate' }}"></a>{% if f.caption %}<figcaption dir="auto">{{ f.caption }}</figcaption>{% endif %}</figure>
-    {% elif f.state == 'not-held' %}
-    <span class="badge" title="the collection carries this plate; this node has not fetched it yet">plate not held here{% if f.caption %}: {{ f.caption }}{% endif %}</span>
+    {% elif f.kind == 'link' %}
+    <a class="badge lapis plate-link" href="{{ f.href }}" target="_blank" rel="noopener" title="{{ f.why }} — the origin shows it">🖼 {{ f.caption or 'illustration' }} — at the source ↗</a>
     {% else %}
-    <span class="badge" title="the origin has a picture here that this collection does not carry">plate not carried{% if f.caption %}: {{ f.caption }}{% endif %}</span>
+    <span class="badge" title="{{ f.why }}; no page of the origin is known for it">🖼 {{ f.caption or 'illustration' }} — not available</span>
     {% endif %}
     {% endfor %}
   </div>

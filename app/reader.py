@@ -32,6 +32,25 @@ ORIGIN = {
                              if row.get("title") else None),
 }
 
+#: where the origin SHOWS a document's pictures, when that is not its page
+#: above: Gutenberg's ebook page lists formats, its HTML edition with images
+#: carries the plates (operator, 2026-10-21: a mentioned picture is shown
+#: or linked)
+ILLUSTRATED = {
+    "gutenberg": lambda row: (f"https://www.gutenberg.org/cache/epub/{row['native_id']}/"
+                              f"pg{row['native_id']}-images.html"),
+}
+
+
+def illustrated_url(plugin: str, row: dict) -> str | None:
+    """The origin page that shows this document's pictures: the plugin's
+    illustrated edition where it has one, else the document's own page."""
+    make = ILLUSTRATED.get(plugin) or ORIGIN.get(plugin)
+    try:
+        return make(row) if make else None
+    except Exception:   # noqa: BLE001 — a missing field is no link, never a 500
+        return None
+
 
 def collection_by_name(name: str):
     """An open route's lookup: a deposit collection is not found (07 §7.4)."""
