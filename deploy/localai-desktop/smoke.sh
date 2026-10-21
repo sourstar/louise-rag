@@ -96,6 +96,11 @@ done <<EOF
 $states
 EOF
 
+# 4b. `louise node health`: every stage's state per collection, exit 1 when one is stuck
+health=$(docker exec -w /srv "$worker" python -m app.louise node health 2>&1); hrc=$?
+if [ "$hrc" = 0 ]; then pass "health: louise node health exit 0"
+else fail "health: louise node health exit $hrc: $(printf '%s' "$health" | grep -iE 'stuck|error|fail' | head -2 | tr '\n' ' ' | cut -c1-160)"; fi
+
 # 5. LocalAI and VeGa's backends
 [ "$(http "http://localhost:$localai_port/readyz")" = 200 ] && pass "localai: ready on :$localai_port" \
   || fail "localai: /readyz on :$localai_port does not answer 200"
