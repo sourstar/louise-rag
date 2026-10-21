@@ -138,8 +138,8 @@ def test_the_beat_sends_this_nodes_digest_signed_to_every_recipient(node, monkey
     body = messages.open_digest(envelope, now=now)
     assert body["key"] == OUR_KEY and body["address"].startswith("http://")
     assert body["neighbours"] == [{"key": PEER_KEY, "address": "http://peer.test"}]
-    (entry,) = [e for e in body["collections"] if e["collection_id"] == codex.collection_id]
-    assert entry["snapshot_id"] == "2026-08" and entry["members"] == [], "not shared: nothing offered"
+    # not shared: not takeable, so not announced (operator, 2026-10-21)
+    assert [e for e in body["collections"] if e["collection_id"] == codex.collection_id] == []
     assert gossip.beat(collections_mod.load_all(), now=now + 60, client=fake)["digest"] is None, \
         "once an interval"
     # a peer heard from meanwhile is not kept waiting for the interval: it
@@ -225,3 +225,25 @@ def test_a_digest_that_did_not_reach_a_peer_is_retried_with_a_backoff_not_an_hou
             break
     gaps = [b - a for a, b in zip(tries, tries[1:])]
     assert gaps == [60, 120, 240, 480], gaps
+
+
+
+def test_a_digest_announces_only_what_can_be_taken(node, monkeypatch):  # noqa: F811
+    """Operator, 2026-10-21: a collection that cannot be taken is not
+    announced. Held without a snapshot (wikipedia on the node: a Codex, no
+    records build) or held and not shared, it is in no digest entry; shared
+    with a snapshot, it is."""
+    from app import louise
+    from app.share import seeder
+    codex, name, d, snap = a_shard(node)
+    louise._write_held_file(node, codex, "http://models:1/upstream/x")
+    root = collections_mod.louise_root() / "collections"
+
+    def ids():
+        return [e["collection_id"] for e in gossip.entries(root, collections_mod.load_all())]
+
+    assert codex.collection_id not in ids(), "not shared"
+    monkeypatch.setattr(seeder, "wants_serving", lambda c: True)
+    assert ids() == [codex.collection_id], "shared, with a snapshot"
+    monkeypatch.setattr(seeder, "current_snapshot", lambda tree: None)
+    assert codex.collection_id not in ids(), "shared, never built"

@@ -131,9 +131,10 @@ def benchmarks(root: Path, collections, own_key: str | None) -> list[dict[str, A
 
 
 def entries(root: Path, collections) -> list[dict[str, Any]]:
-    """The digest's collection entries: every Codex collection held, with
-    its members listed when this node shares it (04 §4.3) and empty
-    otherwise; a never-share collection appears in no digest (09 §9.9)."""
+    """The digest's collection entries: every collection this node SERVES
+    a snapshot of (04 §4.3), with its members; what cannot be taken from
+    it — held unshared, or never built — is not announced (09 §9.9,
+    amended 2026-10-21, operator)."""
     from app import collections as collections_mod
     from app.hold.codex import lineage_id
     out = []
@@ -156,6 +157,11 @@ def entries(root: Path, collections) -> list[dict[str, Any]]:
             continue
         snap = seeder.current_snapshot(shard_tree)
         shared = seeder.wants_serving(c) and snap is not None
+        if not shared:
+            # what cannot be taken is not announced (operator, 2026-10-21):
+            # wikipedia, held unbuilt and unshared, showed in every peer's
+            # Library as "its maker is still building it" with no take
+            continue
         members = list(mem.members_of(snap, shard_dir=shard_tree)) if shared else []
         members = [m for m in members if all((shard_tree / f.path).is_file() for f in m.files)]
         if shared and codex.space is not None:

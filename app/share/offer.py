@@ -71,8 +71,9 @@ def served_by(con, *, now: float) -> dict[str, list[dict[str, Any]]]:
 
 def takeable(served: list[dict[str, Any]]) -> tuple[bool, str]:
     """Can this collection be taken NOW — does some live neighbour serve a
-    SNAPSHOT of it? A digest lists a collection its sender merely created
-    (the node's wikidata, snapshot None, 0 members, while its scan runs):
+    SNAPSHOT of it? A digest from a peer older than 2026-10-21 lists a
+    collection its sender merely created (the node's wikidata, snapshot
+    None, 0 members, while its scan runs; 09 §9.9 now forbids it):
     `share fetch` of such an entry fails at the peer ("holds no snapshot"),
     a message nobody can act on (Perugia, 2026-10-20). So the offer says it
     first, in plain words, and the Library shows no take button."""
