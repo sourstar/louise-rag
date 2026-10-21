@@ -1,0 +1,31 @@
+# The node's vega-jina-v3 (deploy/vega/stage/models/vega-jina-v3.yaml) in every
+# load option, on torch CUDA: louise-python built with VARIANT=cuda
+# (requirements-cuda.txt), installed as `louise-python`, behind VeGa as
+# `vega-louise-python` (CUTS=context_size). CLAUDE.md invariant 12 for torch on
+# CUDA: LOUISE_TORCH_DETERMINISTIC (torch's deterministic algorithms, cuDNN's)
+# AND CUBLAS_WORKSPACE_CONFIG (cuBLAS's fixed workspace: without it torch
+# refuses its deterministic mode on CUDA) — the wrapper requires both. JSON, which is YAML.
+{
+  "name": "vega-jina-v3",
+  "backend": "vega-louise-python",
+  "embeddings": true,
+  "pinned": false,
+  "context_size": 1024,
+  "threads": 6,
+  "gpu_layers": 0,
+  "parameters": {
+    "model": "weights/jina-embeddings-v3",
+    "batch": 1,
+    "seed": 0
+  },
+  "options": [
+    "task:jina-v3",
+    "device:cuda",
+    "adapter:retrieval.passage",
+    "dim:512"
+  ],
+  "env": {
+    "LOUISE_TORCH_DETERMINISTIC": "1",
+    "CUBLAS_WORKSPACE_CONFIG": ":4096:8"
+  }
+}

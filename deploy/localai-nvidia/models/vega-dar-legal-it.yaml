@@ -1,0 +1,25 @@
+# The node's vega-dar-legal-it (deploy/vega/stage/models/vega-dar-legal-it.yaml)
+# in every load option, on torch CUDA (vega-jina-v3.yaml here says how, and
+# why both variables). JSON, which is YAML.
+{
+  "name": "vega-dar-legal-it",
+  "backend": "vega-louise-python",
+  "embeddings": true,
+  "pinned": true,
+  "context_size": 8192,
+  "threads": 6,
+  "gpu_layers": 0,
+  "parameters": {
+    "model": "weights/dar-legal-it",
+    "batch": 1,
+    "seed": 0
+  },
+  "options": [
+    "task:dar-legal-it",
+    "device:cuda"
+  ],
+  "env": {
+    "LOUISE_TORCH_DETERMINISTIC": "1",
+    "CUBLAS_WORKSPACE_CONFIG": ":4096:8"
+  }
+}

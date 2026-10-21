@@ -448,6 +448,13 @@ def test_device_of_asks_the_dxg_reader_only_for_a_backend_on_dev_dxg():
     (0, [], {}, None),                                   # op offload still uses the card
     (999, [], {"HIP_VISIBLE_DEVICES": "-1"}, "cpu"),     # no device to use
     (None, [], {}, None),
+    (0, ["task:jina-v3", "device:cuda"], {}, "card"),    # a torch task names its device
+    (0, ["task:jina-v3", "device:cuda:1"], {}, "card"),
+    (0, ["task:jina-v3", "device:xpu"], {}, "card"),
+    (0, ["task:jina-v3", "device:cpu"], {}, "cpu"),
+    (0, ["task:jina-v3", "device:cuda"], {"CUDA_VISIBLE_DEVICES": "-1"}, "cpu"),
+    (0, ["task:jina-v3", "device:openvino"], {}, None),
+    (0, ["device:cuda"], {}, None),                      # llama.cpp reads no `device:`
 ])
 def test_the_options_say_where_the_work_was_asked_to_go(layers, options, env, placement):
     load = {"Model": "m.gguf", "ModelFile": "/models/m.gguf", "Options": options,

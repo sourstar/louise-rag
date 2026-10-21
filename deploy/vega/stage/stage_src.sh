@@ -16,7 +16,7 @@ git archive --format=tar "$rev" \
   tests/fixtures/vega/backend.proto \
   app/__init__.py app/hold/__init__.py app/hold/codex.py \
   app/vega/model.py app/vega/procfs.py app/vega/runs.py app/vega/loadopts.py \
-  app/vega/dxg.py app/vega/__init__.py app/vega/tag.py \
+  app/vega/dxg.py app/vega/nvidia.py app/vega/__init__.py app/vega/tag.py \
   deploy/localai/backends/run.sh deploy/localai/backends/louise_backend.py \
   deploy/localai/backends/requirements-grpc.txt \
   deploy/localai/backends/louise-medcpt-article-ov deploy/localai/backends/louise-medcpt-rerank \

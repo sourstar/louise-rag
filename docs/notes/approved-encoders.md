@@ -105,7 +105,7 @@ cannot be a cross-peer property.
 
 | stack | bitwise mode | scope of the guarantee | control |
 |---|---|---|---|
-| NVIDIA cuBLAS | yes | same architecture **and same SM count**, single stream, same toolkit version | `cublasSetAtomicsMode` |
+| NVIDIA cuBLAS | yes | same architecture **and same SM count**, single stream, same toolkit version | `cublasSetAtomicsMode` — atomics disallowed by default, nothing to set for llama.cpp (`parallel:1`); torch adds `CUBLAS_WORKSPACE_CONFIG=:4096:8`. The run states the card and the hashed CUDA libraries (docs/notes/nvidia-support.md); NOT YET MEASURED — no peer has a card |
 | AMD rocBLAS | yes | identical GFX target ISA, single HIP stream, same ROCm version | `ROCBLAS_DEFAULT_ATOMICS_MODE=0` |
 | Intel oneDNN | yes | "on a given platform" | `set_deterministic` — API only, no env var |
 | Intel oneMKL | CNR | fixed thread count; GPU since 2024.1, BLAS-3 under OpenMP offload | `MKL_CBWR` |
@@ -132,7 +132,8 @@ The rule is now code. `deploy/vega/vega_wrapper.py` `determinism_lacks`
 applies on ANY device:
 - llama.cpp needs `parallel:1`, and on a card its vendor's mode; Vulkan, or a
   card run naming no known vendor, is refused;
-- louise-python's torch tasks need `LOUISE_TORCH_DETERMINISTIC=1`; its
+- louise-python's torch tasks need `LOUISE_TORCH_DETERMINISTIC=1` (on an
+  NVIDIA card also `CUBLAS_WORKSPACE_CONFIG=:4096:8`, 2026-10-21); its
   OpenVINO tasks are refused;
 - any other family is refused.
 

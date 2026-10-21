@@ -80,6 +80,11 @@ def determinism(torch_mod, environ=None) -> bool:
     mkldnn = getattr(getattr(torch_mod, "backends", None), "mkldnn", None)
     if mkldnn is not None and hasattr(mkldnn, "deterministic"):
         mkldnn.deterministic = True
+    # on CUDA: cuDNN's deterministic algorithms, never one chosen by timing
+    # (cuBLAS's own half is the model's env, CUBLAS_WORKSPACE_CONFIG)
+    cudnn = getattr(getattr(torch_mod, "backends", None), "cudnn", None)
+    if cudnn is not None and hasattr(cudnn, "deterministic"):
+        cudnn.deterministic, cudnn.benchmark = True, False
     return True
 
 
