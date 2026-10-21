@@ -23,7 +23,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 from ..hold.codex import canonical_json, digest
 from .model import CPU
@@ -41,7 +41,7 @@ class WeightsError(RuntimeError):
 
 # ---- the weights digest (09 §9.3) ------------------------------------------
 
-def _file_digest_read(path: Path) -> str:
+def _file_digest(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
         for block in iter(lambda: f.read(MIB), b""):
@@ -49,14 +49,11 @@ def _file_digest_read(path: Path) -> str:
     return "sha256:" + h.hexdigest()
 
 
-def weights_digest(path: Path, file_digest: Callable[[Path], str] | None = None) -> str:
+def weights_digest(path: Path) -> str:
     """One file: `H(bytes)`. A directory: `H` of the canonical JSON mapping
     every regular file's path, relative and `/`-separated, to its digest.
     A symbolic link is refused; code the model loads from its directory is
-    a file like any other, because it is part of the function.
-    `file_digest` computes one file's `sha256:<hex>` (VeGa's wrapper passes
-    its kept digests, so unchanged weights are not read again at every load)."""
-    _file_digest = file_digest or _file_digest_read
+    a file like any other, because it is part of the function."""
     path = Path(path)
     if path.is_symlink():
         raise WeightsError(f"{path} is a symbolic link; the weights are named by the "

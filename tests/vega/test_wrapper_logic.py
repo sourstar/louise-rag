@@ -195,46 +195,6 @@ def test_unchanged_files_are_not_read_again(tmp_path):
     assert files.reads == [os.path.realpath(d / "lib" / "liby.so")], "only the new file read"
 
 
-def test_the_digests_are_kept_across_wrapper_processes(tmp_path):
-    """LocalAI starts a new wrapper for every load: the digests are kept in the
-    package, so the next process reads no unchanged file (8.3 GB of
-    louise-python re-read at every load, ~75 s, 2026-10-21)."""
-    import os
-    d = _tree(tmp_path)
-    store = tmp_path / "pkg" / vw.DIGEST_STORE
-    store.parent.mkdir()
-    first_process = vw.FileDigests(store=store)
-    first = vw.tree_digest(d, first_process)
-    first_process.save()
-    assert first_process.reads and store.is_file()
-    next_process = vw.FileDigests(store=store)
-    assert vw.tree_digest(d, next_process) == first and next_process.reads == [], "nothing read again"
-    (d / "run.sh").write_text("#!/bin/sh\nexec other\n")
-    again = vw.FileDigests(store=store)
-    assert vw.tree_digest(d, again) != first
-    assert again.reads == [os.path.realpath(d / "run.sh")], "the changed file, and only it"
-
-
-def test_an_unreadable_store_only_costs_the_reads(tmp_path):
-    d = _tree(tmp_path)
-    store = tmp_path / vw.DIGEST_STORE
-    store.write_text("{not json")
-    files = vw.FileDigests(store=store)
-    assert vw.tree_digest(d, files) == vw.tree_digest(d) and files.reads
-    files.save()
-    assert vw.FileDigests(store=store)._known, "rewritten whole"
-
-
-def test_weights_read_through_the_kept_digests_are_the_same_digest(tmp_path):
-    w = tmp_path / "weights"
-    (w / "sub").mkdir(parents=True)
-    (w / "model.bin").write_bytes(b"weights")
-    (w / "sub" / "config.json").write_text("{}")
-    files = vw.FileDigests(store=tmp_path / vw.DIGEST_STORE)
-    assert vw._kept_weights_digest(w, files) == runs_mod.weights_digest(w)
-    assert vw._kept_weights_digest(w / "model.bin", vw.FileDigests(store=tmp_path / vw.DIGEST_STORE))         == runs_mod.weights_digest(w / "model.bin")
-
-
 def test_the_cache_holds_to_the_physical_file_not_its_name(tmp_path):
     import hashlib
     import os
