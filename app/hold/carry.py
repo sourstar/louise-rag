@@ -872,6 +872,114 @@ def keep_producer(root, to_ref: str, producer: str, *, window: int = WINDOW,
     return out
 
 
+#: ids looked up in `chunk_verification` per query (SQLite's parameter limit)
+MARK_PROBE = 900
+#: values in one delete predicate: few passes over the table, a bounded string
+DELETE_BATCH = 50_000
+
+
+def keep_producer_scan(root, to_ref: str, producer: str, *,
+                       log: Callable[[str], None] = print) -> dict[str, Any]:
+    """`keep_producer` in ONE PASS over the vector table, for a table too large
+    to visit by document (2026-10-21, wikipedia's parser-5 carry: 146 M rows,
+    53 M documents; the windowed walk read each window's books from the table,
+    ~4 GB a window, 0.17 % done in 3 h — ~1,800 h). The table's `id` and
+    `book_id` columns are read once and each id is looked up among the
+    producer's marks (`chunk_verification`, its primary key); every row not
+    the producer's is dropped. The order is invariant 2's: the documents that
+    lose a row are marked not embedded FIRST, in one transaction each window,
+    then the rows go — a book whose rows are all dropped by `book_id`, the
+    rest by `id`, in few large predicates — and the end requires the table to
+    hold exactly the producer's rows (CarryMismatch). Interrupted, it is run
+    again: the scan recomputes what is left."""
+    from . import collection as col, records as rec
+    from app import db, embeddings
+
+    root = Path(root)
+    name, codex = col.resolve(root, to_ref)
+    coll = rec.local_collection(root, name, codex)
+    con = db.connect(coll)
+    try:
+        tbl = embeddings._conn(coll).open_table(embeddings.TABLE)
+        states = ",".join("?" * len(KEPT_STATES))
+        kept = 0
+        drop_ids: dict[int, list[str]] = {}      # book -> its unmarked ids
+        seen = 0
+        for batch in tbl.to_lance().to_batches(columns=["id", embeddings.BOOK_COLUMN_NAME],
+                                               batch_size=SCAN_ROWS):
+            ids = batch.column(0).to_pylist()
+            books = batch.column(1).to_pylist()
+            marked: set[str] = set()
+            for i in range(0, len(ids), MARK_PROBE):
+                part = ids[i:i + MARK_PROBE]
+                marked.update(r[0] for r in con.execute(
+                    f"SELECT chunk_id FROM chunk_verification WHERE chunk_id IN "
+                    f"({','.join('?' * len(part))}) AND producer=? AND state IN ({states})",
+                    (*part, producer, *KEPT_STATES)))
+            for cid, b in zip(ids, books):
+                if cid in marked:
+                    kept += 1
+                else:
+                    drop_ids.setdefault(int(b), []).append(cid)
+            seen += len(ids)
+            if seen % (SCAN_ROWS * 160) < SCAN_ROWS:
+                log(f"[carry] {name}: scanned {seen} rows, {kept} the producer's, "
+                    f"{sum(len(v) for v in drop_ids.values())} to drop")
+        # a book that loses rows and holds none of the producer's goes whole, by
+        # book_id; one that holds both loses its unmarked ids alone
+        whole, partial = [], []
+        for b, v in drop_ids.items():
+            uid = v[0].rsplit(":", 2)[0]
+            n = con.execute(f"SELECT COUNT(*) FROM chunk_verification WHERE uid=? AND producer=? "
+                            f"AND state IN ({states})", (uid, producer, *KEPT_STATES)).fetchone()[0]
+            (partial if n else whole).append(b)
+        whole.sort()
+        partial.sort()
+        dropped = sum(len(v) for v in drop_ids.values())
+        log(f"[carry] {name}: {seen} rows read, {kept} kept, {dropped} to drop — "
+            f"{len(whole)} document(s) whole, {len(partial)} in part")
+
+        # step 1: the documents marked not done FIRST, a dropped chunk's
+        # provenance going with it (as `keep_producer`)
+        uids = sorted({c.rsplit(":", 2)[0] for v in drop_ids.values() for c in v})
+        for i in range(0, len(uids), 10_000):
+            part = uids[i:i + 10_000]
+            con.execute("BEGIN IMMEDIATE")
+            for j in range(0, len(part), 500):
+                p = part[j:j + 500]
+                con.execute(f"UPDATE documents SET embed_done=0 WHERE uid IN ({','.join('?' * len(p))})", p)
+            con.execute("COMMIT")
+        gone = [c for v in drop_ids.values() for c in v]
+        for i in range(0, len(gone), 10_000):
+            part = gone[i:i + 10_000]
+            con.execute("BEGIN IMMEDIATE")
+            for j in range(0, len(part), 500):
+                p = part[j:j + 500]
+                con.execute(f"DELETE FROM chunk_verification WHERE chunk_id IN ({','.join('?' * len(p))})", p)
+            con.execute("COMMIT")
+        # step 2: the rows, under the vector write lock, in few predicates
+        with embeddings._write_lock(con):
+            for i in range(0, len(whole), DELETE_BATCH):
+                part = whole[i:i + DELETE_BATCH]
+                tbl.delete(f"{embeddings.BOOK_COLUMN_NAME} IN ({','.join(str(b) for b in part)})")
+                log(f"[carry] {name}: dropped the rows of {i + len(part)} of {len(whole)} whole document(s)")
+            ids_part = [c for b in partial for c in drop_ids[b]]
+            for i in range(0, len(ids_part), DELETE_BATCH):
+                part = ids_part[i:i + DELETE_BATCH]
+                quoted = ",".join("'" + c.replace("'", "''") + "'" for c in part)
+                tbl.delete(f"id IN ({quoted})")
+    finally:
+        con.close()
+    rows_now = embeddings.stats(coll)["vectors"]
+    out = {"collection": name, "producer": producer, "kept": kept, "dropped": dropped,
+           "documents_reset": len(uids), "vectors": rows_now, "verified": rows_now == kept}
+    log(f"[carry] {name}: kept {kept} vector(s) of {producer}, dropped {dropped}, "
+        f"{len(uids)} document(s) to embed again; the table holds {rows_now}")
+    if not out["verified"]:
+        raise CarryMismatch(f"{name}: the vector table holds {rows_now} rows and {kept} were kept")
+    return out
+
+
 # ---- A1e: the rows the character cut shortened --------------------------------
 
 #: An archive's rows (02 §2.4 A1b): made by its producer at the token cut the

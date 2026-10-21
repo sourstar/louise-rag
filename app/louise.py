@@ -1312,7 +1312,8 @@ def cmd_dev_carry(a) -> int:
         out["recut"] = carry_mod.recut(a.root, to_name, budget=src_codex.space.ctx * 4,
                                        apply=a.yes, log=say)
     if producer and a.yes:
-        out["keep"] = carry_mod.keep_producer(a.root, to_name, producer, log=say)
+        keep = carry_mod.keep_producer_scan if getattr(a, "scan", False) else carry_mod.keep_producer
+        out["keep"] = keep(a.root, to_name, producer, log=say)
     elif producer:
         say(f"[carry] then: keep only {producer}'s vectors in {to_name} (--yes)")
     _print(out)
@@ -4516,6 +4517,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="after `--rebuilt`, where the source holds no records: re-sign every "
                         "document by the target's discovery and prove a sample's chunks "
                         "unchanged (A1d)")
+    p.add_argument("--scan", action="store_true",
+                   help="with --keep: one pass over the vector table instead of a walk by "
+                        "document — for a table too large to visit document by document")
     p.add_argument("--yes", action="store_true", help="do it; without it, the checks and the plan")
     p.set_defaults(fn=cmd_dev_carry)
     p = dverbs.add_parser("genesis", help="one-shot repairs of an archive's ledger; writes")
