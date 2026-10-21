@@ -222,3 +222,31 @@ def sniff(data: bytes) -> str | None:
     if data.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
     return None
+
+
+#: why a mentioned picture is not drawn, by its state
+_NOT_DRAWN = {"not-held": "this node has not fetched it yet",
+              "not-carried": "this collection does not carry it",
+              None: "this collection's records name no plates"}
+
+
+def mentions(text: str, figures: list | None, *, link: str | None) -> list[dict[str, Any]]:
+    """Every picture the passage MENTIONS, in order — each `[Illustration…]`
+    marker in its text — with the picture or a link to it (operator,
+    2026-10-21: "either the link or the picture shall be present"). The
+    marker's figure (`figures[i]`, placed for this chunk, 09 §9.5's
+    alignment) is drawn when this node holds it; otherwise the entry points
+    at `link`, the origin's page that shows it, and says why it is not
+    drawn here. `kind`: "img" (`hash`), "link" (`href`), or "none" when
+    no page is known either — said, never silent."""
+    out: list[dict[str, Any]] = []
+    text = str(text or "")
+    for i, m in enumerate(MARKER.finditer(text)):
+        caption = text[m.end():].split("]", 1)[0].lstrip(":").strip()
+        f = figures[i] if figures and i < len(figures) else None
+        if f is not None and f.get("state") == "held":
+            out.append({"kind": "img", "hash": f["hash"], "caption": f.get("caption") or caption})
+            continue
+        why = _NOT_DRAWN.get(f.get("state") if f is not None else None, _NOT_DRAWN[None])
+        out.append({"kind": "link" if link else "none", "href": link, "caption": caption, "why": why})
+    return out

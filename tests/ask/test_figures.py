@@ -150,3 +150,19 @@ def test_a_red_collection_s_figures_are_never_served(node, monkeypatch):  # noqa
     with pytest.raises(F.FigureNotServed, match="never served") as e:
         F.figure_bytes(name, "pubmed:10", H_A)
     assert e.value.status == 403
+
+
+def test_every_mention_is_drawn_or_linked_in_order():
+    """Operator, 2026-10-21: a picture the text mentions is shown, or a link
+    to it is. The Nth marker is the chunk's Nth placed figure (09 §9.5)."""
+    from app.ask.figures import mentions
+    text = "a [Illustration: One] b [Illustration] c [Illustration: Three] d"
+    figs = [{"hash": "h1", "caption": "One", "state": "held"},
+            {"hash": "h2", "caption": "", "state": "not-carried"}]
+    got = mentions(text, figs, link="https://origin/x")
+    assert [g["kind"] for g in got] == ["img", "link", "link"]
+    assert got[0]["hash"] == "h1" and got[1]["why"] == "this collection does not carry it"
+    assert got[2]["caption"] == "Three" and got[2]["why"] == "this collection's records name no plates"
+    assert all(g["href"] == "https://origin/x" for g in got[1:])
+    assert [g["kind"] for g in mentions(text, None, link=None)] == ["none"] * 3, "said, never silent"
+    assert mentions("no pictures here", figs, link="x") == []
