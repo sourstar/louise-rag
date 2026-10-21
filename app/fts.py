@@ -92,22 +92,33 @@ def get_index(group: str, collection=None) -> tantivy.Index:
         try:
             idx = tantivy.Index(_schema(group, with_validity), path=str(path))
         except Exception as e:
-            # An index built under a different schema cannot be opened.
-            # Say what to do about it: search() swallows exceptions, so
-            # without this the only symptom is a language that silently
-            # returns no hits.
-            raise RuntimeError(
-                f"tantivy index at {path} was built with a different schema "
-                f"({type(e).__name__}: {e}). This happens when a language "
-                f"joins or leaves config.PYSTEM_LANGS. Delete {path} and "
-                f"re-index that language's documents "
-                f"(UPDATE documents SET fts_done=0 WHERE lang=...)") from None
+            raise RuntimeError(_open_failure(path, e)) from None
         idx.register_tokenizer("lang_tok", _analyzer_for(group))
         if pystem_algorithm(group):
             idx.register_tokenizer("stem_tok", _stem_analyzer())
         _indexes[key] = idx
         _writers.pop(key, None)     # a new Index object: a writer on the old one is stale
         return idx
+
+def _open_failure(path, e: Exception) -> str:
+    """Why a text index could not be opened, as what to do about it: search()
+    swallows exceptions, so without it the only symptom is a language that
+    silently returns no hits. Every failure used to be called a schema
+    mismatch — "delete the index and re-index" — and a lock that could not
+    be taken read as one too (München, 2026-10-21: a read-only mount; that
+    advice would have deleted a healthy index)."""
+    said = f"{type(e).__name__}: {e}"
+    if "Lockfile" in str(e) or "Read-only file system" in str(e):
+        return (f"tantivy index at {path} could not be opened: its lock file cannot be "
+                f"taken ({said}). tantivy writes it even to read, so the index "
+                f"directory must be writable; the index itself is not at fault")
+    if "schema does not match" in str(e):
+        return (f"tantivy index at {path} was built with a different schema ({said}). "
+                f"This happens when a language joins or leaves config.PYSTEM_LANGS. "
+                f"Delete {path} and re-index that language's documents "
+                f"(UPDATE documents SET fts_done=0 WHERE lang=...)")
+    return f"tantivy index at {path} could not be opened ({said})"
+
 
 def existing_groups(collection=None) -> list[str]:
     if collection is None:

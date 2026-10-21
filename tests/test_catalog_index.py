@@ -248,3 +248,32 @@ def test_a_catalogue_leg_that_cannot_answer_says_why_and_is_named_withheld(col, 
     assert retrieval._legs_withheld(c, out) == [
         {"collection": c.name, "leg": "catalog", "reason": why,
          **({"collection_id": c.codex.collection_id} if getattr(c, "codex", None) else {})}]
+
+
+def test_a_text_index_that_cannot_be_opened_names_the_lock_not_the_schema(col, monkeypatch):
+    """München, 2026-10-21: the read-only harness's text index failed on
+    tantivy's lock file, and the message said "built with a different
+    schema" — whose advice, delete the index and re-index, would destroy a
+    healthy one. And the catalogue leg's per-record lookup let it escape:
+    the whole search failed instead of the leg being named withheld."""
+    c, con = col
+    from app import fts as fts_mod
+
+    def locked(*a, **k):
+        raise ValueError('Failed to acquire Lockfile: IoError(Os { code: 30, kind: '
+                         'ReadOnlyFilesystem, message: "Read-only file system" })')
+    assert "lock file cannot be taken" in fts_mod._open_failure("/x/en", ValueError(
+        "Failed to acquire Lockfile: … Read-only file system"))
+    assert "different schema" in fts_mod._open_failure("/x/en", ValueError(
+        "Schema error: 'An index exists but the schema does not match.'"))
+    assert fts_mod._open_failure("/x/en", OSError("disk")).endswith("(OSError: disk)")
+
+    catalog.backfill(con, c, budget_s=60)
+    monkeypatch.setattr(fts_mod, "book_chunks", lambda *a, **k: locked())
+    monkeypatch.setattr(fts_mod, "search", lambda *a, **k: [])        # the text leg: empty, as it is
+    monkeypatch.setattr(fts_mod, "existing_groups", lambda c: ["en", "de"])   # indexes on disk
+    from app import language_plan
+    plan = language_plan.plan("Moby", [c], False)
+    out = retrieval._search_one_collection(con, c, "Moby", 5, "hybrid", False, set(), plan)
+    assert "could not be carried by their text" in out["catalog_leg"]
+    assert [leg["leg"] for leg in retrieval._legs_withheld(c, out)] == ["catalog"]

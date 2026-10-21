@@ -851,7 +851,14 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
             # 05 §5.1 (amended 2026-10-20): the catalogue leg, run with the
             # reader's own words
             cancel.checkpoint()
-            variant = _catalog_variant(collection, catalog_hits, core, restrict)
+            try:
+                variant = _catalog_variant(collection, catalog_hits, core, restrict)
+            except Exception as e:   # noqa: BLE001 — a text index it cannot open fails the leg, not the search
+                variant = None
+                catalog_why = (f"the catalogue's records could not be carried by their text: "
+                               f"{type(e).__name__}: {e}")[:300]
+                print(f"{time.strftime('%H:%M:%S')} [{collection.name} warn:catalog] {catalog_why}",
+                      flush=True)
             if variant:
                 own.add(len(lists))
                 lists.append(variant)
