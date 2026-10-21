@@ -169,6 +169,7 @@ class Config:
     cuts: str = TOKENIZER
     amd_smi: Path | None = None           # WSL2: the dxg build of amd-smi (app/vega/dxg.py)
     nvidia_smi: Path | None = None        # an NVIDIA card: nvidia-smi (app/vega/nvidia.py)
+    package: Path | None = None           # vega.json's directory: where DIGEST_STORE is kept
 
 
 def load_config(path: Path, backends_root: Path) -> Config:
@@ -220,7 +221,8 @@ def load_config(path: Path, backends_root: Path) -> Config:
     return Config(backend=directory, socket=Path(sock), cards=dict(cards),
                   runtime_packages=tuple(packages), cuts=cuts,
                   amd_smi=Path(amd_smi) if amd_smi else None,
-                  nvidia_smi=Path(nvidia_smi) if nvidia_smi else None)
+                  nvidia_smi=Path(nvidia_smi) if nvidia_smi else None,
+                  package=Path(path).resolve().parent)
 
 
 @dataclass(frozen=True)
@@ -267,6 +269,15 @@ def real_backend(directory: Path) -> RealBackend:
 
 # ---- the backend's bytes: the tree, its driver ---------------------------------------
 
+#: the digests kept beside the wrapper's package (`FileDigests(store=…)`)
+DIGEST_STORE = "file-digests.json"
+DIGEST_STORE_VERSION = 1
+#: while files are hashed, what is hashed is kept at least this often — a
+#: load LocalAI gives up on leaves its work to the next one
+SAVE_EVERY_S = 10.0
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+
+
 class FileDigests:
     """The sha256 of files, read again only when a file is not the one read
     before. Keyed on the PHYSICAL path (`os.path.realpath`), never a name, and
@@ -274,12 +285,71 @@ class FileDigests:
     st_ctime_ns). An upgrade that replaces a file gives it a new inode; a
     write in place moves its ctime, which no tool sets back (`tar` restores
     mtimes, so mtime alone is not enough). A file that changes while it is
-    read is refused, never named."""
+    read is refused, never named.
 
-    def __init__(self) -> None:
+    KEPT ACROSS LOADS (`store`, the package's DIGEST_STORE; operator,
+    2026-10-21: "VeGa rechecks at every model reload. The fix is keeping the
+    cache between reloads"). LocalAI starts a new wrapper process for every
+    load, so a cache in memory alone read the whole backend tree and the
+    weights again each time: 8.3 GB of louise-python from tank, ~75 s of
+    every MedCPT, DAR and MADLAD load, against the worker's 65 s bound
+    (München, 2026-10-21). The store holds the same entries under the same
+    rule: an entry stands only for a file whose identity is the one
+    recorded. What it costs to lose — a store unreadable, written by
+    another version, or gone with a rebuild — is the reads, never a wrong
+    digest. Several wrappers share one package: each save merges what the
+    others kept. Whoever can write the store can write the wrapper itself:
+    it is no new trust."""
+
+    def __init__(self, store: Path | str | None = None) -> None:
         self._known: dict[str, tuple[tuple[int, ...], int, str]] = {}
         self._lock = threading.Lock()
+        self._save_lock = threading.Lock()
         self.reads: list[str] = []                    # physical paths read, in order
+        self.store = Path(store) if store else None
+        self._dirty = False
+        self._saved_at = time.monotonic()
+        if self.store is not None:
+            self._known.update(self._load(self.store))
+
+    @staticmethod
+    def _load(store: Path) -> dict[str, tuple[tuple[int, ...], int, str]]:
+        """The entries a store holds; {} for one that cannot be read."""
+        try:
+            doc = json.loads(store.read_text(encoding="utf-8"))
+            files = doc.get("files") if doc.get("version") == DIGEST_STORE_VERSION else None
+        except (OSError, ValueError, AttributeError):
+            return {}
+        out: dict[str, tuple[tuple[int, ...], int, str]] = {}
+        for path, v in (files.items() if isinstance(files, dict) else ()):
+            if (isinstance(v, list) and len(v) == 7 and all(type(x) is int for x in v[:6])
+                    and isinstance(v[6], str) and _HEX64.fullmatch(v[6])):
+                out[path] = (tuple(v[:5]), v[5], v[6])
+        return out
+
+    def save(self) -> None:
+        """Keep what was hashed, merged with what other wrappers kept."""
+        if self.store is None:
+            return
+        with self._save_lock:
+            with self._lock:
+                if not self._dirty:
+                    return
+                mine = dict(self._known)
+                self._dirty, self._saved_at = False, time.monotonic()
+            merged = {**self._load(self.store), **mine}
+            doc = {"version": DIGEST_STORE_VERSION,
+                   "files": {p: [*ident, size, sha] for p, (ident, size, sha) in sorted(merged.items())}}
+            tmp = self.store.with_name(f".{self.store.name}.{os.getpid()}.tmp")
+            try:
+                tmp.write_text(json.dumps(doc, separators=(",", ":")), encoding="utf-8")
+                os.replace(tmp, self.store)
+            except OSError as e:                       # the next load reads again, no more
+                log(f"the file digests are not kept in {self.store}: {e}")
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
 
     @staticmethod
     def _identity(st: os.stat_result) -> tuple[int, ...]:
@@ -305,7 +375,16 @@ class FileDigests:
         with self._lock:
             self._known[physical] = (ident, before.st_size, h.hexdigest())
             self.reads.append(physical)
+            self._dirty = True
+            due = self.store is not None and time.monotonic() - self._saved_at >= SAVE_EVERY_S
+        if due:
+            self.save()
         return before.st_size, h.hexdigest()
+
+    def sha256(self, path: Path | str) -> str:
+        """`sha256:<hex>` of the file at `path`: runs.weights_digest's
+        per-file digest, read through the kept ones."""
+        return "sha256:" + self.read(path)[1]
 
 
 def tree_manifest(root: Path, files: FileDigests | None = None) -> dict[str, dict[str, Any]]:
@@ -1061,15 +1140,19 @@ class Gate:
 
     def __init__(self, cfg: Config, backend: RealBackend, child: Child, receipts: ReceiptClient,
                  pb: Any, *, environ: Mapping[str, str] | None = None,
-                 hash_weights: Callable[[Path], str] = runs.weights_digest,
+                 hash_weights: Callable[[Path], str] | None = None,
                  procfs: ProcFS | None = None, proc_root: Path = Path("/proc"),
                  sys_root: Path = Path("/sys"), dpkg_status: Path = Path("/var/lib/dpkg/status"),
                  files: FileDigests | None = None, amd_smi: dxg.AmdSmi | None = None,
                  nvidia_smi: nvidia.NvidiaSmi | None = None) -> None:
         self.cfg, self.backend, self.child, self.receipts, self.pb = cfg, backend, child, receipts, pb
         self.environ = os.environ if environ is None else environ
-        self.hash_weights = hash_weights
-        self.files = files if files is not None else FileDigests()
+        self.files = files if files is not None else FileDigests(
+            store=cfg.package / DIGEST_STORE if cfg.package else None)
+        # the weights read through the same kept digests: the digest is the
+        # same bytes either way (runs.weights_digest's own per-file one)
+        self.hash_weights = hash_weights or (
+            lambda p: runs.weights_digest(p, file_digest=self.files.sha256))
         self.procfs = procfs or ProcFS(proc_root)
         self.proc_root, self.sys_root, self.dpkg_status = proc_root, sys_root, dpkg_status
         self.amd_smi = amd_smi if amd_smi is not None else (
@@ -1100,6 +1183,7 @@ class Gate:
                         hashed[key] = compute()
                     except Exception as e:           # noqa: BLE001 — said to LocalAI
                         hashed[f"{key} error"] = e
+                    self.files.save()                # kept even if this load is given up
                 t = threading.Thread(target=run, name=f"vega-{key}", daemon=True)
                 t.start()
                 return t

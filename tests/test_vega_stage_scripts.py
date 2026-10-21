@@ -56,3 +56,13 @@ def test_every_app_module_the_wrapper_imports_is_staged_and_packaged():
     for script in ("stage_src.sh", "build_vega_package.sh"):
         listed = set(re.findall(r"app/[\w/]+\.py", (STAGE / script).read_text(encoding="utf-8")))
         assert not wanted - listed, f"{script} leaves out {sorted(wanted - listed)}"
+
+
+def test_a_rebuild_keeps_the_digests_the_wrapper_kept():
+    """A rebuild of the wrapper changes no file of the real backend: its first
+    load must not read the whole tree again (the 65 s bound, 2026-10-21)."""
+    text = (STAGE / "build_vega_package.sh").read_text(encoding="utf-8")
+    clean = next(line for line in text.splitlines() if "-exec rm -rf" in line and "mindepth 1" in line)
+    assert "! -name file-digests.json" in clean
+    from tests.vega.conftest import load_wrapper
+    assert load_wrapper().DIGEST_STORE == "file-digests.json"

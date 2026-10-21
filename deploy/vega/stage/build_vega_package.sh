@@ -17,7 +17,11 @@
 #
 # A rebuild replaces everything but `run/` (the receipts socket, bind-mounted
 # into the receipts service's container: the directory must stay the same
-# inode) and `neo-cache/`.
+# inode), `neo-cache/` and `file-digests.json` (the file digests the wrapper
+# keeps across loads, vega_wrapper.DIGEST_STORE: each entry stands only for
+# a file whose identity is the one recorded, so a rebuild of the wrapper —
+# which changes no file of the real backend — starts with them, and its first
+# load reads nothing again).
 #
 # The card and its runtime default to the node's Arc. Another host passes
 # them (the dev PC's RX 9060 XT under WSL2, deploy/localai-desktop):
@@ -36,7 +40,7 @@ NVIDIA_SMI=${NVIDIA_SMI:-}
 OWNER=${OWNER:-568:0}
 P=/backends/$PKG
 test -d "$P"
-find "$P" -mindepth 1 -maxdepth 1 ! -name run ! -name neo-cache -exec rm -rf {} +
+find "$P" -mindepth 1 -maxdepth 1 ! -name run ! -name neo-cache ! -name file-digests.json -exec rm -rf {} +
 
 # the portable Python, as LocalAI's python backends carry it (libbackend.sh)
 mkdir -p "$P/python"
