@@ -42,6 +42,7 @@ print('yes')"
 MODE=$(docker exec "$W" python -c "from app import node_state; print(node_state.peek_worker_state())" 2>/dev/null | tail -1)
 [ -n "$MODE" ] || { echo "the node's mode could not be read; nothing proceeds"; exit 1; }
 echo "node mode now: $MODE (restored at the end)"
+RESTORED=
 restore_mode() {
   case "$MODE" in
     running) $L node resume ;;
@@ -49,7 +50,22 @@ restore_mode() {
     acquire-only) $L node pause --acquire-only ;;
     *) $L node pause ;;
   esac >/dev/null
+  RESTORED=1
 }
+# on ANY exit before step 10 — a refusal under set -e included (Perugia,
+# 2026-10-21: step 4 refused and the peer stayed seed-only, gutenberg
+# paused, until it was resumed by hand) — the old collection resumes and
+# the mode is put back; the twin stays paused, as the run left it
+on_exit() {
+  rc=$?
+  if [ -z "$RESTORED" ]; then
+    echo "stopped (exit $rc): $OLD resumed and the node's mode restored ($MODE); $NEW stays paused"
+    $L node resume "$OLD" >/dev/null 2>&1 || true
+    restore_mode || true
+  fi
+  exit $rc
+}
+trap on_exit EXIT
 
 if in_w "test -e /config/collections/$OLD.toml.superseded-$TODAY"; then
   say "already renamed: resuming at 8b"

@@ -2099,6 +2099,15 @@ def cmd_snapshot_create(a) -> int:
         # source snapshot's period unless --snapshot names another
         from app.hold import seed
         source, source_snapshot = seed.split_ref(a.shards_from)
+        src_snap = seed.latest_snapshot(a.root, c.name_of(a.root, source), source_snapshot)
+        if seed.holds_the_snapshot(a.root, ref_name, src_snap):
+            # a HOLDER (2026-10-21): the snapshot is held already, fetched and
+            # signed by its creator — the parts this peer has are linked, the
+            # rest are its selection's to fetch; nothing is computed or signed
+            held = seed.seed_holder(a.root, ref_name, source, from_snapshot=source_snapshot,
+                                    log=lambda m: print(m, file=sys.stderr))
+            print(held["snapshot"])
+            return 0
         seeded = seed.seed_shards(a.root, ref_name, source, from_snapshot=source_snapshot,
                                   log=lambda m: print(m, file=sys.stderr))
         snapshot_id = snapshot_id or seeded["snapshot_id"]
