@@ -212,3 +212,39 @@ def test_the_worker_s_forget_releases_the_collection_s_catalog(monkeypatch, tmp_
     monkeypatch.setattr(collections_mod, "louise_root", lambda: tmp_path)
     worker.retire_collection("louise-stop", timeout=0.1)
     assert released == [tmp_path / "collections" / "louise-stop"]
+
+
+def test_a_catalogue_leg_that_cannot_answer_says_why_and_is_named_withheld(col, monkeypatch, capsys):
+    """München, 2026-10-21: in a container whose mounts are read-only, tantivy
+    could not take its lock file to READ the index; `catalog_search` swallowed
+    it, the leg was empty with `legs_withheld` [] and no log line, and two
+    reference runs measured search without its catalogue (title MRR 0.56
+    against 0.87). An empty leg now says why, in the search and once on
+    stdout; an incomplete index says so too; a complete one says nothing."""
+    c, con = col
+    retrieval._catalog_told.clear()
+    hits, why = retrieval.catalog_leg(con, "Moby", collection=c)
+    assert hits == [] and "not complete yet" in why
+
+    catalog.backfill(con, c, budget_s=60)
+    hits, why = retrieval.catalog_leg(con, "Moby", collection=c)
+    assert sorted(_ids(hits)) == [1, 2] and why is None
+
+    def unreadable(*a, **k):
+        raise ValueError('Failed to acquire Lockfile: IoError(Os { code: 30, kind: '
+                         'ReadOnlyFilesystem, message: "Read-only file system" })')
+    monkeypatch.setattr(catalog, "search", unreadable)
+    capsys.readouterr()
+    for _ in range(3):
+        hits, why = retrieval.catalog_leg(con, "Moby", collection=c)
+    assert hits == [] and "could not be read" in why and "Read-only file system" in why
+    said = [line for line in capsys.readouterr().out.splitlines() if "warn:catalog" in line]
+    assert len(said) == 1 and f"[{c.name} warn:catalog]" in said[0], "once, naming the collection"
+
+    from app import language_plan
+    plan = language_plan.plan("Moby", [c], False)
+    out = retrieval._search_one_collection(con, c, "Moby", 5, "hybrid", False, set(), plan)
+    assert out["catalog_leg"] == why
+    assert retrieval._legs_withheld(c, out) == [
+        {"collection": c.name, "leg": "catalog", "reason": why,
+         **({"collection_id": c.codex.collection_id} if getattr(c, "codex", None) else {})}]

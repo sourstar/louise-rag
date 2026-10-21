@@ -176,10 +176,11 @@ def test_a_title_the_catalogue_finds_is_a_variant_of_the_text_leg(isolated_confi
     monkeypatch.setattr(fts, "search", search)
     monkeypatch.setattr(fts, "book_chunks", lambda group, bid, collection=None:
                         [h(f"gutenberg:{bid}", s, "fts:en") for s in (5, 0, 3)])
-    monkeypatch.setattr(retrieval, "catalog_search", lambda con, q, limit=10, langs=None, collection=None:
-                        [{"book_id": 2600, "title": "War and Peace", "lang": "en"},
-                         {"book_id": 77, "title": "War and Peace (abridged)", "lang": "en"}]
-                        + [{"book_id": 1000 + i, "title": f"x{i}", "lang": "en"} for i in range(30)])
+    monkeypatch.setattr(retrieval, "catalog_leg", lambda con, q, limit=10, langs=None, collection=None:
+                        ([{"book_id": 2600, "title": "War and Peace", "lang": "en"},
+                          {"book_id": 77, "title": "War and Peace (abridged)", "lang": "en"}]
+                         + [{"book_id": 1000 + i, "title": f"x{i}", "lang": "en"} for i in range(30)],
+                         None))
     monkeypatch.setattr(retrieval.embeddings, "search_records", lambda *a, **k: [])
     from app import language_plan
     plan = language_plan.plan("War and Peace", [c], False)

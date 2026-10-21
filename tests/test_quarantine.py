@@ -326,7 +326,8 @@ def test_the_search_says_that_the_vector_leg_was_withheld(node, endpoint, tmp_pa
     asked = endpoint.posts
     result = retrieval.search(db.connect(collection), "a lighthouse", mode="hybrid",
                               translate=False, collection=collection)
-    assert result["legs_withheld"] == [{
+    # the fixture's catalogue index is never completed: that leg is named too
+    assert [leg for leg in result["legs_withheld"] if leg["leg"] == "vector"] == [{
         "collection": "gutenberg", "collection_id": codex.collection_id, "leg": "vector",
         "reason": copy_state.vector_leg_withheld(collection)}]
     assert endpoint.posts == asked, "the encoder was asked for a leg that is withheld"

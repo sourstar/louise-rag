@@ -541,7 +541,9 @@ def test_a_query_needs_a_receipt_too(node, localai, vega):
         embeddings.search("chunk 1 of 7", collection=collection)
     result = retrieval.search(con, "a lighthouse", mode="hybrid", translate=False,
                               collection=collection)
-    assert "legs_withheld" not in result
+    # a deferral is not a withheld vector leg (the fixture's incomplete
+    # catalogue index is named, leg "catalog")
+    assert not [leg for leg in result.get("legs_withheld", []) if leg["leg"] == "vector"]
     events = [r["message"] for r in con.execute(
         "SELECT message FROM events WHERE stage='dense' ORDER BY id")]
     assert any("dense search failed" in m and "no receipt" in m for m in events)
@@ -550,7 +552,7 @@ def test_a_query_needs_a_receipt_too(node, localai, vega):
     localai.receipts, localai.alter_vector = True, lambda v: [v[0] + 2 ** -10] + v[1:]
     result = retrieval.search(con, "a lighthouse", mode="hybrid", translate=False,
                               collection=collection)
-    leg, = result["legs_withheld"]
+    leg, = [leg for leg in result["legs_withheld"] if leg["leg"] == "vector"]
     assert leg["leg"] == "vector" and "not the one the backend produced" in leg["reason"]
 
 

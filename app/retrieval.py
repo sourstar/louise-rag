@@ -66,22 +66,49 @@ class PinnedFact:
 
 def catalog_search(con, query: str, limit: int = 10,
                    langs: tuple[str, ...] | list[str] = (), collection=None) -> list[dict]:
-    """`langs`, when given, keeps only documents written in those languages
+    """The catalogue leg's hits (`catalog_leg` without its reason)."""
+    return catalog_leg(con, query, limit, langs, collection)[0]
+
+
+#: (index path, reason) already said on stdout by this process: once each
+_catalog_told: set[tuple[str, str]] = set()
+
+
+def catalog_leg(con, query: str, limit: int = 10,
+                langs: tuple[str, ...] | list[str] = (), collection=None
+                ) -> tuple[list[dict], str | None]:
+    """(the catalogue leg's hits, why it is empty when it cannot answer).
+    `langs`, when given, keeps only documents written in those languages
     (a query's language restriction, app/language_plan.py).
 
     The collection's catalog index answers (app/catalog.py): top-k without
     scoring every match, 18–55 ms on pubmed's 40M records where the SQLite
     FTS5 catalog it replaced took 4–57 s. A collection whose index is not
-    complete yet (its first backfill, or a rebuild after a version change)
-    has an empty catalog leg until it is; the other legs still answer."""
+    complete yet (its first backfill, or a rebuild after a version change),
+    or whose index cannot be read, has an empty catalog leg; the other legs
+    still answer — and the search SAYS so (`legs_withheld`, leg "catalog").
+    It used to say nothing: an index the process could not open (München,
+    2026-10-21: a read-only mount, tantivy's lock file) emptied the leg with
+    `legs_withheld` [] and no log line, and two measurement runs scored
+    search without it (title MRR 0.56 against 0.87) without knowing."""
     q = " ".join(t for t in query.split() if t.isalnum() or t.replace("'", "").isalnum())
     if not q:
-        return []
+        return [], None
     collection = collection or collections_mod.default_collection()
     try:
-        return catalog.search(con, collection, q, limit, langs=langs) or []
-    except Exception:   # noqa: BLE001 — an index problem empties the leg, never fails a search
-        return []
+        hits = catalog.search(con, collection, q, limit, langs=langs)
+    except Exception as e:   # noqa: BLE001 — an index problem empties the leg, never fails a search
+        why = f"the catalogue index could not be read: {type(e).__name__}: {e}"[:300]
+    else:
+        if hits is not None:
+            return hits, None
+        why = ("the catalogue index is not complete yet (its first backfill, or a rebuild): "
+               "the leg is empty until it is")
+    key = (str(catalog.path_for(collection)), why)
+    if key not in _catalog_told:
+        _catalog_told.add(key)
+        print(f"{time.strftime('%H:%M:%S')} [{collection.name} warn:catalog] {why}", flush=True)
+    return [], why
 
 def record_of(hit: dict) -> str:
     """The record a chunk hit belongs to: its uid, `<plugin>:<native_id>` —
@@ -782,8 +809,9 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
     cancel.checkpoint()
     t0 = time.time()
     # as deep as the text leg's other variants: it is one of them (§5.1)
-    catalog_hits = (catalog_search(con, core, limit=max(k, depth, 20), langs=plan.only, collection=collection)
-                    if mode in ("hybrid", "catalog") else [])
+    catalog_hits, catalog_why = (
+        catalog_leg(con, core, limit=max(k, depth, 20), langs=plan.only, collection=collection)
+        if mode in ("hybrid", "catalog") else ([], None))
     if book_ids:
         catalog_hits = [h for h in catalog_hits if int(h.get("book_id", -1)) in book_ids]
     if window and catalog_hits:
@@ -903,19 +931,31 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
 
     return {"catalog": catalog_hits[:CATALOG_PROMPT], "merged": merged, "translations": plan.translations,
             "timings": timings, "scope": scope, "vector_leg": vector_leg,
+            "catalog_leg": catalog_why,
             "filtered": len(book_ids) if book_ids is not None else None}
 
 
-def _leg_withheld(collection, reason: str) -> dict:
+def _leg_withheld(collection, reason: str, leg: str = "vector") -> dict:
     """05 §5.3, §5.4's `legs_withheld` entry: the copy is SEARCHED — its text leg
     goes on — and one leg of it is not, with the reason (03 §3.3: a run that
-    failed the gate, or an answer from a run not yet tested). Beside
-    `withheld`, which names copies left out whole."""
-    entry = {"collection": collection.name, "leg": "vector", "reason": reason}
+    failed the gate, or an answer from a run not yet tested; the catalogue's
+    index not complete or not readable). Beside `withheld`, which names
+    copies left out whole."""
+    entry = {"collection": collection.name, "leg": leg, "reason": reason}
     codex = getattr(collection, "codex", None)
     if codex is not None:
         entry["collection_id"] = codex.collection_id
     return entry
+
+
+def _legs_withheld(collection, partial: dict) -> list[dict]:
+    """The legs of one collection's search that did not answer, each with why."""
+    out = []
+    if partial.get("vector_leg"):
+        out.append(_leg_withheld(collection, partial["vector_leg"]))
+    if partial.get("catalog_leg"):
+        out.append(_leg_withheld(collection, partial["catalog_leg"], leg="catalog"))
+    return out
 
 
 def _attach_metadata_and_enqueue(con, collection, hits: list[dict]) -> None:
@@ -1079,8 +1119,9 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
               "facts": [asdict(f) for f in facts] + _article_facts(query, [collection], facts, as_of),
               "facts_withheld": facts_withheld,
               "timings": timings, "reranked": reranked}
-    if partial.get("vector_leg"):
-        result["legs_withheld"] = [_leg_withheld(collection, partial["vector_leg"])]
+    withheld = _legs_withheld(collection, partial)
+    if withheld:
+        result["legs_withheld"] = withheld
     if rerank_why:
         result["rerank_withheld"] = [_rerank_withheld(collection, rerank_why)]
     if partial.get("filtered") is not None:
@@ -1196,8 +1237,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
         per_collection.append((collection, merged))
         translations.update(partial["translations"])
         timings_per_collection[collection.name] = partial["timings"]
-        if partial.get("vector_leg"):
-            legs_withheld.append(_leg_withheld(collection, partial["vector_leg"]))
+        legs_withheld.extend(_legs_withheld(collection, partial))
         catalog.extend(partial["catalog"])
     collection_by_name = {c.name: c for c in collections}
 

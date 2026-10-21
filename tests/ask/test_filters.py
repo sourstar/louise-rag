@@ -110,7 +110,7 @@ def test_a_filtered_federation_is_restricted_per_collection_and_says_how_many(mo
 def test_an_empty_restriction_returns_nothing_before_any_leg_runs(monkeypatch):
     called = []
     monkeypatch.setattr(retrieval.fts, "existing_groups", lambda c: called.append("fts") or [])
-    monkeypatch.setattr(retrieval, "catalog_search", lambda *a, **k: called.append("catalog") or [])
+    monkeypatch.setattr(retrieval, "catalog_leg", lambda *a, **k: (called.append("catalog") or [], None))
     monkeypatch.setattr(retrieval.db, "get_scope", lambda con: {"embed_mode": "off"})
     plan = SimpleNamespace(core="q", translations={}, only=(), searches=lambda g: True,
                            lang_filter=lambda g: None, variants=lambda g, h: ["q"])
