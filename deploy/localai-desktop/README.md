@@ -48,6 +48,17 @@ identical requests and a reversed order, bit-identical, through Louise's
 own client); the pinned peers from the worker; the socket count
 (dht-flood.md); free space on D:. Exit 1 on any FAIL.
 
+**When the card stops answering** (Perugia, 2026-10-21: the encoder hung
+at 06:15Z; LocalAI's restarts of the backend did not help; after a LocalAI
+restart `amd-smi` failed with AMDSMI_STATUS_UNKNOWN_ERROR and the model fell
+back to the CPU — a run the wrapper now refuses, e77c255). Windows' System
+log showed nothing: the failure was inside WSL's /dev/dxg path. Pause the
+collections that embed here first (`louise node pause <collection>`), then:
+restarting Docker Desktop alone leaves the VM up and the card failed;
+`wsl --shutdown`, then start Docker Desktop. Check `amd-smi static` sees
+the card. If the web gives empty replies afterwards (wslrelay holding its
+port from the old VM), restart the web container. Then rerun the smoke.
+
 **What it does not have yet:** louise-python (MADLAD, MedCPT on torch
 ROCm, 23.8 GB image, not pushed), so the chat model translates and pubmed's
 MedCPT models are absent. LocalAI's GPU panel names the card "AMD GPU" (a
