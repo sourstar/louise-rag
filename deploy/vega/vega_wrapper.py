@@ -695,6 +695,15 @@ def determinism_env(backend_name: str) -> dict[str, str]:
 TORCH_DETERMINISM = {"LOUISE_TORCH_DETERMINISTIC": "1"}
 TORCH_TASKS = frozenset({"dar-legal-it", "madlad", "jina-v3"})
 NO_MODE = frozenset({"vulkan"})
+#: A task with no mode MEASURED instead (invariant 12: "measure, do not
+#: assume"): the model's env names the backend tree it was measured bit-exact
+#: on (tools/vega_repro_check.py: fresh loads, shuffled orders, every vector
+#: byte-identical), and holds only on that tree — a new tree is measured
+#: again. MedCPT on OpenVINO: 16/16 PubMed pairs bit-identical, rerank scores
+#: identical (backend-consolidation.md); refused outright on 2026-10-21, which
+#: stopped pubmed although measured.
+MEASURED_ENV = "LOUISE_BITEXACT_MEASURED"
+MEASURED_TASKS = frozenset({"medcpt-article", "medcpt-rerank"})
 
 
 def _option_values(canon: loadopts.Canon, key: str) -> list[str]:
@@ -725,6 +734,13 @@ def determinism_lacks(backend_name: str, canon: loadopts.Canon, device: str) -> 
     if "python" in tokens:
         tasks = _option_values(canon, "task")
         task = tasks[0] if len(tasks) == 1 else None
+        if task in MEASURED_TASKS:
+            if canon.env.get(MEASURED_ENV) == backend_name:
+                return []
+            raise loadopts.Unstatable(
+                f"{backend_name} task {task!r} has no deterministic mode (CLAUDE.md invariant 12; "
+                f"OpenVINO offers none) and is not measured bit-exact on this tree: measure it "
+                f"(tools/vega_repro_check.py), then set {MEASURED_ENV}={backend_name} in the model's env")
         if task not in TORCH_TASKS:
             raise loadopts.Unstatable(
                 f"{backend_name} task {task!r} has no deterministic mode the wrapper knows (CLAUDE.md "

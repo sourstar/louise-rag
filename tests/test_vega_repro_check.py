@@ -69,3 +69,9 @@ def test_a_refused_text_stops_the_measurement():
 def test_the_texts_are_spread_over_the_file():
     assert vega_repro_check.spread(list("abcdefgh"), 4) == list("aceg")
     assert vega_repro_check.spread(list("ab"), 4) == list("ab")
+
+
+def test_a_line_is_a_text_or_a_pair():
+    """MedCPT's article encoder is fed (title, abstract) pairs: measured as pairs."""
+    assert vega_repro_check.item({"text": "a"}) == "a"
+    assert vega_repro_check.item({"pair": ["title", "abstract"]}) == ("title", "abstract")

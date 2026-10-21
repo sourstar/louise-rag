@@ -764,12 +764,23 @@ def test_a_torch_task_loads_only_with_torchs_deterministic_switch(tmp_path):
 
 
 @pytest.mark.parametrize("task", ["medcpt-article", "medcpt-rerank"])
-def test_an_openvino_task_is_never_loaded(tmp_path, task):
-    """OpenVINO offers no deterministic mode: refused, with the switch or without."""
-    made: list = []
-    r = _combined(made).LoadModel(load_call(_medcpt_dir(tmp_path), options=[f"task:{task}"],
-                                            context_size=512, batch=4), None)
-    assert not r.success and "OpenVINO" in r.message and made == [], "refused before it is imported"
+def test_an_openvino_task_unmeasured_on_this_tree_is_never_loaded(tmp_path, task):
+    """OpenVINO offers no deterministic mode: refused, with the switch or without,
+    unless the model's env names THIS tree as the one it was measured bit-exact on."""
+    model = _medcpt_dir(tmp_path)
+    for environ in (DETERMINISTIC, {python_backend.MEASURED_ENV: "louise-python-19990101"}):
+        made: list = []
+        r = _combined(made, environ=environ).LoadModel(
+            load_call(model, options=[f"task:{task}"], context_size=512, batch=4), None)
+        assert not r.success and "OpenVINO" in r.message and made == [], "refused before it is imported"
+
+
+@pytest.mark.parametrize("task", ["medcpt-article", "medcpt-rerank"])
+def test_an_openvino_task_measured_on_this_tree_may_load(task):
+    on = {python_backend.MEASURED_ENV: "louise-python-20261021a"}
+    assert python_backend.determinism_refusal(task, on, tree="louise-python-20261021a") is None
+    assert "measure it" in python_backend.determinism_refusal(task, on, tree="louise-python-20261022a")
+    assert python_backend.determinism_refusal("dar-legal-it", on, tree="louise-python-20261021a"),         "a measurement never stands in for torch's switch"
 
 
 def test_madlad_switches_torch_to_its_deterministic_algorithms():

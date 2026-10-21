@@ -29,6 +29,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.vega import client  # noqa: E402
 
 
+def item(row: dict) -> str | tuple[str, str]:
+    """A line's input: its `text`, or its `pair` ([first, second]) — the pair
+    form 09 §9.3 feeds a pair layer (MedCPT's article encoder), tagged as such."""
+    if "pair" in row:
+        first, second = row["pair"]
+        return (str(first), str(second))
+    return row["text"]
+
+
 def spread(texts: list[str], n: int) -> list[str]:
     """`n` texts at evenly spaced places in the file, every one if fewer."""
     if n >= len(texts):
@@ -73,10 +82,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--repeats", type=int, default=2, help="shuffled passes per load")
     p.add_argument("--window", type=int, default=None, help="tokens, the space's ctx")
     p.add_argument("--texts", type=Path, default=Path("calibration/text.jsonl"),
-                   help="JSON lines with `text`")
+                   help="JSON lines with `text`, or `pair`: [first, second]")
     args = p.parse_args(argv)
     import httpx
-    texts = spread([json.loads(line)["text"] for line in
+    texts = spread([item(json.loads(line)) for line in
                     args.texts.read_text(encoding="utf-8").splitlines() if line.strip()], args.n)
     out = measure(texts, url=args.url, model=args.model, loads=args.loads,
                   repeats=args.repeats, window=args.window, post=httpx.post)

@@ -779,3 +779,17 @@ def test_louise_python_torch_tasks_need_torchs_switch_and_openvino_is_refused(tm
             vw.state_run(canon=_load_with(on, (f"task:{task}", "device:xpu")), environ=on, **kw)
     with pytest.raises(loadopts.Unstatable, match="no deterministic mode"):
         vw.state_run(canon=_load_with(on, ("device:xpu",)), environ=on, **kw)
+
+
+@pytest.mark.parametrize("task", ["medcpt-article", "medcpt-rerank"])
+def test_an_openvino_task_is_stated_only_measured_on_this_very_tree(tmp_path, task):
+    """No mode: measured instead (invariant 12). The env names the tree the
+    measurement ran on; another tree's name, or none, is refused."""
+    kw = _run_kw(tmp_path, "louise-python-20261021a", "the card")
+    opts = (f"task:{task}", "device:xpu")
+    for env in ({}, {vw.MEASURED_ENV: "louise-python-20261020c"}):
+        with pytest.raises(loadopts.Unstatable, match="not measured bit-exact on this tree"):
+            vw.state_run(canon=_load_with(env, opts), environ=env, **kw)
+    env = {vw.MEASURED_ENV: "louise-python-20261021a"}
+    _rid, run = vw.state_run(canon=_load_with(env, opts), environ=env, **kw)
+    assert run["engine"]["env"] == env, "the run says what it was measured on"

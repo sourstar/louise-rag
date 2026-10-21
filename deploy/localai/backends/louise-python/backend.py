@@ -48,14 +48,23 @@ CALLS = ("Embedding", "Predict", "Rerank")
 #: wrapper is not in front of.
 DETERMINISM_ENV = "LOUISE_TORCH_DETERMINISTIC"
 TORCH_TASKS = frozenset({"dar-legal-it", "madlad", "jina-v3"})
+#: an OpenVINO task loads only MEASURED bit-exact on this very tree: the model's
+#: env names the tree (its directory) the measurement ran on — VeGa's
+#: wrapper's MEASURED_ENV, the same rule here for a model it is not in front of
+MEASURED_ENV = "LOUISE_BITEXACT_MEASURED"
+MEASURED_TASKS = frozenset({"medcpt-article", "medcpt-rerank"})
+TREE = os.path.basename(os.path.dirname(os.path.abspath(__file__)))
 
 
-def determinism_refusal(task: str, environ: Mapping[str, str]) -> str | None:
-    """Why `task` may not load under `environ` — None when it may."""
+def determinism_refusal(task: str, environ: Mapping[str, str], tree: str = TREE) -> str | None:
+    """Why `task` may not load under `environ` from the tree `tree` — None when it may."""
+    if task in MEASURED_TASKS and environ.get(MEASURED_ENV, "").strip() == tree:
+        return None
     if task not in TORCH_TASKS:
         return (f"{TASK}:{task} runs on OpenVINO, which offers no deterministic mode (CLAUDE.md "
-                f"invariant 12): a backend whose answers are not shown to come back bit for bit "
-                f"is not loaded")
+                f"invariant 12), and is not measured bit-exact on this tree ({tree}): a backend "
+                f"whose answers are not shown to come back bit for bit is not loaded; measure it, "
+                f"then set {MEASURED_ENV}={tree} in the model's env")
     if environ.get(DETERMINISM_ENV, "").strip() != "1":
         return (f"{TASK}:{task} loads only with {DETERMINISM_ENV}=1 in the model's env (CLAUDE.md "
                 f"invariant 12): torch's defaults do not give back their own bytes")
