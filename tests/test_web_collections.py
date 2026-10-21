@@ -360,7 +360,9 @@ def test_the_library_shows_an_annotations_collection_on_its_own_card(client, mon
     assert "annotates: pubmed" in card and "from snapshot: 2026-08" in card
     assert "2 claims in snapshot 2026-09" in card
     assert "kinds: records, relations" in card
-    assert codex.collection_id in card
+    # the id in the badge row, as a held card shows the space; not trailing the notes
+    assert f'<span class="badge lapis" title="collection_id">id: {codex.collection_id}</span>' in card
+    assert card.count(codex.collection_id) == 1
     # the served collection's controls do not apply here
     head = card[:card.index("remove…")]
     assert "grow profile" not in head and "embed mode" not in head and "setEmbedMode" not in head
@@ -410,3 +412,25 @@ def test_a_mode_or_sharing_switch_asks_for_a_digest_at_once(client):
     r = client.post("/admin/library/gutenberg/share", json={"share": True})
     assert r.status_code == 200, r.text
     assert node_state.take_digest_request() is True
+
+
+def test_an_annotations_card_names_a_records_twin_of_its_target(client, monkeypatch):
+    """02 §2.4 A1f: claims about a target apply to the collection a carry
+    made of it, byte for byte (368365e), so the card names that collection
+    instead of "a collection this node does not hold" (Perugia, 2026-10-21:
+    gutenberg-book-editions named the retired gutenberg)."""
+    import json
+    from types import SimpleNamespace
+    from app import web
+    from app.hold import carry
+    codex, snap = _an_annotations_collection(monkeypatch)
+    old = collections_mod.load_annotations()[0]
+    (target,) = [t for t in __import__("app.hold.codex", fromlist=["targets_of"]).targets_of(old.codex)]
+    root = collections_mod.louise_root() / "collections"
+    twin = SimpleNamespace(name="pubmed-v2", codex=SimpleNamespace(collection_id="sha256:" + "7a" * 32))
+    state = root / "pubmed-v2" / "state"
+    state.mkdir(parents=True)
+    assert web._annotations_shelf(old, [twin])["targets"][0]["target"] != "pubmed-v2"
+    (state / carry.MARKER).write_text(json.dumps(
+        {"done": True, "mode": "move", "from": target.collection_id, "to": twin.codex.collection_id}))
+    assert web._annotations_shelf(old, [twin])["targets"][0]["target"] == "pubmed-v2"

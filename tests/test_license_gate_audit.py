@@ -45,6 +45,8 @@ def test_the_reader_refuses_the_text_of_an_unacknowledged_collection(client, mon
     name = collections_mod.load_all()[0].name
     _withheld(monkeypatch)
     assert client.get(f"/read/{name}/999999").status_code == 403
+    assert client.get(f"/read/{name}/999999/screen").status_code == 403, \
+        "the reader's first screen, fetched ahead for translation, is the same text"
     _free(monkeypatch)
     assert client.get(f"/read/{name}/999999").status_code == 404, \
         "control: past the gate, a missing document is a 404"

@@ -13,9 +13,7 @@ page and a reader fragment that the app renders here. The dev image carries
 the browser (`docker build --target dev -t louise-rag:dev .`); an image
 without one, the runtime, skips this and says why.
 """
-import os
 import random
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -24,18 +22,12 @@ from fastapi.testclient import TestClient
 
 from app import web
 from app.api import app
+from tests import browser_support
 
 SCRIPT = Path(__file__).parent / "browser" / "reader_translation.js"
-NODE = shutil.which("node")
-CHROMIUM = (os.environ.get("PUPPETEER_EXECUTABLE_PATH") or shutil.which("chromium-headless-shell")
-            or shutil.which("chromium"))
-PUPPETEER = any((Path(p) / "puppeteer-core").is_dir()
-                for p in os.environ.get("NODE_PATH", "").split(os.pathsep) if p)
+NODE = browser_support.NODE
 
-pytestmark = pytest.mark.skipif(
-    not (NODE and CHROMIUM and PUPPETEER),
-    reason="no browser in this image: the dev image has one "
-           "(docker build --target dev -t louise-rag:dev .)")
+pytestmark = pytest.mark.skipif(not browser_support.available(), reason=browser_support.REASON)
 
 
 def _fragment() -> str:
@@ -62,7 +54,7 @@ def test_the_reader_is_translated_as_it_is_read_in_a_browser(isolated_config, tm
     (tmp_path / "ask.html").write_text(page, encoding="utf-8")
     (tmp_path / "fragment.html").write_text(_fragment(), encoding="utf-8")
     run = subprocess.run([NODE, str(SCRIPT), str(tmp_path)], capture_output=True,
-                         text=True, timeout=300)
+                         text=True, timeout=300, env=browser_support.env())
     report = run.stdout + run.stderr
     assert run.returncode == 0 and "ALL PASSED" in run.stdout, report
     assert "FAIL" not in run.stdout, report

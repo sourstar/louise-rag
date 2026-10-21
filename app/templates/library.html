@@ -246,6 +246,9 @@
     {% endif %}
     <span class="badge brass" title="the target snapshot the claims were checked against; a claim is attached to no answer read from an earlier one (02 §2.10)">from snapshot: {{ t.from_snapshot }}</span>
     {% endfor %}
+    {# where a held collection's card shows its id: the badge row, as the
+       space badge does (operator, 2026-10-21: the bare sha256 trailed the card) #}
+    <span class="badge lapis" title="collection_id">id: {{ a.collection_id }}</span>
     {% if a.license.class %}
     <span class="badge {{ 'err' if a.license.needs_ack else 'ok' }}">license: <span class="lic-{{ a.license.class }}">{{ a.license.class }}</span>{{ ' — ack needed' if a.license.needs_ack else (' ✓' if a.license.ok else '') }}</span>
     {% endif %}
@@ -259,7 +262,6 @@
   <div class="note">
     {% if a.claims is not none %}{{ a.claims|num }} claim{{ '' if a.claims == 1 else 's' }} in snapshot {{ a.snapshot }}{% else %}{{ a.note }}{% endif %}
     · kinds: {{ a.kinds | join(', ') }}
-    · <code title="collection_id">{{ a.collection_id }}</code>
   </div>
   <div class="row">
     <div>
