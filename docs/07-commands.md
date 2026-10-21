@@ -1153,6 +1153,8 @@ url = "http://nas:30447/v1/rerank"             # the full endpoint, path include
 api = "jina"                                   # jina: {query, documents} (llama.cpp's /v1/rerank) · tei: {query, texts}
 rerank_model = "bge-reranker-v2-m3"            # required with the block: the request body's `model`; equal to the model
                                                # a `…/upstream/<model>` URL names (amended 2026-10-08)
+window = 2048                                  # optional: the longest candidate read, in the model's tokens; a longer one
+                                               # is cut before it is sent (05 §5.6, amended 2026-10-21). 0: uncut
 
 [[sources]]                                    # a deposit collection only (06 §6.7): one per subscribed URL
 url = "https://example.org/sitemap.xml"

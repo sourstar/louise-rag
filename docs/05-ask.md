@@ -620,6 +620,16 @@ labelled titles:
 A query whose catalogue leg ranks nothing, every descriptive query
 measured, keeps the reranker's order.
 
+**Each candidate is cut to the reranker's window** (*amended 2026-10-21*).
+The collection file's `[reranker] window` (07 §7.8; 2,048 tokens unless it
+says otherwise, 0 for none) is the longest candidate the reranker reads, in
+its own tokens. A longer candidate is counted by the model's tokenizer and
+cut in proportion until it fits, so the model's context is the window and
+not the longest chunk the corpus holds. Measured on live searches, title
+and chunk together: gutenberg's median 878 tokens, p99 1,170, longest
+3,335; wikipedia's p99 584. At 2,048, 99 % of candidates are read whole,
+where a context sized for the longest needed four times the memory.
+
 If the reranker is unreachable, refuses, or exceeds the node's latency
 budget (07 §7.8) — set for the default depth of 50, and given to a
 deeper list in proportion, so 300 candidates have six times as long —

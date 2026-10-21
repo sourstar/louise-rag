@@ -210,6 +210,12 @@ class RerankRecipe:
     # the file's `rerank_model` (07 §7.8, amended 2026-10-08), sent as the
     # body's `model`; None only for RERANK_URL, which names no model
     model: str | None = None
+    # the longest candidate it reads, in ITS tokens (05 §5.6, amended
+    # 2026-10-21): a longer one is cut before it is sent, so the model's
+    # context is the window and not the longest chunk a corpus holds.
+    # Measured on live searches: gutenberg p99 1,170 tokens (max 3,335),
+    # wikipedia p99 584 — 2,048 reads 99 % of candidates whole. 0: uncut.
+    window: int = 2048
 
 
 RERANK_APIS = ("tei", "jina")
@@ -231,7 +237,10 @@ def parse_reranker(raw: Any, *, where: str) -> RerankRecipe | None:
                         f"amended 2026-10-08); {MIGRATE_HINT}")
     model = _named_model(raw, "rerank_model", f"{where} [reranker]")
     _agrees(str(raw["url"]), "rerank_model", model, "url", f"{where} [reranker]")
-    return RerankRecipe(url=str(raw["url"]), api=api, model=model)
+    window = raw.get("window", RerankRecipe.window)
+    if not isinstance(window, int) or isinstance(window, bool) or window < 0:
+        raise ValueError(f"{where}: [reranker] window is a number of tokens (0: uncut), got {window!r}")
+    return RerankRecipe(url=str(raw["url"]), api=api, model=model, window=window)
 
 
 def reranker_for(collection) -> RerankRecipe | None:

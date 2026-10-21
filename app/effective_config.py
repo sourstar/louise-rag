@@ -68,7 +68,7 @@ def _reranker(collection) -> dict[str, Any]:
     if r is None:
         return _v(None, None, note="no [reranker] and no RERANK_URL: lists keep their fused order")
     tier = FILES if getattr(collection, "reranker", None) is not None else ENV
-    return _v({"url": r.url, "api": r.api, "rerank_model": r.model}, tier)
+    return _v({"url": r.url, "api": r.api, "rerank_model": r.model, "window": r.window}, tier)
 
 
 def of(collection) -> dict[str, Any]:

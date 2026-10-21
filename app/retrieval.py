@@ -359,6 +359,7 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
             texts.append(f"{title}\n\n{body_text}" if title else body_text)
             owner.append((i, c))
     budget_s = budget_s * max(1.0, len(texts) / max(1, len(head)))
+    texts = fit_to_window(texts, recipe)
     if recipe.api == "jina":
         body = {"query": query, "documents": texts, "top_n": len(texts)}
     else:
@@ -405,6 +406,60 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
         h["rerank_score"] = score
         ranked.append(h)
     return ranked + tail, True
+
+#: A token covers at least this many bytes of UTF-8, in every script the
+#: reranker's tokenizer (XLM-R's SentencePiece) reads: a text of at most
+#: window * WINDOW_BYTES_PER_TOKEN bytes fits the window uncounted.
+WINDOW_BYTES_PER_TOKEN = 2
+#: how many times a long candidate is cut and counted again before the byte
+#: cut stands in
+WINDOW_TRIES = 3
+
+
+def _tokens_url(recipe) -> str:
+    """LocalAI's tokenizer beside its /v1/rerank (the same model's tokens)."""
+    return recipe.url.rsplit("/v1/rerank", 1)[0] + "/v1/tokenize"
+
+
+def fit_to_window(texts: list[str], recipe) -> list[str]:
+    """Each candidate cut to the reranker's `window` of ITS tokens (05 §5.6,
+    amended 2026-10-21), so the model's context can be the window. A text
+    short enough in bytes goes uncounted; a longer one is counted by the
+    model's own tokenizer and cut in proportion until it fits — the same
+    text always the same cut. Where the count cannot be had (no window, a
+    TEI endpoint, which truncates itself, or a failed call), a text over
+    `window * WINDOW_BYTES_PER_TOKEN` bytes is cut to that, which fits."""
+    window = getattr(recipe, "window", 0) or 0
+    if not window or recipe.api != "jina":
+        return texts
+    limit = window * WINDOW_BYTES_PER_TOKEN
+    out = []
+    for t in texts:
+        if len(t.encode("utf-8")) <= limit:
+            out.append(t)
+            continue
+        out.append(_cut_by_tokens(t, window, recipe) or _cut_bytes(t, limit))
+    return out
+
+
+def _cut_bytes(text: str, limit: int) -> str:
+    return text.encode("utf-8")[:limit].decode("utf-8", errors="ignore")
+
+
+def _cut_by_tokens(text: str, window: int, recipe) -> str | None:
+    cut = text
+    for _ in range(WINDOW_TRIES):
+        try:
+            r = httpc.post(_tokens_url(recipe), json={"model": recipe.model, "content": cut}, timeout=10)
+            r.raise_for_status()
+            n = len(r.json()["tokens"])
+        except Exception:   # noqa: BLE001 — the byte cut stands in
+            return None
+        if n <= window:
+            return cut
+        cut = cut[:max(1, int(len(cut) * window / n * 0.95))]
+    return None
+
 
 #: Where `_rerank_list` says WHY a list kept its fused order, when it knows:
 #: set by `_reranked` around one call (a context variable, so a test's
