@@ -1079,3 +1079,18 @@ def test_dar_legal_it_switches_torch_determinism_on_from_the_models_env_only():
     assert server.determinism(fake, {server.DETERMINISM_ENV: "1"}) is True
     assert calls == [True] and fake.backends.mkldnn.deterministic is True
     assert server.DETERMINISM_ENV == "LOUISE_TORCH_DETERMINISTIC", "one switch for every torch task"
+
+
+@pytest.mark.parametrize("server_py", ["dar-legal-it", "jina-embeddings-v3", "madlad-translate"])
+def test_on_cuda_the_switch_also_takes_cudnns_deterministic_algorithms(server_py):
+    """NVIDIA (2026-10-21): cuDNN chooses its convolution algorithms by
+    timing when `benchmark` is on; the switch fixes them. torch's own
+    deterministic mode covers the rest, and cuBLAS's fixed workspace is the
+    model's env (CUBLAS_WORKSPACE_CONFIG, which the wrapper requires)."""
+    server = _exec(f"cudnn_{server_py}", ROOT / "deploy" / server_py / "server.py")
+    cudnn = SimpleNamespace(deterministic=False, benchmark=True)
+    fake = SimpleNamespace(use_deterministic_algorithms=lambda flag: None,
+                           backends=SimpleNamespace(cudnn=cudnn))
+    assert server.determinism(fake, {}) is False and cudnn.deterministic is False
+    assert server.determinism(fake, {"LOUISE_TORCH_DETERMINISTIC": "1"}) is True
+    assert cudnn.deterministic is True and cudnn.benchmark is False

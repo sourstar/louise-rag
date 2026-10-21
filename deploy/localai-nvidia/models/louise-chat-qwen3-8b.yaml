@@ -1,0 +1,28 @@
+# The node's YAML (/mnt/ssd5/apps/localai/models), byte for byte in every
+# load option, on an NVIDIA card (deploy/localai-nvidia). CLAUDE.md invariant
+# 12 on CUDA: cuBLAS takes no atomics by default, so there is no vendor
+# variable to set — `parallel:1` keeps one stream; the wrapper reads the card
+# as NVIDIA and requires it. On a host with several cards, add to `env`
+# CUDA_VISIBLE_DEVICES: "<its index>" — a load split across cards states no run.
+# A different card is a new engine and run: the space's calibration gate passes it once.
+name: louise-chat-qwen3-8b
+backend: cuda13-llama-cpp
+context_size: 16384
+flash_attention: "on"
+gpu_layers: 999
+mmap: true
+options:
+    - parallel:1
+    - ubatch:512
+    - use_jinja:true
+parameters:
+    batch: 2048
+    model: weights/chat/qwen3-8b.gguf
+    repeat_penalty: 1
+    seed: 0
+    top_k: 20
+    top_p: 0.95
+reasoning_effort: none
+template:
+    use_tokenizer_template: true
+threads: 6

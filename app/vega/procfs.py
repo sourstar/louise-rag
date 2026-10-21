@@ -22,6 +22,9 @@ _UNIT = {None: 1, "K": 1 << 10, "M": 1 << 20, "G": 1 << 30}
 MIB = 1 << 20
 #: WSL's paravirtual GPU: every card behind it, no DRM fdinfo
 WSL_GPU = "/dev/dxg"
+#: an NVIDIA card's device file, `/dev/nvidia<minor>`: a CUDA context holds it,
+#: and it has no DRM fdinfo either (app/vega/nvidia.py reads the card)
+NVIDIA_GPU = re.compile(r"^/dev/nvidia(\d+)$")
 
 
 @dataclass(frozen=True)
@@ -93,7 +96,9 @@ class ProcFS:
             infos = list((self.root / str(pid) / "fdinfo").iterdir())
         except OSError:
             return None
-        if self.holds(pid, WSL_GPU):
+        if self.holds(pid, WSL_GPU) or self.nvidia_minors(pid):
+            # neither has DRM clients: an empty mapping would state a card run
+            # as a CPU run (an NVIDIA card's CUDA context included, 2026-10-21)
             return None
         clients: dict[str, tuple[str | None, int]] = {}
         for info in infos:
@@ -111,6 +116,35 @@ class ProcFS:
         out: dict[str | None, int] = {}
         for pdev, held in clients.values():
             out[pdev] = out.get(pdev, 0) + held // MIB
+        return out
+
+    def nvidia_minors(self, pid: int) -> set[int]:
+        """The minors of the `/dev/nvidia<N>` the process holds open — the
+        NVIDIA cards it has a CUDA context on (`/dev/nvidiactl` and
+        `/dev/nvidia-uvm` name no card)."""
+        try:
+            fds = list((self.root / str(pid) / "fd").iterdir())
+        except OSError:
+            return set()
+        out: set[int] = set()
+        for fd in fds:
+            try:
+                found = NVIDIA_GPU.match(os.readlink(fd))
+            except OSError:
+                continue
+            if found:
+                out.add(int(found.group(1)))
+        return out
+
+    def mapped(self, pid: int) -> set[str]:
+        """The files the process has mapped (`/proc/<pid>/maps`): the shared
+        libraries it LOADED, not the ones it could have."""
+        raw = (self._bytes(pid, "maps") or b"").decode("utf-8", "replace")
+        out: set[str] = set()
+        for line in raw.splitlines():
+            parts = line.split(None, 5)
+            if len(parts) == 6 and parts[5].startswith("/"):
+                out.add(parts[5].removesuffix(" (deleted)"))
         return out
 
     def holds(self, pid: int, device: str) -> bool:

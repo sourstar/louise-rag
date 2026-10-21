@@ -162,6 +162,38 @@ def test_the_command_seeds_then_freezes(pair, monkeypatch):
     assert snap.collection_id == new.collection_id and snap.records == 3
 
 
+def test_a_holder_links_the_parts_it_has_and_keeps_the_snapshot_it_holds(pair, monkeypatch, capsys):
+    """Perugia, 2026-10-21: adopting the node's twin, `snapshot create
+    --shards-from` refused at the first figures container its gutenberg
+    never held (101 GB; its file takes records and vectors). A peer that
+    already holds the snapshot (fetched, signed by its creator) is a
+    HOLDER: the parts its source has are linked, a part neither holds is
+    absent, and nothing is computed or signed; the creator still needs every
+    part."""
+    from app import louise
+    from app.hold import seed as seed_mod
+    root, _old_codex, new = pair
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", PLATFORM)
+    _out, snap = _seeded(root)                      # the creator's run: new holds the snapshot
+    raw = (root / "new" / "shard" / "snapshots" / f"{snap.snapshot_id}.json").read_bytes()
+    paths = [p for p, _b, _r in seed_mod.parts_of(snap)]
+    assert len(paths) >= 2
+    gone_everywhere, relinked = paths[0], paths[1]
+    for name in ("old", "new"):
+        (root / name / "shard" / gone_everywhere).unlink()
+    (root / "new" / "shard" / relinked).unlink()
+    assert seed_mod.holds_the_snapshot(root, "new", seed_mod.latest_snapshot(root, "old", snap.snapshot_id))
+    assert louise.main(["hold", "snapshot", "create", "new", "--root", str(root),
+                        "--shards-from", f"old:{snap.snapshot_id}"]) == 0
+    err = capsys.readouterr().err
+    assert "holds 2026-08 already" in err and "1 not held by old" in err
+    assert (root / "new" / "shard" / relinked).is_file() and not (root / "new" / "shard" / gone_everywhere).exists()
+    assert (root / "new" / "shard" / "snapshots" / f"{snap.snapshot_id}.json").read_bytes() == raw, "kept as fetched"
+    # the creator's rule is unchanged: a target without the snapshot needs every part
+    with pytest.raises(CodexError, match="the source SHARD does not hold it"):
+        seed_mod._link(root / "old" / "shard" / gone_everywhere, root / "elsewhere" / "x", snap.shards[0].root)
+
+
 # ---- G1: carry ----------------------------------------------------------------
 
 def _local(root, name):

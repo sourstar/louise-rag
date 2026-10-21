@@ -448,6 +448,13 @@ def test_device_of_asks_the_dxg_reader_only_for_a_backend_on_dev_dxg():
     (0, [], {}, None),                                   # op offload still uses the card
     (999, [], {"HIP_VISIBLE_DEVICES": "-1"}, "cpu"),     # no device to use
     (None, [], {}, None),
+    (0, ["task:jina-v3", "device:cuda"], {}, "card"),    # a torch task names its device
+    (0, ["task:jina-v3", "device:cuda:1"], {}, "card"),
+    (0, ["task:jina-v3", "device:xpu"], {}, "card"),
+    (0, ["task:jina-v3", "device:cpu"], {}, "cpu"),
+    (0, ["task:jina-v3", "device:cuda"], {"CUDA_VISIBLE_DEVICES": "-1"}, "cpu"),
+    (0, ["task:jina-v3", "device:openvino"], {}, None),
+    (0, ["device:cuda"], {}, None),                      # llama.cpp reads no `device:`
 ])
 def test_the_options_say_where_the_work_was_asked_to_go(layers, options, env, placement):
     load = {"Model": "m.gguf", "ModelFile": "/models/m.gguf", "Options": options,
@@ -455,6 +462,22 @@ def test_the_options_say_where_the_work_was_asked_to_go(layers, options, env, pl
     if layers is not None:
         load["NGPULayers"] = layers
     assert vw.declared_placement(vw.canon_from_protojson(json.dumps(load))) == placement
+
+
+@pytest.mark.parametrize("declared, device, refused", [
+    ("card", "cpu", "missing or has failed"),       # a card that fell back to the CPU
+    ("cpu", "Intel(R) Arc(TM) Pro B70 Graphics", "computes on"),
+    ("card", "Intel(R) Arc(TM) Pro B70 Graphics", None),
+    ("cpu", "cpu", None),
+    (None, "cpu", None),                            # split options: read, not checked
+    (None, "Intel(R) Arc(TM) Pro B70 Graphics", None),
+])
+def test_the_device_read_is_the_one_the_options_asked_for(declared, device, refused):
+    if refused is None:
+        vw.placement_holds(declared, device)
+    else:
+        with pytest.raises(loadopts.Unstatable, match=refused):
+            vw.placement_holds(declared, device)
 
 
 def test_the_config_names_amd_smi_by_absolute_path(tmp_path):

@@ -220,6 +220,59 @@ def _write_build_db(src_db: Path, dst_db: Path, snap) -> str:
     return "written"
 
 
+def holds_the_snapshot(root, to_name: str, snap) -> bool:
+    """Does `to_name` already hold a snapshot of `snap`'s id naming the same
+    parts — fetched, signed by the peer that created it? Then this peer is a
+    HOLDER of that snapshot, not its creator (`seed_holder`)."""
+    try:
+        mine = latest_snapshot(root, to_name, snap.snapshot_id)
+    except CodexError:
+        return False
+    return sorted(parts_of(mine)) == sorted(parts_of(snap))
+
+
+def seed_holder(root, to_ref: str, from_ref: str, *, from_snapshot: str | None = None,
+                log: Callable[[str], None] = print) -> dict[str, Any]:
+    """A HOLDER's seeding (Perugia, 2026-10-21): the target already holds the
+    snapshot (fetched and signed by the peer that created it, `share fetch`
+    of a records twin), so nothing is created or signed here — the parts
+    this peer's source holds are linked into the target's SHARD, checked
+    against the snapshot's roots, and a part the source does not hold is
+    ABSENT, not a refusal: a holder holds a selection (`kinds`, `slices`),
+    and the fetch beat takes what its file asks for. The creator's seeding
+    (`seed_shards`) still requires every part, because its snapshot is
+    computed from them. Perugia never held gutenberg's 1,530 figures
+    containers (101 GB; its file takes records and vectors), and the
+    creator's rule stopped its adoption of the twin at the first one."""
+    from . import collection as col, records as rec
+    root = Path(root)
+    to_name, to = col.resolve(root, to_ref)
+    from_name, src = col.resolve(root, from_ref)
+    refuse_unless_same_records(src, to, "--shards-from")
+    rec.local_collection(root, from_name, src)            # invariant 9: through THE gate
+    rec.local_collection(root, to_name, to)
+    snap = latest_snapshot(root, from_name, from_snapshot)
+    mine = latest_snapshot(root, to_name, snap.snapshot_id)
+    if sorted(parts_of(mine)) != sorted(parts_of(snap)):
+        raise CodexError(f"{to_name}'s snapshot {mine.snapshot_id} does not name the parts {from_name}'s "
+                         f"names; a holder links only the parts of the snapshot it holds")
+    src_shard, dst_shard = col.shard_dir_of(root, from_name), col.shard_dir_of(root, to_name)
+    counts = {"linked": 0, "copied": 0, "present": 0, "absent": 0}
+    absent: list[str] = []
+    for path, _bytes, part_root in parts_of(snap):
+        if not (src_shard / path).is_file() and not (dst_shard / path).exists():
+            counts["absent"] += 1
+            absent.append(path)
+            continue
+        counts[_link(src_shard / path, dst_shard / path, part_root)] += 1
+    log(f"[snapshot create] {to_name}: holds {snap.snapshot_id} already (fetched, signed by its creator); "
+        f"seeded from {from_name} — {counts['linked']} linked, {counts['copied']} copied, "
+        f"{counts['present']} already in place, {counts['absent']} not held by {from_name}"
+        + (f" (e.g. {absent[0]}): a holder's selection, fetched if its file asks for them" if absent else ""))
+    return {"from": src.collection_id, "to": to.collection_id, "snapshot_id": snap.snapshot_id,
+            "snapshot": mine.hash, "parts": counts, "holder": True}
+
+
 def seed_shards(root, to_ref: str, from_ref: str, *, from_snapshot: str | None = None,
                 log: Callable[[str], None] = print) -> dict[str, Any]:
     """Seed `to_ref`'s SHARD and staging from `from_ref`'s snapshot (G3). The

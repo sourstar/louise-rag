@@ -462,6 +462,20 @@ def test_a_node_that_is_stopping_leaves_the_gate_and_keeps_nothing(node, endpoin
     assert statements_kept(root) == []
 
 
+def test_the_pass_itself_is_handed_on_with_all_512_cosines(node, endpoint):
+    """The statement keeps the quorum; the operator's cross-vendor reference
+    (approved-encoders.md) reads the whole set, which `hold embedder check`
+    prints from the pass handed on here — after its statement is kept."""
+    root, collection, codex = node
+    passes: list = []
+    body = run_check.validate(root, "gutenberg", codex, collections_mod.recipe_for(collection),
+                              key=KEY, now=NOW, on_run=passes.append)
+    (run,) = passes
+    assert len(run.all_cosines) == 512 and run.cosines == tuple(run.all_cosines[i] for i in run.sampled)
+    assert [b["run"] for b in statements_kept(root)] == [body["run"]]
+    assert "all_cosines" not in body, "the signed statement is unchanged (09 §9.12)"
+
+
 def test_a_pass_whose_answers_came_from_two_runs_is_inconclusive(node, endpoint):
     root, collection, codex = node
     endpoint.switch_after = 100

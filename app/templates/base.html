@@ -32,9 +32,32 @@ async function postJSON(url,body){
   return d;
 }
 function toast(m){const e=document.createElement('div');e.textContent=m;
-  e.style.cssText='position:fixed;bottom:20px;right:20px;background:var(--panel2);border:1px solid var(--brass);padding:10px 16px;border-radius:4px;z-index:10;max-width:420px;font-family:var(--mono);color:var(--ivory)';
+  e.style.cssText='position:fixed;bottom:20px;right:20px;background:var(--panel2);border:1px solid var(--brass);padding:10px 16px;border-radius:4px;z-index:10;max-width:min(420px,calc(100vw - 40px));font-family:var(--mono);color:var(--ivory)';
   document.body.appendChild(e);setTimeout(()=>e.remove(),4200)}
 const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+/* On a phone a table with a header row is shown one block per row
+   (admin.css, "PHONES"): with three or more columns each cell under its
+   column's name — every cell gets its header as data-label — and with two
+   (key, value) the value under its key. Tables the pages build or refresh
+   later (htmx, fetch) are labelled as they appear. */
+function labelTables(root){
+  for(const t of (root||document).querySelectorAll('table')){
+    const rows=[...t.rows]; const head=rows.find(r=>r.cells.length&&[...r.cells].every(c=>c.tagName==='TH'));
+    if(!head||head.cells.length<2){t.classList.remove('stack','pairs');continue}
+    head.classList.add('head-row'); t.classList.add('stack');
+    if(head.cells.length===2){t.classList.add('pairs');continue}
+    t.classList.remove('pairs');
+    const names=[]; for(const c of head.cells) for(let i=0;i<(c.colSpan||1);i++) names.push(c.textContent.trim());
+    for(const r of rows){ if(r===head) continue; let i=0;
+      for(const c of r.cells){ const n=(c.colSpan||1)===1?names[i]:'';
+        if(n&&c.dataset.label!==n) c.dataset.label=n; i+=c.colSpan||1 } }
+  }
+}
+let labelQueued=false;
+new MutationObserver(()=>{ if(labelQueued) return; labelQueued=true;
+  requestAnimationFrame(()=>{labelQueued=false; labelTables()}) })
+  .observe(document.documentElement,{childList:true,subtree:true});
+document.addEventListener('DOMContentLoaded',()=>labelTables());
 </script>
 {% block scripts %}{% endblock %}
 </body>

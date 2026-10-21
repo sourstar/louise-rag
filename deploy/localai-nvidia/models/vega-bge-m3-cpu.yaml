@@ -1,0 +1,23 @@
+# CPU TWIN (tools/cross_device_check.py): the same build with no card at all —
+# no layers, no op offload, and CUDA shown no device (a CUDA context alone
+# moves a few hundred MiB, which a CPU run must not; vega_wrapper.device_on_nvidia).
+name: vega-bge-m3-cpu
+backend: vega-llama-cpp
+embeddings: true
+pinned: false
+context_size: 8192
+threads: 6
+gpu_layers: 0
+flash_attention: "on"
+mmap: true
+parameters:
+    model: weights/bge-m3/bge-m3-FP16.gguf
+    batch: 8192
+    seed: 0
+options:
+    - parallel:1
+    - pooling:cls
+    - ubatch:8192
+    - no_op_offload:true
+env:
+    CUDA_VISIBLE_DEVICES: "-1"

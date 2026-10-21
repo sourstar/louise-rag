@@ -93,3 +93,30 @@ def test_the_previous_names_are_retired(capsys):
             louise.build_parser().parse_args(old)
         assert e.value.code == 2
     capsys.readouterr()
+
+
+def test_check_prints_the_whole_set_per_role(tmp_path, monkeypatch, capsys):
+    """The operator's cross-vendor reference (approved-encoders.md, 2026-10-21)
+    reads all 512 cosines per role; the per-role check printed only the
+    quorum's (Perugia found the line missing on gutenberg)."""
+    from types import SimpleNamespace
+    from app import run_check
+    from app.hold import collection as col, runs as hold_runs
+    root = _collection(tmp_path)
+    codex = col.read(root, "gutenberg")
+    assert hold_runs.applies(codex)
+    monkeypatch.setattr(louise, "_recipe_for", lambda codex, name: object())
+    monkeypatch.setattr(hold_runs, "passing", lambda body, codex: True)
+    cosines = (0.9990,) * 500 + (0.9932,) * 12
+
+    def validate(root_, name, codex_, recipe, *, role, on_run=None, **kw):
+        on_run(SimpleNamespace(all_cosines=cosines))
+        return {"space_id": codex.space_id, "run": "sha256:" + "ab" * 32, "engine": {},
+                "driver": "cpu", "passed": 16, "sampled": list(range(16)),
+                "worst": "0.999000", "median": "0.999000", "fingerprint": "f",
+                "batch_invariant": True, "tokens_per_s": 1}
+    monkeypatch.setattr(run_check, "validate", validate)
+    assert louise.main(["hold", "embedder", "check", "gutenberg", "--root", str(root)]) == 0
+    out = capsys.readouterr().out
+    roles = 2 if codex.space.query.encoder is not None else 1
+    assert out.count("whole set   worst 0.993200, median 0.999000, below 0.995: 12 of 512") == roles

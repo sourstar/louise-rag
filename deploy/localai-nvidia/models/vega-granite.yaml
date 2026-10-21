@@ -1,0 +1,24 @@
+# The node's YAML (/mnt/ssd5/apps/localai/models), byte for byte in every
+# load option, on an NVIDIA card (deploy/localai-nvidia). CLAUDE.md invariant
+# 12 on CUDA: cuBLAS takes no atomics by default, so there is no vendor
+# variable to set — `parallel:1` keeps one stream; the wrapper reads the card
+# as NVIDIA and requires it. On a host with several cards, add to `env`
+# CUDA_VISIBLE_DEVICES: "<its index>" — a load split across cards states no run.
+# A different card is a new engine and run: the space's calibration gate passes it once.
+name: vega-granite
+backend: vega-llama-cpp
+embeddings: true
+pinned: true
+context_size: 512
+threads: 6
+gpu_layers: 999
+flash_attention: "on"
+mmap: true
+parameters:
+    model: weights/granite/granite-embedding-107m-multilingual-f16.gguf
+    batch: 512
+    seed: 0
+options:
+    - parallel:1
+    - pooling:cls
+    - ubatch:512

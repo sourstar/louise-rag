@@ -131,3 +131,41 @@ pre.cli{background:var(--ink);border:1px solid var(--line);border-radius:3px;pad
   vertical-align:baseline}
 .swatch.free{background:var(--panel2);border:1px solid var(--line)}
 .legend .swatch:first-child{margin-left:0}
+
+/* PHONES (operator, 2026-10-21: "in mobile mode the text can exceed the
+   width of the screen, it shall not happen"). Measured at 360 px by
+   tests/test_mobile_width_browser.py: the System page was 905 px wide and
+   the Network page 467 px — tables of ids, URLs and model names, which have
+   nothing for the line-breaking rules to break on. On a phone:
+   - any word may break where it must (`overflow-wrap:anywhere`), so an id,
+     a path or a URL wraps inside its box instead of widening the page. A
+     sha256 is shown IN FULL, wrapping — never shortened on a phone
+     (operator, 2026-10-21: "keep it in full"; it is copied into commands);
+   - a table with a header row becomes one block per row (base.html's
+     labelTables marks it `.stack`): with three or more columns each cell
+     under its column's name (its `data-label`), with two (`.pairs`: key,
+     value) the value under its key — a squeezed key column broke names
+     mid-word ("FTS_VERSIO N");
+   - preformatted text wraps; the grid is one column; the gutters narrow.
+   Wider screens are unchanged. */
+@media (max-width:760px){
+  body{overflow-wrap:anywhere}
+  nav{padding:10px 12px}
+  nav .brand{margin-right:8px}
+  nav a{padding:6px 8px}
+  main{padding:14px 12px}
+  .panel{padding:12px}
+  .grid{grid-template-columns:minmax(0,1fr)}
+  .row>*{min-width:0;flex-basis:100%}
+  .hit .head>*{min-width:0;max-width:100%}
+  pre,pre.cli{white-space:pre-wrap}
+  th{overflow-wrap:normal}
+  table.stack,table.stack tbody,table.stack tr,table.stack td{display:block;width:100%}
+  table.stack thead,table.stack tr.head-row{display:none}
+  table.stack tr{border-bottom:1px solid var(--line);padding:6px 0}
+  table.stack td{border:0;padding:2px 0}
+  table.stack td:empty{display:none}
+  table.stack td[data-label]::before{content:attr(data-label);display:block;color:var(--muted);
+    font-size:10px;text-transform:uppercase;letter-spacing:.8px}
+  table.stack.pairs td+td{padding-left:12px}
+}

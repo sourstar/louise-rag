@@ -2099,6 +2099,15 @@ def cmd_snapshot_create(a) -> int:
         # source snapshot's period unless --snapshot names another
         from app.hold import seed
         source, source_snapshot = seed.split_ref(a.shards_from)
+        src_snap = seed.latest_snapshot(a.root, c.name_of(a.root, source), source_snapshot)
+        if seed.holds_the_snapshot(a.root, ref_name, src_snap):
+            # a HOLDER (2026-10-21): the snapshot is held already, fetched and
+            # signed by its creator — the parts this peer has are linked, the
+            # rest are its selection's to fetch; nothing is computed or signed
+            held = seed.seed_holder(a.root, ref_name, source, from_snapshot=source_snapshot,
+                                    log=lambda m: print(m, file=sys.stderr))
+            print(held["snapshot"])
+            return 0
         seeded = seed.seed_shards(a.root, ref_name, source, from_snapshot=source_snapshot,
                                   log=lambda m: print(m, file=sys.stderr))
         snapshot_id = snapshot_id or seeded["snapshot_id"]
@@ -3336,8 +3345,10 @@ def _embedder_check_runs(a, name, codex) -> int:
         return 3
     worst = 0
     for role in roles:
+        passes: list = []
         try:
-            body = run_check.validate(a.root, name, codex, recipe, role=role)
+            body = run_check.validate(a.root, name, codex, recipe, role=role,
+                                      on_run=passes.append)
         except emb.GateDeferred as e:
             print(f"louise: deferred: {role}: {e}", file=sys.stderr)
             return 3
@@ -3350,6 +3361,10 @@ def _embedder_check_runs(a, name, codex) -> int:
         print(f"  tolerance   {codex.space.tolerance}")
         print(f"  sampled     {body['passed']} of {len(body['sampled'])} passed, "
               f"worst {body['worst']}, median {body['median']}")
+        for run in passes:                  # all 512 against the reference: the
+            print(f"  whole set   worst {min(run.all_cosines):.6f}, "      # cross-vendor table's row
+                  f"median {__import__('statistics').median(run.all_cosines):.6f}, "
+                  f"below 0.995: {sum(c < 0.995 for c in run.all_cosines)} of {len(run.all_cosines)}")
         print(f"  fingerprint {body['fingerprint']}")
         print(f"  batches     {'as one text at a time' if body['batch_invariant'] else 'DIFFER from one text at a time: validated for single-text work only'}")
         print(f"  benchmark   {body['tokens_per_s']} tokens/s")

@@ -248,6 +248,20 @@ Everything except two items travels through this repository.
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
 
+### 2026-10-21: NVIDIA support, before any peer has a card (operator)
+
+[nvidia-support.md](nvidia-support.md). The defect it closes: VeGa read a
+run's card from DRM fdinfo, which a CUDA process does not have, so a run on an
+NVIDIA card would have been STATED AS A CPU RUN. Now the card is read from the
+/dev/nvidia<N> the backend holds plus nvidia-smi's used memory around the
+load (WSL2: /dev/dxg, one named card), the driver from the bound module (WSL2:
+`dxg nvidia <ver>`), the runtime as the hashed CUDA libraries the backend
+mapped; MIG mode states no run. Contract: llama.cpp `parallel:1`; torch adds
+`CUBLAS_WORKSPACE_CONFIG=:4096:8` and cuDNN deterministic. Deploy:
+deploy/localai-nvidia (LocalAI CUDA 13 by digest, YAMLs tested against the
+wrapper), louise-python `VARIANT=cuda`. Floor: driver R580, Turing. Not
+measured on a card: the first one runs README step 6 before it embeds.
+
 ### 2026-10-19: the deploy gate is München's full suite on the real image
 
 Operator decision (2026-10-19, night), after a tip passed the

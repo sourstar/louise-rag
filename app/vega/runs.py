@@ -23,7 +23,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from ..hold.codex import canonical_json, digest
 from .model import CPU
@@ -49,17 +49,22 @@ def _file_digest(path: Path) -> str:
     return "sha256:" + h.hexdigest()
 
 
-def weights_digest(path: Path) -> str:
+def weights_digest(path: Path, file_digest: Callable[[Path], str] | None = None) -> str:
     """One file: `H(bytes)`. A directory: `H` of the canonical JSON mapping
     every regular file's path, relative and `/`-separated, to its digest.
     A symbolic link is refused; code the model loads from its directory is
-    a file like any other, because it is part of the function."""
+    a file like any other, because it is part of the function.
+
+    `file_digest` gives a file's `sha256:<hex>` another way — VeGa's wrapper
+    reads it through the digests it keeps across loads; the bytes hashed,
+    and so the digest, are the same."""
+    _file_digest_ = file_digest or _file_digest
     path = Path(path)
     if path.is_symlink():
         raise WeightsError(f"{path} is a symbolic link; the weights are named by the "
                            f"bytes they are (09 §9.3)")
     if path.is_file():
-        return _file_digest(path)
+        return _file_digest_(path)
     if not path.is_dir():
         raise WeightsError(f"{path} is neither a file nor a directory")
     manifest: dict[str, str] = {}
@@ -68,7 +73,7 @@ def weights_digest(path: Path) -> str:
             raise WeightsError(f"{p} is a symbolic link; a model directory holds its "
                                f"files (09 §9.3)")
         if p.is_file():
-            manifest[p.relative_to(path).as_posix()] = _file_digest(p)
+            manifest[p.relative_to(path).as_posix()] = _file_digest_(p)
     if not manifest:
         raise WeightsError(f"{path} holds no file")
     return digest(canonical_json(manifest))

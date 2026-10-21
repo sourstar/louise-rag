@@ -44,7 +44,7 @@ THE PACKAGE (what LocalAI's backends path holds as `vega-<backend>/`):
                                         of the release LocalAI runs
     grpc_auth.py  model_identity.py  parent_watch.py   LocalAI's, same release
     app/__init__.py  app/hold/{__init__,codex}.py
-    app/vega/{__init__,tag,model,procfs,runs,loadopts,dxg}.py
+    app/vega/{__init__,tag,model,procfs,runs,loadopts,dxg,nvidia}.py
 The `app/` files are Louise's, copied into the package: ONE
 definition of canonical JSON, the run and the tag. None imports more than the
 standard library; the venv holds grpcio and protobuf (requirements.txt).
@@ -70,7 +70,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from app.hold.codex import canonical_json, digest
-from app.vega import dxg, loadopts, runs
+from app.vega import dxg, loadopts, nvidia, runs
 from app.vega.model import CPU
 from app.vega.procfs import WSL_GPU, ProcFS
 from app.vega import tag as vtag
@@ -168,6 +168,8 @@ class Config:
     runtime_packages: tuple[str, ...] = RUNTIME_PACKAGES
     cuts: str = TOKENIZER
     amd_smi: Path | None = None           # WSL2: the dxg build of amd-smi (app/vega/dxg.py)
+    nvidia_smi: Path | None = None        # an NVIDIA card: nvidia-smi (app/vega/nvidia.py)
+    package: Path | None = None           # vega.json's directory: where DIGEST_STORE is kept
 
 
 def load_config(path: Path, backends_root: Path) -> Config:
@@ -184,7 +186,7 @@ def load_config(path: Path, backends_root: Path) -> Config:
     if not isinstance(doc, dict):
         raise ConfigError(f"{path} is a JSON object")
     unknown = set(doc) - {"backend", "receipts_socket", "cards", "runtime_packages", "cuts",
-                          "amd_smi"}
+                          "amd_smi", "nvidia_smi"}
     if unknown:
         raise ConfigError(f"{path}: unknown key(s) {sorted(unknown)}")
     backend, sock = doc.get("backend"), doc.get("receipts_socket")
@@ -208,10 +210,19 @@ def load_config(path: Path, backends_root: Path) -> Config:
     if amd_smi is not None and not (isinstance(amd_smi, str) and amd_smi.startswith("/")):
         raise ConfigError(f"{path}: `amd_smi` is the absolute path of the dxg build of "
                           f"amd-smi (/opt/rocm-wsl/bin/amd-smi)")
+    nvidia_smi = doc.get("nvidia_smi")
+    if nvidia_smi is not None and not (isinstance(nvidia_smi, str) and nvidia_smi.startswith("/")):
+        raise ConfigError(f"{path}: `nvidia_smi` is the absolute path of nvidia-smi "
+                          f"(/usr/bin/nvidia-smi; /usr/lib/wsl/lib/nvidia-smi under WSL2)")
+    if amd_smi and nvidia_smi:
+        raise ConfigError(f"{path}: `amd_smi` and `nvidia_smi` name two vendors' readers; a "
+                          f"package wraps one backend on one card")
     directory = Path(backend) if backend.startswith("/") else Path(backends_root) / backend
     return Config(backend=directory, socket=Path(sock), cards=dict(cards),
                   runtime_packages=tuple(packages), cuts=cuts,
-                  amd_smi=Path(amd_smi) if amd_smi else None)
+                  amd_smi=Path(amd_smi) if amd_smi else None,
+                  nvidia_smi=Path(nvidia_smi) if nvidia_smi else None,
+                  package=Path(path).resolve().parent)
 
 
 @dataclass(frozen=True)
@@ -258,6 +269,15 @@ def real_backend(directory: Path) -> RealBackend:
 
 # ---- the backend's bytes: the tree, its driver ---------------------------------------
 
+#: the digests kept beside the wrapper's package (`FileDigests(store=…)`)
+DIGEST_STORE = "file-digests.json"
+DIGEST_STORE_VERSION = 1
+#: while files are hashed, what is hashed is kept at least this often — a
+#: load LocalAI gives up on leaves its work to the next one
+SAVE_EVERY_S = 10.0
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+
+
 class FileDigests:
     """The sha256 of files, read again only when a file is not the one read
     before. Keyed on the PHYSICAL path (`os.path.realpath`), never a name, and
@@ -265,12 +285,71 @@ class FileDigests:
     st_ctime_ns). An upgrade that replaces a file gives it a new inode; a
     write in place moves its ctime, which no tool sets back (`tar` restores
     mtimes, so mtime alone is not enough). A file that changes while it is
-    read is refused, never named."""
+    read is refused, never named.
 
-    def __init__(self) -> None:
+    KEPT ACROSS LOADS (`store`, the package's DIGEST_STORE; operator,
+    2026-10-21: "VeGa rechecks at every model reload. The fix is keeping the
+    cache between reloads"). LocalAI starts a new wrapper process for every
+    load, so a cache in memory alone read the whole backend tree and the
+    weights again each time: 8.3 GB of louise-python from tank, ~75 s of
+    every MedCPT, DAR and MADLAD load, against the worker's 65 s bound
+    (München, 2026-10-21). The store holds the same entries under the same
+    rule: an entry stands only for a file whose identity is the one
+    recorded. What it costs to lose — a store unreadable, written by
+    another version, or gone with a rebuild — is the reads, never a wrong
+    digest. Several wrappers share one package: each save merges what the
+    others kept. Whoever can write the store can write the wrapper itself:
+    it is no new trust."""
+
+    def __init__(self, store: Path | str | None = None) -> None:
         self._known: dict[str, tuple[tuple[int, ...], int, str]] = {}
         self._lock = threading.Lock()
+        self._save_lock = threading.Lock()
         self.reads: list[str] = []                    # physical paths read, in order
+        self.store = Path(store) if store else None
+        self._dirty = False
+        self._saved_at = time.monotonic()
+        if self.store is not None:
+            self._known.update(self._load(self.store))
+
+    @staticmethod
+    def _load(store: Path) -> dict[str, tuple[tuple[int, ...], int, str]]:
+        """The entries a store holds; {} for one that cannot be read."""
+        try:
+            doc = json.loads(store.read_text(encoding="utf-8"))
+            files = doc.get("files") if doc.get("version") == DIGEST_STORE_VERSION else None
+        except (OSError, ValueError, AttributeError):
+            return {}
+        out: dict[str, tuple[tuple[int, ...], int, str]] = {}
+        for path, v in (files.items() if isinstance(files, dict) else ()):
+            if (isinstance(v, list) and len(v) == 7 and all(type(x) is int for x in v[:6])
+                    and isinstance(v[6], str) and _HEX64.fullmatch(v[6])):
+                out[path] = (tuple(v[:5]), v[5], v[6])
+        return out
+
+    def save(self) -> None:
+        """Keep what was hashed, merged with what other wrappers kept."""
+        if self.store is None:
+            return
+        with self._save_lock:
+            with self._lock:
+                if not self._dirty:
+                    return
+                mine = dict(self._known)
+                self._dirty, self._saved_at = False, time.monotonic()
+            merged = {**self._load(self.store), **mine}
+            doc = {"version": DIGEST_STORE_VERSION,
+                   "files": {p: [*ident, size, sha] for p, (ident, size, sha) in sorted(merged.items())}}
+            tmp = self.store.with_name(f".{self.store.name}.{os.getpid()}.tmp")
+            try:
+                tmp.write_text(json.dumps(doc, separators=(",", ":")), encoding="utf-8")
+                os.replace(tmp, self.store)
+            except OSError as e:                       # the next load reads again, no more
+                log(f"the file digests are not kept in {self.store}: {e}")
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
 
     @staticmethod
     def _identity(st: os.stat_result) -> tuple[int, ...]:
@@ -296,7 +375,16 @@ class FileDigests:
         with self._lock:
             self._known[physical] = (ident, before.st_size, h.hexdigest())
             self.reads.append(physical)
+            self._dirty = True
+            due = self.store is not None and time.monotonic() - self._saved_at >= SAVE_EVERY_S
+        if due:
+            self.save()
         return before.st_size, h.hexdigest()
+
+    def sha256(self, path: Path | str) -> str:
+        """`sha256:<hex>` of the file at `path`: runs.weights_digest's
+        per-file digest, read through the kept ones."""
+        return "sha256:" + self.read(path)[1]
 
 
 def tree_manifest(root: Path, files: FileDigests | None = None) -> dict[str, dict[str, Any]]:
@@ -498,7 +586,8 @@ def family(pid: int, proc_root: Path = Path("/proc")) -> list[int]:
 
 
 def device_of(pids: list[int], cards: Mapping[str, str], procfs: ProcFS,
-              dxg_device: Callable[[list[int]], tuple[str, str | None]] | None = None
+              dxg_device: Callable[[list[int]], tuple[str, str | None]] | None = None,
+              nvidia_device: Callable[[list[int]], tuple[str, str | None]] | None = None
               ) -> tuple[str, str | None]:
     """(the device as its driver names it, its PCI address) of the card the
     processes hold memory on; (cpu, None) when they hold none. Read, never
@@ -506,7 +595,19 @@ def device_of(pids: list[int], cards: Mapping[str, str], procfs: ProcFS,
 
     A backend on WSL's `/dev/dxg` has no DRM clients to read; with
     `dxg_device` (vega.json's `amd_smi`: `device_on_dxg` over what amd-smi
-    read around the load) the driver is asked instead."""
+    read around the load) the driver is asked instead.
+
+    A backend holding an NVIDIA card (`/dev/nvidia<N>`, a CUDA context) has
+    no DRM clients either: `nvidia_device` (vega.json's `nvidia_smi`:
+    `device_on_nvidia`) reads it, and without it no run is stated — before
+    2026-10-21 such a backend read as holding nothing, a CPU run."""
+    minors = getattr(procfs, "nvidia_minors", None)    # a reader of /proc without them holds none
+    if minors is not None and any(minors(p) for p in pids):
+        if nvidia_device is None:
+            raise loadopts.Unstatable("the backend holds an NVIDIA card (/dev/nvidia*), and "
+                                      "vega.json names no `nvidia_smi` to read which card and "
+                                      "what the load put on it")
+        return nvidia_device(pids)
     on: dict[str | None, int] = {}
     for i, pid in enumerate(pids):
         held = procfs.card_mib_by_device(pid)
@@ -550,11 +651,37 @@ ON_CARD_SHARE = 0.25
 OFF_CARD_MIB = 64
 
 
+def placement_holds(declared: str | None, device: str) -> None:
+    """The device read must be the one the options put the work on. A card
+    run whose card failed or went missing falls back to the CPU by itself —
+    llama.cpp with no HIP/CUDA/SYCL device, torch with none — and would be
+    stated as a NEW CPU run of the same model, an engine nobody measured
+    (CLAUDE.md invariant 12; Perugia, 2026-10-21: after its card hung, the
+    restarted backend ran on the CPU and the worker began gating that run).
+    A CPU twin says so in its options; options that leave it split (None)
+    are read, not checked."""
+    if declared == "card" and device == CPU:
+        raise loadopts.Unstatable(
+            "the options put the work on a card and the backend holds none: the card is "
+            "missing or has failed, and a CPU fallback is never stated as this model's run "
+            "(a CPU twin says so in its options)")
+    if declared == CPU and device != CPU:
+        raise loadopts.Unstatable(f"the options put the work on the CPU and the backend "
+                                  f"computes on {device}")
+
+
+#: torch's names for a card, as a louise-python task's `device:` option gives them
+TORCH_CARDS = ("cuda", "xpu")
+
+
 def declared_placement(canon: loadopts.Canon) -> str | None:
     """Where the load's own options put the work: "card", "cpu", or None
     when they leave it split. A HIP runtime shown no device runs nothing on
     a card; `gpu_layers: 0` alone is NOT a CPU run — llama.cpp still sends
-    large batched matmuls to the card unless `no_op_offload` is set."""
+    large batched matmuls to the card unless `no_op_offload` is set. A torch
+    task (louise-python: a `task:` option) names its device itself and keeps
+    `gpu_layers: 0`: `device:cpu` is the CPU, `device:cuda`/`device:xpu` (an
+    index allowed) a card."""
     if any(canon.env.get(k) == "-1" for k in HIDE_DEVICES):
         return CPU
     layers = canon.options.get("NGPULayers")
@@ -565,6 +692,10 @@ def declared_placement(canon: loadopts.Canon) -> str | None:
         return "card"
     if no_op_offload:
         return CPU
+    devices = _option_values(canon, "device") if _option_values(canon, "task") else []
+    if len(devices) == 1:
+        kind = devices[0].partition(":")[0]
+        return CPU if kind == CPU else "card" if kind in TORCH_CARDS else None
     return None
 
 
@@ -604,6 +735,65 @@ def device_on_dxg(pids: list[int], cards: Mapping[str, str], clients: Mapping[in
         f"on /dev/dxg the load and the driver disagree: the options put the work on "
         f"{declared or 'both the card and the CPU (gpu_layers 0 without no_op_offload)'}, "
         f"and the card's used VRAM moved {moved} MiB for {weights_mib:.0f} MiB of weights")
+
+
+def device_on_nvidia(candidates: Iterable[str], cards: Mapping[str, str], *,
+                     vram_delta_mib: Mapping[str, int], weights_mib: float,
+                     declared: str | None) -> tuple[str, str | None]:
+    """The device of a backend on an NVIDIA card, where what the load did to
+    each card's used memory (`nvidia.used_vram_mib`, read just before and just
+    after it) must agree with the load's options:
+    - `candidates`: the cards the backend holds a CUDA context on (native: the
+      minors of its `/dev/nvidia<N>`, `nvidia.minors`; WSL2: the one card
+      `cards` names). CUDA opens a context on every device it is shown, so a
+      context is necessary, not enough;
+    - a card run moved at least ON_CARD_SHARE of the weights onto exactly one
+      of them; a CPU run moved at most OFF_CARD_MIB (or 5 %) on every one —
+      and a context alone costs a few hundred MiB, so a CPU run shows CUDA no
+      device (`CUDA_VISIBLE_DEVICES=-1`) and then holds none at all.
+    A split load, a context on a card `cards` does not name, or a load another
+    model's moved the numbers of, states no run."""
+    held = sorted(set(candidates))
+    if not held:
+        raise loadopts.Unstatable("the backend holds an NVIDIA card, and which one cannot be read")
+    unknown = [p for p in held if p not in vram_delta_mib]
+    if unknown:
+        raise loadopts.Unstatable(f"the used memory of the NVIDIA card(s) {unknown} was not read "
+                                  f"around the load")
+    floor = ON_CARD_SHARE * weights_mib
+    on = [p for p in held if vram_delta_mib[p] >= floor]
+    if declared == "card" and len(on) == 1:
+        (pci,) = on
+        if pci not in cards:
+            raise loadopts.Unstatable(f"the backend computes on the NVIDIA card at {pci}, which "
+                                      f"vega.json's `cards` names no device for")
+        return cards[pci], pci
+    if declared == CPU and all(abs(vram_delta_mib[p]) <= max(OFF_CARD_MIB, 0.05 * weights_mib)
+                               for p in held):
+        return CPU, None
+    moved = ", ".join(f"{p} {vram_delta_mib[p]} MiB" for p in held)
+    raise loadopts.Unstatable(
+        f"on NVIDIA the load and the driver disagree: the options put the work on "
+        f"{declared or 'both the card and the CPU (gpu_layers 0 without no_op_offload)'}"
+        + (" (a CPU run shows CUDA no device: CUDA_VISIBLE_DEVICES=-1)" if declared == CPU else "")
+        + f", and the used memory moved {moved} for {weights_mib:.0f} MiB of weights")
+
+
+#: the CUDA user-space libraries a run on an NVIDIA card is made of: the
+#: driver's (libcuda, the host's, injected by the NVIDIA Container Toolkit:
+#: its file name carries the driver version) and the toolkit's the backend
+#: LOADED (cuBLAS is bitwise reproducible only within one toolkit version,
+#: approved-encoders.md). Read from what the processes MAPPED, so a library
+#: on the path but never loaded is not stated, and one outside the backend's
+#: tree is.
+CUDA_LIBRARIES = re.compile(r"/lib(?:cuda|cudart|cublas|cublasLt|cudnn[A-Za-z_]*|nvrtc|nvJitLink)"
+                            r"\.so(?:\.[0-9]+)*$")
+
+
+def cuda_libraries(pids: Iterable[int], procfs: ProcFS) -> list[Path]:
+    """The CUDA libraries the backend's processes have mapped, each once."""
+    found = {p for pid in pids for p in procfs.mapped(pid) if CUDA_LIBRARIES.search(p)}
+    return [Path(p) for p in sorted(found)]
 
 
 def weights_mib(path: str) -> float:
@@ -693,6 +883,10 @@ def determinism_env(backend_name: str) -> dict[str, str]:
 #:                 switch on from the model's env; its OpenVINO tasks
 #:                 (medcpt-article, medcpt-rerank) offer no mode.
 TORCH_DETERMINISM = {"LOUISE_TORCH_DETERMINISTIC": "1"}
+#: torch on CUDA: deterministic algorithms raise at the first cuBLAS call
+#: unless cuBLAS's workspace is fixed per stream, before CUDA starts — so the
+#: model's env states it (PyTorch's reproducibility notes; approved-encoders.md)
+CUDA_TORCH_DETERMINISM = {"CUBLAS_WORKSPACE_CONFIG": ":4096:8"}
 TORCH_TASKS = frozenset({"dar-legal-it", "madlad", "jina-v3"})
 NO_MODE = frozenset({"vulkan"})
 #: A task with no mode MEASURED instead (invariant 12: "measure, do not
@@ -711,11 +905,15 @@ def _option_values(canon: loadopts.Canon, key: str) -> list[str]:
             if str(o).partition(":")[0].strip() == key]
 
 
-def determinism_lacks(backend_name: str, canon: loadopts.Canon, device: str) -> list[str]:
+def determinism_lacks(backend_name: str, canon: loadopts.Canon, device: str,
+                      vendor: str | None = None) -> list[str]:
     """What a run on `backend_name` lacks of its family's determinism
     contract — `[]` when it holds it. A family with no contract, or a run its
-    family cannot make reproducible, raises: it is never stated."""
+    family cannot make reproducible, raises: it is never stated. `vendor`
+    "cuda": the card was READ as an NVIDIA one (`device_on_nvidia`), whatever
+    the backend's name says."""
     tokens = set(re.split(r"[-_]", backend_name.lower()))
+    cuda = vendor == "cuda" or any(t.startswith("cuda") for t in tokens)
     if "llama" in tokens:
         lacks = [] if _option_values(canon, "parallel") == ["1"] else \
             ["option parallel:1 (one sequence at a time)"]
@@ -724,12 +922,12 @@ def determinism_lacks(backend_name: str, canon: loadopts.Canon, device: str) -> 
                 raise loadopts.Unstatable(
                     f"{backend_name} offers no deterministic mode on a card (CLAUDE.md invariant "
                     f"12): its runs cannot be shown to give back their own bytes")
-            vendor = determinism_env(backend_name)
-            if not vendor and not any(t.startswith("cuda") for t in tokens):
+            mode = determinism_env(backend_name)
+            if not mode and not cuda:
                 raise loadopts.Unstatable(
                     f"{backend_name} names no vendor whose deterministic mode the wrapper knows "
                     f"(CLAUDE.md invariant 12): a card run on it is refused")
-            lacks += [f"env {k}={v}" for k, v in sorted(vendor.items()) if canon.env.get(k) != v]
+            lacks += [f"env {k}={v}" for k, v in sorted(mode.items()) if canon.env.get(k) != v]
         return lacks
     if "python" in tokens:
         tasks = _option_values(canon, "task")
@@ -745,7 +943,8 @@ def determinism_lacks(backend_name: str, canon: loadopts.Canon, device: str) -> 
             raise loadopts.Unstatable(
                 f"{backend_name} task {task!r} has no deterministic mode the wrapper knows (CLAUDE.md "
                 f"invariant 12; OpenVINO offers none): it is refused")
-        return [f"env {k}={v}" for k, v in sorted(TORCH_DETERMINISM.items()) if canon.env.get(k) != v]
+        need = {**TORCH_DETERMINISM, **(CUDA_TORCH_DETERMINISM if cuda and device != CPU else {})}
+        return [f"env {k}={v}" for k, v in sorted(need.items()) if canon.env.get(k) != v]
     raise loadopts.Unstatable(
         f"no determinism contract for the backend {backend_name} (CLAUDE.md invariant 12): a "
         f"backend whose runs are not shown to give back their own bytes is refused")
@@ -754,7 +953,8 @@ def determinism_lacks(backend_name: str, canon: loadopts.Canon, device: str) -> 
 def state_run(*, backend: RealBackend, canon: loadopts.Canon, environ: Mapping[str, str],
               device: str, pci: str | None, weights: str, tree: str, runtime: list[str],
               sys_root: Path = Path("/sys"), proc_root: Path = Path("/proc"),
-              card_driver_line: str | None = None) -> tuple[str, dict[str, Any]]:
+              card_driver_line: str | None = None, vendor: str | None = None
+              ) -> tuple[str, dict[str, Any]]:
     """(run_id, run) of 09 §9.12, from what this wrapper launched: `tree` the
     backend's tree digest read at this load, `runtime` the driver lines
     (`driver_lines`, or dpkg's `runtime_lines` for a backend carrying none).
@@ -764,7 +964,7 @@ def state_run(*, backend: RealBackend, canon: loadopts.Canon, environ: Mapping[s
     A run that does not hold its backend's determinism contract is refused,
     on any device (invariant 12, fail-closed: `determinism_lacks`): an answer
     the same engine would not reproduce from the same input is not stated."""
-    lacks = determinism_lacks(backend.name, canon, device)
+    lacks = determinism_lacks(backend.name, canon, device, vendor)
     if lacks:
         raise loadopts.Unstatable(
             f"the run does not hold its backend's determinism contract (CLAUDE.md invariant "
@@ -956,18 +1156,25 @@ class Gate:
 
     def __init__(self, cfg: Config, backend: RealBackend, child: Child, receipts: ReceiptClient,
                  pb: Any, *, environ: Mapping[str, str] | None = None,
-                 hash_weights: Callable[[Path], str] = runs.weights_digest,
+                 hash_weights: Callable[[Path], str] | None = None,
                  procfs: ProcFS | None = None, proc_root: Path = Path("/proc"),
                  sys_root: Path = Path("/sys"), dpkg_status: Path = Path("/var/lib/dpkg/status"),
-                 files: FileDigests | None = None, amd_smi: dxg.AmdSmi | None = None) -> None:
+                 files: FileDigests | None = None, amd_smi: dxg.AmdSmi | None = None,
+                 nvidia_smi: nvidia.NvidiaSmi | None = None) -> None:
         self.cfg, self.backend, self.child, self.receipts, self.pb = cfg, backend, child, receipts, pb
         self.environ = os.environ if environ is None else environ
-        self.hash_weights = hash_weights
-        self.files = files if files is not None else FileDigests()
+        self.files = files if files is not None else FileDigests(
+            store=cfg.package / DIGEST_STORE if cfg.package else None)
+        # the weights read through the same kept digests: the digest is the
+        # same bytes either way (runs.weights_digest's own per-file one)
+        self.hash_weights = hash_weights or (
+            lambda p: runs.weights_digest(p, file_digest=self.files.sha256))
         self.procfs = procfs or ProcFS(proc_root)
         self.proc_root, self.sys_root, self.dpkg_status = proc_root, sys_root, dpkg_status
         self.amd_smi = amd_smi if amd_smi is not None else (
             dxg.runner(cfg.amd_smi) if cfg.amd_smi else None)
+        self.nvidia_smi = nvidia_smi if nvidia_smi is not None else (
+            nvidia.runner(cfg.nvidia_smi) if cfg.nvidia_smi else None)
         self.loaded: Loaded | None = None
         self._load_lock = threading.Lock()
 
@@ -992,6 +1199,7 @@ class Gate:
                         hashed[key] = compute()
                     except Exception as e:           # noqa: BLE001 — said to LocalAI
                         hashed[f"{key} error"] = e
+                    self.files.save()                # kept even if this load is given up
                 t = threading.Thread(target=run, name=f"vega-{key}", daemon=True)
                 t.start()
                 return t
@@ -1017,6 +1225,13 @@ class Gate:
                 except dxg.DxgUnreadable as e:
                     vram_before = None
                     log(f"{self.backend.name}: VRAM before the load not read: {e}")
+            # an NVIDIA card's device is read the same way (`device_on_nvidia`)
+            nv_before: dict[str, int] | None = None
+            if self.nvidia_smi is not None:
+                try:
+                    nv_before = nvidia.used_vram_mib(self.nvidia_smi)
+                except nvidia.NvidiaUnreadable as e:
+                    log(f"{self.backend.name}: NVIDIA memory before the load not read: {e}")
             answer = forward(raw)
             if not self.pb.Result.FromString(answer).success:
                 return answer                        # the backend's own refusal, as it said it
@@ -1047,13 +1262,63 @@ class Gate:
                         weights_mib=weights_mib(canon.weights_path),
                         declared=declared_placement(canon))
 
-                device, pci = device_of(pids, self.cfg.cards, self.procfs,
-                                        None if amd_smi is None else on_dxg)
+                smi = self.nvidia_smi
+                read_nvidia: list[bool] = []
+
+                def on_nvidia(family_pids: list[int]) -> tuple[str, str | None]:
+                    assert smi is not None
+                    if nv_before is None:
+                        raise loadopts.Unstatable("the NVIDIA card's used memory before the load "
+                                                  "was not read")
+                    after = nvidia.used_vram_mib(smi)
+                    held = {m for p in family_pids for m in self.procfs.nvidia_minors(p)}
+                    if held:                         # native: the minors the backend opened
+                        by_minor = nvidia.minors(self.proc_root)
+                        lost = sorted(m for m in held if m not in by_minor)
+                        if lost:
+                            raise loadopts.Unstatable(
+                                f"the backend holds /dev/nvidia{lost[0]}, which the driver's "
+                                f"/proc/driver/nvidia/gpus lists no card for")
+                        candidates = [by_minor[m] for m in held]
+                    elif len(self.cfg.cards) == 1:   # WSL2: no process is matched to a card
+                        candidates = list(self.cfg.cards)
+                    else:
+                        raise loadopts.Unstatable("under WSL2 an NVIDIA backend cannot be matched "
+                                                  "to a card: vega.json's `cards` must name one")
+                    mig = sorted(set(candidates) & nvidia.mig_enabled(smi))
+                    if mig:
+                        raise loadopts.Unstatable(
+                            f"the NVIDIA card at {mig[0]} runs in MIG mode: a slice would be "
+                            f"stated as the whole card (docs/notes/nvidia-support.md)")
+                    read_nvidia.append(True)
+                    return device_on_nvidia(
+                        candidates, self.cfg.cards,
+                        vram_delta_mib={k: after[k] - nv_before[k] for k in after if k in nv_before},
+                        weights_mib=weights_mib(canon.weights_path),
+                        declared=declared_placement(canon))
+
+                wsl_reader = (on_dxg if amd_smi is not None else
+                              on_nvidia if smi is not None else None)
+                device, pci = device_of(pids, self.cfg.cards, self.procfs, wsl_reader,
+                                        None if smi is None else on_nvidia)
+                placement_holds(declared_placement(canon), device)
+                vendor = "cuda" if read_nvidia and device != CPU else None
+                on_wsl = self.procfs.holds(self.child.pid, WSL_GPU)
                 card_driver_line = (dxg.driver_line(amd_smi, pci)
-                                    if amd_smi is not None and pci and device != CPU
-                                    and self.procfs.holds(self.child.pid, WSL_GPU) else None)
+                                    if amd_smi is not None and pci and device != CPU and on_wsl
+                                    else nvidia.driver_line(smi, pci)
+                                    if smi is not None and pci and vendor and on_wsl else None)
                 runtime: list[str] = []
-                if device != CPU:
+                if vendor == "cuda":
+                    # the CUDA libraries the backend LOADED, hashed: cuBLAS
+                    # reproduces only within one toolkit version
+                    libraries = cuda_libraries(pids, self.procfs)
+                    if not libraries:
+                        raise loadopts.Unstatable("the backend runs on an NVIDIA card and maps no "
+                                                  "CUDA library (libcuda, libcublas…): what ran "
+                                                  "cannot be named")
+                    runtime = driver_lines(libraries, self.files)
+                elif device != CPU:
                     libraries = driver_libraries(self.backend.directory, pids, self.environ,
                                                  self.proc_root)
                     runtime = (driver_lines(libraries, self.files) if libraries else
@@ -1062,10 +1327,11 @@ class Gate:
                     backend=self.backend, canon=canon, environ=self.environ, device=device,
                     pci=pci, weights=hashed["weights"], tree=hashed["tree"], runtime=runtime,
                     sys_root=self.sys_root, proc_root=self.proc_root,
-                    card_driver_line=card_driver_line)
+                    card_driver_line=card_driver_line, vendor=vendor)
                 if not self.child.alive():
                     raise loadopts.Unstatable("the backend exited while its run was computed")
-            except (loadopts.Unstatable, runs.DriverUnknown, dxg.DxgUnreadable, OSError) as e:
+            except (loadopts.Unstatable, runs.DriverUnknown, dxg.DxgUnreadable,
+                    nvidia.NvidiaUnreadable, OSError) as e:
                 return self._refuse_load(e)
             try:
                 context_size = int(self.pb.ModelOptions.FromString(raw).ContextSize)

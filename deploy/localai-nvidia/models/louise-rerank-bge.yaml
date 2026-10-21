@@ -1,0 +1,26 @@
+# The node's YAML (/mnt/ssd5/apps/localai/models), byte for byte in every
+# load option, on an NVIDIA card (deploy/localai-nvidia). CLAUDE.md invariant
+# 12 on CUDA: cuBLAS takes no atomics by default, so there is no vendor
+# variable to set — `parallel:1` keeps one stream; the wrapper reads the card
+# as NVIDIA and requires it. On a host with several cards, add to `env`
+# CUDA_VISIBLE_DEVICES: "<its index>" — a load split across cards states no run.
+# A different card is a new engine and run: the space's calibration gate passes it once.
+# parallel:1, not the node's 4: on the B70 parallel:4 moved 16 of 20 scores with
+# the documents' order. NOT behind VeGa, and not yet measured bit-exact on any
+# card (the node's is withheld): measure before trusting it.
+name: louise-rerank-bge
+backend: cuda13-llama-cpp
+context_size: 16384
+embeddings: true
+flash_attention: "on"
+gpu_layers: 999
+mmap: true
+options:
+    - parallel:1
+    - ubatch:8192
+parameters:
+    batch: 8192
+    model: weights/bge-m3/bge-reranker-v2-m3-f16.gguf
+    seed: 0
+reranking: true
+threads: 6

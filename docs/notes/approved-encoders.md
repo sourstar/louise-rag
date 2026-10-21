@@ -105,7 +105,7 @@ cannot be a cross-peer property.
 
 | stack | bitwise mode | scope of the guarantee | control |
 |---|---|---|---|
-| NVIDIA cuBLAS | yes | same architecture **and same SM count**, single stream, same toolkit version | `cublasSetAtomicsMode` |
+| NVIDIA cuBLAS | yes | same architecture **and same SM count**, single stream, same toolkit version | `cublasSetAtomicsMode` — atomics disallowed by default, nothing to set for llama.cpp (`parallel:1`); torch adds `CUBLAS_WORKSPACE_CONFIG=:4096:8`. The run states the card and the hashed CUDA libraries (docs/notes/nvidia-support.md); NOT YET MEASURED — no peer has a card |
 | AMD rocBLAS | yes | identical GFX target ISA, single HIP stream, same ROCm version | `ROCBLAS_DEFAULT_ATOMICS_MODE=0` |
 | Intel oneDNN | yes | "on a given platform" | `set_deterministic` — API only, no env var |
 | Intel oneMKL | CNR | fixed thread count; GPU since 2024.1, BLAS-3 under OpenMP offload | `MKL_CBWR` |
@@ -154,7 +154,8 @@ The rule is now code. `deploy/vega/vega_wrapper.py` `determinism_lacks`
 applies on ANY device:
 - llama.cpp needs `parallel:1`, and on a card its vendor's mode; Vulkan, or a
   card run naming no known vendor, is refused;
-- louise-python's torch tasks need `LOUISE_TORCH_DETERMINISTIC=1`; its
+- louise-python's torch tasks need `LOUISE_TORCH_DETERMINISTIC=1` (on an
+  NVIDIA card also `CUBLAS_WORKSPACE_CONFIG=:4096:8`, 2026-10-21); its
   OpenVINO tasks are refused;
 - any other family is refused.
 
@@ -231,6 +232,46 @@ XT; captures in `D:\louise-captures` on the dev PC):
 | **card vs CPU twin** | worst **0.998362**, p1 0.999702, median 0.999999; below 0.999: 1 text; below 0.995: **none** — passes |
 | `tools/vega_cut_scan` at 1024 | 0 of 512 refused (3 before P2) |
 | granite, Qwen3-4B, Qwen3-8B, bge-m3 (`tools/vega_repro_check`) | 16/16 bit-identical each |
+
+**Cross-vendor deviation reference** *(operator, 2026-10-21: "once we have
+the numbers for Nvidia we can set a deviation threshold as a reference").*
+The threshold is SET from this table once its NVIDIA row is measured, not
+before: the worst honest cross-vendor deviation per model and role, with its
+margin stated. Each row costs nothing extra: `hold embedder check
+<collection>` embeds all 512 calibration texts and prints the `whole set`
+worst and median against the space's reference (the calibration member,
+made on the node's B70); the card-vs-own-CPU-twin column is the 0.995 review
+line above. Until then the space's `tolerance` is calibration's and 0.995
+stays the review line.
+
+| engine | model | role | vs the reference, 512 texts: worst / median | vs its own CPU twin: worst / below 0.995 | run to run |
+|---|---|---|---|---|---|
+| Intel SYCL, Arc Pro B70 (München) | — | — | the reference | — | bit-identical |
+| AMD ROCm 7.2, RX 9060 XT (Perugia, 2026-10-18) | bge-m3 F16 | document | not recorded | 0.998362 / none | 512/512 |
+| AMD ROCm 7.2, RX 9060 XT (Perugia, 2026-10-21) | Qwen3-Embedding-4B Q4_K_M (gutenberg) | document | quorum of 16: 0.998837 / 0.999244 — whole set asked | — | 16/16 over 96 vectors |
+| the same | the same | query | quorum of 16: 0.993243 / 0.996924 — whole set asked | asked | the same |
+| NVIDIA CUDA 13 | — | — | no card yet (deploy/localai-nvidia, README step 6) | — | — |
+
+*Published numbers, searched 2026-10-21 (operator: "check online"):* no
+published measurement of an NVIDIA card against the CPU for an embedding
+model, on llama.cpp or torch, was found. The nearest:
+- llama.cpp's own backend test (tests/test-backend-ops.cpp) holds every
+  backend, CUDA included, to the CPU backend PER OPERATION: normalised MSE
+  ≤ 1e-7 by default, ≤ 5e-4 for matrix multiplication (with a comment that
+  1e-7 is "too small for Vulkan"). For unit vectors NMSE 5e-4 is cosine ≥
+  0.99975 per op, which is our arithmetic and not a measurement. It is a
+  per-op pass bar, not a model-level number: errors compound over layers.
+- Verifiable-inference work measures hidden states, not embeddings, and
+  between GPUs: VeriLLM (arXiv 2509.24257) reports Apple M4 against an RTX
+  5090 for Qwen2.5-7B, mean ε about 0.002–0.009 (read from a search
+  summary; arXiv is unreachable from this environment). Across A100, L40S
+  and H100, IEEE FP32 GEMM was bitwise identical and TF32 broke it
+  (arXiv 2609.25624).
+- The large embedding gaps reported in issues come from versions,
+  pooling and tokens, not hardware: Ollama nomic-embed-text across versions
+  cosine 0.57–0.84, and 0.996 against a reference (ollama#14449);
+  Qwen3-Embedding with the wrong end token, cosine 0.55 (mlx-serve#909).
+So the NVIDIA row is measured here, or not at all.
 
 **What this means for `tolerance`, which is the number it feeds.** The
 loosest HONEST deviation measured anywhere in this project is 4x10^-4 —

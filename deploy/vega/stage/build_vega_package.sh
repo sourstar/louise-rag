@@ -17,22 +17,30 @@
 #
 # A rebuild replaces everything but `run/` (the receipts socket, bind-mounted
 # into the receipts service's container: the directory must stay the same
-# inode) and `neo-cache/`.
+# inode), `neo-cache/` and `file-digests.json` (the file digests the wrapper
+# keeps across loads, vega_wrapper.DIGEST_STORE: each entry stands only for
+# a file whose identity is the one recorded, so a rebuild of the wrapper —
+# which changes no file of the real backend — starts with them, and its first
+# load reads nothing again).
 #
 # The card and its runtime default to the node's Arc. Another host passes
 # them (the dev PC's RX 9060 XT under WSL2, deploy/localai-desktop):
 #   -e CARDS='{"0000:03:00.0": "AMD Radeon RX 9060 XT"}' \
 #   -e RUNTIME_PACKAGES='["hip-runtime-amd", "hsa-rocr", "rocdxg-roct"]' \
 #   -e AMD_SMI=/opt/rocm-wsl/bin/amd-smi -e OWNER=0:0
+# An NVIDIA host passes its card and nvidia-smi instead (deploy/localai-nvidia;
+# RUNTIME_PACKAGES stays unset: the CUDA libraries the backend MAPS are its runtime):
+#   -e CARDS='{"0000:01:00.0": "NVIDIA GeForce RTX 4090"}' -e NVIDIA_SMI=/usr/bin/nvidia-smi
 set -eu
 : "${PKG:?}" "${BACKEND:?}" "${SOCKET:?}"
 CARDS=${CARDS:-'{"0000:03:00.0": "Intel(R) Arc(TM) Pro B70 Graphics"}'}
 RUNTIME_PACKAGES=${RUNTIME_PACKAGES:-}
 AMD_SMI=${AMD_SMI:-}
+NVIDIA_SMI=${NVIDIA_SMI:-}
 OWNER=${OWNER:-568:0}
 P=/backends/$PKG
 test -d "$P"
-find "$P" -mindepth 1 -maxdepth 1 ! -name run ! -name neo-cache -exec rm -rf {} +
+find "$P" -mindepth 1 -maxdepth 1 ! -name run ! -name neo-cache ! -name file-digests.json -exec rm -rf {} +
 
 # the portable Python, as LocalAI's python backends carry it (libbackend.sh)
 mkdir -p "$P/python"
@@ -52,15 +60,15 @@ cp /src/deploy/vega/run.sh /src/deploy/vega/vega_wrapper.py /src/deploy/vega/req
 chmod 0755 "$P/run.sh"
 for f in app/__init__.py app/hold/__init__.py app/hold/codex.py \
          app/vega/model.py app/vega/procfs.py app/vega/runs.py app/vega/loadopts.py \
-         app/vega/dxg.py app/vega/__init__.py app/vega/tag.py; do
+         app/vega/dxg.py app/vega/nvidia.py app/vega/__init__.py app/vega/tag.py; do
   mkdir -p "$P/$(dirname "$f")"
   cp "/src/$f" "$P/$f"
 done
 cp /src/REVISION "$P/REVISION"
 python - "$P/vega.json" "$BACKEND" "$SOCKET" "${CUTS:-tokenizer}" "$CARDS" \
-         "$RUNTIME_PACKAGES" "$AMD_SMI" <<'PY'
+         "$RUNTIME_PACKAGES" "$AMD_SMI" "$NVIDIA_SMI" <<'PY'
 import json, sys
-path, backend, sock, cuts, cards, packages, amd_smi = sys.argv[1:]
+path, backend, sock, cuts, cards, packages, amd_smi, nvidia_smi = sys.argv[1:]
 # `cuts` (vega_wrapper.CUTS): how an input is cut to its tag's window —
 # llama.cpp by the wrapper with its tokenizer, louise-python by its tasks
 doc = {"backend": backend, "receipts_socket": sock, "cuts": cuts, "cards": json.loads(cards)}
@@ -68,6 +76,8 @@ if packages:
     doc["runtime_packages"] = json.loads(packages)
 if amd_smi:
     doc["amd_smi"] = amd_smi
+if nvidia_smi:
+    doc["nvidia_smi"] = nvidia_smi
 open(path, "w").write(json.dumps(doc, indent=2) + "\n")
 PY
 printf '{"name": "%s"}\n' "$PKG" > "$P/metadata.json"

@@ -1,0 +1,30 @@
+# louise-python for NVIDIA cards: the same torch, 2.14.0, as PyPI ships it for
+# Linux x86_64 — the CUDA 13.0 build (torch 2.14.0+cu130), whose CUDA
+# libraries come as wheels: the image needs no CUDA of its own, and the driver
+# (libcuda) is the host's, injected by the NVIDIA Container Toolkit. CUDA 13:
+# the host's driver R580 or newer, the card Turing (compute capability 7.5) or
+# newer. torch's word for the card is `cuda`: a model's YAML says device:cuda.
+# OpenVINO has no NVIDIA plugin: MedCPT's tasks run with device:cpu here.
+# Pinned as `pip freeze` gave it in the image's first build (2026-10-21, 10.1 GB,
+# `pip check` clean, every task imported), less what requirements.txt pins.
+cuda-bindings==13.4.4
+cuda-pathfinder==1.8.3
+cuda-toolkit==13.0.3.0
+nvidia-cublas==13.1.1.3
+nvidia-cuda-cupti==13.0.85
+nvidia-cuda-nvrtc==13.0.88
+nvidia-cuda-runtime==13.0.96
+nvidia-cudnn-cu13==9.24.0.43
+nvidia-cufft==12.0.0.61
+nvidia-cufile==1.15.1.6
+nvidia-curand==10.4.0.35
+nvidia-cusolver==12.0.4.66
+nvidia-cusparse==12.6.3.3
+nvidia-cusparselt-cu13==0.8.1
+nvidia-nccl-cu13==2.30.7
+nvidia-nvjitlink==13.4.92
+nvidia-nvshmem-cu13==3.4.5
+nvidia-nvtx==13.0.85
+setuptools==84.0.0
+torch==2.14.0
+triton==3.8.0

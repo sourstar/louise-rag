@@ -1,0 +1,82 @@
+# LocalAI + VeGa's receipts service on an NVIDIA card (2026-10-21, before any
+# peer has one): a Linux host with the NVIDIA driver and the NVIDIA Container
+# Toolkit, or Docker Desktop on Windows with its WSL2 GPU support — the same
+# file. The Louise node is deploy/docker/; its .env points here as the AMD
+# desktop's does (deploy/localai-desktop/compose.yaml):
+#   CHAT_URL=http://host.docker.internal:30286   CHAT_API=openai
+#   CHAT_MODEL=louise-chat-qwen3-8b
+#   VEGA_URL=http://host.docker.internal:30439
+# Steps: README.md here.
+#
+# THE IMAGE is LocalAI's own CUDA 13 build, pinned by digest (quay.io's tag
+# v4.11.0-gpu-nvidia-cuda-13, read from its Docker Hub mirror localai/localai,
+# which serves the AMD build's pinned digest byte for byte). CUDA 13 needs the
+# host's driver at R580 or newer and a Turing (7.5) or newer card — the same
+# floor as louise-python's torch (requirements-cuda.txt), so one driver serves both.
+#
+# THE CARD is given by the toolkit: its /dev/nvidia<N>, the host's libcuda and
+# nvidia-smi (the `utility` capability) and /proc/driver/nvidia/gpus, which
+# VeGa's wrapper reads to state each run's card (app/vega/nvidia.py).
+name: louise-localai
+
+services:
+  localai:
+    image: quay.io/go-skynet/local-ai:v4.11.0-gpu-nvidia-cuda-13@sha256:5ce482e454d249927c47929382bfc1e8d78ec8a2b453c340778019eeb65e7ae2
+    restart: unless-stopped
+    init: true                    # forwards the stop signal, reaps the backends
+    ports:
+      - "30286:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, utility]
+    environment:
+      LOCALAI_MODELS_PATH: /models
+      LOCALAI_BACKENDS_PATH: /backends
+      # `backends install llama-cpp` takes the CUDA 13 build, whatever LocalAI detects
+      LOCALAI_FORCE_META_BACKEND_CAPABILITY: nvidia-cuda-13
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      # the memory reclaimer evicts every model when another process holds
+      # the card (localai-bugs B4) — on a desktop GPU something always does
+      LOCALAI_MEMORY_RECLAIMER: "false"
+    volumes:
+      - ./models:/models
+      - ${LOUISE_WEIGHTS:?set LOUISE_WEIGHTS to the weights folder}:/models/weights:ro
+      - localai-backends:/backends
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # VeGa's receipts (docs/notes/vega.md): the wrapper in front of
+  # cuda13-llama-cpp writes a receipt per vector to the socket in its
+  # package's run/ directory; Louise reads them here before writing a vector.
+  vega:
+    image: louise-rag:local
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    command: ["python", "-m", "app.vega"]
+    environment:
+      VEGA_SOCKET: /run/vega/receipts.sock
+      VEGA_STATE_DIR: /state
+      VEGA_PORT: "8090"
+    ports:
+      - "30439:8090"
+    volumes:
+      - type: volume
+        source: localai-backends
+        target: /run/vega
+        volume:
+          subpath: vega-llama-cpp/run
+      - vega-state:/state
+
+volumes:
+  localai-backends:
+    name: localai_backends     # where cuda13-llama-cpp and vega-llama-cpp are installed
+  vega-state:
