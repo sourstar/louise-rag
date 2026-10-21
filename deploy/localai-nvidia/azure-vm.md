@@ -104,18 +104,26 @@ sha256sum /mnt/ssd5/apps/models/llama-embed/Qwen3-Embedding-4B-Q4_K_M.gguf \
           /mnt/ssd5/apps/models/bge-m3/bge-m3-FP16.gguf
 ```
 
-On the VM, fetch each from the Hugging Face repository the node took it from
-(München knows it; `docs/notes/approved-encoders.md` names them) into
-`/data/weights/llama-embed/` and `/data/weights/bge-m3/`, and compare:
+On the VM, from the Hugging Face revisions whose bytes are the node's
+(München matched each to the Hub's sha256, 2026-10-21):
 
 ```
-sudo mkdir -p /data/weights && sudo chown louise /data/weights
-sha256sum /data/weights/llama-embed/*.gguf /data/weights/bge-m3/*.gguf
+sudo mkdir -p /data/weights/llama-embed /data/weights/bge-m3 && sudo chown -R louise /data/weights
+HF=https://huggingface.co
+curl -fL -o /data/weights/llama-embed/Qwen3-Embedding-4B-Q4_K_M.gguf \
+  $HF/Qwen/Qwen3-Embedding-4B-GGUF/resolve/f4602530db1d980e16da9d7d3a70294cf5c190be/Qwen3-Embedding-4B-Q4_K_M.gguf
+curl -fL -o /data/weights/bge-m3/bge-m3-FP16.gguf \
+  $HF/gpustack/bge-m3-GGUF/resolve/2d48f1737679ad900d5c26c5aad5410e9c70fdca/bge-m3-FP16.gguf
+sha256sum -c <<'SUMS'
+2b0cf8f17b4c723c27303015383c27ec4bf2d8314bb677d05e920dd70bb0f16b  /data/weights/llama-embed/Qwen3-Embedding-4B-Q4_K_M.gguf
+daec91ffb5dd0c27411bd71f29932917c49cf529a641d0168496c3a501e3062c  /data/weights/bge-m3/bge-m3-FP16.gguf
+SUMS
 ```
 
-A digest that differs is a different model: copy that file from the node
-instead (`scp`, through the operator's computer). Done when every digest equals
-the node's.
+Qwen3-Embedding-4B Q4_K_M (2,496,703,776 B) is gutenberg's
+`space.encoder.weights`; bge-m3 F16 is 1,157,671,200 B. Done when both say
+`OK`. A digest that differs is a different model: stop, and copy that file
+from the node instead (`scp`, through the operator's computer).
 
 ## 5. LocalAI, its CUDA backend, VeGa's wrapper
 
