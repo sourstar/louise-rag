@@ -40,6 +40,7 @@ and 8 vCPUs for the CPU twin. About €0.70–0.80 an hour.
 az group create -n louise-nv -l germanywestcentral
 az vm create -g louise-nv -n louise-nv --size Standard_NC8as_T4_v3 \
   --image Canonical:ubuntu-24_04-lts:server:latest --os-disk-size-gb 128 \
+  --security-type Standard \
   --admin-username louise --ssh-key-values ~/.ssh/id_ed25519.pub \
   --public-ip-sku Standard --nsg-rule SSH
 # SSH from the operator's address only; nothing else is reachable from outside
@@ -48,6 +49,19 @@ az network nsg rule update -g louise-nv --nsg-name louise-nvNSG -n default-allow
 # a safety net: the VM stops itself at 22:00 UTC if it is forgotten
 az vm auto-shutdown -g louise-nv -n louise-nv --time 2200
 ```
+
+`--security-type Standard`: Trusted launch (the CLI's and the portal's
+default) turns on Secure Boot and vTPM, and Microsoft's N-series driver guide
+says the NVIDIA driver install hangs with them on. No availability zone: the
+T4 sizes in Germany West Central are offered without one.
+
+From the portal instead (operator, 2026-10-21): Basics → *Availability
+options* "No infrastructure redundancy required", *Security type* "Standard",
+size `Standard_NC8as_T4_v3`, SSH public key; Disks → 128 GiB Standard SSD,
+*Delete with VM*. Then Networking → the SSH inbound rule → *Source* "My IP
+address". The names the portal chose (user `azureuser`, resource group
+`<vm>_group`) stand for `louise` and `louise-nv` below; step 8 deletes that
+resource group, which takes its IP and NIC with it.
 
 LocalAI (30286) and VeGa (30439) are published on the VM's own interfaces
 only; the network security group admits SSH alone. Every command below runs on

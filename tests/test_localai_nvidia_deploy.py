@@ -47,3 +47,13 @@ def test_every_model_holds_the_contract_of_the_device_it_declares(path):
     real = REAL[doc["backend"]]
     device = "cpu" if placement == "cpu" else "NVIDIA GeForce RTX 4090"
     assert vw.determinism_lacks(real, canon, device, "cuda" if placement == "card" else None) == []
+
+
+def test_the_azure_vm_is_created_without_secure_boot():
+    """Trusted launch is the default of `az vm create` and of the portal; its
+    Secure Boot and vTPM hang the NVIDIA driver install (Microsoft's N-series
+    driver guide). The procedure's VM is Standard (operator, 2026-10-21)."""
+    text = (ROOT / "deploy" / "localai-nvidia" / "azure-vm.md").read_text(encoding="utf-8")
+    create = text.split("az vm create", 1)[1].split("\n#", 1)[0]
+    assert "--security-type Standard" in create
+    assert "--zone" not in create
