@@ -52,6 +52,8 @@ ubuntu nvidia-smi` must list the card first.
    twin, are the NVIDIA row of "Cross-vendor deviation reference", from which
    the operator's deviation threshold is set.
 
+**On a rented GPU** (no peer yet): `azure-vm.md` here is the whole session, step by step, measured with `tools/cross_vendor_check.py`.
+
 **Determinism.** llama.cpp on CUDA: `parallel:1`, no vendor variable (cuBLAS
 takes no atomics by default). torch on CUDA: `LOUISE_TORCH_DETERMINISTIC=1`
 and `CUBLAS_WORKSPACE_CONFIG=:4096:8` in the model's env. The wrapper refuses
