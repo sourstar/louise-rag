@@ -51,6 +51,18 @@ def served(isolated_config, monkeypatch):
     monkeypatch.setattr(spaces, "resolve_embed_model_hash", lambda *a: ("abc123", False))
     monkeypatch.setattr(web, "_ping", lambda url: True)
     monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit")
+    # what a live node's Library shows and a test collection does not: the
+    # peers' offers, every one named by its 71-character collection_id
+    from app.share import offer
+    monkeypatch.setattr(offer, "offered_for_node", lambda: [{
+        "collection_id": LONG, "title": "gutenberg-book-editions", "plugin": "gutenberg",
+        "summary": "Project Gutenberg's books, one record per edition — " + URL,
+        "license": "green", "privacy": "public", "publication": "open",
+        "served_by": [{"key": LONG, "address": "100.75.37.54:30042", "snapshot_id": LONG,
+                       "members": 13174}],
+        "first_seen": "2026-10-21T06:14:21Z", "announced_by": LONG, "relation": "twin",
+        "lineage_id": LONG, "codex_known": False, "takeable": False,
+        "waiting": "its snapshot " + LONG + " is not yet served"}])
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
