@@ -5,6 +5,7 @@ Migration plan step 5. Every check here runs against a REAL SHARD built by
 passed on a hand-built fixture would prove that the fixture agrees with
 the checker and nothing about the collection.
 """
+import time
 import json
 from dataclasses import replace
 
@@ -909,10 +910,10 @@ def test_anchor_is_judged_from_the_document_last_fetched(checkable):
     assert o.result == chk.INCONCLUSIVE and "hold key anchor" in o.why
     doc = {"kind": "louise-certifier", "version": 1, "collections": [certified.collection_id],
            "keys": [{"key": env.key_text(KEY.verify_key), "valid_from": "2026-01-01T00:00:00Z", "revoked_at": None}]}
-    anchor.record(root, "gutenberg", certified, document=anchor.parse(doc), now=1_790_000_000.0)
+    anchor.record(root, "gutenberg", certified, document=anchor.parse(doc), now=time.time())   # a fixed instant went stale 30 days on (2026-10-21)
     o = _run(root, certified, snapshot, ["anchor"]).outcome("anchor")
     assert o.result == chk.PASS and o.detail == {"state": "anchored"}, o.why
-    anchor.record(root, "gutenberg", certified, document=anchor.parse({**doc, "collections": []}), now=1_790_000_000.0)
+    anchor.record(root, "gutenberg", certified, document=anchor.parse({**doc, "collections": []}), now=time.time())
     o = _run(root, certified, snapshot, ["anchor"]).outcome("anchor")
     assert o.result == chk.FAIL and o.detail == {"state": "mismatch"} and "this collection" in o.why
 
