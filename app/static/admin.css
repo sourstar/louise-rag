@@ -138,7 +138,9 @@ pre.cli{background:var(--ink);border:1px solid var(--line);border-radius:3px;pad
    the Network page 467 px — tables of ids, URLs and model names, which have
    nothing for the line-breaking rules to break on. On a phone:
    - any word may break where it must (`overflow-wrap:anywhere`), so an id,
-     a path or a URL wraps inside its box instead of widening the page;
+     a path or a URL wraps inside its box instead of widening the page. A
+     sha256 is shown IN FULL, wrapping — never shortened on a phone
+     (operator, 2026-10-21: "keep it in full"; it is copied into commands);
    - a table with a header row becomes one block per row (base.html's
      labelTables marks it `.stack`): with three or more columns each cell
      under its column's name (its `data-label`), with two (`.pairs`: key,
