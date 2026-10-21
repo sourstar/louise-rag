@@ -230,6 +230,27 @@ stays the review line.
 | the same | the same | query | quorum of 16: 0.993243 / 0.996924 — whole set asked | asked | the same |
 | NVIDIA CUDA 13 | — | — | no card yet (deploy/localai-nvidia, README step 6) | — | — |
 
+*Published numbers, searched 2026-10-21 (operator: "check online"):* no
+published measurement of an NVIDIA card against the CPU for an embedding
+model, on llama.cpp or torch, was found. The nearest:
+- llama.cpp's own backend test (tests/test-backend-ops.cpp) holds every
+  backend, CUDA included, to the CPU backend PER OPERATION: normalised MSE
+  ≤ 1e-7 by default, ≤ 5e-4 for matrix multiplication (with a comment that
+  1e-7 is "too small for Vulkan"). For unit vectors NMSE 5e-4 is cosine ≥
+  0.99975 per op, which is our arithmetic and not a measurement. It is a
+  per-op pass bar, not a model-level number: errors compound over layers.
+- Verifiable-inference work measures hidden states, not embeddings, and
+  between GPUs: VeriLLM (arXiv 2509.24257) reports Apple M4 against an RTX
+  5090 for Qwen2.5-7B, mean ε about 0.002–0.009 (read from a search
+  summary; arXiv is unreachable from this environment). Across A100, L40S
+  and H100, IEEE FP32 GEMM was bitwise identical and TF32 broke it
+  (arXiv 2609.25624).
+- The large embedding gaps reported in issues come from versions,
+  pooling and tokens, not hardware: Ollama nomic-embed-text across versions
+  cosine 0.57–0.84, and 0.996 against a reference (ollama#14449);
+  Qwen3-Embedding with the wrong end token, cosine 0.55 (mlx-serve#909).
+So the NVIDIA row is measured here, or not at all.
+
 **What this means for `tolerance`, which is the number it feeds.** The
 loosest HONEST deviation measured anywhere in this project is 4x10^-4 —
 Intel SYCL against AMD Vulkan, two different ISAs and two different
