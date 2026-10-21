@@ -348,3 +348,25 @@ def test_a_card_model_that_fell_back_to_the_cpu_states_no_run(tmp_path, stubs):
     answer = stubs.pb.Result.FromString(gate.load_model(_load(tmp_path, stubs, NGPULayers=999), lambda raw: ok))
     assert not answer.success and "missing or has failed" in answer.message
     assert receipts.runs == [] and gate.loaded is None
+
+
+def test_a_load_answers_without_waiting_for_the_trees_file_list(tmp_path, stubs):
+    """The list is informational: a service that drops it cost every load 30 s
+    (the node, 2026-10-21: MedCPT 36 s, the load itself 2.5 s). It is told in
+    the background, after the answer."""
+    import threading
+    import time
+    gate, receipts = _gate(tmp_path, stubs, _smi_around_a_load(300, 2900))
+    release, told = threading.Event(), threading.Event()
+
+    def slow_tree(tree, manifest):
+        release.wait(10)
+        told.set()
+    receipts.publish_tree = slow_tree
+    ok = stubs.pb.Result(success=True).SerializeToString()
+    t0 = time.monotonic()
+    answer = stubs.pb.Result.FromString(gate.load_model(_load(tmp_path, stubs, NGPULayers=999), lambda raw: ok))
+    assert answer.success and time.monotonic() - t0 < 5, "answered while the list was still being told"
+    assert not told.is_set()
+    release.set()
+    assert told.wait(5), "and the list is still told"

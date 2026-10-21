@@ -1011,6 +1011,9 @@ class ReceiptClient:
         self._sock = self._reader = self._told = None
 
     def _exchange(self, msg: Mapping[str, Any], deadline: float) -> dict[str, Any]:
+        return self._exchange_line(canonical_json(dict(msg)) + b"\n", deadline)
+
+    def _exchange_line(self, out: bytes, deadline: float) -> dict[str, Any]:
         if self._sock is None:
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.settimeout(max(0.001, deadline - time.monotonic()))
@@ -1021,7 +1024,7 @@ class ReceiptClient:
                 raise
             self._sock, self._reader = s, s.makefile("rb")
         self._sock.settimeout(max(0.001, deadline - time.monotonic()))
-        self._sock.sendall(canonical_json(dict(msg)) + b"\n")
+        self._sock.sendall(out)
         line = self._reader.readline(1 << 16)
         if not line.endswith(b"\n"):
             raise OSError("the receipts service closed the connection")
@@ -1073,25 +1076,33 @@ class ReceiptClient:
         the message (an older one) refuses it: said once in the log, never
         retried — the run stands on its own, the list is what makes a drift
         diffable."""
+        # THE LOCK IS TAKEN PER ATTEMPT, never across the retries and their
+        # sleeps (2026-10-21): it is the receipts' lock too, and an older
+        # service that drops the ~5 MB message held it for the whole bound —
+        # every answer's receipt waited behind a list that is only
+        # informational. The message is serialized once, not per attempt.
         with self._lock:
             if image in self._trees_told:
                 return
-            deadline = time.monotonic() + timeout_s
-            last: BaseException | None = None
-            while time.monotonic() < deadline:
-                try:
-                    reply = self._exchange({"kind": "tree", "image": image,
-                                            "tree": dict(manifest)}, deadline)
-                    if not reply["ok"]:
-                        raise ReceiptRefused(str(reply.get("error")))
+        out = canonical_json({"kind": "tree", "image": image, "tree": dict(manifest)}) + b"\n"
+        deadline = time.monotonic() + timeout_s
+        last: BaseException | None = None
+        while time.monotonic() < deadline:
+            try:
+                with self._lock:
+                    reply = self._exchange_line(out, deadline)
+                if not reply["ok"]:
+                    raise ReceiptRefused(str(reply.get("error")))
+                with self._lock:
                     self._trees_told.add(image)
-                    return
-                except (OSError, ValueError) as e:
-                    last = e
+                return
+            except (OSError, ValueError) as e:
+                last = e
+                with self._lock:
                     self.close()
-                    time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
-            why = f"{type(last).__name__}: {last}" if last else "no time left"
-            raise Unavailable(f"the tree was not acknowledged within {timeout_s:g} s ({why})")
+                time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+        why = f"{type(last).__name__}: {last}" if last else "no time left"
+        raise Unavailable(f"the tree was not acknowledged within {timeout_s:g} s ({why})")
 
 
 # ---- the child: the real backend --------------------------------------------------------
@@ -1352,12 +1363,19 @@ class Gate:
                 # tree rides behind the run, so it waits for the next load too
                 log(f"{self.backend.name}: the run is not published yet: {e}")
             else:
-                try:
-                    self.receipts.publish_tree(hashed["tree"], hashed["manifest"])
-                except (Unavailable, ReceiptRefused) as e:
-                    # the run stands without it; the next load tells it again
-                    log(f"{self.backend.name}: the tree's file list is not kept by VeGa: {e}")
+                # IN THE BACKGROUND, after the answer (2026-10-21): the list is
+                # informational — the run stands on its own — and a load that
+                # waited for it waited 30 s whenever the service dropped it
+                threading.Thread(target=self._tell_tree, args=(hashed["tree"], hashed["manifest"]),
+                                 name="vega-tree-publish", daemon=True).start()
             return answer
+
+    def _tell_tree(self, image: str, manifest: Mapping[str, Any]) -> None:
+        try:
+            self.receipts.publish_tree(image, manifest)
+        except (Unavailable, ReceiptRefused) as e:
+            # the run stands without it; the next load tells it again
+            log(f"{self.backend.name}: the tree's file list is not kept by VeGa: {e}")
 
     # ---- the cut to a tag's window (docs/notes/char-cut-truncation.md) ------------
 

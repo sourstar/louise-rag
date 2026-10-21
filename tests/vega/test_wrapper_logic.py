@@ -734,14 +734,28 @@ def test_the_receipts_client_tells_vega_the_tree_once_and_vega_keeps_it(tmp_path
     c.publish_tree(image, manifest)
     assert vega.runs.get_tree(image) == manifest
     sent = []
-    original = c._exchange
-    c._exchange = lambda msg, deadline: sent.append(msg) or original(msg, deadline)
+    original = c._exchange_line
+    c._exchange_line = lambda out, deadline: sent.append(out) or original(out, deadline)
     c.publish_tree(image, manifest)
     assert sent == [], "the same tree again is not sent again"
     with pytest.raises(vw.ReceiptRefused, match="not H of the tree"):
         c.publish_tree("sha256:" + "00" * 32, manifest)
     assert vega.runs.get_tree("sha256:" + "00" * 32) is None
     c.close()
+
+
+def test_a_tree_retried_never_holds_the_receipts_lock_while_it_waits(tmp_path, monkeypatch):
+    """The receipts' lock is the answers' too: an older service that drops the
+    list must not hold every receipt back for the tree's whole bound."""
+    d = _tree(tmp_path)
+    manifest = vw.tree_manifest(d)
+    c = vw.ReceiptClient(tmp_path / "nobody.sock")
+    held: list = []
+    real_sleep = vw.time.sleep
+    monkeypatch.setattr(vw.time, "sleep", lambda s: held.append(c._lock.locked()) or real_sleep(min(s, 0.01)))
+    with pytest.raises(vw.Unavailable):
+        c.publish_tree(vw.manifest_digest(manifest), manifest, timeout_s=0.2)
+    assert held and not any(held), "never asleep with the lock"
 
 
 def test_without_a_receipts_service_the_tree_is_a_deferral_of_its_own(tmp_path):
