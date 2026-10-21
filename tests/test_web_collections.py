@@ -360,7 +360,9 @@ def test_the_library_shows_an_annotations_collection_on_its_own_card(client, mon
     assert "annotates: pubmed" in card and "from snapshot: 2026-08" in card
     assert "2 claims in snapshot 2026-09" in card
     assert "kinds: records, relations" in card
-    assert codex.collection_id in card
+    # the id in the badge row, as a held card shows the space; not trailing the notes
+    assert f'<span class="badge lapis" title="collection_id">id: {codex.collection_id}</span>' in card
+    assert card.count(codex.collection_id) == 1
     # the served collection's controls do not apply here
     head = card[:card.index("remove…")]
     assert "grow profile" not in head and "embed mode" not in head and "setEmbedMode" not in head
