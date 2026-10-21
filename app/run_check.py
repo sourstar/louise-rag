@@ -229,7 +229,8 @@ def _now() -> str:
 
 def validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "document",
              key=None, now: str | None = None,
-             stop: Callable[[], bool] | None = None) -> dict[str, Any]:
+             stop: Callable[[], bool] | None = None,
+             on_run: Callable[[Any], None] | None = None) -> dict[str, Any]:
     """The gate against the run that answers now, and its statement KEPT,
     pass or fail. Returns the statement's body.
 
@@ -257,7 +258,7 @@ def validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "docume
             embed=answers(recipe, **kw),
             embed_one=answers(recipe, how="one", **kw),
             contribute=answers(recipe, how="contribute", **kw),
-            stated=stated, key=key, now=now or _now(), items=items)
+            stated=stated, key=key, now=now or _now(), items=items, on_run=on_run)
         _mark(codex, role, body["run"], body)      # measured now: nothing to re-check
         return body
     except (runs_mod.RunRefused, emb.GateError):

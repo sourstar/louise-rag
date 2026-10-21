@@ -412,13 +412,17 @@ class Answers:
 
 def validate(root: Path, name: str, codex: Codex, *, role: str, reference,
              embed, embed_one, contribute, stated: emb.StatedRun, key,
-             now: str, items=None) -> dict[str, Any]:
+             now: str, items=None,
+             on_run: Callable[[emb.Run], None] | None = None) -> dict[str, Any]:
     """Run the gate against one stated run and KEEP the statement — pass or
     fail: "a failure is kept too, so the run is not retried against the same
     set" (07 §7.3). Returns the statement's body. Embedding is the caller's:
     `embed` for the whole set, `embed_one` and `contribute` for the
     fingerprint and batch invariance (embedder.run_gate). `items`: the set as
-    the space's encoder is fed it (a pair space's, from its member)."""
+    the space's encoder is fed it (a pair space's, from its member).
+    `on_run` is given the pass itself once its statement is kept — the
+    cosines of all 512 texts, which the statement does not carry (the
+    operator's cross-vendor reference reads them, approved-encoders.md)."""
     run = emb.run_gate(codex, reference=reference, embed=embed, role=role,
                        stated=stated, embed_one=embed_one, contribute=contribute,
                        items=items)
@@ -437,4 +441,6 @@ def validate(root: Path, name: str, codex: Codex, *, role: str, reference,
                 f"inconclusive, nothing is kept, and it is tried again")
     statement = emb.statement(run, codex, key, now=now)
     keep(root, name, statement)
+    if on_run is not None:
+        on_run(run)
     return statement["body"]

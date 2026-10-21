@@ -3319,8 +3319,10 @@ def _embedder_check_runs(a, name, codex) -> int:
         return 3
     worst = 0
     for role in roles:
+        passes: list = []
         try:
-            body = run_check.validate(a.root, name, codex, recipe, role=role)
+            body = run_check.validate(a.root, name, codex, recipe, role=role,
+                                      on_run=passes.append)
         except emb.GateDeferred as e:
             print(f"louise: deferred: {role}: {e}", file=sys.stderr)
             return 3
@@ -3333,6 +3335,10 @@ def _embedder_check_runs(a, name, codex) -> int:
         print(f"  tolerance   {codex.space.tolerance}")
         print(f"  sampled     {body['passed']} of {len(body['sampled'])} passed, "
               f"worst {body['worst']}, median {body['median']}")
+        for run in passes:                  # all 512 against the reference: the
+            print(f"  whole set   worst {min(run.all_cosines):.6f}, "      # cross-vendor table's row
+                  f"median {__import__('statistics').median(run.all_cosines):.6f}, "
+                  f"below 0.995: {sum(c < 0.995 for c in run.all_cosines)} of {len(run.all_cosines)}")
         print(f"  fingerprint {body['fingerprint']}")
         print(f"  batches     {'as one text at a time' if body['batch_invariant'] else 'DIFFER from one text at a time: validated for single-text work only'}")
         print(f"  benchmark   {body['tokens_per_s']} tokens/s")
