@@ -900,3 +900,24 @@ no part with an unreadable bundle left — the two "present but
 unreadable" were stale entries. 8710eed deployed on Perugia 16:15Z, no
 cache folder (all its drives are NVMe, operator), nothing in
 state/refused-bundles.
+
+### 2026-10-22 — gutenberg's scan signature covers the record's files (9ed5ed2)
+
+**Change.** A book directory's cursor entry now also records the files that
+decide its record — pg<id>.rdf and the form file `pick_form` chose — with
+their (mtime_ns, size), so a file rewritten IN PLACE (the directory's mtime
+unmoved) is seen by the next scan. Two stats more per book per scan. An
+entry written before is re-examined once.
+
+**Measured on the node** (München, read-only: `GutenbergSource.discover`
+over the live origin, 79,732 book directories, against a copy of the
+cursor in a scratch state dir; nothing written to a manifest):
+- BEFORE (1652337, the directory alone): 3.3 s and 2.7 s a steady-state
+  pass, 0 books re-examined (13.1 s cold, 2.2 s warm earlier the same day).
+- AFTER, the conversion (once per peer, the first scan after the deploy):
+  every book re-examined, its RDF parsed for `lang` — 1,183.5 s for the
+  last 17,981 books of a run interrupted by the switch's rename, so ~70 min
+  for the whole corpus at this pool's load.
+- AFTER, steady state: 3.9, 3.9, 3.9, 3.8 s, 0 books re-examined. One pass
+  right after the conversion re-examined 287 (staged at the conversion's
+  end, not yet promoted); every later pass 0. **+0.6–1.2 s a pass.**
