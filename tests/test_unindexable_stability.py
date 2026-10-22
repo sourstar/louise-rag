@@ -162,3 +162,57 @@ def test_the_command_withdraws_at_once_and_refuses_a_document_that_parses(
     assert louise.main(["dev", "unindexable", "g", readable, "--yes"]) != 0
     assert "parses under this image" in capsys.readouterr().err
     assert con.execute("SELECT error FROM documents WHERE uid=?", (readable,)).fetchone()[0] is None
+
+
+def test_a_withdrawn_book_comes_back_by_itself_when_its_origin_drops_the_note(
+        tmp_path, isolated_config):
+    """READMISSION (operator, 2026-10-22): a book withdrawn because its
+    origin declared it broken returns with no human step once a release
+    drops the note — the RDF is inside `origin_hash` since parser 9, so
+    discovery sees the change, clears the corpus-fact error and resets the
+    stage marks, and the ordinary stages index it again. The stages read the
+    text through `read_chapters`, not `parse`: the refusal has to be there."""
+    import os
+    from app import catalog, fts
+    c, con = _collection(tmp_path)
+    uid, book = "gutenberg:10001", 10001
+    rdf = c.corpus_dir / "10001" / "pg10001.rdf"
+    clean = rdf.read_text(encoding="utf-8")
+
+    def stages():
+        for stage in ("rdf", "fts"):
+            row = con.execute("SELECT * FROM documents WHERE uid=?", (uid,)).fetchone()
+            if row["error"] is None:
+                worker._execute_step(con, c, stage, row)
+
+    def lands(text, bump):
+        # as a release lands: staged, then renamed into the book's directory
+        # (the scan's signature is the directory's mtime, source.py)
+        tmp = rdf.with_suffix(".part")
+        tmp.write_text(text, encoding="utf-8")
+        st = rdf.stat()
+        os.utime(tmp, (st.st_atime, st.st_mtime + bump))
+        os.replace(tmp, rdf)
+        d = rdf.parent.stat()
+        os.utime(rdf.parent, (d.st_atime, d.st_mtime + bump))
+        discovery.sync_collection(con, c)
+
+    def state():
+        err = con.execute("SELECT error FROM documents WHERE uid=?", (uid,)).fetchone()[0]
+        listed = [h["book_id"] for h in catalog.search(con, c, "Study Fixtures", 10) or []]
+        return err, len(fts.book_chunks("en", book, c)), book in listed
+
+    stages()
+    catalog.backfill(con, c, budget_s=60)
+    assert state() == (None, state()[1], True) and state()[1] > 0, "indexed as usual"
+    lands(clean.replace("</pgterms:ebook>", "<dcterms:description>This book's encoding is broken, "
+                        "and will not be fixed.</dcterms:description></pgterms:ebook>", 1), 10)
+    stages()
+    error, chunks, listed = state()
+    assert error and "encoding broken" in error, error
+    assert (chunks, listed) == (0, False), "withdrawn from the lexical and catalog legs"
+    lands(clean, 20)
+    assert state()[0] is None, "the note gone: discovery clears the corpus fact by itself"
+    stages()
+    error, chunks, listed = state()
+    assert error is None and chunks > 0 and listed, "and the ordinary stages index it again"

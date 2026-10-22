@@ -152,6 +152,20 @@ def edition_date(marc: dict, text_header: dict) -> tuple[str | None, str | None]
 BROKEN_ENCODING = re.compile(r"(?:this\s+)?(?:book|e-?book|text)['’]?s?\s+encoding\s+is\s+broken[^.\n]*\.?",
                              re.IGNORECASE)
 
+
+def _refuse_if_broken(meta: dict, native_id: int) -> None:
+    """`UnindexableDocument` for a book its catalogue entry declares broken —
+    in EVERY reader: `parse` (the records) and `read_text`/`read_chapters`
+    (the fts and embed stages), which read the text without `parse`. Only
+    the first had it on 2026-10-22, so the stages would have indexed pg673
+    again from its file."""
+    broken = BROKEN_ENCODING.search(meta.get("description") or "")
+    if broken:
+        # the origin's own statement, quoted, so the Library says why
+        raise UnindexableDocument(
+            f"the origin declares book {native_id}'s encoding broken: \"{broken.group(0)}\" "
+            f"(readmitted when its catalogue entry no longer says so)")
+
 class GutenbergSource:
     source_id = "gutenberg"
     license_class = LicenseClass.GREEN
@@ -375,12 +389,7 @@ class GutenbergSource:
         from . import pg_epub
 
         meta = rdf.parse(book_dir, native_id)
-        broken = BROKEN_ENCODING.search(meta.get("description") or "")
-        if broken:
-            # the origin's own statement, quoted, so the Library says why
-            raise UnindexableDocument(
-                f"the origin declares book {native_id}'s encoding broken: \"{broken.group(0)}\" "
-                f"(readmitted when its catalogue entry no longer says so)")
+        _refuse_if_broken(meta, native_id)
         suffix = raw.path.suffix.lower()
         plates: list = []
         text_header: dict[str, str] = {}
@@ -560,6 +569,7 @@ class GutenbergSource:
         """
         from . import pg_epub
 
+        _refuse_if_broken(rdf.parse(book_dir, native_id), native_id)
         form, path, _ = pick_form(book_dir, native_id)
         if form is None:
             # the CORPUS fact, not a stage failure — see UnindexableDocument
@@ -589,6 +599,7 @@ class GutenbergSource:
         and every chunk id would name a chunk the record does not contain."""
         from . import pg_epub
 
+        _refuse_if_broken(rdf.parse(book_dir, native_id), native_id)
         form, path, _ = pick_form(book_dir, native_id)
         if form == "epub":
             try:
