@@ -27,6 +27,20 @@
   {% for ch in doc.chunks %}
     {% if ch.chapter and ch.chapter != ns.chapter %}{% set ns.chapter = ch.chapter %}<h3>{{ ch.chapter }}</h3>{% endif %}
     <p id="c{{ ch.seq }}" data-cid="{{ ch.chunk_id }}" class="reader-chunk{% if ch.chunk_id in highlights %} hl{% endif %}">{{ ch.text }}</p>
+    {# the pictures this paragraph mentions, drawn or linked (web._reader_plates) #}
+    {% if ch.plates %}
+    <div class="figures">
+      {% for f in ch.plates %}
+      {% if f.kind == 'img' %}{% set src = '/api/ask/figure?' ~ ({'collection': collection, 'uid': doc.header.uid, 'hash': f.hash}|urlencode) %}
+      <figure class="plate"><a href="{{ src }}" target="_blank" rel="noopener" title="open the plate full size"><img src="{{ src }}" loading="lazy" alt="{{ f.caption or 'plate' }}"></a>{% if f.caption %}<figcaption dir="auto">{{ f.caption }}</figcaption>{% endif %}</figure>
+      {% elif f.kind == 'link' %}
+      <a class="badge lapis plate-link" href="{{ f.href }}" target="_blank" rel="noopener" title="{{ f.why }} — the origin shows it">🖼 {{ f.caption or 'illustration' }} — at the source ↗</a>
+      {% else %}
+      <span class="badge" title="{{ f.why }}; no page of the origin is known for it">🖼 {{ f.caption or 'illustration' }} — not available</span>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
   {% endfor %}
   </div>
 </div>
@@ -35,6 +49,10 @@
   .reader-chunk{white-space:pre-wrap;line-height:1.55;margin:0 0 12px}
   .reader-chunk.hl{background:rgba(246,196,83,.22);border-left:3px solid var(--brass);padding:6px 8px;border-radius:4px}
   .reader-body h3{margin:16px 0 6px}
+  .reader-body .figures{display:flex;flex-wrap:wrap;gap:8px;margin:-6px 0 12px}
+  .reader-body .plate{margin:0;max-width:240px}
+  .reader-body .plate img{display:block;max-width:240px;max-height:240px;border-radius:4px;background:#fff}
+  .reader-body .plate figcaption{font-size:11px;color:#9fb0bc;margin-top:2px}
 </style>
 <script>
 const READER_HL={{ highlights|tojson }};

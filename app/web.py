@@ -636,10 +636,55 @@ def read_document(request: Request, collection: str, book_id: int,
     if doc is None:
         raise HTTPException(404, f"{collection} does not hold #{book_id}")
     highlights = [h for h in hl.split(",") if h]
+    _reader_plates(c, doc)
     return TEMPLATES.TemplateResponse(request, "reader.html", {
         "active": "ask", "collection": c.name, "book_id": book_id,
         "doc": doc, "highlights": highlights, "fragment": bool(fragment),
         "plugin_label": _plugin_label(c.plugin)})
+
+
+def _reader_plates(collection, doc: dict) -> None:
+    """Every picture a paragraph of the reader mentions, drawn or linked —
+    the reader's half of `_attach_plates` (operator, 2026-10-22: "pictures
+    are still missing in the reader"). Each `[Illustration…]` marker of a
+    chunk gets its placed plate when the collection's records carry plates
+    and this node holds it (`figures.for_record`, the same placement as a
+    hit's), else a link to the origin's page that shows it. A red-class
+    collection's plates are never served (04 §4.4): its markers are linked
+    only. A placement that cannot be read links every marker; never fatal."""
+    from . import reader
+    from .ask import figures as figures_mod
+    chunks = doc.get("chunks") or []
+    if not any("[Illustration" in str(ch.get("text") or "") for ch in chunks):
+        return
+    header = doc.get("header") or {}
+    link = reader.illustrated_url(str(header.get("source") or collection.plugin),
+                                  {"native_id": header.get("native_id"), "lang": header.get("lang"),
+                                   "title": header.get("title")}) or header.get("origin_url")
+    per_seq: dict = {}
+    codex = getattr(collection, "codex", None)
+    if (codex is not None and getattr(codex, "record_line", 1) == 2
+            and codex.license.cls != "red" and header.get("uid")):
+        try:
+            from .ask import results as ask_results
+            from .hold import collection as col
+            from .share import seeder
+            tree = col.shard_dir_of(ask_results._root(), collection.name)
+            got = figures_mod.record_of(tree, seeder.current_snapshot(tree), str(header["uid"]),
+                                        figures_mod._order(codex))
+            if got is not None:
+                record, shard = got
+                per_seq = figures_mod.for_record(collection, record, figures_mod.held_hashes(tree, shard))
+        except Exception:   # noqa: BLE001 — a placement that cannot be read: every marker linked
+            per_seq = {}
+    for ch in chunks:
+        text = str(ch.get("text") or "")
+        if "[Illustration" in text:
+            try:
+                figs = per_seq.get(int(ch.get("seq")))
+            except (TypeError, ValueError):
+                figs = None
+            ch["plates"] = figures_mod.mentions(text, figs, link=link)
 
 
 @ask_router.get("/read/{collection}/{book_id}/screen")

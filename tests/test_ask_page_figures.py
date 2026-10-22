@@ -93,3 +93,44 @@ def test_a_picture_named_in_prose_is_linked(client, monkeypatch):  # noqa: F811
     html = _page(client, monkeypatch, place, text="His portrait forms the frontispiece of this book.")
     assert 'href="https://www.gutenberg.org/cache/epub/2701/pg2701-images.html"' in html
     assert "the document&#39;s 7 illustrations — at the source" in html
+
+
+def _reader(client, monkeypatch, *, record_line=2, cls="green", per_seq=None):  # noqa: F811
+    from app import reader
+    from app.ask import figures as figures_mod
+    codex = SimpleNamespace(collection_id="cid-gutenberg", record_line=record_line,
+                            license=SimpleNamespace(cls=cls), slicing={})
+    coll = SimpleNamespace(name="gutenberg", plugin="gutenberg", codex=codex)
+    doc = {"header": {"uid": "gutenberg:2701", "source": "gutenberg", "native_id": "2701", "lang": "en",
+                      "title": "Moby Dick", "reference": "", "origin_url": None, "text_from": "lexical index"},
+           "chunks": [{"chunk_id": "gutenberg:2701:3:1", "seq": 3, "chapter": "",
+                       "text": "The whale. [Illustration: The whale] Then [Illustration: Map]"},
+                      {"chunk_id": "gutenberg:2701:4:1", "seq": 4, "chapter": "", "text": "No pictures here."}]}
+    monkeypatch.setattr(reader, "collection_by_name", lambda name: coll)
+    monkeypatch.setattr(reader, "document", lambda c, b: doc)
+    monkeypatch.setattr(web, "_refuse_withheld", lambda *a, **k: None)
+    monkeypatch.setattr(figures_mod, "record_of", lambda *a, **k: ({"uid": "gutenberg:2701"}, None))
+    monkeypatch.setattr(figures_mod, "held_hashes", lambda *a, **k: set())
+    monkeypatch.setattr(figures_mod, "for_record", lambda *a, **k: per_seq or {})
+    from app.share import seeder
+    monkeypatch.setattr(seeder, "current_snapshot", lambda *a, **k: None)
+    return client.get("/read/gutenberg/2701?fragment=1").text
+
+
+def test_the_reader_draws_a_held_plate_and_links_the_rest(client, monkeypatch):  # noqa: F811
+    """Operator, 2026-10-22: "pictures are still missing in the reader"."""
+    html = _reader(client, monkeypatch, per_seq={3: [
+        {"hash": H, "media_type": "image/jpeg", "caption": "The whale", "state": "held"},
+        {"hash": H, "media_type": "image/png", "caption": "Map", "state": "not-held"}]})
+    src = f"/api/ask/figure?collection=gutenberg&amp;uid=gutenberg%3A2701&amp;hash=blake2b%3A{'ab' * 16}"
+    assert f'<img src="{src}"' in html, "the held plate is drawn under its paragraph"
+    assert 'href="https://www.gutenberg.org/cache/epub/2701/pg2701-images.html"' in html
+    assert "Map — at the source" in html
+    assert html.count('class="figures"') == 1, "only the paragraph that mentions pictures"
+
+
+def test_the_reader_links_every_marker_of_a_collection_without_plates(client, monkeypatch):  # noqa: F811
+    for kw in ({"record_line": 1}, {"cls": "red"}):
+        html = _reader(client, monkeypatch, **kw)
+        assert "<img" not in html and "/api/ask/figure" not in html
+        assert html.count("— at the source") == 2
