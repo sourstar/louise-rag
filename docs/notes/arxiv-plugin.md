@@ -1,5 +1,7 @@
 # arXiv — plugin design (2026-10-22)
 
+**PARKED (operator, 2026-10-22): a blueprint kept for future testing and development. Nothing is built, nothing is downloaded from arXiv, and no session works on it until the operator resumes it.**
+
 The first collection, abstracts only, is designed in full in
 docs/notes/arxiv-collection.md (operator, 2026-10-22).
 

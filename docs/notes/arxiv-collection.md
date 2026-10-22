@@ -1,5 +1,7 @@
 # The `arxiv` collection — every paper, searched by its abstract (2026-10-22)
 
+**PARKED (operator, 2026-10-22): a blueprint kept for future testing and development. Nothing is built, nothing is downloaded from arXiv, and no session works on it until the operator resumes it.**
+
 Operator, 2026-10-22: "Design the collection that only searches by
 abstracts, pointing to the remotely hosted version." The plugin's context
 — bulk forms, licences, pre-embeddings, the full-text options left for
@@ -234,3 +236,23 @@ a resumption token and one ending a list.
    `create` follows the encoder choice. The harvest itself is kept: the
    corpus directory is the origin's bytes and is reused (RULE 1).
 5. The measurement of §7, then the real collection.
+
+## 9. Observed before the parking (München, 2026-10-22, 10:43–10:57)
+
+A first capture ran before the stop (4 ListRecords pages, 1,300 records
+each, and GetRecord for six papers; deleted afterwards, nothing kept).
+What it showed, which the design above must absorb when resumed:
+
+- **No `completeListSize`** on arXiv's resumption tokens: the pass's
+  denominator (06 §6.2's one contract) must come from elsewhere — a
+  `ListIdentifiers` pass, or the count of the previous full harvest plus
+  the daily increments.
+- **No `<affiliation>`** in 2,600 records of the `arXiv` format, nor in five
+  old papers searched for one: the second format's reason to exist is the
+  PARSED authors alone. Re-check whether `arXivRaw` + one parse rule
+  suffices before pairing two formats.
+- **No `deleted` headers** in what was read: withdrawals are marked in the
+  record, not deleted.
+- Candidate fixture ids: 1709.07021 (new style), hep-th/9901001 (old
+  style), 1709.09051 (≥3 versions), 2601.01519 (withdrawn), 2608.07609
+  (MSC + ACM + DOI), 0709.1914 (a French abstract).
