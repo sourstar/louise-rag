@@ -182,3 +182,35 @@ def test_a_picture_named_in_prose_links_the_documents_pictures():
     assert mentions("a portrait of the sea, a map of the town", [], link="u", record_plates=5) == [], \
         "ordinary words alone are not a mention"
     assert mentions("the frontispiece", [], link=None, record_plates=3) == [], "no page to send to"
+
+
+def test_a_parts_placement_is_built_once_then_looked_up(node, monkeypatch):  # noqa: F811
+    """München, 2026-10-22: the plates of ten hits read their records' frames
+    and the containers' indexes on every search (1.4 s of 10 s). The first
+    search that meets a part places as before and queues it; the file built
+    off its thread then gives the same plates without reading a record."""
+    codex, name, d, snap = an_illustrated_copy(node)
+    collection = SimpleNamespace(name=name, layers=codex.layers)
+    record, shard = F.record_of(d, snap, "pubmed:10", "numeric")
+    seqs = sorted(F.for_record(collection, record, set()))
+
+    def hits():
+        return [{"uid": u, "chunk_id": f"{u}:{s}:1", "figures": []}
+                for u, s in [("pubmed:10", s) for s in seqs] + [("pubmed:2", 0)]]
+    first = hits()
+    F.place(collection, codex, d, snap, first)
+    F.CACHE.queue.join()
+    files = sorted(p.name for p in F.CACHE.store(d).glob("v*.json"))
+    assert [f.split("-1111")[0] for f in files] == [f"v{F.PLACEMENT_VERSION}-year=2023-00001",
+                                                     f"v{F.PLACEMENT_VERSION}-year=2023-00002"], files
+    F.CACHE.clear()
+
+    def no_read(*a, **k):
+        raise AssertionError("a record was read")
+    monkeypatch.setattr(pack_records, "read_record", no_read)
+    monkeypatch.setattr(pack_records, "iter_records", no_read)
+    again = hits()
+    F.place(collection, codex, d, snap, again)
+    assert again == first
+    assert [h["record_plates"] for h in again] == [4] * len(seqs) + [0]
+    assert any(h["figures"] for h in again), "the fixture places plates"
