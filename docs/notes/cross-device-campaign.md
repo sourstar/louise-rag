@@ -49,6 +49,13 @@ returns the same documents, and cosine alone cannot say that for near-ties.
   - a 16-text random sample hides the tail; the whole set (512) is the unit
     (86bfbfb prints it).
 
+**Proposal to review after the 512-text CPU-twin run** *(operator,
+2026-10-22)*: card vs its own CPU twin, per text — **below 0.995 is a
+warning, below 0.99 is a no-go.** Today a value below 0.995 sends the engine
+to review (approved-encoders.md, "Cross-device bar"); the first review kept
+the AMD query engine validated (one Hebrew text at 0.991561, the twin the
+odd one out). Under the proposal that text is a warning, not a stop.
+
 ## 3. Literature context (to verify with citations before writing)
 
 From general knowledge, not yet a literature search:
