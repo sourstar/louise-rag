@@ -106,3 +106,44 @@ def test_no_annotations_collection_about_it_costs_only_the_listing(tmp_path, mon
     target, tcoll, held, codex = setup(tmp_path)
     monkeypatch.setattr(collections_mod, "load_annotations", lambda: [])
     assert works.work_groups(tcoll, ["pubmed:1"], root=tmp_path) == ({}, {})
+
+
+# ---- which edition a work shows (operator, 2026-10-22) ----------------------
+
+F = works.EditionFacts
+
+
+def test_unabridged_wins_even_over_the_readers_language():
+    """"1. always prefer the unabridged ones (even before criteria 2)": a
+    French abridgement does not beat the English full text for a French
+    reader; among unabridged editions the language decides as before."""
+    hits = [hit("g:2", "en"), hit("g:3", "fr"), hit("g:1", "es")]
+    facts = {"g:3": F(abridged=True)}
+    out = works.collapse(hits, WORK_OF, MEMBERS, works.preference(None, "fr"), facts)
+    assert retrieval.record_of(out[0]) == "g:2"
+    out = works.collapse(hits, WORK_OF, MEMBERS, works.preference(None, "fr"), {})
+    assert retrieval.record_of(out[0]) == "g:3", "no facts: as before"
+
+
+def test_the_corrected_edition_wins_within_a_language():
+    """"2. the newer editions carrying corrections over the older ones of the
+    same printing company"; and PG's own "higher quality eBook" note."""
+    hits = [hit("g:1", "es"), hit("g:4", "es")]
+    newer = {"g:1": F(publisher="ibarra", year=1780), "g:4": F(publisher="ibarra", year=1787)}
+    assert retrieval.record_of(works.collapse(hits, WORK_OF, MEMBERS, ("es",), newer)[0]) == "g:4"
+    other_house = {"g:1": F(publisher="ibarra", year=1780), "g:4": F(publisher="sancha", year=1787)}
+    assert retrieval.record_of(works.collapse(hits, WORK_OF, MEMBERS, ("es",), other_house)[0]) == "g:1", \
+        "another printing company: the rank decides"
+    named = {"g:1": F(better_as=("4",))}
+    assert retrieval.record_of(works.collapse(hits, WORK_OF, MEMBERS, ("es",), named)[0]) == "g:4"
+
+
+def test_edition_facts_read_the_records_own_words():
+    rec = {"title": "Don Quixote (Abridged for Schools)", "date": "1890",
+           "extra": {"marc": {"260": ["London : Macmillan, 1890."]},
+                     "description": "A somewhat higher quality eBook is available as #49652."}}
+    f = works.edition_facts(rec)
+    assert f == F(abridged=True, better_as=("49652",), publisher="macmillan", year=1890)
+    assert works.edition_facts({"title": "Les Misérables (Unabridged)"}).abridged is False
+    assert works.edition_facts({"title": "X", "extra": {"marc": {"520": ["A condensed retelling of the epic."]}}}).abridged
+    assert works.edition_facts({"title": "Plain", "date": "1901"}) == F(year=1901)
