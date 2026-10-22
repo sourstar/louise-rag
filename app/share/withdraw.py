@@ -63,6 +63,8 @@ def duplicates(root: Path, name: str, codex, con, *, own_key: str) -> list[dict[
     root = Path(root)
     by_shard: dict[str, dict[str, list[tuple[int, str, int]]]] = {}
     for r in cov.rows(con):
+        if not str(r["shard"]).startswith(cov.shard_id(codex, "")):
+            continue                 # a carry predecessor's row: provenance, not this collection's
         if r["producer"] != own_key or not r["accepted_at"]:
             continue
         header = _header(root, name, codex, r["shard"], r["bundle_id"])

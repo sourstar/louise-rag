@@ -439,7 +439,49 @@ def offered_elsewhere(codex, con, node_con, *, now: float, skip=None, deprecated
     return out
 
 
-def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | None = None) -> frozenset[str]:
+def predecessors(root: Path, name: str) -> list[str]:
+    """The collections `name` was carried from in the SAME space, its carry
+    marker's `predecessors` (app/hold/carry.py): their coverage rows sit in
+    this manifest unkeyed, as provenance — never this collection's coverage."""
+    import json
+    try:
+        held = json.loads((Path(root) / name / "state" / "carry.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return list(held.get("predecessors") or []) if held.get("done") and held.get("same_space") else []
+
+
+def _uid_key(uid: str):
+    tail = str(uid).rsplit(":", 1)[-1]
+    return (0, int(tail), "") if tail.isdigit() else (1, 0, tail)
+
+
+def _predecessor_rows(con, codex, preds: Sequence[str], sid: str, records: Sequence[dict]):
+    """The accepted rows of the carry predecessors in `sid`'s slice whose
+    [uid_first, uid_last] overlaps this part's records — the part's numbers
+    moved with a re-cut (2026-10-22: 40 of one producer's p9 bundles span two
+    p10 parts), so the slice and the uid range decide, never the part number.
+    Index range per predecessor and slice; bounded by the overlap."""
+    if not preds or not records:
+        return []
+    keys = sorted(_uid_key(r["uid"]) for r in records)
+    lo, hi = keys[0], keys[-1]
+    slice_ = sid.rsplit("/", 1)[0]
+    out = []
+    for pid in preds:
+        start = f"{pid}/{codex.space_segment}/{slice_}/"
+        for bundle_id, shard, producer, first, last in con.execute(
+                "SELECT bundle_id, shard, producer, uid_first, uid_last FROM coverage "
+                "WHERE shard >= ? AND shard < ? AND accepted_at IS NOT NULL",
+                (start, start[:-1] + "0")):
+            if first and last and (_uid_key(last) < lo or _uid_key(first) > hi):
+                continue
+            out.append((bundle_id, shard[len(f"{pid}/{codex.space_segment}/"):], producer))
+    return out
+
+
+def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | None = None,
+                 records: Sequence[dict] | None = None) -> frozenset[str]:
     """The uids EVERY accepted bundle held here for the shard already claims
     (their `possession.json`, 09 §9.7), whoever produced it: what a further
     export of the shard leaves out. A holder bundles the vectors it
@@ -449,7 +491,16 @@ def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | 
     bundled from held vectors and then completed by its leader costs a
     bundle of the new records only, never the part twice (RULE 1;
     operator, 2026-10-19: minimum redundancy). `own_key` is kept for the
-    callers that pass it and narrows nothing."""
+    callers that pass it and narrows nothing.
+
+    `records` (the part's records) also brings in the rows of the carry
+    PREDECESSORS (`predecessors`): a uid an accepted bundle of the collection
+    this one was re-minted from holds is claimed where that bundle's
+    possession names it with the record's own content_hash — a record that
+    changed since is embedded again here and bundled. A predecessor's row
+    without files claims nothing: an accepted bundle keeps no files when its
+    every chunk was held already (the compare path, app/share/accept.py), so
+    the vectors held are this peer's own."""
     import json
     out: set[str] = set()
     for r in cov.rows(con, shard=cov.shard_id(codex, sid)):
@@ -460,6 +511,16 @@ def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | 
             out.update(json.loads(p.read_bytes()).keys())
         except (OSError, ValueError, AttributeError):
             continue                               # a bundle not here (set aside, moved): claims nothing
+    preds = predecessors(root, name) if records else []
+    if preds:
+        hashes = {r["uid"]: r.get("content_hash") for r in records}
+        for bundle_id, psid, _producer in _predecessor_rows(con, codex, preds, sid, records):
+            p = bundle_dir(root, name, codex, psid, bundle_id) / "possession.json"
+            try:
+                held = json.loads(p.read_bytes())
+            except (OSError, ValueError):
+                continue
+            out.update(u for u, h in held.items() if u in hashes and h == hashes[u])
     return frozenset(out)
 
 
@@ -512,10 +573,14 @@ def _bundle_shard(root: Path, name: str, codex, snapshot: sn.Snapshot, shard: sn
             f"{int((now - max(recent)) // 60)} min ago; not exported again for {int(REFUSED_RETRY_S // 3600)} h "
             f"— the vectors stay here for `vectors check`")
         return "refused"
-    claimed = claimed_uids(root, name, codex, con, sid, own_key=own_key)
+    # the part's records, where the claim needs them (the predecessors' rows,
+    # by content hash) or the held path does; read once
+    preds = predecessors(root, name)
+    records = (landing.records_for(root, name, snapshot, sid, None)
+               if held_books is not None or preds else None)
+    claimed = claimed_uids(root, name, codex, con, sid, own_key=own_key, records=records)
     only = None
     if held_books is not None:
-        records = landing.records_for(root, name, snapshot, sid, None)
         unclaimed = [r for r in records if r["uid"] not in claimed]
         if not unclaimed:
             return "claimed" if claimed else "nothing"

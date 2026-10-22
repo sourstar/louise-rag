@@ -316,6 +316,8 @@ def foreign_duplicates(root: Path, name: str, codex, con, *, own_key: str,
     root = Path(root)
     by_shard: dict[str, list[dict[str, Any]]] = {}
     for r in cov.rows(con):
+        if not str(r["shard"]).startswith(cov.shard_id(codex, "")):
+            continue                 # a carry predecessor's row: provenance, not this collection's
         if r["accepted_at"]:
             by_shard.setdefault(r["shard"], []).append(r)
     out: dict[str, str] = {}

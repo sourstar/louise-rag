@@ -765,3 +765,98 @@ def test_an_own_export_the_ladder_refuses_is_set_aside_not_served_and_not_export
     later = contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)],
                             now=now + contribute.REFUSED_RETRY_S + 60, **kw)
     assert later["bundles"] and later["refused_recently"] == []
+
+
+PREDECESSOR = "sha256:" + "d9" * 32
+
+
+def _predecessor(root, codex, con, sid, possession, *, bundle_id=None, files=True, accepted=True):
+    """A carry predecessor's accepted row, UNKEYED under its own collection's
+    shard id (app/hold/carry.py, 2026-10-22), with its bundle's possession
+    file where the row's path names it — and the marker naming it."""
+    from app.share import contribute as c
+    bundle_id = bundle_id or "sha256:" + format(len(possession) + 7, "064x")
+    uids = sorted(possession, key=c._uid_key)
+    cov.record(con, bundle_id=bundle_id, shard=f"{PREDECESSOR}/{codex.space_segment}/{sid}", producer=PEER_KEY,
+               uids=uids, chunks=len(uids), tiers={t: "pass" for t in cov.TIERS}, source=cov.FETCHED,
+               accepted_at="2026-10-20T00:00:00Z" if accepted else None)
+    if files:
+        d = c.bundle_dir(root, "gutenberg", codex, sid, bundle_id)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "possession.json").write_text(json.dumps(possession), encoding="utf-8")
+    marker = root / "gutenberg" / "state" / "carry.json"
+    marker.write_text(json.dumps({"done": True, "same_space": True, "predecessors": [PREDECESSOR]}),
+                      encoding="utf-8")
+    return bundle_id
+
+
+def test_a_predecessor_s_accepted_rows_claim_by_range_and_content_hash(ready):
+    """2026-10-22, gutenberg p9 → p10: the predecessor's rows are read by
+    SLICE and uid range — the part numbers moved with the re-cut, and a
+    bundle may span two new parts — and a uid is claimed only where the
+    bundle's possession names it with the record's own content_hash."""
+    from app.hold import land as landing
+    root, snapshot, codex, kw = ready
+    shard = snapshot.shards[0]
+    sid = f"{shard.slice}/{shard.n:05d}"
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    assert len(records) >= 2
+    first, second = records[0], records[1]
+    # filed under ANOTHER part number of the same slice (the re-cut), and spanning past this part
+    _predecessor(root, codex, kw["con"], f"{shard.slice}/{shard.n + 7:05d}",
+                 {first["uid"]: first["content_hash"], second["uid"]: "0" * 32,      # changed since: not claimed
+                  "gutenberg:999999999": "f" * 32})
+    claimed = contribute.claimed_uids(root, "gutenberg", codex, kw["con"], sid, records=records)
+    assert claimed == {first["uid"]}
+    assert contribute.claimed_uids(root, "gutenberg", codex, kw["con"], sid) == frozenset(), \
+        "without the records nothing is read from a predecessor"
+    other = next(s for s in snapshot.shards if s.slice != shard.slice) if len({s.slice for s in snapshot.shards}) > 1 else None
+    if other is not None:
+        osid = f"{other.slice}/{other.n:05d}"
+        orecs = landing.records_for(root, "gutenberg", snapshot, osid, None)
+        assert not (contribute.claimed_uids(root, "gutenberg", codex, kw["con"], osid, records=orecs)
+                    & {first["uid"]}), "another slice's part reads none of it"
+
+
+def test_a_predecessor_row_without_files_claims_nothing_and_blocks_nothing(ready):
+    """An accepted bundle keeps no files when every chunk was held already
+    (the compare path): the vectors held are this peer's own, so the held
+    path bundles them — never left to a fetch that cannot happen."""
+    from app.hold import land as landing
+    root, snapshot, codex, kw = ready
+    shard = snapshot.shards[0]
+    sid = f"{shard.slice}/{shard.n:05d}"
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    _predecessor(root, codex, kw["con"], sid, {r["uid"]: r["content_hash"] for r in records}, files=False)
+    assert contribute.claimed_uids(root, "gutenberg", codex, kw["con"], sid, records=records) == frozenset()
+    assert contribute.unreadable_bundles(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY) == []
+
+
+def test_the_held_path_signs_none_of_a_predecessor_s_rows_and_never_counts_them_as_coverage(ready):
+    """The node's held path, after the same-space re-mint: the rows it had
+    landed from another producer's bundles in the predecessor are not
+    bundled and signed as its own; a changed record is. The predecessor's
+    rows are never this collection's coverage."""
+    from app.hold import land as landing, vectors_build as vb
+    root, snapshot, codex, kw = ready
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    vb.build(codex, shards=list(snapshot.shards),
+             records_for=lambda s: landing.records_for(root, "gutenberg", snapshot, f"{s.slice}/{s.n:05d}", None),
+             vectors_for=kw["vectors_for"], embed=kw["embed"], write=kw["write"], batch=2)
+    shard = snapshot.shards[0]
+    sid = f"{shard.slice}/{shard.n:05d}"
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    changed = records[-1]
+    _predecessor(root, codex, kw["con"], sid,
+                 {**{r["uid"]: r["content_hash"] for r in records}, changed["uid"]: "0" * 32})
+    live = [rendezvous.Peer(OUR_KEY, 1000.0), rendezvous.Peer(PEER_KEY, 1e12)]
+    out = contribute.once(root, "gutenberg", codex, live=live, **kw)
+    mine = [b for b in out["bundles"] if b["shard"] == sid]
+    assert len(mine) == 1, out["bundles"]
+    held = json.loads((contribute.bundle_dir(root, "gutenberg", codex, sid, mine[0]["bundle_id"])
+                       / "possession.json").read_bytes())
+    assert set(held) == {changed["uid"]}, "only the record that changed since the predecessor's bundle"
+    view = {v["shard"]: v for v in cov.show(codex, snapshot, kw["con"])["shards"]}[cov.shard_id(codex, sid)]
+    assert view["covered"] == mine[0]["chunks"], "the predecessor's row is not this collection's coverage"
+    assert not any(str(r["shard"]).startswith(PREDECESSOR) for r in cov.rows(kw["con"], shard=cov.shard_id(codex, sid)))

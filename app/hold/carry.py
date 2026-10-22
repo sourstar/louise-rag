@@ -163,6 +163,111 @@ def _rekey_union(share: Path, old_prefix: str, new_prefix: str) -> int:
     return sum(1 for k in got if k.startswith(old_prefix))
 
 
+# ---- the predecessor's rows: provenance, not coverage ------------------------
+#
+# gutenberg's parser-10 carry (2026-10-22): the SAME space, a rebuilt target.
+# Clearing the source's coverage rows deleted the only record of which rows
+# the node had LANDED from another producer's bundles, and its held path then
+# bundled everything it held as its own. Re-keying them would be worse for a
+# rebuilt target: its parts are re-cut (222 of 1,639 identical), a bundle may
+# span two new parts, and its signed header names the old collection — offered
+# as the new one's coverage, every ladder would refuse it. So the rows stay
+# UNKEYED, under their own collection's shard ids: never coverage of the new
+# collection, never announced, read by the held path (contribute.claimed_uids)
+# as provenance — which uids another producer's accepted bundle already holds.
+
+def _link_tree(src: Path, dst: Path) -> dict[str, int]:
+    """Every file under `src` HARD-LINKED at the same relative path under
+    `dst` — the bundles' bytes held once (RULE 1), each bundle's
+    possession.json readable at the path its row names. An existing file is
+    left as it is; across filesystems a link cannot be made and the file is
+    copied."""
+    out = {"linked": 0, "copied": 0, "present": 0}
+    src = src.resolve() if src.exists() else src
+    if not src.is_dir():
+        return out
+    for base, _dirs, files in os.walk(src):
+        rel = Path(base).relative_to(src)
+        for f in files:
+            s, d = Path(base) / f, dst / rel / f
+            if d.exists():
+                out["present"] += 1
+                continue
+            d.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.link(s, d)
+                out["linked"] += 1
+            except OSError:
+                shutil.copy2(s, d)
+                out["copied"] += 1
+    return out
+
+
+def _predecessors_of(state: Path, src_id: str) -> list[str]:
+    """`src_id` and the collections IT was carried from in the same space, as
+    its own carry marker records them — so provenance survives a chain of
+    re-mints."""
+    try:
+        held = json.loads((state / MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        held = {}
+    chain = list(held.get("predecessors") or []) if held.get("same_space") else []
+    return [src_id, *[c for c in chain if c != src_id]]
+
+
+def keep_predecessor_rows(root, from_ref: str, to_ref: str, *, apply: bool = False,
+                          log: Callable[[str], None] = print) -> dict[str, Any]:
+    """For a same-space carry that ran before provenance was kept (gutenberg
+    p9 → p10, 2026-10-22): the source's coverage rows copied UNKEYED into the
+    target's manifest, its bundle tree hard-linked into the target's, and the
+    carry marker naming the predecessors. Repeatable."""
+    from . import collection as col
+    root = Path(root)
+    from_name, src = col.resolve(root, from_ref)
+    to_name, to = col.resolve(root, to_ref)
+    if src.space_id != to.space_id:
+        raise CodexError(f"{from_name} and {to_name} are not one space: their rows are another function's")
+    sp, tp = _paths(root, from_name), _paths(root, to_name)
+    marker = tp["state"] / MARKER
+    held = json.loads(marker.read_text(encoding="utf-8")) if marker.is_file() else {}
+    if not (held.get("done") and held.get("from") == src.collection_id and held.get("to") == to.collection_id):
+        raise CodexError(f"{to_name} records no finished carry from {from_name} ({marker})")
+    prefix = cov_prefix(src)
+    like = prefix.replace("%", r"\%").replace("_", r"\_") + "%"
+    scon = sqlite3.connect(f"file:{sp['manifest']}?mode=ro", uri=True)
+    try:
+        rows = scon.execute("SELECT * FROM coverage WHERE shard LIKE ? ESCAPE '\\'", (like,)).fetchall()
+        cols = [d[0] for d in scon.execute("SELECT * FROM coverage LIMIT 0").description]
+    finally:
+        scon.close()
+    plan = {"from": from_name, "to": to_name, "rows": len(rows), "apply": apply}
+    if not apply:
+        log(f"[carry] would keep {len(rows)} coverage row(s) of {from_name} in {to_name}, unkeyed "
+            f"(provenance, not coverage), and link its bundle tree (--yes)")
+        return plan
+    tcon = sqlite3.connect(tp["manifest"], timeout=60, isolation_level=None)
+    try:
+        tcon.execute("BEGIN IMMEDIATE")
+        before = tcon.total_changes
+        tcon.executemany(f"INSERT OR IGNORE INTO coverage({','.join(cols)}) "
+                         f"VALUES({','.join('?' * len(cols))})", rows)
+        plan["rows_written"] = tcon.total_changes - before
+        tcon.execute("COMMIT")
+    except BaseException:
+        if tcon.in_transaction:
+            tcon.execute("ROLLBACK")
+        raise
+    finally:
+        tcon.close()
+    plan["bundles"] = _link_tree(sp["state"] / "bundles", tp["state"] / "bundles")
+    marker.write_text(json.dumps({**held, "same_space": True,
+                                  "predecessors": _predecessors_of(sp["state"], src.collection_id)},
+                                 sort_keys=True), encoding="utf-8")
+    log(f"[carry] {to_name}: {plan['rows_written']} of {len(rows)} coverage row(s) of {from_name} kept "
+        f"unkeyed; bundle tree {plan['bundles']}")
+    return plan
+
+
 def _documents(manifest: Path) -> int | None:
     if not manifest.is_file():
         return None
@@ -360,6 +465,8 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
     # was added) — its bundles, coverage rows and seeder state are the
     # target's too, by the book, and travel with the table
     shares = src.space_id != to.space_id and src.space_id in (getattr(to, "admitted_spaces", ()) or ())
+    # the SAME space, not A1f: the source's rows are provenance, kept unkeyed (2026-10-22)
+    same = src.space_id == to.space_id
     sp, tp = _paths(root, from_name), _paths(root, to_name)
     marker = tp["state"] / MARKER
     claim = {"from": src.collection_id, "to": to.collection_id,
@@ -457,14 +564,22 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
     elif shares:
         log(f"[carry] {from_name} → {to_name}: --copy leaves state/bundles and state/share with "
             f"{from_name}; the coverage rows are carried")
-    cleared = _repin(tp["manifest"], src, to, keep_coverage=shares)
+    elif same:
+        sb, tb = sp["state"] / "bundles", tp["state"] / "bundles"
+        done["bundles"] = (_move_state(sb, tb) if not copy
+                           else "linked " + json.dumps(_link_tree(sb, tb), sort_keys=True))
+    cleared = _repin(tp["manifest"], src, to, keep_coverage=shares, keep_unkeyed=same and not shares)
     plan.update(done=done, coverage_rows_cleared=cleared, documents=_documents(tp["manifest"]))
-    marker.write_text(json.dumps({**claim, "done": True}, sort_keys=True), encoding="utf-8")
+    final = {**claim, "done": True}
+    if same and not shares:
+        final.update(same_space=True, predecessors=_predecessors_of(sp["state"], src.collection_id))
+    marker.write_text(json.dumps(final, sort_keys=True), encoding="utf-8")
     log(f"[carry] {from_name} → {to_name}: manifest {done['manifest']}, index/ "
         f"{done['index']}, lance/ {done['lance']}"
         + (f", state/bundles {done.get('bundles')}, state/share {done.get('share')}" if shares and not copy else "")
         + f"; space re-pinned to {to.space_id[:23]}…; {cleared} coverage row(s) of {from_name} "
-        + ("re-keyed to it (A1f)" if shares else "cleared") + ". Before "
+        + ("re-keyed to it (A1f)" if shares else "kept unkeyed (provenance, never its coverage)"
+           if same else "cleared") + ". Before "
         + (f"use: `hold records build {to_name}`, `hold snapshot create {to_name}`, then "
            f"`dev carry {from_name} {to_name} --reconcile` (A1c) — or, where {from_name} "
            f"holds no records, `dev carry {from_name} {to_name} --resign` (A1d)" if rebuilt else
@@ -729,12 +844,15 @@ def cov_prefix(codex: Codex) -> str:
     return cov.shard_id(codex, "")
 
 
-def _repin(manifest: Path, src: Codex, to: Codex, *, keep_coverage: bool = False) -> int:
+def _repin(manifest: Path, src: Codex, to: Codex, *, keep_coverage: bool = False,
+           keep_unkeyed: bool = False) -> int:
     """The `space` row to `to`'s Codex, and `src`'s coverage rows gone, in
     one transaction — or, `keep_coverage` (A1f: `to` admits `src`'s space,
     the same document vectors), re-keyed to `to`'s shard ids, so the parts
     the network covered stay covered and nothing is embedded or bundled
-    again. Repeatable: a second run finds nothing to clear or re-key."""
+    again; or, `keep_unkeyed` (the same space), left under `src`'s shard ids
+    as provenance (see `keep_predecessor_rows`), and counted. Repeatable: a
+    second run finds nothing to clear or re-key."""
     from app.share import coverage as cov
     con = sqlite3.connect(manifest, timeout=60, isolation_level=None)
     try:
@@ -751,7 +869,10 @@ def _repin(manifest: Path, src: Codex, to: Codex, *, keep_coverage: bool = False
         for t in ("coverage", "coverage_shards"):
             if t not in tables:
                 continue
-            if keep_coverage:
+            if keep_unkeyed:
+                cleared += con.execute(f"SELECT COUNT(*) FROM {t} WHERE shard LIKE ? ESCAPE '\\'",
+                                       (like,)).fetchone()[0]
+            elif keep_coverage:
                 cleared += con.execute(f"UPDATE {t} SET shard = ? || substr(shard, ?) "
                                        f"WHERE shard LIKE ? ESCAPE '\\'",
                                        (cov.shard_id(to, ""), len(prefix) + 1, like)).rowcount

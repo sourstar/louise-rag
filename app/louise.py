@@ -1319,6 +1319,10 @@ def cmd_dev_carry(a) -> int:
         for name in sorted({from_name, to_name}):
             _take_write_lock(a.root, name, "louise dev carry", exit_code=2)
     say = lambda m: print(m, file=sys.stderr)              # noqa: E731
+    if getattr(a, "predecessor_rows", False):
+        _print({"predecessor_rows": carry_mod.keep_predecessor_rows(a.root, from_name, to_name,
+                                                                    apply=a.yes, log=say)})
+        return 0
     if getattr(a, "reconcile", False):
         if not a.yes:
             say(f"[carry] would reconcile {to_name} against {from_name} (--yes)")
@@ -4558,6 +4562,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="into a space that differs only by cutting by tokens (A1e): then drop "
                         "the rows the character cut shortened, not an archive's, and embed "
                         "their documents again")
+    p.add_argument("--predecessor-rows", action="store_true", dest="predecessor_rows",
+                   help="after a same-space carry made before provenance was kept: the "
+                        "source's coverage rows copied unkeyed and its bundle tree linked "
+                        "(contribute.claimed_uids reads them; never this collection's coverage)")
     p.add_argument("--reconcile", action="store_true",
                    help="after `--rebuilt`, the build and the snapshot: keep the vectors of "
                         "every document whose content_hash did not move, embed the rest again")

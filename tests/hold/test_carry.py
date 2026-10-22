@@ -1014,3 +1014,81 @@ def test_an_instruction_twin_admits_its_predecessors_bundles_and_carries_the_sha
     assert out["coverage_rows_cleared"] == 2 and any("re-keyed to it (A1f)" in s for s in said)
     union = json.loads((state / "share" / counting.CACHE).read_text())
     assert list(union) == [cov.shard_id(instructed, "lang=en/00001")]
+
+
+def _foreign_row_and_bundle(root, codex, name="old"):
+    """Another producer's accepted bundle in `name`: its row and its files."""
+    from app.share import contribute, coverage as cov
+    coll = _local(root, name)
+    con = db.connect(coll)
+    try:
+        cov.record(con, bundle_id="sha256:" + "ab" * 32, shard=cov.shard_id(codex, "lang=en/00003"),
+                   producer="ed25519:" + "9a" * 32, uids=["gutenberg:10001"], chunks=3, tiers={},
+                   source="fetched", accepted_at="2026-10-20T00:00:00Z")
+    finally:
+        con.close()
+    d = contribute.bundle_dir(root, name, codex, "lang=en/00003", "sha256:" + "ab" * 32)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "possession.json").write_text('{"gutenberg:10001": "h"}', encoding="utf-8")
+    return d
+
+
+def _coverage(root, name):
+    con = db.connect(_local(root, name))
+    try:
+        return {r[0]: r[1] for r in con.execute("SELECT bundle_id, shard FROM coverage")}
+    finally:
+        con.close()
+
+
+def test_a_same_space_rebuilt_carry_keeps_the_source_s_rows_unkeyed_and_links_its_bundles(pair):
+    """2026-10-22, gutenberg p9 → p10 (the same space, records rebuilt): the
+    carry cleared the source's coverage rows — the only record of what had
+    been landed from another producer — and the held path then signed it all.
+    The rows now stay under the SOURCE's shard ids (provenance; the parts
+    were re-cut, so they are never the target's coverage) and the bundle
+    tree is hard-linked, so their possession files are read in the target."""
+    root, old, re_, _uids, _ids = _rebuilt_pair(pair)
+    src_dir = _foreign_row_and_bundle(root, old)
+    out = carry.carry(root, "old", "re", rebuilt=True, copy=True, apply=True, log=quiet)
+    rows = _coverage(root, "re")
+    assert rows["sha256:" + "ab" * 32].startswith(old.collection_id), "unkeyed: still the source's shard id"
+    assert out["coverage_rows_cleared"] >= 1 and all(not s.startswith(re_.collection_id) for s in rows.values())
+    from app.share import contribute
+    linked = contribute.bundle_dir(root, "re", re_, "lang=en/00003", "sha256:" + "ab" * 32) / "possession.json"
+    assert linked.read_text() == '{"gutenberg:10001": "h"}'
+    assert os.stat(linked).st_ino == os.stat(src_dir / "possession.json").st_ino, "hard-linked, not copied"
+    marker = json.loads((root / "re" / "state" / carry.MARKER).read_text())
+    assert marker["same_space"] is True and marker["predecessors"] == [old.collection_id]
+    assert contribute.predecessors(root, "re") == [old.collection_id]
+
+
+def test_predecessor_rows_restores_a_carry_that_cleared_them(pair):
+    """The remedy for a same-space carry made before provenance was kept:
+    the source's rows copied unkeyed, its bundle tree linked, the marker
+    naming the predecessor. Run again: nothing more."""
+    root, old, re_, _uids, _ids = _rebuilt_pair(pair)
+    _foreign_row_and_bundle(root, old)
+    carry.carry(root, "old", "re", rebuilt=True, copy=True, apply=True, log=quiet)
+    # as the carry of 2026-10-22 left gutenberg: the rows gone, the tree not linked, an old marker
+    con = db.connect(_local(root, "re"))
+    try:
+        con.execute("DELETE FROM coverage")
+        con.commit()
+    finally:
+        con.close()
+    import shutil
+    shutil.rmtree(root / "re" / "state" / "bundles", ignore_errors=True)
+    m = root / "re" / "state" / carry.MARKER
+    m.write_text(json.dumps({k: v for k, v in json.loads(m.read_text()).items()
+                             if k not in ("same_space", "predecessors")}))
+    from app.share import contribute
+    assert contribute.predecessors(root, "re") == []
+    dry = carry.keep_predecessor_rows(root, "old", "re", log=quiet)
+    assert dry["apply"] is False and _coverage(root, "re") == {}
+    out = carry.keep_predecessor_rows(root, "old", "re", apply=True, log=quiet)
+    assert out["rows_written"] == out["rows"] >= 2 and out["bundles"]["linked"] >= 1
+    assert "sha256:" + "ab" * 32 in _coverage(root, "re")
+    assert contribute.predecessors(root, "re") == [old.collection_id]
+    again = carry.keep_predecessor_rows(root, "old", "re", apply=True, log=quiet)
+    assert again["rows_written"] == 0 and again["bundles"]["linked"] == 0
