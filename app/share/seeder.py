@@ -25,7 +25,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable
 
@@ -52,6 +54,44 @@ def current_snapshot(shard_dir: Path) -> sn.Snapshot | None:
         return None
     ids = sorted(p.name[:-5] for p in d.glob("*.json") if not p.name.endswith(".sig.json"))
     return sn.load(d / f"{ids[-1]}.json") if ids else None
+
+
+#: shard tree -> (newest snapshot file, its stat, the Snapshot)
+_SNAPS: "OrderedDict[str, tuple[str, tuple[int, int, int], sn.Snapshot]]" = OrderedDict()
+_SNAPS_MAX = 32
+_snaps_lock = threading.Lock()
+
+
+def cached_snapshot(shard_dir: Path) -> sn.Snapshot | None:
+    """`current_snapshot`, loaded once while the newest file stays the same
+    file (path, inode, size, mtime): a snapshot is immutable once written
+    (02 §2.2), and a search loaded it three times (München, 2026-10-22:
+    25 ms a search). For the SEARCH path only — its readers use the shards,
+    never the delta, which a held Snapshot would keep in memory once read
+    (pubmed's first delta is 4.3 GB as strings, LazyDelta)."""
+    d = Path(shard_dir) / "snapshots"
+    try:
+        ids = sorted(p.name[:-5] for p in d.glob("*.json") if not p.name.endswith(".sig.json"))
+        if not ids:
+            return None
+        path = d / f"{ids[-1]}.json"
+        st = path.stat()
+    except OSError:
+        return None
+    stamp = (st.st_ino, st.st_size, st.st_mtime_ns)
+    key = str(Path(shard_dir))
+    with _snaps_lock:
+        hit = _SNAPS.get(key)
+        if hit is not None and hit[0] == str(path) and hit[1] == stamp:
+            _SNAPS.move_to_end(key)
+            return hit[2]
+    snap = sn.load(path)
+    with _snaps_lock:
+        _SNAPS[key] = (str(path), stamp, snap)
+        _SNAPS.move_to_end(key)
+        while len(_SNAPS) > _SNAPS_MAX:
+            _SNAPS.popitem(last=False)
+    return snap
 
 
 def _lt():

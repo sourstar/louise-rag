@@ -147,3 +147,64 @@ def test_edition_facts_read_the_records_own_words():
     assert works.edition_facts({"title": "Les Misérables (Unabridged)"}).abridged is False
     assert works.edition_facts({"title": "X", "extra": {"marc": {"520": ["A condensed retelling of the epic."]}}}).abridged
     assert works.edition_facts({"title": "Plain", "date": "1901"}) == F(year=1901)
+
+
+# ---- the edition facts, a dict lookup per part (München, 2026-10-22) --------
+
+def _two_editions(tmp_path):
+    target, tcoll, held, codex = setup(tmp_path)
+    hits = [hit("pubmed:1", "la"), hit("pubmed:2", "en"), hit("pubmed:4", "en")]
+    return tcoll, hits, {"pubmed:1": "w", "pubmed:2": "w"}
+
+
+def test_a_parts_facts_are_read_once_then_looked_up(tmp_path, monkeypatch):
+    """The first search that meets a part reads its two records alone and
+    queues the part; the file built off the search's thread then answers
+    every later search without reading a record."""
+    from app.pack import records as pack_records
+    tcoll, hits, work_of = _two_editions(tmp_path)
+    first = works._facts_of(tcoll, hits, work_of, root=tmp_path)
+    assert first == {"pubmed:1": F(year=2023), "pubmed:2": F(year=2023)}, "pubmed:4 is no choice"
+    works._queue.join()
+    files = list((tmp_path / "pubmed" / "state" / "edition-facts").glob("v*.json"))
+    assert [f.name.split("-")[0] for f in files] == [f"v{works.FACTS_VERSION}"]
+    works._PARTS.clear()
+
+    def no_read(*a, **k):
+        raise AssertionError("a record was read")
+    monkeypatch.setattr(pack_records, "read_fields", no_read)
+    monkeypatch.setattr(pack_records, "iter_records", no_read)
+    assert works._facts_of(tcoll, hits, work_of, root=tmp_path) == first, "from the file"
+    files[0].unlink()
+    assert works._facts_of(tcoll, hits, work_of, root=tmp_path) == first, "from memory"
+
+
+def test_a_new_version_of_a_part_is_another_file(tmp_path):
+    """Named by the part's root: a rewritten part never meets the facts of
+    the old one."""
+    from dataclasses import replace
+    from app.share import seeder
+    tcoll, hits, work_of = _two_editions(tmp_path)
+    tree = tmp_path / "pubmed" / "shard"
+    shard = seeder.current_snapshot(tree).shards[0]
+    store = works.facts_dir(tmp_path, "pubmed", tree)
+    old = works.build_part_facts(tree, store, shard)
+    new = works.build_part_facts(tree, store, replace(shard, root="sha256:" + "ee" * 32))
+    assert old != new and old.exists() and new.exists()
+    assert works.part_facts(tree, store, shard)["pubmed:3"] == F(year=2023)
+
+
+def test_the_search_path_loads_a_snapshot_once(tmp_path, monkeypatch):
+    from app.hold import snapshot as sn
+    from app.share import seeder
+    setup(tmp_path)
+    tree = tmp_path / "pubmed" / "shard"
+    loads = []
+    real = sn.load
+    monkeypatch.setattr(sn, "load", lambda *a, **k: loads.append(1) or real(*a, **k))
+    one = seeder.cached_snapshot(tree)
+    assert seeder.cached_snapshot(tree) is one and len(loads) == 1
+    newer = tree / "snapshots" / "2099-01.json"
+    newer.write_bytes((tree / "snapshots" / f"{one.snapshot_id}.json").read_bytes())
+    seeder.cached_snapshot(tree)
+    assert len(loads) == 2, "a newer snapshot is loaded"
