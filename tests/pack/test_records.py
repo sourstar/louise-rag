@@ -160,3 +160,45 @@ def test_the_part_path_names_the_container():
     assert shard_mod.shard_path("all", 3, "2026-09", container="parquet") == "records/all/00003.2026-09.parquet"
     with pytest.raises(ValueError, match="container"):
         shard_mod.shard_path("all", 3, container="csv")
+
+
+@pytest.mark.parametrize("suffix", [".jsonl.zst", ".parquet"])
+def test_read_fields_gives_a_records_fields_without_the_rest(tmp_path, suffix):
+    """The edition facts of a hit need `title`, `date` and `extra`; reading
+    whole row groups for them decompressed whole books (München, 2026-10-22:
+    a median 967 ms a search)."""
+    path = tmp_path / f"part{suffix}"
+    recs = [{**_rec(i), "extra": {"marc": {"260": [f"London : Macmillan, 18{i:02d}"]}, "n": i}}
+            for i in range(5)]
+    records.write_shard(path, recs)
+    records.reset_caches()
+    whole = records.read_record(path, recs[3]["uid"])
+    got = records.read_fields(path, recs[3]["uid"], ("title", "date", "extra", "no_such_field"))
+    assert got == {"title": whole["title"], "date": whole["date"], "extra": whole["extra"],
+                   "no_such_field": None}
+    with pytest.raises(KeyError):
+        records.read_fields(path, "x:nope", ("title",))
+
+
+def test_read_fields_does_not_decompress_the_text(tmp_path):
+    """A Parquet row group of large books: three columns cost a fraction of
+    the whole group."""
+    import time
+    path = tmp_path / "big.parquet"
+    big = "lorem ipsum dolor sit amet " * 40_000           # ~1 MB of text a book
+    recs = [{**_rec(i), "sections": [["Text", big + str(i)]]} for i in range(40)]
+    records.write_shard(path, recs)
+    uid = recs[20]["uid"]
+
+    def timed(fn) -> float:
+        best = float("inf")
+        for _ in range(3):
+            records.reset_caches()
+            records.cached_index(path)                       # both pay the index alike
+            t = time.perf_counter()
+            fn()
+            best = min(best, time.perf_counter() - t)
+        return best
+    whole = timed(lambda: records.read_record(path, uid))
+    some = timed(lambda: records.read_fields(path, uid, ("title", "date", "extra")))
+    assert some * 5 < whole, (some, whole)

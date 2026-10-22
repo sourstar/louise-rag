@@ -569,6 +569,35 @@ def read_record(path: Path, uid: str) -> dict:
     return json.loads(cached_frame(path, frame)[line])
 
 
+def read_fields(path: Path, uid: str, fields: Sequence[str]) -> dict:
+    """Some of one record's fields, without the rest: from a Parquet part
+    only those COLUMNS of its row group are decompressed — the edition facts
+    of a hit (app/ask/works.py) need `title`, `date` and `extra`, and
+    reading the whole row group decompressed whole books' `sections` for
+    them (München, 2026-10-22: a median 967 ms a search against 25 ms
+    before). A frame part has no columns: the record is read and cut."""
+    if not is_parquet(path):
+        record = read_record(path, uid)
+        return {f: record.get(f) for f in fields}
+    index = cached_index(path)
+    loc = index.uids.get(uid)
+    if loc is None:
+        raise KeyError(f"{Path(path).name}: no record {uid}")
+    group, row = loc
+    pf = _parquet_file(path)
+    names = set(pf.schema_arrow.names)
+    cols = [f for f in fields if f in names]
+    table = pf.read_row_group(group, columns=cols)
+    out: dict = {}
+    for f in fields:
+        if f not in names:
+            out[f] = None
+            continue
+        v = table.column(f)[row].as_py()
+        out[f] = json.loads(v) if (f in NESTED_KEYS and v is not None) else v
+    return out
+
+
 def read_record_at(path: Path, frame: int, line: int) -> dict:
     return json.loads(cached_frame(path, frame)[line])
 
