@@ -671,7 +671,7 @@ def _reader_plates(collection, doc: dict) -> None:
             from .hold import collection as col
             from .share import seeder
             tree = col.shard_dir_of(ask_results._root(), collection.name)
-            got = figures_mod.record_of(tree, seeder.current_snapshot(tree), str(header["uid"]),
+            got = figures_mod.record_of(tree, seeder.cached_snapshot(tree), str(header["uid"]),
                                         figures_mod._order(codex))
             if got is not None:
                 record, shard = got
@@ -841,7 +841,7 @@ def _attach_annotations(result: dict, annotations: list[str] | None = None) -> N
         source_of[id(h)] = c
         if c.name not in contexts:
             try:
-                snap = seeder.current_snapshot(hold_col.shard_dir_of(root, c.name))
+                snap = seeder.cached_snapshot(hold_col.shard_dir_of(root, c.name))
             except Exception:   # noqa: BLE001 — no snapshot named: no claim applies (05 §5.3)
                 snap = None
             contexts[c.name] = {"collection_id": codex.collection_id,
@@ -2074,7 +2074,7 @@ def _annotatable(served: list) -> list[dict]:
                 or c.codex.plugin == "deposit":
             continue
         try:
-            snap = seeder.current_snapshot(col.shard_dir_of(root, c.name))
+            snap = seeder.cached_snapshot(col.shard_dir_of(root, c.name))
             snapshot = snap.snapshot_id if snap is not None else None
         except Exception:  # noqa: BLE001
             snapshot = None
@@ -2113,7 +2113,7 @@ def _annotations_shelf(collection, served: list) -> dict:
     target_name = names[0]
     snapshot_id, claims, note = None, None, None
     try:
-        snap = seeder.current_snapshot(col.shard_dir_of(root, collection.name))
+        snap = seeder.cached_snapshot(col.shard_dir_of(root, collection.name))
         if snap is not None:
             snapshot_id, claims = snap.snapshot_id, snap.records
         else:
@@ -3141,7 +3141,7 @@ def _p2p_summary(collection) -> dict | None:
         from app.hold import collection as col
         from app.share import contribute, counting, coverage as cov, peers, seeder
         root = collections_mod.louise_root() / "collections"
-        snap = seeder.current_snapshot(col.shard_dir_of(root, collection.name))
+        snap = seeder.cached_snapshot(col.shard_dir_of(root, collection.name))
         if snap is not None and (root / collection.name / "state" / "manifest.sqlite").is_file():
             with closing(cov.manifest(root, collection.name)) as mcon:
                 rows = cov.rows(mcon)

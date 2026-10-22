@@ -62,7 +62,7 @@ def _trust(root: Path, a) -> str:
     except Exception:   # noqa: BLE001
         own = None
     try:
-        snap = seeder.current_snapshot(col.shard_dir_of(root, a.name))
+        snap = seeder.cached_snapshot(col.shard_dir_of(root, a.name))
         bodies = copy_state.attestations(root, a.name, a.codex)
         return levels.level(a.codex, snap, bodies, (), own_key=own,
                             trust=trust_file.as_filter(root.parent),

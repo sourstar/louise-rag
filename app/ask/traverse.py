@@ -157,7 +157,7 @@ class Elsewhere:
         if any(self._holds(name, uid) for name, _ in cands):
             return True, None
         name, codex = cands[0]
-        snapshot = seeder.current_snapshot(col.shard_dir_of(self.root, name))
+        snapshot = seeder.cached_snapshot(col.shard_dir_of(self.root, name))
         return False, {"collection_id": codex.collection_id,
                        "shard": _shard_of(snapshot, uid, (codex.slicing or {}).get("order", "bytes"))}
 
@@ -272,7 +272,7 @@ def traverse(id_: str, *, relation: str | None = None, depth: int = 1, collectio
     with Elsewhere(root, held, tuple(unheld)) as elsewhere:
         for name, codex in targets:
             shard_tree = col.shard_dir_of(root, name)
-            snapshot = seeder.current_snapshot(shard_tree)
+            snapshot = seeder.cached_snapshot(shard_tree)
             annotations = getattr(codex, "annotates", None) is not None
             if not (root / name / "state" / "manifest.sqlite").is_file() and not annotations:
                 continue

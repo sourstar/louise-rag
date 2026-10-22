@@ -59,3 +59,17 @@ def test_a_kept_search_expires(client, monkeypatch):
     sid = c.post("/ask/query", json={"query": "windmills"}).headers["x-louise-search"]
     monkeypatch.setattr(web, "SEARCH_TTL_S", -1.0)
     assert web.kept_search(sid, "windmills") is None
+
+
+def test_the_search_side_loads_a_snapshot_once_per_file():
+    """München, 2026-10-22: `_attach_annotations` was 0.7 s warm, all of it
+    four `current_snapshot` loads re-hashing the file (~175 ms each). Every
+    caller on the search side reads the cached one (`seeder.cached_snapshot`,
+    keyed on the file's identity)."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "app"
+    files = [root / "web.py", root / "query_service.py", *sorted((root / "ask").glob("*.py"))]
+    uncached = [f"{f.name}:{i}" for f in files for i, line in enumerate(f.read_text().splitlines(), 1)
+                if re.search(r"\bcurrent_snapshot\(", line)]
+    assert uncached == []

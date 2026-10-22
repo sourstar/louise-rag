@@ -167,7 +167,7 @@ def listing(collection: str, field: str | None = None, under: str | None = None,
     from app.share import coverage as cov, seeder
     root = Path(root) if root is not None else collections_mod.louise_root() / "collections"
     name, codex = col.resolve(root, collection)
-    snap = seeder.current_snapshot(col.shard_dir_of(root, name))
+    snap = seeder.cached_snapshot(col.shard_dir_of(root, name))
     sid = snap.snapshot_id if snap else None
     index_dir = root / name / "index"
     if not (root / name / "state" / "manifest.sqlite").is_file():

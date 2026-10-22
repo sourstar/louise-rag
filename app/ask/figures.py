@@ -318,7 +318,7 @@ def figure_bytes(collection: str, uid: str, hash_: str, *, root: Path | None = N
     if held is not None and licensing.state_for(held) == licensing.MISSING:
         raise FigureNotServed(403, f"{name}: its terms are not acknowledged; nothing of it is used (04 §4.4)")
     shard_tree = col.shard_dir_of(root, name)
-    got = record_of(shard_tree, seeder.current_snapshot(shard_tree), uid, _order(codex))
+    got = record_of(shard_tree, seeder.cached_snapshot(shard_tree), uid, _order(codex))
     if got is None:
         raise FigureNotServed(404, f"{uid}: no record held")
     record, shard = got

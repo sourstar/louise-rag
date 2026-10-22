@@ -114,6 +114,7 @@ def _reader(client, monkeypatch, *, record_line=2, cls="green", per_seq=None):  
     monkeypatch.setattr(figures_mod, "for_record", lambda *a, **k: per_seq or {})
     from app.share import seeder
     monkeypatch.setattr(seeder, "current_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(seeder, "cached_snapshot", lambda *a, **k: None)
     return client.get("/read/gutenberg/2701?fragment=1").text
 
 
