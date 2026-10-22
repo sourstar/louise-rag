@@ -153,7 +153,9 @@ TRANSLATED by the translation model. Two models, so a word taken from the
 sources can come out two ways: the operator asked in Italian and read
 "barbican" in the answer (kept from the English source) and "barbacane" in
 the reader. Left as it is (operator, 2026-10-22: "Leave it but document
-it"). The two remedies considered, if it is reopened: a sharper answer
+it"; "barbacane" is a term of ancient military architecture, so a chat
+model not knowing it is acceptable — the translation model is the one
+trained for such terms). The two remedies considered, if it is reopened: a sharper answer
 instruction (translate every word taken from the sources, keeping only
 personal names, titles and quotations), at no extra cost; or the answer
 post-translated by the translation model, one call more per answer and the
