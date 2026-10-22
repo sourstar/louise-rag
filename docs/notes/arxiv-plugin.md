@@ -1,5 +1,8 @@
 # arXiv — plugin design (2026-10-22)
 
+The first collection, abstracts only, is designed in full in
+docs/notes/arxiv-collection.md (operator, 2026-10-22).
+
 Operator, 2026-10-22: "Design a plugin for it, check if there are
 pre-embeddings and bulk download options." This is the design; nothing is
 built. The three decisions it needs are in §6.
@@ -9,9 +12,9 @@ built. The three decisions it needs are in §6.
 | what | where | licence | size | notes |
 |---|---|---|---|---|
 | **Metadata of every paper** (ids, versions and dates, authors, title, abstract, categories, comments, journal-ref, DOI, MSC/ACM classes, report numbers, **the paper's licence**) | arXiv's OAI-PMH endpoint, format `arXivRaw` (the endpoint URL confirmed at build time) | CC0, whatever the paper's own licence | ~2.9 M records; a few GB | incremental by datestamp, resumption tokens; the official per-record form |
-| the same, as one JSON file | Kaggle `Cornell-University/arxiv`, weekly | CC0 | ~4–5 GB | a derived snapshot; useful as a seed, not as the origin (it is not per-record re-fetchable) |
+| the same, as one JSON file | Kaggle `Cornell-University/arxiv`, weekly (an account needed); the copy in `gs://arxiv-dataset/metadata-v5/` is from August 2020 | CC0 | ~4.5 GB | a derived snapshot, not per-record re-fetchable: not the origin |
 | **Full text, LaTeX source** | S3 `s3://arxiv/src/` (requester pays, ~500 MB tars, manifest), or per paper `https://arxiv.org/e-print/<id>` | the paper's own | several TB in all | requester pays: the downloader pays AWS egress |
-| PDFs | S3 `s3://arxiv/pdf/` (requester pays); GCS `gs://arxiv-dataset` (Kaggle-sponsored, free) | the paper's own | ~1.1 TB+ | PDFs are a worse text form than the LaTeX |
+| PDFs | S3 `s3://arxiv/pdf/` (requester pays); GCS `gs://arxiv-dataset` (Kaggle-sponsored, free, anonymous, weekly) | the paper's own | counted 2026-10-22: 5,092,298 files, 10.8 TB; latest version of each of 3,210,040 papers, 6.85 TB | every one of 31 sampled 1993–2026 has a text layer; prose extracts cleanly, equations do not |
 
 **THE LICENCE SPLITS THE CORPUS.** Most papers carry arXiv's default
 licence, a non-exclusive licence to ARXIV to distribute; it grants nobody
