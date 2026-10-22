@@ -73,6 +73,17 @@ Models: Qwen3-Embedding-4B Q4_K_M (asymmetric, instruction on queries),
 bge-m3 F16 (symmetric), granite. Optional axis: quantization (Q4_K_M, Q8_0,
 F16) on one engine, to separate quantization error from device error.
 
+**Optional row: Qualcomm (mobile / Snapdragon X).** Candidates, from general
+knowledge (verify before planning): llama.cpp's OpenCL backend on the Adreno
+GPU (Qualcomm-contributed upstream; same GGUF weights and the VeGa wrapper
+approach — the realistic path), llama.cpp's Hexagon NPU backend (newer,
+embedding coverage partial), ONNX Runtime's QNN provider / Qualcomm AI
+Engine Direct (ONNX weights, a different engine family). No vendor
+reproducibility mode is known (invariant 12): measure bit-exactness first,
+and expect a larger gap on the NPU (int8/fp16 compute). The operator's
+Motorola Edge 50 Ultra (Snapdragon 8s Gen 3, Adreno + Hexagon) is on the
+tailnet: a phone-GPU data point for the paper, not a production encoder.
+
 **Precondition per cell:** the engine is bit-exact run to run
 (`tools/vega_repro_check.py`, 3 fresh loads × shuffled orders), and every
 answer's device is recorded. A cell that is not bit-exact is reported as
