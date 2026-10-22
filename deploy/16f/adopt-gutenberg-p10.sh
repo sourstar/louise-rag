@@ -84,6 +84,28 @@ if ! in_w "test -d /data/collections/$NEW"; then
   $L share fetch "$NEW_ID" --name "$NEW" --kinds records --from "$NODE_URL" | grep -v warn:config
 fi
 $L node pause "$NEW" >/dev/null || true
+
+say "2a. room for the parts still missing, before a byte of them moves"
+# $OLD's parts stay until the retire, so both sets are held at once (review,
+# 2026-10-22): refused here, cleanly, rather than mid-fetch
+docker exec -i -w /srv -e PYTHONPATH=/srv "$W" python - "$NEW" <<'PY'
+import os, shutil, sys
+from pathlib import Path
+from app.hold import collection as col
+from app.share import seeder
+name = sys.argv[1]
+tree = Path(col.shard_dir_of(Path("/data/collections"), name)).resolve()
+snap = seeder.current_snapshot(tree)
+assert snap is not None, f"{name}: no snapshot fetched"
+missing = sum(s.bytes for s in snap.shards
+              if not ((tree / s.path).is_file() and (tree / s.path).stat().st_size == s.bytes))
+free = shutil.disk_usage(tree).free
+need = int(missing * 1.05) + (2 << 30)          # 5 % and 2 GiB to spare
+print(f"{name}: {len(snap.shards)} parts, {missing / 2**30:.1f} GiB still to fetch; "
+      f"{free / 2**30:.1f} GiB free under {tree}")
+if free < need:
+    raise SystemExit(f"not enough room: {need / 2**30:.1f} GiB wanted; nothing fetched")
+PY
 run share fetch "$NEW" --kinds records --here --from "$NODE_URL"
 docker exec "$W" python -c "
 from app.hold import codex as cx

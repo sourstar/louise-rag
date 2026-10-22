@@ -442,6 +442,8 @@ def offered_elsewhere(codex, con, node_con, *, now: float, skip=None, deprecated
 #: append-only: the same-space collections whose accepted bundles this one
 #: holds under their own shard ids (a fresh peer's accept, 2026-10-22)
 PREDECESSORS = "predecessors.json"
+#: how long `add_predecessor` waits for its lock before it refuses
+PREDECESSORS_LOCK_S = 10.0
 
 
 def predecessors(root: Path, name: str) -> list[str]:
@@ -469,21 +471,40 @@ def predecessors(root: Path, name: str) -> list[str]:
 
 def add_predecessor(root: Path, name: str, collection_id: str) -> bool:
     """`collection_id` appended to `state/predecessors.json` (append-only:
-    nothing is ever removed). True when it was new."""
+    nothing is ever removed). True when it was new.
+
+    Read, append and replace under an exclusive lock on a file beside it, so
+    two writers (the worker's fetch beat, a `share fetch --here`) cannot
+    lose each other's entry; the wait is bounded (PREDECESSORS_LOCK_S) and
+    raises rather than hang a pipeline thread."""
+    import fcntl
     import json
     p = Path(root) / name / "state" / PREDECESSORS
-    try:
-        held = json.loads(p.read_text(encoding="utf-8"))
-        held = [c for c in held if isinstance(c, str)]
-    except (OSError, ValueError, TypeError):
-        held = []
-    if collection_id in held:
-        return False
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(held + [collection_id]), encoding="utf-8")
-    os.replace(tmp, p)
-    return True
+    with open(p.with_suffix(".json.lock"), "a+b") as lock:
+        deadline = time.monotonic() + PREDECESSORS_LOCK_S
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise OSError(f"{p}: its lock not free after {PREDECESSORS_LOCK_S} s") from None
+                time.sleep(0.05)
+        try:
+            try:
+                held = json.loads(p.read_text(encoding="utf-8"))
+                held = [c for c in held if isinstance(c, str)]
+            except (OSError, ValueError, TypeError):
+                held = []
+            if collection_id in held:
+                return False
+            tmp = p.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(held + [collection_id]), encoding="utf-8")
+            os.replace(tmp, p)
+            return True
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def _uid_key(uid: str):
