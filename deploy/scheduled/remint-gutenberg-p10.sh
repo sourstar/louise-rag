@@ -86,16 +86,20 @@ fi
 ls -la "$ROOT/data/collections/$NEW/"
 
 say "5. carry --rebuilt --copy (dry run first)"
-if ! docker exec "$W" test -e /data/collections/$NEW/state/carry.json; then
+if ! docker exec "$W" grep -q '"done": *true' /data/collections/$NEW/state/carry.json 2>/dev/null; then
   run dev carry "$OLD" "$NEW" --rebuilt --copy
   run dev carry "$OLD" "$NEW" --rebuilt --copy --yes
 fi
 docker exec "$W" cat /data/collections/$NEW/state/carry.json; echo
 
-say "6. records build from the same origin (parser 10)"
-run hold records build "$NEW" --corpus /data/collections/$OLD/origin
-say "7. snapshot"
-run hold snapshot create "$NEW"
+if docker exec "$W" sh -c "ls /data/collections/$NEW/shard/*.sig.json" >/dev/null 2>&1; then
+  say "6-7. built and snapshotted already: $(docker exec "$W" sh -c "ls /data/collections/$NEW/shard/*.sig.json")"
+else
+  say "6. records build from the same origin (parser 10)"
+  run hold records build "$NEW" --corpus /data/collections/$OLD/origin
+  say "7. snapshot"
+  run hold snapshot create "$NEW"
+fi
 say "8. reconcile: unchanged documents keep their vectors"
 run dev carry "$OLD" "$NEW" --reconcile --yes
 say "9. every check, before use"
