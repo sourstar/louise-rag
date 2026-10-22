@@ -909,6 +909,10 @@ class ChatBody(BaseModel):
     # the page's choice of annotations collections, so the answer's [n] are
     # the page's hits (05 §5.3, amended 2026-10-19); None = every one held
     annotations: list[str] | None = None
+    # the hits the answer's [n] number, beside the answer (`louise_sources`):
+    # one search for both, where a client would otherwise search again for
+    # them (the Open WebUI pipe, deploy/openwebui/; 07 §7.4, 2026-10-22)
+    sources: bool = False
 
 def _text_of(content) -> str:
     """A message's text: a string, or OpenAI's list of parts (Open WebUI
@@ -944,6 +948,30 @@ async def chat_completions(body: ChatBody, request: Request):
     return await run_in_threadpool(_chat_answer, body, query, result, t0)
 
 
+def source_entries(hits: list[dict]) -> list[dict]:
+    """The answer's [n], in order: what a client shows as its sources —
+    the passage, where it is (a path of this node's reader), the work's
+    other editions and the claims beside it (05 §5.3). Never a vector."""
+    out = []
+    for n, h in enumerate(hits, 1):
+        coll = h.get("source_collection") or str(h.get("chunk_id", "")).split(":", 1)[0]
+        bid = h.get("book_id")
+        reader = f"/read/{coll}/{bid}?hl={h.get('chunk_id')}" if bid not in (None, "") else None
+        out.append({
+            "n": n, "title": h.get("title"), "authors": h.get("authors"), "lang": h.get("lang"),
+            "collection": coll, "uid": h.get("uid"), "chunk_id": h.get("chunk_id"), "book_id": bid,
+            "chapter": h.get("chapter"), "text": h.get("text"), "origin_url": h.get("origin_url"),
+            "reader": reader,
+            "editions": [{"uid": e.get("uid"), "title": e.get("title"), "lang": e.get("lang"),
+                          "held": bool(e.get("held"))} for e in h.get("editions") or []],
+            "annotations": [{"type": a.get("type"), "uid": (a.get("record") or {}).get("uid"),
+                             "title": (a.get("record") or {}).get("title"),
+                             "lang": (a.get("record") or {}).get("lang"), "state": a.get("state")}
+                            for a in h.get("annotations") or []],
+        })
+    return out
+
+
 def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
     con = _con()   # query_log lives in the default collection's manifest regardless
     messages = retrieval.build_answer_messages(query, result, answer_lang=body.answer_lang)
@@ -958,12 +986,15 @@ def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
         result["timings"]["total"] = round((time.time() - t0) * 1000, 1)
         db.log_query(con, "chat", query, "hybrid", body.limit, result["timings"],
                      len(result["hits"]), _source_qualified_ids(result["hits"]))
-        return {
+        out = {
             "id": rid, "object": "chat.completion", "created": int(time.time()),
             "model": body.model,
             "choices": [{"index": 0, "finish_reason": "stop",
                          "message": {"role": "assistant", "content": answer}}],
         }
+        if body.sources:
+            out["louise_sources"] = source_entries(result["hits"])
+        return out
 
     def sse():
         # THE ANSWER'S STREAM, RELAYED FROM A THREAD (2026-10-13: "the answer
@@ -1004,6 +1035,12 @@ def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
         chars = 0
         first: float | None = None
         why: str | None = None
+        if body.sources:
+            # before the first word: an OpenAI client ignores the extra key
+            yield "data: " + json.dumps({
+                "id": rid, "object": "chat.completion.chunk", "created": int(time.time()),
+                "model": body.model, "choices": [{"index": 0, "delta": {}, "finish_reason": None}],
+                "louise_sources": source_entries(result["hits"])}, default=str) + "\n\n"
         try:
             while True:
                 try:

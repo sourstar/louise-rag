@@ -261,7 +261,7 @@ closed once the first active user exists, the token as the bearer key of
 `louise/<collection>`, MCP's Streamable HTTP answers (202, batch, GET 405),
 and `/connect` filled in per viewer. Open: a live check from Open WebUI
 (OpenAI connection and MCP tool) and from one MCP agent — neither was run
-against a real client yet.
+against a real client yet. Then the Open WebUI pipe (`deploy/openwebui/louise_pipe.py`): one model per collection, each person's collections, annotations, answer language and result count as Valves, one search per question (`sources: true`), the hits as Open WebUI sources linked to the reader.
 
 ### 2026-10-21: NVIDIA support, before any peer has a card (operator)
 
