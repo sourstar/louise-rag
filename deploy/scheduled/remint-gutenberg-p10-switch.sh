@@ -49,6 +49,23 @@ cp -p "$F" "$ROOT/config/$OLD.toml.created-$TODAY"
 sed "s|^codex = \".*\"|codex = \"$CODEX\"|" "$ROOT/config/collections/$OLD.toml.superseded-$TODAY" > "$F.tmp"
 mv "$F.tmp" "$F"
 cat "$F"
+
+say "2b. 673 out of every index at once (parser 10's UnindexableDocument), before $OLD resumes"
+run dev unindexable "$OLD" gutenberg:673 --yes
+docker exec -i -w /srv -e PYTHONPATH=/srv "$W" python - <<'PY'
+from pathlib import Path
+from app import catalog, db, fts
+from app.hold import collection as col, records as rec
+root = Path("/data/collections")
+name, codex = col.resolve(root, "gutenberg")
+c = rec.local_collection(root, name, codex)
+con = db.connect(c)
+left = len(fts.book_chunks("en", 673, c))
+hits = catalog.search(con, c, "Gutenberg Webster Unabridged Dictionary", 50) or []
+err = con.execute("SELECT error FROM documents WHERE uid='gutenberg:673'").fetchone()[0]
+print("673: lexical chunks", left, "| catalog has it", any(h["book_id"] == 673 for h in hits), "| error", err)
+assert left == 0 and not any(h["book_id"] == 673 for h in hits) and err, "673 is still served"
+PY
 $L node resume "$OLD" | grep -v warn:config || true
 run hold collection show "$OLD" | head -30
 

@@ -93,3 +93,72 @@ def test_a_stage_records_a_corpus_fact_unprefixed(tmp_path, isolated_config):
     db.apply_reset(con, "errors", [])
     row = con.execute("SELECT error FROM documents WHERE uid='gutenberg:99999'").fetchone()
     assert row["error"] == "no epub, txt or rdf for book 99999"
+
+
+def _indexed_as_if_earlier(con, c, uid="gutenberg:99999"):
+    """The pg673 shape (2026-10-22): a document indexed before its origin
+    declared it not indexable — lexical chunks and a catalog row present."""
+    from app import catalog, fts
+    row = con.execute("SELECT rowid, native_id FROM documents WHERE uid=?", (uid,)).fetchone()
+    con.execute("UPDATE documents SET error=NULL, lang='en', title='Webster markup', "
+                "rdf_done=1 WHERE uid=?", (uid,))
+    con.commit()
+    fts.index_book("en", int(row["native_id"]), [
+        {"id": f"{uid}:0:1", "chapter": None, "text": "<hw>A*ban\"don</hw> <def>To cast out</def>"}], c)
+    catalog.backfill(con, c, budget_s=60)
+    return int(row["native_id"])
+
+
+def test_a_stage_that_meets_a_corpus_fact_withdraws_the_document_from_every_index(
+        tmp_path, isolated_config):
+    from app import catalog, fts
+    c, con = _collection(tmp_path)
+    book = _indexed_as_if_earlier(con, c)
+    assert len(fts.book_chunks("en", book, c)) == 1
+    assert [h["book_id"] for h in catalog.search(con, c, "Webster markup", 10)] == [book]
+    row = con.execute("SELECT * FROM documents WHERE uid='gutenberg:99999'").fetchone()
+    assert worker._execute_step(con, c, "fts", row) is True
+    assert con.execute("SELECT error FROM documents WHERE uid='gutenberg:99999'").fetchone()[0] \
+        == "no epub, txt or rdf for book 99999"
+    assert fts.book_chunks("en", book, c) == [], "the lexical leg no longer holds it"
+    assert catalog.search(con, c, "Webster markup", 10) == [], "nor the catalog leg"
+
+
+def test_an_index_that_cannot_be_written_defers_and_records_nothing(
+        tmp_path, isolated_config, monkeypatch):
+    from app import unindexable
+    c, con = _collection(tmp_path)
+    _indexed_as_if_earlier(con, c)
+
+    def busy(*a, **k):
+        raise RuntimeError("index busy")
+    monkeypatch.setattr(unindexable, "withdraw", busy)
+    row = con.execute("SELECT * FROM documents WHERE uid='gutenberg:99999'").fetchone()
+    assert worker._execute_step(con, c, "fts", row) is False
+    assert con.execute("SELECT error FROM documents WHERE uid='gutenberg:99999'").fetchone()[0] is None
+
+
+def test_the_command_withdraws_at_once_and_refuses_a_document_that_parses(
+        tmp_path, isolated_config, monkeypatch, capsys):
+    import json as _json
+    from app import fts, louise
+    from app.hold import collection as col, records as rec
+    c, con = _collection(tmp_path)
+    book = _indexed_as_if_earlier(con, c)
+    monkeypatch.setattr(col, "resolve", lambda root, ref: ("g", None))
+    monkeypatch.setattr(rec, "local_collection", lambda root, name, codex: c)
+    monkeypatch.setattr(louise, "_take_write_lock", lambda *a, **k: None)
+    assert louise.main(["dev", "unindexable", "g", "gutenberg:99999"]) == 0
+    assert len(fts.book_chunks("en", book, c)) == 1, "a dry run writes nothing"
+    assert louise.main(["dev", "unindexable", "g", "gutenberg:99999", "--yes"]) == 0
+    printed = capsys.readouterr().out
+    out = _json.loads(printed[printed.rindex("\n{"):])
+    assert out["withdrawn"] and out["error"] == "no epub, txt or rdf for book 99999"
+    assert fts.book_chunks("en", book, c) == []
+    assert con.execute("SELECT error, embed_done FROM documents WHERE uid='gutenberg:99999'"
+                       ).fetchone()[:] == ("no epub, txt or rdf for book 99999", 0)
+    readable = con.execute("SELECT uid FROM documents WHERE error IS NULL LIMIT 1").fetchone()[0]
+    capsys.readouterr()
+    assert louise.main(["dev", "unindexable", "g", readable, "--yes"]) != 0
+    assert "parses under this image" in capsys.readouterr().err
+    assert con.execute("SELECT error FROM documents WHERE uid=?", (readable,)).fetchone()[0] is None

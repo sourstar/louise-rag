@@ -3119,7 +3119,17 @@ def _execute_step(con, collection, stage, row) -> bool:
             # this entry): recorded UNPREFIXED, like discovery writes it, so
             # it lands in the Library's 'not indexable' bucket — not as a
             # stage-prefixed error that reads as a blocked pipeline and that
-            # "clear errors & retry" would bounce forever
+            # "clear errors & retry" would bounce forever. A document indexed
+            # before the origin said so leaves every index FIRST (pg673,
+            # 2026-10-22: the error alone left its markup in the lexical leg)
+            from . import unindexable
+            try:
+                unindexable.withdraw(con, collection, row["uid"])
+            except Exception as w:  # noqa: BLE001 — an index busy: deferred, nothing recorded
+                db.log_event(con, "warn", stage,
+                             f"{stage} deferred — not indexable, but its index entries could "
+                             f"not be withdrawn yet ({type(w).__name__}: {w})", row["uid"])
+                return False
             con.execute(
                 "UPDATE documents SET error=?, updated_at=? WHERE uid=?",
                 (str(e)[:500], int(time.time()), row["uid"]))

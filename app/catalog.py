@@ -264,6 +264,24 @@ def write(collection, rows) -> int:
         raise CatalogUnavailable(f"catalog index: {type(e).__name__}: {e}") from e
 
 
+def delete_rows(collection, rowids) -> int:
+    """These documents' catalog entries gone, committed before it returns —
+    a document the origin now declares not indexable (app/unindexable.py).
+    Any failure is `CatalogUnavailable`, a deferral like `write`'s."""
+    rowids = [int(r) for r in rowids]
+    if not rowids:
+        return 0
+    try:
+        with _write_lock(collection):
+            writer = _writer(collection)
+            for rowid in rowids:
+                writer.delete_documents("rowid", rowid)
+            writer.commit()
+    except Exception as e:  # noqa: BLE001 — never the document's fault
+        raise CatalogUnavailable(f"catalog index: {type(e).__name__}: {e}") from e
+    return len(rowids)
+
+
 _WINDOW_SQL = ("SELECT rowid, title, authors, subjects, lang FROM documents "
                "WHERE rowid > ? AND rowid <= ? AND rdf_done = 1")
 

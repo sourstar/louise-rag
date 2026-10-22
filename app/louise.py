@@ -1261,6 +1261,49 @@ def cmd_dev_drop_rows(a) -> int:
     return 0
 
 
+def cmd_dev_unindexable(a) -> int:
+    """`louise dev unindexable <collection> <uid> [--yes]`: a document this
+    image's plugin now refuses (`UnindexableDocument`, e.g. gutenberg's parser
+    10 on pg673) withdrawn from every index at once and its error written, as
+    the worker does when a stage meets it (app/unindexable.py) — not left to
+    the next scan. Refused for a document the plugin still parses. The
+    collection's write lock held. A dry run without --yes."""
+    import time
+    from app import db, plugin_io, unindexable
+    from app.hold import records as rec
+    from app.plugins.base import UnindexableDocument
+    name, codex = col.resolve(a.root, a.collection)
+    coll = rec.local_collection(a.root, name, codex)
+    if a.yes:
+        _take_write_lock(a.root, name, "louise dev unindexable", exit_code=2)
+    con = db.connect(coll)
+    try:
+        row = con.execute("SELECT rowid, uid, native_id, path, lang FROM documents WHERE uid=?",
+                          (a.uid,)).fetchone()
+        if row is None:
+            raise CodexError(f"{name}: no document {a.uid}")
+        try:
+            plugin_io.canonical_doc(coll.plugin_instance(), row)
+        except UnindexableDocument as e:
+            reason = str(e)[:500]
+        else:
+            raise CodexError(f"{name}: {a.uid} parses under this image — it is not unindexable")
+        if not a.yes:
+            print(f"[unindexable] would withdraw {a.uid} from {name}'s indexes and record: "
+                  f"{reason} (--yes)", file=sys.stderr)
+            return 0
+        out = unindexable.withdraw(con, coll, a.uid)
+        con.execute("BEGIN IMMEDIATE")
+        con.execute("UPDATE documents SET error=?, embed_done=0, updated_at=? WHERE uid=?",
+                    (reason, int(time.time()), a.uid))
+        con.execute("COMMIT")
+        db.log_event(con, "info", "unindexable", f"not indexable: {reason}", a.uid)
+        _print({**out, "collection": name, "error": reason})
+    finally:
+        con.close()
+    return 0
+
+
 def cmd_dev_carry(a) -> int:
     """`louise dev carry <from> <to> [--copy] [--keep producer:<archive>] --yes`
     (07 §7.3; docs/notes/v5-migration.md G1, G2; amendment A1): the source's
@@ -4493,6 +4536,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ids", required=True, metavar="FILE", help="one chunk id a line")
     p.add_argument("--yes", action="store_true")
     p.set_defaults(fn=cmd_dev_drop_rows)
+    p = dverbs.add_parser("unindexable", help="a document the plugin now refuses: out of every index "
+                                              "and its error written at once; writes only with --yes")
+    root_arg(p); p.add_argument("collection"); p.add_argument("uid")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(fn=cmd_dev_unindexable)
     p = dverbs.add_parser("carry", help="a collection's manifest, text index and vector table into a new "
                                         "collection with the same records (amendment A1); writes "
                                         "only with --yes (both collections' locks)")
