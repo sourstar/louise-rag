@@ -69,6 +69,17 @@ life, so they are all named now.
   gets the `arxiv` entry; a reader opening the hit sees the abstract and
   the full metadata, and the paper itself one click away at arXiv. This is
   also what arXiv asks of tools built on its data: link back.
+- **Every version, linked; only the latest embedded** (operator,
+  2026-10-22: "point to the previous versions of the same article, but
+  keep only the embedding of the latest one"). The record is the paper,
+  ONE per id, and its one chunk is the latest title and abstract — the
+  only text the OAI interface serves, so the only one held. The hit lists
+  every version from `extra.versions` with its date and size, each linked
+  to `https://arxiv.org/abs/<id>v<n>` (and its PDF), the latest marked
+  current. A new version replaces the chunk (a new `content_hash` only if
+  the title or abstract moved; the version list always grows); no vector
+  of an older version is kept, so a search never returns two versions of
+  one paper.
 - **Facets** (05 §5.7): primary category, category group (cs, math,
   physics, q-bio, q-fin, stat, eess, econ), year, licence.
 - **No full text, no figures** (record_line 1). A later full-text
