@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -37,6 +38,8 @@ PARTS = "part-uids"
 _memo: dict[str, tuple[str, "Possession"]] = {}
 #: (collection dir, fingerprint, snapshot) -> covered chunks per part, the last one
 _covered_memo: dict[tuple[str, str, str], dict[str, int]] = {}
+#: (collection dir) -> index rebuilds in this process
+REBUILDS: dict[str, int] = {}
 
 
 class Possession(dict):
@@ -110,6 +113,7 @@ def index(root: Path, name: str, codex, con) -> "Possession":
             return result
     except (OSError, ValueError, AttributeError, KeyError, TypeError):
         pass
+    t0 = time.perf_counter()
     held: dict[str, set[str]] = {}
     bundles: dict[str, dict[str, list[str]]] = {}
     producers: dict[str, str] = {}
@@ -138,6 +142,13 @@ def index(root: Path, name: str, codex, con) -> "Possession":
     tmp.write_bytes(json.dumps({"fingerprint": fp, "index": result.to_json()}).encode())
     os.replace(tmp, path)
     _memo[key] = (fp, result)
+    # every rebuild said, with its cost: a fetch beat that accepts bundles
+    # one by one rebuilds once per bundle (review, 2026-10-22), and this
+    # line is what shows whether that costs anything
+    REBUILDS[key] = REBUILDS.get(key, 0) + 1
+    print(f"{time.strftime('%H:%M:%S')} [{name} info:share] possession index rebuilt "
+          f"(#{REBUILDS[key]} in this process): {len(producers)} bundles held, "
+          f"{len(result)} uids, in {(time.perf_counter() - t0) * 1000:.0f} ms", flush=True)
     return result
 
 
