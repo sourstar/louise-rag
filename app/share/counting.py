@@ -135,7 +135,16 @@ def view_kwargs(root: Path, name: str, codex, con, rows: Sequence[Mapping[str, A
     """What `coverage.shards_view` needs beyond the rows to count a part
     once: `redundant` (a producer's deprecated copies held beside their
     current one) and `union` (every part with several accepted bundles)."""
-    from app.share import coverage as cov, deprecate
+    from app.share import contribute, coverage as cov, deprecate
     rows = cov.rows(con) if rows is None else rows
+    union = None
+    if contribute.predecessors(root, name):
+        # re-minted in the same space: every part counted BY POSSESSION, the
+        # predecessor's bundles included (app/share/possession.py, 2026-10-22)
+        from app.share import possession
+        try:
+            union = possession.covered(root, name, codex, con)
+        except Exception:   # noqa: BLE001 — no snapshot yet: the rows' count
+            union = None
     return {"redundant": deprecate.redundant_here(root, name, codex, con),
-            "union": union_counts(root, name, codex, rows)}
+            "union": union if union is not None else union_counts(root, name, codex, rows)}

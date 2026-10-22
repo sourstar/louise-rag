@@ -215,7 +215,10 @@ louise dev                                                             operator 
                                                                        `snapshot create --shards-from` holds, the space's function (weights, dim, dtype, ctx,
                                                                        pooling, normalise, query, epoch) is equal, the target's latest snapshot names the source's
                                                                        parts, and the target is empty; re-pins the space row to the target's Codex and clears the
-                                                                       source's coverage rows. --keep: then only the rows that archive produced (chunk_verification
+                                                                       source's coverage rows — but in the SAME space keeps them under their own part ids, as
+                                                                       provenance (never the target's coverage), hard-links the bundle tree with --copy and names
+                                                                       the predecessors in the carry marker (04 §4.5, 2026-10-22); --predecessor-rows does that
+                                                                       after a same-space carry made before. --keep: then only the rows that archive produced (chunk_verification
                                                                        imported or verified) stay; every other is deleted and its document embedded again, a window
                                                                        at a time, resumable, the table's row count checked against the kept count (exit 1 if it
                                                                        differs). Before use, `hold check <to> --checks vectors-sample`. A dry run without --yes;
@@ -1311,6 +1314,18 @@ says `embed_done = 0`, marked as the embed stage marks them. The one-off
 repair for what `share contribute`'s build embedded and never marked (372
 documents on the node); the build marks what it completes since, after the
 write. Per shard of the current snapshot, one lookup of its chunk ids.
+
+`dev withdraw-covered <collection> [--dry-run] [--yes]` (added
+2026-10-22) is the producer's side of 03 §3.6's `withdraw` for bundles
+another bundle already covers: this peer's accepted bundles of the
+collection whose every record is held, with the same content_hash, by an
+accepted bundle that is not one of them — another producer's, or a
+same-space predecessor's of anyone (04 §4.5) — counted, then, asked or
+`--yes`, named in ONE `withdraw` attestation (09 §9.8) published for the
+beat to forward; their directories and coverage rows go here, their
+vectors stay. Candidates never cover one another. First use: the 117
+bundles the node's held path made for gutenberg 6f030405 after the carry
+cleared the predecessor's rows.
 
 `dev deprecate-duplicates <collection> [--dry-run] [--yes]` (amended
 2026-10-19, operator) is the producer's side of 03 §3.6's `deprecate`:

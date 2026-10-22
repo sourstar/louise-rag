@@ -542,6 +542,32 @@ that finds it re-signed another producer's rows deprecates its copy in
 favour of the original the same way (the current copy may be another
 producer's). *(Operator, 2026-10-19.)*
 
+**After a re-mint in the same space, the predecessor's bundles are the new
+collection's coverage for unchanged records** *(amended 2026-10-22,
+operator)*. A bundle is admissible by what it was computed FROM — the
+space and each record's content_hash (03 §3.5); the collection and
+snapshot in its header say where the work was done and gate nothing. So
+when a collection is re-minted in the same space (a new parser, a re-cut
+of the parts), a record is covered when ANY accepted bundle held — the new
+collection's or the predecessor's, any producer, filed under any part —
+holds its uid with the record's current content_hash: coverage is counted
+by possession, not by the part a bundle was filed under (a bundle may span
+two re-cut parts). Only the changed and the new records need a new
+bundle. "Once a bundle is made and published, the ownership is of the
+community. A new version of one or more books: the peer that takes the job
+does it, no priority for the original issuer." A bundle "is signed by the
+peer making it, but from that point onwards any other peer has the same
+right to make a new version of it (according to the policies ruling new
+bundles)": served and admitted as its maker signed it, never re-signed by
+a holder; its next version is made by whoever takes the work under the
+ordinary rules (rendezvous, leading, the ladder). The carry that re-mints
+keeps the predecessor's coverage rows under their own part ids, as
+provenance (07 §7.3, `dev carry`). *Why:* gutenberg's parser-10 re-mint
+cleared the predecessor's rows, and the node's held path bundled and
+signed as its own 117 parts whose every record the predecessor's bundles
+already held — 259 of those records only in another producer's. Nothing
+left the node; the 117 were withdrawn (03 §3.6).
+
 **Weight and eligibility.** The weight is the peer's benchmark for this
 collection's space — the `benchmarks` entry of its digest whose
 `space_id` matches (§3.3; 09 §9.9), a peer with no such entry being

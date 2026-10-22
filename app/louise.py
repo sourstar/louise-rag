@@ -1212,6 +1212,58 @@ def cmd_dev_deprecate_duplicates(a) -> int:
     return 0
 
 
+def cmd_dev_withdraw_covered(a) -> int:
+    """`louise dev withdraw-covered <collection> [--dry-run] [--yes]` (03 §3.6;
+    09 §9.8): this peer's accepted bundles of the collection whose every
+    record is already held, with the same content hash, by bundles that are
+    not among them — another producer's or a same-space predecessor's
+    (app/share/possession.py). WITHDRAWN: one attestation, published for
+    peers; their directories and coverage rows go here, their vectors stay
+    (the other bundles cover them). Not a deprecation: there is no single
+    current copy of the same part to name (the predecessor's bundles span the
+    re-cut parts). First use: gutenberg 6f030405's 117 bundles of 2026-10-22,
+    made by the held path after the carry cleared the predecessor's rows.
+    Takes the collection's lock."""
+    from app import db as _db, identity
+    from app.bundles import keys as node_keys
+    from app.hold import equivalence, records as rec
+    from app.share import peers, possession, seeder, withdraw as withdraw_mod
+    name, codex = col.resolve(a.root, a.collection)
+    try:
+        key = node_keys.load_signing_key()
+        own_key = identity.own()
+    except Exception as e:   # noqa: BLE001
+        raise CodexError(f"a withdrawal is signed and this peer has no key: {e}") from None
+    image = equivalence.running_image()
+    if not image:
+        raise CodexError("this process does not know the image it runs (LOUISE_PLATFORM_IMAGE): an attestation "
+                         "names it (09 §9.8), so nothing is withdrawn")
+    snapshot = seeder.current_snapshot(col.shard_dir_of(a.root, name))
+    if snapshot is None:
+        raise CodexError(f"{name}: no snapshot in the SHARD")
+    local = rec.local_collection(a.root, name, codex)
+    with _closing(_db.connect(local)) as con:
+        found = possession.covered_by_others(a.root, name, codex, con, own_key=own_key)
+        summary = {"collection": name, "bundles": len(found), "uids": sum(f["uids"] for f in found),
+                   "parts": len({f["shard"] for f in found})}
+        if not found or a.dry_run:
+            _print({**summary, "withdrawn": False})
+            return 0
+        if not a.yes:
+            reply = _ask(f"Withdraw {len(found)} bundle(s) of {name} whose every record another bundle held here "
+                         f"covers? [y/N] ")
+            if reply not in ("y", "yes"):
+                print("not withdrawn; nothing was written", file=sys.stderr)
+                return 2
+        _take_write_lock(a.root, name, "dev withdraw-covered")
+        with _closing(peers.connect()) as node_con:
+            out = withdraw_mod.publish(a.root, name, codex, snapshot, [f["bundle_id"] for f in found], key=key,
+                                       own_key=own_key, con=con, node_con=node_con, platform_image=image,
+                                       log=lambda m: print(m, file=sys.stderr))
+        _print({**summary, "withdrawn": True, **out})
+    return 0
+
+
 def cmd_dev_adopt_bundles(a) -> int:
     """`louise dev adopt-bundles <collection>` (07 §7.8, 2026-10-19): the
     collection's `state/bundles` copied under `<BUNDLES_ROOT>/<name>`,
@@ -4525,6 +4577,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true", help="no question (07 §7.7: required without a terminal)")
     p.add_argument("--dry-run", action="store_true", help="list the pairs and deprecate nothing")
     p.set_defaults(fn=cmd_dev_deprecate_duplicates)
+    p = dverbs.add_parser("withdraw-covered", help="this peer's bundles whose every record another bundle held "
+                                                   "here covers (a predecessor's, another producer's), withdrawn "
+                                                   "(03 §3.6; 09 §9.8); writes, asks first")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--yes", action="store_true", help="no question (07 §7.7: required without a terminal)")
+    p.add_argument("--dry-run", action="store_true", help="count them and withdraw nothing")
+    p.set_defaults(fn=cmd_dev_withdraw_covered)
     p = dverbs.add_parser("migrate", help="schema changes to a state database; writes; never runs on its own")
     mverbs = p.add_subparsers(dest="what", required=True)
     p = mverbs.add_parser("schema", help="apply pending schema changes to a collection's state database")

@@ -522,20 +522,19 @@ def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | 
 
     `records` (the part's records) also brings in the rows of the carry
     PREDECESSORS (`predecessors`) — the collection this one was re-minted
-    from, in the same space (2026-10-22). Their bundles are not this
-    collection's, so THIS peer's own predecessor bundles claim nothing: they
-    are the proof that the vectors are its own work, which it bundles anew.
-    ANOTHER producer's accepted predecessor bundle claims a uid its
-    possession names with the record's own content_hash (a record changed
-    since is embedded again here and bundled). Another producer's row
-    WITHOUT files (the compare path keeps no files when every chunk was held
-    already) says only that this peer held vectors at compare time, not
-    whose: a uid inside it claims unless an own predecessor bundle holds it
-    (Perugia, en/01192, 2026-10-20: the held vectors were the node's). All of
-    it for records UNCHANGED since the predecessor only: a changed or new
-    record is a new book, bundled by whoever embedded it (operator,
-    2026-10-22). Never "unreadable": nothing can fetch a predecessor's
-    bundle for this collection, so the part never waits on it."""
+    from, in the same space (2026-10-22). A bundle is admissible by what it
+    was computed from (03 §3.5), so ANY accepted bundle held here — own or
+    another producer's, this collection's or a predecessor's, under any
+    shard key — covers a record whose uid its possession names with the
+    record's CURRENT content_hash (`possession.index`): claimed, never
+    bundled again. A changed or new record is a new book, bundled by
+    whoever embedded it (operator, 2026-10-22). Another producer's
+    predecessor row WITHOUT files (the compare path keeps no files when
+    every chunk was held already) says only that this peer held vectors at
+    compare time, not whose: its unchanged records are claimed unless an
+    own predecessor bundle holds them (Perugia, en/01192, 2026-10-20) — and
+    never counted as coverage. Never "unreadable": nothing can fetch a
+    predecessor's bundle for this collection, so the part never waits."""
     import json
     out: set[str] = set()
     for r in cov.rows(con, shard=cov.shard_id(codex, sid)):
@@ -548,42 +547,42 @@ def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | 
             continue                               # a bundle not here (set aside, moved): claims nothing
     preds = predecessors(root, name) if records else []
     if preds:
+        from app.share import possession
         hashes = {r["uid"]: r.get("content_hash") for r in records}
-        # operator, 2026-10-22: "treat the new book versions as a new book; the
-        # new version of a bundle is released by whoever takes the task to
-        # re-embed the new versions" — a record CHANGED since the predecessor
-        # (or new in this collection) is claimed by no predecessor row, own or
-        # foreign, readable or not: its vector was computed after the change
-        # by whoever embedded it, who bundles it. Told by the predecessor's own
-        # snapshot (`_predecessor_hashes`); a predecessor not held here says
-        # nothing, and every record counts as unchanged (the rules below err
-        # toward not re-signing).
+        # COVERED BY POSSESSION (04 §4.5, amended 2026-10-22): a record is
+        # claimed when an accepted bundle held here — this collection's or a
+        # same-space predecessor's, any producer, any shard key — holds its uid
+        # with the record's CURRENT content_hash. A changed or new record is a
+        # new book (operator: "the new version of a bundle is released by
+        # whoever takes the task to re-embed the new versions"): uncovered,
+        # bundled by whoever embedded it.
+        held = possession.index(root, name, codex, con)
+        out.update(possession.covered_uids(held, hashes.items()))
+        # another producer's predecessor row WITHOUT files says only that this
+        # peer held vectors then, not whose (Perugia, en/01192): its unchanged
+        # records are claimed unless an own predecessor bundle holds them —
+        # never coverage (they count for nothing in `possession.index`)
         unchanged = set(hashes)
         for pid in preds:
             before = _predecessor_hashes(root, pid, sid, records)
             if before is not None:
                 unchanged &= {u for u, h in hashes.items() if before.get(u) == h}
-        hashes = {u: h for u, h in hashes.items() if u in unchanged}
-        own_work: set[str] = set()                 # uids an own predecessor bundle proves
-        fileless: list[tuple[str, str]] = []       # another producer's ranges, files gone
+        own_work: set[str] = set()
+        fileless: list[tuple[str, str]] = []
         for bundle_id, psid, producer, first, last in _predecessor_rows(con, codex, preds, sid, records):
             p = bundle_dir(root, name, codex, psid, bundle_id) / "possession.json"
             try:
-                held = json.loads(p.read_bytes())
+                got = json.loads(p.read_bytes())
             except (OSError, ValueError):
-                held = None
+                got = None
             if own_key is not None and producer == own_key:
-                if held is not None:
-                    own_work.update(u for u, h in held.items() if u in hashes and h == hashes[u])
-                continue
-            if held is None:
-                if first and last:
-                    fileless.append((first, last))
-                continue
-            out.update(u for u, h in held.items() if u in hashes and h == hashes[u])
+                if got is not None:
+                    own_work.update(u for u, h in got.items() if hashes.get(u) == h)
+            elif got is None and first and last:
+                fileless.append((first, last))
         for first, last in fileless:
             a, b = _uid_key(first), _uid_key(last)
-            out.update(u for u in hashes if u not in own_work and a <= _uid_key(u) <= b)
+            out.update(u for u in unchanged if u not in own_work and a <= _uid_key(u) <= b)
     return frozenset(out)
 
 

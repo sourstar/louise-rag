@@ -819,32 +819,32 @@ def test_a_predecessor_s_accepted_rows_claim_by_range_and_content_hash(ready):
                     & {first["uid"]}), "another slice's part reads none of it"
 
 
-def test_a_fileless_foreign_row_claims_unless_an_own_predecessor_bundle_proves_the_work(ready):
+def test_a_fileless_foreign_row_claims_its_unchanged_records_but_is_never_coverage(ready):
     """A predecessor's row of ANOTHER producer without files (the compare
-    path) says only that this peer held vectors then, not whose: claimed —
-    Perugia, en/01192, 2026-10-20, re-signed the node's rows through such a
-    row — unless an own predecessor bundle holds the uid with the record's
-    hash. Never unreadable: nothing stalls."""
+    path) says only that this peer held vectors then, not whose: its
+    records are claimed (Perugia, en/01192, 2026-10-20, re-signed the node's
+    rows through such a row), yet it covers nothing — no possession here to
+    count. Never unreadable: nothing stalls."""
     from app.hold import land as landing
+    from app.share import possession
     root, snapshot, codex, kw = ready
     shard = snapshot.shards[0]
     sid = f"{shard.slice}/{shard.n:05d}"
     records = landing.records_for(root, "gutenberg", snapshot, sid, None)
-    mine, theirs = records[0], records[1]
     _predecessor(root, codex, kw["con"], sid, {r["uid"]: r["content_hash"] for r in records},
                  files=False, bundle_id="sha256:" + "f1" * 32)
     assert contribute.claimed_uids(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY,
-                                   records=records) == {r["uid"] for r in records}, "no proof of own work: claimed"
-    _predecessor(root, codex, kw["con"], sid, {mine["uid"]: mine["content_hash"]}, producer=OUR_KEY,
-                 bundle_id="sha256:" + "f2" * 32)
-    claimed = contribute.claimed_uids(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY, records=records)
-    assert mine["uid"] not in claimed and theirs["uid"] in claimed, "an own predecessor bundle proves the work"
+                                   records=records) == {r["uid"] for r in records}
+    assert possession.index(root, "gutenberg", codex, kw["con"]) == {}, "counted as coverage of nothing"
     assert contribute.unreadable_bundles(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY) == []
 
 
-def test_an_own_predecessor_bundle_claims_nothing(ready):
-    """This peer's own bundles of the predecessor are not this collection's:
-    the vectors are its own work, bundled anew for the new collection."""
+def test_any_producer_s_predecessor_bundle_covers_its_unchanged_records(ready):
+    """03 §3.5: a bundle is admissible by what it was computed from — the
+    collection and snapshot in its header gate nothing. So this peer's own
+    predecessor bundle covers its records as well as another producer's:
+    claimed, never bundled again (operator, 2026-10-22: "once a bundle is
+    made and published, the ownership is of the community")."""
     from app.hold import land as landing
     root, snapshot, codex, kw = ready
     shard = snapshot.shards[0]
@@ -852,7 +852,54 @@ def test_an_own_predecessor_bundle_claims_nothing(ready):
     records = landing.records_for(root, "gutenberg", snapshot, sid, None)
     _predecessor(root, codex, kw["con"], sid, {r["uid"]: r["content_hash"] for r in records}, producer=OUR_KEY)
     assert contribute.claimed_uids(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY,
-                                   records=records) == frozenset()
+                                   records=records) == {r["uid"] for r in records}
+
+
+def test_a_bundle_filed_only_under_an_admitted_segment_is_read(ready):
+    """The A1f twin filed 1,743 of the node's gutenberg bundles under the
+    admitted segment 5ac3c581, not the space's own; a fixed path read them as
+    missing (München's first count, 2026-10-22). Possession is read through
+    `bundle_dir`, every admitted segment."""
+    import types
+    from app.hold import land as landing
+    from app.share import possession
+    root, snapshot, codex, kw = ready
+    shard = snapshot.shards[0]
+    sid = f"{shard.slice}/{shard.n:05d}"
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    bid = _predecessor(root, codex, kw["con"], sid, {r["uid"]: r["content_hash"] for r in records})
+    base = root / "gutenberg" / "state" / "bundles"
+    own_dir = contribute.bundle_dir(root, "gutenberg", codex, sid, bid)
+    other = base / "5ac3c5810f2cd56a" / sid / own_dir.name
+    other.parent.mkdir(parents=True, exist_ok=True)
+    own_dir.rename(other)                             # filed only under the admitted segment
+    plain = possession.index(root, "gutenberg", codex, kw["con"])
+    assert plain == {}, "this Codex admits no other segment: not found"
+    admitting = types.SimpleNamespace(**{k: getattr(codex, k) for k in ("collection_id", "space_segment")},
+                                      admitted_segments=(codex.space_segment, "5ac3c5810f2cd56a"))
+    possession._memo.clear()
+    got = possession.index(root, "gutenberg", admitting, kw["con"])
+    assert set(got) == {r["uid"] for r in records}
+
+
+def test_the_view_counts_a_predecessor_s_coverage_by_possession(ready):
+    """Re-minted in the same space, a part's coverage is counted BY
+    POSSESSION: the predecessor's bundle, filed under its own shard key,
+    covers this collection's part — its records' chunks, by the manifest."""
+    from app.hold import land as landing
+    from app.share import counting
+    root, snapshot, codex, kw = ready
+    shard = snapshot.shards[0]
+    sid = f"{shard.slice}/{shard.n:05d}"
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    _predecessor(root, codex, kw["con"], f"{shard.slice}/{shard.n + 3:05d}",
+                 {r["uid"]: r["content_hash"] for r in records})
+    union = counting.view_kwargs(root, "gutenberg", codex, kw["con"])["union"]
+    uids = [r["uid"] for r in records]
+    expect = kw["con"].execute(f"SELECT COALESCE(SUM(chunks), 0) FROM documents WHERE uid IN "
+                               f"({','.join('?' * len(uids))})", uids).fetchone()[0]
+    assert union[cov.shard_id(codex, sid)] == min(int(shard.chunks), int(expect))
+    assert all(v == 0 for k, v in union.items() if k != cov.shard_id(codex, sid)), "nothing else covered"
 
 
 def test_the_held_path_signs_none_of_a_predecessor_s_rows_and_never_counts_them_as_coverage(ready):
@@ -883,3 +930,34 @@ def test_the_held_path_signs_none_of_a_predecessor_s_rows_and_never_counts_them_
     view = {v["shard"]: v for v in cov.show(codex, snapshot, kw["con"])["shards"]}[cov.shard_id(codex, sid)]
     assert view["covered"] == mine[0]["chunks"], "the predecessor's row is not this collection's coverage"
     assert not any(str(r["shard"]).startswith(PREDECESSOR) for r in cov.rows(kw["con"], shard=cov.shard_id(codex, sid)))
+
+
+def _own_bundle(root, codex, con, sid, possession, bundle_id):
+    """An accepted bundle of THIS collection, this peer's, with its possession."""
+    cov.record(con, bundle_id=bundle_id, shard=cov.shard_id(codex, sid), producer=OUR_KEY,
+               uids=sorted(possession), chunks=len(possession), tiers={t: "pass" for t in cov.TIERS},
+               source=cov.LOCAL, accepted_at="2026-10-22T12:00:00Z")
+    d = contribute.bundle_dir(root, "gutenberg", codex, sid, bundle_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "possession.json").write_text(json.dumps(possession), encoding="utf-8")
+
+
+def test_withdraw_covered_finds_own_copies_another_bundle_covers_and_never_pairs_them(ready):
+    """2026-10-22: the node's 117 bundles of gutenberg 6f030405, every record
+    already in a d913 bundle. An own bundle whose every (uid, hash) another
+    bundle held here covers is found; one with a record nobody else holds is
+    not; two own copies of the same records never cover each other."""
+    from app.hold import land as landing
+    from app.share import possession
+    root, snapshot, codex, kw = ready
+    shard = snapshot.shards[0]
+    sid = f"{shard.slice}/{shard.n:05d}"
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    full = {r["uid"]: r["content_hash"] for r in records}
+    first = dict(list(full.items())[:1])
+    _predecessor(root, codex, kw["con"], f"{shard.slice}/{shard.n + 5:05d}", first)       # covers one record
+    _own_bundle(root, codex, kw["con"], sid, first, "sha256:" + "a1" * 32)                 # covered: found
+    _own_bundle(root, codex, kw["con"], sid, full, "sha256:" + "a2" * 32)                  # one record nobody else holds
+    _own_bundle(root, codex, kw["con"], sid, full, "sha256:" + "a3" * 32)                  # its twin: not cover
+    found = possession.covered_by_others(root, "gutenberg", codex, kw["con"], own_key=OUR_KEY)
+    assert [f["bundle_id"] for f in found] == ["sha256:" + "a1" * 32]
