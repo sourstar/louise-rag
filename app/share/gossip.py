@@ -197,19 +197,29 @@ def entries(root: Path, collections) -> list[dict[str, Any]]:
 
 def coverage_of(root: Path, name: str) -> list[dict[str, Any]]:
     """09 §9.9's `coverage`: per shard, the bundle ids this peer has accepted
-    (02 §2.5) — from the coverage map, when the collection has a manifest."""
-    from app.share import coverage as cov
+    (02 §2.5) — from the coverage map, when the collection has a manifest.
+    After a same-space re-mint, the predecessors' bundles are listed under
+    the parts of THIS collection whose records they hold (04 §4.5,
+    `possession.offered_by_part`), never under their own collection's ids."""
+    from app.share import contribute, coverage as cov
     if not (Path(root) / name / "state" / "manifest.sqlite").is_file():
         return []
     by_shard: dict[str, list[str]] = {}
     try:
+        name_, codex = col.resolve(Path(root), name)
+        own = cov.shard_id(codex, "")
+        preds = contribute.predecessors(root, name)
         with closing(cov.manifest(root, name)) as mcon:
             for r in cov.rows(mcon):
-                if r["accepted_at"]:
+                if r["accepted_at"] and (not preds or str(r["shard"]).startswith(own)):
                     by_shard.setdefault(r["shard"], []).append(r["bundle_id"])
+            if preds:
+                from app.share import possession
+                for shard, ids in possession.offered_by_part(root, name, codex, mcon).items():
+                    by_shard.setdefault(shard, []).extend(ids)
     except Exception:   # noqa: BLE001 — a manifest that cannot be read claims nothing
         return []
-    return [{"shard": s, "bundles": sorted(ids)} for s, ids in sorted(by_shard.items())]
+    return [{"shard": s, "bundles": sorted(set(ids))} for s, ids in sorted(by_shard.items())]
 
 
 def fold_claims(root: Path, collections, *, now: float) -> int:

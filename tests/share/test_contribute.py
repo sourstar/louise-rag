@@ -22,14 +22,14 @@ from tests.share.test_share_api import OURS, OUR_KEY
 pytestmark = pytest.mark.strict_encoder
 
 
-def attested(root, codex, snapshot, *, check, key, time_text="2026-10-06T00:00:00Z"):
+def attested(root, codex, snapshot, *, check, key, time_text="2026-10-06T00:00:00Z", name="gutenberg"):
     body = {"kind": "louise-attestation", "version": 3, "collection_id": codex.collection_id,
             "snapshot_id": snapshot.snapshot_id, "snapshot_hash": snapshot.hash, "check": check,
             "seed": None, "shards": [], "result": "pass", "detail": {},
             "platform_image": "sha256:" + "1f" * 32, "encoder_engine": None, "encoder_weights": None,
             "key": env.key_text(key.verify_key), "time": time_text}
     envelope = env.sign(env.ATTESTATION, body, key)
-    p = attest.attestation_path(root, "gutenberg", codex, env.body_id(body))
+    p = attest.attestation_path(root, name, codex, env.body_id(body))
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(json.dumps(envelope).encode())
 
