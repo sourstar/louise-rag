@@ -70,6 +70,10 @@ def viewer_of(tokens: list[str]) -> Viewer | None:
     for t in tokens:
         if config.ADMIN_TOKEN and secrets.compare_digest(t, config.ADMIN_TOKEN):
             return Viewer("admin", "admin", master=True)
+        if config.DEPOSIT_TOKEN and secrets.compare_digest(t, config.DEPOSIT_TOKEN):
+            # LocalAGI's key, and an OpenAI client's for the vector stores:
+            # the depositor may search too (07 §7.4), and nothing more
+            return Viewer("deposit", "deposit")
     try:
         for t in tokens:
             u = users.resolve(t)

@@ -807,6 +807,31 @@ script, filled in with the address they used and their own token.
   identified by its key and nothing else, and the aggregate limit of
   08 §8.2 bounds what an unknown key can cost.
 
+**OpenAI's vector stores and files** (*amended 2026-10-22*, operator: "add the
+OpenAI missing interface calls"; `app/openai_stores.py`). A third alias: code
+written against OpenAI's SDK sets `base_url` to this node. A vector store is
+a collection, its id the local name. A collection built from its origin is
+read-only here: listed, searched, its records listed and read. A deposit
+collection is the writable kind:
+
+| route | is |
+|---|---|
+| `GET /v1/vector_stores`, `GET /v1/vector_stores/{id}` | the collections a search may use; deposit ones only for the deposit token or an admin |
+| `POST /v1/vector_stores {name, file_ids, metadata}` | `hold collection create deposit`, then each file attached |
+| `POST /v1/vector_stores/{id} {metadata}` | the store's metadata (kept in `state/openai/`; a rename is refused) |
+| `DELETE /v1/vector_stores/{id}` | `hold collection forget` of a deposit collection |
+| `POST /v1/vector_stores/{id}/search {query, max_num_results, filters, ranking_options}` | `ask search` over that collection, not logged; filters `eq`, `ne`, `in`, `and` on its facets; `score_threshold` cuts the list |
+| `POST /v1/vector_stores/{id}/files {file_id, attributes}`, `…/file_batches` | `hold deposit add`, the key being the file's name |
+| `GET …/files`, `GET …/files/{file_id}`, `GET …/files/{file_id}/content` | the deposits, or a curated collection's records by uid (a cursor on the primary key) and their text |
+| `POST …/files/{file_id} {attributes}`, `DELETE …/files/{file_id}` | the attributes; `hold deposit erase` |
+| `POST /v1/files` (multipart), `GET`, `GET {id}`, `GET {id}/content`, `DELETE {id}` | uploads waiting for a store, in `state/openai/files/` |
+
+Every write, and every route about a deposit collection, needs the deposit
+token or an admin; reading a curated store is an `ask` route. Errors are
+OpenAI's `{error: {message, type, param, code}}`. Not offered: the
+Responses API's `file_search` tool (a second chat API), chunking strategies
+(a collection's chunker is fixed in its Codex), expiry (stored, echoed).
+
 **The LocalAGI routes** (operator, 2026-09-29;
 `notes/deposit-collections.md`). The second protocol alias beside
 `/v1/chat/completions`: the knowledge-base API that LocalAGI's HTTP

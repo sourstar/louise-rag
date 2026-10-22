@@ -98,6 +98,8 @@ from .share import api as share_api  # noqa: E402
 app.include_router(share_api.router)      # the peer messages of 09 §9.9
 from .ask import api as ask_api  # noqa: E402
 app.include_router(ask_api.router)        # `ask` over HTTP and the MCP server (07 §7.4; 05 §5.4)
+from . import openai_stores  # noqa: E402
+app.include_router(openai_stores.router)   # OpenAI's vector stores and files (07 §7.4, 2026-10-22)
 
 
 @app.get("/.well-known/louise-certifier.json")
