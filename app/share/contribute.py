@@ -480,6 +480,33 @@ def _predecessor_rows(con, codex, preds: Sequence[str], sid: str, records: Seque
     return out
 
 
+def _predecessor_hashes(root: Path, pid: str, sid: str, records: Sequence[dict]) -> dict[str, str] | None:
+    """uid -> content_hash, as the predecessor `pid`'s own latest snapshot
+    holds this part's records: its parts of the same slice whose
+    [first_id, last_id] overlaps the records' range — one or two parts, read
+    once. None when the predecessor is not held here (nothing can say what
+    changed)."""
+    from app.hold import seed
+    try:
+        pname, _pcodex = col.resolve(Path(root), pid)
+        snap = seed.latest_snapshot(Path(root), pname)
+    except Exception:   # noqa: BLE001 — not held, or no snapshot: unknown
+        return None
+    keys = sorted(_uid_key(r["uid"]) for r in records)
+    lo, hi = keys[0], keys[-1]
+    slice_ = sid.rsplit("/", 1)[0]
+    want = {r["uid"] for r in records}
+    out: dict[str, str] = {}
+    for s in snap.shards:
+        if s.slice != slice_:
+            continue
+        if _uid_key(f"x:{s.last_id}") < lo or _uid_key(f"x:{s.first_id}") > hi:
+            continue
+        for r in landing.records_for(Path(root), pname, snap, f"{s.slice}/{s.n:05d}", want):
+            out[r["uid"]] = r.get("content_hash")
+    return out
+
+
 def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | None = None,
                  records: Sequence[dict] | None = None) -> frozenset[str]:
     """The uids EVERY accepted bundle held here for the shard already claims
@@ -504,9 +531,10 @@ def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | 
     WITHOUT files (the compare path keeps no files when every chunk was held
     already) says only that this peer held vectors at compare time, not
     whose: a uid inside it claims unless an own predecessor bundle holds it
-    (Perugia, en/01192, 2026-10-20: the held vectors were the node's) — with
-    any hash, since a record changed since was embedded here again by the
-    re-mint's reconcile. Never "unreadable": nothing can fetch a predecessor's
+    (Perugia, en/01192, 2026-10-20: the held vectors were the node's). All of
+    it for records UNCHANGED since the predecessor only: a changed or new
+    record is a new book, bundled by whoever embedded it (operator,
+    2026-10-22). Never "unreadable": nothing can fetch a predecessor's
     bundle for this collection, so the part never waits on it."""
     import json
     out: set[str] = set()
@@ -521,6 +549,21 @@ def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | 
     preds = predecessors(root, name) if records else []
     if preds:
         hashes = {r["uid"]: r.get("content_hash") for r in records}
+        # operator, 2026-10-22: "treat the new book versions as a new book; the
+        # new version of a bundle is released by whoever takes the task to
+        # re-embed the new versions" — a record CHANGED since the predecessor
+        # (or new in this collection) is claimed by no predecessor row, own or
+        # foreign, readable or not: its vector was computed after the change
+        # by whoever embedded it, who bundles it. Told by the predecessor's own
+        # snapshot (`_predecessor_hashes`); a predecessor not held here says
+        # nothing, and every record counts as unchanged (the rules below err
+        # toward not re-signing).
+        unchanged = set(hashes)
+        for pid in preds:
+            before = _predecessor_hashes(root, pid, sid, records)
+            if before is not None:
+                unchanged &= {u for u, h in hashes.items() if before.get(u) == h}
+        hashes = {u: h for u, h in hashes.items() if u in unchanged}
         own_work: set[str] = set()                 # uids an own predecessor bundle proves
         fileless: list[tuple[str, str]] = []       # another producer's ranges, files gone
         for bundle_id, psid, producer, first, last in _predecessor_rows(con, codex, preds, sid, records):
@@ -531,8 +574,7 @@ def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | 
                 held = None
             if own_key is not None and producer == own_key:
                 if held is not None:
-                    # any hash: a record changed since was embedded here again (A1c's reconcile)
-                    own_work.update(u for u in held if u in hashes)
+                    own_work.update(u for u, h in held.items() if u in hashes and h == hashes[u])
                 continue
             if held is None:
                 if first and last:

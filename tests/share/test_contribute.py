@@ -823,8 +823,8 @@ def test_a_fileless_foreign_row_claims_unless_an_own_predecessor_bundle_proves_t
     """A predecessor's row of ANOTHER producer without files (the compare
     path) says only that this peer held vectors then, not whose: claimed —
     Perugia, en/01192, 2026-10-20, re-signed the node's rows through such a
-    row — unless an own predecessor bundle holds the uid (any hash: a record
-    changed since was embedded here again). Never unreadable: nothing stalls."""
+    row — unless an own predecessor bundle holds the uid with the record's
+    hash. Never unreadable: nothing stalls."""
     from app.hold import land as landing
     root, snapshot, codex, kw = ready
     shard = snapshot.shards[0]
@@ -835,11 +835,10 @@ def test_a_fileless_foreign_row_claims_unless_an_own_predecessor_bundle_proves_t
                  files=False, bundle_id="sha256:" + "f1" * 32)
     assert contribute.claimed_uids(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY,
                                    records=records) == {r["uid"] for r in records}, "no proof of own work: claimed"
-    _predecessor(root, codex, kw["con"], sid, {mine["uid"]: "0" * 32}, producer=OUR_KEY,
+    _predecessor(root, codex, kw["con"], sid, {mine["uid"]: mine["content_hash"]}, producer=OUR_KEY,
                  bundle_id="sha256:" + "f2" * 32)
     claimed = contribute.claimed_uids(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY, records=records)
-    assert mine["uid"] not in claimed and theirs["uid"] in claimed, \
-        "an own predecessor bundle proves the work, whatever hash it held"
+    assert mine["uid"] not in claimed and theirs["uid"] in claimed, "an own predecessor bundle proves the work"
     assert contribute.unreadable_bundles(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY) == []
 
 
