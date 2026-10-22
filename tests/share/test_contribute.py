@@ -770,14 +770,15 @@ def test_an_own_export_the_ladder_refuses_is_set_aside_not_served_and_not_export
 PREDECESSOR = "sha256:" + "d9" * 32
 
 
-def _predecessor(root, codex, con, sid, possession, *, bundle_id=None, files=True, accepted=True):
+def _predecessor(root, codex, con, sid, possession, *, bundle_id=None, files=True, accepted=True,
+                 producer=PEER_KEY):
     """A carry predecessor's accepted row, UNKEYED under its own collection's
     shard id (app/hold/carry.py, 2026-10-22), with its bundle's possession
     file where the row's path names it — and the marker naming it."""
     from app.share import contribute as c
     bundle_id = bundle_id or "sha256:" + format(len(possession) + 7, "064x")
     uids = sorted(possession, key=c._uid_key)
-    cov.record(con, bundle_id=bundle_id, shard=f"{PREDECESSOR}/{codex.space_segment}/{sid}", producer=PEER_KEY,
+    cov.record(con, bundle_id=bundle_id, shard=f"{PREDECESSOR}/{codex.space_segment}/{sid}", producer=producer,
                uids=uids, chunks=len(uids), tiers={t: "pass" for t in cov.TIERS}, source=cov.FETCHED,
                accepted_at="2026-10-20T00:00:00Z" if accepted else None)
     if files:
@@ -818,18 +819,41 @@ def test_a_predecessor_s_accepted_rows_claim_by_range_and_content_hash(ready):
                     & {first["uid"]}), "another slice's part reads none of it"
 
 
-def test_a_predecessor_row_without_files_claims_nothing_and_blocks_nothing(ready):
-    """An accepted bundle keeps no files when every chunk was held already
-    (the compare path): the vectors held are this peer's own, so the held
-    path bundles them — never left to a fetch that cannot happen."""
+def test_a_fileless_foreign_row_claims_unless_an_own_predecessor_bundle_proves_the_work(ready):
+    """A predecessor's row of ANOTHER producer without files (the compare
+    path) says only that this peer held vectors then, not whose: claimed —
+    Perugia, en/01192, 2026-10-20, re-signed the node's rows through such a
+    row — unless an own predecessor bundle holds the uid (any hash: a record
+    changed since was embedded here again). Never unreadable: nothing stalls."""
     from app.hold import land as landing
     root, snapshot, codex, kw = ready
     shard = snapshot.shards[0]
     sid = f"{shard.slice}/{shard.n:05d}"
     records = landing.records_for(root, "gutenberg", snapshot, sid, None)
-    _predecessor(root, codex, kw["con"], sid, {r["uid"]: r["content_hash"] for r in records}, files=False)
-    assert contribute.claimed_uids(root, "gutenberg", codex, kw["con"], sid, records=records) == frozenset()
+    mine, theirs = records[0], records[1]
+    _predecessor(root, codex, kw["con"], sid, {r["uid"]: r["content_hash"] for r in records},
+                 files=False, bundle_id="sha256:" + "f1" * 32)
+    assert contribute.claimed_uids(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY,
+                                   records=records) == {r["uid"] for r in records}, "no proof of own work: claimed"
+    _predecessor(root, codex, kw["con"], sid, {mine["uid"]: "0" * 32}, producer=OUR_KEY,
+                 bundle_id="sha256:" + "f2" * 32)
+    claimed = contribute.claimed_uids(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY, records=records)
+    assert mine["uid"] not in claimed and theirs["uid"] in claimed, \
+        "an own predecessor bundle proves the work, whatever hash it held"
     assert contribute.unreadable_bundles(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY) == []
+
+
+def test_an_own_predecessor_bundle_claims_nothing(ready):
+    """This peer's own bundles of the predecessor are not this collection's:
+    the vectors are its own work, bundled anew for the new collection."""
+    from app.hold import land as landing
+    root, snapshot, codex, kw = ready
+    shard = snapshot.shards[0]
+    sid = f"{shard.slice}/{shard.n:05d}"
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    _predecessor(root, codex, kw["con"], sid, {r["uid"]: r["content_hash"] for r in records}, producer=OUR_KEY)
+    assert contribute.claimed_uids(root, "gutenberg", codex, kw["con"], sid, own_key=OUR_KEY,
+                                   records=records) == frozenset()
 
 
 def test_the_held_path_signs_none_of_a_predecessor_s_rows_and_never_counts_them_as_coverage(ready):

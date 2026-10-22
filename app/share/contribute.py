@@ -476,7 +476,7 @@ def _predecessor_rows(con, codex, preds: Sequence[str], sid: str, records: Seque
                 (start, start[:-1] + "0")):
             if first and last and (_uid_key(last) < lo or _uid_key(first) > hi):
                 continue
-            out.append((bundle_id, shard[len(f"{pid}/{codex.space_segment}/"):], producer))
+            out.append((bundle_id, shard[len(f"{pid}/{codex.space_segment}/"):], producer, first, last))
     return out
 
 
@@ -494,13 +494,20 @@ def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | 
     callers that pass it and narrows nothing.
 
     `records` (the part's records) also brings in the rows of the carry
-    PREDECESSORS (`predecessors`): a uid an accepted bundle of the collection
-    this one was re-minted from holds is claimed where that bundle's
-    possession names it with the record's own content_hash — a record that
-    changed since is embedded again here and bundled. A predecessor's row
-    without files claims nothing: an accepted bundle keeps no files when its
-    every chunk was held already (the compare path, app/share/accept.py), so
-    the vectors held are this peer's own."""
+    PREDECESSORS (`predecessors`) — the collection this one was re-minted
+    from, in the same space (2026-10-22). Their bundles are not this
+    collection's, so THIS peer's own predecessor bundles claim nothing: they
+    are the proof that the vectors are its own work, which it bundles anew.
+    ANOTHER producer's accepted predecessor bundle claims a uid its
+    possession names with the record's own content_hash (a record changed
+    since is embedded again here and bundled). Another producer's row
+    WITHOUT files (the compare path keeps no files when every chunk was held
+    already) says only that this peer held vectors at compare time, not
+    whose: a uid inside it claims unless an own predecessor bundle holds it
+    (Perugia, en/01192, 2026-10-20: the held vectors were the node's) — with
+    any hash, since a record changed since was embedded here again by the
+    re-mint's reconcile. Never "unreadable": nothing can fetch a predecessor's
+    bundle for this collection, so the part never waits on it."""
     import json
     out: set[str] = set()
     for r in cov.rows(con, shard=cov.shard_id(codex, sid)):
@@ -514,13 +521,27 @@ def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | 
     preds = predecessors(root, name) if records else []
     if preds:
         hashes = {r["uid"]: r.get("content_hash") for r in records}
-        for bundle_id, psid, _producer in _predecessor_rows(con, codex, preds, sid, records):
+        own_work: set[str] = set()                 # uids an own predecessor bundle proves
+        fileless: list[tuple[str, str]] = []       # another producer's ranges, files gone
+        for bundle_id, psid, producer, first, last in _predecessor_rows(con, codex, preds, sid, records):
             p = bundle_dir(root, name, codex, psid, bundle_id) / "possession.json"
             try:
                 held = json.loads(p.read_bytes())
             except (OSError, ValueError):
+                held = None
+            if own_key is not None and producer == own_key:
+                if held is not None:
+                    # any hash: a record changed since was embedded here again (A1c's reconcile)
+                    own_work.update(u for u in held if u in hashes)
+                continue
+            if held is None:
+                if first and last:
+                    fileless.append((first, last))
                 continue
             out.update(u for u, h in held.items() if u in hashes and h == hashes[u])
+        for first, last in fileless:
+            a, b = _uid_key(first), _uid_key(last)
+            out.update(u for u in hashes if u not in own_work and a <= _uid_key(u) <= b)
     return frozenset(out)
 
 
