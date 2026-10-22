@@ -110,17 +110,21 @@ def record(con, *, bundle_id: str, shard: str, producer: str, uids: Sequence[str
 
 
 def record_from_report(con, codex, report, header: dict[str, Any], *, source: str,
-                       now: str) -> dict[str, Any]:
+                       now: str, shard_id_: str | None = None) -> dict[str, Any]:
     """After `hold vectors import` (or this peer's own ladder over its own
-    bundle): the row, accepted now when the ladder passed."""
+    bundle): the row, accepted now when the ladder passed. `shard_id_`: the
+    row's key when it is not this collection's part (a predecessor's bundle,
+    `accept._row_shard`); such a row opens no part of this collection."""
     tiers = _tiers_of(report)
     accepted = now if getattr(report, "ok", False) else None
     uids = list(header.get("uids") or [])
     chunks = len(getattr(report, "admitted", ()) or ()) if accepted else 0
-    record(con, bundle_id=report.bundle_id, shard=shard_id(codex, header["shard"]),
+    own = shard_id(codex, header["shard"])
+    record(con, bundle_id=report.bundle_id, shard=shard_id_ or own,
            producer=report.producer, uids=uids, chunks=chunks, tiers=tiers, source=source,
            accepted_at=accepted)
-    note_open(con, codex, header["shard"], now=now)
+    if (shard_id_ or own) == own:
+        note_open(con, codex, header["shard"], now=now)
     return row(con, report.bundle_id)
 
 

@@ -108,6 +108,20 @@ def newer_snapshots(root: Path, collections, node_con, *, client=None, key=None,
     return out
 
 
+def _row_shard(codex, header: dict[str, Any]) -> tuple[str, str | None]:
+    """The coverage row's shard id for a bundle, and the other collection it
+    names when it is keyed under that one's id (04 §4.5, 2026-10-22). A bundle
+    of EXACTLY this space whose header names another collection — the one this
+    was re-minted from, a fork — is recorded under ITS OWN shard id
+    (header collection / segment / header part), as the carried rows are:
+    provenance, counted by possession, never keyed to a part of this
+    collection it does not describe. Any other bundle keys as before."""
+    other = header.get("collection")
+    if other and other != codex.collection_id and header.get("space_id") == codex.space_id:
+        return f"{other}/{codex.space_segment}/{header['shard']}", str(other)
+    return cov.shard_id(codex, header["shard"]), None
+
+
 def _segment_for(codex, payload: dict[str, Any]) -> str:
     """The segment a bundle is offered and filed under: its own space's when
     that is admitted here (A1f), else this space's."""
@@ -228,8 +242,16 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     # names none, an event's may; the header has been read and is signed
     final = contribute.bundle_dir(root, name, codex, str(header.get("shard") or payload.get("shard") or "x/00000"),
                                   bundle_id, space=_segment_for(codex, {"space_id": header.get("space_id")}))
-    snapshot = landing.snapshot_named(root, name, header["snapshot_id"])
-    records = landing.records_for(root, name, snapshot, header["shard"], header["uids"])
+    # records from THIS collection's CURRENT snapshot, by uid (2026-10-22): the
+    # header's snapshot and part are provenance; a bundle of the collection
+    # this one was re-minted from names a part the re-cut moved
+    from app.share import seeder
+    snapshot = (seeder.current_snapshot(col.shard_dir_of(Path(root), name))
+                or landing.snapshot_named(root, name, header["snapshot_id"]))
+    records = landing.records_by_uid(root, name, snapshot, header["uids"],
+                                     order=(getattr(codex, "slicing", None) or {}).get("order", "bytes"),
+                                     hint_slice=str(header["shard"]).rsplit("/", 1)[0])
+    row_shard, foreign = _row_shard(codex, header)
     mine = {r["uid"]: r["content_hash"] for r in records}
     cut = landing.cut(codex, records)
     report = adm.judge(codex, header, rows, possession, bundle_id, envelope=envelope,
@@ -242,7 +264,9 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     # fingerprint of what moved read that stamp
     at = time.time()
     cov.record_from_report(con, codex, report, header, source=cov.FETCHED,
-                           now=messages.time_text(at))
+                           now=messages.time_text(at), shard_id_=row_shard)
+    if foreign and report.ok:
+        contribute.add_predecessor(Path(root), name, foreign)
     if not report.ok:
         failed = [t.tier for t in report.tiers if t.failed]
         for f in member.files:
@@ -273,6 +297,7 @@ def take(root: Path, name: str, codex, payload: dict[str, Any], *, session, con,
     # for are COMPARED, attested and not stored; the first accepted vector
     # stays what is searched
     duplicate = compare_duplicate(root, name, codex, snapshot, report, header, con=con, node_con=node_con,
+                                  row_shard=row_shard,
                                   vectors_for=vectors_for, key=key, own_key=own_key, now=at, log=log)
     if duplicate is not None:
         written = 0
@@ -336,6 +361,7 @@ def _move_dir(src: Path, dst: Path) -> None:
 
 
 def compare_duplicate(root: Path, name: str, codex, snapshot, report, header: dict[str, Any], *, con,
+                      row_shard: str | None = None,
                       node_con, vectors_for, key=None, own_key=None, now: float | None = None,
                       log: Callable[[str], None] | None = None) -> dict[str, Any] | None:
     """04 §4.5: a second compliant bundle for chunks already covered here is
@@ -368,7 +394,7 @@ def compare_duplicate(root: Path, name: str, codex, snapshot, report, header: di
     passed = len(compared) - len(failed)
     quorum = codex.space.calibration
     ok = passed * quorum.n >= quorum.min_pass * len(compared)
-    producers = sorted({report.producer} | {r["producer"] for r in cov.rows(con, cov.shard_id(codex, header["shard"]))
+    producers = sorted({report.producer} | {r["producer"] for r in cov.rows(con, row_shard or cov.shard_id(codex, header["shard"]))
                                              if r["accepted_at"] and r["producer"]})
     detail = {"chunks": len(compared), "passed": passed,
               "median": f"{sorted(cosines)[len(cosines) // 2]:.6f}", "failed": sorted(failed),
@@ -386,7 +412,7 @@ def compare_duplicate(root: Path, name: str, codex, snapshot, report, header: di
             key = None
     if key is not None and image is not None:
         outcome = chk.Outcome("vectors-sample", out["result"], detail, None,
-                              (cov.shard_id(codex, header["shard"]),))
+                              (row_shard or cov.shard_id(codex, header["shard"]),))
         doc = chk.attestation(outcome, codex, snapshot, key, platform_image=image,
                               now=messages.time_text(now))
         aid = env.body_id(doc["body"])

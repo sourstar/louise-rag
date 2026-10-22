@@ -743,6 +743,30 @@ def test_reconcile_keeps_the_vectors_of_every_unchanged_document_and_resets_the_
     assert (again["kept"], again["reset"]) == (out["kept"], out["reset"]), "resumed, not redone"
 
 
+def test_reconcile_drops_the_vectors_of_a_book_the_rebuild_refused(pair, corpus_dir):
+    """pg673 on gutenberg's parser-10 re-mint: refused at the rebuild (its
+    encoding declared broken), so the target holds no record of it, and the
+    vectors the carry brought must go with it — an unchanged book beside it
+    keeps its own."""
+    root, old, re_, uids, ids = _rebuilt_pair(pair)
+    carry.carry(root, "old", "re", rebuilt=True, copy=True, apply=True, log=quiet)
+    refused = uids[1]
+    coll = _local(root, "re")
+    con = db.connect(coll)
+    try:      # what the scan writes for an UnindexableDocument
+        con.execute("UPDATE documents SET error=? WHERE uid=?", ("UnindexableDocument: broken", refused))
+        con.commit()
+    finally:
+        con.close()
+    _build_and_freeze(root, "re", corpus_dir)
+    assert refused not in carry._content_of(root, "re"), "the fixture: no record of it"
+
+    out = carry.reconcile(root, "old", "re", log=quiet)
+    assert out["reset"] == 1 and out["kept"] == len(uids) - 1, out
+    left = set(embeddings.chunk_ids_of_books([int(u.split(":")[1]) for u in uids], collection=coll))
+    assert left == {c for c in ids if not c.startswith(refused + ":")}
+
+
 def test_a_finished_cursor_the_copy_brought_along_is_not_this_pairs(pair, corpus_dir):
     """2026-10-22, gutenberg's parser-10 reconcile: the manifest copied by
     the carry held the parser-9 reconcile's finished cursor, and the new

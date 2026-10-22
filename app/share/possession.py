@@ -33,10 +33,33 @@ from typing import Any, Iterable, Sequence
 INDEX = "possession-index.json"
 PARTS = "part-uids"
 
-#: (collection dir) -> (fingerprint, {uid: [hashes]}) for this process
-_memo: dict[str, tuple[str, dict[str, list[str]]]] = {}
+#: (collection dir) -> (fingerprint, Possession) for this process
+_memo: dict[str, tuple[str, "Possession"]] = {}
 #: (collection dir, fingerprint, snapshot) -> covered chunks per part, the last one
 _covered_memo: dict[tuple[str, str, str], dict[str, int]] = {}
+
+
+class Possession(dict):
+    """uid -> [content hashes] the accepted bundles held here hold for it
+    (a dict, so `covered_uids` reads it as it always has), with:
+    `bundles`: (uid, hash) -> bundle ids holding it (the digest's listing);
+    `producers`: bundle id -> producer (own work, by key);
+    `fileless`: slice -> [(uid_first, uid_last, producer)] of the
+    PREDECESSORS' accepted rows with no files here (the compare path)."""
+
+    def __init__(self, held=(), bundles=None, producers=None, fileless=None):
+        super().__init__(held)
+        self.bundles: dict[str, dict[str, list[str]]] = bundles or {}
+        self.producers: dict[str, str] = producers or {}
+        self.fileless: dict[str, list[list[str]]] = fileless or {}
+
+    def to_json(self) -> dict[str, Any]:
+        return {"held": dict(self), "bundles": self.bundles, "producers": self.producers,
+                "fileless": self.fileless}
+
+    @classmethod
+    def from_json(cls, d: dict[str, Any]) -> "Possession":
+        return cls(d["held"], d.get("bundles") or {}, d.get("producers") or {}, d.get("fileless") or {})
 
 
 def _share_dir(root: Path, name: str) -> Path:
@@ -45,29 +68,33 @@ def _share_dir(root: Path, name: str) -> Path:
 
 def prefixes(root: Path, name: str, codex) -> list[str]:
     """The shard-id prefixes whose rows count: this collection's and its
-    same-space predecessors' (unkeyed rows, app/hold/carry.py)."""
+    same-space predecessors' (unkeyed rows, app/hold/carry.py; a fresh
+    peer's foreign-headed bundles, app/share/accept.py)."""
     from app.share import contribute
     return [f"{cid}/{codex.space_segment}/" for cid in (codex.collection_id, *contribute.predecessors(root, name))]
 
 
 def _fingerprint(con, pre: Sequence[str], segments: Sequence[str] = ()) -> str:
-    h = hashlib.sha256("|".join(segments).encode())      # where bundle_dir looks
-    for p in pre:
-        n, last, top = con.execute(
-            "SELECT COUNT(*), MAX(accepted_at), MAX(rowid) FROM coverage "
-            "WHERE accepted_at IS NOT NULL AND shard >= ? AND shard < ?", (p, p[:-1] + "0")).fetchone()
-        h.update(f"{p}|{n}|{last}|{top}\n".encode())
+    """ONE aggregate over the coverage table, whatever the number of
+    predecessors (a per-round cost must not grow with a list): the rows'
+    count, the highest rowid, the latest acceptance; and the prefixes and
+    segments the index reads by."""
+    h = hashlib.sha256(("|".join(segments) + "#" + "|".join(pre)).encode())
+    n, top, last, accepted = con.execute(
+        "SELECT COUNT(*), MAX(rowid), MAX(accepted_at), COUNT(accepted_at) FROM coverage").fetchone()
+    h.update(f"{n}|{top}|{last}|{accepted}".encode())
     return h.hexdigest()
 
 
-def index(root: Path, name: str, codex, con) -> dict[str, list[str]]:
-    """uid -> the content hashes the accepted bundles held here hold for it,
-    read through `contribute.bundle_dir` — every admitted space segment (the
-    A1f twin filed 1,743 of the node's bundles under 5ac3c581, and a fixed
-    path read them as missing). Cached on disk and in the process; rebuilt
-    when the set of accepted bundles changes."""
+def index(root: Path, name: str, codex, con) -> "Possession":
+    """What the accepted bundles held here hold (`Possession`), read through
+    `contribute.bundle_dir` — every admitted space segment (the A1f twin
+    filed 1,743 of the node's bundles under 5ac3c581, and a fixed path read
+    them as missing). Cached on disk and in the process; rebuilt when the
+    coverage table changes."""
     from app.share import contribute
     pre = prefixes(root, name, codex)
+    own = pre[0]
     segs = tuple(getattr(codex, "admitted_segments", ()) or ()) or (codex.space_segment,)
     fp = _fingerprint(con, pre, segs)
     key = str(Path(root) / name)
@@ -77,28 +104,38 @@ def index(root: Path, name: str, codex, con) -> dict[str, list[str]]:
     path = _share_dir(root, name) / INDEX
     try:
         cached = json.loads(path.read_bytes())
-        if cached.get("fingerprint") == fp:
-            _memo[key] = (fp, cached["index"])
-            return cached["index"]
-    except (OSError, ValueError, AttributeError, KeyError):
+        if cached.get("fingerprint") == fp and "held" in (cached.get("index") or {}):
+            result = Possession.from_json(cached["index"])
+            _memo[key] = (fp, result)
+            return result
+    except (OSError, ValueError, AttributeError, KeyError, TypeError):
         pass
-    out: dict[str, set[str]] = {}
-    for p in pre:
-        for bundle_id, shard in con.execute(
-                "SELECT bundle_id, shard FROM coverage WHERE accepted_at IS NOT NULL AND shard >= ? AND shard < ?",
-                (p, p[:-1] + "0")):
-            sid = shard[len(p):]
-            try:
-                held = json.loads((contribute.bundle_dir(root, name, codex, sid, bundle_id)
-                                   / "possession.json").read_bytes())
-            except (OSError, ValueError):
-                continue                       # no files here: covers nothing
-            for uid, h in held.items():
-                out.setdefault(uid, set()).add(h)
-    result = {u: sorted(hs) for u, hs in out.items()}
+    held: dict[str, set[str]] = {}
+    bundles: dict[str, dict[str, list[str]]] = {}
+    producers: dict[str, str] = {}
+    fileless: dict[str, list[list[str]]] = {}
+    by_cid = {p.split("/", 1)[0]: p for p in pre}
+    for bundle_id, shard, producer, first, last in con.execute(
+            "SELECT bundle_id, shard, producer, uid_first, uid_last FROM coverage WHERE accepted_at IS NOT NULL"):
+        p = by_cid.get(shard.split("/", 1)[0])
+        if p is None or not shard.startswith(p):
+            continue                           # another collection's, not a predecessor: nothing here
+        sid = shard[len(p):]
+        try:
+            got_ = json.loads((contribute.bundle_dir(root, name, codex, sid, bundle_id)
+                               / "possession.json").read_bytes())
+        except (OSError, ValueError):
+            if p != own and first and last:
+                fileless.setdefault(sid.rsplit("/", 1)[0], []).append([first, last, producer or ""])
+            continue                           # no files here: covers nothing
+        producers[bundle_id] = producer or ""
+        for uid, h in got_.items():
+            held.setdefault(uid, set()).add(h)
+            bundles.setdefault(uid, {}).setdefault(h, []).append(bundle_id)
+    result = Possession({u: sorted(hs) for u, hs in held.items()}, bundles, producers, fileless)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_bytes(json.dumps({"fingerprint": fp, "index": result}).encode())
+    tmp.write_bytes(json.dumps({"fingerprint": fp, "index": result.to_json()}).encode())
     os.replace(tmp, path)
     _memo[key] = (fp, result)
     return result
@@ -184,3 +221,39 @@ def covered_by_others(root: Path, name: str, codex, con, *, own_key: str) -> lis
                 holders[pair] = holders.get(pair, 0) + 1
     return [{"bundle_id": b, "shard": s, "uids": len(held)}
             for b, s, held in candidates if held and all(pair in holders for pair in held.items())]
+
+
+#: (collection dir, fingerprint, snapshot) -> the predecessors' bundles per part, the last one
+_offered_memo: dict[tuple[str, str, str], dict[str, list[str]]] = {}
+
+
+def offered_by_part(root: Path, name: str, codex, con, snapshot=None) -> dict[str, list[str]]:
+    """shard id of THIS collection's part -> the PREDECESSORS' accepted
+    bundles held here whose possession holds one of its records with the
+    record's current content_hash (a bundle spanning two re-cut parts is
+    listed under both): what the digest's `coverage` offers for the part
+    (09 §9.9), so a fetcher of this collection takes them, admitted by what
+    they were computed from (03 §3.5). From the possession cache and the
+    per-part uid files; memoised per fingerprint and snapshot."""
+    from app.hold import seed
+    from app.share import coverage as cov
+    snapshot = snapshot or seed.latest_snapshot(Path(root), name)
+    held = index(root, name, codex, con)
+    key = (str(Path(root) / name), _memo[str(Path(root) / name)][0], snapshot.snapshot_id)
+    if key in _offered_memo:
+        return _offered_memo[key]
+    own = f"{codex.collection_id}/{codex.space_segment}/"
+    own_ids = {b for (b,) in con.execute(
+        "SELECT bundle_id FROM coverage WHERE shard >= ? AND shard < ?", (own, own[:-1] + "0"))}
+    out: dict[str, list[str]] = {}
+    for s in snapshot.shards:
+        ids: set[str] = set()
+        for u, h in part_records(root, name, snapshot, s):
+            for b in (held.bundles.get(u) or {}).get(h, ()):
+                if b not in own_ids:
+                    ids.add(b)
+        if ids:
+            out[cov.shard_id(codex, f"{s.slice}/{s.n:05d}")] = sorted(ids)
+    _offered_memo.clear()
+    _offered_memo[key] = out
+    return out

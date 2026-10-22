@@ -562,7 +562,13 @@ bundles)": served and admitted as its maker signed it, never re-signed by
 a holder; its next version is made by whoever takes the work under the
 ordinary rules (rendezvous, leading, the ladder). The carry that re-mints
 keeps the predecessor's coverage rows under their own part ids, as
-provenance (07 §7.3, `dev carry`). *Why:* gutenberg's parser-10 re-mint
+provenance (07 §7.3, `dev carry`). A peer that never carried learns its
+predecessors from the bundles it admits: a bundle whose header names
+another collection of exactly this space is keyed under that collection's
+part id, and the collection is added to `state/predecessors.json`
+— append-only, provenance only (it widens what counts as held here and
+gates nothing). The digest offers a predecessor's bundle under each of
+this collection's parts it holds a current record of. *Why:* gutenberg's parser-10 re-mint
 cleared the predecessor's rows, and the node's held path bundled and
 signed as its own 117 parts whose every record the predecessor's bundles
 already held — 259 of those records only in another producer's. Nothing

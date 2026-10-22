@@ -439,16 +439,51 @@ def offered_elsewhere(codex, con, node_con, *, now: float, skip=None, deprecated
     return out
 
 
+#: append-only: the same-space collections whose accepted bundles this one
+#: holds under their own shard ids (a fresh peer's accept, 2026-10-22)
+PREDECESSORS = "predecessors.json"
+
+
 def predecessors(root: Path, name: str) -> list[str]:
-    """The collections `name` was carried from in the SAME space, its carry
-    marker's `predecessors` (app/hold/carry.py): their coverage rows sit in
-    this manifest unkeyed, as provenance — never this collection's coverage."""
+    """The collections `name` holds bundles of in the SAME space, under their
+    own shard ids: its carry marker's `predecessors` (app/hold/carry.py) and
+    `state/predecessors.json`, which `accept.take` appends to when a bundle's
+    header names another collection of exactly this space. PROVENANCE ONLY:
+    their rows are never this collection's coverage by part key, and claim
+    nothing beyond possession (uid + content_hash, app/share/possession.py)."""
     import json
+    state = Path(root) / name / "state"
+    out: list[str] = []
     try:
-        held = json.loads((Path(root) / name / "state" / "carry.json").read_text(encoding="utf-8"))
+        held = json.loads((state / "carry.json").read_text(encoding="utf-8"))
+        if held.get("done") and held.get("same_space"):
+            out += list(held.get("predecessors") or [])
     except (OSError, ValueError):
-        return []
-    return list(held.get("predecessors") or []) if held.get("done") and held.get("same_space") else []
+        pass
+    try:
+        out += [c for c in json.loads((state / PREDECESSORS).read_text(encoding="utf-8")) if isinstance(c, str)]
+    except (OSError, ValueError, TypeError):
+        pass
+    return list(dict.fromkeys(out))
+
+
+def add_predecessor(root: Path, name: str, collection_id: str) -> bool:
+    """`collection_id` appended to `state/predecessors.json` (append-only:
+    nothing is ever removed). True when it was new."""
+    import json
+    p = Path(root) / name / "state" / PREDECESSORS
+    try:
+        held = json.loads(p.read_text(encoding="utf-8"))
+        held = [c for c in held if isinstance(c, str)]
+    except (OSError, ValueError, TypeError):
+        held = []
+    if collection_id in held:
+        return False
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(held + [collection_id]), encoding="utf-8")
+    os.replace(tmp, p)
+    return True
 
 
 def _uid_key(uid: str):
@@ -456,37 +491,15 @@ def _uid_key(uid: str):
     return (0, int(tail), "") if tail.isdigit() else (1, 0, tail)
 
 
-def _predecessor_rows(con, codex, preds: Sequence[str], sid: str, records: Sequence[dict]):
-    """The accepted rows of the carry predecessors in `sid`'s slice whose
-    [uid_first, uid_last] overlaps this part's records — the part's numbers
-    moved with a re-cut (2026-10-22: 40 of one producer's p9 bundles span two
-    p10 parts), so the slice and the uid range decide, never the part number.
-    Index range per predecessor and slice; bounded by the overlap."""
-    if not preds or not records:
-        return []
-    keys = sorted(_uid_key(r["uid"]) for r in records)
-    lo, hi = keys[0], keys[-1]
-    slice_ = sid.rsplit("/", 1)[0]
-    out = []
-    for pid in preds:
-        start = f"{pid}/{codex.space_segment}/{slice_}/"
-        for bundle_id, shard, producer, first, last in con.execute(
-                "SELECT bundle_id, shard, producer, uid_first, uid_last FROM coverage "
-                "WHERE shard >= ? AND shard < ? AND accepted_at IS NOT NULL",
-                (start, start[:-1] + "0")):
-            if first and last and (_uid_key(last) < lo or _uid_key(first) > hi):
-                continue
-            out.append((bundle_id, shard[len(f"{pid}/{codex.space_segment}/"):], producer, first, last))
-    return out
-
-
 def _predecessor_hashes(root: Path, pid: str, sid: str, records: Sequence[dict]) -> dict[str, str] | None:
     """uid -> content_hash, as the predecessor `pid`'s own latest snapshot
     holds this part's records: its parts of the same slice whose
-    [first_id, last_id] overlaps the records' range — one or two parts, read
-    once. None when the predecessor is not held here (nothing can say what
-    changed)."""
+    [first_id, last_id] overlaps the records' range, read through the
+    per-part cache (`possession.part_records`, once per part root). None
+    when the predecessor is not held here (nothing can say what changed).
+    Asked only for a part a predecessor's fileless row overlaps."""
     from app.hold import seed
+    from app.share import possession
     try:
         pname, _pcodex = col.resolve(Path(root), pid)
         snap = seed.latest_snapshot(Path(root), pname)
@@ -502,8 +515,7 @@ def _predecessor_hashes(root: Path, pid: str, sid: str, records: Sequence[dict])
             continue
         if _uid_key(f"x:{s.last_id}") < lo or _uid_key(f"x:{s.first_id}") > hi:
             continue
-        for r in landing.records_for(Path(root), pname, snap, f"{s.slice}/{s.n:05d}", want):
-            out[r["uid"]] = r.get("content_hash")
+        out.update((u, h) for u, h in possession.part_records(Path(root), pname, snap, s) if u in want)
     return out
 
 
@@ -555,34 +567,28 @@ def claimed_uids(root: Path, name: str, codex, con, sid: str, *, own_key: str | 
         # with the record's CURRENT content_hash. A changed or new record is a
         # new book (operator: "the new version of a bundle is released by
         # whoever takes the task to re-embed the new versions"): uncovered,
-        # bundled by whoever embedded it.
+        # bundled by whoever embedded it. All of it from the cached index: a
+        # part costs no query and no file read while the table is unchanged.
         held = possession.index(root, name, codex, con)
         out.update(possession.covered_uids(held, hashes.items()))
         # another producer's predecessor row WITHOUT files says only that this
         # peer held vectors then, not whose (Perugia, en/01192): its unchanged
-        # records are claimed unless an own predecessor bundle holds them —
-        # never coverage (they count for nothing in `possession.index`)
-        unchanged = set(hashes)
-        for pid in preds:
-            before = _predecessor_hashes(root, pid, sid, records)
-            if before is not None:
-                unchanged &= {u for u, h in hashes.items() if before.get(u) == h}
-        own_work: set[str] = set()
-        fileless: list[tuple[str, str]] = []
-        for bundle_id, psid, producer, first, last in _predecessor_rows(con, codex, preds, sid, records):
-            p = bundle_dir(root, name, codex, psid, bundle_id) / "possession.json"
-            try:
-                got = json.loads(p.read_bytes())
-            except (OSError, ValueError):
-                got = None
-            if own_key is not None and producer == own_key:
-                if got is not None:
-                    own_work.update(u for u, h in got.items() if hashes.get(u) == h)
-            elif got is None and first and last:
-                fileless.append((first, last))
-        for first, last in fileless:
-            a, b = _uid_key(first), _uid_key(last)
-            out.update(u for u in unchanged if u not in own_work and a <= _uid_key(u) <= b)
+        # records are claimed unless an own bundle holds them — never coverage
+        keys = sorted(_uid_key(u) for u in hashes)
+        lo, hi = keys[0], keys[-1]
+        foreign = [(a, b) for a, b, producer in held.fileless.get(sid.rsplit("/", 1)[0], [])
+                   if producer != own_key and not (_uid_key(b) < lo or _uid_key(a) > hi)]
+        if foreign:
+            unchanged = set(hashes)
+            for pid in preds:
+                before = _predecessor_hashes(root, pid, sid, records)
+                if before is not None:
+                    unchanged &= {u for u, h in hashes.items() if before.get(u) == h}
+            own_work = {u for u, h in hashes.items()
+                        if any(held.producers.get(b) == own_key for b in (held.bundles.get(u) or {}).get(h, ()))}
+            for a, b in foreign:
+                ka, kb = _uid_key(a), _uid_key(b)
+                out.update(u for u in unchanged if u not in own_work and ka <= _uid_key(u) <= kb)
     return frozenset(out)
 
 

@@ -86,6 +86,39 @@ def records_for(root, name: str, snapshot: snap.Snapshot, shard: str,
             if want is None or r["uid"] in want]
 
 
+def records_by_uid(root, name: str, snapshot: snap.Snapshot, uids: Iterable[str], *,
+                   order: str = "bytes", hint_slice: str | None = None) -> list[dict]:
+    """This peer's records for `uids`, wherever its CURRENT snapshot holds
+    them — by uid through `shards_of`, not by the part a bundle's header
+    names (2026-10-22: a bundle of the collection this one was re-minted
+    from names a part number the re-cut moved, and slicing is outside the
+    space, so a rebuild may re-slice). The header's slice is read first
+    (`hint_slice`) and the other slices only for the uids it lacks, so a
+    bundle reads one or two parts. A uid this collection does not hold
+    (a book refused since, a 673) is simply absent."""
+    want = list(dict.fromkeys(uids))
+    candidates: dict[str, list[str]] = {}
+    for u in want:
+        nid = str(u).split(":", 1)[-1]
+        for s in snapshot.shards_of(nid, order):
+            candidates.setdefault(u, []).append(f"{s.slice}/{s.n:05d}")
+    found: dict[str, dict] = {}
+    for first_pass in (True, False):
+        by_part: dict[str, set[str]] = {}
+        for u, parts in candidates.items():
+            if u in found:
+                continue
+            for p in parts:
+                if (p.rsplit("/", 1)[0] == hint_slice) == first_pass or hint_slice is None:
+                    by_part.setdefault(p, set()).add(u)
+        for p, us in by_part.items():
+            for r in records_for(root, name, snapshot, p, us):
+                found.setdefault(r["uid"], r)
+        if hint_slice is None:
+            break
+    return [found[u] for u in want if u in found]
+
+
 def cut(codex, records: Sequence[dict]) -> dict[str, dict]:
     """chunk id -> `{text, seq, chapter, book_id, lang}`, this peer's own —
     and `fields` beside them for a chunk of a PAIR layer, the two segments
