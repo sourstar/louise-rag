@@ -35,6 +35,7 @@ collection is about pays the listing alone.
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -333,7 +334,43 @@ def _facts_of(collection, hits: Sequence[dict[str, Any]], work_of: dict[str, str
     order = figures_mod._order(collection.codex)
     out: dict[str, EditionFacts] = {}
     for u in want:
-        got = figures_mod.record_of(tree, snap, u, order)
-        if got is not None:
-            out[u] = edition_facts(got[0])
+        f = _facts_cached(tree, snap, u, order)
+        if f is not None:
+            out[u] = f
     return out
+
+
+#: (part path, its mtime, uid) -> EditionFacts: a record's facts change only
+#: with its part; a search that meets a work again pays nothing
+_FACTS: "OrderedDict[tuple, EditionFacts]" = OrderedDict()
+_FACTS_MAX = 20_000
+
+
+def _facts_cached(tree: Path, snap, uid: str, order: str) -> EditionFacts | None:
+    """One record's `edition_facts` from the three columns they need
+    (`records.read_fields`), never its text, and remembered by the part's
+    physical identity."""
+    from app.hold import shard as shard_mod
+    from app.pack import records as pack_records
+    if snap is None or ":" not in uid:
+        return None
+    for shard in snap.shards_of(uid.split(":", 1)[1], order):
+        path = Path(tree) / shard_mod.shard_path(shard.slice, shard.n)
+        try:
+            key = (str(path), path.stat().st_mtime_ns, uid)
+        except OSError:
+            continue
+        hit = _FACTS.get(key)
+        if hit is not None:
+            _FACTS.move_to_end(key)
+            return hit
+        try:
+            fields = pack_records.read_fields(path, uid, ("title", "date", "extra"))
+        except (KeyError, OSError, ValueError):
+            continue
+        facts = edition_facts(fields)
+        _FACTS[key] = facts
+        while len(_FACTS) > _FACTS_MAX:
+            _FACTS.popitem(last=False)
+        return facts
+    return None
