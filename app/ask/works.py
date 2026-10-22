@@ -34,7 +34,11 @@ collection is about pays the listing alone.
 """
 from __future__ import annotations
 
+import json
+import os
+import queue
 import re
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -240,7 +244,7 @@ def work_groups(collection, uids: Sequence[str], *, root: Path | None = None,
     from app.ask.results import _root
     root = Path(root) if root is not None else _root()
     try:
-        snap = seeder.current_snapshot(col.shard_dir_of(root, collection.name))
+        snap = seeder.cached_snapshot(col.shard_dir_of(root, collection.name))
     except Exception:   # noqa: BLE001 — no snapshot named: no claim applies (05 §5.3)
         snap = None
     read = snap.snapshot_id if snap is not None else None
@@ -316,8 +320,10 @@ def one_hit_per_work(hits: list[dict[str, Any]], collection, prefer: Sequence[st
 def _facts_of(collection, hits: Sequence[dict[str, Any]], work_of: dict[str, str], *,
               root: Path | None = None) -> dict[str, EditionFacts]:
     """`edition_facts` for the hits of a work found more than once — the
-    only ones a choice is made between; one record read each, as the
-    plates of a hit are (app/ask/figures.py)."""
+    only ones a choice is made between: a dict lookup in the part's facts
+    file (`part_facts`) once the part has one, else one record read, as
+    the plates of a hit are (app/ask/figures.py), while the file is built
+    off the search's thread."""
     from collections import Counter
     from app.ask import figures as figures_mod
     from app.ask.results import _root
@@ -330,47 +336,142 @@ def _facts_of(collection, hits: Sequence[dict[str, Any]], work_of: dict[str, str
         return {}
     root = Path(root) if root is not None else _root()
     tree = col.shard_dir_of(root, collection.name)
-    snap = seeder.current_snapshot(tree)
+    snap = seeder.cached_snapshot(tree)
+    if snap is None:
+        return {}
     order = figures_mod._order(collection.codex)
+    store = facts_dir(root, collection.name, tree)
     out: dict[str, EditionFacts] = {}
     for u in want:
-        f = _facts_cached(tree, snap, u, order)
-        if f is not None:
-            out[u] = f
+        if ":" not in u:
+            continue
+        for shard in snap.shards_of(u.split(":", 1)[1], order):
+            part = part_facts(tree, store, shard)
+            if part is None:
+                f = _facts_read(tree, shard, u)
+            else:
+                f = part.get(u)
+            if f is not None:
+                out[u] = f
+                break
     return out
 
 
-#: (part path, its mtime, uid) -> EditionFacts: a record's facts change only
-#: with its part; a search that meets a work again pays nothing
-_FACTS: "OrderedDict[tuple, EditionFacts]" = OrderedDict()
-_FACTS_MAX = 20_000
+#: the rule `edition_facts` applies; a change to it is a new file name, so a
+#: facts file never outlives the rule that wrote it (invariant 3)
+FACTS_VERSION = 1
 
 
-def _facts_cached(tree: Path, snap, uid: str, order: str) -> EditionFacts | None:
-    """One record's `edition_facts` from the three columns they need
-    (`records.read_fields`), never its text, and remembered by the part's
-    physical identity."""
+def facts_dir(root: Path, name: str, tree: Path) -> Path:
+    """Derived and re-creatable: on the fast drive when one is named
+    (invariant 6, app/derived.py), else beside the collection's state."""
+    from app import derived
+    return derived.place("edition-facts", tree) or (Path(root) / name / "state" / "edition-facts")
+
+
+def _facts_file(store: Path, shard) -> Path:
+    return Path(store) / f"v{FACTS_VERSION}-{str(shard.root).split(':')[-1]}.json"
+
+
+#: facts file -> {uid: EditionFacts}, the parts met in this process
+_PARTS: "OrderedDict[str, dict[str, EditionFacts]]" = OrderedDict()
+_PARTS_MAX = 256
+_lock = threading.Lock()
+_queue: "queue.Queue[tuple[Path, Path, Any]]" = queue.Queue(maxsize=1024)
+_queued: set[str] = set()
+_builder: threading.Thread | None = None
+
+
+def part_facts(tree: Path, store: Path, shard) -> dict[str, EditionFacts] | None:
+    """Every record's `edition_facts` of one part, from its file — named by
+    the part's ROOT, so a new version of the part is another file and an
+    old one is never stale — or None when it has none yet, and then the
+    part is queued for `build_part_facts`. gutenberg's parts are zstd
+    frames, not Parquet: a record cannot be read by column, and 173 ms of
+    a 229 ms choice was decompressing frames (München, 2026-10-22). A part
+    is decompressed once, ever, never on the search's thread."""
+    path = _facts_file(store, shard)
+    key = str(path)
+    with _lock:
+        hit = _PARTS.get(key)
+        if hit is not None:
+            _PARTS.move_to_end(key)
+            return hit
+    try:
+        raw = json.loads(path.read_bytes())
+        facts = {u: EditionFacts(bool(v[0]), tuple(v[1]), str(v[2]), v[3]) for u, v in raw.items()}
+    except (OSError, ValueError, TypeError, IndexError, AttributeError):
+        _enqueue(tree, store, shard)
+        return None
+    with _lock:
+        _PARTS[key] = facts
+        while len(_PARTS) > _PARTS_MAX:
+            _PARTS.popitem(last=False)
+    return facts
+
+
+def build_part_facts(tree: Path, store: Path, shard) -> Path | None:
+    """Write a part's facts file: the part read through once, record by
+    record, into a sibling renamed whole (invariant 2). None when the part
+    cannot be read — then nothing is written and the search keeps reading
+    single records."""
     from app.hold import shard as shard_mod
     from app.pack import records as pack_records
-    if snap is None or ":" not in uid:
+    path = _facts_file(store, shard)
+    if path.exists():
+        return path
+    part = Path(tree) / shard_mod.shard_path(shard.slice, shard.n)
+    try:
+        facts = {str(r["uid"]): edition_facts(r) for r in pack_records.iter_records(part)}
+    except (OSError, ValueError, KeyError):
         return None
-    for shard in snap.shards_of(uid.split(":", 1)[1], order):
-        path = Path(tree) / shard_mod.shard_path(shard.slice, shard.n)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_bytes(json.dumps({u: [f.abridged, list(f.better_as), f.publisher, f.year]
+                                for u, f in sorted(facts.items())}).encode("utf-8"))
+    os.replace(tmp, path)
+    return path
+
+
+def _enqueue(tree: Path, store: Path, shard) -> None:
+    global _builder
+    key = str(_facts_file(store, shard))
+    with _lock:
+        if key in _queued:
+            return
         try:
-            key = (str(path), path.stat().st_mtime_ns, uid)
-        except OSError:
-            continue
-        hit = _FACTS.get(key)
-        if hit is not None:
-            _FACTS.move_to_end(key)
-            return hit
+            _queue.put_nowait((Path(tree), Path(store), shard))
+        except queue.Full:
+            return                  # met again later; never waited for
+        _queued.add(key)
+        if _builder is None or not _builder.is_alive():
+            _builder = threading.Thread(target=_build_loop, name="edition-facts", daemon=True)
+            _builder.start()
+
+
+def _build_loop() -> None:
+    while True:
         try:
-            fields = pack_records.read_fields(path, uid, ("title", "date", "extra"))
-        except (KeyError, OSError, ValueError):
-            continue
-        facts = edition_facts(fields)
-        _FACTS[key] = facts
-        while len(_FACTS) > _FACTS_MAX:
-            _FACTS.popitem(last=False)
-        return facts
-    return None
+            tree, store, shard = _queue.get(timeout=30)
+        except queue.Empty:
+            return
+        try:
+            build_part_facts(tree, store, shard)
+        except Exception:   # noqa: BLE001 — a part that cannot be built: single reads, as before
+            pass
+        finally:
+            with _lock:
+                _queued.discard(str(_facts_file(store, shard)))
+            _queue.task_done()
+
+
+def _facts_read(tree: Path, shard, uid: str) -> EditionFacts | None:
+    """One record's facts while its part has no file yet: its three fields
+    (`records.read_fields`, by column from a Parquet part), never its text."""
+    from app.hold import shard as shard_mod
+    from app.pack import records as pack_records
+    path = Path(tree) / shard_mod.shard_path(shard.slice, shard.n)
+    try:
+        return edition_facts(pack_records.read_fields(path, uid, ("title", "date", "extra")))
+    except (KeyError, OSError, ValueError):
+        return None

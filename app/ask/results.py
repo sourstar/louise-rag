@@ -67,7 +67,7 @@ def context_for(collection, *, root: Path | None = None, now: float | None = Non
     name = collection.name
     try:
         shard_tree = col.shard_dir_of(root, name)
-        snap = seeder.current_snapshot(shard_tree)
+        snap = seeder.cached_snapshot(shard_tree)
     except Exception:   # noqa: BLE001 — a SHARD that cannot be read: no snapshot named
         snap = None
     try:
@@ -201,7 +201,7 @@ def _place_figures(lists, source_of, contexts, root) -> None:
         root_ = Path(root) if root is not None else _root()
         shard_tree = col.shard_dir_of(root_, name)
         try:
-            snap = seeder.current_snapshot(shard_tree)
+            snap = seeder.cached_snapshot(shard_tree)
         except Exception:   # noqa: BLE001 — no snapshot: nothing to place from
             continue
         figures_mod.place(c, contexts[name]["codex"], shard_tree, snap, hits, red=contexts[name]["red"])
