@@ -113,10 +113,11 @@ def test_a_text_space_create_writes_the_same_member_and_signature(tmp_path):
     member, sig = shard_mod.calibration_paths(codex.space.calibration.set)
     assert hashlib.sha256((d / member).read_bytes()).hexdigest() == TEXT_MEMBER
     assert hashlib.sha256((d / sig).read_bytes()).hexdigest() == TEXT_SIG
-    # collection_id moved with gutenberg's parser 9 (2026-10-11), which a
-    # template-made Codex names; the space and the member did not
+    # collection_id moved with gutenberg's parser 9 (2026-10-11) and 10
+    # (2026-10-22), which a template-made Codex names; the space and the
+    # member did not
     assert (codex.collection_id, codex.space_id) == (
-        "sha256:ba0a6e2f3b54850b0f61c2a1b913173fb6b7c84446e909cd6afe7afd9b2e5dc3",
+        "sha256:f53040eb6550e8bf5a4d27667aa87aa50ff0a1590afa0518325e1eee12cb9acb",
         "sha256:3a1937eb9e109ad70c692dd2c8ff83c0d37f926290551a5de55102c67d6754e4")
     assert (codex.space.calibration.vectors, codex.space.envelope,
             codex.space.calibration.query_vectors) == (CAL_VECS, ENVELOPE, CAL_QVECS)

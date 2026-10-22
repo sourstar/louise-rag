@@ -208,22 +208,21 @@ def test_a_heavier_neighbour_leads_the_shards_the_hash_gives_it(ready):
     out = contribute.once(root, "gutenberg", codex, live=live, **kw)
     assert out["mine"] == expected, "only the shards rendezvous gives this peer"
     assert len(out["bundles"]) == len(expected)
-    # the other peer's window runs out with no bundle: its shards cascade to us
+    # 04 §4.5 amended 2026-10-20 (operator: "for the bounty list there is no
+    # leader"): the ordering is an order of work, not an owner, and no grace
+    # window hands a part on — a peer with capacity walks the open parts in
+    # its own order (`work_order`). The other peer's parts stay first-ranked
+    # to it at any time. (This branch asserted the old cascade; it first
+    # ran when gutenberg's parser 10 moved the collection id, and with it
+    # the hash, giving both parts to the other peer.)
     others = [f"{s.slice}/{s.n:05d}" for s in snapshot.shards if f"{s.slice}/{s.n:05d}" not in expected]
     if others:
         opened = cov.opened_at(kw["con"])
-        assert all(cov.shard_id(codex, sid) in opened for sid in others), "seen open: the window started"
+        assert all(cov.shard_id(codex, sid) in opened for sid in others), "seen open: the first-open time"
         grace = codex.update.grace_days * 86400
-        within = time.time() + grace - 60
-        still = contribute.shards_i_lead(codex, snapshot, kw["con"], me=OUR_KEY, live=live, now=within)
-        assert still == [], "within the leader's window the shard is the leader's"
-        later = time.time() + grace + 3 * 86400
-        taken = contribute.shards_i_lead(codex, snapshot, kw["con"], me=OUR_KEY, live=live, now=later)
-        assert sorted(f"{s.slice}/{s.n:05d}" for s in taken) == sorted(others), \
-            "the leader published nothing within grace_days: the next in line leads (04 §4.5)"
-        much_later = time.time() + 2 * grace + 3 * 86400
-        assert contribute.shards_i_lead(codex, snapshot, kw["con"], me=OUR_KEY, live=live, now=much_later) == [], \
-            "every window run out: the cascade starts over at the top"
+        for at in (time.time() + grace - 60, time.time() + grace + 3 * 86400, time.time() + 2 * grace + 3 * 86400):
+            assert contribute.shards_i_lead(codex, snapshot, kw["con"], me=OUR_KEY, live=live, now=at) == [], \
+                "nothing cascades: the first in the ordering stays first"
 
 
 def test_leaders_agrees_with_shards_i_lead_and_writes_nothing(ready):
