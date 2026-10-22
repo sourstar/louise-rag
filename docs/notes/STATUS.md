@@ -12,6 +12,8 @@ it left open is below.
 
 ## Open after the migration
 
+- **arXiv — PARKED (operator, 2026-10-22).** A blueprint only: docs/notes/arxiv-plugin.md (bulk forms, licences, pre-embeddings) and docs/notes/arxiv-collection.md (the abstracts collection, every version linked, only the latest embedded; the encoder on hold with a 20,000-abstract / 500-question measurement kept). Nothing built, nothing downloaded; no session works on it until the operator resumes it.
+
 - **The DHT is back ON at the node** (2026-10-19 10:35, [dht-flood.md](dht-flood.md)):
   libtorrent had announced each of 3,170 seeded member torrents by its own
   infohash, and ~10k UDP flows filled the router's NAT table. The fix — the
