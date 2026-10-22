@@ -398,6 +398,30 @@ def test_keep_by_one_scan_drops_what_the_walk_drops(pair):
     assert (again["dropped"], again["kept"], again["verified"]) == (0, 4, True), "run again: nothing left"
 
 
+def test_keep_by_scan_merges_many_sorted_runs_and_leaves_none(pair):
+    """Runs of two ids force several run files per side and a real merge
+    (the table's order is not its ids' order); the run files go at the end."""
+    root, uids, ids = _carried(pair)
+    coll, kept = _provenance(root, uids, ids)
+    out = carry.keep_producer_scan(root, "new", ARCHIVE, run=2, log=quiet)
+    assert (out["kept"], out["dropped"], out["verified"]) == (4, 5, True)
+    books = [int(u.split(":")[1]) for u in uids]
+    assert set(embeddings.chunk_ids_of_books(books, collection=coll)) == kept
+    assert not (Path(coll.manifest_path).parent / "carry-keep-runs").exists()
+
+
+def test_keep_by_scan_refuses_a_producer_with_no_marks(pair):
+    """A producer named wrong matches nothing: keeping "its" rows would drop
+    the whole table."""
+    root, uids, ids = _carried(pair)
+    coll, _kept = _provenance(root, uids, ids)
+    books = [int(u.split(":")[1]) for u in uids]
+    before = set(embeddings.chunk_ids_of_books(books, collection=coll))
+    with pytest.raises(carry.CarryMismatch, match="no chunk of genesis:nobody is marked"):
+        carry.keep_producer_scan(root, "new", "genesis:nobody", log=quiet)
+    assert set(embeddings.chunk_ids_of_books(books, collection=coll)) == before, "nothing dropped"
+
+
 def test_the_command_keeps_by_scan(pair, capsys):
     from app import louise
     root, uids, ids = _carried(pair)

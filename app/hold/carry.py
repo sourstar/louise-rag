@@ -872,26 +872,64 @@ def keep_producer(root, to_ref: str, producer: str, *, window: int = WINDOW,
     return out
 
 
-#: ids looked up in `chunk_verification` per query (SQLite's parameter limit)
-MARK_PROBE = 900
 #: values in one delete predicate: few passes over the table, a bounded string
 DELETE_BATCH = 50_000
+#: ids sorted in memory per run file of the keep's merge (~150 MB of strings)
+SORT_RUN = 2_000_000
 
 
-def keep_producer_scan(root, to_ref: str, producer: str, *,
+def _sorted_runs(rows, workdir: Path, prefix: str, *, run: int) -> list[Path]:
+    """`rows` (lines without a newline) as sorted run files in `workdir`."""
+    paths: list[Path] = []
+    buf: list[str] = []
+
+    def flush() -> None:
+        if not buf:
+            return
+        buf.sort()
+        p = workdir / f"{prefix}-{len(paths):05d}"
+        with p.open("w", encoding="utf-8", newline="\n") as f:
+            f.writelines(line + "\n" for line in buf)
+        paths.append(p)
+        buf.clear()
+    for line in rows:
+        buf.append(line)
+        if len(buf) >= run:
+            flush()
+    flush()
+    return paths
+
+
+def _merged(paths: list[Path]):
+    """The lines of sorted run files, in one sorted stream."""
+    import heapq
+    files = [p.open(encoding="utf-8") for p in paths]
+    try:
+        yield from (line.rstrip("\n") for line in heapq.merge(*files))
+    finally:
+        for f in files:
+            f.close()
+
+
+def keep_producer_scan(root, to_ref: str, producer: str, *, run: int = SORT_RUN,
                        log: Callable[[str], None] = print) -> dict[str, Any]:
-    """`keep_producer` in ONE PASS over the vector table, for a table too large
-    to visit by document (2026-10-21, wikipedia's parser-5 carry: 146 M rows,
-    53 M documents; the windowed walk read each window's books from the table,
-    ~4 GB a window, 0.17 % done in 3 h — ~1,800 h). The table's `id` and
-    `book_id` columns are read once and each id is looked up among the
-    producer's marks (`chunk_verification`, its primary key); every row not
-    the producer's is dropped. The order is invariant 2's: the documents that
-    lose a row are marked not embedded FIRST, in one transaction each window,
-    then the rows go — a book whose rows are all dropped by `book_id`, the
-    rest by `id`, in few large predicates — and the end requires the table to
-    hold exactly the producer's rows (CarryMismatch). Interrupted, it is run
-    again: the scan recomputes what is left."""
+    """`keep_producer` by SORT-MERGE, for a table too large to visit by
+    document (2026-10-21, wikipedia's parser-5 carry: 146 M rows, 53 M
+    documents; the windowed walk read each window's books from the table, ~4
+    GB a window, 0.17 % done in 3 h — ~1,800 h; then a per-id lookup among
+    the marks cost ~66 ms a lookup, the 60 GB manifest's chunk_id index read
+    at random — months, measured 2026-10-22). Every read is SEQUENTIAL: the
+    producer's marks (`chunk_verification`, in table order) and the vector
+    table's `id` and `book_id` are each written as sorted run files beside
+    the manifest, and one merge of the two streams finds every row not the
+    producer's. The order is invariant 2's: the documents that lose a row
+    are marked not embedded FIRST, then the rows go — a book whose rows are
+    all dropped by `book_id`, the rest by `id`, in few large predicates —
+    and the end requires the table to hold exactly the producer's rows
+    (CarryMismatch). A producer with no marks at all is refused: it would
+    drop the whole table. Interrupted, it is run again: the scan recomputes
+    what is left."""
+    import shutil
     from . import collection as col, records as rec
     from app import db, embeddings
 
@@ -899,32 +937,45 @@ def keep_producer_scan(root, to_ref: str, producer: str, *,
     name, codex = col.resolve(root, to_ref)
     coll = rec.local_collection(root, name, codex)
     con = db.connect(coll)
+    workdir = Path(coll.manifest_path).parent / "carry-keep-runs"
+    shutil.rmtree(workdir, ignore_errors=True)
+    workdir.mkdir(parents=True)
     try:
         tbl = embeddings._conn(coll).open_table(embeddings.TABLE)
         states = ",".join("?" * len(KEPT_STATES))
+        marks = _sorted_runs((r[0] for r in con.execute(
+            f"SELECT chunk_id FROM chunk_verification NOT INDEXED WHERE producer=? "
+            f"AND state IN ({states})", (producer, *KEPT_STATES))), workdir, "marks", run=run)
+        if not marks:
+            raise CarryMismatch(f"{name}: no chunk of {producer} is marked in chunk_verification — "
+                                f"keeping its rows would drop the whole table (is the producer right?)")
+        log(f"[carry] {name}: {producer}'s marks read in {len(marks)} sorted run(s)")
+
+        def rows():
+            for batch in embeddings.scan_columns(coll, ["id", embeddings.BOOK_COLUMN_NAME],
+                                                 batch_size=SCAN_ROWS):
+                yield from (f"{i}\t{b}" for i, b in zip(batch.column(0).to_pylist(),
+                                                        batch.column(1).to_pylist()))
+        table = _sorted_runs(rows(), workdir, "rows", run=run)
+        log(f"[carry] {name}: the table's ids read in {len(table)} sorted run(s)")
         kept = 0
-        drop_ids: dict[int, list[str]] = {}      # book -> its unmarked ids
         seen = 0
-        for batch in embeddings.scan_columns(coll, ["id", embeddings.BOOK_COLUMN_NAME],
-                                             batch_size=SCAN_ROWS):
-            ids = batch.column(0).to_pylist()
-            books = batch.column(1).to_pylist()
-            marked: set[str] = set()
-            for i in range(0, len(ids), MARK_PROBE):
-                part = ids[i:i + MARK_PROBE]
-                marked.update(r[0] for r in con.execute(
-                    f"SELECT chunk_id FROM chunk_verification WHERE chunk_id IN "
-                    f"({','.join('?' * len(part))}) AND producer=? AND state IN ({states})",
-                    (*part, producer, *KEPT_STATES)))
-            for cid, b in zip(ids, books):
-                if cid in marked:
-                    kept += 1
-                else:
-                    drop_ids.setdefault(int(b), []).append(cid)
-            seen += len(ids)
-            if seen % (SCAN_ROWS * 160) < SCAN_ROWS:
-                log(f"[carry] {name}: scanned {seen} rows, {kept} the producer's, "
+        drop_ids: dict[int, list[str]] = {}      # book -> its unmarked ids
+        mark_it = _merged(marks)
+        mark = next(mark_it, None)
+        for line in _merged(table):
+            cid, _, b = line.partition("\t")
+            while mark is not None and mark < cid:
+                mark = next(mark_it, None)
+            if mark == cid:
+                kept += 1
+            else:
+                drop_ids.setdefault(int(b), []).append(cid)
+            seen += 1
+            if seen % (SCAN_ROWS * 160) == 0:
+                log(f"[carry] {name}: merged {seen} rows, {kept} the producer's, "
                     f"{sum(len(v) for v in drop_ids.values())} to drop")
+        shutil.rmtree(workdir, ignore_errors=True)
         # a book that loses rows and holds none of the producer's goes whole, by
         # book_id; one that holds both loses its unmarked ids alone
         whole, partial = [], []
@@ -970,6 +1021,7 @@ def keep_producer_scan(root, to_ref: str, producer: str, *,
                 tbl.delete(f"id IN ({quoted})")
     finally:
         con.close()
+        shutil.rmtree(workdir, ignore_errors=True)
     rows_now = embeddings.stats(coll)["vectors"]
     out = {"collection": name, "producer": producer, "kept": kept, "dropped": dropped,
            "documents_reset": len(uids), "vectors": rows_now, "verified": rows_now == kept}
