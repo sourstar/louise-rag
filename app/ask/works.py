@@ -34,6 +34,7 @@ collection is about pays the listing alone.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -65,18 +66,92 @@ def preference(show_in: str | None, query_lang: str | None,
     return tuple(out)
 
 
+# --------------------------------------------------------------------------
+# which edition a work shows (operator, 2026-10-22, verbatim: "If there are
+# more editions: 1. always prefer the unabridged ones (even before criteria
+# 2). 2. the newer editions carrying corrections over the older ones of the
+# same printing company")
+
+@dataclass(frozen=True)
+class EditionFacts:
+    """What a record's own metadata says about the edition it is."""
+    abridged: bool = False
+    #: ebook numbers the origin names as a better edition of this one (PG's
+    #: "A somewhat higher quality eBook is available as #49652")
+    better_as: tuple[str, ...] = ()
+    publisher: str = ""
+    year: int | None = None
+
+
+#: an abridgement, by the edition's own words — never "unabridged"
+_ABRIDGED = re.compile(r"(?<!un)(?<!un-)\b(?:abridged|abridg(?:e)?ment|condensed|retold|adapted\s+for\s+"
+                       r"(?:young|children|schools)|gek(?:ü|ue)rzt|abr(?:é|e)g(?:é|e)|ridott[oa]|resumid[oa])\b",
+                       re.IGNORECASE)
+_BETTER = re.compile(r"higher\s+quality\s+e-?book\s+is\s+available\s+as\s+#\s*(\d+)", re.IGNORECASE)
+_YEAR = re.compile(r"\b(1[4-9]\d\d|20\d\d)\b")
+
+
+def edition_facts(record: dict[str, Any]) -> EditionFacts:
+    """From the record: its title and the origin's summary (marc520) for an
+    abridgement; its description for a better edition the origin names;
+    marc260 for the printing company and the physical edition's year, else
+    the record's `date`."""
+    extra = record.get("extra") or {}
+    marc = extra.get("marc") or {}
+    words = " ".join([str(record.get("title") or ""), *(str(x) for x in marc.get("520") or [])])
+    imprint = " ".join(str(x) for x in marc.get("260") or [])
+    publisher = ""
+    if ":" in imprint:
+        publisher = re.split(r"[,;]|\b\d{4}\b", imprint.split(":", 1)[1])[0]
+    publisher = re.sub(r"[^\w ]", "", publisher.lower()).strip()
+    year = _YEAR.search(imprint) or _YEAR.search(str(record.get("date") or ""))
+    return EditionFacts(abridged=bool(_ABRIDGED.search(words)),
+                        better_as=tuple(_BETTER.findall(str(extra.get("description") or ""))),
+                        publisher=publisher, year=int(year.group(1)) if year else None)
+
+
+def edition_order(candidates: Sequence[tuple[int, str, str | None]], facts: dict[str, EditionFacts],
+                  pref_index) -> list[int]:
+    """The candidates (rank index, uid, language) best first: an unabridged
+    edition before an abridged one, ALWAYS — before the reader's language
+    too, which comes second; then an edition the origin names a better one
+    of loses to it, and of one printing company the newer edition wins (its
+    corrections); then the best-ranked. Facts unknown (a record not held
+    here) count as unabridged and uncorrected."""
+    nums = {u: u.split(":", 1)[-1] for _, u, _ in candidates}
+    found = set(nums.values())
+
+    def worse_than_another(u: str) -> int:
+        f = facts.get(u) or EditionFacts()
+        if any(n in found for n in f.better_as):
+            return 1
+        if f.publisher and f.year is not None:
+            for _, v, _ in candidates:
+                g = facts.get(v)
+                if v != u and g and g.publisher == f.publisher and g.year is not None and g.year > f.year:
+                    return 1
+        return 0
+    return sorted(range(len(candidates)),
+                  key=lambda k: ((facts.get(candidates[k][1]) or EditionFacts()).abridged,
+                                 pref_index(candidates[k][2]), worse_than_another(candidates[k][1]),
+                                 candidates[k][0]))
+
+
 def _uid(hit: dict[str, Any]) -> str:
     from app.retrieval import record_of
     return record_of(hit)
 
 
 def collapse(hits: Sequence[dict[str, Any]], work_of: dict[str, str],
-             members: dict[str, Sequence[Edition]], prefer: Sequence[str]) -> list[dict[str, Any]]:
+             members: dict[str, Sequence[Edition]], prefer: Sequence[str],
+             facts: dict[str, EditionFacts] | None = None) -> list[dict[str, Any]]:
     """`hits` in ranked order, one per record; `work_of` maps a record's uid
     to its work's key, `members` a work's key to every edition of it known.
-    Each work keeps ONE hit, at the position of its best-ranked edition: the
-    best-ranked edition in the first language of `prefer` among the work's
-    hits, else the best-ranked hit. That hit carries `editions`, every
+    Each work keeps ONE hit, at the position of its best-ranked edition:
+    the first of the work's hits by `edition_order` — unabridged first, then
+    the first language of `prefer`, then the corrected edition, then the
+    best-ranked (`facts`, per uid, what its record says; with none, the
+    language and the rank decide, as before). That hit carries `editions`, every
     other edition of the work — `{uid, title, lang, held, rank, chunk_id}`,
     `rank` and `chunk_id` where the edition was among the hits — those in
     the preferred languages first. A hit of no work is untouched."""
@@ -105,7 +180,8 @@ def collapse(hits: Sequence[dict[str, Any]], work_of: dict[str, str],
         found = by_work[w]
         if found[0][0] != i:
             continue                       # a later edition of a work already shown
-        head_i, head = min(found, key=lambda ih: (pref_index(lang(ih[1])), ih[0]))
+        order = edition_order([(j, _uid(x), lang(x)) for j, x in found], facts or {}, pref_index)
+        head_i, head = found[order[0]]
         head = dict(head)
         rank_of = {_uid(x): (j + 1, x.get("chunk_id")) for j, x in found}
         editions = []
@@ -227,4 +303,37 @@ def one_hit_per_work(hits: list[dict[str, Any]], collection, prefer: Sequence[st
                                        annotations=annotations)
     except Exception:   # noqa: BLE001
         return hits
-    return collapse(hits, work_of, members, prefer) if work_of else hits
+    if not work_of:
+        return hits
+    try:
+        facts = _facts_of(collection, hits, work_of, root=root)
+    except Exception:   # noqa: BLE001 — no facts: the language and the rank decide, as before
+        facts = {}
+    return collapse(hits, work_of, members, prefer, facts)
+
+
+def _facts_of(collection, hits: Sequence[dict[str, Any]], work_of: dict[str, str], *,
+              root: Path | None = None) -> dict[str, EditionFacts]:
+    """`edition_facts` for the hits of a work found more than once — the
+    only ones a choice is made between; one record read each, as the
+    plates of a hit are (app/ask/figures.py)."""
+    from collections import Counter
+    from app.ask import figures as figures_mod
+    from app.ask.results import _root
+    from app.hold import collection as col
+    from app.share import seeder
+    uids = [_uid(h) for h in hits]
+    many = {w for w, n in Counter(work_of[u] for u in uids if u in work_of).items() if n >= 2}
+    want = [u for u in dict.fromkeys(uids) if work_of.get(u) in many]
+    if not want:
+        return {}
+    root = Path(root) if root is not None else _root()
+    tree = col.shard_dir_of(root, collection.name)
+    snap = seeder.current_snapshot(tree)
+    order = figures_mod._order(collection.codex)
+    out: dict[str, EditionFacts] = {}
+    for u in want:
+        got = figures_mod.record_of(tree, snap, u, order)
+        if got is not None:
+            out[u] = edition_facts(got[0])
+    return out
