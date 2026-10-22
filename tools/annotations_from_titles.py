@@ -11,28 +11,32 @@ INPUT: `records.jsonl` as tools/measure/one_language_records.py writes it
 editions collection was created from; its claims are kept as they are and
 a pair they already join is not claimed again.
 
-THE RULE. Two books are one work when their titles are equal after
-`base_title` — lowercased, trimmed, PG's own branding prefix dropped ("The
-Gutenberg …", "The Project Gutenberg …") and a trailing part designator
-dropped (": Section A and B", ", Volume 2", "Part I", "(1st 100 Pages)",
-"(of 3)") — AND their authors are the same set. "Project Gutenberg",
-"Various", "Anonymous" and "Unknown" are not authors: a book with no
-author left claims nothing, because a bare title ("Poems", "The Snare")
-joins different works.
-
-WHY AUTHORS. München's sample of the title rule alone (2026-10-22, 2,560
-groups over 79,692 in-scope records): 15 random groups, 11 one work and 4
-different works of one title (Confidence Game, Harmon / McKimmey; The Eyes
-Have It, Garrett / McKimmey / Dick; The Snare; Galatea). Requiring the same
-authors kept the 11 and dropped the 4. Known reach: it joins the VOLUMES
-of one work too (History of Korea vol. 1 and 2; Henry IV Part 1 and 2),
-which is "one hit per work" (05 §5.3) and not an edition in the strict
-sense; the claim says so in its evidence.
+THE RULE (operator's correction, 2026-10-22: "different volumes of the
+same collection may have different authors"). `base_title` is the title
+lowercased, trimmed, PG's own branding prefix dropped ("The Gutenberg …",
+"The Project Gutenberg …") and a trailing part designator dropped
+(": Section A and B", ", Volume 2", "Part I", "(1st 100 Pages)", "(of 3)").
+Two books are one work when their base titles are equal and EITHER
+- both titles carried a designator — the volumes of one collection,
+  whoever each volume credits: München measured 63 of 1,179 such groups
+  whose creators differ by volume, all 10 sampled one collection (Legends
+  of the Jews: Szold on vols 1–2, Radin on 3–4; the Cambridge Natural
+  History, an anthology; a translator credited on one volume only);
+- or they share at least one author — a bare title alone joins different
+  works (Confidence Game, Harmon / McKimmey; The Eyes Have It, Garrett /
+  McKimmey / Dick; The Snare; Galatea: 4 of 15 sampled groups), and the
+  shared author separated every one of them. "Project Gutenberg",
+  "Various", "Anonymous" and "Unknown" are not authors.
+Known reach: it joins the VOLUMES of one work (History of Korea vol. 1 and
+2; Henry IV Part 1 and 2), which is "one hit per work" (05 §5.3) and not
+an edition in the strict sense; the claim's evidence says which test
+joined it.
 
 THE CLAIMS: `same-work`, a STAR per group — every book claimed against the
 group's lowest ebook number, as tools/annotations_from_works.py does.
-Confidence (11 + 1) / (11 + 2) = 0.9230769: the sample's right/checked,
-not certainty. Evidence: the base title, the authors, both full titles.
+Confidence (11 + 1) / (11 + 2) = 0.9230769: the first sample's
+right/checked (the volume test's 10 of 10 agrees), not certainty. Evidence: the base title, which test joined the pair, the shared
+authors, both full titles.
 """
 from __future__ import annotations
 
@@ -44,7 +48,7 @@ from collections import defaultdict
 from pathlib import Path
 
 CONTRIBUTOR = "Louise reference node (same-title rule, operator 2026-10-22)"
-METHOD = {"kind": "matcher", "id": "gutenberg-same-title-authors", "version": 1}
+METHOD = {"kind": "matcher", "id": "gutenberg-same-title", "version": 1}
 CONFIDENCE = "0.9230769"
 NOT_AUTHORS = {"project gutenberg", "various", "anonymous", "unknown", "anonymous."}
 
@@ -61,9 +65,11 @@ _PAGES = re.compile(r"\s*\([^()]*\bpages?\b[^()]*\)\s*$")
 _OF_N = re.compile(r"\s*\(\s*of\s+\d+\s*\)\s*$")
 
 
-def base_title(title: str) -> str:
+def split_title(title: str) -> tuple[str, bool]:
+    """(base title, whether a part designator was dropped)."""
     t = re.sub(r"\s+", " ", (title or "").lower()).strip()
     t = _BRAND.sub("", t)
+    designated = False
     for _ in range(3):                     # "Vol. 2 (of 3)", "Section A (1st 100 Pages)"
         before = t
         t = _PAGES.sub("", t)
@@ -71,7 +77,12 @@ def base_title(title: str) -> str:
         t = _DESIGNATOR.sub("", t).strip(" :,;.-—–")
         if t == before:
             break
-    return t
+        designated = True
+    return t, designated
+
+
+def base_title(title: str) -> str:
+    return split_title(title)[0]
 
 
 def authors(creators) -> frozenset[str]:
@@ -84,9 +95,11 @@ def _num(uid: str) -> int:
 
 
 def claims_of(records: list[dict], existing: list[dict] = ()) -> list[dict]:
-    """The new claims: a star per (base title, authors) group of two or
-    more, minus the pairs `existing` already joins (directly or through
-    its stars)."""
+    """The new claims, minus the pairs `existing` already joins (directly or
+    through its stars): per base title, a star of the designated volumes on
+    the lowest of them, then each book joined to the first book of the same
+    base title it shares an author with. Every claim is a pair one of the
+    two tests joined."""
     parent: dict[str, str] = {}
 
     def find(x: str) -> str:
@@ -98,28 +111,36 @@ def claims_of(records: list[dict], existing: list[dict] = ()) -> list[dict]:
         parent[find(c["subject"])] = find(c["object"])
     lang = {r["uid"]: (r.get("lang") or "und") for r in records}
     title = {r["uid"]: r.get("title") or "" for r in records}
-    groups: dict[tuple[str, frozenset], list[str]] = defaultdict(list)
+    by_base: dict[str, list[tuple[str, bool, frozenset]]] = defaultdict(list)
     for r in sorted(records, key=lambda r: _num(r["uid"])):
-        who = authors(r.get("creators"))
-        base = base_title(r.get("title") or "")
-        if who and base:
-            groups[(base, who)].append(r["uid"])
+        base, designated = split_title(r.get("title") or "")
+        if base:
+            by_base[base].append((r["uid"], designated, authors(r.get("creators"))))
     out = []
-    for (base, who), uids in sorted(groups.items(), key=lambda kv: _num(kv[1][0])):
-        if len(uids) < 2:
+
+    def claim(uid: str, other: str, base: str, test: str, who: frozenset) -> None:
+        if find(uid) == find(other):
+            return                         # already one work
+        parent[find(uid)] = find(other)
+        out.append({"type": "same-work", "subject": uid, "object": other,
+                    "subject_lang": lang[uid], "object_lang": lang[other], "method": METHOD,
+                    "evidence": {"base_title": base, "test": test, "authors": sorted(who),
+                                 "subject_title": title[uid], "object_title": title[other],
+                                 "note": "same title; may be another volume of the work"},
+                    "confidence": CONFIDENCE, "contributor": CONTRIBUTOR})
+    for base in sorted(by_base, key=lambda b: _num(by_base[b][0][0])):
+        books = by_base[base]
+        if len(books) < 2:
             continue
-        centre = uids[0]
-        for uid in uids[1:]:
-            if find(uid) == find(centre):
-                continue                   # already one work by an existing claim
-            parent[find(uid)] = find(centre)
-            out.append({"type": "same-work", "subject": uid, "object": centre,
-                        "subject_lang": lang[uid], "object_lang": lang[centre],
-                        "method": METHOD,
-                        "evidence": {"base_title": base, "authors": sorted(who),
-                                     "subject_title": title[uid], "object_title": title[centre],
-                                     "note": "same title and authors; may be another volume of the work"},
-                        "confidence": CONFIDENCE, "contributor": CONTRIBUTOR})
+        volumes = [b for b in books if b[1]]
+        for uid, _d, _w in volumes[1:]:
+            claim(uid, volumes[0][0], base, "both titles name a volume or part", frozenset())
+        for i, (uid, _d, who) in enumerate(books):
+            for other, _d2, who2 in books[:i]:
+                shared = who & who2
+                if shared:
+                    claim(uid, other, base, "a shared author", shared)
+                    break
     return out
 
 

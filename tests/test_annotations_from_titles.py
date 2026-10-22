@@ -32,10 +32,33 @@ def test_the_title_loses_branding_and_part_designators():
 
 
 def test_the_webster_parts_are_one_work_and_various_claims_nothing():
+    """The Gutenberg sections credit "Project Gutenberg; Webster, Noah", the
+    page parts "Webster, Noah": volumes, so one work whoever they credit."""
     claims = t.claims_of(WEBSTER)
     assert {c["object"] for c in claims} == {"gutenberg:247"}, "a star on the lowest ebook"
     assert {c["subject"] for c in claims} == {f"gutenberg:{n}" for n in (248, 660, 661, 663, 664, 670)}
     assert all(c["type"] == "same-work" and c["confidence"] == "0.9230769" for c in claims)
+    assert "gutenberg:29765" not in {u for c in claims for u in (c["subject"], c["object"])}
+
+
+def test_volumes_crediting_different_people_are_one_work():
+    """Operator, 2026-10-22: Legends of the Jews, Szold on vols 1–2 and
+    Radin on 3–4."""
+    claims = t.claims_of([rec(1, "The Legends of the Jews — Volume 1", ["Ginzberg, Louis", "Szold, Henrietta"]),
+                          rec(2, "The Legends of the Jews — Volume 3", ["Ginzberg, Louis", "Radin, Paul"]),
+                          rec(3, "The Cambridge Natural History, Vol. 7", ["Gadow, Hans"]),
+                          rec(4, "The Cambridge Natural History, Vol. 8", ["Lydekker, Richard"])])
+    assert sorted((c["subject"], c["object"]) for c in claims) == [("gutenberg:2", "gutenberg:1"),
+                                                                   ("gutenberg:4", "gutenberg:3")]
+    assert claims[0]["evidence"]["test"] == "both titles name a volume or part"
+
+
+def test_a_bare_title_needs_one_shared_author():
+    claims = t.claims_of([rec(1, "Les Misérables", ["Hugo, Victor"]),
+                          rec(2, "Les Misérables, Volume 2", ["Hugo, Victor", "Hapgood, Isabel F."]),
+                          rec(3, "Les Misérables", ["Someone, Else"])])
+    assert [(c["subject"], c["object"], c["evidence"]["test"]) for c in claims] == \
+        [("gutenberg:2", "gutenberg:1", "a shared author")]
 
 
 def test_different_authors_of_one_title_are_not_one_work():
