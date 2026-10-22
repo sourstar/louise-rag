@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Connect — louise-rag{% endblock %}
+{% block content %}
+{% set key = token if token else '<your token>' %}
+<div class="panel">
+  <h2>Use Louise from other programs</h2>
+  <p>This node answers at <code>{{ base }}</code>.
+  {% if token %}
+    Your key is your login token:
+    <span id="key" data-key="{{ token }}"><code>••••••••</code></span>
+    <button onclick="showKey()">show</button> <button onclick="copyText(document.getElementById('key').dataset.key)">copy</button>
+  {% elif viewer and viewer.master %}
+    You are logged in with the admin token, which belongs to no program: give each person or program
+    its own key with <code>louise user add &lt;name&gt;</code>, and use that key below.
+  {% elif not users_exist %}
+    No key is needed on this network yet. Once the operator creates the first user, every program needs one:
+    put it where the examples say <code>&lt;your token&gt;</code>.
+  {% else %}
+    Put your token where the examples say <code>&lt;your token&gt;</code>.
+  {% endif %}
+  </p>
+</div>
+
+<div class="panel">
+  <h2>Open WebUI — Louise answers</h2>
+  <p>Louise searches and writes the answer with its sources. In Open WebUI: <b>Admin Settings → Connections → OpenAI API → +</b>, then:</p>
+  <table><tr><th>field</th><th>value</th></tr>
+    <tr><td>URL</td><td><code>{{ base }}/v1</code></td></tr>
+    <tr><td>API key</td><td><code>{{ key }}</code></td></tr>
+  </table>
+  <p class="note">The models appear by themselves: <code>louise</code> searches everything, and each other one searches one collection —
+  {% for m in models %}<code>{{ m }}</code>{{ ', ' if not loop.last else '' }}{% endfor %}.</p>
+</div>
+
+<div class="panel">
+  <h2>Open WebUI, agents — Louise as a tool (MCP)</h2>
+  <p>The program's own model decides when to search and writes the answer; Louise gives it three tools:
+  <code>louise_search</code>, <code>louise_lookup</code> and <code>louise_traverse</code>.
+  In Open WebUI: <b>Admin Settings → External Tools → +</b>, type <b>MCP (Streamable HTTP)</b>, URL
+  <code>{{ base }}/api/ask/mcp</code>, authentication <b>Bearer</b> with your key.</p>
+  <p>For an agent that reads an MCP configuration (Claude Desktop, Claude Code, LocalAGI and most others):</p>
+<pre class="cli" id="mcpcfg">{
+  "mcpServers": {
+    "louise": {
+      "type": "http",
+      "url": "{{ base }}/api/ask/mcp",
+      "headers": {"Authorization": "Bearer {{ key }}"}
+    }
+  }
+}</pre>
+  <button onclick="copyText(document.getElementById('mcpcfg').textContent)">copy</button>
+</div>
+
+<div class="panel">
+  <h2>Scripts</h2>
+  <p>An answer, as from any OpenAI client:</p>
+<pre class="cli">curl {{ base }}/v1/chat/completions \
+  -H "Authorization: Bearer {{ key }}" -H "Content-Type: application/json" \
+  -d '{"model": "louise", "messages": [{"role": "user", "content": "Who tilts at windmills?"}]}'</pre>
+  <p>The ranked results alone, as the Ask tab gets them:</p>
+<pre class="cli">curl {{ base }}/api/ask/search \
+  -H "Authorization: Bearer {{ key }}" -H "Content-Type: application/json" \
+  -d '{"query": "Who tilts at windmills?", "limit": 10}'</pre>
+  <p class="note">Search fields: <code>collections</code> (names; default all), <code>annotations</code>, <code>filters</code>,
+  <code>limit</code>, <code>rerank_depth</code>, <code>as_of</code>. Help explains each.</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function showKey(){const k=document.getElementById('key');k.innerHTML='<code>'+esc(k.dataset.key)+'</code>'}
+async function copyText(t){try{await navigator.clipboard.writeText(t);toast('copied')}catch(e){toast('copy failed: select and copy by hand')}}
+</script>
+{% endblock %}

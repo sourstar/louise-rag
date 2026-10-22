@@ -3946,9 +3946,51 @@ def cmd_vectors_archive_retry(a) -> int:
     return 0
 
 
+def cmd_user(a) -> int:
+    """`louise user add | list | role | expire | reissue | revoke | remove`
+    (07 §7.3, amended 2026-10-22): the users of app/users.py. A token is
+    printed by `add` and `reissue` only, once; nothing else ever shows it."""
+    from app import users
+    try:
+        if a.verb == "add":
+            u, token = users.add(a.name, role=a.role, expires=a.expires)
+            print(f"{u.name} ({u.role}), expires {u.expires or 'never'}. Token — shown once, give it to them:")
+            print(token)
+        elif a.verb == "reissue":
+            u, token = users.reissue(a.name)
+            print(f"{u.name}: a new token; the old one no longer works. Shown once:")
+            print(token)
+        elif a.verb == "list":
+            rows = users.listing()
+            if getattr(a, "json", False):
+                print(json.dumps(rows, indent=2))
+            elif not rows:
+                print("no users: Ask is open to anyone on the network (`louise user add <name>` closes it)")
+            else:
+                for r in rows:
+                    print(f"{r['name']:<20} {r['role']:<6} {r['state']:<8} expires {r['expires'] or 'never':<21} "
+                          f"last seen {r['last_seen'] or '—'}")
+        elif a.verb == "role":
+            u = users.set_role(a.name, a.role)
+            print(f"{u.name}: role {u.role}")
+        elif a.verb == "expire":
+            u = users.set_expiry(a.name, a.expires)
+            print(f"{u.name}: expires {u.expires or 'never'}")
+        elif a.verb == "revoke":
+            u = users.revoke(a.name)
+            print(f"{u.name}: revoked at {u.revoked}; `louise user reissue {u.name}` restores it")
+        elif a.verb == "remove":
+            users.remove(a.name)
+            print(f"{a.name}: removed")
+    except users.UserError as e:
+        print(f"louise user {a.verb}: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog="louise", description="Louise â knowledge, kept.")
-    surfaces = top.add_subparsers(dest="surface", required=True, metavar="hold|share|node")
+    surfaces = top.add_subparsers(dest="surface", required=True, metavar="hold|share|node|user")
     node = surfaces.add_parser("node", help="the node's mode, or one collection paused (07 §7.3, §7.7)")
     nverbs = node.add_subparsers(dest="verb", required=True)
     p = nverbs.add_parser("pause", help="the node: nothing, seeding only, or download and seeding only, "
@@ -4552,6 +4594,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true",
                    help="09 §9.8's report object")
     p.set_defaults(fn=cmd_check)
+
+    user = surfaces.add_parser("user", help="who may search: tokens, roles, expiry (07 §7.4; app/users.py)")
+    uverbs = user.add_subparsers(dest="verb", required=True)
+    p = uverbs.add_parser("add", help="a new user; its token is printed once")
+    p.add_argument("name")
+    p.add_argument("--role", default="user", choices=("user", "admin"))
+    p.add_argument("--expires", default=None, help="never (default), 90d, 2027-03-31 or an ISO time")
+    p.set_defaults(fn=cmd_user)
+    p = uverbs.add_parser("list", help="name, role, state, expiry, last seen; never a token")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_user)
+    p = uverbs.add_parser("role", help="change a user's role")
+    p.add_argument("name")
+    p.add_argument("role", choices=("user", "admin"))
+    p.set_defaults(fn=cmd_user)
+    p = uverbs.add_parser("expire", help="set or clear the expiry: a date, 90d, or never")
+    p.add_argument("name")
+    p.add_argument("expires")
+    p.set_defaults(fn=cmd_user)
+    for verb, what in (("reissue", "a new token, printed once; the old one stops working now"),
+                       ("revoke", "the token stops working; the entry stays (reissue restores it)"),
+                       ("remove", "the entry deleted")):
+        p = uverbs.add_parser(verb, help=what)
+        p.add_argument("name")
+        p.set_defaults(fn=cmd_user)
 
     dev = surfaces.add_parser("dev", help="operator instruments; read-only unless the line says otherwise (07 §7.3)")
     dverbs = dev.add_subparsers(dest="verb", required=True)

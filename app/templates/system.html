@@ -67,6 +67,24 @@
 </div>
 
 <div class="panel">
+  <h2>Users</h2>
+  {% if users is none %}
+  <div class="note" style="color:var(--err)">users.toml does not read; nobody but the admin token gets in.</div>
+  {% elif not users %}
+  <div class="note">No users: Ask is open to anyone on this network. <code>louise user add &lt;name&gt;</code> creates the first one, and from then on Ask needs a token.</div>
+  {% else %}
+  <table><tr><th>name</th><th>role</th><th>state</th><th>expires</th><th>last seen</th><th>created</th></tr>
+    {% for u in users %}
+    <tr><td>{{ u.name }}</td><td>{{ u.role }}</td>
+      <td><span class="badge {{ 'ok' if u.state=='active' else 'err' }}">{{ u.state }}</span></td>
+      <td>{{ u.expires or 'never' }}</td><td>{{ u.last_seen or '—' }}</td><td>{{ u.created }}</td></tr>
+    {% endfor %}
+  </table>
+  <div class="note">Changed from the command line: <code>louise user add | list | role | expire | reissue | revoke | remove</code>.</div>
+  {% endif %}
+</div>
+
+<div class="panel">
   <h2>Worker log</h2>
   <div id="log" hx-get="/admin/system/log" hx-trigger="load, every 4s" hx-swap="innerHTML"></div>
 </div>

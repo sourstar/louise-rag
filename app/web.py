@@ -898,6 +898,167 @@ def login(body: LoginBody, response: Response):
     return {"ok": True}
 
 
+# ---------------- users: login, Connect, the admin API (07 §7.4, amended
+# 2026-10-22; app/users.py) ----------------
+
+def viewer_of(request: Request):
+    return getattr(request.state, "viewer", None)
+
+
+@ask_router.get("/login", response_class=HTMLResponse)
+def user_login_page(request: Request):
+    return TEMPLATES.TemplateResponse(request, "user_login.html", {"active": ""})
+
+
+def _cookie_age(expires: str | None) -> int:
+    """30 days, or until the token expires when that is sooner."""
+    from app import users
+    age = 60 * 60 * 24 * 30
+    if expires:
+        left = (users._parse_time(expires) - users._now()).total_seconds()
+        age = max(60, min(age, int(left)))
+    return age
+
+
+@ask_router.post("/login")
+def user_login(body: LoginBody, response: Response):
+    """A user's token, or the admin token, pasted once: kept as an httponly
+    cookie, so the pages and their fetches carry it."""
+    from app import users
+    token = body.token.strip()
+    if config.ADMIN_TOKEN and secrets.compare_digest(token, config.ADMIN_TOKEN):
+        response.set_cookie("admin_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
+        return {"ok": True, "role": "admin"}
+    u = users.resolve(token)
+    if u is None:
+        raise HTTPException(401, "this token is unknown, revoked or expired")
+    response.set_cookie(auth.USER_COOKIE, token, httponly=True, samesite="lax", max_age=_cookie_age(u.expires))
+    return {"ok": True, "role": u.role, "name": u.name}
+
+
+@ask_router.post("/logout")
+def user_logout(response: Response):
+    response.delete_cookie(auth.USER_COOKIE)
+    response.delete_cookie("admin_token")
+    return {"ok": True}
+
+
+@ask_router.get("/api/me")
+def me(request: Request):
+    """Who this request is: `role` admin, user or guest; `login_required`
+    when it is nobody and the node has users."""
+    from app import users
+    v = viewer_of(request)
+    if v is None:
+        return {"name": None, "role": None, "login_required": True}
+    expires = None
+    if v.role != "guest" and not v.master:
+        u = next((u for u in users.load() if u.name == v.name), None)
+        expires = u.expires if u else None
+    return {"name": v.name, "role": v.role, "master": v.master, "expires": expires, "login_required": False}
+
+
+def _public_base(request: Request) -> str:
+    """The address the viewer reached this node by — a reverse proxy's,
+    when it says so — so Connect's instructions work from where they are."""
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme).split(",")[0].strip()
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc)
+    return f"{proto}://{host.split(',')[0].strip()}"
+
+
+@ask_router.get("/connect", response_class=HTMLResponse)
+def connect_page(request: Request):
+    """How to use this node from Open WebUI, an agent or a script, filled in
+    for the viewer (RULE 2: nobody types an address or a model name)."""
+    from app import users
+    v = viewer_of(request)
+    token = None
+    if v is not None and not v.master and v.role != "guest":
+        t = request.cookies.get(auth.USER_COOKIE)
+        u = users.resolve(t)
+        token = t if u is not None and u.name == v.name else None
+    return TEMPLATES.TemplateResponse(request, "connect.html", {
+        "active": "connect", "base": _public_base(request), "viewer": v, "token": token,
+        "models": model_ids(), "users_exist": users.any_active()})
+
+
+def model_ids() -> list[str]:
+    """`/v1/models`: `louise` (every collection) and `louise/<name>` per
+    collection a search may use — choosing the model chooses what is
+    searched, where a client sends no other field (Open WebUI)."""
+    out = ["louise"]
+    try:
+        out += [f"louise/{c.name}" for c in query_service.resolve_collections(None)]
+    except Exception:   # noqa: BLE001 — a node with nothing listable still answers
+        pass
+    return out
+
+
+class UserBody(BaseModel):
+    name: str
+    role: str = "user"
+    expires: str | None = None
+
+
+class UserPatch(BaseModel):
+    role: str | None = None
+    expires: str | None = None      # "never" clears it
+
+
+def _users_call(fn, *args, **kw):
+    from app import users
+    try:
+        return fn(*args, **kw)
+    except users.UserError as e:
+        raise HTTPException(404 if str(e).startswith("no user") else 409, str(e)) from None
+
+
+@admin_router.get("/api/users")
+def users_list():
+    from app import users
+    return {"users": _users_call(users.listing)}
+
+
+@admin_router.post("/api/users")
+def users_add(body: UserBody):
+    from app import users
+    u, token = _users_call(users.add, body.name, role=body.role, expires=body.expires)
+    return {**u.public(), "token": token}
+
+
+@admin_router.patch("/api/users/{name}")
+def users_patch(name: str, body: UserPatch):
+    from app import users
+    u = None
+    if body.role is not None:
+        u = _users_call(users.set_role, name, body.role)
+    if body.expires is not None:
+        u = _users_call(users.set_expiry, name, body.expires)
+    if u is None:
+        raise HTTPException(400, "nothing to change: role, expires")
+    return u.public(users.seen())
+
+
+@admin_router.post("/api/users/{name}/reissue")
+def users_reissue(name: str):
+    from app import users
+    u, token = _users_call(users.reissue, name)
+    return {**u.public(users.seen()), "token": token}
+
+
+@admin_router.post("/api/users/{name}/revoke")
+def users_revoke(name: str):
+    from app import users
+    return _users_call(users.revoke, name).public(users.seen())
+
+
+@admin_router.delete("/api/users/{name}")
+def users_remove(name: str):
+    from app import users
+    _users_call(users.remove, name)
+    return {"ok": True, "removed": name}
+
+
 # ---------------- Library ----------------
 
 def _human_bytes(n: int | None) -> str:
@@ -3438,7 +3599,16 @@ def system_page(request: Request):
         "boot_report": spaces.report_boot_status(collections),
         "health": _health_pings(),
         "worker_state": node_state.worker_state(),
+        "users": _users_listing(),
     })
+
+
+def _users_listing() -> list[dict] | None:
+    from app import users
+    try:
+        return users.listing()
+    except Exception:   # noqa: BLE001 — the page shows the rest
+        return None
 
 
 @admin_router.get("/system/log", response_class=HTMLResponse)

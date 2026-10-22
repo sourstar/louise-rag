@@ -761,6 +761,44 @@ Who may call what:
   and so they never return a deposit collection, which is searched only
   with the deposit token or the admin token. Never-share is not only
   about peers: a guest on the LAN is not the depositor either.
+
+*Amended 2026-10-22 (operator: "a search-only gui (aka user gui). A user
+token giving only access to the ask tab").* **Users.** A user is a local
+name, a role and a token (`app/users.py`): `user` reaches Ask, the
+reader, its pictures and translation, Connect, `/v1` and the `ask`
+routes, MCP included; `admin` reaches everything, as the admin token
+does. Until the first ACTIVE user exists, the `ask` routes stay open as
+above; from then on they need a token, presented as a bearer token (an
+OpenAI client's API key, an MCP client's header) or as the cookie
+`/login` sets. Login, Help, `/healthz`, the peers' routes and the
+well-known documents stay open. A token is printed once, by `user add`
+and `user reissue`; only its SHA-256 is kept, in `users.toml` (§7.8).
+
+| command | route (admin) |
+|---|---|
+| `louise user add <name> [--role user\|admin] [--expires never\|90d\|<date>]` | `POST /admin/api/users` `{name, role, expires}` → `{…, token}` |
+| `louise user list [--json]` | `GET /admin/api/users` |
+| `louise user role <name> <role>`, `louise user expire <name> <expiry>` | `PATCH /admin/api/users/{name}` `{role?, expires?}` |
+| `louise user reissue <name>` — the old token dies at once; a revoked user is active again | `POST /admin/api/users/{name}/reissue` → `{…, token}` |
+| `louise user revoke <name>` — the entry stays | `POST /admin/api/users/{name}/revoke` |
+| `louise user remove <name>` | `DELETE /admin/api/users/{name}` |
+
+The person's own: `GET /login`, `POST /login` `{token}` (a cookie for 30
+days or until the token expires), `POST /logout`, `GET /api/me` →
+`{name, role, expires}`. A dialog never manages users (RULE 2: choices
+for operators live in the command line); System lists them, read-only.
+
+**The OpenAI-compatible endpoint** names its models (*same amendment*):
+`GET /v1/models` lists `louise` — every collection — and
+`louise/<name>` for each collection a search may use, so a client that
+sends nothing but a model name (Open WebUI) chooses what is searched by
+choosing the model; a body's own `collections` wins; `gutenberg-rag`,
+the old name, is still taken as `louise`. **MCP over HTTP**
+(`POST /api/ask/mcp`) is the Streamable HTTP transport with JSON
+answers: 202 with no body for a notification, a batch answered as a
+batch, `GET` 405 (no server-initiated stream). **Connect** (`/connect`)
+shows each viewer how to reach these from Open WebUI, an agent or a
+script, filled in with the address they used and their own token.
 - the LocalAGI routes below require the token read from
   `DEPOSIT_TOKEN_FILE`, reads included, and that token opens nothing
   else: an agent that can write its memory cannot pause the node.
@@ -1009,6 +1047,7 @@ one home.
 |---|---|---|
 | **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `NODE_PUBLIC_KEY_PATH`, `ADMIN_TOKEN_FILE`, `DEPOSIT_TOKEN_FILE`, `GIT_PRIVATE_KEY_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `TRANSLATE_MODEL` (the model TRANSLATE_URL's server is asked for, as `CHAT_MODEL` is for chat; amended 2026-10-09), `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL`, `VEGA_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
+| **files** — desired state | `users.toml` beside `platform.toml` (*amended 2026-10-22*): the users of §7.4, each token as its SHA-256 only; when each was last seen is `state/users-seen.json`, not desired state | `louise user …`, the admin API — never by hand |
 | **state database** — runtime overrides | the node's mode — `node pause`, `--seed-only`, `--acquire-only` — in force until `resume` | the commands; a restart keeps them |
 
 Desired state is never written into the database, and a runtime override

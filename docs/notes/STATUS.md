@@ -250,6 +250,19 @@ Everything except two items travels through this repository.
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
 
+### 2026-10-22: users, tokens and Connect (operator)
+
+"A search-only gui (aka user gui). A user token giving only access to the
+ask tab", then "connect Louise to OpenWebUI, or agents". Built: `louise user
+add | list | role | expire | reissue | revoke | remove` and the admin API
+(07 §7.4 amended), `users.toml` holding token hashes only (§7.8), Ask
+closed once the first active user exists, the token as the bearer key of
+`/v1`, `/api/ask` and MCP, `/v1/models` naming `louise` and
+`louise/<collection>`, MCP's Streamable HTTP answers (202, batch, GET 405),
+and `/connect` filled in per viewer. Open: a live check from Open WebUI
+(OpenAI connection and MCP tool) and from one MCP agent — neither was run
+against a real client yet.
+
 ### 2026-10-21: NVIDIA support, before any peer has a card (operator)
 
 [nvidia-support.md](nvidia-support.md). The defect it closes: VeGa read a

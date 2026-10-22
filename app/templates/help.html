@@ -68,11 +68,24 @@
   </p>
 </div>
 
+<div class="panel" id="users">
+  <h2>Users and tokens</h2>
+  <p>The operator gives each person or program a token with <code>louise user add &lt;name&gt;</code>
+  (<code>--role user|admin</code>, <code>--expires never|90d|2027-03-31</code>). A <b>user</b> sees Ask, the reader,
+  Connect and Help, and may use <code>/v1</code> and MCP; an <b>admin</b> sees everything. The token is shown once:
+  a lost one is replaced with <code>louise user reissue &lt;name&gt;</code>, which stops the old one at once;
+  <code>revoke</code> stops it and keeps the entry, <code>remove</code> deletes it, <code>role</code> and
+  <code>expire</code> change it, <code>list</code> shows everyone without their tokens.</p>
+  <p>While no user exists, Ask is open to anyone on the network, as before. After that, a browser logs in once at
+  <a href="/login">/login</a>, and a program sends <code>Authorization: Bearer &lt;token&gt;</code>.
+  <a href="/connect">Connect</a> shows how, filled in for you.</p>
+</div>
+
 <div class="panel" id="pages">
   <h2>The pages</h2>
   <table>
     <tr><th>page</th><th>access</th><th>what it does</th></tr>
-    <tr><td><b>Ask</b></td><td>LAN-open, read-only</td>
+    <tr><td><b>Ask</b></td><td>LAN-open until the first user exists, then a token (read-only)</td>
       <td>Search and question-answering across every collection in scope.
       Hybrid retrieval (FTS + dense + RRF fusion), with per-passage
       provenance badges: <b>local ✓</b> (computed here), <b>imported ◌</b>

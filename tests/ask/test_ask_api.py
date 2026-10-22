@@ -46,7 +46,7 @@ def test_the_mcp_server_over_http(client):
     assert r.status_code == 200 and [t["name"] for t in r.json()["result"]["tools"]] == [
         "louise_search", "louise_lookup", "louise_traverse"]
     r = client.post("/api/ask/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
-    assert r.status_code == 204
+    assert r.status_code == 202, "Streamable HTTP: a notification is accepted, no body"
     r = client.post("/api/ask/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                                           "params": {"name": "louise_lookup", "arguments": {"id": "nowhere:1"}}})
     assert r.status_code == 200 and r.json()["result"]["structuredContent"] == {"facts": [], "unresolved": ["nowhere:1"]}

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from app.hold.codex import CodexError
@@ -37,6 +37,9 @@ class SearchBody(BaseModel):
     freshness: bool = False
     translate: bool = False
     all_languages: bool = False
+    #: the annotations collections consulted, by local name; None = every
+    #: one held, [] = none (05 §5.3) — as the MCP tool takes it
+    annotations: list[str] | None = None
 
 
 @router.post("/search")
@@ -47,7 +50,7 @@ async def search(body: SearchBody) -> JSONResponse:
         out = await run_in_threadpool(
             results.search, body.query, collections=body.collections, space=body.space, filters=body.filters,
             limit=body.limit, rerank_depth=body.rerank_depth, as_of=body.as_of, freshness=body.freshness,
-            translate=body.translate, all_languages=body.all_languages)
+            translate=body.translate, all_languages=body.all_languages, annotations=body.annotations)
     except CodexError as e:
         code = int(getattr(e, "exit_code", 2))
         return JSONResponse({"exit": code, "error": str(e)}, status_code=STATUS.get(code, 500))
@@ -140,8 +143,9 @@ async def figure(collection: str, uid: str, hash: str):
 
 @router.post("/mcp")
 async def mcp_route(request: Request) -> JSONResponse:
-    """The MCP server over HTTP: one JSON-RPC message in, its response out
-    (204 for a notification)."""
+    """The MCP server over HTTP — the Streamable HTTP transport with JSON
+    answers: one JSON-RPC message in, its response out, 202 and no body for
+    a notification. A client that sends a batch gets the batch's answers."""
     from starlette.concurrency import run_in_threadpool
     from app.ask import mcp
     try:
@@ -149,7 +153,17 @@ async def mcp_route(request: Request) -> JSONResponse:
     except ValueError:
         return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "not JSON"}},
                             status_code=400)
+    if isinstance(message, list):
+        answers = [r for r in [await run_in_threadpool(mcp.handle, m) for m in message] if r is not None]
+        return JSONResponse(answers) if answers else Response(status_code=202)
     response = await run_in_threadpool(mcp.handle, message)
     if response is None:
-        return JSONResponse(None, status_code=204)
+        return Response(status_code=202)
     return JSONResponse(response)
+
+
+@router.get("/mcp")
+async def mcp_stream() -> Response:
+    """No server-initiated stream: the tools answer the request that called
+    them (the transport allows 405 here)."""
+    return Response(status_code=405, headers={"Allow": "POST"})

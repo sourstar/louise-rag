@@ -58,6 +58,9 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="louise-rag", lifespan=lifespan)
+# who is asking, on every request; Ask closed to nobody-in-particular once a
+# user exists (07 §7.4, amended 2026-10-22; app/users.py)
+app.add_middleware(auth.ViewerGate)
 
 def _con():
     # one connection per request keeps things simple; SQLite WAL handles it
@@ -836,10 +839,31 @@ async def api_search(body: SearchBody, request: Request):
 
 # ---------------- OpenAI-compatible RAG endpoint ----------------
 
+#: the name the OpenAI-compatible endpoint answered to before `louise` and
+#: `louise/<collection>` (07 §7.4, amended 2026-10-22): still taken, as every
+#: collection, so a client configured with it keeps working
+LEGACY_MODEL = "gutenberg-rag"
+
+
 @app.get("/v1/models")
 def models():
-    return {"object": "list", "data": [
-        {"id": "gutenberg-rag", "object": "model", "owned_by": "homelab"}]}
+    """`louise` (every collection) and `louise/<name>` per collection a
+    search may use: in a client that sends nothing but a model name (Open
+    WebUI), choosing the model chooses what is searched."""
+    return {"object": "list", "data": [{"id": m, "object": "model", "owned_by": "louise"}
+                                       for m in web.model_ids()]}
+
+
+def collections_for_model(model: str, collections: list[str] | None) -> list[str] | None:
+    """The collections a chat searches: the body's own list when it sends
+    one, else the one `louise/<name>` names, else every one."""
+    if collections is not None:
+        return collections
+    if model.startswith("louise/") and model[len("louise/"):]:
+        return [model[len("louise/"):]]
+    if model in ("louise", LEGACY_MODEL, ""):
+        return None
+    raise HTTPException(404, f"model {model!r}: `louise` or `louise/<collection>` (GET /v1/models lists them)")
 
 class VerifyBody(BaseModel):
     chunk_ids: list[str]
@@ -869,7 +893,7 @@ KEEPALIVE_S = 5.0
 
 
 class ChatBody(BaseModel):
-    model: str = "gutenberg-rag"
+    model: str = "louise"
     messages: list[dict]
     stream: bool = False
     temperature: float = 0.3
@@ -886,19 +910,29 @@ class ChatBody(BaseModel):
     # the page's hits (05 §5.3, amended 2026-10-19); None = every one held
     annotations: list[str] | None = None
 
+def _text_of(content) -> str:
+    """A message's text: a string, or OpenAI's list of parts (Open WebUI
+    sends `[{"type": "text", "text": …}]` with an attachment)."""
+    if isinstance(content, list):
+        return " ".join(str(p.get("text") or "") for p in content
+                        if isinstance(p, dict) and p.get("type") == "text").strip()
+    return str(content or "")
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(body: ChatBody, request: Request):
     user_msgs = [m for m in body.messages if m.get("role") == "user"]
     if not user_msgs:
         raise HTTPException(400, "no user message")
-    query = str(user_msgs[-1].get("content", ""))
+    query = _text_of(user_msgs[-1].get("content", ""))
+    searched = collections_for_model(body.model, body.collections)
     t0 = time.time()
     # The SEARCH stops if the caller goes (app/cancel.py). The answer after
     # it is one call to the model, which nothing can interrupt midway; it
     # runs in a worker thread so this endpoint never blocks the loop.
     try:
         result = await cancel.while_connected(
-            request, _run_search, body.collections, query, body.limit, "hybrid", True,
+            request, _run_search, searched, query, body.limit, "hybrid", True,
             verify=body.verify, rerank_depth=body.rerank_depth,
             all_languages=body.all_languages,
             # the page's own "show results in", so a work's one hit is the
@@ -926,7 +960,7 @@ def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
                      len(result["hits"]), _source_qualified_ids(result["hits"]))
         return {
             "id": rid, "object": "chat.completion", "created": int(time.time()),
-            "model": "gutenberg-rag",
+            "model": body.model,
             "choices": [{"index": 0, "finish_reason": "stop",
                          "message": {"role": "assistant", "content": answer}}],
         }
@@ -963,7 +997,7 @@ def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
         def chunk(delta: str) -> str:
             return "data: " + json.dumps({
                 "id": rid, "object": "chat.completion.chunk", "created": int(time.time()),
-                "model": "gutenberg-rag",
+                "model": body.model,
                 "choices": [{"index": 0, "delta": {"content": delta},
                              "finish_reason": None}]}) + "\n\n"
 
@@ -1002,7 +1036,7 @@ def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
             db.log_event(con, "info", "chat",
                          f"answer: {chars} chars in {secs:.1f} s, first word at {first:.1f} s")
         done = {"id": rid, "object": "chat.completion.chunk",
-                "created": int(time.time()), "model": "gutenberg-rag",
+                "created": int(time.time()), "model": body.model,
                 "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
         yield f"data: {json.dumps(done)}\n\n"
         yield "data: [DONE]\n\n"

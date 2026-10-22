@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}log in — louise-rag{% endblock %}
+{% block content %}
+<div class="panel" style="max-width:420px;margin:40px auto">
+  <h2>Log in</h2>
+  <p class="note">Paste the token you were given. You stay logged in on this browser for 30 days, or until the token expires.</p>
+  <label for="token">Token</label>
+  <input id="token" type="password" autocomplete="off" autofocus>
+  <div class="actions">
+    <button class="primary" onclick="doLogin()">Log in</button>
+  </div>
+  <div id="err" class="note" style="color:var(--err)"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function doLogin(){
+  const token=document.getElementById('token').value.trim();
+  try{
+    const r=await postJSON('/login',{token});
+    // same-site paths only: "next" comes from the URL
+    const next=new URLSearchParams(location.search).get('next');
+    location.href=(next && next.startsWith('/') && !next.startsWith('//'))?next:'/ask';
+  }catch(e){document.getElementById('err').textContent='login failed: '+e}
+}
+document.getElementById('token').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
+</script>
+{% endblock %}

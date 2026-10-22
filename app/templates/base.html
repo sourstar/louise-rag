@@ -8,13 +8,23 @@
 <script src="/static/vendor/htmx.min.js?v={{ asset_v }}"></script>
 </head>
 <body>
+{% set viewer = request.state.viewer if request and request.state and request.state.viewer is defined else none %}
 <nav>
   <span class="brand">louise-rag</span>
   <a href="/ask" class="{{ 'active' if active=='ask' else '' }}">Ask</a>
+  {% if not (viewer and viewer.role == 'user') %}
   <a href="/admin/library" class="{{ 'active' if active=='library' else '' }}">Library</a>
   <a href="/admin/network" class="{{ 'active' if active=='network' else '' }}">Network</a>
   <a href="/admin/system" class="{{ 'active' if active=='system' else '' }}">System</a>
+  {% endif %}
+  <a href="/connect" class="{{ 'active' if active=='connect' else '' }}">Connect</a>
   <a href="/help" class="{{ 'active' if active=='help' else '' }}">Help</a>
+  {% if viewer and viewer.role != 'guest' %}
+  <a href="#" class="who" onclick="fetch('/logout',{method:'POST'}).then(()=>location.href='/login');return false"
+     title="log out">{{ viewer.name }} · log out</a>
+  {% elif not viewer %}
+  <a href="/login" class="who">Log in</a>
+  {% endif %}
 </nav>
 <main>
 {% block content %}{% endblock %}
