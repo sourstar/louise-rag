@@ -143,6 +143,15 @@ def edition_date(marc: dict, text_header: dict) -> tuple[str | None, str | None]
     return None, None
 
 
+
+#: Project Gutenberg's note on a book it knows to be unreadable, in its
+#: catalogue entry's description: "This book's encoding is broken, and will
+#: not be fixed." (pg673, the GCIDE-markup Webster). Matched on its words,
+#: apostrophe and case free, so a reworded note of the same statement is
+#: caught; a note that only mentions encodings is not.
+BROKEN_ENCODING = re.compile(r"(?:this\s+)?(?:book|e-?book|text)['’]?s?\s+encoding\s+is\s+broken[^.\n]*\.?",
+                             re.IGNORECASE)
+
 class GutenbergSource:
     source_id = "gutenberg"
     license_class = LicenseClass.GREEN
@@ -204,7 +213,17 @@ class GutenbergSource:
     #: discovery never rebuilt the record. The text, sections and chunks do
     #: not move — every `origin_hash` does, so the records are new and the
     #: vectors carry (02 A1).
-    PARSER_VERSION = 9
+    #: 10 since 2026-10-22 (operator): a book whose catalogue entry says its
+    #: encoding is broken (`BROKEN_ENCODING`, PG's own words on pg673: "This
+    #: book's encoding is broken, and will not be fixed.") is NOT INDEXABLE —
+    #: its text was the 1913 Webster in raw GCIDE markup, 160 tag kinds and
+    #: 27,570 characters the transcription could not encode, shown on the
+    #: Ask page as code. A corpus fact, so `UnindexableDocument`: the next
+    #: scan re-applies it, and since 9 the record's hash covers the
+    #: catalogue entry, so a release that drops the note readmits the book
+    #: by itself. Every other record is unchanged; the collection that
+    #: adopts this parser is a new one whose vectors carry.
+    PARSER_VERSION = 10
     modality = Modality.TEXT
     # PG does withdraw a text on a copyright claim, and the tombstone
     # stays: a removal is never silent (04 §4.4).
@@ -356,6 +375,12 @@ class GutenbergSource:
         from . import pg_epub
 
         meta = rdf.parse(book_dir, native_id)
+        broken = BROKEN_ENCODING.search(meta.get("description") or "")
+        if broken:
+            # the origin's own statement, quoted, so the Library says why
+            raise UnindexableDocument(
+                f"the origin declares book {native_id}'s encoding broken: \"{broken.group(0)}\" "
+                f"(readmitted when its catalogue entry no longer says so)")
         suffix = raw.path.suffix.lower()
         plates: list = []
         text_header: dict[str, str] = {}
