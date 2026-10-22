@@ -144,6 +144,28 @@ above 1): it adds rather than translates.
 BLEU follows chrF; it is in `reading_scores.out`. On the full sets, MADLAD
 scores la 35.8, de 58.6, fi 51.3, and Hy-MT2-1.8B 39.5 / 48.5 / 41.0.
 
+### Known difference: the answer box and the reader (2026-10-22, left as it is)
+
+The answer box is WRITTEN in the chosen language by the chat model
+(`retrieval.build_answer_messages`, `answer_lang`: "write your whole answer
+in the language with ISO code …"); the entries and the reader are
+TRANSLATED by the translation model. Two models, so a word taken from the
+sources can come out two ways: the operator asked in Italian and read
+"barbican" in the answer (kept from the English source) and "barbacane" in
+the reader. Left as it is (operator, 2026-10-22: "Leave it but document
+it"). The two remedies considered, if it is reopened: a sharper answer
+instruction (translate every word taken from the sources, keeping only
+personal names, titles and quotations), at no extra cost; or the answer
+post-translated by the translation model, one call more per answer and the
+[n] citations at risk (the page already falls back to the original when
+they move).
+
+Within the translation model, one passage now gets one translation
+(52b1433): an entry's visible lines are translated first, then replaced by
+the reader's whole-paragraph translation when the queue brings it, so the
+entry and the reader agree and the rest of the passage is not translated
+on its own.
+
 ## Footprint
 
 | model | VRAM (driver) | host RSS | cold, from disk / from page cache | warm, one short request |
