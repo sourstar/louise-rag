@@ -743,6 +743,46 @@ def test_reconcile_keeps_the_vectors_of_every_unchanged_document_and_resets_the_
     assert (again["kept"], again["reset"]) == (out["kept"], out["reset"]), "resumed, not redone"
 
 
+def test_a_finished_cursor_the_copy_brought_along_is_not_this_pairs(pair, corpus_dir):
+    """2026-10-22, gutenberg's parser-10 reconcile: the manifest copied by
+    the carry held the parser-9 reconcile's finished cursor, and the new
+    reconcile read it, did nothing and reported the old counts. A cursor
+    written for another pair starts over; one written for this pair resumes."""
+    root, old, re_, uids, ids = _rebuilt_pair(pair)
+    carry.carry(root, "old", "re", rebuilt=True, copy=True, apply=True, log=quiet)
+    coll = _local(root, "re")
+    con = db.connect(coll)
+    try:      # what the copy brought: another pair's pass, done, with its counts
+        con.execute("BEGIN IMMEDIATE")
+        db.set_control(con, carry.RECONCILE_KEY, json.dumps(
+            {"done": True, "kept": 79326, "rehashed": 79387, "reset": 290, "rowid": 79616}))
+        con.execute("COMMIT")
+    finally:
+        con.close()
+    _build_and_freeze(root, "re", corpus_dir)
+    out = carry.reconcile(root, "old", "re", window=1, log=quiet)
+    assert out["kept"] == len(uids) and out["reset"] == 0, out
+    assert carry.reconcile(root, "old", "re", log=quiet)["kept"] == len(uids), "this pair's cursor resumes"
+
+
+def test_a_keep_cursor_the_copy_brought_along_is_not_trusted(pair):
+    """The windowed keep's cursor is keyed by producer alone; one copied
+    from another collection's manifest must not end the walk before it
+    starts."""
+    root, uids, ids = _carried(pair)
+    coll, kept = _provenance(root, uids, ids)
+    con = db.connect(coll)
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        db.set_control(con, carry.KEEP_KEY + ARCHIVE, json.dumps(
+            {"done": True, "kept": 1, "dropped": 0, "documents_reset": 0, "rowid": 10**9}))
+        con.execute("COMMIT")
+    finally:
+        con.close()
+    out = carry.keep_producer(root, "new", ARCHIVE, log=quiet)
+    assert (out["kept"], out["dropped"], out["verified"]) == (4, 5, True), out
+
+
 @pytest.mark.parametrize("copy", [True, False])
 def test_an_empty_manifest_another_writer_made_meanwhile_is_replaced_not_taken(pair, monkeypatch, copy):
     """2026-10-13, normattiva-1861: the worker opened the target two seconds

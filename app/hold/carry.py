@@ -491,6 +491,19 @@ def _content_of(root: Path, name: str) -> dict[str, tuple[str, str | None]]:
     return out
 
 
+def _cursor(con, key: str, pair: list[str], fresh: dict[str, Any]) -> dict[str, Any]:
+    """A resumable pass's cursor in the manifest's `control` table, valid only
+    for the collections it was written for: a manifest is COPIED by a carry,
+    and gutenberg's parser-10 reconcile (2026-10-22) read the parser-9 one's
+    finished cursor from the copy and did nothing — "done", with the old
+    pass's counts. A cursor naming another pair, or none, starts over."""
+    from app import db
+    state = json.loads(db.get_control(con, key) or "{}")
+    if state.get("pair") != pair:
+        state = {**fresh, "pair": pair}
+    return state
+
+
 def reconcile(root, from_ref: str, to_ref: str, *, window: int = WINDOW,
               log: Callable[[str], None] = print) -> dict[str, Any]:
     """After `carry --rebuilt` and the target's own build and snapshot: every
@@ -517,8 +530,9 @@ def reconcile(root, from_ref: str, to_ref: str, *, window: int = WINDOW,
     coll = rec.local_collection(root, to_name, codex=to)
     con = db.connect(coll)
     try:
-        state = json.loads(db.get_control(con, RECONCILE_KEY) or "{}") or \
-            {"rowid": 0, "kept": 0, "reset": 0, "rehashed": 0, "done": False}
+        state = _cursor(con, RECONCILE_KEY, [src.collection_id, to.collection_id],
+                        {"rowid": 0, "kept": 0, "reset": 0, "rehashed": 0, "done": False})
+        pair = state["pair"]
         while not state.get("done"):
             rows = con.execute("SELECT rowid, uid, native_id, txt_hash FROM documents "
                                "WHERE rowid > ? ORDER BY rowid LIMIT ?",
@@ -561,7 +575,8 @@ def reconcile(root, from_ref: str, to_ref: str, *, window: int = WINDOW,
             # step 3: the cursor
             state = {"rowid": last, "kept": state["kept"] + len(same),
                      "reset": state["reset"] + pending["reset"],
-                     "rehashed": state["rehashed"] + pending["rehashed"], "done": False}
+                     "rehashed": state["rehashed"] + pending["rehashed"], "done": False,
+                     "pair": pair}
             con.execute("BEGIN IMMEDIATE")
             db.set_control(con, RECONCILE_KEY, json.dumps(state, sort_keys=True))
             con.execute("COMMIT")
@@ -779,8 +794,9 @@ def keep_producer(root, to_ref: str, producer: str, *, window: int = WINDOW,
     key = KEEP_KEY + producer
     con = db.connect(coll)
     try:
-        state = json.loads(db.get_control(con, key) or "{}") or \
-            {"rowid": 0, "kept": 0, "dropped": 0, "documents_reset": 0, "done": False}
+        state = _cursor(con, key, [codex.collection_id],
+                        {"rowid": 0, "kept": 0, "dropped": 0, "documents_reset": 0, "done": False})
+        pair = state["pair"]
         while not state.get("done"):
             rows = con.execute("SELECT rowid, uid, native_id FROM documents WHERE rowid > ? "
                                "ORDER BY rowid LIMIT ?", (state["rowid"], window)).fetchall()
@@ -852,7 +868,7 @@ def keep_producer(root, to_ref: str, producer: str, *, window: int = WINDOW,
             state = {"rowid": last, "kept": state["kept"] + len(present & kept),
                      "dropped": state["dropped"] + pending["dropped"],
                      "documents_reset": state["documents_reset"] + pending["documents_reset"],
-                     "done": False}
+                     "done": False, "pair": pair}
             con.execute("BEGIN IMMEDIATE")
             db.set_control(con, key, json.dumps(state, sort_keys=True))
             con.execute("COMMIT")

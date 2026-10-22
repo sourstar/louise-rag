@@ -92,12 +92,13 @@ if ! docker exec "$W" grep -q '"done": *true' /data/collections/$NEW/state/carry
 fi
 docker exec "$W" cat /data/collections/$NEW/state/carry.json; echo
 
-if docker exec "$W" sh -c "ls /data/collections/$NEW/shard/*.sig.json" >/dev/null 2>&1; then
-  say "6-7. built and snapshotted already: $(docker exec "$W" sh -c "ls /data/collections/$NEW/shard/*.sig.json")"
-else
+if ! docker exec "$W" sh -c "ls /data/collections/$NEW/shard/records/* >/dev/null 2>&1"; then
   say "6. records build from the same origin (parser 10)"
   run hold records build "$NEW" --corpus /data/collections/$OLD/origin
-  say "7. snapshot"
+fi
+if ! docker exec "$W" sh -c "ls /data/collections/$NEW/shard/*.sig.json >/dev/null 2>&1"; then
+  say "7. validation, then the snapshot"
+  run hold records validation "$NEW"
   run hold snapshot create "$NEW"
 fi
 say "8. reconcile: unchanged documents keep their vectors"
