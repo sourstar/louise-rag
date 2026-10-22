@@ -35,8 +35,11 @@ def _passage(k: int) -> str:
 
 
 def _doc(k: int) -> dict:
+    # the highlighted chunk IS the hit's passage, as on a node: the reader
+    # shows the same text the entry clamps
     chunks = [{"seq": i, "chunk_id": f"c:{k}:{i}:1", "chapter": f"Part {k}.{i // 8}",
-               "text": f"R{k}.{i} " + "the sea was calm and the light fell on the water " * (3 + i % 5)}
+               "text": _passage(k) if i == 20 else
+               f"R{k}.{i} " + "the sea was calm and the light fell on the water " * (3 + i % 5)}
               for i in range(40)]
     return {"header": {"title": f"Book {k}", "reference": f"Anon · #{k} (en)", "lang": "en",
                        "origin_url": None, "text_from": "lexical index"}, "chunks": chunks}

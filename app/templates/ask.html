@@ -299,7 +299,7 @@ function markers(t){const m=t.match(/\[\d+\]/g)||[];return m.slice().sort().join
 // whose rank is beaten by new work (a click, a scroll) is aborted and the
 // plan is made again. Everything translated is kept here too (tq.cache),
 // so an entry opened after rank 5 has reached it paints with no request.
-const tq={job:null, ctl:null, planning:false, hold:false, failed:null, cache:new Map(),
+const tq={job:null, ctl:null, planning:false, hold:false, failed:null, cache:new Map(), flat:new Map(),
           inflight:new Set(), missed:new Set(), same:new Set(), answerMissed:false,
           dir:1, lastY:0, timer:null, screens:new Map()};
 const READER_MIN_CHARS=1200;   // the reader window's floor when little text is on screen
@@ -418,9 +418,26 @@ function answerPending(lang){
 }
 
 // everything already translated, painted without asking
+// ONE PASSAGE, ONE TRANSLATION (operator, 2026-10-22: "barbican" stayed
+// English in the entry and was "barbacane" in the reader). A split passage
+// was translated as two pieces and the reader's paragraph as one: three
+// texts, three model calls, two renderings of one word. Once the whole
+// passage's translation exists — the reader's first screen carries it, as
+// the hit's chunk — the entry shows it, whole, instead of its pieces.
+const flat=t=>(t||'').replace(/\s+/g,' ').trim();
+function wholeOf(lang,orig){
+  const v=tq.cache.get(ckey(lang,orig)); if(v!==undefined)return v;
+  const w=tq.flat.get(ckey(lang,flat(orig))); return w===undefined?undefined:flat(w);
+}
 function tqFromCache(lang){
   const paint=(u,set,via)=>{const v=tq.cache.get(ckey(lang,u.dataset.orig)); if(v===undefined)return;
     via(u,()=>markTranslated(u,v,lang)); if(u.dataset.tl!==lang)set.add(u)};
+  for(const s of document.querySelectorAll('#results .snip.tr')){
+    if(!s.dataset.parted && (s.dataset.tl===lang || !pagePending(s,lang)))continue;
+    if([...s.querySelectorAll('.tr-part')].some(p=>tq.inflight.has(p)))continue;
+    const v=wholeOf(lang,s.dataset.orig); if(v===undefined)continue;
+    restoreUnit(s); markTranslated(s,v,lang); if(s.dataset.tl!==lang)tq.same.add(s);
+  }
   for(const u of pageUnits())if(pagePending(u,lang))paint(u,tq.same,(u,f)=>f());
   if(rd.doc && rd.lang===lang)for(const u of [rd.bar,...rd.units])if(readerPending(u))paint(u,rd.same,readerPaint);
   if(answerPending(lang)){const v=tq.cache.get(ckey(lang,answerRaw));
@@ -475,11 +492,15 @@ function tqPlan(lang){
   if(shown.length)return {rank:4, groups:tqGroups(tqBatch(shown),'page')};
   const hits=[...document.querySelectorAll('#hits .hit')];
   for(const h of hits){
-    const tail=[...h.querySelectorAll('.tr-part.tail')].filter(u=>pagePending(u,lang));
+    let tail=[...h.querySelectorAll('.tr-part.tail')].filter(u=>pagePending(u,lang));
     const key=screenKey(h), scr=tq.screens.get(key);
     if(scr===undefined)return {fetch:h};
     const texts=(scr.texts||[]).filter(t=>t.trim() && scr.src!==lang && !tq.cache.has(ckey(lang,t))
                                          && !tq.missed.has(ckey(lang,t)));
+    // the reader's screen carries the whole passage: its translation replaces
+    // the pieces (tqFromCache), so the rest is not translated on its own
+    const snip=h.querySelector('.snip.tr');
+    if(snip && (scr.texts||[]).some(t=>flat(t)===flat(snip.dataset.orig)))tail=[];
     if(!tail.length && !texts.length)continue;
     const groups=tqGroups(tail,'page');
     for(const t of texts)groups.push({id:'s'+groups.length,text:t,src:scr.src,els:[],kind:'screen'});
@@ -574,7 +595,7 @@ async function tqRun(job,lang){
         let m; try{m=JSON.parse(ln)}catch(e){continue}
         if(m.done)continue;   // a request with nothing back: its items are missed, the queue goes on
         const g=byId.get(m.id); if(!g)continue;
-        if(m.text!==undefined)tq.cache.set(ckey(lang,g.text),m.text);
+        if(m.text!==undefined){tq.cache.set(ckey(lang,g.text),m.text); tq.flat.set(ckey(lang,flat(g.text)),m.text)}
         if(g.kind==='answer'){
           if(m.delta!==undefined){acc[m.id]=(acc[m.id]||'')+m.delta; a.textContent=acc[m.id]; a.classList.add('translating')}
           else if(m.text!==undefined && markers(m.text)===markers(answerRaw))showAnswer(m.text,lang);

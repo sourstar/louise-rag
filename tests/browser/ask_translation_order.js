@@ -27,6 +27,7 @@ function kind(t) {
   if (t.startsWith('The answer cites')) return 'answer';
   if (/^Title \d+$/.test(t)) return 'title';
   if (/^Chapter \d+$/.test(t)) return 'chapter';
+  if (/^<\d+\.0>/.test(t) && /<\d+\.23>/.test(t)) return 'whole';   // the passage entire: the reader's chunk
   if (/^<\d+\.0>/.test(t)) return 'head';
   if (/^<\d+\.\d+>/.test(t)) return 'tail';
   return 'screen';            // the reader's text: R<k>.<i> chunks, Part headings, Book titles
@@ -91,20 +92,23 @@ const hitOf = t => { const m = t.trim().match(/^(?:<|R|Title |Chapter |Book |Par
   const visibleKinds = visibleReqs.flatMap(r => r.texts.map(kind));
   check(firstBehind > 1 && visibleKinds.every(k => ['title', 'chapter', 'head'].includes(k)),
         '2. then only the entries\' visible text', visibleKinds);
-  const shownOnPage = await page.evaluate(() => pageUnits().filter(u => !u.classList.contains('tail')).map(u => u.dataset.orig));
-  const sentVisible = new Set(visibleReqs.flatMap(r => r.texts));
-  check(shownOnPage.every(t => sentVisible.has(t)), '2. every entry\'s visible text before anything behind it',
-        shownOnPage.filter(t => !sentVisible.has(t)));
+  const count = k => visibleKinds.filter(x => x === k).length;
+  check(count('title') === N && count('chapter') === N && count('head') === N,
+        '2. every entry\'s visible text (title, chapter, the clamp\'s part) before anything behind it',
+        { title: count('title'), chapter: count('chapter'), head: count('head') });
   const order = visibleReqs.flatMap(r => r.texts).map(hitOf);
   check(order.every((k, i) => i === 0 || k >= order[i - 1]), '2. the entries in order', order);
-  const parted = await page.evaluate(() => document.querySelectorAll('#results .snip[data-parted]').length);
-  check(parted === N, 'each clamped passage is split at what its clamp shows', parted);
   const behind = reqs.slice(firstBehind);
   const behindHits = behind.map(r => [...new Set(r.texts.map(hitOf))]);
   check(behindHits.every(hs => hs.length === 1) && behindHits.map(hs => hs[0]).every((k, i, a) => i === 0 || k > a[i - 1]),
         '3. then behind each entry, one entry at a time, in order', behindHits);
-  check(behind.every(r => { const k = r.texts.map(kind); const t = k.indexOf('tail'); return t <= 0; }),
-        '3. the rest of the passage before the reader\'s text', behind.map(r => r.texts.map(kind)));
+  check(behind.every(r => !r.texts.map(kind).includes('tail')) && behind.every(r => r.texts.map(kind).includes('whole')),
+        '3. the reader\'s screen carries the whole passage: the rest is not translated on its own', behind.map(r => r.texts.map(kind)));
+  const one = await page.evaluate(() => [...document.querySelectorAll('#results .snip.tr')].map(s =>
+    ({ parted: !!s.dataset.parted, text: s.textContent, orig: s.dataset.orig })));
+  check(one.every(o => !o.parted && o.text === 'IT: ' + o.orig),
+        'ONE passage, ONE translation: each entry shows the reader\'s whole-passage translation, not its pieces',
+        one.filter(o => o.parted || o.text !== 'IT: ' + o.orig).map(o => o.text.slice(0, 60)));
   const all = await page.evaluate(() => pageUnits().every(u => u.dataset.tl === 'it'));
   check(all, 'in the end every unit on the page is Italian');
 
