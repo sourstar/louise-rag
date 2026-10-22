@@ -105,32 +105,121 @@ never moves.
   plugin's `corpus_attribution` byte for byte (the exact wording copied
   from the terms when the plugin is built, not from memory).
 
-## 7. The space
+## 7. The space — ON HOLD (operator, 2026-10-22)
 
-The operator's default (arxiv-plugin.md D1): **Qwen3-Embedding-4B**, the
-engine gutenberg runs, measured bit-exact; dim 2560, f16, last-token
-pooling, normalised; its own calibration set, so `arxiv` is its own space
-(invariant 1) even with gutenberg's weights. The query side gets a
-scientific-retrieval instruction ("Given a question, retrieve arXiv paper
-abstracts that answer it"), applied once (`embeddings._asked`).
+The encoder is not chosen. The collection is created, harvested, built and
+shared as records first; `create` writes the space once the choice is
+made, so nothing below waits on it except the embedding itself.
+
+The candidates (arxiv-plugin.md D1, MTEB from the Qwen3 model card):
+Qwen3-Embedding-4B (gutenberg's; multilingual retrieval 69.6, ~185
+GPU-hours, ~16.4 GB of vectors) and bge-m3 (wikipedia's; 54.6, an
+estimated 4–7× faster, ~6.5 GB). **The choice is settled by a measurement
+kept for when it is wanted** (operator: "keep your params 20000 abstracts
+and 500 questions"):
+
+- 20,000 abstracts from the harvest, the 500 answers among them and the
+  rest drawn from the same categories, so the wrong candidates are close;
+- 500 questions, one per answer abstract, written by the node's chat
+  model from that abstract alone (the prompt kept with the result);
+- both encoders through Louise's own client on the deployed runs, the
+  query instruction of each model's own card;
+- MRR@10 (the primary figure), Hit@1/10 and NDCG@10 per model, with a
+  bootstrap interval (±~1.5 points at 500 questions);
+- cost: ~6 M tokens per model to embed (~70 min Qwen3-4B, ~15 min
+  bge-m3), ~45 min of question writing.
 
 | size | |
 |---|---|
 | records | 3.2 M, ~4 GB of text |
-| vectors | 3.2 M × 2560 × 2 B ≈ 16.4 GB, plus the index |
-| first embedding | ~1 B tokens ≈ 185 GPU-hours at ~1,500 tok/s: about four days on the node and Perugia together, shared by slice |
-| monthly | ~25 K papers, about an hour |
+| first embedding | ~1 B tokens — by the encoder chosen |
+| monthly | ~25 K papers |
 
-## 8. Build order
+## 8. The plugin, in code
 
-1. The plugin (`app/plugins/arxiv/`): OAI client (resumption, from-date,
-   both formats, transfer-manager budget), parser, `current()`, the
-   language detector pinned in the image. Tests: a recorded OAI page of
-   each format → records; every arXivRaw and arXiv field reaching the
-   record (a coverage table, as tests/test_gutenberg_promise9.py); a
-   resumed harvest; a withdrawn paper; an old-style id.
-2. `reader.ORIGIN["arxiv"]` and the hit's two links; the facets.
-3. The recipe (`docs/notes/arxiv-recipe.toml.txt`), `hold collection
-   create`, a 1,000-paper trial on the node: harvest, build, embed, ask.
-4. The full harvest in the operator's windows, then embedding by slice,
-   then `share`.
+### 8.1 The acquisition: an OAI-PMH transport (06 §6.2: "an origin that
+is an API is still a spec")
+
+`app/acquire/transport_oai.py`, a new `Transport.OAI_PMH`, run by the
+platform like https or rsync, every byte through the transfer manager:
+
+- **listing** = `ListRecords` pages, `metadataPrefix` × {`arXivRaw`,
+  `arXiv`}; each page is written verbatim to
+  `<corpus>/oai/<prefix>/<harvest>/page-<NNNNN>.xml` and is the "file" of
+  the spec. The denominator is the resumption token's `completeListSize`,
+  recorded per pass (the spec's one contract);
+- **resumable**: the token after every page is checkpointed beside the
+  pages (invariant 2: a page is the unit); an expired token restarts the
+  pass from the last page's last datestamp, never from zero;
+- **etiquette** (local, outside the Codex): one request at a time, 3 s
+  apart (arXiv's API terms), `Retry-After` on 503 honoured, a
+  contact-bearing User-Agent;
+- **updates**: a pass `from=<previous pass's last datestamp>`, daily.
+
+`origin.spec` (inside the Codex): transport `oai-pmh`, the base URL, the
+two prefixes, `set` none, update form `from-datestamp`. `origin.clock`
+`UTC`; `cutoff_rule` "the latest state of every record the pass harvested
+up to the cutoff instant" (an OAI record exposes only its latest
+version: a peer fetching later may read a newer abstract, which freshness
+labels `changed at origin`, as it does a revised Gutenberg text);
+`unit` "the paper's two OAI records, `GetRecord` per prefix"; `form`
+"OAI-PMH arXivRaw + arXiv: arXiv's own per-record form; together they
+hold everything arXiv states".
+
+### 8.2 The plugin: `app/plugins/arxiv/`
+
+| module | does |
+|---|---|
+| `source.py` | the `CorpusSource`: classes (green, public, mutable, retractable, text, `native_id_order = "bytes"`), corpus provider and attribution, default layer, slicing and facets; `discover`, `fetch`, `parse`, `current` |
+| `oai.py` | reading one page: records, `deleted` headers, the token; the arXivRaw and arXiv field readers; pure functions over bytes |
+| `pairing.py` | the two formats joined by identifier: a small SQLite index in `state_dir` (`id → page, offset` per prefix), rebuilt incrementally per new page; a paper whose second format has not arrived yet is DEFERRED, not an error (engineering rule: deferral is not failure) |
+| `ids.py` | id grammar (new `YYMM.NNNNN`, old `archive[.SC]/YYMMNNN`), the slice of a primary category, the category group table |
+| `lang.py` | the pinned language detector over title + abstract (its version inside the parser version) |
+| `TERMS.txt` | arXiv's metadata licence statement and the API terms' attribution, byte-exact |
+
+- `discover()` walks the pairing index in id order and yields one `DocRef`
+  per paper with both formats (`locator` = the two pages and offsets,
+  `extra.datestamp`); a deleted header yields a tombstone ref.
+- `fetch()` reads the two record elements' bytes from their pages;
+  `raw_hash = H(arXivRaw record ‖ arXiv record)`.
+- `parse()` maps §3's table, nothing dropped; a withdrawn paper (arXivRaw
+  comments "This paper has been withdrawn", or a v-history whose last
+  size is 0) keeps its record with `extra.withdrawn`.
+- `current()` = two `GetRecord` calls into `workdir`, read by the same
+  `parse`.
+- `reader.ORIGIN["arxiv"]` and a second link (`pdf`) in the hit template;
+  facets: `extra.primary_category`, category group, year, `extra.licence`.
+
+### 8.3 Tests (they ship with the code)
+
+Fixtures are REAL pages, captured on the node (this container cannot
+reach arXiv): one `ListRecords` page per prefix trimmed to ~10 records
+chosen to cover a new-style id, an old-style id, a multi-version paper, a
+withdrawn paper, a paper with affiliations, one with MSC/ACM classes and a
+DOI, a non-English abstract, and a `deleted` header; plus a page carrying
+a resumption token and one ending a list.
+
+- **coverage table** (as tests/test_gutenberg_promise9.py): every field
+  of both formats reaches the record or is named as dropped with its
+  reason — none are;
+- the pairing defers a paper with one format and pairs it when the other
+  arrives; `raw_hash` moves when either record moves;
+- the transport: a harvest stopped after page k resumes at page k+1; an
+  expired token resumes from the last datestamp; `completeListSize`
+  recorded; nothing moves without the budget (a stub budget asserts);
+- ids, slices and category groups over the full category list;
+- `current()` against two recorded `GetRecord` answers reproduces the
+  record built from the pages.
+
+### 8.4 Build order
+
+1. Fixtures from the node (München), then `oai.py`, `ids.py`, `pairing.py`,
+   `source.py`, `lang.py` with their tests.
+2. `transport_oai.py` with its tests.
+3. The links and facets on the Ask page.
+4. On the node: `hold collection create` WITHOUT a space is not possible
+   (the space is in the Codex) — so the trial harvests and builds records
+   into a scratch collection whose Codex is thrown away; the real
+   `create` follows the encoder choice. The harvest itself is kept: the
+   corpus directory is the origin's bytes and is reused (RULE 1).
+5. The measurement of §7, then the real collection.
