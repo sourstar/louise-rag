@@ -376,6 +376,38 @@ def test_keep_drops_every_vector_the_archive_did_not_produce(pair):
     assert carry.keep_producer(root, "new", ARCHIVE, log=quiet) == out, "done: nothing to do"
 
 
+def test_keep_by_one_scan_drops_what_the_walk_drops(pair):
+    """keep_producer_scan (wikipedia's 146 M rows, 2026-10-21): the same rows
+    kept and dropped, the same documents reset and provenance cleared, from
+    one pass over the table — a book of no kept row goes whole, a mixed one by
+    id."""
+    root, uids, ids = _carried(pair)
+    coll, kept = _provenance(root, uids, ids)
+    out = carry.keep_producer_scan(root, "new", ARCHIVE, log=quiet)
+    assert out == {"collection": "new", "producer": ARCHIVE, "kept": 4, "dropped": 5,
+                   "documents_reset": 2, "vectors": 4, "verified": True}
+    books = [int(u.split(":")[1]) for u in uids]
+    assert set(embeddings.chunk_ids_of_books(books, collection=coll)) == kept
+    con = db.connect(coll)
+    try:
+        assert dict(con.execute("SELECT uid, embed_done FROM documents").fetchall()) ==             {uids[0]: 1, uids[1]: 0, uids[2]: 0}
+        assert {r[0] for r in con.execute("SELECT chunk_id FROM chunk_verification")} == kept
+    finally:
+        con.close()
+    again = carry.keep_producer_scan(root, "new", ARCHIVE, log=quiet)
+    assert (again["dropped"], again["kept"], again["verified"]) == (0, 4, True), "run again: nothing left"
+
+
+def test_the_command_keeps_by_scan(pair, capsys):
+    from app import louise
+    root, uids, ids = _carried(pair)
+    _provenance(root, uids, ids)
+    assert louise.main(["dev", "carry", "old", "new", "--root", str(root), "--yes",
+                        "--keep", "producer:medcpt-pubmed", "--scan"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["keep"]["kept"] == 4 and printed["keep"]["verified"] is True
+
+
 def test_keep_resumes_after_a_stop_with_exact_counts(pair, monkeypatch):
     root, uids, ids = _carried(pair)
     coll, kept = _provenance(root, uids, ids)
