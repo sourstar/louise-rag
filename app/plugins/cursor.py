@@ -28,9 +28,40 @@ def load(state_dir: Path | None, plugin: str) -> dict:
         return {}
 
 
-def signature(path: Path) -> list:
+#: the third element of an entry recorded with its members — so a container
+#: with NONE (a gutenberg transfer stub) is told from one recorded before
+#: members were kept
+MEMBERS = "members"
+
+
+def signature(path: Path, members=None) -> list:
+    """(mtime_ns, size) of `path`; with `members`, then MEMBERS and
+    [name, mtime_ns, size] of each — the files inside a container directory
+    that decide its record (gutenberg: pg<id>.rdf and the form file
+    `pick_form` chose). A directory's mtime moves on a rename into it, which
+    is how this platform lands every file, but NOT when a file is rewritten
+    in place; the members' own stats see that (2026-10-22). A member gone is
+    [name, None, None], which never equals what was recorded."""
     st = path.stat()
-    return [st.st_mtime_ns, st.st_size]
+    sig = [st.st_mtime_ns, st.st_size]
+    if members is None:
+        return sig
+    sig.append(MEMBERS)
+    for name in members:
+        try:
+            m = (path / name).stat()
+            sig.append([name, m.st_mtime_ns, m.st_size])
+        except OSError:
+            sig.append([name, None, None])
+    return sig
+
+
+def _members_of(entry) -> list[str] | None:
+    """The member names an entry was recorded with; None for an entry
+    recorded without the members rule."""
+    if not isinstance(entry, list) or len(entry) < 3 or entry[2] != MEMBERS:
+        return None
+    return [m[0] for m in entry[3:]]
 
 
 def key(path: Path, root: Path | None = None) -> str:
@@ -61,7 +92,8 @@ def key(path: Path, root: Path | None = None) -> str:
     return path.name
 
 
-def unchanged(cursor: dict, path: Path, root: Path | None = None) -> bool:
+def unchanged(cursor: dict, path: Path, root: Path | None = None, *,
+              members: bool = False) -> bool:
     """True when `path` is recorded with exactly this (mtime_ns, size).
 
     Accepts a LEGACY entry keyed on the bare file name so that moving to
@@ -71,10 +103,19 @@ def unchanged(cursor: dict, path: Path, root: Path | None = None) -> bool:
     signature match, so it can only fire for the very file that wrote it;
     two different shards would need identical mtime_ns AND size to collide.
     Legacy entries are pruned as each file is re-marked.
+
+    `members`: the caller records each container with the files inside it
+    that decide its record (`Progress(..., members=True)`); the recorded
+    files are stat-ed again, and an entry recorded WITHOUT them is changed
+    — a cursor written before members were kept is re-examined once.
     """
-    sig = signature(path)
     k = key(path, root)
-    if cursor.get(k) == sig:
+    entry = cursor.get(k)
+    if members:
+        named = _members_of(entry)
+        return named is not None and entry == signature(path, named)
+    sig = signature(path)
+    if entry == sig:
         return True
     return k != path.name and cursor.get(path.name) == sig
 
@@ -151,9 +192,10 @@ class Progress:
     and promotion is recorded with the signature the scan actually read.
     """
 
-    def __init__(self, state, plugin: str) -> None:
+    def __init__(self, state, plugin: str, *, members: bool = False) -> None:
         self.state = state
         self.plugin = plugin
+        self.members = members
         self.cursor = load(state.state_dir, plugin)
         self.started_ns = time.time_ns()
         self._staged: list[tuple[int, Path, list]] = []
@@ -161,16 +203,19 @@ class Progress:
             state.on_commit.append(self.flush)
 
     def unchanged(self, path: Path) -> bool:
-        return unchanged(self.cursor, path, self.state.corpus_root)
+        return unchanged(self.cursor, path, self.state.corpus_root, members=self.members)
 
-    def stage(self, path: Path, complete_at: int | None = None) -> None:
+    def stage(self, path: Path, complete_at: int | None = None, members=()) -> None:
         """The plugin has yielded every ref of `path`. `complete_at` is the
         orchestrator's count of refs received when that happened — by
         default DiscoverState.received, which is exact when called right
         after the container's last yield resumed (the orchestrator has
-        then taken exactly that many refs)."""
-        sig = signature(path)
-        if sig[0] >= self.started_ns:
+        then taken exactly that many refs). `members`: under
+        `Progress(..., members=True)`, the files inside `path` that decide
+        its record, recorded with it (none for a stub)."""
+        sig = signature(path, list(members) if self.members else None)
+        if sig[0] >= self.started_ns or any(m[1] is None or m[1] >= self.started_ns
+                                            for m in sig[3:]):
             return                      # modified during the scan: re-examine next time
         at = self.state.received if complete_at is None else complete_at
         self._staged.append((at, path, sig))
@@ -198,11 +243,11 @@ def clear(state_dir: Path | None, plugin: str) -> bool:
     The cursor's signature is (mtime_ns, size) of the container or book
     directory, which catches every way this platform writes — acquisition
     always lands bytes with a rename into place, and a rename changes the
-    directory. It cannot catch a file rewritten IN PLACE by something
-    outside the platform (an external mirror running `rsync --inplace`
-    over an existing file). This is the escape hatch for that case, wired
-    to the Library's "rescan" button so an operator has a real forced
-    full rescan rather than a documented file to delete by hand.
+    directory. A file rewritten IN PLACE inside a book directory (an
+    external mirror running `rsync --inplace`) is caught where the plugin
+    records the directory's members (gutenberg since 2026-10-22); for any
+    other plugin, and for anything else, this is the forced full rescan,
+    wired to the Library's "rescan" button.
 
     EVERY cursor the plugin keeps: its own and each route's sub-cursor
     (`<plugin>-<route>_scan_cursor.json` — wikipedia walks its archive under

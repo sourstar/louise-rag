@@ -260,13 +260,13 @@ class GutenbergSource:
         # an idle pool and 25+ minutes once wikivec/pubmed/wikipedia were
         # saturating the same spindles (~150 IOPS, measured).
         #
-        # A DIRECTORY's mtime is the right signature because every way this
-        # platform writes a book lands with a rename into that directory
-        # (the rsync transport stages then os.replace()s), and a rename
-        # changes it. An external mirror rewriting a file IN PLACE would
-        # not be seen — the Library's "rescan" button clears the cursor for
-        # exactly that case.
-        progress = cursor.Progress(state, self.source_id)
+        # The signature is the DIRECTORY's (mtime_ns, size) — a rename into
+        # it moves its mtime, which is how this platform lands every file —
+        # AND the two files that decide the record, pg<id>.rdf and the form
+        # file `pick_form` chose (2026-10-22): a file rewritten IN PLACE
+        # leaves the directory's mtime alone, and only its own stats see it.
+        # Two stats more per book and scan; see cursor.signature.
+        progress = cursor.Progress(state, self.source_id, members=True)
         stubs = 0
         for entry in root.iterdir():
             if not entry.is_dir() or not entry.name.isdigit():
@@ -307,7 +307,8 @@ class GutenbergSource:
             # pg<id>.rdf without touching the text — authors' dates, aliases,
             # links — and a signature over the text alone never saw it, so
             # the record was never rebuilt (records-vs-origin, 2026-10-11).
-            stats = [p.stat() for p in origin_files(entry, book_id, path)]
+            files = origin_files(entry, book_id, path)
+            stats = [p.stat() for p in files]
             # THE LANGUAGE, HERE, because `slicing.slice_hint` reads it from
             # the manifest and gutenberg slices by it. Without it the
             # planning pass of `records build` has no hint and parses every
@@ -325,7 +326,7 @@ class GutenbergSource:
                          size=sum(s.st_size for s in stats),
                          extra={"txt_name": path.name, "form": form,
                                 "lang": rdf.parse(entry, book_id)["lang"]})
-            progress.stage(entry)
+            progress.stage(entry, members=[p.name for p in files])
         if stubs:
             # one scan report, not 21,000 documents
             yield DocRef(source_id=self.source_id, native_id="(scan)",
