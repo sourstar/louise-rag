@@ -165,10 +165,10 @@ def test_a_parts_facts_are_read_once_then_looked_up(tmp_path, monkeypatch):
     tcoll, hits, work_of = _two_editions(tmp_path)
     first = works._facts_of(tcoll, hits, work_of, root=tmp_path)
     assert first == {"pubmed:1": F(year=2023), "pubmed:2": F(year=2023)}, "pubmed:4 is no choice"
-    works._queue.join()
+    works.CACHE.queue.join()
     files = list((tmp_path / "pubmed" / "state" / "edition-facts").glob("v*.json"))
     assert [f.name.split("-")[0] for f in files] == [f"v{works.FACTS_VERSION}"]
-    works._PARTS.clear()
+    works.CACHE.clear()
 
     def no_read(*a, **k):
         raise AssertionError("a record was read")

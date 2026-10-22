@@ -22,9 +22,12 @@ collection carries them and this peer has not fetched the member yet;
 from __future__ import annotations
 
 import re
+import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Iterable
 
+from app.ask.part_cache import PartCache
 from app.hold.codex import CodexError
 
 #: a marker's start: `[Illustration]` or `[Illustration: caption]`, as the
@@ -111,66 +114,166 @@ def _captions(sections: Iterable) -> list[str]:
     return out
 
 
-def held_hashes(shard_tree: Path, shard) -> set[str]:
-    """The figure hashes (bare hex) this peer holds for the record's shard."""
+#: figures container -> (its stat, the hashes it holds)
+_HELD: "OrderedDict[str, tuple[tuple[int, int], frozenset[str]]]" = OrderedDict()
+_held_lock = threading.Lock()
+
+
+def held_hashes(shard_tree: Path, shard) -> set[str] | frozenset[str]:
+    """The figure hashes (bare hex) this peer holds for the record's shard,
+    read once per container while it stays the same file."""
     from app.hold import figures as fig
     path = fig.path_for(Path(shard_tree), shard.slice, shard.n)
-    if not path.is_file():
-        return set()
     try:
-        return set(fig.read_index(path))
+        st = path.stat()
+    except OSError:
+        return set()
+    stamp, key = (st.st_size, st.st_mtime_ns), str(path)
+    with _held_lock:
+        hit = _HELD.get(key)
+        if hit is not None and hit[0] == stamp:
+            _HELD.move_to_end(key)
+            return hit[1]
+    try:
+        got = frozenset(fig.read_index(path))
     except Exception:   # noqa: BLE001 — a container that does not read holds nothing usable
         return set()
+    with _held_lock:
+        _HELD[key] = (stamp, got)
+        while len(_HELD) > 256:
+            _HELD.popitem(last=False)
+    return got
 
 
-def for_record(collection, record: dict[str, Any], held: set[str], *, red: bool = False) -> dict[int, list]:
-    """`seq -> figures` for every chunk of the record."""
+def _sections(record: dict[str, Any]) -> list[tuple[str, str]]:
+    return [(str(n or ""), str(b or "")) for n, b in (record.get("sections") or [])]
+
+
+def _seq_indices(collection, record: dict[str, Any], sections) -> dict[int, list[int]]:
+    """`seq -> indices into record["figures"]` for every chunk of the record."""
     from app import layers
-    from app.hold import figures as fig
-    entries = record.get("figures")
-    if entries is None:
-        return {}
-    sections = [(str(n or ""), str(b or "")) for n, b in (record.get("sections") or [])]
+    entries = record.get("figures") or []
     uid = str(record["uid"])
     row = {"uid": uid, "native_id": str(record.get("native_id") or uid.split(":", 1)[1]),
            "lang": record.get("lang")}
     chunks = sorted(layers.chunks_for_document(collection, row, sections), key=lambda c: c["seq"])
-    captions = _captions(sections)
-    out: dict[int, list] = {}
+    out: dict[int, list[int]] = {}
     for c, indices in zip(chunks, placed([c["text"] for c in chunks])):
-        figs = []
+        keep = []
         for i in indices:
             if i >= len(entries):
                 break                     # the writer's alignment broken: place nothing past it
-            e = entries[i]
-            state = "not-carried" if not e.get("carried", True) else \
-                ("held" if fig.bare(str(e["hash"])) in held else "not-held")
-            figs.append({"hash": e["hash"], "media_type": e.get("media_type"),
-                         "caption": None if red else (captions[i] if i < len(captions) else ""),
-                         "state": state})
-        out[int(c["seq"])] = figs
+            keep.append(i)
+        out[int(c["seq"])] = keep
     return out
+
+
+def _figures(entries: list, captions: list[str], indices: list[int], held, red: bool) -> list[dict]:
+    from app.hold import figures as fig
+    out = []
+    for i in indices:
+        e = entries[i]
+        state = "not-carried" if not e.get("carried", True) else \
+            ("held" if fig.bare(str(e["hash"])) in held else "not-held")
+        out.append({"hash": e["hash"], "media_type": e.get("media_type"),
+                    "caption": None if red else (captions[i] if i < len(captions) else ""),
+                    "state": state})
+    return out
+
+
+def for_record(collection, record: dict[str, Any], held: set[str], *, red: bool = False) -> dict[int, list]:
+    """`seq -> figures` for every chunk of the record."""
+    entries = record.get("figures")
+    if entries is None:
+        return {}
+    sections = _sections(record)
+    captions = _captions(sections)
+    return {seq: _figures(entries, captions, idx, held, red)
+            for seq, idx in _seq_indices(collection, record, sections).items()}
+
+
+#: what `place` needs of a record, per part (app/ask/part_cache.py): the
+#: placement is a re-chunk of the whole record (invariant 3), and reading
+#: ten hits' records cost 0.82 s of frames, the containers' indexes 0.49 s
+#: more (München, 2026-10-22); a change to the placement rule bumps this
+PLACEMENT_VERSION = 1
+
+
+def _decode(v: dict) -> dict:
+    if "s" in v:
+        v["s"] = {int(k): idx for k, idx in v["s"].items()}
+    return v
+
+
+CACHE = PartCache("figure-placement", PLACEMENT_VERSION, decode=_decode)
+
+
+def _placement(collection):
+    """The part's records -> `{uid: {n, e?, c?, s?, x?}}`: `n` plates in the
+    record, `e` its entries (null when it names none), `c` its captions,
+    `s` the non-empty `seq -> indices`, `x` set when it will not re-chunk."""
+    def make(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for r in records:
+            entries = r.get("figures")
+            v: dict[str, Any] = {"n": len(entries or [])}
+            if entries is not None:
+                sections = _sections(r)
+                v["e"] = [{"hash": e["hash"], "media_type": e.get("media_type"),
+                           "carried": e.get("carried", True)} for e in entries]
+                v["c"] = _captions(sections)
+                try:
+                    v["s"] = {str(k): idx for k, idx in _seq_indices(collection, r, sections).items() if idx}
+                except Exception:   # noqa: BLE001 — as `place`: a record that will not re-chunk places nothing
+                    v["x"] = 1
+            out[str(r["uid"])] = v
+        return out
+    return make
+
+
+def _placed_of(collection, shard_tree: Path, snapshot, uid: str, order: str):
+    """`(placement, shard)` from the part's file, `(None, shard)` while the
+    part has none (the record is read as before), None when no shard held
+    holds the uid."""
+    from app.hold import shard as shard_mod
+    if snapshot is None or ":" not in uid:
+        return None
+    store = CACHE.store(shard_tree)
+    for shard in snapshot.shards_of(uid.split(":", 1)[1], order):
+        if not (Path(shard_tree) / shard_mod.shard_path(shard.slice, shard.n)).is_file():
+            continue
+        part = CACHE.get(shard_tree, store, shard, _placement(collection))
+        if part is None:
+            return None, shard
+        if uid in part:
+            return part[uid], shard
+    return None
 
 
 def place(collection, codex, shard_tree: Path, snapshot, hits: list[dict[str, Any]], *,
           red: bool = False) -> None:
-    """Fill `figures` on each result of a collection with plates, one
-    record read and re-chunked per uid."""
+    """Fill `figures` on each result of a collection with plates: from the
+    part's placement file, or one record read and re-chunked per uid while
+    the part has none."""
     by_uid: dict[str, list[dict[str, Any]]] = {}
     for h in hits:
         by_uid.setdefault(h["uid"], []).append(h)
+    order = _order(codex)
     for uid, hs in by_uid.items():
-        got = record_of(shard_tree, snapshot, uid, _order(codex))
+        got = _placed_of(collection, shard_tree, snapshot, uid, order)
         if got is None:
             continue                          # not held as a record here: `[]`, as before
-        record, shard = got
-        for h in hs:
-            # how many plates the whole document carries: a passage that
-            # talks about one placed elsewhere is linked to them (`mentions`)
-            h["record_plates"] = len(record.get("figures") or [])
-        try:
-            per_seq = for_record(collection, record, held_hashes(shard_tree, shard), red=red)
-        except Exception:   # noqa: BLE001 — a record that will not re-chunk places nothing
+        v, shard = got
+        if v is None:
+            per_seq = _read_and_place(collection, shard_tree, snapshot, uid, order, hs, red)
+        else:
+            for h in hs:
+                h["record_plates"] = v["n"]
+            if "e" not in v or v.get("x"):
+                continue
+            held = held_hashes(shard_tree, shard)
+            per_seq = {seq: _figures(v["e"], v["c"], idx, held, red) for seq, idx in v.get("s", {}).items()}
+        if per_seq is None:
             continue
         for h in hs:
             try:
@@ -178,6 +281,24 @@ def place(collection, codex, shard_tree: Path, snapshot, hits: list[dict[str, An
             except (KeyError, IndexError, ValueError):
                 continue
             h["figures"] = per_seq.get(seq, [])
+
+
+def _read_and_place(collection, shard_tree: Path, snapshot, uid: str, order: str, hs: list,
+                    red: bool) -> dict[int, list] | None:
+    got = record_of(shard_tree, snapshot, uid, order)
+    if got is None:
+        return None
+    record, shard = got
+    for h in hs:
+        # how many plates the whole document carries: a passage that
+        # talks about one placed elsewhere is linked to them (`mentions`)
+        h["record_plates"] = len(record.get("figures") or [])
+    if record.get("figures") is None:
+        return None
+    try:
+        return for_record(collection, record, held_hashes(shard_tree, shard), red=red)
+    except Exception:   # noqa: BLE001 — a record that will not re-chunk places nothing
+        return None
 
 
 def figure_bytes(collection: str, uid: str, hash_: str, *, root: Path | None = None) -> tuple[bytes, str]:
