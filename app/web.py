@@ -23,6 +23,7 @@ fabricating one.
 """
 import json
 import re
+from collections import OrderedDict
 import sqlite3
 import secrets
 import shutil
@@ -723,7 +724,41 @@ async def ask_query(request: Request, body: AskQueryBody):
         result = await cancel.while_connected(request, _ask_result, body)
     except cancel.Cancelled:
         return Response(status_code=499)
-    return TEMPLATES.TemplateResponse(request, "_ask_results.html", {"result": result})
+    resp = TEMPLATES.TemplateResponse(request, "_ask_results.html", {"result": result})
+    resp.headers["X-Louise-Search"] = keep_search(body.query, result)
+    return resp
+
+
+# ONE QUESTION, ONE SEARCH (München, 2026-10-22, measured on the node: the
+# page's search 21.9 s, then /v1 searched again, 10.5 s of it the same
+# retrieval and rerank). The page's result is kept here a few minutes under
+# a random id; the answer it asks for next names the id and is written from
+# these hits, so its [n] are the page's hits by construction.
+_SEARCHES: "OrderedDict[str, tuple[float, str, dict]]" = OrderedDict()
+_SEARCHES_MAX = 64
+SEARCH_TTL_S = 600.0
+_searches_lock = threading.Lock()
+
+
+def keep_search(query: str, result: dict) -> str:
+    sid = secrets.token_urlsafe(16)
+    with _searches_lock:
+        _SEARCHES[sid] = (time.time(), query, result)
+        while len(_SEARCHES) > _SEARCHES_MAX:
+            _SEARCHES.popitem(last=False)
+    return sid
+
+
+def kept_search(sid: str | None, query: str) -> dict | None:
+    """The page's result for this id and this very question, or None (gone,
+    expired, another question): then the answer searches, as before."""
+    if not sid:
+        return None
+    with _searches_lock:
+        got = _SEARCHES.get(sid)
+    if got is None or time.time() - got[0] > SEARCH_TTL_S or got[1] != query:
+        return None
+    return got[2]
 
 
 def _ask_result(body: AskQueryBody) -> dict:

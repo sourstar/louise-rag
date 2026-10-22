@@ -793,7 +793,7 @@ for operators live in the command line); System lists them, read-only.
 `louise/<name>` for each collection a search may use, so a client that
 sends nothing but a model name (Open WebUI) chooses what is searched by
 choosing the model; a body's own `collections` wins; `gutenberg-rag`,
-the old name, is still taken as `louise`. A body with `sources: true` gets the hits the answer's [n] number beside it, `louise_sources` (in a stream, the first chunk, before any word; an OpenAI client ignores the key): one search for both, which the Open WebUI pipe (`deploy/openwebui/`) shows as its sources. **MCP over HTTP**
+the old name, is still taken as `louise`. A body with `sources: true` gets the hits the answer's [n] number beside it, `louise_sources` (in a stream, the first chunk, before any word; an OpenAI client ignores the key): one search for both, which the Open WebUI pipe (`deploy/openwebui/`) shows as its sources. And `search_id`, the `X-Louise-Search` header of the Ask page's `/ask/query`: the answer is written from that search's hits instead of searching again (one question, one search; kept 10 minutes; unknown or expired, the answer searches as before). **MCP over HTTP**
 (`POST /api/ask/mcp`) is the Streamable HTTP transport with JSON
 answers: 202 with no body for a notification, a batch answered as a
 batch, `GET` 405 (no server-initiated stream). **Connect** (`/connect`)

@@ -913,6 +913,10 @@ class ChatBody(BaseModel):
     # one search for both, where a client would otherwise search again for
     # them (the Open WebUI pipe, deploy/openwebui/; 07 §7.4, 2026-10-22)
     sources: bool = False
+    # the Ask page's own search (`X-Louise-Search` of /ask/query): the answer
+    # is written from those hits instead of searching again; unknown or
+    # expired, the answer searches as before
+    search_id: str | None = None
 
 def _text_of(content) -> str:
     """A message's text: a string, or OpenAI's list of parts (Open WebUI
@@ -931,6 +935,11 @@ async def chat_completions(body: ChatBody, request: Request):
     query = _text_of(user_msgs[-1].get("content", ""))
     searched = collections_for_model(body.model, body.collections)
     t0 = time.time()
+    kept = web.kept_search(body.search_id, query)
+    if kept is not None:
+        # the page's hits, untouched; this request's own timings start at 0
+        result = {**kept, "timings": {"total": 0.0, "search": "reused"}}
+        return await run_in_threadpool(_chat_answer, body, query, result, t0)
     # The SEARCH stops if the caller goes (app/cancel.py). The answer after
     # it is one call to the model, which nothing can interrupt midway; it
     # runs in a worker thread so this endpoint never blocks the loop.
