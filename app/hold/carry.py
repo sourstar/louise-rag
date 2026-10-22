@@ -1021,10 +1021,9 @@ DELETE_MEM_KB = 1_000_000
 DELETE_KB_PER_VALUE_FRAGMENT = 0.25
 
 
-def _delete_batch(tbl) -> int:
-    """Values per delete predicate for `tbl`, within DELETE_MEM_KB."""
-    frags = max(1, len(tbl.to_lance().get_fragments()))
-    return max(100, min(DELETE_BATCH, int(DELETE_MEM_KB / (DELETE_KB_PER_VALUE_FRAGMENT * frags))))
+def _delete_batch(fragments: int) -> int:
+    """Values per delete predicate on a table of `fragments`, within DELETE_MEM_KB."""
+    return max(100, min(DELETE_BATCH, int(DELETE_MEM_KB / (DELETE_KB_PER_VALUE_FRAGMENT * max(1, fragments)))))
 #: ids sorted in memory per run file of the keep's merge (~150 MB of strings)
 SORT_RUN = 2_000_000
 
@@ -1161,9 +1160,10 @@ def keep_producer_scan(root, to_ref: str, producer: str, *, run: int = SORT_RUN,
             con.execute("COMMIT")
         # step 2: the rows, under the vector write lock, in few predicates
         with embeddings._write_lock(con):
-            batch = _delete_batch(tbl)
-            log(f"[carry] {name}: {batch} value(s) a delete "
-                f"({len(tbl.to_lance().get_fragments())} fragments, {DELETE_MEM_KB // 1000} MB budget)")
+            frags = embeddings.fragment_count(coll)
+            batch = _delete_batch(frags)
+            log(f"[carry] {name}: {batch} value(s) a delete ({frags} fragments, "
+                f"{DELETE_MEM_KB // 1000} MB budget)")
             for i in range(0, len(whole), batch):
                 part = whole[i:i + batch]
                 tbl.delete(f"{embeddings.BOOK_COLUMN_NAME} IN ({','.join(str(b) for b in part)})")
