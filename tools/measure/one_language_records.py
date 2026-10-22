@@ -11,7 +11,9 @@ description ("Wikipedia page about this book: <url>"), the editions note's
 ebook ids ("Project Gutenberg has several editions of this eBook: #N ..."),
 the LCSH translation headings ("... -- Translations into English"), the
 translator credit (role trl), the LCSH set, and the MARC 520 summary
-(truncated) used to write queries.
+(truncated) used to write queries. On every line: the catalogue's credited
+agents as [role, agent id, name], the source scan (MARC 904, `scan`) and the
+LCCN (MARC 010, `lccn`) where present — tools/annotations_from_titles.py.
 """
 import ast
 import json
@@ -67,6 +69,15 @@ def main() -> None:
             if tr:
                 out["trans_subjects"] = tr
             cd = lit(ex.get("creators_detail"))
+            if isinstance(cd, list):
+                # tools/annotations_from_titles.py: who the catalogue credits, by id
+                out["agents"] = [[c.get("role"), c.get("agent_id"), c.get("name")] for c in cd
+                                 if isinstance(c, dict) and c.get("agent_id")]
+            marc_all = lit(ex.get("marc"))
+            if isinstance(marc_all, dict):
+                for key, field in (("904", "scan"), ("010", "lccn")):
+                    if marc_all.get(key):
+                        out[field] = str(marc_all[key][0]).strip()
             if isinstance(cd, list):
                 trl = [c.get("name") for c in cd if isinstance(c, dict) and c.get("role") == "trl"]
                 if trl:
