@@ -410,6 +410,35 @@ def test_keep_by_scan_merges_many_sorted_runs_and_leaves_none(pair):
     assert not (Path(coll.manifest_path).parent / "carry-keep-runs").exists()
 
 
+def test_a_delete_batch_is_sized_from_the_fragment_count():
+    """2026-10-22: the keep's first 50,000-value delete on wikipedia-v8 (3,247
+    fragments) was OOM-killed at 33.8 GB; a filter costs ~0.22 kB a value a
+    fragment, so the batch is sized to DELETE_MEM_KB from the fragments."""
+    class _Tbl:
+        def __init__(self, n):
+            self.n = n
+
+        def to_lance(self):
+            return self
+
+        def get_fragments(self):
+            return [None] * self.n
+    assert carry._delete_batch(_Tbl(3247)) == 1231, "wikipedia-v8: ~1 GB a delete"
+    assert carry._delete_batch(_Tbl(1)) == carry.DELETE_BATCH, "a small table: the old cap"
+    assert carry._delete_batch(_Tbl(10 ** 6)) == 100, "never fewer than 100 a delete"
+
+
+def test_keep_by_scan_in_one_value_deletes_drops_the_same(pair, monkeypatch):
+    """Many small deletes leave exactly what one large one did."""
+    monkeypatch.setattr(carry, "_delete_batch", lambda tbl: 1)
+    root, uids, ids = _carried(pair)
+    coll, kept = _provenance(root, uids, ids)
+    out = carry.keep_producer_scan(root, "new", ARCHIVE, log=quiet)
+    assert (out["kept"], out["dropped"], out["verified"]) == (4, 5, True)
+    books = [int(u.split(":")[1]) for u in uids]
+    assert set(embeddings.chunk_ids_of_books(books, collection=coll)) == kept
+
+
 def test_keep_by_scan_refuses_a_producer_with_no_marks(pair):
     """A producer named wrong matches nothing: keeping "its" rows would drop
     the whole table."""

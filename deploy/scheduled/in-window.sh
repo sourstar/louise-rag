@@ -20,6 +20,11 @@ while kill -0 "$RUNNER" 2>/dev/null; do
     for p in $(docker top "$W" -eo pid,args | awk '/app.louise/ {print $1}' | sort -u); do
       echo "$before" | grep -qx "$p" || kill -TERM "$p" 2>/dev/null
     done
+    # and a step the script runs in a container of its own (a capped one,
+    # wikipedia-keep-night.sh): labelled louise.in-window, signalled alike
+    for c in $(docker ps -q --filter label=louise.in-window); do
+      docker kill -s TERM "$c" >/dev/null 2>&1
+    done
     for i in $(seq 1 120); do kill -0 "$RUNNER" 2>/dev/null || break; sleep 5; done
     kill -TERM "$RUNNER" 2>/dev/null
     echo "=== $(date +%T) stopped for the window; run again in the next one" >> "$LOG"
