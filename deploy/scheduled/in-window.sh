@@ -4,11 +4,11 @@
 # every `app.louise` process the script started in the worker gets SIGTERM —
 # finish the unit, commit, exit 130 (invariant 2) — and the script stops; the
 # next window runs it again and it resumes.
-#   in-window.sh HH:MM SCRIPT LOG     (the window ends at HH:MM today)
+#   in-window.sh END SCRIPT LOG     (END: "HH:MM" today, or a date(1) time such as "2026-10-23 06:00")
 set -u
 END=$1; SCRIPT=$2; LOG=$3
 W=ix-louise-rag-worker-1
-end_s=$(date -d "today $END" +%s)
+case "$END" in *-*) end_s=$(date -d "$END" +%s) ;; *) end_s=$(date -d "today $END" +%s) ;; esac
 now_s=$(date +%s)
 [ "$now_s" -lt "$end_s" ] || { echo "$(date +%T) window over before it began" >> "$LOG"; exit 0; }
 before=$(docker top "$W" -eo pid,args | awk '/app.louise/ {print $1}' | sort -u)
