@@ -7,6 +7,8 @@ that Louise offers. I would like to build knowledge base pipelines to group
 collections/annotations, and fuse the results with rerankers and rrf."
 Nothing is built. Three decisions are in §6.*
 
+**WAITING (operator, 2026-10-22): "Write the specs but wait for the end of the current developments. Then we summarize what's planned and we decide. Some decisions need time to decant."** Specs: [`kb-pipelines-spec.md`](kb-pipelines-spec.md), [`kb-protocol-extensions.md`](kb-protocol-extensions.md).
+
 ## 1. Where things stand
 
 Louise already speaks three knowledge-base protocols:
