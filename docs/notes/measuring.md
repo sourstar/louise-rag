@@ -72,6 +72,21 @@ Copy the flags **and the environment** from the deployed spec, not from memory.
   container took hours of embedding with it.
 - Every Lance commit is a version; `VECTOR_INDEX_KEEP_VERSIONS_H` bounds them,
   and `VECTOR_INDEX_MIN_FREE_GB` keeps maintenance from filling the pool.
+- **A ZFS clone is a copy for the measurement, and for the backup too.** A
+  clone costs nothing to make (copy-on-write, the same bytes — RULE 1's way
+  to measure on a production table without touching it), but a clone made
+  inside a pool that a TrueNAS periodic snapshot task and a recursive
+  replication task cover is snapshotted at their next tick and replicated
+  IN FULL. 2026-10-23: two clones of `ssd4/apps/louise-rag` for normattiva's
+  refresh measurement; at 14:00 replication "ssd4 → tank/backup/ssd4" began
+  sending clone A as a full stream (353 GiB of 1.1 TiB written to tank before
+  it was stopped). So: make clones only on a dataset excluded from the
+  recursive snapshot and replication tasks (`midclt call
+  pool.snapshottask.query`, `replication.query` first), or create and destroy
+  them between two ticks. To stop it once started: `core.job_abort` marks the
+  job but leaves zettarepl's `zfs send`/`zfs recv` running — stop those too —
+  and a clone's auto snapshot blocks a plain `zfs destroy` (`-r` on the clone
+  only). TrueNAS also mounts `-o mountpoint=/x` at `/mnt/x` (its altroot).
 
 ## 5. Say where every number came from
 
