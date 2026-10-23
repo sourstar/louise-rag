@@ -9,7 +9,11 @@ session. After Perugia's (D:\louise-agent), adapted to this PC.
     cd deploy/agent
     docker build -t louise-agent:local .     # compose 5's `--build` (bake) asks for --allow=fs.read=Dockerfile
     docker compose up -d                     # or `docker start louise-agent` once it exists
-    docker exec -it louise-agent claude      # then /login once
+    docker exec -it louise-agent claude      # first time only: /login, trust the folder, exit
+
+The main process waits until a login exists, then runs `claude remote-control
+--name München`: a persistent Remote Control server in the repo, reachable from
+claude.ai/code or the app; it starts within 30 s of the first /login.
 
 Prepared 2026-10-23 (image built, memory seeded, git/docker/ssh checked) and left
 STOPPED: the operator switches to it himself.
