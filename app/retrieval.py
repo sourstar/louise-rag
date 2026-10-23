@@ -333,6 +333,12 @@ CATALOG_FIRST = True
 #: non-Italian records and lost La vita nuova — an English pair scores
 #: systematically higher than an Italian one on bge-reranker-v2-m3. Not
 #: switched until campaign run 5 measures both.
+#: THE STANDARD ALTERNATIVE (CLAUDE.md, "Do not reinvent the wheel"): score
+#: CALIBRATION — Platt scaling or isotonic regression fitted per language
+#: pair on labelled queries maps every pair's scores onto one probability
+#: scale, so records of all languages are ordered by one number. It needs
+#: labelled queries per language (the campaign's are mostly English); it
+#: pays once a few dozen per language exist.
 RERANK_LANGUAGE_ORDER = "score"
 
 
