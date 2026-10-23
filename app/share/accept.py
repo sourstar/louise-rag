@@ -108,6 +108,70 @@ def newer_snapshots(root: Path, collections, node_con, *, client=None, key=None,
     return out
 
 
+#: (collection id, snapshot id) -> when a digest-led pull of it last failed
+_digest_tried: dict[tuple[str, str], float] = {}
+#: a newer snapshot a neighbour lists and would not hand over is asked for
+#: again after this long, not every beat
+DIGEST_RETRY_S = 15 * 60.0
+
+
+def newer_from_digests(root: Path, collections, node_con, *, client=None, key=None, own_key=None,
+                       stop=None, now: float | None = None,
+                       log: Callable[[str], None] | None = None) -> dict[str, int]:
+    """A held collection whose live neighbour's digest lists a NEWER snapshot
+    of it: that snapshot pulled from that neighbour with its chain, exactly
+    as an announced one is (`newer_snapshots`); the members follow at the
+    next beat. The `snapshot` event is the push (09 §9.9) and this the pull
+    (04 §4.2: a digest says what its sender holds): no code path emits a
+    `snapshot` event, so before 2026-10-23 a peer never followed a
+    collection's next snapshot at all — found when annotations collections
+    began to be updated rather than replaced (operator, 2026-10-23).
+    Annotations collections are included: they are fetched like any."""
+    from app.share import fetch as fetch_mod, seeder
+    now = time.time() if now is None else now
+    out = {"pulled": 0, "failed": 0, "waiting": 0}
+    for c in collections:
+        if stop is not None and stop.is_set():
+            break
+        codex = getattr(c, "codex", None)
+        if codex is None:
+            continue
+        cid = codex.collection_id
+        current = seeder.current_snapshot(col.shard_dir_of(Path(root), c.name))
+        best = None
+        for s in fetch_mod.sources(node_con, cid, now=now):
+            e = s.entry or {}
+            sid = e.get("snapshot_id")
+            if e.get("collection_id") != cid or not isinstance(sid, str) or not s.key:
+                continue
+            if current is not None and sid <= current.snapshot_id:
+                continue
+            if best is None or sid > best[0]:
+                best = (sid, s.address)
+        if best is None:
+            continue
+        sid, address = best
+        if now - _digest_tried.get((cid, sid), -DIGEST_RETRY_S) < DIGEST_RETRY_S:
+            out["waiting"] += 1
+            continue
+        try:
+            got = fetch_mod.fetch(Path(root), cid, snapshot_id=sid, from_address=address, client=client,
+                                  stop=stop, now=now, log=log, key=key, own_key=own_key)
+        except (fetch_mod.Unreachable, CodexError) as e:
+            _digest_tried[(cid, sid)] = now
+            out["failed"] += 1
+            if log:
+                log(f"[{c.name}] share: snapshot {sid} listed by {address}: {e}; asked again in "
+                    f"{DIGEST_RETRY_S / 60:.0f} min"[:400])
+            continue
+        _digest_tried.pop((cid, sid), None)
+        out["pulled"] += 1
+        if log:
+            log(f"[{c.name}] share: snapshot {sid} pulled from {address}, which lists it: "
+                f"{got['snapshots']}; the members follow")
+    return out
+
+
 def _row_shard(codex, header: dict[str, Any]) -> tuple[str, str | None]:
     """The coverage row's shard id for a bundle, and the other collection it
     names when it is keyed under that one's id (04 §4.5, 2026-10-22). A bundle

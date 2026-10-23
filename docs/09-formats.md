@@ -626,6 +626,13 @@ a daughter keeps her mother's. A record belongs
 to the snapshot when the origin artefact it was parsed from is one the
 Codex's `cutoff_rule` enumerates at that instant (06 §6.2).
 
+*Amended 2026-10-23* (operator: annotations are updated, not replaced; 02
+§2.10). An ANNOTATIONS collection's next snapshot may be written DURING
+the period it names, not only after its cutoff: its origin is its
+annotator, whose claims at the time of writing are the state, so no
+cutoff passes over anything. Still one snapshot per period, consecutive in
+the chain, and never ahead of the period open now.
+
 **Fields.**
 
 | field | type | required | meaning |

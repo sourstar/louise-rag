@@ -56,6 +56,9 @@ DEFAULT_FRACTION = "0.05"
 #: set it could set it backwards. A run may RAISE it (`--origin-mib`), never
 #: lower it.
 ORIGIN_BYTES = 256 << 20
+#: A network origin that does not list this many units IN A ROW is away: the
+#: check stops asking rather than spending a request per sampled unit
+UNWEIGHED_STOP = 8
 
 
 class CheckError(CodexError):
@@ -213,6 +216,11 @@ class Ctx:
     only_shards: tuple[str, ...] | None = None
     #: `origin-seal` in live mode: a directory of the sealed files in hand
     live: Path | None = None
+    #: `origin unit -> its size, or None where the origin will not say`, for
+    #: a network origin whose `origin_unit` leaves the size out: weighing is
+    #: a listing on the network, so only the units the bound reaches are
+    #: weighed (app/acquire/file_origin.py)
+    weigh_unit: Callable[[str], int | None] | None = None
 
     @property
     def shard_tree(self) -> Path:
@@ -927,15 +935,29 @@ def _origin_units_taken(ctx: Ctx, size_of: dict) -> tuple[set | None, dict]:
     if ctx.origin_unit is None or not size_of:
         return None, {}
     taken: list[str] = []
-    used = 0
+    used = unweighed = in_a_row = 0
     for unit in cx.sample(ctx.seed, len(size_of), iter(sorted(size_of))):
-        size = size_of[unit] or 0
+        size = size_of[unit]
+        if size is None and ctx.weigh_unit is not None:
+            size = ctx.weigh_unit(unit)
+            if size is None:
+                # the origin did not list it: not taken. A run of them is an
+                # origin that is away, and listing on is a request per unit
+                # for nothing — the check stops asking
+                unweighed += 1
+                in_a_row += 1
+                if in_a_row >= UNWEIGHED_STOP:
+                    break
+                continue
+            in_a_row = 0
+        size = size or 0
         if taken and used + size > ctx.origin_bytes:
             break
         taken.append(unit)
         used += size
     return set(taken), {"origin_units": len(taken), "origin_units_sampled": len(size_of),
-                        "origin_bytes": used, "origin_bytes_bound": ctx.origin_bytes}
+                        "origin_bytes": used, "origin_bytes_bound": ctx.origin_bytes,
+                        **({"origin_units_unlisted": unweighed} if unweighed else {})}
 
 
 def _within_the_origin_bound(ctx: Ctx, lines: list) -> tuple[list, dict]:
@@ -1083,6 +1105,7 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
         checks: Sequence[str] | None = None, sample: str | None = None,
         embed=None, vectors_for=None, reference=None, reparse=None,
         origin_unit=None, origin_bytes: int | None = None,
+        weigh_unit=None,
         against: dict | None = None,
         only_shards: Sequence[str] | None = None,
         live: Path | None = None,
@@ -1112,7 +1135,7 @@ def run(root, name: str, codex, snapshot: snap.Snapshot, *, seed: bytes,
     ctx = Ctx(Path(root), name, codex, snapshot, seed, sample, embed,
               vectors_for, reference, reparse, origin_unit,
               max(ORIGIN_BYTES, int(origin_bytes or 0)), against, tuple(only_shards) if only_shards else None,
-              Path(live) if live else None)
+              Path(live) if live else None, weigh_unit)
     outcomes = []
     for c in want:
         try:

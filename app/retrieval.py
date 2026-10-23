@@ -323,6 +323,24 @@ RERANK_FUSE = False
 #: with no catalogue hit — every descriptive one measured — is untouched.
 CATALOG_FIRST = True
 
+#: How records in DIFFERENT languages are ordered after each was judged
+#: against the question in its own language (05 §5.6, amended 2026-10-23):
+#: "score" — by the reranker's score alone; "slots" — the reranker orders
+#: each language's records among themselves, and each language keeps the
+#: positions the fused order gave it, so two languages' scores are never
+#: compared. Measured first on six it/en pairs (München, 2026-10-23):
+#: "score" took MRR 0.119 → 0.444 but showed an Italian query 9–10 of 10
+#: non-Italian records and lost La vita nuova — an English pair scores
+#: systematically higher than an Italian one on bge-reranker-v2-m3. Not
+#: switched until campaign run 5 measures both.
+#: THE STANDARD ALTERNATIVE (CLAUDE.md, "Do not reinvent the wheel"): score
+#: CALIBRATION — Platt scaling or isotonic regression fitted per language
+#: pair on labelled queries maps every pair's scores onto one probability
+#: scale, so records of all languages are ordered by one number. It needs
+#: labelled queries per language (the campaign's are mostly English); it
+#: pays once a few dozen per language exist.
+RERANK_LANGUAGE_ORDER = "score"
+
 
 def _catalog_first(order: list[int], head: list[dict]) -> list[int]:
     """`order` with the catalogue leg's rank-1 record of `head` moved first."""
@@ -343,8 +361,23 @@ def _rerank_order(scores: list[float], *, fuse: bool) -> list[int]:
                                                      rerank_rank[i], i))
 
 
+def _by_language_slots(head: list[dict], scores: list[float]) -> list[int]:
+    """RERANK_LANGUAGE_ORDER "slots": each language's records in the
+    reranker's order, each in the positions its language held in the fused
+    order — scores of two languages are never compared."""
+    def lang(i: int) -> str:
+        return (head[i].get("lang") or "").lower()
+    queues: dict[str, list[int]] = {}
+    for i in range(len(head)):
+        queues.setdefault(lang(i), []).append(i)
+    for q in queues.values():
+        q.sort(key=lambda i: (-scores[i], i))
+    return [queues[lang(p)].pop(0) for p in range(len(head))]
+
+
 def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
-                 depth: int = RERANK_TOP_N) -> tuple[list[dict], bool]:
+                 depth: int = RERANK_TOP_N,
+                 queries: dict[str, str] | None = None) -> tuple[list[dict], bool]:
     """05 §5.6 for ONE ranked list: the reranker re-orders its top `depth`
     (50 unless the request says otherwise) and the rest keep the fused
     order below them. Each candidate goes whole —
@@ -373,7 +406,20 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
     05 §5.6): a reranker its runner reports as not loaded is warmed first
     under its LOAD bound (app/model_load.py), and the budget starts after.
     A load past that bound is the fused order, its reason among
-    the reasons `_reranked` collects ("model loading took longer than N s")."""
+    the reasons `_reranked` collects ("model loading took longer than N s").
+
+    EACH CANDIDATE AGAINST THE QUERY IN ITS OWN LANGUAGE (2026-10-23,
+    operator: "I see results returned only in the language of the query").
+    `queries` is the search's translations, by language (the language plan
+    made them already: no translation is asked here); a candidate in one of
+    those languages is scored against that variant, any other against the
+    query as typed — one reranker call per variant, sharing the budget.
+    Measured on the node: "la balena bianca e l'ossessione del capitano"
+    against Moby-Dick's English passage scored -5.298, LAST of five, and
+    "Al polo australe in velocipede" (Italian) 0.817 first; against the
+    query's English translation Moby-Dick scored +1.204, first. A cross-
+    language pair scores far below a same-language one on bge-reranker-v2-m3,
+    so the reranker demoted every hit not in the query's language."""
     if recipe is None or not hits:
         return hits, False
     head, tail = hits[:depth], hits[depth:]
@@ -387,41 +433,61 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
             owner.append((i, c))
     budget_s = budget_s * max(1.0, len(texts) / max(1, len(head)))
     texts = fit_to_window(texts, recipe)
-    if recipe.api == "jina":
-        body = {"query": query, "documents": texts, "top_n": len(texts)}
-    else:
-        body = {"query": query, "texts": texts, "truncate": True}
-    if recipe.model:
-        # the file's `rerank_model` (07 §7.8, amended 2026-10-08): a runner
-        # that picks the model from the body (LocalAI) is told which; only
-        # RERANK_URL names none
-        body["model"] = recipe.model
+    # the query each text is judged against: its record's language's variant
+    variants = {k.lower(): v for k, v in (queries or {}).items() if v}
+    groups: dict[str, list[int]] = {}
+    for t, (i, _c) in enumerate(owner):
+        lang = (head[i].get("lang") or "").lower()
+        groups.setdefault(variants.get(lang) or query, []).append(t)
     try:
         _warm_reranker(recipe)
     except model_load.LoadTimeout as e:
         return _fused_order(hits, str(e))
-    try:
-        with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=budget_s):
-            r = httpc.post(recipe.url, json=body, timeout=budget_s,
-                           headers=dispatch.level_headers())
-        r.raise_for_status()
-        data = r.json()
-        rows = data["results"] if isinstance(data, dict) else data
-        scores = {int(o["index"]): float(o["relevance_score"] if "relevance_score" in o
-                                         else o["score"]) for o in rows}
-    except Exception as e:   # noqa: BLE001 — any failure is the fused order, said so
-        return _fused_order(hits, rerank_failure(e, budget_s))
-    if sorted(scores) != list(range(len(texts))):
-        return _fused_order(hits, f"the reranker answered for "
-                                  f"{sum(1 for i in scores if 0 <= i < len(texts))} of "
-                                  f"{len(texts)} candidates")
+    deadline = time.monotonic() + budget_s
+    scores: dict[int, float] = {}
+    for q, idx in groups.items():
+        # the first call has the whole budget, as the one call always had;
+        # each further variant what remains of it
+        remaining = budget_s if not scores else deadline - time.monotonic()
+        if remaining <= 0:
+            return _fused_order(hits, f"the rerank took longer than its {budget_s:.1f} s budget")
+        part = [texts[t] for t in idx]
+        if recipe.api == "jina":
+            body = {"query": q, "documents": part, "top_n": len(part)}
+        else:
+            body = {"query": q, "texts": part, "truncate": True}
+        if recipe.model:
+            # the file's `rerank_model` (07 §7.8, amended 2026-10-08): a runner
+            # that picks the model from the body (LocalAI) is told which; only
+            # RERANK_URL names none
+            body["model"] = recipe.model
+        try:
+            with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=remaining):
+                r = httpc.post(recipe.url, json=body, timeout=remaining,
+                               headers=dispatch.level_headers())
+            r.raise_for_status()
+            data = r.json()
+            rows = data["results"] if isinstance(data, dict) else data
+            got = {int(o["index"]): float(o["relevance_score"] if "relevance_score" in o
+                                          else o["score"]) for o in rows}
+        except Exception as e:   # noqa: BLE001 — any failure is the fused order, said so
+            return _fused_order(hits, rerank_failure(e, budget_s))
+        if sorted(got) != list(range(len(part))):
+            return _fused_order(hits, f"the reranker answered for "
+                                      f"{sum(1 for i in got if 0 <= i < len(part))} of "
+                                      f"{len(texts)} candidates")
+        for local, t in enumerate(idx):
+            scores[t] = got[local]
     best: dict[int, tuple[float, dict]] = {}
     for t, (i, c) in enumerate(owner):
         if i not in best or scores[t] > best[i][0]:
             best[i] = (scores[t], c)
     ranked = []
-    order = _rerank_order([best[i][0] for i in range(len(head))], fuse=RERANK_FUSE) \
-        if set(best) == set(range(len(head))) else sorted(best, key=lambda i: (-best[i][0], i))
+    if RERANK_LANGUAGE_ORDER == "slots" and len(groups) > 1 and set(best) == set(range(len(head))):
+        order = _by_language_slots(head, [best[i][0] for i in range(len(head))])
+    else:
+        order = _rerank_order([best[i][0] for i in range(len(head))], fuse=RERANK_FUSE) \
+            if set(best) == set(range(len(head))) else sorted(best, key=lambda i: (-best[i][0], i))
     if CATALOG_FIRST:
         order = _catalog_first(order, head)
     for i in order:
@@ -523,13 +589,15 @@ def rerank_failure(e: BaseException, budget_s: float) -> str:
 
 
 def _reranked(query: str, hits: list[dict], recipe, budget_s: float,
-              depth: int) -> tuple[list[dict], bool, str | None]:
+              depth: int, queries: dict[str, str] | None = None
+              ) -> tuple[list[dict], bool, str | None]:
     """`_rerank_list`, and the reason its list kept the fused order when one
     is known (05 §5.6: the fallback is visible, never silent)."""
     why: list[str] = []
     token = _rerank_why.set(why)
     try:
-        ranked, ok = _rerank_list(query, hits, recipe, budget_s, depth)
+        ranked, ok = _rerank_list(query, hits, recipe, budget_s, depth,
+                                  **({"queries": queries} if queries else {}))
     finally:
         _rerank_why.reset(token)
     return ranked, ok, (why[0] if why and not ok else None)
@@ -1108,7 +1176,8 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     candidates = partial["merged"][: max(k * 4, rerank_depth)]
     ranked, reranked, rerank_why = _reranked(plan.core, candidates,
                                              collections_mod.reranker_for(collection),
-                                             _rerank_budget_s(rerank_depth), rerank_depth)
+                                             _rerank_budget_s(rerank_depth), rerank_depth,
+                                             plan.translations)
     final = _one_hit_per_work(ranked, collection, plan, show_in, annotations)[:k]
     timings["rerank"] = round((time.time() - t0) * 1000, 1)
 
@@ -1265,7 +1334,7 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
         candidates = merged[: max(k * 4, rerank_depth)]
         ranked, ok, why = _reranked(plan.core, candidates,
                                     collections_mod.reranker_for(collection), budget_s,
-                                    rerank_depth)
+                                    rerank_depth, plan.translations)
         # each work once, per collection (work claims are about one
         # collection's records), before the fuse cuts to k
         return _one_hit_per_work(ranked, collection, plan, show_in, annotations), ok, why

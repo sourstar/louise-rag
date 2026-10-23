@@ -89,8 +89,8 @@ The simplest rule that keeps it honest:
 
 A deterministic method re-checks by running again and publishing the next
 annotations snapshot with new hashes. That re-issues the part under 09 §9.5's
-superseded names, and it is not built yet: `create` makes the first snapshot
-only and refuses a second. A reading peer never runs a method.
+superseded names — `hold annotations update`, built 2026-10-23 (below,
+"Updating"). A reading peer never runs a method.
 
 ### Search
 
@@ -179,9 +179,7 @@ would be `method: human`.
 
 ## Not done here
 
-- **Updating an annotations collection.** A second snapshot would re-check
-  claims, add claims or tombstone claims, re-issuing parts. This needs a
-  `hold annotations update` that writes superseded part names.
+- ~~**Updating an annotations collection.**~~ Built 2026-10-23, below.
 - ~~**Grouping in the lists.**~~ Done 2026-10-09: the search shows each
   work once from the `same-work` / `translation-of` claims held
   (05 §5.3 "One hit per work", `app/ask/works.py`).
@@ -346,3 +344,26 @@ the annotations type". Three changes.
 
 Open: the chat path's `annotations` is sent by the page; Open WebUI and
 other API clients get every held one, as before.
+
+## Updating (built 2026-10-23)
+
+The operator: "annotations must be updated, not replaced" — the
+2026-10-19 merge had replaced two collections by a third, and every peer
+would have had to adopt it anew. `ann.update` (`hold annotations update`,
+`POST /api/hold/annotations/{name}/update`, the card's *re-check claims*
+and *update with a claims file*; 02 §2.10 amended):
+
+| | |
+|---|---|
+| what is written | the next snapshot of the SAME collection: Codex and id untouched, `previous` = the last snapshot's hash |
+| checked against | each target's newest held snapshot — or its records twin's (A1f), what the search reads — or `--against`; never before `from_snapshot` |
+| a new claims file | the whole claim set from now on: a claim made before (09 §9.5 identity) keeps its uid, a new one takes the next number, one left out is tombstoned `withdrawn`; a claim about a record the target does not hold refuses the file, as `create` does |
+| no file | the claims held re-checked: re-pinned to the newer text; a claim whose record the target withdrew is tombstoned and named |
+| the previous snapshot | stays servable: a re-issued part's old bytes under `NNNNN.<previous id>.jsonl.zst`, the replaced claims file as `origin/claims.<previous id>.jsonl` |
+| nothing changed | nothing written, said |
+| the id | the period after the previous one, written DURING that period (09 §9.4 amended: the annotator is the origin); one update a period |
+| interrupted | resumed to the same bytes: the previous claims are read by the root the previous snapshot lists, not by path |
+| peers | take the new snapshot from what a neighbour's digest lists (`accept.newer_from_digests`): no code emitted the `snapshot` event the pull waited on, so before this a peer followed NO collection's next snapshot; and the accept beat left annotations collections out. The members follow at the next beat, the old part kept under its superseded name |
+
+Open: one update a month for a monthly Codex. A collection that must change
+more often would be created weekly (its cadence is inside its id).

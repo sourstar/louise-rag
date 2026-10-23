@@ -604,6 +604,20 @@ as it grows with the depth. The reranker's modality must be
 the collection's (`modality` in the Codex, §2.1): a text cross-encoder
 scoring DNA is a category error, refused at boot, not a quality knob.
 
+**Each candidate is judged against the question in its own language**
+(*amended 2026-10-23*). Where the search translated the question (§5.2,
+*expand*), a candidate written in one of those languages is scored
+against that translation; any other against the question as typed. It is
+one question in several languages, not two questions. A cross-language
+pair scores far below a same-language one on a multilingual cross-encoder,
+so judging every candidate against the typed question demoted every
+record not in its language: on gutenberg "la balena bianca e l'ossessione
+del capitano" scored Moby-Dick's English passage −5.298, last of five,
+and +1.204, first, against its own English translation (the node,
+2026-10-23); the operator saw "results returned only in the language of
+the query". No translation is asked for here: the variants are the ones
+the language plan made.
+
 **The catalogue's first record keeps the first place** (*amended
 2026-10-21*, docs/notes/query-campaign.md run 4). After the reranker's
 order, the record the catalogue leg (§5.1) ranks first moves to position

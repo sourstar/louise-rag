@@ -39,6 +39,15 @@ be: it stays in the record without holders, is retried at every
 `reconcile`, and is shown until it succeeds.
 
 Queries are not pinned: a slowdown is acceptable for them.
+
+THE STANDARD ALTERNATIVE (CLAUDE.md, "Do not reinvent the wheel"): the
+holders' record is ours because LocalAI has no leases — its pin is one bit
+per model. The standard shape is a LEASE held by the runner itself (a
+reference-counted hold with a TTL, renewed by its holder, as etcd or
+Kubernetes leases do), so every client of the runner shares one count and
+a dead holder expires there. It would be an upstream LocalAI change
+(docs/notes/localai-bugs.md is where its requests go); it pays once a
+second program besides Louise pins models on the same runner.
 """
 from __future__ import annotations
 

@@ -1430,6 +1430,31 @@ A deterministic method re-checks by running again and publishing the
 annotations collection's next snapshot with new hashes. A reading peer
 compares hashes and never re-runs a method.
 
+**Updated, never replaced** (*amended 2026-10-23*, operator: "annotations
+must be updated, not replaced"). A change to the claims is the NEXT
+SNAPSHOT of the same collection — its Codex, its id and its peers' holdings
+kept — never a new collection (`hold annotations update`, 07 §7.3):
+
+- the claims are checked against each target's newest snapshot held here —
+  or its records twin's (§2.4 A1f), what the search reads — never one
+  before `from_snapshot`, and pinned anew (`subject_hash`, `object_hash`,
+  `target_snapshot`);
+- given a new claims file, that file is the whole claim set from then on: a
+  claim made before (09 §9.5's identity) keeps its uid, a new one takes the
+  next number, one left out is tombstoned `withdrawn`; without one, the
+  claims held are re-checked and a claim whose record the target no longer
+  holds is tombstoned and named;
+- a re-issued part keeps its previous bytes under its superseded name
+  (§2.3), and the claims file it replaced is kept as
+  `origin/claims.<previous snapshot id>.jsonl`, so the previous snapshot
+  stays servable and checkable;
+- a peer holding the collection takes the new snapshot from what its
+  neighbours' digests list (04 §4.3), as it takes any.
+
+One update a period, consecutive as every chain, written DURING its period
+(09 §9.4, amended the same day): the origin is the annotator, whose claims
+at the time of writing are the state, so no cutoff has to pass over them.
+
 **Three more claim types, and ends that are chunks or entities**
 (*amended 2026-10-20*, operator's decisions A-K1–A-K4; 09 §9.5 fixes the
 keys). `mention`: a span of a CHUNK of the text target names an entity of

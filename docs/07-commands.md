@@ -99,6 +99,12 @@ louise hold
               rename <collection> <new-name> [--dry-run]               the same collection under another local name; nothing recomputed
               list [--all]                                             collections held, by lineage; --all includes the dormant
               show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, and the copy's state — refused, quarantine or in use — with every reason
+  annotations update <collection> [--claims FILE] [--against TARGET=SNAPSHOT …] [--snapshot ID] [--dry-run]
+                                                                       (amended 2026-10-23, operator: updated, not replaced; 02 §2.10) the next snapshot of the SAME
+                                                                       annotations collection: the claims checked against each target's newest snapshot (or
+                                                                       --against), a new FILE the whole set from now on (kept claims keep their uids, left out ones
+                                                                       tombstoned), no FILE a re-check of the claims held; signed with the node's key; prints
+                                                                       what changed. The Library's annotations card: *re-check claims*, *update with a claims file*
   deposit     add <collection> FILE [--key K] [--here]                 store a file as a deposit; an existing key is replaced whole
               erase <collection> <key> [--yes] [--here]                remove a deposit, leaving no trace (02 §2.9)
               list <collection>                                        the collection's deposit keys

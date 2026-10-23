@@ -538,3 +538,99 @@ def test_a_twin_lists_and_takes_its_predecessors_bundles_under_their_own_segment
     assert accept._segment_for(codex, payload) == "b" * 16
     assert accept.member_of(payload, accept._segment_for(codex, payload)).name == theirs.name, "the same member"
     assert accept._segment_for(codex, {"space_id": "sha256:" + "f" * 64}) == "a" * 16
+
+
+def test_a_newer_snapshot_a_neighbours_digest_lists_is_pulled_without_any_event(node, fetcher, monkeypatch):  # noqa: F811
+    """No code path emits a `snapshot` event: a peer follows a collection's
+    next snapshot from what its neighbours' digests list (2026-10-23, found
+    when annotations collections began to be updated, not replaced)."""
+    from fastapi.testclient import TestClient
+    from app import api
+    from app.share import fetch
+    from tests.share.test_fetch import SHARER, entry, digest, second_snapshot
+    from tests.share.test_messages import a_shard
+    monkeypatch.setattr(accept, "_digest_tried", {})
+    codex, name, d, first = a_shard(node)
+    client = TestClient(api.app)
+    got = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=client, key=OURS, own_key=OUR_KEY)
+    fc = C(got["name"], codex)
+    now = time.time()
+    node_con = peers.connect()
+    kw = dict(client=client, key=OURS, own_key=OUR_KEY, now=now)
+    peers.record_digest(node_con, digest(PEER_KEY, SHARER, [entry(codex.collection_id, codex.collection_id,
+                                                                   "2026-08")], now), now=now)
+    assert accept.newer_from_digests(fetcher, [fc], node_con, **kw) == {"pulled": 0, "failed": 0, "waiting": 0}, \
+        "the snapshot it lists is the one held here"
+    second = second_snapshot(d, first, signed=True)
+    peers.record_digest(node_con, digest(PEER_KEY, SHARER, [entry(codex.collection_id, codex.collection_id,
+                                                                   "2026-09")], now), now=now)
+    said: list[str] = []
+    out = accept.newer_from_digests(fetcher, [fc], node_con, log=said.append, **kw)
+    assert out["pulled"] == 1, said
+    fshard = col.shard_dir_of(fetcher, fc.name)
+    assert (fshard / "snapshots/2026-09.json").read_bytes() == second.canonical()
+    assert any("snapshot 2026-09 pulled" in s for s in said)
+    assert accept.newer_from_digests(fetcher, [fc], node_con, **kw)["pulled"] == 0, "held now: nothing to pull"
+    node_con.close()
+
+
+def test_a_listed_snapshot_that_will_not_come_is_asked_for_again_later_not_every_beat(node, fetcher, monkeypatch):  # noqa: F811
+    from app.share import fetch
+    from tests.share.test_fetch import entry, digest
+    from tests.share.test_messages import a_shard
+    monkeypatch.setattr(accept, "_digest_tried", {})
+    codex, name, d, first = a_shard(node)
+    calls = []
+
+    def unreachable(*a, **k):
+        calls.append(1)
+        raise fetch.Unreachable("nobody answered")
+    monkeypatch.setattr(fetch, "fetch", unreachable)
+    held = col.shard_dir_of(fetcher, "g")
+    (held / "snapshots").mkdir(parents=True)
+    (held / "snapshots/2026-08.json").write_bytes(first.canonical())
+    now = time.time()
+    node_con = peers.connect()
+    peers.record_digest(node_con, digest(PEER_KEY, "http://peer.test", [entry(codex.collection_id, codex.collection_id,
+                                                                               "2026-09")], now), now=now)
+    fc = C("g", codex)
+    assert accept.newer_from_digests(fetcher, [fc], node_con, now=now)["failed"] == 1
+    assert accept.newer_from_digests(fetcher, [fc], node_con, now=now + 60)["waiting"] == 1
+    assert accept.newer_from_digests(fetcher, [fc], node_con, now=now + accept.DIGEST_RETRY_S + 1)["failed"] == 1
+    assert len(calls) == 2
+    node_con.close()
+
+
+def test_an_updated_annotations_collection_reaches_the_peer_that_holds_it(node, fetcher, monkeypatch):  # noqa: F811
+    """The operator, 2026-10-23: annotations are updated, not replaced. The
+    holder of the first snapshot takes the second of the SAME collection
+    from its neighbour's digest — its id unchanged, the chain intact."""
+    from datetime import datetime, timezone
+    from fastapi.testclient import TestClient
+    from app import api
+    from app.hold import annotations as ann, snapshot as sn
+    from app.share import fetch
+    from tests.hold.conftest import KEY, NOW
+    from tests.hold.test_annotations import a_claim, a_target, claims_file, make
+    from tests.share.test_fetch import SHARER, entry, digest
+    monkeypatch.setattr(accept, "_digest_tried", {})
+    a_target(node)
+    codex, first = make(node)
+    client = TestClient(api.app)
+    got = fetch.fetch(fetcher, codex.collection_id, from_address=SHARER, client=client, key=OURS, own_key=OUR_KEY)
+    assert got["snapshot_id"] == "2026-09"
+    up = ann.update(node, "pubmed-same-work", claims=claims_file(a_claim(), a_claim("pubmed:2", "pubmed:4")),
+                    key=KEY, now=NOW, log=lambda m: None, clock=datetime(2026, 10, 23, tzinfo=timezone.utc))
+    now = time.time()
+    node_con = peers.connect()
+    peers.record_digest(node_con, digest(PEER_KEY, SHARER, [entry(codex.collection_id, codex.collection_id,
+                                                                   "2026-10")], now), now=now)
+    fc = C(got["name"], codex)
+    out = accept.newer_from_digests(fetcher, [fc], node_con, client=client, key=OURS, own_key=OUR_KEY, now=now)
+    assert out["pulled"] == 1
+    fshard = col.shard_dir_of(fetcher, fc.name)
+    held = sn.load(fshard / "snapshots/2026-10.json")
+    assert held.hash == up.snapshot.hash and held.previous == first.hash
+    assert held.collection_id == codex.collection_id, "the same collection: nothing to adopt anew"
+    sn.verify_chain([sn.load(fshard / "snapshots/2026-09.json"), held])
+    node_con.close()

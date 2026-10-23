@@ -861,7 +861,9 @@ def test_the_command_weighs_the_origin_files_it_is_given(checkable, corpus_dir):
     assert not unit.startswith("/") and "#" not in unit
     assert size == (corpus_dir / unit).stat().st_size > 0
     assert unit_of("no/such/file.txt#1")[1] is None
-    assert louise._origin_unit_from(codex, "gutenberg", None) is None
+    # no local origin: gutenberg's is its mirrors, unweighed until the bound
+    # reaches a unit (app/acquire/file_origin.py; the test below)
+    assert louise._origin_unit_from(codex, "gutenberg", None)(record["origin"]) == (unit.split("/")[0], None)
 
     o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
              reparse=louise._reparse_from(codex, "gutenberg", corpus_dir),
@@ -1034,3 +1036,76 @@ def test_the_parts_a_fetch_lands_are_checked_and_attested_at_once(checkable):
     # nothing landed: nothing run
     assert chk.attest_landed(root, "gutenberg", codex, snapshot, ["calibration/x.safetensors"],
                              key=KEY, platform_image=PLATFORM)["why"] == "no record part landed"
+
+
+# ---- the origin over the network (app/acquire/file_origin.py) ------------
+
+def _mirrored(monkeypatch, tmp_path, corpus_dir):
+    """gutenberg's spec with its mirrors replaced by local rsync trees: the
+    first is gone, the second is the origin — the transport, its listing
+    and its fetch are the real ones."""
+    import dataclasses
+    from app import louise
+    from app.acquire import specs
+    from app.acquire.spec import Endpoint, Transport
+    spec = dataclasses.replace(specs.GUTENBERG_SPEC, endpoints=(
+        Endpoint(transport=Transport.RSYNC, url=str(tmp_path / "gone-mirror")),
+        Endpoint(transport=Transport.RSYNC, url=str(corpus_dir))))
+    monkeypatch.setitem(specs.ACQUIRE_REGISTRY, "gutenberg", spec)
+    monkeypatch.setattr(louise, "_member_origins", {})
+    # the test process keeps its own signals (tests/acquire/test_file_origin.py)
+    from app.acquire import file_origin
+    monkeypatch.setattr(file_origin, "terminate_ends_the_transfer", lambda: None)
+    return louise
+
+
+@pytest.mark.skipif(__import__("shutil").which("rsync") is None, reason="needs rsync")
+def test_a_copy_without_an_origin_reparses_it_from_the_network(checkable, corpus_dir,
+                                                               tmp_path, monkeypatch):
+    """A peer that fetched the SHARD holds no corpus (operator, 2026-10-23:
+    its quarantine "will be cleared when the origin is checked"): the
+    sampled documents are fetched from the spec's mirrors, the first that
+    lists them, and re-parsed — and the check passes on them."""
+    root, snapshot, codex = checkable
+    louise = _mirrored(monkeypatch, tmp_path, corpus_dir)
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+             reparse=louise._reparse_from(codex, "gutenberg", None),
+             origin_unit=louise._origin_unit_from(codex, "gutenberg", None),
+             weigh_unit=louise._weigh_from(codex, None)).outcome("records-vs-origin")
+    assert o.result == chk.PASS, o.why
+    assert o.detail["origin"] == "reachable" and o.detail["failed"] == []
+    assert o.detail["origin_units"] > 0 and o.detail["origin_bytes"] > 0
+    assert louise._member_origins[codex.collection_id].bytes_read > 0
+
+
+@pytest.mark.skipif(__import__("shutil").which("rsync") is None, reason="needs rsync")
+def test_an_origin_no_mirror_lists_is_inconclusive_and_asked_a_bounded_number_of_times(
+        checkable, corpus_dir, tmp_path, monkeypatch):
+    root, snapshot, codex = checkable
+    louise = _mirrored(monkeypatch, tmp_path, tmp_path / "also-gone")
+    asked = []
+    weigh = louise._weigh_from(codex, None)
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+             reparse=louise._reparse_from(codex, "gutenberg", None),
+             origin_unit=louise._origin_unit_from(codex, "gutenberg", None),
+             weigh_unit=lambda u: asked.append(u) or weigh(u)).outcome("records-vs-origin")
+    assert o.result == chk.INCONCLUSIVE
+    assert 0 < len(asked) <= chk.UNWEIGHED_STOP
+
+
+def test_the_bound_weighs_only_the_units_it_reaches():
+    """Weighing a network unit is a listing: the units past the bound are
+    never weighed, and a run of unlisted ones ends the asking."""
+    from types import SimpleNamespace
+    sizes = {f"u{i}": 100 << 20 for i in range(50)}
+    asked = []
+    ctx = SimpleNamespace(origin_unit=lambda loc: (loc, None), origin_bytes=256 << 20,
+                          seed=SEED, weigh_unit=lambda u: asked.append(u) or sizes[u])
+    keep, bound = chk._origin_units_taken(ctx, dict.fromkeys(sizes))
+    assert len(keep) == 2 and bound["origin_bytes"] == 200 << 20
+    assert len(asked) == 3, "two taken, the third weighed and over the bound"
+    asked.clear()
+    ctx.weigh_unit = lambda u: asked.append(u) or None
+    keep, bound = chk._origin_units_taken(ctx, dict.fromkeys(sizes))
+    assert keep == set() and len(asked) == chk.UNWEIGHED_STOP
+    assert bound["origin_units_unlisted"] == chk.UNWEIGHED_STOP

@@ -48,6 +48,10 @@ def _schema(group: str, validity: bool = False) -> tantivy.Schema:
     b.add_text_field("chapter", stored=True, tokenizer_name="default")
     b.add_text_field("lang", stored=True, tokenizer_name="raw")
     b.add_text_field("body", stored=True, tokenizer_name="lang_tok")
+    if HEADING_IN_BODY and not pystem_algorithm(group):
+        # the heading folded into the body, indexed only: `body` stays the
+        # stored text the reader and the reranker see
+        b.add_text_field("body_idx", stored=False, tokenizer_name="lang_tok")
     if pystem_algorithm(group):
         # stems get their own field so `body` keeps the ORIGINAL text for
         # snippets; not stored, because nobody reads stems
@@ -229,9 +233,18 @@ def _add_one(writer, algorithm, lang: str, book_id: int, chunks: list[dict],
                       body=c["text"])
         if extra:
             fields.update(extra)          # a versioned collection's columns
-        if algorithm:
-            fields["body_stem"] = stemming.stem_text(algorithm, c["text"])
+        fields.update(_indexed(algorithm, c["chapter"] or "", c["text"]))
         writer.add_document(tantivy.Document(**fields))
+
+
+def _indexed(algorithm, heading: str, text: str) -> dict:
+    """The indexed-only fields of a chunk: its stems (a PyStemmer group),
+    and with HEADING_IN_BODY its heading folded into the one field the query
+    reads, k times ahead of the body."""
+    folded = (f"{heading} " * HEADING_IN_BODY + text) if HEADING_IN_BODY and heading else text
+    if algorithm:
+        return {"body_stem": stemming.stem_text(algorithm, folded)}
+    return {"body_idx": folded} if HEADING_IN_BODY else {}
 
 
 def _writer(key, idx):
@@ -379,8 +392,7 @@ def rewrite_without(group: str, collection=None) -> int:
             for col in ("valid_from", "valid_to", "shown"):     # a versioned collection's columns
                 if d.get(col):
                     fields[col] = int(d[col][0])
-            if algorithm:
-                fields["body_stem"] = stemming.stem_text(algorithm, body)
+            fields.update(_indexed(algorithm, fields["chapter"], body))
             writer.add_document(tantivy.Document(**fields))
         writer.commit()
         writer.garbage_collect_files()
@@ -409,6 +421,28 @@ def book_chunks(group: str, book_id: int, collection=None) -> list[dict]:
 
 
 _QUERY_STRIP = re.compile(r'[\^\[\]{}~/\\:!()"*]')
+
+#: BM25F (Robertson, Zaragoza & Taylor, "Simple BM25 extension to multiple
+#: weighted fields", CIKM 2004), the heading's field weight. BM25F weights
+#: each field's term frequency and length, sums them, and saturates ONCE with
+#: one document frequency; with integer weights that is exactly BM25 over the
+#: heading written k times plus the body once — which is what this indexes
+#: (tests/test_fts_chapter_boost.py checks tantivy's score against the paper's
+#: formula). The weight is tuned on held-out labelled queries, as the BM25F
+#: literature does (Pérez-Iglesias et al., arXiv 0911.5046): the campaign.
+#: 0 is the pre-BM25F schema: `Should(body) + Should(chapter)`, two
+#: separately saturated scores — the sum the paper shows breaks BM25, and why
+#: "white whale obsession captain" put Moby-Dick's first chunk #291 below
+#: every chunk headed "The White Whale Shoal." (München, 2026-10-23). No knob
+#: re-weights that sum (operator, 2026-10-23: do not reinvent the wheel).
+#: Not a runtime knob: it decides what an index holds, so a value other than
+#: the one an index was built with refuses to open it; a change rebuilds the
+#: text indexes under a new FTS_VERSION. THE STANDARD ALTERNATIVE in full:
+#: non-integer weights and a per-field b (Zaragoza et al., TREC 2004) need
+#: per-field term frequencies at scoring time — Lucene's CombinedFieldQuery,
+#: Elasticsearch's `combined_fields`; tantivy 0.26 has neither, and adopting
+#: one means a scorer upstream or another engine.
+HEADING_IN_BODY = 0
 
 #: a tie group at the cut is read whole up to this many hits beyond `limit`
 #: (times `limit`): bounded, so a query whose thousands of chunks score the
@@ -452,11 +486,15 @@ def search(group: str, query: str, limit: int = 20, collection=None,
             if not stemmed:
                 return []
             q = idx.parse_query_lenient(stemmed, ["body_stem"])[0]
-            # chapter titles are stored unstemmed, so they keep the raw
-            # query — dropping them would quietly lose a matching signal
-            chapter_q = idx.parse_query_lenient(clean, ["chapter"])[0]
-            q = tantivy.Query.boolean_query(
-                [(tantivy.Occur.Should, q), (tantivy.Occur.Should, chapter_q)])
+            if not HEADING_IN_BODY:
+                # chapter titles are stored unstemmed, so they keep the raw
+                # query — dropping them would quietly lose a matching signal
+                chapter_q = idx.parse_query_lenient(clean, ["chapter"])[0]
+                q = tantivy.Query.boolean_query(
+                    [(tantivy.Occur.Should, q), (tantivy.Occur.Should, chapter_q)])
+        elif HEADING_IN_BODY:
+            # BM25F: the weighted heading is in body_idx already
+            q = idx.parse_query_lenient(clean, ["body_idx"])[0]
         else:
             q = idx.parse_query_lenient(clean, ["body", "chapter"])[0]
         if book_ids:

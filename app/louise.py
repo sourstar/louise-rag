@@ -229,6 +229,33 @@ def cmd_create_annotations(a) -> int:
     return 0
 
 
+def cmd_annotations_update(a) -> int:
+    """`hold annotations update <collection> [--claims FILE] [--against
+    TARGET=SNAPSHOT]` (02 §2.10; operator, 2026-10-23: "annotations must be
+    updated, not replaced"): the next snapshot of the same collection,
+    signed with the node key when there is one. Prints what changed."""
+    from app.hold import annotations as ann
+    against = []
+    for v in a.against or ():
+        ref, sep, sid = str(v).partition("=")
+        if not sep or not ref or not sid:
+            raise CodexError(f"--against {v!r}: TARGET=SNAPSHOT, e.g. gutenberg=2026-10")
+        against.append((ref, sid))
+    claims = Path(a.claims).read_bytes() if a.claims else None
+    key = None
+    if not a.dry_run:
+        try:
+            from app.bundles import keys as node_keys
+            key = node_keys.load_signing_key()
+        except Exception:   # noqa: BLE001 — no key: the snapshot is held unsigned (09 §9.4)
+            print("no node key: the snapshot is written unsigned, and `signature` stays "
+                  "inconclusive until a key signs it", file=sys.stderr)
+    got = ann.update(a.root, a.collection, claims=claims, against=against, snapshot_id=a.snapshot,
+                     key=key, now=_utc_now(), dry_run=a.dry_run, log=lambda m: print(m, file=sys.stderr))
+    _print(got.to_dict())
+    return 0
+
+
 def annotation_targets(annotates, from_snapshot) -> list[tuple[str, str]]:
     """`--annotates C --from-snapshot S`, repeated once per target (02 §2.10,
     amended 2026-10-20), as (collection, snapshot) pairs in the order given;
@@ -3085,6 +3112,7 @@ def run_check(a):
         embed=embed, reference=reference,
         reparse=_reparse_from(codex, name, getattr(a, "origin_dir", None)),
         origin_unit=_origin_unit_from(codex, name, getattr(a, "origin_dir", None)),
+        weigh_unit=_weigh_from(codex, getattr(a, "origin_dir", None)),
         origin_bytes=(int(a.origin_mib) << 20) if getattr(a, "origin_mib", None) else None,
         against=_json(a.against) if getattr(a, "against", None) else None,
         only_shards=([s for s in a.shards.split(",") if s] if getattr(a, "shards", None) else None),
@@ -3186,7 +3214,9 @@ def _reparse_from(codex, name: str, origin_dir):
     else:
         # no local origin given: a Codex whose `origin.unit` is `index-page`
         # re-fetches each sampled record's MEMBER by Range into a temporary
-        # base (app/acquire/member_origin.py; 02 §2.3; review §3.10)
+        # base (app/acquire/member_origin.py; 02 §2.3; review §3.10); one of
+        # a directory per document, its files by the plugin's own transport
+        # (app/acquire/file_origin.py: a copy fetched as a SHARD)
         mo = _member_origin(codex)
         if mo is None:
             return None
@@ -3224,13 +3254,25 @@ _member_origins: dict = {}
 
 
 def _member_origin(codex):
-    """One member origin per Codex for a run: `_reparse_from` and
-    `_origin_unit_from` share its directories and its temporary base."""
-    from app.acquire import member_origin
+    """One network origin per Codex for a run — its members by Range
+    (app/acquire/member_origin.py) or its documents' files
+    (app/acquire/file_origin.py): `_reparse_from`, `_origin_unit_from` and
+    `_weigh_from` share its listings and its temporary base."""
+    from app.acquire import file_origin, member_origin
     key = getattr(codex, "collection_id", id(codex))
     if key not in _member_origins:
-        _member_origins[key] = member_origin.for_codex(codex)
+        _member_origins[key] = member_origin.for_codex(codex) or file_origin.for_codex(codex)
     return _member_origins[key]
+
+
+def _weigh_from(codex, origin_dir):
+    """`origin unit -> its size`, for a network origin that weighs a unit
+    only when the check's bound reaches it (a listing per unit); None for a
+    local origin, which `_origin_unit_from` weighs by `stat`."""
+    if origin_dir:
+        return None
+    mo = _member_origin(codex)
+    return getattr(mo, "weigh", None)
 
 
 def _origin_unit_from(codex, name: str, origin_dir):
@@ -4229,6 +4271,23 @@ def build_parser() -> argparse.ArgumentParser:
     p = dverbs.add_parser("show", help="a deposit's text and its chunk count")
     p.add_argument("collection"); p.add_argument("key")
     p.set_defaults(fn=cmd_deposit_show)
+
+    anns = nouns.add_parser("annotations", help="an annotations collection's claims (02 §2.10)")
+    averbs = anns.add_subparsers(dest="verb", required=True)
+    p = averbs.add_parser("update", help="the next snapshot of the SAME collection: the claims re-checked "
+                                         "against the target's newer snapshot, or replaced by a new file")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--claims", metavar="FILE", default=None,
+                   help="the whole claim set from now on (JSON Lines): a claim made before keeps its uid, a new "
+                        "one takes the next, one left out is tombstoned. Without it the claims held are re-checked")
+    p.add_argument("--against", action="append", metavar="TARGET=SNAPSHOT", default=None,
+                   help="the target snapshot the claims are checked against (default: the newest held); "
+                        "once per target")
+    p.add_argument("--snapshot", default=None,
+                   help="this snapshot's id (default: the period after the previous one, written during it)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="check and count what would change; write nothing")
+    p.set_defaults(fn=cmd_annotations_update)
 
     recs = nouns.add_parser("records", help="the parsed text of documents")
     rverbs = recs.add_subparsers(dest="verb", required=True)

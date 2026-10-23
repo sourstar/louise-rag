@@ -958,7 +958,13 @@ whether prune ("pruned …") and compaction ("compaction started …") get
 their turns the same night. Scenario to record with it: which collections
 embed (normattiva p2p at night?), the node mode, the load average.
 
-**Not in this change, measured and next:** compaction before the refresh
-when both are due (the per-row cost on 22k fragments was ~7× the 2k
-fragments' here — to measure on one clone: compact, then the delta); the
-maintainer's nice under a saturated CPU.
+**Compaction first — measured, NOT built** (München, one clone made at
+15:02 and destroyed at 15:03:48, the same 591,591-row backlog):
+`compact_files` 22.9 s (22,685 → 4 fragments), then the delta 76.6 s —
+99.5 s in all against 93.1 s for the delta alone. The delta is 18 % faster
+on compacted fragments, the pair is not: the order stays index first,
+fragments in the same pass (2026-10-14). Compaction's value is its own —
+delete memory, scans, and the versions it lets cleanup drop (78 GB here).
+
+**Still open:** the maintainer's nice under a saturated CPU, if the nights
+after this deploy still show the refresh starved.

@@ -317,3 +317,59 @@ def test_the_librarys_form_offers_the_annotations_type(client):
     page = client.get("/admin/library").text
     assert ANN_ROUTE in page and 'value="annotations"' in page and 'id="na_claims"' in page
     assert "louise hold collection create annotations" in page
+
+
+# ---- updating it (operator, 2026-10-23: updated, not replaced) ----
+
+def _created(client):
+    from contextlib import closing
+    from app import jobs
+    snapshot, claims = _target_and_claims(client)
+    assert client.post(ANN_ROUTE, params=_form(snapshot), content=claims).status_code == 202
+    with closing(jobs.connect()) as con:
+        assert jobs.run_next(con, "paused").state == "done"
+    return collections_mod.load_annotations()[0]
+
+
+def test_the_update_is_checked_then_queued_and_the_worker_writes_the_next_snapshot(client):
+    from contextlib import closing
+    from app import jobs
+    from app.hold import snapshot as sn
+    from tests.hold.test_annotations import a_claim, claims_file
+    held = _created(client)
+    route = "/api/hold/annotations/pubmed-same-work/update"
+    new = claims_file(a_claim(), a_claim("pubmed:2", "pubmed:4"))
+    r = client.post(route, params={"dry_run": "true"}, content=new)
+    assert r.status_code == 200, r.text
+    p = r.json()
+    assert (p["added"], p["tombstoned"], p["written"]) == (1, 1, False)
+    assert p["cli"] == "louise hold annotations update pubmed-same-work --claims FILE --dry-run"
+    r = client.post(route, content=new)
+    assert r.status_code == 202, r.text
+    q = r.json()
+    assert q["kind"] == jobs.UPDATE_ANNOTATIONS and q["preview"]["added"] == 1
+    with closing(jobs.connect()) as con:
+        done = jobs.run_next(con, "paused")
+    assert done.state == "done", done.error
+    d = done.result
+    assert d["written"] and d["signed"] and d["previous_id"] < d["snapshot_id"]
+    (again,) = collections_mod.load_annotations()
+    assert again.codex.collection_id == held.codex.collection_id, "the same collection, updated"
+    shard = config.louise_root() / "collections" / "pubmed-same-work" / "shard"
+    assert sn.load(shard / f"snapshots/{d['snapshot_id']}.json").previous is not None
+    assert not list((config.louise_root() / "state").glob("claims-uploads/*update*")), "read once, then gone"
+
+
+def test_an_empty_body_re_checks_and_nothing_to_do_queues_nothing(client):
+    from contextlib import closing
+    from app import jobs
+    from tests.hold.test_annotations import a_claim, claims_file
+    _created(client)
+    route = "/api/hold/annotations/pubmed-same-work/update"
+    r = client.post(route, content=b"")
+    assert r.status_code == 200 and r.json()["why"].startswith("nothing to update"), r.text
+    r = client.post(route, content=claims_file(a_claim("pubmed:1", "pubmed:99")))
+    assert r.status_code == 409 and "pubmed:99" in r.json()["detail"]
+    assert client.post("/api/hold/annotations/nope/update", content=b"").status_code == 409
+    with closing(jobs.connect()) as con:
+        assert jobs.run_next(con, "running") is None, "nothing queued"

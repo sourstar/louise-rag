@@ -93,15 +93,21 @@ def test_stem_text_is_tokenized_lowercased_and_joined():
 def test_each_thread_gets_its_own_stemmer():
     """PyStemmer objects hold C state and are documented as not
     thread-safe; the worker stems from several threads at once."""
+    # The OBJECTS are kept, and the three threads are alive together: a
+    # thread's stemmer goes with it, and comparing id()s of objects already
+    # freed let a later thread's stemmer reuse an address — a failure one run
+    # in three (2026-10-23) that said nothing about sharing.
     seen = {}
+    together = threading.Barrier(3)
     def grab(name):
-        seen[name] = id(stemming._stemmer("greek"))
+        seen[name] = stemming._stemmer("greek")
+        together.wait(timeout=10)
     threads = [threading.Thread(target=grab, args=(f"t{i}",)) for i in range(3)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
-    assert len(set(seen.values())) == 3, "stemmers must not be shared"
+    assert len({id(s) for s in seen.values()}) == 3, "stemmers must not be shared"
 
 
 def test_a_greek_document_indexes_and_matches_an_INFLECTED_query(

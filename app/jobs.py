@@ -42,6 +42,10 @@ CREATE, EXPORT = "collection-create", "bundle-export"
 #: which only the worker holds — and embeds NOTHING, so unlike CREATE it
 #: runs in every mode (2026-10-19).
 CREATE_ANNOTATIONS = "annotations-create"
+#: `hold annotations update` (02 §2.10; operator, 2026-10-23: updated, not
+#: replaced), queued by the Library's annotations card: it signs the next
+#: snapshot with the node's key and embeds nothing — every mode, as CREATE_ANNOTATIONS
+UPDATE_ANNOTATIONS = "annotations-update"
 #: `share fetch` as the Library queues it (04 §4.2 the offer; operator,
 #: 2026-10-20): the Codex and snapshots pulled and the collection held with
 #: the slices and kinds chosen; the members follow at the worker's fetch
@@ -55,7 +59,7 @@ SHARE_FETCH = "share-fetch"
 #: that is embedding a calibration set for minutes; in every mode, because
 #: an agent writing its memory is not the node's background work.
 DEPOSIT = "deposit"
-KINDS = (CREATE, CREATE_ANNOTATIONS, EXPORT, DEPOSIT, SHARE_FETCH)
+KINDS = (CREATE, CREATE_ANNOTATIONS, UPDATE_ANNOTATIONS, EXPORT, DEPOSIT, SHARE_FETCH)
 
 #: A deposit job's row names a key, and 02 §2.9 lets nothing name an erased
 #: deposit: the web deletes the row when it has read the result (`forget`),
@@ -140,8 +144,9 @@ def get(job_id: int) -> Job | None:
 def kinds_allowed(mode: str) -> tuple[str, ...]:
     """What the general job thread may run in this mode. Deposits are not
     among them: they have a thread of their own (`serve_deposits`)."""
-    return ((CREATE, CREATE_ANNOTATIONS, EXPORT, SHARE_FETCH) if node_state.runs(mode, node_state.EMBED)
-            else (CREATE_ANNOTATIONS, EXPORT, SHARE_FETCH))
+    return ((CREATE, CREATE_ANNOTATIONS, UPDATE_ANNOTATIONS, EXPORT, SHARE_FETCH)
+            if node_state.runs(mode, node_state.EMBED)
+            else (CREATE_ANNOTATIONS, UPDATE_ANNOTATIONS, EXPORT, SHARE_FETCH))
 
 
 def waiting_because(job: Job, mode: str) -> str | None:
@@ -324,6 +329,8 @@ def run(job: Job) -> dict[str, Any]:
         return _create(job.args)
     if job.kind == CREATE_ANNOTATIONS:
         return _create_annotations(job.args)
+    if job.kind == UPDATE_ANNOTATIONS:
+        return _update_annotations(job.args)
     if job.kind == EXPORT:
         return _export(job.id, job.args)
     if job.kind == DEPOSIT:
@@ -489,6 +496,37 @@ def _create_annotations(args: dict[str, Any]) -> dict[str, Any]:
     return {"exit": 0, "collection_id": codex.collection_id, "name": args["name"],
             "held": str(collections_mod.config_toml_path(args["name"])),
             "snapshot": snap.snapshot_id, "claims": snap.records, "signed": key is not None,
+            "cli": args.get("cli", "")}
+
+
+def _update_annotations(args: dict[str, Any]) -> dict[str, Any]:
+    """`hold annotations update` (02 §2.10) as the Library queued it: with
+    the claims file the page uploaded (removed here once read), or none —
+    the claims held, re-checked against the targets' newest snapshots. The
+    next snapshot is signed with the node key when there is one (09 §9.4)."""
+    from . import louise
+    from .hold import annotations as ann
+    claims = None
+    claims_path = Path(args["claims_path"]) if args.get("claims_path") else None
+    if claims_path is not None:
+        try:
+            claims = claims_path.read_bytes()
+        except FileNotFoundError:
+            raise ValueError(f"the uploaded claims file is gone ({claims_path.name}): upload it again") from None
+    key = None
+    try:
+        from .bundles import keys as node_keys
+        key = node_keys.load_signing_key()
+    except Exception:   # noqa: BLE001 — no key: the snapshot is written unsigned (09 §9.4)
+        key = None
+    got = ann.update(louise._default_root(), args["name"], claims=claims, key=key, now=louise._utc_now(),
+                     log=lambda m: None)
+    if claims_path is not None:
+        try:
+            claims_path.unlink()
+        except OSError:
+            pass
+    return {"exit": 0, "name": args["name"], **got.to_dict(), "signed": key is not None,
             "cli": args.get("cli", "")}
 
 
