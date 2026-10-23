@@ -1,0 +1,35 @@
+# 2026-10-23, CANDIDATE (operator: "Do it"): nlpai-lab/LAMAR-600m, a reranker
+# trained for one relevance scale across languages (docs/notes/reranker-scope.md
+# §14). The architecture of bge-reranker-v2-m3 (XLMRobertaForSequenceClassification),
+# so louise-rerank-bge's strict configuration, verbatim: bit-exact, ctx 2,560.
+# Weights converted here with llama.cpp's convert_hf_to_gguf.py (f16), never a
+# community GGUF unchecked (§13). Not in any collection file until campaign run 6.
+{
+  "backend": "vega-llama-cpp-gen",
+  "context_size": 2560,
+  "embeddings": true,
+  "env": {
+    "GGML_SYCL_ENABLE_FUSION": "0",
+    "GGML_SYCL_ENABLE_GRAPH": "0",
+    "GGML_SYCL_ENABLE_OPT": "0",
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  },
+  "flash_attention": "off",
+  "gpu_layers": 999,
+  "mmap": true,
+  "name": "louise-rerank-lamar",
+  "options": [
+    "parallel:1",
+    "cache_ram:0",
+    "ubatch:2560"
+  ],
+  "parameters": {
+    "batch": 2560,
+    "model": "weights/lamar/LAMAR-600m-f16.gguf",
+    "seed": 0
+  },
+  "pinned": false,
+  "reranking": true,
+  "threads": 6
+}

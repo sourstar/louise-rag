@@ -39,3 +39,25 @@ def test_the_scoped_pin_encoders_rest_unpinned():
         text = (ROOT / "deploy" / "vega" / "stage" / "models" / f"{name}.yaml").read_text()
         body = json.loads("\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#")))
         assert body.get("pinned") is False, f"{name} is staged pinned"
+
+
+def test_the_lamar_candidate_is_the_bge_reranker_s_strict_configuration():
+    """LAMAR-600m has bge-reranker-v2-m3's architecture (reranker-scope §14):
+    the candidate runs under the deployed reranker's bit-exact settings
+    (invariant 12: GGML_SYCL_ENABLE_DNN=0, parallel:1, cache_ram:0, flash
+    attention off), differing only in its name and its weights."""
+    import json
+    import re
+    from pathlib import Path
+    d = Path(__file__).resolve().parents[2] / "deploy" / "vega" / "stage" / "models"
+
+    def load(name):
+        text = (d / name).read_text(encoding="utf-8")
+        return json.loads(re.sub(r"(?m)^#.*$", "", text))
+    bge, lamar = load("louise-rerank-bge.yaml"), load("louise-rerank-lamar.yaml")
+    assert lamar["name"] == "louise-rerank-lamar"
+    assert lamar["parameters"]["model"] == "weights/lamar/LAMAR-600m-f16.gguf"
+    assert lamar.get("pinned") is False
+    for body in (bge, lamar):
+        body.pop("name"); body["parameters"].pop("model"); body.pop("pinned", None)
+    assert lamar == bge
