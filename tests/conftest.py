@@ -57,6 +57,18 @@ def no_runner_says_what_it_holds(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_model_is_pinned(monkeypatch):
+    """app/model_pins.py pins a `vega-` encoder in LocalAI while it embeds.
+    No test's runner has LocalAI's pin API and its hosts do not exist, so
+    nothing is pinned unless a test fakes the runner itself
+    (tests/test_model_pins.py)."""
+    from app import model_pins
+    monkeypatch.setattr(model_pins, "_applies", lambda model: False)
+    model_pins._retry_after.clear()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def a_fresh_torrent_session():
     """The process-wide libtorrent session (app/acquire/transport_torrent.py)
     is shut down after any test that started one, so the next starts clean.

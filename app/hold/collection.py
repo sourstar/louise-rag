@@ -1206,7 +1206,18 @@ def show(root: Path, ref: str) -> dict[str, Any]:
         "targets": [{**t.to_dict(), "target": n}
                     for t, n in zip(codex.annotates or (), _target_names(root, codex))],
         "codex": json.loads(codex.canonical()),
+        # the encoder pin calls that failed for this collection's processing:
+        # each a defect signal (app/model_pins.py; operator, 2026-10-23)
+        "model_pin_failures": _pin_failures(name),
     }
+
+
+def _pin_failures(name: str) -> list[dict]:
+    from app import model_pins
+    try:
+        return model_pins.failures_for(name)
+    except Exception:   # noqa: BLE001 — `show` reports the rest
+        return []
 
 
 def _target_names(root: Path, codex: Codex) -> list[str | None]:

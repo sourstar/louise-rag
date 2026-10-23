@@ -311,8 +311,18 @@ def _fresh_start(collection) -> dict:
     path = path_for(collection)
     with _write_lock(collection):
         _drop_writer(collection)
+        # MOVED ASIDE, then removed (Perugia's gate, 2026-10-23, under load:
+        # "OSError: [Errno 39] Directory not empty: …/index/_catalog" — a file
+        # written into the directory while rmtree emptied it). A rename is
+        # atomic whatever happens inside; what is left of the old one is
+        # removed best-effort, now and at the next fresh start. Its name
+        # starts with "_", so fts.existing_groups never takes it for a group.
+        for old in path.parent.glob(f"{path.name}.old-*"):
+            shutil.rmtree(old, ignore_errors=True)
         if path.is_dir():
-            shutil.rmtree(path)
+            aside = path.with_name(f"{path.name}.old-{time.time_ns()}")
+            os.replace(path, aside)
+            shutil.rmtree(aside, ignore_errors=True)
         _writer(collection)
         state = {"cursor": 0, "complete": False, "generation": time.time_ns()}
         _write_state(collection, state)

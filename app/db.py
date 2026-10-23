@@ -628,6 +628,20 @@ def read_worker_stats(con, max_age_s: float = WORKER_STATS_MAX_AGE_S):
     return _read_sample(con, WORKER_STATS_KEY, max_age_s)
 
 
+MODEL_PINS_KEY = "worker_model_pins"
+
+
+def publish_model_pins(con, payload: dict) -> None:
+    """The worker's model-pin counters (app/model_pins.py): models pinned
+    now, left pinned with their restore failing, and failed calls — a
+    failure is a defect signal (operator, 2026-10-23). Telemetry."""
+    _publish_sample(con, MODEL_PINS_KEY, payload)
+
+
+def read_model_pins(con, max_age_s: float = WORKER_STATS_MAX_AGE_S):
+    return _read_sample(con, MODEL_PINS_KEY, max_age_s)
+
+
 def publish_worker_rates(con, payload: dict) -> None:
     """The worker's own per-class byte rates, for the web process to read.
 

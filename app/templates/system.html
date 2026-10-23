@@ -32,6 +32,30 @@
   </table>
 </div>
 
+<div class="panel">
+  <h2>Model pins</h2>
+  <div class="note">Encoders pinned in LocalAI while Louise processes with them, each restored to its state before (app/model_pins.py). A failed call should not happen: each is a defect to look into.</div>
+  {% if model_pins.failures.count %}
+  <div class="note" style="color:var(--err)">{{ model_pins.failures.count }} failed pin call(s) — the last {{ model_pins.failures.recent|length }}:</div>
+  <table><tr><th>when</th><th>call</th><th>model</th><th>holder</th><th>collection</th><th>what failed</th></tr>
+    {% for f in model_pins.failures.recent|reverse %}
+    <tr><td>{{ f.at|ago }}</td><td>{{ f.call }}</td><td>{{ f.model }} @ {{ f.server }}</td><td>{{ f.holder }}</td><td>{{ f.collection or '—' }}</td><td>{{ f.detail }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  {% if model_pins.stuck %}
+  <div class="note" style="color:var(--err)">Left pinned though they were not before — the restore is failing and is retried every minute:
+    {% for p in model_pins.stuck %}{{ p.model }} @ {{ p.server }} ({{ p.restore_attempts }} attempt(s)){% if not loop.last %}, {% endif %}{% endfor %}</div>
+  {% endif %}
+  {% if model_pins.pins %}
+  <table><tr><th>model</th><th>pinned before</th><th>held by</th></tr>
+    {% for p in model_pins.pins %}
+    <tr><td>{{ p.model }} @ {{ p.server }}</td><td>{{ 'yes — left so' if p.prior else 'no — unpinned after' }}</td><td>{{ p.holders|join(', ') }}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}<div class="note">Nothing held now.</div>{% endif %}
+</div>
+
 {% if refusals %}
 <div class="panel">
   <h2>Refused collections</h2>

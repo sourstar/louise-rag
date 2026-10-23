@@ -3635,7 +3635,16 @@ def system_page(request: Request):
         "health": _health_pings(),
         "worker_state": node_state.worker_state(),
         "users": _users_listing(),
+        "model_pins": _model_pins(),
     })
+
+
+def _model_pins() -> dict:
+    from app import model_pins
+    try:
+        return model_pins.status()
+    except Exception:   # noqa: BLE001 — the page shows the rest
+        return {"pins": [], "stuck": [], "failures": {"count": 0, "recent": []}}
 
 
 def _users_listing() -> list[dict] | None:

@@ -31,11 +31,11 @@ def holder(command: str) -> str:
     return f"{command} pid {os.getpid()}"
 
 
-def leasing(embed, recipe, *, holder: str):
+def leasing(embed, recipe, *, holder: str, collection: str | None = None):
     """`embed`, renewing the encoder lease before each batch. One row
     replaced per batch — cheaper than the batch by orders of magnitude; a
     store that cannot be written never stops the embed."""
-    from app import model_load, node_state
+    from app import model_load, model_pins, node_state
     server = model_load.server_of(recipe.url)
     model = getattr(recipe, "model", None)
     if not model:
@@ -47,17 +47,21 @@ def leasing(embed, recipe, *, holder: str):
         except Exception as e:   # noqa: BLE001 — the lease is a courtesy to the sweep, not a gate
             print(f"louise: encoder lease not written ({type(e).__name__}: {e}); the worker's "
                   f"sweep may unload {model} between batches", file=sys.stderr)
+        # pinned while this command processes, its prior state restored by
+        # `release` (app/model_pins.py; operator, 2026-10-23)
+        model_pins.hold(recipe.url, model, holder, collection=collection)
         return embed(chunks)
     return leased
 
 
 def release(holder: str) -> None:
     """Every lease `holder` holds goes: the command ended."""
-    from app import node_state
+    from app import model_pins, node_state
     try:
         node_state.release_encoder(holder)
     except Exception:   # noqa: BLE001 — it expires on its own
         pass
+    model_pins.release(holder)
 
 
 def callables(codex, recipe, *, root, name: str, stop, holder: str,
@@ -88,4 +92,4 @@ def callables(codex, recipe, *, root, name: str, stop, holder: str,
 
         def before_write():
             run_check.guard(root, name, codex, recipe, set(seen), stop=stop.is_set, log=say)
-    return leasing(embed, recipe, holder=holder), before_write
+    return leasing(embed, recipe, holder=holder, collection=name), before_write
