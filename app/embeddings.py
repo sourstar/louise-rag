@@ -985,7 +985,7 @@ def sync_columns(book_id: int, columns: dict, collection=None, lock_con=None, *,
     db = _conn(collection)
     if TABLE not in db.table_names():
         return False
-    with _write_lock(lock_con):
+    with _write_lock(lock_con, collection):
         tbl = db.open_table(TABLE)
         if not set(columns) <= set(tbl.schema.names):
             if refuse:
@@ -1017,7 +1017,7 @@ def add_validity_columns(collection, con, *, lock_con=None, batch_rows: int = 50
         return {"rows": tbl.count_rows(), "unchanged": True}
     say = log or (lambda _m: None)
     tmp = f"{TABLE}__validity"
-    with _write_lock(lock_con):
+    with _write_lock(lock_con, collection):
         if tmp in db.table_names():
             db.drop_table(tmp)
         schema = pa.schema(list(tbl.schema) + [pa.field(c, pa.int64()) for c in VALIDITY_COLUMNS])
@@ -1499,7 +1499,7 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
         part = todo[start:start + config.EMBED_SLICE_CHUNKS]
         rows = _rows_for(book_id, lang, part, recipe, carry, dtype, collection, counts, columns)
 
-        with _write_lock(lock_con):
+        with _write_lock(lock_con, collection):
             # existence re-checked INSIDE the lock: the pre-lock check picked
             # the dtype, but two concurrent FIRST writers (the parallel embed
             # stage on a fresh collection) would otherwise both see "missing"
@@ -1710,7 +1710,7 @@ def write_pending(docs: list[PendingDoc], collection=None, lock_con=None,
     db = _conn(collection)
     rows = [r for d in docs for r in d.rows]
     purge = [d.book_id for d in docs if d.purge]
-    with _write_lock(lock_con):
+    with _write_lock(lock_con, collection):
         if TABLE in db.table_names():
             tbl = db.open_table(TABLE)
             before = tbl.version
@@ -1886,7 +1886,7 @@ def upsert_chunks(rows: list[dict], collection=None, lock_con=None, *,
         np_dtype = _np_dtype_of_recipe(collections_mod.recipe_for(collection))
     out = [dict(r, vector=np.asarray(r["vector"], dtype=np_dtype)) for r in rows]
 
-    with _write_lock(lock_con):
+    with _write_lock(lock_con, collection):
         if TABLE in db.table_names():
             tbl = db.open_table(TABLE)
             books = sorted({int(r["book_id"]) for r in out})
@@ -1934,7 +1934,7 @@ def delete_chunks(chunk_ids, collection=None, lock_con=None) -> int:
     books = sorted({int(c.rsplit(":", 3)[1]) for c in ids})
     want = set(ids)
     gone = 0
-    with _write_lock(lock_con):
+    with _write_lock(lock_con, collection):
         tbl = db.open_table(TABLE)
         for i in range(0, len(books), 500):
             part = ",".join(str(b) for b in books[i:i + 500])
@@ -1971,20 +1971,32 @@ def chunk_ids_of_books(book_ids, collection=None) -> list[str]:
 
 
 @contextmanager
-def _write_lock(lock_con):
-    """No-op when no manifest connection is supplied, so callers that predate
-    the bundle importer keep working unchanged."""
-    if lock_con is None:
-        yield
-        return
-    from .bundles.writer_lock import vector_write_lock
-    with vector_write_lock(lock_con):
+def _write_lock(lock_con, collection=None):
+    """Every commit to a vector table goes through here.
+
+    The manifest's vector write lock, when a connection is supplied (callers
+    that predate the bundle importer pass none). And, with `collection`, the
+    table's in-process writer registration (`vector_index.writing`): a
+    compaction waits for the writes in flight and holds new ones off, which
+    a check at the START of the embed stage could not do — normattiva's
+    compaction lost all 13 of its commits from 10-21 to 10-23 to embed
+    batches committing underneath it (München, 2026-10-23). Refused, a write
+    raises a "retryable commit conflict", which the worker already takes for
+    a deferral (`worker.vector_store_contended`)."""
+    from contextlib import ExitStack
+    with ExitStack() as stack:
+        if collection is not None:
+            from . import vector_index
+            stack.enter_context(vector_index.writing(collection))
+        if lock_con is not None:
+            from .bundles.writer_lock import vector_write_lock
+            stack.enter_context(vector_write_lock(lock_con))
         yield
 
 def delete_book(book_id: int, collection=None, lock_con=None):
     db = _conn(collection)
     if TABLE in db.table_names():
-        with _write_lock(lock_con):
+        with _write_lock(lock_con, collection):
             db.open_table(TABLE).delete(_book_filter(book_id))
 
 def search(query: str, k: int = 20, langs: list[str] | None = None, collection=None,

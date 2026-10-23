@@ -88,6 +88,52 @@ def rewriting(collection) -> bool:
         return str(collection.lance_dir) in _rewriting
 
 
+#: lance dir -> commits in flight in this process (`writing`)
+_writers: dict[str, int] = {}
+_writers_changed = threading.Condition(_state_lock)
+#: how long a compaction waits for the writes in flight before it gives up
+#: its turn (a write is one delete+add commit: seconds, never minutes)
+REWRITE_DRAIN_S = 60.0
+
+
+class RewriteInProgress(RuntimeError):
+    """A write refused while this collection's fragments are being
+    rewritten. Worded as a retryable commit conflict on purpose: that is
+    what the worker already takes for a deferral, never a document error."""
+
+
+class writing:
+    """`with writing(collection):` around one commit to the vector table:
+    refused while a compaction rewrites it, counted while in flight so the
+    compaction can wait for it (embeddings._write_lock)."""
+
+    def __init__(self, collection):
+        self.key = str(collection.lance_dir)
+
+    def __enter__(self):
+        with _state_lock:
+            if self.key in _rewriting:
+                raise RewriteInProgress(f"retryable commit conflict: {self.key} is being compacted; "
+                                        f"this write waits for the next turn")
+            _writers[self.key] = _writers.get(self.key, 0) + 1
+        return self
+
+    def __exit__(self, *exc):
+        with _state_lock:
+            n = _writers.get(self.key, 1) - 1
+            if n:
+                _writers[self.key] = n
+            else:
+                _writers.pop(self.key, None)
+            _writers_changed.notify_all()
+        return False
+
+
+def in_flight(collection) -> int:
+    with _state_lock:
+        return _writers.get(str(collection.lance_dir), 0)
+
+
 class rewrite(maintenance):
     """`maintenance`, plus exclusivity against this collection's OWN
     writers.
@@ -106,15 +152,32 @@ class rewrite(maintenance):
     `VECTOR_INDEX_COMPACT_FRAGMENTS` small fragments have accumulated — so
     the exclusivity it needs is affordable."""
 
+    def __init__(self, collection, *, drain_s: float | None = None):
+        super().__init__(collection)
+        self.drain_s = REWRITE_DRAIN_S if drain_s is None else drain_s
+
     def __enter__(self):
+        """New writes are refused from here on; the ones in flight are
+        waited for (bounded), so the rewrite's commit is the only one."""
         super().__enter__()
+        deadline = time.monotonic() + self.drain_s
         with _state_lock:
             _rewriting.add(self.key)
+            while _writers.get(self.key, 0):
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    n = _writers.get(self.key, 0)
+                    _rewriting.discard(self.key)
+                    _busy.discard(self.key)
+                    raise RewriteInProgress(f"compaction deferred: {n} write(s) still in flight "
+                                            f"after {self.drain_s:.0f} s")
+                _writers_changed.wait(left)
         return self
 
     def __exit__(self, *exc):
         with _state_lock:
             _rewriting.discard(self.key)
+            _writers_changed.notify_all()
         return super().__exit__(*exc)
 
 
