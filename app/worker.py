@@ -4543,11 +4543,26 @@ def _settle_runs_for_search() -> None:
                                       f"that names them embeds everything")
         except Exception:   # noqa: BLE001 — never the thread
             pass
+        # A SETTLE EMBEDS (sixteen texts, a whole set for a new run), so it is
+        # the EMBED activity of the node's mode, as the embed stage is
+        # (app/node_state.py): seed-only or paused, the encoder is not loaded
+        # for it (operator, 2026-10-23: the node suspended because the
+        # operator needs the GPU). Nor for a collection the node has paused.
+        # The vector leg of an unsettled collection waits; search answers
+        # from its other legs meanwhile.
+        try:
+            embeds = node_state.runs(node_state.worker_state(), node_state.EMBED)
+            paused = node_state.paused_collections()
+        except Exception:   # noqa: BLE001 — unreadable: runs nothing, as everywhere
+            embeds, paused = False, set()
+        if not embeds:
+            continue
         for c in collections:
             if _stop.is_set():
                 return
             key = str(getattr(c, "manifest_path", c.name))
-            if key in _settled_for_search or not run_check.applies(c) or not holds_vectors(c):
+            if c.name in paused or key in _settled_for_search \
+                    or not run_check.applies(c) or not holds_vectors(c):
                 continue
             con = None
             try:
