@@ -1,10 +1,13 @@
-# docker compose up -d --build   (from deploy/agent/, on this PC)
+# docker build -f agent.Dockerfile -t louise-agent:local . && docker compose up -d   (from deploy/agent/, on this PC)
 # Every working tree is mounted at the SAME path inside as the host's Docker
 # daemon sees it (/run/desktop/mnt/host/c/...), so a path the agent hands to
 # `docker run -v` resolves on the host unchanged.
 services:
   agent:
-    build: .
+    build:
+      context: .
+      dockerfile: agent.Dockerfile
+    init: true
     image: louise-agent:local
     container_name: louise-agent
     restart: unless-stopped
