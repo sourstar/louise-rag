@@ -48,6 +48,10 @@ def _schema(group: str, validity: bool = False) -> tantivy.Schema:
     b.add_text_field("chapter", stored=True, tokenizer_name="default")
     b.add_text_field("lang", stored=True, tokenizer_name="raw")
     b.add_text_field("body", stored=True, tokenizer_name="lang_tok")
+    if HEADING_IN_BODY and not pystem_algorithm(group):
+        # the heading folded into the body, indexed only: `body` stays the
+        # stored text the reader and the reranker see
+        b.add_text_field("body_idx", stored=False, tokenizer_name="lang_tok")
     if pystem_algorithm(group):
         # stems get their own field so `body` keeps the ORIGINAL text for
         # snippets; not stored, because nobody reads stems
@@ -229,9 +233,18 @@ def _add_one(writer, algorithm, lang: str, book_id: int, chunks: list[dict],
                       body=c["text"])
         if extra:
             fields.update(extra)          # a versioned collection's columns
-        if algorithm:
-            fields["body_stem"] = stemming.stem_text(algorithm, c["text"])
+        fields.update(_indexed(algorithm, c["chapter"] or "", c["text"]))
         writer.add_document(tantivy.Document(**fields))
+
+
+def _indexed(algorithm, heading: str, text: str) -> dict:
+    """The indexed-only fields of a chunk: its stems (a PyStemmer group),
+    and with HEADING_IN_BODY its heading folded into the one field the query
+    reads, k times ahead of the body."""
+    folded = (f"{heading} " * HEADING_IN_BODY + text) if HEADING_IN_BODY and heading else text
+    if algorithm:
+        return {"body_stem": stemming.stem_text(algorithm, folded)}
+    return {"body_idx": folded} if HEADING_IN_BODY else {}
 
 
 def _writer(key, idx):
@@ -379,8 +392,7 @@ def rewrite_without(group: str, collection=None) -> int:
             for col in ("valid_from", "valid_to", "shown"):     # a versioned collection's columns
                 if d.get(col):
                     fields[col] = int(d[col][0])
-            if algorithm:
-                fields["body_stem"] = stemming.stem_text(algorithm, body)
+            fields.update(_indexed(algorithm, fields["chapter"], body))
             writer.add_document(tantivy.Document(**fields))
         writer.commit()
         writer.garbage_collect_files()
@@ -410,8 +422,11 @@ def book_chunks(group: str, book_id: int, collection=None) -> list[dict]:
 
 _QUERY_STRIP = re.compile(r'[\^\[\]{}~/\\:!()"*]')
 
-#: The weight of a match in a chunk's HEADING against one in its body
-#: (BM25F's field weight: Robertson, Zaragoza & Taylor 2004). A heading is a
+#: The weight of a match in a chunk's HEADING clause against the body's.
+#: NOT BM25F (München, 2026-10-23, from Robertson, Zaragoza & Taylor, CIKM
+#: 2004): it scales a second, separately saturated BM25 score, and summing
+#: per-field BM25 scores is the very thing BM25F replaces — the measured
+#: workaround, beside HEADING_IN_BODY below, the standard form. A heading is a
 #: few tokens, so BM25's length normalisation makes one heading term worth
 #: ~10 points — more than a whole body: on the node "white whale obsession
 #: captain" ranked Moby-Dick's first chunk #291, below every chunk headed
@@ -420,6 +435,20 @@ _QUERY_STRIP = re.compile(r'[\^\[\]{}~/\\:!()"*]')
 #: 2026-10-23). 1.0 is the behaviour before; the value is the campaign's to
 #: set (titles may lean on headings; the catalogue leg answers titles too).
 CHAPTER_BOOST = 1.0
+
+#: BM25F in its classic poor man's form (Robertson, Zaragoza & Taylor, CIKM
+#: 2004; the "repeat the field k times" weighting): the heading folded k times
+#: into ONE indexed field with the body, so a term saturates once and has one
+#: document frequency, and a heading match counts as k more occurrences
+#: rather than as a second document. 0 is today's schema. Not a runtime knob:
+#: it decides what an index holds, so a value other than the one an index was
+#: built with refuses to open it — set only to build a measured copy until
+#: the campaign chooses (then the indexes are rebuilt under a new FTS_VERSION).
+#: THE STANDARD ALTERNATIVE in full: a real BM25F (or Elasticsearch's
+#: cross_fields, df blended by max) needs per-field term frequencies at
+#: scoring time, which tantivy 0.26 does not offer; adopting it means a
+#: custom scorer upstream.
+HEADING_IN_BODY = 0
 
 #: a tie group at the cut is read whole up to this many hits beyond `limit`
 #: (times `limit`): bounded, so a query whose thousands of chunks score the
@@ -463,13 +492,18 @@ def search(group: str, query: str, limit: int = 20, collection=None,
             if not stemmed:
                 return []
             q = idx.parse_query_lenient(stemmed, ["body_stem"])[0]
-            # chapter titles are stored unstemmed, so they keep the raw
-            # query — dropping them would quietly lose a matching signal
-            chapter_q = idx.parse_query_lenient(clean, ["chapter"])[0]
-            if CHAPTER_BOOST != 1.0:
-                chapter_q = tantivy.Query.boost_query(chapter_q, CHAPTER_BOOST)
-            q = tantivy.Query.boolean_query(
-                [(tantivy.Occur.Should, q), (tantivy.Occur.Should, chapter_q)])
+            if not HEADING_IN_BODY:
+                # chapter titles are stored unstemmed, so they keep the raw
+                # query — dropping them would quietly lose a matching signal
+                chapter_q = idx.parse_query_lenient(clean, ["chapter"])[0]
+                if CHAPTER_BOOST != 1.0:
+                    chapter_q = tantivy.Query.boost_query(chapter_q, CHAPTER_BOOST)
+                q = tantivy.Query.boolean_query(
+                    [(tantivy.Occur.Should, q), (tantivy.Occur.Should, chapter_q)])
+        elif HEADING_IN_BODY:
+            # ONE field, one saturation, one document frequency (BM25F's
+            # poor man's form): the heading is in body_idx already
+            q = idx.parse_query_lenient(clean, ["body_idx"])[0]
         else:
             q = idx.parse_query_lenient(
                 clean, ["body", "chapter"],

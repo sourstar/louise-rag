@@ -63,3 +63,37 @@ def test_the_pystemmer_groups_carry_the_weight_too(tmp_path, monkeypatch):
     at_tenth = scores()
     assert abs(at_tenth[1] - 0.1 * at_one[1]) < 1e-4 and abs(at_tenth[2] - at_one[2]) < 1e-4
     fts.close_all()
+
+
+def test_the_heading_folded_into_the_body_saturates_once(tmp_path, monkeypatch):
+    """HEADING_IN_BODY (BM25F's poor man's form): one field, one saturation,
+    one document frequency; a heading match is k more occurrences, not a
+    second document. The stored text the reader sees is untouched."""
+    monkeypatch.setattr(fts, "HEADING_IN_BODY", 2)
+    c = _collection(tmp_path)
+    _index(c)
+    hits = fts.search("en", "white whale captain", limit=2, collection=c)
+    assert [h["book_id"] for h in hits] == [2, 1], "the body that carries the words wins"
+    assert hits[1]["text"].startswith("the boat drifted"), "the heading is indexed, never shown in the body"
+    assert hits[1]["chapter"] == "The White Whale Shoal."
+    fts.close_all()
+
+
+def test_the_heading_folded_in_where_pystemmer_stems(tmp_path, monkeypatch):
+    monkeypatch.setattr(fts, "HEADING_IN_BODY", 2)
+    c = _collection(tmp_path)
+    fts.index_book("el", 1, [{"id": "g:1:0:1", "chapter": "Η λευκή φάλαινα",
+                              "text": "η βάρκα έπλεε στη θάλασσα " * 30}], c)
+    hits = fts.search("el", "λευκή φάλαινα", limit=1, collection=c)
+    assert [h["book_id"] for h in hits] == [1], "the heading alone still finds its chunk"
+    assert hits[0]["text"].startswith("η βάρκα")
+    fts.close_all()
+
+
+def test_zero_is_today_s_index():
+    """0, the default: nothing new is written, so every index on every peer
+    opens as before (a schema change would refuse to open them)."""
+    assert fts.HEADING_IN_BODY == 0
+    assert fts._indexed(None, "The White Whale", "body") == {}
+    assert fts._indexed("greek", "Η φάλαινα", "κείμενο") == {
+        "body_stem": fts.stemming.stem_text("greek", "κείμενο")}
