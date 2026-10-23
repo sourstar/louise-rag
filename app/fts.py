@@ -410,6 +410,17 @@ def book_chunks(group: str, book_id: int, collection=None) -> list[dict]:
 
 _QUERY_STRIP = re.compile(r'[\^\[\]{}~/\\:!()"*]')
 
+#: The weight of a match in a chunk's HEADING against one in its body
+#: (BM25F's field weight: Robertson, Zaragoza & Taylor 2004). A heading is a
+#: few tokens, so BM25's length normalisation makes one heading term worth
+#: ~10 points — more than a whole body: on the node "white whale obsession
+#: captain" ranked Moby-Dick's first chunk #291, below every chunk headed
+#: "The White Whale Shoal." or "THE WHALE." (31.4 vs 20.1 for Ahab's
+#: quarter-deck speech, white x12, whale x10, captain x5; München,
+#: 2026-10-23). 1.0 is the behaviour before; the value is the campaign's to
+#: set (titles may lean on headings; the catalogue leg answers titles too).
+CHAPTER_BOOST = 1.0
+
 #: a tie group at the cut is read whole up to this many hits beyond `limit`
 #: (times `limit`): bounded, so a query whose thousands of chunks score the
 #: same costs a bounded read
@@ -455,10 +466,14 @@ def search(group: str, query: str, limit: int = 20, collection=None,
             # chapter titles are stored unstemmed, so they keep the raw
             # query — dropping them would quietly lose a matching signal
             chapter_q = idx.parse_query_lenient(clean, ["chapter"])[0]
+            if CHAPTER_BOOST != 1.0:
+                chapter_q = tantivy.Query.boost_query(chapter_q, CHAPTER_BOOST)
             q = tantivy.Query.boolean_query(
                 [(tantivy.Occur.Should, q), (tantivy.Occur.Should, chapter_q)])
         else:
-            q = idx.parse_query_lenient(clean, ["body", "chapter"])[0]
+            q = idx.parse_query_lenient(
+                clean, ["body", "chapter"],
+                **({"field_boosts": {"chapter": CHAPTER_BOOST}} if CHAPTER_BOOST != 1.0 else {}))[0]
         if book_ids:
             id_filter = tantivy.Query.term_set_query(idx.schema, "book_id", book_ids)
             q = tantivy.Query.boolean_query([(tantivy.Occur.Must, q), (tantivy.Occur.Must, id_filter)])
