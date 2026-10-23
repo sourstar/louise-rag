@@ -701,6 +701,14 @@ copies whose completions are Perugia's. Coverage by union 5,679,122 of
   copy; it now receives the node's attestation (§3). Whether a leecher
   should sample the origin over the network (`--origin` as a URL) is
   06 §6.2's etiquette question, not taken up.
+  *Taken up 2026-10-23 (operator, via Perugia: no `ack --origin-unchecked`;
+  the copy "will be cleared when the origin is checked"):
+  `app/acquire/file_origin.py`. With no local origin, a Codex whose spec is
+  one directory per document over rsync or FTP has its sampled documents
+  listed and fetched from the spec's mirrors by acquisition's own transport
+  and budget, inside the check's 256 MiB bound; only the units the bound
+  reaches are weighed. The etiquette answer is that bound: one sample per
+  cadence, mirrors first.*
 - **The dev-PC peer** (ed25519:9f7c969c…) lists gutenberg with
   `coverage []`, `members []`: the same `share = false` as Perugia.
 - **The node's `share_slices`** was removed on 2026-10-19 to unstick
