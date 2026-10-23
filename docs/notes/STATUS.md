@@ -250,6 +250,10 @@ Everything except two items travels through this repository.
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
 
+### 2026-10-22: knowledge-base pipelines — specified, WAITING (operator)
+
+Proposal `notes/kb-pipelines.md` (D1 fusing spaces by rank, D2 pipelines in Louise TOML, D3 upstream after); specs `notes/kb-pipelines-spec.md` and `notes/kb-protocol-extensions.md`, both DRAFT. Operator: wait for the end of the current developments, then summarize what is planned and decide. Nothing built.
+
 ### 2026-10-22: users, tokens and Connect (operator)
 
 "A search-only gui (aka user gui). A user token giving only access to the
