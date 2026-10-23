@@ -7,8 +7,12 @@ session. After Perugia's (D:\louise-agent), adapted to this PC.
 ## Start
 
     cd deploy/agent
-    docker compose up -d --build
+    docker build -t louise-agent:local .     # compose 5's `--build` (bake) asks for --allow=fs.read=Dockerfile
+    docker compose up -d                     # or `docker start louise-agent` once it exists
     docker exec -it louise-agent claude      # then /login once
+
+Prepared 2026-10-23 (image built, memory seeded, git/docker/ssh checked) and left
+STOPPED: the operator switches to it himself.
 
 `restart: unless-stopped` brings it back after a Docker Desktop restart.
 
