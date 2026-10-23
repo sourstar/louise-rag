@@ -70,6 +70,7 @@ written moves.
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import re
@@ -78,6 +79,7 @@ import shutil
 import time
 import unicodedata
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -646,22 +648,26 @@ def records_of(claims: Sequence[dict[str, Any]], submitted: Sequence[Submitted],
     amended 2026-10-20), which is the same order for the 2026-10-09 types
     whose uids carry no byte below `"`; the version-7 rule is kept as it was
     so no part already written moves."""
-    from . import records as rec
+    pairs = sorted(zip(claims, submitted), key=lambda cs: _number_order(cs[0], version))
+    return [_record(n, c, s) for n, (c, s) in enumerate(pairs, 1)]
+
+
+def _number_order(c: dict[str, Any], version: int):
+    """The byte order claims are numbered in (`records_of`)."""
     if version >= cx.GRAPH_VERSION:
-        pairs = sorted(zip(claims, submitted), key=lambda cs: cx.canonical_json(identity_tuple(cs[0])))
-    else:
-        pairs = sorted(zip(claims, submitted),
-                       key=lambda cs: (cs[0]["subject"].encode(), cs[0]["object"].encode(),
-                                       cs[0]["type"].encode()))
-    out = []
-    for n, (c, s) in enumerate(pairs, 1):
-        sections = [["claim", claim_text(c)]]
-        out.append({"uid": f"{PLUGIN}:{n}", "native_id": str(n), "lang": "und", "title": "",
-                    "creators": [], "date": None, "subjects": [], "keys": [],
-                    "sections": sections, "extra": {}, "origin": f"{CLAIMS_FILE}#{s.line}",
-                    "content_hash": rec.content_hash("", [tuple(x) for x in sections]),
-                    "origin_hash": blake128(s.raw)})
-    return out
+        return cx.canonical_json(identity_tuple(c))
+    return (c["subject"].encode(), c["object"].encode(), c["type"].encode())
+
+
+def _record(n: int, c: dict[str, Any], s: Submitted) -> dict[str, Any]:
+    """Claim `n` as its 09 §9.5 record line."""
+    from . import records as rec
+    sections = [["claim", claim_text(c)]]
+    return {"uid": f"{PLUGIN}:{n}", "native_id": str(n), "lang": "und", "title": "",
+            "creators": [], "date": None, "subjects": [], "keys": [],
+            "sections": sections, "extra": {}, "origin": f"{CLAIMS_FILE}#{s.line}",
+            "content_hash": rec.content_hash("", [tuple(x) for x in sections]),
+            "origin_hash": blake128(s.raw)}
 
 
 def edge_lines(records: Iterable[dict[str, Any]], snapshot_id: str) -> list[bytes]:
@@ -1072,6 +1078,252 @@ def create(root: Path, name: str, *, target_ref: str | None = None, from_snapsho
         f"{', '.join(t.from_snapshot for t in ch.targets)}, "
         f"snapshot {snapshot_id} {snap.hash[:23]}…; held: {held_path}")
     return codex, snap
+
+
+# --------------------------------------------------------------------------
+# updating: the next snapshot of the SAME collection (operator, 2026-10-23:
+# "annotations must be updated, not replaced")
+
+def update_snapshot_id(previous_id: str, now: datetime) -> str:
+    """The id an update writes: the period after the previous snapshot — a
+    chain is consecutive periods of one cadence (09 §9.4) — written at the
+    earliest DURING that period. An annotations collection's origin is its
+    annotator, whose claims at the time of writing are the state, so no
+    cutoff has to pass over them (09 §9.4, amended 2026-10-23); one update
+    per period, as one snapshot per period for every collection."""
+    from . import snapshot as sn
+    nxt = sn.next_snapshot_id(previous_id)
+    open_now = sn.next_snapshot_id(sn.snapshot_id_for(now, sn.cadence_of(previous_id)))
+    if nxt > open_now:
+        raise AnnotationsError(
+            f"snapshot {previous_id} is this period's ({open_now} is open now): the next, {nxt}, "
+            f"can be written once its period opens — one snapshot per period (09 §9.4)")
+    return nxt
+
+
+@dataclass(frozen=True)
+class Update:
+    """What `update` found, and wrote unless it was a dry run."""
+    snapshot_id: str
+    previous_id: str
+    against: dict[str, str]          # target name -> the target snapshot re-checked against
+    added: int
+    changed: int
+    tombstoned: int
+    dropped: tuple[str, ...]         # re-check only: claims whose record the target no longer holds
+    reissued: tuple[str, ...]        # part paths written anew
+    snapshot: Any = None             # the Snapshot written; None on a dry run or nothing to do
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"snapshot_id": self.snapshot_id, "previous_id": self.previous_id,
+                "against": self.against, "added": self.added, "changed": self.changed,
+                "tombstoned": self.tombstoned, "dropped": list(self.dropped[:64]),
+                "dropped_count": len(self.dropped), "reissued": list(self.reissued),
+                "written": self.snapshot is not None,
+                "snapshot_hash": self.snapshot.hash if self.snapshot is not None else None}
+
+
+def _held_claims(shard_tree: Path, snap) -> dict[tuple, tuple[int, dict[str, Any]]]:
+    """identity key -> (claim number, record) for every claim the snapshot
+    lists — what keeps a claim's uid across updates."""
+    from app.pack import records as pack_records
+    out: dict[tuple, tuple[int, dict[str, Any]]] = {}
+    for s in snap.shards:
+        # by the ROOT the snapshot lists, never the path alone: an update
+        # stopped after promoting its parts left the new bytes there, and a
+        # resume that read them as the previous claims found nothing to do
+        p = _part_file(Path(shard_tree), s, None, snap.snapshot_id)
+        if p is None:
+            raise AnnotationsError(f"{s.path}: this peer holds no file with the root snapshot "
+                                   f"{snap.snapshot_id} lists ({s.root[:23]}…)")
+        for r in pack_records.iter_records(p):
+            out[identity_key(claim_of(r))] = (int(r["native_id"]), r)
+    return out
+
+
+def update(root: Path, name: str, *, claims: bytes | None = None,
+           against: Sequence[tuple[str, str]] | None = None, snapshot_id: str | None = None,
+           key=None, now: str | None = None, log=print, dry_run: bool = False,
+           clock: datetime | None = None) -> Update:
+    """`hold annotations update <name>` (02 §2.10, built 2026-10-23): the
+    next snapshot of an annotations collection — the SAME collection, its
+    Codex and id untouched, so every peer that holds it takes the new
+    snapshot as it takes any (04 §4.3) rather than adopting a new one.
+
+    The claims are checked against each target's snapshot `against` names,
+    else the newest the target holds here — never one before the Codex's
+    `from_snapshot` (the time rule). With `claims`, that file is the whole
+    claim set from now on: a claim made before keeps its number (its uid),
+    a new one takes the next, one left out is tombstoned (`withdrawn`), and
+    a claim whose end the target no longer holds refuses the file, as
+    `create` refuses it. Without, the claims held are RE-CHECKED: re-pinned
+    to the newer target text, and a claim whose record the target no longer
+    holds is tombstoned and named.
+
+    The parts are rewritten whole and promoted; a part whose bytes moved is
+    re-issued and its old version kept under its superseded name (09 §9.5),
+    so the previous snapshot stays servable and checkable. The claims file
+    replaced is kept as `claims.<previous id>.jsonl` beside the new one."""
+    from datetime import timezone
+    from . import collection as col, shard as shard_mod, snapshot as sn
+    from app.share import seeder
+    root = Path(root)
+    name, codex = col.resolve(root, name)
+    if not is_annotations(codex):
+        raise AnnotationsError(f"{name} is not an annotations collection (02 §2.10)")
+    shard_tree = col.shard_dir_of(root, name)
+    prev = seeder.current_snapshot(shard_tree)
+    if prev is None:
+        raise AnnotationsError(f"{name} holds no snapshot to update: `create` makes the first")
+    sid = snapshot_id or update_snapshot_id(prev.snapshot_id, clock or datetime.now(timezone.utc))
+    if sid != sn.next_snapshot_id(prev.snapshot_id):
+        raise AnnotationsError(f"the snapshot after {prev.snapshot_id} is {sn.next_snapshot_id(prev.snapshot_id)}, "
+                               f"not {sid}: a chain is consecutive periods (09 §9.4)")
+
+    # the targets, as this peer holds them, and the snapshot each is re-checked against
+    chosen = {str(r): str(s) for r, s in (against or ())}
+    ts: list[Target] = []
+    against_of: dict[str, str] = {}
+    for a in cx.targets_of(codex):
+        tname, tcodex = col.resolve(root, a.collection_id)
+        ttree = col.shard_dir_of(root, tname)
+        want = chosen.pop(tname, None) or chosen.pop(a.collection_id, None)
+        if want is None:
+            cur = seeder.current_snapshot(ttree)
+            if cur is None:
+                raise AnnotationsError(f"the target {tname} holds no snapshot to check the claims against")
+            want = cur.snapshot_id
+        if want < a.from_snapshot:
+            raise AnnotationsError(f"{tname} {want} is before {a.from_snapshot}, the snapshot these claims "
+                                   f"hold from (the time rule, 02 §2.10)")
+        ts.append(Target(tname, tcodex, want, ttree))
+        against_of[tname] = want
+    if chosen:
+        raise AnnotationsError(f"--against names {', '.join(sorted(chosen))}, which this collection does "
+                               f"not annotate")
+    by_plugin = {t.plugin: t for t in ts}
+
+    # the claims: the file given, or the ones held, re-checked
+    origin_dir = root / name / "origin"
+    recheck = claims is None
+    if recheck:
+        try:
+            claims = (origin_dir / CLAIMS_FILE).read_bytes()
+        except FileNotFoundError:
+            raise AnnotationsError(f"{name} keeps no {CLAIMS_FILE} beside its SHARD to re-check: "
+                                   f"give the claims file") from None
+    submitted = read_claims(claims, target_plugins=tuple(by_plugin))
+    if recheck:
+        # what create pinned is what is re-checked: the annotator's file as
+        # written, the hashes taken anew from the newer target text
+        submitted = [Submitted(s.line, s.raw, {k: v for k, v in s.claim.items() if k not in PINNED_KEYS})
+                     for s in submitted]
+    graph = any(s.claim["type"] in GRAPH_TYPES for s in submitted)
+    if graph and codex.version < cx.GRAPH_VERSION:
+        raise AnnotationsError("a mention, relation or community claim needs a Codex at the graph "
+                               "version (09 §9.3): not this collection's")
+    wanted: dict[str, set[str]] = {}
+    text_for: dict[str, set[str]] = {}
+    for s_ in submitted:
+        for kind, value in ends_of(s_.claim):
+            uid = end_uid(kind, value)
+            wanted.setdefault(_prefix(uid), set()).add(uid)
+            if kind == CHUNK:
+                text_for.setdefault(_prefix(uid), set()).add(uid)
+    held_recs: dict[str, dict[str, Any]] = {}
+    for plugin, uids in wanted.items():
+        t = by_plugin[plugin]
+        held_recs.update(target_records(t.shard_tree, t.codex, t.from_snapshot, uids,
+                                        text_for=text_for.get(plugin, ())))
+    dropped: list[str] = []
+    if recheck:
+        keep = []
+        for s_ in submitted:
+            gone = [u for u in record_ends(s_.claim) if u not in held_recs]
+            if gone:
+                dropped.append(f"line {s_.line}: {', '.join(gone)}")
+            else:
+                keep.append(s_)
+        submitted = keep
+    pinned = pin(submitted, held_recs, snapshots={p: t.from_snapshot for p, t in by_plugin.items()},
+                 codices={p: t.codex for p, t in by_plugin.items()})
+
+    # numbers: a claim made before keeps its own; a new one takes the next
+    held = _held_claims(shard_tree, prev)
+    top = max((n for n, _ in held.values()), default=0)
+    fresh = sorted(((c, s) for c, s in zip(pinned, submitted) if identity_key(c) not in held),
+                   key=lambda cs: _number_order(cs[0], codex.version))
+    number = {identity_key(c): n for n, (c, _) in enumerate(fresh, top + 1)}
+    number.update({k: n for k, (n, _) in held.items()})
+    records = sorted((_record(number[identity_key(c)], c, s) for c, s in zip(pinned, submitted)),
+                     key=lambda r: int(r["native_id"]))
+    if not records:
+        raise AnnotationsError("the update leaves no claim: an annotations collection holds at least one "
+                               "(retract it instead)")
+    before = {r["uid"]: r["content_hash"] for _, r in held.values()}
+    delta = sn.compute_delta(before, {r["uid"]: r["content_hash"] for r in records})
+    against_text = ", ".join(f"{k} {v}" for k, v in against_of.items())
+
+    staging = root / name / "state" / "annotations-build"
+    if staging.exists():
+        shutil.rmtree(staging)
+    shards, relations = write_parts(staging, records, sid,
+                                    shard_records=int(codex.slicing.get("shard_records") or SHARD_RECORDS),
+                                    container=cx.container_of(codex))
+    old = {(e.slice, e.n): e.root for e in prev.shards}
+    old_rel = {(e.slice, e.n): e.root for e in prev.relations}
+    reissued = tuple(e.path for e in shards if old.get((e.slice, e.n)) != e.root) + \
+        tuple(e.path for e in relations if old_rel.get((e.slice, e.n)) != e.root)
+    result = Update(sid, prev.snapshot_id, against_of, len(delta.added), len(delta.changed),
+                    len(delta.tombstoned), tuple(dropped), reissued)
+    if dry_run or not (delta.added or delta.changed or delta.tombstoned):
+        shutil.rmtree(staging)
+        if not dry_run:
+            log(f"[annotations] {name}: nothing to update — the claims and the records they name "
+                f"({against_text}) are as {prev.snapshot_id} holds them")
+        return result
+
+    # the claims file replaced is kept, named for the last snapshot it was current in
+    if not recheck:
+        cur = origin_dir / CLAIMS_FILE
+        kept = origin_dir / f"claims.{prev.snapshot_id}.jsonl"
+        if cur.is_file() and not kept.exists():
+            cur.replace(kept)
+        origin_dir.mkdir(parents=True, exist_ok=True)
+        tmp = origin_dir / (CLAIMS_FILE + ".tmp")
+        tmp.write_bytes(claims)
+        tmp.replace(cur)
+    for entry in list(shards) + list(relations):
+        dst = shard_tree / entry.path
+        if (staging / entry.path).is_file() and not (dst.is_file() and entry.path not in reissued):
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shard_mod.promote(staging / entry.path, dst, shard_dir=shard_tree, new_root=entry.root)
+    shutil.rmtree(staging, ignore_errors=True)
+    # a part the new snapshot no longer lists (fewer claims, fewer parts) is
+    # the previous snapshot's last version of it: kept under that name too
+    listed = {e.path for e in list(shards) + list(relations)}
+    for e in list(prev.shards) + list(prev.relations):
+        p_ = shard_tree / e.path
+        if e.path not in listed and p_.is_file():
+            dest = shard_mod.superseded_name(p_, prev.snapshot_id)
+            if not dest.exists():
+                p_.replace(dest)
+    snap = sn.Snapshot(
+        collection_id=codex.collection_id, snapshot_id=sid, previous=prev.hash,
+        shards=shards, delta=delta, relations=relations, figures=(),
+        files=files_of(shard_tree, sid))
+    out = shard_tree / shard_mod.snapshot_path(sid)
+    if out.is_file() and out.read_bytes() != snap.canonical():
+        raise AnnotationsError(f"snapshot {sid} exists with different bytes; a snapshot is written once (09 §9.4)")
+    out.write_bytes(snap.canonical())
+    if key is not None:
+        sn.sign_snapshot(root, name, snap, key,
+                         now=now or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    log(f"[annotations] {name}: snapshot {sid} after {prev.snapshot_id}, checked against {against_text}: "
+        f"{len(delta.added)} added, {len(delta.changed)} re-checked or changed, "
+        f"{len(delta.tombstoned)} tombstoned; {len(reissued)} part(s) re-issued; {snap.hash[:23]}…"
+        + (f"; {len(dropped)} claim(s) name a record the target no longer holds" if dropped else ""))
+    return dataclasses.replace(result, snapshot=snap)
 
 
 # --------------------------------------------------------------------------
