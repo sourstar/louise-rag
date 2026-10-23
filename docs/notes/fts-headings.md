@@ -36,6 +36,19 @@ worth ~10 points, more than a body full of the words.
   ([MG4J's BM25FScorer](https://mg4j.di.unimi.it/docs/it/unimi/di/mg4j/search/score/BM25FScorer.html)
   is an example of one built in).
 
+### The published numbers
+
+| Source | Setting | Result |
+|---|---|---|
+| Anthropic, Contextual Retrieval (vendor blog, not peer reviewed) | 1 − recall@20, avg of 4 corpora | embeddings 5.7 % → contextual embeddings 3.7 % → + contextual BM25 2.9 % → + rerank 1.9 %. No BM25-alone row. |
+| arXiv 2610.10170 (dense only, cov-nDCG@10) | Wikipedia FA / QASPER | structure-cut chunks + real heading path beat contextualized fixed windows +0.022 / +0.012; real heading beats shuffled placebo +0.010 / +0.016; where the text is CUT is worth 2–4× the heading; LLM contextualization ranks below bare structure-cut chunks. Effects small (dz 0.06–0.11), Holm-significant. |
+| DAPR, arXiv 2305.13915 | 5 doc-aware passage sets | 53.5 % of SoTA retriever errors come from missing document context; title-prepending helps hard queries, hurts overall; BM25 hybrid best on the mixed set. |
+| mFAR, arXiv 2410.20056 | STaRK (Amazon, MAG, Prime) | per-field BM25 does NOT consistently beat whole-document BM25 (Amazon, MAG); they cite BM25F's saturation argument as the reason. Gains come from fields + dense + query-conditioned weights. |
+| BM25F, Robertson/Zaragoza/Taylor CIKM 2004 | Reuters, TREC .gov | "beneficial"; the tables could not be read here (host unreachable). A later study: BM25F with UNIFORM weights is worse than plain BM25 — weights must be tuned. |
+
+None measures our case (BM25, short heading vs body, mixed-language books).
+Our boost table below is the only number on it.
+
 ## The forms, in our code
 
 | form | commit | what it is |
