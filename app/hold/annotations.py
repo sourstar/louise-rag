@@ -1196,7 +1196,16 @@ def update(root: Path, name: str, *, claims: bytes | None = None,
     prev = seeder.current_snapshot(shard_tree)
     if prev is None:
         raise AnnotationsError(f"{name} holds no snapshot to update: `create` makes the first")
-    sid = snapshot_id or update_snapshot_id(prev.snapshot_id, clock or datetime.now(timezone.utc))
+    # the period rule is asked only of an update that has something to write:
+    # the same file given twice says "nothing to update", not "next month"
+    period_refusal = None
+    if snapshot_id:
+        sid = snapshot_id
+    else:
+        try:
+            sid = update_snapshot_id(prev.snapshot_id, clock or datetime.now(timezone.utc))
+        except AnnotationsError as e:
+            sid, period_refusal = sn.next_snapshot_id(prev.snapshot_id), e
     if sid != sn.next_snapshot_id(prev.snapshot_id):
         raise AnnotationsError(f"the snapshot after {prev.snapshot_id} is {sn.next_snapshot_id(prev.snapshot_id)}, "
                                f"not {sid}: a chain is consecutive periods (09 §9.4)")
@@ -1297,11 +1306,18 @@ def update(root: Path, name: str, *, claims: bytes | None = None,
         tuple(e.path for e in relations if old_rel.get((e.slice, e.n)) != e.root)
     result = Update(sid, prev.snapshot_id, against_of, len(delta.added), len(delta.changed),
                     len(delta.tombstoned), tuple(dropped), reissued)
+    if period_refusal is not None and (delta.added or delta.changed or delta.tombstoned):
+        shutil.rmtree(staging)
+        raise period_refusal
     if dry_run or not (delta.added or delta.changed or delta.tombstoned):
         shutil.rmtree(staging)
-        if not dry_run:
-            log(f"[annotations] {name}: nothing to update — the claims and the records they name "
-                f"({against_text}) are as {prev.snapshot_id} holds them")
+        if not (delta.added or delta.changed or delta.tombstoned):
+            # nothing to write: it stays at the previous snapshot (the edges
+            # name their snapshot, so a relations part would differ in that alone)
+            result = dataclasses.replace(result, snapshot_id=prev.snapshot_id, reissued=())
+            if not dry_run:
+                log(f"[annotations] {name}: nothing to update — the claims and the records they name "
+                    f"({against_text}) are as {prev.snapshot_id} holds them")
         return result
 
     # the claims file replaced is kept, named for the last snapshot it was current in
