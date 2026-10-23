@@ -714,3 +714,19 @@ def test_parquet_parts_are_written_read_checked_and_named_from_the_codex(tmp_pat
     assert again == codex and snap2.hash == snap.hash
     with pytest.raises(CodexError, match="holds one collection"):
         make_graph(tmp_path, claims, name="graph-jsonl", container="parquet")
+
+
+def test_the_claim_index_loads_its_snapshot_once_per_file(tmp_path, monkeypatch):
+    """München, 2026-10-23: a warm search still loaded two snapshots, both
+    here (work groups, then the claims beside the hits); the index reads
+    the cached one, loaded again only when the file changes."""
+    from app.hold import annotations as ann_mod, snapshot as sn_mod
+    a_target(tmp_path)
+    codex, snap = make(tmp_path, claims=claims_file(a_claim()))
+    tree = col.shard_dir_of(tmp_path, col.name_of(tmp_path, codex.collection_id))
+    loads = []
+    real = sn_mod.load
+    monkeypatch.setattr(sn_mod, "load", lambda *a, **k: loads.append(1) or real(*a, **k))
+    first = ann_mod.index_of(tree)
+    after_first = len(loads)
+    assert ann_mod.index_of(tree) is first and len(loads) == after_first, "the second search loads nothing"

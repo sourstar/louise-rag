@@ -1114,7 +1114,11 @@ def index_of(shard_tree: Path) -> ClaimIndex:
     is not among them (02 §2.2)."""
     from app.pack import records as pack_records
     from app.share import seeder
-    snap = seeder.current_snapshot(Path(shard_tree))
+    # cached by the file's identity: every search asks, twice (work groups and
+    # the claims beside the hits) — two uncached loads a warm search
+    # (München, 2026-10-23). An annotations snapshot's delta is its claims'
+    # uids, small, so holding it is harmless (unlike pubmed's, seeder.py)
+    snap = seeder.cached_snapshot(Path(shard_tree))
     if snap is None:
         return ClaimIndex(None, ())
     hit = _indexes.get(str(shard_tree))
