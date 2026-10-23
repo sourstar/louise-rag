@@ -650,12 +650,15 @@ def job_status(job_id: int):
 
 
 @app.post("/api/control", dependencies=[Depends(auth.require_admin)])
-def control(body: ControlBody):
+def control(body: ControlBody, request: Request):
     if body.state not in db.WORKER_STATES:
         raise HTTPException(400, f"state must be {'|'.join(db.WORKER_STATES)}")
     # node.sqlite, not the first collection's manifest: the ONE place every
-    # process reads the node state from (app/node_state.py)
-    node_state.set_worker_state(body.state)
+    # process reads the node state from (app/node_state.py); the write
+    # recorded with who made it (the caller's address and agent)
+    client = request.client.host if request.client else "?"
+    agent = (request.headers.get("user-agent") or "")[:80]
+    node_state.set_worker_state(body.state, by=f"POST /api/control from {client} ({agent})")
     try:
         db.log_event(_con(), "info", "control", f"worker set to {body.state}")
     except Exception:   # noqa: BLE001 — the state is set; the event is a courtesy

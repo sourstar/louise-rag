@@ -50,7 +50,19 @@ def overrides() -> dict[str, Any]:
     mode = node_state.peek_worker_state()
     bw = node_state.peek(db.get_bandwidth_override, None)
     return {"mode": mode, "paused_collections": node_state.peek(_paused, []),
-            "bandwidth_bps": bw}
+            "bandwidth_bps": bw,
+            # the last mode writes and who made them (node_state.set_worker_state)
+            "mode_writes": node_state.peek(_mode_writes, [])}
+
+
+def _mode_writes(con) -> list[dict[str, Any]]:
+    import json
+    from app import db, node_state
+    raw = db.get_control(con, node_state.MODE_HISTORY_KEY)
+    try:
+        return json.loads(raw)[-10:] if raw else []
+    except ValueError:
+        return []
 
 
 def last_round(collections, *, limit: int = 40) -> list[dict[str, Any]]:

@@ -152,3 +152,27 @@ def test_the_mode_the_worker_acts_on_is_said_once_per_change(monkeypatch, capsys
     assert "node mode read: runs embed, fetch, index, parse, seed" in lines[0]
     assert "node mode running -> seed-only: runs seed (read from " in lines[1]
     assert str(node_state.path()) in lines[1]
+
+
+def test_every_mode_write_is_recorded_with_who_made_it(isolated_config):
+    """2026-10-23: the node set seed-only at 12:25 acted as running by 12:34,
+    and no record said whether anyone had written the mode meanwhile."""
+    node_state.set_worker_state("seed-only", by="louise node pause --seed-only")
+    node_state.set_worker_state("running", by="POST /api/control from 10.0.0.5 (Mozilla)")
+    node_state.set_worker_state("paused")
+    got = node_state.mode_history()
+    assert [(h["state"], h["by"]) for h in got] == [
+        ("seed-only", "louise node pause --seed-only"),
+        ("running", "POST /api/control from 10.0.0.5 (Mozilla)"),
+        ("paused", "unnamed")]
+    assert node_state.worker_state() == "paused"
+    for _ in range(node_state.MODE_HISTORY_KEEP + 5):
+        node_state.set_worker_state("running", by="x")
+    assert len(node_state.mode_history()) == node_state.MODE_HISTORY_KEEP
+
+
+def test_node_show_lists_the_last_mode_writes(isolated_config):
+    from app import node_show
+    node_state.set_worker_state("seed-only", by="louise node pause --seed-only")
+    got = node_show.overrides()["mode_writes"]
+    assert got[-1]["state"] == "seed-only" and got[-1]["by"] == "louise node pause --seed-only"

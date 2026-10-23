@@ -223,9 +223,36 @@ def worker_state(con: sqlite3.Connection | None = None) -> str:
         return db.worker_state(c)
 
 
-def set_worker_state(state: str) -> None:
+#: the last mode writes, newest last: when, what, and who (2026-10-23: the
+#: node set seed-only at 12:25 read "running" again by 12:34, and nothing
+#: said who had written it — the web's log went with its container)
+MODE_HISTORY_KEY = "worker_state_history"
+MODE_HISTORY_KEEP = 50
+
+
+def set_worker_state(state: str, *, by: str = "") -> None:
+    """THE node mode, written, and the write recorded with `by` — the
+    command or the route and its caller."""
+    import json
+    import time
     with closing(connect()) as c:
         db.set_worker_state(c, state)
+        try:
+            hist = json.loads(db.get_control(c, MODE_HISTORY_KEY) or "[]")
+        except ValueError:
+            hist = []
+        hist = (hist + [{"at": time.time(), "state": state, "by": by or "unnamed"}])[-MODE_HISTORY_KEEP:]
+        db.set_control(c, MODE_HISTORY_KEY, json.dumps(hist))
+
+
+def mode_history() -> list[dict]:
+    """The recorded mode writes, oldest first; [] when none."""
+    import json
+    try:
+        with closing(connect()) as c:
+            return json.loads(db.get_control(c, MODE_HISTORY_KEY) or "[]")
+    except (ValueError, sqlite3.Error):
+        return []
 
 
 def peek_worker_state() -> str:
