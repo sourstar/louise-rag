@@ -19,7 +19,7 @@ ENVF=$(mktemp); chmod 600 "$ENVF"; trap 'rm -f "$ENVF"' EXIT
 docker inspect "$W" -f '{{range .Config.Env}}{{println .}}{{end}}' | grep -v '^$' > "$ENVF"
 say() { printf '\n=== %s  %s\n' "$(date +%T)" "$*"; }
 step() {
-  docker run --rm --init --name louise-wikipedia-night --label louise.in-window=1 \
+  docker run --rm --init --name louise-wikipedia-night --label "louise.in-window=${IN_WINDOW_ID:-none}" \
     --memory "$CAP" --memory-swap "$CAP" --cpus 4 --volumes-from "$W" --env-file "$ENVF" \
     ${SRC:+-v "$SRC:/srv:ro"} "$IMG" nice -n 19 python -m app.louise "$@" 2>&1 | grep -v warn:config
 }
