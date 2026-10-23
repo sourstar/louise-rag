@@ -53,9 +53,9 @@ Our boost table below is the only number on it.
 
 | form | commit | what it is |
 |---|---|---|
-| `CHAPTER_BOOST` | eabc9e6 | scales the heading's separately saturated score: the workaround the 2004 paper argues against |
-| `HEADING_IN_BODY = k` | 9db4e3a | the heading folded k times into one indexed field with the body: one saturation, one df — BM25F's poor man's form, and contextual BM25's shape with the heading as the context |
-| BM25F proper / cross_fields | — | per-field tf at scoring time; not offered by tantivy 0.26 |
+| `CHAPTER_BOOST` | eabc9e6, REMOVED | scaled the heading's separately saturated score: the sum the 2004 paper shows breaks BM25. Removed (operator, 2026-10-23: "do not reinvent the wheel") |
+| `HEADING_IN_BODY = k` | 9db4e3a | BM25F itself, heading weight k, body weight 1: with integer weights the paper's weighted tf and length ARE the heading written k times plus the body; a test checks tantivy's score against the paper's formula to 1e-4 |
+| BM25F with float weights / per-field b | — | Lucene `CombinedFieldQuery`, Elasticsearch `combined_fields`; not offered by tantivy 0.26 |
 
 ## Measured (fts leg alone, English labelled queries, the node)
 
@@ -64,6 +64,10 @@ Our boost table below is the only number on it.
 | CHAPTER_BOOST 1.0 (today) | 0.114 / 0.414 / 0.897 | 0.077 / 0.133 / 0.440 | 291 |
 | 0.25 | 0.124 / 0.379 / 0.862 | 0.123 / 0.253 / 0.507 | 14 |
 | 0.1 | 0.160 / 0.310 / 0.862 | 0.141 / 0.273 / 0.513 | 1 |
+
+The boost rows are kept as the record of why; they are not candidates. The
+choice is BM25F's weight k, tuned on the labelled queries as the literature
+tunes it.
 | HEADING_IN_BODY 1, 2 | building (München, 2026-10-23 evening) | | |
 
 Deploy rule: the full search (reranker on) on the whole labelled set, no loss

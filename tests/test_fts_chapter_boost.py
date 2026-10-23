@@ -1,7 +1,10 @@
-"""A match in a chunk's heading against one in its body (fts.CHAPTER_BOOST,
-BM25F's field weight). München, 2026-10-23: a few-token heading made one
+"""A match in a chunk's heading against one in its body: BM25F (Robertson,
+Zaragoza & Taylor, CIKM 2004; fts.HEADING_IN_BODY is the heading's weight).
+München, 2026-10-23: summing a few-token heading's own BM25 score made one
 heading term outweigh a whole body — Moby-Dick's quarter-deck chapter (white
 x12, whale x10, captain x5) below a chunk headed "The White Whale Shoal."."""
+import math
+
 from app import collections as collections_mod, fts
 
 
@@ -22,53 +25,41 @@ def _index(c):
                                        "that took his leg; whale and captain and white ") * 6}], c)
 
 
-def _scores(c):
-    return {h["book_id"]: h["score"] for h in fts.search("en", "white whale captain", limit=2, collection=c)}
+def _bm25f(docs, term, w_heading, k1=1.2, b=0.75):
+    """The paper's formula: per-document tf and length are the fields'
+    weighted sums (body weight 1), saturated once; idf from the documents
+    holding the term in any field (tantivy's idf and k1, b)."""
+    tf = [w_heading * h.count(term) + t.count(term) for h, t in docs]
+    dl = [w_heading * len(h) + len(t) for h, t in docs]
+    avgdl = sum(dl) / len(docs)
+    n = sum(1 for f in tf if f)
+    idf = math.log(1 + (len(docs) - n + 0.5) / (n + 0.5))
+    return [idf * f * (k1 + 1) / (f + k1 * (1 - b + b * d / avgdl)) if f else 0.0
+            for f, d in zip(tf, dl)]
 
 
-def test_the_heading_weight_scales_only_the_heading_s_share(tmp_path, monkeypatch):
+def test_the_score_is_the_papers_bm25f(tmp_path, monkeypatch):
+    """Not an approximation of BM25F: with an integer weight the index IS it.
+    Short texts, so tantivy's field norms are exact."""
+    monkeypatch.setattr(fts, "HEADING_IN_BODY", 3)
     c = _collection(tmp_path)
-    _index(c)
-    at_one = _scores(c)
-    monkeypatch.setattr(fts, "CHAPTER_BOOST", 0.1)
-    at_tenth = _scores(c)
-    # book 1 matches by its heading alone, book 2 by its body alone
-    assert abs(at_tenth[1] - 0.1 * at_one[1]) < 1e-4, "a heading-only match weighs a tenth"
-    assert abs(at_tenth[2] - at_one[2]) < 1e-4, "a body match is untouched"
-    fts.close_all()
-
-
-def test_the_weight_applies_where_the_index_stems_the_body_itself(tmp_path, monkeypatch):
-    """English is stemmed by tantivy (one parse over body and chapter);
-    the PyStemmer groups build two clauses — both carry the weight."""
-    monkeypatch.setattr(fts, "CHAPTER_BOOST", 0.0)
-    c = _collection(tmp_path)
-    _index(c)
-    assert set(_scores(c)) == {2} or _scores(c).get(1, 0.0) == 0.0
-    fts.close_all()
-
-
-def test_the_pystemmer_groups_carry_the_weight_too(tmp_path, monkeypatch):
-    """Greek is stemmed by PyStemmer, and its heading is a separate clause."""
-    c = _collection(tmp_path)
-    fts.index_book("el", 1, [{"id": "g:1:0:1", "chapter": "Η λευκή φάλαινα",
-                              "text": "η βάρκα έπλεε στη θάλασσα " * 30}], c)
-    fts.index_book("el", 2, [{"id": "g:2:0:1", "chapter": "Κεφάλαιο",
-                              "text": "η λευκή φάλαινα και ο καπετάνιος " * 6}], c)
-
-    def scores():
-        return {h["book_id"]: h["score"] for h in fts.search("el", "λευκή φάλαινα", limit=2, collection=c)}
-    at_one = scores()
-    monkeypatch.setattr(fts, "CHAPTER_BOOST", 0.1)
-    at_tenth = scores()
-    assert abs(at_tenth[1] - 0.1 * at_one[1]) < 1e-4 and abs(at_tenth[2] - at_one[2]) < 1e-4
+    docs = [("whale", "boat sea dawn"),
+            ("ship", "whale whale captain sea"),
+            ("dawn", "captain boat"),
+            ("whale shoal", "whale")]
+    for i, (h, t) in enumerate(docs, 1):
+        fts.index_book("en", i, [{"id": f"g:{i}:0:1", "chapter": h, "text": t}], c)
+    got = {hit["book_id"]: hit["score"] for hit in fts.search("en", "whale", limit=10, collection=c)}
+    want = _bm25f([(h.split(), t.split()) for h, t in docs], "whale", 3)
+    for i, w in enumerate(want, 1):
+        assert math.isclose(got.get(i, 0.0), w, rel_tol=1e-4), (i, got, want)
     fts.close_all()
 
 
 def test_the_heading_folded_into_the_body_saturates_once(tmp_path, monkeypatch):
-    """HEADING_IN_BODY (BM25F's poor man's form): one field, one saturation,
-    one document frequency; a heading match is k more occurrences, not a
-    second document. The stored text the reader sees is untouched."""
+    """One field, one saturation, one document frequency; a heading match is
+    k more occurrences, not a second document. The stored text the reader
+    sees is untouched."""
     monkeypatch.setattr(fts, "HEADING_IN_BODY", 2)
     c = _collection(tmp_path)
     _index(c)
@@ -94,6 +85,7 @@ def test_zero_is_today_s_index():
     """0, the default: nothing new is written, so every index on every peer
     opens as before (a schema change would refuse to open them)."""
     assert fts.HEADING_IN_BODY == 0
+    assert not hasattr(fts, "CHAPTER_BOOST"), "no knob re-weights the per-field sum"
     assert fts._indexed(None, "The White Whale", "body") == {}
     assert fts._indexed("greek", "Η φάλαινα", "κείμενο") == {
         "body_stem": fts.stemming.stem_text("greek", "κείμενο")}

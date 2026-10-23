@@ -422,32 +422,26 @@ def book_chunks(group: str, book_id: int, collection=None) -> list[dict]:
 
 _QUERY_STRIP = re.compile(r'[\^\[\]{}~/\\:!()"*]')
 
-#: The weight of a match in a chunk's HEADING clause against the body's.
-#: NOT BM25F (München, 2026-10-23, from Robertson, Zaragoza & Taylor, CIKM
-#: 2004): it scales a second, separately saturated BM25 score, and summing
-#: per-field BM25 scores is the very thing BM25F replaces — the measured
-#: workaround, beside HEADING_IN_BODY below, the standard form. A heading is a
-#: few tokens, so BM25's length normalisation makes one heading term worth
-#: ~10 points — more than a whole body: on the node "white whale obsession
-#: captain" ranked Moby-Dick's first chunk #291, below every chunk headed
-#: "The White Whale Shoal." or "THE WHALE." (31.4 vs 20.1 for Ahab's
-#: quarter-deck speech, white x12, whale x10, captain x5; München,
-#: 2026-10-23). 1.0 is the behaviour before; the value is the campaign's to
-#: set (titles may lean on headings; the catalogue leg answers titles too).
-CHAPTER_BOOST = 1.0
-
-#: BM25F in its classic poor man's form (Robertson, Zaragoza & Taylor, CIKM
-#: 2004; the "repeat the field k times" weighting): the heading folded k times
-#: into ONE indexed field with the body, so a term saturates once and has one
-#: document frequency, and a heading match counts as k more occurrences
-#: rather than as a second document. 0 is today's schema. Not a runtime knob:
-#: it decides what an index holds, so a value other than the one an index was
-#: built with refuses to open it — set only to build a measured copy until
-#: the campaign chooses (then the indexes are rebuilt under a new FTS_VERSION).
-#: THE STANDARD ALTERNATIVE in full: a real BM25F (or Elasticsearch's
-#: cross_fields, df blended by max) needs per-field term frequencies at
-#: scoring time, which tantivy 0.26 does not offer; adopting it means a
-#: custom scorer upstream.
+#: BM25F (Robertson, Zaragoza & Taylor, "Simple BM25 extension to multiple
+#: weighted fields", CIKM 2004), the heading's field weight. BM25F weights
+#: each field's term frequency and length, sums them, and saturates ONCE with
+#: one document frequency; with integer weights that is exactly BM25 over the
+#: heading written k times plus the body once — which is what this indexes
+#: (tests/test_fts_chapter_boost.py checks tantivy's score against the paper's
+#: formula). The weight is tuned on held-out labelled queries, as the BM25F
+#: literature does (Pérez-Iglesias et al., arXiv 0911.5046): the campaign.
+#: 0 is the pre-BM25F schema: `Should(body) + Should(chapter)`, two
+#: separately saturated scores — the sum the paper shows breaks BM25, and why
+#: "white whale obsession captain" put Moby-Dick's first chunk #291 below
+#: every chunk headed "The White Whale Shoal." (München, 2026-10-23). No knob
+#: re-weights that sum (operator, 2026-10-23: do not reinvent the wheel).
+#: Not a runtime knob: it decides what an index holds, so a value other than
+#: the one an index was built with refuses to open it; a change rebuilds the
+#: text indexes under a new FTS_VERSION. THE STANDARD ALTERNATIVE in full:
+#: non-integer weights and a per-field b (Zaragoza et al., TREC 2004) need
+#: per-field term frequencies at scoring time — Lucene's CombinedFieldQuery,
+#: Elasticsearch's `combined_fields`; tantivy 0.26 has neither, and adopting
+#: one means a scorer upstream or another engine.
 HEADING_IN_BODY = 0
 
 #: a tie group at the cut is read whole up to this many hits beyond `limit`
@@ -496,18 +490,13 @@ def search(group: str, query: str, limit: int = 20, collection=None,
                 # chapter titles are stored unstemmed, so they keep the raw
                 # query — dropping them would quietly lose a matching signal
                 chapter_q = idx.parse_query_lenient(clean, ["chapter"])[0]
-                if CHAPTER_BOOST != 1.0:
-                    chapter_q = tantivy.Query.boost_query(chapter_q, CHAPTER_BOOST)
                 q = tantivy.Query.boolean_query(
                     [(tantivy.Occur.Should, q), (tantivy.Occur.Should, chapter_q)])
         elif HEADING_IN_BODY:
-            # ONE field, one saturation, one document frequency (BM25F's
-            # poor man's form): the heading is in body_idx already
+            # BM25F: the weighted heading is in body_idx already
             q = idx.parse_query_lenient(clean, ["body_idx"])[0]
         else:
-            q = idx.parse_query_lenient(
-                clean, ["body", "chapter"],
-                **({"field_boosts": {"chapter": CHAPTER_BOOST}} if CHAPTER_BOOST != 1.0 else {}))[0]
+            q = idx.parse_query_lenient(clean, ["body", "chapter"])[0]
         if book_ids:
             id_filter = tantivy.Query.term_set_query(idx.schema, "book_id", book_ids)
             q = tantivy.Query.boolean_query([(tantivy.Occur.Must, q), (tantivy.Occur.Must, id_filter)])
