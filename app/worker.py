@@ -2050,6 +2050,36 @@ def _maintenance_allowed() -> bool:
 _ask_indexed: dict[str, tuple] = {}
 
 
+def _fill_content_hashes(con, collection) -> int:
+    """09 §9.5's `content_hash` onto the manifest's rows that have none,
+    from the current snapshot's records — once per snapshot (the caller's).
+    Only `hold records build` wrote the column, so a peer that FETCHED its
+    SHARD never had it: NULL on all 79,659 of Perugia's gutenberg rows
+    (2026-10-23), and the freshness check, verify-on-use and the embed
+    stage's possession lookup each read it. Never overwrites a value: a
+    records build writes the column as its shards close, ahead of the
+    snapshot that will carry them."""
+    from app.share import possession
+    root = collections_mod.louise_root() / "collections"
+    hashes = possession.record_hashes(root, collection.name)
+    if not hashes:
+        return 0
+    missing = [u for (u,) in con.execute("SELECT uid FROM documents WHERE content_hash IS NULL")]
+    rows = [(hashes[u], u) for u in missing if u in hashes]
+    if not rows:
+        return 0
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        con.executemany("UPDATE documents SET content_hash=? WHERE uid=? AND content_hash IS NULL", rows)
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    db.log_event(con, "info", "ask", f"content_hash filled on {len(rows)} document(s) from the "
+                                     f"current snapshot's records ({len(missing) - len(rows)} not in it)")
+    return len(rows)
+
+
 def _maintain_ask_indexes(con, collection) -> bool:
     """05 §5.7's facet values and §5.5's edges, derived and local, rebuilt
     when the collection's current snapshot changes (app/ask/facets.py,
@@ -2070,6 +2100,10 @@ def _maintain_ask_indexes(con, collection) -> bool:
     if _ask_indexed.get(collection.name) == key:
         return False
     did = False
+    try:
+        did = _fill_content_hashes(con, collection) or did
+    except Exception as e:   # noqa: BLE001 — one fill, not the maintainer
+        db.log_event(con, "warn", "ask", f"content hashes: {type(e).__name__}: {e}"[:300])
     try:
         got = ask_traverse.index_edges(con, shard_tree, snap)
         did = did or bool(got["shards"])
