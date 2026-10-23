@@ -503,6 +503,37 @@ def _release_idle_pins(now: float | None = None) -> list[str]:
     return gone
 
 
+def _possessed_vectors(con, collection, row, chunks) -> dict:
+    """chunk_id -> vector for this document from an accepted bundle held
+    here that holds the record as it is now (app/share/possession.py
+    `held_vectors`): the embed stage carries them instead of asking the
+    encoder. RULE 1 — Perugia, 2026-10-23: since its resume it embedded
+    12,921 chunks of gutenberg that the node's predecessor bundles, held
+    there as files, already carried, and published them as 145 new bundles.
+    {} for a document no held bundle covers, a collection with no Codex,
+    or any doubt (the encoder then embeds, as before)."""
+    codex = getattr(collection, "codex", None)
+    if codex is None or not chunks:
+        return {}
+    try:
+        from app.share import possession
+        keys = row.keys() if hasattr(row, "keys") else ()
+        content_hash = row["content_hash"] if "content_hash" in keys else None
+        if not content_hash:
+            return {}
+        root = collections_mod.louise_root() / "collections"
+        return possession.held_vectors(root, collection.name, codex, con, row["uid"], content_hash,
+                                       [c["id"] for c in chunks])
+    except Exception:   # noqa: BLE001 — any doubt embeds
+        return {}
+
+
+def _given(con, collection, row, chunks) -> dict:
+    """`upsert_book`'s `given=`, only when a held bundle gives something."""
+    got = _possessed_vectors(con, collection, row, chunks)
+    return {"given": got} if got else {}
+
+
 def stage_embed(con, row, collection) -> None:
     chunks = _load_chunks(row, collection)
     # lock_con serializes the delete+add pair against a concurrent bundle
@@ -522,7 +553,7 @@ def stage_embed(con, row, collection) -> None:
         embeddings.upsert_book(int(row["native_id"]), row["lang"], chunks,
                                collection, lock_con=con, stop=_embed_stop,
                                reuse=embeddings.may_reuse(row), counts=counts,
-                               columns=cols)
+                               columns=cols, **_given(con, collection, row, chunks))
         if cols:
             # a document whose every vector was kept rewrote no row: the two
             # columns follow the version table in place (app/validity.py)
@@ -1366,7 +1397,8 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                                                     chunks, collection, lock_con=tcon,
                                                     stop=_embed_stop, held=held, sink=sink,
                                                     reuse=embeddings.may_reuse(row),
-                                                    counts=counts, columns=cols)
+                                                    counts=counts, columns=cols,
+                                                    **_given(tcon, collection, row, chunks))
                         if cols and not counts.embedded and counts.reused:
                             # every vector kept, no row rewritten: the columns
                             # follow the version table in place (app/validity.py)

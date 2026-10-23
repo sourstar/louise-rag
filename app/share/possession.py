@@ -50,19 +50,22 @@ class Possession(dict):
     `fileless`: slice -> [(uid_first, uid_last, producer)] of the
     PREDECESSORS' accepted rows with no files here (the compare path)."""
 
-    def __init__(self, held=(), bundles=None, producers=None, fileless=None):
+    def __init__(self, held=(), bundles=None, producers=None, fileless=None, shards=None):
         super().__init__(held)
         self.bundles: dict[str, dict[str, list[str]]] = bundles or {}
         self.producers: dict[str, str] = producers or {}
         self.fileless: dict[str, list[list[str]]] = fileless or {}
+        #: bundle id -> the shard it is filed under (`contribute.bundle_dir`)
+        self.shards: dict[str, str] = shards or {}
 
     def to_json(self) -> dict[str, Any]:
         return {"held": dict(self), "bundles": self.bundles, "producers": self.producers,
-                "fileless": self.fileless}
+                "fileless": self.fileless, "shards": self.shards}
 
     @classmethod
     def from_json(cls, d: dict[str, Any]) -> "Possession":
-        return cls(d["held"], d.get("bundles") or {}, d.get("producers") or {}, d.get("fileless") or {})
+        return cls(d["held"], d.get("bundles") or {}, d.get("producers") or {}, d.get("fileless") or {},
+                   d.get("shards") or {})
 
 
 def _share_dir(root: Path, name: str) -> Path:
@@ -107,7 +110,7 @@ def index(root: Path, name: str, codex, con) -> "Possession":
     path = _share_dir(root, name) / INDEX
     try:
         cached = json.loads(path.read_bytes())
-        if cached.get("fingerprint") == fp and "held" in (cached.get("index") or {}):
+        if cached.get("fingerprint") == fp and "shards" in (cached.get("index") or {}):
             result = Possession.from_json(cached["index"])
             _memo[key] = (fp, result)
             return result
@@ -118,6 +121,7 @@ def index(root: Path, name: str, codex, con) -> "Possession":
     bundles: dict[str, dict[str, list[str]]] = {}
     producers: dict[str, str] = {}
     fileless: dict[str, list[list[str]]] = {}
+    shards: dict[str, str] = {}
     by_cid = {p.split("/", 1)[0]: p for p in pre}
     for bundle_id, shard, producer, first, last in con.execute(
             "SELECT bundle_id, shard, producer, uid_first, uid_last FROM coverage WHERE accepted_at IS NOT NULL"):
@@ -133,10 +137,11 @@ def index(root: Path, name: str, codex, con) -> "Possession":
                 fileless.setdefault(sid.rsplit("/", 1)[0], []).append([first, last, producer or ""])
             continue                           # no files here: covers nothing
         producers[bundle_id] = producer or ""
+        shards[bundle_id] = sid
         for uid, h in got_.items():
             held.setdefault(uid, set()).add(h)
             bundles.setdefault(uid, {}).setdefault(h, []).append(bundle_id)
-    result = Possession({u: sorted(hs) for u, hs in held.items()}, bundles, producers, fileless)
+    result = Possession({u: sorted(hs) for u, hs in held.items()}, bundles, producers, fileless, shards)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_bytes(json.dumps({"fingerprint": fp, "index": result.to_json()}).encode())
@@ -267,4 +272,68 @@ def offered_by_part(root: Path, name: str, codex, con, snapshot=None) -> dict[st
             out[cov.shard_id(codex, f"{s.slice}/{s.n:05d}")] = sorted(ids)
     _offered_memo.clear()
     _offered_memo[key] = out
+    return out
+
+
+# ---- the embed stage's reuse: a record held in a bundle FILE is not embedded ----
+
+#: the vectors of the last bundles read, by bundle id (documents come part by
+#: part, so a part's bundle is read once for its documents, not once each)
+_vectors_cache: dict[str, dict[str, Any]] = {}
+_VECTORS_KEEP = 2
+
+
+def _bundle_vectors(root: Path, name: str, codex, shard: str, bundle_id: str) -> dict[str, Any] | None:
+    """chunk_id -> vector of one held bundle (challenge rows left out);
+    None when its files do not read."""
+    hit = _vectors_cache.get(bundle_id)
+    if hit is not None:
+        return hit
+    from app.share import contribute
+    try:
+        import pyarrow.parquet as pq
+        d = contribute.bundle_dir(root, name, codex, shard, bundle_id)
+        header = json.loads((d / "header.json").read_bytes())
+        n = int((header.get("challenge") or {}).get("n") or 0)
+        t = pq.read_table(d / "vectors.parquet", columns=["chunk_id", "vector"])
+        ids = t.column("chunk_id").to_pylist()[n:]
+        vecs = t.column("vector").to_pylist()[n:]
+    except Exception:   # noqa: BLE001 — not here, or not a bundle: nothing reused from it
+        return None
+    got = dict(zip(ids, vecs))
+    while len(_vectors_cache) >= _VECTORS_KEEP:
+        _vectors_cache.pop(next(iter(_vectors_cache)))
+    _vectors_cache[bundle_id] = got
+    return got
+
+
+def held_vectors(root: Path, name: str, codex, con, uid: str, content_hash: str | None,
+                 chunk_ids: Sequence[str]) -> dict[str, Any]:
+    """chunk_id -> vector, from an accepted bundle held here that holds
+    `uid` with this `content_hash` — the record as it is now — for those of
+    `chunk_ids` it carries; {} when none does (Perugia, 2026-10-23: 12,921
+    chunks the node's predecessor bundles held were embedded again, because
+    the embed stage asked only its vector table, and those vectors live in
+    the bundle files). The bundle was judged by the ladder when it was
+    accepted (03 §3.5: admissible by what it was computed from); chunking is
+    a pure function of the record (invariant 3), so the same record gives
+    the same chunk ids and texts."""
+    if not content_hash:
+        return {}
+    held = index(root, name, codex, con)
+    if content_hash not in (held.get(uid) or ()):
+        return {}
+    wanted = set(chunk_ids)
+    out: dict[str, Any] = {}
+    for b in (held.bundles.get(uid) or {}).get(content_hash, ()):
+        shard = held.shards.get(b)
+        vecs = _bundle_vectors(root, name, codex, shard, b) if shard else None
+        if not vecs:
+            continue
+        for cid in wanted - set(out):
+            v = vecs.get(cid)
+            if v is not None:
+                out[cid] = v
+        if len(out) == len(wanted):
+            break
     return out
