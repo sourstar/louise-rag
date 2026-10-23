@@ -58,6 +58,10 @@ def get(url: str, **kw: Any) -> httpx.Response:
     return client().get(url, **kw)
 
 
+def put(url: str, **kw: Any) -> httpx.Response:
+    return client().put(url, **kw)
+
+
 def reset() -> None:
     """Drop the client and its pool — for tests, and for a process that has
     just been told its endpoints moved."""

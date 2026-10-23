@@ -235,10 +235,28 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _pinned(recipe, role: str, kind: str, name: str):
+    """The encoder pinned for the length of a gate or a re-check, its state
+    before restored after (app/model_pins.py; operator, 2026-10-23)."""
+    from . import model_pins
+    url, model = _who(recipe, role == "query")
+    return model_pins.holding(url, model, f"{kind} {name} {role} (pid {os.getpid()})",
+                              collection=name)
+
+
 def validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "document",
              key=None, now: str | None = None,
              stop: Callable[[], bool] | None = None,
              on_run: Callable[[Any], None] | None = None) -> dict[str, Any]:
+    with _pinned(recipe, role, "gate", name):
+        return _validate(root, name, codex, recipe, role=role, key=key, now=now,
+                         stop=stop, on_run=on_run)
+
+
+def _validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "document",
+              key=None, now: str | None = None,
+              stop: Callable[[], bool] | None = None,
+              on_run: Callable[[Any], None] | None = None) -> dict[str, Any]:
     """The gate against the run that answers now, and its statement KEPT,
     pass or fail. Returns the statement's body.
 
@@ -408,6 +426,15 @@ def recheck(root: Path, name: str, codex: Codex, recipe, run_id: str, *,
             role: str = "document", key=None,
             stop: Callable[[], bool] | None = None,
             log: Callable[[str], None] | None = None) -> bool:
+    with _pinned(recipe, role, "recheck", name):
+        return _recheck(root, name, codex, recipe, run_id, role=role, key=key,
+                        stop=stop, log=log)
+
+
+def _recheck(root: Path, name: str, codex: Codex, recipe, run_id: str, *,
+             role: str = "document", key=None,
+             stop: Callable[[], bool] | None = None,
+             log: Callable[[str], None] | None = None) -> bool:
     """THE FIRST TIME A KEPT STATEMENT IS RELIED ON IN THIS PROCESS: its own
     sixteen sampled texts, embedded again by the run it names, compared with
     the reference (runs.recheck). True: it holds, and is not asked again

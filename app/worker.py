@@ -35,7 +35,7 @@ from pathlib import Path
 import httpx
 
 from . import (catalog, chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
-                dispatch, embeddings, encoder_timeouts, entities, fts, model_load, node_state, plugin_io, refs,
+                dispatch, embeddings, encoder_timeouts, entities, fts, model_load, model_pins, node_state, plugin_io, refs,
                 sched, sizing, spaces, stats)
 from .dispatch import Level
 from .acquire import engine as acquire_engine
@@ -451,6 +451,57 @@ def stage_fts(con, row, collection) -> None:
                    f"indexed {len(batch)} documents / {n_chunks} chunks "
                    f"in one commit ({took:.1f}s)")
 
+#: how long a collection's embed stage stays idle before its encoder's pin
+#: is restored (app/model_pins.py): the idle boundary of the stage, as long
+#: as an idle on-demand embedder stays loaded (IDLE_BEATS settle beats)
+PIN_IDLE_S = 120.0
+#: the worker's holds on its encoders: holder -> [documents in use, last used]
+_pins: dict[str, list] = {}
+_pins_lock = threading.Lock()
+
+
+def _pin_begin(collection, recipe) -> str:
+    """THE EMBED STAGE PINS ITS ENCODER from its first batch to its idle
+    boundary (operator, 2026-10-23: "model eviction during processing shall
+    be forbidden … a slow down is acceptable, breaking a processing mid way
+    is not"). Counted in, so a document of several hours is never released
+    under itself; `_release_idle_pins` restores it once nothing has used it
+    for PIN_IDLE_S. Never raises, never waits beyond model_pins' timeouts."""
+    holder = f"{model_pins.WORKER}embed {collection.name}"
+    with _pins_lock:
+        entry = _pins.setdefault(holder, [0, 0.0])
+        entry[0] += 1
+    try:
+        model_pins.hold(getattr(recipe, "url", None), getattr(recipe, "model", None),
+                        holder, collection=collection.name)
+    except Exception:   # noqa: BLE001 — a pin is a safeguard, never a gate
+        pass
+    return holder
+
+
+def _pin_end(holder: str) -> None:
+    with _pins_lock:
+        entry = _pins.get(holder)
+        if entry is not None:
+            entry[0] = max(0, entry[0] - 1)
+            entry[1] = time.time()
+
+
+def _release_idle_pins(now: float | None = None) -> list[str]:
+    """The settle beat's: the pins of embed stages idle for PIN_IDLE_S go,
+    each model back to its state before. Under the lock, so a stage that
+    starts meanwhile pins afresh rather than losing its pin."""
+    now = time.time() if now is None else now
+    gone: list[str] = []
+    with _pins_lock:
+        for holder, (n, last) in list(_pins.items()):
+            if n == 0 and now - last >= PIN_IDLE_S:
+                del _pins[holder]
+                model_pins.release(holder)
+                gone.append(holder)
+    return gone
+
+
 def stage_embed(con, row, collection) -> None:
     chunks = _load_chunks(row, collection)
     # lock_con serializes the delete+add pair against a concurrent bundle
@@ -459,6 +510,7 @@ def stage_embed(con, row, collection) -> None:
     started = time.time()
     counts = embeddings.EmbedCounts()
     stats.recorder().set_in_flight(collection.name, 1)
+    pin = _pin_begin(collection, collections_mod.recipe_for(collection))
     try:
         # `stop` bounds SIGTERM to one slice: a 5,335-chunk document is
         # 5.3 h of encoder time, and "finish the current unit" has to mean
@@ -477,6 +529,7 @@ def stage_embed(con, row, collection) -> None:
             validity.mark_synced(con, [int(row["native_id"])])
     finally:
         stats.recorder().set_in_flight(collection.name, 0)
+        _pin_end(pin)
     # Timed around the encoder call only — not around _load_chunks, and not
     # around the manifest write below — so the figure on the Stats page is
     # the endpoint's throughput and nothing else. Comparing a CPU encoder
@@ -1495,6 +1548,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
             in_flight[pool.submit(work, row, held)] = row["uid"]
         stats.recorder().set_in_flight(collection.name, len(in_flight))
 
+    pin = _pin_begin(collection, recipe)
     try:
         with ThreadPoolExecutor(max_workers=window) as pool:
             refill(pool)
@@ -1514,6 +1568,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
         flush()         # what was embedded is written, SIGTERM included
     finally:
         stats.recorder().set_in_flight(collection.name, 0)
+        _pin_end(pin)
     if wrong_endpoint:
         _pause_embedding(con, collection, wrong_endpoint[-1])
     elif done:
@@ -4328,8 +4383,11 @@ def _publish_pass(collection, codex, con, *, stop, log) -> dict:
     key = node_keys.load_signing_key()
     own = identity.own()
     recipe = collections_mod.recipe_for(collection)
+    # the encoder is pinned while the pass embeds and restored when it ends
+    # (app/model_pins.py); a `worker ` holder, so a killed worker's is dropped at boot
+    holder = f"{model_pins.WORKER}publisher {collection.name}"
     embed, _before_write = encoder_use.callables(codex, recipe, root=root, name=collection.name, stop=stop,
-                                                 holder=encoder_use.holder("publisher"), log=log)
+                                                 holder=holder, log=log)
     now = time.time()
     # 04 §4.2: announced only where it is served — the file shares and the mode seeds
     serving = bool(getattr(collection, "share", False)) and \
@@ -4337,12 +4395,15 @@ def _publish_pass(collection, codex, con, *, stop, log) -> dict:
     with closing(peers.connect()) as node_con:
         live = cov.live_peers(codex, node_con, now=now, own_key=own,
                               own_benchmarks=cov.own_benchmarks(root, collection.name, codex, own))
-        return contribute.once(
-            root, collection.name, codex, key=key, own_key=own, embed=embed,
-            vectors_for=lambda ids: embeddings.vectors_by_chunk_id(ids, collection=collection),
-            held_books=lambda ids: embeddings.books_with_vectors(ids, collection=collection),
-            write=None, live=live, con=con, node_con=node_con, now=now, stop=stop, log=log,
-            batch=config.EMBED_SLICE_CHUNKS, serving=serving, collection=collection, build=False)
+        try:
+            return contribute.once(
+                root, collection.name, codex, key=key, own_key=own, embed=embed,
+                vectors_for=lambda ids: embeddings.vectors_by_chunk_id(ids, collection=collection),
+                held_books=lambda ids: embeddings.books_with_vectors(ids, collection=collection),
+                write=None, live=live, con=con, node_con=node_con, now=now, stop=stop, log=log,
+                batch=config.EMBED_SLICE_CHUNKS, serving=serving, collection=collection, build=False)
+        finally:
+            encoder_use.release(holder)
 
 
 def _publisher_beat(budget_s: float | None = None) -> dict[str, dict]:
@@ -4462,6 +4523,16 @@ def _settle_runs_for_search() -> None:
             collections = collections_mod.load_all()
         except Exception:   # noqa: BLE001 — the next beat
             continue
+        # the pins of embed stages past their idle boundary, back to their
+        # state before; what dead holders left; a failed restore, retried
+        # (app/model_pins.py)
+        try:
+            _release_idle_pins()
+            with _pins_lock:
+                live = set(_pins)
+            model_pins.reconcile(live=live, own_idle_s=PIN_IDLE_S)
+        except Exception:   # noqa: BLE001 — never the thread
+            pass
         # and each beat, the embedders no held collection names (a removal
         # made while the worker was down, a model loaded by hand)
         try:
@@ -4545,6 +4616,8 @@ def _stats_publisher() -> None:
                 con = db.connect(control)
                 owner = control.name
             db.publish_worker_stats(con, stats.recorder().snapshot())
+            # pinned now, left pinned, failed calls (app/model_pins.py)
+            db.publish_model_pins(con, model_pins.counters())
             # SEEDING lives on this thread: it is telemetry-shaped work
             # (start published torrents, gate on the worker state, credit
             # uploaded bytes to the UP bucket, publish the table) and the
@@ -4803,6 +4876,13 @@ def run_forever():
     # the members a collection's file asks for and the SHARD lacks, by
     # torrent from the peers that serve them (04 §4.3; app/share/transport.py):
     # its own thread, since a metadata wait is bounded by minutes
+    # the pins a killed worker left are restored before anything embeds, and
+    # what was found is said (app/model_pins.py; bounded by its timeouts)
+    model_pins.set_worker()
+    try:
+        model_pins.reconcile(boot=True)
+    except Exception:   # noqa: BLE001 — a safeguard, never a boot blocker
+        pass
     # the runs of collections that hold vectors and do not embed here,
     # settled for search (03 §3.3; `_settle_runs_for_search`)
     threading.Thread(target=_settle_runs_for_search, name="settle-runs", daemon=True).start()
