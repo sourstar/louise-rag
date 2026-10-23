@@ -323,6 +323,18 @@ RERANK_FUSE = False
 #: with no catalogue hit — every descriptive one measured — is untouched.
 CATALOG_FIRST = True
 
+#: How records in DIFFERENT languages are ordered after each was judged
+#: against the question in its own language (05 §5.6, amended 2026-10-23):
+#: "score" — by the reranker's score alone; "slots" — the reranker orders
+#: each language's records among themselves, and each language keeps the
+#: positions the fused order gave it, so two languages' scores are never
+#: compared. Measured first on six it/en pairs (München, 2026-10-23):
+#: "score" took MRR 0.119 → 0.444 but showed an Italian query 9–10 of 10
+#: non-Italian records and lost La vita nuova — an English pair scores
+#: systematically higher than an Italian one on bge-reranker-v2-m3. Not
+#: switched until campaign run 5 measures both.
+RERANK_LANGUAGE_ORDER = "score"
+
 
 def _catalog_first(order: list[int], head: list[dict]) -> list[int]:
     """`order` with the catalogue leg's rank-1 record of `head` moved first."""
@@ -341,6 +353,20 @@ def _rerank_order(scores: list[float], *, fuse: bool) -> list[int]:
     rerank_rank = {i: r for r, i in enumerate(by_score, 1)}
     return sorted(range(len(scores)), key=lambda i: (-(1.0 / (RRF_K + i + 1) + 1.0 / (RRF_K + rerank_rank[i])),
                                                      rerank_rank[i], i))
+
+
+def _by_language_slots(head: list[dict], scores: list[float]) -> list[int]:
+    """RERANK_LANGUAGE_ORDER "slots": each language's records in the
+    reranker's order, each in the positions its language held in the fused
+    order — scores of two languages are never compared."""
+    def lang(i: int) -> str:
+        return (head[i].get("lang") or "").lower()
+    queues: dict[str, list[int]] = {}
+    for i in range(len(head)):
+        queues.setdefault(lang(i), []).append(i)
+    for q in queues.values():
+        q.sort(key=lambda i: (-scores[i], i))
+    return [queues[lang(p)].pop(0) for p in range(len(head))]
 
 
 def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
@@ -451,8 +477,11 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
         if i not in best or scores[t] > best[i][0]:
             best[i] = (scores[t], c)
     ranked = []
-    order = _rerank_order([best[i][0] for i in range(len(head))], fuse=RERANK_FUSE) \
-        if set(best) == set(range(len(head))) else sorted(best, key=lambda i: (-best[i][0], i))
+    if RERANK_LANGUAGE_ORDER == "slots" and len(groups) > 1 and set(best) == set(range(len(head))):
+        order = _by_language_slots(head, [best[i][0] for i in range(len(head))])
+    else:
+        order = _rerank_order([best[i][0] for i in range(len(head))], fuse=RERANK_FUSE) \
+            if set(best) == set(range(len(head))) else sorted(best, key=lambda i: (-best[i][0], i))
     if CATALOG_FIRST:
         order = _catalog_first(order, head)
     for i in order:

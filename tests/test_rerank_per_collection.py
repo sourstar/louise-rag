@@ -315,3 +315,29 @@ def test_a_failing_variant_call_is_the_fused_order_said_so(monkeypatch):
     hits = [{"chunk_id": "g:1:0:1", "book_id": 1, "lang": "it", "text": "a"},
             {"chunk_id": "g:2:0:1", "book_id": 2, "lang": "en", "text": "b"}]
     assert retrieval._rerank_list("q", hits, JINA, 5.0, queries={"en": "q-en"}) == (hits, False)
+
+
+def test_slots_order_each_language_by_score_in_the_positions_it_held(monkeypatch):
+    """RERANK_LANGUAGE_ORDER "slots": an English pair scoring systematically
+    higher than an Italian one cannot push the Italian records out — each
+    language keeps its fused positions, reordered among themselves."""
+    head = [{"lang": "it"}, {"lang": "en"}, {"lang": "it"}, {"lang": "en"}, {"lang": "it"}]
+    scores = [0.1, 5.0, 0.9, 7.0, 0.5]
+    assert retrieval._by_language_slots(head, scores) == [2, 3, 4, 1, 0]
+
+
+def test_the_slots_order_is_what_rerank_list_returns_when_switched(monkeypatch):
+    monkeypatch.setattr(retrieval, "RERANK_LANGUAGE_ORDER", "slots")
+    monkeypatch.setattr(retrieval, "CATALOG_FIRST", False)
+
+    def post(url, json=None, timeout=None, headers=None):
+        # every English pair outscores every Italian one
+        base = 10.0 if json["query"] == "q-en" else 0.0
+        return _Resp({"results": [{"index": i, "relevance_score": base + i}
+                                  for i in range(len(json["documents"]))]})
+    monkeypatch.setattr(retrieval.httpc, "post", post)
+    hits = [{"chunk_id": f"g:{n}:0:1", "book_id": n, "lang": lang, "text": f"t{n}"}
+            for n, lang in enumerate(["it", "it", "en", "en"])]
+    out, ok = retrieval._rerank_list("q", hits, JINA, 5.0, queries={"en": "q-en"})
+    assert ok and [h["lang"] for h in out] == ["it", "it", "en", "en"], "the Italian records keep their places"
+    assert [h["book_id"] for h in out] == [1, 0, 3, 2], "each language in the reranker's order"
