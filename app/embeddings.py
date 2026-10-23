@@ -1393,7 +1393,8 @@ def _reusable(chunk: dict) -> bool:
 def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
                 lock_con=None, stop=None, *, held: "HeldRead | None" = None,
                 sink: "PendingWrites | None" = None, reuse: bool = True,
-                counts: "EmbedCounts | None" = None, columns: dict | None = None) -> int:
+                counts: "EmbedCounts | None" = None, columns: dict | None = None,
+                given: dict | None = None) -> int:
     """Write one document's vectors, delete-then-insert (invariant 2),
     INCREMENTALLY and resumably.
 
@@ -1490,6 +1491,15 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
         if reuse:
             carry = {chunk_text_hash(r["text"]): r["vector"] for r in have.values()}
         done = set()
+    if given:
+        # `given`: chunk_id -> vector from an accepted bundle held here that
+        # holds this record as it is now (app/share/possession.py
+        # `held_vectors`): carried like a held text, never sent to the encoder
+        # (Perugia, 2026-10-23: 12,921 such chunks embedded again)
+        for c in chunks:
+            v = given.get(c["id"])
+            if v is not None and _reusable(c):
+                carry.setdefault(chunk_text_hash(c["text"]), v)
     todo = [c for c in chunks if c["id"] not in done]
     if counts is not None:
         counts.reused += len(done)
