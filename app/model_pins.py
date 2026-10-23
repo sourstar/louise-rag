@@ -327,13 +327,21 @@ def reconcile(*, now: float | None = None, boot: bool = False,
     Returns the (model, holder) pairs dropped; at boot, reports what it found."""
     now = time.time() if now is None else now
     mine = f" pid {os.getpid()}"
+    live = set(live) | in_use()
+    # WHY each went, said as it is (München, 2026-10-23: the worker's own
+    # idle releases were logged as "silent for over 900 s", 1–2 minutes
+    # after they were taken)
+    idle: set[str] = set()
 
     def gone(h: str, t: float) -> bool:
         if h in live:
             return False
-        if own_idle_s is not None and h.endswith(mine) and now - t > own_idle_s:
+        if now - t > HOLDER_TTL_S or (boot and h.startswith(WORKER)):
             return True
-        return now - t > HOLDER_TTL_S or (boot and h.startswith(WORKER))
+        if own_idle_s is not None and h.endswith(mine) and now - t > own_idle_s:
+            idle.add(h)
+            return True
+        return False
     try:
         with _state() as st:
             dropped = _drop(st, gone, now)
@@ -352,10 +360,16 @@ def reconcile(*, now: float | None = None, boot: bool = False,
                     else "; every model they held is back to its state before"))
         else:
             _say("info", "model pin at boot: nothing left pinned by a previous process")
-    elif dropped:
-        _say("warn", f"model pin: {len(dropped)} holder(s) silent for over "
-                     f"{HOLDER_TTL_S:.0f} s dropped "
-                     f"({', '.join(sorted({f'{m} ({h})' for m, h in dropped}))})")
+    else:
+        released = [(m, h) for m, h in dropped if h in idle]
+        dead = [(m, h) for m, h in dropped if h not in idle]
+        if released:
+            _say("info", f"model pin: released, idle for over {own_idle_s:.0f} s: "
+                         f"{', '.join(sorted({f'{m} ({h})' for m, h in released}))}")
+        if dead:
+            _say("warn", f"model pin: {len(dead)} holder(s) silent for over "
+                         f"{HOLDER_TTL_S:.0f} s dropped "
+                         f"({', '.join(sorted({f'{m} ({h})' for m, h in dead}))})")
     return dropped
 
 
@@ -411,6 +425,62 @@ def hold_for_process(url: str | None, model: str | None, kind: str, *,
         _process_holders.add(holder)
         atexit.register(release, holder)
     return hold(url, model, holder, collection=collection)
+
+
+#: this process's `using` calls in flight, by holder: a holder with a call
+#: in flight is alive whatever its stamp's age (`in_use`, passed as `live`)
+_in_flight: dict[str, int] = {}
+_in_flight_lock = threading.Lock()
+
+
+@contextmanager
+def using(url: str | None, model: str | None, kind: str, *,
+          collection: str | None = None):
+    """One call's processing under this process's holder: held (and renewed)
+    as it starts, counted in flight until it ends, and stamped again as it
+    ends, so the idle clock starts at the END of the call. München,
+    2026-10-23: the stamp was the call's start, so a call longer than the
+    worker's idle bound could be dropped, and its model unpinned, under it."""
+    holder = process_holder(kind)
+    with _in_flight_lock:
+        _in_flight[holder] = _in_flight.get(holder, 0) + 1
+    try:
+        hold_for_process(url, model, kind, collection=collection)
+        yield
+    finally:
+        with _in_flight_lock:
+            n = _in_flight.get(holder, 1) - 1
+            if n > 0:
+                _in_flight[holder] = n
+            else:
+                _in_flight.pop(holder, None)
+        try:
+            # the end of the call is the last use: the stamp says so
+            _touch(url, model, holder)
+        except Exception:   # noqa: BLE001 — a safeguard, never a gate
+            pass
+
+
+def _touch(url: str | None, model: str | None, holder: str) -> None:
+    """Stamp `holder` now where it still holds `model`; nothing otherwise
+    (a holder released meanwhile is not re-pinned by the end of its call)."""
+    if not url or not model or not _applies(model):
+        return
+    from app import model_load
+    k = _key(model_load.server_of(url), model)
+    try:
+        with _state() as st:
+            entry = st["pins"].get(k)
+            if entry is not None and holder in entry["holders"]:
+                entry["holders"][holder] = time.time()
+    except OSError:
+        pass
+
+
+def in_use() -> set[str]:
+    """This process's holders with a call in flight."""
+    with _in_flight_lock:
+        return set(_in_flight)
 
 
 @contextmanager

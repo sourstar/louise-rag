@@ -224,8 +224,45 @@ def test_the_embed_client_pins_processing_and_not_a_query(runner, monkeypatch):
     monkeypatch.setattr(embeddings, "_embed_texts", lambda items, **kw: [[0.0]] * len(items))
     embeddings.embed_query(None, "a question", recipe=recipe)
     assert runner.calls == []
-    embeddings._pin(recipe, collection="gutenberg")
+    embeddings.embed_calibration(recipe, ["a calibration text"])
     assert runner.pinned[M] is True
+    assert model_pins.in_use() == set(), "the call ended: nothing in flight"
+
+
+def test_a_call_in_flight_is_never_dropped_however_long_it_runs(runner):
+    """München, 2026-10-23: the holder's stamp was its call's START, so a
+    call longer than the worker's 120 s idle bound could be dropped, and its
+    model unpinned, mid-call — what the operator forbade."""
+    import time
+    with model_pins.using(URL, M, "embed"):
+        model_pins.reconcile(now=time.time() + 10_000, own_idle_s=120)
+        assert runner.pinned[M] is True, "in flight: alive whatever its stamp's age"
+    # ended: the idle clock starts at the END of the call
+    model_pins.reconcile(now=time.time() + 60, own_idle_s=120)
+    assert runner.pinned[M] is True
+    model_pins.reconcile(now=time.time() + 121, own_idle_s=120)
+    assert runner.pinned[M] is False
+
+
+def test_an_idle_release_is_said_as_one_not_as_a_dead_holder(runner):
+    """The live node logged the worker's own 120 s releases as "silent for
+    over 900 s dropped", one or two minutes after they were taken."""
+    import time
+    model_pins.hold_for_process(URL, M, "embed")
+    model_pins.hold(URL, "vega-dar-legal-it", "embed pid 999999", now=time.time() - 1000)
+    runner.said.clear()
+    model_pins.reconcile(now=time.time() + 121, own_idle_s=120)
+    lines = {lvl: t for lvl, t in runner.said}
+    assert "released, idle for over 120 s" in lines["info"] and M in lines["info"]
+    assert "silent for over 900 s" in lines["warn"] and "vega-dar-legal-it" in lines["warn"]
+    assert M not in lines["warn"]
+
+
+def test_the_end_of_a_call_does_not_pin_again_what_was_released(runner):
+    with model_pins.using(URL, M, "embed"):
+        model_pins.release(model_pins.process_holder("embed"))
+        assert runner.pinned[M] is False
+    assert runner.pinned[M] is False and runner.puts() == ["pin", "unpin"]
 
 
 def test_the_worker_releases_an_embed_stage_at_its_idle_boundary(runner, monkeypatch):

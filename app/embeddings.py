@@ -778,20 +778,22 @@ def _inputs(collection, chunks: list[ChunkLike]) -> list[Item]:
     return out
 
 
-def _pin(recipe, *, collection: str | None = None) -> None:
+def _pin(recipe, *, collection: str | None = None):
     """PROCESSING PINS ITS ENCODER (operator, 2026-10-23: "model eviction
     during processing shall be forbidden"): every chunk and calibration
     embed holds the model in LocalAI for this process, its state before
     restored once the process ends or goes idle (app/model_pins.py). A
     search's query (`embed_query`) does not: a slowdown is acceptable there.
-    Never raises; a failed pin call is reported there and the embed goes on."""
+    Never raises; a failed pin call is reported there and the embed goes on.
+    A context around the call: in flight, the holder is never idle."""
+    from contextlib import nullcontext
     from app import model_pins
     try:
-        model_pins.hold_for_process(getattr(recipe, "url", None),
-                                    getattr(recipe, "model", None), "embed",
-                                    collection=collection)
+        return model_pins.using(getattr(recipe, "url", None),
+                                getattr(recipe, "model", None), "embed",
+                                collection=collection)
     except Exception:   # noqa: BLE001 — a safeguard, never a gate
-        pass
+        return nullcontext()
 
 
 def embed_chunks(collection, chunks: list[ChunkLike], *,
@@ -817,7 +819,12 @@ def embed_chunks(collection, chunks: list[ChunkLike], *,
         collection = collections_mod.default_collection()
     if recipe is None:
         recipe = collections_mod.recipe_for(collection)
-    _pin(recipe, collection=getattr(collection, "name", None))
+    with _pin(recipe, collection=getattr(collection, "name", None)):
+        return _embed_chunks(collection, chunks, recipe=recipe, timeout=timeout,
+                             runs=runs, raw=raw)
+
+
+def _embed_chunks(collection, chunks, *, recipe, timeout, runs, raw) -> list[list[float]]:
     items = _inputs(collection, list(chunks))
     pairs_at = [i for i, x in enumerate(items) if not isinstance(x, str)]
     if pairs_at and recipe.api not in PAIR_APIS:
@@ -878,16 +885,16 @@ def embed_calibration(recipe: "collections_mod.EmbedRecipe", texts: list[Item], 
     if query and any(not isinstance(t, str) for t in texts):
         raise InputFormError("the query side embeds one text in every space; a "
                              "text pair is a document's form (09 §9.3, input forms)")
-    _pin(_side(recipe, query))
-    if one_at_a_time:
-        return _embed_one_at_a_time(texts, recipe=recipe, query=query,
-                                    timeout=timeout, runs=runs, asked=asked)
-    kw = _kw(timeout, runs, raw)
-    if query:
-        kw["query"] = True
-        if asked:
-            kw["asked"] = True
-    return _embed_texts(texts, recipe=recipe, **kw)
+    with _pin(_side(recipe, query)):
+        if one_at_a_time:
+            return _embed_one_at_a_time(texts, recipe=recipe, query=query,
+                                        timeout=timeout, runs=runs, asked=asked)
+        kw = _kw(timeout, runs, raw)
+        if query:
+            kw["query"] = True
+            if asked:
+                kw["asked"] = True
+        return _embed_texts(texts, recipe=recipe, **kw)
 
 # A document with more chunks than this is not resumed by reading its text
 # back — the read would cost more than the re-embedding it saves.
