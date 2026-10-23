@@ -68,6 +68,18 @@ def no_model_is_pinned(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_disk_floor(monkeypatch):
+    """The vector store's free-space floor (app/disk_guard.py, 32 GiB) is the
+    HOST's business: a runner with less free disk deferred every vector
+    import in three unrelated tests (test_accept's survivor 2026-10-19,
+    test_deprecate and test_bundle_worker 2026-10-23, at 19.5 GiB free). The
+    tests of the floor set their own values (tests/test_disk_guard.py)."""
+    from app import config
+    monkeypatch.setattr(config, "VECTORS_MIN_FREE_GB", 0.0)
+    monkeypatch.setattr(config, "VECTORS_MIN_FREE_FRACTION", 0.0)
+
+
+@pytest.fixture(autouse=True)
 def a_fresh_torrent_session():
     """The process-wide libtorrent session (app/acquire/transport_torrent.py)
     is shut down after any test that started one, so the next starts clean.
