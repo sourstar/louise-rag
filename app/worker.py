@@ -31,6 +31,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
+from typing import Callable
 
 import httpx
 
@@ -4318,6 +4319,24 @@ def _control_state_for_beat(node_con) -> str | None:
         return None
 
 
+#: the mode the main loop last acted on, for `_say_mode`
+_mode_seen: list[str | None] = [None]
+
+
+def _say_mode(state: str) -> None:
+    """ONE LINE when the mode the worker acts on changes, and at its first
+    read (2026-10-23: the node set seed-only at 12:25 and the worker's log
+    had no line saying whether the worker ever read it — the question an
+    operator who needs the GPU asks first)."""
+    if _mode_seen[0] == state:
+        return
+    before, _mode_seen[0] = _mode_seen[0], state
+    runs = sorted(node_state.MODE_RUNS.get(state, frozenset()))
+    said = "read" if before is None else f"{before} -> {state}"
+    _node_line("control")(f"node mode {said}: runs {', '.join(runs) if runs else 'nothing'} "
+                          f"(read from {node_state.path()})")
+
+
 def _note_pause_from_state(state: str) -> None:
     """Set `_paused` if the node's state says so, and NEVER clear it — see
     the comment at the call in `_stats_publisher`. Stopping late is the
@@ -4359,13 +4378,32 @@ _publish_said: dict[str, str] = {}
 class _Until:
     """A stop that is also a deadline: `once` and `export` ask `is_set()`
     between units, so a pass yields at its budget and the next beat resumes
-    (CLAUDE.md: a pipeline thread never waits without a bound)."""
+    (CLAUDE.md: a pipeline thread never waits without a bound).
 
-    def __init__(self, deadline: float, stop: threading.Event):
-        self.deadline, self.stop = deadline, stop
+    AND THE MODE (2026-10-23): `still()` says whether the work may go on —
+    the node's mode still embeds, the collection is not paused. The beat
+    asked it once, at its start, so a pass begun before the operator's
+    seed-only went on embedding into the card they had asked for (München:
+    the publisher pinned and embedded with pubmed's encoder at 13:03, the
+    node seed-only since 12:25). Asked at most every STILL_S."""
+
+    STILL_S = 5.0
+
+    def __init__(self, deadline: float, stop: threading.Event,
+                 still: Callable[[], bool] | None = None):
+        self.deadline, self.stop, self.still = deadline, stop, still
+        self._asked, self._ok = 0.0, True
 
     def is_set(self) -> bool:
-        return self.stop.is_set() or time.monotonic() >= self.deadline
+        if self.stop.is_set() or time.monotonic() >= self.deadline:
+            return True
+        if self.still is not None and time.monotonic() - self._asked >= self.STILL_S:
+            self._asked = time.monotonic()
+            try:
+                self._ok = bool(self.still())
+            except Exception:   # noqa: BLE001 — unreadable: runs nothing, as everywhere
+                self._ok = False
+        return not self._ok
 
 
 def _publish_pass(collection, codex, con, *, stop, log) -> dict:
@@ -4447,7 +4485,11 @@ def _publisher_beat(budget_s: float | None = None) -> dict[str, dict]:
 
             def say(m: str, _con=con) -> None:
                 db.log_event(_con, "info", "share", m[:500])
-            out = _publish_pass(c, codex, con, stop=_Until(time.monotonic() + budget_s, _stop), log=say)
+            def still(_name=c.name) -> bool:
+                return (node_state.runs(node_state.worker_state(), node_state.EMBED)
+                        and _name not in node_state.paused_collections())
+            out = _publish_pass(c, codex, con, stop=_Until(time.monotonic() + budget_s, _stop, still),
+                                log=say)
             _publish_state[c.name] = {
                 "at": time.time(), "snapshot": out.get("snapshot_id"), "peers": out.get("peers"),
                 "probed": out.get("probed", 0), "bundled": len(out.get("held", [])),
@@ -4543,11 +4585,26 @@ def _settle_runs_for_search() -> None:
                                       f"that names them embeds everything")
         except Exception:   # noqa: BLE001 — never the thread
             pass
+        # A SETTLE EMBEDS (sixteen texts, a whole set for a new run), so it is
+        # the EMBED activity of the node's mode, as the embed stage is
+        # (app/node_state.py): seed-only or paused, the encoder is not loaded
+        # for it (operator, 2026-10-23: the node suspended because the
+        # operator needs the GPU). Nor for a collection the node has paused.
+        # The vector leg of an unsettled collection waits; search answers
+        # from its other legs meanwhile.
+        try:
+            embeds = node_state.runs(node_state.worker_state(), node_state.EMBED)
+            paused = node_state.paused_collections()
+        except Exception:   # noqa: BLE001 — unreadable: runs nothing, as everywhere
+            embeds, paused = False, set()
+        if not embeds:
+            continue
         for c in collections:
             if _stop.is_set():
                 return
             key = str(getattr(c, "manifest_path", c.name))
-            if key in _settled_for_search or not run_check.applies(c) or not holds_vectors(c):
+            if c.name in paused or key in _settled_for_search \
+                    or not run_check.applies(c) or not holds_vectors(c):
                 continue
             con = None
             try:
@@ -4958,6 +5015,7 @@ def run_forever():
             # happens; publishing is how the web process sees it.
             db.publish_worker_stats(control_con, stats.recorder().snapshot())
             state = node_state.worker_state(node_con)
+            _say_mode(state)
             # WHAT A MODE RUNS is one table (app/node_state.py: MODE_RUNS;
             # operator, 2026-09-19), read here and by every other gate.
             if not node_state.runs(state, node_state.FETCH):

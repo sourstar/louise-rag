@@ -1035,7 +1035,7 @@ def cmd_node_pause(a) -> int:
         return 0
     state = "acquire-only" if a.acquire_only else "seed-only" if a.seed_only else "paused"
     node_state.set_worker_state(state)
-    _print({"node": state})
+    _print({"node": state, "store": str(node_state.path())})
     return 0
 
 
@@ -1491,7 +1491,10 @@ def cmd_node_resume(a) -> int:
         _print({"paused": sorted(names)})
         return 0
     node_state.set_worker_state("running")
-    _print({"node": "running"})
+    # the store written, said: the worker obeys the one it reads (its log
+    # names it: "node mode … (read from …)"), and a command run with another
+    # LOUISE_ROOT writes another (2026-10-23)
+    _print({"node": "running", "store": str(node_state.path())})
     return 0
 
 

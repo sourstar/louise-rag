@@ -8,6 +8,14 @@ from types import SimpleNamespace
 from app import run_check, worker
 
 
+def _running(monkeypatch):
+    """The node in a mode that embeds, nothing paused: a settle embeds."""
+    from app import node_state
+    monkeypatch.setattr(node_state, "worker_state", lambda *a: "running")
+    monkeypatch.setattr(node_state, "paused_collections", lambda *a: set())
+    monkeypatch.setattr(worker, "_sweep_unheld_embedders", lambda collections: [])
+
+
 def test_a_collection_holding_vectors_is_settled_once_and_one_without_is_left(tmp_path, monkeypatch):
     held = tmp_path / "held"
     (held / "lance" / "chunks.lance").mkdir(parents=True)
@@ -20,6 +28,7 @@ def test_a_collection_holding_vectors_is_settled_once_and_one_without_is_left(tm
     monkeypatch.setattr(worker.db, "connect", lambda c: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(worker, "_settled_for_search", set())
     monkeypatch.setattr(worker, "SETTLE_BEAT_S", 0.0)
+    _running(monkeypatch)
     settled = []
     beats = []
 
@@ -48,6 +57,7 @@ def test_a_deferral_is_tried_again_at_the_next_beat(tmp_path, monkeypatch):
     monkeypatch.setattr(run_check, "applies", lambda c: True)
     monkeypatch.setattr(worker.db, "connect", lambda c: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(worker, "_settled_for_search", set())
+    _running(monkeypatch)
     answers = [False, True]
     calls = []
 
@@ -67,3 +77,42 @@ def test_a_deferral_is_tried_again_at_the_next_beat(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "_stop", Stop())
     worker._settle_runs_for_search()
     assert len(calls) == 2, "the encoder away once: asked again, then settled and left"
+
+
+def test_a_mode_that_does_not_embed_settles_nothing(tmp_path, monkeypatch):
+    """A settle embeds sixteen texts: the EMBED activity of the node's mode.
+    2026-10-23: the node went seed-only because the operator needed the GPU,
+    and this thread, asking every minute, would have loaded an encoder for a
+    collection not yet settled. Nor is a collection the node paused settled."""
+    from app import node_state
+    held = tmp_path / "held"
+    (held / "lance" / "chunks.lance").mkdir(parents=True)
+    other = tmp_path / "other"
+    (other / "lance" / "chunks.lance").mkdir(parents=True)
+    a = SimpleNamespace(name="a", manifest_path=held / "manifest.sqlite", lance_dir=held / "lance")
+    p = SimpleNamespace(name="p", manifest_path=other / "manifest.sqlite", lance_dir=other / "lance")
+    monkeypatch.setattr(worker.collections_mod, "load_all", lambda: [a, p])
+    monkeypatch.setattr(run_check, "applies", lambda c: True)
+    monkeypatch.setattr(worker.db, "connect", lambda c: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(worker, "_settled_for_search", set())
+    monkeypatch.setattr(worker, "_sweep_unheld_embedders", lambda collections: [])
+    mode = ["seed-only"]
+    monkeypatch.setattr(node_state, "worker_state", lambda *a: mode[0])
+    monkeypatch.setattr(node_state, "paused_collections", lambda *a: {"p"})
+    settled = []
+    monkeypatch.setattr(run_check, "embed_allowed",
+                        lambda con, collection, *, stop=None: settled.append(collection.name) or True)
+    beats = []
+
+    class Stop:
+        def wait(self, s):
+            beats.append(s)
+            if len(beats) == 3:
+                mode[0] = "running"            # the operator resumes
+            return len(beats) > 4
+
+        def is_set(self):
+            return False
+    monkeypatch.setattr(worker, "_stop", Stop())
+    worker._settle_runs_for_search()
+    assert settled == ["a"], "nothing while seed-only; once running, the held one, never the paused"
