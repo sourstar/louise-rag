@@ -138,3 +138,21 @@ def test_record_hashes_read_the_current_snapshot_once(tmp_path, monkeypatch):
     assert possession.record_hashes(tmp_path, "books") == {"u1": "h1", "u3": "h3"}
     assert possession.record_hashes(tmp_path, "books") == {"u1": "h1", "u3": "h3"}
     assert reads == [1, 2], "the parts read once per snapshot"
+
+
+def test_a_fetched_shard_s_hashes_fill_the_manifest_s_empty_column(collection, monkeypatch):
+    """Only `hold records build` wrote documents.content_hash; a peer that
+    fetched its SHARD had it NULL everywhere (Perugia, 2026-10-23). The
+    maintainer fills it from the current snapshot, never overwriting."""
+    con = db.connect(collection)
+    uids = [u for (u,) in con.execute("SELECT uid FROM documents ORDER BY uid")]
+    con.execute("UPDATE documents SET content_hash=NULL")
+    con.execute("UPDATE documents SET content_hash='built-newer' WHERE uid=?", (uids[0],))
+    monkeypatch.setattr(possession, "record_hashes",
+                        lambda root, name: {u: f"snap-{u}" for u in uids[:-1]})
+    n = worker._fill_content_hashes(con, collection)
+    got = dict(con.execute("SELECT uid, content_hash FROM documents"))
+    assert got[uids[0]] == "built-newer", "never overwritten"
+    assert all(got[u] == f"snap-{u}" for u in uids[1:-1]) and got[uids[-1]] is None
+    assert n == len(uids) - 2
+    assert worker._fill_content_hashes(con, collection) == 0, "once filled, nothing to do"
