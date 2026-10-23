@@ -2073,6 +2073,15 @@ def scan_columns(collection, columns, batch_size: int = 65_536):
                                                           batch_size=batch_size)
 
 
+def fragment_count(collection) -> int:
+    """The vector table's fragments (0 with no table): a Lance delete's filter
+    costs memory per value per fragment (carry._delete_batch)."""
+    db = _conn(collection)
+    if TABLE not in db.table_names():
+        return 0
+    return len(db.open_table(TABLE).to_lance().get_fragments())
+
+
 def stats(collection=None) -> dict:
     db = _conn(collection)
     if TABLE not in db.table_names():

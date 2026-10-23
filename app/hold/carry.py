@@ -1009,8 +1009,21 @@ def keep_producer(root, to_ref: str, producer: str, *, window: int = WINDOW,
     return out
 
 
-#: values in one delete predicate: few passes over the table, a bounded string
+#: values in one delete predicate at most: few passes over the table, a bounded string
 DELETE_BATCH = 50_000
+#: A Lance delete's filter costs memory per value PER FRAGMENT, not per row:
+#: measured on wikipedia-v8 (3,247 fragments, 146 M rows, 2026-10-22) with
+#: `count_rows(filter=book_id IN (...))`, 0.85 GB at 1,000 values and 3.5 GB
+#: at 5,000 — ~0.22 kB a value a fragment — and the keep's first 50,000-value
+#: delete was OOM-killed at 33.8 GB. So a batch is sized from the table's
+#: fragment count to this budget (`_delete_batch`): 1,231 values there.
+DELETE_MEM_KB = 1_000_000
+DELETE_KB_PER_VALUE_FRAGMENT = 0.25
+
+
+def _delete_batch(fragments: int) -> int:
+    """Values per delete predicate on a table of `fragments`, within DELETE_MEM_KB."""
+    return max(100, min(DELETE_BATCH, int(DELETE_MEM_KB / (DELETE_KB_PER_VALUE_FRAGMENT * max(1, fragments)))))
 #: ids sorted in memory per run file of the keep's merge (~150 MB of strings)
 SORT_RUN = 2_000_000
 
@@ -1147,13 +1160,18 @@ def keep_producer_scan(root, to_ref: str, producer: str, *, run: int = SORT_RUN,
             con.execute("COMMIT")
         # step 2: the rows, under the vector write lock, in few predicates
         with embeddings._write_lock(con):
-            for i in range(0, len(whole), DELETE_BATCH):
-                part = whole[i:i + DELETE_BATCH]
+            frags = embeddings.fragment_count(coll)
+            batch = _delete_batch(frags)
+            log(f"[carry] {name}: {batch} value(s) a delete ({frags} fragments, "
+                f"{DELETE_MEM_KB // 1000} MB budget)")
+            for i in range(0, len(whole), batch):
+                part = whole[i:i + batch]
                 tbl.delete(f"{embeddings.BOOK_COLUMN_NAME} IN ({','.join(str(b) for b in part)})")
-                log(f"[carry] {name}: dropped the rows of {i + len(part)} of {len(whole)} whole document(s)")
+                if (i // batch) % 20 == 0 or i + len(part) == len(whole):
+                    log(f"[carry] {name}: dropped the rows of {i + len(part)} of {len(whole)} whole document(s)")
             ids_part = [c for b in partial for c in drop_ids[b]]
-            for i in range(0, len(ids_part), DELETE_BATCH):
-                part = ids_part[i:i + DELETE_BATCH]
+            for i in range(0, len(ids_part), batch):
+                part = ids_part[i:i + batch]
                 quoted = ",".join("'" + c.replace("'", "''") + "'" for c in part)
                 tbl.delete(f"id IN ({quoted})")
     finally:
