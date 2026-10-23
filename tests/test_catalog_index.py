@@ -277,3 +277,29 @@ def test_a_text_index_that_cannot_be_opened_names_the_lock_not_the_schema(col, m
     out = retrieval._search_one_collection(con, c, "Moby", 5, "hybrid", False, set(), plan)
     assert "could not be carried by their text" in out["catalog_leg"]
     assert [leg["leg"] for leg in retrieval._legs_withheld(c, out)] == ["catalog"]
+
+
+def test_a_fresh_start_survives_a_file_written_during_the_removal(col, monkeypatch):
+    """Perugia's gate under load (2026-10-23): "Directory not empty:
+    …/index/_catalog" — the old index is now moved aside atomically and
+    removed best-effort; a leftover is never a text-index group and goes at
+    the next fresh start."""
+    import shutil
+    from pathlib import Path
+    from app import fts
+    c, con = col
+    catalog.backfill(con, c, budget_s=60)
+    real = shutil.rmtree
+
+    def stubborn(path, ignore_errors=False, **kw):
+        (Path(path) / "late.tmp").write_text("x")          # a straggler's file
+        if not ignore_errors:
+            raise OSError(39, "Directory not empty", str(path))
+    monkeypatch.setattr(shutil, "rmtree", stubborn)
+    catalog._fresh_start(c)
+    left = list(catalog.path_for(c).parent.glob("_catalog.old-*"))
+    assert left and catalog.path_for(c).is_dir(), "a fresh index; the old one aside"
+    assert not any(g.startswith("_") for g in fts.existing_groups(c))
+    monkeypatch.setattr(shutil, "rmtree", real)
+    catalog._fresh_start(c)
+    assert not list(catalog.path_for(c).parent.glob("_catalog.old-*")), "swept at the next one"
