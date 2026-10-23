@@ -125,10 +125,10 @@ def _another_writer_commits_first(monkeypatch, write):
     lock, pending = embeddings._write_lock, [write]
 
     @contextlib.contextmanager
-    def lock_after_it(lock_con):
+    def lock_after_it(lock_con, collection=None):
         if pending:
             pending.pop()()
-        with lock(lock_con):
+        with lock(lock_con, collection):
             yield
     monkeypatch.setattr(embeddings, "_write_lock", lock_after_it)
 
