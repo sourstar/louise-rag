@@ -102,8 +102,18 @@ _writer_lock = threading.Lock()
 
 
 def _drain() -> None:
+    """Writes until the queue is empty, then ends: a worker's stop leaves no
+    thread of this module behind."""
+    global _writer
     while True:
-        level, text = _queue.get()
+        try:
+            level, text = _queue.get(timeout=0.5)
+        except queue.Empty:
+            with _writer_lock:
+                if _queue.empty():
+                    _writer = None
+                    return
+            continue
         try:
             _publish(level, text)
         except Exception:   # noqa: BLE001 — a log line never takes a thread down
@@ -115,10 +125,10 @@ def _queued(level: str, text: str) -> None:
     busy timeout to say what happened to its pin."""
     global _writer
     with _writer_lock:
-        if _writer is None or not _writer.is_alive():
+        _queue.put((level, text))
+        if _writer is None:
             _writer = threading.Thread(target=_drain, name="model-pins-log", daemon=True)
             _writer.start()
-    _queue.put((level, text))
 
 
 _say: Callable[[str, str], None] = _queued

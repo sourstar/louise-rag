@@ -242,3 +242,16 @@ def test_the_worker_releases_an_embed_stage_at_its_idle_boundary(runner, monkeyp
     assert worker._release_idle_pins(now=time.time() + 1) == []
     assert worker._release_idle_pins(now=time.time() + worker.PIN_IDLE_S + 1) == [pin]
     assert runner.pinned[M] is False and worker._pins == {}
+
+
+def test_the_log_writer_ends_once_its_lines_are_written(monkeypatch):
+    """A worker's stop leaves no thread behind (tests/test_worker_boot_node_state.py)."""
+    import time
+    written: list[str] = []
+    monkeypatch.setattr(model_pins, "_publish", lambda level, text: written.append(text))
+    model_pins._queued("info", "one")
+    model_pins._queued("error", "two")
+    deadline = time.time() + 5
+    while model_pins._writer is not None and time.time() < deadline:
+        time.sleep(0.05)
+    assert written == ["one", "two"] and model_pins._writer is None
