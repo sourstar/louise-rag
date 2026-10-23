@@ -16,7 +16,8 @@ translator must YIELD: this guard runs on the host beside the measurement and
     measured model + a 2 GiB margin fits the card -- three checks in a row, 5 s apart.
     An unpinned model of Louise's is shut down only when LocalAI has seen no request but
     the worker's embeddings for IDLE_UNLOAD_S (no idle eviction on this node; it reloads on
-    its next use).
+    its next use). Pinned is read LIVE from LocalAI: a model Louise is processing with is
+    pinned for that time (app/model_pins.py) and is never shut down here.
 The measurement client (classical_translation.py) sends nothing while OUT/HOLD exists.
 
 Usage (host): python3 classical_guard.py OUT MODEL_SIZE_MIB MODEL [MODEL...]
@@ -36,7 +37,6 @@ VRAM = Path("/sys/kernel/debug/dri/0000:03:00.0/vram0_mm")
 CARD_MIB = 32656
 MARGIN_MIB = 2048
 IDLE_UNLOAD_S = 900
-PINNED = {"vega-qwen3-embedding-4b", "vega-granite"}       # vega.md §13 (search models unpinned)
 
 OUT = Path(sys.argv[1])
 NEED = int(sys.argv[2])
@@ -66,6 +66,18 @@ def system() -> dict[str, int]:
     with urllib.request.urlopen(f"{URL}/system", timeout=5) as r:
         d = json.load(r)
     return {m["id"]: (m.get("size_vram") or 0) // (1 << 20) for m in d.get("loaded_models") or []}
+
+
+def pinned(model: str) -> bool:
+    """LIVE, never a list (2026-10-23): Louise pins a model while it processes
+    with it and restores it after (app/model_pins.py), so whether a model may
+    be shut down is what LocalAI says now. Unreadable counts as pinned: a
+    guard never shuts down what it cannot see is free."""
+    try:
+        with urllib.request.urlopen(f"{URL}/api/models/config-json/{model}", timeout=5) as r:
+            return bool(json.load(r).get("pinned", False))
+    except Exception:                            # noqa: BLE001
+        return True
 
 
 def shutdown(model: str) -> None:
@@ -122,7 +134,7 @@ def release_loop() -> None:
         except Exception as e:                   # noqa: BLE001
             log(f"release check: {e}")
             continue
-        foreign = {m: s for m, s in listed.items() if m not in PINNED and m not in MINE}
+        foreign = {m: s for m, s in listed.items() if m not in MINE and not pinned(m)}
         now = time.time()
         for m in list(since):
             if m not in foreign:

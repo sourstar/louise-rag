@@ -10,6 +10,8 @@ import pytest
 
 from app import model_pins
 
+#: the real resolution, taken before conftest's autouse stub replaces it
+REAL_APPLIES = model_pins._applies
 SERVER = "http://runner:8080"
 URL = f"{SERVER}/v1/embeddings"
 M = "vega-qwen3-embedding-4b"
@@ -51,6 +53,13 @@ class Runner:
         return [u.rsplit("/", 1)[1] for m, u in self.calls if m == "PUT"]
 
 
+def _system(server):
+    from app import model_load
+    if "llama" in server:
+        raise model_load._NoRoute()      # answers, and not as LocalAI does
+    return frozenset()
+
+
 @pytest.fixture
 def runner(monkeypatch, tmp_path):
     from app import httpc
@@ -58,7 +67,12 @@ def runner(monkeypatch, tmp_path):
     monkeypatch.setattr(httpc, "get", r.get)
     monkeypatch.setattr(httpc, "put", r.put)
     monkeypatch.setattr(model_pins, "_path", lambda: tmp_path / "state" / "model-pins.json")
-    monkeypatch.setattr(model_pins, "_applies", lambda m: m.startswith(model_pins.EMBEDDER_PREFIX))
+    # the real resolution, against a runner that answers /system as LocalAI
+    # does (and `llama:8080`, as llama-server does)
+    from app import model_load
+    monkeypatch.setattr(model_pins, "_applies", REAL_APPLIES)
+    monkeypatch.setattr(model_load, "_fetch_system", _system)
+    model_load.reset()
     said: list[tuple[str, str]] = []
     monkeypatch.setattr(model_pins, "_say", lambda level, text: said.append((level, text)))
     r.said = said
@@ -182,6 +196,25 @@ def test_this_process_holders_go_once_idle(runner):
     assert runner.pinned[M] is False
 
 
+def test_any_localai_model_is_pinned_a_reranker_or_the_chat_model_too(runner):
+    """By USE, not by kind (München, 2026-10-23): LocalAI's pin API serves
+    every model, and a map-reduce over the chat model breaks the same way an
+    embed batch does if the model is evicted between its calls."""
+    for m in ("louise-rerank-medcpt", "qwen3-8b"):
+        with model_pins.holding(f"{SERVER}/v1/chat/completions", m, f"job {m}"):
+            assert runner.pinned[m] is True
+        assert runner.pinned[m] is False
+
+
+def test_a_runner_that_cannot_be_asked_is_tried_and_its_failure_reported(runner, monkeypatch):
+    from app import model_load
+    monkeypatch.setattr(model_load, "_fetch_system", lambda server: None)   # unreachable now
+    model_load.reset()
+    runner.down = True
+    assert model_pins.hold(URL, M, "h") is False
+    assert "read of" in errors(runner)[0]
+
+
 def test_an_encoder_outside_localai_is_not_pinned_nor_reported(runner):
     assert model_pins.hold("http://llama:8080/v1/embeddings", "bge-m3", "h") is False
     assert runner.calls == [] and runner.said == []
@@ -292,3 +325,42 @@ def test_the_log_writer_ends_once_its_lines_are_written(monkeypatch):
     while model_pins._writer is not None and time.time() < deadline:
         time.sleep(0.05)
     assert written == ["one", "two"] and model_pins._writer is None
+
+
+def test_a_long_holding_block_beats_so_no_reconcile_takes_it_for_dead(runner, monkeypatch):
+    """A book's summary is an hour of chapters under one holder: stamped
+    only at its start, another process's reconcile would drop it at 900 s."""
+    import time
+    monkeypatch.setattr(model_pins, "HEARTBEAT_S", 0.05)
+    with model_pins.holding(URL, M, "summary gutenberg-11 (pid 1)"):
+        t0 = time.time()
+        time.sleep(0.3)
+        [entry] = model_pins.status()["pins"]
+        assert entry["holders"]["summary gutenberg-11 (pid 1)"] > t0
+    assert runner.pinned[M] is False
+
+
+def test_a_book_summary_holds_the_chat_model_across_its_chapters(runner, monkeypatch):
+    from app import config, summarize
+    monkeypatch.setattr(config, "CHAT_URL", f"{SERVER}/v1")
+    monkeypatch.setattr(config, "CHAT_MODEL", "qwen3-8b")
+    seen = []
+
+    class Plugin:
+        def split_text(self, text):
+            return [("I", "a"), ("II", "b"), ("III", "c")]
+
+    class Con:
+        def execute(self, sql, args=()):
+            row = {"uid": "g-1", "title": "T", "authors": "A"}
+            return SimpleNamespace(fetchone=lambda: row)
+    monkeypatch.setattr(summarize, "get_cached", lambda con, book_id: None if not seen else {"ok": 1})
+    monkeypatch.setattr(summarize.collections_mod, "default_collection",
+                        lambda: SimpleNamespace(plugin="gutenberg", plugin_instance=lambda: Plugin()))
+    monkeypatch.setattr(summarize.plugin_io, "full_text", lambda plugin, row: "x" * 50_000)
+    monkeypatch.setattr(summarize.db, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(summarize.llm, "chat",
+                        lambda messages, **kw: seen.append(runner.pinned.get("qwen3-8b")) or "s")
+    summarize.summarize_book(Con(), 1)
+    assert seen == [True, True, True, True], "pinned at every chapter and at the reduce"
+    assert runner.pinned["qwen3-8b"] is False, "and its state before restored after"

@@ -5,6 +5,7 @@ identifier (native_id), resolved to a uid internally via the default
 collection. Multi-collection summary lookups are P0.5's job.
 """
 import json
+import os
 import time
 from pathlib import Path
 from . import collections as collections_mod, config, db, llm, plugin_io
@@ -44,15 +45,22 @@ def summarize_book(con, book_id: int, force: bool = False) -> dict:
             title=title, authors=authors, parts=text[:45_000])}], max_tokens=1100)
         chapter_summaries = []
     else:
-        chapters = plugin.split_text(text)
-        chapter_summaries = []
-        for ch_title, body in chapters[:120]:
-            s = llm.chat([{"role": "user", "content": MAP_PROMPT.format(
-                title=title, chapter=ch_title, text=body[:24_000])}], max_tokens=400)
-            chapter_summaries.append({"chapter": ch_title, "summary": s})
-        parts = "\n\n".join(f"{c['chapter']}: {c['summary']}" for c in chapter_summaries)
-        summary = llm.chat([{"role": "user", "content": REDUCE_PROMPT.format(
-            title=title, authors=authors, parts=parts[:48_000])}], max_tokens=1100)
+        # MANY CALLS, ONE PROCESSING: the chat model pinned from the first
+        # chapter to the reduce, its state before restored after — an
+        # eviction between two chapters breaks the summary mid-way
+        # (app/model_pins.py; operator, 2026-10-23)
+        from . import model_pins
+        with model_pins.holding(config.CHAT_URL, config.CHAT_MODEL,
+                                f"summary {uid} (pid {os.getpid()})"):
+            chapters = plugin.split_text(text)
+            chapter_summaries = []
+            for ch_title, body in chapters[:120]:
+                s = llm.chat([{"role": "user", "content": MAP_PROMPT.format(
+                    title=title, chapter=ch_title, text=body[:24_000])}], max_tokens=400)
+                chapter_summaries.append({"chapter": ch_title, "summary": s})
+            parts = "\n\n".join(f"{c['chapter']}: {c['summary']}" for c in chapter_summaries)
+            summary = llm.chat([{"role": "user", "content": REDUCE_PROMPT.format(
+                title=title, authors=authors, parts=parts[:48_000])}], max_tokens=1100)
 
     con.execute(
         "INSERT INTO summaries(uid,model,created_at,summary,chapter_summaries) "

@@ -165,6 +165,17 @@ def loaded_models(server: str) -> frozenset[str] | None:
         return ids
 
 
+def speaks_localai(server: str) -> bool | None:
+    """Is `server` LocalAI? True when its `/system` answers as LocalAI's,
+    False when it answers as something else (llama-server, an OpenAI-style
+    service), None when it cannot be asked now. From `loaded_models`' cache."""
+    if loaded_models(server) is not None:
+        return True
+    with _lock:
+        got = _systems.get(server)
+    return False if got is not None and got[2] == NO_ROUTE_TTL_S else None
+
+
 #: the bound on one unload request
 UNLOAD_TIMEOUT_S = 30.0
 

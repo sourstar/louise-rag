@@ -57,21 +57,25 @@ from typing import Callable, Iterator
 CALL_TIMEOUT_S = 5.0
 #: a holder silent this long is dead; longer than any batch, shorter than an hour
 HOLDER_TTL_S = 900.0
+#: how often a `holding` block stamps its holder while it runs: well inside
+#: HOLDER_TTL_S
+HEARTBEAT_S = 60.0
 #: a holder renewed more recently than this is not written again: an embed
 #: call renews, and a slice is seconds
 RENEW_S = 30.0
 #: after a failed read or pin, this process asks again no sooner: one error
 #: a minute, not one per embed call
 RETRY_S = 60.0
-#: Louise's embedders on the model runner are VeGa's, `vega-<model>`, on
-#: LocalAI (worker.EMBEDDER_PREFIX): only they have LocalAI's pin API. An
-#: encoder elsewhere (llama-server, an OpenAI-style service) is not pinned,
-#: and not reported: nothing failed.
-EMBEDDER_PREFIX = "vega-"
-
-
-def _applies(model: str) -> bool:
-    return model.startswith(EMBEDDER_PREFIX)
+def _applies(server: str, model: str) -> bool:
+    """ANY MODEL LocalAI serves is pinned while it processes — an encoder, a
+    reranker, the chat or translation model (München, 2026-10-23: the pin
+    API is LocalAI's for every model it serves; the rule is by USE, not by
+    kind). A server that answers as something else (llama-server, an
+    OpenAI-style service) has no such API: not pinned, and not reported,
+    since nothing failed. One that cannot be asked now is tried, and a
+    failure is reported."""
+    from app import model_load
+    return model_load.speaks_localai(server) is not False
 
 
 _retry_after: dict[str, float] = {}
@@ -224,10 +228,12 @@ def hold(url: str | None, model: str | None, holder: str, *,
     True when the model is pinned for it; False when it runs unpinned.
     `collection`, when the processing is one collection's, names it in a
     failure, for `hold collection show`."""
-    if not url or not model or not _applies(model):
+    if not url or not model:
         return False
     from app import model_load
     server = model_load.server_of(url)
+    if not _applies(server, model):
+        return False
     now = time.time() if now is None else now
     k = _key(server, model)
     if now < _retry_after.get(k, 0.0):
@@ -464,10 +470,13 @@ def using(url: str | None, model: str | None, kind: str, *,
 def _touch(url: str | None, model: str | None, holder: str) -> None:
     """Stamp `holder` now where it still holds `model`; nothing otherwise
     (a holder released meanwhile is not re-pinned by the end of its call)."""
-    if not url or not model or not _applies(model):
+    if not url or not model:
         return
     from app import model_load
-    k = _key(model_load.server_of(url), model)
+    server = model_load.server_of(url)
+    if not _applies(server, model):
+        return
+    k = _key(server, model)
     try:
         with _state() as st:
             entry = st["pins"].get(k)
@@ -487,9 +496,21 @@ def in_use() -> set[str]:
 def holding(url: str | None, model: str | None, holder: str, *,
             collection: str | None = None):
     """`with holding(url, model, holder):` around one processing that ends
-    with the block (a calibration gate, a vectors-sample)."""
+    with the block (a calibration gate, a book's summary). The holder is
+    stamped every HEARTBEAT_S while the block runs, so a block longer than
+    HOLDER_TTL_S is never taken for a dead one by another process's
+    reconcile (an hour of chapters is one processing)."""
     hold(url, model, holder, collection=collection)
+    done = threading.Event()
+
+    def beat() -> None:
+        while not done.wait(HEARTBEAT_S):
+            _touch(url, model, holder)
+    t = threading.Thread(target=beat, name="model-pin-heartbeat", daemon=True)
+    t.start()
     try:
         yield
     finally:
+        done.set()
+        t.join(timeout=CALL_TIMEOUT_S)
         release(holder)
