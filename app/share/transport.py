@@ -644,6 +644,16 @@ def beat(collections, cons: dict, node_con, *, worker_state: str, session_factor
     # the bundles other peers announced (04 §4.5), taken in through the ladder
     if node_con is not None and not (stop is not None and stop.is_set()):
         from app.share import accept
+        # a newer snapshot a neighbour's digest lists, for EVERY collection —
+        # an annotations collection is updated, not replaced (2026-10-23);
+        # its members follow at the next beat
+        try:
+            newer = accept.newer_from_digests(root, collections, node_con, stop=stop, now=now, log=log)
+            if newer.get("pulled") or newer.get("failed"):
+                out["snapshots"] = newer
+        except Exception as e:   # noqa: BLE001 — one beat, not the thread
+            if log:
+                log(f"[warn:share] newer snapshots: {type(e).__name__}: {e}"[:400])
         try:
             # bundles, flags and forgeries are about vectors: an annotations
             # collection has none (02 §2.10)
