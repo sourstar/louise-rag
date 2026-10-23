@@ -24,17 +24,17 @@ def test_only_the_managed_keys_change():
     assert current["memory_reclaimer_threshold"] == 0.68, "the input is not modified"
 
 
-#: the encoders Louise embeds with continuously (vega.md §12: "pin an encoder
-#: that Louise embeds with continuously"); lost on 2026-10-18 when the backend
-#: switch rewrote their YAMLs, and LocalAI then evicted gutenberg's encoder 129
-#: times in 72 h, between a batch's calls (operator, 2026-10-23: "model
-#: eviction during processing shall be forbidden")
-CONTINUOUS = ("vega-qwen3-embedding-4b", "vega-dar-legal-it", "vega-medcpt-article-ov")
+#: the encoders processing pins for its duration and restores after (app/model_pins.py;
+#: operator, 2026-10-23: "reading the pinning status, in case pinning a model before
+#: processing, then restoring the previous pinning status after"). Their resting state is
+#: UNPINNED: a static pin here would keep the card from other models while nothing runs,
+#: and the scoped pin would find it pinned and never release it.
+SCOPED = ("vega-qwen3-embedding-4b", "vega-dar-legal-it", "vega-medcpt-article-ov")
 
 
-def test_the_continuously_used_encoders_are_staged_pinned():
+def test_the_scoped_pin_encoders_rest_unpinned():
     import json
-    for name in CONTINUOUS:
+    for name in SCOPED:
         text = (ROOT / "deploy" / "vega" / "stage" / "models" / f"{name}.yaml").read_text()
         body = json.loads("\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#")))
-        assert body.get("pinned") is True, f"{name} is not pinned"
+        assert body.get("pinned") is False, f"{name} is staged pinned"

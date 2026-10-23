@@ -18,5 +18,5 @@
     "seed": 0
   },
   "threads": 6,
-  "pinned": true
+  "pinned": false
 }
