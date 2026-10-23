@@ -250,6 +250,10 @@ Everything except two items travels through this repository.
 | **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
 | **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
 
+### 2026-10-23: a restart is explained before anything resumes (operator)
+
+"To stay on the safe side, in the future track why system restarts." Perugia's PC restarted twice in the night (Windows Update), killing the gutenberg adoption and a gate mid-run; nothing was lost (staging empty, every step resumable). Standing practice for every session driving a machine: on finding it restarted (short uptime, tasks ended together, containers just up), read WHY before resuming and report when, why and what was interrupted. Windows: `Get-WinEvent -FilterHashtable @{LogName='System'; Id=1074,1076,6005,6006,6008,41}` (1074 names the initiator — TrustedInstaller = Windows Update; 6008/41 = unexpected); Linux/TrueNAS: `last -x reboot shutdown`, `journalctl --list-boots`, `journalctl -b -1 -n 50`. Read-only; Windows Update settings are the operator's decision.
+
 ### 2026-10-22: knowledge-base pipelines — specified, WAITING (operator)
 
 Proposal `notes/kb-pipelines.md` (D1 fusing spaces by rank, D2 pipelines in Louise TOML, D3 upstream after); specs `notes/kb-pipelines-spec.md` and `notes/kb-protocol-extensions.md`, both DRAFT. Operator: wait for the end of the current developments, then summarize what is planned and decide. Nothing built.
