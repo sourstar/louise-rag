@@ -358,3 +358,39 @@ before adding any other.
   fake: **scores that separate, and the relevant passage first.**
 - The April 2026 timestamps on Qwen's reranker repos are README and
   Sentence-Transformers commits, not new weights.
+
+## 14. Trained rerankers for the cross-language bias (2026-10-23)
+
+**Why now.** On gutenberg, bge-reranker-v2-m3 scores an Italian query
+against an English passage far below a same-language pair: Moby-Dick −5.298
+against "la balena bianca e l'ossessione del capitano", +1.204 against its
+English translation (München, the node). 834baf5 judges each candidate
+against the question in its own language, and then English pairs outscore
+Italian ones (an Italian query 9–10 of 10 non-Italian); 8bee186 orders each
+language in its fused slots. Both work around a model whose scores are not
+on one scale across languages. The operator asked for trained models.
+
+**Candidates** (Hugging Face, 2026-10-23; licences read from the repos):
+
+| model | licence | size | cross-lingual | GGUF / runner | note |
+|---|---|---|---|---|---|
+| **Qwen/Qwen3-Reranker-0.6B** | Apache-2.0 | 0.6B | trained multilingual + cross-lingual (arXiv 2506.05176) | **`ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF`** | §13 *measured* on the Arc: Italian query vs English passage, the relevant one first; 1.86 s / 40 × 2,000 chars |
+| Qwen/Qwen3-Reranker-4B | Apache-2.0 | 4B | as above, stronger | no trusted GGUF: convert, then §13's two checks | ~5.8 s/query modelled |
+| nvidia/llama-nemotron-rerank-1b-v2 | OpenMDW-1.1 + Llama 3.2 licence | 1.2B | **"fine-tuned for multilingual, cross-lingual QA retrieval"**, 26 languages incl. it | transformers (bidirectional Llama, custom code): sidecar, not llama.cpp | licence to read for a published pack |
+| mixedbread-ai/mxbai-rerank-base-v2 / large-v2 | Apache-2.0 | 0.5B / 1.5B | 100+ languages (arXiv 2506.03487) | transformers (Qwen2 causal); TEI-tagged | |
+| Alibaba-NLP/gte-multilingual-reranker-base | Apache-2.0 | 0.3B | 70+ languages | TEI | fast; weaker ceiling |
+| Horizon-Labs/multilingual-reranker-base | Apache-2.0 | 0.3B | ~50 languages, MIRACL-distilled | TEI (ModernBERT) | published 2026-10, unproven |
+| jinaai/jina-reranker-v3, v2-multilingual, m0 | **CC-BY-NC-4.0** | — | — | — | **ruled out** (§13: non-commercial weights) |
+
+**What to measure, and the deciding number.** Campaign run 5's harness
+(`tools/measure/rerank_lang_variants.py`, the product's own path) with the
+reranker swapped, on the 39 titles, 451 descriptive and the it/en pairs,
+plus one number no aggregate shows: the **cross-language gap** — the mean
+score of a relevant pair whose query and passage differ in language minus
+that of a same-language one, on the pairs. A model whose gap is near zero
+needs neither 834baf5 nor the slots: the typed question against every
+candidate, one call, one scale. Each candidate is bit-exact first
+(invariant 12 applies to a reranker's scores as to an encoder's vectors:
+the same pair, the same score). Order: Qwen3-Reranker-0.6B (a trusted GGUF
+on the runner Louise already uses), then 4B (converted), then nemotron
+(licence read first).
