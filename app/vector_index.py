@@ -394,15 +394,17 @@ def stats(collection) -> dict | None:
         return {"rows": rows, "indexed": False, "book_id_indexed": book_id_indexed,
                 "fragments": fragments, "small_fragments": small_fragments}
     name = getattr(indices[0], "name", None)
-    unindexed = None
+    unindexed = n_indices = None
     try:
         st = tbl.index_stats(name) if name else None
         unindexed = getattr(st, "num_unindexed_rows", None) if st is not None else None
+        # the base and its deltas (`refresh` writes one per call)
+        n_indices = getattr(st, "num_indices", None) if st is not None else None
     except Exception:   # noqa: BLE001
         pass
     return {"rows": rows, "indexed": True, "name": name,
             "type": str(getattr(indices[0], "index_type", "")),
-            "unindexed_rows": unindexed,
+            "unindexed_rows": unindexed, "indices": n_indices,
             "book_id_indexed": book_id_indexed,
             "fragments": fragments, "small_fragments": small_fragments}
 
@@ -814,11 +816,32 @@ def refresh(collection, con=None, *, log=None) -> dict:
                        f"fragment(s); this collection's maintenance waits until it ends")
     ds = _dataset(tbl)
     t0 = time.monotonic()
+    merged = None
     if ds is not None:
         # THE INDEX ONLY (2026-09-17): folding new rows in is what a
         # refresh is for, and `optimize()` would compact the whole table
         # on the way — the cost that kept this from running at all.
-        ds.optimize.optimize_indices()
+        #
+        # AS A DELTA (2026-10-23). With no argument Lance folds the new rows
+        # into the NEWEST index — on normattiva the 7.5M-row base, rewritten
+        # whole (713 -> 719 partitions): 404.9 s for 591,591 rows on a clone,
+        # against 93.1 s for a delta over the new rows alone (München; the
+        # night's 20,838 s was that call starved at nice 10 under load 11.6
+        # on 12 cores). A delta costs with the NEW rows, never with the table.
+        ds.optimize.optimize_indices(num_indices_to_merge=0)
+        # and the deltas are merged into one once there are more than
+        # VECTOR_INDEX_MAX_INDICES (the base never: rebuilding it is `build`).
+        # Measured here (IVF_PQ, nprobes 30, refine 30): 24 ms a query up to 5
+        # indices, 36 ms at 9, 41 ms at 13; merging four deltas 0.4 s over a
+        # 300k or a 900k base alike, merging the base too 0.7 s / 1.1 s.
+        forget(collection)
+        mid = stats(collection) or {}
+        n = mid.get("indices")
+        if n is not None and n > config.VECTOR_INDEX_MAX_INDICES:
+            again = _dataset(_table(collection))
+            if again is not None:
+                again.optimize.optimize_indices(num_indices_to_merge=n - 1)
+                merged = n - 1
     else:
         tbl.optimize(cleanup_older_than=timedelta(
             hours=max(0.0, config.VECTOR_INDEX_KEEP_VERSIONS_H)))
@@ -826,7 +849,9 @@ def refresh(collection, con=None, *, log=None) -> dict:
     dt = time.monotonic() - t0
     after = stats(collection) or {}
     msg = (f"vector index refreshed: {before.get('unindexed_rows')} unindexed rows folded in "
-           f"({dt:.0f}s); {after.get('unindexed_rows')} remain")
+           f"({dt:.0f}s); {after.get('unindexed_rows')} remain"
+           + (f"; {after.get('indices')} index(es)" if after.get("indices") is not None else "")
+           + (f", {merged} delta(s) merged into one" if merged else ""))
     if con is not None:
         db.log_event(con, "info", "index", msg)
     elif log:

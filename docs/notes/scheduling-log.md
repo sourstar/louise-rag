@@ -921,3 +921,44 @@ cursor in a scratch state dir; nothing written to a manifest):
 - AFTER, steady state: 3.9, 3.9, 3.9, 3.8 s, 0 books re-examined. One pass
   right after the conversion re-examined 287 (staged at the conversion's
   end, not yet promoted); every later pass 0. **+0.6–1.2 s a pass.**
+
+### 2026-10-23 — a vector index refresh writes a delta; the deltas merge past four — PREPARED
+
+**Why.** normattiva's maintainer logged nothing 01:00–06:00 on 10-22/23; the
+one refresh line of 10-22 read "196048 unindexed rows folded in (20838s)",
+and the night's prune and compaction never got a turn (35k versions, 22,683
+small fragments).
+
+**Before** (München, ZFS clones of normattiva's table at 13:27, normattiva
+paused, 4 cpus / 12 GiB per container, the node otherwise busy with the
+records build and the worker): 8,178,785 rows, 22,691 fragments (22,683
+under 10k rows), 35,172 versions, IVF_PQ 713 partitions, 591,591 unindexed.
+- `optimize_indices()` (the deployed call): **404.9 s** (~0.68 ms a row);
+  partitions 713 → 719 — the NEWEST index, here the base, rewritten.
+- `optimize_indices(num_indices_to_merge=0)`: **93.1 s** (4.3×).
+- `compact_files` 30.4 s (22,685 → 5 fragments); `cleanup_old_versions`
+  887.3 s (35,174 versions, 78 GB of the table's 82 GB).
+- The night itself: load 11.6 on 12 cores at 01:46, the maintainer at
+  nice 10 — the 20,838 s was this call starved, not a hang.
+
+**Measured here** (lance 9.0.1, IVF_PQ 512 partitions, dim 768): a query
+(nprobes 30, refine 30) 24 ms with 1–5 indices, 36 ms at 9, 41 ms at 13;
+merging four deltas 0.4 s over a 300k or a 900k base alike, merging the
+base too 0.7 / 1.1 s. A no-argument `optimize_indices()` over 13 indices
+merged none of them (0.4 s, 13 left).
+
+**Change.** `refresh` calls `optimize_indices(num_indices_to_merge=0)` —
+a delta over the new rows — and, past `VECTOR_INDEX_MAX_INDICES` (4), merges
+the deltas (`indices - 1`), never the base. The log line names the index
+count and a merge.
+
+**After** (to fill in on the node): the first nightly refresh lines of
+normattiva — seconds per refresh and rows folded in, the index count, and
+whether prune ("pruned …") and compaction ("compaction started …") get
+their turns the same night. Scenario to record with it: which collections
+embed (normattiva p2p at night?), the node mode, the load average.
+
+**Not in this change, measured and next:** compaction before the refresh
+when both are due (the per-row cost on 22k fragments was ~7× the 2k
+fragments' here — to measure on one clone: compact, then the delta); the
+maintainer's nice under a saturated CPU.

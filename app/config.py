@@ -422,6 +422,11 @@ VECTOR_INDEX_REFRESH_ROWS = int(os.getenv("VECTOR_INDEX_REFRESH_ROWS", "50000"))
 # for 115k new rows — it must not run every 50k rows there
 VECTOR_INDEX_REFRESH_FRACTION = float(os.getenv("VECTOR_INDEX_REFRESH_FRACTION", "0.02"))
 VECTOR_INDEX_REFRESH_S = int(os.getenv("VECTOR_INDEX_REFRESH_S", "1800"))
+# A refresh writes a DELTA index over the new rows (app/vector_index.py
+# `refresh`); past this many indices (the base and its deltas) the deltas are
+# merged into one. Measured 2026-10-23: a query costs the same up to 5, +50 %
+# at 9, +70 % at 13; merging the deltas costs with their rows, not the base's.
+VECTOR_INDEX_MAX_INDICES = int(os.getenv("VECTOR_INDEX_MAX_INDICES", "4"))
 # How long Lance keeps SUPERSEDED versions of a vector table. This is not a
 # tuning knob, it is a disk-usage decision, and the default was costing more
 # than everything else on the pool: `optimize()` with no argument prunes

@@ -563,3 +563,35 @@ def test_a_long_call_says_it_started_before_it_runs(collection, monkeypatch):
     out = vector_index.compact(collection, log=said.append)
     assert out["compacted"]
     assert said[0].startswith("compaction started:") and said[1].startswith("compacted ")
+
+
+def test_a_refresh_writes_a_delta_and_merges_the_deltas_past_the_cap(collection, monkeypatch):
+    """München, 2026-10-23, on a clone of normattiva: the default call folded
+    591,591 new rows into the 7.5M-row base, rewritten whole, in 404.9 s; a
+    delta over the new rows took 93.1 s. Deltas pile up, and a query pays per
+    index past five, so they are merged — never the base — past the cap."""
+    monkeypatch.setattr(config, "VECTOR_INDEX_MAX_INDICES", 3)
+    _fill(collection, 600)
+    vector_index.build(collection, index_type="ivf_flat", partitions=4)
+    asked: list[int | None] = []
+    real = vector_index._dataset
+
+    def spied(tbl):
+        ds = real(tbl)
+        inner = ds.optimize.optimize_indices
+
+        class Opt:
+            def optimize_indices(self, **kw):
+                asked.append(kw.get("num_indices_to_merge"))
+                return inner(**kw)
+        return type("DS", (), {"optimize": Opt()})()
+    monkeypatch.setattr(vector_index, "_dataset", spied)
+    counts = []
+    for i in range(4):
+        _fill(collection, 50, seed=10 + i, start=1000 + 100 * i)
+        out = vector_index.refresh(collection)
+        assert out["refreshed"] and out["after"]["unindexed_rows"] == 0
+        counts.append(out["after"]["indices"])
+    assert asked[0] == 0, "a delta over the new rows, never the newest index rewritten"
+    assert counts == [2, 3, 2, 3], "past the cap the deltas merge into one beside the base"
+    assert 3 in asked, "the merge takes the deltas (indices - 1), never the base"
