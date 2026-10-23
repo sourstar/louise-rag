@@ -248,6 +248,16 @@ are the ones that have drifted; prefer to add a test when you touch them.
   **Offering the choice is itself the error**: do not present "proceed
   now, repair afterwards" as an option to the operator, and do not take
   it alone. Stop, fix, verify, then continue.
+- **Do not reinvent the wheel** (operator, 2026-10-19; restated
+  2026-10-23). Before building a mechanism, use the standard or the tool
+  that already does it — the library's own call, the protocol, the
+  algorithm with a name — and name it in the code and the commit. Build
+  our own only where none fits, and say why. Paid for: CPU weighting left
+  to cgroups v2 `cpu.weight`, scheduling to DRR/AIMD/CFS
+  (docs/notes/architecture-v2.md); bundles and attestations on the
+  digest's existing messages, BitTorrent v2 and the mainline DHT
+  (docs/notes/p2p-review-open-issues.md); a vector index refresh as
+  Lance's own delta index, not a rebuild of ours.
 - A per-round cost scales with the work available, never with the size of
   a list or the corpus. If a per-item cost depends on how much has been
   processed so far, it is a bug however fast it looks at fixture scale.
