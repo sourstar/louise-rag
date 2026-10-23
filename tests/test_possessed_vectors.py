@@ -31,6 +31,17 @@ def collection(tmp_path, isolated_config, corpus_dir):
     return c
 
 
+def _multi_chunk(con, collection):
+    """A document that cuts to at least two chunks, whatever order discovery
+    found the fixture corpus in (a Windows bind mount lists 10002 — one
+    chunk — first; München's gate, 2026-10-23)."""
+    for row in con.execute("SELECT * FROM documents ORDER BY uid"):
+        chunks = worker._load_chunks(row, collection)
+        if len(chunks) >= 2:
+            return row, chunks
+    raise AssertionError("the fixture corpus holds no document of two chunks")
+
+
 def _bundle(tmp_path, chunk_ids, vectors, challenge=2):
     d = tmp_path / "bundle"
     d.mkdir()
@@ -65,8 +76,7 @@ def test_the_embed_stage_carries_a_possessed_record_and_asks_the_encoder_nothing
     monkeypatch.setattr(embeddings, "_embed_batch",
                         lambda batch, timeout, recipe, **kw: asked.extend(batch) or [[0.5] * 4 for _ in batch])
     con = db.connect(collection)
-    row = con.execute("SELECT * FROM documents ORDER BY rowid LIMIT 1").fetchone()
-    chunks = worker._load_chunks(row, collection)
+    row, chunks = _multi_chunk(con, collection)
     given = {c["id"]: [float(i), 1.0, 0.0, 0.0] for i, c in enumerate(chunks)}
     counts = embeddings.EmbedCounts()
     embeddings.upsert_book(int(row["native_id"]), row["lang"], chunks, collection, given=given,
@@ -83,9 +93,7 @@ def test_a_chunk_the_bundle_lacks_is_still_embedded(collection, monkeypatch):
     monkeypatch.setattr(embeddings, "_embed_batch",
                         lambda batch, timeout, recipe, **kw: asked.extend(batch) or [[0.5] * 4 for _ in batch])
     con = db.connect(collection)
-    row = con.execute("SELECT * FROM documents ORDER BY rowid LIMIT 1").fetchone()
-    chunks = worker._load_chunks(row, collection)
-    assert len(chunks) >= 2
+    row, chunks = _multi_chunk(con, collection)
     given = {chunks[0]["id"]: [1.0, 0.0, 0.0, 0.0]}
     counts = embeddings.EmbedCounts()
     embeddings.upsert_book(int(row["native_id"]), row["lang"], chunks, collection, given=given,
