@@ -1,35 +1,22 @@
-# backend: the louise-python tree installed BESIDE its predecessor under a dated name
-# (docs/notes/louise-python-rebuild.md §2.3–2.4); -20261020c is the rebuild with the jina-v3
-# window fix (context_size 1024, the instruction on top), live 2026-10-20 08:51Z. A rebuild changes this line and nothing else.
-# vega-dar-legal-it — the Italian legal collection's encoder (decided 2026-09-20;
-# memory/legal-encoder-decided). jurifindit/DAR-legal-it at revision
-# de7867e4d6b14a7da6e5fb4aee59cc543b9fa04a (unchanged since 2025-10-08, so the weights
-# gazzetta-plugin.md §7.1b measured), on torch XPU, behind VeGa: backend
-# vega-louise-dar-legal-it, the wrapper in front of louise-dar-legal-it. Its
-# architecture (GteModel) has no llama.cpp converter, so no GGUF. MEAN pooling, sdpa,
-# no query prefix here (the Codex's space.query.instruction is Louise's to add).
-# context_size: the longest text in tokens, the server's MAX_SEQ. PINNED since
-# 2026-10-13 11:09 UTC, when normattiva began embedding with it (through the API:
-# vega.md §12 — this file is put back afterwards, the call drops comments). The weights: /mnt/ssd5/apps/models/dar-legal-it, under
-# the one read-only weights mount. JSON, which is YAML.
 {
-  "name": "vega-dar-legal-it",
-  "backend": "vega-louise-python-20261020c",
-  "embeddings": true,
-  "pinned": true,
+  "backend": "vega-louise-python-20261021a",
   "context_size": 8192,
-  "threads": 6,
-  "gpu_layers": 0,
-  "parameters": {
-    "model": "weights/dar-legal-it",
-    "batch": 1,
-    "seed": 0
+  "embeddings": true,
+  "env": {
+    "LOUISE_TORCH_DETERMINISTIC": "1",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
   },
+  "gpu_layers": 0,
+  "name": "vega-dar-legal-it",
   "options": [
     "task:dar-legal-it",
     "device:xpu"
   ],
-  "env": {
-    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
-  }
+  "parameters": {
+    "batch": 1,
+    "model": "weights/dar-legal-it",
+    "seed": 0
+  },
+  "threads": 6,
+  "pinned": false
 }

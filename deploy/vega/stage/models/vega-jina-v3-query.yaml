@@ -1,5 +1,5 @@
 # backend: the louise-python tree installed BESIDE its predecessor under a dated name
-# (docs/notes/louise-python-rebuild.md §2.3–2.4); -20261020c is the rebuild with the jina-v3
+# (docs/notes/louise-python-rebuild.md §2.3–2.4); -20261020c was the rebuild with the jina-v3
 # window fix (context_size 1024, the instruction on top), live 2026-10-20 08:51Z. A rebuild changes this line and nothing else.
 # vega-jina-v3-query — the wikidata collection's QUERY encoder: the same weights folder as
 # vega-jina-v3 with the retrieval.query adapter (an asymmetric space, 02 §2.4: `space.query.encoder`
@@ -13,7 +13,7 @@
 # JSON, which is YAML.
 {
   "name": "vega-jina-v3-query",
-  "backend": "vega-louise-python-20261020c",
+  "backend": "vega-louise-python-20261021a",
   "embeddings": true,
   "pinned": false,
   "context_size": 1024,

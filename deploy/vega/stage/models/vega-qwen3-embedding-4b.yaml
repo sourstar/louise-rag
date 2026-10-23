@@ -1,33 +1,25 @@
-# vega-qwen3-embedding-4b — staged in the LocalAI app (docs/notes/vega.md §12), beside the live RAGE;
-# no Louise collection uses it yet. Behind VeGa (backend vega-llama-cpp: the wrapper in front of
-# intel-sycl-f16-llama-cpp), so every vector has a receipt.
-# PINNED (vega.md §11): gutenberg embeds with it continuously (embed = "all").
-# Every load option is RAGE's qwen3-embedding-4b.yaml (/mnt/ssd5/apps/louise-rage/state/localai-models/,
-# read only), the weights the same host files, mounted read-only at
-# /models/weights/<name> (deploy/vega/stage/mounts.py), so the model path is
-# RAGE's too. Only the backend, the env (caches under /data/louise-cache) and
-# `pinned` differ. JSON, which is YAML.
 {
-  "name": "vega-qwen3-embedding-4b",
   "backend": "vega-llama-cpp",
-  "embeddings": true,
-  "pinned": true,
   "context_size": 8192,
-  "threads": 6,
-  "gpu_layers": 999,
-  "flash_attention": "on",
-  "mmap": true,
-  "parameters": {
-    "model": "weights/llama-embed/Qwen3-Embedding-4B-Q4_K_M.gguf",
-    "batch": 8192,
-    "seed": 0
+  "embeddings": true,
+  "env": {
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache",
+    "GGML_SYCL_ENABLE_DNN": "0"
   },
+  "flash_attention": "on",
+  "gpu_layers": 999,
+  "mmap": true,
+  "name": "vega-qwen3-embedding-4b",
   "options": [
     "parallel:1",
     "pooling:last",
     "ubatch:8192"
   ],
-  "env": {
-    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
-  }
+  "parameters": {
+    "batch": 8192,
+    "model": "weights/llama-embed/Qwen3-Embedding-4B-Q4_K_M.gguf",
+    "seed": 0
+  },
+  "threads": 6,
+  "pinned": false
 }

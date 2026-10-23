@@ -1,29 +1,32 @@
-# louise-rerank-bge — staged in the LocalAI app (docs/notes/vega.md §12), beside the
-# live RAGE; no Louise collection uses it yet. bge-reranker-v2-m3, an ordinary model
-# (a rerank writes no vector: no VeGa, no receipt). Every load option is RAGE's
-# bge-reranker.yaml; the backend LocalAI's own intel-sycl-f16-llama-cpp; the weights
-# the same host file, mounted read-only. JSON, which is YAML.
+# 2026-10-21: the strict configuration (OPT/GRAPH/FUSION=0, flash attention off), bit-exact, ctx 2,560.
+# The fast one (flash attention on) returned NaN scores on some batches of 40-72 candidates
+# (LocalAI: "json: unsupported value: NaN", HTTP 500), not reproducibly: kept as
+# /root/louise-rerank-bge.yaml.fast-NaN-20261021, not in use.
 {
-  "name": "louise-rerank-bge",
-  "backend": "intel-sycl-f16-llama-cpp",
+  "backend": "vega-llama-cpp-gen",
+  "context_size": 2560,
   "embeddings": true,
-  "reranking": true,
-  "context_size": 16384,
-  "threads": 6,
-  "gpu_layers": 999,
-  "flash_attention": "on",
-  "mmap": true,
-  "parameters": {
-    "model": "weights/bge-m3/bge-reranker-v2-m3-f16.gguf",
-    "batch": 8192,
-    "seed": 0
-  },
-  "options": [
-    "parallel:4",
-    "ubatch:8192"
-  ],
   "env": {
+    "GGML_SYCL_ENABLE_FUSION": "0",
+    "GGML_SYCL_ENABLE_GRAPH": "0",
+    "GGML_SYCL_ENABLE_OPT": "0",
+    "GGML_SYCL_ENABLE_DNN": "0",
     "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
   },
-  "pinned": true
+  "flash_attention": "off",
+  "gpu_layers": 999,
+  "mmap": true,
+  "name": "louise-rerank-bge",
+  "options": [
+    "parallel:1",
+    "cache_ram:0",
+    "ubatch:2560"
+  ],
+  "parameters": {
+    "batch": 2560,
+    "model": "weights/bge-m3/bge-reranker-v2-m3-f16.gguf",
+    "seed": 0
+  },
+  "reranking": true,
+  "threads": 6
 }
