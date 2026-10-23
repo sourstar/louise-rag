@@ -155,7 +155,13 @@ def test_a_leecher_never_starts_a_deprecated_fetch_and_falls_back_when_the_curre
                                                                      deprecated=ids)
 
 
-def test_a_fetch_in_flight_is_finished_past_half_and_dropped_before(ready):
+def test_a_fetch_in_flight_is_finished_past_half_and_dropped_before(ready, monkeypatch):
+    # the disk floor (app/disk_guard.py) is the host's business, not what is
+    # tested here: a runner with 19.6 GiB free deferred the finished bundle
+    # (2026-10-23; test_accept.py's survivor, 2026-10-19)
+    from app import config
+    monkeypatch.setattr(config, "VECTORS_MIN_FREE_GB", 0.0)
+    monkeypatch.setattr(config, "VECTORS_MIN_FREE_FRACTION", 0.0)
     root, snapshot, codex, kw, sid, kept, dup = _pair(ready)
     dup_dir = contribute.bundle_dir(root, "gutenberg", codex, sid, dup)
     m_dup = mem.bundle_member(codex.space_segment, dup_dir)
