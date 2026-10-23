@@ -8,7 +8,7 @@ session. After Perugia's (D:\louise-agent), adapted to this PC.
 
     cd deploy/agent
     docker build -t louise-agent:local .     # compose 5's `--build` (bake) asks for --allow=fs.read=Dockerfile
-    docker compose up -d                     # or `docker start louise-agent` once it exists
+    docker compose up -d                     # recreates the container with the current command
     docker exec -it louise-agent claude      # first time only: /login, trust the folder, exit
 
 The main process waits until a login exists, then runs `claude remote-control
