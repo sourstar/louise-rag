@@ -1,36 +1,23 @@
-# backend: the louise-python tree installed BESIDE its predecessor under a dated name
-# (docs/notes/louise-python-rebuild.md §2.3–2.4); -20261020c is the rebuild with the jina-v3
-# window fix (context_size 1024, the instruction on top), live 2026-10-20 08:51Z. A rebuild changes this line and nothing else.
-# vega-medcpt-article-ov — staged in the LocalAI app (docs/notes/vega.md §12), beside
-# the live RAGE; no Louise collection uses it yet. MedCPT's article encoder on
-# OpenVINO, `Embedding` of a TEXT PAIR (input-forms.md), behind VeGa: backend
-# vega-louise-medcpt-article-ov, the wrapper in front of louise-medcpt-article-ov.
-# A tagged pair reaches the backend as its pair marker only for a model loaded
-# with `pairs:true` (vega_wrapper). Options as RAGE's medcpt-article-ov.yaml
-# (deploy/rage/localai-models/; never deployed in RAGE). The weights: the IR
-# deploy/medcpt-rerank/convert_article.py wrote on the node (2026-10-08) into
-# /mnt/ssd5/apps/medcpt-models/medcpt-article-ov, mounted read-only. NOT pinned:
-# pubmed embeds nothing (embed = "off"). JSON, which is YAML.
 {
-  "name": "vega-medcpt-article-ov",
-  "backend": "vega-louise-python-20261020c",
-  "embeddings": true,
-  "pinned": false,
+  "backend": "vega-louise-python-20261021b",
   "context_size": 512,
-  "threads": 6,
-  "gpu_layers": 0,
-  "parameters": {
-    "model": "weights/medcpt/medcpt-article-ov",
-    "batch": 1,
-    "seed": 0
+  "embeddings": true,
+  "env": {
+    "LOUISE_BITEXACT_MEASURED": "louise-python-20261021b",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache",
+    "OV_CACHE_DIR": "/data/louise-cache/ov-cache"
   },
+  "gpu_layers": 0,
+  "name": "vega-medcpt-article-ov",
   "options": [
     "task:medcpt-article",
     "device:xpu",
     "pairs:true"
   ],
-  "env": {
-    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache",
-    "OV_CACHE_DIR": "/data/louise-cache/ov-cache"
-  }
+  "parameters": {
+    "batch": 1,
+    "model": "weights/medcpt/medcpt-article-ov",
+    "seed": 0
+  },
+  "threads": 6
 }

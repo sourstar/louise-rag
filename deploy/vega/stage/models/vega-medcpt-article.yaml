@@ -30,6 +30,7 @@
     "ubatch:512"
   ],
   "env": {
-    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache",
+    "GGML_SYCL_ENABLE_DNN": "0"
   }
 }
