@@ -23,8 +23,10 @@ ADD https://huggingface.co/jinaai/jina-embeddings-v3/resolve/ab036b023d30b4d1138
 RUN echo "f59925fcb90c92b894cb93e51bb9b4a6105c5c249fe54ce1c704420ac39b81af  /opt/louise/tokenizers/f59925fcb90c92b894cb93e51bb9b4a6105c5c249fe54ce1c704420ac39b81af.json" \
         | sha256sum -c - && chmod 644 /opt/louise/tokenizers/*.json
 WORKDIR /srv
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# every package at the version the gated image ran (constraints.txt): a rebuild
+# never moves one on its own
+COPY requirements.txt constraints.txt ./
+RUN pip install --no-cache-dir -c constraints.txt -r requirements.txt
 COPY app ./app
 COPY tools ./tools
 # RUNTIME DATA, not a fixture: `app/hold/calibration.py` resolves its sets
@@ -58,6 +60,6 @@ ENV NODE_PATH=/opt/browser-test/node_modules \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-headless-shell
 # gRPC for the VeGa wrapper's tests: the test image only (requirements-dev.txt)
 COPY requirements-dev.txt .
-RUN pip install --no-cache-dir -r requirements-dev.txt
+RUN pip install --no-cache-dir -c constraints.txt -r requirements-dev.txt
 
 FROM base AS runtime
