@@ -380,7 +380,12 @@ on one scale across languages. The operator asked for trained models.
 | mixedbread-ai/mxbai-rerank-base-v2 / large-v2 | Apache-2.0 | 0.5B / 1.5B | 100+ languages (arXiv 2506.03487) | transformers (Qwen2 causal); TEI-tagged | |
 | Alibaba-NLP/gte-multilingual-reranker-base | Apache-2.0 | 0.3B | 70+ languages | TEI | fast; weaker ceiling |
 | Horizon-Labs/multilingual-reranker-base | Apache-2.0 | 0.3B | ~50 languages, MIRACL-distilled | TEI (ModernBERT) | published 2026-10, unproven |
-| jinaai/jina-reranker-v3, v2-multilingual, m0 | **CC-BY-NC-4.0** | — | — | — | **ruled out** (§13: non-commercial weights) |
+| **nlpai-lab/LAMAR-600m** (arXiv 2607.22042, 2026-07) | **MIT** | 0.6B | **trained for exactly this**: stage 1 "English-anchored relevance distillation" from Qwen3-Reranker-4B gives one relevance scale across languages; stage 2 prefers the query's language only among semantically equivalent documents (ko 5.79 vs en 4.99 for the same answer, both far above negatives at −13) | **`XLMRobertaForSequenceClassification`, `type_vocab_size` 1 — the architecture of bge-reranker-v2-m3**, so the runner already serving `louise-rerank-bge` serves it; no segment-id issue (§12). Convert ourselves with `convert_hf_to_gguf.py` (a community GGUF exists, `mradermacher/LAMAR-600m-GGUF`; §13's two checks either way) | 51 training languages, 8,192 tokens; evaluated on MIRACL, XGLUE, MLDR |
+| Querit/Querit-4B (arXiv 2606.19037) | Apache-2.0 | 4B | best MTEB multilingual-v2 reranking average (71.09, 2026-08-29) | Qwen3 base; convert | its card lists zh en es fr de ru ja ko — **not Italian** |
+| nvidia/Nemotron-3.5-Rerank-8B (2026-10-20) | OpenMDW-1.1 | 8.4B | 34 languages incl. it; multimodal | vLLM / transformers | an 8B pointwise model: seconds per query |
+| zeroentropy/zerank-2-reranker | Apache-2.0 | 4B | card lists English only | | not for this |
+| albertobarnabo/bge-reranker-v2-m3-italian | Apache-2.0 | 0.6B | Italian-only fine-tune (+0.010 nDCG@10 on Italian) | same architecture | monolingual: does not address the cross-language scale |
+| jinaai/jina-reranker-v3, v3.5, v2-multilingual, m0 | **CC-BY-NC-4.0** | — | — | — | **ruled out** (§13: non-commercial weights) |
 
 **What to measure, and the deciding number.** Campaign run 5's harness
 (`tools/measure/rerank_lang_variants.py`, the product's own path) with the
@@ -391,6 +396,11 @@ that of a same-language one, on the pairs. A model whose gap is near zero
 needs neither 834baf5 nor the slots: the typed question against every
 candidate, one call, one scale. Each candidate is bit-exact first
 (invariant 12 applies to a reranker's scores as to an encoder's vectors:
-the same pair, the same score). Order: Qwen3-Reranker-0.6B (a trusted GGUF
-on the runner Louise already uses), then 4B (converted), then nemotron
-(licence read first).
+the same pair, the same score). Order: **LAMAR-600m first** (trained for
+the cross-language scale, MIT, the same architecture and runner as the
+reranker it would replace — a drop-in), then Qwen3-Reranker-0.6B (a trusted
+GGUF; its scale is LAMAR's teacher's), then Qwen3-Reranker-4B (converted).
+LAMAR's same-language preference among EQUIVALENT documents agrees with
+one hit per work (05 §5.3: a work shown in the reader's language) — it must
+not demote a work that exists only in another language, and the it/en
+pairs (Moby-Dick, Don Quixote) are exactly that test.
