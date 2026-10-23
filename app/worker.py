@@ -517,11 +517,15 @@ def _possessed_vectors(con, collection, row, chunks) -> dict:
         return {}
     try:
         from app.share import possession
+        root = collections_mod.louise_root() / "collections"
         keys = row.keys() if hasattr(row, "keys") else ()
-        content_hash = row["content_hash"] if "content_hash" in keys else None
+        # the record's hash in the current snapshot, as possession judges it:
+        # the manifest's column is NULL on a peer that never filled it
+        # (Perugia: all 79,659 rows)
+        content_hash = (row["content_hash"] if "content_hash" in keys else None) \
+            or possession.record_hashes(root, collection.name).get(row["uid"])
         if not content_hash:
             return {}
-        root = collections_mod.louise_root() / "collections"
         return possession.held_vectors(root, collection.name, codex, con, row["uid"], content_hash,
                                        [c["id"] for c in chunks])
     except Exception:   # noqa: BLE001 — any doubt embeds

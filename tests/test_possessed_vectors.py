@@ -115,6 +115,26 @@ def test_the_worker_asks_possession_with_the_row_s_content_hash(collection, monk
     monkeypatch.setattr(type(c), "codex", property(lambda self: object()), raising=False)
     got = worker._possessed_vectors(con, c, row, [{"id": "a"}, {"id": "b"}])
     assert got == {"x": [1.0]} and seen == {"uid": row["uid"], "h": "h1", "n": 2}
+    # Perugia, 2026-10-23: the manifest's column NULL on every row — the
+    # record's hash comes from the current snapshot's records instead
     con.execute("UPDATE documents SET content_hash=NULL")
     row = con.execute("SELECT * FROM documents ORDER BY rowid LIMIT 1").fetchone()
-    assert worker._possessed_vectors(con, c, row, [{"id": "a"}]) == {}, "no hash, no claim: embedded"
+    monkeypatch.setattr(possession, "record_hashes", lambda root, name: {row["uid"]: "h-snap"})
+    assert worker._possessed_vectors(con, c, row, [{"id": "a"}]) == {"x": [1.0]} and seen["h"] == "h-snap"
+    monkeypatch.setattr(possession, "record_hashes", lambda root, name: {})
+    assert worker._possessed_vectors(con, c, row, [{"id": "a"}]) == {}, "no hash anywhere, no claim: embedded"
+
+
+def test_record_hashes_read_the_current_snapshot_once(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app.hold import seed
+    possession._hash_memo.clear()
+    snap = SimpleNamespace(snapshot_id="s1", shards=[SimpleNamespace(n=1), SimpleNamespace(n=2)])
+    monkeypatch.setattr(seed, "latest_snapshot", lambda root, name: snap)
+    reads = []
+    monkeypatch.setattr(possession, "part_records",
+                        lambda root, name, s, shard: reads.append(shard.n) or
+                        ([("u1", "h1"), ("u2", None)] if shard.n == 1 else [("u3", "h3")]))
+    assert possession.record_hashes(tmp_path, "books") == {"u1": "h1", "u3": "h3"}
+    assert possession.record_hashes(tmp_path, "books") == {"u1": "h1", "u3": "h3"}
+    assert reads == [1, 2], "the parts read once per snapshot"
