@@ -160,3 +160,44 @@ def test_an_interrupted_update_is_resumed_to_the_same_bytes(tmp_path, monkeypatc
     first = sn.load(d / "snapshots/2026-09.json")
     assert shard_mod.pieces_root_of(d / shard_mod.superseded_name(d / first.shards[0].path, "2026-09")) \
         == first.shards[0].root, "the first snapshot's part is still its own bytes"
+
+
+def test_the_command_updates_it_and_says_what_changed(tmp_path, monkeypatch, capsys):
+    from app import louise
+    a_target(tmp_path)
+    make(tmp_path)
+    f = tmp_path / "new.jsonl"
+    f.write_bytes(claims_file(a_claim(), a_claim("pubmed:2", "pubmed:4")))
+    monkeypatch.setattr(ann, "datetime", type("D", (), {"now": staticmethod(lambda tz=None: OCTOBER)}))
+    base = ["hold", "annotations", "update", NAME, "--root", str(tmp_path), "--claims", str(f)]
+    assert louise.main(base + ["--dry-run"]) == 0
+    dry = json.loads(capsys.readouterr().out)
+    assert dry["written"] is False and dry["added"] == 1 and dry["tombstoned"] == 1
+    assert louise.main(base) == 0
+    got = json.loads(capsys.readouterr().out)
+    assert got["written"] and got["snapshot_id"] == "2026-10" and got["against"] == {"pubmed": TARGET_SNAPSHOT}
+    assert louise.main(["hold", "annotations", "update", NAME, "--root", str(tmp_path), "--against", "pubmed"]) != 0
+    assert "TARGET=SNAPSHOT" in capsys.readouterr().err
+
+
+def test_the_claims_are_re_checked_against_the_targets_records_twin_where_it_serves(tmp_path):
+    """gutenberg's A1f twin (2026-10-20): a same-records carry of the target
+    under a new Codex is what the search reads; an update checks against it."""
+    from app.hold import carry
+    target, _ = a_target(tmp_path)
+    make(tmp_path)
+    twin, _ = a_target(tmp_path, name="pubmed-twin", texts=("one", "two, as the twin holds it", "three", "four"),
+                       cleaning_version=2)
+    assert twin.collection_id != target.collection_id
+    d = col.shard_dir_of(tmp_path, "pubmed-twin")
+    s = sn.load(d / shard_mod.snapshot_path(TARGET_SNAPSHOT))
+    nxt = sn.Snapshot(collection_id=twin.collection_id, snapshot_id="2026-09", previous=s.hash, shards=s.shards,
+                      delta=sn.Delta((), (), ()), files={})
+    (d / shard_mod.snapshot_path("2026-09")).write_bytes(nxt.canonical())
+    (tmp_path / "pubmed-twin" / "state").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "pubmed-twin" / "state" / carry.MARKER).write_text(
+        json.dumps({"done": True, "from": target.collection_id}))
+    got = update(tmp_path)
+    assert got.against == {"pubmed-twin": "2026-09"}
+    c = claims_by_uid(tmp_path, got.snapshot)["annotations:1"]
+    assert c["target_snapshot"] == "2026-09" and got.changed == 2

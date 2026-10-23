@@ -229,6 +229,33 @@ def cmd_create_annotations(a) -> int:
     return 0
 
 
+def cmd_annotations_update(a) -> int:
+    """`hold annotations update <collection> [--claims FILE] [--against
+    TARGET=SNAPSHOT]` (02 §2.10; operator, 2026-10-23: "annotations must be
+    updated, not replaced"): the next snapshot of the same collection,
+    signed with the node key when there is one. Prints what changed."""
+    from app.hold import annotations as ann
+    against = []
+    for v in a.against or ():
+        ref, sep, sid = str(v).partition("=")
+        if not sep or not ref or not sid:
+            raise CodexError(f"--against {v!r}: TARGET=SNAPSHOT, e.g. gutenberg=2026-10")
+        against.append((ref, sid))
+    claims = Path(a.claims).read_bytes() if a.claims else None
+    key = None
+    if not a.dry_run:
+        try:
+            from app.bundles import keys as node_keys
+            key = node_keys.load_signing_key()
+        except Exception:   # noqa: BLE001 — no key: the snapshot is held unsigned (09 §9.4)
+            print("no node key: the snapshot is written unsigned, and `signature` stays "
+                  "inconclusive until a key signs it", file=sys.stderr)
+    got = ann.update(a.root, a.collection, claims=claims, against=against, snapshot_id=a.snapshot,
+                     key=key, now=_utc_now(), dry_run=a.dry_run, log=lambda m: print(m, file=sys.stderr))
+    _print(got.to_dict())
+    return 0
+
+
 def annotation_targets(annotates, from_snapshot) -> list[tuple[str, str]]:
     """`--annotates C --from-snapshot S`, repeated once per target (02 §2.10,
     amended 2026-10-20), as (collection, snapshot) pairs in the order given;
@@ -4244,6 +4271,23 @@ def build_parser() -> argparse.ArgumentParser:
     p = dverbs.add_parser("show", help="a deposit's text and its chunk count")
     p.add_argument("collection"); p.add_argument("key")
     p.set_defaults(fn=cmd_deposit_show)
+
+    anns = nouns.add_parser("annotations", help="an annotations collection's claims (02 §2.10)")
+    averbs = anns.add_subparsers(dest="verb", required=True)
+    p = averbs.add_parser("update", help="the next snapshot of the SAME collection: the claims re-checked "
+                                         "against the target's newer snapshot, or replaced by a new file")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--claims", metavar="FILE", default=None,
+                   help="the whole claim set from now on (JSON Lines): a claim made before keeps its uid, a new "
+                        "one takes the next, one left out is tombstoned. Without it the claims held are re-checked")
+    p.add_argument("--against", action="append", metavar="TARGET=SNAPSHOT", default=None,
+                   help="the target snapshot the claims are checked against (default: the newest held); "
+                        "once per target")
+    p.add_argument("--snapshot", default=None,
+                   help="this snapshot's id (default: the period after the previous one, written during it)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="check and count what would change; write nothing")
+    p.set_defaults(fn=cmd_annotations_update)
 
     recs = nouns.add_parser("records", help="the parsed text of documents")
     rverbs = recs.add_subparsers(dest="verb", required=True)

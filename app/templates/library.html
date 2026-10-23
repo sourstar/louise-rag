@@ -270,9 +270,19 @@
                onchange="setShare('{{ a.name }}', this.checked, '')"> shared</label>
     </div>
   </div>
+  {# updated, not replaced (operator, 2026-10-23): the next snapshot of the
+     SAME collection — the claims re-checked against the targets' newest
+     snapshots, or a new claims file as the whole set from now on #}
   <div class="actions">
+    <button title="re-check every claim against the newest snapshot of what it annotates; a claim whose record is gone is withdrawn"
+            onclick="updateAnnotations('{{ a.name }}', null)">re-check claims</button>
+    <button title="a new claims file is the whole claim set from now on: a claim kept keeps its id, a new one is added, one left out is withdrawn"
+            onclick="document.getElementById('upd_{{ a.name }}').click()">update with a claims file…</button>
+    <input type="file" id="upd_{{ a.name }}" accept=".jsonl,.ndjson,.json" style="display:none"
+           onchange="if(this.files[0])updateAnnotations('{{ a.name }}', this.files[0]); this.value=''">
     <button onclick="removeCollection('{{ a.name }}', '{{ a.source }}')">remove…</button>
   </div>
+  <div id="upd_result_{{ a.name }}"></div>
 </div>
 {% endfor %}
 </div>
@@ -664,6 +674,28 @@ async function createAnnotations(){
     box.innerHTML=`<div class="note">Created <b>${esc(d.name)}</b>: <code>${esc(d.collection_id)}</code><br>
       ${esc(d.claims)} claims in snapshot ${esc(d.snapshot)}${d.signed?', signed':', unsigned (no node key)'} — file <b>${esc(d.held)}</b>; not shared until you turn sharing on.</div>
       <pre class="cli">${esc(d.cli)}</pre>`;
+    setTimeout(()=>location.reload(),2500);
+  }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
+}
+// an annotations collection is UPDATED, not replaced (operator, 2026-10-23):
+// checked first (nothing written), then queued for the worker, which signs
+// the next snapshot; an empty body re-checks the claims held
+async function updateAnnotations(name, file){
+  const box=document.getElementById('upd_result_'+name);
+  const url='/api/hold/annotations/'+encodeURIComponent(name)+'/update';
+  box.innerHTML='<div class="note">checking the claims against the newest snapshot of what they annotate…</div>';
+  try{
+    const p=await postClaims({url:url+'?dry_run=true',file:file||''});
+    const said=`${esc(p.added)} added, ${esc(p.changed)} re-checked or changed, ${esc(p.tombstoned)} withdrawn`
+      +(p.dropped_count?` (${esc(p.dropped_count)} name a record that is gone)`:'')
+      +` — snapshot ${esc(p.snapshot_id)} after ${esc(p.previous_id)}`;
+    if(!(p.added||p.changed||p.tombstoned)){box.innerHTML=`<div class="note">Nothing to update: the claims and the records they name are as ${esc(p.previous_id)} holds them.</div>`;return}
+    if(!confirm(`Update ${name}? ${said.replace(/<[^>]+>/g,'')}`)){box.innerHTML='';return}
+    const q=await postClaims({url,file:file||''});
+    box.innerHTML=`<div class="note">${said} — queued as job ${esc(q.id)}</div>`;
+    const j=await waitForJob(q.id,s=>{box.innerHTML+='<div class="note">'+esc(s)+'</div>'});
+    const d=j.result;
+    box.innerHTML=`<div class="note">Updated: snapshot <b>${esc(d.snapshot_id)}</b>${d.signed?', signed':', unsigned (no node key)'} — ${said}. Peers that hold it take the new snapshot.</div><pre class="cli">${esc(d.cli)}</pre>`;
     setTimeout(()=>location.reload(),2500);
   }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
 }

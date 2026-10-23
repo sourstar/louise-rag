@@ -366,6 +366,10 @@ def test_the_library_shows_an_annotations_collection_on_its_own_card(client, mon
     # the served collection's controls do not apply here
     head = card[:card.index("remove…")]
     assert "grow profile" not in head and "embed mode" not in head and "setEmbedMode" not in head
+    # updated, not replaced (operator, 2026-10-23): re-check, or a new claims file — no form
+    assert "updateAnnotations('pubmed-same-work', null)" in head and "re-check claims" in head
+    assert 'id="upd_pubmed-same-work"' in head and "update with a claims file" in head
+    assert "/api/hold/annotations/" in html
 
 
 def test_sharing_an_annotations_collection_writes_its_file_without_an_encoder(client, monkeypatch):

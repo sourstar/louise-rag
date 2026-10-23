@@ -1123,6 +1123,27 @@ class Update:
                 "snapshot_hash": self.snapshot.hash if self.snapshot is not None else None}
 
 
+def _target_holder(root: Path, collection_id: str) -> tuple[str, Codex]:
+    """The collection held here that answers for the target `collection_id`
+    — the target itself, or its records twin (a same-records carry of it,
+    02 §2.4 A1f: the claims apply to its records, and it is what the search
+    reads) — the one with the newest snapshot; the target itself on a tie."""
+    from . import carry, collection as col
+    from app.share import seeder
+    cands = []
+    for n, c in col._held(Path(root)):
+        if is_annotations(c):
+            continue
+        twin = carry.records_twin_of(Path(root) / n / "state")
+        if collection_id in (c.collection_id, twin):
+            cur = seeder.current_snapshot(col.shard_dir_of(Path(root), n))
+            cands.append(((cur.snapshot_id if cur is not None else ""), c.collection_id == collection_id, n, c))
+    if not cands:
+        return col.resolve(Path(root), collection_id)
+    _, _, n, c = max(cands, key=lambda x: (x[0], x[1]))
+    return n, c
+
+
 def _held_claims(shard_tree: Path, snap) -> dict[tuple, tuple[int, dict[str, Any]]]:
     """identity key -> (claim number, record) for every claim the snapshot
     lists — what keeps a claim's uid across updates."""
@@ -1185,7 +1206,7 @@ def update(root: Path, name: str, *, claims: bytes | None = None,
     ts: list[Target] = []
     against_of: dict[str, str] = {}
     for a in cx.targets_of(codex):
-        tname, tcodex = col.resolve(root, a.collection_id)
+        tname, tcodex = _target_holder(root, a.collection_id)
         ttree = col.shard_dir_of(root, tname)
         want = chosen.pop(tname, None) or chosen.pop(a.collection_id, None)
         if want is None:

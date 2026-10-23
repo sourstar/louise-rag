@@ -429,6 +429,52 @@ async def hold_collection_create_annotations(
     return JSONResponse(status_code=202, content={**jobs.view(jobs.get(job_id)), "preview": preview})
 
 
+@app.post("/api/hold/annotations/{name}/update", dependencies=[Depends(auth.require_admin)])
+async def hold_annotations_update(name: str, request: Request, dry_run: bool = False):
+    """`louise hold annotations update <name>` as one route (07 §7.4; 02
+    §2.10; operator, 2026-10-23: annotations are updated, not replaced). The
+    body is the new claims file (`application/x-ndjson`), the whole claim
+    set from now on; an EMPTY body re-checks the claims held against the
+    targets' newest snapshots. The same check runs first and answers at
+    once — `dry_run` stops there; a refusal is a 409 naming its rule and
+    queues nothing. Otherwise the update is QUEUED for the worker, 202,
+    which holds the key that signs the next snapshot (app/jobs.py)."""
+    import secrets
+    from . import jobs, louise
+    from .hold import annotations as ann
+    from .hold.codex import CodexError
+    parts, received = [], 0
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > CLAIMS_MAX_BYTES:
+            raise HTTPException(413, f"the claims file is over {CLAIMS_MAX_BYTES // (1024 * 1024)} MB")
+        parts.append(chunk)
+    data = b"".join(parts)
+    claims = data if data.strip() else None
+    root = louise._default_root()
+    try:
+        preview = await run_in_threadpool(ann.update, root, name, claims=claims, dry_run=True, log=lambda m: None)
+    except (ann.AnnotationsError, CodexError, ValueError, FileNotFoundError) as e:
+        raise HTTPException(409, str(e)) from None
+    cli = f"louise hold annotations update {name}" + (" --claims FILE" if claims is not None else "")
+    view = {**preview.to_dict(), "cli": cli + (" --dry-run" if dry_run else "")}
+    if dry_run:
+        return view
+    if not (preview.added or preview.changed or preview.tombstoned):
+        return JSONResponse(status_code=200, content={**view, "why": f"nothing to update: the claims and the "
+                                                                    f"records they name are as {preview.previous_id} "
+                                                                    f"holds them"})
+    saved = None
+    if claims is not None:
+        uploads = config.louise_root() / "state" / CLAIMS_UPLOADS
+        uploads.mkdir(parents=True, exist_ok=True)
+        saved = uploads / f"{name}-update-{secrets.token_hex(6)}.jsonl"
+        saved.write_bytes(claims)
+    job_id = jobs.submit(jobs.UPDATE_ANNOTATIONS, {"name": name, "claims_path": str(saved) if saved else None,
+                                                   "cli": cli})
+    return JSONResponse(status_code=202, content={**jobs.view(jobs.get(job_id)), "preview": view})
+
+
 @app.get("/api/node/show", dependencies=[Depends(auth.require_admin)])
 def node_show_route():
     """07 §7.3's `node show` over HTTP (07 §7.4): the mode and overrides in
