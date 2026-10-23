@@ -118,6 +118,10 @@ def test_nothing_changed_writes_nothing_and_one_update_a_period(tmp_path):
     assert got.snapshot is None and (got.added, got.changed, got.tombstoned) == (0, 0, 0)
     assert not (col.shard_dir_of(tmp_path, NAME) / "snapshots/2026-10.json").exists()
     update(tmp_path, claims=claims_file(a_claim()))
+    again = update(tmp_path, claims=claims_file(a_claim()))
+    assert (again.snapshot_id, again.reissued) == ("2026-10", ()), "it stays where it is"
+    assert again.snapshot is None and again.added == again.tombstoned == 0, \
+        "the same file twice is nothing to update, not a refusal for the period"
     with pytest.raises(ann.AnnotationsError, match="once its period opens"):
         update(tmp_path, claims=claims_file(a_claim(), a_claim("pubmed:2", "pubmed:4")))
     assert update(tmp_path, claims=claims_file(a_claim(), a_claim("pubmed:2", "pubmed:4")),
