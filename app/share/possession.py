@@ -277,6 +277,37 @@ def offered_by_part(root: Path, name: str, codex, con, snapshot=None) -> dict[st
 
 # ---- the embed stage's reuse: a record held in a bundle FILE is not embedded ----
 
+#: (collection dir, snapshot id) -> uid -> the record's content_hash, the last one
+_hash_memo: dict[tuple[str, str], dict[str, str]] = {}
+
+
+def record_hashes(root: Path, name: str) -> dict[str, str]:
+    """uid -> content_hash of the CURRENT snapshot's records — the hash
+    possession is judged by (`covered`, `offered_by_part`), read from the
+    per-part files those already keep (`part_records`), once per snapshot
+    in this process. Perugia, 2026-10-23: the manifest's `content_hash`
+    column was NULL on all 79,659 rows there, so a lookup by it matched
+    nothing and 921 chunks a node bundle held for fi/00008 were embedded."""
+    from app.hold import seed
+    try:
+        snap = seed.latest_snapshot(Path(root), name)
+    except Exception:   # noqa: BLE001 — no SHARD here: nothing is known
+        return {}
+    if snap is None:
+        return {}
+    key = (str(Path(root) / name), snap.snapshot_id)
+    hit = _hash_memo.get(key)
+    if hit is not None:
+        return hit
+    out: dict[str, str] = {}
+    for s in snap.shards:
+        for u, h in part_records(root, name, snap, s):
+            if h:
+                out[u] = h
+    _hash_memo.clear()
+    _hash_memo[key] = out
+    return out
+
 #: the vectors of the last bundles read, by bundle id (documents come part by
 #: part, so a part's bundle is read once for its documents, not once each)
 _vectors_cache: dict[str, dict[str, Any]] = {}
