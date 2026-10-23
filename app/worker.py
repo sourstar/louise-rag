@@ -4319,6 +4319,24 @@ def _control_state_for_beat(node_con) -> str | None:
         return None
 
 
+#: the mode the main loop last acted on, for `_say_mode`
+_mode_seen: list[str | None] = [None]
+
+
+def _say_mode(state: str) -> None:
+    """ONE LINE when the mode the worker acts on changes, and at its first
+    read (2026-10-23: the node set seed-only at 12:25 and the worker's log
+    had no line saying whether the worker ever read it — the question an
+    operator who needs the GPU asks first)."""
+    if _mode_seen[0] == state:
+        return
+    before, _mode_seen[0] = _mode_seen[0], state
+    runs = sorted(node_state.MODE_RUNS.get(state, frozenset()))
+    said = "read" if before is None else f"{before} -> {state}"
+    _node_line("control")(f"node mode {said}: runs {', '.join(runs) if runs else 'nothing'} "
+                          f"(read from {node_state.path()})")
+
+
 def _note_pause_from_state(state: str) -> None:
     """Set `_paused` if the node's state says so, and NEVER clear it — see
     the comment at the call in `_stats_publisher`. Stopping late is the
@@ -4997,6 +5015,7 @@ def run_forever():
             # happens; publishing is how the web process sees it.
             db.publish_worker_stats(control_con, stats.recorder().snapshot())
             state = node_state.worker_state(node_con)
+            _say_mode(state)
             # WHAT A MODE RUNS is one table (app/node_state.py: MODE_RUNS;
             # operator, 2026-09-19), read here and by every other gate.
             if not node_state.runs(state, node_state.FETCH):

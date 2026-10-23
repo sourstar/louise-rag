@@ -138,3 +138,17 @@ def test_a_signal_exits_130_as_07_says(monkeypatch):
         worker._stop.clear()
     monkeypatch.setattr(worker, "run_forever", lambda: None)
     assert worker.main() == 0
+
+
+def test_the_mode_the_worker_acts_on_is_said_once_per_change(monkeypatch, capsys):
+    """2026-10-23: seed-only was set at 12:25 and the worker's log had no
+    line saying whether the worker read it."""
+    monkeypatch.setattr(worker, "_mode_seen", [None])
+    worker._say_mode("running")
+    worker._say_mode("running")
+    worker._say_mode("seed-only")
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "node mode" in ln]
+    assert len(lines) == 2
+    assert "node mode read: runs embed, fetch, index, parse, seed" in lines[0]
+    assert "node mode running -> seed-only: runs seed (read from " in lines[1]
+    assert str(node_state.path()) in lines[1]
