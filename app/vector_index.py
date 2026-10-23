@@ -190,6 +190,14 @@ def free_bytes(collection) -> int | None:
         return None
 
 
+def _started(con, log, msg: str) -> None:
+    """The line a long Lance call writes BEFORE it runs."""
+    if con is not None:
+        db.log_event(con, "info", "index", msg)
+    elif log:
+        log(msg)
+
+
 def refresh_due(st: dict | None) -> bool:
     """New rows since the build reach both the absolute and the
     fractional threshold: 50k rows AND 2 % of the table by default — a
@@ -630,6 +638,9 @@ def compact(collection, con=None, *, log=None) -> dict:
             log(msg)
         return {"compacted": False, "reason": "low disk"}
     before = stats(collection) or {}
+    _started(con, log, f"compaction started: {before.get('small_fragments')} small fragment(s) "
+                       f"of {before.get('fragments')}, {before.get('rows')} rows; this "
+                       f"collection's vector writes wait until it ends")
     ds = _dataset(tbl)
     t0 = time.monotonic()
     try:
@@ -794,6 +805,13 @@ def refresh(collection, con=None, *, log=None) -> dict:
             log(msg)
         return {"refreshed": False, "reason": "low disk", "free_gb": free / 2**30}
     before = stats(collection) or {}
+    # SAID BEFORE IT RUNS (München, 2026-10-23): normattiva's night of
+    # 01:00–06:00 logged nothing, and the one refresh line of 10-22 read
+    # 20,838 s. A call that cannot be interrupted and logs only when it ends
+    # is indistinguishable from a hang for hours.
+    _started(con, log, f"vector index refresh started: {before.get('unindexed_rows')} "
+                       f"unindexed rows of {before.get('rows')}, {before.get('fragments')} "
+                       f"fragment(s); this collection's maintenance waits until it ends")
     ds = _dataset(tbl)
     t0 = time.monotonic()
     if ds is not None:

@@ -528,3 +528,38 @@ def test_a_prune_counts_what_it_removed_while_writers_keep_committing(
     tbl = FakeTable(kept=15_000, version=230_000, drops=0, writes=1_656)
     out = vector_index.prune(c, log=said.append)
     assert out["versions_removed"] == 0 and said == []
+
+
+def test_a_long_call_says_it_started_before_it_runs(collection, monkeypatch):
+    """München, 2026-10-23: normattiva's night logged nothing from 01:00 to
+    06:00, and a refresh logs only when it ends (one of 10-22 read 20,838 s)
+    — a call that cannot be interrupted read as a hang. The refresh and the
+    compaction each write a line BEFORE the Lance call."""
+    _fill(collection, 600)
+    vector_index.build(collection, index_type="ivf_flat", partitions=4)
+    _fill(collection, 200, seed=1, start=600)
+    said: list[str] = []
+    seen_at_call: list[int] = []
+    real = vector_index._dataset
+
+    def watched(tbl):
+        ds = real(tbl)
+        inner = ds.optimize.optimize_indices
+
+        class Opt:
+            def optimize_indices(self, **kw):
+                seen_at_call.append(len(said))
+                return inner(**kw)
+        ds_proxy = type("DS", (), {"optimize": Opt()})()
+        return ds_proxy
+    monkeypatch.setattr(vector_index, "_dataset", watched)
+    out = vector_index.refresh(collection, log=said.append)
+    assert out["refreshed"]
+    assert seen_at_call == [1] and said[0].startswith("vector index refresh started: 200 unindexed rows of 800")
+    assert said[1].startswith("vector index refreshed: 200 unindexed rows folded in")
+
+    said.clear()
+    monkeypatch.setattr(vector_index, "_dataset", real)
+    out = vector_index.compact(collection, log=said.append)
+    assert out["compacted"]
+    assert said[0].startswith("compaction started:") and said[1].startswith("compacted ")
