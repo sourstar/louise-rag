@@ -265,3 +265,53 @@ def test_a_long_result_list_never_overflows_the_answers_context():
     assert "[13]" in msg and "[14]" not in msg, "24,000 characters of passages, in page order"
     ten = retrieval.build_answer_messages("q", {"hits": hits[:10], "catalog": []})[1]["content"]
     assert "[10]" in ten, "the default ten always fit"
+
+
+def test_each_candidate_is_reranked_against_the_query_in_its_own_language(monkeypatch):
+    """2026-10-23, the operator: "I see results returned only in the language
+    of the query". Measured on the node: Moby-Dick's English passage scored
+    -5.298 against the Italian query (last of five) and +1.204 against its
+    English translation (first): the reranker demoted every hit not in the
+    query's language. Each candidate is now judged against the variant in its
+    own language, the translations the language plan already made."""
+    calls = []
+
+    def post(url, json=None, timeout=None, headers=None):
+        calls.append(json)
+        q = json["query"]
+        # a same-language pair scores high, a cross-language pair low
+        scores = [(2.0 if ("whale" in q) == ("whale" in d) else -5.0) for d in json["documents"]]
+        return _Resp({"results": [{"index": i, "relevance_score": s} for i, s in enumerate(scores)]})
+    monkeypatch.setattr(retrieval.httpc, "post", post)
+    hits = [{"chunk_id": "g:1:0:1", "book_id": 1, "lang": "it", "text": "al polo australe in velocipede"},
+            {"chunk_id": "g:2:0:1", "book_id": 2, "lang": "en", "text": "the white whale, Moby-Dick"}]
+    out, ok = retrieval._rerank_list("la balena bianca", hits, JINA, 5.0,
+                                     queries={"en": "the white whale", "de": "der weiße Wal"})
+    assert ok
+    asked = {c["query"]: c["documents"] for c in calls}
+    assert asked == {"la balena bianca": ["al polo australe in velocipede"],
+                     "the white whale": ["the white whale, Moby-Dick"]}, \
+        "one call per variant; the Italian hit against the typed query, the English against its translation"
+    assert {h["book_id"]: h["rerank_score"] for h in out} == {1: 2.0, 2: 2.0}, \
+        "Moby-Dick scored as a same-language pair (it scored -5.0 against the Italian query)"
+
+
+def test_without_translations_every_candidate_meets_the_typed_query(monkeypatch):
+    calls = _server(monkeypatch)
+    retrieval._rerank_list("q", _hits("c", 3), JINA, 0.4)
+    assert len(calls) == 1 and calls[0]["json"]["query"] == "q"
+
+
+def test_a_failing_variant_call_is_the_fused_order_said_so(monkeypatch):
+    n = [0]
+
+    def post(url, json=None, timeout=None, headers=None):
+        n[0] += 1
+        if n[0] == 2:
+            raise httpx.ConnectError("down")
+        return _Resp({"results": [{"index": i, "relevance_score": 1.0}
+                                  for i in range(len(json["documents"]))]})
+    monkeypatch.setattr(retrieval.httpc, "post", post)
+    hits = [{"chunk_id": "g:1:0:1", "book_id": 1, "lang": "it", "text": "a"},
+            {"chunk_id": "g:2:0:1", "book_id": 2, "lang": "en", "text": "b"}]
+    assert retrieval._rerank_list("q", hits, JINA, 5.0, queries={"en": "q-en"}) == (hits, False)
