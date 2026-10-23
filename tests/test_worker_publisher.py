@@ -127,3 +127,46 @@ def test_the_deadline_stop_is_a_stop(monkeypatch):
     ev.set()
     assert u.is_set()
     assert worker._Until(time.monotonic() - 1, threading.Event()).is_set()
+
+
+def test_a_pass_stops_when_the_mode_stops_embedding(monkeypatch):
+    """München, 2026-10-23: the publisher asked the mode once, at its beat's
+    start; a pass begun before the operator's seed-only embedded with pubmed's
+    encoder 38 minutes into it, into the card the operator had asked for.
+    The pass now asks between units whether it may go on."""
+    import threading
+    monkeypatch.setattr(worker._Until, "STILL_S", 0.0)
+    mode = ["running"]
+    u = worker._Until(time.monotonic() + 3600, threading.Event(), lambda: mode[0] == "running")
+    assert not u.is_set()
+    mode[0] = "seed-only"
+    assert u.is_set(), "seed-only: the pass yields at its next unit"
+    broken = worker._Until(time.monotonic() + 3600, threading.Event(),
+                           lambda: (_ for _ in ()).throw(OSError("node.sqlite")))
+    assert broken.is_set(), "a mode that cannot be read runs nothing"
+
+
+def test_the_beat_gives_its_pass_the_mode_and_the_pause(monkeypatch):
+    from types import SimpleNamespace
+    from app import node_state
+    seen = {}
+
+    def fake_pass(c, codex, con, *, stop, log):
+        seen["still"] = stop.still
+        return {}
+    monkeypatch.setattr(worker, "_publish_pass", fake_pass)
+    c = SimpleNamespace(name="pubmed", codex=SimpleNamespace(privacy="public"), share=True)
+    monkeypatch.setattr(worker.collections_mod, "load_all", lambda: [c])
+    monkeypatch.setattr(worker.db, "connect", lambda c: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(worker, "_locks", {"pubmed": object()})
+    state = {"mode": "running", "paused": set()}
+    monkeypatch.setattr(node_state, "worker_state", lambda *a: state["mode"])
+    monkeypatch.setattr(node_state, "paused_collections", lambda *a: state["paused"])
+    monkeypatch.setattr(node_state, "connect", lambda: (_ for _ in ()).throw(OSError("telemetry")))
+    worker._publisher_beat()
+    still = seen["still"]
+    assert still()
+    state["paused"] = {"pubmed"}
+    assert not still()
+    state["paused"], state["mode"] = set(), "seed-only"
+    assert not still()
