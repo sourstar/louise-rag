@@ -20,5 +20,6 @@
     "model": "weights/llama-embed/Qwen3-Embedding-4B-Q4_K_M.gguf",
     "seed": 0
   },
-  "threads": 6
+  "threads": 6,
+  "pinned": true
 }

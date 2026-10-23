@@ -19,5 +19,6 @@
     "model": "weights/medcpt/medcpt-article-ov",
     "seed": 0
   },
-  "threads": 6
+  "threads": 6,
+  "pinned": true
 }

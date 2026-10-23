@@ -22,3 +22,19 @@ def test_only_the_managed_keys_change():
     assert {k: v for k, v in out.items() if k not in settings.DESIRED} == \
         {k: v for k, v in current.items() if k not in settings.DESIRED}
     assert current["memory_reclaimer_threshold"] == 0.68, "the input is not modified"
+
+
+#: the encoders Louise embeds with continuously (vega.md §12: "pin an encoder
+#: that Louise embeds with continuously"); lost on 2026-10-18 when the backend
+#: switch rewrote their YAMLs, and LocalAI then evicted gutenberg's encoder 129
+#: times in 72 h, between a batch's calls (operator, 2026-10-23: "model
+#: eviction during processing shall be forbidden")
+CONTINUOUS = ("vega-qwen3-embedding-4b", "vega-dar-legal-it", "vega-medcpt-article-ov")
+
+
+def test_the_continuously_used_encoders_are_staged_pinned():
+    import json
+    for name in CONTINUOUS:
+        text = (ROOT / "deploy" / "vega" / "stage" / "models" / f"{name}.yaml").read_text()
+        body = json.loads("\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#")))
+        assert body.get("pinned") is True, f"{name} is not pinned"

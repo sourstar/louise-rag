@@ -17,5 +17,6 @@
     "model": "weights/dar-legal-it",
     "seed": 0
   },
-  "threads": 6
+  "threads": 6,
+  "pinned": true
 }
