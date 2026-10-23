@@ -29,7 +29,8 @@ def test_only_the_managed_keys_change():
 #: processing, then restoring the previous pinning status after"). Their resting state is
 #: UNPINNED: a static pin here would keep the card from other models while nothing runs,
 #: and the scoped pin would find it pinned and never release it.
-SCOPED = ("vega-qwen3-embedding-4b", "vega-dar-legal-it", "vega-medcpt-article-ov")
+SCOPED = ("vega-qwen3-embedding-4b", "vega-dar-legal-it", "vega-medcpt-article-ov", "vega-bge-m3", "vega-granite",
+          "louise-rerank-medcpt")   # the operator, 2026-10-23: "Remove the reranker pin"
 
 
 def test_the_scoped_pin_encoders_rest_unpinned():

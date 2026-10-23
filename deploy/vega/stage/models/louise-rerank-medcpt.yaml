@@ -26,5 +26,5 @@
     "NEO_CACHE_DIR": "/data/louise-cache/neo-cache",
     "OV_CACHE_DIR": "/data/louise-cache/ov-cache"
   },
-  "pinned": true
+  "pinned": false
 }
