@@ -3,7 +3,12 @@ uvicorn[standard]>=0.30
 httpx>=0.27
 pydantic>=2.7
 jinja2>=3.1
-tantivy>=0.24
+# PINNED (2026-10-23): the text index is part of what peers must agree on (05 §5.1:
+# the same list on every peer with the same members), and a new tantivy may tokenize
+# or stem differently — 0.27.0 changed the Greek stemmer (Perugia's image build,
+# tests/test_fts_greek_stemmer.py). Moving to a newer one is a decision with its own
+# measurement, never a rebuild's accident.
+tantivy==0.26.2
 # Snowball stemming (app/stemming.py), replacing tantivy's built-in filter
 # for the languages in config.PYSTEM_LANGS. tantivy compiles rust-stemmers
 # 1.2.0, whose last release was 2019-11 and whose Greek algorithm panics on
