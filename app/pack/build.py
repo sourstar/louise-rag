@@ -327,8 +327,15 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
     closed parts are records counted into `records_per_shard`. Without it
     (a slice's first build, the legacy `pack build`) every part is counted.
     Until 2026-10-12 a fresh build re-cut every slice by count, so one book
-    gone from the origin re-issued every later part of its slice."""
-    closed = closed or {}
+    gone from the origin re-issued every later part of its slice.
+
+    A Codex whose slicing cuts parts BY CONTENT (`slicing.parts`, 02 §2.2
+    amended 2026-10-24) keeps no closed parts: a record ends its part by its
+    own uid's fingerprint (slicing.ends_part), so the layout is a pure
+    function of each slice's records — a from-scratch build, a resumed one
+    and a daughter's give the same parts byte for byte."""
+    content_rule = slicing.parts_rule_of(getattr(getattr(collection, "codex", None), "slicing", None))
+    closed = {} if content_rule is not None else (closed or {})
     plugin = collection.plugin_instance()
     origin = _origin_plugin(collection)
     # THE SHARD'S SHAPE, from the Codex and never from a record (09 §9.5):
@@ -540,7 +547,8 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                     shard_plates.setdefault(figure_hash, (src, href))
                 layer_counts[layer] = layer_counts.get(layer, 0) + 1
                 last_row = prow
-                if next_n not in bounds and len(buf) >= records_per_shard:
+                if (slicing.ends_part(record["uid"], len(buf), content_rule) if content_rule is not None
+                        else next_n not in bounds and len(buf) >= records_per_shard):
                     close_shard(last_row)
                     if time.monotonic() - t0 > 30:
                         log(f"[pack build] {slice_name}: shard {next_n - 1} written "

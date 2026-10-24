@@ -120,12 +120,65 @@ FAMILY_RULE = "wikidata-families"
 
 
 def family_block(map_sha: str, records_per_shard: int = 20_000) -> dict:
-    """The Codex's slicing block for wikidata by family (09 §9.3)."""
+    """The Codex's slicing block for wikidata by family (09 §9.3), its parts
+    cut by content (`content_parts`)."""
     from ..plugins.wikidata import families
     return {"keys": ["family", "range"],
             "family": {"field": "extra.claims", "rule": FAMILY_RULE, "map": map_sha},
             "range": {"field": "id", "bin": families.RANGE},
+            "parts": content_parts(records_per_shard),
             "unknown": "family=unknown", "shard_records": records_per_shard, "order": "numeric"}
+
+
+# ---- parts cut by content (02 §2.2, amended 2026-10-24) ----------------------------------------
+#
+# Operator, 2026-10-24: a daughter must reuse every vector and record of its
+# mother and be "functionally equivalent to a new collection created from
+# scratch". So the part layout is a PURE FUNCTION of each slice's records:
+# within a slice, in order, a record ENDS its part when the part holds at
+# least `min` records and the fingerprint of the record's uid hits the
+# pattern (`fingerprint % (shard_records - min) == 0`), or when it holds
+# `max`. Content-defined chunking — LBFS (Muthitacharoen et al., 2001),
+# FastCDC's min/max bounds (Xia et al., 2016), as rsync, restic, borg and
+# IPFS cut files — with the record as the unit, so the fingerprint is the
+# record's own and needs no rolling window. Keyed on the uid, not the text:
+# an edited record moves no boundary. Expected part: `shard_records`
+# records; a change re-issues its own part and, at worst, the parts up to
+# the next natural boundary.
+#
+# THE STANDARD ALTERNATIVE in full: a Merkle search tree / prolly tree (the
+# same idea applied recursively, as Dolt and Noms index their tables) —
+# pays when parts themselves must be addressed by key ranges across
+# versions; parts listed in a snapshot do not need it.
+
+PARTS_RULE = "content"
+
+
+def content_parts(records_per_shard: int) -> dict:
+    """`{rule: "content", min, max}`: at least half, at most twice the
+    expected part — about 5 % of parts end at `max`."""
+    return {"rule": PARTS_RULE, "min": records_per_shard // 2, "max": records_per_shard * 2}
+
+
+def parts_rule_of(block: dict | None) -> tuple[int, int, int] | None:
+    """`(min, max, shard_records)` when the slicing cuts parts by content,
+    else None (parts cut by count, closed parts kept where they ended)."""
+    parts = (block or {}).get("parts") if isinstance(block, dict) else None
+    if not isinstance(parts, dict) or parts.get("rule") != PARTS_RULE:
+        return None
+    return int(parts["min"]), int(parts["max"]), int(block["shard_records"])
+
+
+def fingerprint(uid: str) -> int:
+    """The first 8 bytes of SHA-256 over the uid's UTF-8, big-endian."""
+    import hashlib
+    return int.from_bytes(hashlib.sha256(uid.encode("utf-8")).digest()[:8], "big")
+
+
+def ends_part(uid: str, count: int, rule: tuple[int, int, int]) -> bool:
+    """Whether the record that brings its part to `count` records ends it."""
+    lo, hi, avg = rule
+    return count >= hi or (count >= lo and fingerprint(uid) % (avg - lo) == 0)
 
 
 def family_map_of(block: dict | None) -> str | None:

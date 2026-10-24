@@ -319,6 +319,26 @@ delete (PubMed flags retractions) need only tombstones; sources that
 edit (Wikipedia) re-issue parts, and their history is the chain of
 snapshots.
 
+**Parts cut by content** (*amended 2026-10-24*, operator: a daughter that
+changes the slicing — wikidata's family map — must reuse every record and
+vector of its mother and be "functionally equivalent to a new collection
+created from scratch"). A Codex whose slicing block declares `parts:
+{rule: "content", min, max}` (09 §9.3) cuts each slice's records, in
+order, where a record ENDS its part: the part holds at least `min` records
+and the first 8 bytes of SHA-256 over the record's uid, read big-endian,
+are divisible by `shard_records − min`, or it holds `max`
+(content-defined chunking, LBFS and FastCDC's bounds, with the record as
+the unit). The layout is then a PURE FUNCTION of the slice's records at the
+snapshot: a from-scratch build, a resumed one, an update and a daughter
+give the same parts byte for byte, and the rules above for closed parts do
+not apply — there is nothing to keep: a record changed, gone, or moved to
+another slice re-issues its own part and, at worst, the parts up to the
+next boundary; a record's slice is the one its fields give at each
+snapshot, not the one it was first published in. Parts are numbered in
+order within the slice, so a part split or merged renumbers the later
+parts of that slice; their bytes do not change, and transport shares them
+by root (09 §9.16). Collections created before keep the count cut.
+
 A daughter's first snapshot (§2.7) has `previous` = the hash of the
 mother's snapshot `continues_through`; the parts it inherits are listed
 with the mother's roots and `toolchain: "mother"`, its own with

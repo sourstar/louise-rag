@@ -430,3 +430,103 @@ def test_a_family_added_later_leaves_every_pinned_map_readable_as_it_was(monkeyp
     assert families.family_code(pizza, families.load_map(old)) == families.load_map(old).other
     with pytest.raises(families.FamilyError, match="not in the list"):
         families.build_map([], [], max_item=1, dump="d", roots={"food": (1,)})
+
+
+# ---- parts cut by content (02 §2.2, amended 2026-10-24) ----------------------------------------
+
+def _cut(uids, rule):
+    """The layout the rule gives a slice's records in order."""
+    parts, cur = [], []
+    for u in uids:
+        cur.append(u)
+        if slicing.ends_part(u, len(cur), rule):
+            parts.append(cur)
+            cur = []
+    return parts + ([cur] if cur else [])
+
+
+def test_the_cut_is_a_pure_function_of_the_records_and_a_change_stays_local():
+    rule = slicing.parts_rule_of({"parts": slicing.content_parts(100), "shard_records": 100})
+    assert rule == (50, 200, 100)
+    uids = [f"wikidata:{n}" for n in range(1, 20_001)]
+    layout = _cut(uids, rule)
+    sizes = [len(p) for p in layout]
+    assert all(50 <= n <= 200 for n in sizes[:-1]) and 80 <= sum(sizes) / len(sizes) <= 125
+    assert _cut(uids, rule) == layout
+    gone = layout[40][7]                                   # a record inside part 41 leaves the slice
+    after = _cut([u for u in uids if u != gone], rule)
+    changed = [i for i, (a, b) in enumerate(zip(layout, after)) if a != b]
+    assert changed and changed[0] == 40 and len(changed) <= 3, "its own part, and at worst the next few"
+    assert after[changed[-1] + 1:] == layout[changed[-1] + 1:], "everything after is untouched"
+
+
+def test_the_records_check_reads_a_content_cut():
+    from app.hold import check
+    rule = (2, 6, 4)
+    uids = [f"wikidata:{n}" for n in range(1, 400)]
+    layout = _cut(uids, rule)
+    assert all(check._cut_by_content(rule, p, i == len(layout) - 1) for i, p in enumerate(layout))
+    merged = layout[3] + layout[4]
+    assert not check._cut_by_content(rule, merged, False), "a part that runs past its boundary"
+    assert not check._cut_by_content(rule, layout[3][:-1], False), "a part that stops short of it"
+    from app.hold import template
+    with pytest.raises(template.TemplateError, match="slicing.parts"):
+        template._check_slicing({"keys": [], "parts": {"rule": "content", "min": 9, "max": 4},
+                                 "shard_records": 5})
+
+
+def test_a_family_collection_cut_by_content_builds_the_same_parts_from_scratch_and_resumed(
+        isolated_config, tmp_path):
+    from app import collections as collections_mod, db, discovery
+    from app.hold.codex import License, Parser
+    from app.pack import build as pack_build, records as pack_records
+    from tests.hold.conftest import pubmed
+    corpus = tmp_path / "corpus"
+    many = [_item(10_000 + i, f"Town {i}", P31=[515]) for i in range(40)]
+    dump = a_dump(corpus, lines=entity_lines() + [_line(o) for o in CLASSES + many])
+    pack.build(dump, languages=("en",), chunk=8, workers=1)
+    raw = pack.creation_map(dump)
+    sha = "sha256:" + hashlib.sha256(raw).hexdigest()
+    d = tmp_path / "wikidata"
+    (d / "shard" / "slicing").mkdir(parents=True)
+    codex = pubmed(plugin="wikidata", parser=Parser("wikidata", 2), license=License("green", None),
+                   slicing=slicing.family_block(sha, records_per_shard=6))
+    (d / "shard" / "codex.json").write_bytes(codex.canonical())
+    (d / "shard" / slicing.map_member(sha)).write_bytes(raw)
+    c = collections_mod.Collection(name="wikidata", plugin="wikidata", profile=None, embed_mode_default=None,
+                                   corpus_dir=corpus, manifest_path=d / "state" / "manifest.sqlite",
+                                   fts_dir=d / "index", lance_dir=d / "lance", codex=codex)
+    (d / "state").mkdir()
+    con = db.connect(c)
+    discovery.sync_collection(con, c)
+    con.close()
+
+    def layout(pack_dir):
+        m = pack_build.manifest_mod.load(pack_dir)
+        return {(s["slice"], s["n"]): ([r["uid"] for r in pack_records.iter_records(pack_dir / s["path"])],
+                                      s["sha256"]) for s in m["shards"]}
+    whole = tmp_path / "whole"
+    pack_build.build(c, whole, snapshot="2026-10-26", sign=False, log=lambda *_: None)
+    got = layout(whole)
+    places = [got[k][0] for k in sorted(got) if k[0] == "family=place/range=0"]
+    rule = slicing.parts_rule_of(codex.slicing)
+    assert rule == (3, 12, 6) and places == _cut([u for p in places for u in p], rule), "cut by content"
+    assert len(places) > 1
+    # a build stopped after every part and resumed: the same parts, byte for byte
+    import threading
+    stopped = tmp_path / "stopped"
+    stop = threading.Event()
+    real = pack_build.records.write_shard
+
+    def write_then_stop(*a, **k):
+        out = real(*a, **k)
+        stop.set()
+        return out
+    pack_build.records.write_shard = write_then_stop
+    try:
+        while not pack_build.build(c, stopped, snapshot="2026-10-26", sign=False, log=lambda *_: None,
+                                   stop=stop).manifest_path:
+            stop.clear()
+    finally:
+        pack_build.records.write_shard = real
+    assert layout(stopped) == got

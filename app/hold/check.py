@@ -306,18 +306,36 @@ def _slice_unless_walked(fmap, record: dict) -> str | None:
     return families.slice_name(families.family_code(x, fmap), str(x.get("id") or ""), fmap.families)
 
 
+def _cut_by_content(rule, uids: list[str], last_of_slice: bool) -> bool:
+    """A part cut by content ends at its first record the rule ends a part
+    with, and nowhere else; the slice's last part may end with the slice."""
+    from app.pack import slicing as sl
+    for i, uid in enumerate(uids, 1):
+        if sl.ends_part(uid, i, rule):
+            return i == len(uids)
+    return last_of_slice
+
+
 def check_records(ctx: Ctx) -> Outcome:
     """"every sampled record's `content_hash` recomputes from its own title
     and sections and it carries an `origin_hash`; each sampled shard's
     `records_root` recomputes from its records' `content_hash` values in
     order" (03 §3.2) — and, where the Codex slices by a family map
     (2026-10-24), the map member hashes to it and every sampled record whose
-    classes the map knows sits in the slice the map gives it."""
+    classes the map knows sits in the slice the map gives it; where it cuts
+    parts by content (02 §2.2, amended 2026-10-24), each sampled part ends
+    at its first record the rule ends a part with — the last part of a
+    slice at the slice's end."""
+    from app.pack import slicing as sl
     shards = _shards(ctx, "records")
     seen, failed, ran = 0, [], []
     fmap, broken = _family_map(ctx)
     if broken:
         failed.append(broken)
+    rule = sl.parts_rule_of(getattr(ctx.codex, "slicing", None))
+    last_n: dict[str, int] = {}
+    for s in ctx.snapshot.shards if rule is not None else ():
+        last_n[s.slice] = max(last_n.get(s.slice, 0), s.n)
     for s in shards:
         try:
             records = ctx.records_of(s)
@@ -325,9 +343,11 @@ def check_records(ctx: Ctx) -> Outcome:
             continue
         ran.append(s)
         hashes: list[str] = []            # the root's input, kept; the records are not
+        uids: list[str] = []
         for r in records:
             seen += 1
             hashes.append(r["content_hash"])
+            uids.append(r["uid"])
             sections = [tuple(x) for x in r.get("sections") or []]
             if rec.content_hash(r.get("title") or "", sections) != r["content_hash"]:
                 failed.append(r["uid"])
@@ -341,6 +361,8 @@ def check_records(ctx: Ctx) -> Outcome:
         root = rec.records_root(hashes)
         if root != s.records_root:
             failed.append(f"{s.slice}/{s.n:05d}:records_root")
+        if rule is not None and not _cut_by_content(rule, uids, s.n == last_n.get(s.slice)):
+            failed.append(f"{s.slice}/{s.n:05d}:cut")
     if not ran:
         return Outcome("records", INCONCLUSIVE,
                        why="this peer holds none of the sampled shards")

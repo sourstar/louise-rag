@@ -224,7 +224,11 @@ that re-issues it anyway; a new map is a new collection (a daughter, 02
 dump gives each class its family once (app/plugins/wikidata/families.py).
 A class created after the creation dump is placed by the current dump's
 own links (deterministic per dump, logged per pass): the one way a later
-edit can move a record that was not edited.
+edit can move a record that was not edited. Such a collection cuts its
+parts BY CONTENT (02 §2.2, 09 §9.3 `parts`), so its layout is a pure
+function of its records and its map: a new map (a family added) is a
+daughter that reuses every record and vector and comes out byte for byte
+as a collection created from scratch with that map.
 
 **Shard** — the unit inside a slice: ~7,000 chunks (≈ 1 GPU-hour, so
 that a shard is also one lease — amendment 37's unit; ~30,000 PubMed

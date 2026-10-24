@@ -270,6 +270,18 @@ def _check_slicing(block: dict[str, Any]) -> dict[str, Any]:
         check_slice(str(block["unknown"]))
     if "container" in block:
         codex_mod.refuse_unbuilt_container(str(block["container"]))
+    if "parts" in block:
+        # 02 §2.2, amended 2026-10-24: parts cut by content, between `min`
+        # and `max` records, `shard_records` expected
+        from app.pack import slicing as sl
+        try:
+            lo, hi, avg = sl.parts_rule_of(block) or (None, None, None)
+            ok = lo is not None and 1 <= lo < avg < hi
+        except (KeyError, TypeError, ValueError):
+            ok = False
+        if not ok:
+            raise TemplateError(f"slicing.parts is {{rule: {sl.PARTS_RULE!r}, min, max}} with "
+                                f"1 ≤ min < shard_records < max (02 §2.2): {block.get('parts')!r}")
     if "family" in (block.get("keys") or ()):
         # pack-format.md §2, amended 2026-10-24: a family key reads a map
         # pinned at creation, named by its sha256 — without it the slices
