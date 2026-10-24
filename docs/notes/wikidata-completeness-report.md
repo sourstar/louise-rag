@@ -22,7 +22,8 @@ title, the names, and which entities get more.
 | our defects in the text | **fixed** in parser 2: `mul` names of referenced entities, uncertain quantities (±), no id where a name exists | §2 |
 | Wikimedia Deutschland's defects we had copied | **fixed** in our copy; **written** for them (W1, W6, W7 and the textifier's §1–5) | §3 |
 | historical facts (what the best-rank filter drops) | **designed**: a history section in parser 3, nothing re-embedded; 26.8 M statements in 5.4 M entities, at most ~0.57 G tokens | §4 |
-| Wikimedia's own pages kept as records | **counted: 9,680,790 records (12.8 %)**; pruning them is a decision before Monday | §5 |
+| Wikimedia's own pages kept as records | **kept** (operator: nothing pruned unless written); whether to EMBED them is a node's choice (§8) | §5, §8 |
+| choosing what to embed | **proposed**: wikidata sliced by family, as Wikipedia is by language | §8 |
 | references to merged entities, lexemes, places' languages | merged: negligible (862 references), left; the others open | §5 |
 | full text in it, de, fr, es for monuments, buildings, events | **approved**: the niche selection and a pilot first | §6 |
 | the node | pack version 2 and wikidata-refs version 3 in place; Monday: wikidata created again on 6d02f8e, then its records | §7 |
@@ -81,6 +82,14 @@ Nothing of it is lost from the record; it is missing from what is read
 and searched. A question like "monuments of the Papal States" or "what was
 X called before" cannot find it in the text.
 
+**Dropping them from the text, pros and cons** (operator: "Always give a
+pros cons"):
+
+| | pros | cons |
+|---|---|---|
+| dropping (as now) | shorter texts, so cheaper to embed (at most ~0.57 G tokens saved); a vector describes the entity as it is now; no census series in the text; Wikimedia's own textifier does the same, so ours compares with theirs | a former name, country, owner or status, and every date of one, cannot be found by a word or a meaning search; Ask cannot answer from them (the model reads only retrieved text); the text says less than the record, against the operator's rule that nothing reachable in the origin may be unreachable here; what search finds depends on an editor's ranking — marking a newer value preferred silently removes the older one from search |
+| keeping (a history section) | everything Wikidata states becomes searchable; the main text and its vectors stay byte for byte; the cost of embedding it is chosen (§8) | a larger text index; more chunks wherever it is embedded; a city's series of populations is noise in a text (the rule below keeps series in the record, not the text); a parser change, with the records it goes into |
+
 **The options.**
 
 | option | what the text gains | cost | verdict |
@@ -136,7 +145,7 @@ adds no source and no service.
 | what | proposal | effort | decision |
 |---|---|---|---|
 | references to entities merged into another (redirects) or deleted: written as ids — the JSON entity dump carries no redirects | name a merged entity by its target, from Wikimedia's SQL table dumps (`redirect` with `page`, a separate run) | two acquisition files more (`page` is several GB) | **left**: 862 references to 331 entities in the 193 M lookups of the selection's texts |
-| Wikimedia's own pages kept as records: categories, templates, disambiguation pages, lists — **9,680,790 of the 75.9 M records (12.8 %)**, the closure of "Wikimedia internal item" (Q17442446, 2,949 classes) | prune them as the scholarly articles are (whole entities; invariant 11 allows it); their labels stay in the label table, so every text naming one still names it | a pass over the pack (the closure, then each entity's P31: ~40 min on the node) and the pruning rule in parser 2; fewer records, chunks and embedding; disambiguation pages, which share every ambiguous name, leave the name search | **decision**: before Monday's records build, or with parser 3 (Monday's records would carry them until then), or never |
+| Wikimedia's own pages kept as records: categories, templates, disambiguation pages, lists — **9,680,790 of the 75.9 M records (12.8 %)**, the closure of "Wikimedia internal item" (Q17442446, 2,949 classes) | **kept as records** — the operator, 2026-10-24: "If not written explicitly in the guidelines a collection cannot prune any information from the corpus" (CLAUDE.md, invariant 11). Their cost is answered by not EMBEDDING them where a node chooses so (§8); disambiguation pages in the name search are a ranking question (measured Monday: "Paris") | — | the pruning proposal is withdrawn |
 | Wikidata's lexemes: words, their senses and glosses in many languages (the separate lexeme dump, not taken by D1) | a small collection of their own — the natural home of "ancient and uncommon words" | a plugin variant over the lexeme dump (hundreds of MB, not 100 GB) | to decide |
 | a place's original language: its country's official language (P37) | a third source for the original name in names.py | a country→language table in the pack | written down, not built |
 | sitelink titles (a Wikipedia article's title) | — | — | left: mostly the label |
@@ -198,3 +207,46 @@ adds no source and no service.
 4. Then parser 3: the niche language sections, the history section, and
    whichever of §5 is decided — one daughter collection, the pilot first.
 5. The operator files the upstream reports.
+
+## 8. Choosing what to embed — wikidata by family, as Wikipedia by language
+
+**How Wikipedia does it.** Each language is a slice (`lang=it/pages=…`); a
+node's collection file lists the slices it holds (`slices`), and what it
+holds it embeds (`embed`). The snapshot holds every language; a node picks.
+
+**Wikidata today** is sliced by id range (`range=` the id ÷ 10⁷): a slice
+means nothing a person would choose, so a node holds and embeds all of it
+or none.
+
+**The proposal.** Slice wikidata by FAMILY first, then by id range
+(`family=heritage/range=3`), the family read from the class tree as the
+selection is (P31 against the P279 closure of fixed roots; the first that
+applies, in this order):
+
+| family | roots (as measured or to measure) |
+|---|---|
+| internal | Wikimedia internal item (Q17442446): categories, templates, disambiguations, lists — 9.68 M |
+| heritage | built structure, monument, archaeological site, architectural element, or a heritage designation (P1435) |
+| event | planned event, military operation, war, calamity, massacre, explosion, geographically localized event, severe weather, demonstration or protest |
+| person | human (Q5) |
+| taxon | taxon (Q16521) |
+| place, work, other | geographic and creative-work roots, then the rest |
+
+A node then holds and embeds the families it wants; an optional
+`embed_slices` lets it hold EVERY record — the complete corpus, word
+search over all of it — while its encoder spends only on some. A record's
+history section and its niche language sections ride with its family.
+
+| | pros | cons |
+|---|---|---|
+| **family slices** | the mechanism Wikipedia already uses, no new concept; the records stay complete (nothing pruned); a node, or the peers between them, choose the cost family by family; "embed heritage and events first" becomes one line | the slicing is fixed at creation: in Monday's re-creation, or a later re-slicing re-issues every part; a class→family table in the pack (an in-place pass, ~30 min) and about a day of code; families need a precedence for an entity in two; parts of uneven families are evened by the id range under them |
+| id ranges (as now) | nothing to do; Monday as planned | all or nothing: the 9.68 M Wikimedia pages are embedded with everything else, or wikidata is not embedded at all |
+| choosing by section (embed the English text, not the history) | finer than records | the embed stage, the coverage map and the bundles count vectors per part, not per section: a deeper change than slices |
+
+**Recommended:** family slices, in Monday's re-creation, with the history
+section in parser 2 (one re-creation, not two). It moves Monday's records
+build by about a day; the discovery and the text index, which come first,
+do not wait. **If nothing is said:** Monday as planned (id ranges, no
+history in the text), both with parser 3 — at the price of re-issuing
+every part then.
+
