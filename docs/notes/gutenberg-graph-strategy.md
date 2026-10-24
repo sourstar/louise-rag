@@ -203,3 +203,131 @@ the claim beneath it, and §2.10's time rule is defined on records.
 If the operator says nothing, the plan of wikidata-plugins.md stands as
 written (one method for C, D, E, F, N with the 26B; unlinked mentions
 dropped); this note is then the record of the alternative and its costs.
+
+## 8. What happens to what the analysis finds
+
+*Operator, 2026-10-24: "What happens to the new entities discovered,
+conflicting relationships and new relationships discovered during the
+analysis?"* The rule under all three: Louise promotes nothing to a fact.
+A discovery is a claim with its evidence, placed beside the hits and
+traversable; the road to "fact" runs through Wikidata, with a person in
+the loop, and the result flows back as the next snapshot.
+
+**A new entity** — a thing no Q-id names.
+- Exact layer: a kept span (`mention`, null object, §9.2 row 2 of
+  graphrag-compliance.md), in every tier; anchored to its book in D.
+- Tiers A and B: `same-entity` candidates tie spans across books
+  (§9.3). The connected component of candidates above threshold is a
+  **cluster**: a claim with the spans as `members` and an id derived
+  from their content (as a community's is), traversable, shown as
+  "probably one person, attested in these passages" with its score.
+  Computed at build time, deterministic given the pinned weights, so
+  bit-exact.
+- A cluster is never a Q-id and is never minted as an identity (§9.2
+  row 3, rejected). If its evidence is good, a person creates the
+  Wikidata item citing the Gutenberg passages — Wikidata's notability
+  admits "a clearly identifiable entity described by serious and
+  publicly available references" — the next wikidata snapshot carries
+  the Q-id, and the next gutenberg-graph update (annotation-collections.md
+  "Updating": claims re-checked, kept claims keeping their uids) links the
+  spans to it. Louise produces the evidence for an identity; Wikidata
+  grants it.
+
+**A conflicting relation** — a book says one thing, Wikidata or another
+book another.
+- Both claims stay, each with its passage. Nothing overwrites Wikidata
+  (wikidata-plugins.md already says so) and nothing resolves the
+  conflict by a score: a conflict is often the gem (a pseudonym, a wrong
+  date in the record).
+- The conflict is NOT stored. It is computable — the same subject and
+  property, a different object, where Wikidata's own single-value
+  constraint (P2302 / Q19474404) says there can be only one — so it is
+  derived when a hit is shown (02 §2.3: a record carries nothing
+  computable from it), as "the book says …; Wikidata says …", or "two
+  sources disagree", with both passages.
+- Back to Wikidata the same way as below: a person adds the book's
+  statement with its reference, at Wikidata's normal or deprecated rank
+  as they judge; Louise never edits.
+
+**A new relation** — two known Q-ids, a property Wikidata lacks.
+- A `relation` claim with its evidence chunk, attached at either
+  entity's record (05 §5.3), walked by `louise_traverse`
+  (`annotations:relation`), checked by byte equality (GLiNER) or the
+  agreement floor (the reader), §5.
+- Only Wikidata properties: a relation the method cannot express as a
+  `wikidata:P…` is not a claim; growing the property set is a new method
+  version, and the next snapshot carries what it now expresses. (An
+  alternative, kept for the record and not recommended: a `relation`
+  with a null property and the stating `surface`, the analogue of the
+  null-object mention. It would keep what was read at the cost of a
+  second untyped kind nobody can traverse.)
+- Where the passage states a time ("in 1850"), the claim carries it in
+  its own keys (the analogue of Wikidata's P580/P582 qualifiers), so a
+  relation from a diary is a relation AT that time, and the chronology
+  of §9.3 can be rebuilt from the claims alone.
+- Back to Wikidata: a person adds the statement with the passage as its
+  reference. The claim IS the reference package — book, chunk, offsets,
+  text hash, the stated run that read it — which is what a Wikidata
+  reference needs and what a later verifier re-checks.
+
+The loop: discover → claim with evidence → a person edits Wikidata →
+the wikidata snapshot → the gutenberg-graph update links to it. Nothing
+in it is automatic past the claim, and nothing in it needs a Louise
+identity registry: Wikidata is the registry (CLAUDE.md, "do not reinvent
+the wheel").
+
+## 9. Prior art — the same work under other names
+
+Nobody calls it forensic analysis of books, but each part of §3's tier A
+has an established line of research, and the tools named in §2 are its
+standard tools (operator's question, 2026-10-24).
+
+**Who hides behind a name.** Two complementary traditions:
+- *Stylometry* — authorship from the writing itself: Mosteller & Wallace
+  on the Federalist Papers (1964); Burrows' Delta; the 2013 attribution
+  of *The Cuckoo's Calling* to Rowling by Juola and Millican from word
+  frequencies, letter 4-grams and word pairs in 1,000-line chunks
+  (https://www.techwell.com/2013/07/analysis-software-wrecked-jk-rowling-s-anonymity,
+  https://teach.htrc.illinois.edu/?p=216), and a 2024 preprint
+  questioning how strong that evidence was
+  (https://arxiv.org/abs/2407.10301) — style is probabilistic, hence
+  "nearest held authors" as a fact beside a hit, never a merge.
+- *Entity resolution in archives* — identity from what is said about a
+  person, which is §9.3's method: **Golden Agents** (Amsterdam) links
+  persons across notarial acts, portraits and Wikidata by embedding
+  similarity over shared record context plus domain rules, reporting
+  very high precision
+  (https://research-portal.uu.nl/en/publications/adding-domain-knowledge-to-improve-entity-resolution-in-17th-and-/,
+  https://zenodo.org/record/7478545); the **HIPE** shared tasks (CLEF
+  2020, 2022) benchmark NER and linking on 200 years of noisy historical
+  newspapers in English, French and German — our steps 1–2 by name
+  (https://ceur-ws.org/Vol-2696/paper_255.pdf,
+  https://api-impresso.uni.lu/hipe).
+
+**A story rebuilt from witnesses who never met.** Narrative extraction
+and timeline reconstruction: the **Text2Story** workshops at ECIR — event
+extraction, temporal and causal ordering, cross-document event
+coreference, automatic timelines
+(https://text2story23.inesctec.pt/); Bugert et al.'s cross-document
+event coreference line is "the same event, different diarists" by name.
+Slot alignment of events (§9.3) is how those systems decide two reports
+describe one event.
+
+**Networks nobody wrote down.** Co-occurrence graphs over text — the
+LazyGraphRAG index — have a record in history:
+- **Six Degrees of Francis Bacon** (Warren, Shore et al., DHQ 2016):
+  13,000+ early-modern Britons and ~200,000 relations inferred from
+  co-mentions in the Oxford DNB, names by NER and semi-automatic
+  disambiguation; inferred edges drawn grey, human-confirmed black
+  (https://dhq-static.digitalhumanities.org/pdf/000244.pdf). Grey versus
+  black is our "candidate, never a merge", in a picture.
+- **Tudor Networks of Power** (R. and S. Ahnert, OUP 2023): the Tudor
+  intelligence and diplomatic network from 132,747 State Papers letters
+  and 20,560 people, centrality and brokerage measures choosing whom to
+  read closely (https://academic.oup.com/book/51646).
+
+What Louise adds to that toolkit, and those projects lacked: a shared
+identity space everyone else also uses (Wikidata), and claims that are
+signed, shareable and re-checkable by a stranger. What the toolkit has
+that Louise does not yet: stylometry — a per-record style vector as a
+derived index, bit-exact, never a leg; a separate proposal if wanted.
