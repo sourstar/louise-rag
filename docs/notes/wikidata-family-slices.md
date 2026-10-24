@@ -75,6 +75,7 @@ the map is part of what the collection is.
 
 | family | an entity is in it when | measured (dump 20261012) |
 |---|---|---|
+| `scholarly` | its P31 is scholarly article (Q13442814) — pruned by D1 until the operator's rule of 2026-10-24 ("everything belonging a collection must be part of the collection"); now an optional slice | 46,010,809 |
 | `internal` | its P31 is under Wikimedia internal item (Q17442446) | 9,680,790 |
 | `heritage` | under built structure (Q811979), monument (Q4989906), archaeological site (Q839954), architectural element (Q391414), or it has a heritage designation (P1435) | to count (its roots' instances overlap) |
 | `event` | under planned event (Q1656682), military operation (Q645883), war (Q198), calamity (Q1689296), massacre (Q3199915), explosion (Q179057), geographically localized event (Q123349687), severe weather (Q741507), demonstration or protest (Q130260549) | to count (the families replace occurrence, W5) |
@@ -84,6 +85,7 @@ the map is part of what the collection is.
 | `work` | under creative work (Q17537576) | to count |
 | `taxon` | under taxon (Q16521) | to count |
 | `property` | a property (P…) | ~12 k |
+| `lexeme` | a lexeme (L…, with its forms and senses), from the lexeme dump | to count (a second origin file) |
 | `other` | none of the above | the rest |
 
 The roots' labels are checked against the pinned dump's label table when

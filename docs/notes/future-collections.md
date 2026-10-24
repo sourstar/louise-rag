@@ -25,8 +25,15 @@ language edition (it.wiktionary, en.wiktionary, …), written as wikitext.
 
 ## Wikidata's lexemes — the dictionary inside Wikidata
 
-Not a separate project: lexemes are one of Wikidata's four kinds of
-entity (below). The `wikidata` collection takes items and properties only
+**Not a collection to come: a part of `wikidata`** (operator, 2026-10-24:
+"everything belonging a collection must be part of the collection; if
+structurally independent it can be an optional download and/or
+embedding"). The lexemes join the `wikidata` collection as a slice of
+their own (`family=lexeme`), optional to hold and to embed; the plan is in
+[wikidata-family-slices.md](wikidata-family-slices.md). What follows is the
+background.
+
+Lexemes are one of Wikidata's four kinds of entity (below). The `wikidata` collection takes items and properties only
 (the "all" dump, decision D1); the lexemes come as a dump of their own,
 in their own dated runs of the same tree (`wikidatawiki/entities/<date>/`,
 `wikidata-<date>-lexemes.json.bz2`; München saw one in 20261014).
@@ -38,7 +45,7 @@ in their own dated runs of the same tree (`wikidatawiki/entities/<date>/`,
 
 | | pros | cons |
 |---|---|---|
-| a `wikidata-lexemes` collection | CC0 (green, no acknowledgement); structured, nothing to parse; the `wikidata` plugin's dump reader, pack and textifier reused; links words to the things they name; small, so cheap to embed whole | glosses are one line and many lexemes have no sense at all; Italian coverage is to be counted (one CPU pass on the node); a plugin variant and a collection, a few days of work |
+| the lexemes as a slice of `wikidata` | CC0 (green, no acknowledgement); structured, nothing to parse; the `wikidata` plugin's dump reader, pack and textifier reused; links words to the things they name; small, so cheap to embed whole | glosses are one line and many lexemes have no sense at all; Italian coverage is to be counted (one CPU pass on the node); a plugin variant and a collection, a few days of work |
 
 Order if wanted: count the Italian lexemes first; the lexemes before
 Wiktionary (CC0, linked to what we hold); Wiktionary where they fall short.
@@ -47,7 +54,7 @@ Wiktionary (CC0, linked to what we hold); Wiktionary where they fall short.
 
 | kind | ids | what it is | in the `wikidata` collection |
 |---|---|---|---|
-| items | Q… | every thing, concept, person, place, work — 121.9 M with the properties in the 2026-10-12 dump, of which 46.0 M scholarly articles (pruned by the written rule D1) | yes |
+| items | Q… | every thing, concept, person, place, work — 121.9 M with the properties in the 2026-10-12 dump, of which 46.0 M scholarly articles (pruned by D1 until 2026-10-24; under the operator's rule they become the optional `scholarly` slice) | yes |
 | properties | P… | the statements' vocabulary (~12 k) | yes |
-| lexemes | L… (forms L…-F…, senses L…-S…) | words, with their forms and senses | no — above |
+| lexemes | L… (forms L…-F…, senses L…-S…) | words, with their forms and senses | to join, as the `lexeme` slice (above) |
 | entity schemas | E… | ShEx shapes describing how items should look; not data about the world | no |
