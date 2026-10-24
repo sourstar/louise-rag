@@ -418,6 +418,16 @@ classes`):
   label in each language: W3 and W4 of
   [upstream-reports/wikidata.md](upstream-reports/wikidata.md).
 
+**When parser 3 lands.** The daughter's parser is a new PARSER_VERSION
+(the Codex binds `parser: {id, version}` and no parameters, so the
+languages and the roots are the version's), and an image whose wikidata
+parser is 3 can no longer build the parser-2 English collection
+(03 §3.4: not equivalent by versions). So parser 3 reaches the branch only
+when the daughter is created from the English collection's last snapshot,
+in the same deploy; until then every deploy carries parser 2. Its pack
+needs (in-place passes, RULE 1, as the names): the labels of the added
+languages, and the P279 edges for the closure.
+
 **Open for the operator, with those numbers:** the languages.
 Recommended: it, de, fr, es (the formatter writes their dates; Italian's
 connectives are in parser 2). If nothing is said: those four.
