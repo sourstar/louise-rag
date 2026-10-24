@@ -396,6 +396,20 @@ the famous names it mentions in passing stay: Wikidata has Ahab, not his
 crew, and almost no place an author invented. For history and
 architecture the loss is small; for novels it is most of the graph.
 
+**Where it matters** (operator, 2026-10-24): novels lose the most spans
+and nothing is at stake there — Starbuck is Starbuck in one book. The
+value is in NON-FICTION, where one real person appears under different
+names in texts that never knew each other: a memoir's "Mr. B." and a
+letter collection's full name, at the same dinner in the same house in
+the same month (a pseudonym); two diarists in Florence in 1850 who never
+met, each describing the same events with different names, places and
+dates, matched event by event into one chronology with every line cited
+(a story rebuilt from diaries); a soldier, a servant, a shopkeeper named
+in three sources that Wikidata has no reason to hold — one person across
+books, so anchoring to the book (§9.2) is wrong and minting an identity
+has nothing to check against; matching across passages is the only way
+they become one, and the confidence says how sure.
+
 ### 9.2 What to do with a span that resolves to nothing
 
 | choice | the unlinked span becomes | cost | risk |
@@ -490,6 +504,9 @@ inventing identities.
 - Measured before any of it is kept: on the first 1,000 unlinked spans,
   how many gain a candidate above threshold, and of a judged sample how
   many are right. A link rate without its precision is not a number.
+  Counted PER LoC CLASS, and the judged sample drawn from history and
+  biography (C, D, E, F), not from fiction: that is where a right link is
+  worth something and a wrong one is dangerous.
 
 Amendments, if approved: 09 §9.5 (`mention` with a null object and its
 keys; the `same-entity` type; a deterministic `method` kind for a scored
