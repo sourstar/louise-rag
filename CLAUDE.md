@@ -10,7 +10,10 @@ time, as long as the final artifact is indistinguishable from one made by
 the book. For example:
 - reuse bytes that are provably identical;
 - carry a space whose vectors already exist;
-- resume a build instead of redoing it.
+- resume a build instead of redoing it;
+- re-create a collection nothing official was published from, instead of
+  continuing it with a daughter (operator, 2026-10-24: "No official
+  daughters so far, rule 1") — carrying what is identical.
 
 Tell the operator about each such intervention, but it is the default
 choice, not an exception to ask about. A spec rule that forces a

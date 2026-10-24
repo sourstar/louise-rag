@@ -181,7 +181,13 @@ collection's life:
 | the same on every peer | an update is a pure function of (previous manifest, origin, cutoff); two honest updaters must make byte-identical parts (pack-format §6.1) | the map is a SHARD member, its hash in the slicing block |
 | answerable without parsing | the plan pass reads 75.9 M manifest rows | one family byte per entity, kept in the pack |
 
-**What the map freezes, and what each later change costs:**
+**What the map freezes, and what each later change costs.** *No official
+daughters so far (operator, 2026-10-24: "No official daughters so far, rule
+1"): until wikidata has been published, every "daughter" below is a
+RE-CREATION — the collection created again with the change, carrying what
+is identical (the pack, the calibration with `--calibration-from`, the
+vectors of unchanged chunks); later changes are batched into one. The
+daughter is the path once something official exists.*
 
 | later | what happens | cost |
 |---|---|---|
@@ -191,8 +197,10 @@ collection's life:
 | a new family, a family split, a newer class tree | a new map is a new slicing block, so a daughter that re-slices | no GPU, but every record and vector file is re-issued: the whole collection moves again for peers |
 
 So the binding constraint is the last row: **the family list must be right
-at creation.** The family pass logs each family's size before `create`, and
-the sizes are reviewed then, not after.
+at creation** — binding for good once the collection is published; before
+that, a wrong family costs a re-creation and a local re-cut, no GPU. The
+family pass logs each family's size before `create`, and the sizes are
+reviewed then, not after.
 
 **Languages to fetch and embed** (operator, the same day: "if it makes sense
 choose which languages to fetch and embed"). For fetching there is no choice

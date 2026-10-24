@@ -212,10 +212,11 @@ adds no source and no service.
    first, its family sizes reviewed before `create`), its text indexed, its
    records built, its first snapshot, `hold check`.
 4. Then parser 3: the niche language sections and whichever of §5 is
-   decided — one daughter collection, the pilot first. Scholarly articles
-   and lexemes join later too (operator, 2026-10-24: "Go with 3"): their
-   families are in Monday's map, so they join as a daughter that moves no
-   record (wikidata-family-slices.md §7).
+   decided — one RE-CREATION, not a daughter (operator, 2026-10-24: "No
+   official daughters so far, rule 1"), the pilot first. Scholarly articles
+   and lexemes join in the same re-creation (operator, 2026-10-24: "Go with
+   3"; recommendations accepted): their families are in Monday's map, so no
+   existing record moves (wikidata-family-slices.md §7).
 5. The operator files the upstream reports.
 
 ## 8. Choosing what to embed — wikidata by family, as Wikipedia by language
