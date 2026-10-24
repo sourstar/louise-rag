@@ -324,7 +324,8 @@ def index_books(entries, collection=None) -> None:
     for entry in entries:
         lang, book_id, chunks = entry[0], entry[1], entry[2]
         extra = entry[3] if len(entry) > 3 else None     # app/validity.py's columns
-        by_group.setdefault(group_for(lang), []).append((lang, book_id, chunks, extra))
+        for part_lang, part in by_section_language(lang, chunks):
+            by_group.setdefault(group_for(part_lang), []).append((part_lang, book_id, part, extra))
     for group, items in by_group.items():
         idx = get_index(group, collection)
         algorithm = pystem_algorithm(group)
@@ -341,19 +342,51 @@ def index_books(entries, collection=None) -> None:
         # write transaction.
 
 
+#: a record IN SEVERAL LANGUAGES (ISO 639-2 `mul`): wikidata's entity, one
+#: section per language, its heading the language's code (09 §9.5;
+#: wikidata-build-plan.md "What is a record")
+MULTILINGUAL = "mul"
+_LANG_CODE = re.compile(r"^[a-z]{2,3}$")
+
+
+def by_section_language(lang: str, chunks: list[dict]) -> list[tuple[str, list[dict]]]:
+    """A document's chunks as (language, chunks) by the index group they go
+    to. A `mul` record's sections are each written in ONE language, named by
+    its heading: each is indexed in that language's group, stemmed as that
+    language, with that language stored — so "in English" finds a wikidata
+    entity's English text, and the English stemmer reads it (2026-10-24: all
+    75.9 M of the node's sat in `other`, unstemmed, and every language-limited
+    search skipped them). A heading that is no language code keeps the
+    record's `mul` (pubmed's multi-language articles, headed "Abstract").
+    Every other record: one part, its own language, as before. A record's
+    section languages are its Codex's list, fixed for the collection's life
+    (02 §2.7), so a re-index never leaves a part in a group it has left."""
+    if (lang or "") != MULTILINGUAL:
+        return [(lang, chunks)]
+    parts: dict[str, list[dict]] = {}
+    for c in chunks:
+        head = (c.get("chapter") or "").strip().lower()
+        parts.setdefault(head if _LANG_CODE.match(head) else MULTILINGUAL, []).append(c)
+    return list(parts.items()) or [(lang, chunks)]
+
+
 def index_book(lang: str, book_id: int, chunks: list[dict], collection=None):
     """One document, one commit — for callers that genuinely have one."""
     index_books([(lang, book_id, chunks)], collection)
 
 def delete_book(lang: str, book_id: int, collection=None):
-    group = group_for(lang)
-    idx = get_index(group, collection)
+    """A `mul` record's sections may be in several groups
+    (`by_section_language`): it is deleted from every group held."""
     base = (collection.fts_dir if collection is not None
             else collections_mod.default_collection().fts_dir)
-    writer, lock = _writer((str(base), group), idx)
-    with lock:
-        writer.delete_documents("book_id", book_id)
-        writer.commit()
+    groups = (existing_groups(collection) if (lang or "") == MULTILINGUAL and collection is not None
+              else [group_for(lang)])
+    for group in groups or [group_for(lang)]:
+        idx = get_index(group, collection)
+        writer, lock = _writer((str(base), group), idx)
+        with lock:
+            writer.delete_documents("book_id", book_id)
+            writer.commit()
 
 def rewrite_without(group: str, collection=None) -> int:
     """Rewrite this group's index from its own live documents, so that what
