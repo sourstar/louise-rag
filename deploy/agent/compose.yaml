@@ -1,0 +1,39 @@
+# docker build -f agent.Dockerfile -t louise-agent:local . && docker compose up -d   (from deploy/agent/, on this PC)
+# Every working tree is mounted at the SAME path inside as the host's Docker
+# daemon sees it (/run/desktop/mnt/host/c/...), so a path the agent hands to
+# `docker run -v` resolves on the host unchanged.
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: agent.Dockerfile
+    init: true
+    image: louise-agent:local
+    container_name: louise-agent
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    working_dir: /run/desktop/mnt/host/c/Users/alana/OneDrive/Documenti/Projects/louise-rag
+    environment:
+      TZ: Europe/Rome
+      RC_NAME: München
+    # the node's ssh key arrives read-only from the host's ~/.ssh and is copied
+    # with the permissions ssh insists on (a Windows bind mount reads as 0777);
+    # then, once logged in (`claude auth status` exits 1 while logged out, so the
+    # container waits instead of crash-looping), the main process is a Remote
+    # Control server in the cwd, reachable from claude.ai/code or the app
+    # (as Perugia's, 2026-10-23)
+    command: >
+      sh -c 'mkdir -p /root/.ssh && cp /root/.ssh-host/truenas_root* /root/.ssh/ 2>/dev/null;
+             chmod 700 /root/.ssh; chmod 600 /root/.ssh/truenas_root 2>/dev/null;
+             until claude auth status >/dev/null 2>&1; do sleep 30; done;
+             exec claude remote-control --name "$$RC_NAME"'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - C:/Users/alana/OneDrive/Documenti/Projects/louise-rag:/run/desktop/mnt/host/c/Users/alana/OneDrive/Documenti/Projects/louise-rag
+      - C:/Users/alana/louise-agent-scratch:/run/desktop/mnt/host/c/Users/alana/louise-agent-scratch
+      - C:/Users/alana/.ssh:/root/.ssh-host:ro
+      - agent-home:/root
+
+volumes:
+  agent-home:

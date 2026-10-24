@@ -12,6 +12,10 @@ case "$END" in *-*) end_s=$(date -d "$END" +%s) ;; *) end_s=$(date -d "today $EN
 now_s=$(date +%s)
 [ "$now_s" -lt "$end_s" ] || { echo "$(date +%T) window over before it began" >> "$LOG"; exit 0; }
 before=$(docker top "$W" -eo pid,args | awk '/app.louise/ {print $1}' | sort -u)
+# this run's own id: a step the script runs in a container of its own labels it
+# louise.in-window=$IN_WINDOW_ID, and only those are signalled at this window's
+# end (2026-10-23: a bare label let one window stop every other window's container)
+export IN_WINDOW_ID="$$-$(date +%s)"
 bash "$SCRIPT" >> "$LOG" 2>&1 &
 RUNNER=$!
 while kill -0 "$RUNNER" 2>/dev/null; do
@@ -21,8 +25,8 @@ while kill -0 "$RUNNER" 2>/dev/null; do
       echo "$before" | grep -qx "$p" || kill -TERM "$p" 2>/dev/null
     done
     # and a step the script runs in a container of its own (a capped one,
-    # wikipedia-keep-night.sh): labelled louise.in-window, signalled alike
-    for c in $(docker ps -q --filter label=louise.in-window); do
+    # wikipedia-keep-night.sh): labelled with THIS run's id, signalled alike
+    for c in $(docker ps -q --filter "label=louise.in-window=$IN_WINDOW_ID"); do
       docker kill -s TERM "$c" >/dev/null 2>&1
     done
     for i in $(seq 1 120); do kill -0 "$RUNNER" 2>/dev/null || break; sleep 5; done

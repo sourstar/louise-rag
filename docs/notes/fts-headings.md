@@ -64,11 +64,34 @@ Our boost table below is the only number on it.
 | CHAPTER_BOOST 1.0 (today) | 0.114 / 0.414 / 0.897 | 0.077 / 0.133 / 0.440 | 291 |
 | 0.25 | 0.124 / 0.379 / 0.862 | 0.123 / 0.253 / 0.507 | 14 |
 | 0.1 | 0.160 / 0.310 / 0.862 | 0.141 / 0.273 / 0.513 | 1 |
+| **HEADING_IN_BODY 1** | 0.208 / 0.448 / 0.966 | 0.143 / 0.273 / 0.533 | 1 |
+| **HEADING_IN_BODY 2** | **0.383 / 0.690 / 1.000** | 0.140 / **0.287 / 0.547** | 1 |
 
 The boost rows are kept as the record of why; they are not candidates. The
 choice is BM25F's weight k, tuned on the labelled queries as the literature
 tunes it.
-| HEADING_IN_BODY 1, 2 | building (München, 2026-10-23 evening) | | |
+
+**How the k rows were measured** (München, 2026-10-23/24 night): gutenberg's
+whole en group rebuilt twice into scratch fts_dirs on tank (not snapshotted or
+replicated) on 9db4e3a's tree, `fts.HEADING_IN_BODY` = 1 and = 2, each in a
+container capped at 2 cpus, nice 19: 63,203 documents, 8,506,767 chunks, 0
+skipped, 16,617 s each (3.8 docs/s, the two in parallel beside run 5), 30 GB
+each (the live en index is 27 GB). Then `fts.search_records("en", q, 50)` on
+the same 29 title, 150 descriptive and 3 pair English queries as the boost rows
+(`tools/measure/heading_build.py`, answers from works.json). The boost rows ran
+on the live index; same queries, same answers, the corpus read at the same
+snapshot.
+
+**Reading.** k = 2 wins both sets on the leg: titles MRR 0.114 → 0.383, R@10
+0.414 → 0.690, R@50 0.897 → 1.000; descriptive MRR 0.077 → 0.140, R@10 0.133 →
+0.287. Unlike the boost, folding the heading into the body does NOT cost
+titles: the heading's words now add term frequency inside one saturation
+instead of a separately saturated short field. k = 1 helps less on titles
+(0.208). The shuffled-heading placebo (arXiv 2610.10170) is not needed to
+separate signal from length: k = 2 over k = 1 is a large margin, and the gain
+is in titles, where the heading is the signal. Next: k = 2 (and k = 3 if a
+third copy is cheap) through the full search, reranker on, on the whole
+labelled set, before any FTS_VERSION rebuild.
 
 Deploy rule: the full search (reranker on) on the whole labelled set, no loss
 on titles or descriptive. A HEADING_IN_BODY choice rebuilds the text indexes
