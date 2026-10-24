@@ -331,3 +331,51 @@ identity space everyone else also uses (Wikidata), and claims that are
 signed, shareable and re-checkable by a stranger. What the toolkit has
 that Louise does not yet: stylometry — a per-record style vector as a
 derived index, bit-exact, never a leg; a separate proposal if wanted.
+
+## 10. The purpose, as the operator stated it — and four adjustments
+
+*Operator, 2026-10-24: "wiki gutenberg is the bridge between gutenberg
+and wikidata. The processing will log the gap between what is found in
+the books and what is mentioned in wikidata (potential new entities,
+conflicting relationships, potentially new relationships). This log may
+enrich the search with 'hypothesis' and be used to ask wikidata to
+evaluate a review. Utopically the gap will close when wikidata processes
+all the claims and the hypothesis leg will go down to zero."* It holds,
+with four adjustments that make it Louise's:
+
+1. **The gap is a view, not a log.** Every finding is already a claim
+   (§8). The gap is the subset whose counterpart in the CURRENT wikidata
+   snapshot is missing or differs — computable by comparing the two
+   collections (02 §2.3: nothing computable is stored). It re-computes
+   itself at every wikidata snapshot and shrinks without anyone editing
+   a file.
+2. **A hypothesis is never a leg** (invariant 4). It is placed beside a
+   hit, labelled *hypothesis*, with its score and passages; it may be a
+   FILTER ("hits with an open hypothesis about Q2044" — restricts, never
+   boosts, 05 §5.2) and a LISTING ("hypotheses about Florence", like
+   `ask facets`, nothing ranked). Open hypotheses per tier is a metric of
+   the collection, shown as counts are.
+3. **The review channel is Wikidata's own: the Mismatch Finder.**
+   Wikimedia's tool takes an external dataset's mismatches (item,
+   property, Wikidata's value, the external value, the external URL,
+   source, expiry) by CSV through an API; editors review them in a queue
+   and fix Wikidata or mark the source wrong
+   (https://github.com/Wikidata/Purdue-Data-Mine-2024/blob/main/upload_mismatches.py,
+   https://www.ifla.org/?p=217993). A conflicting-relation claim IS the
+   row; the external URL is the Gutenberg passage. New relations and new
+   entities have no queue: ordinary edits by a person, the claim as the
+   reference package. Louise never edits and runs no bot (Wikidata's bot
+   policy; not our place). CLAUDE.md: the standard, not our own queue.
+4. **The gap closes in BOTH directions, which is why zero is honest.** A
+   reviewed mismatch ends, in Wikidata's own model, as: the statement
+   added (the book was right); the book's value recorded at DEPRECATED
+   rank with a reason, referencing the book (the book was wrong — the
+   next snapshot carries it, the comparison finds it, closed as "known
+   and rejected"); or left open. Zero is reachable for history and
+   biography. Tier D's anchored characters are not hypotheses about the
+   world and are excluded from the count by construction.
+
+Two cautions. Feedback latency is the wikidata snapshot cadence — Louise
+reads Wikidata through its dump, never live. And the gap is a flow, not
+a stock: every Gutenberg snapshot and every new tier adds to it, so the
+metric is open hypotheses per thousand mentions per tier, not the count.
