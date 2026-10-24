@@ -356,6 +356,12 @@ determined"). names.py, in parser 2, everywhere an id would be read:
   pass writes (tests/test_plugins_wikidata_names.py). Parser 2 parses
   only from a pack whose names are done (`pack.ready`); before that every
   document DEFERS, so no title or text is written without its names.
+  UPGRADED on the node 2026-10-24 (München, 66af9bc, 8 CPUs capped, ~7.4
+  used, 3.2 GB): 37 min 38 s — the codes pass 1,175 s and the names pass
+  1,080 s over the 1,220 chunk files, both bound by decompression; 2,215
+  language codes, 17,954,384 names (of the 18.1 M entities with neither an
+  English nor a `mul` label; the rest have no label at all). A rebuild from
+  the bz2 is the hours-long pass of 2026-10-20.
 
 The Codex of 2026-10-20 names parser 1, so wikidata is CREATED AGAIN from
 the same recipe before Monday's records build: nothing was published (no
