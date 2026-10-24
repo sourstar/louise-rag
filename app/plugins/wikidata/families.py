@@ -34,7 +34,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Optional
+from typing import Callable, Iterable, Mapping, Optional
 
 #: in PRECEDENCE order — an entity in several takes the first; the code of a
 #: family is its place in the MAP's list plus one (0: not computed). This is
@@ -79,10 +79,13 @@ FALLBACK: tuple[str, ...] = ("internal",)
 #: cathedral, castle, museum, street, cemetery, mountain, river, lake,
 #: island, national park, UK Statutory Instrument, act of parliament,
 #: painting, film, school, hotel, university, business, battle, war, public
-#: election, supernova, cell line, Wikimedia category
+#: election, supernova, cell line, Wikimedia category; country, sovereign
+#: state, version/edition/translation, written work, document (the second
+#: report, 2026-10-24)
 PROBES: tuple[int, ...] = (515, 15284, 747074, 484170, 262166, 16970, 2977, 23413, 33506, 79007, 39614,
                            8502, 4022, 23397, 23442, 46169, 7604686, 1520223, 3305213, 11424, 3914, 27686,
-                           3918, 4830453, 178561, 198, 40231, 3937, 21014462, 4167836)
+                           3918, 4830453, 178561, 198, 40231, 3937, 21014462, 4167836,
+                           6256, 3624078, 3331189, 47461344, 49848)
 #: a statement that makes an entity heritage, whatever it is an instance of
 HERITAGE_DESIGNATION = "P1435"
 #: the id range a slice holds under its family: the entity's number ÷ 10⁷
@@ -232,6 +235,61 @@ def load_map(raw: bytes) -> FamilyMap:
             classes[int(q)] = code_of[fam]
     return FamilyMap(raw=bytes(raw), sha256="sha256:" + hashlib.sha256(raw).hexdigest(), dump=str(d["dump"]),
                      max_item=int(d["max_item"]), families=fams, roots=roots, classes=classes)
+
+
+def paths_to_roots(parents_of: Callable[[int], Iterable[int]], cls: int,
+                   roots: Mapping[str, Iterable[int]] = ROOTS, depth: int = 25) -> dict[str, list[int]]:
+    """Why a map gave a class its family: from the class UP its P279 links,
+    breadth-first, the first root of each family reached — a shortest path,
+    the class first and the root last (`nearest_roots` walks the same
+    graph down from the roots, so the family whose path is shortest is the
+    one it chose, unless that family is a FALLBACK). Parents in number
+    order, so the path shown is the same on every run."""
+    root_family = {int(r): f for f, rs in roots.items() for r in rs}
+    came: dict[int, Optional[int]] = {cls: None}
+    level, found = [cls], {}
+    for _ in range(depth + 1):
+        for c in level:
+            f = root_family.get(c)
+            if f is not None and f not in found:
+                path, at = [], c
+                while at is not None:
+                    path.append(at)
+                    at = came[at]
+                found[f] = path[::-1]
+        if not level or len(found) == len(roots):
+            break
+        nxt = []
+        for c in level:
+            for p in sorted(parents_of(c)):
+                if p not in came:
+                    came[p] = c
+                    nxt.append(p)
+        level = nxt
+    return found
+
+
+def preview(deciding: Mapping[tuple[int, int], int], entities: Mapping[int, int],
+            old: FamilyMap, new: FamilyMap) -> tuple[dict[str, int], list[tuple[str, str, int, int]]]:
+    """A candidate map's family sizes, ESTIMATED without a pass over the
+    dump: the old map's entities per family, each counted class's entities
+    moved to the family the new map gives that class. (family → entities,
+    [(from, to, class, entities)] largest first). An estimate: an entity
+    counts by the class that decided it under the old map (another of its
+    P31 may decide under the new), and only the classes the codes pass
+    counted move; the codes pass under the chosen map gives the numbers."""
+    sizes = {f: 0 for f in new.families}
+    for code, n in entities.items():
+        sizes[old.name(code)] = sizes.get(old.name(code), 0) + n
+    moved = []
+    for (code, cls), n in deciding.items():
+        a, b = old.name(code), new.name(new.code_of_class(cls))
+        if a != b:
+            sizes[a] -= n
+            sizes[b] = sizes.get(b, 0) + n
+            moved.append((a, b, cls, n))
+    moved.sort(key=lambda m: (-m[3], m[2]))
+    return sizes, moved
 
 
 def walk(child: Iterable[int], parent: Iterable[int], fmap: FamilyMap) -> dict[int, int]:

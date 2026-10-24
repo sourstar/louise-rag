@@ -90,6 +90,32 @@ municipality, comunes and communes, church, cathedral, castle, museum,
 street, legislation… with the family the map gives each. The table below
 is the first version, kept for the record.
 
+**The second report (map `162b7654…`, 8ca3810; München, 2026-10-24 night)
+— create stays on hold.** The fallback emptied `internal`: every Wikimedia
+category, disambiguation page, template and list article (~8.7 M) reaches
+creative work by a longer path and went to `work`. `other` is 22.5 M,
+about 7 M of it astronomy and about 3.5 M chemical entities, genes and
+proteins. Also in `other`: version/edition/translation (830 k), written work
+and document, which belong in `work`; cemetery (277 k); and "constitutional
+republic", a P31 of countries. Church, cathedral and castle are `built`, as
+designed: `heritage` is what is commemorative or archaeological by its class,
+plus the P1435-designated.
+Two fixes in a row each traded one error for another, both chosen on
+top-25 lists. So no root is chosen any more without the dump's own paths.
+`louise dev wikidata-classes` prints, for a class, its shortest P279 path to
+each family's root. Given a candidate root set, it estimates the family sizes
+from the codes pass already done and lists the classes that would move, in
+minutes and without another pass. The first candidate,
+`wikidata-coverage-2026-10-24/candidate-roots-1.json`:
+- `internal` is no longer a fallback;
+- new `astronomy` (astronomical object) and `molecular` (chemical entity,
+  gene, protein) families;
+- `work` adds version/edition/translation, written work and document;
+- `place` adds country and sovereign state;
+- `heritage` adds cemetery.
+Its paths and preview decide each root. The legislation that once landed in
+`internal` is checked by its own path.
+
 **Families, in precedence order** (an entity in several takes the first):
 
 | family | an entity is in it when | measured (dump 20261012) |

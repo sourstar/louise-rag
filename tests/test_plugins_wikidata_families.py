@@ -633,3 +633,53 @@ def test_a_resliced_daughter_and_carry_are_refused_where_more_than_the_slicing_d
             / slicing.map_member(slicing.family_map_of(d.slicing))).read_bytes() == raw2
     with pytest.raises(CodexError, match="--rebuilt, --keep or --recut"):
         carry_mod.carry(root, "m", col.name_of(root, d.collection_id), resliced=True, rebuilt=True)
+
+
+# ---- why a class has its family, and what candidate roots would move (louise dev wikidata-classes)
+
+def test_a_class_s_shortest_path_to_each_family_s_root_explains_the_map():
+    """The second report (2026-10-24) put every Wikimedia category under
+    `work`: the path the map followed is what a root is chosen on."""
+    up = {601: [17442446, 610], 610: [611], 611: [17537576, 610], 700: [701], 701: [700]}
+    paths = families.paths_to_roots(lambda q: up.get(q, ()), 601)
+    assert paths == {"internal": [601, 17442446], "work": [601, 610, 611, 17537576]}
+    assert list(paths) == ["internal", "work"], "nearest first: the order the walk reached them"
+    assert families.paths_to_roots(lambda q: up.get(q, ()), 700) == {}, "a cycle under no root reaches none"
+    assert families.paths_to_roots(lambda q: up.get(q, ()), 601, depth=1) == {"internal": [601, 17442446]}
+    child, parent = zip(*[(c, p) for c, ps in up.items() for p in ps])
+    fmap = families.load_map(families.build_map(child, parent, max_item=10**9, dump="d"))
+    assert fmap.name(fmap.code_of_class(601)) == "work", "internal is a FALLBACK: the longer path won"
+
+
+def test_a_candidate_s_family_sizes_are_estimated_from_the_classes_that_decided():
+    child, parent = (601, 601, 610, 611, 3305213), (17442446, 610, 611, 17537576, 17537576)
+    old = families.load_map(families.build_map(child, parent, max_item=10**9, dump="d"))
+    new = families.load_map(families.build_map(child, parent, max_item=10**9, dump="d", fallback=()))
+    work, internal, other = old.code("work"), old.code("internal"), old.other
+    deciding = {(work, 601): 10, (work, 3305213): 4, (other, 523): 2}
+    sizes, moved = families.preview(deciding, {work: 15, other: 5}, old, new)
+    assert sizes["work"] == 5 and sizes["internal"] == 10 and sizes["other"] == 5
+    assert moved == [("work", "internal", 601, 10)]
+    assert new.code("internal") == internal
+
+
+def test_the_dev_tool_explains_the_probes_and_previews_a_candidate(tmp_path, capsys):
+    from tools import wikidata_classes
+    dump = _dump(tmp_path)
+    pack.build(dump, languages=("en",), chunk=4, workers=1)
+    cand = tmp_path / "roots.json"
+    # the code's roots without `place`: city is reached only through local government
+    cand.write_text(json.dumps({"roots": {f: rs for f, rs in families.ROOTS.items() if f != "place"}}))
+    out = tmp_path / "report.json"
+    assert wikidata_classes.main([str(dump), "--candidate", str(cand), "--classes", "Q100", "--out", str(out)]) == 0
+    report = json.loads(out.read_text())
+    city = next(r for r in report["explained"] if r["class"] == 515)
+    assert city["label"] == "city" and city["family"] == "place" and city["candidate"] == "organization"
+    assert city["paths"] == {"organization": [[515, "city"], [100, "local government"], [43229, "organization"]]}, \
+        "paths to the CANDIDATE's roots: what it is chosen on"
+    assert [r for r in report["explained"] if r["class"] == 100], "--classes adds to the probes"
+    assert report["preview"]["moved"] == [["place", "organization", 515, "city", 1]]
+    assert report["preview"]["entities"]["organization"] == report["preview"]["entities"]["place"] + 1
+    printed = capsys.readouterr().out
+    assert "Q515 'city': place → organization" in printed and "local government (Q100)" in printed
+    assert pack.read_meta(dump)["families_map"], "read-only: the pack's own record is as it was"

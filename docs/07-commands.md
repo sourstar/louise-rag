@@ -211,6 +211,7 @@ louise dev                                                             operator 
   embedder-profile     the concurrency an endpoint sustains
   migrate schema [<collection>]                                        apply pending schema changes to a state database; writes; never runs on its own
   refs-sync            reference tables from their origins; writes
+  wikidata-classes <dump> [--candidate roots.json]                     why the family map gives a class its family (its shortest P279 path to each family's root), and what candidate roots would move, estimated from the codes pass (added 2026-10-24)
   genesis recheck <collection>                                         reopen final archive shards that still have documents the archive could serve; writes
   genesis recount <collection> [--yes]                                 an archive ledger's docs and chunks recounted from chunk_verification; writes only with --yes (added 2026-10-08)
   drop-rows <collection> --ids FILE [--yes]                            02 §2.4's remedy: the rows FILE lists (a chunk id a line) dropped and their documents marked to embed
@@ -933,7 +934,7 @@ unknown command. The table says where each went.
 | `/admin/…`, `/api/search`, `/api/verify` | `/api/hold/…`, `/api/ask/search`; T4 needs no route — it runs on use |
 | `/v1/chat/completions` | kept as an alias of `/api/ask/chat` for clients that speak that protocol |
 | LocalAGI's `/api/collections/…` | kept as aliases of `hold deposit`, `hold source` and `ask search` for LocalAGI (§7.4) |
-| `tools/sched_report`, `profile_embed`, `migrate_manifest`, `sync_refs` | `dev schedule-report`, `dev embedder-profile`, `dev migrate schema`, `dev refs-sync` (`dev load-profile` retired with RAGE, 2026-10-18: it measured reloads through RAGE's admin API) |
+| `tools/sched_report`, `profile_embed`, `migrate_manifest`, `sync_refs`, `wikidata_classes` | `dev schedule-report`, `dev embedder-profile`, `dev migrate schema`, `dev refs-sync`, `dev wikidata-classes` (`dev load-profile` retired with RAGE, 2026-10-18: it measured reloads through RAGE's admin API) |
 
 ## 7.7 Contracts: exit codes, arguments, output, concurrency, interruption
 

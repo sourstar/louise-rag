@@ -1088,7 +1088,7 @@ def cmd_node_pause(a) -> int:
 #: runs. Wrapped, not rewritten — the module keeps its own flags, and
 #: `python -m tools.<module>` keeps working until step 12 retires it.
 DEV_TOOLS = {"schedule-report": "sched_report", "embedder-profile": "profile_embed",
-             "refs-sync": "sync_refs"}
+             "refs-sync": "sync_refs", "wikidata-classes": "wikidata_classes"}
 
 
 def cmd_dev_tool(a) -> int:
@@ -4712,7 +4712,9 @@ def build_parser() -> argparse.ArgumentParser:
     dverbs = dev.add_subparsers(dest="verb", required=True)
     for verb, what in (("schedule-report", "what the worker spent its rounds on (tools/sched_report.py)"),
                        ("embedder-profile", "the concurrency an endpoint sustains (tools/profile_embed.py)"),
-                       ("refs-sync", "reference tables from their origins; writes (tools/sync_refs.py)")):
+                       ("refs-sync", "reference tables from their origins; writes (tools/sync_refs.py)"),
+                       ("wikidata-classes", "why the family map gives a class its family, and what candidate "
+                                            "roots would move (tools/wikidata_classes.py)")):
         p = dverbs.add_parser(verb, help=what, add_help=False)
         p.add_argument("rest", nargs=argparse.REMAINDER, help="the instrument's own flags")
         p.set_defaults(fn=cmd_dev_tool)
