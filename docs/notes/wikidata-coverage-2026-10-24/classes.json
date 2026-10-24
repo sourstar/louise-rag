@@ -1,0 +1,6924 @@
+{
+ "dump": "/corpora/wikidata/wikidatawiki/entities/20261012/wikidata-20261012-all.json.bz2",
+ "languages": [
+  "en",
+  "it",
+  "de",
+  "fr",
+  "es"
+ ],
+ "roots": {
+  "Q811979": {
+   "label": "built structure",
+   "classes_in_tree": 24378,
+   "instances": {
+    "entities": 5640728,
+    "en": {
+     "label": 0.7182,
+     "label_or_mul": 0.7217,
+     "description": 0.7253
+    },
+    "it": {
+     "label": 0.0554,
+     "label_or_mul": 0.0915,
+     "description": 0.0452
+    },
+    "de": {
+     "label": 0.2715,
+     "label_or_mul": 0.2952,
+     "description": 0.429
+    },
+    "fr": {
+     "label": 0.1804,
+     "label_or_mul": 0.2077,
+     "description": 0.177
+    },
+    "es": {
+     "label": 0.0625,
+     "label_or_mul": 0.0976,
+     "description": 0.0804
+    },
+    "with_sitelinks": 0.3669
+   },
+   "classes": {
+    "entities": 24378,
+    "en": {
+     "label": 0.8526,
+     "label_or_mul": 0.8574,
+     "description": 0.7175
+    },
+    "it": {
+     "label": 0.2563,
+     "label_or_mul": 0.2811,
+     "description": 0.1227
+    },
+    "de": {
+     "label": 0.439,
+     "label_or_mul": 0.4571,
+     "description": 0.329
+    },
+    "fr": {
+     "label": 0.4323,
+     "label_or_mul": 0.4507,
+     "description": 0.2318
+    },
+    "es": {
+     "label": 0.3058,
+     "label_or_mul": 0.327,
+     "description": 0.1466
+    },
+    "with_sitelinks": 0.6983
+   }
+  },
+  "Q41176": {
+   "label": "building",
+   "classes_in_tree": 8164,
+   "instances": {
+    "entities": 2949836,
+    "en": {
+     "label": 0.7083,
+     "label_or_mul": 0.7109,
+     "description": 0.7282
+    },
+    "it": {
+     "label": 0.0603,
+     "label_or_mul": 0.0713,
+     "description": 0.0645
+    },
+    "de": {
+     "label": 0.194,
+     "label_or_mul": 0.2005,
+     "description": 0.3704
+    },
+    "fr": {
+     "label": 0.1359,
+     "label_or_mul": 0.1457,
+     "description": 0.1702
+    },
+    "es": {
+     "label": 0.0639,
+     "label_or_mul": 0.074,
+     "description": 0.0855
+    },
+    "with_sitelinks": 0.352
+   },
+   "classes": {
+    "entities": 8164,
+    "en": {
+     "label": 0.8195,
+     "label_or_mul": 0.824,
+     "description": 0.6545
+    },
+    "it": {
+     "label": 0.1894,
+     "label_or_mul": 0.2135,
+     "description": 0.1165
+    },
+    "de": {
+     "label": 0.4078,
+     "label_or_mul": 0.4275,
+     "description": 0.3301
+    },
+    "fr": {
+     "label": 0.3536,
+     "label_or_mul": 0.3736,
+     "description": 0.237
+    },
+    "es": {
+     "label": 0.2533,
+     "label_or_mul": 0.2749,
+     "description": 0.1575
+    },
+    "with_sitelinks": 0.754
+   }
+  },
+  "Q4989906": {
+   "label": "monument",
+   "classes_in_tree": 1431,
+   "instances": {
+    "entities": 672737,
+    "en": {
+     "label": 0.6198,
+     "label_or_mul": 0.6232,
+     "description": 0.6227
+    },
+    "it": {
+     "label": 0.1023,
+     "label_or_mul": 0.1102,
+     "description": 0.0331
+    },
+    "de": {
+     "label": 0.1972,
+     "label_or_mul": 0.2035,
+     "description": 0.299
+    },
+    "fr": {
+     "label": 0.1902,
+     "label_or_mul": 0.1975,
+     "description": 0.1612
+    },
+    "es": {
+     "label": 0.1357,
+     "label_or_mul": 0.1433,
+     "description": 0.0961
+    },
+    "with_sitelinks": 0.2591
+   },
+   "classes": {
+    "entities": 1431,
+    "en": {
+     "label": 0.8253,
+     "label_or_mul": 0.8295,
+     "description": 0.6513
+    },
+    "it": {
+     "label": 0.2201,
+     "label_or_mul": 0.2481,
+     "description": 0.1405
+    },
+    "de": {
+     "label": 0.4535,
+     "label_or_mul": 0.4773,
+     "description": 0.3655
+    },
+    "fr": {
+     "label": 0.3899,
+     "label_or_mul": 0.4158,
+     "description": 0.2586
+    },
+    "es": {
+     "label": 0.2795,
+     "label_or_mul": 0.3068,
+     "description": 0.1936
+    },
+    "with_sitelinks": 0.782
+   }
+  },
+  "Q839954": {
+   "label": "archaeological site",
+   "classes_in_tree": 595,
+   "instances": {
+    "entities": 363793,
+    "en": {
+     "label": 0.6456,
+     "label_or_mul": 0.6475,
+     "description": 0.7798
+    },
+    "it": {
+     "label": 0.0402,
+     "label_or_mul": 0.0466,
+     "description": 0.0245
+    },
+    "de": {
+     "label": 0.2418,
+     "label_or_mul": 0.2468,
+     "description": 0.3648
+    },
+    "fr": {
+     "label": 0.0877,
+     "label_or_mul": 0.0929,
+     "description": 0.1405
+    },
+    "es": {
+     "label": 0.0884,
+     "label_or_mul": 0.0951,
+     "description": 0.1451
+    },
+    "with_sitelinks": 0.1541
+   },
+   "classes": {
+    "entities": 595,
+    "en": {
+     "label": 0.8252,
+     "label_or_mul": 0.8353,
+     "description": 0.6471
+    },
+    "it": {
+     "label": 0.3025,
+     "label_or_mul": 0.3328,
+     "description": 0.1916
+    },
+    "de": {
+     "label": 0.5294,
+     "label_or_mul": 0.5597,
+     "description": 0.3882
+    },
+    "fr": {
+     "label": 0.4336,
+     "label_or_mul": 0.4588,
+     "description": 0.2992
+    },
+    "es": {
+     "label": 0.3664,
+     "label_or_mul": 0.3983,
+     "description": 0.2555
+    },
+    "with_sitelinks": 0.7328
+   }
+  },
+  "Q1656682": {
+   "label": "planned event",
+   "classes_in_tree": 56778,
+   "instances": {
+    "entities": 1441964,
+    "en": {
+     "label": 0.808,
+     "label_or_mul": 0.8315,
+     "description": 0.6614
+    },
+    "it": {
+     "label": 0.1717,
+     "label_or_mul": 0.1992,
+     "description": 0.1665
+    },
+    "de": {
+     "label": 0.2497,
+     "label_or_mul": 0.2757,
+     "description": 0.2625
+    },
+    "fr": {
+     "label": 0.2121,
+     "label_or_mul": 0.2386,
+     "description": 0.2911
+    },
+    "es": {
+     "label": 0.1397,
+     "label_or_mul": 0.1669,
+     "description": 0.1351
+    },
+    "with_sitelinks": 0.5947
+   },
+   "classes": {
+    "entities": 56778,
+    "en": {
+     "label": 0.9038,
+     "label_or_mul": 0.9058,
+     "description": 0.4663
+    },
+    "it": {
+     "label": 0.2198,
+     "label_or_mul": 0.2301,
+     "description": 0.1508
+    },
+    "de": {
+     "label": 0.2656,
+     "label_or_mul": 0.2757,
+     "description": 0.1747
+    },
+    "fr": {
+     "label": 0.488,
+     "label_or_mul": 0.4942,
+     "description": 0.2452
+    },
+    "es": {
+     "label": 0.2763,
+     "label_or_mul": 0.286,
+     "description": 0.1612
+    },
+    "with_sitelinks": 0.5672
+   }
+  },
+  "Q1190554": {
+   "label": "occurrence",
+   "classes_in_tree": 442711,
+   "instances": {
+    "entities": 3895782,
+    "en": {
+     "label": 0.7343,
+     "label_or_mul": 0.7779,
+     "description": 0.7669
+    },
+    "it": {
+     "label": 0.1116,
+     "label_or_mul": 0.1616,
+     "description": 0.1753
+    },
+    "de": {
+     "label": 0.1634,
+     "label_or_mul": 0.2113,
+     "description": 0.1822
+    },
+    "fr": {
+     "label": 0.1568,
+     "label_or_mul": 0.2047,
+     "description": 0.256
+    },
+    "es": {
+     "label": 0.1202,
+     "label_or_mul": 0.1695,
+     "description": 0.2021
+    },
+    "with_sitelinks": 0.3348
+   },
+   "classes": {
+    "entities": 442711,
+    "en": {
+     "label": 0.9403,
+     "label_or_mul": 0.9421,
+     "description": 0.8267
+    },
+    "it": {
+     "label": 0.1245,
+     "label_or_mul": 0.1305,
+     "description": 0.0866
+    },
+    "de": {
+     "label": 0.1785,
+     "label_or_mul": 0.1835,
+     "description": 0.1442
+    },
+    "fr": {
+     "label": 0.2515,
+     "label_or_mul": 0.2559,
+     "description": 0.1299
+    },
+    "es": {
+     "label": 0.1708,
+     "label_or_mul": 0.1761,
+     "description": 0.0957
+    },
+    "with_sitelinks": 0.3824
+   }
+  }
+ },
+ "selected": {
+  "entities": 10437567,
+  "en": {
+   "label": 0.7068,
+   "label_or_mul": 0.7251,
+   "description": 0.7313
+  },
+  "it": {
+   "label": 0.0772,
+   "label_or_mul": 0.1159,
+   "description": 0.094
+  },
+  "de": {
+   "label": 0.2221,
+   "label_or_mul": 0.2531,
+   "description": 0.3188
+  },
+  "fr": {
+   "label": 0.179,
+   "label_or_mul": 0.2121,
+   "description": 0.2112
+  },
+  "es": {
+   "label": 0.0895,
+   "label_or_mul": 0.1274,
+   "description": 0.1291
+  },
+  "with_sitelinks": 0.351
+ },
+ "heritage_only": 513755,
+ "entities_read": 75896183,
+ "referenced_labels": {
+  "label_lookups": 192259362,
+  "to_properties": 118144180,
+  "to_pruned_articles": 153265,
+  "to_ids_not_in_dump": 0,
+  "coverage": {
+   "en": {
+    "own_language": 0.9872,
+    "with_mul": 0.9898
+   },
+   "it": {
+    "own_language": 0.8462,
+    "with_mul": 0.8598
+   },
+   "de": {
+    "own_language": 0.9059,
+    "with_mul": 0.9142
+   },
+   "fr": {
+    "own_language": 0.9361,
+    "with_mul": 0.9422
+   },
+   "es": {
+    "own_language": 0.883,
+    "with_mul": 0.8939
+   }
+  }
+ },
+ "missing_labels": {
+  "en": {
+   "entities": 557515,
+   "references": 1803410,
+   "most_referenced": [
+    {
+     "id": "Q121076051",
+     "label": null,
+     "references": 22648
+    },
+    {
+     "id": "Q135191058",
+     "label": null,
+     "references": 12389
+    },
+    {
+     "id": "Q677322",
+     "label": null,
+     "references": 7451
+    },
+    {
+     "id": "Q121071315",
+     "label": null,
+     "references": 7189
+    },
+    {
+     "id": "Q121072018",
+     "label": null,
+     "references": 4340
+    },
+    {
+     "id": "Q121071543",
+     "label": null,
+     "references": 4119
+    },
+    {
+     "id": "Q111253599",
+     "label": null,
+     "references": 3734
+    },
+    {
+     "id": "Q136957385",
+     "label": null,
+     "references": 3544
+    },
+    {
+     "id": "Q102144299",
+     "label": null,
+     "references": 3514
+    },
+    {
+     "id": "Q102144080",
+     "label": null,
+     "references": 3514
+    },
+    {
+     "id": "Q102138992",
+     "label": null,
+     "references": 3514
+    },
+    {
+     "id": "Q31360953",
+     "label": null,
+     "references": 3514
+    },
+    {
+     "id": "Q101858067",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q101857637",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q101854168",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q65295937",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q61120851",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q61119546",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q61120184",
+     "label": null,
+     "references": 3015
+    },
+    {
+     "id": "Q61119534",
+     "label": null,
+     "references": 3015
+    },
+    {
+     "id": "Q62415098",
+     "label": null,
+     "references": 2921
+    },
+    {
+     "id": "Q121076045",
+     "label": null,
+     "references": 2565
+    },
+    {
+     "id": "Q118559330",
+     "label": null,
+     "references": 2372
+    },
+    {
+     "id": "Q126052742",
+     "label": null,
+     "references": 2303
+    },
+    {
+     "id": "Q120169931",
+     "label": null,
+     "references": 2299
+    },
+    {
+     "id": "Q105295411",
+     "label": null,
+     "references": 2240
+    },
+    {
+     "id": "Q121076042",
+     "label": null,
+     "references": 2145
+    },
+    {
+     "id": "Q121085205",
+     "label": null,
+     "references": 2075
+    },
+    {
+     "id": "Q121072153",
+     "label": null,
+     "references": 2053
+    },
+    {
+     "id": "Q121084920",
+     "label": null,
+     "references": 2024
+    },
+    {
+     "id": "Q106491386",
+     "label": null,
+     "references": 2021
+    },
+    {
+     "id": "Q121071997",
+     "label": null,
+     "references": 2016
+    },
+    {
+     "id": "Q126052766",
+     "label": null,
+     "references": 2013
+    },
+    {
+     "id": "Q18845791",
+     "label": null,
+     "references": 2012
+    },
+    {
+     "id": "Q66817267",
+     "label": null,
+     "references": 1881
+    },
+    {
+     "id": "Q123094976",
+     "label": null,
+     "references": 1792
+    },
+    {
+     "id": "Q101859889",
+     "label": null,
+     "references": 1732
+    },
+    {
+     "id": "Q121085046",
+     "label": null,
+     "references": 1661
+    },
+    {
+     "id": "Q124646484",
+     "label": null,
+     "references": 1637
+    },
+    {
+     "id": "Q122397434",
+     "label": null,
+     "references": 1624
+    },
+    {
+     "id": "Q121085079",
+     "label": null,
+     "references": 1618
+    },
+    {
+     "id": "Q121085278",
+     "label": null,
+     "references": 1488
+    },
+    {
+     "id": "Q10690716",
+     "label": null,
+     "references": 1456
+    },
+    {
+     "id": "Q122152536",
+     "label": null,
+     "references": 1293
+    },
+    {
+     "id": "Q56676622",
+     "label": null,
+     "references": 1293
+    },
+    {
+     "id": "Q1843360",
+     "label": null,
+     "references": 1216
+    },
+    {
+     "id": "Q10586400",
+     "label": null,
+     "references": 1179
+    },
+    {
+     "id": "Q117444077",
+     "label": null,
+     "references": 1178
+    },
+    {
+     "id": "Q1303388",
+     "label": null,
+     "references": 1110
+    },
+    {
+     "id": "Q118559325",
+     "label": null,
+     "references": 1083
+    },
+    {
+     "id": "Q28803049",
+     "label": null,
+     "references": 1061
+    },
+    {
+     "id": "Q123220878",
+     "label": null,
+     "references": 1015
+    },
+    {
+     "id": "Q109355684",
+     "label": null,
+     "references": 1008
+    },
+    {
+     "id": "Q1843373",
+     "label": null,
+     "references": 996
+    },
+    {
+     "id": "Q116907856",
+     "label": null,
+     "references": 981
+    },
+    {
+     "id": "Q116952033",
+     "label": null,
+     "references": 948
+    },
+    {
+     "id": "Q112166182",
+     "label": null,
+     "references": 920
+    },
+    {
+     "id": "Q109659980",
+     "label": null,
+     "references": 919
+    },
+    {
+     "id": "Q62414915",
+     "label": null,
+     "references": 914
+    },
+    {
+     "id": "Q121085048",
+     "label": null,
+     "references": 898
+    },
+    {
+     "id": "Q30940776",
+     "label": null,
+     "references": 895
+    },
+    {
+     "id": "Q121076066",
+     "label": null,
+     "references": 877
+    },
+    {
+     "id": "Q116911193",
+     "label": null,
+     "references": 869
+    },
+    {
+     "id": "Q106505045",
+     "label": null,
+     "references": 867
+    },
+    {
+     "id": "Q106504960",
+     "label": null,
+     "references": 835
+    },
+    {
+     "id": "Q135399693",
+     "label": null,
+     "references": 820
+    },
+    {
+     "id": "Q117447049",
+     "label": null,
+     "references": 794
+    },
+    {
+     "id": "Q61989188",
+     "label": null,
+     "references": 791
+    },
+    {
+     "id": "Q117444233",
+     "label": null,
+     "references": 785
+    },
+    {
+     "id": "Q121071320",
+     "label": null,
+     "references": 773
+    },
+    {
+     "id": "Q120165756",
+     "label": null,
+     "references": 770
+    },
+    {
+     "id": "Q121071975",
+     "label": null,
+     "references": 769
+    },
+    {
+     "id": "Q3326995",
+     "label": null,
+     "references": 753
+    },
+    {
+     "id": "Q117317849",
+     "label": null,
+     "references": 734
+    },
+    {
+     "id": "Q1473877",
+     "label": null,
+     "references": 732
+    },
+    {
+     "id": "Q116437195",
+     "label": null,
+     "references": 708
+    },
+    {
+     "id": "Q101069823",
+     "label": null,
+     "references": 697
+    },
+    {
+     "id": "Q1833304",
+     "label": null,
+     "references": 657
+    },
+    {
+     "id": "Q59221678",
+     "label": null,
+     "references": 648
+    },
+    {
+     "id": "Q1844105",
+     "label": null,
+     "references": 648
+    },
+    {
+     "id": "Q18023782",
+     "label": null,
+     "references": 644
+    },
+    {
+     "id": "Q108851483",
+     "label": null,
+     "references": 643
+    },
+    {
+     "id": "Q1425452",
+     "label": null,
+     "references": 641
+    },
+    {
+     "id": "Q1650198",
+     "label": null,
+     "references": 621
+    },
+    {
+     "id": "Q1726680",
+     "label": null,
+     "references": 618
+    },
+    {
+     "id": "Q121076047",
+     "label": null,
+     "references": 610
+    },
+    {
+     "id": "Q132202629",
+     "label": null,
+     "references": 609
+    },
+    {
+     "id": "Q116819321",
+     "label": null,
+     "references": 589
+    },
+    {
+     "id": "Q106504986",
+     "label": null,
+     "references": 588
+    },
+    {
+     "id": "Q1845339",
+     "label": null,
+     "references": 587
+    },
+    {
+     "id": "Q1831058",
+     "label": null,
+     "references": 578
+    },
+    {
+     "id": "Q121084893",
+     "label": null,
+     "references": 577
+    },
+    {
+     "id": "Q116895749",
+     "label": null,
+     "references": 574
+    },
+    {
+     "id": "Q121092314",
+     "label": null,
+     "references": 573
+    },
+    {
+     "id": "Q113446990",
+     "label": null,
+     "references": 573
+    },
+    {
+     "id": "Q104433998",
+     "label": null,
+     "references": 572
+    },
+    {
+     "id": "Q70008352",
+     "label": null,
+     "references": 572
+    },
+    {
+     "id": "Q15827794",
+     "label": null,
+     "references": 567
+    },
+    {
+     "id": "Q63759527",
+     "label": null,
+     "references": 548
+    },
+    {
+     "id": "Q12041570",
+     "label": null,
+     "references": 547
+    },
+    {
+     "id": "Q1845357",
+     "label": null,
+     "references": 546
+    },
+    {
+     "id": "Q9068131",
+     "label": null,
+     "references": 545
+    },
+    {
+     "id": "Q10531610",
+     "label": null,
+     "references": 540
+    },
+    {
+     "id": "Q114408337",
+     "label": null,
+     "references": 536
+    },
+    {
+     "id": "Q56415273",
+     "label": null,
+     "references": 536
+    },
+    {
+     "id": "Q141160675",
+     "label": null,
+     "references": 534
+    },
+    {
+     "id": "Q100739937",
+     "label": null,
+     "references": 528
+    },
+    {
+     "id": "Q106502073",
+     "label": null,
+     "references": 526
+    },
+    {
+     "id": "Q1844512",
+     "label": null,
+     "references": 524
+    },
+    {
+     "id": "Q121085343",
+     "label": null,
+     "references": 523
+    },
+    {
+     "id": "Q121071740",
+     "label": null,
+     "references": 522
+    },
+    {
+     "id": "Q121084968",
+     "label": null,
+     "references": 515
+    },
+    {
+     "id": "Q107637266",
+     "label": null,
+     "references": 511
+    },
+    {
+     "id": "Q122704146",
+     "label": null,
+     "references": 507
+    },
+    {
+     "id": "Q141160644",
+     "label": null,
+     "references": 506
+    },
+    {
+     "id": "Q121085383",
+     "label": null,
+     "references": 504
+    },
+    {
+     "id": "Q101860045",
+     "label": null,
+     "references": 504
+    },
+    {
+     "id": "Q126055546",
+     "label": null,
+     "references": 499
+    },
+    {
+     "id": "Q105984617",
+     "label": null,
+     "references": 499
+    },
+    {
+     "id": "Q10681569",
+     "label": null,
+     "references": 499
+    },
+    {
+     "id": "Q105106397",
+     "label": null,
+     "references": 498
+    },
+    {
+     "id": "Q105949988",
+     "label": null,
+     "references": 495
+    },
+    {
+     "id": "Q132185692",
+     "label": null,
+     "references": 490
+    },
+    {
+     "id": "Q1288505",
+     "label": null,
+     "references": 490
+    },
+    {
+     "id": "Q20164856",
+     "label": null,
+     "references": 489
+    },
+    {
+     "id": "Q1843813",
+     "label": null,
+     "references": 485
+    },
+    {
+     "id": "Q1753058",
+     "label": null,
+     "references": 484
+    },
+    {
+     "id": "Q121084906",
+     "label": null,
+     "references": 482
+    },
+    {
+     "id": "Q1830961",
+     "label": null,
+     "references": 479
+    },
+    {
+     "id": "Q1845116",
+     "label": null,
+     "references": 476
+    },
+    {
+     "id": "Q1832174",
+     "label": null,
+     "references": 470
+    },
+    {
+     "id": "Q116897612",
+     "label": null,
+     "references": 465
+    },
+    {
+     "id": "Q126482844",
+     "label": null,
+     "references": 462
+    },
+    {
+     "id": "Q1832380",
+     "label": null,
+     "references": 461
+    },
+    {
+     "id": "Q20164719",
+     "label": null,
+     "references": 457
+    },
+    {
+     "id": "Q1831713",
+     "label": null,
+     "references": 457
+    },
+    {
+     "id": "Q100701548",
+     "label": null,
+     "references": 456
+    },
+    {
+     "id": "Q101028465",
+     "label": null,
+     "references": 452
+    },
+    {
+     "id": "Q121072334",
+     "label": null,
+     "references": 451
+    },
+    {
+     "id": "Q1844640",
+     "label": null,
+     "references": 450
+    },
+    {
+     "id": "Q121085256",
+     "label": null,
+     "references": 448
+    },
+    {
+     "id": "Q1496983",
+     "label": null,
+     "references": 446
+    },
+    {
+     "id": "Q125875093",
+     "label": null,
+     "references": 437
+    },
+    {
+     "id": "Q123015599",
+     "label": null,
+     "references": 435
+    },
+    {
+     "id": "Q113529330",
+     "label": null,
+     "references": 435
+    },
+    {
+     "id": "Q3364880",
+     "label": null,
+     "references": 434
+    },
+    {
+     "id": "Q53855460",
+     "label": null,
+     "references": 430
+    },
+    {
+     "id": "Q20754049",
+     "label": null,
+     "references": 430
+    },
+    {
+     "id": "Q121072115",
+     "label": null,
+     "references": 427
+    },
+    {
+     "id": "Q1642051",
+     "label": null,
+     "references": 427
+    },
+    {
+     "id": "Q113368024",
+     "label": null,
+     "references": 426
+    },
+    {
+     "id": "Q130453959",
+     "label": null,
+     "references": 425
+    },
+    {
+     "id": "Q1832288",
+     "label": null,
+     "references": 422
+    },
+    {
+     "id": "Q1236030",
+     "label": null,
+     "references": 421
+    },
+    {
+     "id": "Q121072081",
+     "label": null,
+     "references": 416
+    },
+    {
+     "id": "Q1833260",
+     "label": null,
+     "references": 415
+    },
+    {
+     "id": "Q96755385",
+     "label": null,
+     "references": 414
+    },
+    {
+     "id": "Q121085323",
+     "label": null,
+     "references": 412
+    },
+    {
+     "id": "Q58398642",
+     "label": null,
+     "references": 410
+    },
+    {
+     "id": "Q10728319",
+     "label": null,
+     "references": 409
+    },
+    {
+     "id": "Q1831070",
+     "label": null,
+     "references": 404
+    },
+    {
+     "id": "Q121085374",
+     "label": null,
+     "references": 403
+    },
+    {
+     "id": "Q113447340",
+     "label": null,
+     "references": 402
+    },
+    {
+     "id": "Q1833301",
+     "label": null,
+     "references": 399
+    },
+    {
+     "id": "Q98141352",
+     "label": null,
+     "references": 398
+    },
+    {
+     "id": "Q123169683",
+     "label": null,
+     "references": 397
+    },
+    {
+     "id": "Q1560033",
+     "label": null,
+     "references": 397
+    },
+    {
+     "id": "Q125472971",
+     "label": null,
+     "references": 395
+    },
+    {
+     "id": "Q108757196",
+     "label": null,
+     "references": 393
+    },
+    {
+     "id": "Q22773597",
+     "label": null,
+     "references": 392
+    },
+    {
+     "id": "Q1830809",
+     "label": null,
+     "references": 391
+    },
+    {
+     "id": "Q1832295",
+     "label": null,
+     "references": 390
+    },
+    {
+     "id": "Q117444530",
+     "label": null,
+     "references": 389
+    },
+    {
+     "id": "Q1684064",
+     "label": null,
+     "references": 388
+    },
+    {
+     "id": "Q117447742",
+     "label": null,
+     "references": 382
+    },
+    {
+     "id": "Q1830953",
+     "label": null,
+     "references": 381
+    },
+    {
+     "id": "Q121085007",
+     "label": null,
+     "references": 376
+    },
+    {
+     "id": "Q121071700",
+     "label": null,
+     "references": 372
+    },
+    {
+     "id": "Q121076127",
+     "label": null,
+     "references": 369
+    },
+    {
+     "id": "Q121084884",
+     "label": null,
+     "references": 368
+    },
+    {
+     "id": "Q121085103",
+     "label": null,
+     "references": 367
+    },
+    {
+     "id": "Q121084972",
+     "label": null,
+     "references": 363
+    },
+    {
+     "id": "Q27602019",
+     "label": null,
+     "references": 362
+    },
+    {
+     "id": "Q121084925",
+     "label": null,
+     "references": 360
+    },
+    {
+     "id": "Q106377720",
+     "label": null,
+     "references": 360
+    },
+    {
+     "id": "Q26493215",
+     "label": null,
+     "references": 359
+    },
+    {
+     "id": "Q117298618",
+     "label": null,
+     "references": 356
+    },
+    {
+     "id": "Q1507094",
+     "label": null,
+     "references": 356
+    },
+    {
+     "id": "Q27861261",
+     "label": null,
+     "references": 355
+    },
+    {
+     "id": "Q115398666",
+     "label": null,
+     "references": 352
+    },
+    {
+     "id": "Q97346218",
+     "label": null,
+     "references": 351
+    },
+    {
+     "id": "Q123221002",
+     "label": null,
+     "references": 350
+    },
+    {
+     "id": "Q1843124",
+     "label": null,
+     "references": 348
+    },
+    {
+     "id": "Q1726583",
+     "label": null,
+     "references": 348
+    },
+    {
+     "id": "Q121071372",
+     "label": null,
+     "references": 346
+    },
+    {
+     "id": "Q123221021",
+     "label": null,
+     "references": 345
+    },
+    {
+     "id": "Q18290346",
+     "label": null,
+     "references": 345
+    },
+    {
+     "id": "Q1773627",
+     "label": null,
+     "references": 343
+    },
+    {
+     "id": "Q56416005",
+     "label": null,
+     "references": 337
+    },
+    {
+     "id": "Q1663556",
+     "label": null,
+     "references": 335
+    }
+   ]
+  },
+  "it": {
+   "entities": 2621573,
+   "references": 18104667,
+   "most_referenced": [
+    {
+     "id": "Q798373",
+     "label": "guard",
+     "references": 309894
+    },
+    {
+     "id": "Q9164018",
+     "label": "interventional study",
+     "references": 304627
+    },
+    {
+     "id": "Q62626012",
+     "label": "HyperText Markup Language",
+     "references": 295038
+    },
+    {
+     "id": "Q80211245",
+     "label": "Swedish copyright act 2 chapter 26 §",
+     "references": 255245
+    },
+    {
+     "id": "Q114364300",
+     "label": "Project Riksdagen's documents",
+     "references": 241089
+    },
+    {
+     "id": "Q27971968",
+     "label": "constituency of the House of Commons",
+     "references": 151768
+    },
+    {
+     "id": "Q21287602",
+     "label": "monument in Fornminnesregistret",
+     "references": 145510
+    },
+    {
+     "id": "Q61443690",
+     "label": "branch post office",
+     "references": 129187
+    },
+    {
+     "id": "Q66098665",
+     "label": "WikiProject Badminton/tournament focus list",
+     "references": 126416
+    },
+    {
+     "id": "Q22137107",
+     "label": "milliarcsecond per year",
+     "references": 123629
+    },
+    {
+     "id": "Q85171284",
+     "label": "cultural heritage monument in Hesse",
+     "references": 105388
+    },
+    {
+     "id": "Q61058403",
+     "label": "object classified as a historical monument",
+     "references": 102929
+    },
+    {
+     "id": "Q7604686",
+     "label": "UK Statutory Instrument",
+     "references": 101168
+    },
+    {
+     "id": "Q57733494",
+     "label": "badminton event",
+     "references": 100752
+    },
+    {
+     "id": "Q29940414",
+     "label": "immovable monument in Poland",
+     "references": 89456
+    },
+    {
+     "id": "Q19558910",
+     "label": "National Register of Historic Places listed place",
+     "references": 86905
+    },
+    {
+     "id": "Q111645234",
+     "label": "NZThesisProject",
+     "references": 81111
+    },
+    {
+     "id": "Q818574",
+     "label": "observational study",
+     "references": 77617
+    },
+    {
+     "id": "Q47035253",
+     "label": "C",
+     "references": 69466
+    },
+    {
+     "id": "Q66619666",
+     "label": "red giant branch star",
+     "references": 68896
+    },
+    {
+     "id": "Q42824440",
+     "label": "phase II clinical trial",
+     "references": 67691
+    },
+    {
+     "id": "Q128302279",
+     "label": "gas station",
+     "references": 63653
+    },
+    {
+     "id": "Q47162123",
+     "label": "NRHP building",
+     "references": 62641
+    },
+    {
+     "id": "Q39699418",
+     "label": "centimetre per square second",
+     "references": 62549
+    },
+    {
+     "id": "Q2341654",
+     "label": "stone setting",
+     "references": 60695
+    },
+    {
+     "id": "Q19413851",
+     "label": "heritage monument in Saxony",
+     "references": 57039
+    },
+    {
+     "id": "Q6811210",
+     "label": "Tabular Islamic calendar",
+     "references": 54017
+    },
+    {
+     "id": "Q219538",
+     "label": "scheduled monument",
+     "references": 52843
+    },
+    {
+     "id": "Q5452194",
+     "label": "phase I clinical trial",
+     "references": 51886
+    },
+    {
+     "id": "Q97154904",
+     "label": "archaeological heritage monument in Bavaria",
+     "references": 50011
+    },
+    {
+     "id": "Q47035155",
+     "label": "A",
+     "references": 47358
+    },
+    {
+     "id": "Q62521875",
+     "label": "second half",
+     "references": 46864
+    },
+    {
+     "id": "Q100534948",
+     "label": "Oireachtas (Open Data) PSI Licence",
+     "references": 45802
+    },
+    {
+     "id": "Q61058419",
+     "label": "object listed as historical monument",
+     "references": 45335
+    },
+    {
+     "id": "Q24906315",
+     "label": "OYO Rooms",
+     "references": 41075
+    },
+    {
+     "id": "Q105835744",
+     "label": "regional cultural heritage site in Russia",
+     "references": 40450
+    },
+    {
+     "id": "Q42824827",
+     "label": "phase III clinical trial",
+     "references": 40089
+    },
+    {
+     "id": "Q1516079",
+     "label": "cultural heritage ensemble",
+     "references": 37902
+    },
+    {
+     "id": "Q99045339",
+     "label": "written question",
+     "references": 36537
+    },
+    {
+     "id": "Q130454268",
+     "label": "archaeological monument of local importance of Ukraine",
+     "references": 35192
+    },
+    {
+     "id": "Q100532807",
+     "label": "Irish Statutory Instrument",
+     "references": 34974
+    },
+    {
+     "id": "Q44924719",
+     "label": "historic monument of local significance in Ukraine",
+     "references": 34520
+    },
+    {
+     "id": "Q115657357",
+     "label": "New Jersey Nets",
+     "references": 33498
+    },
+    {
+     "id": "Q27927857",
+     "label": "baseball game",
+     "references": 31910
+    },
+    {
+     "id": "Q12312385",
+     "label": "protected ancient monument in Denmark",
+     "references": 31322
+    },
+    {
+     "id": "Q59956276",
+     "label": "WikiProject Performing arts",
+     "references": 31066
+    },
+    {
+     "id": "Q105730568",
+     "label": "Wiki Loves Monuments in Brazil",
+     "references": 30894
+    },
+    {
+     "id": "Q76651189",
+     "label": "completed",
+     "references": 29581
+    },
+    {
+     "id": "Q76649708",
+     "label": "recruiting",
+     "references": 29140
+    },
+    {
+     "id": "Q42825046",
+     "label": "phase IV clinical trial",
+     "references": 28989
+    },
+    {
+     "id": "Q128791689",
+     "label": "National Monument of Wales",
+     "references": 28367
+    },
+    {
+     "id": "Q12051047",
+     "label": "Sbírka zákonů",
+     "references": 27902
+    },
+    {
+     "id": "Q67015940",
+     "label": "Government Boys' Primary School",
+     "references": 26161
+    },
+    {
+     "id": "Q127431137",
+     "label": "Rome",
+     "references": 25881
+    },
+    {
+     "id": "Q15975575",
+     "label": "studio recording",
+     "references": 25612
+    },
+    {
+     "id": "Q77340783",
+     "label": "Historic Environment Scotland component of listing record",
+     "references": 25400
+    },
+    {
+     "id": "Q61443650",
+     "label": "sub post office",
+     "references": 24757
+    },
+    {
+     "id": "Q854826",
+     "label": "Bharat Petroleum",
+     "references": 23425
+    },
+    {
+     "id": "Q3850202",
+     "label": "seal in the Sinosphere",
+     "references": 22902
+    },
+    {
+     "id": "Q121076111",
+     "label": "hiking loop",
+     "references": 22665
+    },
+    {
+     "id": "Q121076051",
+     "label": null,
+     "references": 22648
+    },
+    {
+     "id": "Q26884649",
+     "label": "cultural heritage monument in Armenia",
+     "references": 22004
+    },
+    {
+     "id": "Q16739336",
+     "label": "listed in the general inventory of cultural heritage",
+     "references": 21480
+    },
+    {
+     "id": "Q28105722",
+     "label": "men's singles",
+     "references": 20562
+    },
+    {
+     "id": "Q62521848",
+     "label": "first half",
+     "references": 20304
+    },
+    {
+     "id": "Q28105759",
+     "label": "men's doubles",
+     "references": 20177
+    },
+    {
+     "id": "Q28105742",
+     "label": "women's singles",
+     "references": 20109
+    },
+    {
+     "id": "Q28105765",
+     "label": "women's doubles",
+     "references": 19704
+    },
+    {
+     "id": "Q28105774",
+     "label": "mixed doubles",
+     "references": 19530
+    },
+    {
+     "id": "Q111173358",
+     "label": "ResearchSpace@Auckland",
+     "references": 19446
+    },
+    {
+     "id": "Q41477381",
+     "label": "BIE",
+     "references": 19353
+    },
+    {
+     "id": "Q6467278",
+     "label": "laboratory diagnosis of viral infections",
+     "references": 19040
+    },
+    {
+     "id": "Q28034408",
+     "label": "Cultural Asset part of the cultural heritage of Catalonia",
+     "references": 18947
+    },
+    {
+     "id": "Q105770461",
+     "label": "Manorial Documents Register",
+     "references": 18003
+    },
+    {
+     "id": "Q125390868",
+     "label": "hijri month of a given year",
+     "references": 18002
+    },
+    {
+     "id": "Q105774620",
+     "label": "Public General Act of the Parliament of the United Kingdom",
+     "references": 17291
+    },
+    {
+     "id": "Q10672943",
+     "label": "Committee on Health and Welfare",
+     "references": 17290
+    },
+    {
+     "id": "Q7604693",
+     "label": "statutory rules of Northern Ireland",
+     "references": 17148
+    },
+    {
+     "id": "Q112086057",
+     "label": "cultural heritage of Slovakia",
+     "references": 16889
+    },
+    {
+     "id": "Q2400020",
+     "label": "function hall",
+     "references": 16333
+    },
+    {
+     "id": "Q10711418",
+     "label": "Committee on Education",
+     "references": 16118
+    },
+    {
+     "id": "Q10701059",
+     "label": "Committee on Transport and Communications",
+     "references": 15965
+    },
+    {
+     "id": "Q13360578",
+     "label": "thatched cottage",
+     "references": 15892
+    },
+    {
+     "id": "Q76649614",
+     "label": "not yet recruiting",
+     "references": 15456
+    },
+    {
+     "id": "Q97695005",
+     "label": "committee group motion",
+     "references": 15354
+    },
+    {
+     "id": "Q59657037",
+     "label": "monthly measurement",
+     "references": 15337
+    },
+    {
+     "id": "Q117360943",
+     "label": "Shanghai Library Seal Knowledge Base",
+     "references": 15040
+    },
+    {
+     "id": "Q10585355",
+     "label": "Committee on Environment and Agriculture",
+     "references": 15021
+    },
+    {
+     "id": "Q18325129",
+     "label": "architectural monument of local significance of Ukraine",
+     "references": 14924
+    },
+    {
+     "id": "Q1505023",
+     "label": "interpellation",
+     "references": 14233
+    },
+    {
+     "id": "Q56229478",
+     "label": "population present",
+     "references": 14209
+    },
+    {
+     "id": "Q111253568",
+     "label": "Roman Catholic population present",
+     "references": 14195
+    },
+    {
+     "id": "Q23668083",
+     "label": "federal cultural heritage site in Russia",
+     "references": 13935
+    },
+    {
+     "id": "Q111174480",
+     "label": "Massey Research Online",
+     "references": 13917
+    },
+    {
+     "id": "Q63891772",
+     "label": "national championship",
+     "references": 13715
+    },
+    {
+     "id": "Q10669863",
+     "label": "Committee on Taxation",
+     "references": 13586
+    },
+    {
+     "id": "Q95977692",
+     "label": "Hong Kong Baptist University Library",
+     "references": 13575
+    },
+    {
+     "id": "Q115907598",
+     "label": "Chinese Newspaper Clipping Database",
+     "references": 13483
+    },
+    {
+     "id": "Q6503489",
+     "label": "Law of Taiwan",
+     "references": 13262
+    },
+    {
+     "id": "Q140330528",
+     "label": "Wiki4Disarmament",
+     "references": 13184
+    },
+    {
+     "id": "Q140330347",
+     "label": "Wiki4Disarmament UN resolution dataset",
+     "references": 13183
+    },
+    {
+     "id": "Q12870869",
+     "label": "Cincinnati Royals",
+     "references": 13162
+    },
+    {
+     "id": "Q105835774",
+     "label": "tentative cultural heritage site in Russia",
+     "references": 12756
+    },
+    {
+     "id": "Q3024169",
+     "label": "New York Giants",
+     "references": 12550
+    },
+    {
+     "id": "Q66975812",
+     "label": "Presidency of the Federative Republic of Brazil",
+     "references": 12504
+    },
+    {
+     "id": "Q12496021",
+     "label": "Madrasah Tsanawiyah",
+     "references": 12467
+    },
+    {
+     "id": "Q56731284",
+     "label": "Act of the Parliament of Australia",
+     "references": 12440
+    },
+    {
+     "id": "Q105091640",
+     "label": "WikiProject Brazilian Laws",
+     "references": 12398
+    },
+    {
+     "id": "Q135191058",
+     "label": null,
+     "references": 12389
+    },
+    {
+     "id": "Q2022532",
+     "label": "coloring",
+     "references": 12384
+    },
+    {
+     "id": "Q11910250",
+     "label": "Cultural Asset of Local Interest",
+     "references": 12383
+    },
+    {
+     "id": "Q15632117",
+     "label": "architectural heritage monument in North Rhine-Westphalia",
+     "references": 12025
+    },
+    {
+     "id": "Q21573182",
+     "label": "natural monument in Germany",
+     "references": 12017
+    },
+    {
+     "id": "Q10541573",
+     "label": "Committee on Justice",
+     "references": 11863
+    },
+    {
+     "id": "Q19930933",
+     "label": "decision of the Supreme Court of Canada",
+     "references": 11780
+    },
+    {
+     "id": "Q2379199",
+     "label": "City of Edinburgh",
+     "references": 11449
+    },
+    {
+     "id": "Q61278455",
+     "label": "health sub-centre",
+     "references": 11382
+    },
+    {
+     "id": "Q1362233",
+     "label": "Upper Lusatian house",
+     "references": 11272
+    },
+    {
+     "id": "Q138838021",
+     "label": "starter",
+     "references": 11250
+    },
+    {
+     "id": "Q111174468",
+     "label": "OUR Archive",
+     "references": 11212
+    },
+    {
+     "id": "Q5420020",
+     "label": "exercise",
+     "references": 11175
+    },
+    {
+     "id": "Q115497040",
+     "label": "Lower Order Grid Coordinates",
+     "references": 11144
+    },
+    {
+     "id": "Q47035235",
+     "label": "B",
+     "references": 11092
+    },
+    {
+     "id": "Q10605200",
+     "label": "Committee on Industry and Trade",
+     "references": 11090
+    },
+    {
+     "id": "Q11314813",
+     "label": "St. Louis Browns",
+     "references": 10913
+    },
+    {
+     "id": "Q4566176",
+     "label": "Committee on the Constitution",
+     "references": 10880
+    },
+    {
+     "id": "Q111281436",
+     "label": "present Czech-speaking population of Austrian citizenship",
+     "references": 10728
+    },
+    {
+     "id": "Q66317415",
+     "label": "closed user group",
+     "references": 10577
+    },
+    {
+     "id": "Q111174485",
+     "label": "UC Research Repository",
+     "references": 10506
+    },
+    {
+     "id": "Q73852346",
+     "label": "Wiki Loves Monuments in India",
+     "references": 10495
+    },
+    {
+     "id": "Q10429085",
+     "label": "report",
+     "references": 10356
+    },
+    {
+     "id": "Q30114662",
+     "label": "accommodation facility for dependent elderly people",
+     "references": 10231
+    },
+    {
+     "id": "Q96483162",
+     "label": "right side of reaction",
+     "references": 10224
+    },
+    {
+     "id": "Q110799181",
+     "label": "in-person event",
+     "references": 10199
+    },
+    {
+     "id": "Q2300983",
+     "label": "Collaborative Research Centre",
+     "references": 10085
+    },
+    {
+     "id": "Q12496019",
+     "label": "madrasah aliyah",
+     "references": 10043
+    },
+    {
+     "id": "Q101113149",
+     "label": "King's Printer version",
+     "references": 9880
+    },
+    {
+     "id": "Q10416972",
+     "label": "Committee on the Labour Market",
+     "references": 9777
+    },
+    {
+     "id": "Q98970039",
+     "label": "WikiProject PCC Wikidata Pilot/University of Washington",
+     "references": 9730
+    },
+    {
+     "id": "Q10672906",
+     "label": "Committee on Social Insurance",
+     "references": 9674
+    },
+    {
+     "id": "Q111653353",
+     "label": "Historic Milestone Society Database",
+     "references": 9356
+    },
+    {
+     "id": "Q19796778",
+     "label": "route départementale",
+     "references": 9126
+    },
+    {
+     "id": "Q718966",
+     "label": "doctor's office",
+     "references": 9105
+    },
+    {
+     "id": "Q7604692",
+     "label": "Statutory Rules and Orders",
+     "references": 9101
+    },
+    {
+     "id": "Q7437991",
+     "label": "Scottish statutory instrument",
+     "references": 9006
+    },
+    {
+     "id": "Q2079150",
+     "label": "Cultural heritage of Belarus",
+     "references": 8986
+    },
+    {
+     "id": "Q112111570",
+     "label": "Nomenclature d'activités française, rév. 2",
+     "references": 8829
+    },
+    {
+     "id": "Q349450",
+     "label": "Meteorological Service of Canada",
+     "references": 8774
+    },
+    {
+     "id": "Q67479974",
+     "label": "Fife",
+     "references": 8728
+    },
+    {
+     "id": "Q111174567",
+     "label": "Open Access Repository Victoria University of Wellington",
+     "references": 8667
+    },
+    {
+     "id": "Q113103137",
+     "label": "ALEX",
+     "references": 8562
+    },
+    {
+     "id": "Q12763914",
+     "label": "third-class road",
+     "references": 8486
+    },
+    {
+     "id": "Q96483149",
+     "label": "left side of reaction",
+     "references": 8475
+    },
+    {
+     "id": "Q2257184",
+     "label": "priority program",
+     "references": 8475
+    },
+    {
+     "id": "Q59657036",
+     "label": "daily measurement",
+     "references": 8474
+    },
+    {
+     "id": "Q114297071",
+     "label": "road network of the Czech Republic",
+     "references": 8441
+    },
+    {
+     "id": "Q12661150",
+     "label": "column shrine",
+     "references": 8326
+    },
+    {
+     "id": "Q105984528",
+     "label": "ministry act",
+     "references": 8323
+    },
+    {
+     "id": "Q55089312",
+     "label": "edition of commercial catalogue",
+     "references": 8244
+    },
+    {
+     "id": "Q135160342",
+     "label": "Kokuhei-sha",
+     "references": 8239
+    },
+    {
+     "id": "Q122215934",
+     "label": "object of tangible cultural heritage of Uzbekistan",
+     "references": 8201
+    },
+    {
+     "id": "Q45342890",
+     "label": "modifier",
+     "references": 8194
+    },
+    {
+     "id": "Q67393503",
+     "label": "Derbyshire",
+     "references": 8151
+    },
+    {
+     "id": "Q54834401",
+     "label": "number of frames in scan file",
+     "references": 8079
+    },
+    {
+     "id": "Q10550038",
+     "label": "Committee on Cultural Affairs",
+     "references": 8048
+    },
+    {
+     "id": "Q11058522",
+     "label": "sangō",
+     "references": 7721
+    },
+    {
+     "id": "Q7302881",
+     "label": "Recorded Texas Historic Landmark",
+     "references": 7607
+    },
+    {
+     "id": "Q85192696",
+     "label": "Heritage monument in Schleswig-Holstein",
+     "references": 7597
+    },
+    {
+     "id": "Q7212378",
+     "label": "Chinese Mail",
+     "references": 7584
+    },
+    {
+     "id": "Q55712879",
+     "label": "Supernova Catalog",
+     "references": 7557
+    },
+    {
+     "id": "Q5153059",
+     "label": "Committee on Foreign Affairs",
+     "references": 7526
+    },
+    {
+     "id": "Q1100222",
+     "label": "Buffalo Braves",
+     "references": 7298
+    },
+    {
+     "id": "Q24257871",
+     "label": "yellow jersey, general classification",
+     "references": 7193
+    },
+    {
+     "id": "Q121071315",
+     "label": null,
+     "references": 7189
+    },
+    {
+     "id": "Q5153055",
+     "label": "Committee on Finance",
+     "references": 7184
+    },
+    {
+     "id": "Q93462734",
+     "label": "Federal Registry of Health Establishments (Argentina)",
+     "references": 7165
+    },
+    {
+     "id": "Q117197960",
+     "label": "cultural heritage monument in Azerbaijan",
+     "references": 7162
+    },
+    {
+     "id": "Q63869675",
+     "label": "open championship",
+     "references": 7150
+    },
+    {
+     "id": "Q30750411",
+     "label": "room for cardiotraining",
+     "references": 7146
+    },
+    {
+     "id": "Q34480001",
+     "label": "Cultural heritage in Georgia",
+     "references": 7057
+    },
+    {
+     "id": "Q15304993",
+     "label": "WikiProject Figure Skating",
+     "references": 7040
+    },
+    {
+     "id": "Q14552192",
+     "label": "chapel-shrine",
+     "references": 7035
+    },
+    {
+     "id": "Q28478883",
+     "label": "National historical monument of Venezuela",
+     "references": 7027
+    },
+    {
+     "id": "Q31361031",
+     "label": "United Macedonia",
+     "references": 6994
+    },
+    {
+     "id": "Q112602440",
+     "label": "commissioner",
+     "references": 6716
+    },
+    {
+     "id": "Q15080599",
+     "label": "designated heritage property (part IV)",
+     "references": 6669
+    },
+    {
+     "id": "Q21452391",
+     "label": "Umm Al-Qura calendar",
+     "references": 6589
+    },
+    {
+     "id": "Q111265847",
+     "label": "Evangelical population present",
+     "references": 6587
+    },
+    {
+     "id": "Q52662240",
+     "label": "Tuwhera Open Access Publisher",
+     "references": 6548
+    },
+    {
+     "id": "Q111283167",
+     "label": "present German-speaking population of Austrian citizenship",
+     "references": 6488
+    },
+    {
+     "id": "Q569500",
+     "label": "community health center",
+     "references": 6484
+    },
+    {
+     "id": "Q135009120",
+     "label": "Ritsuryō funding type",
+     "references": 6370
+    },
+    {
+     "id": "Q3062261",
+     "label": "online exhibition",
+     "references": 6355
+    },
+    {
+     "id": "Q47018478",
+     "label": "calendar month of a given year",
+     "references": 6259
+    },
+    {
+     "id": "Q135022904",
+     "label": "Shikinai Ronsha",
+     "references": 6256
+    },
+    {
+     "id": "Q10300916",
+     "label": "cultural heritage of China",
+     "references": 6099
+    },
+    {
+     "id": "Q134412769",
+     "label": "WikiProject Architourist Guide",
+     "references": 6038
+    },
+    {
+     "id": "Q111378021",
+     "label": "Stolperstein laying",
+     "references": 5995
+    },
+    {
+     "id": "Q66733014",
+     "label": "heritage without legal protection",
+     "references": 5946
+    },
+    {
+     "id": "Q98100466",
+     "label": "former architectural heritage monument in Bavaria",
+     "references": 5941
+    }
+   ]
+  },
+  "de": {
+   "entities": 2110572,
+   "references": 11202133,
+   "most_referenced": [
+    {
+     "id": "Q62626012",
+     "label": "HyperText Markup Language",
+     "references": 295038
+    },
+    {
+     "id": "Q80211245",
+     "label": "Swedish copyright act 2 chapter 26 §",
+     "references": 255245
+    },
+    {
+     "id": "Q114364300",
+     "label": "Project Riksdagen's documents",
+     "references": 241089
+    },
+    {
+     "id": "Q61443690",
+     "label": "branch post office",
+     "references": 129187
+    },
+    {
+     "id": "Q66098665",
+     "label": "WikiProject Badminton/tournament focus list",
+     "references": 126416
+    },
+    {
+     "id": "Q7604686",
+     "label": "UK Statutory Instrument",
+     "references": 101168
+    },
+    {
+     "id": "Q96739634",
+     "label": "individual motion",
+     "references": 75431
+    },
+    {
+     "id": "Q66619666",
+     "label": "red giant branch star",
+     "references": 68896
+    },
+    {
+     "id": "Q6811210",
+     "label": "Tabular Islamic calendar",
+     "references": 54017
+    },
+    {
+     "id": "Q100534948",
+     "label": "Oireachtas (Open Data) PSI Licence",
+     "references": 45802
+    },
+    {
+     "id": "Q61058419",
+     "label": "object listed as historical monument",
+     "references": 45335
+    },
+    {
+     "id": "Q80700183",
+     "label": "user rating",
+     "references": 44799
+    },
+    {
+     "id": "Q130454268",
+     "label": "archaeological monument of local importance of Ukraine",
+     "references": 35192
+    },
+    {
+     "id": "Q44924719",
+     "label": "historic monument of local significance in Ukraine",
+     "references": 34520
+    },
+    {
+     "id": "Q115657357",
+     "label": "New Jersey Nets",
+     "references": 33498
+    },
+    {
+     "id": "Q27927857",
+     "label": "baseball game",
+     "references": 31910
+    },
+    {
+     "id": "Q105730568",
+     "label": "Wiki Loves Monuments in Brazil",
+     "references": 30894
+    },
+    {
+     "id": "Q76651189",
+     "label": "completed",
+     "references": 29581
+    },
+    {
+     "id": "Q76649708",
+     "label": "recruiting",
+     "references": 29140
+    },
+    {
+     "id": "Q128791689",
+     "label": "National Monument of Wales",
+     "references": 28367
+    },
+    {
+     "id": "Q10729142",
+     "label": "category C listed building",
+     "references": 26501
+    },
+    {
+     "id": "Q67015940",
+     "label": "Government Boys' Primary School",
+     "references": 26161
+    },
+    {
+     "id": "Q127431137",
+     "label": "Rome",
+     "references": 25881
+    },
+    {
+     "id": "Q77340783",
+     "label": "Historic Environment Scotland component of listing record",
+     "references": 25400
+    },
+    {
+     "id": "Q121076111",
+     "label": "hiking loop",
+     "references": 22665
+    },
+    {
+     "id": "Q121076051",
+     "label": null,
+     "references": 22648
+    },
+    {
+     "id": "Q111173358",
+     "label": "ResearchSpace@Auckland",
+     "references": 19446
+    },
+    {
+     "id": "Q62026095",
+     "label": "Hijri month",
+     "references": 18015
+    },
+    {
+     "id": "Q105770461",
+     "label": "Manorial Documents Register",
+     "references": 18003
+    },
+    {
+     "id": "Q125390868",
+     "label": "hijri month of a given year",
+     "references": 18002
+    },
+    {
+     "id": "Q105774620",
+     "label": "Public General Act of the Parliament of the United Kingdom",
+     "references": 17291
+    },
+    {
+     "id": "Q7604693",
+     "label": "statutory rules of Northern Ireland",
+     "references": 17148
+    },
+    {
+     "id": "Q2400020",
+     "label": "function hall",
+     "references": 16333
+    },
+    {
+     "id": "Q76649614",
+     "label": "not yet recruiting",
+     "references": 15456
+    },
+    {
+     "id": "Q117360943",
+     "label": "Shanghai Library Seal Knowledge Base",
+     "references": 15040
+    },
+    {
+     "id": "Q18325129",
+     "label": "architectural monument of local significance of Ukraine",
+     "references": 14924
+    },
+    {
+     "id": "Q23668083",
+     "label": "federal cultural heritage site in Russia",
+     "references": 13935
+    },
+    {
+     "id": "Q111174480",
+     "label": "Massey Research Online",
+     "references": 13917
+    },
+    {
+     "id": "Q95977692",
+     "label": "Hong Kong Baptist University Library",
+     "references": 13575
+    },
+    {
+     "id": "Q115907598",
+     "label": "Chinese Newspaper Clipping Database",
+     "references": 13483
+    },
+    {
+     "id": "Q140330528",
+     "label": "Wiki4Disarmament",
+     "references": 13184
+    },
+    {
+     "id": "Q140330347",
+     "label": "Wiki4Disarmament UN resolution dataset",
+     "references": 13183
+    },
+    {
+     "id": "Q105835774",
+     "label": "tentative cultural heritage site in Russia",
+     "references": 12756
+    },
+    {
+     "id": "Q3024169",
+     "label": "New York Giants",
+     "references": 12550
+    },
+    {
+     "id": "Q66975812",
+     "label": "Presidency of the Federative Republic of Brazil",
+     "references": 12504
+    },
+    {
+     "id": "Q12496021",
+     "label": "Madrasah Tsanawiyah",
+     "references": 12467
+    },
+    {
+     "id": "Q6453643",
+     "label": "decree-law",
+     "references": 12422
+    },
+    {
+     "id": "Q105091640",
+     "label": "WikiProject Brazilian Laws",
+     "references": 12398
+    },
+    {
+     "id": "Q135191058",
+     "label": null,
+     "references": 12389
+    },
+    {
+     "id": "Q11910250",
+     "label": "Cultural Asset of Local Interest",
+     "references": 12383
+    },
+    {
+     "id": "Q138838021",
+     "label": "starter",
+     "references": 11250
+    },
+    {
+     "id": "Q111174468",
+     "label": "OUR Archive",
+     "references": 11212
+    },
+    {
+     "id": "Q115497040",
+     "label": "Lower Order Grid Coordinates",
+     "references": 11144
+    },
+    {
+     "id": "Q11314813",
+     "label": "St. Louis Browns",
+     "references": 10913
+    },
+    {
+     "id": "Q111174485",
+     "label": "UC Research Repository",
+     "references": 10506
+    },
+    {
+     "id": "Q73852346",
+     "label": "Wiki Loves Monuments in India",
+     "references": 10495
+    },
+    {
+     "id": "Q96483162",
+     "label": "right side of reaction",
+     "references": 10224
+    },
+    {
+     "id": "Q12496019",
+     "label": "madrasah aliyah",
+     "references": 10043
+    },
+    {
+     "id": "Q101113149",
+     "label": "King's Printer version",
+     "references": 9880
+    },
+    {
+     "id": "Q98970039",
+     "label": "WikiProject PCC Wikidata Pilot/University of Washington",
+     "references": 9730
+    },
+    {
+     "id": "Q111653353",
+     "label": "Historic Milestone Society Database",
+     "references": 9356
+    },
+    {
+     "id": "Q7604692",
+     "label": "Statutory Rules and Orders",
+     "references": 9101
+    },
+    {
+     "id": "Q7437991",
+     "label": "Scottish statutory instrument",
+     "references": 9006
+    },
+    {
+     "id": "Q67479974",
+     "label": "Fife",
+     "references": 8728
+    },
+    {
+     "id": "Q111174567",
+     "label": "Open Access Repository Victoria University of Wellington",
+     "references": 8667
+    },
+    {
+     "id": "Q96483149",
+     "label": "left side of reaction",
+     "references": 8475
+    },
+    {
+     "id": "Q114297071",
+     "label": "road network of the Czech Republic",
+     "references": 8441
+    },
+    {
+     "id": "Q135160342",
+     "label": "Kokuhei-sha",
+     "references": 8239
+    },
+    {
+     "id": "Q122215934",
+     "label": "object of tangible cultural heritage of Uzbekistan",
+     "references": 8201
+    },
+    {
+     "id": "Q45342890",
+     "label": "modifier",
+     "references": 8194
+    },
+    {
+     "id": "Q134463319",
+     "label": "Wiki Loves Monuments 2025 in Italy - administrative buildings",
+     "references": 7887
+    },
+    {
+     "id": "Q7302881",
+     "label": "Recorded Texas Historic Landmark",
+     "references": 7607
+    },
+    {
+     "id": "Q7212378",
+     "label": "Chinese Mail",
+     "references": 7584
+    },
+    {
+     "id": "Q11910247",
+     "label": "Property of Local Relevance",
+     "references": 7379
+    },
+    {
+     "id": "Q1100222",
+     "label": "Buffalo Braves",
+     "references": 7298
+    },
+    {
+     "id": "Q121071315",
+     "label": null,
+     "references": 7189
+    },
+    {
+     "id": "Q93462734",
+     "label": "Federal Registry of Health Establishments (Argentina)",
+     "references": 7165
+    },
+    {
+     "id": "Q117197960",
+     "label": "cultural heritage monument in Azerbaijan",
+     "references": 7162
+    },
+    {
+     "id": "Q63869675",
+     "label": "open championship",
+     "references": 7150
+    },
+    {
+     "id": "Q15304993",
+     "label": "WikiProject Figure Skating",
+     "references": 7040
+    },
+    {
+     "id": "Q28478883",
+     "label": "National historical monument of Venezuela",
+     "references": 7027
+    },
+    {
+     "id": "Q31361031",
+     "label": "United Macedonia",
+     "references": 6994
+    },
+    {
+     "id": "Q112602440",
+     "label": "commissioner",
+     "references": 6716
+    },
+    {
+     "id": "Q15080599",
+     "label": "designated heritage property (part IV)",
+     "references": 6669
+    },
+    {
+     "id": "Q21452391",
+     "label": "Umm Al-Qura calendar",
+     "references": 6589
+    },
+    {
+     "id": "Q52662240",
+     "label": "Tuwhera Open Access Publisher",
+     "references": 6548
+    },
+    {
+     "id": "Q135009120",
+     "label": "Ritsuryō funding type",
+     "references": 6370
+    },
+    {
+     "id": "Q135022904",
+     "label": "Shikinai Ronsha",
+     "references": 6256
+    },
+    {
+     "id": "Q66733014",
+     "label": "heritage without legal protection",
+     "references": 5946
+    },
+    {
+     "id": "Q123820951",
+     "label": "WikiProject Online Library and Archives Exhibitions",
+     "references": 5868
+    },
+    {
+     "id": "Q65553409",
+     "label": "Basque government heritage site",
+     "references": 5851
+    },
+    {
+     "id": "Q55934339",
+     "label": "Glasgow City",
+     "references": 5784
+    },
+    {
+     "id": "Q60986091",
+     "label": "building protected by city plan",
+     "references": 5780
+    },
+    {
+     "id": "Q96386155",
+     "label": "national school",
+     "references": 5751
+    },
+    {
+     "id": "Q85864317",
+     "label": "Istituto Italiano dei Castelli",
+     "references": 5707
+    },
+    {
+     "id": "Q21408194",
+     "label": "protected shipwreck (Section 1)",
+     "references": 5697
+    },
+    {
+     "id": "Q135190960",
+     "label": "historical heritage of Ukraine",
+     "references": 5584
+    },
+    {
+     "id": "Q105835782",
+     "label": "candidate heritage site in Russia",
+     "references": 5502
+    },
+    {
+     "id": "Q106378467",
+     "label": "Wiki Loves Monuments Moldova",
+     "references": 5475
+    },
+    {
+     "id": "Q26861213",
+     "label": "Guadalquivir Basin",
+     "references": 5467
+    },
+    {
+     "id": "Q111174471",
+     "label": "Research@Lincoln",
+     "references": 5378
+    },
+    {
+     "id": "Q67387310",
+     "label": "Angus",
+     "references": 5375
+    },
+    {
+     "id": "Q42915594",
+     "label": "Scottish burgh",
+     "references": 5356
+    },
+    {
+     "id": "Q67015944",
+     "label": "Government Girls Primary School",
+     "references": 5293
+    },
+    {
+     "id": "Q100754500",
+     "label": "Welsh Statutory Instrument",
+     "references": 5288
+    },
+    {
+     "id": "Q138640329",
+     "label": "Engishiki ranking",
+     "references": 5179
+    },
+    {
+     "id": "Q130391233",
+     "label": "AE3",
+     "references": 5149
+    },
+    {
+     "id": "Q4312270",
+     "label": "railway station above ground",
+     "references": 5135
+    },
+    {
+     "id": "Q712534",
+     "label": "modern system of ranked Shinto shrines",
+     "references": 5123
+    },
+    {
+     "id": "Q135159299",
+     "label": "Kokugakuin University Shrine database",
+     "references": 5101
+    },
+    {
+     "id": "Q114001537",
+     "label": "asset of historic and or cultural interest",
+     "references": 5082
+    },
+    {
+     "id": "Q105476460",
+     "label": "passenger boardings",
+     "references": 5042
+    },
+    {
+     "id": "Q105476478",
+     "label": "doubling",
+     "references": 5033
+    },
+    {
+     "id": "Q12772319",
+     "label": "government regulation in Czech Republic",
+     "references": 5025
+    },
+    {
+     "id": "Q12504877",
+     "label": "Government Regulation of the Republic of Indonesia",
+     "references": 4946
+    },
+    {
+     "id": "Q31027091",
+     "label": "registered archaeological site in Finland",
+     "references": 4888
+    },
+    {
+     "id": "Q105894156",
+     "label": "WP EMEW manor-related focus list",
+     "references": 4865
+    },
+    {
+     "id": "Q114588393",
+     "label": "UniversityofYorkThesisProject",
+     "references": 4829
+    },
+    {
+     "id": "Q85631787",
+     "label": "Pembrokeshire",
+     "references": 4786
+    },
+    {
+     "id": "Q97770165",
+     "label": "motions of the 1989–1990 legislative session of the Riksdag",
+     "references": 4755
+    },
+    {
+     "id": "Q3712237",
+     "label": "Diário Oficial da União",
+     "references": 4755
+    },
+    {
+     "id": "Q110533223",
+     "label": "motions of the 2021-2022 legislative session of the Riksdag",
+     "references": 4729
+    },
+    {
+     "id": "Q104586764",
+     "label": "STC COVID-19 Dataset",
+     "references": 4644
+    },
+    {
+     "id": "Q97769849",
+     "label": "motions of the 1990-1991 legislative session of the Riksdag",
+     "references": 4616
+    },
+    {
+     "id": "Q29024527",
+     "label": "Inventoried Cultural Asset (Basque Autonomous Region)",
+     "references": 4501
+    },
+    {
+     "id": "Q3271540",
+     "label": "mechanism of action",
+     "references": 4498
+    },
+    {
+     "id": "Q28822545",
+     "label": "Heritage New Zealand Category 2 historic place listing",
+     "references": 4481
+    },
+    {
+     "id": "Q5412421",
+     "label": "European Communities Act, 1972",
+     "references": 4469
+    },
+    {
+     "id": "Q112895606",
+     "label": "LSEThesisProject",
+     "references": 4462
+    },
+    {
+     "id": "Q97769830",
+     "label": "motions of the 2005-2006 legislative session of the Riksdag",
+     "references": 4440
+    },
+    {
+     "id": "Q114241199",
+     "label": "WikiProject International (Digital) Dura-Europos Archive",
+     "references": 4416
+    },
+    {
+     "id": "Q11660285",
+     "label": "telegram code",
+     "references": 4413
+    },
+    {
+     "id": "Q56337681",
+     "label": "municipal immovable monument in Poland",
+     "references": 4384
+    },
+    {
+     "id": "Q97770167",
+     "label": "motions of the 1988-1989 legislative session of the Riksdag",
+     "references": 4380
+    },
+    {
+     "id": "Q86830939",
+     "label": "objets non protégés de l'I.G.P.C.",
+     "references": 4375
+    },
+    {
+     "id": "Q105440620",
+     "label": "BADACOR",
+     "references": 4374
+    },
+    {
+     "id": "Q121072018",
+     "label": null,
+     "references": 4340
+    },
+    {
+     "id": "Q97769416",
+     "label": "motions of 2013-2014 legislative session of the Riksdag",
+     "references": 4230
+    },
+    {
+     "id": "Q97769835",
+     "label": "motions of the 2001-2002 legislative session of the Riksdag",
+     "references": 4224
+    },
+    {
+     "id": "Q97769831",
+     "label": "motions of the 2004-2005 legislative session of the Riksdag",
+     "references": 4189
+    },
+    {
+     "id": "Q97722374",
+     "label": "motions of 2017-2018 legislative session of the Riksdag",
+     "references": 4179
+    },
+    {
+     "id": "Q3029647",
+     "label": "Shinto Directive",
+     "references": 4127
+    },
+    {
+     "id": "Q121071543",
+     "label": null,
+     "references": 4119
+    },
+    {
+     "id": "Q24779464",
+     "label": "White Rose Etheses Online",
+     "references": 4113
+    },
+    {
+     "id": "Q99037794",
+     "label": "motions of the 2020-2021 legislative session of the Riksdag",
+     "references": 4098
+    },
+    {
+     "id": "Q18845793",
+     "label": "Judicial Yuan Interpretations",
+     "references": 4098
+    },
+    {
+     "id": "Q97769825",
+     "label": "motions of the 2009-2010 legislative session of the Riksdag",
+     "references": 4024
+    },
+    {
+     "id": "Q97769833",
+     "label": "motions of the 2003-2004 legislative session of the Riksdag",
+     "references": 3987
+    },
+    {
+     "id": "Q56677470",
+     "label": "Museu Paulista collection",
+     "references": 3980
+    },
+    {
+     "id": "Q97769826",
+     "label": "motions of the 2008-2009 legislative session of the Riksdag",
+     "references": 3962
+    },
+    {
+     "id": "Q76651279",
+     "label": "Coronavirus",
+     "references": 3925
+    },
+    {
+     "id": "Q117621806",
+     "label": "Complete Collection of Chinese Seal Connoisseurs",
+     "references": 3902
+    },
+    {
+     "id": "Q67287054",
+     "label": "Carmarthenshire",
+     "references": 3866
+    },
+    {
+     "id": "Q71056157",
+     "label": "Grade B2 listed building",
+     "references": 3778
+    },
+    {
+     "id": "Q2635276",
+     "label": "time immemorial",
+     "references": 3762
+    },
+    {
+     "id": "Q105769095",
+     "label": "conventional date",
+     "references": 3758
+    },
+    {
+     "id": "Q1990719",
+     "label": "copyhold",
+     "references": 3755
+    },
+    {
+     "id": "Q105769818",
+     "label": "abolition of copyhold",
+     "references": 3754
+    },
+    {
+     "id": "Q111174556",
+     "label": "Waikato Research Commons",
+     "references": 3751
+    },
+    {
+     "id": "Q97770168",
+     "label": "motions of the 1987-1988 legislative session of the Riksdag",
+     "references": 3751
+    },
+    {
+     "id": "Q111253599",
+     "label": null,
+     "references": 3734
+    },
+    {
+     "id": "Q17047640",
+     "label": "State Protected Monument",
+     "references": 3729
+    },
+    {
+     "id": "Q101073581",
+     "label": "New Zealand Statutory Regulation",
+     "references": 3696
+    },
+    {
+     "id": "Q97756339",
+     "label": "motions of 2016-2017 legislative session of the Riksdag",
+     "references": 3692
+    },
+    {
+     "id": "Q137372547",
+     "label": "register of chitalishta of Bulgaria",
+     "references": 3689
+    },
+    {
+     "id": "Q97769836",
+     "label": "motions of the 2000–2001 legislative session of the Riksdag",
+     "references": 3675
+    },
+    {
+     "id": "Q99080473",
+     "label": "written questions of the 2020-2021 legislative session of the Riksdag",
+     "references": 3648
+    },
+    {
+     "id": "Q97769846",
+     "label": "motions of the 1992-1993 legislative session of the Riksdag",
+     "references": 3644
+    },
+    {
+     "id": "Q129493044",
+     "label": "Churches in Sweden",
+     "references": 3619
+    },
+    {
+     "id": "Q97695105",
+     "label": "motions of 2019-2020 legislative session of the Riksdag",
+     "references": 3618
+    },
+    {
+     "id": "Q97770170",
+     "label": "motions of the 1986-1987 legislative session of the Riksdag",
+     "references": 3598
+    },
+    {
+     "id": "Q97769827",
+     "label": "motions of the 2007-2008 legislative session of the Riksdag",
+     "references": 3589
+    },
+    {
+     "id": "Q4915012",
+     "label": "biological pathway",
+     "references": 3571
+    },
+    {
+     "id": "Q121055800",
+     "label": "historically valuable town-forming object",
+     "references": 3553
+    },
+    {
+     "id": "Q136957385",
+     "label": null,
+     "references": 3544
+    },
+    {
+     "id": "Q97769834",
+     "label": "motions of the 2002-2003 legislative session of the Riksdag",
+     "references": 3527
+    },
+    {
+     "id": "Q102144299",
+     "label": null,
+     "references": 3514
+    },
+    {
+     "id": "Q102144160",
+     "label": "Dignity for Macedonia",
+     "references": 3514
+    },
+    {
+     "id": "Q102144080",
+     "label": null,
+     "references": 3514
+    },
+    {
+     "id": "Q102138992",
+     "label": null,
+     "references": 3514
+    },
+    {
+     "id": "Q31360953",
+     "label": null,
+     "references": 3514
+    },
+    {
+     "id": "Q18392117",
+     "label": "Social Democratic Party of Macedonia",
+     "references": 3514
+    },
+    {
+     "id": "Q16738440",
+     "label": "Citizen Option for Macedonia",
+     "references": 3514
+    },
+    {
+     "id": "Q15873287",
+     "label": "2014 Macedonian presidential election",
+     "references": 3514
+    },
+    {
+     "id": "Q3111716",
+     "label": "Party for European Future",
+     "references": 3514
+    },
+    {
+     "id": "Q137604636",
+     "label": "motions of the 2025-2026 legislative session of the Riksdag",
+     "references": 3511
+    },
+    {
+     "id": "Q99766504",
+     "label": "UK Statutory Instruments 2014",
+     "references": 3507
+    },
+    {
+     "id": "Q101858067",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q101857637",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q101854168",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q65295937",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q61120851",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q61119546",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q25553804",
+     "label": "The Left",
+     "references": 3480
+    },
+    {
+     "id": "Q97769426",
+     "label": "motions of 2012-2013 legislative session of the Riksdag",
+     "references": 3479
+    },
+    {
+     "id": "Q14509381",
+     "label": "Dutch general election",
+     "references": 3442
+    },
+    {
+     "id": "Q138001723",
+     "label": "Basque Cultural Heritage and GLAM",
+     "references": 3432
+    },
+    {
+     "id": "Q71056138",
+     "label": "Grade B1 listed building",
+     "references": 3419
+    },
+    {
+     "id": "Q66458810",
+     "label": "witchcraft investigation",
+     "references": 3417
+    },
+    {
+     "id": "Q12496022",
+     "label": "madrasah ibtidaiyah",
+     "references": 3408
+    }
+   ]
+  },
+  "fr": {
+   "entities": 2042847,
+   "references": 9830211,
+   "most_referenced": [
+    {
+     "id": "Q798373",
+     "label": "guard",
+     "references": 309894
+    },
+    {
+     "id": "Q80211245",
+     "label": "Swedish copyright act 2 chapter 26 §",
+     "references": 255245
+    },
+    {
+     "id": "Q114364300",
+     "label": "Project Riksdagen's documents",
+     "references": 241089
+    },
+    {
+     "id": "Q10498241",
+     "label": "forward",
+     "references": 197791
+    },
+    {
+     "id": "Q66098665",
+     "label": "WikiProject Badminton/tournament focus list",
+     "references": 126416
+    },
+    {
+     "id": "Q111645234",
+     "label": "NZThesisProject",
+     "references": 81111
+    },
+    {
+     "id": "Q6811210",
+     "label": "Tabular Islamic calendar",
+     "references": 54017
+    },
+    {
+     "id": "Q100534948",
+     "label": "Oireachtas (Open Data) PSI Licence",
+     "references": 45802
+    },
+    {
+     "id": "Q130454268",
+     "label": "archaeological monument of local importance of Ukraine",
+     "references": 35192
+    },
+    {
+     "id": "Q105730568",
+     "label": "Wiki Loves Monuments in Brazil",
+     "references": 30894
+    },
+    {
+     "id": "Q76651189",
+     "label": "completed",
+     "references": 29581
+    },
+    {
+     "id": "Q67015940",
+     "label": "Government Boys' Primary School",
+     "references": 26161
+    },
+    {
+     "id": "Q127431137",
+     "label": "Rome",
+     "references": 25881
+    },
+    {
+     "id": "Q77340783",
+     "label": "Historic Environment Scotland component of listing record",
+     "references": 25400
+    },
+    {
+     "id": "Q61443650",
+     "label": "sub post office",
+     "references": 24757
+    },
+    {
+     "id": "Q111173358",
+     "label": "ResearchSpace@Auckland",
+     "references": 19446
+    },
+    {
+     "id": "Q105770461",
+     "label": "Manorial Documents Register",
+     "references": 18003
+    },
+    {
+     "id": "Q125390868",
+     "label": "hijri month of a given year",
+     "references": 18002
+    },
+    {
+     "id": "Q7604693",
+     "label": "statutory rules of Northern Ireland",
+     "references": 17148
+    },
+    {
+     "id": "Q76649614",
+     "label": "not yet recruiting",
+     "references": 15456
+    },
+    {
+     "id": "Q117360943",
+     "label": "Shanghai Library Seal Knowledge Base",
+     "references": 15040
+    },
+    {
+     "id": "Q18325129",
+     "label": "architectural monument of local significance of Ukraine",
+     "references": 14924
+    },
+    {
+     "id": "Q104344344",
+     "label": "hammering",
+     "references": 14914
+    },
+    {
+     "id": "Q56229478",
+     "label": "population present",
+     "references": 14209
+    },
+    {
+     "id": "Q111253568",
+     "label": "Roman Catholic population present",
+     "references": 14195
+    },
+    {
+     "id": "Q111174480",
+     "label": "Massey Research Online",
+     "references": 13917
+    },
+    {
+     "id": "Q115907598",
+     "label": "Chinese Newspaper Clipping Database",
+     "references": 13483
+    },
+    {
+     "id": "Q140330528",
+     "label": "Wiki4Disarmament",
+     "references": 13184
+    },
+    {
+     "id": "Q140330347",
+     "label": "Wiki4Disarmament UN resolution dataset",
+     "references": 13183
+    },
+    {
+     "id": "Q105835774",
+     "label": "tentative cultural heritage site in Russia",
+     "references": 12756
+    },
+    {
+     "id": "Q3024169",
+     "label": "New York Giants",
+     "references": 12550
+    },
+    {
+     "id": "Q66975812",
+     "label": "Presidency of the Federative Republic of Brazil",
+     "references": 12504
+    },
+    {
+     "id": "Q12496021",
+     "label": "Madrasah Tsanawiyah",
+     "references": 12467
+    },
+    {
+     "id": "Q105091640",
+     "label": "WikiProject Brazilian Laws",
+     "references": 12398
+    },
+    {
+     "id": "Q135191058",
+     "label": null,
+     "references": 12389
+    },
+    {
+     "id": "Q2022532",
+     "label": "coloring",
+     "references": 12384
+    },
+    {
+     "id": "Q6020894",
+     "label": "St. Louis Hawks",
+     "references": 12023
+    },
+    {
+     "id": "Q61278455",
+     "label": "health sub-centre",
+     "references": 11382
+    },
+    {
+     "id": "Q138838021",
+     "label": "starter",
+     "references": 11250
+    },
+    {
+     "id": "Q111174468",
+     "label": "OUR Archive",
+     "references": 11212
+    },
+    {
+     "id": "Q5420020",
+     "label": "exercise",
+     "references": 11175
+    },
+    {
+     "id": "Q115497040",
+     "label": "Lower Order Grid Coordinates",
+     "references": 11144
+    },
+    {
+     "id": "Q11314813",
+     "label": "St. Louis Browns",
+     "references": 10913
+    },
+    {
+     "id": "Q111281436",
+     "label": "present Czech-speaking population of Austrian citizenship",
+     "references": 10728
+    },
+    {
+     "id": "Q73852346",
+     "label": "Wiki Loves Monuments in India",
+     "references": 10495
+    },
+    {
+     "id": "Q96483162",
+     "label": "right side of reaction",
+     "references": 10224
+    },
+    {
+     "id": "Q2300983",
+     "label": "Collaborative Research Centre",
+     "references": 10085
+    },
+    {
+     "id": "Q12496019",
+     "label": "madrasah aliyah",
+     "references": 10043
+    },
+    {
+     "id": "Q62415212",
+     "label": "Zákoník říšský pro království a země v radě říšské zastoupené",
+     "references": 9980
+    },
+    {
+     "id": "Q101113149",
+     "label": "King's Printer version",
+     "references": 9880
+    },
+    {
+     "id": "Q110772651",
+     "label": "2-star hotel rating",
+     "references": 9800
+    },
+    {
+     "id": "Q98970039",
+     "label": "WikiProject PCC Wikidata Pilot/University of Washington",
+     "references": 9730
+    },
+    {
+     "id": "Q111653353",
+     "label": "Historic Milestone Society Database",
+     "references": 9356
+    },
+    {
+     "id": "Q7604692",
+     "label": "Statutory Rules and Orders",
+     "references": 9101
+    },
+    {
+     "id": "Q7437991",
+     "label": "Scottish statutory instrument",
+     "references": 9006
+    },
+    {
+     "id": "Q111174567",
+     "label": "Open Access Repository Victoria University of Wellington",
+     "references": 8667
+    },
+    {
+     "id": "Q113103137",
+     "label": "ALEX",
+     "references": 8562
+    },
+    {
+     "id": "Q96483149",
+     "label": "left side of reaction",
+     "references": 8475
+    },
+    {
+     "id": "Q55089312",
+     "label": "edition of commercial catalogue",
+     "references": 8244
+    },
+    {
+     "id": "Q135160342",
+     "label": "Kokuhei-sha",
+     "references": 8239
+    },
+    {
+     "id": "Q45342890",
+     "label": "modifier",
+     "references": 8194
+    },
+    {
+     "id": "Q134463319",
+     "label": "Wiki Loves Monuments 2025 in Italy - administrative buildings",
+     "references": 7887
+    },
+    {
+     "id": "Q7212378",
+     "label": "Chinese Mail",
+     "references": 7584
+    },
+    {
+     "id": "Q55712879",
+     "label": "Supernova Catalog",
+     "references": 7557
+    },
+    {
+     "id": "Q93462734",
+     "label": "Federal Registry of Health Establishments (Argentina)",
+     "references": 7165
+    },
+    {
+     "id": "Q117197960",
+     "label": "cultural heritage monument in Azerbaijan",
+     "references": 7162
+    },
+    {
+     "id": "Q63869675",
+     "label": "open championship",
+     "references": 7150
+    },
+    {
+     "id": "Q31361031",
+     "label": "United Macedonia",
+     "references": 6994
+    },
+    {
+     "id": "Q112602440",
+     "label": "commissioner",
+     "references": 6716
+    },
+    {
+     "id": "Q21452391",
+     "label": "Umm Al-Qura calendar",
+     "references": 6589
+    },
+    {
+     "id": "Q111265847",
+     "label": "Evangelical population present",
+     "references": 6587
+    },
+    {
+     "id": "Q52662240",
+     "label": "Tuwhera Open Access Publisher",
+     "references": 6548
+    },
+    {
+     "id": "Q111283167",
+     "label": "present German-speaking population of Austrian citizenship",
+     "references": 6488
+    },
+    {
+     "id": "Q135009120",
+     "label": "Ritsuryō funding type",
+     "references": 6370
+    },
+    {
+     "id": "Q134412769",
+     "label": "WikiProject Architourist Guide",
+     "references": 6038
+    },
+    {
+     "id": "Q98100466",
+     "label": "former architectural heritage monument in Bavaria",
+     "references": 5941
+    },
+    {
+     "id": "Q111270503",
+     "label": "Judaism adherents population present",
+     "references": 5902
+    },
+    {
+     "id": "Q7099379",
+     "label": "oral argument",
+     "references": 5876
+    },
+    {
+     "id": "Q123820951",
+     "label": "WikiProject Online Library and Archives Exhibitions",
+     "references": 5868
+    },
+    {
+     "id": "Q21408194",
+     "label": "protected shipwreck (Section 1)",
+     "references": 5697
+    },
+    {
+     "id": "Q106378467",
+     "label": "Wiki Loves Monuments Moldova",
+     "references": 5475
+    },
+    {
+     "id": "Q111174471",
+     "label": "Research@Lincoln",
+     "references": 5378
+    },
+    {
+     "id": "Q42915594",
+     "label": "Scottish burgh",
+     "references": 5356
+    },
+    {
+     "id": "Q67015944",
+     "label": "Government Girls Primary School",
+     "references": 5293
+    },
+    {
+     "id": "Q138640329",
+     "label": "Engishiki ranking",
+     "references": 5179
+    },
+    {
+     "id": "Q130391233",
+     "label": "AE3",
+     "references": 5149
+    },
+    {
+     "id": "Q114001537",
+     "label": "asset of historic and or cultural interest",
+     "references": 5082
+    },
+    {
+     "id": "Q12772319",
+     "label": "government regulation in Czech Republic",
+     "references": 5025
+    },
+    {
+     "id": "Q12504877",
+     "label": "Government Regulation of the Republic of Indonesia",
+     "references": 4946
+    },
+    {
+     "id": "Q105894156",
+     "label": "WP EMEW manor-related focus list",
+     "references": 4865
+    },
+    {
+     "id": "Q114588393",
+     "label": "UniversityofYorkThesisProject",
+     "references": 4829
+    },
+    {
+     "id": "Q97770165",
+     "label": "motions of the 1989–1990 legislative session of the Riksdag",
+     "references": 4755
+    },
+    {
+     "id": "Q3712237",
+     "label": "Diário Oficial da União",
+     "references": 4755
+    },
+    {
+     "id": "Q110533223",
+     "label": "motions of the 2021-2022 legislative session of the Riksdag",
+     "references": 4729
+    },
+    {
+     "id": "Q106577963",
+     "label": "preceding structure",
+     "references": 4690
+    },
+    {
+     "id": "Q117196470",
+     "label": "Open Data KDVZ Rhein-Erft-Rur",
+     "references": 4678
+    },
+    {
+     "id": "Q104586764",
+     "label": "STC COVID-19 Dataset",
+     "references": 4644
+    },
+    {
+     "id": "Q97769849",
+     "label": "motions of the 1990-1991 legislative session of the Riksdag",
+     "references": 4616
+    },
+    {
+     "id": "Q112895606",
+     "label": "LSEThesisProject",
+     "references": 4462
+    },
+    {
+     "id": "Q97769830",
+     "label": "motions of the 2005-2006 legislative session of the Riksdag",
+     "references": 4440
+    },
+    {
+     "id": "Q11660285",
+     "label": "telegram code",
+     "references": 4413
+    },
+    {
+     "id": "Q97770167",
+     "label": "motions of the 1988-1989 legislative session of the Riksdag",
+     "references": 4380
+    },
+    {
+     "id": "Q105440620",
+     "label": "BADACOR",
+     "references": 4374
+    },
+    {
+     "id": "Q97769416",
+     "label": "motions of 2013-2014 legislative session of the Riksdag",
+     "references": 4230
+    },
+    {
+     "id": "Q97769835",
+     "label": "motions of the 2001-2002 legislative session of the Riksdag",
+     "references": 4224
+    },
+    {
+     "id": "Q21170330",
+     "label": "tennis qualification event",
+     "references": 4198
+    },
+    {
+     "id": "Q97769831",
+     "label": "motions of the 2004-2005 legislative session of the Riksdag",
+     "references": 4189
+    },
+    {
+     "id": "Q97722374",
+     "label": "motions of 2017-2018 legislative session of the Riksdag",
+     "references": 4179
+    },
+    {
+     "id": "Q24779464",
+     "label": "White Rose Etheses Online",
+     "references": 4113
+    },
+    {
+     "id": "Q99037794",
+     "label": "motions of the 2020-2021 legislative session of the Riksdag",
+     "references": 4098
+    },
+    {
+     "id": "Q18845793",
+     "label": "Judicial Yuan Interpretations",
+     "references": 4098
+    },
+    {
+     "id": "Q121143375",
+     "label": "Angus and Perthshire Glens",
+     "references": 4082
+    },
+    {
+     "id": "Q97769825",
+     "label": "motions of the 2009-2010 legislative session of the Riksdag",
+     "references": 4024
+    },
+    {
+     "id": "Q91586285",
+     "label": "Act of the Oireachtas",
+     "references": 4013
+    },
+    {
+     "id": "Q97769833",
+     "label": "motions of the 2003-2004 legislative session of the Riksdag",
+     "references": 3987
+    },
+    {
+     "id": "Q97769826",
+     "label": "motions of the 2008-2009 legislative session of the Riksdag",
+     "references": 3962
+    },
+    {
+     "id": "Q76651279",
+     "label": "Coronavirus",
+     "references": 3925
+    },
+    {
+     "id": "Q117621806",
+     "label": "Complete Collection of Chinese Seal Connoisseurs",
+     "references": 3902
+    },
+    {
+     "id": "Q120834162",
+     "label": "Open-Data-Portal Kreis Kleve",
+     "references": 3893
+    },
+    {
+     "id": "Q71056157",
+     "label": "Grade B2 listed building",
+     "references": 3778
+    },
+    {
+     "id": "Q1990719",
+     "label": "copyhold",
+     "references": 3755
+    },
+    {
+     "id": "Q105769818",
+     "label": "abolition of copyhold",
+     "references": 3754
+    },
+    {
+     "id": "Q111174556",
+     "label": "Waikato Research Commons",
+     "references": 3751
+    },
+    {
+     "id": "Q97770168",
+     "label": "motions of the 1987-1988 legislative session of the Riksdag",
+     "references": 3751
+    },
+    {
+     "id": "Q62007231",
+     "label": "Brazilian National Dam Safety Information System",
+     "references": 3737
+    },
+    {
+     "id": "Q111253599",
+     "label": null,
+     "references": 3734
+    },
+    {
+     "id": "Q101073581",
+     "label": "New Zealand Statutory Regulation",
+     "references": 3696
+    },
+    {
+     "id": "Q97756339",
+     "label": "motions of 2016-2017 legislative session of the Riksdag",
+     "references": 3692
+    },
+    {
+     "id": "Q137372547",
+     "label": "register of chitalishta of Bulgaria",
+     "references": 3689
+    },
+    {
+     "id": "Q97769836",
+     "label": "motions of the 2000–2001 legislative session of the Riksdag",
+     "references": 3675
+    },
+    {
+     "id": "Q97769846",
+     "label": "motions of the 1992-1993 legislative session of the Riksdag",
+     "references": 3644
+    },
+    {
+     "id": "Q129493044",
+     "label": "Churches in Sweden",
+     "references": 3619
+    },
+    {
+     "id": "Q97695105",
+     "label": "motions of 2019-2020 legislative session of the Riksdag",
+     "references": 3618
+    },
+    {
+     "id": "Q97770170",
+     "label": "motions of the 1986-1987 legislative session of the Riksdag",
+     "references": 3598
+    },
+    {
+     "id": "Q97769827",
+     "label": "motions of the 2007-2008 legislative session of the Riksdag",
+     "references": 3589
+    },
+    {
+     "id": "Q121055800",
+     "label": "historically valuable town-forming object",
+     "references": 3553
+    },
+    {
+     "id": "Q136957385",
+     "label": null,
+     "references": 3544
+    },
+    {
+     "id": "Q97769834",
+     "label": "motions of the 2002-2003 legislative session of the Riksdag",
+     "references": 3527
+    },
+    {
+     "id": "Q102144299",
+     "label": null,
+     "references": 3514
+    },
+    {
+     "id": "Q102144160",
+     "label": "Dignity for Macedonia",
+     "references": 3514
+    },
+    {
+     "id": "Q102144080",
+     "label": null,
+     "references": 3514
+    },
+    {
+     "id": "Q102138992",
+     "label": null,
+     "references": 3514
+    },
+    {
+     "id": "Q31360953",
+     "label": null,
+     "references": 3514
+    },
+    {
+     "id": "Q18392117",
+     "label": "Social Democratic Party of Macedonia",
+     "references": 3514
+    },
+    {
+     "id": "Q1717980",
+     "label": "National Democratic Revival",
+     "references": 3514
+    },
+    {
+     "id": "Q137604636",
+     "label": "motions of the 2025-2026 legislative session of the Riksdag",
+     "references": 3511
+    },
+    {
+     "id": "Q99766504",
+     "label": "UK Statutory Instruments 2014",
+     "references": 3507
+    },
+    {
+     "id": "Q101858067",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q101857637",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q101854168",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q65295937",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q61120851",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q61119546",
+     "label": null,
+     "references": 3480
+    },
+    {
+     "id": "Q97769426",
+     "label": "motions of 2012-2013 legislative session of the Riksdag",
+     "references": 3479
+    },
+    {
+     "id": "Q109469291",
+     "label": "street list of Hanover",
+     "references": 3451
+    },
+    {
+     "id": "Q71056138",
+     "label": "Grade B1 listed building",
+     "references": 3419
+    },
+    {
+     "id": "Q12496022",
+     "label": "madrasah ibtidaiyah",
+     "references": 3408
+    },
+    {
+     "id": "Q97761428",
+     "label": "motions of 2015-2016 legislative session of the Riksdag",
+     "references": 3393
+    },
+    {
+     "id": "Q108305793",
+     "label": "Monument of monumental art of Ukraine of local importance",
+     "references": 3385
+    },
+    {
+     "id": "Q97769437",
+     "label": "motions of 2011-2012 legislative session of the Riksdag",
+     "references": 3376
+    },
+    {
+     "id": "Q97769823",
+     "label": "motions of the 2010-2011 legislative session of the Riksdag",
+     "references": 3360
+    },
+    {
+     "id": "Q99766500",
+     "label": "UK Statutory Instruments 2012",
+     "references": 3346
+    },
+    {
+     "id": "Q97770171",
+     "label": "motions of the 1985-1986 legislative session of the Riksdag",
+     "references": 3323
+    },
+    {
+     "id": "Q62274582",
+     "label": "Aberdeen City",
+     "references": 3317
+    },
+    {
+     "id": "Q99766502",
+     "label": "UK Statutory Instruments 2013",
+     "references": 3316
+    },
+    {
+     "id": "Q15120977",
+     "label": "grave cairn",
+     "references": 3290
+    },
+    {
+     "id": "Q138638986",
+     "label": "Information integrity on extreme weather events",
+     "references": 3272
+    },
+    {
+     "id": "Q97769840",
+     "label": "motions of the 1997-1998 legislative session of the Riksdag",
+     "references": 3262
+    },
+    {
+     "id": "Q97770172",
+     "label": "motions of the 1984-1985 legislative session of the Riksdag",
+     "references": 3245
+    },
+    {
+     "id": "Q130565902",
+     "label": "Rhein-Kreis Neuss Street Directory",
+     "references": 3230
+    },
+    {
+     "id": "Q130215728",
+     "label": "motions of the 2024-2025 legislative session of the Riksdag",
+     "references": 3214
+    },
+    {
+     "id": "Q2046310",
+     "label": "bowl barrow",
+     "references": 3208
+    },
+    {
+     "id": "Q62089701",
+     "label": "primary characteristic",
+     "references": 3206
+    },
+    {
+     "id": "Q97769838",
+     "label": "motions of the 1999-2000 legislative session of the Riksdag",
+     "references": 3202
+    },
+    {
+     "id": "Q99766497",
+     "label": "UK Statutory Instruments 2011",
+     "references": 3193
+    },
+    {
+     "id": "Q70873595",
+     "label": "Ogi-Ogham Project",
+     "references": 3187
+    },
+    {
+     "id": "Q50430271",
+     "label": "combined anesthetic",
+     "references": 3186
+    },
+    {
+     "id": "Q62011240",
+     "label": "dam with volume capacity of less than 3 hm³",
+     "references": 3160
+    },
+    {
+     "id": "Q97695326",
+     "label": "motions of 2018-2019 legislative session of the Riksdag",
+     "references": 3122
+    },
+    {
+     "id": "Q27020779",
+     "label": "ice hockey team season",
+     "references": 3097
+    },
+    {
+     "id": "Q97769848",
+     "label": "motions of the 1991-1992 legislative session of the Riksdag",
+     "references": 3076
+    },
+    {
+     "id": "Q110554591",
+     "label": "street cadastre of Leipzig",
+     "references": 3075
+    },
+    {
+     "id": "Q51278630",
+     "label": "EHRI authority control",
+     "references": 3074
+    },
+    {
+     "id": "Q97769845",
+     "label": "motions of the 1993-1994 legislative session of the Riksdag",
+     "references": 3026
+    },
+    {
+     "id": "Q97767710",
+     "label": "motions of the 2014-2015 legislative session of the Riksdag",
+     "references": 3019
+    },
+    {
+     "id": "Q61120184",
+     "label": null,
+     "references": 3015
+    },
+    {
+     "id": "Q61119534",
+     "label": null,
+     "references": 3015
+    },
+    {
+     "id": "Q52773878",
+     "label": "Civic Democratic Union",
+     "references": 3015
+    },
+    {
+     "id": "Q113329855",
+     "label": "WikiProject UNC Charlotte Library",
+     "references": 3008
+    },
+    {
+     "id": "Q99766496",
+     "label": "UK Statutory Instruments 2010",
+     "references": 2998
+    },
+    {
+     "id": "Q97770173",
+     "label": "motions of the 1983-1984 legislative session of the Riksdag",
+     "references": 2985
+    },
+    {
+     "id": "Q76649790",
+     "label": "active, not recruiting",
+     "references": 2976
+    },
+    {
+     "id": "Q108839865",
+     "label": "Collection Marianne van der Heijden",
+     "references": 2968
+    },
+    {
+     "id": "Q684016",
+     "label": "Flintshire",
+     "references": 2958
+    },
+    {
+     "id": "Q97769841",
+     "label": "motions of the 1996-1997 legislative session of the Riksdag",
+     "references": 2943
+    },
+    {
+     "id": "Q112945334",
+     "label": "Organ index",
+     "references": 2935
+    },
+    {
+     "id": "Q105835766",
+     "label": "local cultural heritage site in Russia",
+     "references": 2933
+    },
+    {
+     "id": "Q113576825",
+     "label": "not enough information",
+     "references": 2927
+    },
+    {
+     "id": "Q62415098",
+     "label": null,
+     "references": 2921
+    },
+    {
+     "id": "Q97769842",
+     "label": "motions of the 1994-1995 legislative session of the Riksdag",
+     "references": 2919
+    }
+   ]
+  },
+  "es": {
+   "entities": 2441376,
+   "references": 14742513,
+   "most_referenced": [
+    {
+     "id": "Q798373",
+     "label": "guard",
+     "references": 309894
+    },
+    {
+     "id": "Q9164018",
+     "label": "interventional study",
+     "references": 304627
+    },
+    {
+     "id": "Q62626012",
+     "label": "HyperText Markup Language",
+     "references": 295038
+    },
+    {
+     "id": "Q80211245",
+     "label": "Swedish copyright act 2 chapter 26 §",
+     "references": 255245
+    },
+    {
+     "id": "Q3033641",
+     "label": "Office Open XML Wordprocessing Document, ECMA-376 1st Edition",
+     "references": 255191
+    },
+    {
+     "id": "Q10498241",
+     "label": "forward",
+     "references": 197791
+    },
+    {
+     "id": "Q66098665",
+     "label": "WikiProject Badminton/tournament focus list",
+     "references": 126416
+    },
+    {
+     "id": "Q22137107",
+     "label": "milliarcsecond per year",
+     "references": 123629
+    },
+    {
+     "id": "Q85171284",
+     "label": "cultural heritage monument in Hesse",
+     "references": 105388
+    },
+    {
+     "id": "Q7604686",
+     "label": "UK Statutory Instrument",
+     "references": 101168
+    },
+    {
+     "id": "Q111645234",
+     "label": "NZThesisProject",
+     "references": 81111
+    },
+    {
+     "id": "Q96739634",
+     "label": "individual motion",
+     "references": 75431
+    },
+    {
+     "id": "Q66619666",
+     "label": "red giant branch star",
+     "references": 68896
+    },
+    {
+     "id": "Q128302279",
+     "label": "gas station",
+     "references": 63653
+    },
+    {
+     "id": "Q2341654",
+     "label": "stone setting",
+     "references": 60695
+    },
+    {
+     "id": "Q21500224",
+     "label": "milliarcsecond",
+     "references": 59198
+    },
+    {
+     "id": "Q97154904",
+     "label": "archaeological heritage monument in Bavaria",
+     "references": 50011
+    },
+    {
+     "id": "Q100534948",
+     "label": "Oireachtas (Open Data) PSI Licence",
+     "references": 45802
+    },
+    {
+     "id": "Q61058419",
+     "label": "object listed as historical monument",
+     "references": 45335
+    },
+    {
+     "id": "Q24906315",
+     "label": "OYO Rooms",
+     "references": 41075
+    },
+    {
+     "id": "Q99045339",
+     "label": "written question",
+     "references": 36537
+    },
+    {
+     "id": "Q130454268",
+     "label": "archaeological monument of local importance of Ukraine",
+     "references": 35192
+    },
+    {
+     "id": "Q44924719",
+     "label": "historic monument of local significance in Ukraine",
+     "references": 34520
+    },
+    {
+     "id": "Q59956276",
+     "label": "WikiProject Performing arts",
+     "references": 31066
+    },
+    {
+     "id": "Q105730568",
+     "label": "Wiki Loves Monuments in Brazil",
+     "references": 30894
+    },
+    {
+     "id": "Q76651189",
+     "label": "completed",
+     "references": 29581
+    },
+    {
+     "id": "Q76649708",
+     "label": "recruiting",
+     "references": 29140
+    },
+    {
+     "id": "Q12051047",
+     "label": "Sbírka zákonů",
+     "references": 27902
+    },
+    {
+     "id": "Q67015940",
+     "label": "Government Boys' Primary School",
+     "references": 26161
+    },
+    {
+     "id": "Q127431137",
+     "label": "Rome",
+     "references": 25881
+    },
+    {
+     "id": "Q1934075",
+     "label": "West Riding of Yorkshire",
+     "references": 25752
+    },
+    {
+     "id": "Q77340783",
+     "label": "Historic Environment Scotland component of listing record",
+     "references": 25400
+    },
+    {
+     "id": "Q61443650",
+     "label": "sub post office",
+     "references": 24757
+    },
+    {
+     "id": "Q854826",
+     "label": "Bharat Petroleum",
+     "references": 23425
+    },
+    {
+     "id": "Q121076111",
+     "label": "hiking loop",
+     "references": 22665
+    },
+    {
+     "id": "Q121076051",
+     "label": null,
+     "references": 22648
+    },
+    {
+     "id": "Q67461071",
+     "label": "Somerset",
+     "references": 20159
+    },
+    {
+     "id": "Q2593777",
+     "label": "grave field",
+     "references": 19476
+    },
+    {
+     "id": "Q111173358",
+     "label": "ResearchSpace@Auckland",
+     "references": 19446
+    },
+    {
+     "id": "Q67531563",
+     "label": "Hampshire",
+     "references": 19066
+    },
+    {
+     "id": "Q105770461",
+     "label": "Manorial Documents Register",
+     "references": 18003
+    },
+    {
+     "id": "Q125390868",
+     "label": "hijri month of a given year",
+     "references": 18002
+    },
+    {
+     "id": "Q7604693",
+     "label": "statutory rules of Northern Ireland",
+     "references": 17148
+    },
+    {
+     "id": "Q2400020",
+     "label": "function hall",
+     "references": 16333
+    },
+    {
+     "id": "Q76649614",
+     "label": "not yet recruiting",
+     "references": 15456
+    },
+    {
+     "id": "Q97695005",
+     "label": "committee group motion",
+     "references": 15354
+    },
+    {
+     "id": "Q59657037",
+     "label": "monthly measurement",
+     "references": 15337
+    },
+    {
+     "id": "Q117360943",
+     "label": "Shanghai Library Seal Knowledge Base",
+     "references": 15040
+    },
+    {
+     "id": "Q56229478",
+     "label": "population present",
+     "references": 14209
+    },
+    {
+     "id": "Q111253568",
+     "label": "Roman Catholic population present",
+     "references": 14195
+    },
+    {
+     "id": "Q111174480",
+     "label": "Massey Research Online",
+     "references": 13917
+    },
+    {
+     "id": "Q95977692",
+     "label": "Hong Kong Baptist University Library",
+     "references": 13575
+    },
+    {
+     "id": "Q115907598",
+     "label": "Chinese Newspaper Clipping Database",
+     "references": 13483
+    },
+    {
+     "id": "Q140330528",
+     "label": "Wiki4Disarmament",
+     "references": 13184
+    },
+    {
+     "id": "Q140330347",
+     "label": "Wiki4Disarmament UN resolution dataset",
+     "references": 13183
+    },
+    {
+     "id": "Q12870869",
+     "label": "Cincinnati Royals",
+     "references": 13162
+    },
+    {
+     "id": "Q3024169",
+     "label": "New York Giants",
+     "references": 12550
+    },
+    {
+     "id": "Q12496021",
+     "label": "Madrasah Tsanawiyah",
+     "references": 12467
+    },
+    {
+     "id": "Q56731284",
+     "label": "Act of the Parliament of Australia",
+     "references": 12440
+    },
+    {
+     "id": "Q135191058",
+     "label": null,
+     "references": 12389
+    },
+    {
+     "id": "Q2022532",
+     "label": "coloring",
+     "references": 12384
+    },
+    {
+     "id": "Q372090",
+     "label": "North Riding of Yorkshire",
+     "references": 12311
+    },
+    {
+     "id": "Q19930933",
+     "label": "decision of the Supreme Court of Canada",
+     "references": 11780
+    },
+    {
+     "id": "Q814254",
+     "label": "feature",
+     "references": 11463
+    },
+    {
+     "id": "Q1362233",
+     "label": "Upper Lusatian house",
+     "references": 11272
+    },
+    {
+     "id": "Q138838021",
+     "label": "starter",
+     "references": 11250
+    },
+    {
+     "id": "Q111174468",
+     "label": "OUR Archive",
+     "references": 11212
+    },
+    {
+     "id": "Q5420020",
+     "label": "exercise",
+     "references": 11175
+    },
+    {
+     "id": "Q11314813",
+     "label": "St. Louis Browns",
+     "references": 10913
+    },
+    {
+     "id": "Q111281436",
+     "label": "present Czech-speaking population of Austrian citizenship",
+     "references": 10728
+    },
+    {
+     "id": "Q66317415",
+     "label": "closed user group",
+     "references": 10577
+    },
+    {
+     "id": "Q111174485",
+     "label": "UC Research Repository",
+     "references": 10506
+    },
+    {
+     "id": "Q73852346",
+     "label": "Wiki Loves Monuments in India",
+     "references": 10495
+    },
+    {
+     "id": "Q10429085",
+     "label": "report",
+     "references": 10356
+    },
+    {
+     "id": "Q96483162",
+     "label": "right side of reaction",
+     "references": 10224
+    },
+    {
+     "id": "Q2300983",
+     "label": "Collaborative Research Centre",
+     "references": 10085
+    },
+    {
+     "id": "Q12496019",
+     "label": "madrasah aliyah",
+     "references": 10043
+    },
+    {
+     "id": "Q62415212",
+     "label": "Zákoník říšský pro království a země v radě říšské zastoupené",
+     "references": 9980
+    },
+    {
+     "id": "Q101113149",
+     "label": "King's Printer version",
+     "references": 9880
+    },
+    {
+     "id": "Q98970039",
+     "label": "WikiProject PCC Wikidata Pilot/University of Washington",
+     "references": 9730
+    },
+    {
+     "id": "Q111653353",
+     "label": "Historic Milestone Society Database",
+     "references": 9356
+    },
+    {
+     "id": "Q7604692",
+     "label": "Statutory Rules and Orders",
+     "references": 9101
+    },
+    {
+     "id": "Q7437991",
+     "label": "Scottish statutory instrument",
+     "references": 9006
+    },
+    {
+     "id": "Q67479974",
+     "label": "Fife",
+     "references": 8728
+    },
+    {
+     "id": "Q111174567",
+     "label": "Open Access Repository Victoria University of Wellington",
+     "references": 8667
+    },
+    {
+     "id": "Q113103137",
+     "label": "ALEX",
+     "references": 8562
+    },
+    {
+     "id": "Q12763914",
+     "label": "third-class road",
+     "references": 8486
+    },
+    {
+     "id": "Q96483149",
+     "label": "left side of reaction",
+     "references": 8475
+    },
+    {
+     "id": "Q2257184",
+     "label": "priority program",
+     "references": 8475
+    },
+    {
+     "id": "Q59657036",
+     "label": "daily measurement",
+     "references": 8474
+    },
+    {
+     "id": "Q114297071",
+     "label": "road network of the Czech Republic",
+     "references": 8441
+    },
+    {
+     "id": "Q105984528",
+     "label": "ministry act",
+     "references": 8323
+    },
+    {
+     "id": "Q135160342",
+     "label": "Kokuhei-sha",
+     "references": 8239
+    },
+    {
+     "id": "Q45342890",
+     "label": "modifier",
+     "references": 8194
+    },
+    {
+     "id": "Q134463319",
+     "label": "Wiki Loves Monuments 2025 in Italy - administrative buildings",
+     "references": 7887
+    },
+    {
+     "id": "Q11058522",
+     "label": "sangō",
+     "references": 7721
+    },
+    {
+     "id": "Q85192696",
+     "label": "Heritage monument in Schleswig-Holstein",
+     "references": 7597
+    },
+    {
+     "id": "Q7212378",
+     "label": "Chinese Mail",
+     "references": 7584
+    },
+    {
+     "id": "Q55712879",
+     "label": "Supernova Catalog",
+     "references": 7557
+    },
+    {
+     "id": "Q4042165",
+     "label": "Kepler Input Catalog",
+     "references": 7536
+    },
+    {
+     "id": "Q677322",
+     "label": null,
+     "references": 7451
+    },
+    {
+     "id": "Q1100222",
+     "label": "Buffalo Braves",
+     "references": 7298
+    },
+    {
+     "id": "Q121071315",
+     "label": null,
+     "references": 7189
+    },
+    {
+     "id": "Q63869675",
+     "label": "open championship",
+     "references": 7150
+    },
+    {
+     "id": "Q30750411",
+     "label": "room for cardiotraining",
+     "references": 7146
+    },
+    {
+     "id": "Q113470529",
+     "label": "ICOM Italy",
+     "references": 6748
+    },
+    {
+     "id": "Q112602440",
+     "label": "commissioner",
+     "references": 6716
+    },
+    {
+     "id": "Q15080599",
+     "label": "designated heritage property (part IV)",
+     "references": 6669
+    },
+    {
+     "id": "Q1399033",
+     "label": "statio",
+     "references": 6664
+    },
+    {
+     "id": "Q21452391",
+     "label": "Umm Al-Qura calendar",
+     "references": 6589
+    },
+    {
+     "id": "Q111265847",
+     "label": "Evangelical population present",
+     "references": 6587
+    },
+    {
+     "id": "Q52662240",
+     "label": "Tuwhera Open Access Publisher",
+     "references": 6548
+    },
+    {
+     "id": "Q111283167",
+     "label": "present German-speaking population of Austrian citizenship",
+     "references": 6488
+    },
+    {
+     "id": "Q1785240",
+     "label": "Democratic Party of Albanians",
+     "references": 6395
+    },
+    {
+     "id": "Q135009120",
+     "label": "Ritsuryō funding type",
+     "references": 6370
+    },
+    {
+     "id": "Q135022904",
+     "label": "Shikinai Ronsha",
+     "references": 6256
+    },
+    {
+     "id": "Q134412769",
+     "label": "WikiProject Architourist Guide",
+     "references": 6038
+    },
+    {
+     "id": "Q111378021",
+     "label": "Stolperstein laying",
+     "references": 5995
+    },
+    {
+     "id": "Q98100466",
+     "label": "former architectural heritage monument in Bavaria",
+     "references": 5941
+    },
+    {
+     "id": "Q111270503",
+     "label": "Judaism adherents population present",
+     "references": 5902
+    },
+    {
+     "id": "Q123820951",
+     "label": "WikiProject Online Library and Archives Exhibitions",
+     "references": 5868
+    },
+    {
+     "id": "Q60986091",
+     "label": "building protected by city plan",
+     "references": 5780
+    },
+    {
+     "id": "Q96386155",
+     "label": "national school",
+     "references": 5751
+    },
+    {
+     "id": "Q85864317",
+     "label": "Istituto Italiano dei Castelli",
+     "references": 5707
+    },
+    {
+     "id": "Q21408194",
+     "label": "protected shipwreck (Section 1)",
+     "references": 5697
+    },
+    {
+     "id": "Q58954843",
+     "label": "senior",
+     "references": 5657
+    },
+    {
+     "id": "Q40444998",
+     "label": "academic workshop",
+     "references": 5653
+    },
+    {
+     "id": "Q135190960",
+     "label": "historical heritage of Ukraine",
+     "references": 5584
+    },
+    {
+     "id": "Q105835782",
+     "label": "candidate heritage site in Russia",
+     "references": 5502
+    },
+    {
+     "id": "Q111174471",
+     "label": "Research@Lincoln",
+     "references": 5378
+    },
+    {
+     "id": "Q67387310",
+     "label": "Angus",
+     "references": 5375
+    },
+    {
+     "id": "Q42915594",
+     "label": "Scottish burgh",
+     "references": 5356
+    },
+    {
+     "id": "Q67015944",
+     "label": "Government Girls Primary School",
+     "references": 5293
+    },
+    {
+     "id": "Q100754500",
+     "label": "Welsh Statutory Instrument",
+     "references": 5288
+    },
+    {
+     "id": "Q56761382",
+     "label": "roman-numbered page",
+     "references": 5201
+    },
+    {
+     "id": "Q138640329",
+     "label": "Engishiki ranking",
+     "references": 5179
+    },
+    {
+     "id": "Q130391233",
+     "label": "AE3",
+     "references": 5149
+    },
+    {
+     "id": "Q4312270",
+     "label": "railway station above ground",
+     "references": 5135
+    },
+    {
+     "id": "Q135159299",
+     "label": "Kokugakuin University Shrine database",
+     "references": 5101
+    },
+    {
+     "id": "Q114001537",
+     "label": "asset of historic and or cultural interest",
+     "references": 5082
+    },
+    {
+     "id": "Q61058374",
+     "label": "object as Historical Monument",
+     "references": 5071
+    },
+    {
+     "id": "Q105476460",
+     "label": "passenger boardings",
+     "references": 5042
+    },
+    {
+     "id": "Q12772319",
+     "label": "government regulation in Czech Republic",
+     "references": 5025
+    },
+    {
+     "id": "Q106505070",
+     "label": "settlement of protohistoric times",
+     "references": 5024
+    },
+    {
+     "id": "Q121407542",
+     "label": "Argyll, Bute and South Lochaber",
+     "references": 5023
+    },
+    {
+     "id": "Q12504877",
+     "label": "Government Regulation of the Republic of Indonesia",
+     "references": 4946
+    },
+    {
+     "id": "Q31027091",
+     "label": "registered archaeological site in Finland",
+     "references": 4888
+    },
+    {
+     "id": "Q105894156",
+     "label": "WP EMEW manor-related focus list",
+     "references": 4865
+    },
+    {
+     "id": "Q114588393",
+     "label": "UniversityofYorkThesisProject",
+     "references": 4829
+    },
+    {
+     "id": "Q3138439",
+     "label": "Edinburgh North and Leith",
+     "references": 4787
+    },
+    {
+     "id": "Q85631787",
+     "label": "Pembrokeshire",
+     "references": 4786
+    },
+    {
+     "id": "Q97770165",
+     "label": "motions of the 1989–1990 legislative session of the Riksdag",
+     "references": 4755
+    },
+    {
+     "id": "Q110533223",
+     "label": "motions of the 2021-2022 legislative session of the Riksdag",
+     "references": 4729
+    },
+    {
+     "id": "Q106577963",
+     "label": "preceding structure",
+     "references": 4690
+    },
+    {
+     "id": "Q117196470",
+     "label": "Open Data KDVZ Rhein-Erft-Rur",
+     "references": 4678
+    },
+    {
+     "id": "Q104586764",
+     "label": "STC COVID-19 Dataset",
+     "references": 4644
+    },
+    {
+     "id": "Q97769849",
+     "label": "motions of the 1990-1991 legislative session of the Riksdag",
+     "references": 4616
+    },
+    {
+     "id": "Q27479792",
+     "label": "Monument Preservation Service of the Canton of Bern",
+     "references": 4616
+    },
+    {
+     "id": "Q28822545",
+     "label": "Heritage New Zealand Category 2 historic place listing",
+     "references": 4481
+    },
+    {
+     "id": "Q586663",
+     "label": "North East Fife",
+     "references": 4470
+    },
+    {
+     "id": "Q5412421",
+     "label": "European Communities Act, 1972",
+     "references": 4469
+    },
+    {
+     "id": "Q112895606",
+     "label": "LSEThesisProject",
+     "references": 4462
+    },
+    {
+     "id": "Q97769830",
+     "label": "motions of the 2005-2006 legislative session of the Riksdag",
+     "references": 4440
+    },
+    {
+     "id": "Q114241199",
+     "label": "WikiProject International (Digital) Dura-Europos Archive",
+     "references": 4416
+    },
+    {
+     "id": "Q56337681",
+     "label": "municipal immovable monument in Poland",
+     "references": 4384
+    },
+    {
+     "id": "Q97770167",
+     "label": "motions of the 1988-1989 legislative session of the Riksdag",
+     "references": 4380
+    },
+    {
+     "id": "Q121072018",
+     "label": null,
+     "references": 4340
+    },
+    {
+     "id": "Q50378766",
+     "label": "cultural heritage monument in Baden-Württemberg",
+     "references": 4260
+    },
+    {
+     "id": "Q97769416",
+     "label": "motions of 2013-2014 legislative session of the Riksdag",
+     "references": 4230
+    },
+    {
+     "id": "Q97769835",
+     "label": "motions of the 2001-2002 legislative session of the Riksdag",
+     "references": 4224
+    },
+    {
+     "id": "Q112897980",
+     "label": "Stadttheater Bern",
+     "references": 4207
+    },
+    {
+     "id": "Q131741681",
+     "label": "company name under French law",
+     "references": 4202
+    },
+    {
+     "id": "Q85171485",
+     "label": "cultural heritage monument in Lower Saxony",
+     "references": 4196
+    },
+    {
+     "id": "Q97769831",
+     "label": "motions of the 2004-2005 legislative session of the Riksdag",
+     "references": 4189
+    },
+    {
+     "id": "Q97722374",
+     "label": "motions of 2017-2018 legislative session of the Riksdag",
+     "references": 4179
+    },
+    {
+     "id": "Q3029647",
+     "label": "Shinto Directive",
+     "references": 4127
+    },
+    {
+     "id": "Q121071543",
+     "label": null,
+     "references": 4119
+    },
+    {
+     "id": "Q16964584",
+     "label": "PTT Archive",
+     "references": 4114
+    },
+    {
+     "id": "Q24779464",
+     "label": "White Rose Etheses Online",
+     "references": 4113
+    },
+    {
+     "id": "Q99037794",
+     "label": "motions of the 2020-2021 legislative session of the Riksdag",
+     "references": 4098
+    },
+    {
+     "id": "Q18845793",
+     "label": "Judicial Yuan Interpretations",
+     "references": 4098
+    },
+    {
+     "id": "Q121143375",
+     "label": "Angus and Perthshire Glens",
+     "references": 4082
+    },
+    {
+     "id": "Q28971394",
+     "label": "Swiss cultural property of cantonal or local significance",
+     "references": 4063
+    },
+    {
+     "id": "Q3134016",
+     "label": "Berwickshire, Roxburgh and Selkirk",
+     "references": 4058
+    },
+    {
+     "id": "Q97769825",
+     "label": "motions of the 2009-2010 legislative session of the Riksdag",
+     "references": 4024
+    },
+    {
+     "id": "Q91586285",
+     "label": "Act of the Oireachtas",
+     "references": 4013
+    },
+    {
+     "id": "Q3336017",
+     "label": "Dumfries and Galloway",
+     "references": 4009
+    },
+    {
+     "id": "Q11832720",
+     "label": "ledger stone",
+     "references": 4007
+    },
+    {
+     "id": "Q97769833",
+     "label": "motions of the 2003-2004 legislative session of the Riksdag",
+     "references": 3987
+    },
+    {
+     "id": "Q56677470",
+     "label": "Museu Paulista collection",
+     "references": 3980
+    },
+    {
+     "id": "Q97769826",
+     "label": "motions of the 2008-2009 legislative session of the Riksdag",
+     "references": 3962
+    },
+    {
+     "id": "Q117621806",
+     "label": "Complete Collection of Chinese Seal Connoisseurs",
+     "references": 3902
+    },
+    {
+     "id": "Q120834162",
+     "label": "Open-Data-Portal Kreis Kleve",
+     "references": 3893
+    },
+    {
+     "id": "Q121085156",
+     "label": "dance hall",
+     "references": 3874
+    },
+    {
+     "id": "Q67287054",
+     "label": "Carmarthenshire",
+     "references": 3866
+    },
+    {
+     "id": "Q1307347",
+     "label": "boundary",
+     "references": 3848
+    },
+    {
+     "id": "Q12363077",
+     "label": "research grant",
+     "references": 3783
+    },
+    {
+     "id": "Q71056157",
+     "label": "Grade B2 listed building",
+     "references": 3778
+    },
+    {
+     "id": "Q1990719",
+     "label": "copyhold",
+     "references": 3755
+    },
+    {
+     "id": "Q105769818",
+     "label": "abolition of copyhold",
+     "references": 3754
+    }
+   ]
+  }
+ },
+ "cost_per_added_language": {
+  "sampled": 10359,
+  "every": 1000,
+  "chars_per_entity": 550.9,
+  "chunks_per_entity": 1.01,
+  "tokens_per_entity": 154.46,
+  "chunks_per_language": 10541943,
+  "tokens_per_language": 1612186599
+ },
+ "top_classes": [
+  {
+   "id": "Q79007",
+   "label": "street",
+   "instances": 727979,
+   "roots": [
+    "Q811979"
+   ]
+  },
+  {
+   "id": "Q30612",
+   "label": "clinical trial",
+   "instances": 391649,
+   "roots": [
+    "Q1190554"
+   ]
+  },
+  {
+   "id": "Q41176",
+   "label": "building",
+   "instances": 301936,
+   "roots": [
+    "Q811979",
+    "Q41176"
+   ]
+  },
+  {
+   "id": "Q16970",
+   "label": "church building",
+   "instances": 296623,
+   "roots": [
+    "Q811979",
+    "Q41176"
+   ]
+  },
+  {
+   "id": "Q3947",
+   "label": "house",
+   "instances": 248207,
+   "roots": [
+    "Q811979",
+    "Q41176"
+   ]
+  },
+  {
+   "id": "Q32815",
+   "label": "mosque",
+   "instances": 240362,
+   "roots": [
+    "Q811979",
+    "Q41176"
+   ]
+  },
+  {
+   "id": "Q811979",
+   "label": "built structure",
+   "instances": 201606,
+   "roots": [
+    "Q811979"
+   ]
+  },
+  {
+   "id": "Q27020041",
+   "label": "sports season",
+   "instances": 196739,
+   "roots": [
+    "Q1656682",
+    "Q1190554"
+   ]
+  },
+  {
+   "id": "Q1076486",
+   "label": "sports venue",
+   "instances": 145421,
+   "roots": [
+    "Q811979"
+   ]
+  },
+  {
+   "id": "Q27686",
+   "label": "hotel",
+   "instances": 133633,
+   "roots": [
+    "Q811979",
+    "Q41176"
+   ]
+  },
+  {
+   "id": "Q61443690",
+   "label": "branch post office",
+   "instances": 129187,
+   "roots": [
+    "Q811979",
+    "Q41176"
+   ]
+  },
+  {
+   "id": "Q187685",
+   "label": "doctoral thesis",
+   "instances": 110291,
+   "roots": [
+    "Q1190554"
+   ]
+  },
+  {
+   "id": "Q7604686",
+   "label": "UK Statutory Instrument",
+   "instances": 101163,
+   "roots": [
+    "Q1190554"
+   ]
+  },
+  {
+   "id": "Q57733494",
+   "label": "badminton event",
+   "instances": 100729,
+   "roots": [
+    "Q1656682",
+    "Q1190554"
+   ]
+  },
+  {
+   "id": "Q1260524",
+   "label": "time of day",
+   "instances": 87914,
+   "roots": [
+    "Q1190554"
+   ]
+  },
+  {
+   "id": "Q34442",
+   "label": "road",
+   "instances": 85494,
+   "roots": [
+    "Q811979"
+   ]
+  },
+  {
+   "id": "Q452237",
+   "label": "motion",
+   "instances": 84223,
+   "roots": [
+    "Q1190554"
+   ]
+  },
+  {
+   "id": "Q18431960",
+   "label": "basketball game",
+   "instances": 77371,
+   "roots": [
+    "Q1656682",
+    "Q1190554"
+   ]
+  },
+  {
+   "id": "Q12323",
+   "label": "dam",
+   "instances": 76864,
+   "roots": [
+    "Q811979"
+   ]
+  },
+  {
+   "id": "Q839954",
+   "label": "archaeological site",
+   "instances": 75953,
+   "roots": [
+    "Q839954"
+   ]
+  },
+  {
+   "id": "Q96739634",
+   "label": "individual motion",
+   "instances": 75431,
+   "roots": [
+    "Q1190554"
+   ]
+  },
+  {
+   "id": "Q108325",
+   "label": "chapel",
+   "instances": 73704,
+   "roots": [
+    "Q811979",
+    "Q41176"
+   ]
+  },
+  {
+   "id": "Q1298668",
+   "label": "science project",
+   "instances": 71477,
+   "roots": [
+    "Q1190554"
+   ]
+  },
+  {
+   "id": "Q2319498",
+   "label": "architectural landmark",
+   "instances": 70826,
+   "roots": [
+    "Q811979"
+   ]
+  },
+  {
+   "id": "Q66619666",
+   "label": "red giant branch star",
+   "instances": 68896,
+   "roots": [
+    "Q1190554"
+   ]
+  },
+  {
+   "id": "Q575759",
+   "label": "war memorial",
+   "instances": 66412,
+   "roots": [
+    "Q811979",
+    "Q4989906"
+   ]
+  },
+  {
+   "id": "Q128302279",
+   "label": "gas station",
+   "instances": 63651,
+   "roots": [
+    "Q811979",
+    "Q41176",
+    "Q1190554"
+   ]
+  },
+  {
+   "id": "Q2341654",
+   "label": "stone setting",
+   "instances": 60688,
+   "roots": [
+    "Q811979",
+    "Q4989906",
+    "Q839954"
+   ]
+  },
+  {
+   "id": "Q41253",
+   "label": "movie theater",
+   "instances": 58450,
+   "roots": [
+    "Q811979",
+    "Q41176"
+   ]
+  },
+  {
+   "id": "Q41207",
+   "label": "coin",
+   "instances": 57007,
+   "roots": [
+    "Q1190554"
+   ]
+  }
+ ],
+ "p279_cycles": {
+  "count": 6,
+  "classes": 18,
+  "largest": [
+   {
+    "classes": [
+     {
+      "id": "Q81741",
+      "label": "magic"
+     },
+     {
+      "id": "Q133363",
+      "label": "Satanism"
+     },
+     {
+      "id": "Q178934",
+      "label": "occultism"
+     },
+     {
+      "id": "Q141668045",
+      "label": "Liberluxpolism"
+     }
+    ],
+    "size": 4
+   },
+   {
+    "classes": [
+     {
+      "id": "Q338",
+      "label": "cosmology"
+     },
+     {
+      "id": "Q37547",
+      "label": "astrophysics"
+     },
+     {
+      "id": "Q1195766",
+      "label": "space sciences"
+     },
+     {
+      "id": "Q25508843",
+      "label": "cosmic physics"
+     }
+    ],
+    "size": 4
+   },
+   {
+    "classes": [
+     {
+      "id": "Q9415",
+      "label": "emotion"
+     },
+     {
+      "id": "Q4531715",
+      "label": "emotional process"
+     },
+     {
+      "id": "Q5489108",
+      "label": "experience"
+     }
+    ],
+    "size": 3
+   },
+   {
+    "classes": [
+     {
+      "id": "Q2095",
+      "label": "food"
+     },
+     {
+      "id": "Q118451828",
+      "label": "food and beverage"
+     },
+     {
+      "id": "Q141446099",
+      "label": "food material component"
+     }
+    ],
+    "size": 3
+   },
+   {
+    "classes": [
+     {
+      "id": "Q366",
+      "label": "corruption"
+     },
+     {
+      "id": "Q1975478",
+      "label": "abuse of power"
+     }
+    ],
+    "size": 2
+   },
+   {
+    "classes": [
+     {
+      "id": "Q115019248",
+      "label": "GNSS jamming"
+     },
+     {
+      "id": "Q141507841",
+      "label": "cross-pol jamming"
+     }
+    ],
+    "size": 2
+   }
+  ]
+ },
+ "found": [
+  {
+   "id": "Q145503",
+   "labels": [
+    [
+     "de",
+     "Barbican"
+    ],
+    [
+     "en",
+     "Barbican"
+    ],
+    [
+     "it",
+     "Barbican"
+    ],
+    [
+     "fr",
+     "Barbican"
+    ],
+    [
+     "es",
+     "Barbican"
+    ],
+    [
+     "nl",
+     "Barbican"
+    ],
+    [
+     "nb",
+     "Barbican"
+    ],
+    [
+     "cs",
+     "Barbican"
+    ],
+    [
+     "pt",
+     "Barbican"
+    ],
+    [
+     "sv",
+     "Barbican"
+    ]
+   ],
+   "p31": [
+    "Q4167410"
+   ],
+   "p279": [],
+   "instance_bits": 0,
+   "class_bits": 0,
+   "heritage": false
+  },
+  {
+   "id": "Q23398",
+   "labels": [
+    [
+     "en",
+     "machicolation"
+    ],
+    [
+     "en-ca",
+     "Machicolation"
+    ],
+    [
+     "en-gb",
+     "machicolation"
+    ]
+   ],
+   "p31": [],
+   "p279": [
+    "Q391414"
+   ],
+   "instance_bits": 0,
+   "class_bits": 0,
+   "heritage": false
+  },
+  {
+   "id": "Q3634551",
+   "labels": [
+    [
+     "it",
+     "Barbacane"
+    ]
+   ],
+   "p31": [],
+   "p279": [
+    "Q23394"
+   ],
+   "instance_bits": 0,
+   "class_bits": 3,
+   "heritage": false
+  },
+  {
+   "id": "Q108322358",
+   "labels": [
+    [
+     "it",
+     "Barbacane"
+    ]
+   ],
+   "p31": [
+    "Q23394"
+   ],
+   "p279": [],
+   "instance_bits": 3,
+   "class_bits": 0,
+   "heritage": true
+  },
+  {
+   "id": "Q1108269",
+   "labels": [
+    [
+     "fr",
+     "barbacane"
+    ]
+   ],
+   "p31": [
+    "Q57821",
+    "Q811165"
+   ],
+   "p279": [],
+   "instance_bits": 1,
+   "class_bits": 0,
+   "heritage": true
+  },
+  {
+   "id": "Q18326653",
+   "labels": [
+    [
+     "fr",
+     "Merlon"
+    ]
+   ],
+   "p31": [],
+   "p279": [],
+   "instance_bits": 0,
+   "class_bits": 0,
+   "heritage": false
+  },
+  {
+   "id": "Q30601194",
+   "labels": [
+    [
+     "en",
+     "Barbican"
+    ],
+    [
+     "ca",
+     "Barbican"
+    ],
+    [
+     "ast",
+     "Barbican"
+    ]
+   ],
+   "p31": [
+    "Q431289"
+   ],
+   "p279": [
+    "Q2647467",
+    "Q2144234",
+    "Q524679"
+   ],
+   "instance_bits": 0,
+   "class_bits": 32,
+   "heritage": false
+  },
+  {
+   "id": "Q119981202",
+   "labels": [
+    [
+     "en",
+     "Barbican"
+    ]
+   ],
+   "p31": [
+    "Q3305213"
+   ],
+   "p279": [],
+   "instance_bits": 0,
+   "class_bits": 0,
+   "heritage": false
+  },
+  {
+   "id": "Q3306561",
+   "labels": [
+    [
+     "fr",
+     "Merlon"
+    ],
+    [
+     "it",
+     "Merlon"
+    ],
+    [
+     "es",
+     "Merlon"
+    ],
+    [
+     "en",
+     "Merlon"
+    ],
+    [
+     "de",
+     "Merlon"
+    ],
+    [
+     "af",
+     "Merlon"
+    ],
+    [
+     "an",
+     "Merlon"
+    ],
+    [
+     "ast",
+     "Merlon"
+    ],
+    [
+     "bar",
+     "Merlon"
+    ],
+    [
+     "br",
+     "Merlon"
+    ],
+    [
+     "ca",
+     "Merlon"
+    ],
+    [
+     "co",
+     "Merlon"
+    ],
+    [
+     "cs",
+     "Merlon"
+    ],
+    [
+     "cy",
+     "Merlon"
+    ],
+    [
+     "da",
+     "Merlon"
+    ],
+    [
+     "de-at",
+     "Merlon"
+    ],
+    [
+     "de-ch",
+     "Merlon"
+    ],
+    [
+     "en-ca",
+     "Merlon"
+    ],
+    [
+     "en-gb",
+     "Merlon"
+    ],
+    [
+     "eo",
+     "Merlon"
+    ],
+    [
+     "et",
+     "Merlon"
+    ],
+    [
+     "eu",
+     "Merlon"
+    ],
+    [
+     "fi",
+     "Merlon"
+    ],
+    [
+     "frp",
+     "Merlon"
+    ],
+    [
+     "fur",
+     "Merlon"
+    ],
+    [
+     "ga",
+     "Merlon"
+    ],
+    [
+     "gd",
+     "Merlon"
+    ],
+    [
+     "gl",
+     "Merlon"
+    ],
+    [
+     "gsw",
+     "Merlon"
+    ],
+    [
+     "hr",
+     "Merlon"
+    ],
+    [
+     "ia",
+     "Merlon"
+    ],
+    [
+     "id",
+     "Merlon"
+    ],
+    [
+     "ie",
+     "Merlon"
+    ],
+    [
+     "is",
+     "Merlon"
+    ],
+    [
+     "io",
+     "Merlon"
+    ],
+    [
+     "kg",
+     "Merlon"
+    ],
+    [
+     "lb",
+     "Merlon"
+    ],
+    [
+     "li",
+     "Merlon"
+    ],
+    [
+     "lij",
+     "Merlon"
+    ],
+    [
+     "mg",
+     "Merlon"
+    ],
+    [
+     "min",
+     "Merlon"
+    ],
+    [
+     "ms",
+     "Merlon"
+    ],
+    [
+     "nap",
+     "Merlon"
+    ],
+    [
+     "nb",
+     "Merlon"
+    ],
+    [
+     "nds",
+     "Merlon"
+    ],
+    [
+     "nds-nl",
+     "Merlon"
+    ],
+    [
+     "nl",
+     "Merlon"
+    ],
+    [
+     "nn",
+     "Merlon"
+    ],
+    [
+     "nrm",
+     "Merlon"
+    ],
+    [
+     "oc",
+     "Merlon"
+    ],
+    [
+     "pcd",
+     "Merlon"
+    ],
+    [
+     "pl",
+     "Merlon"
+    ],
+    [
+     "pms",
+     "Merlon"
+    ],
+    [
+     "pt",
+     "Merlon"
+    ],
+    [
+     "pt-br",
+     "Merlon"
+    ],
+    [
+     "rm",
+     "Merlon"
+    ],
+    [
+     "ro",
+     "Merlon"
+    ],
+    [
+     "sc",
+     "Merlon"
+    ],
+    [
+     "scn",
+     "Merlon"
+    ],
+    [
+     "sco",
+     "Merlon"
+    ],
+    [
+     "sk",
+     "Merlon"
+    ],
+    [
+     "sl",
+     "Merlon"
+    ],
+    [
+     "sr-el",
+     "Merlon"
+    ],
+    [
+     "sv",
+     "Merlon"
+    ],
+    [
+     "sw",
+     "Merlon"
+    ],
+    [
+     "vec",
+     "Merlon"
+    ],
+    [
+     "vi",
+     "Merlon"
+    ],
+    [
+     "vls",
+     "Merlon"
+    ],
+    [
+     "vo",
+     "Merlon"
+    ],
+    [
+     "wa",
+     "Merlon"
+    ],
+    [
+     "wo",
+     "Merlon"
+    ],
+    [
+     "zu",
+     "Merlon"
+    ]
+   ],
+   "p31": [
+    "Q4167410"
+   ],
+   "p279": [],
+   "instance_bits": 0,
+   "class_bits": 0,
+   "heritage": false
+  },
+  {
+   "id": "Q38876",
+   "labels": [
+    [
+     "pl",
+     "Barbican"
+    ],
+    [
+     "fr",
+     "Barbican"
+    ],
+    [
+     "de",
+     "Barbican"
+    ],
+    [
+     "sv",
+     "Barbican"
+    ],
+    [
+     "nl",
+     "Barbican"
+    ],
+    [
+     "es",
+     "Barbican"
+    ],
+    [
+     "eo",
+     "Barbican"
+    ],
+    [
+     "cs",
+     "Barbican"
+    ],
+    [
+     "hu",
+     "Barbican"
+    ],
+    [
+     "ca",
+     "Barbican"
+    ],
+    [
+     "mul",
+     "Barbican"
+    ],
+    [
+     "id",
+     "Barbican"
+    ],
+    [
+     "sk",
+     "Barbican"
+    ]
+   ],
+   "p31": [
+    "Q14562709",
+    "Q22808404"
+   ],
+   "p279": [],
+   "instance_bits": 1,
+   "class_bits": 0,
+   "heritage": false
+  },
+  {
+   "id": "Q2319878",
+   "labels": [
+    [
+     "sv",
+     "Barbican"
+    ],
+    [
+     "nb",
+     "Barbican"
+    ],
+    [
+     "ceb",
+     "Barbican"
+    ]
+   ],
+   "p31": [
+    "Q1406988",
+    "Q2755753",
+    "Q11303",
+    "Q47012103"
+   ],
+   "p279": [],
+   "instance_bits": 35,
+   "class_bits": 0,
+   "heritage": true
+  },
+  {
+   "id": "Q4859652",
+   "labels": [
+    [
+     "en",
+     "Barbican"
+    ]
+   ],
+   "p31": [
+    "Q15642599"
+   ],
+   "p279": [],
+   "instance_bits": 0,
+   "class_bits": 0,
+   "heritage": false
+  },
+  {
+   "id": "Q23419",
+   "labels": [
+    [
+     "fr",
+     "merlon"
+    ],
+    [
+     "en",
+     "merlon"
+    ],
+    [
+     "en-ca",
+     "Merlon"
+    ],
+    [
+     "en-gb",
+     "Merlon"
+    ],
+    [
+     "ro",
+     "Merlon"
+    ]
+   ],
+   "p31": [
+    "Q391414"
+   ],
+   "p279": [
+    "Q2167035"
+   ],
+   "instance_bits": 0,
+   "class_bits": 1,
+   "heritage": false
+  },
+  {
+   "id": "Q47000024",
+   "labels": [
+    [
+     "fr",
+     "Barbacane"
+    ]
+   ],
+   "p31": [
+    "Q13433827"
+   ],
+   "p279": [],
+   "instance_bits": 0,
+   "class_bits": 0,
+   "heritage": false
+  },
+  {
+   "id": "Q103891701",
+   "labels": [
+    [
+     "en",
+     "Barbican"
+    ],
+    [
+     "pl",
+     "Barbican"
+    ]
+   ],
+   "p31": [
+    "Q13433827"
+   ],
+   "p279": [],
+   "instance_bits": 0,
+   "class_bits": 0,
+   "heritage": false
+  },
+  {
+   "id": "Q103953576",
+   "labels": [
+    [
+     "en",
+     "Machicolation"
+    ]
+   ],
+   "p31": [
+    "Q13433827"
+   ],
+   "p279": [],
+   "instance_bits": 0,
+   "class_bits": 0,
+   "heritage": false
+  },
+  {
+   "id": "Q23394",
+   "labels": [
+    [
+     "fr",
+     "barbacane"
+    ],
+    [
+     "en",
+     "barbican"
+    ],
+    [
+     "en-ca",
+     "Barbican"
+    ],
+    [
+     "en-gb",
+     "barbican"
+    ],
+    [
+     "it",
+     "barbacane"
+    ],
+    [
+     "li",
+     "Barbacane"
+    ],
+    [
+     "nl",
+     "barbacane"
+    ],
+    [
+     "da",
+     "Barbican"
+    ]
+   ],
+   "p31": [],
+   "p279": [
+    "Q811979",
+    "Q41176"
+   ],
+   "instance_bits": 0,
+   "class_bits": 3,
+   "heritage": false
+  },
+  {
+   "id": "Q3634552",
+   "labels": [
+    [
+     "it",
+     "Barbacane"
+    ],
+    [
+     "nl",
+     "Barbacane"
+    ],
+    [
+     "en",
+     "Barbacane"
+    ],
+    [
+     "de",
+     "Barbacane"
+    ],
+    [
+     "fr",
+     "Barbacane"
+    ],
+    [
+     "es",
+     "Barbacane"
+    ],
+    [
+     "af",
+     "Barbacane"
+    ],
+    [
+     "an",
+     "Barbacane"
+    ],
+    [
+     "ast",
+     "Barbacane"
+    ],
+    [
+     "bar",
+     "Barbacane"
+    ],
+    [
+     "br",
+     "Barbacane"
+    ],
+    [
+     "ca",
+     "Barbacane"
+    ],
+    [
+     "co",
+     "Barbacane"
+    ],
+    [
+     "cs",
+     "Barbacane"
+    ],
+    [
+     "cy",
+     "Barbacane"
+    ],
+    [
+     "da",
+     "Barbacane"
+    ],
+    [
+     "de-at",
+     "Barbacane"
+    ],
+    [
+     "de-ch",
+     "Barbacane"
+    ],
+    [
+     "en-ca",
+     "Barbacane"
+    ],
+    [
+     "en-gb",
+     "Barbacane"
+    ],
+    [
+     "eo",
+     "Barbacane"
+    ],
+    [
+     "et",
+     "Barbacane"
+    ],
+    [
+     "eu",
+     "Barbacane"
+    ],
+    [
+     "fi",
+     "Barbacane"
+    ],
+    [
+     "frp",
+     "Barbacane"
+    ],
+    [
+     "fur",
+     "Barbacane"
+    ],
+    [
+     "ga",
+     "Barbacane"
+    ],
+    [
+     "gd",
+     "Barbacane"
+    ],
+    [
+     "gl",
+     "Barbacane"
+    ],
+    [
+     "gsw",
+     "Barbacane"
+    ],
+    [
+     "hr",
+     "Barbacane"
+    ],
+    [
+     "ia",
+     "Barbacane"
+    ],
+    [
+     "id",
+     "Barbacane"
+    ],
+    [
+     "ie",
+     "Barbacane"
+    ],
+    [
+     "is",
+     "Barbacane"
+    ],
+    [
+     "io",
+     "Barbacane"
+    ],
+    [
+     "kg",
+     "Barbacane"
+    ],
+    [
+     "lb",
+     "Barbacane"
+    ],
+    [
+     "li",
+     "Barbacane"
+    ],
+    [
+     "lij",
+     "Barbacane"
+    ],
+    [
+     "mg",
+     "Barbacane"
+    ],
+    [
+     "min",
+     "Barbacane"
+    ],
+    [
+     "ms",
+     "Barbacane"
+    ],
+    [
+     "nap",
+     "Barbacane"
+    ],
+    [
+     "nb",
+     "Barbacane"
+    ],
+    [
+     "nds",
+     "Barbacane"
+    ],
+    [
+     "nds-nl",
+     "Barbacane"
+    ],
+    [
+     "nn",
+     "Barbacane"
+    ],
+    [
+     "nrm",
+     "Barbacane"
+    ],
+    [
+     "oc",
+     "Barbacane"
+    ],
+    [
+     "pcd",
+     "Barbacane"
+    ],
+    [
+     "pl",
+     "Barbacane"
+    ],
+    [
+     "pms",
+     "Barbacane"
+    ],
+    [
+     "pt",
+     "Barbacane"
+    ],
+    [
+     "pt-br",
+     "Barbacane"
+    ],
+    [
+     "rm",
+     "Barbacane"
+    ],
+    [
+     "ro",
+     "Barbacane"
+    ],
+    [
+     "sc",
+     "Barbacane"
+    ],
+    [
+     "scn",
+     "Barbacane"
+    ],
+    [
+     "sco",
+     "Barbacane"
+    ],
+    [
+     "sk",
+     "Barbacane"
+    ],
+    [
+     "sl",
+     "Barbacane"
+    ],
+    [
+     "sr-el",
+     "Barbacane"
+    ],
+    [
+     "sv",
+     "Barbacane"
+    ],
+    [
+     "sw",
+     "Barbacane"
+    ],
+    [
+     "vec",
+     "Barbacane"
+    ],
+    [
+     "vi",
+     "Barbacane"
+    ],
+    [
+     "vls",
+     "Barbacane"
+    ],
+    [
+     "vo",
+     "Barbacane"
+    ],
+    [
+     "wa",
+     "Barbacane"
+    ],
+    [
+     "wo",
+     "Barbacane"
+    ],
+    [
+     "zu",
+     "Barbacane"
+    ]
+   ],
+   "p31": [
+    "Q4167410"
+   ],
+   "p279": [],
+   "instance_bits": 0,
+   "class_bits": 0,
+   "heritage": false
+  },
+  {
+   "id": "Q15152775",
+   "labels": [
+    [
+     "en-gb",
+     "Barbican"
+    ],
+    [
+     "en",
+     "Barbican"
+    ],
+    [
+     "nl",
+     "Barbican"
+    ],
+    [
+     "ast",
+     "Barbican"
+    ]
+   ],
+   "p31": [
+    "Q3957"
+   ],
+   "p279": [],
+   "instance_bits": 0,
+   "class_bits": 0,
+   "heritage": false
+  },
+  {
+   "id": "Q22939537",
+   "labels": [
+    [
+     "en",
+     "Barbacane"
+    ]
+   ],
+   "p31": [
+    "Q1416685"
+   ],
+   "p279": [],
+   "instance_bits": 1,
+   "class_bits": 0,
+   "heritage": true
+  }
+ ],
+ "textifier_errors": {},
+ "error_examples": [],
+ "seconds": {
+  "tree": 1023,
+  "entities": 2019
+ }
+}

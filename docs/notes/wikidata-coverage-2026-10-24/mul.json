@@ -1,0 +1,69 @@
+{
+ "dump": "/corpora/wikidata/wikidatawiki/entities/20261012/wikidata-20261012-all.json.bz2",
+ "entities": 8823,
+ "texts_changed": 280,
+ "texts_changed_share": 0.0317,
+ "label_lookups": 155247,
+ "written_as_id_parser1": 870,
+ "written_as_id_parser2": 506,
+ "examples": [
+  {
+   "entity": "Q3236314",
+   "referenced": "Q1034093",
+   "mul_label": "Marcel Vibert"
+  },
+  {
+   "entity": "Q3242399",
+   "referenced": "Q10680",
+   "mul_label": "PlayStation 2"
+  },
+  {
+   "entity": "Q23788120",
+   "referenced": "Q22969563",
+   "mul_label": "Bodendenkmal"
+  },
+  {
+   "entity": "Q41156951",
+   "referenced": "Q166898",
+   "mul_label": "Suidae"
+  },
+  {
+   "entity": "Q41156617",
+   "referenced": "Q5199383",
+   "mul_label": "Cymatoceratidae"
+  },
+  {
+   "entity": "Q41154281",
+   "referenced": "Q111568495",
+   "mul_label": "Hiatula"
+  },
+  {
+   "entity": "Q41156646",
+   "referenced": "Q300698",
+   "mul_label": "Hexanchidae"
+  },
+  {
+   "entity": "Q41152756",
+   "referenced": "Q17149",
+   "mul_label": "Scyliorhinidae"
+  },
+  {
+   "entity": "Q41156763",
+   "referenced": "Q26623",
+   "mul_label": "Rallidae"
+  },
+  {
+   "entity": "Q41155031",
+   "referenced": "Q25497",
+   "mul_label": "Bovidae"
+  }
+ ],
+ "no_english_label": 3001,
+ "titled_by_id": 1762,
+ "titled_by_id_share": 0.1997,
+ "label_rows": {
+  "en": 93171448,
+  "mul": 20594687
+ },
+ "mul_without_en": 10598629
+}

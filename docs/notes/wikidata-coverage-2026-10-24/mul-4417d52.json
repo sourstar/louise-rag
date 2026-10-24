@@ -1,0 +1,206 @@
+{
+ "dump": "/corpora/wikidata/wikidatawiki/entities/20261012/wikidata-20261012-all.json.bz2",
+ "entities": 8823,
+ "texts_changed": 280,
+ "texts_changed_share": 0.0317,
+ "label_lookups": 155247,
+ "written_as_id_parser1": 870,
+ "written_as_id_parser2": 506,
+ "examples": [
+  {
+   "entity": "Q3236314",
+   "referenced": "Q1034093",
+   "mul_label": "Marcel Vibert"
+  },
+  {
+   "entity": "Q3242399",
+   "referenced": "Q10680",
+   "mul_label": "PlayStation 2"
+  },
+  {
+   "entity": "Q23788120",
+   "referenced": "Q22969563",
+   "mul_label": "Bodendenkmal"
+  },
+  {
+   "entity": "Q41156951",
+   "referenced": "Q166898",
+   "mul_label": "Suidae"
+  },
+  {
+   "entity": "Q41156617",
+   "referenced": "Q5199383",
+   "mul_label": "Cymatoceratidae"
+  },
+  {
+   "entity": "Q41154281",
+   "referenced": "Q111568495",
+   "mul_label": "Hiatula"
+  },
+  {
+   "entity": "Q41156646",
+   "referenced": "Q300698",
+   "mul_label": "Hexanchidae"
+  },
+  {
+   "entity": "Q41152756",
+   "referenced": "Q17149",
+   "mul_label": "Scyliorhinidae"
+  },
+  {
+   "entity": "Q41156763",
+   "referenced": "Q26623",
+   "mul_label": "Rallidae"
+  },
+  {
+   "entity": "Q41155031",
+   "referenced": "Q25497",
+   "mul_label": "Bovidae"
+  }
+ ],
+ "no_english_label": 3001,
+ "titled_by_id": 1762,
+ "titled_by_id_examples": [
+  {
+   "entity": "Q3240149",
+   "label_count": 2,
+   "labels": {
+    "yue": "頭盤",
+    "nl": "borrelhapje"
+   },
+   "instance_of": [],
+   "sitelinks": [
+    "commonswiki",
+    "nlwikibooks"
+   ]
+  },
+  {
+   "entity": "Q3236278",
+   "label_count": 2,
+   "labels": {
+    "fr": "Les auditeurs ont la parole",
+    "ast": "Les auditeurs ont la parole"
+   },
+   "instance_of": [
+    "Q1555508 (radio program)"
+   ],
+   "sitelinks": [
+    "frwiki"
+   ]
+  },
+  {
+   "entity": "Q3239462",
+   "label_count": 2,
+   "labels": {
+    "fr": "ligne de Charpal",
+    "nl": "spoorlijn Charpal"
+   },
+   "instance_of": [
+    "Q728937 (railway line)"
+   ],
+   "sitelinks": [
+    "frwiki",
+    "nlwiki"
+   ]
+  },
+  {
+   "entity": "Q3242104",
+   "label_count": 2,
+   "labels": {
+    "ru": "Люберецкая организованная преступная группировка",
+    "fr": "Liouberetskaya"
+   },
+   "instance_of": [
+    "Q4335775 (organized crime group)"
+   ],
+   "sitelinks": [
+    "frwiki",
+    "ruwiki"
+   ]
+  },
+  {
+   "entity": "Q3244855",
+   "label_count": 1,
+   "labels": {
+    "fr": "liste de ponts du Morbihan"
+   },
+   "instance_of": [
+    "Q13406463 (Wikimedia list article)"
+   ],
+   "sitelinks": [
+    "frwiki"
+   ]
+  },
+  {
+   "entity": "Q3236299",
+   "label_count": 1,
+   "labels": {
+    "fr": "Les corps ont soif"
+   },
+   "instance_of": [
+    "Q7725634 (literary work)"
+   ],
+   "sitelinks": [
+    "frwiki"
+   ]
+  },
+  {
+   "entity": "Q3235697",
+   "label_count": 2,
+   "labels": {
+    "fr": "Les Tambours de septembre",
+    "nl": "Les Tambours de septembre"
+   },
+   "instance_of": [
+    "Q7725634 (literary work)"
+   ],
+   "sitelinks": [
+    "frwiki"
+   ]
+  },
+  {
+   "entity": "Q3244517",
+   "label_count": 1,
+   "labels": {
+    "fr": "liste de pierres à cupules"
+   },
+   "instance_of": [
+    "Q13406463 (Wikimedia list article)"
+   ],
+   "sitelinks": [
+    "frwiki"
+   ]
+  },
+  {
+   "entity": "Q3236406",
+   "label_count": 2,
+   "labels": {
+    "fr": "Les oignons font pleurer",
+    "cy": "Les Oignons font pleurer"
+   },
+   "instance_of": [
+    "Q11424 (film)"
+   ],
+   "sitelinks": [
+    "cywiki",
+    "frwiki"
+   ]
+  },
+  {
+   "entity": "Q3235171",
+   "label_count": 3,
+   "labels": {
+    "fr": "Les Roses de la vie",
+    "de": "Die Rosen des Lebens",
+    "hu": "Az élet rózsái"
+   },
+   "instance_of": [
+    "Q47461344 (written work)"
+   ],
+   "sitelinks": [
+    "frwiki"
+   ]
+  }
+ ],
+ "titled_by_id_share": 0.1997
+}
