@@ -351,3 +351,18 @@ def test_the_reference_source_takes_the_name_last(tmp_path):
                    "Q12": ("fr", "ligne de Charpal"), "Q13": ("fr", "Rivière"), "Q15": ("de", "Schlacht"),
                    "Q16": ("de", "Die Rosen des Lebens"), "Q188": ("en", "German")}, \
         "a label of the pack's languages, then mul, then the name; Q14 has none"
+
+
+def test_a_pack_of_newer_code_is_never_started_over(tmp_path, monkeypatch):
+    """The deployed version-1 code met a version-2 pack as "another version:
+    start over" — unlinking every chunk file and the label table. Code older
+    than the pack refuses and leaves it."""
+    dump = a_dump(tmp_path)
+    pack.build(dump, languages=("en",), chunk=4, workers=1)
+    before = {p.name: p.read_bytes() for p in pack.chunk_files(dump)}
+    monkeypatch.setattr(pack, "PACK_VERSION", 1)
+    with pytest.raises(pack.PackError, match="newer code"):
+        pack.build(dump, languages=("en",), chunk=4, workers=1)
+    monkeypatch.undo()
+    assert {p.name: p.read_bytes() for p in pack.chunk_files(dump)} == before
+    assert rows(dump, "name") == NAMES

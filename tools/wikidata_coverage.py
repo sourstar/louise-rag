@@ -164,6 +164,23 @@ def closure(child: Iterable[int], parent: Iterable[int], roots: Iterable[int]) -
     return out
 
 
+def shortest_path(parents: dict[int, list[int]], start: int, goal: int) -> list[int]:
+    """The fewest P279 steps from a class up to a root (breadth first), or []."""
+    back: dict[int, int | None] = {start: None}
+    queue = [start]
+    for node in queue:
+        if node == goal:
+            path = [node]
+            while back[path[-1]] is not None:
+                path.append(back[path[-1]])
+            return list(reversed(path))
+        for up in parents.get(node, ()):
+            if up not in back:
+                back[up] = node
+                queue.append(up)
+    return []
+
+
 def cycles(child: Iterable[int], parent: Iterable[int], within: set[int]) -> list[list[int]]:
     """P279 cycles among `within`: Tarjan's strongly connected components of
     more than one class, iteratively, and each class that is its own
@@ -378,6 +395,10 @@ def run_classes(dump: Path, *, roots: tuple[str, ...] = ROOTS, langs: tuple[str,
             class_bits[c] = class_bits.get(c, 0) | (1 << i)
     within = set(class_bits)
     loops = cycles(child, parent, within)
+    parents: dict[int, list[int]] = {}
+    for c, p in zip(child, parent):
+        if c in within and p in within:
+            parents.setdefault(c, []).append(p)
     t_tree = time.time() - t0
 
     lm = np.zeros(maxq + 1, np.uint8)
@@ -484,11 +505,20 @@ def run_classes(dump: Path, *, roots: tuple[str, ...] = ROOTS, langs: tuple[str,
     tops = [{"id": f"Q{c}", "label": _label_of(dump, f"Q{c}"), "instances": n,
              "roots": [r for i, r in enumerate(roots) if class_bits.get(c, 0) & (1 << i)]}
             for c, n in inst.most_common(top)]
+    # per root, what its tree holds: the classes with the most instances
+    # per root, what its tree holds: the classes with the most instances, and
+    # the shortest P279 chain that brings each in (what an editor would question)
+    def chain(c: int, r: str) -> list[str]:
+        return [f"Q{x} {_label_of(dump, f'Q{x}') or '?'}" for x in shortest_path(parents, c, _qnum(r))]
+    per_root_tops = {r: [{"id": f"Q{c}", "label": _label_of(dump, f"Q{c}"), "instances": n, "path": chain(c, r)}
+                         for c, n in sorted(((c, n) for c, n in inst.items() if class_bits.get(c, 0) & (1 << i)),
+                                            key=lambda cn: (-cn[1], cn[0]))[:top]]
+                     for i, r in enumerate(roots)}
     return {
         "dump": str(dump), "languages": list(langs), "roots": per_root,
         "selected": union, "heritage_only": heritage_only, "entities_read": entities,
         "referenced_labels": referenced, "missing_labels": missing, "cost_per_added_language": cost,
-        "top_classes": tops,
+        "top_classes": tops, "top_classes_per_root": per_root_tops,
         "p279_cycles": {"count": len(loops), "classes": sum(len(c) for c in loops),
                         "largest": [{"classes": [{"id": f"Q{x}", "label": _label_of(dump, f"Q{x}")} for x in c[:8]],
                                      "size": len(c)} for c in sorted(loops, key=len, reverse=True)[:20]]},
@@ -600,6 +630,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--max-tokens", type=int, default=1024)
     c.add_argument("--find", default=",".join(FIND))
     c.add_argument("--top-missing", type=int, default=200)
+    c.add_argument("--top", type=int, default=30, help="classes listed, overall and per root")
     c.add_argument("--out")
     a = ap.parse_args(argv)
     if a.cmd == "mul":
@@ -608,7 +639,7 @@ def main(argv: list[str] | None = None) -> int:
         got = run_classes(Path(a.dump), roots=tuple(x for x in a.roots.split(",") if x),
                           langs=tuple(x for x in a.langs.split(",") if x), processes=a.processes, every=a.every,
                           tokenizer=a.tokenizer, max_tokens=a.max_tokens,
-                          find=tuple(x for x in a.find.split(",") if x), top_missing=a.top_missing)
+                          find=tuple(x for x in a.find.split(",") if x), top_missing=a.top_missing, top=a.top)
     text = json.dumps(got, ensure_ascii=False, indent=1)
     if a.out:
         Path(a.out).write_text(text + "\n", encoding="utf-8")

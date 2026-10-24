@@ -385,8 +385,16 @@ def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[st
     n_workers = processes() if workers is None else max(1, int(workers))
     if not _meta_matches(meta, dump, languages) and _upgradable(meta, dump, languages):
         return _finish(dump, d, meta, say=say, stop=stop, workers=n_workers, upgrade=True)
+    newer = (meta or {}).get("pack_version")
+    if isinstance(newer, int) and newer > PACK_VERSION:
+        # A NEWER CODE'S PACK is never started over (München, 2026-10-24: the
+        # deployed version-1 worker would have unlinked the 100 GB a version-2
+        # upgrade had just written, had its scan reached the dump): refused,
+        # left as it is, for the code that wrote it
+        raise PackError(f"{dump.name}: its pack is version {newer}, written by newer code than this "
+                        f"(version {PACK_VERSION}); left untouched")
     if not _meta_matches(meta, dump, languages):
-        # another dump, another version or other languages: start over
+        # another dump, an older version or other languages: start over
         for p in d.glob("*.parquet"):
             p.unlink()
         for p in (d / "labels.sqlite", d / "labels.sqlite-wal", d / "labels.sqlite-shm"):

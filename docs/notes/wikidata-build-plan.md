@@ -418,6 +418,46 @@ classes`):
   label in each language: W3 and W4 of
   [upstream-reports/wikidata.md](upstream-reports/wikidata.md).
 
+**Measured** (München, 2026-10-24, dump 20261012, 6 processes, 51 min;
+outputs in [wikidata-coverage-2026-10-24/](wikidata-coverage-2026-10-24/)):
+
+| root | classes in the tree | instances |
+|---|---|---|
+| built structure Q811979 | 24,378 | 5,640,728 |
+| — of which building Q41176 | 8,164 | 2,949,836 |
+| monument Q4989906 | 1,431 | 672,737 |
+| archaeological site Q839954 | 595 | 363,793 |
+| planned event Q1656682 | 56,778 | 1,441,964 |
+| occurrence Q1190554 | 442,711 | 3,895,782 |
+| heritage designation only (P1435) | — | 513,755 |
+| **selected, all together** | | **10,437,567** |
+
+- Wikidata's own names for them (label or `mul`): English 72.5 %, German
+  25.3 %, French 21.2 %, Spanish 12.7 %, Italian 11.6 %. The rest of the
+  text is better covered: of the 192 M labels their texts look up (118 M
+  of them property names), English 99.0 %, French 94.2 %, German 91.4 %,
+  Spanish 89.4 %, Italian 86.0 % exist.
+- One more language for all of them: 10.5 M chunks, 1.61 G tokens (a
+  sample of 10,359 rendered through the real chunker: 1.01 chunks and 154
+  tokens an entity) — 3.7 months of wikidata's `work.tokens` (430 M a
+  month), 222 h of the card at 2,016 tokens/s. Four languages: 15 months.
+- Only where Wikidata names the entity in that language: it 1.21 M, de
+  2.64 M, fr 2.21 M, es 1.33 M — 7.4 M sections, 1.14 G tokens, 2.7 months
+  for all four. Those are the sections whose name is in their language;
+  the others would be an English name in a translated frame.
+- "Barbacane" fits: barbican (Q23394) is a subclass of built structure and
+  building, and the Italian-only class "Barbacane" (Q3634551) sits under
+  it; merlon (Q23419) comes in through its class. Machicolation (Q23398)
+  does not: it is under architectural element (Q391414), a root to add for
+  such words.
+- The occurrence tree is not "events" as a reader means it: clinical
+  trials (391,649), doctoral theses, statutory instruments, parliamentary
+  motions, red giant stars and coins come in through chains of P279
+  (W5 of the report). Its roots are re-measured with each class's chain
+  (`--top`, the path per class) before the daughter: planned event, and
+  the classes of occurrence that are events.
+- No textifier error on 10.4 M entities.
+
 **When parser 3 lands.** The daughter's parser is a new PARSER_VERSION
 (the Codex binds `parser: {id, version}` and no parameters, so the
 languages and the roots are the version's), and an image whose wikidata
@@ -428,6 +468,8 @@ in the same deploy; until then every deploy carries parser 2. Its pack
 needs (in-place passes, RULE 1, as the names): the labels of the added
 languages, and the P279 edges for the closure.
 
-**Open for the operator, with those numbers:** the languages.
-Recommended: it, de, fr, es (the formatter writes their dates; Italian's
-connectives are in parser 2). If nothing is said: those four.
+**Open for the operator, with those numbers:** the languages, and
+whether a language's section is written for every selected entity or only
+where Wikidata names it in that language. Recommended: it, de, fr, es,
+only where named (2.7 months of the budget, against 15). If nothing is
+said: that.

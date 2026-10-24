@@ -121,6 +121,12 @@ def test_the_closure_the_classes_heritage_and_the_cycles(dump, word_tokenizer):
     found = {f["id"]: f for f in got["found"]}
     assert set(found) == {"Q100"} and ("it", "barbacane") in [tuple(x) for x in found["Q100"]["labels"]]
     assert found["Q100"]["class_bits"] == 1, "barbacane is a class of the architecture tree"
+    per = got["top_classes_per_root"]
+    assert [c["id"] for c in per["Q811979"]] == ["Q100"] and [c["id"] for c in per["Q1656682"]] == ["Q700"]
+    assert per["Q811979"][0]["path"] == ["Q100 barbican", "Q57821 fortification", "Q811979 architectural structure"], \
+        "the chain that brings the class in, the class first"
+    assert wc.shortest_path({5: [4], 4: [3, 9], 3: [1], 9: [1]}, 5, 1) == [5, 4, 3, 1]
+    assert wc.shortest_path({5: [4]}, 5, 7) == []
     top = {t["id"]: t for t in got["top_classes"]}
     assert top["Q100"]["instances"] == 1 and top["Q100"]["roots"] == ["Q811979"]
     assert got["textifier_errors"] == {}
