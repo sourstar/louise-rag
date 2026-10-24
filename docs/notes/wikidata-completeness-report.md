@@ -21,12 +21,12 @@ title, the names, and which entities get more.
 |---|---|---|
 | our defects in the text | **fixed** in parser 2: `mul` names of referenced entities, uncertain quantities (±), no id where a name exists | §2 |
 | Wikimedia Deutschland's defects we had copied | **fixed** in our copy; **written** for them (W1, W6, W7 and the textifier's §1–5) | §3 |
-| historical facts (what the best-rank filter drops) | **designed**: a history section in parser 3, nothing re-embedded; 26.8 M statements in 5.4 M entities, at most ~0.57 G tokens | §4 |
+| historical facts (what the best-rank filter drops) | **built** in parser 2 (decided: "the history section now"): a section `en:history` after the English text, which stays byte for byte; 26.8 M statements in 5.4 M entities, at most ~0.57 G tokens | §4 |
 | Wikimedia's own pages kept as records | **kept** (operator: nothing pruned unless written); whether to EMBED them is a node's choice (§8) | §5, §8 |
-| choosing what to embed | **proposed**: wikidata sliced by family, as Wikipedia is by language | §8 |
+| choosing what to embed | **decided**: wikidata sliced by family, a map pinned at creation (A); scholarly articles and lexemes join later as families already in the map ("Go with 3") | §8 |
 | references to merged entities, lexemes, places' languages | merged: negligible (862 references), left; the others open | §5 |
 | full text in it, de, fr, es for monuments, buildings, events | **approved**: the niche selection and a pilot first | §6 |
-| the node | pack version 2 and wikidata-refs version 3 in place; Monday: wikidata created again on 6d02f8e, then its records | §7 |
+| the node | pack version 2 and wikidata-refs version 3 in place; Monday: the family pass, then wikidata created again on the new target, then its records | §7 |
 
 ## 2. Our defects — fixed in parser 2
 
@@ -114,10 +114,15 @@ records-vs-origin reproduces it):
   files it with the English text (a heading `en` with a second part — a
   one-line change in `fts.by_section_language`).
 
-**Where.** Parser 3, the daughter collection that also brings the niche
-language sections (§6): one daughter, one re-issue of the changed records,
-after Monday's English collection has its first snapshot. Parser 2 is not
-touched: Monday goes ahead as planned.
+**Where.** ~~Parser 3, the daughter collection that also brings the niche
+language sections (§6)~~ — **in parser 2, in Monday's re-creation**
+(operator, 2026-10-24: "Go with family slices and the history section
+now"): built the same day, `textify.history_text`, the section headed
+`en:history` after the English text, which stays byte for byte; the word
+index files it with English (`fts.by_section_language`). The connective is
+"Other statements include", not "history": a normal-rank statement under a
+preferred one is usually a former value, but sometimes a less precise or
+less sourced one, and the text says only what Wikidata says.
 
 **Effort.**
 - Code: the rule in textify.py (the statements the filter drops, already
@@ -202,10 +207,15 @@ adds no source and no service.
    is never started over (München's safety check, now code).
 2. Tonight: the classes run with the niche counts, the event roots' P279
    chains, the history, redirect and Wikimedia-page counts.
-3. Monday: wikidata created again on 6d02f8e (parser 2), its text indexed,
-   its records built, its first snapshot, `hold check`.
-4. Then parser 3: the niche language sections, the history section, and
-   whichever of §5 is decided — one daughter collection, the pilot first.
+3. Monday: wikidata created again on the new target (parser 2 with the
+   history section; family slices, option A: the family pass on the pack
+   first, its family sizes reviewed before `create`), its text indexed, its
+   records built, its first snapshot, `hold check`.
+4. Then parser 3: the niche language sections and whichever of §5 is
+   decided — one daughter collection, the pilot first. Scholarly articles
+   and lexemes join later too (operator, 2026-10-24: "Go with 3"): their
+   families are in Monday's map, so they join as a daughter that moves no
+   record (wikidata-family-slices.md §7).
 5. The operator files the upstream reports.
 
 ## 8. Choosing what to embed — wikidata by family, as Wikipedia by language

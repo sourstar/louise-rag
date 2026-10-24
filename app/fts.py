@@ -519,12 +519,13 @@ def by_section_language(lang: str, chunks: list[dict],
     ran it). Any other heading keeps the record's `mul`, in `other`, as before.
     Every other record: one part, its own language, as before. The list is
     fixed for the collection's life, so a re-index never leaves a part in a
-    group it has left."""
+    group it has left. A heading `<language>:<part>` — wikidata's history
+    section, `en:history` (parser 2) — is that language's text too."""
     if (lang or "") != MULTILINGUAL or not languages:
         return [(lang, chunks)]
     parts: dict[str, list[dict]] = {}
     for c in chunks:
-        head = (c.get("chapter") or "").strip()
+        head = (c.get("chapter") or "").strip().split(":", 1)[0]
         parts.setdefault(head if head in languages else MULTILINGUAL, []).append(c)
     return list(parts.items()) or [(lang, chunks)]
 

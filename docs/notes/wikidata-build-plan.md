@@ -57,7 +57,11 @@ references, `snaktype`, `datatype`), `sitelinks` with badges, `lastrevid`,
 `sections`: one section per language of the Codex's list, heading the
 language code, text the TEXTIFIED entity in that language — Wikimedia's
 textifier, vendored at the pinned commits — so `content_hash` covers the
-text that is embedded, and the chunker is a pure cutter.
+text that is embedded, and the chunker is a pure cutter. Each followed,
+where the rank filter drops something, by that language's HISTORY section,
+heading `<code>:history` (parser 2, operator 2026-10-24: "Go with family
+slices and the history section now"; the rule in
+wikidata-completeness-report.md §4, the code `textify.history_text`).
 
 **Pruned entities.** Scholarly articles (`P31` = `Q13442814`, any rank)
 are not records: ~46 M of the ~115 M entities, as the design's corpus

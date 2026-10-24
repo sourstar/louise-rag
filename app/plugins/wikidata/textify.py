@@ -8,6 +8,7 @@ Copyright (c) 2025, Wikimedia Deutschland e. V.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -31,6 +32,14 @@ LANGUAGE_VARIABLES: dict[str, dict[str, str]] = {
     "it": {"also known as": "noto anche come", "Attributes include": "I suoi attributi includono", ", ": ", ",
            "has": "ha", "Examples": "Esempi"},
 }
+#: OURS (parser 2): the connective of the history section (`history_text`),
+#: in the words each Wikibase UI uses for a statement; a language without it
+#: takes the English
+OTHER_STATEMENTS = "Other statements include"
+for _lang, _words in {"en": OTHER_STATEMENTS, "fr": "Les autres déclarations incluent",
+                      "de": "Weitere Aussagen sind", "es": "Otras declaraciones incluyen",
+                      "it": "Altre dichiarazioni includono"}.items():
+    LANGUAGE_VARIABLES[_lang][OTHER_STATEMENTS] = _words
 #: OURS (parser 2): Wikibase's own wording for the two special values
 #: (`wikibase-snakview-variations-novalue-label` / `-somevalue-label`); a
 #: language without them takes the English. Upstream rendered both as
@@ -48,6 +57,20 @@ Labels = Callable[[str, str], Optional[str]]
 #: rendered first: what the entity is an instance of — upstream's
 #: `sticky_property_ids`, which every chunk of a long text repeats
 STICKY_PROPERTIES = ("P31",)
+
+#: OURS (parser 2, operator 2026-10-24: "Go with family slices and the
+#: history section now"): THE HISTORY SECTION — what the best-rank filter
+#: leaves out of the text, as a section of its own, so the English text and
+#: its vectors stay byte for byte (wikidata-completeness-report.md §4):
+HISTORY = "history"
+#: the qualifiers that date a statement, in the order that sorts it: end
+#: time, start time, point in time — the most recent first
+HISTORY_DATES = ("P582", "P580", "P585")
+#: per property at most, so a city's thirty former mayors do not swamp the rest
+HISTORY_PER_PROPERTY = 10
+#: left in the record, out of the text: time series (the current value is in
+#: the text already) and withdrawn identifiers
+HISTORY_LEFT_OUT = ("quantity", "external-id")
 
 
 # ---- the data classes (upstream's, `to_text` as theirs) -----------------------------------
@@ -110,12 +133,16 @@ class Entity:
     description: Optional[str] = None
     aliases: list[str] = field(default_factory=list)
     claims: list["Claim"] = field(default_factory=list)
+    #: OURS: the words before the statements — upstream's, or the history
+    #: section's (`OTHER_STATEMENTS`)
+    connective: str = "Attributes include"
 
     def __bool__(self) -> bool:
         return bool(self.id) and self.label is not None and str(self.label) != ""
 
     def to_text(self, lang: str = "en") -> str:
         lang_var = LANGUAGE_VARIABLES.get(lang, LANGUAGE_VARIABLES["en"])
+        connective = lang_var.get(self.connective) or LANGUAGE_VARIABLES["en"][self.connective]
         # OURS: a referenced entity without a label in this language is its
         # id, not "<no label>" — the id is searchable, the placeholder is not
         label_str = str(self.label) if self.label else self.id
@@ -128,7 +155,7 @@ class Entity:
         attributes = [c.to_text(lang) for c in self.claims]
         attributes = [a for a in attributes if a]
         if attributes:
-            string += f". {lang_var['Attributes include']}:\n- " + "\n- ".join(attributes)
+            string += f". {connective}:\n- " + "\n- ".join(attributes)
         elif string != label_str:
             string += "."
         return string
@@ -211,6 +238,48 @@ def _filter_by_rank(statements: list[dict]) -> list[dict]:
     return kept
 
 
+def _dropped_by_rank(statements: list[dict]) -> list[dict]:
+    """OURS: what `_filter_by_rank` drops and the history section keeps — a
+    property's normal-rank statements when it has a preferred one;
+    deprecated never."""
+    if not any(isinstance(s, dict) and s.get("rank") == "preferred" for s in statements):
+        return []
+    return [s for s in statements if isinstance(s, dict) and s.get("rank") == "normal"]
+
+
+_TIME = re.compile(r"^([+-]\d+)-(\d\d)-(\d\d)T")
+
+
+def _time_of(snak: Any) -> Optional[tuple[int, int, int]]:
+    """A time snak's (year, month, day); a month or a day not stated is 0."""
+    if not isinstance(snak, dict) or snak.get("snaktype", "value") != "value":
+        return None
+    v = (snak.get("datavalue") or {}).get("value") if isinstance(snak.get("datavalue"), dict) else None
+    m = _TIME.match(v.get("time") or "") if isinstance(v, dict) and isinstance(v.get("time"), str) else None
+    return (int(m[1]), int(m[2]), int(m[3])) if m else None
+
+
+def _date_of(statement: dict) -> Optional[tuple[int, int, int]]:
+    """The date that orders a statement in the history: its latest end time,
+    else start time, else point in time (`HISTORY_DATES`)."""
+    qualifiers = statement.get("qualifiers") or {}
+    for pid in HISTORY_DATES:
+        times = [t for t in map(_time_of, qualifiers.get(pid) or ()) if t is not None]
+        if times:
+            return max(times)
+    return None
+
+
+def most_recent_first(statements: list[dict]) -> list[dict]:
+    """The dated statements, the most recent first, then the undated in the
+    dump's order; a tie keeps the dump's order."""
+    dated = [(d, i) for i, d in enumerate(map(_date_of, statements)) if d is not None]
+    dated.sort(key=lambda t: (-t[0][0], -t[0][1], -t[0][2], t[1]))
+    first = [statements[i] for _, i in dated]
+    seen = {i for _, i in dated}
+    return first + [s for i, s in enumerate(statements) if i not in seen]
+
+
 def _datatype(statements: list[dict]) -> str:
     for st in statements:
         if isinstance(st, dict):
@@ -246,7 +315,8 @@ class Normalizer:
         # table keeps for every entity with no English and no mul label
         return self.labels(entity_id, names.NAME) or None
 
-    def normalize(self, e: dict) -> Entity:
+    def _head(self, e: dict, *, aliases: bool = True) -> Entity:
+        """The entity without its statements: label, description, aliases."""
         label = _lang_val(e.get("labels"), self.lang, self.fallback)
         if not label:
             # OURS (parser 2): a name by the operator's order, never the id
@@ -254,12 +324,46 @@ class Normalizer:
             got = names.display_name(e, self.codes)
             label = got[1] if got else ""
         description = _lang_val(e.get("descriptions"), self.lang, self.fallback)
-        aliases_in = e.get("aliases") or {}
-        raw = (aliases_in.get(self.lang) or []) + (aliases_in.get("mul") or [])
-        # OURS: the dump's order, deduplicated — upstream's `list({...})` was unordered
-        aliases = list(dict.fromkeys(a.get("value") if isinstance(a, dict) else str(a) for a in raw if a))
-        entity = Entity(id=str(e.get("id") or ""), label=label or None, description=description or None,
-                        aliases=[a for a in aliases if a])
+        entity = Entity(id=str(e.get("id") or ""), label=label or None, description=description or None)
+        if aliases:
+            aliases_in = e.get("aliases") or {}
+            raw = (aliases_in.get(self.lang) or []) + (aliases_in.get("mul") or [])
+            # OURS: the dump's order, deduplicated — upstream's `list({...})` was unordered
+            found = dict.fromkeys(a.get("value") if isinstance(a, dict) else str(a) for a in raw if a)
+            entity.aliases = [a for a in found if a]
+        return entity
+
+    def history(self, e: dict) -> Optional[Entity]:
+        """OURS (parser 2): the history section's tree — the statements the
+        best-rank filter drops (`_dropped_by_rank`), but not a quantity or an
+        external id (`HISTORY_LEFT_OUT`), each with its qualifiers, at most
+        `HISTORY_PER_PROPERTY` a property, the most recent first. The head
+        names the entity (its aliases are in the main text) and the current
+        `instance of` comes first, the line every window repeats, so a chunk
+        of history says what it is about. None when nothing is dropped."""
+        claims = e.get("claims") or {}
+        dropped = {pid: _dropped_by_rank(sts) for pid, sts in claims.items()
+                   if isinstance(pid, str) and pid.startswith("P") and isinstance(sts, list)}
+        dropped = {pid: sts for pid, sts in dropped.items() if sts and _datatype(sts) not in HISTORY_LEFT_OUT}
+        if not dropped:
+            return None
+        entity = self._head(e, aliases=False)
+        entity.connective = OTHER_STATEMENTS
+        found: list[Claim] = []
+        for pid, statements in dropped.items():
+            claim = self._claim(entity, pid, statements,
+                                chosen=most_recent_first(statements)[:HISTORY_PER_PROPERTY])
+            if claim is not None and claim:
+                found.append(claim)
+        if not found:
+            return None                 # every one under a property with no label: nothing to read
+        sticky = [c for c in (self._claim(entity, pid, claims[pid]) for pid in STICKY_PROPERTIES
+                              if isinstance(claims.get(pid), list)) if c is not None and c]
+        entity.claims = sticky + found
+        return entity
+
+    def normalize(self, e: dict) -> Entity:
+        entity = self._head(e)
         claims_out: list[Claim] = []
         for pid, statements in (e.get("claims") or {}).items():
             if not (isinstance(pid, str) and pid.startswith("P") and isinstance(statements, list)):
@@ -274,13 +378,16 @@ class Normalizer:
         entity.claims = claims_out
         return entity
 
-    def _claim(self, subject: Entity, pid: str, statements: list[dict]) -> Optional[Claim]:
+    def _claim(self, subject: Entity, pid: str, statements: list[dict],
+               chosen: list[dict] | None = None) -> Optional[Claim]:
+        """`chosen`: the statements to render (the history's); upstream's
+        rank filter otherwise."""
         datatype = _datatype(statements)
         if not self.external_ids and datatype == "external-id":
             return None
         claim = Claim(subject=subject, property=Entity(id=pid, label=self._label(pid)), datatype=datatype)
         values = []
-        for st in _filter_by_rank(statements):
+        for st in (_filter_by_rank(statements) if chosen is None else chosen):
             cv = self._claim_value(claim, st, datatype)
             if cv is not None:
                 values.append(cv)
@@ -373,3 +480,12 @@ def entity_text(obj: dict, lang: str, labels: Labels, *, fallback: str | None = 
     the dump's labels and our formatting — a pure function of (entity,
     label table, language codes, lang)."""
     return Normalizer(lang=lang, fallback=fallback, labels=labels, codes=codes).normalize(obj).to_text(lang)
+
+
+def history_text(obj: dict, lang: str, labels: Labels, *, fallback: str | None = "en",
+                 codes: dict[str, str] | None = None) -> str:
+    """OURS (parser 2): the entity's history section in `lang` —
+    `Normalizer.history` — or "" when the best-rank filter drops nothing the
+    section keeps. A pure function of the same inputs as `entity_text`."""
+    entity = Normalizer(lang=lang, fallback=fallback, labels=labels, codes=codes).history(obj)
+    return entity.to_text(lang) if entity is not None else ""

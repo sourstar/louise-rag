@@ -197,3 +197,82 @@ def test_a_lexeme_value_is_its_id_and_a_quantity_keeps_its_uncertainty():
     assert fmt.quantity_text({"amount": "+52.00", "unit": "1", "upperBound": "+52.50",
                               "lowerBound": "+51.75"}) == "52.00±0.50"
     assert fmt.quantity_text({"amount": "+3", "unit": "1", "upperBound": "+3", "lowerBound": "+3"}) == "3"
+
+
+# ---- the history section (parser 2, operator 2026-10-24: "Go with family slices and the history
+# ---- section now"; wikidata-completeness-report.md §4) ------------------------------------------
+
+def _time(t: str, precision: int = 11) -> dict:
+    return {"type": "time", "value": {"time": t, "precision": precision, "timezone": 0, "before": 0, "after": 0,
+                                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"}}
+
+
+def _item(n: int) -> dict:
+    return {"type": "wikibase-entityid", "value": {"entity-type": "item", "numeric-id": n, "id": f"Q{n}"}}
+
+
+def _st(pid, value, rank="normal", datatype="wikibase-item", **qualifiers):
+    out = {"mainsnak": _snak(pid, datavalue=value, datatype=datatype), "rank": rank}
+    if qualifiers:
+        out["qualifiers"] = {q: [_snak(q, datavalue=_time(t), datatype="time")] for q, t in qualifiers.items()}
+    return out
+
+
+def test_the_history_section_holds_what_the_rank_filter_drops_and_the_text_stays_as_it_was():
+    q = entities("dump-sample.jsonl")["Q3331"]
+    assert textify.history_text(q, "en", labels) == (
+        "tunnel de la Croix-Rousse, road tunnel in Lyon. Other statements include:\n"
+        "- instance of: road tunnel\n"
+        "- operator: Grand Lyon (end time: 1 January 2015)"), \
+        "the head names it, its `instance of` first (every window repeats it), the dropped statement dated"
+    text = textify.entity_text(q, "en", labels)
+    assert "Grand Lyon" not in text and "Other statements" not in text, "the main text is upstream's, unchanged"
+    assert textify.history_text(q, "en", labels) == textify.history_text(q, "en", labels), "a pure function"
+
+
+def test_history_keeps_ten_a_property_the_most_recent_first_and_leaves_series_and_ids_in_the_record():
+    mayors = [_st("P6", _item(100 + i), P582=f"+{1900 + i:04d}-00-00T00:00:00Z") for i in (3, 11, 0, 7, 1, 9, 2, 10,
+                                                                                         5, 4, 8, 6)]
+    e = {"id": "Q950", "labels": {"en": {"language": "en", "value": "Bologna"}},
+         "aliases": {"en": [{"language": "en", "value": "Bononia"}]},
+         "claims": {
+             "P31": [_st("P31", _item(515))],
+             "P6": [_st("P6", _item(99), rank="preferred", P580="+2021-10-11T00:00:00Z"),
+                    _st("P6", _item(98)), *mayors,
+                    {**_st("P6", _item(97), P582="+2999-00-00T00:00:00Z"), "rank": "deprecated"}],
+             "P1082": [_st("P1082", {"type": "quantity", "value": {"amount": "+390000", "unit": "1"}},
+                           rank="preferred", datatype="quantity"),
+                       _st("P1082", {"type": "quantity", "value": {"amount": "+370000", "unit": "1"}},
+                           datatype="quantity", P585="+2001-00-00T00:00:00Z")],
+             "P214": [_st("P214", "123", rank="preferred", datatype="external-id"),
+                      _st("P214", "456", datatype="external-id")],
+             "P17": [_st("P17", _item(38))],
+         }}
+    table = {("P31", "en"): "instance of", ("P6", "en"): "head of government", ("P582", "en"): "end time",
+             ("P580", "en"): "start time", ("P1082", "en"): "population", ("P214", "en"): "VIAF ID",
+             ("P17", "en"): "country", ("Q515", "en"): "city", ("Q38", "en"): "Italy",
+             **{(f"Q{n}", "en"): f"Mayor {n}" for n in range(97, 113)}}
+    history = textify.history_text(e, "en", lambda eid, lang: table.get((eid, lang)))
+    head, lines = history.split(":\n- ")[0], history.split(":\n- ", 1)[1].split("\n- ")
+    assert head == "Bologna. Other statements include", "the aliases are in the main text, not repeated"
+    assert lines[0] == "instance of: city"
+    assert lines[1] == ("head of government: " + ", ".join(
+        f"Mayor {100 + i} (end time: {1900 + i})" for i in (11, 10, 9, 8, 7, 6, 5, 4, 3, 2))), \
+        "ten, the latest end time first; the eleventh and twelfth and the undated Mayor 98 wait"
+    assert len(lines) == 2, "no population series, no withdrawn VIAF id, no property without a preferred one"
+    assert "Mayor 97" not in history, "deprecated never"
+    assert "Mayor 99" not in history, "the preferred value is the main text's"
+
+
+def test_no_history_without_a_preferred_statement_and_dates_order_by_end_then_start_then_point():
+    plain = {"id": "Q951", "labels": {"en": {"language": "en", "value": "Village"}},
+             "claims": {"P17": [_st("P17", _item(38)), _st("P17", _item(39))]}}
+    assert textify.history_text(plain, "en", labels) == "", "two normal values are both the text's"
+    sts = [_st("P1", _item(1)),                                            # undated: last, in the dump's order
+           _st("P1", _item(2), P585="+1500-00-00T00:00:00Z"),
+           _st("P1", _item(3), P580="+1600-05-00T00:00:00Z"),
+           _st("P1", _item(4), P582="-0044-03-15T00:00:00Z", P580="+1700-00-00T00:00:00Z"),   # end time wins
+           _st("P1", _item(5)),
+           _st("P1", _item(6), P580="+1600-05-02T00:00:00Z")]
+    order = [s["mainsnak"]["datavalue"]["value"]["id"] for s in textify.most_recent_first(sts)]
+    assert order == ["Q6", "Q3", "Q2", "Q4", "Q1", "Q5"]

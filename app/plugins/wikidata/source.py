@@ -30,6 +30,13 @@ _DUMP_RE = re.compile(r"^wikidata-(\d{8})-all\.json\.(bz2|gz)$")
 _KEY_PROPERTIES = ("P31", "P279")
 
 
+def history_heading(lang: str) -> str:
+    """The heading of a language's history section: `en:history` — the
+    language first, so the word index files it with that language's text
+    (fts.by_section_language)."""
+    return f"{lang}:{textify.HISTORY}"
+
+
 def split_locator(locator: str) -> tuple[Path, int]:
     path, sep, index = locator.rpartition(_LOCATOR_SEP)
     if not sep or not index.isdigit():
@@ -77,7 +84,9 @@ class WikidataSource:
     #: name in its text and a referenced entity's name follow names.py; and
     #: what the text dropped or misread: "no value" / "unknown value" with
     #: their qualifiers, a lexeme value's id, a quantity's ± (textify.py,
-    #: format.py)
+    #: format.py); and the HISTORY SECTION (operator: "Go with family slices
+    #: and the history section now"): after each language's text, what the
+    #: best-rank filter drops, headed `<lang>:history` (textify.history_text)
     PARSER_VERSION = 2
     LOCATOR_SEP = _LOCATOR_SEP
     LOCATOR_MEMBER_FIELDS = 1
@@ -171,8 +180,16 @@ class WikidataSource:
             raise UnindexableDocument(f"not an item or property: {eid!r}")
         labels = pack.labels(dump)
         codes = pack.language_codes(dump)       # a pack not ready defers the document
-        sections = [(lang, textify.entity_text(obj, lang, labels, fallback=self.fallback_language, codes=codes))
-                    for lang in self.languages]
+        sections = []
+        for lang in self.languages:
+            sections.append((lang, textify.entity_text(obj, lang, labels, fallback=self.fallback_language,
+                                                       codes=codes)))
+            # parser 2 (operator, 2026-10-24): what the best-rank filter drops,
+            # as a section of its own after the language's text, headed
+            # `<lang>:history` — the text before it stays byte for byte
+            history = textify.history_text(obj, lang, labels, fallback=self.fallback_language, codes=codes)
+            if history:
+                sections.append((history_heading(lang), history))
         title = next((obj["labels"][lang]["value"] for lang in (*self.languages, "mul", self.fallback_language)
                       if isinstance((obj.get("labels") or {}).get(lang), dict)
                       and (obj["labels"][lang] or {}).get("value")), None)

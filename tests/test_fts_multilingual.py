@@ -55,6 +55,23 @@ def test_only_a_language_the_plugin_declares_routes_a_section(tmp_path):
         fts.close_all()
 
 
+def test_a_language_s_history_section_is_that_language_s_text(tmp_path):
+    """wikidata parser 2: `en:history` goes where `en` goes, stemmed as
+    English; a part named after a language the plugin does not declare
+    stays `mul`, in `other`."""
+    history = [{"id": "wikidata:42:2:1", "chapter": "en:history",
+                "text": "Douglas Adams. Other statements include:\n- employer: BBC Radios (end time: 1978)"}]
+    assert fts.by_section_language("mul", ENTITY + history, ("en", "it")) == [
+        ("en", [ENTITY[0], history[0]]), ("it", [ENTITY[1]])]
+    assert fts.by_section_language("mul", [{**history[0], "chapter": "xx:history"}], ("en", "it")) == [
+        ("mul", [{**history[0], "chapter": "xx:history"}])]
+    c = _collection(tmp_path)
+    fts.index_book("mul", 42, ENTITY + history, c)
+    assert set(fts.existing_groups(c)) == {"en", "it"}
+    assert [h["book_id"] for h in fts.search("en", "radio employer", limit=5, collection=c)] == [42], "stemmed"
+    fts.close_all()
+
+
 def test_the_node_s_wikidata_declares_english_alone():
     assert fts.section_languages(SimpleNamespace(plugin="wikidata")) == ("en",)
     assert fts.section_languages(SimpleNamespace(plugin="gutenberg")) == ()

@@ -34,6 +34,13 @@ What was changed, and why (docs/notes/wikidata-build-plan.md §2, §5):
 - the `instance of` (P31) statement is rendered FIRST, the rest in the
   dump's order: it is the sticky line the chunker repeats in every window
   (upstream's `sticky_property_ids`), found by its place in the text;
+- the HISTORY SECTION is ours (parser 2, `history_text`): what the rank
+  filter drops — a property's normal-rank statements when it has a
+  preferred one, not quantities or external ids, at most ten a property,
+  the most recent first — rendered by upstream's classes as a text of its
+  own after the language's text, under the connective "Other statements
+  include" (`OTHER_STATEMENTS`, the word each Wikibase UI uses for a
+  statement); upstream's text is untouched;
 - the rank filter, the `external_ids`/`qualifiers`/`references` defaults
   and the connectives (`language_variables.json`, inlined) are upstream's,
   plus Italian (ours, parser 2; offered upstream in

@@ -1,5 +1,6 @@
 """The `wikidata-text` chunker (06 §6.3; docs/notes/wikidata-build-plan.md
-§2 "The chunker"): per section — one per language of the entity's text —
+§2 "The chunker"): per section — one per language of the entity's text,
+and its history section (`en:history`, parser 2) —
 windows of at most `max_tokens` tokens of a pinned tokenizer, split at the
 textifier's own statement boundaries as Wikimedia's `chunk_item_text`
 splits them (WikidataTextEmbedding `src/utils.py`, commit c9dc819, MIT,
@@ -21,7 +22,7 @@ in the layer's params by the sha256 of its `tokenizer.json`, which enters
 image fetches it at build), checked against the sha256, and loaded once
 (Hugging Face `tokenizers`, D6). Chunk ids `<uid>:<seq>:<version>`,
 `seq` running across the sections in their order; `chapter` is the
-section's language.
+section's heading: its language, or `<language>:history`.
 """
 from __future__ import annotations
 

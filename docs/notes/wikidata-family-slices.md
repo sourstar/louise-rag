@@ -129,7 +129,49 @@ families; the Library's card offers the families by name.
    records build about a day later than planned; discovery and the text
    index do not wait.
 
-## 7. What would reopen it
+## 7. The constraints, now and later (operator's question, 2026-10-24)
+
+*"About Family map pinned at creation, explain the slicing constraints and
+future proof constraints."*
+
+**What any slice key must satisfy**: pack-format §2, plus the fact that the
+slicing block is inside `collection_id` (09 §9.3), so it is fixed for the
+collection's life:
+
+| constraint | why | how the pinned map meets it |
+|---|---|---|
+| read from the record alone, never from a vector | slices exist before anything is embedded | the record's own P31 / P1435, looked up in the map |
+| stable for the record's life | a move re-issues two parts (the one it leaves, the one it joins) and churns the torrents | the map never changes; a record moves only when its own P31 / P1435 is edited, and that edit re-issues its part anyway |
+| the same on every peer | an update is a pure function of (previous manifest, origin, cutoff); two honest updaters must make byte-identical parts (pack-format §6.1) | the map is a SHARD member, its hash in the slicing block |
+| answerable without parsing | the plan pass reads 75.9 M manifest rows | one family byte per entity, kept in the pack |
+
+**What the map freezes, and what each later change costs:**
+
+| later | what happens | cost |
+|---|---|---|
+| a class created after the creation dump | placed by walking the CURRENT dump's P279 links to the nearest class the map has | the one leak: its records move if that class is re-linked upstream. Each update logs how many records the walk placed and moved; that count is the trigger for a new map |
+| scholarly articles and lexemes join (operator, 2026-10-24: "Go with 3", later) | a daughter (the parser emits records it did not); their families are already in the map, and the range rule is written over the entity's number in its kind (Q42 → 42, P31 → 31, L7 → 7), so lexemes fit it too | only their new parts; no existing record moves; every part and vector inherited |
+| a language added to the text | a SECTION, never a slice: an entity is one record carrying every language (invariant 11). A daughter re-issues the changed parts and keeps every English vector (02 §2.7) | only the new language's chunks are embedded |
+| a new family, a family split, a newer class tree | a new map is a new slicing block, so a daughter that re-slices | no GPU, but every record and vector file is re-issued: the whole collection moves again for peers |
+
+So the binding constraint is the last row: **the family list must be right
+at creation.** The family pass logs each family's size before `create`, and
+the sizes are reviewed then, not after.
+
+**Languages to fetch and embed** (operator, the same day: "if it makes sense
+choose which languages to fetch and embed"). For fetching there is no choice
+to make: the dump is one file, and each record keeps every language
+(invariant 11). For embedding, the languages are sections: English for every
+entity from Monday; later, the niche it / de / fr / es sections (parser 3)
+where Wikidata says more in that language than in English, counted over the
+monuments, buildings and events selection (de 945,914 entities, fr 723,772,
+it 277,416, es 220,546; 287 M tokens; classes-niche.json). A `lang=` slice
+key, announced to the operator and then withdrawn the same day, would have
+been constant (`mul`) for every item. The lexemes are the one part with a
+language of their own, and they are small next to the items, so a node takes
+them whole.
+
+## 8. What would reopen it
 
 - A newer class tree that matters (a family badly mis-assigned by the
   pinned map): a daughter with a new map.
