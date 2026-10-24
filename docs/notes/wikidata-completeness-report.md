@@ -243,6 +243,10 @@ history section and its niche language sections ride with its family.
 | id ranges (as now) | nothing to do; Monday as planned | all or nothing: the 9.68 M Wikimedia pages are embedded with everything else, or wikidata is not embedded at all |
 | choosing by section (embed the English text, not the history) | finer than records | the embed stage, the coverage map and the bundles count vectors per part, not per section: a deeper change than slices |
 
+**DECIDED (operator, 2026-10-24): family slices with a map pinned at
+creation (option A), and the history section now.** The background, the
+slicing rule it met and the design: [wikidata-family-slices.md](wikidata-family-slices.md).
+
 **Recommended:** family slices, in Monday's re-creation, with the history
 section in parser 2 (one re-creation, not two). It moves Monday's records
 build by about a day; the discovery and the text index, which come first,
