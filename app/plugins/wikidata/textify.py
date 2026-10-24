@@ -26,6 +26,10 @@ LANGUAGE_VARIABLES: dict[str, dict[str, str]] = {
     "es": {"also known as": "también conocido como", "Attributes include": "Sus atributos incluyen", ", ": ", ",
            "has": "tiene", "Examples": "Ejemplos"},
     "zh": {"also known as": "也称为", "Attributes include": "属性包括", ", ": "，", "has": "有", "Examples": "示例"},
+    # OURS (parser 2, 2026-10-24), offered upstream: Italian, built as the
+    # French and Spanish entries are (docs/notes/upstream-reports/wmde-wikidata-textifier.md §3)
+    "it": {"also known as": "noto anche come", "Attributes include": "I suoi attributi includono", ", ": ", ",
+           "has": "ha", "Examples": "Esempi"},
 }
 
 #: `labels(entity_id, lang) -> label or None`: the dump's label table
@@ -198,12 +202,18 @@ class Normalizer:
                  external_ids: bool = True, qualifiers: bool = True):
         self.lang, self.fallback, self.labels = lang, fallback, labels
         self.external_ids, self.qualifiers = external_ids, qualifiers
+        # upstream's `get_lang_val` chain, the one `_lang_val` applies to the
+        # entity's own label: the language, else `mul`, else the fallback.
+        # Parser 1 skipped `mul` here, so a referenced entity labelled only in
+        # `mul` (Wikidata's default label since 2024) rendered as its id
+        self._chain = tuple(dict.fromkeys(x for x in (lang, "mul", fallback) if x))
 
     def _label(self, entity_id: str) -> Optional[str]:
-        got = self.labels(entity_id, self.lang)
-        if not got and self.fallback and self.fallback != self.lang:
-            got = self.labels(entity_id, self.fallback)
-        return got or None
+        for lang in self._chain:
+            got = self.labels(entity_id, lang)
+            if got:
+                return got
+        return None
 
     def normalize(self, e: dict) -> Entity:
         label = _lang_val(e.get("labels"), self.lang, self.fallback)

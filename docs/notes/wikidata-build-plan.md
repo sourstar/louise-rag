@@ -289,3 +289,82 @@ pins no files. Next: the fetch and the first streaming scan (§2), the first
 snapshot, the gate against the document run, then §4.5's model-identity
 check is done and gutenberg-graph's methods (gutenberg-graph-amendments.md,
 steps 4–5) can run against its vectors.
+
+## Parser 2 (2026-10-24): a referenced label falls back to `mul`
+
+The vendored textifier looked a referenced entity's label up in the
+language, then in the fallback language. Upstream's `get_lang_val` — and
+our rendering of the entity's OWN label — tries `mul` in between. Since
+2024 `mul` is Wikidata's default label, the name in every language, so an
+entity labelled only in `mul` was written as its id (`Q…`) in the text of
+every entity naming it. Found while designing the section below, before
+any record existed: `PARSER_VERSION = 2` (textify.py `Normalizer._chain`;
+tests/test_plugins_wikidata_textify.py). Parser 2 also carries Italian
+connectives (W1 of upstream-reports/wikidata.md), inert for an English
+collection. How many texts it changed is counted on the node
+(`tools/wikidata_coverage.py mul`).
+
+The Codex of 2026-10-20 names parser 1, so wikidata is CREATED AGAIN from
+the same recipe before Monday's records build: nothing was published (no
+snapshot, share off), so nothing is superseded. RULE 1, named: the
+calibration's document side is reused (`hold collection create
+--calibration-from wikidata`, only the query side embedded); the pack is
+a cache of the dump and stays; the text index was to be rebuilt on Monday
+anyway. The new collection's manifest is discovered again from the pack's
+index columns.
+
+## Full text in more languages for monuments, buildings and events (operator, 2026-10-24)
+
+*"I want that also monuments, buildings and events are full text translated
+as well / As ancient and uncommon words (barbacane, barbican) if it fits /
+Any improvement to wikidata goes in a report to be submitted to the
+wikidata team for integration."*
+
+**How.** A daughter (D3, and 02 §2.7's sentence on it) after the English
+collection is built. For the entities of the selection, its parser writes
+one more section per added language: the same textifier, fed Wikidata's
+OWN labels in that language. That is the translation Wikidata already
+holds — a property's label exists in nearly every language, a value's
+label where editors wrote one, else `mul`, else English. Not machine
+translation, for three reasons:
+- a record is reproduced from the dump (records-vs-origin, invariant 11);
+- translating before embedding made retrieval worse where we measured it
+  (translate-before-embed.md, classical-translation.md), and MADLAD costs
+  seconds a passage on the shared card;
+- jina-v3 reads Italian, German, French and Spanish as they are.
+
+The English sections stay byte-identical, so their vectors are carried by
+chunk hash: only the new sections are embedded.
+
+**The selection** is a pure function of the dump:
+- every entity whose P31 is in the P279 closure of architectural structure
+  (Q811979: buildings, bridges, towers…), monument (Q4989906),
+  archaeological site (Q839954), event (Q1656682) or occurrence
+  (Q1190554);
+- every CLASS in those closures. "Ancient and uncommon words" fit here as
+  the classes they are: a barbican ("barbacane") is a class of
+  fortification; the run says which roots reach it (`--find`), and whether
+  a root such as architectural element is needed for words like merlon;
+- every entity with a heritage designation (P1435).
+
+Words as words are Wikidata's lexemes, a separate dump D1 did not take:
+a collection of their own, if ever wanted.
+
+**The pack** needs the added languages in its label table. Today a
+language change rebuilds the whole pack from the bz2; the chunk files do
+not depend on the languages, so a labels-only pass over the pack's own
+lines is the RULE 1 shortcut (to build with the daughter).
+
+**Measured first**, read-only on the node (`tools/wikidata_coverage.py
+classes`):
+- entities and classes per root;
+- per language, how much of their text Wikidata's labels write;
+- each added language's cost in chunks and tokens, through the real
+  chunker on a sample;
+- P279 cycles in the closures, and the most-referenced entities with no
+  label in each language: W3 and W4 of
+  [upstream-reports/wikidata.md](upstream-reports/wikidata.md).
+
+**Open for the operator, with those numbers:** the languages.
+Recommended: it, de, fr, es (the formatter writes their dates; Italian's
+connectives are in parser 2). If nothing is said: those four.

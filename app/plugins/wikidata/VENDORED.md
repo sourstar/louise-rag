@@ -12,6 +12,9 @@ What was changed, and why (docs/notes/wikidata-build-plan.md §2, §5):
 - labels of referenced entities and properties come from a callable over
   the dump's own label table, not from the Wikidata Action API with a
   MariaDB cache (`LazyLabelFactory`): the text is a function of the dump;
+  the language chain is upstream's (`get_lang_val`: the language, `mul`,
+  the fallback) — parser 1 left `mul` out for referenced entities, fixed
+  in parser 2 (2026-10-24);
 - time, coordinate and quantity values are formatted by `format.py`, not
   by `wbformatvalue` on a running Wikibase (D4, revised 2026-10-19);
 - aliases keep the dump's order, deduplicated with `dict.fromkeys`; the
@@ -24,7 +27,9 @@ What was changed, and why (docs/notes/wikidata-build-plan.md §2, §5):
   dump's order: it is the sticky line the chunker repeats in every window
   (upstream's `sticky_property_ids`), found by its place in the text;
 - the rank filter, the `external_ids`/`qualifiers`/`references` defaults
-  and the connectives (`language_variables.json`, inlined) are upstream's.
+  and the connectives (`language_variables.json`, inlined) are upstream's,
+  plus Italian (ours, parser 2; offered upstream in
+  docs/notes/upstream-reports/wmde-wikidata-textifier.md §3).
 
 `chunker.py` carries the cutting rule of **WikidataTextEmbedding**
 (`src/utils.py`, `chunk_item_text` and `_trim_to_length`, commit c9dc819),

@@ -34,3 +34,19 @@ entities, the exact-match rate to the published vectors falls from 87 % to
 
 **Suggested fix:** raise rather than return `None` for a network error, so
 the item fails and is retried instead of being embedded degraded.
+
+## 3. No Italian in `language_variables.json`
+
+**What:** `src/Textifier/language_variables.json` has en, fr, ar, de, es and
+zh. A text asked in Italian takes the English connectives: "Colosseo,
+anfiteatro … also known as … Attributes include: …".
+
+**Proposed entry**, built as the French and Spanish ones are:
+
+```json
+"it": {"also known as": "noto anche come", "Attributes include": "I suoi attributi includono",
+       ", ": ", ", "has": "ha", "Examples": "Esempi"}
+```
+
+In use in Louise's copy since 2026-10-24 (`app/plugins/wikidata/textify.py`,
+parser 2). Listed in [wikidata.md](wikidata.md) (W1).

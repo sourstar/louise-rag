@@ -70,8 +70,10 @@ class WikidataSource:
     protocol_version = PROTOCOL_VERSION
     #: 1: the first parser (2026-10-19) — the dump's entity kept whole in
     #: `extra`, one text section per language of `languages` (textify.py,
-    #: format.py), scholarly articles pruned (pack.PRUNED_CLASSES)
-    PARSER_VERSION = 1
+    #: format.py), scholarly articles pruned (pack.PRUNED_CLASSES).
+    #: 2 (2026-10-24): a referenced entity's label falls back to `mul` before
+    #: the fallback language, as upstream's — parser 1 wrote its id instead
+    PARSER_VERSION = 2
     LOCATOR_SEP = _LOCATOR_SEP
     LOCATOR_MEMBER_FIELDS = 1
     modality = Modality.TEXT

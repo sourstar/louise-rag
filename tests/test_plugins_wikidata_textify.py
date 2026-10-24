@@ -75,6 +75,37 @@ def test_a_value_without_a_label_is_its_id_and_a_language_falls_back():
     assert "Quora topic ID: Implode" in fr, "a property with no French label takes the English one (fallback)"
 
 
+def test_a_referenced_label_falls_back_to_mul_before_the_fallback_language():
+    """Upstream's `get_lang_val` chain — the language, `mul`, the fallback —
+    for every referenced entity, as for the entity's own label: Wikidata's
+    default (`mul`) label is the name in every language; parser 1 wrote the
+    id where only `mul` had one."""
+    q2 = entities("dump-sample.jsonl")["Q2711"]
+    table = {("P31", "en"): "instance of", ("Q2755432", "mul"): "Implode family", ("P31", "fr"): "nature"}
+    asked = []
+
+    def look(eid, lang):
+        asked.append((eid, lang))
+        return table.get((eid, lang))
+    en = textify.entity_text(q2, "en", look)
+    assert "instance of: Implode family" in en
+    assert ("Q2755432", "en") in asked and asked.index(("Q2755432", "en")) < asked.index(("Q2755432", "mul"))
+    assert "nature: Implode family" in textify.entity_text(q2, "fr", look), "mul before the fallback language"
+    table[("Q2755432", "en")] = "data compression algorithm"
+    assert "instance of: data compression algorithm" in textify.entity_text(q2, "en", look), \
+        "the language's own label wins over mul"
+    table[("Q2755432", "en")] = None
+    del table[("Q2755432", "mul")]
+    assert "instance of: Q2755432" in textify.entity_text(q2, "en", look), "no label in the chain: the id, as before"
+
+
+def test_italian_has_its_own_connectives():
+    q2 = entities("dump-sample.jsonl")["Q2711"]
+    it = textify.entity_text(q2, "it", lambda eid, lang: {("P31", "it"): "istanza di"}.get((eid, lang)))
+    assert ". I suoi attributi includono:\n- istanza di: Q2755432" in it
+    assert textify.LANGUAGE_VARIABLES["it"].keys() == textify.LANGUAGE_VARIABLES["en"].keys()
+
+
 def test_aliases_keep_the_dump_s_order_and_every_datavalue_type_renders():
     q42 = entities("entities.jsonl")["Q42"]
     text = textify.entity_text(q42, "en", lambda eid, lang: f"<{eid}>")
