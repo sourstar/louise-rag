@@ -217,3 +217,51 @@ the tables. The failures grew over the run (1, 2, 5, 5, 9, 14, 13, 18, 8 per
 (set to p2p in the Library then). This is a reranker budget under load, not
 a fault of any variant. Where the reranker gives no answer, the product
 shows the fused order, in which the catalogue is already one of the legs.
+
+## Run 5 — the reranker's question in each record's language (2026-10-22 to 2026-10-24, nights)
+
+834baf5 judges each candidate against the question in its own record's
+language (the language plan's translation) instead of the typed question for
+all of them; 8bee186 adds a second way to order the languages. On the SAME
+fused candidates, one live search per query on the Ask page's default path
+(`query_service.run_search(["gutenberg"], q, 10, "hybrid", True)`),
+`tools/measure/rerank_lang_variants.py` reranks three times:
+
+- **base**: the typed question for every candidate (`queries=None`);
+- **score**: each language's variant, all ordered by the reranker's score —
+  what the node runs since 834baf5 (`retrieval.py`: `_reranked(…, plan.translations)`);
+- **slots**: the same scores, each language keeping the positions the fused
+  order gave it (`RERANK_LANGUAGE_ORDER = "slots"`).
+
+All 496 labelled queries, bge-reranker-v2-m3, over three nights. The first
+night lost 54 queries to the chat and translation models loading beside the
+embedder, dar-legal and the reranker. Normattiva was paused and dar-legal
+unloaded, and the queries without three reranks were run again, resumably,
+until none was left.
+
+| kind (n) | variant | MRR | R@1 | R@10 | other-language records in the 10 |
+|---|---|---:|---:|---:|---:|
+| title (39) | base | 0.809 | 0.744 | **0.974** | 2.44 |
+| title | **score** (live) | **0.834** | **0.769** | 0.949 | 3.21 |
+| title | slots | 0.802 | 0.744 | 0.949 | 3.00 |
+| descriptive (451) | base | **0.422** | **0.310** | 0.687 | 4.43 |
+| descriptive | **score** (live) | 0.412 | 0.284 | **0.714** | 6.11 |
+| descriptive | slots | 0.419 | 0.293 | 0.701 | 5.65 |
+| pair (6) | base | 0.123 | 0.000 | 0.667 | 2.00 |
+| pair | score | 0.444 | 0.333 | 0.667 | 5.17 |
+| pair | slots | 0.264 | 0.000 | 0.667 | 5.33 |
+
+**Nothing is switched.** Under the deploy rule (no loss on titles or
+descriptive), no variant beats the live one on both:
+
+- base gains descriptive MRR (+0.010) and R@1 (+0.027) but loses descriptive
+  R@10 (−0.027, 12 queries) and titles MRR (−0.025).
+- slots loses titles MRR (−0.032) and descriptive R@10 (−0.013).
+
+score keeps the most answers in the top ten and shows the most other-language
+records; base puts the right book first slightly more often. The six it/en
+pairs, where 834baf5 began, favour score (0.444), but six is not a sample.
+THE STANDARD ALTERNATIVE (retrieval.py's comment on `RERANK_LANGUAGE_ORDER`):
+score calibration per language pair, which needs labelled queries per
+language; the set has 182 English and 78 French, and fewer than 50 in every
+other language.
