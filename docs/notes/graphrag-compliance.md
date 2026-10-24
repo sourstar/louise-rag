@@ -376,3 +376,122 @@ GraphRAG plan (Gemma relations and LLM summaries at index time) stays
 what it is — a stronger graph for point questions, at the cost and the
 verification debt §5 names — and nothing here changes it; it is the
 operator's to keep, defer or narrow.
+
+## 9. Proposal — unlinked mentions, and linking them by what a passage says
+
+*Added 2026-10-24 at the operator's request, from the discussion of this
+note. A proposal: nothing here is decided or built, and two of its rows
+touch hashed bytes (09 §9.5), so they are asked, never taken.*
+
+### 9.1 The gap
+
+In the gutenberg-graph plan a mention is a span GLiNER finds, linked to a
+Q-id by a search over wikidata's vectors and an LLM's pick "or none"
+(wikidata-plugins.md, step 2). A `mention` claim's object is a canonical
+id `wikidata:Q…` (09 §9.5, A-K1), so a span that resolves to nothing has
+no legal shape and is DROPPED — span, offsets and surface alike. No
+relation can involve it either, since both ends of a `relation` are
+Q-ids. What a passage is actually about can vanish from the graph while
+the famous names it mentions in passing stay: Wikidata has Ahab, not his
+crew, and almost no place an author invented. For history and
+architecture the loss is small; for novels it is most of the graph.
+
+### 9.2 What to do with a span that resolves to nothing
+
+| choice | the unlinked span becomes | cost | risk |
+|---|---|---|---|
+| drop it (the plan today) | nothing | none | the graph is only as complete as Wikidata; novels mostly fall out |
+| **keep it as a span with no entity** | a `mention` whose object is null, carrying `surface`, `start`, `end` and GLiNER's type; searchable by surface, never traversable | 09 §9.5 amended (hashed bytes: ask first); no model work | spans do not merge: "Starbuck" and "the first mate" stay two things |
+| mint a local entity | the annotations collection registers its own namespace (`gutenberg-graph:<hash of type + normalised surface>`), as a reference source registers one (05 §5.2); spans the LLM judges to be one thing merge under it; relations may use it | the row above plus a namespace and a merge rule — what GraphRAG does, by name | the GraphRAG failure: one thing under three names; an id nobody outside can check against anything |
+| anchor it to the book | an unlinked entity belongs to the work it appears in — `gutenberg:2701#Starbuck`, a character or place OF that record, never shared across books | the same amendment, narrower; the book is already a verifiable record | a person two chronicles mention, missing from Wikidata, is two entities |
+
+**Recommendation.** Keep unlinked spans (row 2) from the first run, so
+nothing GLiNER found is lost and the loss can be COUNTED: mentions
+resolved and unresolved, per LoC class, on the first 1,000 — the same
+sample the agreement floor is measured on (gutenberg-graph-amendments.md,
+"Decided"). Choose between minting and anchoring from that count, not
+before. If the operator says nothing, the plan stands and unlinked
+mentions are dropped.
+
+### 9.3 Linking an unlinked span by the relation it takes part in
+
+The operator's case: Wikidata (or another passage) states *Pippo met
+Pluto in a park in Florence in 1850*; a passage says *Pippo met Mark in a
+park in Florence in 1850*; "Mark" resolved to nothing. Three of four
+participants agree, the event is the same, so Mark is probably Pluto. This
+is **entity linking by relational context**, and each of its three parts
+has a name (CLAUDE.md, "do not reinvent the wheel"):
+
+1. **A tag-agnostic relation embedding.** Every entity span is replaced
+   by a typed blank before embedding — `[PERSON] met [PERSON] in a park in
+   [PLACE] in [DATE]` — so two statements of the same event shape embed
+   close whatever the names, and "met", "ran into", "encountered" are one
+   relation without a rule per verb. The standard is *Matching the Blanks*
+   (Baldini Soares, FitzGerald, Ling, Kwiatkowski, ACL 2019,
+   https://aclanthology.org/P19-1279/): a relation encoder trained so that
+   statements sharing an entity pair, entities masked, come out near each
+   other. Louise needs no new model for the first version: the masked
+   template goes through the collection's own encoder, bit-exact like any
+   other vector (invariant 12); a Matching-the-Blanks encoder is the
+   stronger choice if the plain one proves too coarse, and it is a stated
+   run like any encoder's. The embedding only NARROWS: it finds the known
+   statements with the same shape. It never decides — sentence similarity
+   puts "Pippo met Mark in Florence in 1850" beside "Pippo left Mark in
+   Florence in 1850".
+2. **Slots aligned as structure, scored as record linkage.** Each
+   candidate's participants are compared one by one: a filled slot by
+   Q-id; a place by containment along Wikidata's `located in` (P131) —
+   a park in Florence is in Florence; a time at the coarser of the two
+   precisions — 12 March 1850 is in 1850. The score is **Fellegi–Sunter**
+   (JASA 1969, https://doi.org/10.1080/01621459.1969.10501049), the
+   standard behind every record-linkage system: an agreeing field adds a
+   weight that depends on how discriminating it is (a shared year is weak;
+   person + place + year together are strong), a disagreeing field
+   subtracts, the sum is compared with a threshold. "3 of 4" is the
+   intuition; the weights keep "Pippo met someone in Florence in 1850"
+   from matching every acquaintance he had that year. The weights are
+   estimated from the data (the EM fit the method describes), on the
+   labelled first run, and pinned.
+3. **One assignment per book, not per sentence.** "Mark" is resolved
+   together with everything else the book says about him: other
+   matched events raise the link, a contradiction (Mark dies in 1849,
+   Pluto in 1870) lowers it. This is *collective entity linking* (AIDA:
+   Hoffart et al., EMNLP 2011, https://aclanthology.org/D11-1072/), and
+   within one record it is the ordinary coreference step.
+
+**The result** is a candidate, never a merge: a claim `same-entity`
+(new type, 09 §9.5 — hashed bytes, ask first) from the local span (row 2
+above gives it a shape) to `wikidata:Q…`, with the matched relation as
+`evidence` (the Wikidata statement or the other passage's `relation`
+claim), the Fellegi–Sunter score as `confidence` (a decimal string, as
+every score in a claim is), and a `method` whose kind is NOT a model:
+the encoder's stated run, the masked template version, the pinned
+weights and threshold, the wikidata snapshot — deterministic given those,
+so a stranger reproduces it the way a chunker is reproduced, with no
+agreement floor. The entities' records are never merged: shown as
+"probably the same person, because of these passages", it is useful and
+honest; written as one entity it is the GraphRAG failure in reverse.
+
+**Where the base relations come from.** Wikidata's statements with
+qualifiers — `significant event` / `participant` / `location` /
+`point in time` — are exactly n-ary facts to match against. Where
+Wikidata has no such statement, two passages from two books can be
+matched against each other the same way (their `relation` claims, both
+with an unlinked end), which is how the graph grows past Wikidata without
+inventing identities.
+
+### 9.4 What it depends on, and the order
+
+- Row 2 of §9.2 first: without a kept span there is no "Mark" to resolve.
+- The `relation` claims of the plan (an LLM, agreement floor measured) OR
+  the co-occurrence graph of §5: the slot alignment needs the event's
+  participants as a tuple, however it was extracted. Linking by relation
+  therefore follows relation extraction; it cannot replace it.
+- Measured before any of it is kept: on the first 1,000 unlinked spans,
+  how many gain a candidate above threshold, and of a judged sample how
+  many are right. A link rate without its precision is not a number.
+
+Amendments, if approved: 09 §9.5 (`mention` with a null object and its
+keys; the `same-entity` type; a deterministic `method` kind for a scored
+procedure), 05 §5.3 (the candidate shown beside the hit with its
+evidence), 03 §3.2 (its check: recompute the score). Asked, not written.
