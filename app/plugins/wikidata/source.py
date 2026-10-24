@@ -22,7 +22,7 @@ from typing import Iterator
 from app.plugins import cursor
 from app.plugins.base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass, Modality, Mutability,
                               PROTOCOL_VERSION, PrivacyClass, RawDoc, UnindexableDocument)
-from app.plugins.wikidata import ids, pack, textify
+from app.plugins.wikidata import ids, names, pack, textify
 
 _LOCATOR_SEP = "#"
 _DUMP_RE = re.compile(r"^wikidata-(\d{8})-all\.json\.(bz2|gz)$")
@@ -72,7 +72,9 @@ class WikidataSource:
     #: `extra`, one text section per language of `languages` (textify.py,
     #: format.py), scholarly articles pruned (pack.PRUNED_CLASSES).
     #: 2 (2026-10-24): a referenced entity's label falls back to `mul` before
-    #: the fallback language, as upstream's — parser 1 wrote its id instead
+    #: the fallback language, as upstream's — parser 1 wrote its id instead;
+    #: and no id where a name exists (operator): the title, the entity's own
+    #: name in its text and a referenced entity's name follow names.py
     PARSER_VERSION = 2
     LOCATOR_SEP = _LOCATOR_SEP
     LOCATOR_MEMBER_FIELDS = 1
@@ -169,7 +171,13 @@ class WikidataSource:
                     for lang in self.languages]
         title = next((obj["labels"][lang]["value"] for lang in (*self.languages, "mul", self.fallback_language)
                       if isinstance((obj.get("labels") or {}).get(lang), dict)
-                      and (obj["labels"][lang] or {}).get("value")), eid)
+                      and (obj["labels"][lang] or {}).get("value")), None)
+        if title is None:
+            # parser 2 (operator, 2026-10-24): "showing an id is meaningless for
+            # humans" — the name by names.py's order; the id only for an entity
+            # with no label and no name statement at all
+            named = names.display_name(obj)
+            title = named[1] if named else eid
         keys = [ids.canonical(eid)]
         for prop in _KEY_PROPERTIES:
             for st in (obj.get("claims") or {}).get(prop) or ():

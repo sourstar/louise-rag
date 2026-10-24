@@ -13,7 +13,9 @@ lines' labels. So the pass writes, under `<dump dir>/.pack/<dump name>/`:
   groups of `ROW_GROUP` rows, so a record is one small read;
 - `labels.sqlite`: `label(id, lang, label)` for the languages asked and
   `mul` — of EVERY entity, pruned ones included, since a pruned article is
-  still a value other entities name;
+  still a value other entities name; and `name(id, lang, label)`, the name
+  by names.py's order of every entity with no English and no `mul` label
+  (operator, 2026-10-24: an id is meaningless to a reader);
 - `meta.json`: the dump's size and mtime, PACK_VERSION, the languages, the
   files complete so far — the RESUME POINT.
 
@@ -23,7 +25,12 @@ rewritten; a build stopped by SIGTERM or a crash resumes by re-reading the
 stream (bz2 does not seek) and SKIPPING the lines of complete chunks
 without parsing them — decompression alone, about a fifth of the pass.
 Like PubMed's pack a cache, never a member, never exchanged; a dump of
-another size, mtime or PACK_VERSION rebuilds it.
+another size, mtime or PACK_VERSION rebuilds it — but a complete version-1
+pack is UPGRADED in place (RULE 1, named): version 2 adds the `name` table
+and changes nothing else, so its rows are computed from the pack's own
+lines (`_add_names`, resumable at a chunk) instead of a new pass over the
+bz2; the chunk files and the `label` rows are those a version-2 pass
+writes, byte for byte (tests/test_plugins_wikidata_names.py).
 
 ON EVERY CORE (2026-10-20, the operator: "squeeze everything from the
 cpu"). The serial pass ran at ~29 MB/s of JSON on one core of twelve —
@@ -47,6 +54,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -62,9 +70,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from app import config
-from app.plugins.wikidata import dump as dump_mod, ids
+from app.plugins.wikidata import dump as dump_mod, ids, names
 
-PACK_VERSION = 1
+#: 2 (2026-10-24): the `name` table; a complete 1 is upgraded in place
+PACK_VERSION = 2
 #: entities per chunk file: the resume granularity and the index listing's unit
 CHUNK = 100_000
 #: rows per Parquet row group: one record is one row-group read
@@ -93,6 +102,12 @@ _LABELS_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS label (id TEXT NOT NULL, lang TEXT NOT NULL, label TEXT NOT NULL, "
     "PRIMARY KEY (id, lang)) WITHOUT ROWID"
 )
+_NAMES_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS name (id TEXT PRIMARY KEY, lang TEXT NOT NULL, label TEXT NOT NULL) WITHOUT ROWID"
+)
+#: the labels whose absence gives an entity a `name` row: the plugin's
+#: fallback language and `mul` — what every text's chain ends with
+NAMED_UNLESS = ("en", "mul")
 
 
 class PackError(RuntimeError):
@@ -205,6 +220,14 @@ def _labels_of(obj: dict, languages: tuple[str, ...]) -> list[tuple[str, str, st
     return out
 
 
+def _name_of(obj: dict) -> tuple[str, str, str] | None:
+    """The `name` row of an entity with no English and no `mul` label."""
+    if names.has_label(obj, NAMED_UNLESS):
+        return None
+    got = names.display_name(obj)
+    return (str(obj.get("id")), got[0], got[1]) if got else None
+
+
 def _row(entity: dump_mod.Entity, pruned: bool) -> dict[str, Any]:
     obj = entity.obj
     eid = str(obj.get("id") or "")
@@ -271,12 +294,14 @@ SUB = 5_000
 
 
 def _rows_job(lines: list[bytes], start: int,
-              languages: tuple[str, ...]) -> tuple[int, list[tuple[str, str, str]], pa.Table]:
+              languages: tuple[str, ...]) -> tuple[int, list[tuple[str, str, str]], list[tuple[str, str, str]],
+                                                   pa.Table]:
     """In a child: a slice of a chunk's lines parsed exactly as the serial
-    pass parses them. Returns (pruned, labels, the slice's rows as a table
-    of SCHEMA) — the parent writes the chunk's file from its slices."""
+    pass parses them. Returns (pruned, labels, names, the slice's rows as a
+    table of SCHEMA) — the parent writes the chunk's file from its slices."""
     rows: list[dict[str, Any]] = []
     labels: list[tuple[str, str, str]] = []
+    named: list[tuple[str, str, str]] = []
     pruned_n = 0
     for i, raw in enumerate(lines):
         try:
@@ -289,7 +314,10 @@ def _rows_job(lines: list[bytes], start: int,
         pruned_n += pruned
         rows.append(_row(dump_mod.Entity(start + i, raw, obj), pruned))
         labels.extend(_labels_of(obj, languages))
-    return pruned_n, labels, pa.Table.from_pylist(rows, schema=SCHEMA)
+        row = _name_of(obj)
+        if row is not None:
+            named.append(row)
+    return pruned_n, labels, named, pa.Table.from_pylist(rows, schema=SCHEMA)
 
 
 def _child_nice() -> None:
@@ -341,6 +369,9 @@ def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[st
     d.mkdir(parents=True, exist_ok=True)
     size, mtime = _signature(dump)
     meta = read_meta(dump)
+    if not _meta_matches(meta, dump, languages) and _upgradable(meta, dump, languages):
+        return _add_names(dump, d, meta, say=say, stop=stop,
+                          workers=processes() if workers is None else max(1, int(workers)))
     if not _meta_matches(meta, dump, languages):
         # another dump, another version or other languages: start over
         for p in d.glob("*.parquet"):
@@ -360,19 +391,22 @@ def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[st
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
     con.execute(_LABELS_SCHEMA)
+    con.execute(_NAMES_SCHEMA)
     rows: list[dict[str, Any]] = []
     labels: list[tuple[str, str, str]] = []
+    named: list[tuple[str, str, str]] = []
     pruned_n = int(meta["pruned"])
     t0 = time.monotonic()
 
     def flush_chunk(chunk_no: int, complete: bool) -> None:
-        nonlocal rows, labels, done_chunks
+        nonlocal rows, labels, named, done_chunks
         if rows:
             tmp = chunk_path(d, chunk_no).with_name(f"{chunk_no:05d}.parquet.tmp")
             table = pa.Table.from_pylist(rows, schema=SCHEMA)
             pq.write_table(table, tmp, compression="zstd", compression_level=3, row_group_size=ROW_GROUP)
             con.execute("BEGIN IMMEDIATE")
             con.executemany("INSERT OR REPLACE INTO label (id, lang, label) VALUES (?, ?, ?)", labels)
+            con.executemany("INSERT OR REPLACE INTO name (id, lang, label) VALUES (?, ?, ?)", named)
             con.execute("COMMIT")
             os.replace(tmp, chunk_path(d, chunk_no))
             done_chunks = chunk_no + 1
@@ -381,7 +415,7 @@ def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[st
         tmp_meta = _meta_path(d).with_name("meta.json.tmp")
         tmp_meta.write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
         os.replace(tmp_meta, _meta_path(d))
-        rows, labels = [], []
+        rows, labels, named = [], [], []
 
     say(f"[wikidata] pack: {dump.name}: {'resuming after' if skip else 'starting;'} {skip} entities"
         if skip else f"[wikidata] pack: {dump.name}: starting")
@@ -403,6 +437,9 @@ def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[st
                 pruned_n += 1
             rows.append(_row(entity, pruned))
             labels.extend(_labels_of(obj, languages))
+            name_row = _name_of(obj)
+            if name_row is not None:
+                named.append(name_row)
             count += 1
             if len(rows) >= chunk:
                 flush_chunk(chunk_no, complete=False)
@@ -425,6 +462,131 @@ def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[st
     say(f"[wikidata] pack: {dump.name}: complete — {meta['entities']} entities, {meta['pruned']} pruned, "
         f"{meta['chunks']} chunk file(s), {time.monotonic() - t0:.0f} s")
     return meta
+
+
+# ---- version 1 → 2: the names from the pack's own lines (RULE 1) ------------------------------
+
+#: an English or mul label, as the dump writes one: `"en":{"language":"en","value":"<not empty>`
+_NAMED_LABEL = re.compile(rb'"en":\{"language":"en","value":"[^"]|"mul":\{"language":"mul","value":"[^"]')
+
+
+def _upgradable(meta: dict[str, Any] | None, dump: Path, languages: tuple[str, ...]) -> bool:
+    """A COMPLETE version-1 pack of this very dump and languages: version 2
+    only adds the `name` table, so it is upgraded, not rebuilt."""
+    if not meta or meta.get("pack_version") != 1 or not meta.get("complete"):
+        return False
+    size, mtime = _signature(dump)
+    return (meta.get("size") == size and meta.get("mtime_ns") == mtime
+            and tuple(meta.get("languages") or ()) == tuple(languages))
+
+
+def maybe_unnamed(line: bytes) -> bool:
+    """False only when the line certainly has an English or `mul` label, so
+    no `name` row: the label map runs from `"labels":` to `"descriptions":`
+    (a JSON string cannot hold an unescaped quote, so neither key occurs in
+    a value, and the dump writes the labels first). Anything else is parsed."""
+    a = line.find(b'"labels":')
+    b = line.find(b'"descriptions":', a) if a >= 0 else -1
+    return a < 0 or b < 0 or _NAMED_LABEL.search(line, a, b) is None
+
+
+def _names_job(path: str) -> list[tuple[str, str, str]]:
+    """One chunk file's `name` rows, every line read, the unnamed ones parsed."""
+    out: list[tuple[str, str, str]] = []
+    pf = pq.ParquetFile(path)
+    for g in range(pf.num_row_groups):
+        t = pf.read_row_group(g, columns=["index", "line"])
+        for index, raw in zip(t.column("index").to_pylist(), t.column("line").to_pylist()):
+            if not maybe_unnamed(raw):
+                continue
+            try:
+                obj = json.loads(raw)
+            except ValueError as e:
+                raise PackError(f"{Path(path).name}: entity {index} is not JSON ({e})") from None
+            row = _name_of(obj)
+            if row is not None:
+                out.append(row)
+    return out
+
+
+def _add_names(dump: Path, d: Path, meta: dict[str, Any], *, say: Callable[[str], None],
+               stop: Callable[[], bool] | None, workers: int) -> dict[str, Any]:
+    """Version 1 → 2 in place: the `name` rows of every chunk file, committed
+    in chunk order with the resume point (`names_chunks`) in the meta; the
+    version written last. Returns the meta, `complete` False while the
+    upgrade has not ended (the caller defers; the next pass resumes)."""
+    global _parallel_failed
+    from collections import deque
+    from concurrent.futures.process import BrokenProcessPool
+
+    files = [str(p) for p in chunk_files(dump)]
+    start = int(meta.get("names_chunks") or 0)
+    con = sqlite3.connect(d / "labels.sqlite", isolation_level=None)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA synchronous=NORMAL")
+    con.execute(_NAMES_SCHEMA)
+    t0 = time.monotonic()
+    say(f"[wikidata] pack: {dump.name}: version 1 → {PACK_VERSION}: the names from the pack's own lines, "
+        f"chunk {start} of {len(files)} (RULE 1: no pass over the dump)")
+
+    def write_meta() -> None:
+        tmp_meta = _meta_path(d).with_name("meta.json.tmp")
+        tmp_meta.write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
+        os.replace(tmp_meta, _meta_path(d))
+
+    def commit(k: int, rows: list[tuple[str, str, str]]) -> bool:
+        con.execute("BEGIN IMMEDIATE")
+        con.executemany("INSERT OR REPLACE INTO name (id, lang, label) VALUES (?, ?, ?)", rows)
+        con.execute("COMMIT")
+        meta["names_chunks"] = k + 1
+        write_meta()
+        if (k + 1) % 50 == 0:
+            say(f"[wikidata] pack: {dump.name}: names, {k + 1} of {len(files)} chunk files, "
+                f"{time.monotonic() - t0:.0f} s")
+        return not (stop is not None and stop())
+
+    hung = False
+    ex = None
+    try:
+        n = 1 if _parallel_failed else workers
+        if n > 1:
+            ex = ProcessPoolExecutor(max_workers=n, mp_context=multiprocessing.get_context("spawn"),
+                                     initializer=_child_nice)
+            todo = iter(range(start, len(files)))
+            pending: deque = deque()
+
+            def fill() -> None:
+                while len(pending) < n + 2:
+                    k = next(todo, None)
+                    if k is None:
+                        return
+                    pending.append((k, ex.submit(_names_job, files[k])))
+            fill()
+            while pending:
+                k, fut = pending.popleft()
+                if not commit(k, fut.result(timeout=CHUNK_TIMEOUT_S)):
+                    return {**meta, "complete": False}
+                fill()
+        else:
+            for k in range(start, len(files)):
+                if not commit(k, _names_job(files[k])):
+                    return {**meta, "complete": False}
+        meta["pack_version"] = PACK_VERSION
+        meta.pop("names_chunks", None)
+        write_meta()
+        say(f"[wikidata] pack: {dump.name}: version {PACK_VERSION}, "
+            f"{con.execute('SELECT COUNT(*) FROM name').fetchone()[0]} names, {time.monotonic() - t0:.0f} s")
+        return meta
+    except (BrokenProcessPool, TimeoutError) as e:
+        _parallel_failed = True
+        hung = isinstance(e, TimeoutError)
+        say(f"[wikidata] pack: {dump.name}: the names pool failed ({type(e).__name__}: {e}); stopped after "
+            f"{meta.get('names_chunks', start)} chunk(s), resumable; the next pass of this process is serial")
+        return {**meta, "complete": False}
+    finally:
+        if ex is not None:
+            ex.shutdown(wait=not hung, cancel_futures=True)
+        con.close()
 
 
 def _tmp_path(d: Path, chunk_no: int, token: str) -> Path:
@@ -459,7 +621,7 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
     ex = ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"),
                              initializer=_child_nice)
     writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wikidata-pack-writer")
-    writing: list[tuple[int, Future, int, list, bool]] = []   # at most one chunk being written
+    writing: list[tuple[int, Future, int, list, list, bool]] = []   # at most one chunk being written
     hung = False
 
     def in_flight() -> int:
@@ -472,10 +634,11 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
 
     def commit_written() -> None:
         """The chunk the writer finished: labels, rename, meta — in order."""
-        chunk_no, fut, pruned, labels, final = writing.pop()
+        chunk_no, fut, pruned, labels, named, final = writing.pop()
         fut.result(timeout=CHUNK_TIMEOUT_S)
         con.execute("BEGIN IMMEDIATE")
         con.executemany("INSERT OR REPLACE INTO label (id, lang, label) VALUES (?, ?, ?)", labels)
+        con.executemany("INSERT OR REPLACE INTO name (id, lang, label) VALUES (?, ?, ?)", named)
         con.execute("COMMIT")
         os.replace(_tmp_path(d, chunk_no, token), chunk_path(d, chunk_no))
         state["pruned"] += pruned
@@ -501,18 +664,19 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
             if state.get("stopped"):
                 return False
         chunk_no, futs = closed.popleft()
-        pruned_n, labels, tables = 0, [], []
+        pruned_n, labels, named, tables = 0, [], [], []
         try:
             for f in futs:
-                p, lab, t = f.result(timeout=CHUNK_TIMEOUT_S)
+                p, lab, nam, t = f.result(timeout=CHUNK_TIMEOUT_S)
                 pruned_n += p
                 labels.extend(lab)
+                named.extend(nam)
                 tables.append(t)
         except BaseException:
             closed.appendleft((chunk_no, futs))
             raise
         writing.append((chunk_no, writer.submit(_write_slices, tables, _tmp_path(d, chunk_no, token)),
-                        pruned_n, labels, final))
+                        pruned_n, labels, named, final))
         return True
 
     try:
@@ -629,14 +793,24 @@ def line(dump: Path, index: int) -> bytes:
 
 class LabelTable:
     """`labels(id, lang)` over the pack's sqlite, one connection per thread,
-    a bounded cache in front: the textifier asks for every referenced id."""
+    a bounded cache in front: the textifier asks for every referenced id.
+    `lang` = `names.NAME` reads the `name` table — of a version-2 pack only:
+    on a pack still being upgraded the lookup DEFERS the document (a text
+    written without the names would be a wrong text, not a missing one)."""
 
     def __init__(self, dump: Path, cache: int = 200_000):
+        self.dump = Path(dump)
         self.path = pack_dir(dump) / "labels.sqlite"
         self._local = threading.local()
         self._cache: OrderedDict = OrderedDict()
         self._max = cache
         self._lock = threading.Lock()
+        self._named = False
+
+    def _names_ready(self) -> bool:
+        if not self._named:
+            self._named = (read_meta(self.dump) or {}).get("pack_version") == PACK_VERSION
+        return self._named
 
     def _con(self) -> sqlite3.Connection:
         con = getattr(self._local, "con", None)
@@ -652,7 +826,15 @@ class LabelTable:
             if key in self._cache:
                 self._cache.move_to_end(key)
                 return self._cache[key]
-        row = self._con().execute("SELECT label FROM label WHERE id=? AND lang=?", key).fetchone()
+        if lang == names.NAME:
+            if not self._names_ready():
+                from app.chunking import PlatformMissing
+                raise PlatformMissing(f"the wikidata pack of {self.dump.name} has no names yet (version "
+                                      f"{(read_meta(self.dump) or {}).get('pack_version')}): the next scan "
+                                      f"upgrades it, and this document is parsed then")
+            row = self._con().execute("SELECT label FROM name WHERE id=?", (entity_id,)).fetchone()
+        else:
+            row = self._con().execute("SELECT label FROM label WHERE id=? AND lang=?", key).fetchone()
         got = row[0] if row else None
         with self._lock:
             self._cache[key] = got

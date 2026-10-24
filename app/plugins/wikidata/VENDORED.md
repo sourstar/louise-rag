@@ -19,10 +19,12 @@ What was changed, and why (docs/notes/wikidata-build-plan.md §2, §5):
   by `wbformatvalue` on a running Wikibase (D4, revised 2026-10-19);
 - aliases keep the dump's order, deduplicated with `dict.fromkeys`; the
   upstream `list({...})` made their order depend on the hash seed;
-- a value whose entity has no label in the language is rendered as its id
-  (`Q2755432`) instead of `<no label>`: the id is searchable, the
-  placeholder is not; a PROPERTY without a label still drops its claim
-  from the text, as upstream;
+- a value whose entity has no label in the language is rendered by its
+  NAME (names.py, the pack's `name` table; parser 2, operator 2026-10-24:
+  an id is meaningless to a reader), and as its id (`Q2755432`) only when
+  it has no label at all — never `<no label>`; the entity's own label falls
+  back to its name the same way; a PROPERTY without a label still drops its
+  claim from the text, as upstream;
 - the `instance of` (P31) statement is rendered FIRST, the rest in the
   dump's order: it is the sticky line the chunker repeats in every window
   (upstream's `sticky_property_ids`), found by its place in the text;

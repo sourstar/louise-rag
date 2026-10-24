@@ -6,7 +6,8 @@ label falls back to `mul`, as upstream's `get_lang_val` does; parser 1 wrote
 its id. On a seeded sample of entities, the English text under both chains:
 how many texts change, how many referenced labels parser 1 wrote as ids;
 and how many entities have no English label, and no `mul` one either —
-those whose record is titled by its id.
+named by names.py's order (operator, 2026-10-24) — and how many still keep
+their id, having no label and no name statement at all.
 With `--counts`, the label table's `en` and `mul` rows, and the entities
 with a `mul` label and no English one.
 
@@ -52,7 +53,7 @@ from typing import Any, Callable, Iterable, Iterator
 
 import pyarrow.parquet as pq
 
-from app.plugins.wikidata import pack, textify
+from app.plugins.wikidata import names, pack, textify
 
 LANGS = ("en", "it", "de", "fr", "es")
 #: architectural structure, building, monument, archaeological site, event, occurrence
@@ -247,10 +248,18 @@ def sampled(eid: str, every: int) -> bool:
     return every > 0 and int.from_bytes(hashlib.blake2b(eid.encode(), digest_size=8).digest(), "big") % every == 0
 
 
+def _labels_for_cost(dump: Path) -> Callable:
+    """The pack's labels; on a version-1 pack (no names yet) a name lookup
+    answers nothing rather than deferring, so the cost is still measured."""
+    table = pack.labels(dump)
+    ready = (pack.read_meta(dump) or {}).get("pack_version") == pack.PACK_VERSION
+    return table if ready else (lambda eid, lang: None if lang == names.NAME else table(eid, lang))
+
+
 def _cost(eid: str, obj: dict) -> tuple[int, int | None, int | None]:
     """The English text's characters, and its chunks and tokens through the
     real chunker when the tokenizer is given."""
-    text = textify.entity_text(obj, "en", pack.labels(_G["dump"]), fallback="en")
+    text = textify.entity_text(obj, "en", _labels_for_cost(_G["dump"]), fallback="en")
     if not _G["tokenizer"]:
         return len(text), None, None
     from app.plugins.wikidata import chunker
@@ -501,7 +510,7 @@ class _Chain(textify.Normalizer):
 
     def _label(self, entity_id: str):
         self.slots += 1
-        got = super()._label(entity_id)
+        got = next((x for x in (self.labels(entity_id, lang) for lang in self._chain) if x), None)
         if not got:
             self.unlabelled += 1
         elif "mul" in self._chain and not self.labels(entity_id, "en"):
@@ -516,7 +525,7 @@ def run_mul(dump: Path, *, groups: int = 100, per_group: int = 100, seed: int = 
     rng = random.Random(seed)
     picks = sorted(rng.sample(all_groups, min(groups, len(all_groups))))
     table = pack.labels(dump)
-    n = changed = slots = p1_ids = p2_ids = no_en = no_name = 0
+    n = changed = slots = p1_ids = p2_ids = no_en = no_name = titled_by_id = 0
     examples: list[dict] = []
     untitled: list[dict] = []
     for f, g in picks:
@@ -535,6 +544,7 @@ def run_mul(dump: Path, *, groups: int = 100, per_group: int = 100, seed: int = 
                 no_en += 1
                 if not (own.get("mul") or {}).get("value"):
                     no_name += 1
+                    titled_by_id += names.display_name(obj) is None
                     if len(untitled) < 10:
                         sl = obj.get("sitelinks")
                         untitled.append({
@@ -542,7 +552,8 @@ def run_mul(dump: Path, *, groups: int = 100, per_group: int = 100, seed: int = 
                             "labels": {k: (v or {}).get("value") for k, v in list(own.items())[:12]},
                             "instance_of": [f"{c} ({table(c, 'en') or table(c, 'mul') or '?'})"
                                             for c in values(obj, "P31")],
-                            "sitelinks": sorted(sl)[:12] if isinstance(sl, dict) else []})
+                            "sitelinks": sorted(sl)[:12] if isinstance(sl, dict) else [],
+                            "named": names.display_name(obj)})
             slots += one.slots
             p1_ids += one.unlabelled
             p2_ids += two.unlabelled
@@ -555,8 +566,9 @@ def run_mul(dump: Path, *, groups: int = 100, per_group: int = 100, seed: int = 
         "texts_changed_share": round(changed / n, 4) if n else None,
         "label_lookups": slots, "written_as_id_parser1": p1_ids, "written_as_id_parser2": p2_ids,
         "examples": examples,
-        "no_english_label": no_en, "titled_by_id": no_name, "titled_by_id_examples": untitled,
-        "titled_by_id_share": round(no_name / n, 4) if n else None}
+        "no_english_label": no_en, "no_english_nor_mul": no_name, "no_english_nor_mul_examples": untitled,
+        "no_english_nor_mul_share": round(no_name / n, 4) if n else None,
+        "titled_by_id": titled_by_id}
     if counts:
         con = sqlite3.connect((pack.pack_dir(dump) / "labels.sqlite").resolve().as_uri() + "?mode=ro", uri=True)
         out["label_rows"] = {lang: con.execute("SELECT COUNT(*) FROM label WHERE lang=?", (lang,)).fetchone()[0]

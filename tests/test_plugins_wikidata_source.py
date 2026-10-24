@@ -112,8 +112,9 @@ def _pack_bytes(dump: Path) -> dict:
     meta.pop("mtime_ns"), meta.pop("size")            # two dumps' own signatures
     con = sqlite3.connect(d / "labels.sqlite")
     labels = con.execute("SELECT id, lang, label FROM label ORDER BY id, lang").fetchall()
+    names = con.execute("SELECT id, lang, label FROM name ORDER BY id").fetchall()
     con.close()
-    return {"meta": meta, "labels": labels,
+    return {"meta": meta, "labels": labels, "names": names,
             "chunks": {p.name: p.read_bytes() for p in sorted(d.glob("*.parquet"))},
             "stray": sorted(p.name for p in d.glob("*.tmp"))}
 
@@ -127,7 +128,7 @@ def test_the_parallel_pass_writes_the_serial_pass_byte_for_byte(tmp_path, chunk)
     m2 = pack.build(parallel, languages=("en", "fr"), chunk=chunk, workers=3, log=said.append)
     assert m2["complete"] and m2["entities"] == m1["entities"] == 6 and m2["pruned"] == m1["pruned"] == 1
     a, b = _pack_bytes(serial), _pack_bytes(parallel)
-    assert a["meta"] == b["meta"] and a["labels"] == b["labels"]
+    assert a["meta"] == b["meta"] and a["labels"] == b["labels"] and a["names"] == b["names"]
     assert a["chunks"] == b["chunks"], "every chunk file the same bytes"
     assert b["stray"] == [], "no tmp file left"
     assert "3 processes" in said[-1]

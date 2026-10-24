@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from app.plugins.wikidata import format as fmt
+from app.plugins.wikidata import format as fmt, names
 
 #: upstream's `language_variables.json`, inlined; en for every other language
 LANGUAGE_VARIABLES: dict[str, dict[str, str]] = {
@@ -213,10 +213,18 @@ class Normalizer:
             got = self.labels(entity_id, lang)
             if got:
                 return got
-        return None
+        # OURS (parser 2, operator 2026-10-24: "showing an id is meaningless
+        # for humans"): the entity's name by names.py's order, which the label
+        # table keeps for every entity with no English and no mul label
+        return self.labels(entity_id, names.NAME) or None
 
     def normalize(self, e: dict) -> Entity:
         label = _lang_val(e.get("labels"), self.lang, self.fallback)
+        if not label:
+            # OURS (parser 2): a name by the operator's order, never the id
+            # while the entity has any label or name statement (names.py)
+            got = names.display_name(e)
+            label = got[1] if got else ""
         description = _lang_val(e.get("descriptions"), self.lang, self.fallback)
         aliases_in = e.get("aliases") or {}
         raw = (aliases_in.get(self.lang) or []) + (aliases_in.get("mul") or [])
