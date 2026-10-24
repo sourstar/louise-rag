@@ -249,10 +249,15 @@ are the ones that have drifted; prefer to add a test when you touch them.
   now, repair afterwards" as an option to the operator, and do not take
   it alone. Stop, fix, verify, then continue.
 - **Do not reinvent the wheel** (operator, 2026-10-19; restated
-  2026-10-23). Before building a mechanism, use the standard or the tool
-  that already does it — the library's own call, the protocol, the
-  algorithm with a name — and name it in the code and the commit. Build
-  our own only where none fits, and say why. Paid for: CPU weighting left
+  2026-10-23). Before building a mechanism, use what already does it:
+  an available solution PROVEN effective (the library's own call, a tool
+  in use, the algorithm with a name), and preferably an existing STANDARD
+  — and name it in the code and the commit. Within reason: a whole
+  standard is not integrated for a single case. Then solve the case
+  simply, and WRITE DOWN the standardized alternative (which standard,
+  what adopting it would take, when it would pay) in the code's comment
+  or the note beside it, so the choice can be revisited. Build our own
+  only where nothing fits, and say why. Paid for: CPU weighting left
   to cgroups v2 `cpu.weight`, scheduling to DRR/AIMD/CFS
   (docs/notes/architecture-v2.md); bundles and attestations on the
   digest's existing messages, BitTorrent v2 and the mainline DHT
