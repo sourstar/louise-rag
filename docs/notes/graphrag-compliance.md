@@ -508,6 +508,10 @@ inventing identities.
   biography (C, D, E, F), not from fiction: that is where a right link is
   worth something and a wrong one is dangerous.
 
+The per-category strategy that places this proposal in the whole plan —
+which tiers of Gutenberg get the reader, which only the exact layer — is
+[gutenberg-graph-strategy.md](gutenberg-graph-strategy.md).
+
 Amendments, if approved: 09 §9.5 (`mention` with a null object and its
 keys; the `same-entity` type; a deterministic `method` kind for a scored
 procedure), 05 §5.3 (the candidate shown beside the hit with its
