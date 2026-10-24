@@ -1044,4 +1044,29 @@ scratch build dir, the deployed tree and a833c1e, CPU only — wall time,
 CPU-s per record and the utilisation on IDENTICAL records. That, not an hour
 of a different stretch, decides step 2.
 
-**STEP 2 (a833c1e, 20:41–21:42 CEST):** (to fill) utilisation; then the A/B.
+**STEP 2 (a833c1e tree, 20:41:55–21:41:55 CEST, PARSE_PROCESSES default
+= quota − 1 = 3).** docker stats ×12: 300 301 302 300 194 300 308 302 307 163
+301 100 → mean 265 % (100–308); readings at ~100 % (one core): 1/12 (baseline
+3/12, step 1 2/12). 355 parts in en/30M–32M, 705,733 records, 1,971,340
+chunks, 2.79 chunks/doc, 214.1 rec/s, 598 chunks/s; no "[parse pool]" line.
+CPU-s per record: baseline 11.0 ms, step 1 31.6 ms (en/2M's heavy stretch),
+step 2 13.5 ms — content-bound, not comparable across steps. Utilisation
+232 % → 221 % → 265 %, and flat at the pool's ceiling (3 children) in step 2:
+the stream keeps the children fed, the barrier pauses are gone, the
+parent's own share is small. One cpu of the 4 stays mostly idle.
+
+**Byte identity, fixtures (architecture, 2026-10-24).** The live staging
+holds parts cut by c3a7612 (to 20:41) and by a833c1e (from en/30M on). The
+same 700-record corpus (gutenberg-mini's three books ×, sizes varied so
+children finish out of order), records_per_shard 60, 3 real children,
+built under each tree: 12 parts, sha256 identical. Not the proof on
+wikipedia's own records — the A/B's byte check is — but the paths the two
+trees differ in (pack_slices' page stream, slice_of) cut the same bytes.
+
+**Next, step 3 — the 4th child, in the A/B:** the A/B adds a third arm,
+a833c1e with PARSE_PROCESSES=4, on the same 250 k records. If it holds
+~400 % with no "[parse pool]" line and a lower wall time than arm 2, the
+records build's default becomes the whole quota (the build's parent only
+feeds and writes); the node worker keeps quota − 1 (its parent runs the
+round loop and the API). That change ships with these numbers in its
+commit, not before.
