@@ -200,6 +200,14 @@ are the ones that have drifted; prefer to add a test when you touch them.
     articles, D1) is written in the plugin's guidelines and its Codex form
     before it applies; cost is answered by choosing what to EMBED, never by
     leaving entities out of the records.
+    EVERYTHING THAT BELONGS TO A COLLECTION IS PART OF IT (operator, the
+    same day): "everything belonging a collection must be part of the
+    collection; if structurally independent it can be an optional download
+    and/or embedding. As already happens, for instance, with languages in
+    some collections." A structurally independent part — a language of
+    Wikipedia, a family of Wikidata, Wikidata's lexemes — is a SLICE a node
+    may hold or not and embed or not; it is never a separate collection and
+    never left out.
     Concretely: every record carries `origin_hash` — the hash of the origin
     unit it was parsed from — and `origin` locates that unit, while the
     Codex names the acquisition spec and parser version that produced it
