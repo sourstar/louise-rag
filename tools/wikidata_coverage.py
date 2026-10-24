@@ -4,7 +4,9 @@
 `mul` — parser 2 (app/plugins/wikidata/textify.py): a referenced entity's
 label falls back to `mul`, as upstream's `get_lang_val` does; parser 1 wrote
 its id. On a seeded sample of entities, the English text under both chains:
-how many texts change, how many referenced labels parser 1 wrote as ids.
+how many texts change, how many referenced labels parser 1 wrote as ids;
+and how many entities have no English label, and no `mul` one either —
+those whose record is titled by its id.
 With `--counts`, the label table's `en` and `mul` rows, and the entities
 with a `mul` label and no English one.
 
@@ -514,7 +516,7 @@ def run_mul(dump: Path, *, groups: int = 100, per_group: int = 100, seed: int = 
     rng = random.Random(seed)
     picks = sorted(rng.sample(all_groups, min(groups, len(all_groups))))
     table = pack.labels(dump)
-    n = changed = slots = p1_ids = p2_ids = 0
+    n = changed = slots = p1_ids = p2_ids = no_en = no_name = 0
     examples: list[dict] = []
     for f, g in picks:
         t = pq.ParquetFile(f).read_row_group(g, columns=["id", "pruned", "line"])
@@ -525,6 +527,13 @@ def run_mul(dump: Path, *, groups: int = 100, per_group: int = 100, seed: int = 
             one, two = _Chain(("en",), table), _Chain(("en", "mul"), table)
             t1, t2 = one.normalize(obj).to_text("en"), two.normalize(obj).to_text("en")
             n += 1
+            # the record's title and its text's first words: the English label,
+            # else mul, else the id (source.py, textify._lang_val)
+            own = obj.get("labels") if isinstance(obj.get("labels"), dict) else {}
+            if not (own.get("en") or {}).get("value"):
+                no_en += 1
+                if not (own.get("mul") or {}).get("value"):
+                    no_name += 1
             slots += one.slots
             p1_ids += one.unlabelled
             p2_ids += two.unlabelled
@@ -536,7 +545,9 @@ def run_mul(dump: Path, *, groups: int = 100, per_group: int = 100, seed: int = 
         "dump": str(dump), "entities": n, "texts_changed": changed,
         "texts_changed_share": round(changed / n, 4) if n else None,
         "label_lookups": slots, "written_as_id_parser1": p1_ids, "written_as_id_parser2": p2_ids,
-        "examples": examples}
+        "examples": examples,
+        "no_english_label": no_en, "titled_by_id": no_name,
+        "titled_by_id_share": round(no_name / n, 4) if n else None}
     if counts:
         con = sqlite3.connect((pack.pack_dir(dump) / "labels.sqlite").resolve().as_uri() + "?mode=ro", uri=True)
         out["label_rows"] = {lang: con.execute("SELECT COUNT(*) FROM label WHERE lang=?", (lang,)).fetchone()[0]
