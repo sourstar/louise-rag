@@ -192,6 +192,14 @@ are the ones that have drifted; prefer to add a test when you touch them.
     (d) or entity information, ASK; do not guess it away.
     Losing the ability to re-fetch the origin and reproduce what we kept
     is equally forbidden.
+    NOTHING IS PRUNED UNLESS WRITTEN (operator, 2026-10-24): "If not
+    written explicitly in the guidelines a collection cannot prune any
+    information from the corpus, in other words I cannot get from the raw
+    corpus more information than those I can get from the parsed corpus
+    and possibly from queries." A pruning rule (wikidata's scholarly
+    articles, D1) is written in the plugin's guidelines and its Codex form
+    before it applies; cost is answered by choosing what to EMBED, never by
+    leaving entities out of the records.
     Concretely: every record carries `origin_hash` — the hash of the origin
     unit it was parsed from — and `origin` locates that unit, while the
     Codex names the acquisition spec and parser version that produced it
@@ -304,6 +312,11 @@ are the ones that have drifted; prefer to add a test when you touch them.
   (3) the recommendation, and what happens if the operator says nothing.
   A question that does not fit that shape is not asked. Never re-ask a
   decision already presented; decide and proceed.
+- **Always give the pros AND the cons** (operator, 2026-10-24: "Always
+  give a pros cons"): every proposal, option and recommendation carries
+  both — in a choices table, a pros column and a cons column per row,
+  the status quo included. A benefit stated without its cost, or a
+  recommendation without the cons of what it keeps, is not given.
 - **Answer at one fifth the length that feels right.** MANDATORY, and it
   binds explanations hardest — the finding, not the retelling. State the
   outcome, anything that needs a decision, and stop. No recap of work the
