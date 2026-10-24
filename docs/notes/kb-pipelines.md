@@ -225,3 +225,9 @@ Recommendation: Louise. If nothing is said: Louise.
 | never | our own extensions only (§3A) |
 
 Recommendation: after. If nothing is said: after.
+
+**DECIDED (operator, 2026-10-24): after.** Upstream hears from us once the
+pipeline runs here: issues for §3B 1–3 (the third reshaped by D2's
+proposal of 2026-10-24 into a `pipeline.retrieval` stage of a LocalAI model
+YAML, beside the realtime pipeline's `vad`/`transcription`/`llm`/`tts`),
+PRs only where the maintainers welcome them.
