@@ -21,8 +21,9 @@ title, the names, and which entities get more.
 |---|---|---|
 | our defects in the text | **fixed** in parser 2: `mul` names of referenced entities, uncertain quantities (±), no id where a name exists | §2 |
 | Wikimedia Deutschland's defects we had copied | **fixed** in our copy; **written** for them (W1, W6, W7 and the textifier's §1–5) | §3 |
-| historical facts (what the best-rank filter drops) | **designed**: a history section in parser 3, nothing re-embedded; effort below, its size counted by tonight's run | §4 |
-| references to merged entities, Wikimedia's own pages, lexemes, places' languages | open, each with its proposal | §5 |
+| historical facts (what the best-rank filter drops) | **designed**: a history section in parser 3, nothing re-embedded; 26.8 M statements in 5.4 M entities, at most ~0.57 G tokens | §4 |
+| Wikimedia's own pages kept as records | **counted: 9,680,790 records (12.8 %)**; pruning them is a decision before Monday | §5 |
+| references to merged entities, lexemes, places' languages | merged: negligible (862 references), left; the others open | §5 |
 | full text in it, de, fr, es for monuments, buildings, events | **approved**: the niche selection and a pilot first | §6 |
 | the node | pack version 2 and wikidata-refs version 3 in place; Monday: wikidata created again on 6d02f8e, then its records | §7 |
 
@@ -41,7 +42,9 @@ collection is created again from the same recipe, its calibration reused).
 
 Found by reading our own code against upstream's and against the dump;
 each with its test (tests/test_plugins_wikidata_textify.py,
-tests/test_plugins_wikidata_names.py).
+tests/test_plugins_wikidata_names.py). Counted over the 75.9 M kept
+entities (classes-niche.json, `statements.all`): 55,225,147 quantities in
+6,322,086 entities carry bounds (their ± shown now where it is not zero).
 
 ## 3. Wikimedia Deutschland's defects — fixed here, written for them
 
@@ -50,13 +53,13 @@ tests/test_plugins_wikidata_names.py).
 | T1 | aliases in random order (a Python set) — the text, and its vector, change from run to run | the dump's order | [wmde-wikidata-textifier.md](upstream-reports/wmde-wikidata-textifier.md) §1 |
 | T2 | a failed date or coordinate format drops the value silently ("has date of birth") | our formatter has no service to fail | §2 |
 | T3 | no Italian connectives | added | §3 (W1) |
-| T4 | `novalue` written as "has <property>" — the opposite ("has architect" for "no architect"); `somevalue` loses its qualifiers (an unknown date's earliest/latest bounds) | "architect: no value", "date of death: unknown value (earliest date: 1450)", Wikibase's own wording | §4 (W6) |
-| T5 | a lexeme, form or sense value written as the Python repr of its datavalue | its id (`L7`) | §5 (W7) |
+| T4 | `novalue` written as "has <property>" — the opposite ("has architect" for "no architect"): 222,602 statements in 212,288 entities; `somevalue` loses its qualifiers (an unknown date's earliest/latest bounds): 884,844 statements in 806,956 entities | "architect: no value", "date of death: unknown value (earliest date: 1450)", Wikibase's own wording | §4 (W6) |
+| T5 | a lexeme, form or sense value written as the Python repr of its datavalue: 24,553 statements in 22,188 entities | its id (`L7`) | §5 (W7) |
 | — | the Wikidata embedding project: stale vectors kept as current (~14 %), text depending on a live page, dropped entity data, the card's counts | — | [wmde-wikidata-embedding-project.md](upstream-reports/wmde-wikidata-embedding-project.md) |
 | W2–W5 | data: a description cut short (Q22844), six P279 cycles, the most-referenced entities with no label in it/de/fr/es, the occurrence tree holding clinical trials, theses, statutory instruments, stars and coins | — | [wikidata.md](upstream-reports/wikidata.md) |
 
-The operator files them; nothing has been filed yet. Before filing, W5's
-P279 chains are traced (tonight's run prints the shortest chain per class).
+The operator files them; nothing has been filed yet. W5's P279 chains are
+traced (the shortest chain per class, in the report).
 
 ## 4. Historical facts — the optimal solution and its effort
 
@@ -112,11 +115,16 @@ touched: Monday goes ahead as planned.
   computed there), the section in source.py, the heading in fts.py, tests —
   about a day, inside parser 3's work.
 - Pack: nothing.
-- Compute: the history sections' chunks only. Their number is tonight's
-  count (`statements.dropped_by_rank`, over every entity and over the
-  selection); the cost follows from it and the tokens a statement takes.
-  OWED: filled in from the run (wikidata-coverage-2026-10-24/,
-  classes-niche).
+- Compute: the history sections' chunks only. Counted (classes-niche.json,
+  `statements`): the best-rank filter drops **26,819,624 statements in
+  5,415,910 entities** (7.1 % of the 75.9 M records); in the 10.5 M
+  selected monuments, buildings and events, 532,157 statements in 196,376
+  entities. At ~15 tokens a statement and ~30 for the section's head, at
+  most **~0.57 G tokens** for every entity (~1.3 months of wikidata's
+  budget) and **~14 M** for the selection (about a day) — both before the
+  number series and identifiers are left out, which are most of the
+  former (cities' populations). A count by datatype refines it before
+  parser 3.
 
 **The standard alternative, written down.** The full statement graph —
 every rank, with qualifiers — is what the Query Service exposes as
@@ -127,8 +135,8 @@ adds no source and no service.
 
 | what | proposal | effort | decision |
 |---|---|---|---|
-| references to entities merged into another (redirects) or deleted: written as ids — the JSON entity dump carries no redirects | name a merged entity by its target, read from Wikimedia's SQL table dumps (the `redirect` table, with `page` to map page ids to QIDs — a separate run, dated apart from the entity dump) | two acquisition files more (a new origin spec, so with parser 3; `page` is several GB), a `redirect` table in the pack | only if tonight's count (`to_absent_entities`) shows it matters |
-| Wikimedia's own pages kept as records: categories, templates, disambiguation pages, lists | prune them as the scholarly articles are (whole entities, invariant 11 allows it), by the closure of "Wikimedia internal item" (Q17442446) | one line in the pruning rule; fewer records and fewer chunks to embed | counted tonight (`counted`); before Monday's records build only if decided tonight, else with parser 3 |
+| references to entities merged into another (redirects) or deleted: written as ids — the JSON entity dump carries no redirects | name a merged entity by its target, from Wikimedia's SQL table dumps (`redirect` with `page`, a separate run) | two acquisition files more (`page` is several GB) | **left**: 862 references to 331 entities in the 193 M lookups of the selection's texts |
+| Wikimedia's own pages kept as records: categories, templates, disambiguation pages, lists — **9,680,790 of the 75.9 M records (12.8 %)**, the closure of "Wikimedia internal item" (Q17442446, 2,949 classes) | prune them as the scholarly articles are (whole entities; invariant 11 allows it); their labels stay in the label table, so every text naming one still names it | a pass over the pack (the closure, then each entity's P31: ~40 min on the node) and the pruning rule in parser 2; fewer records, chunks and embedding; disambiguation pages, which share every ambiguous name, leave the name search | **decision**: before Monday's records build, or with parser 3 (Monday's records would carry them until then), or never |
 | Wikidata's lexemes: words, their senses and glosses in many languages (the separate lexeme dump, not taken by D1) | a small collection of their own — the natural home of "ancient and uncommon words" | a plugin variant over the lexeme dump (hundreds of MB, not 100 GB) | to decide |
 | a place's original language: its country's official language (P37) | a third source for the original name in names.py | a country→language table in the pack | written down, not built |
 | sitelink titles (a Wikipedia article's title) | — | — | left: mostly the label |
@@ -146,11 +154,31 @@ adds no source and no service.
   English one, or a Wikipedia article in it and no English one. For the
   famous, the English text, the cross-lingual encoder and the all-language
   name search already work; the gain is in the local ones.
-- **Measured:** 10.4 M entities in the first selection; Wikidata names
-  them in Italian for 11.6 %, German 25.3 %, French 21.2 %, Spanish 12.7 %;
-  a language for all would cost 1.61 G tokens (3.7 months of wikidata's
-  budget). The niche counts and their cost, and the event roots cleaned of
-  the occurrence tree's non-events, come with tonight's run.
+- **Measured** (classes-niche.json; seven roots, architectural element
+  added: 10,503,655 entities):
+
+  | language | niche sections | of which: label not in English / description not in English / Wikipedia not in English | tokens |
+  |---|---|---|---|
+  | it | 277,416 | 139,410 / 132,962 / 135,066 | 34.7 M |
+  | de | 945,914 | 524,994 / 518,127 / 251,731 | 122.0 M |
+  | fr | 723,772 | 480,100 / 374,613 / 171,504 | 104.0 M |
+  | es | 220,546 | 128,568 / 104,950 / 88,369 | 26.7 M |
+  | **all** | **2,167,648** | | **287 M** |
+
+  287 M tokens is ~0.7 month of wikidata's budget (~40 hours of the card)
+  — against 1.14 G for every entity Wikidata names in the language and
+  6.4 G for every entity in all four.
+- **Events, cleaned.** The occurrence tree's non-events come in through
+  process (W5). The real happenings hang below a few families, each found
+  in the chains: planned event (sports, elections, festivals, exhibitions,
+  ceremonies — Q1656682), military operation (battles, sieges, campaigns —
+  Q645883), war (Q198), calamity (Q1689296), massacre (Q3199915), explosion
+  (Q179057), geographically localized event (earthquakes — Q123349687),
+  severe weather (Q741507), demonstration or protest (Q130260549). They
+  replace occurrence as roots; measured again before parser 3.
+- **Architectural element** (Q391414) adds 422,014 instances — Stolpersteine,
+  tumuli, graves, fountains, milestones, gates — and the vocabulary
+  (machicolation).
 - **The pilot, before the full embedding:** the Italian sections of a
   sample of the niche set embedded, Italian questions asked with and
   without them; the full run only if they win.

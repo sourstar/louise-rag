@@ -101,6 +101,23 @@ time of day (Q1260524, 87,914), motion (Q452237, 84,223), individual motion
 (Q96739634, 75,431), science project (Q1298668, 71,477), red giant branch
 star (Q66619666, 68,896) and coin (Q41207, 57,007) — none of them an event
 in the sense a reader means. Each comes in through a chain of P279
-statements that someone found true one step at a time; the chains are to
-be traced (the shortest path from each class to Q1190554) before the
-report goes, so the editors see which link to question.
+statements that someone found true one step at a time. The shortest chain
+for each (dump 20261012, `tools/wikidata_coverage.py classes --top 300`,
+classes-niche.json):
+
+| class | instances | shortest P279 chain to occurrence |
+|---|---|---|
+| clinical trial (Q30612) | 391,649 | Q30612 clinical trial → Q7247798 product testing → Q1003030 test → Q1190554 occurrence |
+| doctoral thesis (Q187685) | 110,291 | Q187685 doctoral thesis → Q1266946 thesis → Q42240 research → Q3249551 process → Q1190554 occurrence |
+| UK Statutory Instrument (Q7604686) | 101,163 | Q7604686 UK Statutory Instrument → Q100532772 statutory instrument → Q2795484 implementing regulation → Q694045 delegated legislation → Q49371 legislation → Q428148 regulation → Q3249551 process → Q1190554 occurrence |
+| time of day (Q1260524) | 87,914 | Q1260524 time of day → Q1190554 occurrence |
+| motion (Q452237) | 84,223 | Q452237 motion → Q22445448 request → Q11024 communication → Q52948 interaction → Q3249551 process → Q1190554 occurrence |
+| science project (Q1298668) | 71,477 | Q1298668 science project → Q170584 project → Q104637332 planned process → Q3249551 process → Q1190554 occurrence |
+| red giant branch star (Q66619666) | 68,896 | Q66619666 red giant branch star → Q3929897 red giant branch → Q50089 asymptotic giant branch → Q6472 stellar evolution → Q5418608 evolution → Q1150070 change → Q29017603 control → Q1914636 activity → Q3249551 process → Q1190554 occurrence |
+| gas station (Q128302279) | 63,651 | Q128302279 gas station → Q205495 filling station → Q126793 retail → Q601401 trade → Q8187769 economic activity → Q125506646 transfer → Q52948 interaction → Q3249551 process → Q1190554 occurrence |
+| coin (Q41207) | 57,007 | Q41207 coin → Q693464 cash → Q1368 money → Q247506 financial instrument → Q93288 contract → Q327197 legal transaction → Q609298 social interaction → Q52948 interaction → Q3249551 process → Q1190554 occurrence |
+| obituary (Q309481) | 23,988 | Q309481 obituary → Q21557777 announcement of death → Q567303 announcement → Q1190554 occurrence |
+
+Most run through process (Q3249551), by way of interaction, activity,
+legal transaction or change; the link to question is the one that makes a
+document, an object or a celestial body a kind of happening.
