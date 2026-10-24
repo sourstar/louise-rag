@@ -384,3 +384,26 @@ def test_a_build_waits_for_the_pack_s_own_families_pass_and_spacing_never_skips_
     pack.reset_caches()
     with pytest.raises(pack.PackError, match="being computed by the pack's pass"):
         pack.ensure_codes(dump, pack.creation_map(dump), workers=1)
+
+
+def test_create_after_a_rename_reads_the_held_wikidata_s_corpus(tmp_path, monkeypatch):
+    """München's sequence (2026-10-24): `wikidata` renamed `wikidata-p1`,
+    then `create --name wikidata` — no collection of that name yet, so the
+    corpus and the pinned dump are the one held wikidata collection's."""
+    from app import collections as collections_mod
+    from app.plugins.wikidata.source import WikidataSource
+    dump = _dump(tmp_path / "corpora")
+    pack.build(dump, languages=("en",), chunk=4, workers=1)
+    p1 = SimpleNamespace(name="wikidata-p1", plugin="wikidata", corpus_dir=tmp_path / "corpora", snapshot="20261012")
+    other = SimpleNamespace(name="gutenberg", plugin="gutenberg", corpus_dir=tmp_path / "g", snapshot=None)
+    monkeypatch.setattr(collections_mod, "by_name", lambda name: None)
+    monkeypatch.setattr(collections_mod, "load_all", lambda **kw: ([p1, other], []))
+    block, raw = WikidataSource().creation_slicing("wikidata")
+    assert raw == pack.creation_map(dump)
+    twin = SimpleNamespace(name="wikidata-x", plugin="wikidata", corpus_dir=tmp_path / "elsewhere", snapshot="20261019")
+    monkeypatch.setattr(collections_mod, "load_all", lambda **kw: ([p1, twin], []))
+    with pytest.raises(pack.PackError, match="read different dumps"):
+        WikidataSource().creation_slicing("wikidata")
+    monkeypatch.setattr(collections_mod, "load_all", lambda **kw: ([], []))
+    monkeypatch.setattr(collections_mod, "origin_dir", lambda name: tmp_path / "corpora")
+    assert WikidataSource().creation_slicing("wikidata")[1] == raw, "none held: the name's own origin folder"

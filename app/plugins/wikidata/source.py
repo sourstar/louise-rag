@@ -117,15 +117,18 @@ class WikidataSource:
         """The slicing block a new wikidata collection is created with, and
         the bytes of the family map it pins: the map of the dump the
         collection reads, from that dump's pack (pack.creation_map). The
-        dump is the one the collection's file pins (`snapshot`), else the
-        only one under its corpus; several and none pinned is refused in
-        plain words — the choice is the operator's, never guessed."""
+        corpus and the pinned dump (`snapshot`) are the held collection's of
+        that name; else — a collection created again, its predecessor
+        renamed first (München's sequence, 2026-10-24: `wikidata` →
+        `wikidata-p1`, then `create`) — the one held wikidata collection's;
+        else the name's own origin folder. Several dumps and none pinned,
+        or several held wikidata collections reading different dumps, are
+        refused in plain words — the choice is the operator's, never
+        guessed."""
         import hashlib
         from app import collections as collections_mod
         from app.pack import slicing
-        held = collections_mod.by_name(name)
-        corpus = Path(held.corpus_dir) if held is not None else collections_mod.origin_dir(name)
-        snapshot = getattr(held, "snapshot", None) if held is not None else None
+        corpus, snapshot = self._corpus_for(name)
         dumps = find_dumps(corpus, snapshot)
         if not dumps:
             raise pack.PackError(f"no wikidata dump{' of ' + snapshot if snapshot else ''} under {corpus}: the "
@@ -137,6 +140,23 @@ class WikidataSource:
                                  f"say which one the collection reads: its family map is that dump's")
         raw = pack.creation_map(dumps[0])
         return slicing.family_block("sha256:" + hashlib.sha256(raw).hexdigest()), raw
+
+    def _corpus_for(self, name: str) -> tuple[Path, str | None]:
+        from app import collections as collections_mod
+        held = collections_mod.by_name(name)
+        if held is not None:
+            return Path(held.corpus_dir), getattr(held, "snapshot", None)
+        served, _unreadable = collections_mod.load_all(skip_unreadable=True)
+        reads = sorted({(str(c.corpus_dir), getattr(c, "snapshot", None) or "")
+                        for c in served if getattr(c, "plugin", None) == self.source_id})
+        if len(reads) > 1:
+            raise pack.PackError(f"no collection is named {name} yet and the held wikidata collections read "
+                                 f"different dumps ({'; '.join(f'{c} {s or chr(8212)}' for c, s in reads)}): the "
+                                 f"new one's family map is the map of the dump it reads — name that collection's "
+                                 f"file `{name}` first, or keep one")
+        if reads:
+            return Path(reads[0][0]), reads[0][1] or None
+        return collections_mod.origin_dir(name), None
 
     def __init__(self, languages: tuple[str, ...] | None = None):
         if languages:
