@@ -30,6 +30,20 @@ language groups' ranks 1–3 when the query went to every group as typed
 (fused rank 113). A result's `legs` (§5.3) names `catalog` beside `text`
 and `vector`.
 
+**Names, for a collection whose records have them** (*amended 2026-10-24*,
+operator: wikidata, "names only"). Its plugin gives each record's names —
+every label and alias, every language — and its popularity (wikidata: the
+wiki pages linking it). The text leg then has one more list, from the
+reader's own words: the records one of whose names IS a word sequence of
+the query, the longer name first ("Monaco di Baviera" before "Monaco"),
+then the more popular; a search limited to languages matches names in
+those languages only. Names are index-only: they enter no record, no
+section and no vector, and a peer rebuilds them from the records'
+`extra`. A multilingual (`mul`) record's sections are indexed each in its
+own language (*amended 2026-10-24*), and a search limited to languages
+keeps such a record in every leg when one of its sections is in an asked
+language.
+
 **A leg's list is the same on every peer with the same members**
 (*amended 2026-10-20*). Equal scores order by the record's uid bytes, then
 the chunk's place in its record, the earliest first; a group of equal

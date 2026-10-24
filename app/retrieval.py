@@ -933,6 +933,17 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                     if q == core:
                         own.add(len(lists))      # the user's own words: first on a tie
                     lists.append(hits)
+        if fts.names_capable(collection):
+            # BY NAME (operator, 2026-10-24; wikidata): the records one of
+            # whose names in any language IS a word sequence of the reader's
+            # own words — in one of the asked languages when the search is
+            # limited to some (fts.search_names) — longest name, then most
+            # linked, first. A list of the text leg, as the catalogue's is.
+            cancel.checkpoint()
+            by_name = fts.search_names(collection, core, limit, langs=list(plan.only) or None, **restrict)
+            if by_name:
+                own.add(len(lists))
+                lists.append(by_name)
         if catalog_hits:
             # 05 §5.1 (amended 2026-10-20): the catalogue leg, run with the
             # reader's own words

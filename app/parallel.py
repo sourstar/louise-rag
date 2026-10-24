@@ -159,6 +159,13 @@ def _one(kind: str, collection, row: dict):
     if kind == "chunks":
         sections = plugin_io.sections(plugin, row)
         return layers.chunks_for_document(collection, row, sections)
+    if kind == "chunks+names":
+        # one parse for both: the chunks the text index cuts, and the names a
+        # record is found by (fts.index_names_of; wikidata)
+        from . import fts
+        doc = plugin_io.canonical_doc(plugin, row)
+        return {"chunks": layers.chunks_for_document(collection, row, doc.sections),
+                "names": fts.index_names_of(collection, doc.extra)}
     if kind == "metadata":
         return plugin_io.metadata(plugin, row)
     if kind == "record":
@@ -547,6 +554,12 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
 
 def chunks_for_rows(collection, rows) -> list[tuple[bool, object]]:
     return compute("chunks", collection, rows)
+
+
+def chunks_names_for_rows(collection, rows) -> list[tuple[bool, object]]:
+    """`chunks_for_rows` plus each record's names: one `{chunks, names}` per
+    row, for a collection whose plugin gives names (fts.names_capable)."""
+    return compute("chunks+names", collection, rows)
 
 
 def metadata_for_rows(collection, rows) -> list[tuple[bool, object]]:

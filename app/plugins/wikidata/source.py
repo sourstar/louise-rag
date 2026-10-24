@@ -193,4 +193,37 @@ class WikidataSource:
         )
 
 
+#: per entity, the names indexed at most (an entity's aliases can run long)
+INDEX_NAMES_MAX = 2000
+
+
+def index_names(extra: dict) -> tuple[list[tuple[str, str]], int]:
+    """What the text index finds an entity BY NAME (operator, 2026-10-24:
+    "names only"): every label and alias the dump gives it, in EVERY
+    language, as `(language, name)`, and its popularity — how many wiki
+    pages link it (`sitelinks`), Wikidata's own tie-break between entities
+    of one name (WikibaseCirrusSearch rescores by sitelinks). A pure
+    function of the record's `extra`, which keeps the whole entity
+    (invariant 11), so a peer that fetched the records indexes the same
+    names; nothing here enters `sections`, `content_hash` or a vector."""
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(lang, value) -> None:
+        if isinstance(lang, str) and isinstance(value, str) and value.strip():
+            key = (lang, value.strip())
+            if key not in seen and len(out) < INDEX_NAMES_MAX:
+                seen.add(key)
+                out.append(key)
+    for lang, v in sorted((extra.get("labels") or {}).items()):
+        add(lang, (v or {}).get("value") if isinstance(v, dict) else None)
+    for lang, vs in sorted((extra.get("aliases") or {}).items()):
+        for v in vs or ():
+            add(lang, (v or {}).get("value") if isinstance(v, dict) else None)
+    sitelinks = extra.get("sitelinks")
+    return out, len(sitelinks) if isinstance(sitelinks, dict) else 0
+
+
+WikidataSource.index_names = staticmethod(index_names)
+
 SOURCE = WikidataSource()

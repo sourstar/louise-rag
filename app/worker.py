@@ -387,18 +387,30 @@ def stage_fts(con, row, collection) -> None:
     # the batch's fetch/parse/chunk goes to the PARSE POOL (amendment 47):
     # one (ok, chunks) per row, in order; the selected row's failure IS the
     # round's, a peer's failure drops the peer
-    results = parallel.chunks_for_rows(collection, [row, *peers])
+    # a collection whose records are also found by NAME (wikidata, operator
+    # 2026-10-24): the same parse gives each record's names (fts.search_names)
+    with_names = fts.names_capable(collection)
+    results = (parallel.chunks_names_for_rows if with_names else parallel.chunks_for_rows)(
+        collection, [row, *peers])
+    names_of: dict[str, tuple | None] = {}
+
+    def _unpack(r, value):
+        if with_names:
+            names_of[r["uid"]] = value.get("names")
+            return value["chunks"]
+        return value
     ok, first = results[0]
     if not ok:
         parallel.raise_for(first)
-    chunks = first
+    chunks = _unpack(row, first)
     batch = [(row, chunks)]
     n_chunks = len(chunks)
-    for peer, (ok, peer_chunks) in zip(peers, results[1:]):
+    for peer, (ok, peer_value) in zip(peers, results[1:]):
         if n_chunks >= config.FTS_BATCH_CHUNKS:
             break
         if not ok:
             continue            # a peer never fails the round
+        peer_chunks = _unpack(peer, peer_value)
         batch.append((peer, peer_chunks))
         n_chunks += len(peer_chunks)
 
@@ -406,7 +418,8 @@ def stage_fts(con, row, collection) -> None:
     # before the lock like every other load; `{}` for every other collection
     from app import validity
     cols = validity.columns_for(con, collection, [int(r["native_id"]) for r, _ in batch])
-    fts.index_books(((r["lang"], int(r["native_id"]), ch, cols.get(int(r["native_id"])))
+    fts.index_books(((r["lang"], int(r["native_id"]), ch, cols.get(int(r["native_id"])),
+                      names_of.get(r["uid"]))
                      for r, ch in batch), collection)
 
     # the tantivy commit landed; only the tags and marks remain — SQLite

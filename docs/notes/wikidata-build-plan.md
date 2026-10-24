@@ -32,6 +32,12 @@ canonical id `wikidata:Q42` / `wikidata:P31` — the namespace
 `wikidata-refs` registers (§4) — and in `extra.id`. The rule is a pure
 function of the origin's key, recorded here (06 §6.1).
 
+**Names in search** (*operator, 2026-10-24: "names only"*). The text stays
+English (D3), but every label and alias of an entity, in every language, is
+searchable by name: index-only keys on the record's first chunk, ranked
+longer-name-first then by sitelinks (05 §5.1 amended; `fts.search_names`).
+The records are unchanged.
+
 **What is a record.** One entity, one record. `title` is the label in the
 first language of the list that has one (else the id); `lang` is `"mul"`
 (an entity has no one language; 09 §9.5 asks for 639 codes and `und`;
