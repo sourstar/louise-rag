@@ -892,9 +892,20 @@ def _acceptance(mother: cx.Codex, sister: cx.Codex) -> None:
 
 def cmd_continue(a) -> int:
     origin = Origin(**_json(a.origin)) if a.origin else None
+    slicing = member = None
+    if getattr(a, "reslice", False):
+        # the slicing the plugin gives a collection created NOW (wikidata: the
+        # map of the code's family list over the pack's class tree), so the
+        # daughter is what a creation from scratch would be (02 §2.7, A1g)
+        mother_name, mother = col.resolve(a.root, a.codex_id)
+        source = tpl.source_for(mother.plugin)
+        if not callable(getattr(source, "creation_slicing", None)):
+            raise CodexError(f"--reslice: the {mother.plugin} plugin derives no slicing at creation")
+        slicing, member = source.creation_slicing(mother_name)
     d = col.continue_(a.root, a.codex_id, platform_image=a.platform_image,
                       continues_through=a.continues_through, origin=origin,
-                      origin_reachable_until=a.origin_reachable_until)
+                      origin_reachable_until=a.origin_reachable_until,
+                      slicing=slicing, slicing_member=member)
     print(d.collection_id)
     return 0
 
@@ -1435,7 +1446,7 @@ def cmd_dev_carry(a) -> int:
     out = {"carry": carry_mod.carry(a.root, from_name, to_name, copy=a.copy,
                                     apply=a.yes, keep=producer,
                                     rebuilt=getattr(a, "rebuilt", False), recut=recut,
-                                    log=say)}
+                                    resliced=getattr(a, "resliced", False), log=say)}
     if recut and producer:
         say(f"[carry] the cut is crossed with --keep {a.keep}: only that archive's rows stay, "
             f"so no row the character cut shortened is left to recut (A1e)")
@@ -2210,7 +2221,8 @@ def cmd_records_build(a) -> int:
             pass
     result = rec.build(a.root, a.collection, corpus_dir=corpus,
                        snapshot_id=a.snapshot_id,
-                       records_per_shard=a.records_per_shard, stop=stop)
+                       records_per_shard=a.records_per_shard, stop=stop,
+                       records_from=getattr(a, "records_from", None))
     return 130 if result.interrupted else 0
 
 
@@ -4173,6 +4185,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "the side that already exists")
     p.add_argument("--origin", help="JSON file with the new origin block")
     p.add_argument("--origin-reachable-until")
+    p.add_argument("--reslice", action="store_true",
+                   help="the slicing a creation would get now (wikidata: the family map of the "
+                        "code's families) — every record and vector reused (A1g)")
     p.set_defaults(fn=cmd_continue)
 
     p = verbs.add_parser("replace", help="a corrective sister, with its reproducible defect")
@@ -4308,6 +4323,10 @@ def build_parser() -> argparse.ArgumentParser:
                        help="the cutoff to build to")
         p.add_argument("--shard-records", type=int, dest="records_per_shard",
                        help="override the Codex's slicing.shard_records (tests)")
+        p.add_argument("--records-from", dest="records_from", metavar="COLLECTION",
+                       help="take the record lines of this held collection's latest snapshot "
+                            "instead of parsing — a daughter or re-creation that changes only "
+                            "the slicing (RULE 1)")
 
     p = rverbs.add_parser("build", help="parse, slice, shard, hash")
     args_records_build(p); p.set_defaults(fn=cmd_records_build)
@@ -4757,6 +4776,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="into a space that differs only by cutting by tokens (A1e): then drop "
                         "the rows the character cut shortened, not an archive's, and embed "
                         "their documents again")
+    p.add_argument("--resliced", action="store_true",
+                   help="into a collection that differs only by its slicing, its parts cut by "
+                        "content (A1g: a family map added): every vector carried; then "
+                        "`hold records build <to> --records-from <from>`")
     p.add_argument("--predecessor-rows", action="store_true", dest="predecessor_rows",
                    help="after a same-space carry made before provenance was kept: the "
                         "source's coverage rows copied unkeyed and its bundle tree linked "

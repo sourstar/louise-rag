@@ -1136,7 +1136,8 @@ def continue_(root: Path, mother_id: str, *, platform_image: str,
               continues_through: str, origin: Origin | None = None,
               parser: Parser | None = None, license: License | None = None,
               origin_reachable_until: str | None = None,
-              descriptive: Descriptive | None = None) -> Codex:
+              descriptive: Descriptive | None = None,
+              slicing: dict[str, Any] | None = None, slicing_member: bytes | None = None) -> Codex:
     """A daughter: the outside world changed, the toolchain adapts, the space
     stays. The encoder is inherited and cannot be given here — an encoder
     change is a sister.
@@ -1144,8 +1145,25 @@ def continue_(root: Path, mother_id: str, *, platform_image: str,
     The boundary is named from the mother's side: `continues_through` is her
     LAST snapshot, which exists and is content-addressed, rather than the
     daughter's first, which does not exist when her Codex is written.
+
+    `slicing` (02 §2.7, amended 2026-10-24: a family added to wikidata): a
+    daughter that re-slices — every record and vector of her mother reused
+    (`hold records build --records-from`, `dev carry --resliced`), her parts
+    those a collection created from scratch with this slicing would have,
+    which needs her parts CUT BY CONTENT (02 §2.2). `slicing_member`: the
+    map the block names, written into her SHARD; a block that keeps the
+    mother's map takes the mother's member.
     """
+    from app.pack import slicing as sl
     mother = read(root, mother_id)
+    if slicing is not None and slicing != mother.slicing:
+        from . import template
+        template._check_slicing(dict(slicing))
+        if sl.parts_rule_of(slicing) is None:
+            raise CodexError(
+                "a daughter that changes the slicing cuts her parts by content (02 §2.2, amended "
+                "2026-10-24): only then are they the parts a collection created from scratch with "
+                "that slicing would have")
     daughter = _replace(
         mother,
         descriptive=descriptive if descriptive is not None else mother.descriptive,
@@ -1158,8 +1176,16 @@ def continue_(root: Path, mother_id: str, *, platform_image: str,
         continues_through=continues_through,
         origin_reachable_until=origin_reachable_until,
         derived_from=None, space_from=None, replaces=None,
+        slicing=dict(slicing) if slicing is not None else mother.slicing,
     )
-    carry_calibration(root, daughter, write(root, daughter, mother), mother)
+    d = write(root, daughter, mother)
+    carry_calibration(root, daughter, d, mother)
+    named = sl.family_map_of(daughter.slicing)
+    if named is not None:
+        if slicing_member is None and named == sl.family_map_of(mother.slicing):
+            slicing_member = (shard_dir_of(root, name_of(root, mother.collection_id))
+                              / sl.map_member(named)).read_bytes()
+        write_slicing_map(d, daughter, slicing_member)
     return daughter
 
 

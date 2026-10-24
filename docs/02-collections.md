@@ -837,6 +837,20 @@ directory has a parent: those are the canonical words for those things
 and they keep them. Naming what is ours should cost a reader none of
 the words they already know.
 
+A daughter whose only change is her SLICING — wikidata's family map with a
+family added (*amended 2026-10-24*, operator: "if a new family is added a
+daughter allows you to reuse all the vectors and corpus of the mother. It
+must be functionally equivalent to a new collection created from scratch")
+— reuses both whole: her parts are built from her mother's record lines
+(`hold records build --records-from`, none parsed, each cut into chunks
+again for its part's `chunks_root`), her vector table is her mother's
+(`dev carry --resliced`, amendment A1g: the same records, chunks and space,
+other parts). Her parts are cut by content (§2.2), so they are byte for
+byte the parts a collection created from scratch with her slicing has;
+`hold collection continue --reslice` refuses a daughter that changes the
+slicing and cuts by count. Until a collection is published, the same
+steps serve a re-creation (RULE 1).
+
 A daughter whose parser adds to every record a section the mother's did
 not have — a Wikidata entity's text in one more language
 (docs/notes/wikidata-build-plan.md, D3; *amended 2026-10-19*) — re-issues

@@ -530,3 +530,97 @@ def test_a_family_collection_cut_by_content_builds_the_same_parts_from_scratch_a
     finally:
         pack_build.records.write_shard = real
     assert layout(stopped) == got
+
+
+def _family_collection(tmp_path, name, corpus, codex, raw):
+    from app import collections as collections_mod, db, discovery
+    d = tmp_path / name
+    (d / "shard" / "slicing").mkdir(parents=True)
+    (d / "shard" / "codex.json").write_bytes(codex.canonical())
+    sha = slicing.family_map_of(codex.slicing)
+    (d / "shard" / slicing.map_member(sha)).write_bytes(raw)
+    c = collections_mod.Collection(name=name, plugin="wikidata", profile=None, embed_mode_default=None,
+                                   corpus_dir=corpus, manifest_path=d / "state" / "manifest.sqlite",
+                                   fts_dir=d / "index", lance_dir=d / "lance", codex=codex)
+    (d / "state").mkdir()
+    con = db.connect(c)
+    discovery.sync_collection(con, c)
+    con.close()
+    return c
+
+
+def test_a_daughter_with_a_new_family_reuses_her_mother_s_records_and_equals_a_build_from_scratch(
+        isolated_config, tmp_path, monkeypatch):
+    """The operator's requirement (2026-10-24): a family added → a daughter
+    that reuses every record of her mother (none parsed) and whose parts are
+    those a collection created from scratch with the new map has, byte for
+    byte."""
+    import sqlite3
+    from app.hold.codex import License, Parser
+    from app.pack import build as pack_build, records as pack_records
+    from tests.hold.conftest import pubmed
+    corpus = tmp_path / "corpus"
+    towns = [_item(10_000 + i, f"Town {i}", P31=[515]) for i in range(30)]
+    dump = a_dump(corpus, lines=entity_lines() + [_line(o) for o in CLASSES + towns])
+    pack.build(dump, languages=("en",), chunk=8, workers=1)
+    m1 = pack.creation_map(dump)
+    con = sqlite3.connect(pack.pack_dir(dump) / "labels.sqlite")
+    child, parent = zip(*con.execute("SELECT id, parent FROM subclass").fetchall())
+    con.close()
+    # the family added: `city`, before `place` in precedence
+    fams = families.FAMILIES[:6] + ("city",) + families.FAMILIES[6:]
+    m2 = families.build_map(child, parent, max_item=pack.read_meta(dump)["max_item"], dump=dump.name,
+                            roots={**families.ROOTS, "city": (515,)}, families=fams)
+
+    def codex_for(raw):
+        return pubmed(plugin="wikidata", parser=Parser("wikidata", 2), license=License("green", None),
+                      slicing=slicing.family_block("sha256:" + hashlib.sha256(raw).hexdigest(),
+                                                   records_per_shard=6))
+
+    def layout(pack_dir):
+        m = pack_build.manifest_mod.load(pack_dir)
+        return {(s["slice"], s["n"]): ([r["uid"] for r in pack_records.iter_records(pack_dir / s["path"])],
+                                      s["sha256"]) for s in m["shards"]}
+    mother = _family_collection(tmp_path, "mother", corpus, codex_for(m1), m1)
+    pack_build.build(mother, tmp_path / "m", snapshot="2026-10-26", sign=False, log=lambda *_: None)
+    m_parts = pack_build.manifest_mod.load(tmp_path / "m")["shards"]
+    scratch = _family_collection(tmp_path, "scratch", corpus, codex_for(m2), m2)
+    pack_build.build(scratch, tmp_path / "s", snapshot="2026-10-26", sign=False, log=lambda *_: None)
+    daughter = _family_collection(tmp_path, "daughter", corpus, codex_for(m2), m2)
+
+    def never(*a, **k):
+        raise AssertionError("the daughter parsed a document")
+    monkeypatch.setattr(pack_build, "_record_of", never)
+    held = pack_build.HeldRecords(tmp_path / "m", tuple(s["path"] for s in m_parts))
+    pack_build.build(daughter, tmp_path / "d", snapshot="2026-10-26", sign=False, log=lambda *_: None,
+                     held=held)
+    assert layout(tmp_path / "d") == layout(tmp_path / "s"), "the parts of a creation from scratch, byte for byte"
+    got = layout(tmp_path / "d")
+    assert any(k[0] == "family=city/range=0" for k in got) and not any(k[0] == "family=place/range=0" for k in got)
+    assert {u for uids, _ in got.values() for u in uids} == \
+        {u for uids, _ in layout(tmp_path / "m").values() for u in uids}, "the same records, re-sliced"
+
+
+def test_a_resliced_daughter_and_carry_are_refused_where_more_than_the_slicing_differs(tmp_path):
+    from app.hold import carry as carry_mod, collection as col
+    from app.hold.codex import CodexError, Parser
+    from tests.hold.conftest import PLATFORM, a_root, pubmed
+    root = tmp_path / "root"
+    raw = families.build_map([515], [486972], max_item=1000, dump="d")
+    sha = "sha256:" + hashlib.sha256(raw).hexdigest()
+    mother = pubmed(slicing={**slicing.family_block(sha, records_per_shard=30_000)})
+    created = a_root(root, mother, name="m")
+    col.write_slicing_map(col.shard_dir_of(root, "m"), created, raw)
+    by_count = {k: v for k, v in mother.slicing.items() if k != "parts"}
+    with pytest.raises(CodexError, match="cuts her parts by content"):
+        col.continue_(root, created.collection_id, platform_image=PLATFORM, continues_through="2026-10",
+                      slicing=by_count, slicing_member=raw)
+    raw2 = families.build_map([515], [43229], max_item=1000, dump="d")
+    d = col.continue_(root, created.collection_id, platform_image=PLATFORM, continues_through="2026-10",
+                      slicing=slicing.family_block("sha256:" + hashlib.sha256(raw2).hexdigest(), 30_000),
+                      slicing_member=raw2)
+    assert d.space_id == created.space_id and d.slicing != created.slicing
+    assert (col.shard_dir_of(root, col.name_of(root, d.collection_id))
+            / slicing.map_member(slicing.family_map_of(d.slicing))).read_bytes() == raw2
+    with pytest.raises(CodexError, match="--rebuilt, --keep or --recut"):
+        carry_mod.carry(root, "m", col.name_of(root, d.collection_id), resliced=True, rebuilt=True)

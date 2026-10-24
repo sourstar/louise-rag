@@ -390,9 +390,17 @@ def origin_only_adds(a: Codex, b: Codex) -> bool:
 
 def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool = False,
           keep: str | None = None, rebuilt: bool = False, recut: bool = False,
-          log: Callable[[str], None] = print) -> dict[str, Any]:
+          resliced: bool = False, log: Callable[[str], None] = print) -> dict[str, Any]:
     """Carry `from_ref`'s manifest, text index and vector table into `to_ref`
     (G1). `apply=False` checks everything and writes nothing.
+
+    `resliced` (A1g, 2026-10-24; operator: a daughter with a new family map
+    reuses "all the vectors and corpus of the mother"): the target differs
+    only by its SLICING and cuts its parts by content (02 §2.2) — the same
+    records, the same chunks, the same space, other parts. Its parts come
+    from `hold records build <to> --records-from <from>` (the source's
+    record lines, none parsed), so no snapshot is compared here; the
+    coverage rows name the source's parts and are kept unkeyed.
 
     `rebuilt` (A1c, 2026-10-11): the target's records are BUILT, not seeded —
     its parser moved without moving cleaning or chunking (gutenberg's parser
@@ -407,7 +415,23 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
     root = Path(root)
     from_name, src = col.resolve(root, from_ref)
     to_name, to = col.resolve(root, to_ref)
-    if rebuilt:
+    if resliced and (rebuilt or keep or recut):
+        raise CodexError("carry --resliced moves the same records' vectors whole: no --rebuilt, "
+                         "--keep or --recut with it")
+    if resliced:
+        from app.pack import slicing as sl
+        if src.collection_id == to.collection_id:
+            raise CodexError("carry: the source and the target are one collection")
+        other = [d for d in record_differences(src, to) if d != "slicing"]
+        if other or src.slicing == to.slicing:
+            raise CodexError(
+                f"carry --resliced: {to.collection_id} and {src.collection_id} differ in "
+                f"{', '.join(other) or 'nothing'} — only the slicing may differ (A1g); anything else "
+                f"moves records or chunks, and nothing is carried")
+        if sl.parts_rule_of(to.slicing) is None:
+            raise CodexError(f"carry --resliced: {to_name} cuts its parts by count; a re-slice "
+                             f"needs parts cut by content (02 §2.2) to equal a build from scratch")
+    elif rebuilt:
         if src.collection_id == to.collection_id:
             raise CodexError("carry: the source and the target are one collection")
         other = [d for d in record_differences(src, to) if d not in RECORDS_REBUILT
@@ -453,7 +477,7 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
             f"table cross into a space that differs only by ENGINE or by a declared input "
             f"form (02 §2.4, 03 §3.5); any other difference is another function, and its "
             f"vectors are embedded again, never carried")
-    if not rebuilt:
+    if not rebuilt and not resliced:
         a, b = latest_snapshot(root, from_name), latest_snapshot(root, to_name)
         if _part_entries(a) != _part_entries(b):
             raise CodexError(
@@ -473,6 +497,8 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
              "mode": "copy" if copy else "move"}
     if rebuilt:
         claim["rebuilt"] = True
+    if resliced:
+        claim["resliced"] = True
     held = json.loads(marker.read_text(encoding="utf-8")) if marker.is_file() else None
     if held is not None and {k: held.get(k) for k in claim} != claim:
         raise CodexError(f"{marker} records another carry ({held}); this one is {claim}")
@@ -583,6 +609,8 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         + (f"use: `hold records build {to_name}`, `hold snapshot create {to_name}`, then "
            f"`dev carry {from_name} {to_name} --reconcile` (A1c) — or, where {from_name} "
            f"holds no records, `dev carry {from_name} {to_name} --resign` (A1d)" if rebuilt else
+           f"use: `hold records build {to_name} --records-from {from_name}` (its parts, from "
+           f"{from_name}'s record lines), `hold snapshot create {to_name}` (A1g)" if resliced else
            f"use: `hold check {to_name} --checks vectors-sample` (amendment A1)"))
     return plan
 

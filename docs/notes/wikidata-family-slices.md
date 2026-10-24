@@ -194,13 +194,23 @@ daughter is the path once something official exists.*
 | a class created after the creation dump | placed by walking the CURRENT dump's P279 links to the nearest class the map has | the one leak: its records move if that class is re-linked upstream. Each update logs how many records the walk placed and moved; that count is the trigger for a new map |
 | scholarly articles and lexemes join (operator, 2026-10-24: "Go with 3", later) | a daughter (the parser emits records it did not); their families are already in the map, and the range rule is written over the entity's number in its kind (Q42 → 42, P31 → 31, L7 → 7), so lexemes fit it too | only their new parts; no existing record moves; every part and vector inherited |
 | a language added to the text | a SECTION, never a slice: an entity is one record carrying every language (invariant 11). A daughter re-issues the changed parts and keeps every English vector (02 §2.7) | only the new language's chunks are embedded |
-| a new family, a family split, a newer class tree | a new map is a new slicing block, so a daughter that re-slices (before publication: a re-creation). The code learns the family; every map already pinned keeps reading by its OWN family list (families.py; fixed 2026-10-24, when the operator asked "What happens if a new family is created?": the first version read only maps of the code's current list, so adding a family would have made every pinned map unreadable) | no GPU: the family codes again (~40 min, CPU) and the records re-cut into new parts; before publication that is all; after it, every record and vector file is re-issued and peers fetch the whole collection again. The vectors are the same bytes (same chunk text): carrying them across a re-cut needs `louise dev carry` to accept other parts, owed when the first such change comes |
+| a new family, a family split, a newer class tree | a new map is a new slicing block, so a daughter that re-slices (before publication: a re-creation). *Superseded the same day — operator: "a daughter allows you to reuse all the vectors and corpus of the mother … functionally equivalent to a new collection created from scratch": parts cut by content and the daughter step, below this table.* The code learns the family; every map already pinned keeps reading by its OWN family list (families.py; fixed 2026-10-24, when the operator asked "What happens if a new family is created?": the first version read only maps of the code's current list, so adding a family would have made every pinned map unreadable) | no GPU: the family codes again (~40 min, CPU) and the records re-cut into new parts; before publication that is all; after it, every record and vector file is re-issued and peers fetch the whole collection again. The vectors are the same bytes (same chunk text): carrying them across a re-cut needs `louise dev carry` to accept other parts, owed when the first such change comes |
 
-So the binding constraint is the last row: **the family list must be right
-at creation** — binding for good once the collection is published; before
-that, a wrong family costs a re-creation and a local re-cut, no GPU. The
-family pass logs each family's size before `create`, and the sizes are
-reviewed then, not after.
+**A family added, as built (2026-10-24, operator's requirement and "I
+agree").** The parts are cut BY CONTENT (02 §2.2, `slicing.parts`), so a
+collection's layout is a pure function of its records and its map. Adding
+a family: the code learns it (families.py); `hold collection continue
+--reslice` writes the daughter's Codex with the map of the code's families
+over the pack's class tree (a minute); `dev carry --resliced` moves the
+vector table (A1g); `hold records build <daughter> --records-from <mother>`
+builds her parts from her mother's record lines — none parsed, each cut
+into chunks again (the chunker only); the family codes under the new map
+are one CPU pass over the pack (~40 min). No GPU, no record re-derived, and
+her parts are byte for byte those of a collection created from scratch with
+the new map (tests/test_plugins_wikidata_families.py). Peers fetch only the
+parts whose records changed family. So the family list is no longer a
+for-ever choice; it is still reviewed before `create` (each re-slice costs
+the CPU above).
 
 **Languages to fetch and embed** (operator, the same day: "if it makes sense
 choose which languages to fetch and embed"). For fetching there is no choice

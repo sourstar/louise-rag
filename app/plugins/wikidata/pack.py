@@ -973,20 +973,45 @@ def language_codes(dump: Path) -> dict[str, str]:
 # ---- the families, read ----------------------------------------------------------------------
 
 def creation_map(dump: Path) -> bytes:
-    """The bytes of the family map this dump's own class tree gives — what
-    a collection created on this dump pins (its sha256 in the Codex, the
-    bytes a SHARD member). Refused, in plain words, until the pack's class
-    tree is done."""
+    """The bytes of the family map this dump's own class tree gives under
+    the CODE's family list and roots (families.py) — what a collection
+    created, or a daughter continued, on this dump pins (its sha256 in the
+    Codex, the bytes a SHARD member). The pack's own pass computed it with
+    the list of its day; a family added to the code since gives another map,
+    built here from the pack's class tree (a minute, no pass over the lines)
+    and kept beside it, named by its hash. Refused, in plain words, until
+    the class tree is done."""
     meta = read_meta(dump) or {}
-    sha = meta.get("families_map")
-    if not sha:
+    if not meta.get("subclass_done"):
         raise PackError(f"the family map of {Path(dump).name} is not built yet (pack version "
                         f"{meta.get('pack_version')}): the worker's next scan of the collection builds it "
                         f"from the pack's own lines — about an hour — and `create` reads it then")
-    raw = map_path(pack_dir(dump), sha).read_bytes()
-    if "sha256:" + hashlib.sha256(raw).hexdigest() != sha:
-        raise PackError(f"{map_path(pack_dir(dump), sha)} does not hash to {sha}, the pack's own record of it")
+    d = pack_dir(dump)
+    sha = meta.get("families_map")
+    if sha:
+        raw = map_path(d, sha).read_bytes()
+        if "sha256:" + hashlib.sha256(raw).hexdigest() != sha:
+            raise PackError(f"{map_path(d, sha)} does not hash to {sha}, the pack's own record of it")
+        if _code_rules(raw):
+            return raw
+    con = sqlite3.connect((d / "labels.sqlite").resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        raw = _creation_map(dump, con, int(meta["max_item"]))
+    finally:
+        con.close()
+    sha = "sha256:" + hashlib.sha256(raw).hexdigest()
+    if not map_path(d, sha).is_file():
+        tmp = map_path(d, sha).with_name(f".{map_path(d, sha).name}.{os.getpid()}.tmp")
+        tmp.write_bytes(raw)
+        os.replace(tmp, map_path(d, sha))
     return raw
+
+
+def _code_rules(raw: bytes) -> bool:
+    """A map written with the code's own family list and roots."""
+    m = json.loads(raw)
+    return m.get("families") == list(families.FAMILIES) and m.get("roots") == {
+        f: sorted(int(r) for r in rs) for f, rs in families.ROOTS.items()}
 
 
 _codes_views: dict[tuple[str, str], Any] = {}
