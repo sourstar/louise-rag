@@ -155,6 +155,20 @@ layer (adopted on agreement). Splitting them means a 16 GB peer can
 verify and serve the exact layer of every tier while trusting the
 reader's layer at its stated trust level (03 §3.6). Recommended.
 
+**Both annotate gutenberg and wikidata; neither annotates the other**
+(operator's question, 2026-10-24: "an annotation of an annotation?" —
+no). Every claim is identified by its content (09 §9.5), so the reader's
+layer needs no pointer into the exact layer: a relation names two
+wikidata records and a gutenberg chunk; a Q-id pick for a kept span is a
+`mention` on the same chunk, `start` and `end`, with the object filled
+where the exact layer's is null — matched by (chunk, offsets); a
+summary is a `community` claim with the SAME sorted `members` and the
+summary filled where the exact layer's is empty — the same community by
+content, the member list duplicated (megabytes). 02 §2.10's rule that an
+annotations collection is never a target stands, and `_targets` keeps
+refusing one: a claim about a claim would go stale at every re-issue of
+the claim beneath it, and §2.10's time rule is defined on records.
+
 ## 6. What this changes in the specification (asked, not written)
 
 1. 09 §9.5: a `mention` with a null object carrying `surface`, `start`,
