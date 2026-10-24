@@ -404,3 +404,24 @@ LAMAR's same-language preference among EQUIVALENT documents agrees with
 one hit per work (05 §5.3: a work shown in the reader's language) — it must
 not demote a work that exists only in another language, and the it/en
 pairs (Moby-Dick, Don Quixote) are exactly that test.
+
+### 14a. LAMAR-600m measured (München, 2026-10-24 05:55)
+
+| check | result |
+|---|---|
+| model card's example (LocalAI vs reference) | 5.8176 / 5.0364 / −13.3933 / −13.8386 vs 5.7904 / 4.9918 / −13.3835 / −13.8347 (max diff 0.045) |
+| invariant 12 | bit-identical over 3 fresh loads × 2 orders, 0 pairs differing |
+| 42 real pairs, LocalAI vs transformers | max diff 3.29, mean 0.22; same order on 4 of 6 queries. Every large diff is ONE passage (Don Quixote en, "in writers like Feliciano de Silva…"), query-dependent (3.29, 3.07, 1.36, 1.08, 0.11); the other six agree within 0.04. Tokenisation identical (479 tokens, same ids): f16 precision inside the model suspected; an f32 GGUF would test it |
+| cross-language gap on the pairs | LAMAR −2.002 (reference) / −1.849 (LocalAI) vs bge −1.678 |
+
+**LAMAR does not narrow the gap on our pairs** — the reason it was first
+(§14) — and its f16 GGUF disagrees with its reference on one passage. Not
+adopted. Run 6 (LAMAR, base variant) finishes in Saturday's window for the
+record; Qwen3-Reranker-0.6B is next on §14's list only if the operator wants
+the gap pursued.
+
+Run 5, partial (127 queries with all three reranks; München): titles MRR
+base / score / slots 0.799 / 0.825 / 0.791, R@10 0.973 / 0.946 / 0.946;
+descriptive MRR 0.422 / 0.443 / 0.413, R@10 0.689 / 0.800 / 0.744. By the
+deploy rule (no loss on titles or descriptive) no variant passes yet: `score`
+gains descriptive and loses titles R@10. The complete run (486/496) decides.
