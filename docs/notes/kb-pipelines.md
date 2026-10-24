@@ -201,6 +201,12 @@ two lists. A pipeline could merge them into one list.
 Recommendation: by rank. If nothing is said: by rank, since this is what
 was asked.
 
+*Refined by the operator, 2026-10-24: merge "only if it makes sense" —
+any collection returns something, pertinent or not.* A leg passes a
+**pertinence gate** before it is fused: one cross-encoder scores each leg's
+best records on its one scale, and a leg below a threshold measured on
+labelled queries is left out and named (spec §P3a).
+
 **D2 — Where a pipeline is defined.**
 
 | choice | effect |
