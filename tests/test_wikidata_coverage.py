@@ -145,8 +145,11 @@ def test_parser_1_wrote_ids_where_parser_2_writes_the_mul_label(dump):
     assert got["texts_changed"] >= 1 and got["written_as_id_parser1"] > got["written_as_id_parser2"]
     assert {"entity": "Q101", "referenced": "Q500", "mul_label": "Polska"} in got["examples"]
     assert got["label_rows"]["mul"] == 2 and got["mul_without_en"] == 2
-    # Q101 and Q500 have only mul; Q701 only German: titled by its id
+    # Q101 and Q500 have only mul; Q701 only German, under its class: titled by its id
     assert got["no_english_label"] == 3 and got["titled_by_id"] == 1
+    assert got["titled_by_id_examples"] == [{"entity": "Q701", "label_count": 1,
+                                             "labels": {"de": "Schlacht bei Hastings"},
+                                             "instance_of": ["Q700 (battle)"], "sitelinks": []}]
 
 
 def test_cycles_and_closure_on_their_own():

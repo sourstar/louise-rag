@@ -518,6 +518,7 @@ def run_mul(dump: Path, *, groups: int = 100, per_group: int = 100, seed: int = 
     table = pack.labels(dump)
     n = changed = slots = p1_ids = p2_ids = no_en = no_name = 0
     examples: list[dict] = []
+    untitled: list[dict] = []
     for f, g in picks:
         t = pq.ParquetFile(f).read_row_group(g, columns=["id", "pruned", "line"])
         rows = [(i, line) for i, p, line in zip(t.column("id").to_pylist(), t.column("pruned").to_pylist(),
@@ -534,6 +535,14 @@ def run_mul(dump: Path, *, groups: int = 100, per_group: int = 100, seed: int = 
                 no_en += 1
                 if not (own.get("mul") or {}).get("value"):
                     no_name += 1
+                    if len(untitled) < 10:
+                        sl = obj.get("sitelinks")
+                        untitled.append({
+                            "entity": eid, "label_count": len(own),
+                            "labels": {k: (v or {}).get("value") for k, v in list(own.items())[:12]},
+                            "instance_of": [f"{c} ({table(c, 'en') or table(c, 'mul') or '?'})"
+                                            for c in values(obj, "P31")],
+                            "sitelinks": sorted(sl)[:12] if isinstance(sl, dict) else []})
             slots += one.slots
             p1_ids += one.unlabelled
             p2_ids += two.unlabelled
@@ -546,7 +555,7 @@ def run_mul(dump: Path, *, groups: int = 100, per_group: int = 100, seed: int = 
         "texts_changed_share": round(changed / n, 4) if n else None,
         "label_lookups": slots, "written_as_id_parser1": p1_ids, "written_as_id_parser2": p2_ids,
         "examples": examples,
-        "no_english_label": no_en, "titled_by_id": no_name,
+        "no_english_label": no_en, "titled_by_id": no_name, "titled_by_id_examples": untitled,
         "titled_by_id_share": round(no_name / n, 4) if n else None}
     if counts:
         con = sqlite3.connect((pack.pack_dir(dump) / "labels.sqlite").resolve().as_uri() + "?mode=ro", uri=True)
