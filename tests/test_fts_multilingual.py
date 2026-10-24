@@ -51,3 +51,17 @@ def test_re_indexing_is_idempotent_and_a_delete_removes_every_part(tmp_path):
 def test_every_other_record_is_indexed_as_before():
     assert fts.by_section_language("en", ENTITY) == [("en", ENTITY)]
     assert fts.by_section_language("und", ENTITY) == [("und", ENTITY)]
+
+
+def test_a_limited_search_keeps_multilingual_records_in_the_legs_that_filter_by_record(monkeypatch):
+    """The catalogue and vector legs filter by the RECORD's language: a `mul`
+    record is kept when its plugin writes one of the asked languages
+    (wikidata: English), and only then."""
+    from types import SimpleNamespace
+    from app import retrieval
+    monkeypatch.setitem(collections_mod.PLUGIN_REGISTRY, "wd-test", SimpleNamespace(languages=("en",)))
+    wd = SimpleNamespace(plugin="wd-test")
+    assert retrieval.limited_langs(wd, ("en",)) == ("en", "mul")
+    assert retrieval.limited_langs(wd, ("it",)) == ("it",), "an entity written in English is not Italian"
+    assert retrieval.limited_langs(wd, ()) == (), "unlimited stays unlimited"
+    assert retrieval.limited_langs(SimpleNamespace(plugin="gutenberg"), ("en",)) == ("en",)

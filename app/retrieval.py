@@ -756,6 +756,25 @@ def _best_rank(lists: list[list[dict]], limit: int) -> list[dict]:
 #: 05 §5.1 (amended 2026-10-20): the source of the catalogue leg — a
 #: record's title, creators and subjects (app/catalog.py)
 CATALOG_SOURCE = "catalog"
+
+
+def limited_langs(collection, only) -> tuple[str, ...]:
+    """The record languages a search limited to `only` keeps, for the legs
+    that filter by the RECORD's language (catalogue, vectors). A
+    multilingual (`mul`) record is written in its plugin's `languages`, one
+    section each (wikidata: `("en",)`, a Codex's list for its life, 02 §2.7):
+    it is kept when one of them is asked for. 2026-10-24: every "in English"
+    search left wikidata's 75.9 M records out of these legs, their `lang`
+    being `mul`. The text leg routes the sections themselves
+    (fts.by_section_language). Unlimited: `()`, every language, as before."""
+    only = tuple(only or ())
+    if not only:
+        return only
+    plugin = collections_mod.PLUGIN_REGISTRY.get(getattr(collection, "plugin", None))
+    written_in = getattr(plugin, "languages", ()) or ()
+    if fts.MULTILINGUAL not in only and set(only) & set(written_in):
+        return only + (fts.MULTILINGUAL,)
+    return only
 #: the legacy prompt's "[catalog matches]" block reads at most this many
 CATALOG_PROMPT = 10
 #: the catalogue variant's chunk lookup asks one text query per language
@@ -878,7 +897,8 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
     t0 = time.time()
     # as deep as the text leg's other variants: it is one of them (§5.1)
     catalog_hits, catalog_why = (
-        catalog_leg(con, core, limit=max(k, depth, 20), langs=plan.only, collection=collection)
+        catalog_leg(con, core, limit=max(k, depth, 20), langs=limited_langs(collection, plan.only),
+                    collection=collection)
         if mode in ("hybrid", "catalog") else ([], None))
     if book_ids:
         catalog_hits = [h for h in catalog_hits if int(h.get("book_id", -1)) in book_ids]
@@ -959,7 +979,7 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                 # empty leg whenever the top k were in other languages
                 if vector_leg is None:
                     lists.append(embeddings.search_records(core, limit, collection=collection,
-                                                           langs=list(plan.only) or None,
+                                                           langs=list(limited_langs(collection, plan.only)) or None,
                                                            **restrict))
         except (hold_runs.RunUnvalidated, hold_runs.RunRefused) as e:
             # the answer named a run not yet tested, or one that failed — or
