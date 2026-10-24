@@ -389,7 +389,41 @@ LLM_KEEP_ALIVE = os.getenv("LLM_KEEP_ALIVE", "30m")
 # lock — measured on the reference node as one thread at 87 % and eleven
 # idle cores. Batches are cut into sub-batches for this many low-priority
 # child processes; 1 = in-process, serial (tests, small nodes).
-PARSE_PROCESSES = int(os.getenv("PARSE_PROCESSES", str(max(1, (os.cpu_count() or 2) - 1))))
+def available_cpus(cgroup: str = "/sys/fs/cgroup") -> int:
+    """The CPUs this process may actually use: its affinity, and the cgroup
+    CPU QUOTA where one is set — `cpu.max` (v2) or `cpu.cfs_quota_us` /
+    `cpu.cfs_period_us` (v1), rounded up. `os.cpu_count()` sees the HOST: a
+    container capped at 4 of 12 cores read 12 and ran 11 parse children in 4
+    cores' time, the batches overran the pool's timeout and were re-done
+    serially (wikipedia-v8's records build, München's profile 2026-10-24).
+    The standard container answer: what the JVM, Go (automaxprocs) and .NET
+    read; Python's own `os.process_cpu_count()` (3.13) has affinity only."""
+    try:
+        n = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        n = os.cpu_count() or 1
+    quota = None
+    try:
+        with open(f"{cgroup}/cpu.max", encoding="ascii") as f:
+            q, period = f.read().split()[:2]
+        if q != "max":
+            quota = int(q) / int(period)
+    except (OSError, ValueError):
+        try:
+            with open(f"{cgroup}/cpu/cpu.cfs_quota_us", encoding="ascii") as f:
+                q = int(f.read().strip())
+            with open(f"{cgroup}/cpu/cpu.cfs_period_us", encoding="ascii") as f:
+                period = int(f.read().strip())
+            if q > 0 and period > 0:
+                quota = q / period
+        except (OSError, ValueError):
+            pass
+    if quota is not None:
+        n = min(n, max(1, -(-int(quota * 1000) // 1000)))
+    return max(1, n)
+
+
+PARSE_PROCESSES = int(os.getenv("PARSE_PROCESSES", str(max(1, available_cpus() - 1))))
 # a child is replaced after this many sub-batches: its plugin caches (row
 # groups, streams) grow with what it has parsed — measured +4 GB across
 # eleven children in fifteen minutes — and a fresh child starts small

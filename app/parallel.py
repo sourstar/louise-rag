@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
 
 from . import config
@@ -549,6 +549,130 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
         # budget that has been eaten by a batch that is long over.
         if mine:
             _occupy(name, -mine)
+        _want(name, -1)
+
+
+def _finished(f):
+    """A future's result when it finished cleanly, else None."""
+    try:
+        return f.result(timeout=0) if f.done() and not f.cancelled() and f.exception(timeout=0) is None else None
+    except Exception:   # noqa: BLE001 — a part that did not finish is computed again
+        return None
+
+
+def compute_pages(kind: str, collection, pages):
+    """`compute` over a STREAM of pages: one result list per page, in order,
+    with the pool's window kept full ACROSS pages — the parts of page k+1
+    are submitted while page k's are still running and while the caller
+    works on page k's results.
+
+    WHY (München's profile of wikipedia-v8's records build, 2026-10-24):
+    `compute` per page of ≤500 documents waits for its slowest part before
+    the next page is even read, so every page ended on one long article with
+    the other children idle — 47.8 % of all samples were children waiting
+    for work, two children did the parsing, ~1.3 of 4 cpus busy — and its
+    deadline covered the WHOLE batch, so a page past PARSE_TIMEOUT_S was
+    thrown away and parsed again serially (15 times in 18 h).
+
+    Here the timeout bounds the wait for the NEXT result (no progress for
+    PARSE_TIMEOUT_S), the standard watchdog; on a timeout or a broken pool
+    the parts not yet answered — and only they — are computed in-process,
+    the finished ones kept, and the next pages go to a fresh pool. Parts are
+    cut per page by `_partition` (unit boundaries, `work_span`), as before.
+    A generator: closing it cancels what is in flight."""
+    from collections import deque
+    name = getattr(collection, "name", None)
+    pages = iter(pages)
+    inflight: deque = deque()            # (page_no, part_rows, future or None)
+    results: dict[int, list] = {}         # page_no -> list of per-part results, in part order
+    sizes: dict[int, int] = {}            # page_no -> number of parts
+    next_page = 0                         # pages read so far
+    emit = 0                              # the next page to yield
+    exhausted = False
+    _want(name, 1)
+    mine = 0
+    try:
+        while True:
+            ex = pool()
+            n = processes()
+            budget = n * IN_FLIGHT_PER_CHILD
+            # fill the window: read pages ahead only while there is room
+            while not exhausted and (ex is None or mine < slots(name, budget)) \
+                    and next_page - emit <= 2:
+                page = next(pages, None)
+                if page is None:
+                    exhausted = True
+                    break
+                rows = [dict(r) if not isinstance(r, dict) else r for r in page]
+                parts = ([rows] if ex is None or len(rows) <= 1
+                         else _partition(collection, rows, n * PARTS_PER_CHILD)) if rows else []
+                sizes[next_page] = len(parts)
+                results[next_page] = [None] * len(parts)
+                for i, part in enumerate(parts):
+                    fut = None
+                    if ex is not None and len(rows) > 1:
+                        fut = ex.submit(_compute, kind, collection, part)
+                        mine += 1
+                        _occupy(name, 1)
+                    inflight.append((next_page, i, part, fut))
+                next_page += 1
+                if ex is None:
+                    break                 # serial: one page at a time
+            # yield every page whose parts are all in
+            while emit < next_page and all(r is not None for r in results[emit]):
+                out: list = []
+                for r in results.pop(emit):
+                    out.extend(r)
+                sizes.pop(emit, None)
+                emit += 1
+                yield out
+            if not inflight:
+                if exhausted:
+                    return
+                continue
+            page_no, i, part, fut = inflight.popleft()
+            if fut is None:
+                results[page_no][i] = _compute(kind, collection, part)
+                continue
+            try:
+                # THE WATCHDOG: no part answered for PARSE_TIMEOUT_S, not
+                # "this part took longer" — one long article on a busy core
+                # is progress as long as its neighbours keep finishing
+                deadline = time.monotonic() + config.PARSE_TIMEOUT_S
+                while not fut.done():
+                    waiting = [fut] + [f for *_x, f in inflight if f is not None and not f.done()]
+                    done, _ = wait(waiting, timeout=max(0.0, deadline - time.monotonic()),
+                                   return_when=FIRST_COMPLETED)
+                    if done:
+                        deadline = time.monotonic() + config.PARSE_TIMEOUT_S
+                    elif time.monotonic() >= deadline:
+                        raise TimeoutError(f"no part answered for {config.PARSE_TIMEOUT_S:.0f} s")
+                got = fut.result()
+                mine -= 1
+                _occupy(name, -1)
+                _note_success()
+                results[page_no][i] = got
+            except (BrokenProcessPool, TimeoutError, OSError) as e:
+                mine -= 1
+                _occupy(name, -1)
+                for _p, _i, _part, f in inflight:
+                    if f is not None:
+                        f.cancel()
+                        mine -= 1
+                        _occupy(name, -1)
+                _note_failure(e)
+                # what was not answered, in-process; what finished is kept
+                results[page_no][i] = _compute(kind, collection, part)
+                for p_no, j, rest, f in inflight:
+                    results[p_no][j] = (_finished(f) if f is not None else None) \
+                        or _compute(kind, collection, rest)
+                inflight.clear()
+    finally:
+        for _p, _i, _part, f in inflight:
+            if f is not None:
+                f.cancel()
+        for _ in range(max(0, mine)):
+            _occupy(name, -1)
         _want(name, -1)
 
 

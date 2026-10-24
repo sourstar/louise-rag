@@ -968,3 +968,47 @@ delete memory, scans, and the versions it lets cleanup drop (78 GB here).
 
 **Still open:** the maintainer's nice under a saturated CPU, if the nights
 after this deploy still show the refresh starved.
+
+### 2026-10-24 — the records build streams its pages; the parse pool is sized from the cpu quota — PREPARED, two steps
+
+**The defect, measured (München, py-spy 18:15–18:20Z, read-only).**
+`hold records build wikipedia-v8` in its own container, 4-cpu quota
+(`cpu.max` 400000/100000), nice 19, the deployed image. `os.cpu_count()` 12,
+so `PARSE_PROCESSES` defaulted to 11: 11 children in 4 cpus. docker stats
+every 8 s over 96 s: mean ~132 % (1.3 of 4 cpus). py-spy record 120 s,
+`--subprocesses --idle`, 89,973 samples: 47.8 % children idle waiting for
+work; per child, 7–45 % of its time parsing, two children doing most of it;
+the parent 100 % in the wait for the page. Cause: `pack_slices` hands
+`parallel.compute` ONE page of ≤500 documents and waits for its slowest part
+before reading the next, and the batch deadline (`PARSE_TIMEOUT_S` 120 s over
+the WHOLE page) threw 15 pages away in 18 h and parsed them again serially.
+Rate this run: 8.15 M records in 18.8 h, ~120 rec/s (an en slice of ~300 k:
+~185 rec/s; en/0M 5 h).
+
+**Scenario.** wikipedia-v8's records build alone in its container (the
+worker's other collections in theirs); slices de, en finished to
+en/pages=27M; the rest of en, then es, fa, fr, it, ja, pt, ru, tr, zh.
+`chunks/doc` not yet recorded for the window — read it from the build log's
+part entries (`chunks` / `records`) before and after, per rule 3.
+
+**The changes, ONE per step (scheduling.md §6, 8):**
+1. *The pool size* — `config.available_cpus()`: affinity and the cgroup quota
+   (`cpu.max`, v1 `cfs_quota_us`), as the JVM, Go (automaxprocs) and .NET
+   read it; `PARSE_PROCESSES` defaults to it − 1 (3 here). On the running
+   image the same step is `PARSE_PROCESSES=3` in the build container's env:
+   no deploy, measured first.
+2. *The page stream* — `parallel.compute_pages`: page k+1's parts are
+   submitted while page k is with the caller (window kept full across
+   pages, the admission budget unchanged, parts still cut by `work_span`);
+   the timeout bounds the wait for the NEXT answer (no part answered for
+   `PARSE_TIMEOUT_S`), and on a timeout only the unanswered parts are
+   computed in-process. Cost tests: tests/test_parallel.py (the next page
+   submitted before the caller takes this one; a stalled part costs only
+   itself). Byte-identical parts: `test_pack_records_are_computed_by_the_pool`.
+
+**Expected, unmeasured:** step 1 removes the oversubscription (the straggler
+gets a whole cpu, the timeouts go); step 2 keeps the 3 children fed — together
+~1.3 → ~3.5–4 cpus, 2.5–3× on the remaining ~61 M records.
+
+**After:** (to fill) per step: cpu % over 96 s, rec/s and `chunks/doc` over
+an hour of the same language, the "[parse pool]" lines.

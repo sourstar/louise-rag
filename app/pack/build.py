@@ -23,6 +23,7 @@ import json
 import shutil
 import sqlite3
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -528,21 +529,34 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
         # at a time — parse + chunk + hash per document is the whole cost
         # of a pack pass, and it is pure Python (amendment 47)
         page_size = max(50, min(records_per_shard, 500))
-        for page_start in range(0, len(rows), page_size):
+        # THE PAGES STREAM (parallel.compute_pages): the pool computes the
+        # next pages while this thread writes the current one, instead of a
+        # barrier per page — München's profile, 2026-10-24: one page at a
+        # time kept ~1.3 of 4 cpus busy on wikipedia-v8, 47.8 % of the
+        # children's samples idle behind each page's longest article
+        pending: deque = deque()
+
+        def pages_of():
+            for page_start in range(0, len(rows), page_size):
+                page = rows[page_start:page_start + page_size]
+                srcs = []
+                for prow in page:
+                    src = con_src.execute(
+                        "SELECT uid, native_id, path, lang FROM documents WHERE uid=?",
+                        (prow["uid"],)).fetchone()
+                    srcs.append(dict(src) if src is not None else None)
+                pending.append((page, srcs))
+                yield [s for s in srcs if s is not None]
+        stream = ((_held_values(collection, con_build, held, wanted) for wanted in pages_of())
+                  if held is not None else parallel.compute_pages("record", collection, pages_of()))
+        for results in stream:
+            page, srcs = pending.popleft()
             if stop is not None and stop.is_set():
+                stream.close()                 # what the pool still holds is cancelled
                 log(f"[pack build] stop requested — {slice_name}: {len(buf)} buffered records "
                     f"discarded, resumes at shard {next_n}")
                 return written, n_records, n_chunks, n_skipped, True
-            page = rows[page_start:page_start + page_size]
-            srcs = []
-            for prow in page:
-                src = con_src.execute(
-                    "SELECT uid, native_id, path, lang FROM documents WHERE uid=?",
-                    (prow["uid"],)).fetchone()
-                srcs.append(dict(src) if src is not None else None)
-            computed = iter(_held_values(collection, con_build, held, [s for s in srcs if s is not None])
-                            if held is not None else
-                            parallel.compute("record", collection, [s for s in srcs if s is not None]))
+            computed = iter(results)
             for prow, src in zip(page, srcs):
                 done_rows += 1
                 if src is None:
@@ -628,6 +642,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                     if stop is not None and stop.is_set():
                         # the unit is a shard: what the page still holds is
                         # recomputed on resume
+                        stream.close()
                         log(f"[pack build] stop requested — {slice_name}: resumes at shard {next_n}")
                         return written, n_records, n_chunks, n_skipped, True
         close_shard(last_row)
