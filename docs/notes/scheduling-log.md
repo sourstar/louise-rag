@@ -1010,5 +1010,14 @@ part entries (`chunks` / `records`) before and after, per rule 3.
 gets a whole cpu, the timeouts go); step 2 keeps the 3 children fed — together
 ~1.3 → ~3.5–4 cpus, 2.5–3× on the remaining ~61 M records.
 
-**After:** (to fill) per step: cpu % over 96 s, rec/s and `chunks/doc` over
-an hour of the same language, the "[parse pool]" lines.
+**The before numbers were contended** (München, 18:40Z): the profile and the
+hour before it ran while the wikidata pack's version-3 upgrade held 6–7 of
+the 12 cores (17:13–18:35Z): 108.5 rec/s, 252 chunks/s, 2.32 chunks/doc.
+Right after it ended (18:36Z, 208 s, 51 parts): 479 rec/s, 2,361 chunks/s,
+4.93 chunks/doc, docker stats 100–418 %, with stretches at exactly ~100 %
+(one core: the page barrier). So the BEFORE is a clean hour of en,
+18:40–19:40Z, nothing else heavy; then step 1 (19:40–20:40, PARSE_PROCESSES=3),
+then step 2 (a833c1e, 20:45–21:45), all normalised by chunks.
+
+**After:** (to fill) per step: cpu % over 96 s, rec/s, chunks/s and
+`chunks/doc` over the hour, the "[parse pool]" lines.

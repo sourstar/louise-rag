@@ -71,6 +71,25 @@ the map is part of what the collection is.
 
 ## 5. The design
 
+**Revised 2026-10-24 evening, on the node's first report (München's
+review, map `f79007bd…`, 75,896,183 records):** `other` was the largest
+family (21.5 M, none of its classes listed); church buildings sat in
+`place` (geographical feature nearer than built structure); UK and Irish
+statutory instruments, acts of parliament and "events in a year" sat in
+`internal`; `heritage` was every built structure (street 726 k, house
+242 k, gas station 64 k). So: `heritage` is monuments, archaeological and
+heritage sites and the P1435-designated, and a new `built` family holds
+the built structures and architectural elements; `place`'s roots are
+human settlement, administrative territorial entity, landform, body of
+water and protected area (no longer "geographical feature"); `internal`
+is a FALLBACK — its roots take only classes no other root reaches; the
+precedence is scholarly, heritage, built, event, person, place,
+organization, work, taxon, internal, property, lexeme, other (families.py).
+The report now lists `other`'s top 50 classes and PROBES — city,
+municipality, comunes and communes, church, cathedral, castle, museum,
+street, legislation… with the family the map gives each. The table below
+is the first version, kept for the record.
+
 **Families, in precedence order** (an entity in several takes the first):
 
 | family | an entity is in it when | measured (dump 20261012) |

@@ -758,11 +758,16 @@ def _write_report(dump: Path, d: Path, con: sqlite3.Connection, fmap: families.F
             if got:
                 return got
         return None
+    # `walked_entities`: entities decided by a class newer than the map,
+    # placed by this dump's links — 0 on the map's own dump, by definition
     report = {"map": fmap.sha256, "map_dump": fmap.dump, "dump": dump.name, "walked_entities": walked_n,
               "families": [{"family": f, "records": records.get(code, 0), "pruned": pruned_n.get(code, 0),
                             "roots": [[q, label(q)] for q in fmap.roots.get(f, ())],
-                            "top_classes": [[q, label(q), n] for q, n in classes.get(code, Counter()).most_common(25)]}
-                           for code, f in enumerate(fmap.families, 1)]}
+                            "top_classes": [[q, label(q), n] for q, n in classes.get(code, Counter()).most_common(
+                                50 if code == fmap.other else 25)]}
+                           for code, f in enumerate(fmap.families, 1)],
+              # well-known classes and the family the map gives them (families.PROBES)
+              "probes": [[q, label(q), fmap.name(fmap.code_of_class(q))] for q in families.PROBES]}
     tmp = report_path(d, fmap.sha256).with_suffix(".tmp")
     tmp.write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, report_path(d, fmap.sha256))
@@ -1008,10 +1013,11 @@ def creation_map(dump: Path) -> bytes:
 
 
 def _code_rules(raw: bytes) -> bool:
-    """A map written with the code's own family list and roots."""
+    """A map written with the code's own family list, roots and fallback."""
     m = json.loads(raw)
-    return m.get("families") == list(families.FAMILIES) and m.get("roots") == {
-        f: sorted(int(r) for r in rs) for f, rs in families.ROOTS.items()}
+    return (m.get("families") == list(families.FAMILIES)
+            and m.get("roots") == {f: sorted(int(r) for r in rs) for f, rs in families.ROOTS.items()}
+            and m.get("fallback", []) == sorted(families.FALLBACK))
 
 
 _codes_views: dict[tuple[str, str], Any] = {}

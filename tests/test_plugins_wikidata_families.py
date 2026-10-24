@@ -47,15 +47,20 @@ def test_a_class_takes_its_nearest_root_and_a_tie_goes_to_the_first_family():
     child, parent = zip(*[
         (100, 486972),               # municipality → human settlement (1 step) …
         (100, 200), (200, 43229),    # … and → local government → organization (2): a place
-        (300, 811979), (300, 43229),  # one step to built structure and to organization: heritage, first
-        (400, 401), (401, 400), (401, 618123),   # a P279 cycle under geographical feature: settled once
+        (300, 811979), (300, 43229),  # one step to built structure and to organization: built, first
+        (400, 401), (401, 400), (401, 271669),   # a P279 cycle under landform: settled once
         (500, 13442814), (13442814, 17537576),  # under scholarly article, itself a root under creative work
+        # a legal act one step under Wikimedia internal item and three under
+        # creative work (the node's first map, 2026-10-24): internal is a
+        # FALLBACK, so the work wins; a category reaches nothing else
+        (600, 17442446), (600, 700), (700, 800), (800, 17537576), (601, 17442446),
     ])
     got = families.nearest_roots(child, parent)
     code = {v: k for k, v in families.CODE.items()}
-    assert code[got[100]] == "place" and code[got[300]] == "heritage"
+    assert code[got[100]] == "place" and code[got[300]] == "built"
     assert code[got[400]] == code[got[401]] == "place"
     assert code[got[13442814]] == code[got[500]] == "scholarly", "a root is its own family's, at distance 0"
+    assert code[got[600]] == "work" and code[got[601]] == "internal"
     assert code[got[5]] == "person" and 999 not in got
 
 
@@ -76,7 +81,7 @@ def test_an_entity_s_family_from_its_own_statements():
     raw = families.build_map([515, 41176], [486972, 811979], max_item=1000, dump="d")
     fmap = families.load_map(raw)
     assert families.family_code(_item(1, "Rome", P31=[515]), fmap) == families.CODE["place"]
-    assert families.family_code(_item(2, "Castle town", P31=[515, 41176]), fmap) == families.CODE["heritage"], \
+    assert families.family_code(_item(2, "Castle town", P31=[515, 41176]), fmap) == families.CODE["built"], \
         "an entity in two families takes the first"
     deprecated = _item(3, "Was a building", P31=[_st("P31", 41176, rank="deprecated"), 515])
     assert families.family_code(deprecated, fmap) == families.CODE["place"], "a deprecated P31 is not read"
@@ -134,16 +139,20 @@ def test_the_pack_builds_the_class_tree_the_map_and_every_entity_s_code(tmp_path
     raw = pack.creation_map(dump)
     assert meta["families_map"] == "sha256:" + hashlib.sha256(raw).hexdigest()
     fmap = families.load_map(raw)
-    assert fmap.classes[515] == families.CODE["place"] and fmap.classes[2354973] == families.CODE["heritage"]
+    assert fmap.classes[515] == families.CODE["place"] and fmap.classes[2354973] == families.CODE["built"]
     ids = [json.loads(l)["id"] for l in entity_lines() + [_line(o) for o in CLASSES]]
     got = {eid: families.FAMILIES[pack.family_code_at(dump, fmap.sha256, i) - 1] for i, eid in enumerate(ids)}
-    assert got["Q42"] == "person" and got["Q3331"] == "heritage" and got["P31"] == "property"
+    assert got["Q42"] == "person" and got["Q3331"] == "built" and got["P31"] == "property"
     assert got["Q33010486"] == "scholarly", "the pruned article has its code too: the class tree is the dump's"
     assert got["Q600"] == "place" and got["Q601"] == "heritage" and got["Q43229"] == "other"
     report = json.loads(pack.report_path(pack.pack_dir(dump), fmap.sha256).read_text())
     by = {f["family"]: f for f in report["families"]}
     assert by["scholarly"]["records"] == 0 and by["scholarly"]["pruned"] == 1
     assert by["place"]["top_classes"] == [[515, "city", 1]]
+    assert [777, None, 1] not in by["other"]["top_classes"], "Old oak is heritage, by its designation"
+    assert by["other"]["top_classes"], "what fills `other` is listed (the first report showed nothing)"
+    probes = {q: fam for q, _label, fam in report["probes"]}
+    assert probes[515] == "place" and probes[4167836] == "other" and len(probes) == len(families.PROBES)
     assert any("families under map" in s for s in said)
     assert pack.is_complete(dump, ("en",)) and pack.ready(dump)
 
@@ -217,7 +226,7 @@ def test_codes_under_another_map_walk_this_dump_s_newer_classes(tmp_path):
     ids = [json.loads(l)["id"] for l in entity_lines() + [_line(o) for o in CLASSES]]
     got = {eid: families.FAMILIES[pack.family_code_at(dump, fmap.sha256, i) - 1] for i, eid in enumerate(ids)}
     assert got["Q600"] == "other", "city was under no root of the pinned map: other, whatever this dump says"
-    assert got["Q3331"] == "heritage", "road tunnel is newer than the map: walked to built structure"
+    assert got["Q3331"] == "built", "road tunnel is newer than the map: walked to built structure"
 
 
 # ---- the slicing, the SHARD member, the records check ---------------------------------------
@@ -355,7 +364,7 @@ def test_the_records_build_slices_a_family_collection_by_its_codex_s_map(isolate
         con_src.close()
         con_build.close()
     assert got["wikidata:42"] == "family=person/range=0"
-    assert got["wikidata:3331"] == "family=heritage/range=0"
+    assert got["wikidata:3331"] == "family=built/range=0"
     assert got["wikidata:600"] == "family=place/range=0" and got["wikidata:601"] == "family=heritage/range=0"
     assert got["wikidata:1000000031"] == "family=property/range=0"
     assert "wikidata:33010486" not in got, "the scholarly article is pruned: not a record (option 3, later)"
@@ -420,7 +429,7 @@ def test_a_family_added_later_leaves_every_pinned_map_readable_as_it_was(monkeyp
     monkeypatch.setattr(families, "FAMILIES", added)
     monkeypatch.setattr(families, "CODE", {f: i + 1 for i, f in enumerate(added)})
     fmap = families.load_map(old)
-    assert fmap.families[4] == "person" and len(fmap.families) == 12, "read by its own list"
+    assert fmap.families[4] == "person" and len(fmap.families) == len(added) - 1, "read by its own list"
     assert families.slice_name(families.family_code(bologna, fmap), "Q600", fmap.families) == before
     new = families.load_map(families.build_map([515, 7000], [486972, 2095], max_item=9000, dump="d2",
                                                roots={**families.ROOTS, "food": (2095,)}, families=added))

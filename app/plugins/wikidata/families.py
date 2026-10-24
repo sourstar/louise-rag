@@ -41,28 +41,48 @@ from typing import Iterable, Mapping, Optional
 #: the list a NEW map is written with; every map carries its own list and is
 #: read by it, so a family added here later leaves every pinned map — and the
 #: collection it slices — readable as it was (wikidata-family-slices.md §7)
-FAMILIES: tuple[str, ...] = ("scholarly", "internal", "heritage", "event", "person", "organization", "place",
-                             "work", "taxon", "property", "lexeme", "other")
+FAMILIES: tuple[str, ...] = ("scholarly", "heritage", "built", "event", "person", "place", "organization",
+                             "work", "taxon", "internal", "property", "lexeme", "other")
 CODE: dict[str, int] = {f: i + 1 for i, f in enumerate(FAMILIES)}
 OTHER = CODE["other"]
-#: the classes whose subclasses (P279, any depth) make a family, by number:
-#: scholarly article; Wikimedia internal item; built structure, monument,
-#: archaeological site, architectural element; planned event, military
-#: operation, war, calamity, massacre, explosion, geographically localized
-#: event, severe weather, demonstration or protest; human; organization;
-#: human settlement, administrative territorial entity, geographical feature;
-#: creative work; taxon (wikidata-family-slices.md §5)
+#: the classes whose subclasses (P279, any depth) make a family, by number
+#: (wikidata-family-slices.md §5, revised 2026-10-24 on the node's first
+#: report, München's review):
+#: scholarly article; HERITAGE — monument, archaeological site, heritage
+#: site (and, per entity, a heritage designation); BUILT — built structure,
+#: architectural element (the first map put every street, house and gas
+#: station in "heritage"); planned event, military operation, war, calamity,
+#: massacre, explosion, geographically localized event, severe weather,
+#: demonstration or protest; human; PLACE — human settlement, administrative
+#: territorial entity, landform, body of water, protected area ("geographical
+#: feature" took church buildings nearer than built structure did);
+#: organization; creative work; taxon; Wikimedia internal item
 ROOTS: dict[str, tuple[int, ...]] = {
     "scholarly": (13442814,),
-    "internal": (17442446,),
-    "heritage": (811979, 4989906, 839954, 391414),
+    "heritage": (4989906, 839954, 358),
+    "built": (811979, 391414),
     "event": (1656682, 645883, 198, 1689296, 3199915, 179057, 123349687, 741507, 130260549),
     "person": (5,),
+    "place": (486972, 56061, 271669, 15324, 473972),
     "organization": (43229,),
-    "place": (486972, 56061, 618123),
     "work": (17537576,),
     "taxon": (16521,),
+    "internal": (17442446,),
 }
+#: FALLBACK families take only the classes no other root reaches: the first
+#: map filed UK Statutory Instruments, Irish SIs and acts of parliament under
+#: Wikimedia internal item (a polluted path nearer than creative work's)
+FALLBACK: tuple[str, ...] = ("internal",)
+#: well-known classes the report places, by number, so a map is read before
+#: `create` without guessing from top-25 lists: city, municipality, comune of
+#: Italy, commune of France, municipality of Germany, church building,
+#: cathedral, castle, museum, street, cemetery, mountain, river, lake,
+#: island, national park, UK Statutory Instrument, act of parliament,
+#: painting, film, school, hotel, university, business, battle, war, public
+#: election, supernova, cell line, Wikimedia category
+PROBES: tuple[int, ...] = (515, 15284, 747074, 484170, 262166, 16970, 2977, 23413, 33506, 79007, 39614,
+                           8502, 4022, 23397, 23442, 46169, 7604686, 1520223, 3305213, 11424, 3914, 27686,
+                           3918, 4830453, 178561, 198, 40231, 3937, 21014462, 4167836)
 #: a statement that makes an entity heritage, whatever it is an instance of
 HERITAGE_DESIGNATION = "P1435"
 #: the id range a slice holds under its family: the entity's number ÷ 10⁷
@@ -95,45 +115,53 @@ def number(entity_id: object) -> Optional[int]:
 
 def nearest_roots(child: Iterable[int], parent: Iterable[int],
                   roots: Mapping[str, Iterable[int]] = ROOTS,
-                  families: tuple[str, ...] = FAMILIES) -> dict[int, int]:
+                  families: tuple[str, ...] = FAMILIES,
+                  fallback: Iterable[str] = FALLBACK) -> dict[int, int]:
     """Every class under a root → its family's code in `families`: the
     nearest root by P279 steps, a tie to the family first in precedence —
     level by level from all roots at once, so a cycle or a class reached
-    twice is settled where it is first reached."""
+    twice is settled where it is first reached. The FALLBACK families' roots
+    are walked after, and take only what no other root reached."""
     code_of = {f: i + 1 for i, f in enumerate(families)}
     subs: dict[int, list[int]] = {}
     for c, p in zip(child, parent):
         subs.setdefault(p, []).append(c)
     assigned: dict[int, int] = {}
-    frontier: dict[int, int] = {}
-    for fam, rs in roots.items():
-        for r in rs:
-            if r not in frontier or code_of[fam] < frontier[r]:
-                frontier[r] = code_of[fam]
-    while frontier:
-        assigned.update(frontier)
-        nxt: dict[int, int] = {}
-        for cls, code in frontier.items():
-            for sub in subs.get(cls, ()):
-                if sub not in assigned and (sub not in nxt or code < nxt[sub]):
-                    nxt[sub] = code
-        frontier = nxt
+    late = set(fallback)
+    for tier in ({f: rs for f, rs in roots.items() if f not in late},
+                 {f: rs for f, rs in roots.items() if f in late}):
+        frontier: dict[int, int] = {}
+        for fam, rs in tier.items():
+            for r in rs:
+                if r not in assigned and (r not in frontier or code_of[fam] < frontier[r]):
+                    frontier[r] = code_of[fam]
+        while frontier:
+            assigned.update(frontier)
+            nxt: dict[int, int] = {}
+            for cls, code in frontier.items():
+                for sub in subs.get(cls, ()):
+                    if sub not in assigned and (sub not in nxt or code < nxt[sub]):
+                        nxt[sub] = code
+            frontier = nxt
     return assigned
 
 
 def build_map(child: Iterable[int], parent: Iterable[int], *, max_item: int, dump: str,
-              roots: Mapping[str, Iterable[int]] = ROOTS, families: tuple[str, ...] = FAMILIES) -> bytes:
+              roots: Mapping[str, Iterable[int]] = ROOTS, families: tuple[str, ...] = FAMILIES,
+              fallback: Iterable[str] = FALLBACK) -> bytes:
     """The map of a creation dump, canonical bytes: its P279 edges (item
     numbers, child → parent), its largest item number, and the family list
     in precedence order it is read by."""
     _check_families(families, roots)
-    codes = nearest_roots(child, parent, roots, families)
+    fallback = [f for f in fallback if f in roots]
+    codes = nearest_roots(child, parent, roots, families, fallback)
     classes: dict[str, list[int]] = {}
     for cls, code in codes.items():
         classes.setdefault(families[code - 1], []).append(cls)
     return canonical({
         "kind": KIND, "version": VERSION, "dump": dump, "max_item": int(max_item),
         "families": list(families), "roots": {f: sorted(int(r) for r in rs) for f, rs in roots.items()},
+        "fallback": sorted(fallback),
         "heritage_designation": HERITAGE_DESIGNATION, "range": RANGE,
         "classes": {f: sorted(v) for f, v in sorted(classes.items())},
     })
@@ -271,15 +299,19 @@ def family_and_class(obj: dict, fmap: FamilyMap,
     if eid[:1] == "L":
         return fmap.code("lexeme"), None
     claims = obj.get("claims") if isinstance(obj.get("claims"), dict) else {}
-    best, by = fmap.other, None
+    best, by, first = fmap.other, None, None
     for q in item_values(claims.get("P31")):
+        if first is None:
+            first = q
         code = fmap.code_of_class(q, walked)
         if code < best:
             best, by = code, q
     if "heritage" in fmap.families and best > fmap.code("heritage") \
             and _designated(claims.get(HERITAGE_DESIGNATION)):
         return fmap.code("heritage"), None
-    return best, by
+    # `other`: the first class it is an instance of, so the report shows what
+    # fills it (the first report listed none for 21.5 M records)
+    return best, (by if by is not None else first)
 
 
 def family_code(obj: dict, fmap: FamilyMap, walked: Mapping[int, int] | None = None) -> int:
