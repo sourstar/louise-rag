@@ -1019,5 +1019,29 @@ Right after it ended (18:36 CEST, 208 s, 51 parts): 479 rec/s, 2,361 chunks/s,
 18:40–19:40 CEST, nothing else heavy; then step 1 (19:40–20:40, PARSE_PROCESSES=3),
 then step 2 (a833c1e, 20:45–21:45), all normalised by chunks.
 
-**After:** (to fill) per step: cpu % over 96 s, rec/s, chunks/s and
-`chunks/doc` over the hour, the "[parse pool]" lines.
+**BASELINE, clean (18:40–19:40 CEST; deployed image, PARSE_PROCESSES 11,
+nothing else heavy).** docker stats ×12: mean 232 % (100–391; three readings
+at exactly ~100 %). 382 parts, 759,764 records, 2,888,004 chunks, 3.80
+chunks/doc, 230.7 rec/s, 877 chunks/s; no "[parse pool]" line. By slice:
+en/28M 1.03 chunks/doc, 161 rec/s; en/29M 1.93, 233 rec/s; en/2M's first
+236 k records 8.63, 357 rec/s, 3,080 chunks/s. CPU per chunk: 232 % × 3,600 s
+/ 2,888,004 = 2.9 ms.
+
+**STEP 1 (19:41–20:41 CEST; same image, PARSE_PROCESSES=3).** Mean 221 %
+(101–309). 127 parts, all en/2M's next 252 k records, 689,593 chunks, 2.74
+chunks/doc, 76.6 rec/s, 210 chunks/s; no "[parse pool]" line. CPU per chunk
+11.5 ms — FOUR times the baseline's, on the same slice: the cost follows the
+wikitext (templates, tables, refs), not the chunks, so rule 3's unit does
+not normalise this build and the two hours are not comparable on
+throughput. What IS comparable is the utilisation: 3 children held the same
+~2.2 cpus as 11, and neither hour timed out — once the node was quiet the
+oversubscription was not what capped it (it was under contention, before).
+The ~100 % phases (one core: the page barrier, the serial parent) recur in
+both: step 2's target.
+
+**The fair A/B (agreed with München):** the same page range built twice in a
+scratch build dir, the deployed tree and a833c1e, CPU only — wall time,
+CPU-s per record and the utilisation on IDENTICAL records. That, not an hour
+of a different stretch, decides step 2.
+
+**STEP 2 (a833c1e, 20:41–21:42 CEST):** (to fill) utilisation; then the A/B.
