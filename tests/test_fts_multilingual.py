@@ -3,12 +3,23 @@ language, headed by its code) is indexed section by section in each
 language's group (fts.by_section_language). Found on the node 2026-10-24:
 wikidata's 75.9 M records sat in `other`, unstemmed, and every search
 limited to a language skipped them."""
+from types import SimpleNamespace
+
+import pytest
+
 from app import collections as collections_mod, fts
 
 
-def _collection(tmp_path):
+@pytest.fixture(autouse=True)
+def two_languages(monkeypatch):
+    """A wikidata-like plugin whose records carry an English and an Italian
+    section (the node's wikidata declares `("en",)`)."""
+    monkeypatch.setitem(collections_mod.PLUGIN_REGISTRY, "wd-two", SimpleNamespace(languages=("en", "it")))
+
+
+def _collection(tmp_path, plugin="wd-two"):
     return collections_mod.Collection(
-        name="w", plugin="wikidata", profile=None, embed_mode_default=None,
+        name="w", plugin=plugin, profile=None, embed_mode_default=None,
         corpus_dir=tmp_path / "corpus", manifest_path=tmp_path / "m.db",
         fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance")
 
@@ -29,12 +40,24 @@ def test_each_section_goes_to_its_language_and_is_stemmed_there(tmp_path):
     fts.close_all()
 
 
-def test_a_heading_that_names_no_language_keeps_the_record_in_other(tmp_path):
-    c = _collection(tmp_path)
-    fts.index_book("mul", 7, [{"id": "pubmed:7:0:1", "chapter": "Abstract", "text": "a multilingual abstract"}], c)
-    assert fts.existing_groups(c) == ["other"]
-    assert fts.search("other", "multilingual", limit=5, collection=c)[0]["lang"] == "mul"
-    fts.close_all()
+def test_only_a_language_the_plugin_declares_routes_a_section(tmp_path):
+    """Two or three letters are not a language: pubmed's structured abstracts
+    head a section "AIM", gutenberg's chapters "II" — kept `mul` in `other`,
+    as before, in a plugin that declares languages and in one that does not."""
+    for plugin in ("wd-two", "pubmed"):
+        c = _collection(tmp_path / plugin, plugin=plugin)
+        fts.index_book("mul", 7, [{"id": "x:7:0:1", "chapter": "AIM", "text": "a multilingual aim"},
+                                  {"id": "x:7:1:1", "chapter": "II", "text": "a second chapter"},
+                                  {"id": "x:7:2:1", "chapter": "Abstract", "text": "an abstract"}], c)
+        assert fts.existing_groups(c) == ["other"], plugin
+        assert {h["lang"] for h in fts.search("other", "multilingual chapter abstract", limit=5, collection=c)} \
+            == {"mul"}, plugin
+        fts.close_all()
+
+
+def test_the_node_s_wikidata_declares_english_alone():
+    assert fts.section_languages(SimpleNamespace(plugin="wikidata")) == ("en",)
+    assert fts.section_languages(SimpleNamespace(plugin="gutenberg")) == ()
 
 
 def test_re_indexing_is_idempotent_and_a_delete_removes_every_part(tmp_path):
@@ -49,15 +72,15 @@ def test_re_indexing_is_idempotent_and_a_delete_removes_every_part(tmp_path):
 
 
 def test_every_other_record_is_indexed_as_before():
-    assert fts.by_section_language("en", ENTITY) == [("en", ENTITY)]
-    assert fts.by_section_language("und", ENTITY) == [("und", ENTITY)]
+    assert fts.by_section_language("en", ENTITY, ("en", "it")) == [("en", ENTITY)]
+    assert fts.by_section_language("und", ENTITY, ("en", "it")) == [("und", ENTITY)]
+    assert fts.by_section_language("mul", ENTITY, ()) == [("mul", ENTITY)], "no declared languages: as before"
 
 
 def test_a_limited_search_keeps_multilingual_records_in_the_legs_that_filter_by_record(monkeypatch):
     """The catalogue and vector legs filter by the RECORD's language: a `mul`
     record is kept when its plugin writes one of the asked languages
     (wikidata: English), and only then."""
-    from types import SimpleNamespace
     from app import retrieval
     monkeypatch.setitem(collections_mod.PLUGIN_REGISTRY, "wd-test", SimpleNamespace(languages=("en",)))
     wd = SimpleNamespace(plugin="wd-test")

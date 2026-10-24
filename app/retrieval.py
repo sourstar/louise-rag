@@ -770,9 +770,7 @@ def limited_langs(collection, only) -> tuple[str, ...]:
     only = tuple(only or ())
     if not only:
         return only
-    plugin = collections_mod.PLUGIN_REGISTRY.get(getattr(collection, "plugin", None))
-    written_in = getattr(plugin, "languages", ()) or ()
-    if fts.MULTILINGUAL not in only and set(only) & set(written_in):
+    if fts.MULTILINGUAL not in only and set(only) & set(fts.section_languages(collection)):
         return only + (fts.MULTILINGUAL,)
     return only
 #: the legacy prompt's "[catalog matches]" block reads at most this many

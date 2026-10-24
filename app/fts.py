@@ -324,7 +324,7 @@ def index_books(entries, collection=None) -> None:
     for entry in entries:
         lang, book_id, chunks = entry[0], entry[1], entry[2]
         extra = entry[3] if len(entry) > 3 else None     # app/validity.py's columns
-        for part_lang, part in by_section_language(lang, chunks):
+        for part_lang, part in by_section_language(lang, chunks, section_languages(collection)):
             by_group.setdefault(group_for(part_lang), []).append((part_lang, book_id, part, extra))
     for group, items in by_group.items():
         idx = get_index(group, collection)
@@ -346,27 +346,44 @@ def index_books(entries, collection=None) -> None:
 #: section per language, its heading the language's code (09 §9.5;
 #: wikidata-build-plan.md "What is a record")
 MULTILINGUAL = "mul"
-_LANG_CODE = re.compile(r"^[a-z]{2,3}$")
 
 
-def by_section_language(lang: str, chunks: list[dict]) -> list[tuple[str, list[dict]]]:
+def section_languages(collection) -> tuple[str, ...]:
+    """The languages a collection's `mul` records are written in, one section
+    each, headed by the code: its plugin's declared `languages` (wikidata:
+    `("en",)`; the Codex's list, fixed for the collection's life, 02 §2.7).
+    `()` for a plugin that declares none — every other one today. The ONE
+    source for the text leg here and for the legs that filter by the record's
+    language (`retrieval.limited_langs`)."""
+    plugin = collections_mod.PLUGIN_REGISTRY.get(getattr(collection, "plugin", None))
+    return tuple(getattr(plugin, "languages", ()) or ())
+
+
+def by_section_language(lang: str, chunks: list[dict],
+                        languages: tuple[str, ...] = ()) -> list[tuple[str, list[dict]]]:
     """A document's chunks as (language, chunks) by the index group they go
     to. A `mul` record's sections are each written in ONE language, named by
     its heading: each is indexed in that language's group, stemmed as that
     language, with that language stored — so "in English" finds a wikidata
     entity's English text, and the English stemmer reads it (2026-10-24: all
     75.9 M of the node's sat in `other`, unstemmed, and every language-limited
-    search skipped them). A heading that is no language code keeps the
-    record's `mul` (pubmed's multi-language articles, headed "Abstract").
-    Every other record: one part, its own language, as before. A record's
-    section languages are its Codex's list, fixed for the collection's life
-    (02 §2.7), so a re-index never leaves a part in a group it has left."""
-    if (lang or "") != MULTILINGUAL:
+    search skipped them).
+
+    ONLY A HEADING THE PLUGIN DECLARES (`languages`, `section_languages`)
+    names a language. The first form took any two or three letters for a
+    code, and a `mul` record headed otherwise would have been filed under a
+    language that is not one: pubmed's structured abstracts carry "AIM",
+    gutenberg's chapters "II" and "IV" (caught 2026-10-24, before any node
+    ran it). Any other heading keeps the record's `mul`, in `other`, as before.
+    Every other record: one part, its own language, as before. The list is
+    fixed for the collection's life, so a re-index never leaves a part in a
+    group it has left."""
+    if (lang or "") != MULTILINGUAL or not languages:
         return [(lang, chunks)]
     parts: dict[str, list[dict]] = {}
     for c in chunks:
-        head = (c.get("chapter") or "").strip().lower()
-        parts.setdefault(head if _LANG_CODE.match(head) else MULTILINGUAL, []).append(c)
+        head = (c.get("chapter") or "").strip()
+        parts.setdefault(head if head in languages else MULTILINGUAL, []).append(c)
     return list(parts.items()) or [(lang, chunks)]
 
 
@@ -376,12 +393,14 @@ def index_book(lang: str, book_id: int, chunks: list[dict], collection=None):
 
 def delete_book(lang: str, book_id: int, collection=None):
     """A `mul` record's sections may be in several groups
-    (`by_section_language`): it is deleted from every group held."""
+    (`by_section_language`): it is deleted from each group its sections can
+    be in, and from `other`."""
     base = (collection.fts_dir if collection is not None
             else collections_mod.default_collection().fts_dir)
-    groups = (existing_groups(collection) if (lang or "") == MULTILINGUAL and collection is not None
-              else [group_for(lang)])
-    for group in groups or [group_for(lang)]:
+    groups = [group_for(lang)]
+    if (lang or "") == MULTILINGUAL:
+        groups = list(dict.fromkeys([group_for(l) for l in section_languages(collection)] + groups))
+    for group in groups:
         idx = get_index(group, collection)
         writer, lock = _writer((str(base), group), idx)
         with lock:
