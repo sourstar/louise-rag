@@ -7,6 +7,8 @@ that Louise offers. I would like to build knowledge base pipelines to group
 collections/annotations, and fuse the results with rerankers and rrf."
 Nothing is built. Three decisions are in §6.*
 
+**FUTURE (operator, 2026-10-24): "Keep the pipelines as a future implementation. Before we must conclude ongoing migrations and measurements."** Decided so far: D1 by rank through the pertinence gate (spec §P3a); D3 after it works here. Open: D2 (LocalAI model YAML with a `pipeline.retrieval` block, recommended, or a Louise TOML file). Nothing is built until the migrations and measurements in progress are concluded.
+
 **WAITING (operator, 2026-10-22): "Write the specs but wait for the end of the current developments. Then we summarize what's planned and we decide. Some decisions need time to decant."** Specs: [`kb-pipelines-spec.md`](kb-pipelines-spec.md), [`kb-protocol-extensions.md`](kb-protocol-extensions.md).
 
 ## 1. Where things stand
