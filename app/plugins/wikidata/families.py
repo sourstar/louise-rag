@@ -37,9 +37,10 @@ from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Optional
 
 #: in PRECEDENCE order — an entity in several takes the first; the code of a
-#: family is its place here plus one (0: not computed). Fixed for the life of
-#: every collection whose map names them: a family added is a new map, and a
-#: new map is a new collection (wikidata-family-slices.md §7)
+#: family is its place in the MAP's list plus one (0: not computed). This is
+#: the list a NEW map is written with; every map carries its own list and is
+#: read by it, so a family added here later leaves every pinned map — and the
+#: collection it slices — readable as it was (wikidata-family-slices.md §7)
 FAMILIES: tuple[str, ...] = ("scholarly", "internal", "heritage", "event", "person", "organization", "place",
                              "work", "taxon", "property", "lexeme", "other")
 CODE: dict[str, int] = {f: i + 1 for i, f in enumerate(FAMILIES)}
@@ -66,6 +67,8 @@ ROOTS: dict[str, tuple[int, ...]] = {
 HERITAGE_DESIGNATION = "P1435"
 #: the id range a slice holds under its family: the entity's number ÷ 10⁷
 RANGE = 10_000_000
+#: the families decided by an entity's kind, not by its classes: every map has them
+BY_KIND = ("property", "lexeme", "other")
 KIND = "louise-wikidata-families"
 VERSION = 1
 
@@ -91,11 +94,13 @@ def number(entity_id: object) -> Optional[int]:
 # ---- the map ---------------------------------------------------------------------------------
 
 def nearest_roots(child: Iterable[int], parent: Iterable[int],
-                  roots: Mapping[str, Iterable[int]] = ROOTS) -> dict[int, int]:
-    """Every class under a root → its family's code: the nearest root by P279
-    steps, a tie to the family first in precedence — level by level from all
-    roots at once, so a cycle or a class reached twice is settled where it
-    is first reached."""
+                  roots: Mapping[str, Iterable[int]] = ROOTS,
+                  families: tuple[str, ...] = FAMILIES) -> dict[int, int]:
+    """Every class under a root → its family's code in `families`: the
+    nearest root by P279 steps, a tie to the family first in precedence —
+    level by level from all roots at once, so a cycle or a class reached
+    twice is settled where it is first reached."""
+    code_of = {f: i + 1 for i, f in enumerate(families)}
     subs: dict[int, list[int]] = {}
     for c, p in zip(child, parent):
         subs.setdefault(p, []).append(c)
@@ -103,8 +108,8 @@ def nearest_roots(child: Iterable[int], parent: Iterable[int],
     frontier: dict[int, int] = {}
     for fam, rs in roots.items():
         for r in rs:
-            if r not in frontier or CODE[fam] < frontier[r]:
-                frontier[r] = CODE[fam]
+            if r not in frontier or code_of[fam] < frontier[r]:
+                frontier[r] = code_of[fam]
     while frontier:
         assigned.update(frontier)
         nxt: dict[int, int] = {}
@@ -117,43 +122,68 @@ def nearest_roots(child: Iterable[int], parent: Iterable[int],
 
 
 def build_map(child: Iterable[int], parent: Iterable[int], *, max_item: int, dump: str,
-              roots: Mapping[str, Iterable[int]] = ROOTS) -> bytes:
+              roots: Mapping[str, Iterable[int]] = ROOTS, families: tuple[str, ...] = FAMILIES) -> bytes:
     """The map of a creation dump, canonical bytes: its P279 edges (item
-    numbers, child → parent) and its largest item number."""
-    codes = nearest_roots(child, parent, roots)
+    numbers, child → parent), its largest item number, and the family list
+    in precedence order it is read by."""
+    _check_families(families, roots)
+    codes = nearest_roots(child, parent, roots, families)
     classes: dict[str, list[int]] = {}
     for cls, code in codes.items():
-        classes.setdefault(FAMILIES[code - 1], []).append(cls)
+        classes.setdefault(families[code - 1], []).append(cls)
     return canonical({
         "kind": KIND, "version": VERSION, "dump": dump, "max_item": int(max_item),
-        "families": list(FAMILIES), "roots": {f: sorted(int(r) for r in rs) for f, rs in roots.items()},
+        "families": list(families), "roots": {f: sorted(int(r) for r in rs) for f, rs in roots.items()},
         "heritage_designation": HERITAGE_DESIGNATION, "range": RANGE,
         "classes": {f: sorted(v) for f, v in sorted(classes.items())},
     })
 
 
+def _check_families(families, roots) -> None:
+    if len(set(families)) != len(families) or not set(BY_KIND) <= set(families) or families[-1] != "other":
+        raise FamilyError(f"a family list names each family once, ends with `other` and holds "
+                          f"{', '.join(BY_KIND)}: {list(families)}")
+    if not set(roots) <= set(families) - set(BY_KIND):
+        raise FamilyError(f"roots for families not in the list: {sorted(set(roots) - set(families))}")
+
+
 @dataclass(frozen=True)
 class FamilyMap:
-    """A map, read: class number → code, and what identifies it."""
+    """A map, read: its own family list (precedence order) and roots, class
+    number → code in that list, and what identifies it."""
     raw: bytes
     sha256: str
     dump: str
     max_item: int
+    families: tuple[str, ...]
+    roots: dict[str, tuple[int, ...]] = field(repr=False)
     classes: dict[int, int] = field(repr=False)
+
+    def code(self, family: str) -> int:
+        return self.families.index(family) + 1
+
+    @property
+    def other(self) -> int:
+        return len(self.families)                     # `other` is last, always
+
+    def name(self, code: int) -> str:
+        if not 1 <= code <= len(self.families):
+            raise FamilyError(f"family code {code} is not computed")
+        return self.families[code - 1]
 
     def code_of_class(self, q: int, walked: Mapping[int, int] | None = None) -> int:
         got = self.classes.get(q)
         if got is not None:
             return got
         if q > self.max_item and walked:
-            return walked.get(q, OTHER)
-        return OTHER
+            return walked.get(q, self.other)
+        return self.other
 
 
 def load_map(raw: bytes) -> FamilyMap:
-    """A map's bytes → `FamilyMap`; refused unless they are canonical and
-    name this code's families in this order (a map of other families is
-    another collection's)."""
+    """A map's bytes → `FamilyMap`, read by its OWN family list (a map
+    written before a family was added reads as it was written); refused
+    unless canonical and well formed."""
     try:
         d = json.loads(raw)
     except ValueError as e:
@@ -162,14 +192,18 @@ def load_map(raw: bytes) -> FamilyMap:
         raise FamilyError(f"not a {KIND} version {VERSION} map")
     if canonical(d) != bytes(raw):
         raise FamilyError("the family map is not in canonical form (09 §9.1): its hash would not be its identity")
-    if d.get("families") != list(FAMILIES):
-        raise FamilyError(f"the map's families {d.get('families')} are not this code's {list(FAMILIES)}")
+    fams = tuple(d.get("families") or ())
+    roots = {str(f): tuple(int(r) for r in rs) for f, rs in (d.get("roots") or {}).items()}
+    _check_families(fams, roots)
+    code_of = {f: i + 1 for i, f in enumerate(fams)}
     classes: dict[int, int] = {}
     for fam, nums in (d.get("classes") or {}).items():
+        if fam not in code_of:
+            raise FamilyError(f"the map lists classes for {fam!r}, which its family list does not name")
         for q in nums:
-            classes[int(q)] = CODE[fam]
+            classes[int(q)] = code_of[fam]
     return FamilyMap(raw=bytes(raw), sha256="sha256:" + hashlib.sha256(raw).hexdigest(), dump=str(d["dump"]),
-                     max_item=int(d["max_item"]), classes=classes)
+                     max_item=int(d["max_item"]), families=fams, roots=roots, classes=classes)
 
 
 def walk(child: Iterable[int], parent: Iterable[int], fmap: FamilyMap) -> dict[int, int]:
@@ -184,8 +218,8 @@ def walk(child: Iterable[int], parent: Iterable[int], fmap: FamilyMap) -> dict[i
             ups.setdefault(c, []).append(p)
     out: dict[int, int] = {}
     for start in ups:
-        seen, level, found = {start}, [start], OTHER
-        while level and found == OTHER:
+        seen, level, found = {start}, [start], fmap.other
+        while level and found == fmap.other:
             nxt = []
             old = []
             for cls in level:
@@ -233,17 +267,18 @@ def family_and_class(obj: dict, fmap: FamilyMap,
     the class that decided it (None: its kind, its designation or nothing)."""
     eid = str(obj.get("id") or "")
     if eid[:1] == "P":
-        return CODE["property"], None
+        return fmap.code("property"), None
     if eid[:1] == "L":
-        return CODE["lexeme"], None
+        return fmap.code("lexeme"), None
     claims = obj.get("claims") if isinstance(obj.get("claims"), dict) else {}
-    best, by = OTHER, None
+    best, by = fmap.other, None
     for q in item_values(claims.get("P31")):
         code = fmap.code_of_class(q, walked)
         if code < best:
             best, by = code, q
-    if best > CODE["heritage"] and _designated(claims.get(HERITAGE_DESIGNATION)):
-        return CODE["heritage"], None
+    if "heritage" in fmap.families and best > fmap.code("heritage") \
+            and _designated(claims.get(HERITAGE_DESIGNATION)):
+        return fmap.code("heritage"), None
     return best, by
 
 
@@ -252,11 +287,11 @@ def family_code(obj: dict, fmap: FamilyMap, walked: Mapping[int, int] | None = N
     return family_and_class(obj, fmap, walked)[0]
 
 
-def slice_name(code: int, entity_id: str) -> str:
-    """`family=heritage/range=3` — the family, then the entity's number in
-    its kind ÷ 10⁷ (Q42 → 0, P31 → 0, L7 → 0), so parts stay even under a
-    family."""
-    if not 1 <= code <= len(FAMILIES):
+def slice_name(code: int, entity_id: str, families: tuple[str, ...] = FAMILIES) -> str:
+    """`family=heritage/range=3` — the family (by the MAP's list: pass
+    `fmap.families`), then the entity's number in its kind ÷ 10⁷ (Q42 → 0,
+    P31 → 0, L7 → 0), so parts stay even under a family."""
+    if not 1 <= code <= len(families):
         raise FamilyError(f"family code {code} is not computed")
     n = int(entity_id[1:]) if len(entity_id) > 1 and entity_id[1:].isdigit() else 0
-    return f"family={FAMILIES[code - 1]}/range={n // RANGE}"
+    return f"family={families[code - 1]}/range={n // RANGE}"

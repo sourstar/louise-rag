@@ -303,7 +303,7 @@ def _slice_unless_walked(fmap, record: dict) -> str | None:
     classes = list(families.item_values((x.get("claims") or {}).get("P31")))
     if any(q > fmap.max_item and q not in fmap.classes for q in classes):
         return None
-    return families.slice_name(families.family_code(x, fmap), str(x.get("id") or ""))
+    return families.slice_name(families.family_code(x, fmap), str(x.get("id") or ""), fmap.families)
 
 
 def check_records(ctx: Ctx) -> Outcome:

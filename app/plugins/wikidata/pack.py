@@ -760,15 +760,15 @@ def _write_report(dump: Path, d: Path, con: sqlite3.Connection, fmap: families.F
         return None
     report = {"map": fmap.sha256, "map_dump": fmap.dump, "dump": dump.name, "walked_entities": walked_n,
               "families": [{"family": f, "records": records.get(code, 0), "pruned": pruned_n.get(code, 0),
-                            "roots": [[q, label(q)] for q in families.ROOTS.get(f, ())],
+                            "roots": [[q, label(q)] for q in fmap.roots.get(f, ())],
                             "top_classes": [[q, label(q), n] for q, n in classes.get(code, Counter()).most_common(25)]}
-                           for f, code in families.CODE.items()]}
+                           for code, f in enumerate(fmap.families, 1)]}
     tmp = report_path(d, fmap.sha256).with_suffix(".tmp")
     tmp.write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, report_path(d, fmap.sha256))
     say(f"[wikidata] pack: {dump.name}: families under map {fmap.sha256[:23]}… — " + ", ".join(
         f"{f} {records.get(code, 0)}" + (f" (+{pruned_n[code]} pruned)" if pruned_n.get(code) else "")
-        for f, code in families.CODE.items()) + f"; report {report_path(d, fmap.sha256).name}")
+        for code, f in enumerate(fmap.families, 1)) + f"; report {report_path(d, fmap.sha256).name}")
 
 
 def _lines_pass(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Connection, *, what: str,

@@ -224,7 +224,8 @@ def slice_of(scheme: "SliceScheme", doc: CanonicalDoc, native_id: int, context: 
     if isinstance(context, FamilyContext):
         from ..plugins.wikidata import families
         x = doc.extra or {}
-        return families.slice_name(families.family_code(x, context.fmap, context.walked), str(x.get("id") or ""))
+        return families.slice_name(families.family_code(x, context.fmap, context.walked), str(x.get("id") or ""),
+                                   context.fmap.families)
     return scheme.slice_of(doc, native_id)
 
 
@@ -302,7 +303,7 @@ def slice_hint(plugin_name: str, row, context: FamilyContext | None = None) -> s
             code = pack.family_code_at(dump, context.fmap.sha256, index)
             if code is None:
                 return None
-            return families.slice_name(code, ids.entity_id_of(int(row["native_id"])))
+            return families.slice_name(code, ids.entity_id_of(int(row["native_id"])), context.fmap.families)
         if plugin_name == "wikipedia":
             from ..plugins.wikipedia.source import decode_native_id
             lang, page, _ = decode_native_id(int(row["native_id"]))

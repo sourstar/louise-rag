@@ -68,7 +68,7 @@ def test_the_map_is_canonical_bytes_named_by_their_hash_and_refused_otherwise():
     d = json.loads(raw)
     with pytest.raises(families.FamilyError, match="canonical"):
         families.load_map(json.dumps(d, indent=1).encode())
-    with pytest.raises(families.FamilyError, match="families"):
+    with pytest.raises(families.FamilyError, match="ends with `other`"):
         families.load_map(families.canonical({**d, "families": list(reversed(d["families"]))}))
 
 
@@ -407,3 +407,26 @@ def test_create_after_a_rename_reads_the_held_wikidata_s_corpus(tmp_path, monkey
     monkeypatch.setattr(collections_mod, "load_all", lambda **kw: ([], []))
     monkeypatch.setattr(collections_mod, "origin_dir", lambda name: tmp_path / "corpora")
     assert WikidataSource().creation_slicing("wikidata")[1] == raw, "none held: the name's own origin folder"
+
+
+def test_a_family_added_later_leaves_every_pinned_map_readable_as_it_was(monkeypatch):
+    """A map carries its own family list and is read by it: after `food` is
+    added to the code's list, Monday's map — twelve families — slices
+    exactly as before, and a new map has thirteen."""
+    old = families.build_map([515], [486972], max_item=1000, dump="d")
+    bologna = _item(600, "Bologna", P31=[515])
+    before = families.slice_name(families.family_code(bologna, families.load_map(old)), "Q600")
+    added = families.FAMILIES[:4] + ("food",) + families.FAMILIES[4:]
+    monkeypatch.setattr(families, "FAMILIES", added)
+    monkeypatch.setattr(families, "CODE", {f: i + 1 for i, f in enumerate(added)})
+    fmap = families.load_map(old)
+    assert fmap.families[4] == "person" and len(fmap.families) == 12, "read by its own list"
+    assert families.slice_name(families.family_code(bologna, fmap), "Q600", fmap.families) == before
+    new = families.load_map(families.build_map([515, 7000], [486972, 2095], max_item=9000, dump="d2",
+                                               roots={**families.ROOTS, "food": (2095,)}, families=added))
+    assert new.families == added and new.classes[7000] == new.code("food")
+    pizza = _item(601, "Pizza", P31=[7000])
+    assert families.slice_name(families.family_code(pizza, new), "Q601", new.families) == "family=food/range=0"
+    assert families.family_code(pizza, families.load_map(old)) == families.load_map(old).other
+    with pytest.raises(families.FamilyError, match="not in the list"):
+        families.build_map([], [], max_item=1, dump="d", roots={"food": (1,)})
