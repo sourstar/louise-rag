@@ -333,7 +333,9 @@ def _classes_of(path: str) -> dict[str, Any]:
             continue
         sl = obj.get("sitelinks")
         n_sl = len(sl) if isinstance(sl, dict) else 0
-        sel[(inst_bits, own_bits, heritage, 0 if n_sl == 0 else 1 if n_sl < 5 else 2, lm, dm)] += 1
+        # bit i: a Wikipedia article in langs[i] (`itwiki`): where it is documented
+        hm = sum(1 << i for i, lang in enumerate(langs) if isinstance(sl, dict) and f"{lang}wiki" in sl)
+        sel[(inst_bits, own_bits, heritage, 0 if n_sl == 0 else 1 if n_sl < 5 else 2, lm, dm, hm)] += 1
         for c in p31:
             cq = _qnum(c)
             if cq is not None and cq in class_bits:
@@ -343,7 +345,7 @@ def _classes_of(path: str) -> dict[str, Any]:
             look.normalize(obj)
             refs.update(look.asked)
             if sampled(eid, _G["every"]):
-                sample.append((eid, inst_bits, own_bits, heritage, *_cost(eid, obj)))
+                sample.append((eid, inst_bits, own_bits, heritage, *_cost(eid, obj), lm, dm, hm))
         except Exception as e:   # noqa: BLE001 — counted: the parse would fail on it too
             errors[type(e).__name__] += 1
             if len(examples) < 5:
@@ -467,6 +469,44 @@ def run_classes(dump: Path, *, roots: tuple[str, ...] = ROOTS, langs: tuple[str,
     union = share(lambda k: True)
     heritage_only = sum(n for k, n in sel.items() if k[2] and not k[0] and not k[1])
 
+    # WHERE A LANGUAGE ADDS MOST (operator, 2026-10-24: "focus on the niche
+    # cases"): Wikidata says more about the entity in L than in English — a
+    # label in L and no English or mul one, a description in L and no English
+    # one, or an L Wikipedia article and no English one
+    en = langs.index("en") if "en" in langs else None
+
+    def is_niche(i: int, lm_: int, dm_: int, hm_: int) -> dict[str, bool]:
+        b, e = 1 << i, (1 << en) if en is not None else 0
+        got = {"label_not_english": bool(lm_ & b) and not lm_ & (e | mul_bit),
+               "description_not_english": bool(dm_ & b) and not dm_ & e,
+               "wiki_not_english": bool(hm_ & b) and not hm_ & e}
+        got["any"] = any(got.values())
+        return got
+
+    niche: dict[str, Any] = {}
+    for i, lang in enumerate(langs):
+        if i == en:
+            continue
+        counts = Counter()
+        for k, n in sel.items():
+            for name, yes in is_niche(i, k[4], k[5], k[6]).items():
+                if yes:
+                    counts[name] += n
+        tok = [s_[6] for s_ in sample if s_[6] is not None and is_niche(i, s_[7], s_[8], s_[9])["any"]]
+        per_entity = sum(tok) / len(tok) if tok else None
+        niche[lang] = {**{k: counts.get(k, 0) for k in ("label_not_english", "description_not_english",
+                                                        "wiki_not_english", "any")},
+                       "named": sum(n for k, n in sel.items() if k[4] & ((1 << i) | mul_bit)),
+                       "sampled_any": len(tok), "tokens_per_entity_any": round(per_entity, 1) if per_entity else None,
+                       "tokens_any": round(per_entity * counts.get("any", 0)) if per_entity else None}
+    niche["all"] = {"sections": sum(v["any"] for v in niche.values()),
+                    "tokens": sum(v["tokens_any"] or 0 for v in niche.values())}
+    for i, r in enumerate(roots):
+        bit = 1 << i
+        per_root[r]["niche_any"] = {lang: sum(n for k, n in sel.items() if (k[0] & bit or k[1] & bit)
+                                              and is_niche(j, k[4], k[5], k[6])["any"])
+                                    for j, lang in enumerate(langs) if j != en}
+
     total_refs = int(ref.sum()) + sum(ref_p.values()) + beyond
     ref_cov = {}
     for i, lang in enumerate(langs):
@@ -516,7 +556,7 @@ def run_classes(dump: Path, *, roots: tuple[str, ...] = ROOTS, langs: tuple[str,
                      for i, r in enumerate(roots)}
     return {
         "dump": str(dump), "languages": list(langs), "roots": per_root,
-        "selected": union, "heritage_only": heritage_only, "entities_read": entities,
+        "selected": union, "heritage_only": heritage_only, "entities_read": entities, "niche": niche,
         "referenced_labels": referenced, "missing_labels": missing, "cost_per_added_language": cost,
         "top_classes": tops, "top_classes_per_root": per_root_tops,
         "p279_cycles": {"count": len(loops), "classes": sum(len(c) for c in loops),

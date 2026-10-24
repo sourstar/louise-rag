@@ -130,6 +130,12 @@ def test_the_closure_the_classes_heritage_and_the_cycles(dump, word_tokenizer):
     top = {t["id"]: t for t in got["top_classes"]}
     assert top["Q100"]["instances"] == 1 and top["Q100"]["roots"] == ["Q811979"]
     assert got["textifier_errors"] == {}
+    # where a language adds most: Q100 has it and de labels but en too; Q701 has only German
+    niche = got["niche"]
+    assert niche["de"]["label_not_english"] == 1 and niche["de"]["description_not_english"] == 1, "Q701"
+    assert niche["it"]["label_not_english"] == 0 and niche["it"]["named"] >= 6, "every Italian name has an English one"
+    assert niche["de"]["any"] == 1 and niche["de"]["tokens_any"] > 0 and niche["all"]["sections"] == 1
+    assert got["roots"]["Q1656682"]["niche_any"]["de"] == 1
     # the worklist: named by the selection's texts, no Italian label and no mul one
     it = {m["id"]: m for m in got["missing_labels"]["it"]["most_referenced"]}
     assert {"Q800", "Q801"} <= set(it) and it["Q801"]["label"] == "cycle two"
