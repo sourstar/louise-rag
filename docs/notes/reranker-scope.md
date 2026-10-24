@@ -425,3 +425,32 @@ base / score / slots 0.799 / 0.825 / 0.791, R@10 0.973 / 0.946 / 0.946;
 descriptive MRR 0.422 / 0.443 / 0.413, R@10 0.689 / 0.800 / 0.744. By the
 deploy rule (no loss on titles or descriptive) no variant passes yet: `score`
 gains descriptive and loses titles R@10. The complete run (486/496) decides.
+
+**Run 5, complete (496/496, 23:04 CEST 2026-10-24; München).** The same
+fused candidates were reranked under each variant by bge-reranker-v2-m3, one
+live search per query. Each query counts by its last error-free row in
+run5-results.jsonl and run5b-results.jsonl.
+
+| kind (n) | variant | MRR | R@1 | R@10 | other-lang in top 10 |
+|---|---|---|---|---|---|
+| title (39) | base | 0.809 | 0.744 | 0.974 | 2.44 |
+| title | **score (deployed)** | 0.834 | 0.769 | 0.949 | 3.21 |
+| title | slots | 0.802 | 0.744 | 0.949 | 3.00 |
+| descriptive (451) | base | 0.422 | 0.310 | 0.687 | 4.43 |
+| descriptive | **score (deployed)** | 0.412 | 0.284 | 0.714 | 6.11 |
+| descriptive | slots | 0.419 | 0.293 | 0.701 | 5.65 |
+| pair (6) | base | 0.123 | 0.000 | 0.667 | 2.00 |
+| pair | score | 0.444 | 0.333 | 0.667 | 5.17 |
+| pair | slots | 0.264 | 0.000 | 0.667 | 5.33 |
+
+No variant dominates. Against `score`:
+- `base` gains descriptive MRR +0.010 and R@1 +0.026, and loses descriptive
+  R@10 −0.027 (12 queries) and titles MRR −0.025.
+- `slots` loses titles MRR −0.032 and gains descriptive MRR +0.007.
+
+So no switch passes the deploy rule (no loss on titles or descriptive), and
+by the operator's decision (2026-10-24: "the score stays unless run 5 shows
+otherwise") **`score` stays**.
+The partial run's descriptive R@10 lead for `score` (0.800 on 127 queries)
+shrank to +0.027 on 451 queries. A partial run is a direction, not a number.
+The pairs favour `score`, but n = 6.
