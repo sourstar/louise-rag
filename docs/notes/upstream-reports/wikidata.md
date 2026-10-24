@@ -27,11 +27,25 @@ either: a record is reproduced from the dump (records-vs-origin).
 | # | kind | what | status |
 |---|---|---|---|
 | W1 | code, textifier | Italian connectives for `language_variables.json` | written: [wmde-wikidata-textifier.md](wmde-wikidata-textifier.md) §3 |
-| W2 | data | a description cut short: "Huh Gak", `… (1984 -` | the item id and the language from the node's sample, owed |
+| W2 | data | Q22844's English description cut short: `South Korean singer (1984 -` | written below |
 | W3 | data | P279 cycles inside the architecture and event trees | measured by `tools/wikidata_coverage.py classes` on 20261012, owed |
 | W4 | gap | the most-referenced entities with no label in it, de, fr, es, for the texts of monuments, buildings and events | the same run, owed |
 | — | code, textifier | random alias order; a failed format silently drops the value | [wmde-wikidata-textifier.md](wmde-wikidata-textifier.md) §1–2 |
 | — | code, embedding project | stale vectors kept as current; text depending on a live page; dropped entity data; the card's counts | [wmde-wikidata-embedding-project.md](wmde-wikidata-embedding-project.md) |
+
+## W2. Q22844 ("Huh Gak"): an English description cut short
+
+**What:** the English description is `South Korean singer (1984 -`, the
+parenthesis never closed (dump 20261012; lastrevid 2550930617, modified
+2026-09-29T17:02:53Z). The Korean one is complete, `대한민국의 가수`
+("South Korean singer"); there is no `mul` description.
+
+**Proposed edit**, for an editor to check against the item's date of birth
+(P569) — the year as the description has it:
+
+```
+Q22844	Den	"South Korean singer (born 1984)"
+```
 
 ## W3. P279 cycles (to be filled from the run)
 

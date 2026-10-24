@@ -301,8 +301,24 @@ every entity naming it. Found while designing the section below, before
 any record existed: `PARSER_VERSION = 2` (textify.py `Normalizer._chain`;
 tests/test_plugins_wikidata_textify.py). Parser 2 also carries Italian
 connectives (W1 of upstream-reports/wikidata.md), inert for an English
-collection. How many texts it changed is counted on the node
-(`tools/wikidata_coverage.py mul`).
+collection. Counted on the node (München, 2026-10-24,
+`tools/wikidata_coverage.py mul`, 8,823 kept entities in 100 row groups —
+a clustered sample): 280 English texts change (3.2 %); of 155,247 label
+lookups, 870 were written as an id by parser 1 and 506 by parser 2. What
+parser 1 wrote as ids: "PlayStation 2" (Q10680), "Marcel Vibert",
+"Bodendenkmal", and taxa — Suidae, Rallidae, Bovidae — whose scientific
+name is their `mul` label. The label table: 93,171,448 English rows,
+20,594,687 `mul`, 10,598,629 entities with `mul` and no English.
+
+Titled by their id (no English, no `mul` label), counted exactly over the
+node's manifest: 15,765,162 of the 75,896,183 kept records, 20.8 % — about
+one in five, not the one in four first read off 20 entities; 18.1 M of the
+dump's 121.9 M entities (14.9 %) have neither. The examples are such
+entities as Q3235171 (fr "Les Roses de la vie", de "Die Rosen des
+Lebens", hu "Az élet rózsái"), Q3242104 (ru, fr) and Q3239462 (fr "ligne de
+Charpal", nl "spoorlijn Charpal"). Such a record keeps its id as title, as
+Wikidata's own label service does, unless the operator decides otherwise
+(2026-10-24, open); its names are searchable in every language.
 
 The Codex of 2026-10-20 names parser 1, so wikidata is CREATED AGAIN from
 the same recipe before Monday's records build: nothing was published (no
