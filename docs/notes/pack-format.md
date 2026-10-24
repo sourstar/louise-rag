@@ -207,10 +207,24 @@ scheme, not a convention:
 | Wikipedia (text) | `lang` / `pages` (page-id range) | `lang=de/pages=0-2M` | page ids are stable and monotonic in creation time — the honest proxy for "created before ~2010"; creation dates are not in the dumps |
 | wikivec (pre-embedded Wikipedia) | `lang` / `pages` | `lang=tr/pages=0-1M` | same; today's per-language torrents (5h) are the `lang` level alone |
 | Gutenberg | `lang` | `lang=it` | 70k books; language is the only split anyone wants |
+| Wikidata (from 2026-10-24) | `family` / `range` (id ÷ 10⁷) | `family=heritage/range=3` | what a person chooses — monuments, events, people — as a language is chosen in Wikipedia; the family from a map pinned at creation (below) |
 
 ```json
 "slicing": {"keys": ["year"], "year": {"field": "date", "bins": ["<1950", "5y<2000", "1y"]}}
 ```
+
+**Amended 2026-10-24 (operator: "Go with A"; docs/notes/wikidata-family-slices.md).**
+A mutable collection may slice by a value its plugin derives from a MAP
+pinned at the collection's creation — its sha256 in the Codex's slicing
+block (09 §9.3), its bytes the SHARD member `slicing/<sha256 hex>.json`
+(09 §9.4, §9.16). The map never changes for the collection's life, so a
+record moves between slices only when its own fields change — the change
+that re-issues it anyway; a new map is a new collection (a daughter, 02
+§2.7). First use: Wikidata's families — the class tree of the creation
+dump gives each class its family once (app/plugins/wikidata/families.py).
+A class created after the creation dump is placed by the current dump's
+own links (deterministic per dump, logged per pass): the one way a later
+edit can move a record that was not edited.
 
 **Shard** — the unit inside a slice: ~7,000 chunks (≈ 1 GPU-hour, so
 that a shard is also one lease — amendment 37's unit; ~30,000 PubMed

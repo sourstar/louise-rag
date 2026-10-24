@@ -19,6 +19,17 @@ lines' labels. So the pass writes, under `<dump dir>/.pack/<dump name>/`:
   and no `mul` label (operator, 2026-10-24: an id is meaningless to a
   reader) — written by a pass over the pack's own lines AFTER the chunks,
   since a name may need the code of a language item later in the dump;
+- the CLASS TREE and the FAMILIES (version 3, 2026-10-24, operator: "Go
+  with A"; families.py): `subclass(id, parent)`, every item's P279 links,
+  and `chunk_top`, each chunk's largest item number — a pass over the
+  pack's own lines after the names; from them `families-<h>.json`, the
+  family map this dump gives (the map a collection created on this dump
+  pins, `creation_map`), and for a map, `families-<h>.u8`: one byte an
+  entity, its family code in dump order — what the records build slices by
+  without parsing 75.9 M documents (`family_code_at`) — with
+  `families-<h>.report.json`, each family's size and the classes that fill
+  it, read before `create` (the family list is fixed for the collection's
+  life);
 - `meta.json`: the dump's size and mtime, PACK_VERSION, the languages, the
   files complete so far — the RESUME POINT.
 
@@ -34,8 +45,10 @@ and `name` tables and changes nothing else, so their rows come from two
 passes over the pack's own lines (`_finish`, each resumable at a chunk)
 instead of a new pass over the bz2; the chunk files and the `label` rows
 are those a version-2 pass writes, byte for byte
-(tests/test_plugins_wikidata_names.py). Parser 2 reads only a version-2
-pack whose names are done (`ready`): anything else defers.
+(tests/test_plugins_wikidata_names.py). A complete version-2 pack is
+upgraded to 3 the same way: the class tree and the families, from its own
+lines. Parser 2 reads a pack of version 2 or later whose names are done
+(`ready`): anything else defers; the families do not hold it up.
 
 ON EVERY CORE (2026-10-20, the operator: "squeeze everything from the
 cpu"). The serial pass ran at ~29 MB/s of JSON on one core of twelve —
@@ -56,6 +69,7 @@ same bytes), else the standard library's bz2.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import multiprocessing
 import os
@@ -75,10 +89,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from app import config
-from app.plugins.wikidata import dump as dump_mod, ids, names
+from app.plugins.wikidata import dump as dump_mod, families, ids, names
 
-#: 2 (2026-10-24): the `name` table; a complete 1 is upgraded in place
-PACK_VERSION = 2
+#: 2 (2026-10-24): the `name` table; 3 (2026-10-24): the class tree and the
+#: families (families.py); a complete 1 or 2 is upgraded in place
+PACK_VERSION = 3
 #: entities per chunk file: the resume granularity and the index listing's unit
 CHUNK = 100_000
 #: rows per Parquet row group: one record is one row-group read
@@ -111,6 +126,13 @@ _NAMES_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS name (id TEXT PRIMARY KEY, lang TEXT NOT NULL, label TEXT NOT NULL) WITHOUT ROWID"
 )
 _LANGUAGES_SCHEMA = "CREATE TABLE IF NOT EXISTS language (id TEXT PRIMARY KEY, code TEXT NOT NULL) WITHOUT ROWID"
+#: version 3: every item's P279 links (item numbers), each chunk's largest
+#: item number, and per family map each chunk's summary for the report
+_SUBCLASS_SCHEMA = ("CREATE TABLE IF NOT EXISTS subclass (id INTEGER NOT NULL, parent INTEGER NOT NULL, "
+                    "PRIMARY KEY (id, parent)) WITHOUT ROWID")
+_CHUNK_TOP_SCHEMA = "CREATE TABLE IF NOT EXISTS chunk_top (chunk INTEGER PRIMARY KEY, max_item INTEGER NOT NULL)"
+_FAMILY_CHUNK_SCHEMA = ("CREATE TABLE IF NOT EXISTS family_chunk (map TEXT NOT NULL, chunk INTEGER NOT NULL, "
+                        "summary TEXT NOT NULL, PRIMARY KEY (map, chunk)) WITHOUT ROWID")
 #: the labels whose absence gives an entity a `name` row: the plugin's
 #: fallback language and `mul` — what every text's chain ends with
 NAMED_UNLESS = ("en", "mul")
@@ -194,10 +216,12 @@ def _meta_matches(meta: dict[str, Any] | None, dump: Path, languages: tuple[str,
 
 
 def is_complete(dump: Path, languages: tuple[str, ...]) -> bool:
-    """The pack covers the whole dump as it is now."""
+    """The pack covers the whole dump as it is now, its names and its
+    families included."""
     adopt_beside(dump)
     meta = read_meta(dump)
-    return _meta_matches(meta, dump, languages) and bool(meta.get("complete")) and bool(meta.get("names_done"))
+    return (_meta_matches(meta, dump, languages) and bool(meta.get("complete")) and bool(meta.get("names_done"))
+            and bool(meta.get("families_done")))
 
 
 def chunk_path(d: Path, chunk: int) -> Path:
@@ -403,7 +427,7 @@ def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[st
                 "chunk": chunk, "chunks": 0, "entities": 0, "pruned": 0, "complete": False, "dump": dump.name}
         _meta_path(d).write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
     if meta.get("complete"):
-        return meta if meta.get("names_done") else _finish(dump, d, meta, say=say, stop=stop, workers=n_workers)
+        return meta if meta.get("families_done") else _finish(dump, d, meta, say=say, stop=stop, workers=n_workers)
     if meta.get("chunk") != chunk:
         raise PackError(f"the pack was started with chunk {meta.get('chunk')}; resume with the same")
     done_chunks = int(meta["chunks"])
@@ -493,10 +517,10 @@ _NAMED_LABEL = re.compile(rb'"en":\{"language":"en","value":"[^"]|"mul":\{"langu
 
 
 def _upgradable(meta: dict[str, Any] | None, dump: Path, languages: tuple[str, ...]) -> bool:
-    """A COMPLETE version-1 pack of this very dump and languages: version 2
-    only adds the `language` and `name` tables, so it is upgraded, not
-    rebuilt."""
-    if not meta or meta.get("pack_version") != 1 or not meta.get("complete"):
+    """A COMPLETE version-1 or version-2 pack of this very dump and
+    languages: version 2 only adds the `language` and `name` tables, version
+    3 the class tree and the families, so it is upgraded, not rebuilt."""
+    if not meta or meta.get("pack_version") not in (1, 2) or not meta.get("complete"):
         return False
     size, mtime = _signature(dump)
     return (meta.get("size") == size and meta.get("mtime_ns") == mtime
@@ -564,13 +588,198 @@ def _names_job(path: str) -> list[tuple[str, str, str]]:
     return out
 
 
+# ---- the class tree and the families (version 3) ---------------------------------------------
+
+def _subclass_job(path: str) -> tuple[list[tuple[int, int]], int]:
+    """One chunk file's P279 links between items (child, parent; the
+    non-deprecated values, families.item_values) and its largest item
+    number — of every entity, pruned ones included: the class tree is the
+    dump's. Only the lines that name P279 anywhere are parsed — a line
+    without the bytes `"P279"` has no such statement, however it is spaced."""
+    ids_ = pq.read_table(path, columns=["id"]).column("id").to_pylist()
+    top = max((q for q in map(families.number, ids_) if q is not None), default=0)
+    edges: list[tuple[int, int]] = []
+    for index, raw in _lines(path):
+        if b'"P279"' not in raw:
+            continue
+        obj = _parsed(path, index, raw)
+        q = families.number(obj.get("id"))
+        if q is None:
+            continue
+        for parent in families.item_values((obj.get("claims") or {}).get("P279")):
+            edges.append((q, parent))
+    return edges, top
+
+
+def _write_subclass(con: sqlite3.Connection, k: int, result: tuple[list[tuple[int, int]], int]) -> None:
+    edges, top = result
+    con.executemany("INSERT OR REPLACE INTO subclass (id, parent) VALUES (?, ?)", edges)
+    con.execute("INSERT OR REPLACE INTO chunk_top (chunk, max_item) VALUES (?, ?)", (k, top))
+
+
+#: a codes child's map and the walk of the classes newer than it
+_FMAP: dict[str, Any] = {}
+#: per chunk and family, the classes kept for the report
+REPORT_CLASSES = 200
+
+
+def _set_fmap(raw: bytes, walked: dict[int, int]) -> None:
+    _FMAP.clear()
+    _FMAP.update(map=families.load_map(raw), walked=walked)
+
+
+def _codes_init(raw: bytes, walked: dict[int, int]) -> None:
+    """A codes child: the map and the walk, once; nice as every pack child."""
+    _child_nice()
+    _set_fmap(raw, walked)
+
+
+def _codes_job(path: str) -> tuple[int, bytes, dict[str, Any]]:
+    """One chunk file's family codes, one byte an entity in dump order, and
+    its summary (records and pruned per family, the classes that decided);
+    a line without the bytes `"P31"` and `"P1435"` anywhere has neither
+    statement, and is not parsed."""
+    from collections import Counter
+    fmap, walked = _FMAP["map"], _FMAP["walked"]
+    pf = pq.ParquetFile(path)
+    out = bytearray()
+    start = None
+    records: Counter = Counter()
+    pruned_n: Counter = Counter()
+    deciding: Counter = Counter()
+    walked_n = 0
+    for g in range(pf.num_row_groups):
+        t = pf.read_row_group(g, columns=["index", "id", "pruned", "line"])
+        for index, eid, pruned, raw in zip(t.column("index").to_pylist(), t.column("id").to_pylist(),
+                                           t.column("pruned").to_pylist(), t.column("line").to_pylist()):
+            if start is None:
+                start = index
+            if eid[:1] != "Q" or (b'"P31"' not in raw and b'"P1435"' not in raw):
+                code, by = families.family_and_class({"id": eid}, fmap)
+            else:
+                code, by = families.family_and_class(_parsed(path, index, raw), fmap, walked)
+            out.append(code)
+            (pruned_n if pruned else records)[code] += 1
+            if by is not None:
+                deciding[(code, by)] += 1
+                walked_n += by > fmap.max_item
+    top: dict[str, list[list[int]]] = {}
+    for (code, cls), n in deciding.most_common():
+        got = top.setdefault(str(code), [])
+        if len(got) < REPORT_CLASSES:
+            got.append([cls, n])
+    summary = {"records": {str(c): n for c, n in sorted(records.items())},
+               "pruned": {str(c): n for c, n in sorted(pruned_n.items())},
+               "classes": top, "walked": walked_n}
+    return int(start or 0), bytes(out), summary
+
+
+def _hex(sha: str) -> str:
+    return sha.split(":", 1)[1][:16]
+
+
+def map_path(d: Path, sha: str) -> Path:
+    return d / f"families-{_hex(sha)}.json"
+
+
+def codes_path(d: Path, sha: str) -> Path:
+    return d / f"families-{_hex(sha)}.u8"
+
+
+def report_path(d: Path, sha: str) -> Path:
+    return d / f"families-{_hex(sha)}.report.json"
+
+
+def _codes_pass(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Connection, fmap: families.FamilyMap, *,
+                say: Callable[[str], None], stop: Callable[[], bool] | None, workers: int) -> bool:
+    """Every entity's family code under `fmap`, chunk by chunk into its
+    `.u8` (preallocated, written at the chunk's first index, synced before
+    the resume point moves), then the report. The classes newer than the
+    map are walked over THIS dump's links (families.walk). True when done."""
+    done = dict(meta.get("families_codes") or {})
+    if done.get(fmap.sha256):
+        return True
+    rows = con.execute("SELECT id, parent FROM subclass WHERE id > ?", (fmap.max_item,)).fetchall()
+    walked = families.walk((r[0] for r in rows), (r[1] for r in rows), fmap)
+    if walked:
+        say(f"[wikidata] pack: {dump.name}: {len(walked)} classes newer than the map's dump "
+            f"{fmap.dump}, placed by this dump's P279 links")
+    out = codes_path(d, fmap.sha256)
+    total = int(meta.get("entities") or 0)
+    if not out.is_file() or out.stat().st_size != total:
+        with open(out, "wb") as f:
+            f.truncate(total)
+
+    def write(con: sqlite3.Connection, k: int, result: tuple[int, bytes, dict[str, Any]]) -> None:
+        start, codes, summary = result
+        with open(out, "r+b") as f:
+            f.seek(start)
+            f.write(codes)
+            f.flush()
+            os.fsync(f.fileno())
+        con.execute("INSERT OR REPLACE INTO family_chunk (map, chunk, summary) VALUES (?, ?, ?)",
+                    (fmap.sha256, k, json.dumps(summary, sort_keys=True)))
+
+    if not _lines_pass(dump, d, meta, con, what=f"codes_{_hex(fmap.sha256)}", job=_codes_job, insert=write,
+                       say=say, stop=stop, workers=workers, init=_codes_init, serial_init=_set_fmap,
+                       init_args=(fmap.raw, walked)):
+        return False
+    _write_report(dump, d, con, fmap, say=say)
+    meta.pop(f"codes_{_hex(fmap.sha256)}_chunks", None)
+    done[fmap.sha256] = True
+    meta["families_codes"] = done
+    _write_meta(d, meta)
+    return True
+
+
+def _write_report(dump: Path, d: Path, con: sqlite3.Connection, fmap: families.FamilyMap, *,
+                  say: Callable[[str], None]) -> None:
+    """Each family's records and pruned entities, and the classes that put
+    the most entities in it (merged from each chunk's first
+    `REPORT_CLASSES`: exact counts for every class that leads a chunk), with
+    their labels — what is read before `create` pins the map."""
+    from collections import Counter
+    records: Counter = Counter()
+    pruned_n: Counter = Counter()
+    classes: dict[int, Counter] = {}
+    walked_n = 0
+    for (raw,) in con.execute("SELECT summary FROM family_chunk WHERE map=? ORDER BY chunk", (fmap.sha256,)):
+        s = json.loads(raw)
+        records.update({int(c): n for c, n in s["records"].items()})
+        pruned_n.update({int(c): n for c, n in s["pruned"].items()})
+        for c, pairs in s["classes"].items():
+            classes.setdefault(int(c), Counter()).update({cls: n for cls, n in pairs})
+        walked_n += int(s.get("walked") or 0)
+    labels_of = LabelTable(dump)
+
+    def label(q: int) -> str | None:
+        for lang in ("en", "mul"):
+            got = labels_of(f"Q{q}", lang)
+            if got:
+                return got
+        return None
+    report = {"map": fmap.sha256, "map_dump": fmap.dump, "dump": dump.name, "walked_entities": walked_n,
+              "families": [{"family": f, "records": records.get(code, 0), "pruned": pruned_n.get(code, 0),
+                            "roots": [[q, label(q)] for q in families.ROOTS.get(f, ())],
+                            "top_classes": [[q, label(q), n] for q, n in classes.get(code, Counter()).most_common(25)]}
+                           for f, code in families.CODE.items()]}
+    tmp = report_path(d, fmap.sha256).with_suffix(".tmp")
+    tmp.write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, report_path(d, fmap.sha256))
+    say(f"[wikidata] pack: {dump.name}: families under map {fmap.sha256[:23]}… — " + ", ".join(
+        f"{f} {records.get(code, 0)}" + (f" (+{pruned_n[code]} pruned)" if pruned_n.get(code) else "")
+        for f, code in families.CODE.items()) + f"; report {report_path(d, fmap.sha256).name}")
+
+
 def _lines_pass(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Connection, *, what: str,
-                job: Callable[[str], list], insert: str, say: Callable[[str], None],
-                stop: Callable[[], bool] | None, workers: int, init: Callable | None = None,
-                serial_init: Callable | None = None, init_args: tuple = ()) -> bool:
+                job: Callable[[str], Any], insert: str | Callable[[sqlite3.Connection, int, Any], None],
+                say: Callable[[str], None], stop: Callable[[], bool] | None, workers: int,
+                init: Callable | None = None, serial_init: Callable | None = None, init_args: tuple = ()) -> bool:
     """`job` over every chunk file in order, its rows committed per chunk
-    with the resume point (`<what>_chunks`) in the meta. True when every
-    chunk is done; False when `stop` asked or the pool failed (resumable)."""
+    with the resume point (`<what>_chunks`) in the meta. `insert` is the
+    statement the rows go through, or a callable `(con, chunk, result)`
+    that writes them inside the same transaction. True when every chunk is
+    done; False when `stop` asked or the pool failed (resumable)."""
     global _parallel_failed
     from collections import deque
     from concurrent.futures.process import BrokenProcessPool
@@ -580,9 +789,12 @@ def _lines_pass(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Connecti
     start = int(meta.get(key) or 0)
     t0 = time.monotonic()
 
-    def commit(k: int, rows: list) -> bool:
+    def commit(k: int, rows: Any) -> bool:
         con.execute("BEGIN IMMEDIATE")
-        con.executemany(insert, rows)
+        if callable(insert):
+            insert(con, k, rows)
+        else:
+            con.executemany(insert, rows)
         con.execute("COMMIT")
         meta[key] = k + 1
         _write_meta(d, meta)
@@ -637,44 +849,82 @@ def _write_meta(d: Path, meta: dict[str, Any]) -> None:
 
 def _finish(dump: Path, d: Path, meta: dict[str, Any], *, say: Callable[[str], None],
             stop: Callable[[], bool] | None, workers: int, upgrade: bool = False) -> dict[str, Any]:
-    """After the chunks: the language codes (an upgrade's own pass; a build
-    wrote them with the chunks), then the names, each from the pack's own
-    lines and resumable; then `names_done` (and, upgrading, the version).
-    Returns the meta, `complete` False while this has not ended — the
-    caller defers and the next pass resumes."""
+    """After the chunks, each from the pack's own lines and resumable at a
+    chunk: the language codes (a version-1 pack's upgrade; a build wrote
+    them with the chunks), the names (`names_done`: parser 2 may read from
+    here on), the class tree, the family map this dump gives and every
+    entity's code under it with the report (`families_done`); upgrading,
+    then the version. Returns the meta, `complete` False while this has not
+    ended — the caller defers and the next pass resumes."""
     con = sqlite3.connect(d / "labels.sqlite", isolation_level=None)
     try:
         con.execute("PRAGMA journal_mode=WAL")
         con.execute("PRAGMA synchronous=NORMAL")
-        con.execute(_LANGUAGES_SCHEMA)
-        con.execute(_NAMES_SCHEMA)
+        for schema in (_LANGUAGES_SCHEMA, _NAMES_SCHEMA, _SUBCLASS_SCHEMA, _CHUNK_TOP_SCHEMA, _FAMILY_CHUNK_SCHEMA):
+            con.execute(schema)
         if upgrade:
-            say(f"[wikidata] pack: {dump.name}: version 1 → {PACK_VERSION} from the pack's own lines "
-                f"(RULE 1: no pass over the dump)")
-            if not meta.get("languages_done"):
-                if not _lines_pass(dump, d, meta, con, what="languages", job=_languages_job,
-                                   insert="INSERT OR REPLACE INTO language (id, code) VALUES (?, ?)",
-                                   say=say, stop=stop, workers=workers):
-                    return {**meta, "complete": False}
-                meta["languages_done"] = True
-                _write_meta(d, meta)
-        codes = dict(con.execute("SELECT id, code FROM language").fetchall())
-        if not _lines_pass(dump, d, meta, con, what="names", job=_names_job,
-                           insert="INSERT OR REPLACE INTO name (id, lang, label) VALUES (?, ?, ?)",
-                           say=say, stop=stop, workers=workers, init=_names_init, serial_init=_set_codes,
-                           init_args=(codes,)):
+            say(f"[wikidata] pack: {dump.name}: version {meta.get('pack_version')} → {PACK_VERSION} from the "
+                f"pack's own lines (RULE 1: no pass over the dump)")
+        if upgrade and meta.get("pack_version") == 1 and not meta.get("languages_done"):
+            if not _lines_pass(dump, d, meta, con, what="languages", job=_languages_job,
+                               insert="INSERT OR REPLACE INTO language (id, code) VALUES (?, ?)",
+                               say=say, stop=stop, workers=workers):
+                return {**meta, "complete": False}
+            meta["languages_done"] = True
+            _write_meta(d, meta)
+        if not meta.get("names_done"):
+            codes = dict(con.execute("SELECT id, code FROM language").fetchall())
+            if not _lines_pass(dump, d, meta, con, what="names", job=_names_job,
+                               insert="INSERT OR REPLACE INTO name (id, lang, label) VALUES (?, ?, ?)",
+                               say=say, stop=stop, workers=workers, init=_names_init, serial_init=_set_codes,
+                               init_args=(codes,)):
+                return {**meta, "complete": False}
+            for k in ("languages_chunks", "names_chunks", "languages_done"):
+                meta.pop(k, None)
+            meta["names_done"] = True
+            _write_meta(d, meta)
+            say(f"[wikidata] pack: {dump.name}: {len(codes)} language codes, "
+                f"{con.execute('SELECT COUNT(*) FROM name').fetchone()[0]} names")
+        if not meta.get("subclass_done"):
+            if not _lines_pass(dump, d, meta, con, what="subclass", job=_subclass_job, insert=_write_subclass,
+                               say=say, stop=stop, workers=workers):
+                return {**meta, "complete": False}
+            meta.pop("subclass_chunks", None)
+            meta["max_item"] = int(con.execute("SELECT COALESCE(MAX(max_item), 0) FROM chunk_top").fetchone()[0])
+            meta["subclass_done"] = True
+            _write_meta(d, meta)
+            say(f"[wikidata] pack: {dump.name}: the class tree — "
+                f"{con.execute('SELECT COUNT(*) FROM subclass').fetchone()[0]} P279 links, "
+                f"the largest item Q{meta['max_item']}")
+        if not meta.get("families_map"):
+            raw = _creation_map(dump, con, int(meta["max_item"]))
+            sha = "sha256:" + hashlib.sha256(raw).hexdigest()
+            tmp = map_path(d, sha).with_suffix(".tmp")
+            tmp.write_bytes(raw)
+            os.replace(tmp, map_path(d, sha))
+            meta["families_map"] = sha
+            _write_meta(d, meta)
+            say(f"[wikidata] pack: {dump.name}: its family map {sha} ({len(raw)} bytes, {map_path(d, sha).name})")
+        fmap = families.load_map(map_path(d, meta["families_map"]).read_bytes())
+        if not _codes_pass(dump, d, meta, con, fmap, say=say, stop=stop, workers=workers):
             return {**meta, "complete": False}
-        for k in ("languages_chunks", "names_chunks", "languages_done"):
-            meta.pop(k, None)
-        meta["names_done"] = True
+        meta["families_done"] = True
         if upgrade:
             meta["pack_version"] = PACK_VERSION
         _write_meta(d, meta)
-        say(f"[wikidata] pack: {dump.name}: {len(codes)} language codes, "
-            f"{con.execute('SELECT COUNT(*) FROM name').fetchone()[0]} names")
         return meta
     finally:
         con.close()
+
+
+def _creation_map(dump: Path, con: sqlite3.Connection, max_item: int) -> bytes:
+    """The family map of this dump's own class tree (families.build_map)."""
+    from array import array
+    child, parent = array("q"), array("q")
+    for c, p in con.execute("SELECT id, parent FROM subclass"):
+        child.append(c)
+        parent.append(p)
+    return families.build_map(child, parent, max_item=max_item, dump=Path(dump).name)
 
 
 _ready: set[str] = set()
@@ -682,12 +932,15 @@ _codes_cache: dict[str, dict[str, str]] = {}
 
 
 def ready(dump: Path) -> bool:
-    """A version-2 pack whose names are done: what parser 2 reads."""
+    """A pack of version 2 or later, complete, whose names are done: what
+    parser 2 reads — the families (version 3) do not hold it up."""
     key = str(pack_dir(dump))
     if key in _ready:
         return True
     meta = read_meta(dump) or {}
-    ok = meta.get("pack_version") == PACK_VERSION and bool(meta.get("complete")) and bool(meta.get("names_done"))
+    version = meta.get("pack_version")
+    ok = (isinstance(version, int) and 2 <= version <= PACK_VERSION and bool(meta.get("complete"))
+          and bool(meta.get("names_done")))
     if ok:
         _ready.add(key)
     return ok
@@ -704,7 +957,7 @@ def language_codes(dump: Path) -> dict[str, str]:
         return got
     if not ready(dump):
         from app.chunking import PlatformMissing
-        raise PlatformMissing(f"the wikidata pack of {Path(dump).name} is not ready for parser {PACK_VERSION} "
+        raise PlatformMissing(f"the wikidata pack of {Path(dump).name} is not ready for parser 2 "
                               f"(version {(read_meta(dump) or {}).get('pack_version')}, names not done): the "
                               f"next scan finishes it, and this document is parsed then")
     con = sqlite3.connect((pack_dir(dump) / "labels.sqlite").resolve().as_uri() + "?mode=ro", uri=True)
@@ -715,6 +968,90 @@ def language_codes(dump: Path) -> dict[str, str]:
     with _files_lock:
         _codes_cache[key] = got
     return got
+
+
+# ---- the families, read ----------------------------------------------------------------------
+
+def creation_map(dump: Path) -> bytes:
+    """The bytes of the family map this dump's own class tree gives — what
+    a collection created on this dump pins (its sha256 in the Codex, the
+    bytes a SHARD member). Refused, in plain words, until the pack's class
+    tree is done."""
+    meta = read_meta(dump) or {}
+    sha = meta.get("families_map")
+    if not sha:
+        raise PackError(f"the family map of {Path(dump).name} is not built yet (pack version "
+                        f"{meta.get('pack_version')}): the worker's next scan of the collection builds it "
+                        f"from the pack's own lines — about an hour — and `create` reads it then")
+    raw = map_path(pack_dir(dump), sha).read_bytes()
+    if "sha256:" + hashlib.sha256(raw).hexdigest() != sha:
+        raise PackError(f"{map_path(pack_dir(dump), sha)} does not hash to {sha}, the pack's own record of it")
+    return raw
+
+
+_codes_views: dict[tuple[str, str], Any] = {}
+
+
+def family_codes(dump: Path, sha: str):
+    """Every entity's family code under the map `sha`, one byte an entity in
+    dump order (a read-only memory map), or None while the pack has not
+    computed them for that map."""
+    d = pack_dir(dump)
+    key = (str(d), sha)
+    with _files_lock:
+        got = _codes_views.get(key)
+    if got is not None:
+        return got
+    meta = read_meta(dump) or {}
+    if not (meta.get("families_codes") or {}).get(sha):
+        return None
+    import mmap
+    with open(codes_path(d, sha), "rb") as f:
+        view = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) if os.fstat(f.fileno()).st_size else b""
+    with _files_lock:
+        _codes_views[key] = view
+    return view
+
+
+def family_code_at(dump: Path, sha: str, index: int) -> int | None:
+    """Entity `index`'s family code under the map `sha`; None while not computed."""
+    view = family_codes(dump, sha)
+    if view is None or not 0 <= index < len(view):
+        return None
+    code = view[index]
+    return code or None
+
+
+def ensure_codes(dump: Path, raw_map: bytes, *, log: Callable[[str], None] | None = None,
+                 stop: Callable[[], bool] | None = None, workers: int | None = None) -> bool:
+    """The family codes of this dump's entities under a PINNED map — the
+    collection's, which for a later dump is not the dump's own: a pass over
+    the pack's lines, resumable at a chunk, the classes newer than the map
+    walked over this dump's links. Needs the pack's class tree (version 3).
+    True when the codes are there."""
+    say = log or (lambda m: None)
+    fmap = families.load_map(raw_map)
+    d = pack_dir(dump)
+    meta = read_meta(dump) or {}
+    if (meta.get("families_codes") or {}).get(fmap.sha256):
+        return True
+    if not meta.get("subclass_done"):
+        raise PackError(f"the pack of {Path(dump).name} has no class tree yet (version {meta.get('pack_version')}): "
+                        f"the worker's next scan builds it")
+    if meta.get("families_map") == fmap.sha256 and not meta.get("families_done"):
+        # the pack's OWN pass computes these codes (`_finish`, in the
+        # worker's scan): a second pass beside it would race it for the
+        # meta, so this one waits for it instead
+        raise PackError(f"the family codes of {Path(dump).name} under its own map are being computed by the "
+                        f"pack's pass (the worker's scan of the collection): the build runs once it is done")
+    n = processes() if workers is None else max(1, int(workers))
+    con = sqlite3.connect(d / "labels.sqlite", isolation_level=None)
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute(_FAMILY_CHUNK_SCHEMA)
+        return _codes_pass(dump, d, meta, con, fmap, say=say, stop=stop, workers=n)
+    finally:
+        con.close()
 
 
 def _tmp_path(d: Path, chunk_no: int, token: str) -> Path:
@@ -983,3 +1320,4 @@ def reset_caches() -> None:
         _tables.clear()
         _codes_cache.clear()
         _ready.clear()
+        _codes_views.clear()

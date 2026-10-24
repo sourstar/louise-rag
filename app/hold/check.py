@@ -273,13 +273,51 @@ def check_roots(ctx: Ctx) -> Outcome:
                        f"are not the snapshot's root")
 
 
+def _family_map(ctx: Ctx):
+    """The family map the Codex's slicing names, read from its SHARD member
+    and checked against the sha256 (pack-format.md §2, amended
+    2026-10-24): `(map or None, the failure or None)`. The map's reader is
+    pure (app/plugins/wikidata/families.py: JSON and hashlib), so a peer that
+    is only checking still needs no plugin machinery."""
+    import hashlib
+    from app.pack import slicing as sl
+    named = sl.family_map_of(getattr(ctx.codex, "slicing", None))
+    if named is None:
+        return None, None
+    p = ctx.shard_tree / sl.map_member(named)
+    if not p.is_file():
+        return None, f"{sl.map_member(named)}:missing"
+    raw = p.read_bytes()
+    if "sha256:" + hashlib.sha256(raw).hexdigest() != named:
+        return None, f"{sl.map_member(named)}:hash"
+    from app.plugins.wikidata import families
+    return families.load_map(raw), None
+
+
+def _slice_unless_walked(fmap, record: dict) -> str | None:
+    """The slice the map gives a record, or None when one of its classes is
+    newer than the map (placed by the dump's own links, which a record
+    alone does not carry: not checked here)."""
+    from app.plugins.wikidata import families
+    x = record.get("extra") or {}
+    classes = list(families.item_values((x.get("claims") or {}).get("P31")))
+    if any(q > fmap.max_item and q not in fmap.classes for q in classes):
+        return None
+    return families.slice_name(families.family_code(x, fmap), str(x.get("id") or ""))
+
+
 def check_records(ctx: Ctx) -> Outcome:
     """"every sampled record's `content_hash` recomputes from its own title
     and sections and it carries an `origin_hash`; each sampled shard's
     `records_root` recomputes from its records' `content_hash` values in
-    order" (03 §3.2)."""
+    order" (03 §3.2) — and, where the Codex slices by a family map
+    (2026-10-24), the map member hashes to it and every sampled record whose
+    classes the map knows sits in the slice the map gives it."""
     shards = _shards(ctx, "records")
     seen, failed, ran = 0, [], []
+    fmap, broken = _family_map(ctx)
+    if broken:
+        failed.append(broken)
     for s in shards:
         try:
             records = ctx.records_of(s)
@@ -298,6 +336,8 @@ def check_records(ctx: Ctx) -> Outcome:
                 # permanently unverifiable against its source, which is the
                 # worst artefact we could ship.
                 failed.append(r["uid"])
+            elif fmap is not None and _slice_unless_walked(fmap, r) not in (None, s.slice):
+                failed.append(f"{r['uid']}:slice")
         root = rec.records_root(hashes)
         if root != s.records_root:
             failed.append(f"{s.slice}/{s.n:05d}:records_root")

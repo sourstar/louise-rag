@@ -902,6 +902,12 @@ def _files(shard_dir, codex, snapshot_id: str | None = None) -> dict:
 
     member, sig = shard_mod.calibration_paths(codex.space.calibration.set)
     required = [shard_mod.VALIDATION_PATH, member, sig]
+    # the family map a slicing names (09 §9.4, amended 2026-10-24): required
+    # where the Codex names one — its records' slices are read through it
+    from app.pack import slicing as slicing_mod
+    named = slicing_mod.family_map_of(getattr(codex, "slicing", None))
+    if named is not None:
+        required.append(slicing_mod.map_member(named))
     nullable = [shard_mod.TERMS_PATH]
     if snapshot_id is not None:
         nullable.append(shard_mod.seals_path(snapshot_id))

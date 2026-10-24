@@ -270,6 +270,17 @@ def _check_slicing(block: dict[str, Any]) -> dict[str, Any]:
         check_slice(str(block["unknown"]))
     if "container" in block:
         codex_mod.refuse_unbuilt_container(str(block["container"]))
+    if "family" in (block.get("keys") or ()):
+        # pack-format.md §2, amended 2026-10-24: a family key reads a map
+        # pinned at creation, named by its sha256 — without it the slices
+        # could be neither computed nor checked by anyone else
+        from app.pack import slicing as sl
+        named = sl.family_map_of(block)
+        try:
+            sl.map_member(named or "")
+        except ValueError:
+            raise TemplateError(f"slicing: a `family` key names its map — {{field, rule: "
+                                f"{sl.FAMILY_RULE!r}, map: \"sha256:…\"}} (09 §9.3)") from None
     return block
 
 

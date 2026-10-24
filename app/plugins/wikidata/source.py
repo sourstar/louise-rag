@@ -108,7 +108,35 @@ class WikidataSource:
         {"chunker": {"id": "wikidata-text", "version": 1, "params": {"max_tokens": 1024}},
          "rule": "default"},
     ]
-    #: the slicing is the scheme's (app/pack/slicing.py "wikidata"): one declaration
+    #: THE SLICING (pack-format.md §2, amended 2026-10-24, operator: "Go with
+    #: A"): by family under a map pinned at creation, then by id range —
+    #: `creation_slicing` gives `create` the block and the map; a collection
+    #: created before keeps its id ranges (app/pack/slicing.py)
+
+    def creation_slicing(self, name: str) -> tuple[dict, bytes]:
+        """The slicing block a new wikidata collection is created with, and
+        the bytes of the family map it pins: the map of the dump the
+        collection reads, from that dump's pack (pack.creation_map). The
+        dump is the one the collection's file pins (`snapshot`), else the
+        only one under its corpus; several and none pinned is refused in
+        plain words — the choice is the operator's, never guessed."""
+        import hashlib
+        from app import collections as collections_mod
+        from app.pack import slicing
+        held = collections_mod.by_name(name)
+        corpus = Path(held.corpus_dir) if held is not None else collections_mod.origin_dir(name)
+        snapshot = getattr(held, "snapshot", None) if held is not None else None
+        dumps = find_dumps(corpus, snapshot)
+        if not dumps:
+            raise pack.PackError(f"no wikidata dump{' of ' + snapshot if snapshot else ''} under {corpus}: the "
+                                 f"collection is sliced by the family map of the dump it reads, so the dump "
+                                 f"and its pack come first (`hold records fetch {name}`)")
+        if snapshot is None and len(dumps) > 1:
+            raise pack.PackError(f"{len(dumps)} wikidata dumps under {corpus} "
+                                 f"({', '.join(d.name for d in dumps)}) and no `snapshot` in {name}'s file to "
+                                 f"say which one the collection reads: its family map is that dump's")
+        raw = pack.creation_map(dumps[0])
+        return slicing.family_block("sha256:" + hashlib.sha256(raw).hexdigest()), raw
 
     def __init__(self, languages: tuple[str, ...] | None = None):
         if languages:

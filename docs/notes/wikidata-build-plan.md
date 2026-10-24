@@ -94,7 +94,11 @@ label table at the same time. `discover` reads the pack's index columns;
 blocks, seekable with an offset index) is measured first (§5): if it is,
 the locator can name the block and the pack shrinks to an index.
 
-**Slicing and parts.** One id-range key, `range` = `native_id // 10⁷`
+**Slicing and parts.** *Amended 2026-10-24 (operator: "Go with A"): a
+collection created from then on is sliced `family=<f>/range=<n>` by a family
+map pinned at creation — wikidata-family-slices.md, app/plugins/wikidata/
+families.py; the collection of 2026-10-20 keeps the id ranges below.* One
+id-range key, `range` = `native_id // 10⁷`
 (slices `range=0`, `range=1`, …, properties in `range=100`), `order:
 numeric`, `shard_records` 20,000 (≈ 50,000 chunks a part at 2.5 chunks an
 entity over four languages; PubMed's parts are 30,000 records) — about

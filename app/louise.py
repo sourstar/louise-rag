@@ -414,6 +414,13 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
     # SHA-256 of nothing, and the live gutenberg Codex carries exactly that
     # placeholder (found 2026-09-14), so no identity may name no build again.
     platform_image = preflight_create(recipe, platform_image)
+    # A SLICING THE PLUGIN DERIVES AT CREATION (wikidata's family map,
+    # pack-format.md §2 amended 2026-10-24): the block goes into the Codex,
+    # the map into the SHARD. A recipe that states its own slicing keeps it
+    slicing_member = None
+    source_of = tpl.source_for(plugin)
+    if callable(getattr(source_of, "creation_slicing", None)) and "slicing" not in recipe:
+        recipe["slicing"], slicing_member = source_of.creation_slicing(name or plugin)
     if space_from:
         source = col.read(root, space_from)
         want = recipe.get("cleaning_version", 1)
@@ -475,7 +482,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                                                                   models[1], api=api, query=True)
                                                 if query_encoder else None),
                                    space_version=source.version if space_from else None,
-                                   credits=credits, pairs=pairs,
+                                   credits=credits, pairs=pairs, slicing_member=slicing_member,
                                    # RULE 1: a held twin's document-side reference reused
                                    calibration_from=(col.shard_dir_of(
                                        Path(root), col.resolve(root, calibration_from)[0])

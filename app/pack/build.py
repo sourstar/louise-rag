@@ -131,6 +131,12 @@ def plan(collection, con_src, con_build, *, log=print, stop=None) -> int:
     plugin = collection.plugin_instance()
     origin = _origin_plugin(collection)
     scheme = slicing.scheme_for(origin)
+    # what the slicing needs beyond a record — wikidata's family map, pinned
+    # by the Codex (pack-format.md §2, amended 2026-10-24); None elsewhere
+    try:
+        context = slicing.context_for(collection, log=log, stop=stop)
+    except slicing.ContextUnavailable as e:
+        raise BuildError(str(e)) from None
     last = int(_meta(con_build, "plan_rowid", -1))
     planned = 0
     t0 = time.monotonic()
@@ -149,11 +155,11 @@ def plan(collection, con_src, con_build, *, log=print, stop=None) -> int:
         for row in page:
             if not row["in_scope"] or row["error"] is not None:
                 continue
-            slice_name = slicing.slice_hint(origin, row)
+            slice_name = slicing.slice_hint(origin, row, context)
             if slice_name is None:
                 try:
                     doc = plugin_io.canonical_doc(plugin, row)
-                    slice_name = scheme.slice_of(doc, int(row["native_id"]))
+                    slice_name = slicing.slice_of(scheme, doc, int(row["native_id"]), context)
                 except (UnindexableDocument, Exception) as e:   # noqa: BLE001 — recorded, never fatal
                     con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
                                       (row["uid"], f"plan: {type(e).__name__}: {e}"[:200]))
@@ -581,7 +587,8 @@ def write_manifest(collection, con_build, pack_dir: Path, *, snapshot: str, name
         publisher = node_keys.public_key_hex(key)
     m = manifest_mod.new_manifest(
         plugin=origin, name=name, snapshot=snapshot, license_class=license_class,
-        terms_sha256=terms_sha, slicing={**scheme.describe, "records_per_shard": records_per_shard},
+        terms_sha256=terms_sha, slicing={**slicing.describe_for(collection, scheme),
+                                         "records_per_shard": records_per_shard},
         layers=[l.as_manifest() for l in layers_mod.layers_for(collection)],
         cleaning_version=config.CLEANING_VERSION,
         origin={"plugin": origin, "corpus_snapshot": getattr(collection, "snapshot", None),

@@ -93,17 +93,33 @@ the map is built (a wrong id shows as a wrong label in the log), and the
 map's size per family is logged; the numbers above marked "to count" come
 from that pass.
 
+**A class under roots of several families** (decided while building it,
+2026-10-24): the family of the NEAREST root, by P279 steps, and a tie to the
+first in precedence — a municipality is one or two steps under
+"administrative territorial entity" and further under "organization"
+(through "local government"), so it is a place; precedence alone would have
+put every municipality in `organization`. Multi-source breadth-first search
+from all the roots at once (families.py `nearest_roots`). The ENTITY-level
+rule stays precedence: an entity whose P31 values fall in two families takes
+the first. `scholarly` is a root like the others (scholarly article and its
+subclasses); the pruning rule stays its exact P31, so on Monday a review
+article is a record in `family=scholarly` while the scholarly articles
+themselves are not yet records (option 3).
+
 **The pinned map** — every class under a root, with its family, from the
 creation dump's P279 closure; a SHARD member (`slicing/families.json`, its
 sha256 in the slicing description), built once by `create` from the pack.
 
 **An entity's family** — from its own statements, at the dump being read:
-its non-deprecated P31 values looked up in the pinned map, its P1435;
-the first family in precedence order. A P31 class NOT in the map (created
-after the creation dump) is walked up the CURRENT dump's P279 links to the
-nearest class the map has (breadth first, the smallest id at a tie) —
-deterministic per dump; such classes are new, so the walk rarely moves an
-existing record. No class found: `other`.
+its non-deprecated P31 values looked up in the pinned map, its P1435 (a
+stated or unknown value; "no value" designates nothing); the first family
+in precedence order. A class not listed whose number is at most the map's
+`max_item` existed at creation under no root: `other`, for ever. A class
+created after the creation dump (a larger number) is walked up the CURRENT
+dump's P279 links to the nearest class the map knows (breadth first, a tie
+to the first family) — deterministic per dump; such classes are new, so the
+walk rarely moves an existing record, and each pass logs how many it
+placed. No class found: `other`.
 
 **The slice** — `family=<family>/range=<id ÷ 10⁷>` (`family=property/
 range=100` for properties): the family is what a person chooses, the id
@@ -118,16 +134,36 @@ builds the map.
 (word search over all of it) while the encoder spends only on some
 families; the Library's card offers the families by name.
 
-## 6. Effort and order
+## 6. Effort and order — built 2026-10-24
 
-1. Parser 2's history section (approved the same day; independent).
-2. The family pass in the pack (P279 edges → map; P31/P1435 → each
-   entity's family code; ~30 min on the node, read-only for the chunks),
-   the map as a member at `create`, the slicer and `slice_hint`, tests —
-   about 1.5 days.
-3. On the node: the pass, then Monday's sequence on the new target —
-   records build about a day later than planned; discovery and the text
-   index do not wait.
+1. Parser 2's history section: built (eea21cc).
+2. Built the same day: the pack's version 3 (a complete version 2 is
+   upgraded in place from its own lines, RULE 1): `subclass` — every item's
+   P279 links — and each chunk's largest item, then `families-<h>.json`, the
+   map this dump gives, then `families-<h>.u8`, every entity's code under it
+   (one byte an entity, in dump order) and `families-<h>.report.json`, each
+   family's records and the classes that fill it. `create` takes the block
+   and the map from the plugin (`WikidataSource.creation_slicing`: the
+   pinned dump's pack) and writes the member; each snapshot lists it;
+   `share` moves it as the member `slicing`; the records build reads the
+   Codex's map from the SHARD, checks its hash and slices by the pack's
+   codes (`slicing.context_for`, `slice_hint`); `hold check`'s `records`
+   check verifies the member and every sampled record's slice. A Codex
+   sliced by id range keeps its ranges. Tests:
+   tests/test_plugins_wikidata_families.py.
+3. On the node (the order matters — the family list is fixed at `create`):
+   deploy; the worker's scan of wikidata upgrades the pack to version 3
+   (the class tree is the 18-minute pass of the classes run, the codes about
+   as long as its entity pass, ~40 min — counted then); READ
+   `families-<h>.report.json` before `create` (a family badly filled is
+   fixed in the roots now, never after); `create` on the new target; the
+   records build. Parsing does not wait for the families (a version-2 pack
+   whose names are done is enough); discovery does (it finishes the pack
+   first).
+
+**Option 3** (operator, 2026-10-24: "Go with 3"): the scholarly articles
+and the lexemes join later. Both families are in Monday's map, so they join
+as a daughter that adds parts and moves no record (§7).
 
 ## 7. The constraints, now and later (operator's question, 2026-10-24)
 

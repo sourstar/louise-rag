@@ -347,7 +347,7 @@ names).
 | field | type | required | meaning |
 |---|---|---|---|
 | `keys` | list of strings | yes | slice keys in path order: `["year"]`, `["lang", "pages"]`, `[]` for one slice `all` |
-| `<key>` | object | one per key | for a year key: `{field, bins}` — `field` names the record field read (`date`), `bins` is the list below; for an id-range key: `{field, bin: integer}` — the record's `native_id` divided by `bin`; for a language key: `{field: "lang"}` |
+| `<key>` | object | one per key | for a year key: `{field, bins}` — `field` names the record field read (`date`), `bins` is the list below; for an id-range key: `{field, bin: integer}` — the record's `native_id` divided by `bin` (`field: "id"`: the number of the entity's own id, wikidata's `Q42` → 42); for a language key: `{field: "lang"}`; for a FAMILY key (*amended 2026-10-24*, pack-format.md §2): `{field: "extra.claims", rule: "wikidata-families", map: "sha256:…"}` — the family the rule gives the record's own statements under the map pinned at creation, whose bytes are the SHARD member `slicing/<sha256 hex>.json` (§9.4, §9.16; app/plugins/wikidata/families.py) |
 | `unknown` | string | yes | the slice a record joins when the key cannot be read: `"year=unknown"` |
 | `shard_records` | integer | yes | records per part: 30,000 for PubMed, 2,000 for Wikipedia, 50 for Gutenberg; 1,000,000 for a claims collection in Parquet (below) |
 | `container` | `"jsonl"` · `"parquet"` | version 9 | the record parts' file form (§9.5 "The file"): the zstd-framed JSONL of every collection so far, or one Parquet file per part. ABSENT, never null, below version 9, where a Codex reads as `"jsonl"`; REQUIRED at version 9, which is written for every collection kind that declares it (*amended 2026-10-20*, operator: Parquet parts offered to every collection, not to annotations collections alone). Inside `collection_id`: the container is part of what a part's bytes are, though not of what its records are — `records_root` does not depend on it |
@@ -645,7 +645,7 @@ the chain, and never ahead of the period open now.
 | `shards` | list of part | yes | every record part the snapshot consists of, sorted by (`slice` bytes, `n`); the key keeps the old word |
 | `relations` | list of relation part | yes | the relations parts (§9.14), same order; `[]` when the collection has none |
 | `figures` | list of figures part | yes | the figures containers (§9.5), same order; `[]` when the collection carries no plates — which is every collection whose Codex has `record_line` 1 |
-| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`. A SHARD file that is neither here nor a part that a `shards`, `relations` or `figures` entry names is not a member and is not served (07 §7.8). An annotations collection (02 §2.10) has no space, so its `files` carries no calibration entries: `validation.json`, `LICENSE-TERMS` and the seals file, the last two null when it is green and open (*amended 2026-10-09*) |
+| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`, and `"slicing/<sha256 hex>.json": {root, bytes}` where the Codex's slicing block names a family map (§9.3; required then, absent otherwise — *amended 2026-10-24*). A SHARD file that is neither here nor a part that a `shards`, `relations` or `figures` entry names is not a member and is not served (07 §7.8). An annotations collection (02 §2.10) has no space, so its `files` carries no calibration entries: `validation.json`, `LICENSE-TERMS` and the seals file, the last two null when it is green and open (*amended 2026-10-09*) |
 | `delta` | object | yes | `{added: [uid…], changed: [uid…], tombstoned: [{uid, reason}…]}`, each list sorted by uid bytes; `reason` is `"retracted"` (the origin says the record should not have existed) or `"withdrawn"` (the origin no longer supplies it) |
 
 A part entry:
@@ -2102,6 +2102,7 @@ that `file_hash`: `{"file_hash":"4e1a…","format":"cades","signer":
 | `calibration-<set>` | `calibration/<set>.safetensors` and `.sig.json` | in the snapshot's `files` |
 | `validation` | `validation.json` | in the snapshot's `files` |
 | `terms` | `LICENSE-TERMS` | in the snapshot's `files` |
+| `slicing` | `slicing/<sha256 hex>.json`: the family map a slicing block names (§9.3; *amended 2026-10-24*) | in the snapshot's `files` |
 | `seals-<snapshot_id>` | `seals/<snapshot_id>.json`, and `seals/lists/<sha256>.xml` for each trusted list its entries name (*amended 2026-10-08*) | in the snapshot's `files` |
 | `origin-<slice>` | the sealed origin files of a certified collection, optional | per file, in the digest |
 

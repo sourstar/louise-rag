@@ -411,12 +411,17 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
                        embed_query=None,
                        space_version: int | None = None,
                        pairs: bytes | None = None,
-                       calibration_from: Path | None = None) -> Codex:
+                       calibration_from: Path | None = None,
+                       slicing_member: bytes | None = None) -> Codex:
     """`hold collection create <plugin> --recipe FILE` (06 §6.6, 07 §7.3).
 
     `calibration_from`: a held collection's SHARD whose document-side
     reference vectors and envelope are reused (`_reused_calibration`, RULE
     1) — only the query side is embedded.
+
+    `slicing_member`: the bytes of the map the recipe's slicing block names
+    by sha256 (wikidata's family map, pack-format.md §2 amended
+    2026-10-24), written as the SHARD member `slicing/<hex>.json`.
 
     `pairs`: the bytes of a PAIR space's calibration set — 512 title-and-
     abstract pairs drawn from the collection's records by
@@ -512,7 +517,30 @@ def create_from_recipe(root: Path, plugin: str, recipe: dict[str, Any], *,
                       query_vectors=query_vectors, pairs=pairs)
     write_terms(d, codex, plugin,
                 terms_path=(recipe.get("license") or {}).get("terms_path"))
+    write_slicing_map(d, codex, slicing_member)
     return created
+
+
+def write_slicing_map(shard_dir_path: Path, codex: Codex, raw: bytes | None) -> None:
+    """`slicing/<sha256 hex>.json`: the map the Codex's slicing block names
+    (09 §9.4, amended 2026-10-24), byte for byte and checked against the
+    sha256 the Codex pins; nothing for a slicing that names none. A Codex
+    naming a map with no bytes to write is refused: its records could never
+    be sliced, nor its slices checked."""
+    import hashlib
+    from app.pack import slicing
+    want = slicing.family_map_of(codex.slicing)
+    if want is None:
+        return
+    if raw is None or "sha256:" + hashlib.sha256(raw).hexdigest() != want:
+        raise CodexError(f"the Codex's slicing names the family map {want[:23]}… and "
+                         f"{'no map was given' if raw is None else 'the map given hashes otherwise'}: "
+                         f"the member {slicing.map_member(want)} cannot be written")
+    p = Path(shard_dir_path) / slicing.map_member(want)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_bytes(raw)
+    tmp.replace(p)
 
 
 def _document_side(space: dict[str, Any]) -> dict[str, Any]:

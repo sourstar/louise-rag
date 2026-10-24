@@ -84,6 +84,14 @@ def test_a_stopped_pass_resumes_at_the_chunk_without_parsing_what_it_has(tmp_pat
             calls["n"] += 1
         return real(s, *a, **k)
     monkeypatch.setattr(dump_mod.json, "loads", counting)
+    real_finish = pack._finish
+
+    def finish(*a, **k):
+        # the passes after the chunks (names, class tree, families) parse what
+        # they need from the pack's own lines: not the chunk pass counted here
+        monkeypatch.setattr(dump_mod.json, "loads", real)
+        return real_finish(*a, **k)
+    monkeypatch.setattr(pack, "_finish", finish)
     meta = pack.build(dump, languages=("en",), chunk=2)
     assert meta["complete"] and meta["chunks"] == 3 and meta["entities"] == 6
     assert calls["n"] == 4, "the two entities of the complete chunk were skipped, not parsed"
@@ -263,6 +271,12 @@ def test_a_pack_built_beside_the_dump_is_adopted_into_the_cache_and_resumes_ther
             calls["n"] += 1
         return real(s, *a, **k)
     monkeypatch.setattr(dump_mod.json, "loads", counting)
+    real_finish = pack._finish
+
+    def finish(*a, **k):
+        monkeypatch.setattr(dump_mod.json, "loads", real)     # the passes after the chunks: not counted
+        return real_finish(*a, **k)
+    monkeypatch.setattr(pack, "_finish", finish)
     meta = pack.build(dump, languages=("en",), chunk=2, workers=1, log=said.append)
     assert meta["complete"] and meta["chunks"] == 3
     assert calls["n"] == 4, "resumed after the adopted chunk: its two entities were not parsed again"

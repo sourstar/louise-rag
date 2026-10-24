@@ -204,7 +204,7 @@ NAMES = [("Q12", "fr", "ligne de Charpal"), ("Q13", "fr", "Rivière"), ("Q15", "
 def test_the_pack_names_every_entity_without_english_or_mul(tmp_path):
     dump = a_dump(tmp_path)
     meta = pack.build(dump, languages=("en",), chunk=4, workers=1)
-    assert meta["pack_version"] == 2 and meta["complete"] and meta["names_done"] and pack.ready(dump)
+    assert meta["pack_version"] == pack.PACK_VERSION and meta["complete"] and meta["names_done"] and pack.ready(dump)
     assert rows(dump, "language") == [("Q188", "de")]
     assert rows(dump, "name") == NAMES, \
         "an English description or alias is not a label; Q14 has none; Q16 by its language, found after it"
@@ -252,7 +252,7 @@ def test_a_version_1_pack_is_upgraded_in_place_not_rebuilt(tmp_path, monkeypatch
     pack.reset_caches()
     said = []
     meta = pack.build(old, languages=("en",), chunk=2, workers=1, log=said.append)
-    assert meta["complete"] and meta["pack_version"] == 2 and meta["names_done"]
+    assert meta["complete"] and meta["pack_version"] == pack.PACK_VERSION and meta["names_done"]
     assert not {"names_chunks", "languages_chunks", "languages_done"} & set(meta)
     assert any("no pass over the dump" in s for s in said)
     assert {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in pack.chunk_files(old)} == files, \
@@ -274,7 +274,7 @@ def test_a_stopped_upgrade_defers_and_resumes_at_its_chunk(tmp_path, monkeypatch
     meta = pack.build(dump, languages=("en",), chunk=2, workers=1, stop=lambda: True)
     assert pack.read_meta(dump)["languages_chunks"] == 2, "resumed at its chunk"
     meta = pack.build(dump, languages=("en",), chunk=2, workers=2)
-    assert meta["complete"] and meta["pack_version"] == 2 and pack.is_complete(dump, ("en",))
+    assert meta["complete"] and meta["pack_version"] == pack.PACK_VERSION and pack.is_complete(dump, ("en",))
     assert rows(dump, "name") == NAMES
 
 
