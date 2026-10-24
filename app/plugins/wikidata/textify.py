@@ -31,6 +31,17 @@ LANGUAGE_VARIABLES: dict[str, dict[str, str]] = {
     "it": {"also known as": "noto anche come", "Attributes include": "I suoi attributi includono", ", ": ", ",
            "has": "ha", "Examples": "Esempi"},
 }
+#: OURS (parser 2): Wikibase's own wording for the two special values
+#: (`wikibase-snakview-variations-novalue-label` / `-somevalue-label`); a
+#: language without them takes the English. Upstream rendered both as
+#: "has <property>", which for `novalue` says the opposite of the statement
+SPECIAL_VALUES: dict[str, dict[str, str]] = {
+    "en": {"novalue": "no value", "somevalue": "unknown value"},
+    "de": {"novalue": "kein Wert", "somevalue": "unbekannter Wert"},
+    "fr": {"novalue": "aucune valeur", "somevalue": "valeur inconnue"},
+    "es": {"novalue": "sin valor", "somevalue": "valor desconocido"},
+    "it": {"novalue": "nessun valore", "somevalue": "valore sconosciuto"},
+}
 
 #: `labels(entity_id, lang) -> label or None`: the dump's label table
 Labels = Callable[[str, str], Optional[str]]
@@ -62,6 +73,22 @@ class MonolingualText:
 
     def __bool__(self) -> bool:
         return bool(self.text)
+
+
+@dataclass(slots=True)
+class Special:
+    """OURS: a statement whose value is `novalue` ("no value") or `somevalue`
+    ("unknown value") — information, rendered as Wikibase displays it."""
+    kind: str
+
+    def to_text(self, lang: str = "en") -> str:
+        return SPECIAL_VALUES.get(lang, SPECIAL_VALUES["en"]).get(self.kind) or SPECIAL_VALUES["en"][self.kind]
+
+    def __str__(self) -> str:
+        return self.to_text("en")
+
+    def __bool__(self) -> bool:
+        return True
 
 
 @dataclass(slots=True)
@@ -146,7 +173,7 @@ class ClaimValue:
         lang_var = LANGUAGE_VARIABLES.get(lang, LANGUAGE_VARIABLES["en"])
         if not self:
             return ""
-        s = self.value.to_text(lang) if isinstance(self.value, Entity) else str(self.value)
+        s = self.value.to_text(lang) if isinstance(self.value, (Entity, Special)) else str(self.value)
         if self.rank == "deprecated":
             s += " [deprecated]"
         qs = [q.to_text(lang) for q in self.qualifiers]
@@ -264,9 +291,16 @@ class Normalizer:
         mainsnak = st.get("mainsnak", st)
         if not isinstance(mainsnak, dict):
             return None
-        if mainsnak.get("snaktype", "value") != "value":
-            return ClaimValue(claim=claim, value=None, rank=st.get("rank"))      # somevalue / novalue
-        value = self._value(datatype, mainsnak.get("datavalue"))
+        snaktype = mainsnak.get("snaktype", "value")
+        if snaktype in ("somevalue", "novalue"):
+            # OURS: the special value as Wikibase shows it, its qualifiers kept
+            # (earliest/latest date bound an unknown date); upstream wrote
+            # "has <property>" and dropped the qualifiers
+            value: Any = Special(snaktype)
+        elif snaktype != "value":
+            return None
+        else:
+            value = self._value(datatype, mainsnak.get("datavalue"))
         quals: list[Claim] = []
         if self.qualifiers:
             for qpid, snaks in (st.get("qualifiers") or {}).items():
@@ -283,8 +317,10 @@ class Normalizer:
         for snak in snaks:
             if not isinstance(snak, dict):
                 continue
-            if snak.get("snaktype", "value") != "value":
-                vals.append(ClaimValue(claim=claim, value=None))
+            snaktype = snak.get("snaktype", "value")
+            if snaktype != "value":
+                vals.append(ClaimValue(claim=claim, value=Special(snaktype) if snaktype in ("somevalue", "novalue")
+                                       else None))
                 continue
             vals.append(ClaimValue(claim=claim, value=self._value(datatype, snak.get("datavalue"))))
         claim.values = vals
@@ -296,9 +332,13 @@ class Normalizer:
         t, v = dv.get("type"), dv.get("value")
         if t == "wikibase-entityid" or datatype in ("wikibase-item", "wikibase-property"):
             eid = v.get("id") if isinstance(v, dict) else None
-            if isinstance(eid, str) and eid[:1] in ("Q", "P"):
+            if not isinstance(eid, str) and isinstance(v, dict) and isinstance(v.get("numeric-id"), int):
+                eid = {"item": "Q", "property": "P", "lexeme": "L"}.get(v.get("entity-type"), "") + str(v["numeric-id"])
+            if isinstance(eid, str) and eid[:1] in ("Q", "P") and eid[1:].isdigit():
                 return Entity(id=eid, label=self._label(eid))
-            return Text(text=str(v))
+            # OURS: a lexeme, form or sense (L7, L7-F2) is its id; upstream
+            # wrote the Python repr of the datavalue into the text
+            return Text(text=eid) if isinstance(eid, str) and eid else None
         if t == "time" or datatype == "time":
             if not isinstance(v, dict):
                 return None

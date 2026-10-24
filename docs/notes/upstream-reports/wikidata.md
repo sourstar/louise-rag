@@ -31,6 +31,8 @@ either: a record is reproduced from the dump (records-vs-origin).
 | W3 | data | six P279 cycles (18 classes) inside the occurrence tree | written below |
 | W4 | gap | the most-referenced entities with no label in it, de, fr, es, for the texts of monuments, buildings and events | written below; the full lists in [../wikidata-coverage-2026-10-24/classes.json](../wikidata-coverage-2026-10-24/classes.json) |
 | W5 | data | the occurrence (Q1190554) tree holds clinical trials, doctoral theses, statutory instruments, stars and coins | written below; the paths to trace |
+| W6 | code, textifier | `novalue` written as "has <property>", the opposite; special values' qualifiers dropped | written: [wmde-wikidata-textifier.md](wmde-wikidata-textifier.md) §4 |
+| W7 | code, textifier | a lexeme, form or sense value written as a Python dict | written: [wmde-wikidata-textifier.md](wmde-wikidata-textifier.md) §5 |
 | — | code, textifier | random alias order; a failed format silently drops the value | [wmde-wikidata-textifier.md](wmde-wikidata-textifier.md) §1–2 |
 | — | code, embedding project | stale vectors kept as current; text depending on a live page; dropped entity data; the card's counts | [wmde-wikidata-embedding-project.md](wmde-wikidata-embedding-project.md) |
 

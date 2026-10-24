@@ -242,9 +242,44 @@ _G: dict[str, Any] = {}
 
 
 def _init(class_bits: dict[int, int], langs: tuple[str, ...], dump: str, every: int,
-          tokenizer: str | None, max_tokens: int, find: tuple[str, ...]) -> None:
+          tokenizer: str | None, max_tokens: int, find: tuple[str, ...],
+          count_bits: dict[int, int] | None = None) -> None:
     _G.update(class_bits=class_bits, langs=tuple(langs), dump=Path(dump), every=every, tokenizer=tokenizer,
-              max_tokens=max_tokens, find=tuple(f.casefold() for f in find))
+              max_tokens=max_tokens, find=tuple(f.casefold() for f in find), count_bits=count_bits or {})
+
+
+def statement_facts(obj: dict) -> Counter:
+    """What the text renders specially or leaves out (operator, 2026-10-24:
+    "check if there is any other information from wikidata that we silently
+    ignore"): `novalue` / `somevalue` statements, lexeme values, quantities
+    with bounds, and the statements the best-rank filter drops (a normal one
+    of a property that has a preferred one) — each counted, and the entity
+    once per kind (`<kind>_entities`)."""
+    out: Counter = Counter()
+    claims = obj.get("claims") if isinstance(obj.get("claims"), dict) else {}
+    for statements in claims.values():
+        if not isinstance(statements, list):
+            continue
+        preferred = any(isinstance(st, dict) and st.get("rank") == "preferred" for st in statements)
+        for st in statements:
+            if not isinstance(st, dict):
+                continue
+            snak = st.get("mainsnak") if isinstance(st.get("mainsnak"), dict) else {}
+            kind = snak.get("snaktype")
+            if kind in ("novalue", "somevalue"):
+                out[kind] += 1
+            dv = snak.get("datavalue") if isinstance(snak.get("datavalue"), dict) else {}
+            v = dv.get("value")
+            if dv.get("type") == "wikibase-entityid" and isinstance(v, dict) and \
+                    v.get("entity-type") in ("lexeme", "form", "sense"):
+                out["lexeme_values"] += 1
+            if dv.get("type") == "quantity" and isinstance(v, dict) and "upperBound" in v:
+                out["quantities_with_bounds"] += 1
+            if preferred and st.get("rank") == "normal":
+                out["dropped_by_rank"] += 1
+    for kind in list(out):
+        out[f"{kind}_entities"] = 1
+    return out
 
 
 class _Lookups(textify.Normalizer):
@@ -298,6 +333,10 @@ def _classes_of(path: str) -> dict[str, Any]:
     errors: Counter = Counter()
     examples: list[tuple[str, str]] = []
     found: list[dict] = []
+    facts: Counter = Counter()
+    facts_selected: Counter = Counter()
+    counted: Counter = Counter()
+    count_bits: dict[int, int] = _G.get("count_bits") or {}
     entities = 0
     for eid, pruned, line in _rows(Path(path)):
         q = _qnum(eid)
@@ -308,6 +347,17 @@ def _classes_of(path: str) -> dict[str, Any]:
         entities += 1
         obj = json.loads(line)
         lm, dm = masks(obj, langs)
+        these = statement_facts(obj)
+        facts.update(these)
+        if count_bits:
+            bits = 0
+            for c in values(obj, "P31"):
+                cq = _qnum(c)
+                if cq is not None:
+                    bits |= count_bits.get(cq, 0)
+            for i in range(bits.bit_length()):
+                if bits >> i & 1:
+                    counted[i] += 1
         if q is None:
             props[eid] = lm
             continue
@@ -336,6 +386,7 @@ def _classes_of(path: str) -> dict[str, Any]:
         # bit i: a Wikipedia article in langs[i] (`itwiki`): where it is documented
         hm = sum(1 << i for i, lang in enumerate(langs) if isinstance(sl, dict) and f"{lang}wiki" in sl)
         sel[(inst_bits, own_bits, heritage, 0 if n_sl == 0 else 1 if n_sl < 5 else 2, lm, dm, hm)] += 1
+        facts_selected.update(these)
         for c in p31:
             cq = _qnum(c)
             if cq is not None and cq in class_bits:
@@ -360,7 +411,8 @@ def _classes_of(path: str) -> dict[str, Any]:
             ref_p[rid] = n
     return {"q": q_all, "lm": bytes(lm_all), "dm": bytes(dm_all), "pruned_q": pruned_q, "props": props,
             "sel": sel, "inst": inst, "ref_q": ref_q, "ref_n": ref_n, "ref_p": ref_p, "sample": sample,
-            "errors": errors, "examples": examples, "found": found, "entities": entities}
+            "errors": errors, "examples": examples, "found": found, "entities": entities,
+            "facts": facts, "facts_selected": facts_selected, "counted": counted}
 
 
 # ---- classes --------------------------------------------------------------------------------
@@ -372,7 +424,8 @@ def _label_of(dump: Path, eid: str) -> str | None:
 
 def run_classes(dump: Path, *, roots: tuple[str, ...] = ROOTS, langs: tuple[str, ...] = LANGS,
                 processes: int = 1, every: int = 1000, tokenizer: str | None = None, max_tokens: int = 1024,
-                find: tuple[str, ...] = FIND, top: int = 30, top_missing: int = 200) -> dict[str, Any]:
+                find: tuple[str, ...] = FIND, top: int = 30, top_missing: int = 200,
+                count_roots: tuple[str, ...] = ()) -> dict[str, Any]:
     import numpy as np
 
     if len(langs) > 7:
@@ -396,6 +449,13 @@ def run_classes(dump: Path, *, roots: tuple[str, ...] = ROOTS, langs: tuple[str,
         for c in trees[r]:
             class_bits[c] = class_bits.get(c, 0) | (1 << i)
     within = set(class_bits)
+    # roots only COUNTED (Wikimedia's internal items): their trees, outside the selection
+    count_q = [q for q in (_qnum(r) for r in count_roots) if q is not None]
+    count_trees = closure(child, parent, count_q) if count_q else {}
+    count_bits: dict[int, int] = {}
+    for i, r in enumerate(count_q):
+        for c in count_trees[r]:
+            count_bits[c] = count_bits.get(c, 0) | (1 << i)
     loops = cycles(child, parent, within)
     parents: dict[int, list[int]] = {}
     for c, p in zip(child, parent):
@@ -418,7 +478,10 @@ def run_classes(dump: Path, *, roots: tuple[str, ...] = ROOTS, langs: tuple[str,
     found: list = []
     entities = beyond = 0
     t1 = time.time()
-    args = (class_bits, langs, str(dump), every, tokenizer, max_tokens, find)
+    args = (class_bits, langs, str(dump), every, tokenizer, max_tokens, find, count_bits)
+    facts: Counter = Counter()
+    facts_selected: Counter = Counter()
+    counted: Counter = Counter()
     for i, got in enumerate(_pool_map(_classes_of, files, processes, _init, args), 1):
         q = np.frombuffer(got["q"], dtype=np.int32)
         present[q] = True
@@ -436,6 +499,9 @@ def run_classes(dump: Path, *, roots: tuple[str, ...] = ROOTS, langs: tuple[str,
         inst.update(got["inst"])
         sample.extend(got["sample"])
         errors.update(got["errors"])
+        facts.update(got["facts"])
+        facts_selected.update(got["facts_selected"])
+        counted.update(got["counted"])
         examples.extend(got["examples"][: max(0, 10 - len(examples))])
         found.extend(got["found"])
         entities += got["entities"]
@@ -518,7 +584,12 @@ def run_classes(dump: Path, *, roots: tuple[str, ...] = ROOTS, langs: tuple[str,
         ref_cov[lang] = {"own_language": round((items_own + p_own) / total_refs, 4) if total_refs else None,
                          "with_mul": round((items_any + p_any) / total_refs, 4) if total_refs else None}
     referenced = {"label_lookups": total_refs, "to_properties": sum(ref_p.values()),
-                  "to_pruned_articles": int(ref[pruned].sum()), "to_ids_not_in_dump": beyond, "coverage": ref_cov}
+                  "to_pruned_articles": int(ref[pruned].sum()), "to_ids_not_in_dump": beyond,
+                  # an id below the largest the dump holds but with no line: merged into another
+                  # entity (a redirect, which the JSON dump does not carry) or deleted
+                  "to_absent_entities": int(ref[~present & ~pruned].sum()),
+                  "absent_entities": int(((ref > 0) & ~present & ~pruned).sum()),
+                  "coverage": ref_cov}
 
     # THE WORKLIST for the report: per language, the entities the selection's
     # texts name most often that have no label in it (nor in mul) — where the
@@ -563,6 +634,9 @@ def run_classes(dump: Path, *, roots: tuple[str, ...] = ROOTS, langs: tuple[str,
                         "largest": [{"classes": [{"id": f"Q{x}", "label": _label_of(dump, f"Q{x}")} for x in c[:8]],
                                      "size": len(c)} for c in sorted(loops, key=len, reverse=True)[:20]]},
         "found": found, "textifier_errors": dict(errors), "error_examples": examples,
+        "statements": {"all": dict(sorted(facts.items())), "selected": dict(sorted(facts_selected.items()))},
+        "counted": {r: {"label": _label_of(dump, r), "classes_in_tree": len(count_trees.get(_qnum(r), ())),
+                        "entities": counted.get(i, 0)} for i, r in enumerate(count_roots)},
         "seconds": {"tree": round(t_tree), "entities": round(time.time() - t1)},
     }
 
@@ -671,6 +745,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--find", default=",".join(FIND))
     c.add_argument("--top-missing", type=int, default=200)
     c.add_argument("--top", type=int, default=30, help="classes listed, overall and per root")
+    c.add_argument("--count-roots", default="", help="roots whose instances are only counted (e.g. Q17442446)")
     c.add_argument("--out")
     a = ap.parse_args(argv)
     if a.cmd == "mul":
@@ -679,7 +754,8 @@ def main(argv: list[str] | None = None) -> int:
         got = run_classes(Path(a.dump), roots=tuple(x for x in a.roots.split(",") if x),
                           langs=tuple(x for x in a.langs.split(",") if x), processes=a.processes, every=a.every,
                           tokenizer=a.tokenizer, max_tokens=a.max_tokens,
-                          find=tuple(x for x in a.find.split(",") if x), top_missing=a.top_missing, top=a.top)
+                          find=tuple(x for x in a.find.split(",") if x), top_missing=a.top_missing, top=a.top,
+                          count_roots=tuple(x for x in a.count_roots.split(",") if x))
     text = json.dumps(got, ensure_ascii=False, indent=1)
     if a.out:
         Path(a.out).write_text(text + "\n", encoding="utf-8")

@@ -74,7 +74,10 @@ class WikidataSource:
     #: 2 (2026-10-24): a referenced entity's label falls back to `mul` before
     #: the fallback language, as upstream's — parser 1 wrote its id instead;
     #: and no id where a name exists (operator): the title, the entity's own
-    #: name in its text and a referenced entity's name follow names.py
+    #: name in its text and a referenced entity's name follow names.py; and
+    #: what the text dropped or misread: "no value" / "unknown value" with
+    #: their qualifiers, a lexeme value's id, a quantity's ± (textify.py,
+    #: format.py)
     PARSER_VERSION = 2
     LOCATOR_SEP = _LOCATOR_SEP
     LOCATOR_MEMBER_FIELDS = 1

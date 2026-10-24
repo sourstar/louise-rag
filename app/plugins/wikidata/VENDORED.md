@@ -25,6 +25,12 @@ What was changed, and why (docs/notes/wikidata-build-plan.md §2, §5):
   it has no label at all — never `<no label>`; the entity's own label falls
   back to its name the same way; a PROPERTY without a label still drops its
   claim from the text, as upstream;
+- `novalue` / `somevalue` read as Wikibase shows them, "no value" /
+  "unknown value" (`SPECIAL_VALUES`), with their qualifiers; upstream wrote
+  "has <property>" for both — for `novalue` the opposite — and dropped the
+  qualifiers (parser 2; offered upstream, wmde-wikidata-textifier.md §4);
+- a lexeme, form or sense value is its id (`L7`); upstream wrote the
+  datavalue's Python repr (parser 2; §5);
 - the `instance of` (P31) statement is rendered FIRST, the rest in the
   dump's order: it is the sticky line the chunker repeats in every window
   (upstream's `sticky_property_ids`), found by its place in the text;

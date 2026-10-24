@@ -152,3 +152,48 @@ def test_coordinates_and_quantities():
     assert fmt.quantity_text({"amount": "+7", "unit": "http://www.wikidata.org/entity/Q999"}) == "7 Q999"
     with pytest.raises(fmt.FormatError):
         fmt.time_text({"time": "1952-04-19", "precision": 11})
+
+
+def _snak(pid, snaktype="value", datavalue=None, datatype="wikibase-item"):
+    out = {"snaktype": snaktype, "property": pid, "datatype": datatype}
+    if datavalue is not None:
+        out["datavalue"] = datavalue
+    return out
+
+
+def test_unknown_and_no_value_read_as_wikibase_shows_them_with_their_qualifiers():
+    """Upstream wrote "has <property>" for both special values — for
+    `novalue` the opposite of the statement — and dropped their qualifiers,
+    which is where an unknown date keeps its bounds."""
+    e = {"id": "Q900", "labels": {"en": {"language": "en", "value": "Old tower"}}, "claims": {
+        "P84": [{"mainsnak": _snak("P84", "novalue"), "rank": "normal"}],
+        "P570": [{"mainsnak": _snak("P570", "somevalue", datatype="time"), "rank": "normal",
+                  "qualifiers": {"P1319": [_snak("P1319", datavalue={"type": "time", "value": {
+                      "time": "+1450-00-00T00:00:00Z", "precision": 9, "timezone": 0, "before": 0, "after": 0,
+                      "calendarmodel": "http://www.wikidata.org/entity/Q1985727"}}, datatype="time")],
+                      "P582": [_snak("P582", "novalue", datatype="time")]}}],
+    }}
+    table = {("P84", "en"): "architect", ("P570", "en"): "date of death", ("P1319", "en"): "earliest date",
+             ("P582", "en"): "end time", ("P84", "it"): "architetto"}
+    text = textify.entity_text(e, "en", lambda eid, lang: table.get((eid, lang)))
+    assert "- architect: no value" in text and "has architect" not in text
+    assert "- date of death: unknown value (earliest date: 1450, end time: no value)" in text
+    assert "architetto: nessun valore" in textify.entity_text(e, "it", lambda eid, lang: table.get((eid, lang)))
+
+
+def test_a_lexeme_value_is_its_id_and_a_quantity_keeps_its_uncertainty():
+    e = {"id": "Q901", "labels": {"en": {"language": "en", "value": "Tower"}}, "claims": {
+        "P5137": [{"mainsnak": _snak("P5137", datavalue={"type": "wikibase-entityid", "value": {
+            "entity-type": "lexeme", "numeric-id": 7, "id": "L7"}}, datatype="wikibase-lexeme"), "rank": "normal"}],
+        "P2048": [{"mainsnak": _snak("P2048", datavalue={"type": "quantity", "value": {
+            "amount": "+52", "unit": "http://www.wikidata.org/entity/Q11573", "upperBound": "+53",
+            "lowerBound": "+50.5"}}, datatype="quantity"), "rank": "normal"}],
+    }}
+    table = {("P5137", "en"): "item for this sense", ("P2048", "en"): "height", ("Q11573", "en"): "metre"}
+    text = textify.entity_text(e, "en", lambda eid, lang: table.get((eid, lang)))
+    assert "- item for this sense: L7" in text and "entity-type" not in text, "never the datavalue's repr"
+    assert "- height: 52±1.5 metre" in text, "± the larger distance to a bound, as Wikibase shows it"
+    assert fmt.quantity_text({"amount": "+52", "unit": "1"}) == "52", "no bounds: the amount alone"
+    assert fmt.quantity_text({"amount": "+52.00", "unit": "1", "upperBound": "+52.50",
+                              "lowerBound": "+51.75"}) == "52.00±0.50"
+    assert fmt.quantity_text({"amount": "+3", "unit": "1", "upperBound": "+3", "lowerBound": "+3"}) == "3"

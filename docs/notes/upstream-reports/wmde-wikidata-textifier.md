@@ -50,3 +50,34 @@ anfiteatro … also known as … Attributes include: …".
 
 In use in Louise's copy since 2026-10-24 (`app/plugins/wikidata/textify.py`,
 parser 2). Listed in [wikidata.md](wikidata.md) (W1).
+
+## 4. `novalue` is written as "has <property>" — the opposite of the statement
+
+**Root cause:** `JSONNormalizer._claim_value` turns both special snaks,
+`somevalue` and `novalue`, into a value of `None` (and drops their
+qualifiers); `WikibaseClaim.to_text` then writes "has <property>" for a
+claim whose values are all empty. For `somevalue` that is roughly right;
+for `novalue` — "this item has no architect", "no end time" — it says the
+opposite.
+
+**Example:** a statement "architect: no value" renders as "has architect";
+"date of death: unknown value" with the qualifier "earliest date: 1450"
+loses its bound.
+
+**Suggested fix:** render them as Wikibase displays them, "no value" and
+"unknown value" (the messages `wikibase-snakview-variations-novalue-label`
+and `-somevalue-label`, translated already), and keep their qualifiers.
+In use in Louise's copy since 2026-10-24 (parser 2).
+
+## 5. A lexeme, form or sense value is written as a Python dict
+
+**Root cause:** `_to_value_object` returns an entity only for ids starting
+with `Q` or `P`; any other entity value (a lexeme `L7`, a form `L7-F2`, a
+sense `L7-S1`) becomes `WikibaseText(text=str(dv_val))`.
+
+**Example:** "item for this sense: {'entity-type': 'lexeme', 'numeric-id':
+7, 'id': 'L7'}".
+
+**Suggested fix:** the id (`L7`), or its lemma where a lexeme label lookup
+exists. In use in Louise's copy since 2026-10-24 (parser 2): the id.
+

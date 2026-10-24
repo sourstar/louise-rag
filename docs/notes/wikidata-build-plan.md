@@ -473,3 +473,30 @@ whether a language's section is written for every selected entity or only
 where Wikidata names it in that language. Recommended: it, de, fr, es,
 only where named (2.7 months of the budget, against 15). If nothing is
 said: that.
+
+## What the dump says that the text dropped or misread — checked (operator, 2026-10-24)
+
+*"Check if there is any other information from wikidata that we silently
+ignore like the original language."* The record keeps the whole entity
+(`extra`, invariant 11); this is about the TEXT — what is read, searched
+and embedded — and the selection.
+
+| what | was | now |
+|---|---|---|
+| `novalue` ("no architect", "no end time") | "has architect" — the opposite (upstream) | "architect: no value", Wikibase's wording; parser 2 |
+| `somevalue` and its qualifiers (an unknown date's earliest/latest bounds) | "has date of death", qualifiers dropped (upstream) | "date of death: unknown value (earliest date: 1450)"; parser 2 |
+| a lexeme, form or sense value | the datavalue's Python repr (upstream) | its id (`L7`); parser 2 |
+| a quantity's uncertainty (`upperBound`/`lowerBound`) | dropped (our formatter) | "52±1.5 metre", as Wikibase shows it; parser 2 |
+| an entity's original language (P407, P364, P103) | unused | the names rule (above) |
+| statements the best-rank filter drops: a property's normal-rank values when one is preferred — former countries, former names, past populations | dropped (upstream's "truthy" choice) | COUNTED in the next run (`dropped_by_rank`); a decision with the numbers |
+| references to merged or deleted entities: the JSON dump carries no redirects | written as ids | COUNTED (`to_absent_entities`); the redirect table is a small dump of its own, a source to add |
+| Wikimedia's own pages as records — categories, templates, disambiguations, lists | kept as records, embedded | COUNTED (`--count-roots Q17442446`, Wikimedia internal item); pruning them is a decision |
+| Wikidata's lexemes (words, their senses and glosses, in many languages) | not taken (D1) | the natural home of "ancient and uncommon words": a small collection of their own |
+| sitelink titles (a Wikipedia article's title) | not among the names searched | mostly equal to labels; left |
+| references (sources) of statements | off (upstream default) | left: provenance, kept in `extra` |
+| a place's official language (P37, through its country) | unused | written down in names.py, not built |
+
+The four parser-2 changes landed before any wikidata record exists, so
+they cost no recomputation; the counted ones come with tonight's second
+classes run.
+

@@ -172,3 +172,25 @@ def test_cycles_and_closure_on_their_own():
     assert wc.cycles(child, parent, {1, 2, 3, 4, 5, 6}) == [[6]], "a class that is its own subclass"
     assert sorted(wc.cycles([1, 2, 3, 7], [2, 3, 1, 1], {1, 2, 3, 7})) == [[1, 2, 3]]
     assert wc.cycles([1, 2], [2, 1], {1}) == [], "only inside the closure"
+
+
+def test_what_the_text_renders_specially_or_leaves_out_is_counted(dump):
+    obj = {"claims": {
+        "P17": [{"rank": "preferred", "mainsnak": {"snaktype": "value"}},
+                {"rank": "normal", "mainsnak": {"snaktype": "value"}},
+                {"rank": "deprecated", "mainsnak": {"snaktype": "value"}}],
+        "P84": [{"rank": "normal", "mainsnak": {"snaktype": "novalue"}}],
+        "P570": [{"rank": "normal", "mainsnak": {"snaktype": "somevalue"}}],
+        "P5137": [{"rank": "normal", "mainsnak": {"snaktype": "value", "datavalue": {
+            "type": "wikibase-entityid", "value": {"entity-type": "lexeme", "numeric-id": 7, "id": "L7"}}}}],
+        "P2048": [{"rank": "normal", "mainsnak": {"snaktype": "value", "datavalue": {
+            "type": "quantity", "value": {"amount": "+5", "unit": "1", "upperBound": "+6", "lowerBound": "+4"}}}}]}}
+    assert dict(wc.statement_facts(obj)) == {
+        "dropped_by_rank": 1, "novalue": 1, "somevalue": 1, "lexeme_values": 1, "quantities_with_bounds": 1,
+        "dropped_by_rank_entities": 1, "novalue_entities": 1, "somevalue_entities": 1, "lexeme_values_entities": 1,
+        "quantities_with_bounds_entities": 1}
+    got = wc.run_classes(dump, roots=("Q811979",), langs=("en", "it"), every=0, count_roots=("Q57821",))
+    assert got["counted"]["Q57821"]["entities"] == 1 and got["counted"]["Q57821"]["label"] == "fortification", \
+        "Q101, an instance of a barbican, counted under fortification"
+    assert got["referenced_labels"]["absent_entities"] >= 1, "Q999 and Q600 are named and not in the dump"
+    assert set(got["statements"]) == {"all", "selected"}

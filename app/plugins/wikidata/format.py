@@ -201,12 +201,24 @@ def coordinate_text(value: dict, lang: str = "en", globe_label: Callable[[str], 
 
 def quantity_text(value: dict, unit_label: Callable[[str], str | None] | None = None) -> str:
     """A quantity datavalue: the amount as written, without its leading `+`
-    (Wikibase's own display drops it), and the unit's label or id where the
-    unit is not `1`."""
+    (Wikibase's own display drops it), its uncertainty as Wikibase shows it
+    — `±` the larger distance to a bound, in exact decimals (parser 2: the
+    first formatter dropped the bounds) — and the unit's label or id where
+    the unit is not `1`."""
+    from decimal import Decimal, InvalidOperation
     amount = value.get("amount")
     if not isinstance(amount, str):
         raise FormatError(f"quantity without an amount string: {value!r}")
     text = amount[1:] if amount.startswith("+") else amount
+    upper, lower = value.get("upperBound"), value.get("lowerBound")
+    if isinstance(upper, str) and isinstance(lower, str):
+        try:
+            a = Decimal(amount)
+            margin = max(Decimal(upper) - a, a - Decimal(lower))
+        except InvalidOperation:
+            margin = Decimal(0)
+        if margin > 0:
+            text += "±" + format(margin, "f")
     unit = value.get("unit")
     if isinstance(unit, str) and unit not in ("", "1"):
         uid = unit.rsplit("/", 1)[-1]
