@@ -131,7 +131,7 @@ def test_the_parallel_pass_writes_the_serial_pass_byte_for_byte(tmp_path, chunk)
     assert a["meta"] == b["meta"] and a["labels"] == b["labels"] and a["names"] == b["names"]
     assert a["chunks"] == b["chunks"], "every chunk file the same bytes"
     assert b["stray"] == [], "no tmp file left"
-    assert "3 processes" in said[-1]
+    assert any("3 processes" in m for m in said), "the chunk pass's last line (the names follow it)"
 
 
 def test_a_stopped_parallel_pass_resumes_at_its_last_committed_chunk(tmp_path):

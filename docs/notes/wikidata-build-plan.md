@@ -328,27 +328,34 @@ English languages use in order: 1. the original name if it can be
 determined and if it's in latin characters 2. Any other language in latin
 characters. 3. The name in the original language if it can be
 determined"). names.py, in parser 2, everywhere an id would be read:
-- the order: the original name — what the entity states as its own name
+- the order: the ORIGINAL NAME — what the entity states as its own name
   (native label P1705, name in native language P1559, official name P1448,
-  title P1476, name P2561) — in Latin characters; else a label in Latin
-  characters; else the original name in its script; else any label (the
-  general rule). Among labels: the languages of the entity's own wiki
-  pages first, then the value most languages give, then the smallest code.
-  The language of a work (P407) would determine more originals; it names a
-  language item whose code (P424) lives on another entity, a table the
-  pack does not keep — written down, not built;
+  title P1476, name P2561), then its label in its ORIGINAL LANGUAGE where
+  it states one (language of the work or name P407, original language of a
+  film or series P364, native language P103 — each a language item, read
+  as its Wikimedia code P424 through the pack's `language` table) — in
+  Latin characters; else a label in Latin characters; else the original
+  name in its script; else any label (the general rule). Among labels
+  (operator, the same day: "Go with your recommendation and the language
+  lookup"): the languages of the entity's own wiki pages first, then
+  French, Spanish, Italian, German, then the order Wikidata lists them,
+  then the code. A place's official language (P37, on its country) would
+  determine more originals — written down, not built;
 - where: the record's `title`, the entity's own name at the head of its
   text, the name of every entity its text refers to, and the reference
   source's label (`ask lookup`);
-- the referenced names come from the pack: `labels.sqlite` gains a table
-  `name(id, lang, label)` for every entity with no English and no `mul`
-  label (PACK_VERSION 2). RULE 1, named: a complete version-1 pack is
-  UPGRADED in place from its own Parquet lines — a byte check skips every
-  line that holds an English or `mul` label, the rest is parsed — not
-  rebuilt from the bz2; the chunk files and label rows stay byte for byte
-  those a version-2 pass writes (tests/test_plugins_wikidata_names.py). A
-  parse that needs a name on a pack not yet upgraded is DEFERRED, never
-  written without it.
+- the pack (PACK_VERSION 2): `labels.sqlite` gains `language(id, code)`
+  (every language item's P424, written with the chunks) and `name(id,
+  lang, label)` for every entity with no English and no `mul` label,
+  written by a pass over the pack's own lines AFTER the chunks — a name
+  may need the code of a language item later in the dump. RULE 1, named: a
+  complete version-1 pack is UPGRADED in place — a pass for the codes
+  (only lines naming P424 are parsed), a pass for the names (a byte check
+  skips every line holding an English or `mul` label) — not rebuilt from
+  the bz2; chunk files and label rows stay byte for byte those a version-2
+  pass writes (tests/test_plugins_wikidata_names.py). Parser 2 parses
+  only from a pack whose names are done (`pack.ready`); before that every
+  document DEFERS, so no title or text is written without its names.
 
 The Codex of 2026-10-20 names parser 1, so wikidata is CREATED AGAIN from
 the same recipe before Monday's records build: nothing was published (no

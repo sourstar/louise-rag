@@ -199,8 +199,9 @@ class Normalizer:
     table; `fallback` is the language tried when `lang` has none."""
 
     def __init__(self, *, lang: str = "en", fallback: str | None = "en", labels: Labels,
-                 external_ids: bool = True, qualifiers: bool = True):
+                 external_ids: bool = True, qualifiers: bool = True, codes: dict[str, str] | None = None):
         self.lang, self.fallback, self.labels = lang, fallback, labels
+        self.codes = codes                     # language item → code, for names.py (the pack's table)
         self.external_ids, self.qualifiers = external_ids, qualifiers
         # upstream's `get_lang_val` chain, the one `_lang_val` applies to the
         # entity's own label: the language, else `mul`, else the fallback.
@@ -223,7 +224,7 @@ class Normalizer:
         if not label:
             # OURS (parser 2): a name by the operator's order, never the id
             # while the entity has any label or name statement (names.py)
-            got = names.display_name(e)
+            got = names.display_name(e, self.codes)
             label = got[1] if got else ""
         description = _lang_val(e.get("descriptions"), self.lang, self.fallback)
         aliases_in = e.get("aliases") or {}
@@ -326,8 +327,9 @@ class Normalizer:
         return Text(text=str(v) if v is not None else None)
 
 
-def entity_text(obj: dict, lang: str, labels: Labels, *, fallback: str | None = "en") -> str:
+def entity_text(obj: dict, lang: str, labels: Labels, *, fallback: str | None = "en",
+                codes: dict[str, str] | None = None) -> str:
     """The text of one dump entity in `lang`: upstream's `format=text`, with
     the dump's labels and our formatting — a pure function of (entity,
-    label table, lang)."""
-    return Normalizer(lang=lang, fallback=fallback, labels=labels).normalize(obj).to_text(lang)
+    label table, language codes, lang)."""
+    return Normalizer(lang=lang, fallback=fallback, labels=labels, codes=codes).normalize(obj).to_text(lang)

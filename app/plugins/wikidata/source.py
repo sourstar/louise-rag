@@ -167,7 +167,8 @@ class WikidataSource:
         if not ids.is_entity_id(eid):
             raise UnindexableDocument(f"not an item or property: {eid!r}")
         labels = pack.labels(dump)
-        sections = [(lang, textify.entity_text(obj, lang, labels, fallback=self.fallback_language))
+        codes = pack.language_codes(dump)       # a pack not ready defers the document
+        sections = [(lang, textify.entity_text(obj, lang, labels, fallback=self.fallback_language, codes=codes))
                     for lang in self.languages]
         title = next((obj["labels"][lang]["value"] for lang in (*self.languages, "mul", self.fallback_language)
                       if isinstance((obj.get("labels") or {}).get(lang), dict)
@@ -176,7 +177,7 @@ class WikidataSource:
             # parser 2 (operator, 2026-10-24): "showing an id is meaningless for
             # humans" — the name by names.py's order; the id only for an entity
             # with no label and no name statement at all
-            named = names.display_name(obj)
+            named = names.display_name(obj, codes)
             title = named[1] if named else eid
         keys = [ids.canonical(eid)]
         for prop in _KEY_PROPERTIES:
