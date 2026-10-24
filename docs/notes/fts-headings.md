@@ -65,7 +65,8 @@ Our boost table below is the only number on it.
 | 0.25 | 0.124 / 0.379 / 0.862 | 0.123 / 0.253 / 0.507 | 14 |
 | 0.1 | 0.160 / 0.310 / 0.862 | 0.141 / 0.273 / 0.513 | 1 |
 | **HEADING_IN_BODY 1** | 0.208 / 0.448 / 0.966 | 0.143 / 0.273 / 0.533 | 1 |
-| **HEADING_IN_BODY 2** | **0.383 / 0.690 / 1.000** | 0.140 / **0.287 / 0.547** | 1 |
+| **HEADING_IN_BODY 2** | 0.383 / 0.690 / 1.000 | 0.140 / 0.287 / 0.547 | 1 |
+| **HEADING_IN_BODY 3** | **0.528 / 0.793 / 1.000** | 0.139 / **0.293 / 0.553** | 1 |
 
 The boost rows are kept as the record of why; they are not candidates. The
 choice is BM25F's weight k, tuned on the labelled queries as the literature
@@ -89,9 +90,17 @@ titles: the heading's words now add term frequency inside one saturation
 instead of a separately saturated short field. k = 1 helps less on titles
 (0.208). The shuffled-heading placebo (arXiv 2610.10170) is not needed to
 separate signal from length: k = 2 over k = 1 is a large margin, and the gain
-is in titles, where the heading is the signal. Next: k = 2 (and k = 3 if a
-third copy is cheap) through the full search, reranker on, on the whole
-labelled set, before any FTS_VERSION rebuild.
+is in titles, where the heading is the signal.
+
+**k = 3** (2026-10-24, the same build alone at 2 cpus: 63,206 documents — three
+more than the k = 1/2 builds read the day before — 8,507,047 chunks, 0
+skipped, 10,821 s, 30 GB): titles rise again, MRR 0.383 → 0.528, R@10 0.690 →
+0.793; descriptive is flat (MRR 0.140 → 0.139, R@10 0.287 → 0.293). The leg
+alone has not yet found where titles stop gaining; the descriptive set says
+the heading weight costs nothing there up to 3. Next: k = 0/2/3 through the
+full search, reranker on, on the whole labelled set
+(`tools/measure/heading_full_search.py`, the night of 2026-10-24), before any
+FTS_VERSION rebuild.
 
 Deploy rule: the full search (reranker on) on the whole labelled set, no loss
 on titles or descriptive. A HEADING_IN_BODY choice rebuilds the text indexes
