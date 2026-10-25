@@ -4540,7 +4540,7 @@ def _publisher_beat(budget_s: float | None = None) -> dict[str, dict]:
     raises; a refusal or a deferral is said once per collection."""
     from contextlib import closing
     from .hold import embedder as emb
-    from .share import contribute
+    from .share import contribute, counting
     budget_s = config.PUBLISH_BUDGET_S if budget_s is None else budget_s
     done: dict[str, dict] = {}
     try:
@@ -4594,7 +4594,7 @@ def _publisher_beat(budget_s: float | None = None) -> dict[str, dict]:
                     f"{len(out['awaiting'])} led part(s) await the embed stage, "
                     f"{len(out['left_to_fetch'])} left to the fetch"
                     + (" — interrupted at the budget, resumes next beat" if out.get("interrupted") else ""))
-        except (contribute.ContributeRefused, emb.GateDeferred) as e:
+        except (contribute.ContributeRefused, emb.GateDeferred, counting.CoverageUnknown) as e:
             if _publish_said.get(c.name) != str(e) and con is not None:
                 _publish_said[c.name] = str(e)
                 db.log_event(con, "info", "share", f"[{c.name}] publish: not this beat — {e}"[:500])

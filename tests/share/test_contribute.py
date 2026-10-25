@@ -902,6 +902,47 @@ def test_the_view_counts_a_predecessor_s_coverage_by_possession(ready):
     assert all(v == 0 for k, v in union.items() if k != cov.shard_id(codex, sid)), "nothing else covered"
 
 
+def test_a_possession_count_that_fails_is_no_figure_never_the_rows_undercount(ready, monkeypatch):
+    """2026-10-25: a cache-file race made `possession.covered` raise, and the
+    view fell back to the rows: 114,154 of 10,471,327 chunks covered for
+    10,164,506 — a re-minted collection's rows hold only its own bundles.
+    Now the caller gets `CoverageUnknown`; the publish pass defers on it."""
+    import pytest
+    from app.hold import land as landing
+    from app.share import counting, possession
+    root, snapshot, codex, kw = ready
+    shard = snapshot.shards[0]
+    sid = f"{shard.slice}/{shard.n:05d}"
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    _predecessor(root, codex, kw["con"], f"{shard.slice}/{shard.n + 3:05d}",
+                 {r["uid"]: r["content_hash"] for r in records})
+
+    def raced(*a, **k):
+        raise FileNotFoundError("[Errno 2] No such file or directory: 'x.json.tmp'")
+    monkeypatch.setattr(possession, "covered", raced)
+    with pytest.raises(counting.CoverageUnknown, match="could not be counted by possession.*FileNotFoundError"):
+        counting.view_kwargs(root, "gutenberg", codex, kw["con"])
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    with pytest.raises(counting.CoverageUnknown):
+        contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)], **kw)
+
+
+def test_a_re_minted_collection_with_no_snapshot_yet_counts_its_rows(ready, monkeypatch):
+    from app.hold import seed
+    from app.hold.codex import CodexError
+    from app.share import counting, possession
+    root, snapshot, codex, kw = ready
+    monkeypatch.setattr(contribute, "predecessors", lambda root, name: ["sha256:" + "aa" * 32])
+
+    def none_yet(root, name, snapshot_id=None):
+        raise CodexError(f"{name} holds no snapshot: there are no parts to name")
+    monkeypatch.setattr(seed, "latest_snapshot", none_yet)
+    monkeypatch.setattr(possession, "covered", lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked")))
+    view = counting.view_kwargs(root, "gutenberg", codex, kw["con"])
+    assert view["union"] == counting.union_counts(root, "gutenberg", codex, cov.rows(kw["con"]))
+
+
 def test_the_held_path_signs_none_of_a_predecessor_s_rows_and_never_counts_them_as_coverage(ready):
     """The node's held path, after the same-space re-mint: the rows it had
     landed from another producer's bundles in the predecessor are not
