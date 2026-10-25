@@ -127,7 +127,7 @@ def test_an_identifier_restricts_only_as_a_filter_the_reader_gives(tmp_path):
     idx = tmp_path / "index"
     facets.build(con, codex, idx, snapshot_id="2026-08")
     tags = {"hgnc:1101": [1, 3], "hgnc:1100": [3]}
-    tagged = lambda value, limit: tags.get(value, [])[:limit]  # noqa: E731
+    tagged = lambda value, limit: (len(tags.get(value, [])), tags.get(value, []))  # noqa: E731
     ids = lambda f: filters.book_ids_for(codex, idx, f, snapshot_id="2026-08", tagged=tagged,  # noqa: E731
                                          all_ids=lambda: [1, 2, 3, 4])
     assert ids({"keys": "hgnc:1101"}) == {1, 3}
@@ -144,15 +144,16 @@ def test_an_identifier_too_broad_for_the_legs_is_refused_not_cut(tmp_path, monke
 
     def tagged(value, limit):
         asked.append(limit)
-        return [1, 2, 3, 4][:limit]
+        return limit, []
     with pytest.raises(filters.FilterError, match="admits more than 2"):
         filters.book_ids_for(a_codex(), tmp_path, {"keys": "hgnc:5172"}, snapshot_id=None, tagged=tagged)
-    assert asked == [3], "read one past the bound, never the whole entity"
+    assert asked == [3], "counted one past the bound, never the whole entity"
 
 
-def test_the_tagged_records_are_read_by_the_entity_index(tmp_path):
-    """The heaviest gene tags 265,237 pubmed documents: the read is driven by
-    `idx_doc_keys_entity`, one primary-key lookup per row, stopped by LIMIT."""
+def test_the_tagged_records_are_read_by_the_entity_index_alone(tmp_path):
+    """The heaviest gene tags 265,237 pubmed documents. The count is read
+    from `idx_doc_keys_entity` alone, and `documents` (40 M rows on pubmed)
+    is never touched: the native id is the uid's."""
     from app import collections as collections_mod, db
     c = collections_mod.Collection(
         name="pubmedish", plugin="pubmed", profile=None, embed_mode_default=None,
@@ -164,9 +165,12 @@ def test_the_tagged_records_are_read_by_the_entity_index(tmp_path):
     con.executemany("INSERT INTO doc_keys(uid, entity_id) VALUES (?,?)",
                     [("pubmed:1", "hgnc:1101"), ("pubmed:3", "hgnc:1101"), ("pubmed:2", "hgnc:1100")])
     con.commit()
-    plan = [str(r[-1]).upper() for r in con.execute("EXPLAIN QUERY PLAN " + query_service.TAGGED_SQL,
-                                                     ("hgnc:1101", 10))]
-    assert any("IDX_DOC_KEYS_ENTITY" in row for row in plan), plan
-    assert not any("TEMP B-TREE" in row or row.startswith("SCAN") for row in plan), plan
-    got = [int(r[0]) for r in con.execute(query_service.TAGGED_SQL, ("hgnc:1101", 10))]
-    assert got == [1], "an out-of-scope record is not admitted"
+    for sql, covering in ((query_service.TAGGED_COUNT_SQL, True), (query_service.TAGGED_SQL, False)):
+        plan = [str(r[-1]).upper() for r in con.execute("EXPLAIN QUERY PLAN " + sql, ("hgnc:1101", 10))]
+        assert any("IDX_DOC_KEYS_ENTITY" in row for row in plan), plan
+        assert not any("DOCUMENTS" in row or "TEMP B-TREE" in row for row in plan), plan
+        assert not covering or any("COVERING INDEX" in row for row in plan), plan
+        assert not any(row.startswith("SCAN") and "SCAN K" not in row and "SUBQUERY" not in row
+                       and "COVERING" not in row for row in plan), plan
+    assert con.execute(query_service.TAGGED_COUNT_SQL, ("hgnc:1101", 1)).fetchone()[0] == 1, "stopped at the limit"
+    assert sorted(r[0] for r in con.execute(query_service.TAGGED_SQL, ("hgnc:1101", 10))) == ["pubmed:1", "pubmed:3"]

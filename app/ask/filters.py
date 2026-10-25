@@ -43,13 +43,14 @@ class FilterError(CodexError):
 
 def _tagged_ids(tagged, value: str, negate: bool) -> set[int]:
     """The records tagged with identifier `value`, bounded as a facet
-    value's postings are: more than MAX_IDS is refused, never cut."""
-    ids = set(tagged(value, MAX_IDS + 1)) if tagged is not None else set()
-    if len(ids) > MAX_IDS:
+    value's postings are: more than MAX_IDS is refused, never cut.
+    `tagged(value, limit)` gives (how many, up to `limit`; their ids)."""
+    count, ids = tagged(value, MAX_IDS + 1) if tagged is not None else (0, [])
+    if count > MAX_IDS:
         said = (f"excluding {KEYS!r} = {value!r} needs more than {MAX_IDS} records" if negate
                 else f"{KEYS!r} = {value!r} admits more than {MAX_IDS} records")
         raise FilterError(f"{said}, the most the legs take as a prefilter; narrow it (05 §5.2)")
-    return ids
+    return set(ids)
 
 
 def connect(index_dir: Path) -> sqlite3.Connection:
@@ -121,7 +122,8 @@ def book_ids_for(codex, index_dir: Path, filters: dict[str, Any] | None, *, snap
     """The records the filters admit — None for no filter, a set (possibly
     empty) otherwise. `all_ids` is a callable giving every record's
     native_id, needed for a `not` alone. `tagged(identifier, limit)` gives
-    the records tagged with an identifier, for the `keys` filter. A value's COUNT, from the facet
+    how many records an identifier tags (up to `limit`) and their ids, for
+    the `keys` filter. A value's COUNT, from the facet
     cache, is read before its postings: the postings hold only values of
     at most MAX_IDS records (app/ask/facets.py), so a broader value is
     refused here as too broad, and the postings read are complete."""
