@@ -53,9 +53,12 @@ mismatch rarely writes a deprecated statement. So `rejected` is also
 read from the Mismatch Finder's review outcomes for the rows we
 uploaded, not from the dump alone.
 
-Review after review the `open` set shrinks; a closed rumor stays in the
-collection with its state, the review that closed it and the statement. A
-claim never changes for this: claims are identified by their content
+Rumors never reach zero, and nothing is measured as if they could. Review
+after review some close, and new ones keep arriving: from books added to
+the corpus, and from sister collections whose better models (future
+hardware) read more. A closed rumor stays in the collection with its
+state, the review that closed it and the statement. A claim never changes
+for this: claims are identified by their content
 (09 §9.5), so the state lives in its own member keyed by claim uid, and
 a state change re-issues that member, not the claims. Nothing published is
 deleted (promise 7). `hold annotations update` (annotation-collections.md
@@ -83,20 +86,42 @@ A search option `rumors`. When it is on:
 
 If nothing is said: the separate list, facts and filter.
 
-## Back to Wikidata, and the measure of it
+## Back to Wikidata, and what we learn from it
 
-Unchanged from gutenberg-graph-strategy.md §8 and §10.3: conflicting
-values go to Wikidata's Mismatch Finder, the Gutenberg passage as the
-external URL; new connections and entities go in as ordinary edits by a
-person, the claim as the reference package; Louise never edits. The
-collection's metrics per snapshot and tier:
-- open rumors per thousand mentions;
-- adopted against rejected. That ratio is Louise's precision, judged by
-  Wikidata's own editors; `confirmed` is reported apart.
+The channels are unchanged from gutenberg-graph-strategy.md §8 and §10.3:
+- conflicting values go to Wikidata's Mismatch Finder, the Gutenberg
+  passage as the external URL;
+- new connections and entities go in as ordinary edits by a person, the
+  claim as the reference package;
+- Louise never edits.
 
-The open set will not reach zero. Wikidata's review is people, and a
-queue of millions will mostly stay open. "It shrinks" is true, but the
-metric is the rate, not convergence.
+**What is fundamental is what happens to our proposals, and why**
+(operator, 2026-10-25: "a statistic about the adoption and the rejection
+rate and reason of our proposals instead is fundamental for
+improvement"; convergence speed is not measured). Each rumor records:
+- whether it was proposed, where (a Mismatch Finder batch, an edit
+  suggestion) and when;
+- the review's outcome and its REASON, from the source that gave it:
+  - the Mismatch Finder reviewer's verdict on the row (our value wrong,
+    Wikidata's value wrong, both, neither, as its API names them);
+  - in Wikidata, a deprecated statement's "reason for deprecated rank"
+    (P2241), or a statement added citing our passage (`adopted`), or our
+    reference removed.
+
+At each update, the collection's report and its Library card show:
+- the adoption rate and the rejection rate;
+- the rejection reasons;
+- each broken down by rumor kind, property, tier, method and model (each
+  sister collection apart), confidence band and language.
+
+That is the improvement loop:
+- which properties, genres, methods and confidence bands get rejected,
+  and for what reason;
+- hence where each kind's floor belongs, what the next method version
+  fixes, and whether a sister collection's model earns its cost.
+
+`confirmed` (independent evidence) is reported apart from `adopted`.
+Counts of open rumors are descriptive, never a target.
 
 ## The specification it needs (for approval; hashed bytes)
 
@@ -104,18 +129,24 @@ metric is the rate, not convergence.
    listed in `files`. Canonical JSON lines, one per claim uid: `{uid,
    state, against: <wikidata snapshot id>, since: <snapshot first seen>,
    closed_by: <wikidata snapshot id or null>, statement: <Wikidata
-   statement GUID or null>}`.
+   statement GUID or null>, proposed: {channel, at, batch} or null,
+   review: {outcome, reason, source, at} or null}`.
 2. 02 §2.10: an annotations collection whose targets include wikidata
    records the rumor states at each update.
 3. 05 §5.1 and §5.3: the `rumors` option, the facts, the separate list
    and the filter.
-4. 03: the member is checked by recomputing the states from the claims and
-   the named wikidata snapshot. It is deterministic given both, so it is
-   compared byte for byte.
+4. 03: the member's dump-derived fields (`state`, `closed_by`,
+   `statement`) are checked by recomputing them from the claims and the
+   named wikidata snapshot. They are deterministic given both, so they are
+   compared byte for byte. `proposed` and `review` are recorded
+   observations of other systems, attributed to their source and time. A
+   verifier can ask the source again, but the source may have changed
+   since, so they are never a reason to refuse the member.
 
 It is built with gutenberg-graph's first collection, since until then
 there is nothing to record. Start small: tier A only (diaries, letters,
 memoirs, personal narratives), with a strict floor. Then report the
 judged precision and the YIELD on a sample: how many rumors are right,
 and how many of the right ones are worth a reader's time rather than a
-mundane fact Wikidata merely lacks. Only then add the other tiers.
+mundane fact Wikidata merely lacks. Then propose them, and read the
+adoption and rejection reasons. Only then add the other tiers.
