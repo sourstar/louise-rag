@@ -215,6 +215,7 @@ louise dev                                                             operator 
   genesis recheck <collection>                                         reopen final archive shards that still have documents the archive could serve; writes
   genesis recount <collection> [--yes]                                 an archive ledger's docs and chunks recounted from chunk_verification; writes only with --yes (added 2026-10-08)
   drop-rows <collection> --ids FILE [--yes]                            02 §2.4's remedy: the rows FILE lists (a chunk id a line) dropped and their documents marked to embed
+  reindex <collection> --ids FILE [--yes]                              the documents FILE lists (a uid a line) queued for the text-index stage again — fts_done = 0, embedding untouched; for rows indexed under an earlier parse (tools/measure/chunks_drift.py lists them); writes (added 2026-10-25)
                                                                        again — what `vectors check --drop`, which leaves an empty row, does not; the collection's lock held; writes (added 2026-10-19)
   carry <from> <to> [--copy] [--keep producer:<archive>] [--rebuilt|--reconcile|--resign|--recut] [--yes]  amendment A1 (02 §2.4): the manifest (after a TRUNCATE checkpoint), index/ and lance/ moved
                                                                        — or copied, reflinked where it can — into a collection with the same records whose space

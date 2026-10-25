@@ -1358,6 +1358,52 @@ def cmd_dev_drop_rows(a) -> int:
     return 0
 
 
+def cmd_dev_reindex(a) -> int:
+    """`louise dev reindex <collection> --ids FILE [--yes]`: the documents
+    FILE lists (one uid a line) queued for the text-index stage again —
+    `fts_done = 0`, nothing else — so the worker re-cuts them from the live
+    parse, rewrites their text-index entries (delete-then-insert) and their
+    `documents.chunks`. Embedding is untouched: their vectors are the
+    records' (2026-10-25: gutenberg rows indexed under an earlier parse kept
+    stale chunk counts and text, `tools/measure/chunks_drift.py` lists them).
+    A document out of scope or not yet extracted is left alone and counted.
+    The collection's write lock held. A dry run without --yes."""
+    import time
+    from app import db
+    from app.hold import records as rec
+    name, codex = col.resolve(a.root, a.collection)
+    uids = sorted({line.strip() for line in Path(a.ids).read_text(encoding="utf-8").splitlines()
+                   if line.strip()})
+    coll = rec.local_collection(a.root, name, codex)
+    if a.yes:
+        _take_write_lock(a.root, name, "louise dev reindex", exit_code=2)
+    con = db.connect(coll)
+    try:
+        eligible = 0
+        for i in range(0, len(uids), 900):
+            part = uids[i:i + 900]
+            eligible += con.execute(
+                f"SELECT COUNT(*) FROM documents WHERE uid IN ({','.join('?' * len(part))}) "
+                f"AND in_scope=1 AND rdf_done=1", part).fetchone()[0]
+        if not a.yes:
+            print(f"[reindex] would queue {eligible} of {len(uids)} listed document(s) of {name} for the "
+                  f"text-index stage (fts_done = 0; embedding untouched) — --yes", file=sys.stderr)
+            return 0
+        con.execute("BEGIN IMMEDIATE")
+        queued = 0
+        for i in range(0, len(uids), 900):
+            part = uids[i:i + 900]
+            queued += con.execute(
+                f"UPDATE documents SET fts_done=0, updated_at=? WHERE uid IN ({','.join('?' * len(part))}) "
+                f"AND in_scope=1 AND rdf_done=1", [int(time.time()), *part]).rowcount
+        con.execute("COMMIT")
+    finally:
+        con.close()
+    _print({"collection": name, "listed": len(uids), "queued": queued, "left_alone": len(uids) - queued,
+            "note": "the worker's text-index stage re-cuts them; embedding untouched"})
+    return 0
+
+
 def cmd_dev_unindexable(a) -> int:
     """`louise dev unindexable <collection> <uid> [--yes]`: a document this
     image's plugin now refuses (`UnindexableDocument`, e.g. gutenberg's parser
@@ -4756,6 +4802,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ids", required=True, metavar="FILE", help="one chunk id a line")
     p.add_argument("--yes", action="store_true")
     p.set_defaults(fn=cmd_dev_drop_rows)
+    p = dverbs.add_parser("reindex", help="the documents a file lists queued for the text-index stage "
+                                          "again (fts_done = 0), embedding untouched; writes only with "
+                                          "--yes (the collection's lock)")
+    root_arg(p)
+    p.add_argument("collection")
+    p.add_argument("--ids", required=True, metavar="FILE", help="one uid a line")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(fn=cmd_dev_reindex)
     p = dverbs.add_parser("unindexable", help="a document the plugin now refuses: out of every index "
                                               "and its error written at once; writes only with --yes")
     root_arg(p); p.add_argument("collection"); p.add_argument("uid")

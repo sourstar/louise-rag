@@ -348,6 +348,15 @@ Found on the way:
 - **a race** (f386934, Perugia): two writers of one possession cache entry shared a temp file;
 - **a silent fallback** (5863f81): `counting.view_kwargs` caught the race's error and counted the rows. For a re-minted collection that is only its own bundles: 114,154 covered for 10,164,506. A failed count is now `CoverageUnknown`, never the undercount. The publish pass defers, leading's "every doubt embeds" stands by name, and the CLI and card show no figure.
 
+**The 127-part gap is stale manifest counts, not data** (München, coverage_explain and a re-cut of the records, 2026-10-25):
+- every bundle is credited, and cutting the records gives exactly the snapshot's part totals (7,714 / 8,820 / 7,085);
+- the live parse agrees with the records (gutenberg:52478 108/108, manifest 105; 52483 69/69, manifest 82), so invariant 3 holds;
+- `documents.chunks`, and the text index it was counted from, were written by an earlier index pass under an earlier parse and never refreshed, because `fts_version` stayed 1. Possession converts covered records to chunks through that column, hence the undercount. Whoever changed the live parse back then did so without a version bump.
+
+Remedy, targeted (RULE 1, not a whole-collection FTS_VERSION bump): `tools/measure/chunks_drift.py --all --ids-out` lists the drifting records, and `louise dev reindex --ids` (new) queues exactly those for the text-index stage (fts_done = 0, embedding untouched). Runs by day after tonight's measurement.
+
+OPEN: no check compares the manifest's counts or text index with the records. `hold check --checks chunks` re-cuts records against the snapshot only, which is why this drift went unseen. A sampled live-vs-record check is owed.
+
 ### 2026-10-25: the gap between the corpus and Wikidata is recorded — "rumors" (operator)
 
 "'The gap' shall be recorded, it is an additional pillar that can be optionally used for searches, the 'rumors'. Review over review of wikidata the current 'rumors' shrink, but they are part of the collection." Design in [rumors.md](rumors.md):
