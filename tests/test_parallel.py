@@ -619,6 +619,54 @@ def test_a_part_that_stalls_costs_only_itself_and_what_finished_is_kept(isolated
     parallel.reset_failures()
 
 
+def test_one_slow_part_does_not_hold_back_the_pages_after_it(isolated_config, tmp_path,
+                                                           corpus_dir, monkeypatch):
+    """A COST test (München, 2026-10-25, wikipedia-v8 at 12 children: the cpu
+    sat at one core for stretches between 800 % readings). The stream waited
+    on its OLDEST part alone and counted a part that had answered as holding
+    a slot until its page's turn, so one long article held every child idle.
+    Here the first part answers only once parts of later pages have been
+    submitted: the old stream waits for it until the watchdog fires and
+    computes it in-process; this one keeps submitting, and the results are
+    the serial ones, in order, with no failure."""
+    from concurrent.futures import Future
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    rows = [dict(r) for r in (rows * 30)[:72]]
+    pages = [rows[i:i + 12] for i in range(0, 72, 12)]
+    truth = [parallel.compute("chunks", c, p) for p in pages]
+    real = parallel._compute
+    first: dict = {}
+    submitted: list[int] = []
+
+    class Pool:
+        def submit(self, _fn, kind, collection, part):
+            page = next(i for i, p in enumerate(pages) if any(part[0] is r for r in p))
+            submitted.append(page)
+            if not first:
+                first["f"], first["args"] = Future(), (kind, collection, part)
+                return first["f"]
+            if page >= 3 and not first["f"].done():
+                first["f"].set_result(real(*first["args"]))   # the long article ends
+            return _done(real(kind, collection, part))
+
+    inprocess: list[int] = []
+
+    def counting(kind, collection, part):
+        inprocess.append(len(part))
+        return real(kind, collection, part)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 3)
+    monkeypatch.setattr(config, "PARSE_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(parallel, "pool", lambda: Pool())
+    monkeypatch.setattr(parallel, "_compute", counting)
+    parallel.reset_failures()
+    parallel.forget_users()
+    assert list(parallel.compute_pages("chunks", c, iter(pages))) == truth
+    assert inprocess == [], f"the slow part was given up on and computed in-process: {inprocess}"
+    assert max(submitted) == len(pages) - 1
+    parallel.reset_failures()
+    assert parallel.held() == {} and parallel.wanting() == {}, "every slot given back"
+
+
 def test_the_page_stream_through_real_children_gives_the_serial_results(isolated_config, tmp_path,
                                                                        corpus_dir, two_processes):
     c, rows = _gutenberg(tmp_path, corpus_dir)
