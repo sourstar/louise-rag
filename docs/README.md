@@ -11,6 +11,8 @@ between the people who have them, so nobody re-does work that's already
 been done, and the original source isn't asked for the same download
 again and again.
 
+A new maintainer starts with [HANDOVER.md](HANDOVER.md).
+
 Read these in order. Each one assumes the ones before it and nothing
 after it. Document 9 is the reference the others point into: it fixes
 every byte, and assumes all of them.

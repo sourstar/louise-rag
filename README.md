@@ -51,7 +51,8 @@ interface is the same operations behind a page.
 **Read [`docs/README.md`](docs/README.md)** — nine documents, in order,
 from what Louise is to the byte formats. `docs/notes/` is the engineering
 record behind them (measurements, postmortems, design history);
-[`docs/notes/STATUS.md`](docs/notes/STATUS.md) is where things stand.
+[`docs/notes/STATUS.md`](docs/notes/STATUS.md) is where things stand, and
+[`docs/HANDOVER.md`](docs/HANDOVER.md) is where a new maintainer starts.
 
 ## What a node does
 
