@@ -241,7 +241,19 @@ louise dev                                                             operator 
   genesis recount <collection> [--yes]                                 an archive ledger's docs and chunks recounted from chunk_verification; writes only with --yes (added 2026-10-08)
   drop-rows <collection> --ids FILE [--yes]                            02 §2.4's remedy: the rows FILE lists (a chunk id a line) dropped and their documents marked to embed
                                                                        again — what `vectors check --drop`, which leaves an empty row, does not; the collection's lock held; writes (added 2026-10-19)
-  reindex <collection> --ids FILE [--yes]                              the documents FILE lists (a uid a line) queued for the text-index stage again — fts_done = 0, embedding untouched; for rows indexed under an earlier parse (tools/measure/chunks_drift.py lists them); writes (added 2026-10-25)
+  reindex <collection> --ids FILE [--yes]                              the documents FILE lists (a uid a line) queued for the text-index stage again — fts_done = 0, embedding untouched; for rows indexed under an earlier parse (`index-drift --ids-out` lists them); writes (added 2026-10-25)
+  index-drift <collection> [--shards S,…] [--cut-all] [--sample F] [--seed HEX] [--snapshot ID] [--ids-out FILE]
+                                                                       the documents whose SERVED state disagrees with the latest held snapshot's records (added
+                                                                       2026-10-25, the 127-part gap): the manifest's chunk count against the record's own cut, the
+                                                                       text index's count against both, on a seeded `--sample` of parts (03 §3.2's rule, 0.05 unless
+                                                                       said, 0 for none) the index's stored chunks against the cut chunk for chunk, the manifest's
+                                                                       `content_hash` against the record's and its `txt_hash` against the record's `origin_hash`.
+                                                                       Rows the worker has not indexed, or will re-index itself (a version below the current), are
+                                                                       counted, not named. Walked a part at a time in windows of 2,000 records; a part is cut only
+                                                                       where its manifest total is not the snapshot's `chunks`, or with --cut-all. --ids-out: the
+                                                                       uids `reindex --ids` repairs (chunks, index, text; never one whose live origin moved). Exit 1
+                                                                       when a document is named; prints the seconds it took. Not a plan row: it checks this node's
+                                                                       derived state, not the copy, and proves nothing to another peer (03 §3.2)
   unindexable <collection> <uid> [--yes]                               a document the plugin now refuses: out of every index, its error written at once; writes
   mark-embedded <collection>                                           documents whose every chunk has a vector here and whose row says embed_done = 0, marked; writes
   deprecate-duplicates <collection> [--yes]                            this peer's bundles duplicating another of its own for a part, deprecated (03 §3.6; 09 §9.8):
