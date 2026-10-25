@@ -237,7 +237,18 @@ class GutenbergSource:
     #: catalogue entry, so a release that drops the note readmits the book
     #: by itself. Every other record is unchanged; the collection that
     #: adopts this parser is a new one whose vectors carry.
-    PARSER_VERSION = 10
+    #: 11 since 2026-10-25 (operator: "Every plate"): EVERY image the epub
+    #: has is carried, SVG, GIF, WEBP and anything over 08 §8.7's caps
+    #: included — `carried: true` where 10 wrote `false` and left the bytes
+    #: behind (invariant 11). The caps and the closed list bind DISPLAY now
+    #: (app/ask/figures.py). The record LINE moves for the books that had
+    #: such an image (measured 2026-09-09: 2,407 SVG and 46 GIF images, ten
+    #: books), and their figures containers gain those plates; `sections`,
+    #: `content_hash`, `origin_hash` and every chunk do not — a figure is
+    #: never in `content_hash` (09 §9.5) and the marker never depended on
+    #: the type. The collection that adopts this parser is a new one whose
+    #: vectors all carry (02 §2.4 A1c, `louise dev carry --rebuilt`).
+    PARSER_VERSION = 11
     modality = Modality.TEXT
     # PG does withdraw a text on a copyright claim, and the tombstone
     # stays: a removal is never silent (04 §4.4).

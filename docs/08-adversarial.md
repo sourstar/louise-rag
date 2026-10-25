@@ -285,20 +285,35 @@ producer meant to send. A figure is published, not merely relayed, and a
 hostile publisher's plate verifies perfectly. So the defences below are
 about what a well-formed figure may be, and none of them is a signature.
 
-**The admitted types are a closed list**: `image/jpeg` and `image/png`.
-Two, because they are the two the measured corpora hold, and a format
-admitted "in case" is a decoder admitted in case. `media_type` on the
-record line is compared against what the bytes ACTUALLY ARE — the magic
-number and a structural parse — and a disagreement refuses the figure,
-never the reverse. Extending the list is an amendment to this section and
-a new `record_line` version, because a peer that cannot decode a type
-cannot show the document.
+**Every plate is carried; display is the gate** (*amended 2026-10-25,
+operator: "Every plate"*). Invariant 11 — a collection may not hold less
+than the origin gave it about an entity — wins over the refusal this
+section used to make at STORAGE. Every image the origin has for a record
+is carried as opaque bytes in the figures container (09 §9.5), whatever
+its type and whatever its size: SVG, GIF, WEBP and a plate over the caps
+below included. The rules that follow bind DISPLAY, where the attack
+surface is, and nothing else: a peer stores, verifies by hash and shares
+a figure it would never show.
 
-**SVG is refused, and is the reason the list is closed rather than open.**
-An SVG is a document, not an image: it carries script, external
-references and its own fetches. There is no safe subset worth the cost of
-policing one, and "we strip the script tags" is the sentence that precedes
-every such failure.
+**Display admits a closed list**: `image/jpeg` and `image/png`. Two,
+because they are the two the measured corpora hold, and a format admitted
+"in case" is a decoder admitted in case. `media_type` on the record line
+is compared against what the bytes ACTUALLY ARE — the magic number and a
+structural parse — and a disagreement refuses DISPLAY, never the reverse.
+Extending the list is an amendment to this section; the record line does
+not change, since it already names every type. A figure outside the list
+or over a cap is shown as "not displayable", with its media type and
+size, and its bytes are offered only as a download — `Content-Type:
+application/octet-stream`, `Content-Disposition: attachment`, never
+inline and never under its own type — so a browser saves it and never
+renders it (07 §7.4).
+
+**SVG is never displayed, and is the reason the list is closed rather
+than open.** An SVG is a document, not an image: it carries script,
+external references and its own fetches. There is no safe subset worth
+the cost of policing one, and "we strip the script tags" is the sentence
+that precedes every such failure. It is carried, because it is what the
+origin published; it is never rendered, because rendering is what runs it.
 
 **Caps, applied before decoding.** At most 16 MiB of bytes per figure, at
 most 64 megapixels once the header is read but before any pixel is, and
@@ -306,7 +321,10 @@ at most 4,096 figures per record. The first two are what stop a
 decompression bomb — a few hundred kilobytes of PNG that decodes to
 tens of gigabytes — and they are applied to the DECLARED dimensions in
 the header, so the decoder is never handed something it will die inside.
-The third stops a record from being a container in its own right.
+Since 2026-10-25 they bind display only: a plate over them is carried
+and not shown. The third is still a cap on what a RECORD may name, and
+stops a record from being a container in its own right: it protects
+storage from a hostile record, and refuses no real one (below).
 
 These three numbers were the section's weakest part until 2026-09-09,
 when they were measured against 44,477 illustrated epubs holding 786,699
@@ -326,18 +344,23 @@ an illustrated natural history is backwards, so the cap is 4,096.
 
 The media-type list was measured too: `image/jpeg` and `image/png` cover
 99.66 % of that corpus. SVG is REAL in it — 2,407 images — so refusing
-it is a live cost and not a hypothetical one, and the cost was counted:
-ten books lose at least one plate and NO BOOK loses all of them. A
-record whose image is refused still names it, with `carried: false`
-(09 §9.5), so a reader meeting the caption is told the picture is gone
-rather than left to hunt for it.
+it was a live cost and not a hypothetical one, and the cost was counted:
+ten books lost at least one plate and NO BOOK lost all of them. Until
+2026-10-25 such a record still named the image with `carried: false`
+(09 §9.5) and left its bytes behind. That was ten books holding less than
+the origin gave them (the 46 GIFs, counted by type and not by book, may
+add more), which invariant 11 does not allow at any price, so
+the refusal moved from storage to display (*amended 2026-10-25,
+operator: "Every plate"*): those 2,407 SVGs and 46 GIFs are carried, and
+shown as not displayable.
 
 **A figure is never executed, never fetched from, and never resolved.**
 Whatever a format permits, a peer that stores or serves a figure treats
 it as opaque bytes; only a peer that DISPLAYS one decodes it, and it
-decodes with the caps above. An embedded reference in a figure is not
-followed. This is 01's "never anything executable", which figures bind
-harder than any other member.
+decodes only the closed list, with the caps above. An embedded reference
+in a figure is not followed. This is 01's "never anything executable",
+which figures bind harder than any other member — and it is why carrying
+an SVG is safe where showing one is not.
 
 **What is out of scope, and stated so nobody assumes otherwise.** A plate
 whose hash is right, whose type is right and whose bytes decode, but

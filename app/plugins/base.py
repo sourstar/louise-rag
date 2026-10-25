@@ -174,10 +174,13 @@ class Figure:
     alignment from the first repeat onward, and 39% of Gutenberg's
     illustrated books repeat a plate.
 
-    `carried` False means the origin HAS the image and this collection may
-    not admit it — a media type outside 08 §8.7's closed list, SVG above
-    all. The entry is still written: a reader meeting a caption and no
-    picture must be able to tell "not here yet" from "not here ever".
+    `carried` is True for every image the origin has (operator, 2026-10-25:
+    "Every plate", 08 §8.7 amended): a type outside 08 §8.7's closed list
+    or a figure over its caps is carried as opaque bytes like any other,
+    and only DISPLAY refuses it. False remains in the format for records
+    written before the amendment (gutenberg parser ≤ 10), which named an
+    SVG without carrying it; a reader must still tell "not here yet" from
+    "not here ever" for those.
     """
     href: str
     media_type: str

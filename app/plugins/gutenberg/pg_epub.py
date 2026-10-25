@@ -144,12 +144,11 @@ class Figure:
     bytes: int
     caption: str         # the alt text
     seq: int             # this appearance's position in the reading order
-    carried: bool = True # False where the origin HAS the image and this
-                         # collection may not admit it — a media type
-                         # outside 08 §8.7's list. The entry is still
-                         # written: a reader that meets a caption and no
-                         # picture must be able to tell "not here yet"
-                         # from "not here ever" (05 §5.3)
+    carried: bool = True # always True since parser 11 ("Every plate",
+                         # 08 §8.7 amended 2026-10-25): every image the
+                         # origin has is carried, whatever its type or size;
+                         # the closed list binds display only. False stays
+                         # in the format for records written before it
 
 
 # --------------------------------------------------------------------------
@@ -452,26 +451,32 @@ def _documents(z: zipfile.ZipFile) -> list[tuple[str, _Text]]:
     return out
 
 
-#: 08 §8.7's closed list. A type outside it is named in the record with
-#: `carried: false` and its bytes are not carried.
-_ADMITTED = {"image/jpeg", "image/png"}
-
-
 def _walk(z: zipfile.ZipFile) -> tuple[str, list[tuple[str, str, bool]]]:
     """`(text with one sentinel per surviving image, [(target, alt, carried)])`.
 
     THE ONE PLACE the filtering happens, which is what makes 09 §9.5's
     alignment true rather than hoped for: the text and the figure list are
-    both derived from this single sequence, so a cover, a broken reference
-    and a refused type drop from both together or from neither.
+    both derived from this single sequence, so a cover and a broken
+    reference drop from both together or from neither.
 
-    Three outcomes, and they are not the same:
+    Two outcomes:
       * the COVER and a BROKEN REFERENCE vanish from both. There is no
         picture and nothing announces one.
-      * a REFUSED TYPE stays in both. The origin has the image, the text
-        says so, and the record says `carried: false` so a reader knows to
-        stop looking rather than to ask again later.
-      * everything else is carried.
+      * EVERY OTHER IMAGE IS CARRIED, whatever its type or size (parser 11,
+        operator 2026-10-25: "Every plate"). Until parser 10 a type outside
+        08 §8.7's closed list — SVG, GIF, WEBP — stayed in the text and was
+        named `carried: false` with its bytes left behind, which is holding
+        less than the origin gave us (invariant 11). The closed list and the
+        caps now bind DISPLAY, not storage (08 §8.7, app/ask/figures.py):
+        the bytes are stored and shared as opaque bytes and only shown when
+        they are a jpeg or png within the caps.
+
+    `carried` stays in the tuple and on the record line (09 §9.5), and is
+    always True here: an image this walk keeps is one whose member the zip
+    names, so its bytes exist; a member that will not read fails the whole
+    book (`source.parse` -> `UnindexableDocument`), never one plate.
+    The TEXT is exactly what parser 10 wrote — the marker never depended on
+    the type — so no chunk moves.
     """
     names = set(z.namelist())
     cover = cover_href(z)
@@ -486,7 +491,7 @@ def _walk(z: zipfile.ZipFile) -> tuple[str, list[tuple[str, str, bool]]]:
             target = posixpath.normpath(posixpath.join(base, src.split("#")[0]))
             tail = pieces[i + 1] if i + 1 < len(pieces) else ""
             if target in names and target != cover:
-                images.append((target, alt, _media_type(target) in _ADMITTED))
+                images.append((target, alt, True))
                 text_parts.append(_IMG)
             text_parts.append(tail)
 

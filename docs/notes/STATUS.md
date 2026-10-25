@@ -32,6 +32,23 @@ it left open is below.
 
 ## Open after the migration
 
+- **"Every plate" — gutenberg parser 11** (operator, 2026-10-25; 08 §8.7,
+  09 §9.5, 05 §5.3, 07 §7.4 amended). Invariant 11 wins over 08's
+  refusal: every image an epub has is carried in the figures container
+  as opaque bytes — SVG, GIF, anything over the caps — `carried: true`
+  where parser 10 wrote `false`. The closed list (jpeg, png) and the caps
+  (16 MiB, 64 MP declared) bind DISPLAY: the page says "not displayable"
+  with type and size and offers the file as `application/octet-stream`,
+  `attachment` (app/ask/figures.py, app/ask/api.py). What moves: the
+  record LINE and the figures container of the books that had such an
+  image (2,407 SVG and 46 GIF images; ten books for the SVGs). What does
+  not: `sections`, `content_hash`, `origin_hash`, every chunk — so every
+  vector carries. The live gutenberg collection takes it by RULE 1
+  re-creation carrying what is identical (02 §2.4 A1c, `louise dev carry
+  --rebuilt`), as parser 9 was; nothing has been run against a
+  live node. 4,096 figures per record stays in 08 as a cap on what a
+  record may name, and is not enforced in code yet (it never was).
+
 - **arXiv — PARKED (operator, 2026-10-22).** A blueprint only: docs/notes/arxiv-plugin.md (bulk forms, licences, pre-embeddings) and docs/notes/arxiv-collection.md (the abstracts collection, every version linked, only the latest embedded; the encoder on hold with a 20,000-abstract / 500-question measurement kept). Nothing built, nothing downloaded; no session works on it until the operator resumes it.
 
 - **The P2P review** (2026-10-19,

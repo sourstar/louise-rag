@@ -308,10 +308,12 @@ def _record_of(collection, plugin, row) -> tuple[dict, int, bytes, dict[str, str
         #
         # DISTINCT plates, where `figures` above lists APPEARANCES: the
         # container stores each once (09 §9.5), and a book repeating one
-        # plate 703 times would otherwise read it 703 times. `carried`
-        # False is absent on purpose — the entry says the origin has the
-        # image and this collection does not admit it, so there are no
-        # bytes to fetch and the container must not hold any.
+        # plate 703 times would otherwise read it 703 times. Every plate
+        # is here whatever its type or size — SVG, GIF, over a cap — since
+        # 08 §8.7's amendment of 2026-10-25 ("Every plate"): the container
+        # stores opaque bytes and only display applies the closed list. A
+        # `carried` False entry (a record from before it) has no bytes to
+        # fetch, and the container must not hold any.
         plates = {f.sha256: f.href for f in (doc.figures or []) if f.carried}
     # NOTE: no validation here. This runs in a parse-pool child, where an
     # exception becomes one skipped row rather than a failed build — so a

@@ -81,9 +81,11 @@ consistent, because there is nobody to prove them to.
    the record by hash (09 §9.5). It is admitted for the same reason the
    text is: it is what the document says. "Never anything executable"
    binds it hardest of all, because a figure is the one thing here a
-   viewer RENDERS — so the admitted types are a closed list, SVG is not
-   on it, and the type is checked against the bytes rather than believed
-   (08 §8.7).
+   viewer RENDERS — so every figure the origin has is carried as opaque
+   bytes, and only DISPLAY decodes: the types it shows are a closed
+   list, SVG is not on it, and the type is checked against the bytes
+   rather than believed (08 §8.7, *amended 2026-10-25, operator: "Every
+   plate"*).
 2. **A peer takes the portion it wants** — one language, one period, with
    or without vectors — and knows from the Codex and the snapshot what
    it is getting before the first byte.

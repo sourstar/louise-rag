@@ -820,10 +820,10 @@ object with exactly these keys in this order:
 | key | type | meaning |
 |---|---|---|
 | `hash` | id | `H` over the figure's bytes as the origin ships them |
-| `media_type` | string | one of 08 §8.7's admitted types; compared against what the bytes actually are, never trusted |
+| `media_type` | string | the type the origin gives the figure, whatever it is (*amended 2026-10-25, "Every plate"*: until then one of 08 §8.7's admitted types); DISPLAY compares it against what the bytes actually are and never trusts it (08 §8.7) |
 | `bytes` | integer | the size of those bytes |
 | `seq` | integer | this appearance's position in the record's text, from 0 |
-| `carried` | boolean | whether this collection carries the bytes. `false` where the origin HAS the image and the collection does not admit it — a media type outside 08 §8.7's list, or a figure over one of its caps. The entry is still written, because a reader that meets the caption and no picture must be able to tell "not here yet" from "not here ever" |
+| `carried` | boolean | whether this collection carries the bytes. `true` for every image the origin has, whatever its type or size (*amended 2026-10-25, operator: "Every plate"*: 08 §8.7's closed list and caps bind display, not storage). `false` only where the origin names an image whose bytes do not exist to carry, and on records written before the amendment, which set it for a type outside 08 §8.7's list or a figure over a cap; such an entry is still written, because a reader that meets the caption and no picture must be able to tell "not here yet" from "not here ever". Kept in the format because records already published carry it |
 
 `hash` is `H` — SHA-256 — and not the BLAKE2b-128 of `content_hash` and
 `origin_hash` beside it, which is the one place in a record line the two
@@ -851,15 +851,19 @@ times over 66 distinct images.
 
 The alignment is a rule about the WRITER: whatever produces the text and
 whatever produces this list walk one filtered sequence of images, so a
-cover, a broken reference and a refused type drop from both together or
-from neither.
+cover and a broken reference drop from both together or from neither,
+and every other image stays in both whatever its type.
 
 **The figures container.** `figures/<slice>/<NNNNN>.fig.zst`, one
 container per record part of the same slice and number, holding every
-figure that part's records name, each stored once and ordered by
-`hash`. A figure is addressed BY HASH INSIDE the container and never by a
-path of its own, so §9.1's "path segments from digests" rule does not
-reach here — no directory is ever named after a figure.
+figure that part's records name with `carried: true`, each stored once
+and ordered by `hash`. It holds OPAQUE BYTES: an SVG, a GIF or a plate
+over 08 §8.7's caps is stored exactly as the origin ships it, verified by
+its hash and nothing else, and never decoded here — whether it may be
+shown is decided at display (08 §8.7, *amended 2026-10-25, operator:
+"Every plate"*). A figure is addressed BY HASH INSIDE the container and
+never by a path of its own, so §9.1's "path segments from digests" rule
+does not reach here — no directory is ever named after a figure.
 
 One container per part, and not one file per plate, because §9.16 makes
 every FILE of a member its own BitTorrent v2 torrent. A corpus of
