@@ -467,11 +467,7 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
         pid = model_load.backend_pid(recipe.url, recipe.model)
         sent = time.monotonic()
         try:
-            with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=remaining):
-                r = httpc.post(recipe.url, json=body, timeout=remaining,
-                               headers=dispatch.level_headers())
-            r.raise_for_status()
-            data = r.json()
+            data = _rerank_call(recipe, body, remaining, deadline)
             rows = data["results"] if isinstance(data, dict) else data
             got = {int(o["index"]): float(o["relevance_score"] if "relevance_score" in o
                                           else o["score"]) for o in rows}
@@ -585,12 +581,64 @@ def rerank_failure(e: BaseException, budget_s: float) -> str:
     if isinstance(e, httpx.TimeoutException) and not isinstance(e, httpx.ConnectTimeout):
         return f"the reranker did not answer within {budget_s:g} s"
     if isinstance(e, httpx.HTTPStatusError):
-        return f"the reranker refused the request (HTTP {e.response.status_code})"
+        said = _server_said(e.response)
+        return (f"the reranker refused the request (HTTP {e.response.status_code}"
+                + (f": {said})" if said else ")")
+                + (", and again when asked once more" if getattr(e, "retried", False) else ""))
     if isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):
         return "the reranker could not be reached"
     if isinstance(e, (KeyError, IndexError, TypeError, ValueError)):
         return f"the reranker's answer could not be read ({type(e).__name__})"
     return f"the reranker failed ({type(e).__name__})"
+
+
+#: a server error (5xx) is asked again ONCE, after this pause, when the
+#: budget still has room: the rerank is a pure function of its body, and
+#: under load the reranker refuses transiently (2026-10-25: 130 of 5,792
+#: night calls answered 500, scattered — 1 in 21 within one minute — and
+#: none by day). One refused call of a query's 4-6 used to cost the whole
+#: list its rerank. The standard client policy (urllib3's `Retry` with a
+#: status list, gRPC's retry on UNAVAILABLE), kept to one try because the
+#: budget is a person's wait; a library is not adopted for one call site.
+RERANK_RETRY_PAUSE_S = 0.25
+
+
+def _rerank_call(recipe, body: dict, timeout: float, deadline: float) -> dict:
+    """One rerank request, through the gate: its JSON answer. A 5xx is
+    asked again once when at least the pause and a second remain before
+    `deadline`; anything else raises as it came."""
+    for attempt in (1, 2):
+        with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=timeout):
+            r = httpc.post(recipe.url, json=body, timeout=timeout,
+                           headers=dispatch.level_headers())
+        if getattr(r, "status_code", 200) >= 500 and attempt == 1:
+            left = deadline - time.monotonic() - RERANK_RETRY_PAUSE_S
+            if left >= 1.0:
+                time.sleep(RERANK_RETRY_PAUSE_S)
+                timeout = left
+                continue
+        try:
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            e.retried = attempt == 2          # what the reason says
+            raise
+        return r.json()
+    raise AssertionError("unreachable")
+
+
+def _server_said(response) -> str:
+    """The error a model server put in its answer, short: LocalAI's
+    `{"error": {"message": …}}`, else the start of the text. Never the
+    request's body or headers."""
+    try:
+        got = response.json()
+        msg = (got.get("error") or {}).get("message") if isinstance(got, dict) else None
+        if not msg and isinstance(got, dict):
+            msg = got.get("error") if isinstance(got.get("error"), str) else got.get("detail")
+    except Exception:   # noqa: BLE001 — not JSON: its text
+        msg = None
+    text = str(msg or getattr(response, "text", "") or "").strip().replace("\n", " ")
+    return text[:160]
 
 
 def _cold_or(e: BaseException, recipe, pid: int | None, sent: float, budget_s: float) -> str:
