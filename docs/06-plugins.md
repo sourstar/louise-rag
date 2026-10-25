@@ -668,7 +668,14 @@ content; a resolver never returns a bare symbol.
    writes the reference vectors' hashes into
    `space.calibration` and their envelope into `space.envelope`, and
    stores the vectors as the SHARD member `calibration/<set>.safetensors`
-   (§2.4, 09 §9.12). A pair space's set is the exception: 512 pairs drawn
+   (§2.4, 09 §9.12). Where no `--encoder` is given — the Library gives
+   none — the node determines all of it (*amended 2026-10-25*, RULE 2):
+   its model server, and on it the model whose stated run loads exactly
+   the recipe's `space.encoder.weights` (the query side's its own), a
+   model's name never deciding (07 §7.4); where none does, the refusal
+   names the encoder to install and nothing is written. The recipe
+   itself, for a create that names only a plugin and a local name, is
+   the node's `recipes/<plugin>.toml` (07 §7.8). A pair space's set is the exception: 512 pairs drawn
    beforehand from the collection's records by a fixed rule, given to
    `create` as a file and carried in the member (09 §9.12, *amended
    2026-10-08*). The Codex's hash is the collection's identity.

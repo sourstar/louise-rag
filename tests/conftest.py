@@ -57,6 +57,16 @@ def no_runner_says_what_it_holds(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_served_weights_are_remembered():
+    """app/encoder_resolve.py caches, per process, the weights each model on
+    a server states. A test's fake server must not answer for the next."""
+    from app import encoder_resolve
+    encoder_resolve.reset_cache()
+    yield
+    encoder_resolve.reset_cache()
+
+
+@pytest.fixture(autouse=True)
 def no_model_is_pinned(monkeypatch):
     """app/model_pins.py pins a LocalAI model while it processes. No test's
     runner has LocalAI's pin API and its hosts do not exist, so nothing is

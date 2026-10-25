@@ -393,12 +393,13 @@ def test_sharing_an_annotations_collection_writes_its_file_without_an_encoder(cl
 
 def test_the_add_panel_offers_the_annotations_type_with_the_held_targets(client):
     """Operator, 2026-10-19: "Add a collection does not show the annotations
-    type". The type is offered beside the plugins, and its target list is
-    the served collections with the snapshot each holds now."""
+    type". The type is offered beside the plugins. RULE 2 (2026-10-25): its
+    targets are not chosen there — the node reads them from the claims and
+    holds them from each one's newest snapshot."""
     r = client.get("/admin/library")
     html = r.text
     assert '<option value="annotations">' in html
-    assert 'id="na_target"' in html and '<option value="gutenberg" data-snapshot=' in html
+    assert 'id="na_target"' not in html and 'id="na_claims"' in html
     assert "/api/hold/collection/create-annotations" in html
 
 

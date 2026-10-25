@@ -175,6 +175,11 @@ def create_deposit(root, name: str, *, platform_image: str | None = None,
         block = _recipe(path) if path else None
         if block is not None and "space" in block:
             block = block["space"]
+        if block is None and encoder and models:
+            # RULE 2 (2026-10-25): the node determines the first deposit
+            # collection's space itself — a held Codex in the space whose
+            # weights the deposit encoder's stated run loads, copied whole
+            source = _space_of_served_model(root, encoder, api, models[0])
     codex = deposit.create(
         root, name, platform_image=preflight_create({}, platform_image),
         encoder_url=encoder, embed_model=models[0] if models else None,
@@ -191,6 +196,24 @@ def create_deposit(root, name: str, *, platform_image: str | None = None,
         query_model=models[1] if models else None)
 
 
+def _space_of_served_model(root, encoder: str, api: str, model: str):
+    """A held text Codex whose space the model at `encoder` runs — the one
+    whose `space.encoder.weights` are the weights the model's stated run
+    loads (app/encoder_resolve.py: verified against the run id; a name never
+    decides) and whose space has no query encoder of its own, since a
+    deposit's encoder is symmetric (02 §2.9). The oldest by name, so the
+    choice is stable; None where the model states no run or no held space
+    is its."""
+    from app import encoder_resolve
+    weights = encoder_resolve.served_weights(encoder, api, model)
+    if not weights:
+        return None
+    found = sorted((n, c) for n, c in col._held(Path(root))
+                   if getattr(c, "space", None) is not None and c.modality == "text"
+                   and c.space.encoder.weights == weights and c.space.query.encoder is None)
+    return found[0][1] if found else None
+
+
 def cmd_create_annotations(a) -> int:
     """`hold collection create annotations --annotates C --from-snapshot S
     --claims FILE --name N` (07 §7.3; 02 §2.10): an annotations collection
@@ -198,16 +221,17 @@ def cmd_create_annotations(a) -> int:
     first snapshot (signed with the node key when there is one) and its
     collection file. Prints the new collection's id."""
     from app.hold import annotations as ann
-    missing = [f for f, v in (("--annotates", a.annotates), ("--from-snapshot", a.from_snapshot),
-                              ("--claims", a.claims), ("--name", a.name)) if not v]
+    missing = [f for f, v in (("--claims", a.claims), ("--name", a.name)) if not v]
     if missing:
-        raise CodexError(f"create annotations takes {', '.join(missing)}: the collection it "
-                         f"annotates, the target snapshot the claims hold from, the claims "
-                         f"file and the new collection's name (02 §2.10)")
+        raise CodexError(f"create annotations takes {', '.join(missing)}: the claims file and "
+                         f"the new collection's name (02 §2.10); the targets and their snapshots "
+                         f"are the claims' unless --annotates and --from-snapshot name them")
     if a.recipe:
         raise CodexError("create annotations takes no --recipe: its Codex is fixed by 02 §2.10 "
                          "and named by the flags")
-    targets = annotation_targets(a.annotates, a.from_snapshot)
+    # named: as named, one --from-snapshot per --annotates; a target alone: its
+    # newest held snapshot; none: the collections the claims name (RULE 2)
+    targets = ann.resolve_targets(a.root, Path(a.claims).read_bytes(), a.annotates, a.from_snapshot)
     container = getattr(a, "container", None) or "jsonl"
     if getattr(a, "dry_run", False):
         _print(ann.preview(a.root, targets=targets, container=container,
@@ -390,7 +414,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                 query_encoder: str | None = None, name: str | None = None,
                 calibration_set: str | None = None, api: str | None = None,
                 embed_model: str | None = None, query_model: str | None = None,
-                calibration_from: str | None = None):
+                calibration_from: str | None = None, embed: str = "off"):
     """`hold collection create <plugin> --recipe FILE` — for the command
     line and for its route alike (07 §7.4: the web interface is a client of
     the same function, not a second implementation). Returns the Codex and
@@ -495,8 +519,11 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
               f"in space {codex.space_id} — calibration is not inside "
               f"space_id — but the two builds are not the same build.",
               file=sys.stderr)
+    # `embed`: what the file spends (07 §7.8) — off for the command; the
+    # node's default for the Library's create from its own recipe (RULE 2)
     return codex, _write_held_file(root, codex, encoder, query_encoder, api=api,
-                                   embed_model=models[0], query_model=models[1])
+                                   embed_model=models[0], query_model=models[1],
+                                   embed=embed)
 
 
 def _encoder_key_args(p) -> None:

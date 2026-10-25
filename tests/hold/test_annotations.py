@@ -292,7 +292,8 @@ def test_the_command_creates_it_and_show_prints_what_it_annotates(tmp_path, monk
     claims.write_bytes(claims_file(a_claim()))
     base = ["hold", "collection", "create", "annotations", "--root", str(tmp_path)]
     assert louise.main(base + ["--annotates", "pubmed", "--name", "same"]) == 2
-    assert "takes --from-snapshot, --claims" in capsys.readouterr().err
+    # the targets and their snapshots may be the claims' (RULE 2, 2026-10-25); the file may not
+    assert "takes --claims" in capsys.readouterr().err
     assert louise.main(base + ["--annotates", "pubmed", "--from-snapshot", TARGET_SNAPSHOT,
                                "--claims", str(claims), "--name", "same", "--snapshot", "2026-09",
                                "--platform-image", PLATFORM, "--title", "Same works"]) == 0

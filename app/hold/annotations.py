@@ -933,6 +933,96 @@ def _targets(root: Path, refs: Sequence[tuple[str, str]]) -> tuple[Target, ...]:
     return tuple(out)
 
 
+def newest_snapshot(root: Path, ref: str) -> tuple[str, str]:
+    """(name, the newest snapshot it holds) of a held target — what `update`
+    re-checks against when nothing names one, and what a create the node
+    decides holds the claims from (RULE 2, 2026-10-25)."""
+    from . import collection as col
+    from app.share import seeder
+    tname, _ = col.resolve(Path(root), ref)
+    cur = seeder.current_snapshot(col.shard_dir_of(Path(root), tname))
+    if cur is None:
+        raise AnnotationsError(f"{tname} holds no snapshot yet, and claims are checked against one "
+                               f"(02 §2.10): wait until its first snapshot is held, then create the "
+                               f"annotations")
+    return tname, cur.snapshot_id
+
+
+def targets_of_claims(root: Path, claims: bytes) -> list[tuple[str, str]]:
+    """The targets a claims file names, decided by the node (RULE 2,
+    amended 2026-10-25): every end's uid names its target's PLUGIN by its
+    prefix (09 §9.3), and the target is the collection of that plugin held
+    here — the one whose newest snapshot holds every record the claims name
+    where several are held — with that newest snapshot as `from_snapshot`.
+    Where no held collection or more than one could be it, nothing is
+    guessed: the refusal says which, and how to name it on the command line."""
+    from . import collection as col
+    from app.share import seeder
+    root = Path(root)
+    submitted = read_claims(claims)
+    wanted: dict[str, set[str]] = {}
+    for s_ in submitted:
+        for kind, value in ends_of(s_.claim):
+            uid = end_uid(kind, value)
+            wanted.setdefault(_prefix(uid), set()).add(uid)
+    held = [(n, c) for n, c in col._held(root) if not is_annotations(c)]
+    out: list[tuple[str, str]] = []
+    for plugin, uids in wanted.items():
+        cands = []
+        for n, c in held:
+            if c.plugin != plugin:
+                continue
+            tree = col.shard_dir_of(root, n)
+            cur = seeder.current_snapshot(tree)
+            if cur is not None:
+                cands.append((n, c, cur.snapshot_id, tree))
+        example = sorted(uids)[0]
+        # a directory whose file is gone is retired, not held (07 §7.8: the
+        # file existing IS the collection existing) — where any has its file
+        from app import collections as collections_mod
+        filed = [t for t in cands if collections_mod.config_toml_path(t[0]).exists()]
+        cands = filed or cands
+        if not cands:
+            raise AnnotationsError(
+                f"the claims name {plugin} records ({example}…), and this node holds no {plugin} "
+                f"collection with a snapshot: take or create one, then create the annotations")
+        if len(cands) > 1:
+            cands = [t for t in cands
+                     if len(target_records(t[3], t[1], t[2], uids)) == len(uids)]
+        if len(cands) != 1:
+            names = ", ".join(sorted(t[0] for t in cands)) or "none of them"
+            raise AnnotationsError(
+                f"the claims name {plugin} records, and this node holds several {plugin} "
+                f"collections that could be their target ({names}): nothing is guessed — name it on "
+                f"the command line: `louise hold collection create annotations --annotates <collection> "
+                f"--claims FILE --name <name>`")
+        out.append((cands[0][0], cands[0][2]))
+    return out
+
+
+def resolve_targets(root: Path, claims: bytes, annotates: Any = None,
+                    from_snapshot: Any = None) -> list[tuple[str, str]]:
+    """(collection, from_snapshot) pairs for a create: as named (the command
+    line's `--annotates` / `--from-snapshot`, one per target), each target's
+    newest held snapshot where none is named, and decided from the claims
+    where no target is named (`targets_of_claims`)."""
+    def items(v: Any) -> list[str]:
+        parts = [] if v is None else (v if isinstance(v, (list, tuple)) else [v])
+        return [x.strip() for p in parts for x in str(p).split(",") if x.strip()]
+    refs, snaps = items(annotates), items(from_snapshot)
+    if not refs:
+        if snaps:
+            raise AnnotationsError("--from-snapshot names the snapshot of a target --annotates names")
+        return targets_of_claims(root, claims)
+    if not snaps:
+        return [newest_snapshot(root, r) for r in refs]
+    if len(refs) != len(snaps):
+        raise AnnotationsError(f"create annotations names {len(refs)} collection(s) with --annotates and "
+                               f"{len(snaps)} snapshot(s) with --from-snapshot: one --from-snapshot per "
+                               f"--annotates, in the same order (02 §2.10)")
+    return list(zip(refs, snaps))
+
+
 def _refs(target_ref: str | None, from_snapshot: str | None,
           targets: Sequence[tuple[str, str]] | None) -> tuple[tuple[str, str], ...]:
     if targets:
@@ -969,8 +1059,11 @@ def _checked(root: Path, target_ref: str | None = None, from_snapshot: str | Non
     contributors = sorted({c["contributor"] for c in pinned})
     annotator = annotator or (contributors[0] if len(contributors) == 1 else None)
     if not annotator:
-        raise AnnotationsError(f"the claims name {len(contributors)} contributors; name the "
-                               f"annotator the Codex credits with --annotator")
+        raise AnnotationsError(f"the claims name {len(contributors)} contributors "
+                               f"({', '.join(contributors[:5])}), and an annotations collection "
+                               f"credits one annotator: give a claims file whose claims name one "
+                               f"contributor, or name the annotator the Codex credits on the "
+                               f"command line with --annotator")
     return Checked(ts, tuple(submitted), tuple(pinned), annotator)
 
 
