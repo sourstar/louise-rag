@@ -28,8 +28,8 @@ and what is deliberately not being built. Read this before planning work.
   mounts read-write — the yaml gives it to the worker alone, read-only
   (both moved to a secrets dataset in the next deploy);
   the reranker's HTTP 500s under load (cause not found);
-  no check compares the manifest's counts and text index with the records
-  (the 127-part gap: a reindex by day 2026-10-26).
+  the 127-part gap (stale counts and text index): `louise dev index-drift`
+  names the documents, `dev reindex` fixes them, on the node 2026-10-26.
 - **Parked:** arXiv and the knowledge-base pipelines.
 - **Counted on the node (2026-10-25):** how many records have no date is
   NOT known: the build databases hold no skip for it, but `hold records
