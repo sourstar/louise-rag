@@ -390,22 +390,34 @@ def _writing(name: str):
 
 
 def _add(name: str, key: str, data: bytes, *, url: str | None = None,
-         now: float | None = None) -> dict[str, Any]:
+         now: float | None = None, form: str | None = None,
+         if_changed: bool = False) -> dict[str, Any]:
     """`hold deposit add` — store `data` as the deposit `key`, replacing a
     deposit already under that key (02 §2.9: replaced whole, never edited),
     and index it for text search before returning.
+
+    `form` "html" is a URL source's page, kept as fetched (06 §6.7,
+    amended 2026-10-25). `if_changed` (the sources thread's): a deposit
+    already holding exactly these bytes, in this form, from this URL is
+    left as it is — a refetch of an unchanged page writes nothing
+    (invariant 2), where a client's deposit is always replaced.
 
     Refused before anything is written: a key 02 §2.9 does not allow, a
     form 06 §6.7 does not take, text that is not UTF-8."""
     src = _source()
     try:
-        src.check_content(key, data)
+        src.check_content(key, data, form)
     except src.DepositError as e:
         raise DepositError(str(e)) from e
 
     collection = _collection(name)
     with closing(_connect(collection)) as con:
-        if _row(con, key) is not None:
+        old = _row(con, key)
+        if old is not None and if_changed and _holds(old, data, url=url, form=form):
+            return {"collection": name, "key": key, "uid": old["uid"],
+                    "native_id": int(old["native_id"]),
+                    "chunks": int(old["chunks"] or 0), "unchanged": True}
+        if old is not None:
             _erase(collection, con, key)     # replaced whole: the old one
             purge(collection, con)           # leaves no trace either
         nid = next_native_id()
@@ -416,6 +428,8 @@ def _add(name: str, key: str, data: bytes, *, url: str | None = None,
         stamp = time.gmtime(now if now is not None else time.time())
         meta = {"key": key, "deposited_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", stamp),
                 "url": url}
+        if form is not None:
+            meta["form"] = form
         # The sidecar LAST: `discover` lists a deposit only once it exists,
         # so a deposit half-written by a crash is never taken for one.
         _fsync_write(d / src.SIDECAR,
@@ -439,11 +453,29 @@ def _add(name: str, key: str, data: bytes, *, url: str | None = None,
             "chunks": int(row["chunks"] or 0)}
 
 
+def _holds(row, data: bytes, *, url: str | None, form: str | None) -> bool:
+    """Does the deposit `row` hold exactly `data`, in `form`, from `url`?
+    Its hash, then the bytes themselves — an equal hash is not taken for
+    equal bytes where comparing them costs one read of a small file."""
+    from app.plugins.deposit import source as src
+    p = Path(row["path"])
+    meta = src.read_sidecar(p.parent) or {}
+    if meta.get("form") != form or (meta.get("url") or None) != url:
+        return False
+    if row["txt_hash"] != src.origin_hash(data):
+        return False
+    try:
+        return p.read_bytes() == data
+    except OSError:
+        return False
+
+
 def add(name: str, key: str, data: bytes, *, url: str | None = None,
-        now: float | None = None) -> dict[str, Any]:
+        now: float | None = None, form: str | None = None,
+        if_changed: bool = False) -> dict[str, Any]:
     """`hold deposit add` — see `_add`; under the collection's write lock."""
     with _writing(name):
-        return _add(name, key, data, url=url, now=now)
+        return _add(name, key, data, url=url, now=now, form=form, if_changed=if_changed)
 
 
 def erase(name: str, key: str) -> list[str]:
@@ -626,8 +658,13 @@ def show(name: str, key: str) -> dict[str, Any]:
         if row is None:
             raise DepositError(f"{name!r} holds no deposit {key!r}")
         src = _source()
-        data = Path(row["path"]).read_bytes()
-        if Path(key).suffix.lower() in src.TEXT_SUFFIXES:
+        p = Path(row["path"])
+        data = p.read_bytes()
+        form = (src.read_sidecar(p.parent) or {}).get("form")
+        if form == src.FORM_HTML:
+            from app.plugins.deposit import html
+            text = html.page_text(data)           # the page's text, as LocalRecall's
+        elif Path(key).suffix.lower() in src.TEXT_SUFFIXES:
             text = src.decode_text(key, data)     # the file, as deposited
         else:
             doc = plugin_io.canonical_doc(collection.plugin_instance(), row)

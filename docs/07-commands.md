@@ -1455,7 +1455,8 @@ command yet — `hold vectors check --drop` is the spec's.
 A deposit collection (02 §2.9) has the same tree, and its `shard/` holds
 only `codex.json` and the calibration member. Its `origin/` holds the
 deposits, byte-exact — one directory per deposit, named by its deposit
-number, with the file under the name the client gave it — and is the
+number, with the file under the name the client gave it (a URL source's
+page as fetched, under its source key: 06 §6.7, amended 2026-10-25) — and is the
 only copy of them anywhere; `state/`, `index/` and `lance/` hold what is
 derived from them, and erasing a deposit removes it from all four.
 

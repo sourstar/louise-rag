@@ -752,10 +752,11 @@ Anything else, text that is not valid UTF-8, and a PDF that yields no
 text (a scan: there is no OCR) are refused when they arrive, and never
 stored. `origin_hash` is BLAKE2b-128 of the bytes as deposited, and the
 record's `origin` is their path under `origin/`. `extra` carries `key`
-(the name the client gave), `deposited_at`, `url` for a source's text,
-and the `pdf_*` keys — what a PDF says about itself, and its page count —
-every one present on every deposit, null where it does not apply, because
-a collection's `extra` keys are fixed for its life (09 §9.5).
+(the name the client gave), `deposited_at`, `url` for a source's deposit,
+the `pdf_*` keys — what a PDF says about itself, and its page count —
+and, from parser 3 (amended 2026-10-25), the `html_*` keys of a source's
+page (below), every one present on every deposit, null where it does not
+apply, because a collection's `extra` keys are fixed for its life (09 §9.5).
 
 **URL sources.** A deposit collection may be subscribed to URLs, each
 with a refresh interval in minutes (default 60). The subscription is
@@ -770,7 +771,36 @@ URL:
   concatenated;
 - ending `sitemap.xml`: every page the sitemap lists, fetched and their
   texts joined;
-- anything else: the one page, its HTML converted to text.
+- anything else: the one page, **kept as fetched** — its bytes are the
+  deposit — and its record parsed from them (below).
+
+*Amended 2026-10-25, operator: "Keep all".* A page is the origin unit
+of its deposit: the response's bytes are written byte-exact under the
+source's key, the sidecar saying `form: "html"`, so `origin_hash` is
+BLAKE2b-128 of the page and the record's `origin` locates it. The record
+is parsed from those bytes: the text is the page's HTML converted to
+text exactly as before (decoded as UTF-8, an undecodable byte replaced;
+scripts and styles left out), so an unchanged page cuts the same
+chunks, and `show` answers that text as it did. What the page says about
+itself is kept (invariant 11, §6.4): its `<title>` (else `og:title`)
+as `title`, `<meta name=author>` in `creators`, the published date
+(`article:published_time`, `datePublished`, `dcterms.created`, …) as
+`date`, `<meta name=keywords>` in `subjects`, the primary subtag of
+`<html lang>` as `lang`; and in `extra` the values as the page wrote them
+— `html_lang`, `html_description`, `html_keywords`, `html_author`,
+`html_published`, `html_modified`, `html_canonical` — with every
+`<meta>` (Open Graph's `og:*` among them) and every `<link>`, all their
+attributes as written, in `html_meta` and `html_links`, and every JSON-LD
+block in `html_jsonld`. These are parser 3's keys, null on every other
+deposit. A collection keeps the record shape its Codex's parser names
+for its life (09 §9.5): one created at parser 2 keeps its pages as
+fetched too, but its records keep parser 2's shape. A refetch that
+returns the same bytes, from the same URL, writes nothing; a changed page
+replaces the deposit whole. A source deposited as text before the
+amendment is replaced by its page at its next refresh. What is kept is
+the response's body, not its HTTP headers — WARC (ISO 28500) is the
+standard form for keeping both, should a header be wanted. A sitemap's
+pages and a repository's files are still kept as the text they give.
 
 A source is fetched when it is added, then again whenever its interval
 has passed — by the worker's sources thread, and only where the node's
@@ -779,7 +809,8 @@ or downloading-only node lets its due sources wait. The deposit is
 replaced whole each time, and a fetch that fails or returns nothing keeps
 the previous one. A repository's files are those LocalRecall counts as
 text (by extension), each after a `--- File: <path> ---` line; a page's
-HTML is read as text with its scripts and styles left out; a page is at
+HTML is read as text with its scripts and styles left out (and the page
+itself kept, above); a page is at
 most 50 MB and 30 s, a clone 10 minutes. A streamed page draws from the
 budget per chunk; a clone, which no rate cap reaches, is charged once it
 has landed. Removing the source
