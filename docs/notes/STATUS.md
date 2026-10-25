@@ -290,7 +290,7 @@ Operator, the same day: the retry treats the symptom; "Embedding shall have the 
 - The levels are a query's steps in order: CORPUS < TRANSLATE < QUERY < RERANK < CHAT. 09 §9.12 is amended: the same five header values, a new order.
 - Corpus work stands aside on the WHOLE CARD while any step of a person's query holds the node's claim. Its next request and its encoder's warm wait, bounded by the request's own timeout (then a deferral), and wake on stop.
 - The device-wide yield removed on 2026-09-20 (chat's clock) returns, with the GPU governor holding the clock.
-BEFORE numbers and the scenario are in scheduling-log.md (2026-10-25). Also: the test fake in test_rerank_per_collection.py now carries a status code, instead of product code reading one with a default.
+BEFORE numbers and the scenario are in scheduling-log.md (2026-10-25). Found before deploying it (München): **the GPU governor was not running on the node.** There was no TrueNAS app and no `app.gpu_governor` process, and the System status reported none. Its YAML records a deploy on 2026-09-20; it is not known since when it has been gone. So chat has run at the idle clock whenever the card was otherwise quiet. It is installed from deploy/truenas-gpu-governor.yaml before 7cc6975 (as 50030dc on c3a7612) goes out, with min_freq checked idle, during a search and after. Also: the test fake in test_rerank_per_collection.py now carries a status code, instead of product code reading one with a default.
 
 ### 2026-10-24: wikidata sliced by family — built: pack version 3, the map pinned in the Codex and carried in the SHARD
 
