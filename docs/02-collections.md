@@ -741,7 +741,10 @@ a fixed rule from the collection's own records, and the member carries it
 (09 §9.12, *amended 2026-10-08*).
 
 The **index** is a set of centre points trained once on a corpus-wide
-sample. Every vector's label is its nearest centre, and search probes a
+sample. *(Not built, 2026-10-25: the node searches its local LanceDB
+index, which no peer shares; the centres member, the labels and their two
+checks below are the design, not the code — 07 §7.3's `index build`
+says what `--vector` builds today.)* Every vector's label is its nearest centre, and search probes a
 few buckets instead of everything. The training is fixed so that anyone
 can reproduce it (`centres`, 03 §3.2): k-means with k = ⌈√n⌉, capped at
 65,536, on a sample of min(200,000, n) chunks chosen by a deterministic

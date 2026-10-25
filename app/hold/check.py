@@ -1161,6 +1161,10 @@ CHECKS: dict[str, Callable[[Ctx], Outcome]] = {
     "evaluation": _not_yet(
         "evaluation", "needs the suite `space.evaluation` names; this "
                       "collection declares none" ),
+    "model-agreement": _not_yet(
+        "model-agreement", "re-runs a `model` method's claims (02 §2.10); "
+                           "not built — no collection has a `model` method "
+                           "yet, and its floor is measured before the first"),
 }
 
 

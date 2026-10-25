@@ -31,8 +31,8 @@ through with the commit that closes them.
 |---|---|---|
 | ~~`louise node start` / `node stop`~~ | 07 §7.3, CLAUDE.md invariant 2 | built 2026-10-25 (stop through state/node.sqlite, exit 0) |
 | One route per command, `/api/<surface>/<noun>/<verb>` | 07 §7.4 | **build** (operator, 2026-10-25: A): one generic route over the command tree, `--json` output, exit → status, signing verbs queued as jobs |
-| The `centres`, `labels`, `model-agreement` and `evaluation` checks (INCONCLUSIVE stubs; `model-agreement` refused) | 03 §3.2 | build `model-agreement` as INCONCLUSIVE-until-built at least; mark the four "not built" in 03 |
-| `index build --vector` trains and ships the centres member | 02 §2.4 (07 marks it) | mark in 02 |
+| ~~The `centres`, `labels`, `model-agreement` and `evaluation` checks~~ | 03 §3.2 | marked "not built" in 03; `model-agreement` INCONCLUSIVE with its reason, no longer refused (2026-10-25) |
+| ~~`index build --vector` trains and ships the centres member~~ | 02 §2.4 | marked not built in 02 (2026-10-25) |
 | ~~`derive` / `replace --encoder-weights --engine`~~ | 07 §7.3 | amended 2026-10-25: never built, dropped; `--space FILE` names a new encoder |
 | `hold config apply --set` (and 07 §7.6 telling users to run it) | 07 | build |
 | `records fetch --slice/--snapshot` | 07 (marked) | build |
