@@ -22,6 +22,9 @@ and what is deliberately not being built. Read this before planning work.
   worker and web (invariant 8; deploy/truenas-app.yaml takes
   `ADMIN_TOKEN_FILE`, the node's app is not yet on it), and where the node
   key's offline copy is kept is recorded nowhere (the operator states it);
+  the node's private key sits in `/config`, which the LAN-facing web
+  mounts read-write — the yaml gives it to the worker alone, read-only
+  (both moved to a secrets dataset in the next deploy);
   the reranker's HTTP 500s under load (cause not found);
   no check compares the manifest's counts and text index with the records
   (the 127-part gap: a reindex by day 2026-10-26).
