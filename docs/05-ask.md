@@ -313,7 +313,7 @@ The fields, with their values:
 | `verified_on_use` | `local` · `imported` · `verified` · `failed`: this peer produced the vector; produced elsewhere and not yet re-embedded here; re-embedded and within tolerance; re-embedded and outside it. A chunk whose producer is unknown is `imported`, never `local` |
 | `producer_key` | the key that signed the chunk's vector — this peer's own key for `local` |
 | `text` or `origin_url` | the chunk's text; for a red-class collection the origin's page and never the text |
-| `figures` | the plates whose `[Illustration…]` markers fall inside this chunk, in order: `{hash, media_type, caption, state}` — NEVER the bytes. `null` where the collection carries no figures at all, `[]` where this chunk has none. `state` is `held` · `not-held` · `not-carried`, below |
+| `figures` | the plates whose `[Illustration…]` markers fall inside this chunk, in order: `{hash, media_type, bytes, caption, state}` — NEVER the bytes themselves; `bytes` is their size as the record names it (*amended 2026-10-25*), so a client can say "not displayable: image/svg+xml, 12 KB" without fetching them (08 §8.7). `null` where the collection carries no figures at all, `[]` where this chunk has none. `state` is `held` · `not-held` · `not-carried`, below |
 | `annotations` | the claims an annotations collection held here makes about this record (02 §2.10; *amended 2026-10-09*), `[]` where none does. Each entry is `{collection_id, snapshot_id, claim, type, relation, role, record: {uid, title, lang, held}, subject_lang, object_lang, method, confidence, contributor, state, trust_level}`. `record` is the record at the claim's other end, as the target holds it, and `role` is this record's end, `subject` or `object`. *Amended 2026-10-20*: a `mention` entry carries `chunk_id`, `start`, `end` and `surface`, so the reader places it in the chunk it was read from and highlights it; a `relation` is attached at either entity's record; a `community` is a fact beside each member (02 §2.10, 09 §9.5). `state` is `current`, `stale` or `unknown`, below |
 | `editions` | present only on a work's one hit (below; *amended 2026-10-09*): the work's other records, `{uid, title, lang, held, rank, chunk_id}` — `rank` and `chunk_id` where the record was in the list before the grouping, `null` where it was not |
 | `freshness` | present only on request: `current` · `newer-at-source` · `unreachable` · `unavailable` — the last when the plugin has no per-record current form for this record (one read from a static archive, a copy built before records carried a content hash), said rather than guessed (*amended 2026-10-07*) |
@@ -335,9 +335,13 @@ entries and no others.
 kind of absence it is facing.** `held` — this peer has the bytes.
 `not-held` — the collection carries this plate and this peer does not
 have the member yet, so asking again later works. `not-carried` — the
-origin has an image here that the collection does not admit (09 §9.5's
-`carried: false`), so asking again NEVER works and the reader should
-stop looking. `figures: null` is the fourth and commonest case: this
+origin has an image here that the collection does not hold (09 §9.5's
+`carried: false`, written before 2026-10-25 for a type outside 08 §8.7's
+list; every plate is carried since), so asking again NEVER works and the
+reader should stop looking. A `held` plate is still SHOWN only when 08
+§8.7's display rule admits it — `image/jpeg` or `image/png`, within the
+caps; any other is said to be not displayable, with its type and size,
+and offered as a download (07 §7.4). `figures: null` is the fourth and commonest case: this
 collection has no plates at all, and a caption in the text is all there
 has ever been.
 

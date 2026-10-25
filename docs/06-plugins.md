@@ -211,7 +211,9 @@ class CanonicalDoc:
 @dataclass(frozen=True)
 class Figure:
     hash: str                       # H over `data` — SHA-256, not BLAKE2b (09 §9.5)
-    media_type: str                 # one of 08 §8.7's admitted types
+    media_type: str                 # the origin's type, whatever it is — every plate is
+                                    # carried; 08 §8.7's closed list binds display only
+                                    # (amended 2026-10-25, "Every plate")
     bytes: int                      # len(data)
     seq: int                        # order of first appearance in the text, from 0
     data: bytes                     # the plate itself; the only field that does not

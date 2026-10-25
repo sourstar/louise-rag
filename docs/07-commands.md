@@ -747,6 +747,17 @@ peer answers 404 for a hash it does not hold and for one the record
 marks `carried: false` — the result object already told the caller
 which of those it was, before the request was made.
 
+*Amended 2026-10-25 (operator: "Every plate", 08 §8.7):* every plate is
+carried and served, but only a DISPLAYABLE one is answered inline under
+its type — `image/jpeg` or `image/png` that the bytes really are, within
+16 MiB and 64 megapixels declared in the header. Any other answers `415`
+with the reason (type, size) and no bytes, so an `<img>` pointed at it
+has nothing to decode. `&download=1` asks for the file: the bytes, byte
+for byte, as `application/octet-stream` with `Content-Disposition:
+attachment; filename="<hash prefix>.<ext>"` — never inline, never
+`image/svg+xml` — for a displayable plate as for any other. Every answer
+carries `X-Content-Type-Options: nosniff`.
+
 **Two routes are not under `/api` at all** (*added 2026-10-07*): the
 documents 09 §9.11 fixes at a certifier's domain, served by the node for
 whatever domain fronts it —

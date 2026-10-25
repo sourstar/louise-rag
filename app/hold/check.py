@@ -1008,10 +1008,11 @@ def check_figures(ctx: Ctx) -> Outcome:
     that is the one thing the hash on the record line exists to catch.
 
     A `carried: false` entry names a plate the ORIGIN has and this
-    collection does not admit (a media type outside 08 §8.7, a figure over
-    a cap). It is not counted as named: there is nothing to hold and never
-    will be, and counting it would make `named - held` grow with every
-    refused SVG.
+    collection did not carry — a record written before 08 §8.7's amendment
+    of 2026-10-25 ("Every plate"), which left SVGs behind; every plate is
+    carried since. It is not counted as named: there is nothing to hold and
+    never will be, and counting it would make `named - held` grow with
+    every such entry.
     """
     from . import figures as figures_mod
 
