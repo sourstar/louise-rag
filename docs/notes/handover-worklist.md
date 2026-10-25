@@ -21,7 +21,7 @@ through with the commit that closes them.
 | Every plate carried; display admits JPEG/PNG only (operator) | CODE | merged (693ffcc); gutenberg parser 11 → RULE 1 re-creation on the node (NODE) |
 | A web source's page kept byte-exact (operator) | CODE | merged (fc4467f); deposit parser 3 |
 | The Library's dialogs ask only a name (RULE 2) | CODE | being built |
-| A deposit source's clone draws from the budget first (invariant 5) | CODE | next |
+| A deposit source's clone draws from the budget as it lands (invariant 5) | CODE | done 2026-10-25 |
 | A dateless record is a defect, never a silent exclusion (operator: A) | CODE + NODE | counts asked of München |
 | Batched answers equal single-text bytes; the gate measures reproduction (operator: A) | CODE | done (c9ac138) |
 

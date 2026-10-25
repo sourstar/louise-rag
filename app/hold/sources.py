@@ -63,6 +63,11 @@ PAGE_TIMEOUT_S = 30.0
 CLONE_TIMEOUT_S = 600.0
 #: A page larger than this is refused rather than read into memory whole.
 MAX_PAGE_BYTES = 50 * 2**20
+#: A clone's bound in bytes, as MAX_PAGE_BYTES is a page's: what lands under
+#: `.git` (the pack the network delivered) past this stops the clone.
+MAX_CLONE_BYTES = 2 * 2**30
+#: How often a running clone's landed bytes are measured and drawn.
+CLONE_POLL_S = 0.5
 DEFAULT_INTERVAL_MIN = 60
 
 _USER_AGENT = "louise-rag/0.1 (+https://github.com/sourstar/louise-rag)"
@@ -280,11 +285,15 @@ def fetch_sitemap(url: str) -> str:
 
 def fetch_git(url: str) -> str:
     """A shallow clone at HEAD, its text files concatenated in LocalRecall's
-    shape, the clone's bytes charged to the budget once it has landed (a
-    subprocess cannot be metered per byte, and git takes no rate cap)."""
+    shape. The clone draws from the budget AS IT LANDS (invariant 5): git
+    takes no rate cap, so its process group is measured every
+    CLONE_POLL_S — the bytes under `.git`, which is where the network's pack
+    lands; the checkout is local — and is stopped (SIGSTOP) while each
+    increment is drawn, so an exhausted budget pauses the transfer itself.
+    The page's pay-after rule (`_get`), at the granularity a subprocess
+    allows; bounded by CLONE_TIMEOUT_S and MAX_CLONE_BYTES."""
     import os
     from app import config
-    from app.acquire import budget
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
     if config.GIT_PRIVATE_KEY_FILE:
         env["GIT_SSH_COMMAND"] = ("ssh -i " + _shell_quote(config.GIT_PRIVATE_KEY_FILE)
@@ -292,16 +301,8 @@ def fetch_git(url: str) -> str:
                                   " -o StrictHostKeyChecking=accept-new")
     with tempfile.TemporaryDirectory(prefix="louise-source-") as tmp:
         dest = Path(tmp) / "repo"
-        try:
-            done = subprocess.run(["git", "clone", "--depth", "1", "--single-branch",
-                                   "--no-tags", "--quiet", url, str(dest)],
-                                  capture_output=True, timeout=CLONE_TIMEOUT_S, env=env)
-        except subprocess.TimeoutExpired as e:
-            raise SourceError(f"{url}: clone did not finish in {CLONE_TIMEOUT_S:.0f}s") from e
-        if done.returncode != 0:
-            why = done.stderr.decode("utf-8", "replace").strip().splitlines()
-            raise SourceError(f"{url}: git clone failed: {why[-1] if why else ''}")
-        budget.acquire_bytes(sum(f.stat().st_size for f in dest.rglob("*") if f.is_file()))
+        _metered_clone(["git", "clone", "--depth", "1", "--single-branch",
+                        "--no-tags", "--quiet", url, str(dest)], dest, url, env)
         parts = []
         for f in sorted(dest.rglob("*")):
             rel = f.relative_to(dest)
@@ -311,6 +312,72 @@ def fetch_git(url: str) -> str:
                 parts.append(f"\n--- File: {rel.as_posix()} ---\n"
                              + f.read_bytes().decode("utf-8", "replace") + "\n")
         return "".join(parts)
+
+
+def _landed(git_dir: Path) -> int:
+    """Bytes under `git_dir` now; a file renamed or removed mid-walk (git's
+    `tmp_pack_*` becoming `pack-*`) is skipped, and the next poll sees it."""
+    import os
+    total = 0
+    for root, _dirs, files in os.walk(git_dir):
+        for name in files:
+            try:
+                total += os.stat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def _metered_clone(argv: list[str], dest: Path, url: str, env: dict) -> None:
+    import os
+    import signal
+    from app.acquire import budget
+    proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                            env=env, start_new_session=True)
+
+    def group(sig) -> None:
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            pass
+
+    drawn = 0
+    deadline = time.monotonic() + CLONE_TIMEOUT_S
+    try:
+        while True:
+            try:
+                proc.wait(timeout=CLONE_POLL_S)
+                finished = True
+            except subprocess.TimeoutExpired:
+                finished = False
+            landed = _landed(dest / ".git")
+            if landed > MAX_CLONE_BYTES:
+                raise SourceError(f"{url}: more than {MAX_CLONE_BYTES} bytes")
+            if landed > drawn:
+                if not finished:
+                    group(signal.SIGSTOP)        # paused while the bytes are drawn
+                try:
+                    budget.acquire_bytes(landed - drawn)
+                finally:
+                    if not finished:
+                        group(signal.SIGCONT)
+                drawn = landed
+            if finished:
+                break
+            if time.monotonic() > deadline:
+                raise SourceError(f"{url}: clone did not finish in {CLONE_TIMEOUT_S:.0f}s")
+    except BaseException:
+        group(signal.SIGCONT)
+        group(signal.SIGKILL)
+        proc.wait()
+        raise
+    finally:
+        err = proc.stderr.read() if proc.stderr else b""
+        if proc.stderr:
+            proc.stderr.close()
+    if proc.returncode != 0:
+        why = err.decode("utf-8", "replace").strip().splitlines()
+        raise SourceError(f"{url}: git clone failed: {why[-1] if why else ''}")
 
 
 def _shell_quote(s: str) -> str:

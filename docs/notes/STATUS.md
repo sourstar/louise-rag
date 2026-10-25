@@ -277,7 +277,7 @@ From the audit of docs 01–09 against CLAUDE.md (2c6642e), the operator decided
 - **Batching, choice A.** The gate fails a run whose single-text passes differ (invariant 12, now measured). Batched answers must equal the single-text bytes, or the run is limited to one-at-a-time work (the 2026-10-12 band is gone).
 - **Dateless records, choice A.** A record a dated snapshot cannot place is a defect to fix, never a silent exclusion. Gutenberg's cause is a missing or damaged pg<N>.rdf in our copy. PubMed's record parser already falls back to MedlineDate and ArticleDate, so a dateless PubMed record means NCBI gave no date of any kind. Counts are asked of München before the fix.
 - **RULE 2.** The Library's dialogs ask only a name; the node resolves the encoder from the Codex's weights (being built).
-- **Invariant 5.** A deposit source's git clone draws from the bandwidth budget before it starts (next).
+- ~~**Invariant 5.** A deposit source's git clone draws from the bandwidth budget~~ — as it lands, git paused while each increment is drawn (2026-10-25).
 
 ### 2026-10-25: the records build A/B — every part byte-identical; the build takes the whole cpu quota
 
