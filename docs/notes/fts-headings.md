@@ -105,3 +105,24 @@ FTS_VERSION rebuild.
 Deploy rule: the full search (reranker on) on the whole labelled set, no loss
 on titles or descriptive. A HEADING_IN_BODY choice rebuilds the text indexes
 (a new FTS_VERSION), collection by collection: CPU, no GPU, no re-embedding.
+
+**Full search, partial (379 of 496 with all three arms; 2026-10-24 23:04 –
+2026-10-25 02:43 CEST; München).** Deployed path, reranker on (score).
+
+| kind (n) | k | MRR | R@1 | R@10 |
+|---|---|---|---|---|
+| title (37) | 0 (live) | 0.821 | 0.757 | 0.946 |
+| title | 2 / 3 | 0.820 | 0.757 | 0.946 |
+| descriptive (336) | 0 | 0.430 | 0.307 | 0.732 |
+| descriptive | 2 / 3 | 0.440 | 0.312 | 0.729 |
+| pair (6) | 0 / 2 / 3 | 0.444 | 0.333 | 0.667 |
+
+The leg's title gain does not survive the reranker; titles tie (−0.001 MRR
+is one rank step on one query). Descriptive gains a little (MRR +0.010,
+R@1 +0.005), and R@10 is −0.003, one query. k = 2 and 3 agree on every row,
+so k = 4 is not built. The verdict waits for the remaining 117.
+Those 117 lost their rerank inside its budget: 95 on arm 0, 12 on arm 2, 10
+on arm 3, a rate that rose through the night while normattiva's re-embed ran.
+The arm asymmetry suggests the first call of each query pays something,
+either a load or a wait behind corpus work. That is open in STATUS.md as a
+possible live-search defect, before any heading deploy.
