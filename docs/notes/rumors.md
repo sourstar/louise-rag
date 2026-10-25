@@ -40,9 +40,18 @@ state** against the wikidata snapshot it was checked against:
 | state | meaning |
 |---|---|
 | `open` | Wikidata does not state it: a current rumor |
-| `confirmed` | Wikidata now states it (the statement's GUID recorded) |
-| `rejected` | Wikidata states it at deprecated rank, or contradicts it with a reference |
+| `adopted` | Wikidata now states it, citing OUR passage as its reference: a person reviewed our evidence and agreed (the statement's GUID recorded) |
+| `confirmed` | Wikidata now states it on a reference of its own: independent evidence (GUID recorded) |
+| `rejected` | Wikidata states it at deprecated rank, or contradicts it with a reference, or the Mismatch Finder review marked our value wrong |
 | `known` | Wikidata already stated it when it was found: never a rumor |
+
+`adopted` and `confirmed` are kept apart: a statement a person entered
+from our own passage measures our precision, but it is not a second
+source, and counting it as one would let the collection confirm itself.
+A rejection seldom reaches the dump, since an editor who dismisses a
+mismatch rarely writes a deprecated statement. So `rejected` is also
+read from the Mismatch Finder's review outcomes for the rows we
+uploaded, not from the dump alone.
 
 Review after review the `open` set shrinks; a closed rumor stays in the
 collection with its state, the review that closed it and the statement. A
@@ -82,8 +91,12 @@ external URL; new connections and entities go in as ordinary edits by a
 person, the claim as the reference package; Louise never edits. The
 collection's metrics per snapshot and tier:
 - open rumors per thousand mentions;
-- closed as confirmed against rejected. That ratio is Louise's precision,
-  judged by Wikidata's own editors.
+- adopted against rejected. That ratio is Louise's precision, judged by
+  Wikidata's own editors; `confirmed` is reported apart.
+
+The open set will not reach zero. Wikidata's review is people, and a
+queue of millions will mostly stay open. "It shrinks" is true, but the
+metric is the rate, not convergence.
 
 ## The specification it needs (for approval; hashed bytes)
 
@@ -101,4 +114,8 @@ collection's metrics per snapshot and tier:
    compared byte for byte.
 
 It is built with gutenberg-graph's first collection, since until then
-there is nothing to record.
+there is nothing to record. Start small: tier A only (diaries, letters,
+memoirs, personal narratives), with a strict floor. Then report the
+judged precision and the YIELD on a sample: how many rumors are right,
+and how many of the right ones are worth a reader's time rather than a
+mundane fact Wikidata merely lacks. Only then add the other tiers.
