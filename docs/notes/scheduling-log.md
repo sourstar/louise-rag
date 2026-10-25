@@ -1230,3 +1230,26 @@ quota, `PARSE_PROCESSES` 3, `PARSE_TASKS_PER_CHILD` 500, after the A/B arms.
 **AFTER so far (München):** the live build restarted on c3dcb4c at 13:37:36
 CET. The sampler reads 3 children at ~300 % (13:40, 13:41). The A/B arm
 on c3dcb4c: no "[parse pool]" line, 622.9 s, parts byte-identical.
+
+### 2026-10-25 — the build uses every core; the page stream refills on any answer (operator) — DEPLOYED on the build 15:20 CET
+
+**The operator:** "Use all the cores", then "Fix it, we are wasting CPU time."
+
+**BEFORE (München).** The build container ran at `--cpus 12`, `PARSE_PROCESSES` 12, on c3dcb4c: 223 rec/s. The cpu sat at one core (99–100 %) in many 60 s samples between 400 and 1,180 %. py-spy `--gil` on the parent showed the GIL held ~8 % of the time, so the parent's Python was not the limit. `compute_pages` was:
+- a part that had answered held its slot until its page was consumed in order;
+- the loop waited on the OLDEST part alone, refilling nothing meanwhile;
+- it read at most three pages ahead.
+So one long article in the oldest page left 11 children idle.
+
+**The change (21da0e3, München; reviewed and merged by architecture).** The window counts only RUNNING parts. Any answer returns the loop to the top, which refills. The watchdog deadline is reset by any answer and after each yield. `PAGES_AHEAD` is 16, the memory bound. Results stay in page and part order. The cost test `test_one_slow_part_does_not_hold_back_the_pages_after_it` fails on the old code and passes now.
+
+**A/B, 12 cpus, the same 250 k records** (parts identical to the earlier five runs):
+
+| arm | wall | cpu s | cpu s/record | mean util | one-core readings |
+|---|---|---|---|---|---|
+| c3dcb4c, 12 children | 408.5 s | 2830 | 0.0113 | 693 % | 1 of 51 |
+| 21da0e3, 12 children | 334.2 s | 3324 | 0.0133 | 995 % | 1 of 41 |
+
+On 4 cpus the arms were 544–630 s. Live since 15:20: 572 rec/s and 1,750 chunks/s over the first 5 minutes, against the morning's 223 rec/s and 322 chunks/s on a different stretch. CPU per record is higher at 12 children (SMT siblings, memory bandwidth). The operator asked for throughput.
+
+**Note (review).** A part that answered and waits for its page's turn still counts in `_held` and in the occupancy meter until consumed. That is harmless for the build, which is alone in its container, and `compute_pages` is not used by the worker. Revisit if it ever is.
