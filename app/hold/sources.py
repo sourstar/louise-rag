@@ -6,13 +6,25 @@ LocalRecall's behaviour (`rag/source_manager.go`, `rag/sources/` at
 difference. A source is a SUBSCRIPTION INSIDE THE COLLECTION: a URL and an
 interval in minutes, kept in the collection's file (desired state,
 invariant 10); ONE deposit per URL, keyed `source-<collection>-<url>.txt`,
-replaced whole each time it is fetched; a fetch that fails or comes back
-empty keeps the deposit it had. What a URL gives:
+replaced whole each time it is fetched (a page that comes back as the
+same bytes is left as it is); a fetch that fails or comes back empty
+keeps the deposit it had. What a URL gives:
 
     …ends .git          the repository shallow-cloned at HEAD, its text
                         files concatenated, each under a `--- File: … ---` line
     …ends sitemap.xml   every page the sitemap lists, fetched, texts joined
-    anything else       the one page, its HTML as text
+    anything else       the one page, KEPT AS FETCHED: its bytes are the
+                        deposit and its record is parsed from them — its
+                        HTML as text, and what its head says about it
+                        (06 §6.7, amended 2026-10-25, operator: "Keep all")
+
+The page's body is kept, not the HTTP response around it. The standard
+form for that is WARC (ISO 28500): the request, the response headers and
+the redirect chain beside the payload. Adopting it takes a WARC writer
+(`warcio`, a new dependency) and an idempotence key on the payload digest
+rather than the file's hash, since a WARC record carries its fetch time;
+it pays once a header (Last-Modified, Content-Type's charset) or the
+redirect is wanted in the record.
 
 Three additions, none of which LocalAGI can see: every byte draws from the
 transfer budget (invariant 5); nothing is fetched before 04 §4.4's rule
@@ -36,10 +48,11 @@ import threading
 import time
 import tomllib
 from contextlib import closing
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
+
+from app.plugins.deposit import html as page_html
 
 from . import deposit
 
@@ -220,55 +233,9 @@ def erase(name: str, url: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 # fetching
 
-class _Text(HTMLParser):
-    """HTML as text: script, style and the head's non-content left out,
-    block elements on their own lines. The standard library, not a new
-    dependency — LocalRecall's html2text has no Python twin, and the text
-    is what is searched, not a rendering."""
-    _SKIP = {"script", "style", "noscript", "template", "svg", "head"}
-    _BLOCK = {"p", "div", "br", "li", "ul", "ol", "tr", "table", "section",
-              "article", "header", "footer", "h1", "h2", "h3", "h4", "h5", "h6",
-              "pre", "blockquote", "hr", "title", "dd", "dt", "main", "nav"}
-
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
-        self.skip = 0
-        self.title = ""
-        self._in_title = False
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "title":
-            self._in_title = True
-        if tag in self._SKIP:
-            self.skip += 1
-        if tag in self._BLOCK:
-            self.parts.append("\n")
-
-    def handle_endtag(self, tag):
-        if tag == "title":
-            self._in_title = False
-        if tag in self._SKIP and self.skip:
-            self.skip -= 1
-        if tag in self._BLOCK:
-            self.parts.append("\n")
-
-    def handle_data(self, data):
-        if self._in_title:
-            self.title += data
-        if not self.skip:
-            self.parts.append(data)
-
-
-def html_to_text(html: str) -> str:
-    p = _Text()
-    p.feed(html)
-    p.close()
-    lines = [re.sub(r"[ \t\r\f\v]+", " ", line).strip()
-             for line in "".join(p.parts).split("\n")]
-    text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
-    title = p.title.strip()
-    return (f"{title}\n\n{text}" if title and not text.startswith(title) else text)
+#: A page's text, and what it says about itself, are the deposit plugin's:
+#: the record is parsed from the page's bytes (app/plugins/deposit/html.py).
+html_to_text = page_html.to_text
 
 
 def _get(url: str) -> bytes:
@@ -292,8 +259,8 @@ def _get(url: str) -> bytes:
 
 
 def fetch_page(url: str) -> str:
-    raw = _get(url)
-    return html_to_text(raw.decode("utf-8", "replace"))
+    """A sitemap's page as text, exactly as before 2026-10-25."""
+    return html_to_text(page_html.decode(_get(url)))
 
 
 def fetch_sitemap(url: str) -> str:
@@ -351,8 +318,12 @@ def _shell_quote(s: str) -> str:
     return shlex.quote(s)
 
 
+def _is_page(url: str) -> bool:
+    return not (url.endswith(".git") or url.endswith("sitemap.xml"))
+
+
 def fetch(url: str) -> str:
-    """What the URL gives, by LocalRecall's rule on its ending."""
+    """What the URL gives, as text, by LocalRecall's rule on its ending."""
     if url.endswith(".git"):
         return fetch_git(url)
     if url.endswith("sitemap.xml"):
@@ -371,10 +342,22 @@ def refresh(name: str, url: str, *, now: float | None = None) -> bool:
     refusal = licensing.web_source_refusal(url)
     if refusal:
         return False
-    text = fetch(url)
-    if not text.strip():
-        return False
-    deposit.add(name, source_key(name, url), text.encode("utf-8"), url=url, now=now)
+    key = source_key(name, url)
+    if _is_page(url):
+        # 06 §6.7, amended 2026-10-25 (operator: "Keep all"): the page is
+        # kept as fetched and its record parsed from it; the same bytes
+        # again change nothing. Fetched by `_get`, so the budget, the size
+        # and time bounds and the gate above hold for it as for any page.
+        page = _get(url)
+        if not page_html.page_text(page).strip():
+            return False
+        deposit.add(name, key, page, url=url, now=now,
+                    form=deposit._source().FORM_HTML, if_changed=True)
+    else:
+        text = fetch(url)
+        if not text.strip():
+            return False
+        deposit.add(name, key, text.encode("utf-8"), url=url, now=now)
     c = _collection(name)
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ",
                           time.gmtime(now if now is not None else time.time()))

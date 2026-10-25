@@ -1249,8 +1249,9 @@ classes (§4.4), which is the actual need.
 `notes/deposit-collections.md`.*
 
 A **deposit collection** is the collection a client of this node writes
-over HTTP (07 §7.4): an agent's memory, the files a person uploads, the
-text of a URL they subscribe it to. Its plugin is `deposit` (06 §6.7);
+over HTTP (07 §7.4): an agent's memory, the files a person uploads, a
+URL they subscribe it to — a page kept as fetched and its record parsed
+from it (06 §6.7, amended 2026-10-25, operator: "Keep all"). Its plugin is `deposit` (06 §6.7);
 it is `privacy: never-share` and `erasure: erasable`, and neither may
 be changed.
 
