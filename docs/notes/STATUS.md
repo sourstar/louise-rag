@@ -340,6 +340,17 @@ The node's wikidata (75,896,183 documents, all `lang = "mul"` by design: an enti
 
 "Implement docs/notes/annotation-collections.md immediately … Annotations must be updated not replaced." `hold annotations update` / the API route / the Library card's *re-check claims* and *update with a claims file*: the next snapshot of the same collection, its claims re-checked against the targets' newest snapshots (records twin included), kept claims keeping their uids, left-out ones tombstoned, superseded parts and the replaced claims file kept (annotation-collections.md "Updating"; 02 §2.10, 07 §7.3, 09 §9.4 amended). Found on the way, and fixed: a peer never followed ANY collection's next snapshot — the pull acted on `snapshot` events that no code emits; it now follows what its neighbours' digests list (`accept.newer_from_digests`), annotations collections included. One update a period (monthly for gutenberg-book-editions: its next is 2026-10, written now; the one after from November).
 
+### 2026-10-25: the entity boost removed — 05 §5.2, "nothing boosts", measured; the identifier restriction is the operator's to decide
+
+The search added 1/60 to the fused score of a candidate the query's entity tags. 05 §5.2 forbids it (task #33, found by PR #4). Measured on TREC Precision Medicine 2017–18 (80 topics, NIST's judgements, [query-campaign.md](query-campaign.md)), NDCG@10 was:
+- no boost, no restriction: 0.3143;
+- the boost: 0.3073 (won 16, lost 27);
+- the spec's restriction to records tagged with any named identifier: 0.3002; with all of them: 0.2983. Both are ~2 s slower.
+
+None of the differences is significant. The boost is removed, with its lookup; the tests now check that a tag moves nothing. Deployed after tonight's priority measurement (one change per deploy).
+
+OPEN: 05 §5.2 also says "a resolved identifier restricts every leg", which the code has never done. Amend or implement is put to the operator; until then nothing restricts by default.
+
 ### 2026-10-25: Perugia's hand-over, and the coverage count that lied (Perugia, München)
 
 Perugia shuts down for a long time (operator). Its 1,008 bundles (336,586 chunks) were already on the node. 848 chunks of 9 books (lang=en/00872–00875), held only there, were bundled (4 bundles, 1,168 chunks) for the node to take in. The 13 München-key bundles it held cover parts the node covers fully. Perugia stays up until München's per-part confirmation.

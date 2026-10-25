@@ -6,18 +6,19 @@ Pipeline per query:
      -> every step below is a structural no-op, degenerating exactly to the
      pre-P0.3 pipeline. Entities found -> two separate outputs, NEVER
      blended (CLAUDE.md invariant 4): structured lookups become PinnedFacts
-     for the LLM context (never ranked, never in RRF); doc_keys-tagged hits
-     get a soft RRF boost. The boost takes only the entities the query
-     NAMES; the facts take those and docs/05's one hop, bounded per link,
-     with what the bound left out named in `facts_withheld` (2026-09-21:
-     one gene expanded to 21,968 variants).
+     for the LLM context (never ranked, never in RRF); the ranked lists are
+     left as they are — 05 §5.2: nothing boosts (the soft RRF boost
+     doc_keys-tagged hits used to get lost on TREC PM, 2026-10-25). The legs
+     are handed only the entities the query NAMES; the facts take those and
+     docs/05's one hop, bounded per link, with what the bound left out named
+     in `facts_withheld` (2026-09-21: one gene expanded to 21,968 variants).
   1. catalog search (the catalog index over title/author/subjects,
      app/catalog.py — subjects are English LoC headings for every
      language, so this is cross-lingual for free)
   2. lexical fan-out: the query in every language the indexes hold, BM25
      each group with its own (app/language_plan.py — once per search)
   3. dense search over whatever is embedded (cross-lingual natively)
-  4. reciprocal-rank-fusion merge (+ entity boost), optional external rerank
+  4. reciprocal-rank-fusion merge, optional external rerank
   5. lazy-embed hook: top books not yet embedded get queued
 
 P0.1 runs a single (Gutenberg) collection; source-qualified, multi-collection
@@ -41,7 +42,6 @@ from .bundles import verify_on_use
 from .hold import runs as hold_runs
 
 RRF_K = 60
-ENTITY_BOOST = 1.0 / RRF_K   # one extra "virtual rank-1 vote" for a tagged hit
 
 
 @dataclass(frozen=True)
@@ -706,7 +706,7 @@ FACTS_PER_LINK = 25
 def _entity_facts(query: str, store) -> tuple[list, list["PinnedFact"], list[dict]]:
     """resolve, then docs/05's expand — one hop along each declared link,
     bounded — then the facts. Returns the entities the query NAMES (the
-    boost's, and only those: the 21,968 variants BRCA2 reaches tag not one
+    legs', and only those: the 21,968 variants BRCA2 reaches tag not one
     PubMed document the gene does not), the pinned facts, and what each link
     reached beyond its bound: named in the answer, never dropped in silence
     (docs/05). A fact expand reached names the link (`PinnedFact.via`)."""
@@ -755,39 +755,6 @@ def _build_pinned_facts(entities_found, store) -> list[PinnedFact]:
         facts.append(PinnedFact(entity_id=e.entity_id, kind=e.kind, source_id=e.source_id,
                                  label=e.label, fields=row, via=via))
     return facts
-
-def _tagged_among(con, collection, entity_ids: list[str], book_ids) -> set[int]:
-    """Which of these CANDIDATES carry any of `entity_ids` — for the boost.
-
-    The boost asks one thing: is this hit tagged? So the question is put for
-    the candidates alone, after the merge, and its cost is theirs — a few
-    hundred at most — never the entity's. It used to be the other way round:
-    every document tagged with the entity, fetched before the search, to test
-    a hundred hits against. On pubmed (40.0 M documents, 51.5 GB, 2026-09-21)
-    BRCA2 tags 12,053 documents and took 2.5 s that way; the heaviest gene,
-    HGNC:5172, tags 265,237.
-
-    And before THAT fix it never finished at all. A manifest nobody has
-    ANALYZEd has no statistics, so the planner takes any equality on an
-    indexed column to be selective — and `d.source = ?` is not, every
-    document of a collection has the same source. It drove the loop from all
-    40 M documents; one search was still running after 75 minutes, its
-    caller long gone. `CROSS JOIN` fixes the order here, and with BOTH
-    columns of the unique (source, native_id) index constrained, each
-    candidate is known to be at most one row whatever the statistics say.
-
-    `str(book_id)` is how a candidate is found again: a book_id IS
-    int(native_id), exact for every native id without leading zeros — which
-    is every collection this node holds."""
-    if not entity_ids or not book_ids:
-        return set()
-    ids = sorted({str(b) for b in book_ids})
-    rows = con.execute(
-        f"SELECT d.native_id FROM documents d CROSS JOIN doc_keys k ON k.uid = d.uid "
-        f"WHERE d.source = ? AND d.native_id IN ({','.join('?' * len(ids))}) "
-        f"AND k.entity_id IN ({','.join('?' * len(entity_ids))})",
-        [collection.plugin, *ids, *entity_ids]).fetchall()
-    return {int(r["native_id"]) for r in rows}
 
 def _enqueue_lazy_embed(con, book_ids: list[int], collection):
     now = int(time.time())
@@ -924,12 +891,14 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
                             entity_ids: list[str], plan: LanguagePlan | None = None,
                             depth: int = 0, book_ids: set[int] | None = None,
                             as_of: int | None = None) -> dict:
-    """catalog + fts fan-out + dense + intra-collection RRF + entity boost —
+    """catalog + fts fan-out + dense + intra-collection RRF —
     the per-collection core, extracted so search() (one collection) and
     federated_search() (N collections) share identical logic. `plan` is the
     search's language plan, made once for all its collections; without one
     this collection plans alone. Each leg goes at least `depth` deep, so a
-    reranker asked for its top N has N candidates to order. Returns
+    reranker asked for its top N has N candidates to order. `entity_ids`,
+    the entities the query names, change no rank (05 §5.2: nothing boosts);
+    whether they restrict the legs is the operator's open decision. Returns
     {"catalog", "merged", "translations", "timings", "scope"}."""
     timings: dict[str, float] = {}
     vector_leg: str | None = None      # why the vector leg was withheld, if it was
@@ -1092,12 +1061,12 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
     # what the reranker will read above each candidate's chunks (05 §5.6)
     if collections_mod.reranker_for(collection) is not None:
         _attach_heads(con, collection, merged[:limit])
-    tagged = _tagged_among(con, collection, entity_ids, [m["book_id"] for m in merged])
-    if tagged:
-        for m in merged:
-            if m["book_id"] in tagged:
-                m["rrf"] += ENTITY_BOOST
-        merged.sort(key=lambda x: (-x["rrf"], record_of(x)))
+    # 05 §5.2: nothing boosts. The +1/60 an entity-tagged candidate used to
+    # get lost on TREC Precision Medicine (80 topics, NDCG@10 0.3073 against
+    # 0.3143 without it, docs/notes/query-campaign.md), and the spec never
+    # allowed it. The entities the query names are pinned as facts beside
+    # the lists; whether they also RESTRICT the legs (05 §5.2's other rule,
+    # which lost too: 0.3002 / 0.2983) is the operator's to decide.
 
     return {"catalog": catalog_hits[:CATALOG_PROMPT], "merged": merged, "translations": plan.translations,
             "timings": timings, "scope": scope, "vector_leg": vector_leg,
@@ -1246,9 +1215,8 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
     t_total = time.time()
 
     # resolve -> expand -> plan (architecture-v2.md §4, docs/05). No entities
-    # found (the common case) -> no facts and no entity ids, and nothing
-    # below reads either until the boost block, which is then skipped — a
-    # structural no-op, not a behavior that needs re-verifying per call.
+    # found (the common case) -> no facts and no entity ids; found, they are
+    # pinned as facts and change no rank (05 §5.2: nothing boosts).
     store = refs.get_store()
     resolved, facts, facts_withheld = _entity_facts(query, store)
 
@@ -1302,7 +1270,7 @@ def search(con, query: str, k: int = 12, mode: str = "hybrid",
 
 def _merge_rrf_federated(lists: list[list[dict]]) -> list[dict]:
     """Second RRF pass across collections' already-intra-collection-merged
-    (+entity-boosted) candidate lists. Rank is each list's OWN position —
+    candidate lists. Rank is each list's OWN position —
     raw per-collection score/rrf values are never compared across
     collections (architecture-v2.md's RRF-fuses-rankable-lists design, and
     this task's own "scores never compared across collections" contract).

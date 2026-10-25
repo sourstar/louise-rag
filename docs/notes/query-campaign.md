@@ -333,3 +333,28 @@ the spec's rule if restricting loses nothing against `none`. If it loses,
 the numbers go to the operator with 05 §5.2's restriction rule in
 question. The boost's removal waits for that run, so the code changes
 once, to what the spec and the numbers agree on.
+
+**Second run, four arms (München, 2026-10-25 ~10:30–10:57 CET, deployed
+50030dc, reranker on; on file at origin/main edde517).** All 80 counted,
+the identifiers applied on 74; `boost` and `none` reproduce the first run
+exactly.
+
+| arm | NDCG@10 | condensed | P@10 | RR@10 | R@50 | NDCG@10 vs none, won–lost–tied | sign test p | median ms |
+|---|---|---|---|---|---|---|---|---|
+| none | **0.3143** | **0.5646** | **0.3112** | **0.5459** | 0.137 | — | — | 3,302 |
+| boost | 0.3073 | 0.5617 | 0.305 | 0.5448 | **0.1414** | 16–27–37 | 0.13 | 3,053 |
+| any | 0.3002 | 0.5547 | 0.3025 | 0.5314 | 0.1372 | 16–20–44 | 0.62 | 5,206 |
+| all | 0.2983 | 0.5576 | 0.3013 | 0.5322 | 0.1369 | 18–22–40 | 0.64 | 5,412 |
+
+No arm beats `none` on any metric at 10, and no difference is significant
+(two-sided sign test). Both restrictions cost ~2 s a query.
+
+**Done:** the boost is removed (05 §5.2 forbids it and it earns no
+exception). `test_entity_boost.py` now checks that a tagged candidate keeps
+its fused score; the P0.3 test (`test_retrieval_entities.py`) checks that
+a tag moves nothing.
+
+**The operator's to decide:** 05 §5.2's "a resolved identifier restricts
+every leg". The code has never done it; on this set it loses (not
+significantly) and costs 2 s. The choices (amend it, or implement it) are
+put to the operator; until then nothing restricts by default.

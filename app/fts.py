@@ -668,9 +668,9 @@ def search(group: str, query: str, limit: int = 20, collection=None,
            book_ids: list[int] | None = None, langs: list[str] | None = None,
            validity: dict | None = None) -> list[dict]:
     """book_ids, when given, is a hard prefilter (Tantivy term-set query
-    ANDed with the text query) — not used by retrieval.search()'s default
-    entity-boost wiring (a soft score bonus instead), but a real, directly
-    testable primitive for a future "search only within this entity" mode.
+    ANDed with the text query) — the facet filters' restriction (05 §5.2:
+    "a filter restricts; nothing boosts"), and the one a resolved
+    identifier's would be.
     `langs` is the same kind of prefilter on the stored `lang`, for the
     mixed groups (cjk, other) when a query is restricted to languages."""
     try:

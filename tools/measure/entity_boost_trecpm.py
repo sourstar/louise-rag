@@ -1,6 +1,13 @@
-"""MEASUREMENT (not product code): the entity boost (`retrieval.ENTITY_BOOST`,
-1/60 added to the fused score of a candidate the query's entity tags) against
-05 §5.2's "a filter restricts; nothing boosts" — task #33, found by PR #4.
+"""MEASUREMENT (not product code): what a resolved identifier should do to the
+legs, against 05 §5.2's "a filter restricts; nothing boosts" — task #33,
+found by PR #4.
+
+RESULT (München, 2026-10-25, 80 topics, all reranked, bit-reproducible on a
+second run; docs/notes/query-campaign.md): NDCG@10 none 0.3143, the boost
+0.3073, any 0.3002, all 0.2983; both restrictions ~2 s slower. The boost
+(1/60 added to the fused score of a candidate the query's entity tags) was
+removed from the search after it; its arm went with it. The two
+restriction arms stay, to measure again whatever 05 §5.2 becomes.
 
 The labelled set is a standard one, not ours: TREC Precision Medicine 2017
 and 2018, scientific abstracts (topics naming a disease and a gene or
@@ -15,8 +22,7 @@ Judged documents that are not PubMed (2017's AACR/ASCO abstracts) are left
 out. The query is the participants' common baseline: disease, then gene.
 
 THE ARMS (each topic searched once per arm, the order rotating per topic):
-- `boost`: as deployed — the boost on the fused score;
-- `none`: no boost, no restriction — a query with no identifier;
+- `none`: as deployed — no restriction, nothing boosts;
 - `any`: 05 §5.2 as written, a resolved identifier RESTRICTS every leg to
   the records tagged with it (`doc_keys`, the tagger's stand-in for a
   record's `keys`) — tagged with ANY of the named identifiers;
@@ -32,8 +38,8 @@ Two steps:
      --pm 2018 topics2018.xml qrels-treceval-abstracts-2018-v2.txt > data.json`
   2. search (on the node, the deployed path, reranker on): the script reaches
      the node on stdin with `DATA = <data.json>` prepended, as the campaign's
-     other harnesses do. Each topic is searched once per ARM (the boost as
-     deployed, and 0), the order alternating per topic; nothing is written.
+     other harnesses do. Each topic is searched once per ARM, the order
+     rotating per topic; nothing is written.
 One JSON line per topic on stdout; the summary on stderr.
 
 Metrics per topic and arm, at k = 10 unless said: NDCG (trec_eval's
@@ -41,9 +47,9 @@ ndcg_cut: gain = the grade, log2 discount, unjudged counted as 0), the
 CONDENSED NDCG (Sakai 2007: unjudged documents removed before ranking — the
 standard answer to a pool Louise did not contribute to), P (grade >= 1), RR,
 the share of the top 10 that is judged, and R@50. A topic counts only when
-both arms were reranked; the boost can only differ where it APPLIED (a
-candidate tagged with an entity the query named), and that subset is
-reported apart.
+every arm was reranked; a restriction can only differ where it APPLIED (a
+record tagged with an entity the query named), and that subset is reported
+apart.
 """
 import json
 import math
@@ -51,8 +57,8 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-#: arm -> (boost: None = as deployed, restriction: None / "any" / "all")
-ARMS = {"boost": (None, None), "none": (0.0, None), "any": (0.0, "any"), "all": (0.0, "all")}
+#: arm -> its restriction: None (as deployed) / "any" / "all"
+ARMS = {"none": None, "any": "any", "all": "all"}
 BASELINE = "none"
 K = 10
 DEPTH = 50
@@ -172,7 +178,6 @@ def pmid_of(hit: dict) -> str:
 def run(data: list[dict], collection: str = "pubmed") -> list[dict]:
     import time
     from app import query_service, retrieval
-    deployed = retrieval.ENTITY_BOOST
     seen: dict = {}
     restriction: list = [None]
     orig_one, orig_reranked = retrieval._search_one_collection, retrieval._reranked
@@ -200,8 +205,7 @@ def run(data: list[dict], collection: str = "pubmed") -> list[dict]:
                    "ms": {}, "restricted_to": {}, "applied": False, "error": None}
             order = names[n % len(names):] + names[:n % len(names)]
             for arm in order:
-                boost, restriction[0] = ARMS[arm]
-                retrieval.ENTITY_BOOST = deployed if boost is None else boost
+                restriction[0] = ARMS[arm]
                 seen.clear()
                 t0 = time.monotonic()
                 try:
@@ -220,7 +224,6 @@ def run(data: list[dict], collection: str = "pubmed") -> list[dict]:
             print(json.dumps(row, ensure_ascii=False), flush=True)
             rows.append(row)
     finally:
-        retrieval.ENTITY_BOOST = deployed
         retrieval._search_one_collection, retrieval._reranked = orig_one, orig_reranked
     print(json.dumps(summarise(rows), indent=1), file=sys.stderr)
     return rows

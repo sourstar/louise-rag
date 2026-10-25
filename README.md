@@ -40,8 +40,8 @@ ingest    acquire (rsync/https/ftp/hf, resumable, licence-gated, drawing from
 retrieve  catalog FTS5 + per-language BM25 (LLM query fan-out translation)
           + dense LanceDB, federated across collections
           -> reciprocal-rank fusion (never cross-collection score compares)
-          -> entity boosts + pinned reference facts (HGNC/ClinVar-style
-             lookups: facts-by-key, never blended into ranking)
+          -> pinned reference facts (HGNC/ClinVar-style lookups:
+             facts-by-key, never blended into ranking; nothing boosts)
           -> optional rerank -> answer with [n] citations and per-chunk
              provenance badges (local / imported / verified)
 

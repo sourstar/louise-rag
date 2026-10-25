@@ -1,6 +1,7 @@
 """P0.3 acceptance tests: degeneration (identical to the pre-entity-layer
-golden baseline when no entities resolve), entity boost + pinned facts
-demonstrated together, and the type-level invariant-4 guarantee.
+golden baseline when no entities resolve), pinned facts and 05 §5.2's
+"nothing boosts" demonstrated together, and the type-level invariant-4
+guarantee.
 """
 import json
 import shutil
@@ -82,11 +83,14 @@ def test_degeneration(name, tmp_path, monkeypatch):
         assert result["facts"] == [], f"query {q!r} spuriously resolved an entity"
 
 
-def test_entity_boost_and_facts(tmp_path, monkeypatch):
-    """Both acceptance-criterion halves together: a BRCA2 query returns
-    pinned HGNC/ClinVar facts above ranked results, AND ranked results are
-    boosted by the entity — proven causally (same query, before/after a
-    doc_keys tag), not just by presence."""
+def test_entity_facts_and_nothing_boosts(tmp_path, monkeypatch):
+    """Both halves together: a BRCA2 query returns pinned HGNC/ClinVar facts
+    above ranked results, AND a document the entity tags is ranked exactly as
+    before it was tagged — proven causally (same query, before/after a
+    doc_keys tag). P0.3 accepted a boost here (the tagged document moved
+    up); 05 §5.2 never allowed one — "a filter restricts; nothing boosts" —
+    and on TREC Precision Medicine it lost: NDCG@10 0.3073 against 0.3143
+    without it (80 topics, 2026-10-25, docs/notes/query-campaign.md)."""
     _sync_refs(tmp_path, monkeypatch)
     collection = _pubmed_collection(tmp_path)
     _index_pubmed(collection)
@@ -104,8 +108,8 @@ def test_entity_boost_and_facts(tmp_path, monkeypatch):
     con.execute("INSERT INTO doc_keys(uid, entity_id) VALUES ('pubmed:30000001','hgnc:1101')")
 
     after = retrieval.search(con, query, k=12, mode="fts", translate=False, collection=collection)
-    rank_after = next(i for i, h in enumerate(after["hits"]) if h["book_id"] == 30000001)
-    assert rank_after < rank_before   # causally moved up by the boost, not just present
+    ranked = lambda r: [(h["book_id"], h["chunk_id"]) for h in r["hits"]]
+    assert ranked(after) == ranked(before), "the tag moved nothing: no boost"
 
     fact_ids_after = {f["entity_id"] for f in after["facts"]}
     assert fact_ids_after == {"hgnc:1101", "clinvar-mini:55074"}
