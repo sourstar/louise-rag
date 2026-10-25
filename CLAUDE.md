@@ -82,14 +82,20 @@ are the ones that have drifted; prefer to add a test when you touch them.
    versions and parameters (one chunker per layer, every document in
    exactly one layer by a declared rule, the layer list fixed at creation;
    a collection with one layer is the common case and its layer IS its
-   chunker), `cleaning_version`, the space block's dim, dtype, ctx,
-   pooling, normalisation and query encoder's weights, and the epoch. Not
+   chunker) and each layer's INPUT form (text, or a tokenizer pair),
+   `cleaning_version`, the space block's dim, dtype, ctx, pooling,
+   normalisation, its query side (the query encoder's weights and its
+   `instruction`), its `cut` where the space declares one (characters or
+   tokens), and the epoch (09 §9.3's formula; a version-2 Codex still has
+   its engine image inside). Not
    the ENGINE — the tested build, image, args, env and device are frozen
    in the Codex as `space.encoder.engine` (inside `collection_id`,
    outside `space_id`); any engine may contribute once its RUN passes
    the calibration gate, validated once, and a vector is written only from
-   an answer whose `Louise-Run` names a validated run — checked per answer,
-   before the write (docs/03 §3.3). Not the tolerance, not the calibration.
+   an answer whose run is a validated one — named by the answer's VeGa
+   receipt for an `api = "vega"` encoder (bound to the input and vector
+   digests), by its `Louise-Run` header otherwise — checked per answer,
+   before the write (docs/03 §3.3, app/embeddings.py). Not the tolerance, not the calibration.
    A vector table whose
    dim/space mismatches the Codex is a
    REFUSE-TO-START error FOR THAT COLLECTION, never a warning or
@@ -119,7 +125,14 @@ are the ones that have drifted; prefer to add a test when you touch them.
    legs ALWAYS go through RRF — when they answer the same question. Two
    ranked lists that answer different questions (docs/05 §5.1; homology vs
    function in the genome collection is the case) are presented separately,
-   never fused. Do not blend the types. *Enforced: test + review.*
+   never fused. Do not blend the types. Nothing boosts: an identifier the
+   query names pins its facts and restricts nothing unless the reader asks
+   for it as the `keys` filter (docs/05 §5.2, operator 2026-10-25). ONE
+   EXCEPTION, by operator decision (2026-10-25: "The final goal is the
+   quality of the information retrieval"): after the reranker, the record
+   the catalogue leg ranks first takes position 1 and nothing else moves
+   (docs/05 §5.6; titles MRR 0.782 against 0.720 fused by RRF and 0.578
+   reranked alone). *Enforced: test + review.*
 5. BANDWIDTH. No code path moves bytes without drawing from the central
    token-bucket budget (transfer manager). No per-tool rate limits as a
    substitute. *Enforced: review.*
@@ -168,7 +181,9 @@ are the ones that have drifted; prefer to add a test when you touch them.
     `state/node.sqlite`, app/node_state.py) SURVIVES a restart until it is
     changed. No file sets it, so there is nothing to reset it to, and an
     expiry would turn acquire-only back into running — starting the
-    encoder — on every deploy. docs/07 §7.8 says the same. Do not "fix" it.
+    encoder — on every deploy. A paused COLLECTION (`node pause
+    <collection>`) survives a restart for the same reason
+    (app/node_state.py). docs/07 §7.8 says the same. Do not "fix" it.
     *Enforced: test.*
 11. CORPUS FIDELITY. A plugin's corpus may be PRUNED but never altered in
     a way that prevents verification against the original form, and
