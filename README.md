@@ -1,29 +1,57 @@
 # Louise — knowledge, kept.
 
-Louise is a RAG platform you run yourself, online or off. It comes with
-Wikipedia, Wikidata, Project Gutenberg, PubMed and Normattiva (Italian
-legislation), with HGNC, ClinVar, gnomAD and HomoloGene as reference
-lookups, and any other source can be added by implementing a plugin. Copies of a
-collection — the documents and the embeddings both — pass directly
-between the people who have them, so nobody re-does work that's already
-been done, and the original source isn't asked for the same download
-again and again.
+**Shared knowledge anyone can verify.** Large libraries of texts —
+Project Gutenberg's books, PubMed, Wikipedia, Wikidata, Italian law — are
+queried by an AI that runs on your own computer. It searches the real
+texts and quotes them, so every answer can be opened and checked passage
+by passage. No central server, no blind trust: *don't trust, verify.*
 
-Preservation and reliability are two different claims, and one mechanism
-delivers both: the hash that lets peers avoid duplicate downloads is the
-hash that proves a copy is identical to what the publisher released, so
-a collection received from a stranger can be checked against the
-original.
+## In a nutshell
 
-**Start with [`docs/README.md`](docs/README.md)** — nine documents, read
-in order, from what Louise is to the byte formats. `docs/notes/` is the
-engineering record behind them: measurements, postmortems, the design
-history; needed to change the code, not to understand or use it.
+- **You hold the knowledge, you don't receive it.** The texts, their "map
+  of meanings" (the embeddings) and the model that answers all live at
+  home. No question leaves the machine, nobody filters the answers.
+- **The work is shared.** Computing a collection's map of meanings alone
+  takes weeks. Like BitTorrent, every peer keeps pieces and passes them
+  on, and every peer computes a piece of the work: everyone processes a
+  part, everyone uses the whole, and nobody redoes what someone already did.
+- **Everything is checkable.** Each collection has a **Codex**, its
+  immutable birth certificate: the sources, the method, the model.
+  Anyone can rerun the process and get the same bytes; what a stranger
+  sends is re-checked, never believed.
+- **Knowledge that grows.** New blocks arrive every month; what is
+  already published stays immutable and verifiable. The same method works
+  on any body of text — scientific papers, laws, archives, or your own
+  notes, kept as a private collection you never have to share.
+- **Under construction — Gutenberg × Wikidata.** A knowledge graph over
+  literature: the people, places and events every book mentions, linked
+  to Wikidata; the relations the books assert; the communities they form.
+  Where a book contradicts the encyclopedia the claim is kept and flagged,
+  never corrected: the system shows where literature and facts diverge,
+  each voice traceable to its passage. A source for historians — how an
+  era told the world, not just how things went.
 
-The app never touches a GPU. All model access is HTTP to your model server
-(on the reference node LocalAI, with the VeGa wrapper in front of every
-encoder; an Ollama-style chat endpoint also works), so VRAM arbitration
-stays where it already is.
+## How it is achieved
+
+| promise | mechanism | spec |
+|---|---|---|
+| a collection is one well-defined thing | the **Codex**: a signed JSON file fixing origin, parser, chunking, the encoder's weights and engine, licence, cadence; `collection_id` is its hash, and `space_id` the hash of what decides the vectors — two spaces are never mixed | [02](docs/02-collections.md), [09 §9.3](docs/09-formats.md) |
+| what you hold is what was published | records are cut into **parts** (zstd JSON Lines) that never move once closed; each **snapshot**, at the collection's cadence, lists every part's hash and is signed (Ed25519); each record carries the hash of the origin bytes it was parsed from, so it can be re-fetched and reproduced | [02 §2.2–2.3](docs/02-collections.md), [06 §6.4](docs/06-plugins.md) |
+| vectors anyone can check | an encoder runs in its vendor's bitwise-reproducible mode; a **calibration gate** proves an engine reproduces the Codex's reference vectors before it may write one; **VeGa**, a wrapper in front of the model runner, issues a receipt for every answer, checked before the vector is stored | [03](docs/03-checking.md) |
+| no central server | peers find each other on the BitTorrent mainline DHT (keyed by collection) and move parts as BitTorrent v2 torrents; who embeds which part is a rendezvous function every peer computes the same way, so no node is in charge | [04](docs/04-sharing.md) |
+| trust from reproduction, not votes | a bundle of vectors carries no text; importing it needs the same source bytes, passes a verification ladder and a sampled re-embed, and every vector is re-checked when first used; attestations say who reproduced what | [03 §3.5–3.6](docs/03-checking.md), [08](docs/08-adversarial.md) |
+| answers that quote | a text index (tantivy, BM25, per language) and a vector index (LanceDB) per collection, fused by reciprocal rank — never by comparing scores — then reranked; reference lookups (genes, variants) are pinned facts, never ranked; every answer cites its passages | [05](docs/05-ask.md) |
+| any source | a **plugin** declares acquisition, parsing, chunking and the licence class; nothing the origin says about an entity is dropped | [06](docs/06-plugins.md) |
+| everything local | the app never touches a GPU: every model (encoder, chat, translation, reranker) is an HTTP endpoint on your own model server | [07 §7.8](docs/07-commands.md) |
+
+One CLI drives it — `louise hold` (your own copy), `louise share` (with
+peers), `louise ask` (questions), `louise node` (the daemon) — and the web
+interface is the same operations behind a page.
+
+**Read [`docs/README.md`](docs/README.md)** — nine documents, in order,
+from what Louise is to the byte formats. `docs/notes/` is the engineering
+record behind them (measurements, postmortems, design history);
+[`docs/notes/STATUS.md`](docs/notes/STATUS.md) is where things stand.
 
 ## What a node does
 
@@ -39,30 +67,26 @@ stays where it already is.
 collections/*.toml + platform.toml  versioned desired state
 
 ingest    acquire (rsync/https/ftp/hf/torrent, resumable, licence-gated,
-          drawing from one shared bandwidth budget) -> discover -> rdf ->
-          fts -> embed (off | on-demand | all local | all p2p) — rounds
-          across all collections, per-document commits, SIGTERM-safe
+          drawing from one shared bandwidth budget) -> records build
+          (parse, slice, parts, snapshot) -> text index -> embed
+          (off | on-demand | all local | all p2p) — rounds across all
+          collections, per-document commits, SIGTERM-safe
 
-retrieve  catalogue (tantivy) + per-language BM25 (query translated into
-          the main languages) + dense LanceDB, federated across collections
+retrieve  catalogue + per-language BM25 (the query translated into the
+          main languages) + dense LanceDB, federated across collections
           -> reciprocal-rank fusion (never cross-collection score compares)
-          -> pinned reference facts (HGNC/ClinVar-style lookups:
-             facts-by-key, never blended into ranking; nothing boosts;
-             `--filter keys=<id>` keeps only the records tagged with one)
-          -> optional rerank -> answer with [n] citations and per-chunk
-             provenance badges (local / imported / verified)
+          -> pinned reference facts (facts-by-key, never ranked; nothing
+             boosts; `--filter keys=<id>` keeps the records tagged with one)
+          -> rerank -> answer with [n] citations and per-chunk provenance
 
-share     export: pack vectors (never text) as Ed25519-signed bundles
-          import: signature -> trust -> space match -> possession binding
-          (you must hold the same raw bytes) -> verification ladder ->
-          all-or-nothing apply, with verify-on-use catching targeted
-          poisoning at first retrieval and quarantining the producer
+share     parts and signed vector bundles (never text) as BitTorrent v2;
+          import: signature -> space match -> possession binding (you
+          must hold the same raw bytes) -> verification ladder ->
+          all-or-nothing apply, verify-on-use at first retrieval
 
-network   peers found through the BitTorrent mainline DHT (by the
-          collection's swarm key) or a hand-given address; parts move as
-          BitTorrent v2 torrents; who embeds what is a function every peer
-          computes, so no node is in charge (docs/04). An optional
-          coordinator only keeps statistics and credit.
+network   peers through the mainline DHT or a hand-given address; who
+          embeds what is a function every peer computes (docs/04). An
+          optional coordinator only keeps statistics and credit.
 ```
 
 ## The web interface
@@ -89,7 +113,9 @@ docker build --target dev -t louise-rag:dev .
 docker run --rm -v "$PWD:/srv" -w /srv louise-rag:dev python -m pytest tests/ -q
 ```
 
-5,300+ tests, no live model needed anywhere in the suite.
+5,300+ tests, no live model needed anywhere in the suite. `louise node
+start` runs the worker and the web interface (`--only worker|web` for one
+container each); `louise node stop` finishes the current units and exits 0.
 
 The end-to-end two-node flow (producer → coordinator → consumer → verified
 answer, mocked embed endpoint as the only fake):
