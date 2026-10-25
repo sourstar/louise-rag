@@ -1,0 +1,5567 @@
+{
+ "map": "sha256:162b7654fcd2c5348e26fbe8530be0b889440159304b69b9ecf2fee297e6cf19",
+ "dump": "wikidata-20261012-all.json.bz2",
+ "explained": [
+  {
+   "class": 515,
+   "label": "city",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      515,
+      "city"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 15284,
+   "label": "municipality",
+   "family": "place",
+   "paths": {
+    "organization": [
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      2659904,
+      "government organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ],
+    "place": [
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      1048835,
+      "political territorial entity"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 747074,
+   "label": "comune of Italy",
+   "family": "place",
+   "paths": {
+    "organization": [
+     [
+      747074,
+      "comune of Italy"
+     ],
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      2659904,
+      "government organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ],
+    "place": [
+     [
+      747074,
+      "comune of Italy"
+     ],
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      1048835,
+      "political territorial entity"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 484170,
+   "label": "commune of France",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      484170,
+      "commune of France"
+     ],
+     [
+      192611,
+      "electoral unit"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ],
+    "organization": [
+     [
+      484170,
+      "commune of France"
+     ],
+     [
+      3266850,
+      "commune"
+     ],
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      2659904,
+      "government organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 262166,
+   "label": "municipality in Germany",
+   "family": "place",
+   "paths": {
+    "organization": [
+     [
+      262166,
+      "municipality in Germany"
+     ],
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      2659904,
+      "government organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ],
+    "place": [
+     [
+      262166,
+      "municipality in Germany"
+     ],
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      1048835,
+      "political territorial entity"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 16970,
+   "label": "church building",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      16970,
+      "church building"
+     ],
+     [
+      24398318,
+      "religious building"
+     ],
+     [
+      41176,
+      "building"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   },
+   "candidate": "built"
+  },
+  {
+   "class": 2977,
+   "label": "cathedral",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      2977,
+      "cathedral"
+     ],
+     [
+      16970,
+      "church building"
+     ],
+     [
+      24398318,
+      "religious building"
+     ],
+     [
+      41176,
+      "building"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   },
+   "candidate": "built"
+  },
+  {
+   "class": 23413,
+   "label": "castle",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      23413,
+      "castle"
+     ],
+     [
+      57821,
+      "fortification"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "place": [
+     [
+      23413,
+      "castle"
+     ],
+     [
+      57821,
+      "fortification"
+     ],
+     [
+      97095925,
+      "military area"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ]
+   },
+   "candidate": "built"
+  },
+  {
+   "class": 33506,
+   "label": "museum",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      33506,
+      "museum"
+     ],
+     [
+      178706,
+      "institution"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "organization"
+  },
+  {
+   "class": 79007,
+   "label": "street",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      79007,
+      "street"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   },
+   "candidate": "built"
+  },
+  {
+   "class": 39614,
+   "label": "cemetery",
+   "family": "other",
+   "paths": {
+    "heritage": [
+     [
+      39614,
+      "cemetery"
+     ]
+    ]
+   },
+   "candidate": "heritage"
+  },
+  {
+   "class": 8502,
+   "label": "mountain",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      8502,
+      "mountain"
+     ],
+     [
+      106589819,
+      "elevation"
+     ],
+     [
+      271669,
+      "landform"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 4022,
+   "label": "river",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      4022,
+      "river"
+     ],
+     [
+      355304,
+      "watercourse"
+     ],
+     [
+      15324,
+      "body of water"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 23397,
+   "label": "lake",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      23397,
+      "lake"
+     ],
+     [
+      271669,
+      "landform"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 23442,
+   "label": "island",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      23442,
+      "island"
+     ],
+     [
+      271669,
+      "landform"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 46169,
+   "label": "national park",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      46169,
+      "national park"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 7604686,
+   "label": "UK Statutory Instrument",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      7604686,
+      "UK Statutory Instrument"
+     ],
+     [
+      100532772,
+      "statutory instrument"
+     ],
+     [
+      732577,
+      "publication"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ],
+    "internal": [
+     [
+      7604686,
+      "UK Statutory Instrument"
+     ],
+     [
+      100532772,
+      "statutory instrument"
+     ],
+     [
+      2795484,
+      "implementing regulation"
+     ],
+     [
+      694045,
+      "delegated legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      21281405,
+      "Wikidata internal entity"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 1520223,
+   "label": "constitutional republic",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 3305213,
+   "label": "painting",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      3305213,
+      "painting"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 11424,
+   "label": "film",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      11424,
+      "film"
+     ],
+     [
+      2431196,
+      "audiovisual work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 3914,
+   "label": "school",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      3914,
+      "school"
+     ],
+     [
+      5341295,
+      "educational organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "organization"
+  },
+  {
+   "class": 27686,
+   "label": "hotel",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      27686,
+      "hotel"
+     ],
+     [
+      6881511,
+      "enterprise"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ],
+    "built": [
+     [
+      27686,
+      "hotel"
+     ],
+     [
+      655686,
+      "commercial building"
+     ],
+     [
+      41176,
+      "building"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   },
+   "candidate": "organization"
+  },
+  {
+   "class": 3918,
+   "label": "university",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      3918,
+      "university"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "organization"
+  },
+  {
+   "class": 4830453,
+   "label": "business",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      4830453,
+      "business"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "organization"
+  },
+  {
+   "class": 178561,
+   "label": "battle",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      178561,
+      "battle"
+     ],
+     [
+      645883,
+      "military operation"
+     ]
+    ]
+   },
+   "candidate": "event"
+  },
+  {
+   "class": 198,
+   "label": "war",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      198,
+      "war"
+     ]
+    ]
+   },
+   "candidate": "event"
+  },
+  {
+   "class": 40231,
+   "label": "public election",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      40231,
+      "public election"
+     ],
+     [
+      841654,
+      "competition"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   },
+   "candidate": "event"
+  },
+  {
+   "class": 3937,
+   "label": "supernova",
+   "family": "event",
+   "paths": {
+    "astronomy": [
+     [
+      3937,
+      "supernova"
+     ],
+     [
+      523,
+      "star"
+     ]
+    ],
+    "event": [
+     [
+      3937,
+      "supernova"
+     ],
+     [
+      179057,
+      "explosion"
+     ]
+    ]
+   },
+   "candidate": "event"
+  },
+  {
+   "class": 21014462,
+   "label": "cell line",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      21014462,
+      "cell line"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   },
+   "candidate": "taxon"
+  },
+  {
+   "class": 4167836,
+   "label": "Wikimedia category",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      4167836,
+      "Wikimedia category"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      4167836,
+      "Wikimedia category"
+     ],
+     [
+      118555179,
+      "MediaWiki non-main namespace page"
+     ],
+     [
+      15474042,
+      "MediaWiki page"
+     ],
+     [
+      36774,
+      "web page"
+     ],
+     [
+      111955382,
+      "manifestation"
+     ],
+     [
+      3331189,
+      "version, edition or translation"
+     ]
+    ]
+   },
+   "candidate": "internal"
+  },
+  {
+   "class": 6256,
+   "label": "country",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      6256,
+      "country"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 3624078,
+   "label": "sovereign state",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      3624078,
+      "sovereign state"
+     ]
+    ],
+    "organization": [
+     [
+      3624078,
+      "sovereign state"
+     ],
+     [
+      7275,
+      "state"
+     ],
+     [
+      96196009,
+      "former or current state"
+     ],
+     [
+      1063239,
+      "polity"
+     ],
+     [
+      7210356,
+      "political organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 3331189,
+   "label": "version, edition or translation",
+   "family": "other",
+   "paths": {
+    "work": [
+     [
+      3331189,
+      "version, edition or translation"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 47461344,
+   "label": "written work",
+   "family": "other",
+   "paths": {
+    "work": [
+     [
+      47461344,
+      "written work"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 49848,
+   "label": "document",
+   "family": "other",
+   "paths": {
+    "work": [
+     [
+      49848,
+      "document"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 100532807,
+   "label": "Irish Statutory Instrument",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      100532807,
+      "Irish Statutory Instrument"
+     ],
+     [
+      100532772,
+      "statutory instrument"
+     ],
+     [
+      732577,
+      "publication"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ],
+    "internal": [
+     [
+      100532807,
+      "Irish Statutory Instrument"
+     ],
+     [
+      100532772,
+      "statutory instrument"
+     ],
+     [
+      2795484,
+      "implementing regulation"
+     ],
+     [
+      694045,
+      "delegated legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      21281405,
+      "Wikidata internal entity"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 105774620,
+   "label": "Public General Act of the Parliament of the United Kingdom",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      105774620,
+      "Public General Act of the Parliament of the United Kingdom"
+     ],
+     [
+      4677783,
+      "Act of the Parliament of the United Kingdom"
+     ],
+     [
+      1076579,
+      "act of parliament"
+     ],
+     [
+      7243147,
+      "primary legislation"
+     ],
+     [
+      686822,
+      "bill"
+     ],
+     [
+      47461344,
+      "written work"
+     ]
+    ],
+    "internal": [
+     [
+      105774620,
+      "Public General Act of the Parliament of the United Kingdom"
+     ],
+     [
+      4677783,
+      "Act of the Parliament of the United Kingdom"
+     ],
+     [
+      1076579,
+      "act of parliament"
+     ],
+     [
+      7243147,
+      "primary legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      21281405,
+      "Wikidata internal entity"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 1076579,
+   "label": "act of parliament",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      1076579,
+      "act of parliament"
+     ],
+     [
+      7243147,
+      "primary legislation"
+     ],
+     [
+      686822,
+      "bill"
+     ],
+     [
+      47461344,
+      "written work"
+     ]
+    ],
+    "internal": [
+     [
+      1076579,
+      "act of parliament"
+     ],
+     [
+      7243147,
+      "primary legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      21281405,
+      "Wikidata internal entity"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 1298239,
+   "label": "executive order",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      1298239,
+      "executive order"
+     ],
+     [
+      694045,
+      "delegated legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      820655,
+      "statute"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ],
+    "internal": [
+     [
+      1298239,
+      "executive order"
+     ],
+     [
+      694045,
+      "delegated legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      21281405,
+      "Wikidata internal entity"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 6453643,
+   "label": "decree-law",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      6453643,
+      "decree-law"
+     ],
+     [
+      2571972,
+      "decree"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      820655,
+      "statute"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ],
+    "internal": [
+     [
+      6453643,
+      "decree-law"
+     ],
+     [
+      2571972,
+      "decree"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      21281405,
+      "Wikidata internal entity"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 18340514,
+   "label": "events in a specific year or time period",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      18340514,
+      "events in a specific year or time period"
+     ],
+     [
+      185363,
+      "chronicle"
+     ],
+     [
+      47461344,
+      "written work"
+     ]
+    ],
+    "internal": [
+     [
+      18340514,
+      "events in a specific year or time period"
+     ],
+     [
+      18340550,
+      "Wikimedia timeline"
+     ],
+     [
+      13406463,
+      "Wikimedia list article"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 3024240,
+   "label": "historical country",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      3024240,
+      "historical country"
+     ],
+     [
+      6256,
+      "country"
+     ]
+    ],
+    "organization": [
+     [
+      3024240,
+      "historical country"
+     ],
+     [
+      96196009,
+      "former or current state"
+     ],
+     [
+      1063239,
+      "polity"
+     ],
+     [
+      7210356,
+      "political organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 2668072,
+   "label": "collection",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 18593264,
+   "label": "item of collection or exhibition",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 2342494,
+   "label": "collectable",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 30612,
+   "label": "clinical trial",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 101352,
+   "label": "family name",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 13442814,
+   "label": "scholarly article",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      13442814,
+      "scholarly article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ]
+   },
+   "candidate": "scholarly"
+  },
+  {
+   "class": 18918145,
+   "label": "academic journal article",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      18918145,
+      "academic journal article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      18918145,
+      "academic journal article"
+     ],
+     [
+      10383930,
+      "academic work"
+     ],
+     [
+      47461344,
+      "written work"
+     ]
+    ]
+   },
+   "candidate": "scholarly"
+  },
+  {
+   "class": 580922,
+   "label": "preprint",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      580922,
+      "preprint"
+     ],
+     [
+      1347686,
+      "eprint"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      580922,
+      "preprint"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ]
+   },
+   "candidate": "scholarly"
+  },
+  {
+   "class": 20136634,
+   "label": "Wikipedia overview article",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      20136634,
+      "Wikipedia overview article"
+     ],
+     [
+      7318358,
+      "review article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      20136634,
+      "Wikipedia overview article"
+     ],
+     [
+      7318358,
+      "review article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ]
+   },
+   "candidate": "scholarly"
+  },
+  {
+   "class": 10885494,
+   "label": "academic conference paper",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      10885494,
+      "academic conference paper"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      10885494,
+      "academic conference paper"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ]
+   },
+   "candidate": "scholarly"
+  },
+  {
+   "class": 1228945,
+   "label": "working paper",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      1228945,
+      "working paper"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      1228945,
+      "working paper"
+     ],
+     [
+      3099732,
+      "technical report"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ]
+   },
+   "candidate": "scholarly"
+  },
+  {
+   "class": 15706459,
+   "label": "research article",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      15706459,
+      "research article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      15706459,
+      "research article"
+     ],
+     [
+      213051,
+      "non-fiction"
+     ],
+     [
+      47461344,
+      "written work"
+     ]
+    ]
+   },
+   "candidate": "scholarly"
+  },
+  {
+   "class": 107244961,
+   "label": "women in a geographic region",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      107244961,
+      "women in a geographic region"
+     ],
+     [
+      107243694,
+      "female topic"
+     ],
+     [
+      134883751,
+      "Wikipedia social group topic"
+     ],
+     [
+      20136634,
+      "Wikipedia overview article"
+     ],
+     [
+      7318358,
+      "review article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      107244961,
+      "women in a geographic region"
+     ],
+     [
+      107243694,
+      "female topic"
+     ],
+     [
+      134883751,
+      "Wikipedia social group topic"
+     ],
+     [
+      20136634,
+      "Wikipedia overview article"
+     ],
+     [
+      7318358,
+      "review article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ]
+   },
+   "candidate": "scholarly"
+  },
+  {
+   "class": 110716513,
+   "label": "scholarly letter/reply",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      110716513,
+      "scholarly letter/reply"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      110716513,
+      "scholarly letter/reply"
+     ],
+     [
+      651270,
+      "letter to the editor"
+     ],
+     [
+      133492,
+      "letter"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ]
+   },
+   "candidate": "scholarly"
+  },
+  {
+   "class": 116740071,
+   "label": "Reproducibility Report",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      116740071,
+      "Reproducibility Report"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      116740071,
+      "Reproducibility Report"
+     ],
+     [
+      3099732,
+      "technical report"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ]
+   },
+   "candidate": "scholarly"
+  },
+  {
+   "class": 839954,
+   "label": "archaeological site",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      839954,
+      "archaeological site"
+     ]
+    ]
+   },
+   "candidate": "heritage"
+  },
+  {
+   "class": 575759,
+   "label": "war memorial",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      575759,
+      "war memorial"
+     ],
+     [
+      4989906,
+      "monument"
+     ]
+    ],
+    "built": [
+     [
+      575759,
+      "war memorial"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "work": [
+     [
+      575759,
+      "war memorial"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   },
+   "candidate": "heritage"
+  },
+  {
+   "class": 2341654,
+   "label": "stone setting",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      2341654,
+      "stone setting"
+     ],
+     [
+      39614,
+      "cemetery"
+     ]
+    ],
+    "built": [
+     [
+      2341654,
+      "stone setting"
+     ],
+     [
+      3395377,
+      "ancient monument"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "work": [
+     [
+      2341654,
+      "stone setting"
+     ],
+     [
+      3395377,
+      "ancient monument"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   },
+   "candidate": "heritage"
+  },
+  {
+   "class": 26703203,
+   "label": "Stolperstein",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      26703203,
+      "Stolperstein"
+     ],
+     [
+      1792363,
+      "artistic monument"
+     ],
+     [
+      358,
+      "heritage site"
+     ]
+    ],
+    "built": [
+     [
+      26703203,
+      "Stolperstein"
+     ],
+     [
+      112776888,
+      "memorable paving"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "work": [
+     [
+      26703203,
+      "Stolperstein"
+     ],
+     [
+      721747,
+      "commemorative plaque"
+     ],
+     [
+      4364339,
+      "plaque"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   },
+   "candidate": "heritage"
+  },
+  {
+   "class": 22969563,
+   "label": "Bodendenkmal",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      22969563,
+      "Bodendenkmal"
+     ],
+     [
+      12649079,
+      "archaeological monument"
+     ],
+     [
+      839954,
+      "archaeological site"
+     ]
+    ],
+    "built": [
+     [
+      22969563,
+      "Bodendenkmal"
+     ],
+     [
+      11691318,
+      "Kulturdenkmal"
+     ],
+     [
+      811165,
+      "architectural heritage monument"
+     ],
+     [
+      2319498,
+      "architectural landmark"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   },
+   "candidate": "heritage"
+  },
+  {
+   "class": 4989906,
+   "label": "monument",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      4989906,
+      "monument"
+     ]
+    ],
+    "built": [
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "work": [
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   },
+   "candidate": "heritage"
+  },
+  {
+   "class": 1516079,
+   "label": "cultural heritage ensemble",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      1516079,
+      "cultural heritage ensemble"
+     ],
+     [
+      358,
+      "heritage site"
+     ]
+    ]
+   },
+   "candidate": "heritage"
+  },
+  {
+   "class": 2309609,
+   "label": "wayside cross",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      2309609,
+      "wayside cross"
+     ],
+     [
+      3370053,
+      "small monument"
+     ],
+     [
+      4989906,
+      "monument"
+     ]
+    ],
+    "built": [
+     [
+      2309609,
+      "wayside cross"
+     ],
+     [
+      3370053,
+      "small monument"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "work": [
+     [
+      2309609,
+      "wayside cross"
+     ],
+     [
+      3370053,
+      "small monument"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   },
+   "candidate": "heritage"
+  },
+  {
+   "class": 852190,
+   "label": "shipwreck",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      852190,
+      "shipwreck"
+     ],
+     [
+      839954,
+      "archaeological site"
+     ]
+    ]
+   },
+   "candidate": "heritage"
+  },
+  {
+   "class": 173387,
+   "label": "grave",
+   "family": "heritage",
+   "paths": {
+    "built": [
+     [
+      173387,
+      "grave"
+     ],
+     [
+      6023295,
+      "funerary structure"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "heritage": [
+     [
+      173387,
+      "grave"
+     ],
+     [
+      5003624,
+      "memorial"
+     ],
+     [
+      4989906,
+      "monument"
+     ]
+    ],
+    "work": [
+     [
+      173387,
+      "grave"
+     ],
+     [
+      5003624,
+      "memorial"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   },
+   "candidate": "heritage"
+  },
+  {
+   "class": 32815,
+   "label": "mosque",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      32815,
+      "mosque"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "organization": [
+     [
+      32815,
+      "mosque"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "built"
+  },
+  {
+   "class": 1076486,
+   "label": "sports venue",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      1076486,
+      "sports venue"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   },
+   "candidate": "built"
+  },
+  {
+   "class": 61443690,
+   "label": "branch post office",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      61443690,
+      "branch post office"
+     ],
+     [
+      35054,
+      "post office"
+     ],
+     [
+      41176,
+      "building"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "organization": [
+     [
+      61443690,
+      "branch post office"
+     ],
+     [
+      35054,
+      "post office"
+     ],
+     [
+      1880737,
+      "branch office"
+     ],
+     [
+      334453,
+      "division"
+     ],
+     [
+      9261468,
+      "organizational subdivision"
+     ],
+     [
+      62079110,
+      "subsidiary organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "built"
+  },
+  {
+   "class": 34442,
+   "label": "road",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      34442,
+      "road"
+     ],
+     [
+      123414165,
+      "road or street"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   },
+   "candidate": "built"
+  },
+  {
+   "class": 12323,
+   "label": "dam",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      12323,
+      "dam"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   },
+   "candidate": "built"
+  },
+  {
+   "class": 128302279,
+   "label": "gas station",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      128302279,
+      "gas station"
+     ],
+     [
+      205495,
+      "filling station"
+     ],
+     [
+      655686,
+      "commercial building"
+     ],
+     [
+      41176,
+      "building"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   },
+   "candidate": "built"
+  },
+  {
+   "class": 41253,
+   "label": "movie theater",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      41253,
+      "movie theater"
+     ],
+     [
+      107123630,
+      "civic structure"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "organization": [
+     [
+      41253,
+      "movie theater"
+     ],
+     [
+      4830453,
+      "business"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "built"
+  },
+  {
+   "class": 820477,
+   "label": "mine",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      820477,
+      "mine"
+     ],
+     [
+      12146012,
+      "underground structure"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   },
+   "candidate": "built"
+  },
+  {
+   "class": 27020041,
+   "label": "sports season",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      27020041,
+      "sports season"
+     ],
+     [
+      13406554,
+      "sports competition"
+     ],
+     [
+      841654,
+      "competition"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   },
+   "candidate": "event"
+  },
+  {
+   "class": 57733494,
+   "label": "badminton event",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      57733494,
+      "badminton event"
+     ],
+     [
+      16510064,
+      "sporting event"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   },
+   "candidate": "event"
+  },
+  {
+   "class": 18431960,
+   "label": "basketball game",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      18431960,
+      "basketball game"
+     ],
+     [
+      13406554,
+      "sports competition"
+     ],
+     [
+      841654,
+      "competition"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   },
+   "candidate": "event"
+  },
+  {
+   "class": 26887310,
+   "label": "association football team season",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      26887310,
+      "association football team season"
+     ],
+     [
+      1539532,
+      "sports season of a sports club"
+     ],
+     [
+      27020041,
+      "sports season"
+     ],
+     [
+      13406554,
+      "sports competition"
+     ],
+     [
+      841654,
+      "competition"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   },
+   "candidate": "event"
+  },
+  {
+   "class": 16510064,
+   "label": "sporting event",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      16510064,
+      "sporting event"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   },
+   "candidate": "event"
+  },
+  {
+   "class": 43099500,
+   "label": "performing arts production",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      43099500,
+      "performing arts production"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ],
+    "work": [
+     [
+      43099500,
+      "performing arts production"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   },
+   "candidate": "event"
+  },
+  {
+   "class": 27927857,
+   "label": "baseball game",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      27927857,
+      "baseball game"
+     ],
+     [
+      118496986,
+      "sports match"
+     ],
+     [
+      16510064,
+      "sporting event"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   },
+   "candidate": "event"
+  },
+  {
+   "class": 46190676,
+   "label": "tennis event",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      46190676,
+      "tennis event"
+     ],
+     [
+      16510064,
+      "sporting event"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   },
+   "candidate": "event"
+  },
+  {
+   "class": 26895936,
+   "label": "American football team season",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      26895936,
+      "American football team season"
+     ],
+     [
+      1539532,
+      "sports season of a sports club"
+     ],
+     [
+      27020041,
+      "sports season"
+     ],
+     [
+      13406554,
+      "sports competition"
+     ],
+     [
+      841654,
+      "competition"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   },
+   "candidate": "event"
+  },
+  {
+   "class": 5,
+   "label": "human",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      5,
+      "human"
+     ]
+    ]
+   },
+   "candidate": "person"
+  },
+  {
+   "class": 2345820,
+   "label": "stillborn child",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      2345820,
+      "stillborn child"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   },
+   "candidate": "person"
+  },
+  {
+   "class": 26513,
+   "label": "human fetus",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      26513,
+      "human fetus"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   },
+   "candidate": "person"
+  },
+  {
+   "class": 11598453,
+   "label": "kumāra",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      11598453,
+      "kumāra"
+     ],
+     [
+      7569,
+      "child"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   },
+   "candidate": "person"
+  },
+  {
+   "class": 4676846,
+   "label": "acting",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      4676846,
+      "acting"
+     ],
+     [
+      29863201,
+      "substitute"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   },
+   "candidate": "person"
+  },
+  {
+   "class": 117463454,
+   "label": "miscarried child",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      117463454,
+      "miscarried child"
+     ],
+     [
+      26513,
+      "human fetus"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   },
+   "candidate": "person"
+  },
+  {
+   "class": 1309494,
+   "label": "substitute",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      1309494,
+      "substitute"
+     ],
+     [
+      29863201,
+      "substitute"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   },
+   "candidate": "person"
+  },
+  {
+   "class": 1020994,
+   "label": "citizen",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      1020994,
+      "citizen"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   },
+   "candidate": "person"
+  },
+  {
+   "class": 63177820,
+   "label": "unborn child",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      63177820,
+      "unborn child"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   },
+   "candidate": "person"
+  },
+  {
+   "class": 258146,
+   "label": "feral child",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      258146,
+      "feral child"
+     ],
+     [
+      7569,
+      "child"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   },
+   "candidate": "person"
+  },
+  {
+   "class": 13100073,
+   "label": "village of the People's Republic of China",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      13100073,
+      "village of the People's Republic of China"
+     ],
+     [
+      16480895,
+      "hamlet"
+     ],
+     [
+      486972,
+      "human settlement"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 486972,
+   "label": "human settlement",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      486972,
+      "human settlement"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 54050,
+   "label": "hill",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      54050,
+      "hill"
+     ],
+     [
+      271669,
+      "landform"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 532,
+   "label": "village",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      532,
+      "village"
+     ],
+     [
+      10354598,
+      "rural settlement"
+     ],
+     [
+      486972,
+      "human settlement"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 47521,
+   "label": "stream",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      47521,
+      "stream"
+     ],
+     [
+      15324,
+      "body of water"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 355304,
+   "label": "watercourse",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      355304,
+      "watercourse"
+     ],
+     [
+      15324,
+      "body of water"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 56436498,
+   "label": "village in India",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      56436498,
+      "village in India"
+     ],
+     [
+      532,
+      "village"
+     ],
+     [
+      10354598,
+      "rural settlement"
+     ],
+     [
+      486972,
+      "human settlement"
+     ]
+    ]
+   },
+   "candidate": "place"
+  },
+  {
+   "class": 43229,
+   "label": "organization",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "organization"
+  },
+  {
+   "class": 1080794,
+   "label": "public school",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      1080794,
+      "public school"
+     ],
+     [
+      5341295,
+      "educational organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "organization"
+  },
+  {
+   "class": 9842,
+   "label": "primary school",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      9842,
+      "primary school"
+     ],
+     [
+      3914,
+      "school"
+     ],
+     [
+      5341295,
+      "educational organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "organization"
+  },
+  {
+   "class": 215380,
+   "label": "musical group",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      215380,
+      "musical group"
+     ],
+     [
+      2088357,
+      "musical ensemble"
+     ],
+     [
+      32178211,
+      "music organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "organization"
+  },
+  {
+   "class": 19855165,
+   "label": "rural school",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      19855165,
+      "rural school"
+     ],
+     [
+      3914,
+      "school"
+     ],
+     [
+      5341295,
+      "educational organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "organization"
+  },
+  {
+   "class": 163740,
+   "label": "nonprofit organization",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      163740,
+      "nonprofit organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "organization"
+  },
+  {
+   "class": 423208,
+   "label": "private school",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      423208,
+      "private school"
+     ],
+     [
+      3914,
+      "school"
+     ],
+     [
+      5341295,
+      "educational organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   },
+   "candidate": "organization"
+  },
+  {
+   "class": 4167410,
+   "label": "Wikimedia disambiguation page",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      4167410,
+      "Wikimedia disambiguation page"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      4167410,
+      "Wikimedia disambiguation page"
+     ],
+     [
+      15633587,
+      "MediaWiki main namespace page"
+     ],
+     [
+      15474042,
+      "MediaWiki page"
+     ],
+     [
+      36774,
+      "web page"
+     ],
+     [
+      111955382,
+      "manifestation"
+     ],
+     [
+      3331189,
+      "version, edition or translation"
+     ]
+    ]
+   },
+   "candidate": "internal"
+  },
+  {
+   "class": 11266439,
+   "label": "Wikimedia template",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      11266439,
+      "Wikimedia template"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      11266439,
+      "Wikimedia template"
+     ],
+     [
+      118555179,
+      "MediaWiki non-main namespace page"
+     ],
+     [
+      15474042,
+      "MediaWiki page"
+     ],
+     [
+      36774,
+      "web page"
+     ],
+     [
+      111955382,
+      "manifestation"
+     ],
+     [
+      3331189,
+      "version, edition or translation"
+     ]
+    ]
+   },
+   "candidate": "internal"
+  },
+  {
+   "class": 13433827,
+   "label": "encyclopedia article",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      13433827,
+      "encyclopedia article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 7725634,
+   "label": "literary work",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      7725634,
+      "literary work"
+     ],
+     [
+      47461344,
+      "written work"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 13406463,
+   "label": "Wikimedia list article",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      13406463,
+      "Wikimedia list article"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      13406463,
+      "Wikimedia list article"
+     ],
+     [
+      15138389,
+      "Wikimedia article page"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ]
+   },
+   "candidate": "internal"
+  },
+  {
+   "class": 43305660,
+   "label": "United States patent",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      43305660,
+      "United States patent"
+     ],
+     [
+      253623,
+      "patent"
+     ],
+     [
+      591041,
+      "scientific publication"
+     ],
+     [
+      47461344,
+      "written work"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 482994,
+   "label": "album",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      482994,
+      "album"
+     ],
+     [
+      108346082,
+      "release group"
+     ],
+     [
+      140007694,
+      "song, audio track, or release group"
+     ],
+     [
+      2188189,
+      "musical work"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 16521,
+   "label": "taxon",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   },
+   "candidate": "taxon"
+  },
+  {
+   "class": 23038290,
+   "label": "fossil taxon",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      23038290,
+      "fossil taxon"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   },
+   "candidate": "taxon"
+  },
+  {
+   "class": 310890,
+   "label": "monotypic taxon",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      310890,
+      "monotypic taxon"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   },
+   "candidate": "taxon"
+  },
+  {
+   "class": 4886,
+   "label": "cultivar",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      4886,
+      "cultivar"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   },
+   "candidate": "taxon"
+  },
+  {
+   "class": 26817508,
+   "label": "rose cultivar",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      26817508,
+      "rose cultivar"
+     ],
+     [
+      4886,
+      "cultivar"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   },
+   "candidate": "taxon"
+  },
+  {
+   "class": 98961713,
+   "label": "extinct taxon",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      98961713,
+      "extinct taxon"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   },
+   "candidate": "taxon"
+  },
+  {
+   "class": 15731356,
+   "label": "apple cultivar",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      15731356,
+      "apple cultivar"
+     ],
+     [
+      133297767,
+      "fruit cultivar"
+     ],
+     [
+      4886,
+      "cultivar"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   },
+   "candidate": "taxon"
+  },
+  {
+   "class": 958314,
+   "label": "grape variety",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      958314,
+      "grape variety"
+     ],
+     [
+      133297767,
+      "fruit cultivar"
+     ],
+     [
+      4886,
+      "cultivar"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   },
+   "candidate": "taxon"
+  },
+  {
+   "class": 47487597,
+   "label": "monotypic fossil taxon",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      47487597,
+      "monotypic fossil taxon"
+     ],
+     [
+      310890,
+      "monotypic taxon"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   },
+   "candidate": "taxon"
+  },
+  {
+   "class": 523,
+   "label": "star",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      523,
+      "star"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 318,
+   "label": "galaxy",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      318,
+      "galaxy"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 113145171,
+   "label": "type of chemical entity",
+   "family": "other",
+   "paths": {
+    "molecular": [
+     [
+      113145171,
+      "type of chemical entity"
+     ]
+    ]
+   },
+   "candidate": "molecular"
+  },
+  {
+   "class": 7187,
+   "label": "gene",
+   "family": "other",
+   "paths": {
+    "molecular": [
+     [
+      7187,
+      "gene"
+     ]
+    ]
+   },
+   "candidate": "molecular"
+  },
+  {
+   "class": 8054,
+   "label": "protein",
+   "family": "other",
+   "paths": {
+    "molecular": [
+     [
+      8054,
+      "protein"
+     ]
+    ]
+   },
+   "candidate": "molecular"
+  },
+  {
+   "class": 1931185,
+   "label": "astronomical radio source",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      1931185,
+      "astronomical radio source"
+     ],
+     [
+      6999,
+      "astronomical object"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 1457376,
+   "label": "eclipsing binary",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      1457376,
+      "eclipsing binary"
+     ],
+     [
+      6243,
+      "variable star"
+     ],
+     [
+      523,
+      "star"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 2247863,
+   "label": "high proper-motion star",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      2247863,
+      "high proper-motion star"
+     ],
+     [
+      523,
+      "star"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 3863,
+   "label": "asteroid",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      3863,
+      "asteroid"
+     ],
+     [
+      193275,
+      "small Solar System body"
+     ],
+     [
+      3132741,
+      "substellar object"
+     ],
+     [
+      6999,
+      "astronomical object"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 83373,
+   "label": "quasar",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      83373,
+      "quasar"
+     ],
+     [
+      46587,
+      "active galactic nucleus"
+     ],
+     [
+      318,
+      "galaxy"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 113813711,
+   "label": "coin type",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 59199015,
+   "label": "group of stereoisomers",
+   "family": "other",
+   "paths": {
+    "molecular": [
+     [
+      59199015,
+      "group of stereoisomers"
+     ]
+    ]
+   },
+   "candidate": "molecular"
+  },
+  {
+   "class": 29654788,
+   "label": "Unicode character",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 4164871,
+   "label": "position",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 2154519,
+   "label": "astrophysical X-ray source",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      2154519,
+      "astrophysical X-ray source"
+     ],
+     [
+      6999,
+      "astronomical object"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 49008,
+   "label": "prime number",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 16317911,
+   "label": "positive integer",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 726242,
+   "label": "RR Lyrae variable",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      726242,
+      "RR Lyrae variable"
+     ],
+     [
+      353834,
+      "pulsating variable star"
+     ],
+     [
+      6243,
+      "variable star"
+     ],
+     [
+      523,
+      "star"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 55488,
+   "label": "railway station",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 427087,
+   "label": "non-coding RNA",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 1153690,
+   "label": "long-period variable star",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      1153690,
+      "long-period variable star"
+     ],
+     [
+      353834,
+      "pulsating variable star"
+     ],
+     [
+      6243,
+      "variable star"
+     ],
+     [
+      523,
+      "star"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 1260524,
+   "label": "time of day",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 22698,
+   "label": "park",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 204107,
+   "label": "galaxy cluster",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      204107,
+      "galaxy cluster"
+     ],
+     [
+      249389,
+      "deep-sky object"
+     ],
+     [
+      6999,
+      "astronomical object"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 452237,
+   "label": "motion",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 28869365,
+   "label": "issue",
+   "family": "other",
+   "paths": {
+    "work": [
+     [
+      28869365,
+      "issue"
+     ],
+     [
+      234460,
+      "text"
+     ],
+     [
+      47461344,
+      "written work"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 65259218,
+   "label": "compact group of galaxies",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      65259218,
+      "compact group of galaxies"
+     ],
+     [
+      1491746,
+      "galaxy group"
+     ],
+     [
+      14515149,
+      "galaxy group or cluster"
+     ],
+     [
+      15053549,
+      "gravitationally bound system"
+     ],
+     [
+      6999,
+      "astronomical object"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 11446,
+   "label": "ship",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 96739634,
+   "label": "individual motion",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 1151284,
+   "label": "brightest cluster galaxy",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      1151284,
+      "brightest cluster galaxy"
+     ],
+     [
+      318,
+      "galaxy"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 67206701,
+   "label": "far-infrared source",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      67206701,
+      "far-infrared source"
+     ],
+     [
+      67206691,
+      "infrared source"
+     ],
+     [
+      6999,
+      "astronomical object"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 11646939,
+   "label": "metal object",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 66619666,
+   "label": "red giant branch star",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      66619666,
+      "red giant branch star"
+     ],
+     [
+      5875,
+      "giant star"
+     ],
+     [
+      523,
+      "star"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 20860083,
+   "label": "educational facility",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 67206691,
+   "label": "infrared source",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      67206691,
+      "infrared source"
+     ],
+     [
+      6999,
+      "astronomical object"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 72802727,
+   "label": "possible red giant branch star",
+   "family": "other",
+   "paths": {
+    "astronomy": [
+     [
+      72802727,
+      "possible red giant branch star"
+     ],
+     [
+      523,
+      "star"
+     ]
+    ]
+   },
+   "candidate": "astronomy"
+  },
+  {
+   "class": 277338,
+   "label": "pseudogene",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 12308941,
+   "label": "male given name",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 1238720,
+   "label": "volume",
+   "family": "other",
+   "paths": {
+    "work": [
+     [
+      1238720,
+      "volume"
+     ],
+     [
+      732577,
+      "publication"
+     ],
+     [
+      49848,
+      "document"
+     ]
+    ]
+   },
+   "candidate": "work"
+  },
+  {
+   "class": 3052382,
+   "label": "fonds",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  },
+  {
+   "class": 13226383,
+   "label": "facility",
+   "family": "other",
+   "paths": {},
+   "candidate": "other"
+  }
+ ],
+ "candidate": {
+  "map": "sha256:91e2cb1a8743618240578aebd779bab3b47d9287caaa52188fa78fa668275500",
+  "roots": {
+   "astronomy": [
+    318,
+    523,
+    6999
+   ],
+   "built": [
+    391414,
+    811979
+   ],
+   "event": [
+    198,
+    179057,
+    645883,
+    741507,
+    1656682,
+    1689296,
+    3199915,
+    123349687,
+    130260549
+   ],
+   "heritage": [
+    358,
+    39614,
+    839954,
+    4989906
+   ],
+   "internal": [
+    17442446
+   ],
+   "molecular": [
+    7187,
+    8054,
+    59199015,
+    113145171
+   ],
+   "organization": [
+    43229
+   ],
+   "person": [
+    5
+   ],
+   "place": [
+    6256,
+    15324,
+    56061,
+    271669,
+    473972,
+    486972,
+    3624078
+   ],
+   "scholarly": [
+    13442814
+   ],
+   "taxon": [
+    16521
+   ],
+   "work": [
+    49848,
+    3331189,
+    17537576,
+    47461344
+   ]
+  },
+  "families": [
+   "scholarly",
+   "heritage",
+   "built",
+   "event",
+   "person",
+   "place",
+   "organization",
+   "work",
+   "taxon",
+   "astronomy",
+   "molecular",
+   "internal",
+   "property",
+   "lexeme",
+   "other"
+  ]
+ },
+ "preview": {
+  "entities": {
+   "scholarly": 46125519,
+   "heritage": 3206992,
+   "built": 3169402,
+   "event": 1473369,
+   "person": 13736789,
+   "place": 6773578,
+   "organization": 3668794,
+   "work": 9833914,
+   "taxon": 4168953,
+   "astronomy": 8380425,
+   "molecular": 3538551,
+   "internal": 9247136,
+   "property": 13972,
+   "lexeme": 0,
+   "other": 8569598
+  },
+  "moved": [
+   [
+    "work",
+    "internal",
+    4167836,
+    "Wikimedia category",
+    5838015
+   ],
+   [
+    "other",
+    "astronomy",
+    523,
+    "star",
+    3274091
+   ],
+   [
+    "other",
+    "astronomy",
+    318,
+    "galaxy",
+    2096067
+   ],
+   [
+    "work",
+    "internal",
+    4167410,
+    "Wikimedia disambiguation page",
+    1530753
+   ],
+   [
+    "other",
+    "molecular",
+    113145171,
+    "type of chemical entity",
+    1280089
+   ],
+   [
+    "other",
+    "molecular",
+    7187,
+    "gene",
+    1073920
+   ],
+   [
+    "other",
+    "molecular",
+    8054,
+    "protein",
+    990305
+   ],
+   [
+    "other",
+    "work",
+    3331189,
+    "version, edition or translation",
+    829831
+   ],
+   [
+    "work",
+    "internal",
+    11266439,
+    "Wikimedia template",
+    803906
+   ],
+   [
+    "work",
+    "internal",
+    13406463,
+    "Wikimedia list article",
+    380942
+   ],
+   [
+    "other",
+    "astronomy",
+    1931185,
+    "astronomical radio source",
+    352457
+   ],
+   [
+    "other",
+    "astronomy",
+    1457376,
+    "eclipsing binary",
+    292797
+   ],
+   [
+    "other",
+    "astronomy",
+    2247863,
+    "high proper-motion star",
+    281138
+   ],
+   [
+    "other",
+    "heritage",
+    39614,
+    "cemetery",
+    277388
+   ],
+   [
+    "other",
+    "astronomy",
+    3863,
+    "asteroid",
+    248524
+   ],
+   [
+    "work",
+    "internal",
+    115595777,
+    "taxonomy template",
+    172571
+   ],
+   [
+    "other",
+    "astronomy",
+    83373,
+    "quasar",
+    167663
+   ],
+   [
+    "other",
+    "work",
+    47461344,
+    "written work",
+    156374
+   ],
+   [
+    "other",
+    "molecular",
+    59199015,
+    "group of stereoisomers",
+    148291
+   ],
+   [
+    "other",
+    "astronomy",
+    2154519,
+    "astrophysical X-ray source",
+    142758
+   ],
+   [
+    "other",
+    "work",
+    49848,
+    "document",
+    139149
+   ],
+   [
+    "work",
+    "internal",
+    22808320,
+    "Wikimedia human name disambiguation page",
+    96661
+   ],
+   [
+    "other",
+    "astronomy",
+    726242,
+    "RR Lyrae variable",
+    96186
+   ],
+   [
+    "other",
+    "astronomy",
+    1153690,
+    "long-period variable star",
+    88900
+   ],
+   [
+    "other",
+    "astronomy",
+    204107,
+    "galaxy cluster",
+    84293
+   ],
+   [
+    "other",
+    "work",
+    28869365,
+    "issue",
+    83338
+   ],
+   [
+    "other",
+    "astronomy",
+    65259218,
+    "compact group of galaxies",
+    78846
+   ],
+   [
+    "other",
+    "astronomy",
+    1151284,
+    "brightest cluster galaxy",
+    74516
+   ],
+   [
+    "other",
+    "astronomy",
+    67206701,
+    "far-infrared source",
+    72174
+   ],
+   [
+    "other",
+    "astronomy",
+    66619666,
+    "red giant branch star",
+    68802
+   ],
+   [
+    "work",
+    "internal",
+    15184295,
+    "Wikimedia module",
+    64844
+   ],
+   [
+    "other",
+    "astronomy",
+    67206691,
+    "infrared source",
+    63887
+   ],
+   [
+    "other",
+    "astronomy",
+    72802727,
+    "possible red giant branch star",
+    61726
+   ],
+   [
+    "work",
+    "internal",
+    11753321,
+    "Wikimedia navigational template",
+    58426
+   ],
+   [
+    "other",
+    "work",
+    1238720,
+    "volume",
+    58063
+   ],
+   [
+    "other",
+    "astronomy",
+    2168098,
+    "rotating variable star",
+    48631
+   ],
+   [
+    "other",
+    "work",
+    602446,
+    "lyrics",
+    44598
+   ],
+   [
+    "other",
+    "astronomy",
+    6243,
+    "variable star",
+    43406
+   ],
+   [
+    "other",
+    "work",
+    820655,
+    "statute",
+    36780
+   ],
+   [
+    "other",
+    "work",
+    99045339,
+    "written question",
+    36536
+   ],
+   [
+    "work",
+    "internal",
+    23894233,
+    "Wikimedia templates category",
+    36208
+   ],
+   [
+    "work",
+    "internal",
+    14204246,
+    "Wikimedia project page",
+    34985
+   ],
+   [
+    "other",
+    "astronomy",
+    72802508,
+    "emission-line galaxy",
+    31868
+   ],
+   [
+    "other",
+    "work",
+    732577,
+    "publication",
+    30449
+   ],
+   [
+    "other",
+    "astronomy",
+    11282,
+    "H II region",
+    29119
+   ],
+   [
+    "other",
+    "astronomy",
+    12795622,
+    "low-mass star",
+    27967
+   ],
+   [
+    "other",
+    "astronomy",
+    1332364,
+    "rotating ellipsoidal variable",
+    27085
+   ],
+   [
+    "other",
+    "astronomy",
+    72802977,
+    "young stellar object candidate",
+    26761
+   ],
+   [
+    "other",
+    "molecular",
+    20747295,
+    "protein-coding gene",
+    25867
+   ],
+   [
+    "other",
+    "astronomy",
+    6999,
+    "astronomical object",
+    25527
+   ],
+   [
+    "other",
+    "astronomy",
+    1491746,
+    "galaxy group",
+    24463
+   ],
+   [
+    "other",
+    "astronomy",
+    272447,
+    "molecular cloud",
+    22888
+   ],
+   [
+    "other",
+    "astronomy",
+    497654,
+    "young stellar object",
+    22560
+   ],
+   [
+    "work",
+    "internal",
+    24046192,
+    "Wikimedia category of stubs",
+    22206
+   ],
+   [
+    "work",
+    "internal",
+    15647814,
+    "Wikimedia administration category",
+    21916
+   ],
+   [
+    "other",
+    "astronomy",
+    204194,
+    "dark nebula",
+    21002
+   ],
+   [
+    "other",
+    "astronomy",
+    130019,
+    "carbon star",
+    20933
+   ],
+   [
+    "other",
+    "astronomy",
+    13890,
+    "double star",
+    20334
+   ],
+   [
+    "other",
+    "work",
+    23927052,
+    "conference paper",
+    19502
+   ],
+   [
+    "other",
+    "work",
+    1302249,
+    "cross-reference",
+    18438
+   ],
+   [
+    "other",
+    "astronomy",
+    744691,
+    "Mira variable",
+    18186
+   ],
+   [
+    "other",
+    "astronomy",
+    71798532,
+    "blue object",
+    17765
+   ],
+   [
+    "other",
+    "astronomy",
+    46587,
+    "active galactic nucleus",
+    17442
+   ],
+   [
+    "other",
+    "work",
+    67035425,
+    "ASTM standard",
+    17253
+   ],
+   [
+    "other",
+    "astronomy",
+    11276,
+    "globular cluster",
+    17108
+   ],
+   [
+    "other",
+    "astronomy",
+    71965429,
+    "Seyfert 1 galaxy",
+    16183
+   ],
+   [
+    "other",
+    "astronomy",
+    5871,
+    "white dwarf",
+    15957
+   ],
+   [
+    "other",
+    "work",
+    106006703,
+    "local regulations of the People's Republic of China",
+    15541
+   ],
+   [
+    "other",
+    "astronomy",
+    72803622,
+    "emission-line star",
+    14646
+   ],
+   [
+    "work",
+    "internal",
+    59541917,
+    "Wikimedia topic category",
+    14574
+   ],
+   [
+    "work",
+    "internal",
+    56428020,
+    "Wikimedia lists category",
+    14519
+   ],
+   [
+    "other",
+    "astronomy",
+    72803426,
+    "horizontal branch star",
+    14481
+   ],
+   [
+    "other",
+    "work",
+    1505023,
+    "interpellation",
+    14227
+   ],
+   [
+    "other",
+    "work",
+    235557,
+    "file format",
+    14097
+   ],
+   [
+    "other",
+    "molecular",
+    420927,
+    "protein complex",
+    13878
+   ],
+   [
+    "other",
+    "work",
+    1330251,
+    "United Nations General Assembly resolution",
+    13308
+   ],
+   [
+    "other",
+    "astronomy",
+    72803708,
+    "possible globular cluster",
+    12532
+   ],
+   [
+    "other",
+    "astronomy",
+    168845,
+    "star cluster",
+    12218
+   ],
+   [
+    "other",
+    "work",
+    19930933,
+    "decision of the Supreme Court of Canada",
+    11628
+   ],
+   [
+    "other",
+    "astronomy",
+    67201574,
+    "sub-millimetric radio source",
+    11100
+   ],
+   [
+    "work",
+    "internal",
+    26267864,
+    "Wikimedia KML file",
+    11048
+   ],
+   [
+    "other",
+    "astronomy",
+    13632,
+    "planetary nebula",
+    10606
+   ],
+   [
+    "other",
+    "astronomy",
+    691269,
+    "W Ursae Majoris variable",
+    10597
+   ],
+   [
+    "other",
+    "astronomy",
+    10451997,
+    "classical Cepheid variable",
+    10593
+   ],
+   [
+    "other",
+    "astronomy",
+    24452,
+    "Algol variable",
+    10411
+   ],
+   [
+    "other",
+    "astronomy",
+    2557101,
+    "low-ionization nuclear emission-line region",
+    10376
+   ],
+   [
+    "other",
+    "work",
+    10429085,
+    "report",
+    10352
+   ],
+   [
+    "other",
+    "astronomy",
+    28738741,
+    "interacting galaxies",
+    10099
+   ],
+   [
+    "other",
+    "astronomy",
+    22247,
+    "gamma-ray burst",
+    9872
+   ],
+   [
+    "other",
+    "work",
+    686822,
+    "bill",
+    9816
+   ],
+   [
+    "other",
+    "work",
+    212971,
+    "Request for Comments",
+    9433
+   ],
+   [
+    "other",
+    "astronomy",
+    1142192,
+    "peculiar star",
+    9415
+   ],
+   [
+    "other",
+    "work",
+    91257459,
+    "PM20 country/subject folder",
+    9202
+   ],
+   [
+    "work",
+    "internal",
+    30432511,
+    "Wikimedia meta category",
+    8881
+   ],
+   [
+    "other",
+    "astronomy",
+    115518,
+    "low-surface-brightness galaxy",
+    8829
+   ],
+   [
+    "other",
+    "astronomy",
+    71965638,
+    "Seyfert 2 galaxy",
+    8666
+   ],
+   [
+    "other",
+    "astronomy",
+    217012,
+    "radio galaxy",
+    7868
+   ],
+   [
+    "work",
+    "internal",
+    98645843,
+    "Wikimedia music-related list",
+    7815
+   ],
+   [
+    "other",
+    "astronomy",
+    71798788,
+    "ultraviolet source",
+    7807
+   ],
+   [
+    "work",
+    "internal",
+    106612246,
+    "Wikimedia albums-by-performer category",
+    7519
+   ],
+   [
+    "other",
+    "astronomy",
+    188593,
+    "Cepheid variable",
+    7451
+   ],
+   [
+    "other",
+    "work",
+    98467717,
+    "record of meeting of the Riksdag",
+    7186
+   ],
+   [
+    "work",
+    "internal",
+    17146139,
+    "Wikimedia route diagram",
+    7070
+   ],
+   [
+    "other",
+    "work",
+    19692072,
+    "decision of the Supreme Court of the United States",
+    7024
+   ],
+   [
+    "work",
+    "internal",
+    13331174,
+    "Wikimedia navboxes category",
+    6671
+   ],
+   [
+    "other",
+    "astronomy",
+    836976,
+    "Delta Scuti variable",
+    6566
+   ],
+   [
+    "other",
+    "astronomy",
+    67201561,
+    "millimetric radio source",
+    6475
+   ],
+   [
+    "work",
+    "internal",
+    17442446,
+    "Wikimedia internal item",
+    6167
+   ],
+   [
+    "other",
+    "astronomy",
+    44559,
+    "exoplanet",
+    6067
+   ],
+   [
+    "work",
+    "internal",
+    20010800,
+    "Wikimedia user language category",
+    5982
+   ],
+   [
+    "other",
+    "molecular",
+    3780824,
+    "coding region",
+    5921
+   ],
+   [
+    "other",
+    "astronomy",
+    2488,
+    "spiral galaxy",
+    5673
+   ],
+   [
+    "work",
+    "internal",
+    108783631,
+    "Wikimedia country data template",
+    5329
+   ],
+   [
+    "work",
+    "internal",
+    15407973,
+    "Wikimedia disambiguation category",
+    5184
+   ],
+   [
+    "other",
+    "work",
+    57933693,
+    "book edition",
+    4945
+   ],
+   [
+    "other",
+    "work",
+    12504877,
+    "Government Regulation of the Republic of Indonesia",
+    4885
+   ],
+   [
+    "other",
+    "astronomy",
+    1621824,
+    "high-velocity cloud",
+    4728
+   ],
+   [
+    "work",
+    "internal",
+    19692233,
+    "Wikimedia list of persons",
+    4549
+   ],
+   [
+    "other",
+    "work",
+    98491862,
+    "committee directives",
+    4391
+   ],
+   [
+    "work",
+    "internal",
+    19887878,
+    "Wikimedia infobox template",
+    4298
+   ],
+   [
+    "other",
+    "astronomy",
+    1993624,
+    "spectroscopic binary",
+    4274
+   ],
+   [
+    "other",
+    "work",
+    18845793,
+    "Judicial Yuan Interpretations",
+    4097
+   ],
+   [
+    "other",
+    "astronomy",
+    9262,
+    "asterism",
+    4086
+   ],
+   [
+    "other",
+    "astronomy",
+    5848,
+    "blue straggler",
+    4085
+   ],
+   [
+    "other",
+    "work",
+    29154550,
+    "verse of the Bible",
+    3900
+   ],
+   [
+    "other",
+    "astronomy",
+    11387,
+    "open cluster",
+    3864
+   ],
+   [
+    "other",
+    "astronomy",
+    54231557,
+    "hot subdwarf star",
+    3854
+   ],
+   [
+    "organization",
+    "internal",
+    137424753,
+    "list of participants in sport tournament",
+    3739
+   ],
+   [
+    "work",
+    "internal",
+    125101257,
+    "Wikimedia category of redirects",
+    3738
+   ],
+   [
+    "other",
+    "astronomy",
+    18611609,
+    "unconfirmed exoplanet",
+    3726
+   ],
+   [
+    "other",
+    "astronomy",
+    50053,
+    "binary star",
+    3633
+   ],
+   [
+    "work",
+    "internal",
+    115668764,
+    "Wiktionary rhymes page",
+    3616
+   ],
+   [
+    "work",
+    "internal",
+    67131190,
+    "Wikimedia tracking category",
+    3584
+   ],
+   [
+    "work",
+    "internal",
+    18711811,
+    "map data module",
+    3564
+   ],
+   [
+    "other",
+    "astronomy",
+    1341811,
+    "astrophysical maser",
+    3550
+   ],
+   [
+    "other",
+    "astronomy",
+    67201586,
+    "HI (21cm) source",
+    3445
+   ],
+   [
+    "work",
+    "internal",
+    15623926,
+    "Wikimedia set index article",
+    3328
+   ],
+   [
+    "work",
+    "internal",
+    63032896,
+    "Wikimedia list of fictional characters",
+    3317
+   ],
+   [
+    "other",
+    "astronomy",
+    353834,
+    "pulsating variable star",
+    3256
+   ],
+   [
+    "other",
+    "work",
+    131569,
+    "treaty",
+    3239
+   ],
+   [
+    "other",
+    "work",
+    712597,
+    "article",
+    3181
+   ],
+   [
+    "other",
+    "astronomy",
+    6232,
+    "T Tauri-type star",
+    3121
+   ],
+   [
+    "other",
+    "astronomy",
+    50048,
+    "Herbig–Haro object",
+    3077
+   ],
+   [
+    "other",
+    "astronomy",
+    195385,
+    "BL Lacertae object",
+    2993
+   ],
+   [
+    "other",
+    "work",
+    38647918,
+    "United Nations Treaty Series volume",
+    2931
+   ],
+   [
+    "other",
+    "work",
+    113376528,
+    "PM20 ware/country folder",
+    2891
+   ],
+   [
+    "other",
+    "astronomy",
+    101600,
+    "brown dwarf",
+    2830
+   ],
+   [
+    "other",
+    "astronomy",
+    67201524,
+    "centimetric radio source",
+    2775
+   ],
+   [
+    "other",
+    "astronomy",
+    4360,
+    "pulsar",
+    2711
+   ],
+   [
+    "other",
+    "work",
+    877358,
+    "United Nations Security Council resolution",
+    2700
+   ],
+   [
+    "work",
+    "internal",
+    66480449,
+    "Wikimedia surname disambiguation page",
+    2669
+   ],
+   [
+    "built",
+    "heritage",
+    846659,
+    "Jewish cemetery",
+    2615
+   ],
+   [
+    "work",
+    "internal",
+    3273417,
+    "lists of sportspeople",
+    2585
+   ],
+   [
+    "other",
+    "work",
+    11242653,
+    "Supreme Commander for the Allied Powers Instruction Note",
+    2584
+   ],
+   [
+    "other",
+    "work",
+    19902850,
+    "witch trial",
+    2543
+   ],
+   [
+    "other",
+    "astronomy",
+    71962386,
+    "gamma-ray source",
+    2409
+   ],
+   [
+    "other",
+    "astronomy",
+    1054444,
+    "interstellar cloud",
+    2390
+   ],
+   [
+    "other",
+    "work",
+    114079647,
+    "Supreme Court of Ghana decision",
+    2362
+   ],
+   [
+    "other",
+    "work",
+    133492,
+    "letter",
+    2338
+   ],
+   [
+    "other",
+    "astronomy",
+    1352333,
+    "Orion variable",
+    2253
+   ],
+   [
+    "other",
+    "work",
+    13058849,
+    "The Bangladesh Gazette",
+    2244
+   ],
+   [
+    "work",
+    "internal",
+    19842659,
+    "Wikimedia user language template",
+    2227
+   ],
+   [
+    "other",
+    "astronomy",
+    72054258,
+    "possible cluster of galaxies",
+    2226
+   ],
+   [
+    "other",
+    "work",
+    1671773,
+    "bilateral investment treaty",
+    2197
+   ],
+   [
+    "work",
+    "internal",
+    18340550,
+    "Wikimedia timeline",
+    2053
+   ],
+   [
+    "work",
+    "internal",
+    30330522,
+    "Wikimedia unknown parameters category",
+    2044
+   ],
+   [
+    "work",
+    "internal",
+    111803808,
+    "Wikimedia award template",
+    1989
+   ],
+   [
+    "work",
+    "internal",
+    36330215,
+    "Wikimedia location map template",
+    1947
+   ],
+   [
+    "work",
+    "internal",
+    111019629,
+    "Wikimedia duplicated category",
+    1945
+   ],
+   [
+    "work",
+    "internal",
+    1371849,
+    "filmography",
+    1944
+   ],
+   [
+    "other",
+    "work",
+    96482904,
+    "decision of the Supreme Court of Sweden",
+    1931
+   ],
+   [
+    "work",
+    "internal",
+    80096233,
+    "Wikimedia information list",
+    1882
+   ],
+   [
+    "other",
+    "astronomy",
+    812800,
+    "Be-type star",
+    1871
+   ],
+   [
+    "other",
+    "astronomy",
+    845371,
+    "void",
+    1791
+   ],
+   [
+    "work",
+    "internal",
+    20769287,
+    "Wikimedia user category",
+    1789
+   ],
+   [
+    "other",
+    "astronomy",
+    6458,
+    "nova",
+    1788
+   ],
+   [
+    "other",
+    "work",
+    19752986,
+    "Law of the Republic of Indonesia",
+    1784
+   ],
+   [
+    "other",
+    "astronomy",
+    1362543,
+    "eruptive variable star",
+    1781
+   ],
+   [
+    "other",
+    "astronomy",
+    41872,
+    "interstellar medium",
+    1753
+   ],
+   [
+    "work",
+    "internal",
+    21167233,
+    "Commons gallery",
+    1728
+   ],
+   [
+    "other",
+    "astronomy",
+    67206785,
+    "near-infrared source",
+    1708
+   ],
+   [
+    "other",
+    "astronomy",
+    644507,
+    "interacting galaxy",
+    1699
+   ],
+   [
+    "other",
+    "work",
+    13136,
+    "reference work",
+    1675
+   ],
+   [
+    "other",
+    "work",
+    21112633,
+    "edition of a translation",
+    1637
+   ],
+   [
+    "work",
+    "internal",
+    66050470,
+    "conjugation table for French verb",
+    1590
+   ],
+   [
+    "other",
+    "astronomy",
+    244264,
+    "Dwarf nova",
+    1574
+   ],
+   [
+    "other",
+    "astronomy",
+    936076,
+    "W Virginis variable",
+    1482
+   ],
+   [
+    "other",
+    "work",
+    1926935,
+    "stamp edition",
+    1476
+   ],
+   [
+    "other",
+    "work",
+    114767323,
+    "mathematical section (text)",
+    1471
+   ],
+   [
+    "other",
+    "astronomy",
+    207436,
+    "supernova remnant",
+    1465
+   ],
+   [
+    "work",
+    "internal",
+    66715753,
+    "Wikimedia list of persons by position held",
+    1457
+   ],
+   [
+    "other",
+    "astronomy",
+    192078,
+    "lenticular galaxy",
+    1430
+   ],
+   [
+    "other",
+    "work",
+    75006800,
+    "Ang",
+    1430
+   ],
+   [
+    "other",
+    "astronomy",
+    1153392,
+    "S-type star",
+    1408
+   ],
+   [
+    "built",
+    "heritage",
+    34023,
+    "tumulus",
+    1376
+   ],
+   [
+    "other",
+    "astronomy",
+    1062509,
+    "pre-main-sequence star",
+    1375
+   ],
+   [
+    "other",
+    "work",
+    186117,
+    "timeline",
+    1369
+   ],
+   [
+    "other",
+    "astronomy",
+    6251,
+    "Wolf–Rayet star",
+    1334
+   ],
+   [
+    "other",
+    "work",
+    317623,
+    "technical standard",
+    1317
+   ],
+   [
+    "work",
+    "internal",
+    66050442,
+    "conjugation table",
+    1311
+   ]
+  ]
+ }
+}
