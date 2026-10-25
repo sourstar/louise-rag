@@ -172,6 +172,7 @@ def serial_parse_pool(monkeypatch):
     back in explicitly (PARSE_PROCESSES=2)."""
     from app import config
     monkeypatch.setattr(config, "PARSE_PROCESSES", 1)
+    monkeypatch.setattr(config, "BUILD_WHOLE_QUOTA", False)
 
 
 @pytest.fixture

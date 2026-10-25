@@ -1071,6 +1071,38 @@ feeds and writes); the node worker keeps quota − 1 (its parent runs the
 round loop and the API). That change ships with these numbers in its
 commit, not before.
 
+**THE A/B (München, 2026-10-25; origin/main e330ed5,
+docs/notes/records-ab-2026-10-25/run2-*.json).** en/2M's first 250,000
+records, 2,096,112 chunks, 125 parts, 4-cpu quota, nice 19, the live build
+stopped:
+
+| arm | wall s | cpu s | cpu s/record | mean util | one-core readings | min–max % |
+|---|---|---|---|---|---|---|
+| c3a7612 (11 children) | 761.2 | 2015.0 | 0.00806 | 265 % | 6 of 95 | 100–355 |
+| a833c1e (3 children) | 629.5 | 1775.5 | 0.00710 | 282 % | 0 of 78 | 149–307 |
+| a833c1e, PARSE_PROCESSES=4 | 543.8 | 1824.7 | 0.00730 | 336 % | 0 of 67 | 132–400 |
+| c3dcb4c (3 children) | 622.9 | 1767.3 | 0.00707 | 284 % | 0 of 77 | 176–308 |
+
+The parts (n, sha256, records_root, chunks_root) were identical in all
+seven runs (these four and the first run's three), and no arm logged a
+"[parse pool]" line.
+- Step 2 is 1.21× faster than the old pool on wall time, at 12 % less CPU
+  per record.
+- c3dcb4c costs nothing against it.
+- The 4th child is 1.16× faster on wall time at +3 % CPU per record. It
+  meets two of the three rules (lower wall, no fallback). The third,
+  ~400 %, it misses: it averaged 336 %, peaking at 400.
+
+DECIDED (architecture): the 4th child is taken.
+`config.build_parse_processes()` gives `hold records build` the whole
+quota unless PARSE_PROCESSES is set; the worker keeps quota − 1.
+
+The first A/B run (11:17–12:50) is VOID for speed. Its harness reached the
+container on stdin, so the spawned children found no main file and
+disabled themselves, and every arm ran on one core. Its parts still count
+for the byte check.
+
+
 ### 2026-10-25 — query processing highest, corpus embedding lowest, a query's later step first (operator) — PREPARED
 
 **Operator:** "Embedding shall have the lower priority and query processing
@@ -1194,3 +1226,7 @@ quota, `PARSE_PROCESSES` 3, `PARSE_TASKS_PER_CHILD` 500, after the A/B arms.
 - the time from `wikipedia-build.sh stop` to exit (BEFORE: never; SIGKILL
   after 15 min);
 - rec/s and chunks/s against step 1's hour, on comparable slices (rule 3).
+
+**AFTER so far (München):** the live build restarted on c3dcb4c at 13:37:36
+CET. The sampler reads 3 children at ~300 % (13:40, 13:41). The A/B arm
+on c3dcb4c: no "[parse pool]" line, 622.9 s, parts byte-identical.

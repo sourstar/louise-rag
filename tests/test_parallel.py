@@ -648,3 +648,13 @@ def test_the_pool_is_sized_from_the_cpu_quota_not_the_host(tmp_path):
     (tmp_path / "v1" / "cpu" / "cpu.cfs_period_us").write_text("100000\n")
     assert config.available_cpus(str(tmp_path / "v1")) == min(host, 2)
     assert config.available_cpus(str(tmp_path / "none")) == host
+
+
+def test_the_records_build_takes_the_whole_quota_unless_told(monkeypatch):
+    """The A/B on wikipedia-v8 (2026-10-25): 4 children in a 4-cpu quota were
+    1.16x faster than 3, every part byte-identical. The worker keeps quota - 1."""
+    monkeypatch.setattr(config, "available_cpus", lambda: 4)
+    monkeypatch.delenv("PARSE_PROCESSES", raising=False)
+    assert config.build_parse_processes() == 4
+    monkeypatch.setenv("PARSE_PROCESSES", "2")
+    assert config.build_parse_processes() == 2, "an operator's setting wins"

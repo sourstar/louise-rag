@@ -2256,6 +2256,10 @@ def cmd_records_build(a) -> int:
     # collection's own, `<root>/<name>/origin` (07 §7.8); --corpus names
     # another, for a node whose origins are not there yet
     corpus = a.corpus or (Path(a.root) / name / "origin")
+    # the parse pool takes the whole quota here (config.build_parse_processes)
+    from app import config
+    if config.BUILD_WHOLE_QUOTA:
+        config.PARSE_PROCESSES = config.build_parse_processes()
     # Invariant 2: SIGTERM or SIGINT finishes the current unit and exits 130.
     # Without this a stop KILLED the build: its parse pool's children were
     # re-parented to init and kept running (2026-09-21).

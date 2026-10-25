@@ -424,6 +424,22 @@ def available_cpus(cgroup: str = "/sys/fs/cgroup") -> int:
 
 
 PARSE_PROCESSES = int(os.getenv("PARSE_PROCESSES", str(max(1, available_cpus() - 1))))
+
+
+def build_parse_processes() -> int:
+    """The records build's pool: the WHOLE quota, unless PARSE_PROCESSES is
+    set. Its parent only feeds and writes, while the worker's runs the round
+    loop and the API, which is why the worker keeps quota − 1. Measured on
+    wikipedia-v8's en/2M, first 250,000 records (München, 2026-10-25, every
+    part byte-identical): on a 4-cpu quota, 4 children took 543.8 s wall
+    against 629.5 s for 3 (1.16×), at 0.00730 against 0.00710 cpu-s a
+    record (+3 %), 336 % mean utilisation, and no fallback."""
+    return int(os.environ["PARSE_PROCESSES"]) if os.getenv("PARSE_PROCESSES") else max(1, available_cpus())
+
+
+#: whether `hold records build` widens the pool to `build_parse_processes()`
+#: (the test suite turns it off: it pins PARSE_PROCESSES to 1)
+BUILD_WHOLE_QUOTA = True
 # a child is replaced after this many sub-batches: its plugin caches (row
 # groups, streams) grow with what it has parsed — measured +4 GB across
 # eleven children in fifteen minutes — and a fresh child starts small
