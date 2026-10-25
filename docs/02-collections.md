@@ -153,8 +153,8 @@ the function that turns text into vectors, and the contract around it
 names the pre-embedded archives whose vectors this collection carries,
 and is derived rather than chosen (§2.7). `work` is the work parameter
 (§2.4). `modality` says what the bytes are, so that
-an encoder or a reranker of the wrong kind — a language model over the
-reference genomes — is refused rather than merely worse. `erasure` says
+an encoder or a reranker of the wrong kind — a language model over bytes
+that are not text — is refused rather than merely worse. `erasure` says
 how content may leave: `append-only` (the Gazzetta Ufficiale: nothing
 leaves without a recorded tombstone), `retractable` (PubMed: the
 publisher may withdraw a record, and the tombstone says so), `erasable`

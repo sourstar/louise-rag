@@ -123,8 +123,7 @@ are the ones that have drifted; prefer to add a test when you touch them.
 4. FUSION TYPES. ReferenceSource lookups are facts-by-key: they go into the
    LLM context as pinned blocks and NEVER enter RRF. Ranked lists from corpus
    legs ALWAYS go through RRF — when they answer the same question. Two
-   ranked lists that answer different questions (docs/05 §5.1; homology vs
-   function in the genome collection is the case) are presented separately,
+   ranked lists that answer different questions (docs/05 §5.1) are presented separately,
    never fused. Do not blend the types. Nothing boosts: an identifier the
    query names pins its facts and restricts nothing unless the reader asks
    for it as the `keys` filter (docs/05 §5.2, operator 2026-10-25). ONE

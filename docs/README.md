@@ -4,8 +4,8 @@
 
 Louise is a RAG platform you run yourself, online or off. It comes with
 Wikipedia, Wikidata, Project Gutenberg, PubMed and Normattiva (Italian
-legislation), with HGNC, ClinVar, gnomAD and HomoloGene as reference
-lookups, and any other source can be added by implementing a plugin. Copies of a
+legislation), with gene and variant references (HGNC, ClinVar, gnomAD,
+HomoloGene) as facts pinned beside medical answers, and any other source can be added by implementing a plugin. Copies of a
 collection — the documents and the embeddings both — pass directly
 between the people who have them, so nobody re-does work that's already
 been done, and the original source isn't asked for the same download

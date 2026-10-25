@@ -145,10 +145,10 @@ default that question is relevance to the query text: `question` is the
 literal `"relevance"`, every collection's legs carry it, and in this
 version every collection's legs carry nothing else — so there is one
 list, and the rule below costs nothing until there is not. A collection
-may contribute a leg that answers another question — the genome
-collections' by-sequence leg answers *homology*, their annotation text
-answers *function* — and legs answering different questions are never
-fused: each question is its own list, presented beside the others and
+may contribute a leg that answers another question — a by-sequence leg
+answering *homology* beside annotation text answering *function*, say;
+no collection held today declares one — and legs answering different
+questions are never fused: each question is its own list, presented beside the others and
 named. Where a non-default leg is DECLARED, and how two collections
 establish that their legs answer the same question, is the search-axes
 amendment; nothing in this version declares one, and an implementation
@@ -193,8 +193,8 @@ identifier that is itself a URI carries its scheme as its namespace and
 is written verbatim, never prefixed twice:
 `urn:nir:stato:legge:2003-10-31;306`, namespace `urn`.
 Where the origin's identifier is not qualified on its own, the
-namespace's registration says how it is qualified: a genomic region
-carries its assembly, `region:grch38:13:32316461-32316527`. A plugin
+namespace's registration says how it is qualified, as a Wikidata item is
+`wikidata:Q42`. A plugin
 writes only registered ids into a record's `keys` (§6.1), and a
 namespace is registered before any record uses it, because `keys` are
 bytes of the record and therefore of its `content_hash`.

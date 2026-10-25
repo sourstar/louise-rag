@@ -678,9 +678,9 @@ passes, and it passes at p98 = 1.930 against a ceiling of 2.0.
 classes, dimensions from 768 to 4096, four corpora and three chunkers —
 covering EVERY text space the reference deployment runs. What is left is
 another MODALITY
-— a genome collection, where the alphabet and the encoder family change
-at once — and that one cannot be measured at all until a DNA calibration
-set exists, since 09 §9.12 ships one set per modality and the platform
+— a collection whose alphabet and encoder family both change; none is
+held — and such a one cannot be measured at all until a calibration set
+for it exists, since 09 §9.12 ships one set per modality and the platform
 ships only `text`. Given that the
 cosine has already ranged 0.658 to 0.933 and the deviation percentiles
 0.557 to 1.666 over what has been tried, an untested shape can land
