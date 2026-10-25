@@ -2060,28 +2060,6 @@ def _collection_shelf(collection: collections_mod.Collection,
     }
 
 
-def _annotatable(served: list) -> list[dict]:
-    """The served Codex collections an annotations collection can be about,
-    with the id of the snapshot each holds now — the default for `from
-    snapshot`, since claims are checked against a snapshot this peer holds
-    (02 §2.10). Never raises; a collection with no snapshot yet says so."""
-    from .hold import collection as col
-    from .share import seeder
-    root = collections_mod.louise_root() / "collections"
-    out = []
-    for c in served:
-        if getattr(c, "codex", None) is None or collections_mod.is_annotations(c) \
-                or c.codex.plugin == "deposit":
-            continue
-        try:
-            snap = seeder.cached_snapshot(col.shard_dir_of(root, c.name))
-            snapshot = snap.snapshot_id if snap is not None else None
-        except Exception:  # noqa: BLE001
-            snapshot = None
-        out.append({"name": c.name, "snapshot": snapshot})
-    return out
-
-
 def _annotations_shelf(collection, served: list) -> dict:
     """The Library's card for an annotations collection (02 §2.10): what it
     annotates and from which target snapshot, how many claims its current
@@ -2372,9 +2350,11 @@ def library_page(request: Request):
         "shelves": shelves,
         "annotations": annotations,
         "offered": offered,
-        # the Add panel's annotations type (02 §2.10): the collections a new
-        # one can annotate, each with the snapshot its claims would hold from
-        "annotatable": _annotatable(collections),
+        # the Add panel (RULE 2, 2026-10-25): the plugins this node holds a
+        # recipe for, and where — a create names the plugin and a name only
+        "plugin_recipes": {p: str(collections_mod.recipe_path(p))
+                           for p in collections_mod.PLUGIN_REGISTRY
+                           if collections_mod.recipe_path(p).is_file()},
         # oldest cached count on the page — a stale bar should look stale
         "counts_age": max((s["counts_age"] for s in shelves), default=0),
         "plugins": sorted(collections_mod.PLUGIN_REGISTRY),

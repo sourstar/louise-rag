@@ -71,11 +71,13 @@ louise hold
                                                                        (amended 2026-10-08)
               create deposit --name N [--encoder URL [--api A] [--embed-model M] [--query-model M]] [--space-from CODEX | --space FILE]
                                                                        a deposit collection (02 §2.9): no recipe; the node's deposit encoder unless one is named
-              create annotations --annotates C --from-snapshot S [--annotates C2 --from-snapshot S2 …] --claims FILE --name N [--title T] [--summary S] [--annotator A] [--snapshot ID] [--container jsonl|parquet] [--dry-run]
+              create annotations --claims FILE --name N [--annotates C [--from-snapshot S] [--annotates C2 --from-snapshot S2 …]] [--title T] [--summary S] [--annotator A] [--snapshot ID] [--container jsonl|parquet] [--dry-run]
                                                                        an annotations collection (02 §2.10; amended 2026-10-09): no recipe, no encoder; each claim's
                                                                        target hashes read from C's snapshot S; writes the parts, the relations, the first snapshot
                                                                        (signed with the node's key when there is one) and the file; prints its id. `--dry-run`
-                                                                       (2026-10-19) checks the file against S exactly as the write would and prints the counts
+                                                                       (2026-10-19) checks the file against S exactly as the write would and prints the counts.
+                                                                       Without --annotates the targets are the held collections the claims' uids name, each
+                                                                       from its newest snapshot; a target without --from-snapshot, its newest (2026-10-25, §7.4)
                                                                        (claims, target records named, by type and method), writing nothing. Several claims
                                                                        files for one collection are merged first with `tools/annotations_merge.py` (the
                                                                        wikidata claims whole, a matcher claim only where its books are not one work yet)
@@ -725,6 +727,58 @@ nothing; otherwise the fetch is queued for the worker (202), which signs
 the pulls, runs in every mode, and `GET /api/jobs/<id>` follows it. The
 Library's *Offered by peers* is a client of both.
 
+*Amended 2026-10-25 (CLAUDE.md RULE 2: "A regular user chooses what only
+they can know — a local name — and nothing else").* Every Library dialog
+asks a local name, plus what only the user has — the source (plugin) of a
+new collection, the claims file of an annotations collection — and SENDS
+nothing else; the routes keep every key above for the command line and
+scripts, and work when only those are given. The node determines the
+rest:
+
+- **The encoder** (`encoder`, `api`, `embed_model`, `query_model`, and
+  `query_encoder` on create), for a take and a create alike, by WEIGHTS:
+  the server is the node's model server (the address its collection
+  files share, else `platform.toml`'s `[deposit] encoder`); the models
+  are a held collection's in the same space (the same document and query
+  weights), else the models on that server whose STATED RUN — a VeGa
+  receipt or `Louise-Run`, its description verified against the run id
+  (03 §3.3, 09 §9.12) — loads exactly the Codex's `space.encoder.weights`
+  (and `space.query.encoder.weights` for the query side). A model counts
+  only if its weights digest matches; its name orders which models are
+  asked first and never decides, and a model that states no run does not
+  count (app/encoder_resolve.py). Where none matches, a TAKE is held
+  anyway — its texts and the peers' vectors arrive, embed `off`; its file
+  names no `[encoder]`, so it is shown under *Held, not served* with its
+  reason and is not searched until one is added (the 2026-09-18 rule
+  above stands) — and the answer says in plain words which model to
+  install; a CREATE is
+  refused (409) in the same words and creates nothing, since a Codex
+  holds reference vectors only its own encoder computes (06 §6.6).
+  `GET /api/encoders/suggest[?collection_id=]` answers what the node
+  decided, for the take dialog to say before anything is queued.
+- **The recipe** of `POST /api/hold/collection/create` without a
+  `recipe`: the node's own for the plugin, `recipes/<plugin>.toml` (§7.8);
+  without one, the 409 says where it goes and that a collection a peer
+  offers is taken with none. What the file then takes and spends is the
+  node's too: every slice and the default kinds, `embed = "on-demand"`
+  (`slices`, `embed` in the body change it; a create given a `recipe`
+  writes what the command writes, no slice and `off`).
+- **An annotations collection's targets**: `annotates` and
+  `from_snapshot` may be omitted — each claim end's uid names its
+  target's plugin by its prefix (09 §9.3), the target is the collection
+  of that plugin held here (where several are, the one whose newest
+  snapshot holds every record named; several still, nothing is guessed
+  and the 409 says to name it with `--annotates`), held from its newest
+  snapshot, as `hold annotations update` re-checks; a target named
+  without its snapshot takes its newest. The title and summary are
+  derived from the targets and the claims, the annotator is the claims'
+  one contributor (several: the 409 says to give a file with one, or
+  `--annotator`). `hold collection create annotations` takes the same
+  omissions.
+- **What a take holds**: the whole collection, every slice and kind, the
+  latest snapshot, embed `p2p` where the encoder resolved and `off` where
+  it did not (above).
+
 **One route is not JSON, and it is the only one.**
 
 ```
@@ -904,7 +958,7 @@ unknown command. The table says where each went.
 |---|---|
 | `corpus add` / `grow` (`--profile P`) | `hold records fetch --profile P` — both fetched; neither created |
 | `corpus add --ack-terms FILE` | `hold collection ack` |
-| the web interface's *new collection* | `hold collection create --recipe FILE`; the annotations type, `hold collection create annotations` (*amended 2026-10-19*) |
+| the web interface's *new collection* | `hold collection create --recipe FILE`; the annotations type, `hold collection create annotations` (*amended 2026-10-19*). It asks the source and a local name — and the claims file — only; the recipe is `recipes/<plugin>.toml`, the encoder, the targets and the rest are the node's (§7.4, *amended 2026-10-25*) |
 | `corpus status` | `hold collection show` |
 | `pack build`, `tools/pack_convert` | `hold records build` |
 | `pack verify` | `hold check` |
@@ -1079,6 +1133,7 @@ one home.
 | **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `NODE_PUBLIC_KEY_PATH`, `ADMIN_TOKEN_FILE`, `DEPOSIT_TOKEN_FILE`, `GIT_PRIVATE_KEY_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `TRANSLATE_MODEL` (the model TRANSLATE_URL's server is asked for, as `CHAT_MODEL` is for chat; amended 2026-10-09), `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL`, `VEGA_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
 | **files** — desired state | `users.toml` beside `platform.toml` (*amended 2026-10-22*): the users of §7.4, each token as its SHA-256 only; when each was last seen is `state/users-seen.json`, not desired state | `louise user …`, the admin API — never by hand |
+| **files** — desired state | `recipes/<plugin>.toml` beside `collections/` (*amended 2026-10-25, RULE 2*): this node's recipe for a plugin (06 §6.6) — what the Library's *new collection*, which names a plugin and a local name only, creates from | editing the file |
 | **state database** — runtime overrides | the node's mode — `node pause`, `--seed-only`, `--acquire-only` — in force until `resume` | the commands; a restart keeps them |
 
 Desired state is never written into the database, and a runtime override
@@ -1247,10 +1302,14 @@ answered with the space's encoder label, which names no model any server
 is asked for — and so is a flag that is not the model its URL names. The
 calibration set is embedded on that `api` with those models. The flags
 are node-local, beside `--encoder`, and never in the recipe, whose
-`space` block is hashed into the Codex; the Library's create route takes
+`space` block is hashed into the Codex; the create route takes
 them as `api`, `embed_model` and `query_model`, and `share fetch
 --encoder` takes the same three flags (amended 2026-10-09; 2026-10-08
-fell back to the label). A deposit
+fell back to the label). The Library sends none of them: where a route is
+given no `encoder`, the NODE determines all four — its model server, and
+the model there whose stated run loads the Codex's weights, each side its
+own — and where nothing it runs loads them it says so in plain words
+instead of asking (§7.4, *amended 2026-10-25*, RULE 2). A deposit
 collection's file (02 §2.9) takes `[deposit]`'s `encoder`, `api`,
 `embed_model` and `query_model` — the models, where `[deposit]` names
 none, from the URL, under the same refusal. `[deposit]` is checked at

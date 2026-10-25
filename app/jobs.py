@@ -455,9 +455,17 @@ def _create(args: dict[str, Any]) -> dict[str, Any]:
                                          api=args.get("api"),
                                          embed_model=args.get("embed_model"),
                                          query_model=args.get("query_model"),
-                                         name=args.get("name"))
-    return {"exit": 0, "collection_id": codex.collection_id, "name": held.stem,
-            "held": str(held), "cli": args.get("cli", "")}
+                                         name=args.get("name"),
+                                         embed=args.get("embed") or "off")
+    out = {"exit": 0, "collection_id": codex.collection_id, "name": held.stem,
+           "held": str(held), "cli": args.get("cli", "")}
+    # what the file takes (07 §7.8): the node's decision for a create from its
+    # own recipe (RULE 2, 2026-10-25) — written as `share fetch` writes a take
+    slices = args.get("slices") or []
+    if slices:
+        out["selection"] = louise._set_held_selection(
+            held, "all" if slices == "all" else tuple(str(s) for s in slices), ())
+    return out
 
 
 def _create_annotations(args: dict[str, Any]) -> dict[str, Any]:

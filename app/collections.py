@@ -868,6 +868,16 @@ def config_toml_path(name: str) -> Path:
     return _config_dir() / "collections" / f"{name}.toml"
 
 
+def recipe_path(plugin: str) -> Path:
+    """Where this node keeps its recipe for a plugin (06 §6.6; 07 §7.8,
+    amended 2026-10-25): `$CONFIG_DIR/recipes/<plugin>.toml`, desired state
+    an operator writes once. The Library's *new collection* names a plugin
+    and a local name, and the node creates it from this file (RULE 2): the
+    space, the work budget and the description are the creator's choices,
+    made on the command line or in this file, never in a dialog."""
+    return _config_dir() / "recipes" / f"{plugin}.toml"
+
+
 def collections_dir() -> Path:
     """`$CONFIG_DIR/collections` — the TOML files.
 

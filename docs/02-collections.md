@@ -1291,9 +1291,17 @@ and nothing serves it.
 - `space`: the encoder is the node's deposit default,
   `granite-embedding-107m-multilingual` unless `platform.toml` names
   another (07 §7.8), or the one `create` is given. The first deposit
-  collection on an encoder is given its space block once — a file, or a
-  Codex to copy it from. The first deposit
-  collection on an encoder runs `create`'s calibration; every later one
+  collection on an encoder takes its space block from what the operator
+  names — a Codex to copy (`--space-from`, `[deposit] space_from`) or a
+  space file (`--space`, `[deposit] space`) — and, where nothing is
+  named, from what the node holds (*amended 2026-10-25*, RULE 2: it was
+  "given its space block once"): a held text Codex whose
+  `space.encoder.weights` are the weights the deposit encoder's stated
+  run loads — verified against its run id, a model's name never
+  deciding — and with no query encoder of its own, copied whole as
+  `--space-from` copies it. With none of these, `create` says so and
+  creates nothing. One given a space file runs `create`'s calibration;
+  every later one
   copies that space block whole — encoder, engine, calibration,
   envelope, tolerance — because the calibration set does not depend on
   the corpus (03 §3.3) and the bytes would be identical. The encoder is
@@ -1380,6 +1388,11 @@ What it does **not** have:
     claim's end belongs to the target its uid's plugin prefix says. The
     version is inside `collection_id`, so the two collections of 2026-10-09
     keep version 7 and their bytes (09 §9.3).
+  - *Amended 2026-10-25* (RULE 2): the creator need not name them. The
+    node reads the targets from the claims — each end's plugin prefix
+    names one held collection of that plugin, never guessed between two
+    — and `from_snapshot` is each target's newest held snapshot, the one
+    `hold annotations update` re-checks against (07 §7.4).
 - `plugin` is `annotations`: the claims' uids are `annotations:<n>` and
   their relation types are `annotations:<type>`.
 - `origin.spec` is `{source_id: "annotations", nonce}`, the deposit rule

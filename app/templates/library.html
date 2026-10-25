@@ -292,11 +292,14 @@
    does not hold (its catalogue minus what it holds), with who serves each.
    Taking one is `share fetch`, queued for the worker (app/jobs.py
    SHARE_FETCH): the Codex and snapshots are pulled and the collection is
-   held with the slices and kinds chosen here; the members follow at the
-   worker's fetch beat. A yellow or red collection then asks for its
+   held whole — every slice, records and vectors, the latest snapshot, the
+   encoder the node decides (RULE 2; nothing of it is asked here, the take
+   dialog names a local name only); the members follow at the worker's
+   fetch beat. A yellow or red collection then asks for its
    acknowledgement before any member moves (invariant 9). A peer chooses
-   what it fetches; nothing is fetched that was not chosen (operator,
-   2026-10-20). `louise share offer` lists the same. #}
+   WHICH collections it takes; nothing is fetched that was not taken
+   (operator, 2026-10-20). `louise share offer` lists the same, and
+   `louise share fetch --slice/--kinds/--encoder` takes less or otherwise. #}
 {# a render without `offered` (a test's, a page that passes less) shows an
    empty offer — never an Undefined handed to tojson (München's gate,
    2026-10-20); the filter at each use, since a `set` in this block is not
@@ -344,70 +347,56 @@
 <div class="panel">
   <h2>Add a collection</h2>
   {# 07 §7.6: the web interface's new collection IS `hold collection
-     create --recipe FILE`, through its route (07 §7.4). It writes the Codex
-     and the collection file of 07 §7.8. #}
-  <div class="note">A collection is created from a <b>recipe</b>: a TOML with
-    every Codex field the plugin does not default — at least its
-    <code>[space]</code> and <code>[work]</code>, or a held collection to take
-    the space from (06 §6.6). This writes the Codex and the collection's file,
-    which holds no slice yet: nothing is fetched until you set
-    <code>slices = "all"</code> in it. See Help.</div>
+     create`, through its route (07 §7.4). RULE 2 (operator, 2026-10-20;
+     amended 2026-10-25): the user chooses the source and a local name —
+     and for annotations, the claims file — and nothing else. The node
+     decides the rest: the recipe is its own for the source
+     (`$CONFIG_DIR/recipes/<plugin>.toml`), the encoder is the model on its
+     server whose stated run loads the recipe's weights, the collection
+     takes every slice and embeds on demand; an annotations collection's
+     targets are the collections its claims' uids name, from their newest
+     snapshots. No server address, protocol, model name or Codex field is
+     asked here: those are the command line's (shown below). #}
+  <div class="note">Choose the source and a name on this node. The node decides the rest — its
+    recipe for the source, the model on its server that runs the recipe's encoder, every slice,
+    embedding on demand — and says what it decided, or what is missing. The command line below
+    changes any of it.</div>
   <div class="row">
-    <div><label>Plugin</label>
+    <div><label>Source</label>
       {# display names only — the internal id is minted into every document
          uid and can never change; 'embedded' currently means the wikivec
          pre-embedded Wikipedia dataset on every known deployment #}
-      <select id="nc_plugin" onchange="createKindChanged()">{% for p in plugins %}<option value="{{ p }}">{{ 'wikivec (pre-embedded Wikipedia)' if p == 'embedded' else p }}</option>{% endfor %}<option value="annotations">annotations (claims about a held collection)</option></select>
+      <select id="nc_plugin" onchange="createKindChanged()">{% for p in plugins %}<option value="{{ p }}">{{ 'wikivec (pre-embedded Wikipedia)' if p == 'embedded' else p }}</option>{% endfor %}<option value="annotations">annotations (claims about held collections)</option></select>
     </div>
+    <div><label>Name on this node (the only thing to choose)</label>
+      <input id="nc_name" placeholder="default: the source's name"></div>
   </div>
   {# 02 §2.10: the annotations type — no space, no encoder, no recipe: a
-     claims file about a held collection's records, checked against the
-     target snapshot before anything is written (`create annotations
-     --dry-run`), then created by the worker, which signs the first snapshot.
-     Shown in place of the recipe form when the type is chosen (2026-10-19). #}
+     claims file about held collections' records, checked against their
+     newest snapshots before anything is written (`create annotations
+     --dry-run`), then created by the worker, which signs the first snapshot. #}
   <div id="nc_ann" style="display:none">
     <div class="row">
-      <div><label>Name</label><input id="na_name" placeholder="gutenberg-book-editions"></div>
-      <div><label>Annotates (a held collection)</label>
-        <select id="na_target" onchange="annotationTargetChanged()">{% for t in annotatable %}<option value="{{ t.name }}" data-snapshot="{{ t.snapshot or '' }}">{{ t.name }}</option>{% endfor %}</select></div>
-      <div><label>From snapshot (the target snapshot the claims hold from)</label>
-        <input id="na_from" placeholder="2026-09"></div>
-      <div><label>Title (optional)</label><input id="na_title" placeholder="Book editions"></div>
-      <div><label>Summary (optional)</label><input id="na_summary" placeholder="one line on what the claims say"></div>
-      <div><label>Annotator (optional; default: the claims' one contributor)</label><input id="na_annotator"></div>
       <div><label>Claims file (JSON Lines, one claim per line)</label><input type="file" id="na_claims" accept=".jsonl,.json,.ndjson,application/json,text/plain"></div>
     </div>
-    <div class="note">The claims are checked against the target snapshot named: every claim's two records must be in it. <b>Check</b> counts them and writes nothing; <b>Create</b> runs the same check, then the worker writes the collection and signs its first snapshot.</div>
+    <div class="note">The node reads from the claims which held collections they are about (each
+      record's id names its source), checks every claim against each one's newest snapshot, titles
+      the collection after them and credits the claims' contributor. <b>Check</b> counts them and
+      writes nothing; <b>Create</b> runs the same check, then the worker writes the collection and
+      signs its first snapshot.</div>
     <div class="actions">
       <button onclick="checkAnnotations()">Check claims</button>
       <button class="primary" onclick="createAnnotations()">Create on this node</button>
     </div>
-    <pre class="cli">louise hold collection create annotations --annotates &lt;collection&gt; --from-snapshot &lt;id&gt; --claims FILE --name &lt;name&gt; [--title T] [--summary S] [--annotator A] [--dry-run]</pre>
+    <pre class="cli">louise hold collection create annotations --claims FILE --name &lt;name&gt; [--annotates &lt;collection&gt; --from-snapshot &lt;id&gt;] [--title T] [--summary S] [--annotator A] [--dry-run]</pre>
     <div id="na_result"></div>
   </div>
   <div id="nc_std">
-  <div class="row">
-    <div><label>Space from (optional)</label>
-      <input id="nc_space_from" placeholder="a held collection's name or id"></div>
-    {# a collection names its own encoder — there is no default one
-       (operator, 2026-09-18) — and the file it gets names this one #}
-    <div><label>Model server (this node's, filled in when it names one)</label>
-      <input id="nc_encoder" placeholder="http://nas:30437"></div>
-    {# the rest of the file's [encoder] (07 §7.8, amended 2026-10-09): a URL
-       that names no model (LocalAI, api vega) needs the model named here #}
-    <div><label>API</label>
-      <select id="nc_api"><option value="">openai</option><option>ollama</option><option>vega</option></select></div>
-    <div><label>Embed model (when the URL names none)</label>
-      <input id="nc_embed_model" placeholder="vega-medcpt-article"></div>
-    <div><label>Query model (optional)</label>
-      <input id="nc_query_model" placeholder="default: the embed model"></div>
-  </div>
-  <label>Recipe (TOML)</label>
-  <textarea id="nc_recipe" rows="10" style="width:100%" placeholder="[space]&#10;…&#10;&#10;[work]&#10;…"></textarea>
+  <div class="note" id="nc_plan"></div>
   <div class="actions">
     <button class="primary" onclick="createCollection()">Create on this node</button>
   </div>
-  <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE --encoder URL [--api A] [--embed-model M] [--query-model M] [--space-from &lt;collection&gt;]</pre>
+  <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE --name &lt;name&gt; [--encoder URL --api A --embed-model M --query-model M] [--space-from &lt;collection&gt;]</pre>
   <div id="nc_result"></div>
   </div>
 </div>
@@ -580,41 +569,33 @@ async function getJSON(url){
   const r=await fetch(url);const d=await r.json().catch(()=>({}));
   if(!r.ok)throw (d.detail||r.statusText);return d;
 }
-// the create form's encoder: this node's model server, when it names one
-(async()=>{
-  try{
-    const s=await getJSON('/api/encoders/suggest');
-    const enc=document.getElementById('nc_encoder'), api=document.getElementById('nc_api');
-    if(s.url&&enc&&!enc.value){enc.value=s.url; if(api) api.value=s.api;}
-    if(s.models&&s.models.length){
-      const list=document.createElement('datalist'); list.id='nc_models';
-      list.innerHTML=s.models.map(n=>`<option value="${esc(n)}">`).join('');
-      document.body.appendChild(list);
-      for(const id of ['nc_embed_model','nc_query_model']){const el=document.getElementById(id); if(el) el.setAttribute('list','nc_models');}
-    }
-  }catch(e){}
-})();
-// 07 §7.6: a new collection is `hold collection create --recipe FILE`,
-// through its route (07 §7.4) — the Codex and the collection file
+// RULE 2 (2026-10-25): a new collection is the source and a local name; the
+// node's own recipe for the source, the encoder, the slices and the embed
+// mode are the node's (POST /api/hold/collection/create with {plugin, name})
+const NODE_RECIPES={{ plugin_recipes|default({}, true)|tojson }};
+function explainCreate(){
+  const box=document.getElementById('nc_plan'); if(!box)return;
+  const plugin=document.getElementById('nc_plugin').value;
+  const r=NODE_RECIPES[plugin];
+  box.innerHTML=r
+    ? `The node creates it from its recipe for ${esc(plugin)} (<code>${esc(r)}</code>), with the model on its server that runs that recipe's encoder; the collection takes every slice and embeds on demand. If no model there runs it, nothing is created and the reason is said.`
+    : `This node has no recipe for ${esc(plugin)}: a new ${esc(plugin)} collection's encoder, work budget and description are chosen once on the command line below. A ${esc(plugin)} collection a peer offers is taken from "Offered by peers" with no recipe at all.`;
+}
 async function createCollection(){
   const plugin=document.getElementById('nc_plugin').value;
-  const recipe=document.getElementById('nc_recipe').value;
-  const space_from=document.getElementById('nc_space_from').value.trim()||null;
-  const encoder=document.getElementById('nc_encoder').value.trim();
-  const api=document.getElementById('nc_api').value||null;
-  const embed_model=document.getElementById('nc_embed_model').value.trim()||null;
-  const query_model=document.getElementById('nc_query_model').value.trim()||null;
+  const name=document.getElementById('nc_name').value.trim()||null;
   const box=document.getElementById('nc_result');
-  if(!recipe.trim()){toast('paste the recipe');return}
-  if(!encoder){toast('name the encoder: a collection names its own (this node names no model server)');return}
-  box.innerHTML='<div class="note">queued — the worker embeds the calibration set, then signs…</div>';
+  box.innerHTML='<div class="note">asking the node…</div>';
   try{
-    const q=await postJSON('/api/hold/collection/create',{plugin,recipe,space_from,encoder,api,embed_model,query_model});
-    const j=await waitForJob(q.id,s=>{box.innerHTML='<div class="note">'+esc(s)+'</div>'});
+    const q=await postJSON('/api/hold/collection/create',{plugin,name});
+    const head=q.decided?`<div class="note">${esc(q.decided)}.</div>`:'';
+    box.innerHTML=head+'<div class="note">queued — the worker embeds the calibration set, then signs…</div>';
+    const j=await waitForJob(q.id,s=>{box.innerHTML=head+'<div class="note">'+esc(s)+'</div>'});
     const d=j.result;
-    box.innerHTML=`<div class="note">Created <b>${esc(d.name)}</b>: <code>${esc(d.collection_id)}</code><br>
-      file <b>${esc(d.held)}</b> — it holds no slice yet: set <code>slices = "all"</code> there to fetch.</div>
+    box.innerHTML=head+`<div class="note">Created <b>${esc(d.name)}</b>: <code>${esc(d.collection_id)}</code><br>
+      file <b>${esc(d.held)}</b> — it takes every slice and embeds on demand.</div>
       <pre class="cli">${esc(d.cli)}</pre>`;
+    setTimeout(()=>location.reload(),3500);
   }catch(e){box.innerHTML='<div class="note" style="color:var(--err)">'+esc(e)+'</div>'}
 }
 // the annotations type (02 §2.10) has its own form: no recipe, no encoder
@@ -622,22 +603,16 @@ function createKindChanged(){
   const ann=document.getElementById('nc_plugin').value==='annotations';
   document.getElementById('nc_ann').style.display=ann?'':'none';
   document.getElementById('nc_std').style.display=ann?'none':'';
-  if(ann)annotationTargetChanged();
+  if(!ann)explainCreate();
 }
-function annotationTargetChanged(){
-  const sel=document.getElementById('na_target'), opt=sel.options[sel.selectedIndex];
-  const from=document.getElementById('na_from');
-  if(opt&&!from.dataset.edited)from.value=opt.dataset.snapshot||'';
-}
-document.getElementById('na_from').addEventListener('input',e=>{e.target.dataset.edited='1'});
-// the flags as query parameters and the file as the raw body: no multipart
+explainCreate();
+// the name as a query parameter and the file as the raw body: no multipart
 // (python-multipart is not a dependency of the platform; the bundle import
-// is sent the same way)
+// is sent the same way). The targets, their snapshots, the title, the
+// summary and the annotator are the node's (RULE 2, 2026-10-25)
 function annotationsRequest(dryRun){
   const q=new URLSearchParams();
-  for(const [k,id] of [['name','na_name'],['annotates','na_target'],['from_snapshot','na_from'],
-                       ['title','na_title'],['summary','na_summary'],['annotator','na_annotator']])
-    q.set(k,document.getElementById(id).value.trim());
+  q.set('name',document.getElementById('nc_name').value.trim());
   q.set('dry_run',dryRun?'true':'false');
   const file=document.getElementById('na_claims').files[0];
   if(!file){toast('choose the claims file');return null}
@@ -652,7 +627,9 @@ async function postClaims(req){
 }
 function previewHtml(p){
   const dl=o=>Object.entries(o||{}).map(([k,v])=>esc(k)+' '+esc(v)).join(', ')||'none';
-  return `${esc(p.claims)} claim(s) about ${esc(p.target_records_named)} record(s) of <b>${esc(p.target)}</b> as snapshot ${esc(p.from_snapshot)} holds them · annotator: ${esc(p.annotator||'?')} · types: ${dl(p.by_type)} · methods: ${dl(p.by_method)} · ${esc(p.parts)} part(s)`;
+  const ts=(p.targets&&p.targets.length?p.targets:[{target:p.target,from_snapshot:p.from_snapshot}])
+    .map(t=>`<b>${esc(t.target)}</b> as snapshot ${esc(t.from_snapshot)} holds them`).join(' and ');
+  return `${esc(p.claims)} claim(s) about ${esc(p.target_records_named)} record(s) of ${ts} · annotator: ${esc(p.annotator||'?')} · types: ${dl(p.by_type)} · methods: ${dl(p.by_method)} · ${esc(p.parts)} part(s)`;
 }
 async function checkAnnotations(){
   const req=annotationsRequest(true); if(!req)return;
@@ -664,7 +641,7 @@ async function checkAnnotations(){
 }
 async function createAnnotations(){
   const req=annotationsRequest(false); if(!req)return;
-  if(!document.getElementById('na_name').value.trim()){toast('name the collection');return}
+  if(!document.getElementById('nc_name').value.trim()){toast('name the collection');return}
   const box=document.getElementById('na_result');
   box.innerHTML='<div class="note">checking the claims, then queued for the worker…</div>';
   try{const q=await postClaims(req);

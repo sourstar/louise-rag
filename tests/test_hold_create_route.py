@@ -124,9 +124,11 @@ def test_the_file_names_both_models(client):
 
 def test_the_librarys_form_is_this_route(client):
     """07 §7.6: the web interface's new collection is `hold collection
-    create --recipe FILE`, and the page shows the command line it runs."""
+    create`, and the page shows the command line it runs. RULE 2
+    (2026-10-25): it asks a local name, never a recipe — the node's own
+    recipe for the plugin is used."""
     page = client.get("/admin/library").text
-    assert ROUTE in page and 'id="nc_recipe"' in page
+    assert ROUTE in page and 'id="nc_name"' in page and 'id="nc_recipe"' not in page
     assert "louise hold collection create" in page
     assert "/admin/library/new/create" not in page, \
         "the old route is gone: its files named no Codex"
@@ -204,10 +206,26 @@ def test_a_vega_create_names_api_and_models_and_calibrates_with_them(client, mon
     assert collections_mod.by_name("gutenberg").embed.api == "vega"
 
 
-def test_the_librarys_form_carries_the_model_keys(client):
+def test_the_librarys_dialogs_ask_for_no_server_protocol_model_or_codex_field(client):
+    """RULE 2 (CLAUDE.md; amended 2026-10-25): "A dialog that asks for a
+    server address, a protocol, a model name or a Codex field is a defect."
+    The create form named the model server, the api, both models and took a
+    recipe; the annotations form named its target, the target snapshot, the
+    title, the summary and the annotator. The Library asks a local name, the
+    source, and the claims file — and sends nothing else; the command line
+    shown beside each keeps every flag."""
+    import re
     page = client.get("/admin/library").text
-    assert 'id="nc_embed_model"' in page and 'id="nc_query_model"' in page
-    assert 'id="nc_api"' in page and "embed_model,query_model" in page
+    ids = set(re.findall(r'<(?:input|select|textarea)\b[^>]*\bid="([^"]+)"', page))
+    for forbidden in ("encoder", "api", "model", "recipe", "space_from", "annotates", "target",
+                      "from", "title", "summary", "annotator"):
+        assert not [i for i in ids if re.search(rf"(^|_){forbidden}(_|$)", i)], (forbidden, ids)
+    assert {"nc_plugin", "nc_name", "na_claims"} <= ids
+    for key in ("embed_model", "query_model", "encoder:", "space_from", "'annotates'", "'from_snapshot'",
+                "'title'", "'summary'", "'annotator'"):
+        assert key not in page, f"the page sends {key}"
+    assert "postJSON('/api/hold/collection/create',{plugin,name})" in page
+    assert "louise hold collection create &lt;plugin&gt; --recipe FILE" in page, "the CLI keeps them"
 
 
 # ---- the annotations type (02 §2.10; 07 §7.4, amended 2026-10-19) ----
