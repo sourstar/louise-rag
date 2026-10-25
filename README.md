@@ -37,7 +37,7 @@ by passage. No central server, no blind trust: *don't trust, verify.*
 |---|---|---|
 | a collection is one well-defined thing | the **Codex**: a signed JSON file fixing origin, parser, chunking, the encoder's weights and engine, licence, cadence; `collection_id` is its hash, and `space_id` the hash of what decides the vectors — two spaces are never mixed | [02](docs/02-collections.md), [09 §9.3](docs/09-formats.md) |
 | what you hold is what was published | records are cut into **parts** (zstd JSON Lines) that never move once closed; each **snapshot**, at the collection's cadence, lists every part's hash and is signed (Ed25519); each record carries the hash of the origin bytes it was parsed from, so it can be re-fetched and reproduced | [02 §2.2–2.3](docs/02-collections.md), [06 §6.4](docs/06-plugins.md) |
-| vectors anyone can check | an encoder runs in its vendor's bitwise-reproducible mode; a **calibration gate** proves an engine reproduces the Codex's reference vectors before it may write one; **VeGa**, a wrapper in front of the model runner, issues a receipt for every answer, checked before the vector is stored | [03](docs/03-checking.md) |
+| vectors anyone can check | an encoder runs in its vendor's bitwise-reproducible mode; a **calibration gate** proves an engine reproduces the Codex's reference vectors before it may write one; **VeGa**, a wrapper between the model runner and each backend, issues a receipt for every answer, checked before the vector is stored (below) | [03](docs/03-checking.md) |
 | no central server | peers find each other on the BitTorrent mainline DHT (keyed by collection) and move parts as BitTorrent v2 torrents; who embeds which part is a rendezvous function every peer computes the same way, so no node is in charge | [04](docs/04-sharing.md) |
 | trust from reproduction, not votes | a bundle of vectors carries no text; importing it needs the same source bytes, passes a verification ladder and a sampled re-embed, and every vector is re-checked when first used; attestations say who reproduced what | [03 §3.5–3.6](docs/03-checking.md), [08](docs/08-adversarial.md) |
 | answers that quote | a text index (tantivy, BM25, per language) and a vector index (LanceDB) per collection, fused by reciprocal rank — never by comparing scores — then reranked; reference lookups (genes, variants) are pinned facts, never ranked; every answer cites its passages | [05](docs/05-ask.md) |
@@ -53,6 +53,63 @@ from what Louise is to the byte formats. `docs/notes/` is the engineering
 record behind them (measurements, postmortems, design history);
 [`docs/notes/STATUS.md`](docs/notes/STATUS.md) is where things stand, and
 [`docs/HANDOVER.md`](docs/HANDOVER.md) is where a new maintainer starts.
+
+## Models: LocalAI and VeGa
+
+Louise runs no model. Every model it uses is an HTTP endpoint on the
+node's model server — on the reference node **LocalAI**, which loads,
+keeps and evicts the models and alone manages the card's memory. Chat,
+translation and reranking go to it directly through its OpenAI-compatible
+API. Embeddings do too, but an embedding becomes a stored vector, and a
+stored vector must be provable. So every encoder is served through
+**VeGa**.
+
+**VeGa, the Vector Gate, makes the provenance of every vector provable.**
+It is two pieces beside LocalAI:
+
+```
+Louise ── POST /v1/embeddings (model vega-<name>, each input tagged) ──► LocalAI
+  │                                                                         │ gRPC
+  │                                                     VeGa wrapper (a LocalAI backend, vega-<backend>)
+  │                                                       │ strips the tag; the real backend is its child
+  │                                                       ▼
+  │                                                     llama.cpp SYCL / ROCm / CUDA, OpenVINO, …
+  │                                     receipt ◄─────────┘ held BEFORE the vector goes back
+  │                                        │
+  └── GET /vega/receipts?ids=… ──────────► VeGa service (receipts and run descriptions)
+```
+
+- **The wrapper** is installed in LocalAI as a backend (`vega-<backend>`)
+  and launches the real backend as its own child. It therefore knows the
+  run from what it launched, never from what a configuration declares:
+  the digest of the backend's installed files, the weights (hashed while
+  they load), the exact arguments, load options and environment, the
+  device and its driver. That is the **run identity**. For every answer
+  it issues a **receipt** binding that run to the digest of the input the
+  backend received and of the vector it returned. The service must hold
+  the receipt before the vector is released.
+- **Louise** sends two requests: the embedding to LocalAI, then the
+  receipts to VeGa. It writes a vector only when every input has its
+  receipt, the digests match what was sent and what came back, and the
+  run has passed the collection's calibration gate. A missing receipt
+  defers the work. A mismatched one refuses the answer. A query vector at
+  search time needs its receipt too.
+- **LocalAI stays outside the trust path.** It decides when an answer
+  comes, never what it says. A runner that altered an input or a vector,
+  or reached a backend around the wrapper, is caught by the writer.
+- **Determinism is part of the run.** The wrapper states no run whose
+  model environment lacks its vendor's bitwise-reproducible mode
+  (`GGML_SYCL_ENABLE_DNN=0` on Intel, `ROCBLAS_DEFAULT_ATOMICS_MODE=0` on
+  AMD; one request at a time). Reloading with another flag, upgrading the
+  backend or updating the driver is a new run, and says so on its next
+  receipt.
+
+A collection's file names its encoder (`[encoder]`, `api = "vega"`) and
+there is no default. The Library finds the model itself: it asks the
+server's candidate models for their stated run and takes the one whose
+weights are the Codex's. Specification: [03 §3.3](docs/03-checking.md),
+[09 §9.12](docs/09-formats.md); code: `app/vega/`, `deploy/vega/`,
+`deploy/localai/`.
 
 ## What a node does
 
@@ -140,7 +197,7 @@ louise hold records fetch gutenberg --profile demo --dry-run
 louise hold records fetch gutenberg --profile demo
 ```
 
-**Manually** (the original path, still fine): rsync the Gutenberg generated
+**Manually**: rsync the Gutenberg generated
 collection yourself and mount it read-only as `/corpus`:
 
 ```bash
@@ -160,7 +217,7 @@ away from it.
 ## Configuration, in three tiers
 
 - **Tier 1 — env** (identity/infrastructure, restart to change): paths, ports,
-  `CHAT_URL` (the chat model; `OLLAMA_URL` is its old name, still read), `CHAT_MODEL`,
+  `CHAT_URL` (the chat model), `CHAT_MODEL`,
   `TRANSLATE_URL` (the translation model; unset, the chat model translates),
   `RERANK_URL` as the fallback behind each collection's own reranker, stage
   version bumps (`FTS_VERSION`…), `ADMIN_TOKEN_FILE` (a path; secrets are
@@ -236,9 +293,8 @@ file with another `LOUISE_PROJECT` and other ports. The header of
    token as a file (`ADMIN_TOKEN_FILE`).
 4. Open `http://<nas>:30042` → `/ask`.
 
-(The root `docker-compose.yaml` is the earlier single-collection app, kept
-for its volumes; new installs use `deploy/truenas-app.yaml` or
-`deploy/docker/`.)
+Installs use `deploy/truenas-app.yaml` or `deploy/docker/`; the root
+`docker-compose.yaml` is not a node install.
 
 `/data` must be a **local** filesystem (SQLite WAL + LanceDB do not tolerate
 SMB/NFS); `/corpus` read-only over NFS is fine. Ask is open until the first user
@@ -247,8 +303,9 @@ exists — keep the app on LAN/Tailscale; don't tunnel it to the internet.
 ## Model endpoints
 
 - **Chat**: `CHAT_URL` + `CHAT_MODEL` (OpenAI-compatible or Ollama-style).
-- **Embeddings**: each collection's own encoder — the collection file's
-  `[encoder]` names it, and there is no default one. Each encoder runs in
+- **Embeddings**: each collection's own encoder through VeGa (above) — the
+  collection file's `[encoder]` names it, and there is no default one;
+  `VEGA_URL` is where the receipts are read. Each encoder runs in
   its vendor's bitwise-reproducible mode, one request at a time
   (`ROCBLAS_DEFAULT_ATOMICS_MODE=0` on AMD, `GGML_SYCL_ENABLE_DNN=0` on
   Intel; `-np 1`), set in the model's YAML (invariant 12,
