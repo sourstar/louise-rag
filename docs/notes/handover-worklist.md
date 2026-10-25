@@ -73,7 +73,7 @@ through with the commit that closes them.
 ## 6. Decisions for the operator
 
 - ~~The HTTP API~~ — decided: A, build the generic route (2026-10-25).
-- Retention: "everything held is verifiable", what is kept following the origin (proposed A, 2026-10-25; draft before code).
+- Retention: "everything held is verifiable", what is kept following the origin (proposed A, 2026-10-25; draft: [retention-amendment-draft.md](retention-amendment-draft.md)).
 - pubmed's OtherAbstract records ([pubmed-other-abstracts.md](pubmed-other-abstracts.md)).
 - A periodic snapshot of the origin mirror's dataset (STATUS).
 - `normattiva-archive`: create after timing one year of the export.
