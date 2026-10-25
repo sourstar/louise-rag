@@ -18,10 +18,23 @@ and what is deliberately not being built. Read this before planning work.
   deployed). The entity boost is removed and an identifier restricts only
   as the reader's `keys` filter (05 §5.2 amended; deploys after tonight's
   measurement).
-- **Open defects:** the reranker's HTTP 500s under load (cause not found);
+- **Open defects:** the node passes `ADMIN_TOKEN` as an env VALUE to the
+  worker and web (invariant 8; deploy/truenas-app.yaml takes
+  `ADMIN_TOKEN_FILE`, the node's app is not yet on it), and where the node
+  key's offline copy is kept is recorded nowhere (the operator states it);
+  the reranker's HTTP 500s under load (cause not found);
   no check compares the manifest's counts and text index with the records
   (the 127-part gap: a reindex by day 2026-10-26).
 - **Parked:** arXiv and the knowledge-base pipelines.
+- **Counted on the node (2026-10-25):** no build database holds a record
+  skipped for having no date (gutenberg, normattiva, pubmed, wikipedia-v8
+  and the retired ones). A sample of 120,000 pubmed baseline citations
+  holds none without DateRevised or DateCompleted. gutenberg's one build
+  skip is book 673, whose encoding the origin declares broken. The census
+  of the mirror's 79,770 `pg<N>.rdf` files is running (book 10 has none).
+  gutenberg holds no superseded part versions. LocalAI's watchdog kills a
+  model busy for more than 10 min (`busy_timeout`); its idle timeout is
+  disabled. The ZFS ARC is capped at 16 GB.
 
 **The specification moved.** `docs/README.md` and the nine numbered
 documents it lists are now the design; `architecture-v2.md` and its §17
