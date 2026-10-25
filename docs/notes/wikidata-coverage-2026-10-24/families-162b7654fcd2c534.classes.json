@@ -1,0 +1,3814 @@
+{
+ "map": "sha256:162b7654fcd2c5348e26fbe8530be0b889440159304b69b9ecf2fee297e6cf19",
+ "dump": "wikidata-20261012-all.json.bz2",
+ "explained": [
+  {
+   "class": 515,
+   "label": "city",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      515,
+      "city"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 15284,
+   "label": "municipality",
+   "family": "place",
+   "paths": {
+    "organization": [
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      2659904,
+      "government organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ],
+    "place": [
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      1048835,
+      "political territorial entity"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 747074,
+   "label": "comune of Italy",
+   "family": "place",
+   "paths": {
+    "organization": [
+     [
+      747074,
+      "comune of Italy"
+     ],
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      2659904,
+      "government organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ],
+    "place": [
+     [
+      747074,
+      "comune of Italy"
+     ],
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      1048835,
+      "political territorial entity"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 484170,
+   "label": "commune of France",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      484170,
+      "commune of France"
+     ],
+     [
+      192611,
+      "electoral unit"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ],
+    "organization": [
+     [
+      484170,
+      "commune of France"
+     ],
+     [
+      3266850,
+      "commune"
+     ],
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      2659904,
+      "government organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 262166,
+   "label": "municipality in Germany",
+   "family": "place",
+   "paths": {
+    "organization": [
+     [
+      262166,
+      "municipality in Germany"
+     ],
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      2659904,
+      "government organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ],
+    "place": [
+     [
+      262166,
+      "municipality in Germany"
+     ],
+     [
+      15284,
+      "municipality"
+     ],
+     [
+      1048835,
+      "political territorial entity"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 16970,
+   "label": "church building",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      16970,
+      "church building"
+     ],
+     [
+      24398318,
+      "religious building"
+     ],
+     [
+      41176,
+      "building"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 2977,
+   "label": "cathedral",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      2977,
+      "cathedral"
+     ],
+     [
+      16970,
+      "church building"
+     ],
+     [
+      24398318,
+      "religious building"
+     ],
+     [
+      41176,
+      "building"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 23413,
+   "label": "castle",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      23413,
+      "castle"
+     ],
+     [
+      57821,
+      "fortification"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "place": [
+     [
+      23413,
+      "castle"
+     ],
+     [
+      57821,
+      "fortification"
+     ],
+     [
+      97095925,
+      "military area"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 33506,
+   "label": "museum",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      33506,
+      "museum"
+     ],
+     [
+      178706,
+      "institution"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 79007,
+   "label": "street",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      79007,
+      "street"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 39614,
+   "label": "cemetery",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 8502,
+   "label": "mountain",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      8502,
+      "mountain"
+     ],
+     [
+      106589819,
+      "elevation"
+     ],
+     [
+      271669,
+      "landform"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 4022,
+   "label": "river",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      4022,
+      "river"
+     ],
+     [
+      355304,
+      "watercourse"
+     ],
+     [
+      15324,
+      "body of water"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 23397,
+   "label": "lake",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      23397,
+      "lake"
+     ],
+     [
+      271669,
+      "landform"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 23442,
+   "label": "island",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      23442,
+      "island"
+     ],
+     [
+      271669,
+      "landform"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 46169,
+   "label": "national park",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      46169,
+      "national park"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 7604686,
+   "label": "UK Statutory Instrument",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      7604686,
+      "UK Statutory Instrument"
+     ],
+     [
+      100532772,
+      "statutory instrument"
+     ],
+     [
+      2795484,
+      "implementing regulation"
+     ],
+     [
+      694045,
+      "delegated legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      21281405,
+      "Wikidata internal entity"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      7604686,
+      "UK Statutory Instrument"
+     ],
+     [
+      100532772,
+      "statutory instrument"
+     ],
+     [
+      2795484,
+      "implementing regulation"
+     ],
+     [
+      694045,
+      "delegated legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      15138389,
+      "Wikimedia article page"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 1520223,
+   "label": "constitutional republic",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 3305213,
+   "label": "painting",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      3305213,
+      "painting"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 11424,
+   "label": "film",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      11424,
+      "film"
+     ],
+     [
+      2431196,
+      "audiovisual work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 3914,
+   "label": "school",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      3914,
+      "school"
+     ],
+     [
+      5341295,
+      "educational organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 27686,
+   "label": "hotel",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      27686,
+      "hotel"
+     ],
+     [
+      6881511,
+      "enterprise"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ],
+    "built": [
+     [
+      27686,
+      "hotel"
+     ],
+     [
+      655686,
+      "commercial building"
+     ],
+     [
+      41176,
+      "building"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 3918,
+   "label": "university",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      3918,
+      "university"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 4830453,
+   "label": "business",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      4830453,
+      "business"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 178561,
+   "label": "battle",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      178561,
+      "battle"
+     ],
+     [
+      645883,
+      "military operation"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 198,
+   "label": "war",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      198,
+      "war"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 40231,
+   "label": "public election",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      40231,
+      "public election"
+     ],
+     [
+      841654,
+      "competition"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 3937,
+   "label": "supernova",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      3937,
+      "supernova"
+     ],
+     [
+      179057,
+      "explosion"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 21014462,
+   "label": "cell line",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      21014462,
+      "cell line"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 4167836,
+   "label": "Wikimedia category",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      4167836,
+      "Wikimedia category"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      4167836,
+      "Wikimedia category"
+     ],
+     [
+      118555179,
+      "MediaWiki non-main namespace page"
+     ],
+     [
+      15474042,
+      "MediaWiki page"
+     ],
+     [
+      36774,
+      "web page"
+     ],
+     [
+      111955382,
+      "manifestation"
+     ],
+     [
+      141523833,
+      "endeavour"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 6256,
+   "label": "country",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      6256,
+      "country"
+     ],
+     [
+      1048835,
+      "political territorial entity"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 3624078,
+   "label": "sovereign state",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      3624078,
+      "sovereign state"
+     ],
+     [
+      6256,
+      "country"
+     ],
+     [
+      1048835,
+      "political territorial entity"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ],
+    "organization": [
+     [
+      3624078,
+      "sovereign state"
+     ],
+     [
+      7275,
+      "state"
+     ],
+     [
+      96196009,
+      "former or current state"
+     ],
+     [
+      1063239,
+      "polity"
+     ],
+     [
+      7210356,
+      "political organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 3331189,
+   "label": "version, edition or translation",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 47461344,
+   "label": "written work",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 49848,
+   "label": "document",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 100532807,
+   "label": "Irish Statutory Instrument",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      100532807,
+      "Irish Statutory Instrument"
+     ],
+     [
+      100532772,
+      "statutory instrument"
+     ],
+     [
+      2795484,
+      "implementing regulation"
+     ],
+     [
+      694045,
+      "delegated legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      21281405,
+      "Wikidata internal entity"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      100532807,
+      "Irish Statutory Instrument"
+     ],
+     [
+      100532772,
+      "statutory instrument"
+     ],
+     [
+      2795484,
+      "implementing regulation"
+     ],
+     [
+      694045,
+      "delegated legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      15138389,
+      "Wikimedia article page"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 105774620,
+   "label": "Public General Act of the Parliament of the United Kingdom",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      105774620,
+      "Public General Act of the Parliament of the United Kingdom"
+     ],
+     [
+      4677783,
+      "Act of the Parliament of the United Kingdom"
+     ],
+     [
+      1076579,
+      "act of parliament"
+     ],
+     [
+      7243147,
+      "primary legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      21281405,
+      "Wikidata internal entity"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      105774620,
+      "Public General Act of the Parliament of the United Kingdom"
+     ],
+     [
+      4677783,
+      "Act of the Parliament of the United Kingdom"
+     ],
+     [
+      1076579,
+      "act of parliament"
+     ],
+     [
+      7243147,
+      "primary legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      15138389,
+      "Wikimedia article page"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 1076579,
+   "label": "act of parliament",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      1076579,
+      "act of parliament"
+     ],
+     [
+      7243147,
+      "primary legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      21281405,
+      "Wikidata internal entity"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      1076579,
+      "act of parliament"
+     ],
+     [
+      7243147,
+      "primary legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      15138389,
+      "Wikimedia article page"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 1298239,
+   "label": "executive order",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      1298239,
+      "executive order"
+     ],
+     [
+      694045,
+      "delegated legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      21281405,
+      "Wikidata internal entity"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      1298239,
+      "executive order"
+     ],
+     [
+      694045,
+      "delegated legislation"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      15138389,
+      "Wikimedia article page"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 6453643,
+   "label": "decree-law",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      6453643,
+      "decree-law"
+     ],
+     [
+      2571972,
+      "decree"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      21281405,
+      "Wikidata internal entity"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      6453643,
+      "decree-law"
+     ],
+     [
+      2571972,
+      "decree"
+     ],
+     [
+      49371,
+      "legislation"
+     ],
+     [
+      91615393,
+      "Wikidata item that needs to be split"
+     ],
+     [
+      16222597,
+      "Wikidata item"
+     ],
+     [
+      15138389,
+      "Wikimedia article page"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 18340514,
+   "label": "events in a specific year or time period",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      18340514,
+      "events in a specific year or time period"
+     ],
+     [
+      18340550,
+      "Wikimedia timeline"
+     ],
+     [
+      13406463,
+      "Wikimedia list article"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      18340514,
+      "events in a specific year or time period"
+     ],
+     [
+      185363,
+      "chronicle"
+     ],
+     [
+      7725634,
+      "literary work"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 3024240,
+   "label": "historical country",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      3024240,
+      "historical country"
+     ],
+     [
+      19832712,
+      "historical administrative division"
+     ],
+     [
+      56061,
+      "administrative territorial entity"
+     ]
+    ],
+    "organization": [
+     [
+      3024240,
+      "historical country"
+     ],
+     [
+      96196009,
+      "former or current state"
+     ],
+     [
+      1063239,
+      "polity"
+     ],
+     [
+      7210356,
+      "political organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 2668072,
+   "label": "collection",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 18593264,
+   "label": "item of collection or exhibition",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 2342494,
+   "label": "collectable",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 30612,
+   "label": "clinical trial",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 101352,
+   "label": "family name",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 13442814,
+   "label": "scholarly article",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      13442814,
+      "scholarly article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 18918145,
+   "label": "academic journal article",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      18918145,
+      "academic journal article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      18918145,
+      "academic journal article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 580922,
+   "label": "preprint",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      580922,
+      "preprint"
+     ],
+     [
+      1347686,
+      "eprint"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      580922,
+      "preprint"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 20136634,
+   "label": "Wikipedia overview article",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      20136634,
+      "Wikipedia overview article"
+     ],
+     [
+      7318358,
+      "review article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      20136634,
+      "Wikipedia overview article"
+     ],
+     [
+      7318358,
+      "review article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 10885494,
+   "label": "academic conference paper",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      10885494,
+      "academic conference paper"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      10885494,
+      "academic conference paper"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 1228945,
+   "label": "working paper",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      1228945,
+      "working paper"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      1228945,
+      "working paper"
+     ],
+     [
+      580922,
+      "preprint"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 15706459,
+   "label": "research article",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      15706459,
+      "research article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      15706459,
+      "research article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 107244961,
+   "label": "women in a geographic region",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      107244961,
+      "women in a geographic region"
+     ],
+     [
+      107243694,
+      "female topic"
+     ],
+     [
+      134883751,
+      "Wikipedia social group topic"
+     ],
+     [
+      20136634,
+      "Wikipedia overview article"
+     ],
+     [
+      7318358,
+      "review article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      107244961,
+      "women in a geographic region"
+     ],
+     [
+      107243694,
+      "female topic"
+     ],
+     [
+      134883751,
+      "Wikipedia social group topic"
+     ],
+     [
+      20136634,
+      "Wikipedia overview article"
+     ],
+     [
+      7318358,
+      "review article"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 110716513,
+   "label": "scholarly letter/reply",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      110716513,
+      "scholarly letter/reply"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      110716513,
+      "scholarly letter/reply"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 116740071,
+   "label": "Reproducibility Report",
+   "family": "scholarly",
+   "paths": {
+    "scholarly": [
+     [
+      116740071,
+      "Reproducibility Report"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ]
+    ],
+    "work": [
+     [
+      116740071,
+      "Reproducibility Report"
+     ],
+     [
+      13442814,
+      "scholarly article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 839954,
+   "label": "archaeological site",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      839954,
+      "archaeological site"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 575759,
+   "label": "war memorial",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      575759,
+      "war memorial"
+     ],
+     [
+      4989906,
+      "monument"
+     ]
+    ],
+    "built": [
+     [
+      575759,
+      "war memorial"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "work": [
+     [
+      575759,
+      "war memorial"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 2341654,
+   "label": "stone setting",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      2341654,
+      "stone setting"
+     ],
+     [
+      3395377,
+      "ancient monument"
+     ],
+     [
+      839954,
+      "archaeological site"
+     ]
+    ],
+    "built": [
+     [
+      2341654,
+      "stone setting"
+     ],
+     [
+      3395377,
+      "ancient monument"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "work": [
+     [
+      2341654,
+      "stone setting"
+     ],
+     [
+      3395377,
+      "ancient monument"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 26703203,
+   "label": "Stolperstein",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      26703203,
+      "Stolperstein"
+     ],
+     [
+      1792363,
+      "artistic monument"
+     ],
+     [
+      358,
+      "heritage site"
+     ]
+    ],
+    "built": [
+     [
+      26703203,
+      "Stolperstein"
+     ],
+     [
+      112776888,
+      "memorable paving"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "work": [
+     [
+      26703203,
+      "Stolperstein"
+     ],
+     [
+      721747,
+      "commemorative plaque"
+     ],
+     [
+      4364339,
+      "plaque"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 22969563,
+   "label": "Bodendenkmal",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      22969563,
+      "Bodendenkmal"
+     ],
+     [
+      12649079,
+      "archaeological monument"
+     ],
+     [
+      839954,
+      "archaeological site"
+     ]
+    ],
+    "built": [
+     [
+      22969563,
+      "Bodendenkmal"
+     ],
+     [
+      11691318,
+      "Kulturdenkmal"
+     ],
+     [
+      811165,
+      "architectural heritage monument"
+     ],
+     [
+      2319498,
+      "architectural landmark"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 4989906,
+   "label": "monument",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      4989906,
+      "monument"
+     ]
+    ],
+    "built": [
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "work": [
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 1516079,
+   "label": "cultural heritage ensemble",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      1516079,
+      "cultural heritage ensemble"
+     ],
+     [
+      358,
+      "heritage site"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 2309609,
+   "label": "wayside cross",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      2309609,
+      "wayside cross"
+     ],
+     [
+      3370053,
+      "small monument"
+     ],
+     [
+      4989906,
+      "monument"
+     ]
+    ],
+    "built": [
+     [
+      2309609,
+      "wayside cross"
+     ],
+     [
+      3370053,
+      "small monument"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "work": [
+     [
+      2309609,
+      "wayside cross"
+     ],
+     [
+      3370053,
+      "small monument"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 852190,
+   "label": "shipwreck",
+   "family": "heritage",
+   "paths": {
+    "heritage": [
+     [
+      852190,
+      "shipwreck"
+     ],
+     [
+      839954,
+      "archaeological site"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 173387,
+   "label": "grave",
+   "family": "heritage",
+   "paths": {
+    "built": [
+     [
+      173387,
+      "grave"
+     ],
+     [
+      6023295,
+      "funerary structure"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "heritage": [
+     [
+      173387,
+      "grave"
+     ],
+     [
+      5003624,
+      "memorial"
+     ],
+     [
+      4989906,
+      "monument"
+     ]
+    ],
+    "work": [
+     [
+      173387,
+      "grave"
+     ],
+     [
+      5003624,
+      "memorial"
+     ],
+     [
+      4989906,
+      "monument"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 32815,
+   "label": "mosque",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      32815,
+      "mosque"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "organization": [
+     [
+      32815,
+      "mosque"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 1076486,
+   "label": "sports venue",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      1076486,
+      "sports venue"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 61443690,
+   "label": "branch post office",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      61443690,
+      "branch post office"
+     ],
+     [
+      35054,
+      "post office"
+     ],
+     [
+      41176,
+      "building"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "organization": [
+     [
+      61443690,
+      "branch post office"
+     ],
+     [
+      35054,
+      "post office"
+     ],
+     [
+      1880737,
+      "branch office"
+     ],
+     [
+      334453,
+      "division"
+     ],
+     [
+      9261468,
+      "organizational subdivision"
+     ],
+     [
+      62079110,
+      "subsidiary organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 34442,
+   "label": "road",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      34442,
+      "road"
+     ],
+     [
+      123414165,
+      "road or street"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 12323,
+   "label": "dam",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      12323,
+      "dam"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 128302279,
+   "label": "gas station",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      128302279,
+      "gas station"
+     ],
+     [
+      205495,
+      "filling station"
+     ],
+     [
+      655686,
+      "commercial building"
+     ],
+     [
+      41176,
+      "building"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 41253,
+   "label": "movie theater",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      41253,
+      "movie theater"
+     ],
+     [
+      107123630,
+      "civic structure"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ],
+    "organization": [
+     [
+      41253,
+      "movie theater"
+     ],
+     [
+      4830453,
+      "business"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 820477,
+   "label": "mine",
+   "family": "built",
+   "paths": {
+    "built": [
+     [
+      820477,
+      "mine"
+     ],
+     [
+      12146012,
+      "underground structure"
+     ],
+     [
+      811979,
+      "built structure"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 27020041,
+   "label": "sports season",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      27020041,
+      "sports season"
+     ],
+     [
+      13406554,
+      "sports competition"
+     ],
+     [
+      841654,
+      "competition"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 57733494,
+   "label": "badminton event",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      57733494,
+      "badminton event"
+     ],
+     [
+      16510064,
+      "sporting event"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 18431960,
+   "label": "basketball game",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      18431960,
+      "basketball game"
+     ],
+     [
+      13406554,
+      "sports competition"
+     ],
+     [
+      841654,
+      "competition"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 26887310,
+   "label": "association football team season",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      26887310,
+      "association football team season"
+     ],
+     [
+      1539532,
+      "sports season of a sports club"
+     ],
+     [
+      27020041,
+      "sports season"
+     ],
+     [
+      13406554,
+      "sports competition"
+     ],
+     [
+      841654,
+      "competition"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 16510064,
+   "label": "sporting event",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      16510064,
+      "sporting event"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 43099500,
+   "label": "performing arts production",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      43099500,
+      "performing arts production"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ],
+    "work": [
+     [
+      43099500,
+      "performing arts production"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 27927857,
+   "label": "baseball game",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      27927857,
+      "baseball game"
+     ],
+     [
+      118496986,
+      "sports match"
+     ],
+     [
+      16510064,
+      "sporting event"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 46190676,
+   "label": "tennis event",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      46190676,
+      "tennis event"
+     ],
+     [
+      16510064,
+      "sporting event"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 26895936,
+   "label": "American football team season",
+   "family": "event",
+   "paths": {
+    "event": [
+     [
+      26895936,
+      "American football team season"
+     ],
+     [
+      1539532,
+      "sports season of a sports club"
+     ],
+     [
+      27020041,
+      "sports season"
+     ],
+     [
+      13406554,
+      "sports competition"
+     ],
+     [
+      841654,
+      "competition"
+     ],
+     [
+      1656682,
+      "planned event"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 5,
+   "label": "human",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      5,
+      "human"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 2345820,
+   "label": "stillborn child",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      2345820,
+      "stillborn child"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 26513,
+   "label": "human fetus",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      26513,
+      "human fetus"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 11598453,
+   "label": "kumāra",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      11598453,
+      "kumāra"
+     ],
+     [
+      7569,
+      "child"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 4676846,
+   "label": "acting",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      4676846,
+      "acting"
+     ],
+     [
+      29863201,
+      "substitute"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 117463454,
+   "label": "miscarried child",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      117463454,
+      "miscarried child"
+     ],
+     [
+      26513,
+      "human fetus"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 1309494,
+   "label": "substitute",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      1309494,
+      "substitute"
+     ],
+     [
+      29863201,
+      "substitute"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 1020994,
+   "label": "citizen",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      1020994,
+      "citizen"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 63177820,
+   "label": "unborn child",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      63177820,
+      "unborn child"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 258146,
+   "label": "feral child",
+   "family": "person",
+   "paths": {
+    "person": [
+     [
+      258146,
+      "feral child"
+     ],
+     [
+      7569,
+      "child"
+     ],
+     [
+      5,
+      "human"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 13100073,
+   "label": "village of the People's Republic of China",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      13100073,
+      "village of the People's Republic of China"
+     ],
+     [
+      16480895,
+      "hamlet"
+     ],
+     [
+      486972,
+      "human settlement"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 486972,
+   "label": "human settlement",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      486972,
+      "human settlement"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 54050,
+   "label": "hill",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      54050,
+      "hill"
+     ],
+     [
+      271669,
+      "landform"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 532,
+   "label": "village",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      532,
+      "village"
+     ],
+     [
+      10354598,
+      "rural settlement"
+     ],
+     [
+      486972,
+      "human settlement"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 47521,
+   "label": "stream",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      47521,
+      "stream"
+     ],
+     [
+      15324,
+      "body of water"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 355304,
+   "label": "watercourse",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      355304,
+      "watercourse"
+     ],
+     [
+      15324,
+      "body of water"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 56436498,
+   "label": "village in India",
+   "family": "place",
+   "paths": {
+    "place": [
+     [
+      56436498,
+      "village in India"
+     ],
+     [
+      532,
+      "village"
+     ],
+     [
+      10354598,
+      "rural settlement"
+     ],
+     [
+      486972,
+      "human settlement"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 43229,
+   "label": "organization",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 1080794,
+   "label": "public school",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      1080794,
+      "public school"
+     ],
+     [
+      5341295,
+      "educational organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 9842,
+   "label": "primary school",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      9842,
+      "primary school"
+     ],
+     [
+      3914,
+      "school"
+     ],
+     [
+      5341295,
+      "educational organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 215380,
+   "label": "musical group",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      215380,
+      "musical group"
+     ],
+     [
+      2088357,
+      "musical ensemble"
+     ],
+     [
+      32178211,
+      "music organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 19855165,
+   "label": "rural school",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      19855165,
+      "rural school"
+     ],
+     [
+      3914,
+      "school"
+     ],
+     [
+      5341295,
+      "educational organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 163740,
+   "label": "nonprofit organization",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      163740,
+      "nonprofit organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 423208,
+   "label": "private school",
+   "family": "organization",
+   "paths": {
+    "organization": [
+     [
+      423208,
+      "private school"
+     ],
+     [
+      3914,
+      "school"
+     ],
+     [
+      5341295,
+      "educational organization"
+     ],
+     [
+      43229,
+      "organization"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 4167410,
+   "label": "Wikimedia disambiguation page",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      4167410,
+      "Wikimedia disambiguation page"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      4167410,
+      "Wikimedia disambiguation page"
+     ],
+     [
+      15633587,
+      "MediaWiki main namespace page"
+     ],
+     [
+      15474042,
+      "MediaWiki page"
+     ],
+     [
+      36774,
+      "web page"
+     ],
+     [
+      111955382,
+      "manifestation"
+     ],
+     [
+      141523833,
+      "endeavour"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 11266439,
+   "label": "Wikimedia template",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      11266439,
+      "Wikimedia template"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      11266439,
+      "Wikimedia template"
+     ],
+     [
+      118555179,
+      "MediaWiki non-main namespace page"
+     ],
+     [
+      15474042,
+      "MediaWiki page"
+     ],
+     [
+      36774,
+      "web page"
+     ],
+     [
+      111955382,
+      "manifestation"
+     ],
+     [
+      141523833,
+      "endeavour"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 13433827,
+   "label": "encyclopedia article",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      13433827,
+      "encyclopedia article"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 7725634,
+   "label": "literary work",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      7725634,
+      "literary work"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 13406463,
+   "label": "Wikimedia list article",
+   "family": "work",
+   "paths": {
+    "internal": [
+     [
+      13406463,
+      "Wikimedia list article"
+     ],
+     [
+      17442446,
+      "Wikimedia internal item"
+     ]
+    ],
+    "work": [
+     [
+      13406463,
+      "Wikimedia list article"
+     ],
+     [
+      15138389,
+      "Wikimedia article page"
+     ],
+     [
+      191067,
+      "article"
+     ],
+     [
+      88392887,
+      "part of a work"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 43305660,
+   "label": "United States patent",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      43305660,
+      "United States patent"
+     ],
+     [
+      253623,
+      "patent"
+     ],
+     [
+      111955339,
+      "work"
+     ],
+     [
+      141523833,
+      "endeavour"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 482994,
+   "label": "album",
+   "family": "work",
+   "paths": {
+    "work": [
+     [
+      482994,
+      "album"
+     ],
+     [
+      108346082,
+      "release group"
+     ],
+     [
+      140007694,
+      "song, audio track, or release group"
+     ],
+     [
+      2188189,
+      "musical work"
+     ],
+     [
+      838948,
+      "work of art"
+     ],
+     [
+      17537576,
+      "creative work"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 16521,
+   "label": "taxon",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 23038290,
+   "label": "fossil taxon",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      23038290,
+      "fossil taxon"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 310890,
+   "label": "monotypic taxon",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      310890,
+      "monotypic taxon"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 4886,
+   "label": "cultivar",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      4886,
+      "cultivar"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 26817508,
+   "label": "rose cultivar",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      26817508,
+      "rose cultivar"
+     ],
+     [
+      4886,
+      "cultivar"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 98961713,
+   "label": "extinct taxon",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      98961713,
+      "extinct taxon"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 15731356,
+   "label": "apple cultivar",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      15731356,
+      "apple cultivar"
+     ],
+     [
+      133297767,
+      "fruit cultivar"
+     ],
+     [
+      4886,
+      "cultivar"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 958314,
+   "label": "grape variety",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      958314,
+      "grape variety"
+     ],
+     [
+      133297767,
+      "fruit cultivar"
+     ],
+     [
+      4886,
+      "cultivar"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 47487597,
+   "label": "monotypic fossil taxon",
+   "family": "taxon",
+   "paths": {
+    "taxon": [
+     [
+      47487597,
+      "monotypic fossil taxon"
+     ],
+     [
+      310890,
+      "monotypic taxon"
+     ],
+     [
+      16521,
+      "taxon"
+     ]
+    ]
+   }
+  },
+  {
+   "class": 523,
+   "label": "star",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 318,
+   "label": "galaxy",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 113145171,
+   "label": "type of chemical entity",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 7187,
+   "label": "gene",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 8054,
+   "label": "protein",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 1931185,
+   "label": "astronomical radio source",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 1457376,
+   "label": "eclipsing binary",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 2247863,
+   "label": "high proper-motion star",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 3863,
+   "label": "asteroid",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 83373,
+   "label": "quasar",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 113813711,
+   "label": "coin type",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 59199015,
+   "label": "group of stereoisomers",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 29654788,
+   "label": "Unicode character",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 4164871,
+   "label": "position",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 2154519,
+   "label": "astrophysical X-ray source",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 49008,
+   "label": "prime number",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 16317911,
+   "label": "positive integer",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 726242,
+   "label": "RR Lyrae variable",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 55488,
+   "label": "railway station",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 427087,
+   "label": "non-coding RNA",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 1153690,
+   "label": "long-period variable star",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 1260524,
+   "label": "time of day",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 22698,
+   "label": "park",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 204107,
+   "label": "galaxy cluster",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 452237,
+   "label": "motion",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 28869365,
+   "label": "issue",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 65259218,
+   "label": "compact group of galaxies",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 11446,
+   "label": "ship",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 96739634,
+   "label": "individual motion",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 1151284,
+   "label": "brightest cluster galaxy",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 67206701,
+   "label": "far-infrared source",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 11646939,
+   "label": "metal object",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 66619666,
+   "label": "red giant branch star",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 20860083,
+   "label": "educational facility",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 67206691,
+   "label": "infrared source",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 72802727,
+   "label": "possible red giant branch star",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 277338,
+   "label": "pseudogene",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 12308941,
+   "label": "male given name",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 1238720,
+   "label": "volume",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 3052382,
+   "label": "fonds",
+   "family": "other",
+   "paths": {}
+  },
+  {
+   "class": 13226383,
+   "label": "facility",
+   "family": "other",
+   "paths": {}
+  }
+ ]
+}

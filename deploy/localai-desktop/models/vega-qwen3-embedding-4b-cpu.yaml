@@ -8,7 +8,10 @@ backend: vega-llama-cpp
 embeddings: true
 pinned: false
 context_size: 8192
-threads: 6
+# every logical CPU of the Perugia PC (Ryzen 7 9700X, SMT on since 2026-10-25);
+# embedding runs on llama.cpp's BATCH threads, which default to the physical
+# core count (8) whatever `threads` says — hence threads_batch below too
+threads: 16
 gpu_layers: 0
 flash_attention: "on"
 mmap: true
@@ -21,6 +24,7 @@ options:
     - pooling:last
     - ubatch:8192
     - no_op_offload:true
+    - threads_batch:16
 env:
     # CLAUDE.md invariant 12: rocBLAS without atomics, bit-identical run to run
     ROCBLAS_DEFAULT_ATOMICS_MODE: "0"
