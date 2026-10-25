@@ -445,8 +445,13 @@ has a name (CLAUDE.md, "do not reinvent the wheel"):
    https://aclanthology.org/P19-1279/): a relation encoder trained so that
    statements sharing an entity pair, entities masked, come out near each
    other. Louise needs no new model for the first version: the masked
-   template goes through the collection's own encoder, bit-exact like any
-   other vector (invariant 12); a Matching-the-Blanks encoder is the
+   template goes through ONE pinned encoder run named in the method —
+   templates are compared with templates, never with a collection's
+   vectors, so this is a space of the method, not of gutenberg or
+   wikidata (invariant 1; the strategy note proposes jina-v3's passage
+   run, which linking needs anyway) — bit-exact like any other vector
+   (invariant 12, under torch's `LOUISE_TORCH_DETERMINISTIC=1`, measured);
+   a Matching-the-Blanks encoder is the
    stronger choice if the plain one proves too coarse, and it is a stated
    run like any encoder's. The embedding only NARROWS: it finds the known
    statements with the same shape. It never decides — sentence similarity
@@ -479,7 +484,8 @@ above gives it a shape) to `wikidata:Q…`, with the matched relation as
 `evidence` (the Wikidata statement or the other passage's `relation`
 claim), the Fellegi–Sunter score as `confidence` (a decimal string, as
 every score in a claim is), and a `method` whose kind is NOT a model:
-the encoder's stated run, the masked template version, the pinned
+the template encoder's stated run and wikidata's query run (the one
+that linked the spans), the masked template version, the pinned
 weights and threshold, the wikidata snapshot — deterministic given those,
 so a stranger reproduces it the way a chunker is reproduced, with no
 agreement floor. The entities' records are never merged: shown as

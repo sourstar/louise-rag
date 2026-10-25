@@ -71,7 +71,8 @@ exists.
 | tool | does | size / device | exact? |
 |---|---|---|---|
 | **GLiNER 2.5** (`fastino/gliner2.5-multi-v1`, Apache-2.0; checkpoints 74M–287M, published) | mentions (NER with our own labels), and **joint entity–relation decoding** — relations as a schema we declare, without an LLM | < 1 GB f16; GPU or CPU | bit-exact per stated run (invariant 12; measure it as any encoder) |
-| the collection's **encoder** (Qwen3-Embedding-4B, already resident for gutenberg) | linking a mention to Wikidata (search its vectors, top-10 Q-ids); the **masked relation embedding** (`[PERSON] met [PERSON] in [PLACE] in [DATE]`, graphrag-compliance §9.3) | ~8 GB f16, already paid for | bit-exact (invariant 12) |
+| **wikidata's QUERY encoder** (jina-embeddings-v3, `retrieval.query` adapter — `vega-jina-v3-query`, docs/notes/wikidata-recipe.toml; torch on louise-python behind VeGa) | linking a mention to Wikidata: the mention embedded as a QUERY of wikidata's space, searched against wikidata's vectors, top-10 Q-ids. **Invariant 1**: wikidata's space is jina-v3 at dim 512; a vector from gutenberg's encoder (Qwen3-Embedding-4B) searched against it is meaningless — the first draft of this note had that error (architecture session's review, 2026-10-25) | ~1.1 GB f16 (572M); resident on the node for the wikidata collection, an ADDITIONAL model on a 16 GB peer | bit-exact with `LOUISE_TORCH_DETERMINISTIC=1` — MEASURED for the document model (512/512, approved-encoders.md torch row); the query model's measurement is listed as following and is a precondition here |
+| the **masked relation embedding** (`[PERSON] met [PERSON] in [PLACE] in [DATE]`, graphrag-compliance §9.3) | templates compared with TEMPLATES — never against gutenberg's or wikidata's vectors — so it is a space of the METHOD, named in it: one pinned run embeds both sides. Proposed: jina-v3's `retrieval.passage` run (already required above), so one torch model serves linking and templates | no extra model | as the row above |
 | a **reading LLM, 16 GB class** | relation extraction where GLiNER's schema is not enough; the Q-id pick among candidates "or none"; community summaries | Gemma 3 12B at Q6_K ≈ 10 GB + 8k context, or Qwen3 14B Q4_K_M ≈ 9 GB; the plan's own HHEM table ranks Gemma 3 12B (4.4 %) and Qwen3 8B (4.8 %) ABOVE Gemma 4 26B A4B (5.2 %) on hallucination (published, wikidata-plugins.md) | not bit-exact: `model` method, agreement floor measured (03 §3.2) |
 | a **reading LLM, 32 GB class** (the plan's Gemma 4 26B A4B Q8_0 ≈ 27 GB) | the same, better JSON and longer context, on peers that have the card | 32 GB cards only, alone, at night | as above; a DIFFERENT model is a different sibling (wikidata-plugins.md) |
 | **Leiden** (igraph or graspologic, pinned version, fixed seed) | communities over the graph | CPU, RAM ∝ edges | bit-exact given library version + seed (measure: two runs, byte compare) |
@@ -100,7 +101,7 @@ over the whole graph; no summary. On top of that:
 | **A — the street** | GLiNER joint relations with a declared schema (met, wrote to, travelled with, lived at, employed, accused, married — the Wikidata properties we care about), then the 16 GB reader over chunks with ≥ 2 mentions for what the schema missed, with the masked template embedded for every relation; **cross-document linking** of unnamed spans by shared event slots (§9.3), including span-to-span across books; stylometry per record; LLM community summaries for A's communities only | the gems live here; the only tier where a link's evidence is a witness; the reader's tokens are spent on the smallest share | the reader is the costly, non-exact step; unnamed-span linking is probabilistic and must be shown as a candidate; A is small, so its communities are sparse until B joins | GLiNER ~free; reader ≈ 1 call per qualifying chunk (plan: 4–8k ctx) — at the plan's rate (~15 % of Gutenberg ≈ one week of a 32 GB card) a 16 GB reader on tier A alone is DAYS, not weeks, if A is a few per cent of chunks (measure) |
 | **B — about people and events** | GLiNER joint relations with the same schema; the reader ONLY where a chunk has ≥ 3 linked Q-ids and GLiNER emitted nothing (a bounded fraction, measure); linking of unnamed spans to Q-ids (not span-to-span); LLM summaries of B's communities | most of the historical graph for the price of GLiNER; relations are between known Q-ids, so they are traversable and auditable against Wikidata; conflicts with Wikidata flagged as the plan says | GLiNER's schema is closed — a relation it has no label for is lost until the schema grows (a new method version); the reader's share must be capped or B costs what the plan costs | GLiNER over B's chunks ≈ hours on any GPU, CPU-feasible; the reader bounded to the fraction above |
 | **C — polished print** | nothing beyond the base layer; Wikidata facts beside the hit do the "details to a known fact" work at query time (05 §5.1 facts); unnamed spans kept but never linked | near zero cost; exact; an encyclopedia article mentioning Q2044 enriches every Florence query across the library | no relations extracted — "Brunelleschi built the dome" is found by search, not traversed; periodicals' news items may hide a gem the rule puts here (an LCSH "Personal narratives" subdivision rescues the obvious cases) | GLiNER + linking only: the base layer's ~8B tokens (plan's estimate for ALL of Gutenberg) are mostly C and D; 2–5 days on the B70 for mentions is the plan's number for everything (modelled) |
-| **D — fiction, poetry, drama** | the base layer with one change: unnamed spans are **anchored to the book** (§9.2 row 4, `gutenberg:<id>#<surface>`), never linked across books; a per-book character co-occurrence network (chapters as windows) as a `community` claim with `level` 0 of that book; no relations, no reader, no summaries | real places and people in novels still link to Wikidata (Florence in a novel IS Florence); a who-is-who per novel for nothing; the largest tier at the smallest unit cost | characters stay per book, so Sherlock Holmes in two volumes is two anchors unless a work claim (same-work / translation-of) unites the volumes — it can, through gutenberg-book-editions; no gems expected and none sought | GLiNER + linking + CPU; the bulk of the base layer's tokens, nothing else |
+| **D — fiction, poetry, drama** | the base layer with one change: unnamed spans are **anchored to the book** (§9.2 row 4, `gutenberg:<id>#<surface>`), never linked across books; a per-book character co-occurrence network (chapters as windows) as a `community` claim with `level` 0 of that book; no relations, no reader, no summaries. **Limitation of the anchor by surface** (review, 2026-10-25): two characters with one surface ("the doctor" in two households) collapse, one character with two surfaces ("Mr. Starbuck", "Starbuck") splits. The alternative is an anchor by a WITHIN-BOOK coreference cluster — deterministic string clustering of surfaces (exact; cheap; catches the second case, not the first) or a neural coreference model (a `model` method with its floor). Stated as a limitation of the first version; the cluster anchor is §7's fifth measurement | real places and people in novels still link to Wikidata (Florence in a novel IS Florence); a who-is-who per novel for nothing; the largest tier at the smallest unit cost | characters stay per book, so Sherlock Holmes in two volumes is two anchors unless a work claim (same-work / translation-of) unites the volumes — it can, through gutenberg-book-editions; no gems expected and none sought | GLiNER + linking + CPU; the bulk of the base layer's tokens, nothing else |
 
 Two cross-cutting rules:
 
@@ -131,10 +132,31 @@ Two cross-cutting rules:
   block when a tier's claims change (the plan's rule), on the CPU, off
   the GPU loop.
 - **The 16 GB floor.** Every stated run in the first sibling fits 16 GB:
-  GLiNER (< 1 GB), the encoder (8 GB, resident anyway), the 12B reader
-  at Q6_K (~10 GB) — not at once; the reader runs when the encoder is
-  not embedding, as the plan already says for the 26B. A peer with 32 GB
-  adds nothing to THIS sibling; it may produce the 26B sibling's claims.
+  GLiNER (< 1 GB), jina-v3 for linking and templates (~1.1 GB), the 12B
+  reader at Q6_K (~10 GB) — not at once with the peer's own encoders;
+  the reader runs when nothing embeds, as the plan already says for the
+  26B. A peer with 32 GB adds nothing to THIS sibling; it may produce the
+  26B sibling's claims. **A VRAM check comes first** (review, 2026-10-25):
+  the node ran at 85–86.5 % of its 32 GB the night before, with its
+  resident models; a 10 GB reader does not fit BESIDE them, only in their
+  place, so the pass is scheduled when the encoders are unloaded, and the
+  check is the budget's, not a guess.
+- **Claims production is corpus work.** It runs at the CORPUS level of
+  scheduling.md and stands aside on the WHOLE card while a query holds
+  the claim (scheduling.md §12, amended 2026-10-25: embedding has the
+  lower priority) — so a pass never slows a search, and its throughput is
+  whatever the idle windows leave.
+- **The exact layer runs on torch, and torch is not yet checked by the
+  wrapper** (invariant 12, "Open"). GLiNER 2.5 is a transformers model,
+  so it runs on louise-python with `LOUISE_TORCH_DETERMINISTIC=1`
+  (`torch.use_deterministic_algorithms(True)` + oneDNN deterministic
+  primitives; on NVIDIA also `CUBLAS_WORKSPACE_CONFIG=:4096:8`,
+  approved-encoders.md torch row), and its bit-exactness is MEASURED
+  before the first claim as louise-python-rebuild.md §4 says — several
+  fresh loads, shuffled orders, every span and score byte-identical.
+  Until that measurement passes, "the exact layer" is a design intent,
+  not a property; a model that does not reproduce under the switch is
+  not used.
 - **Nights and pins.** The reader is pinned for the pass (app/model_pins.py)
   and runs in the embedder's idle windows; GLiNER and the linking are
   small enough to run beside embedding on the same card, which is to be
@@ -183,14 +205,27 @@ the claim beneath it, and §2.10's time rule is defined on records.
    evidence; a tier-D character network as a fact beside a novel's hits.
 4. 03 §3.2: the exact-layer check (byte equality on a re-run sample)
    beside `model-agreement`.
+5. **New dependencies, asked first** (CLAUDE.md): a Leiden
+   implementation (`igraph` + `leidenalg`, or `graspologic` — the one
+   GraphRAG pins; version pinned, seed fixed, both inside the method);
+   the `gliner2` package in louise-python (a new tree, so a new stated
+   run for every model on it — louise-python-rebuild.md); Fellegi–Sunter
+   either as `splink` or as our own ~200-line module (the standard is the
+   method, not the package; the package would pay only if its EM fit and
+   blocking are used — write down which).
+6. 09 §9.4/§9.5: the `rumors` member and states (rumors.md, §10 below).
 
 ## 7. Measurements before any of it is kept
 
 1. Documents and chunks per tier under §1's rule (one manifest query);
    records with neither LCC nor LCSH.
 2. GLiNER 2.5 on 1,000 chunks of A and B: mentions found, linked by the
-   deterministic pick, unlinked; joint relations emitted against the
-   schema; bit-exactness over two fresh loads (invariant 12).
+   deterministic pick, unlinked; **the PRECISION of the pick on a judged
+   sample** (a linked count without its precision is not a number — the
+   same rule §9.4 of graphrag-compliance.md sets for `same-entity`);
+   joint relations emitted against the schema; bit-exactness of GLiNER
+   and of jina-v3's query run over several fresh loads and shuffled
+   orders under `LOUISE_TORCH_DETERMINISTIC=1` (invariant 12).
 3. The 12B reader against the 26B on the same 200 chunks of A: relations
    agreed, JSON failures, tokens/s on a 16 GB and a 32 GB card — this
    decides whether the first sibling's reader is the 12B.
@@ -198,7 +233,8 @@ the claim beneath it, and §2.10's time rule is defined on records.
    precision on a judged sample from history and biography
    (graphrag-compliance §9.4).
 5. Tier D's per-book network on ten novels: does it read as a who-is-who
-   to a person who knows the book.
+   to a person who knows the book; how many characters the surface anchor
+   collapses or splits against a string-clustered anchor (§3, tier D).
 
 If the operator says nothing, the plan of wikidata-plugins.md stands as
 written (one method for C, D, E, F, N with the 26B; unlinked mentions
@@ -239,12 +275,13 @@ book another.
   (wikidata-plugins.md already says so) and nothing resolves the
   conflict by a score: a conflict is often the gem (a pseudonym, a wrong
   date in the record).
-- The conflict is NOT stored. It is computable — the same subject and
-  property, a different object, where Wikidata's own single-value
-  constraint (P2302 / Q19474404) says there can be only one — so it is
-  derived when a hit is shown (02 §2.3: a record carries nothing
-  computable from it), as "the book says …; Wikidata says …", or "two
-  sources disagree", with both passages.
+- The conflict is found by comparison — the same subject and property,
+  a different object, where Wikidata's own single-value constraint
+  (P2302 / Q19474404) says there can be only one — and RECORDED as the
+  claim's rumor state against the wikidata snapshot it was checked
+  against (operator, 2026-10-25; rumors.md, §10 below: this supersedes
+  the first draft's "not stored"). It is shown as "the book says …;
+  Wikidata says …", or "two sources disagree", with both passages.
 - Back to Wikidata the same way as below: a person adds the book's
   statement with its reference, at Wikidata's normal or deprecated rank
   as they judge; Louise never edits.
@@ -343,18 +380,27 @@ evaluate a review. Utopically the gap will close when wikidata processes
 all the claims and the hypothesis leg will go down to zero."* It holds,
 with four adjustments that make it Louise's:
 
-1. **The gap is a view, not a log.** Every finding is already a claim
-   (§8). The gap is the subset whose counterpart in the CURRENT wikidata
-   snapshot is missing or differs — computable by comparing the two
-   collections (02 §2.3: nothing computable is stored). It re-computes
-   itself at every wikidata snapshot and shrinks without anyone editing
-   a file.
-2. **A hypothesis is never a leg** (invariant 4). It is placed beside a
-   hit, labelled *hypothesis*, with its score and passages; it may be a
-   FILTER ("hits with an open hypothesis about Q2044" — restricts, never
-   boosts, 05 §5.2) and a LISTING ("hypotheses about Florence", like
-   `ask facets`, nothing ranked). Open hypotheses per tier is a metric of
-   the collection, shown as counts are.
+1. **The gap is RECORDED: the rumors** (operator, 2026-10-25, as
+   recorded in [rumors.md](rumors.md), branch ccr-d144b7d4-l13jt8 at
+   f59d63a: "'The gap' shall be recorded, it is an additional pillar that
+   can be optionally used for searches, the 'rumors'. … they are part of
+   the collection. … It's a unique contribution of louise"). This
+   supersedes the first draft's "a view, not a log": a rumor's state
+   depends on a snapshot of ANOTHER collection and its history — first
+   seen, which review closed it, how — cannot be recomputed once the next
+   review has happened. So every claim carries a rumor state against the
+   wikidata snapshot it was checked against — `open`, `confirmed`,
+   `rejected`, `known` — in its own member keyed by claim uid, re-issued
+   at each `hold annotations update`; closed rumors stay in the
+   collection (promise 7). The design, its member bytes and the spec
+   changes it needs are rumors.md's.
+2. **A rumor is never fused** (invariant 4). Optional in a search and
+   off by default (rumors.md): beside a hit as a fact labelled *rumor*
+   with its confidence, passages and date first seen; a SEPARATE LIST of
+   records reached through open rumors — another question, presented
+   apart (05 §5.1); a FILTER ("records with an open rumor about Q2044" —
+   restricts, never boosts, 05 §5.2). Open rumors per thousand mentions
+   per tier is a metric of the collection, shown as counts are.
 3. **The review channel is Wikidata's own: the Mismatch Finder.**
    Wikimedia's tool takes an external dataset's mismatches (item,
    property, Wikidata's value, the external value, the external URL,
@@ -372,10 +418,12 @@ with four adjustments that make it Louise's:
    rank with a reason, referencing the book (the book was wrong — the
    next snapshot carries it, the comparison finds it, closed as "known
    and rejected"); or left open. Zero is reachable for history and
-   biography. Tier D's anchored characters are not hypotheses about the
-   world and are excluded from the count by construction.
+   biography. Tier D's anchored characters are not rumors about the
+   world and are excluded from the count by construction. Closed as
+   confirmed against rejected is Louise's precision, judged by Wikidata's
+   own editors (rumors.md).
 
 Two cautions. Feedback latency is the wikidata snapshot cadence — Louise
 reads Wikidata through its dump, never live. And the gap is a flow, not
 a stock: every Gutenberg snapshot and every new tier adds to it, so the
-metric is open hypotheses per thousand mentions per tier, not the count.
+metric is open rumors per thousand mentions per tier, not the count.
