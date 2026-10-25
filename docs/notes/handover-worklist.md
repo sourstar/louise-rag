@@ -29,7 +29,7 @@ through with the commit that closes them.
 
 | item | where | decision |
 |---|---|---|
-| `louise node start` / `node stop` (the worker and web started by `python -m app.worker` / uvicorn) | 07 §7.3, CLAUDE.md invariant 2 | build (thin commands over today's entry points) |
+| ~~`louise node start` / `node stop`~~ | 07 §7.3, CLAUDE.md invariant 2 | built 2026-10-25 (stop through state/node.sqlite, exit 0) |
 | One route per command, `/api/<surface>/<noun>/<verb>` | 07 §7.4 | **build** (operator, 2026-10-25: A): one generic route over the command tree, `--json` output, exit → status, signing verbs queued as jobs |
 | The `centres`, `labels`, `model-agreement` and `evaluation` checks (INCONCLUSIVE stubs; `model-agreement` refused) | 03 §3.2 | build `model-agreement` as INCONCLUSIVE-until-built at least; mark the four "not built" in 03 |
 | `index build --vector` trains and ships the centres member | 02 §2.4 (07 marks it) | mark in 02 |
@@ -37,7 +37,7 @@ through with the commit that closes them.
 | `hold config apply --set` (and 07 §7.6 telling users to run it) | 07 | build |
 | `records fetch --slice/--snapshot` | 07 (marked) | build |
 | `range` facet filter | 07 (marked) | build |
-| `collection list --all`, `share serve <collection>` long form, `continue --through` (code: `--continues-through`) | 07 §7.3 | build (aliases) |
+| ~~`collection list --all`, `share serve <collection>` long form, `continue --through`~~ | 07 §7.3 | built 2026-10-25 (`serve`, `--through`); `--all` amended away |
 | A check comparing the manifest's counts and text index with the records | STATUS (open defect) | build |
 | The archive-shard rendezvous (decided, archive-signing-keys.md) | notes | spec it or drop it |
 | Constitution on-demand query (normattiva) | STATUS | build |

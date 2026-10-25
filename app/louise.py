@@ -7,7 +7,7 @@
                                     [--encoder URL [--query-encoder URL] [--api A]
                                      [--embed-model M] [--query-model M]]
                                     [--calibration-set FILE] [--name N] --accept
-    louise hold collection continue <codex> --platform-image D --continues-through <snapshot>
+    louise hold collection continue <codex> --platform-image D --through <snapshot>
                                     [--origin FILE] [--origin-reachable-until <snapshot>]
     louise hold collection replace <codex> --defect FILE [--platform-image D] [--space FILE]
     louise hold collection list
@@ -1575,6 +1575,52 @@ def cmd_node_show(a) -> int:
     return 0
 
 
+#: The web process `node start` runs beside the worker: the image's own
+#: command (Dockerfile), so one node started either way serves the same app.
+WEB_COMMAND = ("-m", "uvicorn", "app.api:app", "--host", "0.0.0.0")
+WEB_STOP_WAIT_S = 30.0
+
+
+def cmd_node_start(a) -> int:
+    """`node start [--acquire-only | --seed-only] [--only worker|web]` (07
+    §7.3): the daemon — the worker's rounds and the web interface — until
+    stopped. A mode flag sets the node's mode as `node pause` does (it
+    survives a restart, §7.8). `--only` runs one of the two, which is how a
+    deployment with one container each runs them. Exit: the worker's —
+    0 after `node stop`, 130 on a signal (§7.7)."""
+    import subprocess
+    from app import config, node_state
+    if a.acquire_only or a.seed_only:
+        state = "acquire-only" if a.acquire_only else "seed-only"
+        node_state.set_worker_state(state, by=f"louise node start --{state}")
+    web_argv = [sys.executable, *WEB_COMMAND, "--port", str(config.PORT)]
+    if a.only == "web":
+        os.execv(sys.executable, web_argv)
+    web = subprocess.Popen(web_argv) if a.only is None else None
+    try:
+        from app import worker
+        return worker.main()
+    finally:
+        if web is not None and web.poll() is None:
+            web.terminate()
+            try:
+                web.wait(timeout=WEB_STOP_WAIT_S)
+            except subprocess.TimeoutExpired:
+                web.kill()
+                web.wait()
+
+
+def cmd_node_stop(a) -> int:
+    """`node stop` (07 §7.3): asks the worker to finish its current units,
+    commit and exit 0 — through the node's state, which every container of
+    the node shares; it does not wait for the exit."""
+    from app import node_state
+    node_state.request_stop()
+    _print({"node": "stopping", "store": str(node_state.path()),
+            "says": "the worker finishes its current units, commits and exits 0"})
+    return 0
+
+
 def cmd_node_resume(a) -> int:
     from app import node_state
     if a.collection:
@@ -1590,7 +1636,7 @@ def cmd_node_resume(a) -> int:
 
 
 #: 07 §7.3 writes `share <collection>`: the collection stands where a verb would
-_SHARE_VERBS = ("collection", "fetch", "contribute", "attest", "peers", "-h", "--help", "offer")
+_SHARE_VERBS = ("collection", "serve", "fetch", "contribute", "attest", "peers", "-h", "--help", "offer")
 
 
 def cmd_share(a) -> int:
@@ -4107,6 +4153,14 @@ def build_parser() -> argparse.ArgumentParser:
     surfaces = top.add_subparsers(dest="surface", required=True, metavar="hold|share|node|user")
     node = surfaces.add_parser("node", help="the node's mode, or one collection paused (07 §7.3, §7.7)")
     nverbs = node.add_subparsers(dest="verb", required=True)
+    p = nverbs.add_parser("start", help="the daemon: the worker's rounds and the web interface, until stopped")
+    p.add_argument("--acquire-only", action="store_true", dest="acquire_only")
+    p.add_argument("--seed-only", action="store_true", dest="seed_only")
+    p.add_argument("--only", choices=("worker", "web"), default=None,
+                   help="run one of the two (a deployment with a container each)")
+    p.set_defaults(fn=cmd_node_start)
+    p = nverbs.add_parser("stop", help="the worker finishes its current units, commits and exits 0")
+    p.set_defaults(fn=cmd_node_stop)
     p = nverbs.add_parser("pause", help="the node: nothing, seeding only, or download and seeding only, "
                                        "until resume; or ONE collection: its write lock released at "
                                        "the end of the current unit, nothing run for it until resume")
@@ -4230,7 +4284,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = verbs.add_parser("continue", help="a daughter: a new toolchain, the same space")
     root_arg(p); p.add_argument("codex_id")
     p.add_argument("--platform-image", required=True)
-    p.add_argument("--continues-through", required=True,
+    p.add_argument("--through", "--continues-through", dest="continues_through", required=True,
                    help="the mother's LAST snapshot — the boundary, named from "
                         "the side that already exists")
     p.add_argument("--origin", help="JSON file with the new origin block")
@@ -4870,7 +4924,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     share = surfaces.add_parser("share", help="bytes leaving here, and the announcement that they exist (04)")
     shverbs = share.add_subparsers(dest="verb", required=True)
-    p = shverbs.add_parser("collection", help="serve what you hold — and announce it; --stop to stop")
+    p = shverbs.add_parser("collection", aliases=["serve"],
+                           help="serve what you hold — and announce it; --stop to stop")
     root_arg(p); p.add_argument("collection")
     p.add_argument("--slices", default=None)
     p.add_argument("--kinds", default=None)

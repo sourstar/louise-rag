@@ -76,6 +76,32 @@ def _handle_sigterm(signum, frame):
     except Exception:
         pass
 
+#: `louise node stop` (07 §7.3) reaches the worker through node_state; a
+#: stop asked for is exit 0, a signal 130 (§7.7). Polled by its own thread,
+#: never by a stage: a round does not grow a read of the node's state.
+_stop_requested = threading.Event()
+STOP_POLL_S = 2.0
+
+
+def _watch_stop_request(poll_s: float = STOP_POLL_S) -> None:
+    from . import node_state
+    while not _stop.wait(poll_s):
+        if node_state.take_stop_request():
+            _stop_requested.set()
+            _handle_sigterm(None, None)
+            return
+
+
+def _start_stop_watch() -> threading.Thread:
+    """A request left from before this start is not this run's: cleared
+    first, so `node stop` on a stopped node does not stop the next start."""
+    from . import node_state
+    node_state.take_stop_request()
+    t = threading.Thread(target=_watch_stop_request, name="stop-watch", daemon=True)
+    t.start()
+    return t
+
+
 def _load_chunks(row, collection):
     plugin = collection.plugin_instance()
     chapters = plugin_io.sections(plugin, row)
@@ -4939,6 +4965,7 @@ def run_forever():
     # default SIGHUP and leave rsync writing with nobody to stop it
     signal.signal(signal.SIGHUP, _handle_sigterm)
     _register_stack_dump()
+    _start_stop_watch()
     from . import jobs, run_check
     all_collections = collections_mod.load_all()
     # the record of which kept statements THIS start has re-checked, which
@@ -5230,7 +5257,8 @@ def _warn_if_pid1() -> None:
 def main() -> int:
     """`python -m app.worker`. docs/07 §7.7: the node "stops every
     collection at its unit and exits 130 on a signal" — invariant 2 says
-    the same — and it exited 0. `_stop` is set only by the signal handler."""
+    the same — and it exited 0. `_stop` is set by the signal handler, and
+    by `node stop`'s request, which exits 0 (`_stop_requested`)."""
     _warn_if_pid1()
     # the public key the web process recognises must be this key's half
     # (app/identity.py): a node whose two processes disagree about who it is
@@ -5242,6 +5270,13 @@ def main() -> int:
         print(f"REFUSED TO START: {e}", file=sys.stderr, flush=True)
         return 2
     run_forever()
+    return exit_code()
+
+
+def exit_code() -> int:
+    """0 for `node stop` or a run that ended by itself, 130 for a signal (07 §7.7)."""
+    if _stop_requested.is_set():
+        return 0
     return 130 if _stop.is_set() else 0
 
 

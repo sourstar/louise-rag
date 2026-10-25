@@ -97,7 +97,8 @@ louise hold
               certify <collection> <snapshot>                          sign a snapshot as this collection's certifier
               forget <collection> [--kinds …] [--yes] [--dry-run] [--here]  stop holding: remove this peer's copy and its state; --here when no worker runs
               rename <collection> <new-name> [--dry-run]               the same collection under another local name; nothing recomputed
-              list [--all]                                             collections held, by lineage; --all includes the dormant
+              list                                                     collections held, by lineage (amended 2026-10-25: `--all` dropped — dormant is a state of the
+                                                                       network's catalogue, 04 §4.7, and every held collection is listed)
               show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, and the copy's state — refused, quarantine or in use — with every reason
   annotations update <collection> [--claims FILE] [--against TARGET=SNAPSHOT …] [--snapshot ID] [--dry-run]
                                                                        (amended 2026-10-23, operator: updated, not replaced; 02 §2.10) the next snapshot of the SAME
@@ -200,8 +201,10 @@ louise ask
   serve                                                                expose search, lookup and traversal as MCP tools
 
 louise node
-  start [--acquire-only | --seed-only]                                 the daemon; runs until stopped
-  stop                                                                 finish the current units, commit, exit
+  start [--acquire-only | --seed-only] [--only worker|web]             the daemon — the worker's rounds and the web interface; runs until stopped; a mode flag sets the
+                                                                       node's mode as `pause` does; `--only` runs one of the two, a container each (amended 2026-10-25)
+  stop                                                                 the worker finishes its current units, commits, exits 0 — asked through state/node.sqlite, which
+                                                                       every container of the node shares; it does not wait (built 2026-10-25)
   show                                                                 state per collection, the current stage, the last round's cost, overrides in force
   pause [<collection>] [--acquire-only | --seed-only]                  a runtime override: the node's mode — nothing, seeding only, or download and seeding only — until resume; it survives a restart (§7.8)
   resume [<collection>]

@@ -298,6 +298,33 @@ def peek(read, absent, *, error=None, table: str = "control"):
         return error
 
 
+#: `louise node stop` (07 §7.3): the worker finishes its current units,
+#: commits and exits 0 — where a signal exits 130 (§7.7). Through the
+#: control table, as the digest request is: the CLI and the worker are two
+#: processes, often two containers, and a pid does not cross a container.
+STOP_REQUEST_KEY = "stop_requested"
+
+
+def request_stop() -> None:
+    with closing(connect()) as c:
+        db.set_control(c, STOP_REQUEST_KEY, "1")
+        c.commit()
+
+
+def take_stop_request() -> bool:
+    """True once per request: read and cleared together. An unreadable
+    store is no request — the worker keeps running, a signal still stops it."""
+    try:
+        with closing(connect()) as c:
+            if db.get_control(c, STOP_REQUEST_KEY) != "1":
+                return False
+            db.set_control(c, STOP_REQUEST_KEY, "")
+            c.commit()
+            return True
+    except sqlite3.Error:
+        return False
+
+
 #: 04 §4.5 (amended 2026-10-20): a collection's embed mode or sharing
 #: switched → the next digest goes out at once, so the parts this peer led
 #: are released (or claimed) without waiting the hour. The web sets it, the
