@@ -1,0 +1,285 @@
+{
+ "topics": 80,
+ "counted": 80,
+ "applied": 74,
+ "all_topics": {
+  "boost": {
+   "ndcg": {
+    "mean": 0.3073,
+    "won": 16,
+    "lost": 27,
+    "tied": 37
+   },
+   "ndcg_condensed": {
+    "mean": 0.5617,
+    "won": 27,
+    "lost": 19,
+    "tied": 34
+   },
+   "p": {
+    "mean": 0.305,
+    "won": 11,
+    "lost": 15,
+    "tied": 54
+   },
+   "rr": {
+    "mean": 0.5448,
+    "won": 3,
+    "lost": 8,
+    "tied": 69
+   },
+   "judged": {
+    "mean": 0.455,
+    "won": 18,
+    "lost": 14,
+    "tied": 48
+   },
+   "r_depth": {
+    "mean": 0.1414,
+    "won": 25,
+    "lost": 15,
+    "tied": 40
+   },
+   "ms_median": 3053
+  },
+  "none": {
+   "ndcg": {
+    "mean": 0.3143
+   },
+   "ndcg_condensed": {
+    "mean": 0.5646
+   },
+   "p": {
+    "mean": 0.3112
+   },
+   "rr": {
+    "mean": 0.5459
+   },
+   "judged": {
+    "mean": 0.4525
+   },
+   "r_depth": {
+    "mean": 0.137
+   },
+   "ms_median": 3302
+  },
+  "any": {
+   "ndcg": {
+    "mean": 0.3002,
+    "won": 16,
+    "lost": 20,
+    "tied": 44
+   },
+   "ndcg_condensed": {
+    "mean": 0.5547,
+    "won": 25,
+    "lost": 22,
+    "tied": 33
+   },
+   "p": {
+    "mean": 0.3025,
+    "won": 10,
+    "lost": 13,
+    "tied": 57
+   },
+   "rr": {
+    "mean": 0.5314,
+    "won": 2,
+    "lost": 5,
+    "tied": 73
+   },
+   "judged": {
+    "mean": 0.445,
+    "won": 10,
+    "lost": 13,
+    "tied": 57
+   },
+   "r_depth": {
+    "mean": 0.1372,
+    "won": 19,
+    "lost": 19,
+    "tied": 42
+   },
+   "ms_median": 5206
+  },
+  "all": {
+   "ndcg": {
+    "mean": 0.2983,
+    "won": 18,
+    "lost": 22,
+    "tied": 40
+   },
+   "ndcg_condensed": {
+    "mean": 0.5576,
+    "won": 26,
+    "lost": 22,
+    "tied": 32
+   },
+   "p": {
+    "mean": 0.3013,
+    "won": 13,
+    "lost": 16,
+    "tied": 51
+   },
+   "rr": {
+    "mean": 0.5322,
+    "won": 3,
+    "lost": 5,
+    "tied": 72
+   },
+   "judged": {
+    "mean": 0.4388,
+    "won": 11,
+    "lost": 16,
+    "tied": 53
+   },
+   "r_depth": {
+    "mean": 0.1369,
+    "won": 21,
+    "lost": 20,
+    "tied": 39
+   },
+   "ms_median": 5412
+  }
+ },
+ "applied_topics": {
+  "boost": {
+   "ndcg": {
+    "mean": 0.3048,
+    "won": 16,
+    "lost": 27,
+    "tied": 31
+   },
+   "ndcg_condensed": {
+    "mean": 0.5611,
+    "won": 27,
+    "lost": 19,
+    "tied": 28
+   },
+   "p": {
+    "mean": 0.3068,
+    "won": 11,
+    "lost": 15,
+    "tied": 48
+   },
+   "rr": {
+    "mean": 0.5349,
+    "won": 3,
+    "lost": 8,
+    "tied": 63
+   },
+   "judged": {
+    "mean": 0.4608,
+    "won": 18,
+    "lost": 14,
+    "tied": 42
+   },
+   "r_depth": {
+    "mean": 0.1386,
+    "won": 25,
+    "lost": 15,
+    "tied": 34
+   },
+   "ms_median": 3872
+  },
+  "none": {
+   "ndcg": {
+    "mean": 0.3123
+   },
+   "ndcg_condensed": {
+    "mean": 0.5643
+   },
+   "p": {
+    "mean": 0.3135
+   },
+   "rr": {
+    "mean": 0.5361
+   },
+   "judged": {
+    "mean": 0.4581
+   },
+   "r_depth": {
+    "mean": 0.1337
+   },
+   "ms_median": 3404
+  },
+  "any": {
+   "ndcg": {
+    "mean": 0.2972,
+    "won": 16,
+    "lost": 20,
+    "tied": 38
+   },
+   "ndcg_condensed": {
+    "mean": 0.5535,
+    "won": 25,
+    "lost": 22,
+    "tied": 27
+   },
+   "p": {
+    "mean": 0.3041,
+    "won": 10,
+    "lost": 13,
+    "tied": 51
+   },
+   "rr": {
+    "mean": 0.5204,
+    "won": 2,
+    "lost": 5,
+    "tied": 67
+   },
+   "judged": {
+    "mean": 0.45,
+    "won": 10,
+    "lost": 13,
+    "tied": 51
+   },
+   "r_depth": {
+    "mean": 0.134,
+    "won": 19,
+    "lost": 19,
+    "tied": 36
+   },
+   "ms_median": 5685
+  },
+  "all": {
+   "ndcg": {
+    "mean": 0.2951,
+    "won": 18,
+    "lost": 22,
+    "tied": 34
+   },
+   "ndcg_condensed": {
+    "mean": 0.5567,
+    "won": 26,
+    "lost": 22,
+    "tied": 26
+   },
+   "p": {
+    "mean": 0.3027,
+    "won": 13,
+    "lost": 16,
+    "tied": 45
+   },
+   "rr": {
+    "mean": 0.5213,
+    "won": 3,
+    "lost": 5,
+    "tied": 66
+   },
+   "judged": {
+    "mean": 0.4432,
+    "won": 11,
+    "lost": 16,
+    "tied": 47
+   },
+   "r_depth": {
+    "mean": 0.1336,
+    "won": 21,
+    "lost": 20,
+    "tied": 33
+   },
+   "ms_median": 6180
+  }
+ }
+}
