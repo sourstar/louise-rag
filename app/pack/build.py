@@ -40,6 +40,9 @@ VALIDATION_FILE = "validation.json"
 PLAN_PAGE = 5000
 PLAN_PAGE_SQL = ("SELECT rowid, uid, native_id, path, lang, in_scope, error FROM documents "
                  "WHERE rowid>? ORDER BY rowid LIMIT ?")
+#: the in-memory record's key for its parse's issues (app/issues.py) — not a
+#: 09 §9.5 key, so no line could carry it even if it were left on
+ISSUES_KEY = "_issues"
 
 
 class BuildError(RuntimeError):
@@ -315,6 +318,12 @@ def _record_of(collection, plugin, row) -> tuple[dict, int, bytes, dict[str, str
         # `carried` False entry (a record from before it) has no bytes to
         # fetch, and the container must not hold any.
         plates = {f.sha256: f.href for f in (doc.figures or []) if f.carried}
+    # THE ORIGIN'S INCONSISTENCIES this parse met (06 §6.1, amended
+    # 2026-10-25), beside the record and never in its line: `canonical_line`
+    # writes 09 §9.5's keys alone, and `pack_slices` pops this one before the
+    # record is buffered. A list (possibly empty) means "parsed"; a record
+    # taken from a held line has none, and records nothing.
+    record[ISSUES_KEY] = [(i.code, i.detail) for i in (doc.issues or [])]
     # NOTE: no validation here. This runs in a parse-pool child, where an
     # exception becomes one skipped row rather than a failed build — so a
     # fidelity defect raised here would quietly DROP documents from the
@@ -435,6 +444,33 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
     order = getattr(plugin, "native_id_order", "bytes")
     slices = [r["slice"] for r in con_build.execute("SELECT DISTINCT slice FROM plan ORDER BY slice")]
     written = n_records = n_chunks = n_skipped = 0
+    # THE ORIGIN'S INCONSISTENCIES (06 §6.1, amended 2026-10-25): what each
+    # parse met, recorded in the manifest a page at a time (app/issues.py —
+    # one keyed read per page, a write only where a document has or had
+    # one), logged once each, and summed here for the build's own line
+    from .. import issues as issues_mod
+    codes = issues_mod.declared(plugin)
+    page_issues: list[tuple[str, list]] = []
+    met: dict[str, int] = {}
+    undated_out = 0
+
+    def flush_issues() -> None:
+        if page_issues:
+            issues_mod.record_many(con_src, page_issues, codes=codes)
+            page_issues.clear()
+
+    def say_issues() -> None:
+        if met:
+            log(f"[pack build] {collection.name}: origin inconsistencies met — "
+                + ", ".join(f"{c} {n:,}" for c, n in sorted(met.items()))
+                + f" (`louise hold issues list {collection.name}`)")
+        if undated_out:
+            # 06 §6.2 excludes them; the operator's choice A forbids doing it
+            # silently (STATUS, 2026-10-25)
+            log(f"[pack build] {collection.name}: {undated_out:,} record(s) EXCLUDED from the "
+                f"snapshot cut at {until}: no cutoff date — a defect to fix, flagged as "
+                f"`cutoff-undated`")
+
     for slice_name in slices:
         done = con_build.execute(
             "SELECT n, last_ord, last_uid FROM shards WHERE slice=? ORDER BY n DESC LIMIT 1",
@@ -566,6 +602,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
             page, srcs = pending.popleft()
             if stop is not None and stop.is_set():
                 stream.close()                 # what the pool still holds is cancelled
+                say_issues()
                 log(f"[pack build] stop requested — {slice_name}: {len(buf)} buffered records "
                     f"discarded, resumes at shard {next_n}")
                 return written, n_records, n_chunks, n_skipped, True
@@ -582,6 +619,16 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                                       (prow["uid"], f"pack: {value.get('type')}: {value.get('msg')}"[:200]))
                     continue
                 record, layer, chunk_blob, plates = value
+                found = record.pop(ISSUES_KEY, None)
+                if found is not None:
+                    found = list(found)
+                    why = cutoff_mod.undated(origin, record)
+                    if why is not None:
+                        found.append(("cutoff-undated", why + (
+                            f"; excluded from the snapshot cut at {until}" if until else "")))
+                    page_issues.append((src["uid"], found))
+                    for code, _ in found:
+                        met[code] = met.get(code, 0) + 1
                 if not record.get("origin_hash"):
                     # CORPUS FIDELITY (invariant 11). `origin_hash` is the
                     # only link between a packed record and the origin bytes
@@ -610,6 +657,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                 outside = cutoff_mod.excluded(origin, record, until)
                 if outside is not None:
                     n_skipped += 1
+                    undated_out += outside.startswith("no cutoff date")
                     con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
                                       (prow["uid"], f"cutoff: {outside}"[:200]))
                     continue
@@ -657,10 +705,14 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                         # the unit is a shard: what the page still holds is
                         # recomputed on resume
                         stream.close()
+                        flush_issues()
+                        say_issues()
                         log(f"[pack build] stop requested — {slice_name}: resumes at shard {next_n}")
                         return written, n_records, n_chunks, n_skipped, True
+            flush_issues()
         close_shard(last_row)
         log(f"[pack build] {slice_name}: {next_n - 1} shard(s)")   # next_n is the NEXT index: one past the last written
+    say_issues()
     return written, n_records, n_chunks, n_skipped, False
 
 

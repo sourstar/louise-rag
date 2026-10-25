@@ -295,6 +295,10 @@ From the audit of docs 01–09 against CLAUDE.md (2c6642e), the operator decided
 - **RULE 2.** The Library's dialogs ask only a name; the node resolves the encoder from the Codex's weights (being built).
 - ~~**Invariant 5.** A deposit source's git clone draws from the bandwidth budget~~ — as it lands, git paused while each increment is drawn (2026-10-25).
 
+### 2026-10-25: the origin's inconsistencies, logged and flagged (operator; dateless records, choice A)
+
+"Add any inconsistency found in the corpora in a report. Make the parsers such that on a regular basis any inconsistency is logged and flagged." The report: [corpus-inconsistencies.md](corpus-inconsistencies.md). The mechanism (06 §6.1 amended, `app/issues.py`): a parse returns `CanonicalDoc.issues` beside the record, never in it (no record byte, hash or PARSER_VERSION moves; nothing is rebuilt); `hold records build` records them for every record it parses, the worker's rdf stage for the codes its read checks; per document the checked codes are replaced, so a fixed origin clears them; each is logged once with the collection's name; `hold collection show`, `node health` and the Library's card count them, `hold issues list` lists them. Wired: `cutoff-undated` (the platform's, every gutenberg and pubmed record on every build, cutoff or not); gutenberg `rdf-missing`, `rdf-unreadable`, `rdf-no-ebook`, `epub-unreadable`, `epub-image-missing`, `epub-document-missing`; pubmed `no-publication-date`, `no-title`, `other-abstract-only`; normattiva `frbr-expression-stale`, `expression-before-publication`. The manifest gains the table `issues`, created on open (07 §7.3 `dev migrate schema` amended). Found on the way: `hold records build` passes no cutoff to the builder, so the build databases' 0 "no cutoff date" skips (München) count nothing; the first build with the flag gives the real number.
+
 ### 2026-10-25: the records build A/B — every part byte-identical; the build takes the whole cpu quota
 
 München ran en/2M's first 250,000 records of wikipedia-v8 (2,096,112 chunks, 125 parts, a 4-cpu quota) under four trees. The 125 parts were byte-identical in all seven runs. Wall time:

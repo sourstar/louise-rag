@@ -36,8 +36,8 @@ from typing import Callable
 import httpx
 
 from . import (catalog, chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
-                dispatch, embeddings, encoder_timeouts, entities, fts, model_load, model_pins, node_state, plugin_io, refs,
-                sched, sizing, spaces, stats)
+                dispatch, embeddings, encoder_timeouts, entities, fts, issues as issues_mod, model_load, model_pins,
+                node_state, plugin_io, refs, sched, sizing, spaces, stats)
 from .dispatch import Level
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
@@ -241,6 +241,10 @@ def stage_rdf(con, row, collection) -> None:
     if not con.in_transaction:               # direct callers wrap the stage
         con.execute("BEGIN IMMEDIATE")
     entries = [_rdf_one(con, row, collection, plugin, now, meta=first)]
+    # the origin's inconsistencies each read met (06 §6.1, amended
+    # 2026-10-25), recorded in this same transaction for the codes the read
+    # checks — `None` when a plugin's lazy read says nothing about them
+    found = [(row["uid"], first["issues"])] if first.get("issues") is not None else []
     n = 1
     for peer, (ok, meta) in zip(peers, metas[1:]):
         if not ok:
@@ -250,6 +254,11 @@ def stage_rdf(con, row, collection) -> None:
             n += 1
         except Exception:   # noqa: BLE001
             continue
+        if meta.get("issues") is not None:
+            found.append((peer["uid"], meta["issues"]))
+    if found:
+        issues_mod.record_many(con, found, codes=issues_mod.declared(plugin),
+                               checked=plugin_io.metadata_checks(plugin), now=now)
     # The catalog index is committed HERE, before the caller commits the
     # marks (invariant 2). A failure is CatalogUnavailable: the transaction
     # rolls back and the batch is deferred, never recorded as an error.

@@ -166,6 +166,10 @@ class Report:
     note: str = ""
     #: the node's mode this report was judged against ("" = not given)
     mode: str = ""
+    #: the origin's inconsistencies flagged, per code (app/issues.py; 06
+    #: §6.1, amended 2026-10-25) — shown, never blocking: they are the
+    #: origin's, and no stage waits on them
+    issues: dict = field(default_factory=dict)
 
     def blocked(self) -> list[Stage]:
         return [s for s in self.stages if s.state == BLOCKED]
@@ -205,6 +209,11 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -
     except Exception:       # noqa: BLE001 — a health check never raises
         report.note = "manifest unreadable"
         return report
+    try:
+        from . import issues
+        report.issues = issues.counts(con)      # the code index alone
+    except Exception:       # noqa: BLE001 — a health check never raises
+        report.issues = {}
 
     withheld = _withheld(collection)
     quarantined, said = _copy_state(collection)
@@ -468,5 +477,9 @@ def render(reports: list[Report]) -> str:
         out.append(head)
         for s in r.stages:
             out.append(s.line())
+        if r.issues:
+            out.append("   origin inconsistencies: "
+                       + ", ".join(f"{c} {n:,}" for c, n in sorted(r.issues.items()))
+                       + f" — `louise hold issues list {r.collection}`")
         out.append("")
     return "\n".join(out).rstrip() + "\n"

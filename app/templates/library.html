@@ -154,6 +154,14 @@
     no usable content in the source (no text, or retracted upstream)
   </div>
   {% endif %}
+  {% if c.issues %}
+  {# 06 §6.1, amended 2026-10-25: the origin's inconsistencies the parses met #}
+  <div class="note">
+    <span class="badge">{{ c.issues.values()|sum }} origin inconsistenc{{ 'y' if c.issues.values()|sum == 1 else 'ies' }}</span>
+    {% for code, n in c.issues|dictsort %}{{ code }} {{ n }}{{ ', ' if not loop.last }}{% endfor %}
+    — <code>louise hold issues list {{ c.name }}</code>
+  </div>
+  {% endif %}
   {% if c.gate and not c.gate.allowed %}
   <div class="note">
     <span class="badge err">embedding paused</span> {{ c.gate.reason }}
