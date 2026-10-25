@@ -247,6 +247,8 @@ def keep_predecessor_rows(root, from_ref: str, to_ref: str, *, apply: bool = Fal
         return plan
     tcon = sqlite3.connect(tp["manifest"], timeout=60, isolation_level=None)
     try:
+        from app import db
+        db.wal(tcon)                                    # invariant 6: a manifest is WAL
         tcon.execute("BEGIN IMMEDIATE")
         before = tcon.total_changes
         tcon.executemany(f"INSERT OR IGNORE INTO coverage({','.join(cols)}) "
@@ -344,6 +346,8 @@ def _checkpoint(manifest: Path) -> None:
     manifest is then one file, and the move cannot leave half of it behind."""
     con = sqlite3.connect(manifest, timeout=60)
     try:
+        from app import db
+        db.wal(con)                                     # invariant 6: a manifest is WAL
         busy, _log, _done = con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
     finally:
         con.close()
@@ -884,6 +888,8 @@ def _repin(manifest: Path, src: Codex, to: Codex, *, keep_coverage: bool = False
     from app.share import coverage as cov
     con = sqlite3.connect(manifest, timeout=60, isolation_level=None)
     try:
+        from app import db
+        db.wal(con)                                     # invariant 6: a manifest is WAL
         con.execute("BEGIN IMMEDIATE")
         con.execute("INSERT INTO space(id, space_id, dim, components, pinned_at) "
                     "VALUES(1, ?, ?, NULL, ?) ON CONFLICT(id) DO UPDATE SET "

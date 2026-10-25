@@ -64,10 +64,10 @@ through with the commit that closes them.
 
 | invariant | the test that could enforce it |
 |---|---|
-| 5 bandwidth | every module doing network I/O draws from `app/transfer` or is on a named exemption list (model calls) |
-| 6 storage | no `VACUUM` on a manifest; manifests open in WAL; archive and state never under `LOUISE_CACHE_DIR` |
-| 8 secrets | a sentinel secret never appears in logs or error output over startup and failure paths |
-| 11 origin form | each registered plugin has its recorded origin-form note |
+| ~~5 bandwidth~~ | built 2026-10-25: `tests/test_invariant_5_bandwidth.py`; three listings that moved bytes undrawn now draw (HF tree, Wikimedia dump dates, the well-known pointer) |
+| ~~6 storage~~ | built 2026-10-25: `tests/test_invariant_6_storage.py`; six manifest openers that did not set WAL now do (`db.wal`) |
+| ~~8 secrets~~ | built 2026-10-25: `tests/test_invariant_8_secrets.py`; nothing leaked |
+| ~~11 origin form~~ | built 2026-10-25: `tests/test_invariant_11_origin_form.py`; notes written for gutenberg, pubmed, wikipedia, wikidata, deposit, embedded (normattiva had one) |
 | 12 fresh loads | needs a GPU: stays with the measurement harness |
 
 ## 6. Decisions for the operator

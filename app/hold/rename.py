@@ -109,6 +109,8 @@ def _rewrite_paths(manifest: Path, old_prefix: str, new_prefix: str) -> dict[str
         return counts
     con = sqlite3.connect(manifest, timeout=60, isolation_level=None)
     try:
+        from app import db
+        db.wal(con)                                     # invariant 6: a manifest is WAL
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         con.execute("BEGIN IMMEDIATE")
         for table, column in PATH_COLUMNS:

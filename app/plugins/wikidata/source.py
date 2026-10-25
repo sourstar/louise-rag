@@ -10,6 +10,22 @@ Ids (ids.py): an item's native id is its number, a property's is
 `origin` is `<dump rel path>#<entity index>`; `origin_hash` covers the
 entity's own line bytes (the unit a query returns); a verifier needs the
 same dump's label table, rebuilt from the dump (06 §6.4).
+
+THE ORIGIN FORM, and why — invariant 11 wants it recorded beside the
+plugin (06 §6.4; decision D1, docs/notes/wikidata-implementation.md).
+Wikidata is offered as the official JSON entity dump, the RDF dumps (all
+and truthy), the live API, and third-party corpora built from the dump
+(the Hugging Face `philippesaade/wikidata`). Taken: the official JSON
+dump, the dated run the snapshot names (`wikidata-<date>-all.json.bz2`,
+items and properties, with the run's own md5/sha1 sums), read entity by
+entity — the form the origin versions and checksums, and the complete
+one. Not the Hugging Face corpus, whose cleaner drops `snaktype`,
+statement ids, a property's `datatype`, sitelink badges, `modified` and
+`lastrevid` (invariant 11: we may not hold less than the origin gives);
+not the truthy RDF, which keeps the best rank only; not the API, which
+has no dated form a verifier can re-fetch. The Codex's `origin.form`
+says the same (docs/notes/wikidata-recipe.toml). The lexeme dump is a
+separate file and a later slice (STATUS, 2026-10-24).
 """
 from __future__ import annotations
 

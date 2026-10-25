@@ -12,6 +12,16 @@ detected as a real change, not a phantom insert) but is permanently excluded
 from further stage processing by the existing `WHERE error IS NULL` gates —
 no manifest schema change needed. A later baseline/updatefile pass over the
 same files re-derives the identical tombstone (idempotent).
+
+THE ORIGIN FORM, and why — invariant 11 wants it recorded beside the
+plugin (06 §6.4). NLM serves the citations as the annual BASELINE and the
+daily UPDATEFILES (MEDLINE XML, gzipped, each with an `.md5` sidecar) and
+through the E-utilities API. Taken: the baseline and updatefiles
+containers, read as published (`PUBMED_SPEC`) — the archival form the
+origin itself versions and checksums, and the only one that carries the
+`DeleteCitation` tombstones. The API returns the same records paginated,
+unversioned and with no checksum a verifier could re-fetch against.
+docs/notes/pack-format.md, "Which origin form, and why".
 """
 import hashlib
 from pathlib import Path

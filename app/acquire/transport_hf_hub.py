@@ -13,6 +13,7 @@ from typing import Iterator
 
 import httpx
 
+from . import budget
 from .spec import AcquisitionSpec, Endpoint, RemoteFile, TransferAborted, TransportError
 from .transport_https import HttpsTransport, _USER_AGENT
 
@@ -51,6 +52,8 @@ class HfHubTransport:
                         raise TransferAborted(
                             f"hf listing aborted by stop event: {endpoint.url}")
                     r = client.get(url)
+                    # a listing page is bytes moved like any other (invariant 5)
+                    budget.acquire_bytes(len(r.content))
                     r.raise_for_status()
                     for entry in r.json():
                         if entry.get("type") == "file":

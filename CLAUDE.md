@@ -135,7 +135,9 @@ are the ones that have drifted; prefer to add a test when you touch them.
    reranked alone). *Enforced: test + review.*
 5. BANDWIDTH. No code path moves bytes without drawing from the central
    token-bucket budget (transfer manager). No per-tool rate limits as a
-   substitute. *Enforced: review.*
+   substitute. *Enforced: test (tests/test_invariant_5_bandwidth.py: every
+   app/ module doing network I/O draws from the budget or is on its named
+   exemption list — model-server calls, each with its reason).*
 6. STORAGE. /data is a local filesystem: SQLite WAL + LanceDB, no SMB/NFS
    assumptions. SQLite holds state (never travels); Lance holds vectors
    locally — a bundle travels as Parquet (docs/09 §9.7) and rests in the
@@ -146,7 +148,10 @@ are the ones that have drifted; prefer to add a test when you touch them.
    random-access data — a plugin's pack, a label table — goes under
    `LOUISE_CACHE_DIR` (the fast drive) when set, keyed on the origin's
    physical identity (`app/derived.py`); the archive and the authoritative
-   state never do (operator, 2026-10-20; docs/07 §7.8). *Enforced: review.*
+   state never do (operator, 2026-10-20; docs/07 §7.8). *Enforced: test
+   (tests/test_invariant_6_storage.py: no VACUUM in app/, tools/, deploy/;
+   every write-open of a manifest sets WAL; only app/derived.py resolves
+   LOUISE_CACHE_DIR, for named derived data) + review (SMB/NFS).*
 7. GPU BOUNDARY. The app never imports torch/CUDA/SYCL. All model access is
    HTTP (CHAT_URL / TRANSLATE_URL / RERANK_URL, and each collection's own
    [encoder] — there is no default encoder). Embedding calls go through the
@@ -154,7 +159,11 @@ are the ones that have drifted; prefer to add a test when you touch them.
 8. SECRETS. Secrets — key material AND tokens — are referenced by filesystem
    path (`NODE_KEY_PATH`, `ADMIN_TOKEN_FILE`); never in logs, config values
    or error messages, and never in an env VALUE where a path is possible.
-   *Enforced: test + review.*
+   *Enforced: test (tests/test_invariant_8_secrets.py: sentinel token and
+   key files, real config loading in a fresh process, never in log, stderr,
+   stdout or an HTTP answer over startup, bad tokens, an admitted request,
+   bad key files and an unreadable token file; tests/test_invariant_guards.py)
+   + review.*
 9. LICENSE GATES. A yellow- or red-class source requires a recorded
    acknowledgement (timestamp + sha256 of terms text) before its data is
    USED — however the data arrived (docs/04 §4.4). Acquisition: before
@@ -240,7 +249,10 @@ are the ones that have drifted; prefer to add a test when you touch them.
     API, dump vs live), choose the one that best fits our goals and RECORD
     the choice with its reason beside the plugin — the form is part of what
     a verifier needs in order to reproduce our records. *Enforced: build +
-    test (tests/pack/test_origin_fidelity.py); the form choice by review.*
+    test (tests/pack/test_origin_fidelity.py); the form choice recorded by
+    test (tests/test_invariant_11_origin_form.py: every registered plugin's
+    source module carries "THE ORIGIN FORM, and why"), its content by
+    review.*
 12. ENCODER DETERMINISM. *(Operator, 2026-10-18: a fundamental pillar.)*
     The same input on the same card, the same build and the same flags
     gives the SAME BYTES, every time — not "within tolerance". Tolerance
