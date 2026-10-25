@@ -112,7 +112,7 @@ def test_several_torrents_are_fetched_one_after_the_other_in_listed_order(isolat
         estimated_bytes={"demo": 1}, license_class=LicenseClass.GREEN)
     seen = []
 
-    def fake_claimed(con_, coll, spec_, profile, stop, priority):
+    def fake_claimed(con_, coll, spec_, profile, stop, priority, until=None):
         seen.append([e.url for e in spec_.endpoints])
         return {"fetched": 1, "skipped": 0, "failed": 0, "aborted": 0, "adopted": 0, "total": 1}
     monkeypatch.setattr(engine, "_run_acquisition_claimed", fake_claimed)

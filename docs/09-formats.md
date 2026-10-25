@@ -2189,6 +2189,7 @@ half never leaves the plugin and the peer.
 | `etiquette` | | no | `{max_conns, bandwidth_cap_bps, windows}` |
 | `profiles`, `profile_mode`, `profile_labels`, `estimated_bytes` | | no | named selections of slices and their sizes |
 | `all_profile` | string or null | no | the profile `slices = "all"` spells (07 §7.8) where it is not the one whose filter includes everything — a spec that lists files beyond a collection's whole names it (*amended 2026-10-13*: Normattiva's `full` is the 23 pre-packaged collections; `archive` adds the yearly exports for another collection) |
+| `slice_profiles` | map of slice name to profile | no | the slices the origin delivers whole, each with the profile that fetches it — `lang=it` → `it` for Wikipedia's dumps; a slice under one (`lang=it/pages=3M`) is fetched as it, and an origin whose every file may hold any slice declares none (*amended 2026-10-25*: `records fetch --slice`, 07 §7.3) |
 | `probe_file` | | no | the mirror structure probe |
 | `extras` | | no | formats the origin offers that Louise does not exchange |
 | `terms_text_path`, `ssh_key_path`, `auth_token_path` | paths | no | never in any shared object |

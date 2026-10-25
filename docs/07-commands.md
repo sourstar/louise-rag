@@ -122,8 +122,10 @@ louise hold
               list <collection>                                        the subscriptions, each with its last fetch
   config      show [<collection>]                                      the effective configuration, each value with its tier (§7.8)
               apply [<collection>] [--set KEY=VALUE …]                 write the effective values into the files; the node applies them
+                                                                       (`--set` built 2026-10-25: one collection's file, below)
   records     fetch <collection> [--slice … | --profile P] [--snapshot ID]
-                                                                       run the acquisition spec to the cutoff, for these slices or the profile's (06 §6.2)
+                                                                       run the acquisition spec to the cutoff, for these slices or the profile's (06 §6.2);
+                                                                       the slices fetched recorded in the file (built 2026-10-25, below)
               build <collection> [--snapshot ID]                       parse, slice, cut into parts, hash
                                                                        [--corpus DIR]: another origin directory than the collection's own; [--records-from C]: the record lines
                                                                        of a held collection's latest snapshot taken instead of parsing — a re-creation changing only the slicing (RULE 1)
@@ -360,9 +362,29 @@ reader needs at the command line:
   A slice fetched once is recorded in the file so the monthly cycle
   continues it. *As built (2026-10-08, step 12):* the old `corpus
   add|grow`, wrapped — `--profile P` (default: the file's `profile`) and
-  `--dry-run`; `--slice` and recording what was fetched in the file are
-  not built yet. A missing acknowledgement is exit 2, naming `hold
-  collection ack`.
+  `--dry-run`. A missing acknowledgement is exit 2, naming `hold
+  collection ack`. *Amended 2026-10-25 (built):* `--slice` names slices
+  as the SHARD's paths do, or `all`. An origin delivers whole only the
+  slices its acquisition spec declares (`slice_profiles`, the local half,
+  09 §9.17) — Wikipedia's and the pre-embedded archive's `lang=<code>`,
+  one dump or directory each; a slice under one (`lang=it/pages=3M`) is
+  fetched as that one, and said; a slice the origin does not deliver
+  apart — every PubMed update file may hold any year — is exit 2, naming
+  the slices it does deliver and `--slice all`. A fetch that completes
+  (exit 0) writes what it took into the file's `slices`, joined with what
+  the file says (`all` wins; a `profile` the file still names is spelt as
+  its slices, and one no list spells is refused before anything moves),
+  through the file's one writer; the node then derives the profile and
+  fetches it every cycle (`acquire_enabled` follows unless the file
+  states one). A dry run, a refusal, a failure or a stop records nothing.
+  `--snapshot ID` runs the spec to that snapshot's cutoff by the origin's
+  cutoff rule (06 §6.2): an origin of update files takes the files its
+  listing dates before the cutoff; a dated-dump origin takes the dump its
+  Codex pins, refused (exit 2) when the Codex pins none or a dump not
+  before the cutoff; an origin that keeps only its present state (a full
+  resync, a zip rebuilt in place) is fetched as it is now, and the
+  command says that `records build --snapshot ID` applies the cutoff per
+  record. An id not of the Codex's cadence is exit 2.
 - **`records build`.** Refuses (exit 2) a record without `origin_hash`
   (02 §2.3), refuses one whose `native_id` sorts before the open part's
   `first_id` (02 §2.2), and writes a tombstone for a document the origin
@@ -470,7 +492,28 @@ reader needs at the command line:
   labelled `environment`, `files`, `state database` — or `codex` for what
   the space fixes. `apply` replaces each runtime embed-mode override by
   the file's value, as the node does at start, and names (exit 1) a file
-  the node refuses. `--set` is not built yet (2026-10-08).
+  the node refuses. *Amended 2026-10-25 (built):* `--set KEY=VALUE`,
+  repeatable, names a collection and writes its file first, through the
+  file's one writer — the Library's, so the embed-mode and sharing
+  controls and `--set` leave the same bytes (app/collection_file.py) —
+  then applies it. The keys are the file's editable values, as `config
+  show` names them: `embed` (`embed_mode` too: `off`, `on-demand`, `all`,
+  `p2p`), `share`, `title`, `slices`, `kinds`, `share_slices`,
+  `share_kinds` (comma-separated; `all` lifts a narrowing),
+  `encoder.url`, `encoder.query_url`, `encoder.api`,
+  `encoder.embed_model`, `encoder.query_model`, `reranker.url` (empty:
+  no `[reranker]`), `reranker.api`, `reranker.rerank_model`,
+  `reranker.window`. Never `codex` or `source` (§7.8). The values are set
+  together, the file rendered whole and loaded back by the node's own
+  loader before it replaces the old one: an unknown key, a malformed
+  value, a model its URL does not name, `share = true` on a never-share
+  collection, `embed = p2p` with `share = false` in one call, or `--set`
+  without a collection is exit 2 with nothing written, the keys named.
+  `embed = p2p` alone turns sharing on and `share = false` alone under
+  `p2p` takes the mode to `all`, as the Library does after asking (§7.8);
+  the output names what else changed. A collection the node refuses for
+  naming no encoder is given one this way. The file's comments do not
+  survive the rewrite.
 - **`check`.** Runs the plan (03 §3.2) with the seed given or a fresh
   one. A check's outcome is `pass`, `fail` or `inconclusive` (03 §3.1);
   the first two yield an attestation (09 §9.8), signed when this peer
@@ -1129,7 +1172,9 @@ are. A `tree` facet matches a value and everything under it, so
 facet takes `FROM..TO`, either end omitted for open (not built yet).
 `--profile` takes a profile name the collection's acquisition spec
 declares (06 §6.2) and expands to that profile's slices; it may not be
-combined with `--slice`. `--space` and `--work` take a TOML holding
+combined with `--slice` (exit 2). `--set` takes `KEY=VALUE`, a key of
+the collection's file as `hold config show` names it (§7.3, amended
+2026-10-25). `--space` and `--work` take a TOML holding
 that Codex block in the form 09 §9.3 fixes; a new encoder is named by
 its whole space block (*amended 2026-10-25*: the `--encoder-weights D
 --engine FILE` shorthand for `derive` and `replace` was never built and

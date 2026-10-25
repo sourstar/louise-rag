@@ -170,6 +170,24 @@ def test_the_mode_is_written_in_the_documents_word(codex_loaded):
     assert collections_mod._load_one(path).embed_mode_default == "lazy"
 
 
+def test_the_reranker_window_and_the_sources_survive_a_rewrite(codex_loaded):
+    """Both were dropped by every rewrite until 2026-10-25: the `[reranker]`
+    `window` (05 §5.6, amended 2026-10-21) came back as the default, and a
+    deposit collection's `[[sources]]` (06 §6.7) vanished — the guards above
+    compare `Collection` fields, and the subscriptions are not one."""
+    import tomllib
+    path, _, _ = codex_loaded
+    path.write_text(path.read_text(encoding="utf-8") + "window = 1024\n"
+                    '\n[[sources]]\nurl = "https://example.org/a\\\\b.xml"\ninterval = 60\n',
+                    encoding="utf-8")
+    before = collections_mod._load_one(path)
+    assert before.reranker.window == 1024
+    write(path, before)
+    assert collections_mod._load_one(path) == before
+    assert tomllib.loads(path.read_text(encoding="utf-8"))["sources"] == [
+        {"url": "https://example.org/a\\b.xml", "interval": 60}]
+
+
 def test_codex_rewrites_are_idempotent(codex_loaded):
     path, before, _ = codex_loaded
     write(path, before)
