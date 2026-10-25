@@ -125,6 +125,17 @@ def _get_dht(session, codex, *, wait_s, sleep, clock) -> dict[str, Any] | None:
     return best
 
 
+def _draw(n: int) -> None:
+    """The bytes read, from the central budget (invariant 5), as the anchor
+    document's are (app/hold/anchor.py fetch)."""
+    try:
+        from app.transfer.bucket import Priority
+        from app.transfer.manager import Direction, get_manager
+        get_manager().bucket(Direction.DOWN).acquire(n, Priority.DELTA)
+    except Exception:   # noqa: BLE001 — accounting after the fact never loses the pointer
+        pass
+
+
 def get_well_known(codex, *, client=None) -> dict[str, Any] | None:
     """The pointer at the anchor domain's well-known path, verified; None
     when it is not there or does not verify."""
@@ -136,6 +147,7 @@ def get_well_known(codex, *, client=None) -> dict[str, Any] | None:
             r = c.get(well_known_url(codex))
         except httpx.HTTPError:
             return None
+        _draw(len(r.content))
         if r.status_code != 200:
             return None
         try:

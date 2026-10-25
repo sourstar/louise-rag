@@ -15,6 +15,9 @@ the moment it drifts.
   one maintenance regime, for every collection.
 - Logging: every stdout line names its collection (db.ManifestConnection),
   because seven collections share one worker stdout.
+
+Invariants 5 (bandwidth), 6 (storage), 8 (secrets, by behaviour) and 11
+(the origin-form note) have their own files: tests/test_invariant_<n>_*.py.
 """
 import re
 from pathlib import Path

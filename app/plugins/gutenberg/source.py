@@ -6,6 +6,28 @@ functions call directly so the `rdf` stage never pays for a full-text read and
 the `fts`/`embed` stages never re-parse metadata — matching today's exact lazy
 I/O cost per stage, which parse() alone (always returning the full
 CanonicalDoc) can't express.
+
+THE ORIGIN FORM, and why — invariant 11 wants it recorded beside the
+plugin (06 §6.4). Project Gutenberg publishes a book in several forms
+beside its catalogue entry `pg<id>.rdf`: epubs (illustrated and plain), a
+`.txt`, html, mobi/kf8. ONE rule, in order (`FORMS`, `pick_form`;
+operator 2026-09-11, the epub first since parser 7):
+
+  * the first READABLE epub, the illustrated edition first — the plates
+    are only there, and it is the form the origin keeps most current;
+  * else the `.txt`, the text the epub is made from;
+  * else the catalogue entry alone: a record with no body, rather than an
+    error saying the book does not exist (~1,199 entries have nothing
+    else).
+
+The rdf travels beside the chosen form in `origin_hash` (parser 9), so
+the record's creators, dates and subjects are verifiable too. html and
+mobi/kf8 are re-renderings of the same text and are never read (the
+acquisition spec does not fetch mobi/kf8). A verifier applying the rule to
+the same book directory reaches the same form, and `extra.form` names it
+per record. The cost — an epub and a `.txt` do not clean to the same text
+— is in pg_epub.py; the history (`.txt` only before parser 7) in
+docs/notes/pack-format.md, "Which origin form, and why".
 """
 import hashlib
 import re

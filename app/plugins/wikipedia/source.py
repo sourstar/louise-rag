@@ -18,6 +18,26 @@ language, in wikivec's own numbering, so every wiki of the collection
 coexists and a document the pre-embedded archive covers keeps the id its
 vectors are keyed by. A page read from a DUMP is numbered above the
 archive's whole range, which makes the layer a pure function of the id.
+
+THE ORIGIN FORM, and why — invariant 11 wants it recorded beside the
+plugin (06 §6.4). Wikimedia publishes each wiki as XML dumps (plain and
+multistream), Cirrus search dumps, HTML dumps and the live API. Taken:
+
+  * the dated MULTISTREAM `pages-articles-multistream.xml.bz2` with its
+    index, and the run's `page_props.sql.gz` (parser 5: the QIDs) — the
+    wikitext the origin versions by run; the index makes the dump seekable
+    per page, so a record is re-derived from its one stream without
+    re-reading the dump. Cirrus and HTML dumps are pre-rendered and lossy
+    for our purposes; the API has no dated form a verifier can re-fetch;
+  * where the credited pre-embedded archive (wikivec's parquet, layer 1)
+    covers an article, its text is read from the archive instead, and
+    `extra.source` says per record which of the two it came from
+    (`"archive"` or `"dump"`; docs/notes/wikipedia-two-layers.md);
+  * figures: Commons' PNG rendition at a fixed width, not the `.svg` (08
+    §8.7 refuses SVG; the record's `origin` still locates the `.svg`).
+
+The full reasoning: docs/notes/pack-format.md, "Which origin form, and
+why".
 """
 import bz2
 import hashlib

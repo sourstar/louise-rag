@@ -1875,6 +1875,8 @@ def _fetch_members_here(root, name: str, *, slices, kinds, session=None) -> dict
     con = sqlite3.connect(manifest, isolation_level=None)
     con.row_factory = sqlite3.Row
     try:
+        from app import db
+        db.wal(con)            # invariant 6: the first opener of a fresh manifest decides its mode
         with peers_connection() as node_con:
             hints = transport.hints_for(node_con, codex.collection_id, now=time.time())
         return transport.fetch_members(root, name, codex, slices=slices, kinds=tuple(kinds),

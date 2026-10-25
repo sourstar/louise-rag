@@ -21,6 +21,19 @@ never starts with a dot (02 §2.9).
 Nothing here writes. `app/hold/deposit.py` places the bytes and runs the
 worker's own stages over them; this module only reads what is there, like
 any plugin reads its corpus.
+
+THE ORIGIN FORM, and why — invariant 11 wants it recorded beside the
+plugin (06 §6.4, §6.7). The origin is the client, and the form is the
+BYTES AS THE CLIENT SENT THEM (the Codex's `origin.form`, "deposit: the
+bytes as the client sent them"; docs/notes/deposit-collections.md A3):
+`.txt`, `.md` or `.pdf`, chosen by the client, stored byte-exact and
+hashed as stored — never a conversion of them, because no other copy
+exists anywhere for a verifier to re-fetch. A URL source's page is kept
+as FETCHED, the response's bytes (`form: "html"` in the sidecar; 06 §6.7
+amended 2026-10-25, operator: "Keep all"), not the text extracted from
+it, so the record — and what the page says about itself — is re-derived
+from the page. A `.git` or `sitemap.xml` source is one deposit of the
+texts joined, its form the `.txt` key it is stored under.
 """
 from __future__ import annotations
 
