@@ -56,11 +56,12 @@ from . import httpc
 SYSTEM_TTL_S = 2.0
 #: how long it is trusted for a request a person waits on. In 2 s another
 #: model's load can make LocalAI's reclaimer evict this one, and a check that
-#: reads the older answer sends the request cold: the load is then paid
-#: inside its budget (2026-10-25: 95 of 496 first searches lost their rerank
-#: overnight beside normattiva's re-embed; the translator's load evicting the
-#: idle reranker is the suspected path). A burst — a query's variants — shares
-#: one read; a single request (rerank, chat, translation) asks with 0.
+#: reads the older answer sends the request cold, its load then paid inside
+#: its budget. A guard for the operator's rule of 2026-10-09; it was NOT the
+#: cause of the 2026-10-25 rerank misses: the reranker was never evicted that
+#: night, and the misses were HTTP 500s (STATUS.md). A burst — a query's
+#: variants — shares one read; a single request (rerank, chat, translation)
+#: asks with 0.
 INTERACTIVE_TTL_S = 0.25
 #: how long a server that has no `/system` (or not LocalAI's) is left alone
 NO_ROUTE_TTL_S = 300.0
