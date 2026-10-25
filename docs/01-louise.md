@@ -109,12 +109,18 @@ consistent, because there is nobody to prove them to.
    reproduction outweighs any number of assurances.
 6. **No node is in charge.** Once one honest peer holds a collection, it
    can keep it available and up to date if everyone else disappears.
-7. **Nothing published is deleted.** A superseded collection stays
-   available and verifiable; catalogues mark it, nothing removes it. A
-   tombstoned record is no exception: its text stays in the closed part
-   of the snapshot that carried it, which remains shareable and
-   verifiable as that snapshot, and from the snapshot that tombstones it
-   the record is excluded from search and from embedding (02 §2.2).
+7. **Nothing published is recalled, and everything held is
+   verifiable** (*amended 2026-10-25*, operator: "what really matters in
+   the end is the verifiability"). A superseded collection stays
+   available; catalogues mark it, nothing removes it. Within a
+   collection, what is kept follows the origin: where the origin keeps
+   its history, a superseded part is kept and an old snapshot can still
+   be served and checked; where the origin replaces in place (Project
+   Gutenberg), the superseded version is dropped once the newer snapshot
+   holds its replacement, because it can no longer be checked against
+   the source (02 §2.3, 06 §6.2). A tombstoned record is excluded from
+   search and from embedding from the snapshot that tombstones it (02
+   §2.2).
 8. **Nothing proceeds with a known defect. "Fix it after" is never, ever
    an option.** Not for one more run, not for the batch already queued,
    not for the deploy that is otherwise ready, not for the hour it would
@@ -122,8 +128,8 @@ consistent, because there is nobody to prove them to.
    it is fixed first — including work in flight and work unrelated to
    it.
 
-   Promise 7 is why. Nothing published is deleted, so a wrong artefact
-   is never recalled, only superseded, and every peer that adopted it in
+   Promise 7 is why. Nothing published is recalled, so a wrong artefact
+   is only superseded, and every peer that adopted it in
    the meantime still holds it. Promise 5 is what makes it dangerous
    rather than merely useless: trust here is reproduction, so the
    artefact that matters is not the one that crashes — it is the one

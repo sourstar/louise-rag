@@ -90,10 +90,8 @@ in [`handover-worklist.md`](notes/handover-worklist.md) §1, §2 and §6. The
 node's own list is in [`node-runbook.md`](notes/node-runbook.md) §14. At
 the time of writing:
 
-- **Waiting on the operator:** the retention amendment
-  ([`retention-amendment-draft.md`](notes/retention-amendment-draft.md):
-  keep only what can still be verified against its origin); pubmed's
-  OtherAbstract records; a periodic snapshot of the origin mirror.
+- **Waiting on the operator:** pubmed's OtherAbstract records; a
+  periodic snapshot of the origin mirror.
 - **Waiting on the node:** wikidata's re-creation (Monday 2026-10-26);
   gutenberg's re-index of 127 parts, then its parser-11 re-creation
   ("every plate"); the wikipedia-v8 records build; the reranker's HTTP 500s

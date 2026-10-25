@@ -308,7 +308,7 @@ its closed part — so the part still verifies and 01's promise 7 holds
 — until that part is next re-issued, when it is dropped from the file.
 A record the origin no longer supplies cannot be re-parsed, so its own
 going re-issues its part in the next snapshot, one record shorter; the
-version it supersedes is kept (below), and no later part moves, because
+version it supersedes is kept or dropped as below, and no later part moves, because
 the build cuts every closed part where it ended (*amended 2026-10-12*,
 operator: a build used to re-cut a slice by count, and one book gone
 re-issued every later part).
@@ -374,9 +374,15 @@ records/<slice>/NNNNN.jsonl.zst                     -- the newest version of par
 records/<slice>/NNNNN.<snapshot id>.jsonl.zst       -- a superseded version, kept; the id is the last snapshot that listed it
 ```
 
-A re-issued part keeps its path; the version it supersedes is renamed
-with the id of the last snapshot that listed it and kept, so an old
-snapshot can still be served and checked (01, promise 7).
+A re-issued part keeps its path. Where the origin keeps its history (06
+§6.2's `origin_versions = "history"`: Wikipedia's and Wikidata's
+revisions, Normattiva's versions in force), the version it supersedes is
+renamed with the id of the last snapshot that listed it and kept, so an
+old snapshot can still be served and checked. Where the origin replaces
+in place (`"replaces"`: Project Gutenberg), the superseded version can no
+longer be checked against the source and is not kept: the promotion
+overwrites it, and a part no longer held is not served (01, promise 7;
+*amended 2026-10-25*, operator: A).
 
 A record is one line: the keys `uid`, `native_id`, `lang`, `title`,
 `creators`, `date`, `subjects`, `keys`, `sections`, `extra`,

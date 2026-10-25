@@ -249,6 +249,11 @@ class GutenbergSource:
     #: the type. The collection that adopts this parser is a new one whose
     #: vectors all carry (02 §2.4 A1c, `louise dev carry --rebuilt`).
     PARSER_VERSION = 11
+    #: 06 §6.2: Project Gutenberg rewrites a book's files under the same
+    #: number, and keeps no earlier version anyone can fetch — a part this
+    #: collection re-issues can only be checked against its newer self, so
+    #: its superseded version is not kept (01 promise 7, 02 §2.3).
+    origin_versions = "replaces"
     modality = Modality.TEXT
     # PG does withdraw a text on a copyright claim, and the tombstone
     # stays: a removal is never silent (04 §4.4).

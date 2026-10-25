@@ -276,6 +276,9 @@ class NormattivaSource:
     #: wrote are unchanged; a parser-8 collection is created and carried from
     #: the parser-7 one by `dev carry --rebuilt` and `--reconcile` (A1c, RULE 1).
     PARSER_VERSION = 8
+    #: 06 §6.2: the origin keeps its history — Normattiva serves every act in each version that was in force (multivigente) —
+    #: so a superseded part version stays checkable and is kept (02 §2.3).
+    origin_versions = "history"
     modality = Modality.TEXT
     erasure = Erasure.RETRACTABLE          # an act withdrawn from the database
     native_id_order = "numeric"            # eli.expression_native_id: start of validity first

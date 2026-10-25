@@ -88,6 +88,9 @@ class WikidataSource:
     #: and the history section now"): after each language's text, what the
     #: best-rank filter drops, headed `<lang>:history` (textify.history_text)
     PARSER_VERSION = 2
+    #: 06 §6.2: the origin keeps its history — every entity's earlier revisions stay fetchable by revision id —
+    #: so a superseded part version stays checkable and is kept (02 §2.3).
+    origin_versions = "history"
     LOCATOR_SEP = _LOCATOR_SEP
     LOCATOR_MEMBER_FIELDS = 1
     modality = Modality.TEXT

@@ -89,6 +89,14 @@ NativeIdOrder = Literal["bytes", "numeric"]
 #: does not implement, and the version is part of the image the Codex names
 #: by digest.
 PROTOCOL_VERSION = 1
+#: `origin_versions` (06 §6.2): the origin keeps its history / replaces in place.
+ORIGIN_HISTORY, ORIGIN_REPLACES = "history", "replaces"
+
+
+def origin_versions(plugin) -> str:
+    """A plugin's `origin_versions`; ORIGIN_HISTORY — keep — when it says nothing."""
+    v = getattr(plugin, "origin_versions", ORIGIN_HISTORY)
+    return v if v in (ORIGIN_HISTORY, ORIGIN_REPLACES) else ORIGIN_HISTORY
 
 
 @dataclass(frozen=True)
@@ -304,6 +312,14 @@ class CorpusSource(Protocol):
     chunking_profile: str
     mutability: Mutability
     native_id_order: NativeIdOrder
+    #: 06 §6.2 (amended 2026-10-25, operator: "what really matters in the
+    #: end is the verifiability"): does the origin keep earlier versions a
+    #: verifier can still fetch (`ORIGIN_HISTORY`, the default when a plugin
+    #: says nothing) or overwrite them in place (`ORIGIN_REPLACES`)? A
+    #: superseded part version is kept only where it can still be checked
+    #: against its origin (01 promise 7, 02 §2.3; app/hold/shard.py).
+    #: Outside the Codex: it decides what a node keeps, never a byte.
+    origin_versions: str
 
     # 06 §6.1's `default_layers`, `default_slicing` and `default_facets`, as
     # plain dicts: this module stays free of app.hold so that it can be

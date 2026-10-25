@@ -259,6 +259,18 @@ none and its Codex carries `terms_sha256: null`.
 
 ## 6.2 Acquisition
 
+**Whether the origin keeps its versions** (*amended 2026-10-25*,
+operator: "what really matters in the end is the verifiability"). A plugin
+declares `origin_versions`: `"history"` when the origin keeps earlier
+versions a verifier can still fetch (Wikipedia and Wikidata by revision
+id, Normattiva by the version in force), `"replaces"` when it overwrites
+in place (Project Gutenberg rewrites a book under the same number). A
+superseded part version is kept only under `"history"` (02 §2.3, 01
+promise 7). A plugin that declares nothing keeps (`"history"`); pubmed,
+deposit and embedded declare nothing until their origins are checked. The
+declaration is the plugin's and outside the Codex: it decides what a node
+keeps, never a byte that is hashed.
+
 A plugin that fetches its own corpus ships an **acquisition spec**:
 transport (HTTPS, rsync, a model hub, a torrent), base URL, how the
 origin lists its files, how it checksums them, how it publishes updates

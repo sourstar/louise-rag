@@ -428,7 +428,8 @@ un-publish: once a part is served, no later snapshot reaches the peers
 who hold it. So `erasure: erasable` requires `privacy: never-share`, and
 a SHARD build refuses the pair otherwise; every collection that travels
 is append-only or retractable, and a tombstoned record stays in its
-closed part, excluded from search and embedding (01, promise 7).
+closed part until that part is re-issued (02 §2.2), excluded from search
+and embedding (01, promise 7).
 What "no trace" means in bytes is 02 §2.9.
 
 **The web sources of a deposit collection.** A deposit collection may

@@ -209,7 +209,11 @@ are the ones that have drifted; prefer to add a test when you touch them.
     collection to add later. If you cannot decide whether something is
     (d) or entity information, ASK; do not guess it away.
     Losing the ability to re-fetch the origin and reproduce what we kept
-    is equally forbidden.
+    is equally forbidden. EVERYTHING HELD IS VERIFIABLE (operator,
+    2026-10-25): a superseded part version is kept where the origin keeps
+    its history and dropped where it replaces in place, since it can no
+    longer be checked against the source (01 promise 7, 06 §6.2
+    `origin_versions`, app/hold/shard.py).
     NOTHING IS PRUNED UNLESS WRITTEN (operator, 2026-10-24): "If not
     written explicitly in the guidelines a collection cannot prune any
     information from the corpus, in other words I cannot get from the raw

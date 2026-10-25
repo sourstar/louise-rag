@@ -330,6 +330,9 @@ class WikipediaSource:
     #: sections do not move, so neither does a chunk (02 §2.4 A1d;
     #: docs/notes/wikipedia-qids.md).
     PARSER_VERSION = 5
+    #: 06 §6.2: the origin keeps its history — every page's earlier revisions stay fetchable by revision id —
+    #: so a superseded part version stays checkable and is kept (02 §2.3).
+    origin_versions = "history"
     #: 09 §9.5's `origin` is `<dump>#<start>::<end>`: the member is the
     #: stream's byte range, TWO fields (plugin_io.origin_locator). Without
     #: these the record carried the raw `::` locator, which the reparse
