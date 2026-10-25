@@ -132,7 +132,9 @@ Legislation stayed in `work`, but by one edge. Its path to `internal` runs
 legislation (Q49371) → "Wikidata item that needs to be split" (Q91615393) →
 Wikidata item → Wikimedia internal item: 6–8 steps, against 8–10 to creative
 work. So **legislation is a `work` root**, and the bad edge goes in the
-standing report to Wikidata.
+standing report to Wikidata (W8). For the same reason, **cell line is a
+`molecular` root**: upstream makes it a direct subclass of taxon (W9), and
+its 153,635 items would otherwise count among the taxa.
 
 Estimated entities per family (records and pruned):
 

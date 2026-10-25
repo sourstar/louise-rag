@@ -59,7 +59,7 @@ entities (classes-niche.json, `statements.all`): 55,225,147 quantities in
 | — | the Wikidata embedding project: stale vectors kept as current (~14 %), text depending on a live page, dropped entity data, the card's counts | — | [wmde-wikidata-embedding-project.md](upstream-reports/wmde-wikidata-embedding-project.md) |
 | W2–W5 | data: a description cut short (Q22844), six P279 cycles, the most-referenced entities with no label in it/de/fr/es, the occurrence tree holding clinical trials, theses, statutory instruments, stars and coins | — | [wikidata.md](upstream-reports/wikidata.md) |
 
-| W8–W9 | data: legislation (Q49371) a subclass of the maintenance class "Wikidata item that needs to be split", which makes every act a "Wikimedia internal item"; cell line a subclass of taxon (153,635 items) | legislation a `work` root; cell lines left as taxa | [wikidata.md](upstream-reports/wikidata.md) W8–W9 |
+| W8–W9 | data: legislation (Q49371) a subclass of the maintenance class "Wikidata item that needs to be split", which makes every act a "Wikimedia internal item"; cell line a subclass of taxon (153,635 items) | legislation a `work` root; cell line a `molecular` root | [wikidata.md](upstream-reports/wikidata.md) W8–W9 |
 
 The operator files them; nothing has been filed yet. W5's P279 chains are
 traced (the shortest chain per class, in the report).

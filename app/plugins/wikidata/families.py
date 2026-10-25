@@ -64,7 +64,8 @@ OTHER = CODE["other"]
 #: mis-modelled edge, "Wikidata item that needs to be split": as a root it no
 #: longer hangs on that edge); taxon; ASTRONOMY — astronomical object, star,
 #: galaxy; MOLECULAR — type of chemical entity, gene, protein, group of
-#: stereoisomers; Wikimedia internal item
+#: stereoisomers, cell line (a direct subclass of taxon upstream, 153,635
+#: Cellosaurus items; upstream-reports/wikidata.md W9); Wikimedia internal item
 ROOTS: dict[str, tuple[int, ...]] = {
     "scholarly": (13442814,),
     "heritage": (4989906, 839954, 358, 39614),
@@ -76,7 +77,7 @@ ROOTS: dict[str, tuple[int, ...]] = {
     "work": (17537576, 3331189, 47461344, 49848, 49371),
     "taxon": (16521,),
     "astronomy": (6999, 523, 318),
-    "molecular": (113145171, 7187, 8054, 59199015),
+    "molecular": (113145171, 7187, 8054, 59199015, 21014462),
     "internal": (17442446,),
 }
 #: FALLBACK families take only the classes no other root reaches. None since
