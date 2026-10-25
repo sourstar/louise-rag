@@ -29,9 +29,11 @@ and what is deliberately not being built. Read this before planning work.
   no check compares the manifest's counts and text index with the records
   (the 127-part gap: a reindex by day 2026-10-26).
 - **Parked:** arXiv and the knowledge-base pipelines.
-- **Counted on the node (2026-10-25):** no build database holds a record
-  skipped for having no date (gutenberg, normattiva, pubmed, wikipedia-v8
-  and the retired ones). A sample of 120,000 pubmed baseline citations
+- **Counted on the node (2026-10-25):** how many records have no date is
+  NOT known: the build databases hold no skip for it, but `hold records
+  build` never passes a cutoff, so that exclusion has never run; the
+  `cutoff-undated` flag gives the number at the next gutenberg and pubmed
+  build (docs/notes/corpus-inconsistencies.md). A sample of 120,000 pubmed baseline citations
   holds none without DateRevised or DateCompleted. gutenberg's one build
   skip is book 673, whose encoding the origin declares broken. The census
   of the mirror's 79,770 `pg<N>.rdf` files is running (book 10 has none).
