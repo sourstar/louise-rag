@@ -5,6 +5,7 @@ its own ladder, records the coverage and announces a `bundle` event; a
 second pass finds nothing open; a heavier neighbour takes the shards it
 leads; the seeder serves the bundles as members."""
 import json
+from pathlib import Path
 import time
 
 import pytest
@@ -941,6 +942,60 @@ def test_a_re_minted_collection_with_no_snapshot_yet_counts_its_rows(ready, monk
     monkeypatch.setattr(possession, "covered", lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked")))
     view = counting.view_kwargs(root, "gutenberg", codex, kw["con"])
     assert view["union"] == counting.union_counts(root, "gutenberg", codex, cov.rows(kw["con"]))
+
+
+def test_a_part_s_coverage_is_explained_bundle_by_bundle(ready):
+    """2026-10-25, the Perugia hand-over: two peers holding the same 380
+    bundles counted 9,010 chunks apart over 127 parts. `explain_part` says,
+    per bundle that could hold the part's records, which test it passes."""
+    from app.hold import land as landing
+    from app.share import possession
+    root, snapshot, codex, kw = ready
+    shard = snapshot.shards[0]
+    sid = f"{shard.slice}/{shard.n:05d}"
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    first, second = records[0], records[1]
+    good = _predecessor(root, codex, kw["con"], f"{shard.slice}/{shard.n + 3:05d}",
+                        {first["uid"]: first["content_hash"], second["uid"]: "0" * 32})
+    gone = _predecessor(root, codex, kw["con"], sid, {second["uid"]: second["content_hash"]},
+                        bundle_id="sha256:" + "e" * 64, files=False)
+    other_seg = "sha256:" + "d" * 64
+    cov.record(kw["con"], bundle_id=other_seg, shard=f"{PREDECESSOR}/5ac3c5810f2cd56a/{sid}", producer=PEER_KEY,
+               uids=[first["uid"]], chunks=1, tiers={t: "pass" for t in cov.TIERS}, source=cov.FETCHED,
+               accepted_at="2026-10-20T00:00:00Z")
+    out = possession.explain_part(root, "gutenberg", codex, kw["con"], sid)
+    by = {b["bundle_id"]: b for b in out["bundles"]}
+    assert (by[good]["counted"], by[good]["files"], by[good]["uids"], by[good]["same_hash"]) == (True, True, 2, 1), \
+        "one record held with its current hash, one changed since"
+    assert (by[gone]["files"], by[gone]["uids"]) == (False, 0), "a row with no files here covers nothing"
+    assert by[other_seg]["counted"] is False, "a row under another space segment is not read by the index"
+    assert out["records"] == len(records) and out["covered"] is not None and out["prefixes"]
+
+
+def test_the_index_cache_has_a_temp_file_of_its_own(ready, monkeypatch):
+    """The same race as `part_records` (f386934), one function up: a CLI and
+    the worker rebuilding the index at once shared `<index>.json.tmp`."""
+    from app.share import possession
+    root, snapshot, codex, kw = ready
+    cov.ensure_schema(kw["con"])
+    real_replace = possession.os.replace
+    nested = {"done": False}
+
+    def replace(src, dst):
+        if not nested["done"] and str(dst).endswith(possession.INDEX):
+            nested["done"] = True
+            possession._memo.clear()
+            Path(dst).unlink(missing_ok=True)
+            possession.index(root, "gutenberg", codex, kw["con"])     # the other writer, first
+        real_replace(src, dst)
+    monkeypatch.setattr(possession.os, "replace", replace)
+    possession._memo.clear()
+    (root / "gutenberg" / "state" / "share" / possession.INDEX).unlink(missing_ok=True)
+    possession.index(root, "gutenberg", codex, kw["con"])
+    assert nested["done"]
+    left = [p.name for p in (root / "gutenberg" / "state" / "share").iterdir() if p.name.endswith(".tmp")
+            or p.name.startswith("." + possession.INDEX)]
+    assert left == [], "no temp file left behind"
 
 
 def test_the_held_path_signs_none_of_a_predecessor_s_rows_and_never_counts_them_as_coverage(ready):

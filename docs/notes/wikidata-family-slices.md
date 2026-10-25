@@ -161,6 +161,43 @@ republic", which countries also carry while their country and
 sovereign-state classes are `place`. The creation map and the codes under
 these rules (a pass of about an hour), then their report, decide `create`.
 
+**The map create pins: `sha256:78399d609759f3ac…` (41e3112's rules; report
+at origin/main 23acfe4, München 2026-10-25 09:28–10:19 CET).**
+
+| family | entities |
+|---|---|
+| scholarly | 114,947 (+46,010,584 pruned) |
+| heritage | 3,208,175 |
+| built | 3,168,807 |
+| event | 1,473,144 |
+| person | 13,736,789 |
+| place | 6,773,668 |
+| organization | 3,669,054 |
+| work | 9,860,689 |
+| taxon | 4,015,318 |
+| astronomy | 8,394,562 |
+| molecular | 3,844,690 |
+| internal | 9,250,962 |
+| property | 13,972 |
+| other | 8,371,406 |
+
+Every probe lands as intended: legislation → work, Wikimedia category →
+internal, cemetery → heritage, country and sovereign state → place, cell
+line → molecular, edition, written work and document → work.
+
+`other` holds nothing above 700 k; family name, 690 k, is the largest.
+**Approved for create.** The small misplacements stay for the ONE later
+re-creation (operator, 2026-10-24: later changes go in one re-creation),
+with scholarly articles, lexemes and the niche languages:
+- railway station (94 k) and tram stop (26 k), likely `built` through
+  "facility" (Q13226383), with its paths and a preview first, since
+  facility is broad;
+- park (86 k) and ship (76 k);
+- educational facility (66 k) and facility (52 k).
+
+Fictional humans (48 k) stay out of `person`, which is real people (human,
+Q5).
+
 **Families, in precedence order** (an entity in several takes the first):
 
 | family | an entity is in it when | measured (dump 20261012) |
