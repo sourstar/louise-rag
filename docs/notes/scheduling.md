@@ -432,6 +432,33 @@ starved while a bundle lands, the cut moves to the parse pool
 (`app/parallel.py`, children at nice 10), as the embed stage's own
 chunking did in amendment 50.
 
+**19. A pool that runs out of children, and an exit that waits for it.**
+München, 2026-10-25: wikipedia-v8's records build was stopped with SIGTERM.
+It committed its part, returned from main, and never exited. py-spy showed
+the main thread in `concurrent.futures.process._python_exit`, joining two
+pool manager threads. No parse child was left in the container, and two
+queue feeders were blocked writing to a pipe nobody read. Two causes, both
+reproduced on 3.12.3:
+- CPython gh-115634. A child that retires at `max_tasks_per_child` is
+  replaced only if no stale "idle" token says otherwise. So a 3.12 pool
+  runs out of children with parts still queued: 8 parts, 2 children retiring
+  after 2 tasks each, 4 answered and 0 children left. The watchdog then
+  throws the pool away, and 2026-10-24's 15 pages re-parsed serially in
+  18 h fit this cause.
+- `shutdown(wait=False)` leaves a pool's manager thread waiting for its
+  children: for ever if one is stuck or none is left. The interpreter's
+  exit joins every manager thread with no bound.
+
+→ The library's fix is backported where the interpreter lacks it
+(`parallel._Executor`). A pool thrown away is STOPPED (`parallel.discard`):
+its children are terminated until its manager has ended, and only then is
+it shut down. Doing it in the other order, as 3.14's `terminate_workers()`
+does, lets the last child retire unreplaced in between: 2 exits in 8 hung,
+then 0 in 12. The exit stops the pool before the library joins it. Tests:
+tests/test_parallel_exit.py, in this interpreter and in 3.12 when present.
+The lesson: an optimisation's WORKERS can disappear too, so a wait on them
+needs a bound (§6, 5), and so does the exit that cleans them up.
+
 ## 6. Before you change the scheduler — the checklist
 
 1. **Read the worker log as a time series first.** It is the first

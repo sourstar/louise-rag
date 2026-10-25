@@ -340,6 +340,19 @@ The node's wikidata (75,896,183 documents, all `lang = "mul"` by design: an enti
 
 "Implement docs/notes/annotation-collections.md immediately … Annotations must be updated not replaced." `hold annotations update` / the API route / the Library card's *re-check claims* and *update with a claims file*: the next snapshot of the same collection, its claims re-checked against the targets' newest snapshots (records twin included), kept claims keeping their uids, left-out ones tombstoned, superseded parts and the replaced claims file kept (annotation-collections.md "Updating"; 02 §2.10, 07 §7.3, 09 §9.4 amended). Found on the way, and fixed: a peer never followed ANY collection's next snapshot — the pull acted on `snapshot` events that no code emits; it now follows what its neighbours' digests list (`accept.newer_from_digests`), annotations collections included. One update a period (monthly for gutenberg-book-editions: its next is 2026-10, written now; the one after from November).
 
+### 2026-10-25: a stopped records build never exited — the parse pool fixed (München's find, invariant 2)
+
+wikipedia-v8's build committed its part on SIGTERM, returned from main, then hung in the interpreter's exit for 15 minutes until it was SIGKILLed. Nothing was lost. The causes, both reproduced on Python 3.12.3 (the node's interpreter):
+- CPython gh-115634: a pool loses the children that retire at their task limit and is left with none, with parts queued;
+- a pool thrown away by the watchdog is joined at exit for as long as its children never answer.
+
+Fixed in `app/parallel.py`:
+- the upstream fix is backported;
+- a pool that is thrown away has its children terminated until its manager ends;
+- the exit stops the pool first.
+
+Also: a hung wikidata pack pool is stopped the same way, and the build's log lines are flushed. Tests: tests/test_parallel_exit.py, under 3.13 and 3.12. Measurement row: [scheduling-log.md](scheduling-log.md); pitfall 19 in [scheduling.md](scheduling.md) §5.
+
 ### 2026-10-25: the entity boost removed — 05 §5.2, "nothing boosts", measured; the identifier restriction is the operator's to decide
 
 The search added 1/60 to the fused score of a candidate the query's entity tags. 05 §5.2 forbids it (task #33, found by PR #4). Measured on TREC Precision Medicine 2017–18 (80 topics, NIST's judgements, [query-campaign.md](query-campaign.md)), NDCG@10 was:

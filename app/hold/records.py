@@ -248,8 +248,15 @@ def _paths(root, name: str):
     return base / "shard", base / STATE, base / STATE / BUILD
 
 
+def _say(line: str) -> None:
+    """A build's log line, flushed: its stdout is a pipe (docker's log), so
+    unflushed lines arrive in bursts, and a live build read 40 parts behind
+    itself looked frozen (München, 2026-10-25)."""
+    print(line, flush=True)
+
+
 def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
-          records_per_shard: int | None = None, log=print, stop=None, records_from: str | None = None):
+          records_per_shard: int | None = None, log=_say, stop=None, records_from: str | None = None):
     """`louise hold records build <collection>` — parse, slice, shard, hash.
 
     The build runs into a STAGING directory under the collection's state,

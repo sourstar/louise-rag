@@ -88,7 +88,7 @@ from typing import Any, Callable, Iterable, Iterator, Optional
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from app import config
+from app import config, parallel
 from app.plugins.wikidata import dump as dump_mod, families, ids, names
 
 #: 2 (2026-10-24): the `name` table; 3 (2026-10-24): the class tree and the
@@ -843,7 +843,12 @@ def _lines_pass(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Connecti
             f"{meta.get(key, start)} chunk(s), resumable; the next pass of this process is serial")
         return False
     finally:
-        ex.shutdown(wait=not hung, cancel_futures=True)
+        if hung:
+            # a stuck child is terminated: a pool left to finish would be
+            # joined by the interpreter's exit for as long as it is stuck
+            parallel.discard(ex)
+        else:
+            ex.shutdown(wait=True, cancel_futures=True)
 
 
 def _write_meta(d: Path, meta: dict[str, Any]) -> None:
@@ -1233,8 +1238,13 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
             f"{meta['chunks']} chunk(s), resumable; the next pass of this process is serial")
         return meta
     finally:
-        # the running children finish (one slice, bounded) unless one hung
-        ex.shutdown(wait=not hung, cancel_futures=True)
+        # the running children finish (one slice, bounded) unless one hung,
+        # which is terminated (`parallel.discard`): a pool left to finish
+        # would be joined by the interpreter's exit for as long as it is stuck
+        if hung:
+            parallel.discard(ex)
+        else:
+            ex.shutdown(wait=True, cancel_futures=True)
         writer.shutdown(wait=True)
         for chunk_no, *_ in writing:
             _tmp_path(d, chunk_no, token).unlink(missing_ok=True)

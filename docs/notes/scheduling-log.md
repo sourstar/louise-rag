@@ -1138,3 +1138,42 @@ runs and fills the gaps between steps.
 Deployed together with the one-retry on a 5xx (b573be4). The per-call 500
 rate is the priority's alone, because the harness counts every POST,
 retried or not.
+
+### 2026-10-25 — the parse pool keeps its children, and a stopped build leaves — PREPARED
+
+**The defect (München, 2026-10-25 10:58–11:15 CET, read-only py-spy).**
+wikipedia-v8's live build, on a833c1e's tree, did not exit on SIGTERM. Its
+part was committed (en/60M part 103, 10:58:45) and main had returned. The
+main thread was joining two pool manager threads in `_python_exit`, the two
+queue feeders were blocked in `_send`, and no parse child was alive. It was
+SIGKILLed at 11:15, with nothing lost. The causes are scheduling.md §5,
+pitfall 19: CPython gh-115634 (a 3.12 pool loses the children that retire at
+`max_tasks_per_child`), and a pool thrown away with `shutdown(wait=False)`
+that the exit then joins with no bound.
+
+**Reproduced here (3.12.3 against 3.13.16, which carries the upstream
+fix):**
+- 8 parts on 2 children retiring after 2 tasks: 3.12 answered 4 and had 0
+  children left; 3.13 answered all 8;
+- the watchdog's `shutdown(wait=False, cancel_futures=True)` and then a
+  normal exit: 3.12 was still there after 30 s, 3.13 left in 0.1 s;
+- a stream whose children retire after every part, stopped: with the
+  pool shut down before its children were terminated (3.14's order), 2
+  exits in 8 hung on 3.12; terminated first, 0 in 12 on 3.12 and 0 in 12
+  on 3.13.
+
+**The change (one):** `parallel._Executor` (the gh-115634 backport),
+`parallel.discard` (stop a pool thrown away), and the exit stopping the
+pool first. A hung wikidata pack pool is discarded the same way, and the
+build's log lines are flushed.
+
+**Scenario for AFTER:** the live wikipedia-v8 build in its container, 4-cpu
+quota, `PARSE_PROCESSES` 3, `PARSE_TASKS_PER_CHILD` 500, after the A/B arms.
+
+**AFTER (to fill):**
+- "[parse pool]" fallback lines per hour (BEFORE: count them in the build
+  log since a833c1e);
+- live parse children every 60 s (expected: 3 throughout);
+- the time from `wikipedia-build.sh stop` to exit (BEFORE: never; SIGKILL
+  after 15 min);
+- rec/s and chunks/s against step 1's hour, on comparable slices (rule 3).
