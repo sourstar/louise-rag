@@ -459,3 +459,154 @@ strict floor; the judged PRECISION and the YIELD on a sample come first
 reader's time rather than a mundane fact Wikidata merely lacks); then they
 are proposed and the adoption and rejection reasons read; only then the
 other tiers.
+
+## 11. Source reliability, and readjusting the rumors a source made (operator, 2026-10-25)
+
+*Operator: "1. a source shall have a reliability index (with a default
+value for unverifiable reliability); an author historically known for
+'boosting' or occasionally 'borrowing' his stories shall have a lower
+reliability than the default value. 2. we shall keep track of the effect
+of a source on the rumors it generates: if in the future it turns out that
+the reliability of the source is different, its contribution shall be
+readjusted."* Two refinements of rumors.md (whose home this belongs in);
+this section is their design, nothing built.
+
+### 11.1 Two axes, not one — and a standard for both
+
+A rumor's score today is the METHOD's confidence: does the passage say
+this (GLiNER's score, the reader's agreement, a Fellegi–Sunter sum). The
+operator adds the SOURCE's reliability: should what the passage says be
+believed. They are different questions and stay separate: the claim's
+`confidence` (09 §9.5, content-hashed, pinned when the claim is made) is
+the first; the second is the source's, lives beside the claim, and is the
+thing that can change later.
+
+The standard with both axes is the **Admiralty System** (NATO AJP-2.1 /
+STANAG 2511; the "do not reinvent the wheel" rule): a letter for the
+source and a digit for the information.
+
+| source reliability | | information credibility | |
+|---|---|---|---|
+| A | completely reliable | 1 | confirmed by other sources |
+| B | usually reliable | 2 | probably true |
+| C | fairly reliable | 3 | possibly true |
+| D | not usually reliable | 4 | doubtful |
+| E | unreliable | 5 | improbable |
+| **F** | **reliability cannot be judged — the DEFAULT** | 6 | truth cannot be judged |
+
+The default for an unverifiable source is F, by the standard's own
+definition. An author "known for boosting" is D; one known to invent is
+E. A court record, a scholarly edition, a diary whose entries have been
+checked against the record may be A or B. D and E are BELOW F, as the
+operator asks: unknown is not the same as unreliable.
+
+### 11.2 Where reliability lives: a claims collection of its own
+
+Reliability is OUR judgement about a source, never the origin's word about
+itself (invariant 11: a record holds what the origin says; 05 §5.5: a link
+the source does not state is an annotation). So it is an annotations
+collection — `source-reliability` — with two claim types (new, 09 §9.5,
+hashed bytes: ask first):
+
+| type | subject | keys | method |
+|---|---|---|---|
+| `reliability` | a gutenberg record (one book), or an AUTHOR as a Wikidata entity `wikidata:Q…` — the record's `work_author` agent id maps to the Q-id through Wikidata's **P1938 Project Gutenberg author ID**, a mapping derivable from the two collections; an author with no Q-id is pinned record by record | `letter` A–F; `reason` (text); `evidence` — the scholarship, as canonical ids or URLs | `{kind: "human"}` — an editor's judgement with its reasons; `METHOD_KINDS` already has it |
+| `derived-source` | a gutenberg record or author that BORROWS from another | `object` the source borrowed from; `reason`; `evidence` | `human` |
+
+Precedence when a rumor's passage is read: the record's own letter, else
+the work's (same-work claims group editions), else the author's, else F.
+A letter never changes a claim: like a rumor state, it is an input the
+rumors member records at each update.
+
+Two mechanisms for the two faults the operator names:
+- **boosting** (exaggeration, invention): the LETTER, D or E — every
+  rumor the source makes weighs less;
+- **borrowing** (one book retelling another): a `derived-source` edge —
+  the borrower is NOT A SECOND WITNESS of what the original says. Two
+  books that tell one story are one source for it; lowering the
+  borrower's letter would be the wrong tool, because a careful borrower
+  may be perfectly reliable about what he borrowed.
+
+Competing judgements are allowed: `source-reliability` collections are
+sisters in a lineage like any annotations collection; a rumors member
+names the one it used, so two peers applying two tables show two
+credibilities, each saying whose.
+
+### 11.3 How the credibility digit is derived — and recomputed
+
+The rumors member (rumors.md, "The specification it needs") gains, per
+rumor: `sources: [{uid, work, author: <Q-id or null>, letter,
+letter_from: <reliability claim uid or "default">, independent: bool}]`,
+`credibility: <digit>`, `reliability_snapshot: <id>`. The digit is a
+pure function of (the independent witnesses' letters, their number, the
+Wikidata state) under a DECISION TABLE pinned in the method — no
+arithmetic, every line explainable:
+
+| witnesses (after collapsing editions and `derived-source` chains) | state | digit |
+|---|---|---|
+| any | `confirmed` (Wikidata, independent reference) | 1 |
+| two or more, best letter A–C | `open` | 2 |
+| one A or B | `open` | 2 |
+| one C; or two or more all D/F | `open` | 3 |
+| one F | `open` | 6 — the standard's own answer for "cannot be judged" |
+| one D | `open` | 4 |
+| only E; or `rejected` with a Wikidata reference | any | 5 |
+
+ILLUSTRATIVE: the rows are set, like every floor in this plan, from the
+first judged sample and then from the adoption and rejection outcomes by
+letter (§10.4) — the external judge calibrates the table, which is
+point 2 of the operator's refinement applied to the table itself. The
+standardised alternative, if a table proves too coarse: a log-odds sum
+of per-witness weights (Fellegi–Sunter's own form) or Dempster–Shafer
+combination; written here so it can be revisited, not adopted.
+
+**Credibility never decides whether a claim exists.** The method's
+confidence floor decides that (rumors.md). Credibility decides what is
+PROPOSED to Wikidata (a proposal floor, e.g. digit ≤ 3) and how a rumor
+is SHOWN (the default view hides 5 and 6; a filter opens them). So a
+readjustment is lossless by construction: a rumor an E source made is
+still a claim, still recorded; when the letter rises the digit rises and
+the rumor re-enters the default view and the proposal set.
+
+**Readjustment** (point 2). `hold annotations update` recomputes every
+rumor's `sources` and `credibility` with the NEWEST held
+`source-reliability` snapshot, as it recomputes states with the newest
+wikidata snapshot; the member records which. Deterministic given both,
+so checked byte for byte (03). The per-round cost scales with the rumors
+whose sources CHANGED letter, through a local `source uid → rumor uids`
+index, never with all rumors (CLAUDE.md). The update's report lists, per
+source whose letter moved: the rumors affected, digits before and after,
+and the PROPOSALS among them whose digit fell below the proposal floor —
+proposals already sent cannot be unsent by Louise, but a person can
+withdraw or annotate them in the Mismatch Finder or on Wikidata, and the
+list is what tells them which. The history of a rumor's credibility is
+the snapshot chain of the member (promise 7), no second record.
+
+### 11.4 The empirical letter — reported, never fed back by itself
+
+The adoption and rejection outcomes (§10.4) can be read PER SOURCE: an
+author whose rumors are rejected far more often than others' is, in
+fact, less reliable. That statistic is reported beside the editorial
+letter — over reviewed rows only, with a minimum count, as `adopted` is
+kept apart from `confirmed` — and a person may fold it into the
+`source-reliability` collection as a new claim whose evidence IS the
+statistic. It never changes a letter by itself: a letter that lowered
+itself from rejections would send fewer of that source's rumors to
+review, earn fewer reviews, and never recover — a loop that confirms its
+own first impression. The same rule as §10.4's: the collection must not
+be able to flatter or condemn itself.
+
+### 11.5 What it costs, and what to measure first
+
+- No model, no GPU: letters are a person's; the recompute is a join.
+- The first `source-reliability` table is small and comes from
+  scholarship that already exists for the famous cases (travellers,
+  memoirists, the "unreliable narrators" of history); everything else
+  is F, which is the point of a default.
+- Measure before setting the table: on tier A's first judged sample,
+  the adoption and rejection rates by letter — if F and C sources are
+  rejected at the same rate, the letters are not yet earning their keep,
+  and the table says so.
+- Asked first (09 §9.5, hashed bytes): the two claim types, the
+  `sources` / `credibility` / `reliability_snapshot` fields of the rumors
+  member, the P1938 author mapping as a reference-source link (06 §6.5).
