@@ -89,9 +89,18 @@ def compact(name: str, result: Any) -> Any:
     return result
 
 
-def ask(question: str, *, collections: list[str] | None = None, history: list[dict[str, Any]] | None = None,
-        call: Callable[[str, dict[str, Any]], Any] | None = None, model=None,
-        max_rounds: int = MAX_ROUNDS) -> dict[str, Any]:
+def ask(question: str, **kwargs) -> dict[str, Any]:
+    """`_ask`, with the node's claim held for the whole question — every
+    chat round and every search it calls (dispatch.query_in_process;
+    operator, 2026-10-25: a query in process goes first)."""
+    from app import dispatch
+    with dispatch.query_in_process():
+        return _ask(question, **kwargs)
+
+
+def _ask(question: str, *, collections: list[str] | None = None, history: list[dict[str, Any]] | None = None,
+         call: Callable[[str, dict[str, Any]], Any] | None = None, model=None,
+         max_rounds: int = MAX_ROUNDS) -> dict[str, Any]:
     """One question through the loop: `{answer, turns: [{tool, arguments,
     result}], rounds, exhausted}`. `model(messages, tools) -> (content,
     calls, assistant_message)` is llm.chat_tools unless a test gives

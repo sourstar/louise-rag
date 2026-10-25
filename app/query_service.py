@@ -149,12 +149,21 @@ def book_ids_for(filters: dict | None):
     return resolve
 
 
-def run_search(collection_names: list[str] | None, query: str, k: int, mode: str,
-               translate: bool, verify: bool = False,
-               rerank_depth: int = retrieval.RERANK_TOP_N,
-               all_languages: bool = False, private: bool = False,
-               filters: dict | None = None, show_in: str | None = None,
-               as_of: int | None = None, annotations: list[str] | None = None) -> dict:
+def run_search(*args, **kwargs) -> dict:
+    """`_run_search`, with the node's claim held from the query's first step
+    to its last (dispatch.query_in_process): corpus work stands aside on the
+    whole card until the answer is built (operator, 2026-10-25)."""
+    from . import dispatch
+    with dispatch.query_in_process():
+        return _run_search(*args, **kwargs)
+
+
+def _run_search(collection_names: list[str] | None, query: str, k: int, mode: str,
+                translate: bool, verify: bool = False,
+                rerank_depth: int = retrieval.RERANK_TOP_N,
+                all_languages: bool = False, private: bool = False,
+                filters: dict | None = None, show_in: str | None = None,
+                as_of: int | None = None, annotations: list[str] | None = None) -> dict:
     """`verify` opts this query into blocking verify-on-use: every imported
     chunk among the results is recomputed locally before the answer is given
     (architecture-v2.md §6 T4). Off by default — it costs an embed call per

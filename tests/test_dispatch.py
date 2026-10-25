@@ -344,3 +344,32 @@ def test_a_block_left_in_its_own_context_still_restores_the_level():
         with dispatch.working_as(Level.QUERY):
             assert dispatch.current() == (Level.QUERY, "")
         assert dispatch.current() == (Level.CORPUS, "gutenberg")
+
+
+def test_a_query_holds_the_claim_from_its_first_step_to_its_last(monkeypatch):
+    """München, 2026-10-25: with the claim per model call, the clock flickered
+    1400/400 between a search's reranks — and corpus work could slip a
+    request in between two steps of a query in process. The search, an Ask
+    question and a summary hold it from first step to last."""
+    from app import query_service, summarize
+    from app.ask import chat
+    writes = []
+    monkeypatch.setattr(dispatch, "_write_claim", lambda until: writes.append(until > 0))
+    between = []
+
+    def steps(*_a, **_k):
+        for level in (Level.TRANSLATE, Level.QUERY, Level.RERANK, Level.CHAT):
+            with dispatch.interactive(level):
+                pass
+            between.append(dispatch._board.live)
+        return {"hits": []}
+    for module, name, call in ((query_service, "_run_search", lambda: query_service.run_search(None, "q", 10, "hybrid", True)),
+                               (chat, "_ask", lambda: chat.ask("q")),
+                               (summarize, "_summarize_book", lambda: summarize.summarize_book(None, 1))):
+        writes.clear()
+        between.clear()
+        monkeypatch.setattr(module, name, steps)
+        call()
+        assert between == [1, 1, 1, 1], f"{name}: the claim is held between every two steps"
+        assert writes == [True, False], f"{name}: written once at its start, cleared once at its end"
+    assert dispatch._board.live == 0
