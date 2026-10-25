@@ -1,10 +1,12 @@
 # Louise — knowledge, kept.
 
-**Shared knowledge anyone can verify.** Large libraries of texts —
-Project Gutenberg's books, PubMed, Wikipedia, Wikidata, Italian law — are
-queried by an AI that runs on your own computer. It searches the real
-texts and quotes them, so every answer can be opened and checked passage
-by passage. No central server, no blind trust: *don't trust, verify.*
+**Shared knowledge anyone can verify.** Louise is a platform for holding
+large libraries of texts and asking questions of them with an AI that
+runs on your own computer. It searches the real texts and quotes them, so
+every answer can be opened and checked passage by passage. No central
+server, no blind trust: *don't trust, verify.* Any body of text can
+become a Louise collection; the ones it ships with are samples of what it
+can do ([below](#sample-collections)).
 
 ## In a nutshell
 
@@ -23,13 +25,11 @@ by passage. No central server, no blind trust: *don't trust, verify.*
   already published stays immutable and verifiable. The same method works
   on any body of text — scientific papers, laws, archives, or your own
   notes, kept as a private collection you never have to share.
-- **Under construction — Gutenberg × Wikidata.** A knowledge graph over
-  literature: the people, places and events every book mentions, linked
-  to Wikidata; the relations the books assert; the communities they form.
-  Where a book contradicts the encyclopedia the claim is kept and flagged,
-  never corrected: the system shows where literature and facts diverge,
-  each voice traceable to its passage. A source for historians — how an
-  era told the world, not just how things went.
+- **Knowledge that connects.** Collections can carry claims about one
+  another — who is mentioned where, what a text asserts about someone —
+  each claim traceable to its passage. Where a source contradicts another
+  the claim is kept and flagged, never corrected: Louise shows where they
+  diverge rather than deciding the truth.
 
 ## How it is achieved
 
@@ -40,7 +40,7 @@ by passage. No central server, no blind trust: *don't trust, verify.*
 | vectors anyone can check | an encoder runs in its vendor's bitwise-reproducible mode; a **calibration gate** proves an engine reproduces the Codex's reference vectors before it may write one; **VeGa**, a wrapper between the model runner and each backend, issues a receipt for every answer, checked before the vector is stored (below) | [03](docs/03-checking.md) |
 | no central server | peers find each other on the BitTorrent mainline DHT (keyed by collection) and move parts as BitTorrent v2 torrents; who embeds which part is a rendezvous function every peer computes the same way, so no node is in charge | [04](docs/04-sharing.md) |
 | trust from reproduction, not votes | a bundle of vectors carries no text; importing it needs the same source bytes, passes a verification ladder and a sampled re-embed, and every vector is re-checked when first used; attestations say who reproduced what | [03 §3.5–3.6](docs/03-checking.md), [08](docs/08-adversarial.md) |
-| answers that quote | a text index (tantivy, BM25, per language) and a vector index (LanceDB) per collection, fused by reciprocal rank — never by comparing scores — then reranked; reference lookups (genes, variants) are pinned facts, never ranked; every answer cites its passages | [05](docs/05-ask.md) |
+| answers that quote | a text index (tantivy, BM25, per language) and a vector index (LanceDB) per collection, fused by reciprocal rank — never by comparing scores — then reranked; facts looked up by key are pinned beside the answer, never ranked; every answer cites its passages | [05](docs/05-ask.md) |
 | any source | a **plugin** declares acquisition, parsing, chunking and the licence class; nothing the origin says about an entity is dropped | [06](docs/06-plugins.md) |
 | everything local | the app never touches a GPU: every model (encoder, chat, translation, reranker) is an HTTP endpoint on your own model server | [07 §7.8](docs/07-commands.md) |
 
@@ -110,6 +110,28 @@ server's candidate models for their stated run and takes the one whose
 weights are the Codex's. Specification: [03 §3.3](docs/03-checking.md),
 [09 §9.12](docs/09-formats.md); code: `app/vega/`, `deploy/vega/`,
 `deploy/localai/`.
+
+## Sample collections
+
+The collections below are not Louise: they are what Louise does with five
+public sources, each built by a plugin (docs/06) and each a Codex anyone
+can reproduce. A new source is a new plugin; your own documents are a
+private collection.
+
+| collection | what it holds | what it shows |
+|---|---|---|
+| **Gutenberg** | Project Gutenberg's books, with their illustrations | a library of literature, searched and quoted across languages |
+| **PubMed** | the biomedical literature's citations and abstracts | precise questions answered from the papers, with their identifiers |
+| **Wikipedia** | the encyclopedia, language by language | one knowledge base in many languages, each a slice a node may hold or not |
+| **Wikidata** | the structured facts about people, places and things | entities that the other collections' texts link to |
+| **Normattiva** | Italian state legislation, in each version in force | the law as it stood on any date |
+
+**Under construction — Gutenberg × Wikidata.** A knowledge graph over
+literature: the people, places and events every book mentions, linked to
+Wikidata; the relations the books assert; the communities they form.
+Where a book contradicts the encyclopedia, the claim is kept and flagged.
+A source for historians: how an era told the world, not just how things
+went.
 
 ## What a node does
 
