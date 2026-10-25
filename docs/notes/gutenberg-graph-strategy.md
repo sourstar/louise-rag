@@ -307,8 +307,10 @@ book another.
   text hash, the stated run that read it — which is what a Wikidata
   reference needs and what a later verifier re-checks.
 
-The loop: discover → claim with evidence → a person edits Wikidata →
-the wikidata snapshot → the gutenberg-graph update links to it. Nothing
+The loop: discover → claim with evidence → a person proposes it to
+Wikidata → the review's outcome and reason recorded against the claim
+(rumors.md) → the wikidata snapshot → the gutenberg-graph update links to
+it. Nothing
 in it is automatic past the claim, and nothing in it needs a Louise
 identity registry: Wikidata is the registry (CLAUDE.md, "do not reinvent
 the wheel").
@@ -380,27 +382,31 @@ evaluate a review. Utopically the gap will close when wikidata processes
 all the claims and the hypothesis leg will go down to zero."* It holds,
 with four adjustments that make it Louise's:
 
-1. **The gap is RECORDED: the rumors** (operator, 2026-10-25, as
-   recorded in [rumors.md](rumors.md), branch ccr-d144b7d4-l13jt8 at
-   f59d63a: "'The gap' shall be recorded, it is an additional pillar that
+1. **The gap is RECORDED: the rumors** (operator, 2026-10-25, confirmed
+   to this session; the design in [rumors.md](rumors.md), branch
+   ccr-d144b7d4-l13jt8 at e7bb63f: "'The gap' shall be recorded, it is an additional pillar that
    can be optionally used for searches, the 'rumors'. … they are part of
    the collection. … It's a unique contribution of louise"). This
    supersedes the first draft's "a view, not a log": a rumor's state
    depends on a snapshot of ANOTHER collection and its history — first
    seen, which review closed it, how — cannot be recomputed once the next
    review has happened. So every claim carries a rumor state against the
-   wikidata snapshot it was checked against — `open`, `confirmed`,
-   `rejected`, `known` — in its own member keyed by claim uid, re-issued
-   at each `hold annotations update`; closed rumors stay in the
-   collection (promise 7). The design, its member bytes and the spec
-   changes it needs are rumors.md's.
+   wikidata snapshot it was checked against — `open`, `adopted` (Wikidata
+   now states it citing OUR passage: a person agreed with our evidence),
+   `confirmed` (Wikidata states it on a reference of its own: independent
+   evidence, kept apart so the collection cannot confirm itself),
+   `rejected`, `known` — in its own member keyed by claim uid, with what
+   was `proposed` where and when and the `review`'s outcome, reason and
+   source; re-issued at each `hold annotations update`; closed rumors
+   stay in the collection (promise 7). The design, its member bytes and
+   the spec changes it needs are rumors.md's.
 2. **A rumor is never fused** (invariant 4). Optional in a search and
    off by default (rumors.md): beside a hit as a fact labelled *rumor*
    with its confidence, passages and date first seen; a SEPARATE LIST of
    records reached through open rumors — another question, presented
    apart (05 §5.1); a FILTER ("records with an open rumor about Q2044" —
-   restricts, never boosts, 05 §5.2). Open rumors per thousand mentions
-   per tier is a metric of the collection, shown as counts are.
+   restricts, never boosts, 05 §5.2). Counts of open rumors are
+   descriptive, never a target (rumors.md).
 3. **The review channel is Wikidata's own: the Mismatch Finder.**
    Wikimedia's tool takes an external dataset's mismatches (item,
    property, Wikidata's value, the external value, the external URL,
@@ -412,18 +418,44 @@ with four adjustments that make it Louise's:
    entities have no queue: ordinary edits by a person, the claim as the
    reference package. Louise never edits and runs no bot (Wikidata's bot
    policy; not our place). CLAUDE.md: the standard, not our own queue.
-4. **The gap closes in BOTH directions, which is why zero is honest.** A
-   reviewed mismatch ends, in Wikidata's own model, as: the statement
-   added (the book was right); the book's value recorded at DEPRECATED
-   rank with a reason, referencing the book (the book was wrong — the
-   next snapshot carries it, the comparison finds it, closed as "known
-   and rejected"); or left open. Zero is reachable for history and
-   biography. Tier D's anchored characters are not rumors about the
-   world and are excluded from the count by construction. Closed as
-   confirmed against rejected is Louise's precision, judged by Wikidata's
-   own editors (rumors.md).
+4. **Rumors never reach zero, and convergence is not what is measured**
+   (operator, 2026-10-25: "Rumors cannot go to zero, it is understood.
+   New rumors will be found over the time because new books are added
+   and because future hardware will allow better models in the future
+   sister collections. The convergence speed is useless, a statistic
+   about the adoption and the rejection rate and reason of our proposals
+   instead is fundamental for improvement"). This replaces the first
+   draft's "zero is honest for history and biography". What each rumor
+   records, from the source that gave it (rumors.md): whether it was
+   proposed, where and when; the review's OUTCOME and its REASON — the
+   Mismatch Finder reviewer's verdict on our row (our value wrong,
+   Wikidata's wrong, both, neither), a deprecated statement's "reason for
+   deprecated rank" (P2241), a statement added citing our passage
+   (`adopted`), our reference removed. What the collection reports at
+   each update, on its card: the adoption rate and the rejection rate,
+   the rejection reasons, each broken down by rumor kind, property, tier,
+   method and model (each sister collection apart), confidence band and
+   language. That is the improvement loop — which properties, genres,
+   methods and confidence bands get rejected and why; hence where each
+   kind's floor belongs, what the next method version fixes, and whether
+   a sister collection's model earns its cost. `confirmed` (independent
+   evidence) is reported apart from `adopted`. Tier D's anchored
+   characters are not rumors about the world and are excluded by
+   construction.
 
 Two cautions. Feedback latency is the wikidata snapshot cadence — Louise
-reads Wikidata through its dump, never live. And the gap is a flow, not
-a stock: every Gutenberg snapshot and every new tier adds to it, so the
-metric is open rumors per thousand mentions per tier, not the count.
+reads Wikidata through its dump, never live — and a rejection seldom
+reaches the dump at all (an editor who dismisses a mismatch rarely writes
+a deprecated statement), so `rejected` is also read from the Mismatch
+Finder's review outcomes for the rows we uploaded (rumors.md). And the
+gap is a flow, not a stock: every Gutenberg snapshot, every new tier and
+every sister collection's better model adds to it, which is why no count
+of open rumors is a target and no speed of closure is measured.
+
+**Order** (rumors.md, consistent with §4's order of value): rumors start
+with tier A only — diaries, letters, memoirs, personal narratives — under a
+strict floor; the judged PRECISION and the YIELD on a sample come first
+(how many rumors are right, and how many of the right ones are worth a
+reader's time rather than a mundane fact Wikidata merely lacks); then they
+are proposed and the adoption and rejection reasons read; only then the
+other tiers.
