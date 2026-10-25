@@ -96,9 +96,12 @@
 # Signing from the command line runs in the worker container
 # (`docker exec <worker> python -m app.louise …`): the web holds no key.
 #
-# Set ADMIN_TOKEN before installing: it gates the Library/Network/System
-# pages and the mutating API. Unset = those areas are locked out entirely
-# (fail-closed), while Ask/search stay LAN-open read-only.
+# Put the admin token in a file before installing (secrets/admin-token,
+# one line) — ADMIN_TOKEN_FILE names it: a secret is referenced by path,
+# never given as a value (CLAUDE.md invariant 8). It gates the
+# Library/Network/System pages and the mutating API. No file = those areas
+# are locked out entirely (fail-closed), while Ask stays LAN-open until the
+# first `louise user add`.
 #
 # The external TrueNAS rsync task feeding /corpus stays exactly as it is —
 # the worker rescans at startup and every DISCOVER_INTERVAL_MIN minutes.
@@ -142,8 +145,9 @@ services:
       # no EMBED_URL: a collection names its own encoder in its file's
       # [encoder], and one that names none is refused (2026-09-18)
       # EMBED_BATCH=1 is LOAD-BEARING: llama-server corrupts long sequences
-      # in multi-text embedding requests (see header). Parallel single-text
-      # requests are verified safe — concurrency drives the -np 4 slots.
+      # in multi-text embedding requests (see header). Every encoder runs
+      # one stream (-np 1, invariant 12); a second request in flight waits
+      # at the server.
       EMBED_BATCH: '1'
       EMBED_CONCURRENCY: '2'
       RERANK_URL: ''
@@ -155,12 +159,13 @@ services:
       EMBED_VERSION: '2'          # stored v2 vectors verified correct (header); only the 714 reset on 2026-08-17 re-embedded
       DISCOVER_INTERVAL_MIN: '360'
       # ── platform ──
-      ADMIN_TOKEN: 'CHANGE-ME-BEFORE-INSTALL'
+      ADMIN_TOKEN_FILE: /run/louise/admin/admin-token
     volumes:
       - /mnt/tank/media/public/books/project_gutenberg:/corpus:ro
       - /mnt/ssd4/apps/louise-rag/data:/data
       - /mnt/ssd4/apps/louise-rag/config:/config
       - /mnt/ssd4/apps/louise-rag/secrets/public:/run/louise/public:ro
+      - /mnt/ssd4/apps/louise-rag/secrets/admin:/run/louise/admin:ro
     healthcheck:
       test: ['CMD', 'curl', '-sf', 'http://localhost:8742/healthz']
       interval: 30s

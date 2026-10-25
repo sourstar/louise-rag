@@ -374,8 +374,8 @@ reader needs at the command line:
   identity is refused for them (exit 2).
 - **`vectors build`.** `--delta ID` embeds exactly `delta.added ∪
   delta.changed` of snapshot `ID` — a snapshot id, never a file. About every
-  fifteen thousand chunks a bundle (09 §9.7) is signed and merged into the
-  part's vector file (02 §2.4); the bundle is kept for `share`.
+  fifteen thousand chunks a bundle (09 §9.7) is signed and its rows written
+  to the collection's LanceDB table (09 §9.6); the bundle is kept for `share`.
 - **`vectors import`.** A bundle binds its space and, per record, the
   content hash it embedded; its `collection` and `snapshot_id` are
   provenance and gate nothing (03 §3.5; 09 §9.7). `import` refuses at
@@ -996,12 +996,13 @@ flag keeps the old word until the code follows.
 `<pack-dir>` is a filesystem path to a pre-Codex pack (§7.6); it is the
 one argument in the tree that is a path and not a name, which is why it
 says so. A
-facet flag is named for its field — `--subjects`, `--creators`,
-`--not-subjects` — and is accepted only for a field the collection's
-Codex declares (02 §2.1); any other is exit 2, listing the fields that
+filter is `--filter FIELD=VALUE` (`FIELD=!VALUE` excludes), and is
+accepted for a field the collection's Codex declares as a facet (02 §2.1)
+and for `keys`, the identifier filter every collection has (05 §5.2,
+amended 2026-10-25); any other field is exit 2, listing the fields that
 are. A `tree` facet matches a value and everything under it, so
-`--subjects Neoplasms` takes `Neoplasms/genetics` with it; a `range`
-facet takes `FROM..TO`, either end omitted for open.
+`--filter subjects=Neoplasms` takes `Neoplasms/genetics` with it; a `range`
+facet takes `FROM..TO`, either end omitted for open (not built yet).
 `--profile` takes a profile name the collection's acquisition spec
 declares (06 §6.2) and expands to that profile's slices; it may not be
 combined with `--slice`. `--space` and `--work` take a TOML holding
@@ -1079,7 +1080,7 @@ one home.
 
 | tier | carries | changes by |
 |---|---|---|
-| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `NODE_PUBLIC_KEY_PATH`, `ADMIN_TOKEN_FILE`, `DEPOSIT_TOKEN_FILE`, `GIT_PRIVATE_KEY_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `TRANSLATE_MODEL` (the model TRANSLATE_URL's server is asked for, as `CHAT_MODEL` is for chat; amended 2026-10-09), `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL`, `VEGA_URL` | restart |
+| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `NODE_PUBLIC_KEY_PATH`, `ADMIN_TOKEN_FILE`, `DEPOSIT_TOKEN_FILE`, `GIT_PRIVATE_KEY_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `TRANSLATE_MODEL` (the model TRANSLATE_URL's server is asked for, as `CHAT_MODEL` is for chat; amended 2026-10-09), `RERANK_URL`, `GPU_PROBE_URL`, `VEGA_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
 | **files** — desired state | `users.toml` beside `platform.toml` (*amended 2026-10-22*): the users of §7.4, each token as its SHA-256 only; when each was last seen is `state/users-seen.json`, not desired state | `louise user …`, the admin API — never by hand |
 | **state database** — runtime overrides | the node's mode — `node pause`, `--seed-only`, `--acquire-only` — in force until `resume` | the commands; a restart keeps them |
@@ -1120,11 +1121,9 @@ unset means the chat model translates (05 §5.2); `CHAT_URL`
 unset refuses `ask chat` (exit 2); `RERANK_URL` unset returns
 `reranked: false` (05 §5.6) for every collection whose file names no
 `[reranker]` of its own; `GPU_PROBE_URL` unset leaves the node's GPU
-panel empty and says why, and nothing else changes; `RAGE_URL` — the
-node's model container (03 §3.3) — unset leaves the System page without
-the container's models and their controls, and the node then learns a
-run only from the answers it gets, which is enough to check every one
-of them. `VEGA_URL` is where the receipts of an `api = "vega"` encoder
+panel empty and says why, and nothing else changes (`RAGE_URL` was
+retired with RAGE, 2026-10-18: a run is learnt from VeGa's receipts).
+`VEGA_URL` is where the receipts of an `api = "vega"` encoder
 are read (`/vega/receipts`, `/vega/runs/<run_id>`); unset, every answer of
 such an encoder is a deferral and nothing is written or searched through
 it (amended 2026-10-08, docs/notes/vega.md). Secrets are named
@@ -1205,8 +1204,8 @@ source = "origin"                              # origin | shard: where the docum
 
 [encoder]                                      # required: a collection names its own encoder, there is no default
                                                # the endpoint that serves the Codex's encoder: a MODEL on the node's model
-                                               # container RAGE, never a device — RAGE places the model on a device, and
-                                               # states the run, device included, with every answer (03 §3.3)
+                                               # server (LocalAI, behind VeGa), never a device — VeGa states the run,
+                                               # device included, with a receipt for every answer (03 §3.3)
 url = "http://nas:30450/upstream/medcpt-article"   # the SERVER, never the endpoint: the client appends
                                                # /v1/embeddings (openai, vega) or /api/embed (ollama) — a url that
                                                # already ends in either is wrong (amended 2026-10-09)

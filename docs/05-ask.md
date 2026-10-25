@@ -329,7 +329,7 @@ The fields, with their values:
 | `chunk_id` | the record's best chunk (§5.1); in a reranked list, the chunk that scored the record (§5.6, *amended 2026-10-10*) |
 | `layer` | the layer that cut the chunk, derived from the Codex (02 §2.3) |
 | `rank` | the record's position in the list as presented |
-| `legs` | `{text, vector}` — the record's rank in each leg that ranked it, `null` in a leg that did not |
+| `legs` | `{text, vector, catalog}` — the record's rank in each leg that ranked it, `null` in a leg that did not |
 | `trust_level` | `unverified` · `checked` · `verified` · `flagged` (§3.6) |
 | `certification` | `{certified_by, anchor_state}` — the certifier's key and `anchored` · `stale` · `mismatch` (§3.7); `null` for an open collection |
 | `verified_on_use` | `local` · `imported` · `verified` · `failed`: this peer produced the vector; produced elsewhere and not yet re-embedded here; re-embedded and within tolerance; re-embedded and outside it. A chunk whose producer is unknown is `imported`, never `local` |
@@ -488,14 +488,15 @@ The three tools, their parameters and what they return are part of the
 platform image and change only with it:
 
 ```
-louise_search(query, collections?, space?, filters?, limit?, rerank_depth?,
-              as_of?, freshness?, translate?, all_languages?)
+louise_search(query, collections?, annotations?, space?, filters?, limit?,
+              rerank_depth?, as_of?, freshness?, translate?, all_languages?)
     → {lists: [{space_id, question, hits: [<result, §5.3>]}],   -- question is "relevance" (§5.1)
        facts: [<fact, §5.3>], unresolved: [<canonical id>],
        withheld: [{collection_id, shards, reason}],
        legs_withheld: [{collection_id, leg, reason}],     -- leg is "vector"; the copy IS searched, on its text leg (§5.3)
        translations: [...]}   -- shards: a list, or "all" for a copy in quarantine (§5.3)
-    filters: {<facet field>: <value> | {not: <value>}}
+    filters: {keys?: <canonical id> | {not: <canonical id>},      -- §5.2, amended 2026-10-25
+              <facet field>: <value> | {not: <value>}}
 louise_lookup(id)
     → {facts: [<fact, §5.3>], unresolved: [<canonical id>]}
 louise_traverse(id, relation?, depth?, resolve_in?)   -- resolve_in: the collections an edge into another collection is resolved against (§5.5; added 2026-10-07)
@@ -504,13 +505,13 @@ louise_traverse(id, relation?, depth?, resolve_in?)   -- resolve_in: the collect
 ```
 
 `collections` names collections by id, prefix or local name (07 §7.7)
-and `annotations` (*amended 2026-10-19*) names, by local name, the
+and defaults to every collection the peer holds and may use.
+`annotations` (*amended 2026-10-19*) names, by local name, the
 annotations collections consulted — absent, every one held; `[]`, none.
 They are never legs (invariant 4): the choice decides whether a
 collection's work claims group a work's editions into one hit (§5.3)
 and whether its claims come beside the hits. The Ask page offers each
-held one as a chip and remembers the choice in the browser.
-and defaults to every collection the peer holds and may use; `space`
+held one as a chip and remembers the choice in the browser. `space`
 restricts the search to the collections in one space; `limit` is the
 number of results per list, 10 by default and at most 100.
 `rerank_depth` is how many of each list the reranker orders (§5.6), 50

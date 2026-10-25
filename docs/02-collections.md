@@ -54,8 +54,10 @@ codex = {
   space: {
     encoder: {weights: "sha256:…", label: "medcpt-article",
               engine: {name: "llama.cpp", build: "b10630", variant: "sycl", image: "sha256:…",
-                       args: ["llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls", "--port", "${PORT}"],
-                       env: {}, device: "Intel(R) Arc(TM) Pro B70 Graphics"}},
+                       args: ["llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls", "-np", "1", "--port", "${PORT}"],
+                       env: {GGML_SYCL_ENABLE_DNN: "0"}, device: "Intel(R) Arc(TM) Pro B70 Graphics"}},
+                                     -- env carries the vendor's bitwise-reproducibility mode (CLAUDE.md
+                                     -- invariant 12; notes/approved-encoders.md); one stream, -np 1
                                      -- the engine the reference vectors came from; not in space_id (§2.4)
     dim: 768, dtype: "f16", ctx: 512, pooling: "cls", normalise: true,
                                      -- dtype: f16 | f32 | i8 | i5 | i4 (09 §9.6)
@@ -352,7 +354,8 @@ for that cutoff is incomplete (exit 3; the codes are 07 §7.7).
 
 ## 2.3 Records
 
-Records are the parsed text of documents and nothing else — no markup,
+Records are the parsed text of documents, with everything the origin
+asserts about each entity (01 promise 9), and nothing else — no markup,
 no origin files, no local extras. They are sliced by declared keys
 (year, language) and cut into parts so that one part is one unit of transfer,
 of embedding and of verification. `slicing.shard_records` is chosen per
@@ -432,8 +435,15 @@ credited pre-embedded archive supplies is located there instead — its
 `origin` a URL into that archive — while `origin.spec` locates the rest
 (06 §6.4).
 
-A corpus may be **pruned** — what is not used is dropped — but never
-altered in a way that breaks that reproduction.
+A corpus is **pruned** only by a rule written in the plugin's guidelines
+and in its Codex form before it applies (*amended 2026-10-25*, CLAUDE.md
+invariant 11, operator 2026-10-24: "nothing is pruned unless written").
+Cost is answered by choosing what to embed, never by leaving entities out
+of the records, and pruning never breaks that reproduction. A
+structurally independent part of a collection — a language of
+Wikipedia, a family of Wikidata, Wikidata's lexemes — is a slice a peer
+may hold or not and embed or not; it is never a separate collection, and
+never left out (operator, 2026-10-24).
 A record without an `origin_hash` is refused at build, because a SHARD
 that verifies internally while being permanently unverifiable against
 its source is the worst thing a collection can ship.
@@ -710,10 +720,14 @@ whole set with its own encoder and
 passes when, over `quorum.n` texts drawn from it by the seeded rule of
 03 §3.2, at least `quorum.min_pass` reach cosine ≥ `tolerance` and the
 median of those n does (`hold embedder check`, 03 §3.3). A peer that
-runs `space.encoder.engine` as written, on the device it names, may get
+runs `space.encoder.engine` as written, on the device it names, gets
 the reference vectors back bit for bit — their hash is then
 `space.calibration.vectors` itself, the exact reproduction the engine is
-frozen for — but the gate asks only for the tolerance. The whole set
+frozen for; a mismatch there is a determinism defect of that run, never
+a matter of tolerance (*amended 2026-10-25*, CLAUDE.md invariant 12: found
+by the bit-exact measurement before the engine embeds, by review until
+the gate runs it). The gate itself asks the tolerance, which is for other
+engines and other hardware. The whole set
 is embedded because the statement it produces reports over all of it,
 and because T0's envelope and T1's probe set are the whole set too. A
 peer that fails may still search with what it holds. The same
@@ -779,7 +793,6 @@ local, and its form is 09 §9.10.
 ├── records/<slice>/NNNNN.jsonl.zst      -- and NNNNN.<snapshot id>.jsonl.zst for superseded versions (§2.3)
 ├── relations/<slice>/NNNNN.jsonl.zst    -- typed edges between records (§5.5; 09 §9.14)
 ├── figures/<slice>/NNNNN.fig.zst        -- the plates that part's records name (09 §9.5); fetchable or not
-├── index/<slice>/NNNNN/                 -- the text index of that part (optional to share; a cache)
 └── vectors/<space>/…                    -- as above
 ```
 
@@ -927,8 +940,14 @@ carry (amendment A1, *amended 2026-10-09*): into a collection with the
 same records whose space differs only by engine or by a declared input
 form equal to the one the vectors were produced in, after `vectors-sample`
 under a validated run passes at the target's tolerance; a sister who
-changes the weights, the layers' chunkers or anything else in the
-function starts from zero as before. Her parts are byte-identical, so
+changes the weights or anything else in the function starts from zero as
+before. *Amendment A1h (RULE 1, 2026-10-25):* a sister, or a re-creation,
+that changes the layers or their chunkers keeps the vector of every chunk
+whose id, text and input form are unchanged, under the same weights,
+query side and epoch — a by-the-book build computes the same vector — and
+embeds every other chunk; `vectors-sample` passes before use, as for any
+carry. (The carry by chunk is built when the first such change needs it;
+until then such a change starts from zero.) Her parts are byte-identical, so
 they need not be built again either:
 `hold snapshot create --shards-from` links them, each checked against its
 source snapshot's `root`, and the snapshot it freezes is the one her own
@@ -1161,11 +1180,16 @@ construction, so the vectors and every credit copy with her. A
 corrective sister starts from zero by definition and inherits no
 vectors and no archive credit — but it keeps the corpus and community
 entries, which were never about the vectors it discarded.
+While nothing official has been published from a collection, its
+correction is not a corrective sister at all: it is a re-creation under
+the same name's successor, carrying what is identical (RULE 1; operator,
+2026-10-24: "No official daughters so far").
 
 **A cleaning change is not a sister.** Cleaning output *is* the record
 (§2.3), so changing `cleaning_version` re-derives every record from the
 origin: different `content_hash`, different parts, different chunk
-ids, nothing carried over but the origin itself. Calling that a sister
+ids, nothing carried over but the origin itself — and, under RULE 1
+(A1h), the vector of every chunk whose text did not change. Calling that a sister
 would empty the word of the one thing it means. It is a collection of
 its own, standing beside the first over the same origin, with no
 relation claimed and neither superseded.

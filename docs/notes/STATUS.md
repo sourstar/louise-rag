@@ -1,7 +1,27 @@
 # Project status
 
-**Last updated: 2026-10-19.** What exists, what is designed but unbuilt,
+**Last updated: 2026-10-25.** What exists, what is designed but unbuilt,
 and what is deliberately not being built. Read this before planning work.
+
+**Where things stand (2026-10-25).**
+- **wikidata** is re-created on Monday 2026-10-26 on family map
+  `sha256:78399d60…` (approved, 29398cf). It keeps the version-3 pack and
+  brings parser 2, the history section and parts cut by content; its
+  records build follows.
+- **wikipedia-v8** (parser 5, token cut) is mid records build, in cron
+  windows. Its pool now keeps its children and takes the whole cpu quota
+  (c3dcb4c, 6694b19).
+- **pubmed** is the Codex-8 collection (renamed 2026-10-20), paused.
+- **gutenberg** is on-demand on the node. Perugia, the second GPU peer, is
+  shut down (2026-10-25 10:23 CET) after handing its vectors over.
+- **Search:** query steps take priority over corpus embedding (7cc6975,
+  deployed). The entity boost is removed and an identifier restricts only
+  as the reader's `keys` filter (05 §5.2 amended; deploys after tonight's
+  measurement).
+- **Open defects:** the reranker's HTTP 500s under load (cause not found);
+  no check compares the manifest's counts and text index with the records
+  (the 127-part gap: a reindex by day 2026-10-26).
+- **Parked:** arXiv and the knowledge-base pipelines.
 
 **The specification moved.** `docs/README.md` and the nine numbered
 documents it lists are now the design; `architecture-v2.md` and its §17
@@ -14,11 +34,6 @@ it left open is below.
 
 - **arXiv — PARKED (operator, 2026-10-22).** A blueprint only: docs/notes/arxiv-plugin.md (bulk forms, licences, pre-embeddings) and docs/notes/arxiv-collection.md (the abstracts collection, every version linked, only the latest embedded; the encoder on hold with a 20,000-abstract / 500-question measurement kept). Nothing built, nothing downloaded; no session works on it until the operator resumes it.
 
-- **The DHT is back ON at the node** (2026-10-19 10:35, [dht-flood.md](dht-flood.md)):
-  libtorrent had announced each of 3,170 seeded member torrents by its own
-  infohash, and ~10k UDP flows filled the router's NAT table. The fix — the
-  swarm key, member torrents off the DHT (04 §4.2, amended) — is deployed
-  (f85a606); 49–110 conntrack flows since, against 14,194 before.
 - **The P2P review** (2026-10-19,
   [p2p-review-open-issues.md](p2p-review-open-issues.md), "The review"):
   seven gaps found when the second GPU peer joined, five fixed on the
@@ -36,33 +51,25 @@ it left open is below.
   and served a day longer, never offered for a new fetch, the fallback
   when the current copy is gone (operator's design, 2026-10-19). Perugia's first
   pass re-embedded led parts the node already offered (note §12, fixed).
-  Still open there: vector convergence (measure first), a leecher's
-  `records-vs-origin`. `share contribute` under the worker's lock is
-  BUILT (2026-10-19 night, 56b8a50: the PUBLISHER, scheduling-log.md):
-  the operator's decision is that both peers switch gutenberg to
-  `embed = "p2p"` once it is gated — Perugia runs everything instead of
-  the CLI loop, the node retires its nightly cron — each measured against
-  its CLI pass first.
-- **Wikidata, built to the create** (2026-10-19 night, [wikidata-build-plan.md](wikidata-build-plan.md)):
-  the plugin `wikidata` is registered — the dump reader, the pack and
-  label table in one resumable pass, the vendored textifier with our own
-  value formatter (D4 revised: Python, no service), the chunker
-  `wikidata-text` at the tokens of a pinned tokenizer (D6:
-  `tokenizers==0.22.1`), the slicing `range=`, the acquisition spec of
-  the dated dump. The recipe is a template with four values only the node
-  can give (the tokenizer's sha256, the weights digest, the stated run of
-  the jina-v3 task, `work.tokens`), asked of München; `hold collection
-  create wikidata` runs on the node once they are in, then the 103 GB
-  fetch and the pack pass (hours, resumable).
-- **`hold embedder calibrate`** is a stub: it wants two builds of one model
-  to compare (step 3).
+  Still open there: vector convergence (measure first; not decided). A
+  leecher's `records-vs-origin` is done (Perugia PASSED, 2026-10-24). The
+  PUBLISHER is built (56b8a50); the node's gutenberg stays on-demand
+  (operator, 2026-10-20), and Perugia is shut down (2026-10-25).
+- **Wikidata, re-created Monday 2026-10-26** on map `78399d60…` (29398cf):
+  parser 2, the history section, parts cut by content (RULE 1: the
+  version-3 pack kept, `--calibration-from`). Then the records build and
+  the text index. Scholarly articles, lexemes, niche languages and the
+  map's small misplacements go into ONE later re-creation. The 99 GB
+  version-1 pack is deleted after the build. Build plan:
+  [wikidata-build-plan.md](wikidata-build-plan.md).
 - **Normattiva, what the second part left** (2026-10-12,
   [normattiva-multivigenza-review.md](normattiva-multivigenza-review.md) §3.12,
   §7): the measurement before `shard_records` is fixed (a second archive
-  listing a month on), the Constitution's on-demand query, and no
-  collection created yet — the next collection is the quarantine's
-  guinea pig (never listed; the tooling it finds missing gets fixed).
-  Built the same day: the vector carry, `relations()`, the
+  listing a month on) and the Constitution's on-demand query. `normattiva`
+  is live (2026-10-14); its DAR-legal-it vectors are re-embedded bit-exact
+  in quiet hours (77148be, b2f3dd6); `normattiva-archive` is not created;
+  its `records-vs-origin` re-run is still owed.
+  Built on 2026-10-12: the vector carry, `relations()`, the
   central-directory delta, the member as origin unit, the `urn`/`eli`/
   `akn` reference source with the citation resolver
   (`app/refs/normattiva.py`; `keys` written at parser 6), the original's
@@ -71,7 +78,9 @@ it left open is below.
   repeal (`closures`, `validity_closures`; review §3.2 case 2).
 - **The Gazzetta plugin**: certified records carrying `extra.seal` — the
   certifier body's to run (step 10).
-- **`backend_gate`** stays while any Codex is version 1 or 2 (five live).
+- **`backend_gate`** stays while any live Codex is version 1 or 2 (today:
+  wikipedia's parser-4 Codex, until wikipedia-v8 replaces it; re-count on
+  the node). History:
   Moving one to version 4 is a new collection AND a new space (09 §9.3), so
   its vectors would be recomputed — unless RULE 1 carries them. Measured
   2026-10-08 (32 random chunks re-embedded now vs stored, f16): gutenberg
@@ -79,19 +88,9 @@ it left open is below.
   — carryable; wikipedia by 1.5e-3, four times it (its first layer is the
   wikivec archive's engine); pubmed materially (cosine 0.958). So pubmed and
   wikipedia would be re-embedded in full, and `backend_gate` cannot go yet.
-- **The code follows the SHARD/parts vocabulary** (operator, 2026-10-08):
-  `app/pack/`, `KIND = "louise-pack"`, `shard_of`/`shards_of`, … — bytes
-  already written keep their names. *drag* is done (2026-10-11): code,
-  `shard/`, `source = "shard"`, the node's mounts and folders
-  (09's opening note lists them). The specification already speaks it;
-  the dated entries below keep the words of their time (pack, drag, shard).
-- **Operator**: file [`localai-bugs.md`](localai-bugs.md) upstream (step 15).
-- **Part deltas** (operator, 2026-10-11): a re-issued part is downloaded
-  whole, so one revised book costs its part (gutenberg: ~5 MB, plus up to
-  ~100 MB of plates if their container's bytes change). Options and a
-  recommendation (a patch packed on request by any peer holding the new part,
-  rebuilt by the platform's writer, the root still the proof) in
-  [part-deltas.md](part-deltas.md). Not decided.
+- **Operator**: file upstream [`localai-bugs.md`](localai-bugs.md) (step 15),
+  [`upstream-bugs.md`](upstream-bugs.md) (V1/V2) and
+  [`upstream-reports/wikidata.md`](upstream-reports/wikidata.md); none filed yet.
 - **The character cut** (2026-10-18, [char-cut-truncation.md](char-cut-truncation.md)):
   the platform cuts long inputs by characters, not to `ctx` tokens. Pubmed
   fails its own `vectors-sample` on it (74 of 1,088 sampled chunks, all
@@ -122,17 +121,17 @@ it left open is below.
   abstract is an OtherAbstract, cut to their title
   ([pubmed-other-abstracts.md](pubmed-other-abstracts.md), a decision for the
   operator) — dropped with `dev drop-rows`, and 5 single misses; two fresh
-  seeds then PASS (1 and 3 rows under the tolerance, below the quorum). ~900 k
-  documents re-embed at night (cron jobs 7/8); old `pubmed` paused and its file
-  set aside, nothing deleted. **Open, first:** those residual misses (~0.2 % of
+  seeds then PASS (1 and 3 rows under the tolerance, below the quorum). Since
+  then all 39,994,988 documents are done, the collection is renamed `pubmed`
+  (2026-10-20), v6 is retired, crons 7/8 are disabled, and it is PAUSED. **Open, first:** those residual misses (~0.2 % of
   sampled rows, 2022 PMIDs: records revised after NCBI embedded them?) —
   compare every imported row with the title/abstract NCBI ships beside its
   embeddings (`pubmed_chunk_N.json`) once the internet is back, and drop the
   ones that differ.
 - **Wikipedia parser 5** (2026-10-18, [wikipedia-qids.md](wikipedia-qids.md)):
   the QIDs from each run's `page_props`, built and tested with `dev carry
-  --resign` (A1d); the node still runs parser 4's Codex, and the switch's
-  order is in the note's §3 (after the character cut, a measured tolerance).
+  --resign` (A1d). The switch is under way: wikipedia-v8's records build
+  (2026-10-24 entries below).
 - **Vector writes stop below the disk floor** (2026-10-18, operator):
   `app/disk_guard.py`; `node show` lists the filesystems. ssd5 (LocalAI's
   models, ComfyUI's, Ollama's) stood at 94 % that day, 26 GB free.
@@ -192,7 +191,7 @@ it left open is below.
   Still open:
   - **the robust layer is a watchdog, whatever the cause — now needed, since
     the cause is not the wake alone — and LocalAI has one**: the busy watchdog (`watchdog_busy_enabled`; ON since 2026-10-12 at 10 min, operator — its first second killed a pubmed encoder hung for 8 h, and LocalAI reloaded it on the next call with no hand;
-    `watchdog_busy_timeout`, 5m). It times each backend from its OLDEST
+    `watchdog_busy_timeout`, 5m — two values on record; confirm the live one on the node). It times each backend from its OLDEST
     in-flight request, covers every backend (VeGa or not, pinned or not),
     and force-kills (SIGTERM, SIGKILL after the grace period); the next call
     loads the model again. 5 m matches the worker, which abandons a call at
@@ -207,10 +206,6 @@ it left open is below.
   - throughput the OpenVINO way: true batching (several items per
     `infer`) or an `AsyncInferQueue` with the plugin's own streams, instead
     of one item per gRPC call;
-  - a wedged backend is invisible until the worker's 300 s timeout, and
-    LocalAI's recovery does not kill it (localai-bugs.md). A watchdog that
-    ends a backend whose call outlives its bound would turn 7 h into
-    minutes.
 
 Node-specific facts — addresses, paths, ports, the live collection inventory —
 are deliberately **not** here: they live in `deploy/reference/DEPLOYMENT.md`,
@@ -237,7 +232,11 @@ Everything except two items travels through this repository.
    host/tunnel for the LAN address in every DEPLOYMENT.md command; nothing
    else changes.
 5. No local Python is assumed anywhere: `docker build --target dev -t louise-rag:dev .`
-   recreates the test image, and tests run as in Conventions below.
+   recreates the test image, and tests run as in Conventions below. The
+   dev image (with requirements-dev.txt) is not the deploy gate: the gate
+   is the image built from requirements.txt alone.
+6. The agent container (a Claude session beside the node) is described in
+   `deploy/agent/README.md`.
 
 ---
 
@@ -246,99 +245,22 @@ Everything except two items travels through this repository.
 | phase | state |
 |---|---|
 | **Phase 0** — generalize, no network | **done.** CorpusSource + collections + `space_id`, five plugins, ReferenceSource/EntityResolver/`doc_keys`, query federation, acquisition layer with profiles, transfer manager. |
-| **Phase 1** — bundles + community | **built, never exercised.** Signed bundle export/import, verification ladder T0–T4, coordinator with leases and demand-sets, `contribute` mode, genesis import. Integration-tested two-node. The *deliverable* — publishing a revived PubMed corpus — has never been done, and §12 argues that artifact is the entire go-to-market. |
-| **Phase 2** — swarm | **transport done, discovery designed.** BitTorrent v2 via libtorrent works and is tested against a real two-session swarm; peer/collection discovery is specified in [`p2p-discovery.md`](p2p-discovery.md) and not built. |
-| **Phase 3** — decentralize | not started, correctly. §12: "don't build the DHT until someone begs." |
+| **Phase 1** — bundles + community | **built and exercised** between two peers on gutenberg (2026-10-19→25: bundles both ways, a SHARD fetched and checked). The *deliverable* — publishing a revived PubMed corpus — is still not done (after the wikidata work). |
+| **Phase 2** — swarm | **built** per 04 §4.2: BitTorrent v2 via libtorrent, digests, neighbours, the peer list and the offer (`app/share/gossip.py`, `peers.py`, `offer.py`). [`p2p-discovery.md`](p2p-discovery.md) is the earlier design. |
+| **Phase 3** — decentralize | no DHT of our own; libtorrent's mainline DHT finds swarms by the collection's swarm key (04 §4.2). |
 
-### 2026-10-24: the family map revised on the node's first report — `built` split from `heritage`, `internal` a fallback, place's roots narrowed
+### 2026-10-25: the records build A/B — every part byte-identical; the build takes the whole cpu quota
 
-The pack's version 3 on the node (München, 17:13–18:35 CEST, 82 min: class tree 1,256 s, codes 3,668 s; 5,231,012 P279 links; largest item Q141715864; map `f79007bd…`, 3.4 MB; codes 122 MB): scholarly 114,950 (+46,010,584 pruned), internal 9,677,031, heritage 5,808,872, event 1,472,201, person 13,736,759, organization 3,738,186, place 7,963,064, work 7,704,829, taxon 4,168,948, property 13,972, other 21,497,371 — summing to the manifest's 75,896,183. München's review found `other` unlisted, churches in place, legislation in internal, every built structure in heritage. Revised before `create` (families.py; wikidata-family-slices.md §5): `heritage` = monuments, archaeological and heritage sites and the designated; new `built`; `place` = settlements, administrative areas, landforms, bodies of water, protected areas; `internal` a fallback; the report lists `other`'s top 50 and probes 30 known classes. Next: the codes and report of the revised map on the node (~1 h CPU), reviewed, then `create`.
+München ran en/2M's first 250,000 records of wikipedia-v8 (2,096,112 chunks, 125 parts, a 4-cpu quota) under four trees. The 125 parts were byte-identical in all seven runs. Wall time:
+- the old pool, 11 children: 761 s;
+- a833c1e, 3 children: 630 s;
+- 4 children: 544 s, 1.16× faster than 3 at +3 % CPU per record;
+- c3dcb4c (the exit fix), 3 children: 623 s.
+`hold records build` now takes the whole quota (6694b19); the worker keeps quota − 1. The live build runs on c3dcb4c since 13:37 CET and takes 6694b19 at its next restart. Table and decision: [scheduling-log.md](scheduling-log.md), 2026-10-24 row.
 
-### 2026-10-24: wikipedia-v8's records build ran on ~1.3 of 4 cpus — the pool sized from the quota, the pages streamed
+### 2026-10-25: the wikidata family map approved — `78399d60…`
 
-München's report (18:20Z): the build is not done by Monday 07:00 — 13.37 M of ~74.8 M records, ~120 rec/s, 4–6 days continuous; and only ~1 cpu busy. Their profile (py-spy, read-only) found both causes: `PARSE_PROCESSES` from `os.cpu_count()` = the host's 12 inside a 4-cpu quota (11 children), and a barrier per page of ≤500 documents with a timeout over the whole page (47.8 % of children's samples idle; 15 pages re-parsed serially in 18 h). Fixed in two separately measurable steps, the before numbers and scenario in scheduling-log.md: `config.available_cpus()` (affinity and the cgroup quota, as JVM/Go/.NET read it) and `parallel.compute_pages` (the next pages submitted while the caller writes this one; a progress watchdog, only unanswered parts recomputed). Byte-identical parts (the pool-vs-serial build test). Monday's wikidata does not wait for wikipedia-v8. The operator decided day running on weekdays (2026-10-24): the build runs 08:00–12:00 and 13:30–17:00 as well as 22:30–06:00 (node time, CEST/CET), and is stopped outside them (SIGTERM: it finishes the part, commits, exits 130, and resumes at the next window). Weekends are unchanged: the build runs all day. Set by München (TrueNAS cron, the quiet-hours pattern): /root/louise-scheduled/wikipedia-build.sh start|stop (stop = SIGTERM, then docker wait ≤ 15 min, logging the exit code and the last part written); cron 18 stops at 06:00, 12:00 and 17:00 Mon–Fri, 19 starts at 08:00, 20 at 13:30 and 22:30, and 21 is an idempotent start at 00:05 Sat and Sun (Friday 22:30's run continues to Monday 06:00). The first stop/resume (Mon 12:00 → 13:30) is checked: exit 130, and no part cut twice.
-
-### 2026-10-24: the re-slicing daughter, built — a family added reuses every record and vector, equal to a build from scratch
-
-The second half of the operator's requirement ("I agree"). `hold collection continue --reslice` (the slicing a creation gets now: the pack gives the map of the code's current family list over its class tree, built from the `subclass` table in a minute when the list changed); `dev carry --resliced` (amendment A1g: only the slicing differs and the target cuts by content — the manifest, text index and vector table carried, no snapshot compared); `hold records build <daughter> --records-from <mother>` (her parts from her mother's latest snapshot's record lines, indexed per part from each part's own trailing index, none parsed, each record cut into chunks again for `chunks_root`; refused unless only the slicing differs). Test: a mother built from the origin, a daughter with a family added (`city` before `place`) built from her record lines with the parser forbidden, and a collection built from scratch with the new map — the daughter's parts are the scratch build's, paths and bytes. Amendment: 02 §2.7. Full suite 5252 passed, 2 skipped.
-
-### 2026-10-24: parts cut by content — a daughter with a new family map equals a collection built from scratch
-
-Operator: "the structure must be such that if a new family is added a daughter allows you to reuse all the vectors and corpus of the mother. It must be functionally equivalent to a new collection created from scratch", then "I agree" to B: content-defined part boundaries in Monday's creation. A Codex whose slicing declares `parts: {rule: "content", min, max}` (wikidata's family block: 10,000 / 40,000 around 20,000) cuts each slice where a record's uid fingerprint (SHA-256, first 8 bytes) marks a boundary past `min`, or at `max` — content-defined chunking (LBFS; FastCDC's bounds), the record as the unit. The layout is a pure function of each slice's records: from scratch, resumed, updated or a daughter's, the same parts byte for byte; a change re-issues its part and at worst the next few; no closed parts to keep. The `records` check verifies each sampled part's cut. Amendments: 02 §2.2 (a record's slice is the one its fields give at each snapshot, for such a collection), 09 §9.3 `parts`, pack-format §2. Tests: purity and locality over 20,000 uids, the check, a family collection built whole and stopped-and-resumed after every part — the same parts. Full suite: 5249 passed; 33 errors and failures under parallel load in tests/vega, the GPU governor, run_check and quarantine, all 390 passing when run alone. Owed next: the daughter step itself — re-slice from the mother's record lines (no parse), carry the vector table across the new parts (no GPU), and a test that the daughter's parts equal a from-scratch build's.
-
-### 2026-10-24: a family added later — every pinned map stays readable (defect found and fixed)
-
-Operator: "What happens if a new family is created?" Answering it found a defect in 0f0c02f: `load_map` read only maps whose family list was the code's current one, so adding a family to the code would have made every pinned map — and every collection sliced by it — unreadable. Fixed before anything was built on it: a map carries its own family list (precedence order) and roots and is read by them; codes are per map; the code's list is only what a NEW map is written with. Map bytes unchanged, so München's upgrade ahead from e0cb788 stays valid. A new family itself: a new map — before publication a re-creation (family codes again, ~40 min CPU, and the records re-cut; vectors the same bytes, their carry across a re-cut owed when it first happens), after publication a new collection whose parts peers fetch again (wikidata-family-slices.md §7). Test: tests/test_plugins_wikidata_families.py (18).
-
-### 2026-10-24: no official daughters so far (operator, RULE 1); the recommendations accepted
-
-Operator: "No official daughters so far, rule 1. I accept your recommendations". While nothing official has been published, a change to what a collection is goes into a RE-CREATION carrying what is identical (the pack, `--calibration-from`, the vectors of unchanged chunks), never a daughter — CLAUDE.md RULE 1's examples, wikidata-family-slices.md §7. Accepted: the 99 GB version-1 pack beside the dump on tank is kept until Monday's records build has finished, then deleted (München does it); the family list is reviewed from the pack's report before `create`; scholarly articles, lexemes, the niche it/de/fr/es sections (after their pilot) and any root fix go into ONE later re-creation; embedding by family starts with heritage, events, places and people (phase 2, `embed_slices`); the reranker: the score stays unless run 5 shows otherwise — run 5 complete (496/496, 2026-10-24 23:04 CEST): no variant dominates (titles MRR score 0.834 / base 0.809 / slots 0.802; descriptive 0.412 / 0.422 / 0.419, R@10 0.714 / 0.687 / 0.701), so `score` stays (reranker-scope.md §14a). München runs the pack's version-3 upgrade ahead of Monday from e0cb788 (create's corpus lookup after the rename to `wikidata-p1`).
-
-OPEN (2026-10-25, München's heading full search): 117 of 496 queries lost their rerank inside the budget overnight (95 on arm 0, 12 on arm 2, 10 on arm 3, rising through the night) while normattiva's re-embed ran on the card. The asymmetry between arms points at a first-call cost (a load or a wait behind corpus work). Asked of München, read-only: the arm order, how many LIVE searches since 22:30 came back `reranked: false` and why, and the harness's why/ms per miss in Sunday night's resume (deployed conditions). If live searches were hit, this is a defect fixed before anything else, through scheduling.md §6 with numbers.
-
-FIX, part 1 (operator 2026-10-25: "Fix this defect with priority over all the rest"). app/model_load.py's check against LocalAI's `/system` trusted a 2 s cached answer for every caller. In a search, the query embedding's check refreshes that cache, and the rerank's check a moment later believed it. An eviction between the two, by LocalAI's reclaimer making room for another model's load, sent the rerank to a cold reranker: the 7–8 s load ran INSIDE the 8 s budget, against the operator's rule of 2026-10-09 ("Timeouts shall not include cold start"). Reproduced by test (`test_an_eviction_after_a_cached_check…`, which fails on the old code). Now:
-- a single request a person waits on asks `/system` fresh (rerank, chat, translation: `max_age_s=0`, about 11 ms);
-- a query's embedding burst shares a 0.25 s answer, and corpus work keeps the 2 s cache;
-- each loaded model's backend pid is noted, so a rerank that times out with its model gone or re-spawned says "evicted before the request and loaded again inside its budget", and the event log records that cold start, distinct from a reranker that was merely slow.
-**It does not explain the 117** (München, 2026-10-25 07:30 CET, LocalAI's log 22:30 CEST to 07:30 CET, 88,346 lines): louise-rerank-bge was never loaded or evicted all night, and there were no cold-start lines for the rerank. The reclaimer fired 4 times, at 85.1–86.5 % of its 85 %, evicting the 4B encoder twice and chat twice. The misses were **HTTP 500 refusals**: /v1/rerank answered 5,662 × 200 and 130 × 500 (2.2 % of calls), every 500 between 23:00 and 03:00 CEST, with no reason in LocalAI's log. A score-variant query sends 4–6 calls in sequence (one per language group), and any failed one makes the whole list the fused order, so 2.2 % per call becomes 10–20 % of queries. Re-run by day with normattiva idle: 6 of the 117, 32 calls, all 200 (340–5,374 ms). Part 1 stays as a guard for the rule (a stale check is a real window), not as the fix. Also found: two LIVE searches spent 30.4 s (20:05 CEST) and 42.6 s (00:06 CEST) in the rerank, both while the campaign was reranking. Separate processes share no gate, so a person's calls can queue behind the harness's inside LocalAI. Next: the 500's body and the backend's stderr, VRAM and gtt per second, concurrency on the reranker, and the YAML's slots and context.
-
-München's day tests: 6 of the missed queries (32 calls) and 18 reranks of 69/45/9 × 4.4k characters beside the 4B encoder embedding (VRAM peak 83 %) — all 200. bge runs `parallel:1`, context 2560, batch = ubatch 2560, flash attention off. At 00:06 CEST the person's search shared the reranker with the harness and the card with a burst of 86 embedding calls by normattiva in one minute, with 2 × 500 of 5 calls. So the refusals come under load and pass at once.
-
-FIX, part 2: a 5xx is asked again ONCE, after 0.25 s, when at least a second of the budget is left (`retrieval._rerank_call`). The rerank is a pure function of its body, the same policy as urllib3's `Retry` on a status list and gRPC's retry on UNAVAILABLE. One refused call of a query's 4–6 no longer costs the whole list its rerank. The reason now carries the server's own message (`HTTP 500: <LocalAI's error.message>`) and says when the second try failed too, so a live search records the cause the logs lack. Tonight's harness (d6ddc85) logs every refused call with LocalAI's body. The per-call 500 rate measures the reranker; the per-query misses measure the fix. The cause of the 500s is still open until that body is read: the backend's allocation or decode failing under the card's load is the reading.
-
-Operator, the same day: the retry treats the symptom; "Embedding shall have the lower priority and query processing the highest; the subsequent steps of a query in process shall be processed first to avoid wasting the effort spent for the previous steps." **FIX, part 3, the root (app/dispatch.py):**
-- The levels are a query's steps in order: CORPUS < TRANSLATE < QUERY < RERANK < CHAT. 09 §9.12 is amended: the same five header values, a new order.
-- Corpus work stands aside on the WHOLE CARD while any step of a person's query holds the node's claim. Its next request and its encoder's warm wait, bounded by the request's own timeout (then a deferral), and wake on stop.
-- The device-wide yield removed on 2026-09-20 (chat's clock) returns, with the GPU governor holding the clock.
-BEFORE numbers and the scenario are in scheduling-log.md (2026-10-25). Correction: the night's corpus work beside the reranker was GUTENBERG's on-demand embedding of the books the campaign's searches touched, at 1 text a request, 0.43 s each, two in flight. normattiva embedded nothing. The claim stays PER STEP: a whole-query claim (04b4f50, reverted in 1b8d8cc) would have idled the card for the 3.4–4.1 s of gaps per query, while a corpus request in a gap shares the card with the next step for at most ~0.43 s. Found before deploying it (München): **the GPU governor was not running on the node.** There was no TrueNAS app and no `app.gpu_governor` process, and the System status reported none. Its YAML records a deploy on 2026-09-20; it is not known since when it has been gone. So chat has run at the idle clock whenever the card was otherwise quiet. It is installed from deploy/truenas-gpu-governor.yaml before 7cc6975 (as 50030dc on c3a7612) goes out, with min_freq checked idle, during a search and after. Also: the test fake in test_rerank_per_collection.py now carries a status code, instead of product code reading one with a default.
-
-### 2026-10-24: wikidata sliced by family — built: pack version 3, the map pinned in the Codex and carried in the SHARD
-
-Operator: "Go with A" (a family map pinned at creation). Built: app/plugins/wikidata/families.py — the rule (twelve families in precedence; an entity takes the first among its non-deprecated P31 values, a heritage designation makes it heritage; a CLASS takes its NEAREST root, a tie to precedence: precedence alone would have filed every municipality under organization, through "local government"), the map as canonical bytes named by their sha256, the walk of classes newer than the map, the slice `family=<f>/range=<n>`. The pack's version 3, upgraded in place from version 2 (RULE 1, no pass over the bz2): `subclass` (every item's P279 links) and each chunk's largest item, then the dump's own map (`families-<h>.json`), then every entity's code under it (`families-<h>.u8`, one byte an entity) and `families-<h>.report.json` (each family's records, pruned entities and the 25 classes that fill it most, with labels). Parsing does not wait for it (a version-2 pack whose names are done is enough); discovery does. `create` takes the slicing block and the map from the plugin (the pinned dump's pack; several dumps and no `snapshot` are refused in plain words) and writes the SHARD member `slicing/<sha256 hex>.json`; every snapshot lists it (09 §9.4), `share` moves it as the member `slicing` (09 §9.16); the records build reads the Codex's map from the SHARD, checks its hash and slices by the pack's codes (the parse is the fallback, through the same map); the `records` check verifies the member and each sampled record's slice (03 §3.2). A Codex sliced by id range — the wikidata of 2026-10-20 — keeps its ranges. A build never runs a second codes pass beside the worker's own (it waits). Amendments: pack-format.md §2, 09 §9.3 / §9.4 / §9.16, 03 §3.2. Tests: tests/test_plugins_wikidata_families.py (16, the end-to-end plan pass included). Monday's order on the node: deploy → the worker's scan upgrades the pack (~1 h: the class tree ~18 min, the codes ~40 min, as the classes run measured its two passes) → READ the report before `create` (the family list is fixed for the collection's life) → `create` on the new target → the records build.
-
-### 2026-10-24: wikidata's history section, in parser 2; scholarly articles and lexemes later; the slicing constraints written down
-
-Operator: "Go with family slices and the history section now", then "Go with 3" (scholarly articles and lexemes join later, not in Monday's re-creation) "also if it makes sense choose which languages to fetch and embed", then "explain the slicing constraints and future proof constraints". The history section: after each language's text, what the best-rank filter drops (a property's normal-rank statements when it has a preferred one; not quantities, not external ids; each with its qualifiers; at most ten a property, the most recent first), headed `en:history`, under "Other statements include" — the English text stays byte for byte (`textify.history_text`; the word index files it with English, `fts.by_section_language`). Parser 2 still: nothing was built with it. The constraints, and the languages answer (fetch: no choice, a record keeps every language; embed: English now, the niche it/de/fr/es sections with parser 3; no `lang=` slice key — announced, then withdrawn: it would be `mul` for every item): [wikidata-family-slices.md](wikidata-family-slices.md) §7. The binding one: the family list is fixed at creation, so its sizes are reviewed before `create`.
-
-### 2026-10-24: Perugia — gutenberg's records-vs-origin PASSED over the network; quarantine cleared
-
-The real origin check the operator asked for (2026-10-23: no `ack --origin-unchecked`), made possible by c3b9d79's network re-fetch for rsync origins. On b3ac1be (full suite 5149 passed; smoke clean; qwen3-4b bit-identical), 12:27–12:50Z: PASS, 87 records re-parsed from the origin, 0 differing, 84 moved (the mirror regenerates book folders — identical but for origin_hash, counted as reproduced, 03 §3.2 as amended 2026-10-07), reading 87 of 4,100 origin units, 241 MiB of the 256 MiB a check may read (operator, 2026-09-20). One run's depth: 0 of 87 bounds the per-record failure rate at ~3.4 % (95 %); seeds differ per run and per peer, and `--origin-mib` raises it for a deeper run. Copy state: in use.
-
-### 2026-10-24: wikidata sliced by family with a map pinned at creation (operator: A); the history section; nothing pruned
-
-Operator: "Propose a way to choose what to embed like it is currently done for Wikipedia language fetching/embedding … If not written explicitly in the guidelines a collection cannot prune any information from the corpus" (CLAUDE.md, invariant 11; and "Always give a pros cons", Style). The Wikimedia-pages pruning proposal is withdrawn: they stay records, and what a node embeds is chosen by slice, as Wikipedia by language. Family slices met the rule that a slice is stable for a record's life (pack-format.md §2): a class tree is not. Option A — the map of class to family pinned at creation, an amendment of the slicing rule — chosen ("Go with A, but write down today's report"): [wikidata-family-slices.md](wikidata-family-slices.md). With the history section, both go into Monday's re-creation; its records build moves by about a day. Wiktionary and Wikidata's lexemes written down as collections to come ([future-collections.md](future-collections.md)).
-
-### 2026-10-24: what the wikidata text dropped or misread — four fixes in parser 2, three things counted
-
-Operator: "check if there is any other information from wikidata that we silently ignore like the original language". Fixed in parser 2, before any record: `novalue` was written "has <property>", the opposite (upstream; now "no value", Wikibase's wording), `somevalue` lost its qualifiers (an unknown date's bounds), a lexeme value was written as a Python dict (upstream), a quantity lost its ± (our formatter). Counted in the next classes run: the statements the best-rank filter drops (former countries, names, populations), references to merged or deleted entities (the JSON dump has no redirects), Wikimedia's own pages kept as records (categories, templates, disambiguations). Upstream items W6, W7 in the report. The table: wikidata-build-plan.md, last section. The node's pack is at version 2 since 12:00 CEST (in-place upgrade, 37 min 38 s: 2,215 language codes, 17,954,384 names; RULE 1 against an hours-long rebuild). wikidata-refs version 3 synced from it: 121,724,461 rows in 817 s (refs.db 11.16 → 12.62 GB); the 182,531 entities with no label at all have no row. `ask lookup`: Q42 "Douglas Adams" (its label is `mul` in this dump), Q3235171 "Les Roses de la vie" (fr), Q3242104 "Liouberetskaya" (fr, the Latin label over the Russian). The operator also approved the niche selection (a language's section only where Wikidata says more in it than in English) and the pilot before the full embedding.
-
-### 2026-10-24: monuments, buildings and events measured — 10.4 M entities, 1.6 G tokens a language; the occurrence tree is polluted
-
-`tools/wikidata_coverage.py classes` on the node (51 min, read-only): 10,437,567 entities selected (built structure 5.64 M, monument 0.67 M, archaeological site 0.36 M, occurrence 3.90 M of which planned event 1.44 M, heritage designation alone 0.51 M). Wikidata names them in Italian (label or mul) for 11.6 %, German 25.3 %, French 21.2 %, Spanish 12.7 %; their texts' other labels exist in Italian for 86 %. One more language for all: 1.61 G tokens, 3.7 months of wikidata's budget; only where Wikidata names the entity in that language: 1.14 G tokens for all four. Barbacane/barbican and merlon are in the built-structure tree; machicolation needs architectural element (Q391414). The occurrence tree brings in clinical trials, theses, statutory instruments, stars and coins (W5 of upstream-reports/wikidata.md; W3 six P279 cycles, W4 the missing-label worklists, written). Next: a second run with the event roots' chains; the operator's languages decision. And a pack of NEWER code is never started over (München's safety check: the deployed version-1 worker would have unlinked the version-2 pack).
-
-### 2026-10-24: wikidata — no id where a name exists (operator); the pack's `name` table, upgraded in place
-
-Operator: "As a general rule showing an id is meaningless for humans; in case there are multiple non English languages use in order: 1. the original name if it can be determined and if it's in latin characters 2. Any other language in latin characters. 3. The name in the original language if it can be determined." names.py — the original name from the entity's name statements (P1705/P1559/P1448/P1476/P2561), then its label in its original language (P407/P364/P103 through each language item's code, P424: the language lookup); Latin by Unicode script; among labels the entity's own wikis, then French, Spanish, Italian, German, then Wikidata's listing order (operator: "Go with your recommendation and the language lookup"); any label before an id — in parser 2: the title (20.8 % of the records were titled by their id), the entity's own name in its text, every referenced name, and `ask lookup` (wikidata-refs ref_version 3). The pack (PACK_VERSION 2) gains `language` (written with the chunks) and `name` (a pass over its own lines after them); a complete version-1 pack is upgraded in place by two such passes, not rebuilt from the bz2 (RULE 1); parser 2 parses only from a pack whose names are done, every document deferring before that. wikidata-build-plan.md "No id where a name exists".
-
-### 2026-10-24: wikidata parser 2 — a referenced label falls back to `mul`; the collection is created again before its records
-
-The vendored textifier skipped upstream's `mul` step for REFERENCED entities (the entity's own label had it): an entity labelled only in `mul`, Wikidata's default label since 2024, was written as its id in the text of everything naming it. Fixed as parser 2 (textify.py `Normalizer._chain`: language, `mul`, fallback — upstream's `get_lang_val`), with Italian connectives inert for English. The Codex of 2026-10-20 names parser 1 and nothing was published, so wikidata is created again from the same recipe before Monday's records build (RULE 1: calibration document side reused with `--calibration-from`, the pack kept, the text index rebuilt as already planned; wikidata-build-plan.md "Parser 2"). Counted on the node (`tools/wikidata_coverage.py mul`, a clustered sample of 8,823 kept entities): 280 English texts change (3.2 %), ids written 870 → 506 of 155,247 label lookups — "PlayStation 2", taxa named by their scientific `mul` label. Titled by their id (no English, no `mul` label), exactly over the manifest: 15,765,162 of 75,896,183 records, 20.8 % (about one in five; "one in four" was read off 20 entities).
-
-### 2026-10-24: monuments, buildings and events in more languages — designed, measured first; a standing report to the Wikidata team
-
-Operator: "I want that also monuments, buildings and events are full text translated as well / As ancient and uncommon words (barbacane, barbican) if it fits / Any improvement to wikidata goes in a report to be submitted to the wikidata team for integration." A daughter after the English build; per added language, the textifier fed Wikidata's own labels (no machine translation: records reproduce from the dump); the selection is the P279 closure of architectural structure, monument, archaeological site, event and occurrence, their classes (the vocabulary: barbican/barbacane), and heritage designations (wikidata-build-plan.md, last section). `tools/wikidata_coverage.py classes` counts it on the node first. The report: [upstream-reports/wikidata.md](upstream-reports/wikidata.md). Open: the languages (recommended it, de, fr, es).
-
-### 2026-10-24: wikidata is searched by name in every language (operator: "names only")
-
-"Go with names only, before Monday's records build." Every label and alias of an entity, in every language (`index_names`, from the record's `extra`, which keeps the whole entity), is indexed as whole-name keys on the record's first chunk, with its popularity (sitelinks). `fts.search_names` matches the question's word sequences (up to 8 words) against them — the longer name first, then the most linked: Wikidata's own near match and rescore (WikibaseCirrusSearch), so a famous entity is not outranked by an obscure one of the same name, as BM25 over a bag of every name would rank it. Keys are `|name` and `<lang>|name`: a search limited to languages matches names in those languages. One more list of the text leg, from the reader's own words (05 §5.1 amended). The text stage takes chunks and names from ONE parse (parse pool kind `chunks+names`). Not in records, sections, `content_hash` or vectors, so the records build is unchanged; an erase-rewrite refuses a names index (names are not stored). Owed on the node with Monday's rebuild: the index's size and `search_names`' time on the real index (CLAUDE.md: time every new hot-path query). Not done: the catalogue (title list) keeps the English title; a title in another language for the 1 in 4 entities with no English label would change the records (title is in `content_hash`).
-
-### 2026-10-24: a multilingual record is indexed by section language (wikidata)
-
-The node's wikidata (75,896,183 documents, all `lang = "mul"` by design: an entity has no one language, wikidata-build-plan.md) sat whole in the `other` text group: its English text unstemmed, and every language-limited search ("in English") skipped it, since `other` is searched only for a language that maps there. `fts.by_section_language`: a `mul` record's sections are each indexed in the group of the language their heading names (wikidata's chunker puts the section's language in `chapter`), with that language stored — ONLY a language the plugin declares (`fts.section_languages`: wikidata `("en",)`; no other plugin declares any). The first form took any two or three letters for a code and would have filed pubmed's "AIM" sections and gutenberg's "II" chapters under fake languages; caught the same day, before any node ran it. Any other heading keeps `mul` in `other`, as before; a delete removes every part. The records keep `mul` (correct, and unchanged): only the local text index moves. Owed on the node: wikidata's text index rebuilt (its `other` group dropped, fts re-run), with the records build, Monday after wikipedia-v8's build. The catalogue and vector legs, which filter by the RECORD's language, keep a `mul` record when its plugin writes one of the asked languages (`retrieval.limited_langs`; only wikidata declares `languages`, `("en",)`), operator 2026-10-24: "Fix the language defect".
-
-### 2026-10-23: annotations collections are updated, not replaced (operator)
-
-"Implement docs/notes/annotation-collections.md immediately … Annotations must be updated not replaced." `hold annotations update` / the API route / the Library card's *re-check claims* and *update with a claims file*: the next snapshot of the same collection, its claims re-checked against the targets' newest snapshots (records twin included), kept claims keeping their uids, left-out ones tombstoned, superseded parts and the replaced claims file kept (annotation-collections.md "Updating"; 02 §2.10, 07 §7.3, 09 §9.4 amended). Found on the way, and fixed: a peer never followed ANY collection's next snapshot — the pull acted on `snapshot` events that no code emits; it now follows what its neighbours' digests list (`accept.newer_from_digests`), annotations collections included. One update a period (monthly for gutenberg-book-editions: its next is 2026-10, written now; the one after from November).
+The third revision's report under 41e3112's roots (legislation a work root, cell line a molecular root) was approved for Monday's `create` (29398cf; [wikidata-family-slices.md](wikidata-family-slices.md)). Small misplacements (railway station, tram stop, park, ship, facilities) wait for the one later re-creation, with scholarly articles, lexemes and the niche languages.
 
 ### 2026-10-25: a stopped records build never exited — the parse pool fixed (München's find, invariant 2)
 
@@ -391,6 +313,98 @@ This supersedes PR #4's "the gap is a view". The spec changes are listed for app
 - one real finding, the entity boost against 05 §5.2 (task #33);
 - to fix before merge: wikidata linking with gutenberg's encoder (wikidata's space is jina-v3), torch determinism for GLiNER, new dependencies to ask, per-book surface anchors, linking precision.
 
+### 2026-10-25: the reranker's misses — the night's 117, a fresh check, one retry, and query steps first (operator)
+
+FOUND (2026-10-25, München's heading full search; the cause of the HTTP 500s is still open): 117 of 496 queries lost their rerank inside the budget overnight (95 on arm 0, 12 on arm 2, 10 on arm 3, rising through the night) while normattiva's re-embed ran on the card. The asymmetry between arms points at a first-call cost (a load or a wait behind corpus work). Asked of München, read-only: the arm order, how many LIVE searches since 22:30 came back `reranked: false` and why, and the harness's why/ms per miss in Sunday night's resume (deployed conditions). If live searches were hit, this is a defect fixed before anything else, through scheduling.md §6 with numbers.
+
+FIX, part 1 (operator 2026-10-25: "Fix this defect with priority over all the rest"). app/model_load.py's check against LocalAI's `/system` trusted a 2 s cached answer for every caller. In a search, the query embedding's check refreshes that cache, and the rerank's check a moment later believed it. An eviction between the two, by LocalAI's reclaimer making room for another model's load, sent the rerank to a cold reranker: the 7–8 s load ran INSIDE the 8 s budget, against the operator's rule of 2026-10-09 ("Timeouts shall not include cold start"). Reproduced by test (`test_an_eviction_after_a_cached_check…`, which fails on the old code). Now:
+- a single request a person waits on asks `/system` fresh (rerank, chat, translation: `max_age_s=0`, about 11 ms);
+- a query's embedding burst shares a 0.25 s answer, and corpus work keeps the 2 s cache;
+- each loaded model's backend pid is noted, so a rerank that times out with its model gone or re-spawned says "evicted before the request and loaded again inside its budget", and the event log records that cold start, distinct from a reranker that was merely slow.
+**It does not explain the 117** (München, 2026-10-25 07:30 CET, LocalAI's log 22:30 CEST to 07:30 CET, 88,346 lines): louise-rerank-bge was never loaded or evicted all night, and there were no cold-start lines for the rerank. The reclaimer fired 4 times, at 85.1–86.5 % of its 85 %, evicting the 4B encoder twice and chat twice. The misses were **HTTP 500 refusals**: /v1/rerank answered 5,662 × 200 and 130 × 500 (2.2 % of calls), every 500 between 23:00 and 03:00 CEST, with no reason in LocalAI's log. A score-variant query sends 4–6 calls in sequence (one per language group), and any failed one makes the whole list the fused order, so 2.2 % per call becomes 10–20 % of queries. Re-run by day with normattiva idle: 6 of the 117, 32 calls, all 200 (340–5,374 ms). Part 1 stays as a guard for the rule (a stale check is a real window), not as the fix. Also found: two LIVE searches spent 30.4 s (20:05 CEST) and 42.6 s (00:06 CEST) in the rerank, both while the campaign was reranking. Separate processes share no gate, so a person's calls can queue behind the harness's inside LocalAI. Next: the 500's body and the backend's stderr, VRAM and gtt per second, concurrency on the reranker, and the YAML's slots and context.
+
+München's day tests: 6 of the missed queries (32 calls) and 18 reranks of 69/45/9 × 4.4k characters beside the 4B encoder embedding (VRAM peak 83 %) — all 200. bge runs `parallel:1`, context 2560, batch = ubatch 2560, flash attention off. At 00:06 CEST the person's search shared the reranker with the harness and the card with a burst of 86 embedding calls by normattiva in one minute, with 2 × 500 of 5 calls. So the refusals come under load and pass at once.
+
+FIX, part 2: a 5xx is asked again ONCE, after 0.25 s, when at least a second of the budget is left (`retrieval._rerank_call`). The rerank is a pure function of its body, the same policy as urllib3's `Retry` on a status list and gRPC's retry on UNAVAILABLE. One refused call of a query's 4–6 no longer costs the whole list its rerank. The reason now carries the server's own message (`HTTP 500: <LocalAI's error.message>`) and says when the second try failed too, so a live search records the cause the logs lack. Tonight's harness (d6ddc85) logs every refused call with LocalAI's body. The per-call 500 rate measures the reranker; the per-query misses measure the fix. The cause of the 500s is still open until that body is read: the backend's allocation or decode failing under the card's load is the reading.
+
+Operator, the same day: the retry treats the symptom; "Embedding shall have the lower priority and query processing the highest; the subsequent steps of a query in process shall be processed first to avoid wasting the effort spent for the previous steps." **FIX, part 3, the root (app/dispatch.py):**
+- The levels are a query's steps in order: CORPUS < TRANSLATE < QUERY < RERANK < CHAT. 09 §9.12 is amended: the same five header values, a new order.
+- Corpus work stands aside on the WHOLE CARD while any step of a person's query holds the node's claim. Its next request and its encoder's warm wait, bounded by the request's own timeout (then a deferral), and wake on stop.
+- The device-wide yield removed on 2026-09-20 (chat's clock) returns, with the GPU governor holding the clock.
+BEFORE numbers and the scenario are in scheduling-log.md (2026-10-25). Correction: the night's corpus work beside the reranker was GUTENBERG's on-demand embedding of the books the campaign's searches touched, at 1 text a request, 0.43 s each, two in flight. normattiva embedded nothing. The claim stays PER STEP: a whole-query claim (04b4f50, reverted in 1b8d8cc) would have idled the card for the 3.4–4.1 s of gaps per query, while a corpus request in a gap shares the card with the next step for at most ~0.43 s. Found before deploying it (München): **the GPU governor was not running on the node.** There was no TrueNAS app and no `app.gpu_governor` process, and the System status reported none. Its YAML records a deploy on 2026-09-20; it is not known since when it has been gone. So chat has run at the idle clock whenever the card was otherwise quiet. It is installed from deploy/truenas-gpu-governor.yaml before 7cc6975 (as 50030dc on c3a7612) goes out, with min_freq checked idle, during a search and after. Also: the test fake in test_rerank_per_collection.py now carries a status code, instead of product code reading one with a default.
+
+### 2026-10-24: the family map revised on the node's first report — `built` split from `heritage`, `internal` a fallback, place's roots narrowed
+
+The pack's version 3 on the node (München, 17:13–18:35 CEST, 82 min: class tree 1,256 s, codes 3,668 s; 5,231,012 P279 links; largest item Q141715864; map `f79007bd…`, 3.4 MB; codes 122 MB): scholarly 114,950 (+46,010,584 pruned), internal 9,677,031, heritage 5,808,872, event 1,472,201, person 13,736,759, organization 3,738,186, place 7,963,064, work 7,704,829, taxon 4,168,948, property 13,972, other 21,497,371 — summing to the manifest's 75,896,183. München's review found `other` unlisted, churches in place, legislation in internal, every built structure in heritage. Revised before `create` (families.py; wikidata-family-slices.md §5): `heritage` = monuments, archaeological and heritage sites and the designated; new `built`; `place` = settlements, administrative areas, landforms, bodies of water, protected areas; `internal` a fallback; the report lists `other`'s top 50 and probes 30 known classes. Next: the codes and report of the revised map on the node (~1 h CPU), reviewed, then `create`. *Done 2026-10-25: third revision; map `78399d60…` approved (29398cf).*
+
+### 2026-10-24: wikipedia-v8's records build ran on ~1.3 of 4 cpus — the pool sized from the quota, the pages streamed
+
+München's report (18:20Z): the build is not done by Monday 07:00 — 13.37 M of ~74.8 M records, ~120 rec/s, 4–6 days continuous; and only ~1 cpu busy. Their profile (py-spy, read-only) found both causes: `PARSE_PROCESSES` from `os.cpu_count()` = the host's 12 inside a 4-cpu quota (11 children), and a barrier per page of ≤500 documents with a timeout over the whole page (47.8 % of children's samples idle; 15 pages re-parsed serially in 18 h). Fixed in two separately measurable steps, the before numbers and scenario in scheduling-log.md: `config.available_cpus()` (affinity and the cgroup quota, as JVM/Go/.NET read it) and `parallel.compute_pages` (the next pages submitted while the caller writes this one; a progress watchdog, only unanswered parts recomputed). Byte-identical parts (the pool-vs-serial build test). Monday's wikidata does not wait for wikipedia-v8. The operator decided day running on weekdays (2026-10-24): the build runs 08:00–12:00 and 13:30–17:00 as well as 22:30–06:00 (node time, CEST/CET), and is stopped outside them (SIGTERM: it finishes the part, commits, exits 130, and resumes at the next window). Weekends are unchanged: the build runs all day. Set by München (TrueNAS cron, the quiet-hours pattern): /root/louise-scheduled/wikipedia-build.sh start|stop (stop = SIGTERM, then docker wait ≤ 15 min, logging the exit code and the last part written); cron 18 stops at 06:00, 12:00 and 17:00 Mon–Fri, 19 starts at 08:00, 20 at 13:30 and 22:30, and 21 is an idempotent start at 00:05 Sat and Sun (Friday 22:30's run continues to Monday 06:00). The first stop/resume (Mon 12:00 → 13:30) is checked: exit 130, and no part cut twice.
+
+### 2026-10-24: the re-slicing daughter, built — a family added reuses every record and vector, equal to a build from scratch
+
+The second half of the operator's requirement ("I agree"). `hold collection continue --reslice` (the slicing a creation gets now: the pack gives the map of the code's current family list over its class tree, built from the `subclass` table in a minute when the list changed); `dev carry --resliced` (amendment A1g: only the slicing differs and the target cuts by content — the manifest, text index and vector table carried, no snapshot compared); `hold records build <daughter> --records-from <mother>` (her parts from her mother's latest snapshot's record lines, indexed per part from each part's own trailing index, none parsed, each record cut into chunks again for `chunks_root`; refused unless only the slicing differs). Test: a mother built from the origin, a daughter with a family added (`city` before `place`) built from her record lines with the parser forbidden, and a collection built from scratch with the new map — the daughter's parts are the scratch build's, paths and bytes. Amendment: 02 §2.7. Full suite 5252 passed, 2 skipped.
+
+### 2026-10-24: parts cut by content — a daughter with a new family map equals a collection built from scratch
+
+Operator: "the structure must be such that if a new family is added a daughter allows you to reuse all the vectors and corpus of the mother. It must be functionally equivalent to a new collection created from scratch", then "I agree" to B: content-defined part boundaries in Monday's creation. A Codex whose slicing declares `parts: {rule: "content", min, max}` (wikidata's family block: 10,000 / 40,000 around 20,000) cuts each slice where a record's uid fingerprint (SHA-256, first 8 bytes) marks a boundary past `min`, or at `max` — content-defined chunking (LBFS; FastCDC's bounds), the record as the unit. The layout is a pure function of each slice's records: from scratch, resumed, updated or a daughter's, the same parts byte for byte; a change re-issues its part and at worst the next few; no closed parts to keep. The `records` check verifies each sampled part's cut. Amendments: 02 §2.2 (a record's slice is the one its fields give at each snapshot, for such a collection), 09 §9.3 `parts`, pack-format §2. Tests: purity and locality over 20,000 uids, the check, a family collection built whole and stopped-and-resumed after every part — the same parts. Full suite: 5249 passed; 33 errors and failures under parallel load in tests/vega, the GPU governor, run_check and quarantine, all 390 passing when run alone. Owed next (*done: af32643*): the daughter step itself — re-slice from the mother's record lines (no parse), carry the vector table across the new parts (no GPU), and a test that the daughter's parts equal a from-scratch build's.
+
+### 2026-10-24: a family added later — every pinned map stays readable (defect found and fixed)
+
+Operator: "What happens if a new family is created?" Answering it found a defect in 0f0c02f: `load_map` read only maps whose family list was the code's current one, so adding a family to the code would have made every pinned map — and every collection sliced by it — unreadable. Fixed before anything was built on it: a map carries its own family list (precedence order) and roots and is read by them; codes are per map; the code's list is only what a NEW map is written with. Map bytes unchanged, so München's upgrade ahead from e0cb788 stays valid. A new family itself: a new map — before publication a re-creation (family codes again, ~40 min CPU, and the records re-cut; vectors the same bytes, their carry across a re-cut owed when it first happens), after publication a new collection whose parts peers fetch again (wikidata-family-slices.md §7). Test: tests/test_plugins_wikidata_families.py (18).
+
+### 2026-10-24: no official daughters so far (operator, RULE 1); the recommendations accepted
+
+Operator: "No official daughters so far, rule 1. I accept your recommendations". While nothing official has been published, a change to what a collection is goes into a RE-CREATION carrying what is identical (the pack, `--calibration-from`, the vectors of unchanged chunks), never a daughter — CLAUDE.md RULE 1's examples, wikidata-family-slices.md §7. Accepted: the 99 GB version-1 pack beside the dump on tank is kept until Monday's records build has finished, then deleted (München does it); the family list is reviewed from the pack's report before `create`; scholarly articles, lexemes, the niche it/de/fr/es sections (after their pilot) and any root fix go into ONE later re-creation; embedding by family starts with heritage, events, places and people (phase 2, `embed_slices`); the reranker: the score stays unless run 5 shows otherwise — run 5 complete (496/496, 2026-10-24 23:04 CEST): no variant dominates (titles MRR score 0.834 / base 0.809 / slots 0.802; descriptive 0.412 / 0.422 / 0.419, R@10 0.714 / 0.687 / 0.701), so `score` stays (reranker-scope.md §14a). München runs the pack's version-3 upgrade ahead of Monday from e0cb788 (create's corpus lookup after the rename to `wikidata-p1`). *Done 2026-10-24.*
+
+### 2026-10-24: wikidata sliced by family — built: pack version 3, the map pinned in the Codex and carried in the SHARD
+
+Operator: "Go with A" (a family map pinned at creation). Built: app/plugins/wikidata/families.py — the rule (twelve families in precedence; an entity takes the first among its non-deprecated P31 values, a heritage designation makes it heritage; a CLASS takes its NEAREST root, a tie to precedence: precedence alone would have filed every municipality under organization, through "local government"), the map as canonical bytes named by their sha256, the walk of classes newer than the map, the slice `family=<f>/range=<n>`. The pack's version 3, upgraded in place from version 2 (RULE 1, no pass over the bz2): `subclass` (every item's P279 links) and each chunk's largest item, then the dump's own map (`families-<h>.json`), then every entity's code under it (`families-<h>.u8`, one byte an entity) and `families-<h>.report.json` (each family's records, pruned entities and the 25 classes that fill it most, with labels). Parsing does not wait for it (a version-2 pack whose names are done is enough); discovery does. `create` takes the slicing block and the map from the plugin (the pinned dump's pack; several dumps and no `snapshot` are refused in plain words) and writes the SHARD member `slicing/<sha256 hex>.json`; every snapshot lists it (09 §9.4), `share` moves it as the member `slicing` (09 §9.16); the records build reads the Codex's map from the SHARD, checks its hash and slices by the pack's codes (the parse is the fallback, through the same map); the `records` check verifies the member and each sampled record's slice (03 §3.2). A Codex sliced by id range — the wikidata of 2026-10-20 — keeps its ranges. A build never runs a second codes pass beside the worker's own (it waits). Amendments: pack-format.md §2, 09 §9.3 / §9.4 / §9.16, 03 §3.2. Tests: tests/test_plugins_wikidata_families.py (16, the end-to-end plan pass included). *(Upgrade and review done; Monday's order is now: deploy → `create` on map 78399d60 → records build.)* Monday's order on the node, as first planned: deploy → the worker's scan upgrades the pack (~1 h: the class tree ~18 min, the codes ~40 min, as the classes run measured its two passes) → READ the report before `create` (the family list is fixed for the collection's life) → `create` on the new target → the records build.
+
+### 2026-10-24: wikidata's history section, in parser 2; scholarly articles and lexemes later; the slicing constraints written down
+
+Operator: "Go with family slices and the history section now", then "Go with 3" (scholarly articles and lexemes join later, not in Monday's re-creation) "also if it makes sense choose which languages to fetch and embed", then "explain the slicing constraints and future proof constraints". The history section: after each language's text, what the best-rank filter drops (a property's normal-rank statements when it has a preferred one; not quantities, not external ids; each with its qualifiers; at most ten a property, the most recent first), headed `en:history`, under "Other statements include" — the English text stays byte for byte (`textify.history_text`; the word index files it with English, `fts.by_section_language`). Parser 2 still: nothing was built with it. The constraints, and the languages answer (fetch: no choice, a record keeps every language; embed: English now, the niche it/de/fr/es sections with parser 3; no `lang=` slice key — announced, then withdrawn: it would be `mul` for every item): [wikidata-family-slices.md](wikidata-family-slices.md) §7. The binding one: the family list is fixed at creation, so its sizes are reviewed before `create`.
+
+### 2026-10-24: Perugia — gutenberg's records-vs-origin PASSED over the network; quarantine cleared
+
+The real origin check the operator asked for (2026-10-23: no `ack --origin-unchecked`), made possible by c3b9d79's network re-fetch for rsync origins. On b3ac1be (full suite 5149 passed; smoke clean; qwen3-4b bit-identical), 12:27–12:50Z: PASS, 87 records re-parsed from the origin, 0 differing, 84 moved (the mirror regenerates book folders — identical but for origin_hash, counted as reproduced, 03 §3.2 as amended 2026-10-07), reading 87 of 4,100 origin units, 241 MiB of the 256 MiB a check may read (operator, 2026-09-20). One run's depth: 0 of 87 bounds the per-record failure rate at ~3.4 % (95 %); seeds differ per run and per peer, and `--origin-mib` raises it for a deeper run. Copy state: in use.
+
+### 2026-10-24: wikidata sliced by family with a map pinned at creation (operator: A); the history section; nothing pruned
+
+Operator: "Propose a way to choose what to embed like it is currently done for Wikipedia language fetching/embedding … If not written explicitly in the guidelines a collection cannot prune any information from the corpus" (CLAUDE.md, invariant 11; and "Always give a pros cons", Style). The Wikimedia-pages pruning proposal is withdrawn: they stay records, and what a node embeds is chosen by slice, as Wikipedia by language. Family slices met the rule that a slice is stable for a record's life (pack-format.md §2): a class tree is not. Option A — the map of class to family pinned at creation, an amendment of the slicing rule — chosen ("Go with A, but write down today's report"): [wikidata-family-slices.md](wikidata-family-slices.md). With the history section, both go into Monday's re-creation; its records build moves by about a day. Wiktionary and Wikidata's lexemes written down as collections to come ([future-collections.md](future-collections.md)).
+
+### 2026-10-24: what the wikidata text dropped or misread — four fixes in parser 2, three things counted
+
+Operator: "check if there is any other information from wikidata that we silently ignore like the original language". Fixed in parser 2, before any record: `novalue` was written "has <property>", the opposite (upstream; now "no value", Wikibase's wording), `somevalue` lost its qualifiers (an unknown date's bounds), a lexeme value was written as a Python dict (upstream), a quantity lost its ± (our formatter). Counted in the next classes run: the statements the best-rank filter drops (former countries, names, populations), references to merged or deleted entities (the JSON dump has no redirects), Wikimedia's own pages kept as records (categories, templates, disambiguations). Upstream items W6, W7 in the report. The table: wikidata-build-plan.md, last section. The node's pack is at version 2 since 12:00 CEST (in-place upgrade, 37 min 38 s: 2,215 language codes, 17,954,384 names; RULE 1 against an hours-long rebuild). wikidata-refs version 3 synced from it: 121,724,461 rows in 817 s (refs.db 11.16 → 12.62 GB); the 182,531 entities with no label at all have no row. `ask lookup`: Q42 "Douglas Adams" (its label is `mul` in this dump), Q3235171 "Les Roses de la vie" (fr), Q3242104 "Liouberetskaya" (fr, the Latin label over the Russian). The operator also approved the niche selection (a language's section only where Wikidata says more in it than in English) and the pilot before the full embedding.
+
+### 2026-10-24: monuments, buildings and events measured — 10.4 M entities, 1.6 G tokens a language; the occurrence tree is polluted
+
+`tools/wikidata_coverage.py classes` on the node (51 min, read-only): 10,437,567 entities selected (built structure 5.64 M, monument 0.67 M, archaeological site 0.36 M, occurrence 3.90 M of which planned event 1.44 M, heritage designation alone 0.51 M). Wikidata names them in Italian (label or mul) for 11.6 %, German 25.3 %, French 21.2 %, Spanish 12.7 %; their texts' other labels exist in Italian for 86 %. One more language for all: 1.61 G tokens, 3.7 months of wikidata's budget; only where Wikidata names the entity in that language: 1.14 G tokens for all four. Barbacane/barbican and merlon are in the built-structure tree; machicolation needs architectural element (Q391414). The occurrence tree brings in clinical trials, theses, statutory instruments, stars and coins (W5 of upstream-reports/wikidata.md; W3 six P279 cycles, W4 the missing-label worklists, written). Next: a second run with the event roots' chains; the operator's languages decision. *Both done (b3ac1be; languages decided 2026-10-24).* And a pack of NEWER code is never started over (München's safety check: the deployed version-1 worker would have unlinked the version-2 pack).
+
+### 2026-10-24: wikidata — no id where a name exists (operator); the pack's `name` table, upgraded in place
+
+Operator: "As a general rule showing an id is meaningless for humans; in case there are multiple non English languages use in order: 1. the original name if it can be determined and if it's in latin characters 2. Any other language in latin characters. 3. The name in the original language if it can be determined." names.py — the original name from the entity's name statements (P1705/P1559/P1448/P1476/P2561), then its label in its original language (P407/P364/P103 through each language item's code, P424: the language lookup); Latin by Unicode script; among labels the entity's own wikis, then French, Spanish, Italian, German, then Wikidata's listing order (operator: "Go with your recommendation and the language lookup"); any label before an id — in parser 2: the title (20.8 % of the records were titled by their id), the entity's own name in its text, every referenced name, and `ask lookup` (wikidata-refs ref_version 3). The pack (PACK_VERSION 2) gains `language` (written with the chunks) and `name` (a pass over its own lines after them); a complete version-1 pack is upgraded in place by two such passes, not rebuilt from the bz2 (RULE 1); parser 2 parses only from a pack whose names are done, every document deferring before that. wikidata-build-plan.md "No id where a name exists".
+
+### 2026-10-24: wikidata parser 2 — a referenced label falls back to `mul`; the collection is created again before its records
+
+The vendored textifier skipped upstream's `mul` step for REFERENCED entities (the entity's own label had it): an entity labelled only in `mul`, Wikidata's default label since 2024, was written as its id in the text of everything naming it. Fixed as parser 2 (textify.py `Normalizer._chain`: language, `mul`, fallback — upstream's `get_lang_val`), with Italian connectives inert for English. The Codex of 2026-10-20 names parser 1 and nothing was published, so wikidata is created again from the same recipe before Monday's records build (RULE 1: calibration document side reused with `--calibration-from`, the pack kept, the text index rebuilt as already planned; wikidata-build-plan.md "Parser 2"). Counted on the node (`tools/wikidata_coverage.py mul`, a clustered sample of 8,823 kept entities): 280 English texts change (3.2 %), ids written 870 → 506 of 155,247 label lookups — "PlayStation 2", taxa named by their scientific `mul` label. Titled by their id (no English, no `mul` label), exactly over the manifest: 15,765,162 of 75,896,183 records, 20.8 % (about one in five; "one in four" was read off 20 entities).
+
+### 2026-10-24: monuments, buildings and events in more languages — designed, measured first; a standing report to the Wikidata team
+
+Operator: "I want that also monuments, buildings and events are full text translated as well / As ancient and uncommon words (barbacane, barbican) if it fits / Any improvement to wikidata goes in a report to be submitted to the wikidata team for integration." A daughter after the English build; per added language, the textifier fed Wikidata's own labels (no machine translation: records reproduce from the dump); the selection is the P279 closure of architectural structure, monument, archaeological site, event and occurrence, their classes (the vocabulary: barbican/barbacane), and heritage designations (wikidata-build-plan.md, last section). `tools/wikidata_coverage.py classes` counts it on the node first. The report: [upstream-reports/wikidata.md](upstream-reports/wikidata.md). Open: the languages (recommended it, de, fr, es). *Decided 2026-10-24.*
+
+### 2026-10-24: wikidata is searched by name in every language (operator: "names only")
+
+"Go with names only, before Monday's records build." Every label and alias of an entity, in every language (`index_names`, from the record's `extra`, which keeps the whole entity), is indexed as whole-name keys on the record's first chunk, with its popularity (sitelinks). `fts.search_names` matches the question's word sequences (up to 8 words) against them — the longer name first, then the most linked: Wikidata's own near match and rescore (WikibaseCirrusSearch), so a famous entity is not outranked by an obscure one of the same name, as BM25 over a bag of every name would rank it. Keys are `|name` and `<lang>|name`: a search limited to languages matches names in those languages. One more list of the text leg, from the reader's own words (05 §5.1 amended). The text stage takes chunks and names from ONE parse (parse pool kind `chunks+names`). Not in records, sections, `content_hash` or vectors, so the records build is unchanged; an erase-rewrite refuses a names index (names are not stored). Owed on the node with Monday's rebuild: the index's size and `search_names`' time on the real index (CLAUDE.md: time every new hot-path query). Not done: the catalogue (title list) keeps the English title; a title in another language for the 1 in 4 entities with no English label would change the records (title is in `content_hash`).
+
+### 2026-10-24: a multilingual record is indexed by section language (wikidata)
+
+The node's wikidata (75,896,183 documents, all `lang = "mul"` by design: an entity has no one language, wikidata-build-plan.md) sat whole in the `other` text group: its English text unstemmed, and every language-limited search ("in English") skipped it, since `other` is searched only for a language that maps there. `fts.by_section_language`: a `mul` record's sections are each indexed in the group of the language their heading names (wikidata's chunker puts the section's language in `chapter`), with that language stored — ONLY a language the plugin declares (`fts.section_languages`: wikidata `("en",)`; no other plugin declares any). The first form took any two or three letters for a code and would have filed pubmed's "AIM" sections and gutenberg's "II" chapters under fake languages; caught the same day, before any node ran it. Any other heading keeps `mul` in `other`, as before; a delete removes every part. The records keep `mul` (correct, and unchanged): only the local text index moves. Owed on the node: wikidata's text index rebuilt (its `other` group dropped, fts re-run), with the records build, Monday. The catalogue and vector legs, which filter by the RECORD's language, keep a `mul` record when its plugin writes one of the asked languages (`retrieval.limited_langs`; only wikidata declares `languages`, `("en",)`), operator 2026-10-24: "Fix the language defect".
+
+### 2026-10-23: annotations collections are updated, not replaced (operator)
+
+"Implement docs/notes/annotation-collections.md immediately … Annotations must be updated not replaced." `hold annotations update` / the API route / the Library card's *re-check claims* and *update with a claims file*: the next snapshot of the same collection, its claims re-checked against the targets' newest snapshots (records twin included), kept claims keeping their uids, left-out ones tombstoned, superseded parts and the replaced claims file kept (annotation-collections.md "Updating"; 02 §2.10, 07 §7.3, 09 §9.4 amended). Found on the way, and fixed: a peer never followed ANY collection's next snapshot — the pull acted on `snapshot` events that no code emits; it now follows what its neighbours' digests list (`accept.newer_from_digests`), annotations collections included. One update a period (monthly for gutenberg-book-editions: its next is 2026-10, written now; the one after from November).
+
 ### 2026-10-23: a copy fetched as a SHARD checks its origin over the network (operator)
 
 Perugia's gutenberg (fetched from the node, no corpus) sat in report-only quarantine with `records-vs-origin` inconclusive for want of an origin. Operator: no `ack --origin-unchecked`; "it will be cleared when the origin is checked". `app/acquire/file_origin.py`: with no `--origin`, a Codex whose spec is one directory per document over rsync or FTP (gutenberg) has its sampled documents' directories listed on the spec's mirrors (first that lists, mirrors first) and their admitted files fetched by acquisition's own transport and budget into a temporary base, removed at exit; a SIGTERM (the scheduled check's stop) ends rsync's group rather than stranding it. The check's 256 MiB bound decides how much: units are weighed by listing only when the bound reaches them, and 8 unlisted in a row end the asking (the origin is away: inconclusive, as before). The scheduled check already omits `--origin` for a shard-sourced copy, so Perugia's next scheduled check runs it — nothing to do there. pubmed (container files) and wikipedia (dumps) are not served: their units are files, and a file's listing is the transport's to add.
@@ -424,6 +438,10 @@ and `/connect` filled in per viewer. Open: a live check from Open WebUI
 (OpenAI connection and MCP tool) and from one MCP agent — neither was run
 against a real client yet. Then the Open WebUI pipe (`deploy/openwebui/louise_pipe.py`): one model per collection, each person's collections, annotations, answer language and result count as Valves, one search per question (`sources: true`), the hits as Open WebUI sources linked to the reader. Then OpenAI's vector stores and files API (`app/openai_stores.py`, 07 §7.4): curated collections read-only, deposit collections writable; checked with OpenAI's own SDK in a scratch install (not a dependency).
 
+### 2026-10-21: normattiva's vectors re-embedded bit-exact (DAR-legal-it)
+
+`normattiva`'s vectors are re-embedded with its DAR-legal-it encoder in the bit-exact configuration, in the node's quiet hours (77148be, b2f3dd6). Its `records-vs-origin` re-run is still owed.
+
 ### 2026-10-21: NVIDIA support, before any peer has a card (operator)
 
 [nvidia-support.md](nvidia-support.md). The defect it closes: VeGa read a
@@ -437,29 +455,6 @@ mapped; MIG mode states no run. Contract: llama.cpp `parallel:1`; torch adds
 deploy/localai-nvidia (LocalAI CUDA 13 by digest, YAMLs tested against the
 wrapper), louise-python `VARIANT=cuda`. Floor: driver R580, Turing. Not
 measured on a card: the first one runs README step 6 before it embeds.
-
-### 2026-10-19: the deploy gate is München's full suite on the real image
-
-Operator decision (2026-10-19, night), after a tip passed the
-architecture session's tests and failed at import on the node's image
-(python-multipart present in one container, absent from the other):
-
-- **One gate.** A commit deploys on any peer only after München has run
-  the FULL suite on it in an image built from `requirements.txt` alone —
-  the image the node runs. That run tests what is deployed; nothing
-  else does.
-- **The architecture session** runs the test files its change touches
-  before every push, and says in the push message which it ran. It does
-  not run the full suite: its container carries packages the platform
-  does not declare, so its pass is not the gate.
-- **Perugia** deploys a commit München has passed without rerunning the
-  suite: same code, same image build; what differs is the machine. It
-  runs its own smoke checks (the web answers, the worker's first round,
-  `louise node health`) and reports those.
-- A difference between the two containers that lets a test pass in one
-  and fail in the other is itself a defect to fix (tonight's:
-  tests/test_invariant_guards.py now refuses a multipart route unless
-  the package is declared).
 
 ### 2026-10-20: T2 is T0's envelope tie-breaker
 
@@ -503,19 +498,19 @@ offer says when a collection cannot be taken yet (no snapshot served).
 
 Perugia is off for the night (operator); the node runs. Gutenberg's open
 parts get no new vectors meanwhile (the node's gutenberg is on-demand).
-1. Perugia (on 274d461, gutenberg p2p, adoption NOT run) deploys 0a2c6ef —
+1. *(Done: Perugia's copy in use, 2026-10-24.)* Perugia (on 274d461, gutenberg p2p, adoption NOT run) deploys 0a2c6ef —
    PASSED 4,898 and live on the node since 22:41:58 CEST — or a later
    PASSED tip, then adopts the node's twin d913cceb
    (deploy/16f/adopt-gutenberg-twin.sh, seed-only across the run, no
    scheduled check in progress); `quarantine_in_use_before` only if its own
    checks have not run.
-2. The reranker regression on titles (MRR 0.738 before it, 0.579 after):
+2. *(Done: run 4, 902ceb4; run 5 kept `score`.)* The reranker regression on titles (MRR 0.738 before it, 0.579 after):
    München measures (a) a catalogue rank-1 kept on top, (b) RRF of the
    reranker's order with the fused one (`retrieval.RERANK_FUSE`, dc36f1a,
    off), (c) the head line weighted — titles, then descriptive; the switch
    moves only on those numbers.
-3. The ARC cap at 16 GiB: c_max and MemAvailable after, from München.
-4. Wikidata's indexing rate from the NVMe pack, from 22:42.
+3. The ARC cap at 16 GiB: c_max and MemAvailable after, from München. *(Still not reported.)*
+4. *(Superseded by the pack's re-creation.)* Wikidata's indexing rate from the NVMe pack, from 22:42.
 5. This session's messages to the peers are refused (no trusted-device
    proof); the operator relays them.
 
@@ -635,7 +630,7 @@ platform image `sha256:297f2fb5…` (ef2720a). Held file
 `[encoder]` VeGa at 192.168.178.10:30286, vega-jina-v3 / vega-jina-v3-query;
 `snapshot = "20261012"` added by hand (the Codex's origin.spec pins no
 files, so the file names the dump). Quarantine until the first snapshot and
-the gate. Next: `hold records fetch wikidata --profile all` (103.4 GB, the
+the gate. Next (*done*): `hold records fetch wikidata --profile all` (103.4 GB, the
 pack and the label table in one streaming pass), then the first snapshot,
 then gutenberg-graph's steps 4–5 against it.
 
@@ -689,7 +684,7 @@ tokens/s warm. docs/notes/wikidata-recipe.toml is filled from the two
 stated runs byte for byte (document `bec9c3a0…`, query `dd90f8d4…`, image
 `1807f280…`) and `work.tokens` set to 1.7 G a month from the measured rate
 at eight hours a day — the one chosen number, inside collection_id, for
-the operator to confirm. Create follows the query model's 512/512.
+the operator to confirm. Create follows the query model's 512/512. *Decided: 430 M tokens a month (2 h a day).*
 
 ### 2026-10-20: pubmed-v8 is `pubmed` (operator; München, 08:24–08:35Z)
 
@@ -735,8 +730,8 @@ Docker Desktop over WSL2 — the GIL held, the embed producer starved, the
 GPU idle (61 chunks/min against the CLI's 143). Fixed by cutting by index
 (byte-identical, the old loop kept as the test's oracle; 0.136 → 0.005 s
 here) and by landing from the intake's one cut instead of a second
-([scheduling.md](scheduling.md) pitfall 18; the log row's AFTER is owed
-by Perugia). The rate gap is the measurement that decides whether the cut
+([scheduling.md](scheduling.md) pitfall 18; the log row's AFTER, owed
+by Perugia, was measured: 62a098d). The rate gap is the measurement that decides whether the cut
 must also leave the intake thread.
 
 ### 2026-10-20: wikidata-refs syncs from the plugin's pack
@@ -751,7 +746,8 @@ input for its mtime (`input_mtime`), and re-creates an EMPTY table whose
 declared shape moved — `get_store()` had created the old shape on every
 node at the first open — while refusing a non-empty one by name. No
 resolver over labels and the table's size on the node are the two open
-points ([wikidata-build-plan.md](wikidata-build-plan.md) §2).
+points ([wikidata-build-plan.md](wikidata-build-plan.md) §2). *Both closed:
+12.62 GB, 121,724,461 rows; lookup by name, 3247c39.*
 
 ### 2026-10-20: jina-v3's folder, its YAMLs and the rebuild runbook
 
@@ -774,6 +770,29 @@ digest in the deployed image), both pinned in fetch.py and filled into the
 recipe template with the tokenizer's sha256; the 2026-10-18 measurement's
 folder, which held files the layout excludes, was refused and moved aside
 as `jina-embeddings-v3.pre-installer-20261018` (the operator's to remove).
+
+### 2026-10-19: the deploy gate is München's full suite on the real image
+
+Operator decision (2026-10-19, night), after a tip passed the
+architecture session's tests and failed at import on the node's image
+(python-multipart present in one container, absent from the other):
+
+- **One gate.** A commit deploys on any peer only after München has run
+  the FULL suite on it in an image built from `requirements.txt` alone —
+  the image the node runs. That run tests what is deployed; nothing
+  else does.
+- **The architecture session** runs the test files its change touches
+  before every push, and says in the push message which it ran. It does
+  not run the full suite: its container carries packages the platform
+  does not declare, so its pass is not the gate.
+- **Perugia** deploys a commit München has passed without rerunning the
+  suite: same code, same image build; what differs is the machine. It
+  runs its own smoke checks (the web answers, the worker's first round,
+  `louise node health`) and reports those.
+- A difference between the two containers that lets a test pass in one
+  and fail in the other is itself a defect to fix (tonight's:
+  tests/test_invariant_guards.py now refuses a multipart route unless
+  the package is declared).
 
 ### 2026-10-13: JuriFindIT acknowledged — the operator, for the legal pilot
 

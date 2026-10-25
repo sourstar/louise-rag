@@ -66,7 +66,9 @@ different output for some input. A bump is never a new snapshot of the
 same collection: the Codex names `parser.version`, so the collection
 that carries the new parser is a daughter (§2.7, `continues`) unless
 `records-vs-origin` under the new image proves it equivalent (§3.4), in
-which case nothing changes.
+which case nothing changes. While nothing official has been published
+from the collection, it is re-created instead, carrying what is
+identical (RULE 1, 02 §2.4 A1c; operator, 2026-10-24).
 
 The classes are the plugin's **defaults**, because they are properties
 of the source: `hold collection create` copies them into the Codex, and
@@ -477,9 +479,14 @@ category is genuinely unclear — (d) or the entity's own — goes to the
 operator; §6.1's plugin note is where the answer is recorded, beside the
 FORM choice.
 
-Beyond that a plugin may **prune** — drop the ePub when the plain text
-is kept, drop markup, drop dump indexes — but never alter a record in a
-way that prevents reproducing it from the origin. Concretely: every record's
+Within those four a plugin drops what it must — the ePub when the plain
+text is the form kept, markup, a dump's index files. Nothing else is
+**pruned** unless a rule is written in the plugin's guidelines and in its
+Codex form before the collection is created (wikidata's scholarly
+articles are the case; CLAUDE.md invariant 11, operator 2026-10-24:
+"nothing is pruned unless written"); cost is answered by what is
+embedded, never by leaving entities out of the records. And nothing may
+alter a record in a way that prevents reproducing it from the origin. Concretely: every record's
 `origin_hash` is the hash of the bytes it was parsed from, and the Codex
 names the acquisition spec and parser version that produced it, so a
 verifier can re-fetch a sample and re-parse it (§3.2). A record with no

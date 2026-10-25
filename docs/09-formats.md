@@ -395,7 +395,7 @@ whole so that anyone can compute them again (02 §2.4):
 | `variant` | string or null | yes | the variant of that build where the software publishes several — `"sycl"`, `"cpu"`, `"cuda"`; `null` where there is one |
 | `image` | id | yes | the digest of the OCI image holding that build, the one that was run; for a backend engine, the digest of the backend's installed files (below). It must be obtainable (02 §2.4), and it travels like weights (04 §4.3) |
 | `args` | list of strings | yes | the argument vector the engine was started with inside `image`, program first, in order. The weights file is written `${WEIGHTS}`, the listening port `${PORT}` and, in a backend engine alone, the backend's directory `${BACKEND}` (below), and nothing else in it names the host |
-| `env` | object | yes | the environment variables set for the engine beyond the image's own, name → string; `{}` when none. Never a credential: the Codex is public |
+| `env` | object | yes | the environment variables set for the engine beyond the image's own, name → string; `{}` when none. On a card it carries the vendor's bitwise-reproducibility mode (`GGML_SYCL_ENABLE_DNN=0` on Intel SYCL, `ROCBLAS_DEFAULT_ATOMICS_MODE=0` on AMD ROCm; CLAUDE.md invariant 12, docs/notes/approved-encoders.md): a card engine without it states no run. Never a credential: the Codex is public |
 | `options` | object | no | the options the engine received when it loaded the weights, for an engine a model runner loads by a call rather than by its argument vector — a LocalAI backend's `LoadModel`. They are the runner's record of that call as the runner sent it (for LocalAI, `load_options` in `GET /system`, `deploy/localai/patches/`), with the weights file written `${WEIGHTS}`, the runner's models directory `${MODELS}`, and every number that is not an integer as its decimal string (§9.1). The variables the runner sets in the engine's environment — LocalAI's `EnvVars` — are the engine's `env` and are written there only, never again among the options (operator, 2026-10-03). An option naming any other absolute path makes the run unstatable: a run that loads a second file — a projector, a LoRA, a draft model — cannot be stated yet. ABSENT, never null, for an engine started by `args` alone, which therefore keeps the bytes and the `engine_id` it had in version 3 (operator, 2026-10-03). Never a credential |
 | `device` | string | yes | the device the reference vectors were computed on, as its driver names it — `"Intel(R) Arc(TM) Pro B70 Graphics"`, `"cpu"` |
 
@@ -575,8 +575,8 @@ fields that carry its choices (every other field is present in the file):
             "unknown":"year=unknown","shard_records":30000,"order":"numeric"},
  "space":{"encoder":{"weights":"sha256:e2…","label":"MedCPT-Article-Encoder",
                      "engine":{"name":"llama.cpp","build":"b10630","variant":"sycl","image":"sha256:8c…",
-                               "args":["llama-server","-m","${WEIGHTS}","--embedding","--pooling","cls","-c","512","-ngl","99","--port","${PORT}"],
-                               "env":{},"device":"Intel(R) Arc(TM) Pro B70 Graphics"}},
+                               "args":["llama-server","-m","${WEIGHTS}","--embedding","--pooling","cls","-c","512","-ngl","99","-np","1","--port","${PORT}"],
+                               "env":{"GGML_SYCL_ENABLE_DNN":"0"},"device":"Intel(R) Arc(TM) Pro B70 Graphics"}},
           "dim":768,"dtype":"f16","ctx":512,"pooling":"cls","normalise":true,
           "query":{"encoder":{"weights":"sha256:b7…","engine":{…the same, its own weights…}},"instruction":null},
           "tolerance":"0.95","calibration":{"set":"sha256:6b…","vectors":"sha256:d4…","query_vectors":"sha256:5e…","quorum":{"n":16,"min_pass":12}},
@@ -1002,7 +1002,7 @@ the compressor and its level, honest peers agree on `root` as well.
 **Worked example.** Two lines. A Gutenberg record (green, text travels):
 
 ```
-{"uid":"gutenberg:1342","native_id":"1342","lang":"en","title":"Pride and Prejudice","creators":["Austen, Jane"],"date":"1998-06-01","subjects":["Courtship -- Fiction","England -- Fiction"],"keys":[],"sections":[["Chapter 1","It is a truth universally acknowledged, …"],["Chapter 2","Mr. Bennet was among the earliest …"],…],"extra":{"downloads":61432},"origin":"1/3/4/1342/1342-0.txt","content_hash":"2c9e6f0b1a8d4e7f3b5c0a9d8e7f6a1b","origin_hash":"f1e2d3c4b5a69788796a5b4c3d2e1f00"}
+{"uid":"gutenberg:1342","native_id":"1342","lang":"en","title":"Pride and Prejudice","creators":["Austen, Jane"],"date":"1998-06-01","subjects":["Courtship -- Fiction","England -- Fiction"],"keys":[],"sections":[["Chapter 1","It is a truth universally acknowledged, …"],["Chapter 2","Mr. Bennet was among the earliest …"],…],"extra":{"loc_class":"PR"},"origin":"1/3/4/1342/1342-0.txt","content_hash":"2c9e6f0b1a8d4e7f3b5c0a9d8e7f6a1b","origin_hash":"f1e2d3c4b5a69788796a5b4c3d2e1f00"}
 ```
 
 A PubMed pointer record (red, text stays where it was fetched):
