@@ -132,6 +132,14 @@ class AcquisitionSpec:
     #: whose filter includes everything: a spec that lists files beyond a
     #: collection's whole (Normattiva's yearly exports, 2026-10-13) names it
     all_profile: str | None = None
+    #: the slices this origin delivers WHOLE, each with the profile that
+    #: fetches it (07 §7.3 `records fetch --slice`, amended 2026-10-25): a
+    #: slice named as the SHARD's paths name it, at the depth the origin's
+    #: files divide — `lang=it` is the itwiki dump, which holds every
+    #: `lang=it/pages=…` slice. An origin whose every file may hold records
+    #: of any slice (PubMed's update files, Gutenberg's tree) declares none,
+    #: and only `--slice all` fetches from it. Local, like the profiles.
+    slice_profiles: dict[str, str] = field(default_factory=dict)
     # MIRRORED sources (several endpoints): the relative path of a SMALL
     # file every structurally-correct mirror must serve — the structure
     # probe AND the benchmark unit (app/acquire/mirrors.py). A mirror that
@@ -248,6 +256,58 @@ def everything_profile(spec: AcquisitionSpec) -> str | None:
         if flt == Filter():
             return name
     return None
+
+
+def delivered_slice(spec: AcquisitionSpec, slice_name: str) -> str | None:
+    """The slice the origin delivers whole that holds `slice_name` — itself,
+    or the declared slice it lies under (`lang=it/pages=3M` → `lang=it`) —
+    or None when the origin's files do not divide by it."""
+    for key in spec.slice_profiles:
+        if slice_name == key or slice_name.startswith(key + "/"):
+            return key
+    return None
+
+
+def profile_for_slices(spec: AcquisitionSpec, slices) -> str | None:
+    """The profile that fetches these slices: the everything profile for
+    `"all"`, else the declared profiles of the slices the origin delivers,
+    combined on an additive source. None when one is not delivered whole,
+    or when two need profiles that do not combine."""
+    if slices == "all":
+        return everything_profile(spec)
+    parts: list[str] = []
+    for s in slices or ():
+        key = delivered_slice(spec, s)
+        if key is None:
+            return None
+        if spec.slice_profiles[key] not in parts:
+            parts.append(spec.slice_profiles[key])
+    if not parts or (len(parts) > 1 and spec.profile_mode != "additive"):
+        return None
+    return PROFILE_SEP.join(parts)
+
+
+def slices_for_profile(spec: AcquisitionSpec, profile: str | None):
+    """The inverse, for a file that still names a `profile`: `"all"` for the
+    everything profile, else the delivered slices whose profile selects what
+    each part of it selects (wikipedia's `demo` is trwiki: `lang=tr`). None
+    when a part selects something no declared slice is."""
+    if not profile:
+        return None
+    if profile == everything_profile(spec):
+        return "all"
+    out: list[str] = []
+    for part in profile_parts(profile):
+        try:
+            want = resolve_profile(spec, part)
+        except ValueError:
+            return None
+        hits = [k for k, p in spec.slice_profiles.items()
+                if p == part or spec.profiles.get(p) == want]
+        if not hits:
+            return None
+        out += [k for k in hits if k not in out]
+    return out
 
 
 def admitted(rel_path: str, filters) -> bool:

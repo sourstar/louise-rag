@@ -215,6 +215,9 @@ WIKIPEDIA_SPEC = AcquisitionSpec(
         "all": Filter(),
     },
     profile_mode="additive",
+    # a language's dump holds every `lang=<code>/pages=…` slice of it: the
+    # slices the origin delivers whole (07 §7.3 `records fetch --slice`)
+    slice_profiles={f"lang={lang}": lang for lang in _WIKI_DUMP_BYTES},
     estimated_bytes={"demo": _WIKI_DUMP_BYTES["tr"] + _WIKI_PROPS_BYTES["tr"],
                      **{lang: n + _WIKI_PROPS_BYTES[lang] for lang, n in _WIKI_DUMP_BYTES.items()},
                      "all": sum(_WIKI_DUMP_BYTES.values()) + sum(_WIKI_PROPS_BYTES.values())},
@@ -259,6 +262,7 @@ EMBEDDED_SPEC = AcquisitionSpec(
     # perfectly coherent corpus. Growing adds a language rather than
     # replacing one.
     profile_mode="additive",
+    slice_profiles={f"lang={lang}": lang for lang in _EMBEDDED_LANG_BYTES},
     estimated_bytes={
         "demo": _EMBEDDED_LANG_BYTES["tr"],
         **_EMBEDDED_LANG_BYTES,

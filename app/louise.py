@@ -3995,9 +3995,29 @@ def cmd_config_apply(a) -> int:
     """`hold config apply [<collection>]` (07 §7.8): the files applied now,
     as the node applies them at start — a runtime embed-mode override gives
     way to the file's value. Exit 1 when a named file is refused (an
-    `[encoder]` it does not name: what `embed materialize` reported)."""
-    from app import effective_config
+    `[encoder]` it does not name: what `embed materialize` reported).
+
+    `--set KEY=VALUE …` (07 §7.8 "Pickup", 2026-10-25) writes the values into
+    the collection's file first, through its one writer — the Library's
+    (app/collection_file.py) — then applies it. A key that is not a value of
+    the file, a value the node would refuse, or `--set` with no collection
+    is exit 2 with nothing written, the keys named. Desired state goes into
+    the file only (invariant 10): the state database changes only by the
+    apply, as at start."""
+    from app import collection_file, effective_config
+    written = None
+    if getattr(a, "set", None):
+        if not a.collection:
+            raise CodexError("--set writes one collection's file: `hold config apply <collection> "
+                             f"--set KEY=VALUE`; the keys are {collection_file.accepted()} (07 §7.8)")
+        try:
+            written = collection_file.set_values(a.collection,
+                                                 collection_file.parse_assignments(a.set))
+        except collection_file.SetRefused as e:
+            raise CodexError(str(e)) from None
     out = effective_config.apply(a.collection)
+    if written is not None:
+        out = {"written": written, **out}
     _print(out)
     return 1 if out["refused"] else 0
 
@@ -4014,15 +4034,36 @@ def _node_collections(name: str | None) -> list:
 
 
 def cmd_records_fetch(a) -> int:
-    """`hold records fetch <collection> [--profile P] [--dry-run]` (07 §7.3):
-    the acquisition spec run for a profile — the file's, unless one is
-    named (app/hold/records_fetch.py). Was `corpus add` / `corpus grow`."""
+    """`hold records fetch <collection> [--slice … | --profile P] [--snapshot
+    ID] [--dry-run]` (07 §7.3): the acquisition spec run for slices or a
+    profile — the file's, unless one is named — to a snapshot's cutoff when
+    one is named; the slices a complete fetch took recorded in the file
+    (app/hold/records_fetch.py). Was `corpus add` / `corpus grow`."""
     from app import db
+    from app.acquire.specs import ACQUIRE_REGISTRY
     from app.hold import records_fetch
     collection = _node_collections(a.collection)[0]
-    profile = a.profile or collection.profile or "demo"
+    if getattr(collection, "source", "origin") == "shard":
+        # the loader's own rule (acquire_enabled with source = "shard"):
+        # the origin's files would land in the SHARD this copy reads
+        raise CodexError(f"{collection.name} is held from peers (source = \"shard\", 07 §7.8): "
+                         f"its corpus is the SHARD, and `share fetch {collection.name} --slice …` "
+                         f"takes more of it, not the origin")
+    if a.slice is None and a.snapshot is None:
+        profile = a.profile or collection.profile or "demo"
+        with _closing(db.connect(collection)) as con:
+            return records_fetch.fetch(collection, con, profile, dry_run=a.dry_run)
+    spec = ACQUIRE_REGISTRY.get(collection.plugin)
+    if spec is None:
+        raise CodexError(f"{collection.name}: no acquisition spec is registered for "
+                         f"plugin {collection.plugin!r}")
+    sel = records_fetch.select(collection, spec, slices=a.slice, profile=a.profile,
+                               snapshot_id=a.snapshot)
+    for note in sel.notes:
+        print(f"louise: {collection.name}: {note}", file=sys.stderr)
     with _closing(db.connect(collection)) as con:
-        return records_fetch.fetch(collection, con, profile, dry_run=a.dry_run)
+        return records_fetch.fetch(collection, con, sel.profile, dry_run=a.dry_run,
+                                   until=sel.until, record=sel.record)
 
 
 def cmd_node_health(a) -> int:
@@ -4451,12 +4492,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = rverbs.add_parser("build", help="parse, slice, shard, hash")
     args_records_build(p); p.set_defaults(fn=cmd_records_build)
-    p = rverbs.add_parser("fetch", help="run the acquisition spec for a profile (06 §6.2): "
+    p = rverbs.add_parser("fetch", help="run the acquisition spec for slices or a profile (06 §6.2): "
                                         "the origin's files, on the node's budget")
     p.add_argument("collection")
-    p.add_argument("--profile", default=None,
-                   help="a profile the acquisition spec declares (default: the "
-                        "collection file's)")
+    which = p.add_mutually_exclusive_group()
+    which.add_argument("--slice", nargs="+", default=None, metavar="SLICE",
+                       help="the slices to fetch, as the SHARD's paths name them (lang=it), or "
+                            "`all`; what a complete fetch took is recorded in the collection's file")
+    which.add_argument("--profile", default=None,
+                       help="a profile the acquisition spec declares (default: the "
+                            "collection file's)")
+    p.add_argument("--snapshot", default=None, metavar="ID",
+                   help="run the spec to this snapshot's cutoff (2026-09), by the origin's cutoff rule")
     p.add_argument("--dry-run", action="store_true", dest="dry_run",
                    help="print the plan — files, bytes, the licence state — and fetch nothing")
     p.set_defaults(fn=cmd_records_fetch)
@@ -4523,6 +4570,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = cverbs.add_parser("apply", help="apply the files now, as the node does at start: a runtime "
                                         "override gives way to the file's value")
     p.add_argument("collection", nargs="?", default=None)
+    p.add_argument("--set", action="append", default=None, metavar="KEY=VALUE", dest="set",
+                   help="write one value into the collection's file first, then apply it; "
+                        "repeatable (embed=off, share=true, encoder.url=…; 07 §7.8)")
     p.set_defaults(fn=cmd_config_apply)
 
     # ---- hold snapshot --------------------------------------------------

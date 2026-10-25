@@ -20,7 +20,7 @@ through with the commit that closes them.
 |---|---|---|
 | Every plate carried; display admits JPEG/PNG only (operator) | CODE | merged (693ffcc); gutenberg parser 11 → RULE 1 re-creation on the node (NODE) |
 | A web source's page kept byte-exact (operator) | CODE | merged (fc4467f); deposit parser 3 |
-| The Library's dialogs ask only a name (RULE 2) | CODE | merged (16abd91): encoder by stated weights (app/encoder_resolve.py), recipe from `config/recipes/<plugin>.toml`, annotations targets from the claims. Kept, by the operator's earlier requests: the card's embed-mode, shared and grow-profile controls (no CLI sets them until `hold config apply --set` exists); a take with no matching model is held, not served |
+| The Library's dialogs ask only a name (RULE 2) | CODE | merged (16abd91): encoder by stated weights (app/encoder_resolve.py), recipe from `config/recipes/<plugin>.toml`, annotations targets from the claims. Kept, by the operator's earlier requests: the card's embed-mode, shared and grow-profile controls (`hold config apply --set` sets the first two since 2026-10-25, through the same writer); a take with no matching model is held, not served |
 | A deposit source's clone draws from the budget as it lands (invariant 5) | CODE | done 2026-10-25 |
 | A dateless record is a defect, never a silent exclusion (operator: A) | CODE | none exist today (counted 2026-10-25); flagged as an inconsistency by the parse (being built), gutenberg RDF census running |
 | Batched answers equal single-text bytes; the gate measures reproduction (operator: A) | CODE | done (c9ac138) |
@@ -34,8 +34,8 @@ through with the commit that closes them.
 | ~~The `centres`, `labels`, `model-agreement` and `evaluation` checks~~ | 03 §3.2 | marked "not built" in 03; `model-agreement` INCONCLUSIVE with its reason, no longer refused (2026-10-25) |
 | ~~`index build --vector` trains and ships the centres member~~ | 02 §2.4 | marked not built in 02 (2026-10-25) |
 | ~~`derive` / `replace --encoder-weights --engine`~~ | 07 §7.3 | amended 2026-10-25: never built, dropped; `--space FILE` names a new encoder |
-| `hold config apply --set` (and 07 §7.6 telling users to run it) | 07 | build |
-| `records fetch --slice/--snapshot` | 07 (marked) | build |
+| ~~`hold config apply --set` (and 07 §7.6 telling users to run it)~~ | 07 | built 2026-10-25: the Library's writer moved to app/collection_file.py and is the one both use |
+| ~~`records fetch --slice/--snapshot`~~ | 07 (marked) | built 2026-10-25: slices the origin delivers whole (`slice_profiles`), recorded in the file after a complete fetch; the cutoff by the origin's rule |
 | `range` facet filter | 07 (marked) | build |
 | ~~`collection list --all`, `share serve <collection>` long form, `continue --through`~~ | 07 §7.3 | built 2026-10-25 (`serve`, `--through`); `--all` amended away |
 | A check comparing the manifest's counts and text index with the records | STATUS (open defect) | build |
