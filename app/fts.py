@@ -621,6 +621,54 @@ def book_chunks(group: str, book_id: int, collection=None) -> list[dict]:
     return out
 
 
+def chunk_counts(collection, book_ids: list[int]) -> dict[int, int]:
+    """How many chunks the text index holds for each of `book_ids`, summed
+    over every language group (a document's sections can land in several,
+    `by_section_language`). One term-set query and tantivy's own `terms`
+    aggregation over the `book_id` fast field per group, no stored document
+    read: 1.1 µs a document in windows of 2,000, measured on 1.6M chunks
+    (2026-10-25, `louise dev index-drift`). A document the index lacks is
+    absent from the result. Keep a window under tantivy's bucket limit
+    (65,000)."""
+    out: dict[int, int] = {}
+    if not book_ids:
+        return out
+    for group in existing_groups(collection):
+        idx = get_index(group, collection)
+        idx.reload()
+        q = tantivy.Query.term_set_query(idx.schema, "book_id", list(book_ids))
+        got = idx.searcher().aggregate(q, {"n": {"terms": {"field": "book_id", "size": len(book_ids) + 1}}})
+        for b in got["n"]["buckets"]:
+            k = int(b["key"])
+            out[k] = out.get(k, 0) + int(b["doc_count"])
+    return out
+
+
+def stored_chunks(collection, book_ids: list[int]) -> dict[int, list[tuple[str, str, str]]]:
+    """Every stored chunk of each of `book_ids` as (chunk id, heading, text),
+    over every group, sorted by chunk id — what the text index would give a
+    reader, for comparing with a record's own cut. Reads stored documents,
+    so it is the costly half of `dev index-drift` and runs on its sample."""
+    out: dict[int, list[tuple[str, str, str]]] = {}
+    if not book_ids:
+        return out
+    for group in existing_groups(collection):
+        idx = get_index(group, collection)
+        idx.reload()
+        q = tantivy.Query.term_set_query(idx.schema, "book_id", list(book_ids))
+        searcher = idx.searcher()
+        total = searcher.search(q, 1, count=True).count
+        if not total:
+            continue
+        for _score, addr in searcher.search(q, total).hits:
+            doc = searcher.doc(addr)
+            out.setdefault(int(doc["book_id"][0]), []).append(
+                (doc["chunk_id"][0], doc["chapter"][0] if doc["chapter"] else "", doc["body"][0]))
+    for v in out.values():
+        v.sort()
+    return out
+
+
 _QUERY_STRIP = re.compile(r'[\^\[\]{}~/\\:!()"*]')
 
 #: BM25F (Robertson, Zaragoza & Taylor, "Simple BM25 extension to multiple

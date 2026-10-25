@@ -331,7 +331,16 @@ Found on the way:
 
 Remedy, targeted (RULE 1, not a whole-collection FTS_VERSION bump): `tools/measure/chunks_drift.py --all --ids-out` lists the drifting records, and `louise dev reindex --ids` (new) queues exactly those for the text-index stage (fts_done = 0, embedding untouched). Runs by day after tonight's measurement.
 
-OPEN: no check compares the manifest's counts or text index with the records. `hold check --checks chunks` re-cuts records against the snapshot only, which is why this drift went unseen. A sampled live-vs-record check is owed.
+CLOSED by `louise dev index-drift` (07 §7.3, app/hold/drift.py): the manifest's counts, the text index and, on a seeded sample of parts, the index's stored chunks, against the records. `hold check --checks chunks` still re-cuts against the snapshot only.
+
+Its cost, MEASURED at two scales on a synthetic agreeing collection (3 chunks a record, ~500 characters a chunk, parts of 5,000, built straight into parts, manifest and text index; this container, 2026-10-25):
+
+| records | full walk, `--sample 0` | default `--sample 0.05` |
+|---|---|---|
+| 20,000 | 0.84 s (41.9 µs a record) | 1.26 s (63.0 µs a record) |
+| 300,000 | 17.3 s (57.7 µs a record) | 19.5 s (64.9 µs a record) |
+
+NOT MEASURED at 2 million: that fixture's build filled the shared disk at 1.6 M records and was stopped. Extrapolated LINEARLY from the 300,000 rate, 2 M records take ~115 s unsampled and ~130 s at 0.05. Two points do not prove linearity: the unsampled per-record cost rose 38 % from 20 k to 300 k (the sampled cost 3 %), and the cause is not isolated (page cache or the index aggregation's growth with the index). A run on a real node's collection settles it.
 
 ### 2026-10-25: the gap between the corpus and Wikidata is recorded — "rumors" (operator)
 

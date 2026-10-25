@@ -1423,6 +1423,50 @@ def cmd_dev_reindex(a) -> int:
     return 0
 
 
+def cmd_dev_index_drift(a) -> int:
+    """`louise dev index-drift <collection> [--shards S,…] [--cut-all]
+    [--sample F] [--seed HEX] [--snapshot ID] [--ids-out FILE]`: the
+    documents whose served state — the manifest's chunk count and hashes,
+    the text index — disagrees with the latest held snapshot's records
+    (app/hold/drift.py; the 127-part gap, STATUS 2026-10-25). Read-only;
+    exit 1 when a document is named, 0 when every one agrees, 130 when a
+    signal ended the walk at a part boundary. `--ids-out` is `dev reindex
+    --ids`'s input."""
+    from app.hold import drift, records as rec, seed as seed_mod
+    name, codex = col.resolve(a.root, a.collection)
+    snapshot = seed_mod.latest_snapshot(Path(a.root), name, a.snapshot)
+    local = rec.local_collection(a.root, name, codex)
+    shards = [s.strip() for s in a.shards.split(",") if s.strip()] if a.shards else None
+    try:
+        seed = bytes.fromhex(a.seed) if a.seed else os.urandom(32)
+    except ValueError:
+        raise CodexError(f"--seed is 32 bytes as hex, got {a.seed!r}") from None
+    stop = threading.Event()             # 07 §7.7: a signal ends the walk at the next part
+    before = {}
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            before[sig] = signal.signal(sig, lambda *_a: stop.set())
+        except (ValueError, OSError):    # not the main thread
+            pass
+    try:
+        report = drift.run(a.root, name, codex, snapshot, local, shards=shards, cut_all=a.cut_all,
+                           sample=a.sample, seed=seed, log=lambda m: print(m, file=sys.stderr),
+                           stop=stop.is_set)
+    finally:
+        for sig, handler in before.items():
+            signal.signal(sig, handler)
+    ids = report.pop("ids")
+    if a.ids_out:
+        drift.write_ids(Path(a.ids_out), ids)
+        report["ids_out"] = str(a.ids_out)
+    print(drift.summary_line(report), file=sys.stderr)
+    _print(report)
+    if report["interrupted"]:
+        print("[index-drift] interrupted at a part boundary: the report covers the parts walked", file=sys.stderr)
+        return 130
+    return 1 if report["named"] else 0
+
+
 def cmd_dev_unindexable(a) -> int:
     """`louise dev unindexable <collection> <uid> [--yes]`: a document this
     image's plugin now refuses (`UnindexableDocument`, e.g. gutenberg's parser
@@ -4885,6 +4929,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ids", required=True, metavar="FILE", help="one uid a line")
     p.add_argument("--yes", action="store_true")
     p.set_defaults(fn=cmd_dev_reindex)
+    p = dverbs.add_parser("index-drift", help="the documents whose manifest counts, hashes or text index "
+                                              "disagree with the latest held snapshot's records; read-only, "
+                                              "exit 1 when any is named")
+    root_arg(p)
+    p.add_argument("collection")
+    p.add_argument("--shards", metavar="SLICE/NNNNN,…", help="these parts alone (default: every part)")
+    p.add_argument("--cut-all", action="store_true",
+                   help="cut every record, not only the parts whose manifest total is not the snapshot's")
+    p.add_argument("--sample", default="0.05", metavar="F",
+                   help="the fraction of parts whose text index is compared chunk by chunk with the "
+                        "records (03 §3.2's seeded sample); 0 for none")
+    p.add_argument("--seed", help="32 bytes as hex; the default is fresh OS entropy, printed in the report")
+    p.add_argument("--snapshot", help="which snapshot (default: the latest held)")
+    p.add_argument("--ids-out", metavar="FILE",
+                   help="the uids `dev reindex --ids` repairs, one a line")
+    p.set_defaults(fn=cmd_dev_index_drift)
     p = dverbs.add_parser("unindexable", help="a document the plugin now refuses: out of every index "
                                               "and its error written at once; writes only with --yes")
     root_arg(p); p.add_argument("collection"); p.add_argument("uid")

@@ -17,6 +17,11 @@ Per part on stdout, one JSON object: records, the two totals, and every
 record that differs with its manifest columns (fts_version, entity_version,
 updated_at, in_scope, error). On stderr a line per part and, with --all, the
 collection's totals and the drifting records' fts_version histogram.
+
+The routine check is `louise dev index-drift` (07 §7.3, 2026-10-25): the
+same comparison in bounded windows, cutting only the parts whose totals
+disagree, plus the text index and the content and origin hashes. This tool
+stays for its per-part form, which cuts every record of the parts named.
 """
 import argparse
 import json
@@ -26,39 +31,10 @@ from contextlib import closing
 from pathlib import Path
 
 
-def record_chunks(codex, rec: dict) -> int:
-    """How many chunks the record cuts into, by the one path every stage cuts
-    by (invariant 1)."""
-    from app import layers as layers_mod
-    row = {"uid": rec["uid"], "native_id": rec.get("native_id", 0)}
-    return len(layers_mod.chunks_for_document(codex, row, [tuple(x) for x in rec.get("sections") or []]))
-
-
-def drift(con, records: list[dict], count) -> dict:
-    """The part's records (`count(record)` -> its chunks) against the
-    manifest rows of the same uids."""
-    uids = [r["uid"] for r in records]
-    rows: dict[str, dict] = {}
-    for i in range(0, len(uids), 900):
-        part = uids[i:i + 900]
-        for row in con.execute(
-                "SELECT uid, chunks, fts_version, entity_version, updated_at, in_scope, error FROM documents "
-                f"WHERE uid IN ({','.join('?' * len(part))})", part):
-            rows[row[0]] = {"chunks": row[1], "fts_version": row[2], "entity_version": row[3],
-                            "updated_at": row[4], "in_scope": row[5], "error": row[6]}
-    differs = []
-    total = 0
-    for r in records:
-        m = rows.get(r["uid"])
-        want = int(count(r))
-        total += want
-        have = None if m is None else int(m["chunks"] or 0)
-        if have != want:
-            differs.append({"uid": r["uid"], "record_chunks": want, "manifest_chunks": have,
-                            **({k: v for k, v in m.items() if k != "chunks"} if m else {"missing": True})})
-    return {"records": len(records), "record_chunks": total,
-            "manifest_chunks": sum(int((rows.get(r["uid"]) or {}).get("chunks") or 0) for r in records),
-            "differs": differs}
+# The two functions live in app/hold/drift.py since 2026-10-25, where
+# `louise dev index-drift` — this tool's check, windowed, over the text index too —
+# calls them; they are re-exported here for this tool's callers.
+from app.hold.drift import drift, record_chunks  # noqa: E402,F401
 
 
 def main(argv: list[str]) -> int:
