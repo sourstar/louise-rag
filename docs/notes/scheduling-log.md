@@ -1091,10 +1091,15 @@ first to avoid wasting the effort spent for the previous steps."
   990 MHz alone). The GPU governor now holds the clock for the claim's
   lifetime; pinned, standing aside measured 64.2 s against 67.5 s.
 
-**BEFORE (the night of 2026-10-24, München).** Scenario: normattiva
-re-embedding (vega-qwen3-embedding-4b) from 22:30 by its cron; the campaign's
-run 5 tail and the heading full search (3 arms, reranker on) from 23:04; the
-records build on CPU; the GPU at 85–86.5 % VRAM at the reclaimer's 4 fires.
+**BEFORE (the night of 2026-10-24, München).** Scenario, corrected
+2026-10-25 08:45: normattiva embedded NOTHING (embed off, nothing left). The
+corpus work on vega-qwen3-embedding-4b was GUTENBERG's on-demand embedding,
+of the books the campaign's own searches touched: 65 documents, 6,556 chunks
+embedded and 6,330 reused, ~10.0 M tokens, EMBED_BATCH 1 at concurrency 2,
+7,028 requests served in 3,035 s (0.43 s each). Also running: the
+campaign's run 5 tail and the heading full search (3 arms, reranker on) from
+23:04, and the records build on CPU. The GPU was at 85–86.5 % VRAM at the
+reclaimer's 4 fires.
 - /v1/rerank (louise-rerank-bge, parallel:1): 5,662 × 200, **130 × 500
   (2.2 %)**, all between 23:00 and 03:00 CEST. None by day (50 calls, one
   test beside 16 embedding batches).
@@ -1110,8 +1115,25 @@ records build on CPU; the GPU at 85–86.5 % VRAM at the reclaimer's 4 fires.
 - rerank ms per call;
 - per-query misses;
 - live t_rerank;
-- normattiva's documents/hour while the campaign runs: what corpus pays,
-  since its requests now wait whenever a query is live.
+- the on-demand corpus work's documents/hour while the campaign runs: what
+  corpus pays, since its requests now wait whenever a query step is live.
+
+**Claim per step, not per query (operator, 2026-10-25: "subsequent steps
+first does not mean keep the gpu unloaded for a long time").** Measured
+the same morning, the deployed path with every HTTP call timed, 3 gutenberg
+searches and 1 Ask:
+- translation: chat 0.3–1.3 s, MADLAD 0.5–1.3 s;
+- gap (a), the text legs: 1.0–2.3 s;
+- query embedding: 0.08–0.1 s warm (4.4 s once, cold);
+- gap (b), dense search, fusion, attach, tokenize: 0.7–1.1 s;
+- 3–6 reranks of 0.3–4.4 s, 9–37 ms apart;
+- in Ask, gap (c) of 2.2 s before a 5.2 s answer.
+The gaps total 3.4–4.1 s per query of 11.6–16.7 s. A corpus request (one
+text, 0.43 s) that starts in a gap shares the card with the next step for
+at most ~0.43 s, or ~0.9 s for the two in flight. A whole-query claim
+(04b4f50) would have idled the card for the gaps and deferred corpus work
+for the whole query. Reverted (1b8d8cc): corpus stands aside while a step
+runs and fills the gaps between steps.
 
 Deployed together with the one-retry on a 5xx (b573be4). The per-call 500
 rate is the priority's alone, because the harness counts every POST,
