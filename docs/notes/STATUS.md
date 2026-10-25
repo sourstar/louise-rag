@@ -20,8 +20,10 @@ and what is deliberately not being built. Read this before planning work.
   measurement).
 - **Open defects:** the node passes `ADMIN_TOKEN` as an env VALUE to the
   worker and web (invariant 8; deploy/truenas-app.yaml takes
-  `ADMIN_TOKEN_FILE`, the node's app is not yet on it), and where the node
-  key's offline copy is kept is recorded nowhere (the operator states it);
+  `ADMIN_TOKEN_FILE`, the node's app is not yet on it); the node key's
+  backup is `/mnt/tank/homes/alanari/louise-node.key` (+ `.pub`, 2026-10-25,
+  checked byte-identical and its public half derived from it), which is on
+  the same machine: an off-machine copy is the operator's to keep;
   the node's private key sits in `/config`, which the LAN-facing web
   mounts read-write — the yaml gives it to the worker alone, read-only
   (both moved to a secrets dataset in the next deploy);

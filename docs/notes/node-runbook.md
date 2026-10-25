@@ -70,9 +70,17 @@ containers from its compose config.
 
 ## 4. Secrets (by path)
 
-- **Node key**: `NODE_KEY_PATH` = `/config/node.key`. It signs the node's digests and
-  SHARDs, so losing it means a new identity for every peer. Keep an OFFLINE copy;
-  where it is kept is for the operator to record (open item, §13).
+- **Node key**: `NODE_KEY_PATH` = `/config/node.key` (it moves to a secrets dataset
+  mounted on the worker alone, read-only, in the next deploy; the `/config` copy is
+  then moved to `/mnt/ssd4/apps/louise-rag/secrets-moved/`, mounted nowhere). It
+  signs the node's digests and SHARDs, so losing it means a new identity for every
+  peer. Public half: `ed25519:ba2168c0…`.
+  - **Backup on the node** (2026-10-25, made by the operator, checked
+    byte-identical): `/mnt/tank/homes/alanari/louise-node.key` (0400, alanari) with
+    `louise-node.pub` (0444) beside it, the public half derived from that copy. It
+    is on tank, so it covers a lost ssd4 dataset, but it is on the SAME machine.
+  - **Off the machine** (password manager, paper or USB): the common practice,
+    for the operator to keep.
 - **Tokens**: `DEPOSIT_TOKEN_FILE` (path). `ADMIN_TOKEN` is today an env VALUE in the
   app's compose config, against invariant 8 (open item, §13).
 - **LocalAI**: its `/api/settings` JSON carries `api_keys` and a p2p token; never print it.
