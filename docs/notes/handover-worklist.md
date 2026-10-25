@@ -29,6 +29,7 @@ through with the commit that closes them.
 
 | item | where | decision |
 |---|---|---|
+| The Library's document counts read every row (pubmed 40M, wikipedia-v8 75M: a core or two per refresh, capped at 10 % of the time; measured on the node 2026-10-25) | app/web.py `_document_counts` | build running counts kept by the stages (no operator answer; the default) |
 | ~~`louise node start` / `node stop`~~ | 07 §7.3, CLAUDE.md invariant 2 | built 2026-10-25 (stop through state/node.sqlite, exit 0) |
 | ~~One route per command, `/api/<surface>/<noun>/<verb>`~~ | 07 §7.4 | built 2026-10-25 (app/api_commands.py; operator: A) |
 | ~~The `centres`, `labels`, `model-agreement` and `evaluation` checks~~ | 03 §3.2 | marked "not built" in 03; `model-agreement` INCONCLUSIVE with its reason, no longer refused (2026-10-25) |
