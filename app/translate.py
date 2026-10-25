@@ -78,7 +78,7 @@ def warm() -> None:
         config.TRANSLATE_URL, config.TRANSLATE_MODEL,
         lambda bound_s: _completion({"items": [{"text": "OK", "to": "it"}]}, bound_s,
                                     {dispatch.LEVEL_HEADER: "translate"}),
-        caller="translation")
+        caller="translation", max_age_s=0.0)
 
 
 def languages() -> frozenset[str]:
@@ -202,7 +202,7 @@ def translate_reading(model: str, text: str, src: str, to: str) -> str | None:
     try:
         model_load.ensure_loaded(
             config.TRANSLATE_URL, model,
-            lambda bound_s: _reading_warm(model, bound_s), caller="translation (reading)")
+            lambda bound_s: _reading_warm(model, bound_s), caller="translation (reading)", max_age_s=0.0)
         with dispatch.call(config.TRANSLATE_URL, dispatch.Level.TRANSLATE, timeout=READING_TIMEOUT_S):
             choice = call(READING_TIMEOUT_S)["choices"][0]
     except Exception:   # noqa: BLE001 — the caller falls back to TRANSLATE_MODEL

@@ -195,6 +195,14 @@ it.
   model's load bound: `app/model_loads.json`, else `[models]
   load_timeout_s` = 120 (07 §7.8).
 - There is one warm per (server, model). `/system` is cached for 2 s.
+  **Amended 2026-10-25:** the 2 s holds for corpus work only. A request a
+  person waits on trusts an answer 0.25 s old at most, so a query's variants
+  share one read, and a single request (a rerank, a chat answer, a
+  translation) asks fresh. The old cache let a search's rerank believe the
+  query embedding's answer of a moment before, while another model's load
+  had evicted the reranker meanwhile, so the load ran inside the budget
+  (STATUS.md, 2026-10-25). A rerank that times out with its model gone or
+  re-spawned (a new backend pid) says so, and the cold start is logged.
 - A load past its bound is a deferral for embedding and a stated fallback
   for search: `legs_withheld`, or `rerank_withheld` beside `reranked:
   false` (05 §5.6), with the reason "model loading took longer than N s".

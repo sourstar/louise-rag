@@ -461,6 +461,11 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
             # that picks the model from the body (LocalAI) is told which; only
             # RERANK_URL names none
             body["model"] = recipe.model
+        # the backend serving the reranker now: another pid after a timed-out
+        # request means it was evicted and loaded again in between, a cold
+        # start the budget paid (model_load; the cached check missed it)
+        pid = model_load.backend_pid(recipe.url, recipe.model)
+        sent = time.monotonic()
         try:
             with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=remaining):
                 r = httpc.post(recipe.url, json=body, timeout=remaining,
@@ -471,7 +476,7 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
             got = {int(o["index"]): float(o["relevance_score"] if "relevance_score" in o
                                           else o["score"]) for o in rows}
         except Exception as e:   # noqa: BLE001 — any failure is the fused order, said so
-            return _fused_order(hits, rerank_failure(e, budget_s))
+            return _fused_order(hits, _cold_or(e, recipe, pid, sent, budget_s))
         if sorted(got) != list(range(len(part))):
             return _fused_order(hits, f"the reranker answered for "
                                       f"{sum(1 for i in got if 0 <= i < len(part))} of "
@@ -588,6 +593,19 @@ def rerank_failure(e: BaseException, budget_s: float) -> str:
     return f"the reranker failed ({type(e).__name__})"
 
 
+def _cold_or(e: BaseException, recipe, pid: int | None, sent: float, budget_s: float) -> str:
+    """A failed rerank request's reason: a timeout whose model is served by
+    another backend than when the request went was a COLD START inside the
+    budget (operator, 2026-10-09: "Timeouts shall not include cold start"),
+    recorded as one and said so; anything else is `rerank_failure`."""
+    if isinstance(e, httpx.TimeoutException) and not isinstance(e, httpx.ConnectTimeout) \
+            and model_load.reloaded_since(recipe.url, recipe.model, pid):
+        model_load.note_cold_call(recipe.url, recipe.model, "rerank", time.monotonic() - sent)
+        return (f"the reranker was evicted before the request and loaded again inside its "
+                f"{budget_s:g} s budget")
+    return rerank_failure(e, budget_s)
+
+
 def _reranked(query: str, hits: list[dict], recipe, budget_s: float,
               depth: int, queries: dict[str, str] | None = None
               ) -> tuple[list[dict], bool, str | None]:
@@ -625,7 +643,7 @@ def _warm_reranker(recipe) -> None:
             httpc.post(recipe.url, json=body, timeout=bound_s,
                        headers=dispatch.level_headers())
 
-    model_load.ensure_loaded(recipe.url, recipe.model, warm, caller="rerank")
+    model_load.ensure_loaded(recipe.url, recipe.model, warm, caller="rerank", max_age_s=0.0)
 
 
 #: docs/05's one hop, bounded: at most this many facts per declared link from

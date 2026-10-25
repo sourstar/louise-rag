@@ -63,7 +63,7 @@ def warm(level: Level = Level.CHAT) -> None:
             httpx.post(url, json=body, timeout=bound_s, headers=dispatch.level_headers())
 
     model_load.ensure_loaded(config.CHAT_URL, config.CHAT_MODEL, send,
-                             caller=level.name.lower())
+                             caller=level.name.lower(), max_age_s=0.0)
 
 
 @dataclass(frozen=True)
