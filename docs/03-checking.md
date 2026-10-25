@@ -16,8 +16,10 @@ pure function of the cleaned text and the layer's chunker. Hashes are
 hashes. A check on any of these either passes or is a proof of failure
 that names the part. There is no "close".
 
-**Vectors are within tolerance.** The same weights on different GPUs,
-drivers or batch sizes produce different floats. So a vector is correct
+**Vectors are within tolerance.** The same weights on different GPUs or
+drivers produce different floats; the same run on the same card gives the
+same bytes (CLAUDE.md invariant 12), so tolerance covers only agreement
+across hardware. So a vector is correct
 when its cosine against a compliant encoder's output for the same chunk
 is at least the Codex's `tolerance` — a statistical statement, sampled,
 never exhaustive in practice. The encoder on the other side of that
@@ -286,15 +288,19 @@ nor searched with.
 
 **The gate also measures what the answers depend on besides the run.**
 It embeds the sixteen fingerprint texts (09 §9.12) one at a time, then
-again the way the peer contributes: its batching and its concurrency.
-Equal bytes pass at once. Otherwise the batched answers are judged
-against the run's own run-to-run variation: the sixteen are embedded one
-at a time a second time, and every batched vector must be as close to its
-single-text answer as the two single-text passes are to each other at
-their furthest apart, less f32 rounding (10⁻⁶ of cosine). A run whose
-batched answers fall outside that band is validated only for
-single-text, one-at-a-time work (*amended 2026-10-12*, operator: equal
-bytes failed engines whose batching adds no more than last-bit noise). The batching fault that silently
+one at a time again in reverse order, then the way the peer contributes:
+its batching and its concurrency (*amended 2026-10-25*, operator's
+choice A; CLAUDE.md invariant 12). The two single-text passes must be
+equal byte for byte, or the run FAILS whatever its cosines: a vector its
+own run cannot reproduce cannot be checked by anyone. The batched answers
+must equal the single-text ones byte for byte, or the run is validated
+only for single-text, one-at-a-time work. (From 2026-10-12 to 2026-10-25
+a band was allowed: batched answers as close to the single-text ones as
+two single-text passes were to each other. Under invariant 12 those
+passes are equal, so the band was only f32 rounding, and a batched vector
+a checker cannot reproduce is not admitted.) The fresh-load half of
+invariant 12's measurement stays the measurement harness's
+(docs/notes/approved-encoders.md). The batching fault that silently
 corrupted 714 books (2026-07) is a property of a run's settings, and it
 is measured, never assumed. The sixteen vectors' hash, the run's
 **fingerprint**, goes into the statement as evidence, not as a check

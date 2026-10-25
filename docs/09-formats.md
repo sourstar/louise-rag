@@ -1870,8 +1870,10 @@ embedded one at a time, truncated as a chunk is. A run's fingerprint is
 returned it, converted to little-endian f32 and concatenated. The gate
 embeds the same sixteen a second time as the peer contributes, with its
 batching and concurrency. The run is batch-invariant at those settings
-when the bytes are equal, or when its batched vectors stay within the
-band two single-text passes show (03 §3.3, *amended 2026-10-12*). An asymmetric space's query run has its own
+when the bytes are equal (03 §3.3, *amended 2026-10-25*; the band of
+2026-10-12 is gone). Before that the gate embeds the sixteen one at a
+time a second time, in reverse order; bytes that differ fail the run
+(invariant 12). An asymmetric space's query run has its own
 fingerprint, over the same texts with `space.query.instruction`
 prefixed.
 

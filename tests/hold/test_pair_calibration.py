@@ -359,7 +359,9 @@ def test_the_gate_embeds_every_pair_as_a_pair(tmp_path):
     assert run.ok and run.passed == 16 and run.batch_invariant is True
     assert seen["embed"] == PAIRS
     sixteen = [PAIRS[i] for i in fp.indices(PAIRS)]
-    assert seen["one"] == seen["contribute"] == sixteen
+    assert seen["contribute"] == sixteen
+    assert seen["one"] == sixteen + sixteen[::-1], "again one at a time, reversed (invariant 12)"
+    assert run.reproducible is True
     assert all(isinstance(x, tuple) for x in seen["one"])
     by_len = sorted(range(cal.SIZE), key=lambda i: (cal.item_bytes(PAIRS[i]), i))
     assert fp.indices(PAIRS)[0] == by_len[0] and fp.indices(PAIRS)[-1] == by_len[-1]

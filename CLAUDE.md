@@ -265,8 +265,12 @@ are the ones that have drifted; prefer to add a test when you touch them.
     the prompt cache and overlapping requests are what break it — `-np 1`).
     *Enforced: the VeGa wrapper states no card run whose model env lacks
     its vendor's mode (deploy/vega/vega_wrapper.py `DETERMINISM`,
-    tests/vega/test_wrapper_logic.py); the bit-exact measurement by
-    review until the gate runs it.* Open: torch (louise-python) and
+    tests/vega/test_wrapper_logic.py); the gate fails a run whose sixteen
+    fingerprint texts, embedded one at a time again in reverse order, come
+    back different, and admits batched answers only when they equal the
+    single-text bytes (app/hold/embedder.py, operator 2026-10-25,
+    tests/hold/test_embedder.py); the fresh-load half by the measurement
+    harness and review.* Open: torch (louise-python) and
     OpenVINO have their own controls (`torch.use_deterministic_algorithms`,
     CUBLAS_WORKSPACE_CONFIG) and are not yet checked by the wrapper.
 
