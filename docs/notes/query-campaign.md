@@ -256,3 +256,32 @@ there can the arms differ.
   negative;
 - a gain with it → amend 05 §5.2 with the weight pinned in the Codex.
 Either way it is a fusion change, so the numbers go in its commit.
+
+**Measured (München, 2026-10-25 10:00–10:15 CET, deployed 50030dc, reranker
+on, nothing else on the GPU).** 80 TREC PM topics (31 + 51 fetched, 80
+with a judged relevant PubMed abstract); all 80 counted (no rerank miss);
+the boost applied on 74. Results on file at origin/main af7986b,
+docs/notes/entity-boost-2026-10-25/.
+
+| metric | boost | none | boost won–lost–tied |
+|---|---|---|---|
+| NDCG@10 | 0.3073 | **0.3143** | 16–27–37 |
+| condensed NDCG@10 | 0.5617 | 0.5646 | 27–19–34 |
+| P@10 | 0.305 | 0.3112 | 11–15–54 |
+| RR@10 | 0.5448 | 0.5459 | 3–8–69 |
+| judged@10 | 0.455 | 0.4525 | 18–14–48 |
+| R@50 | **0.1414** | 0.137 | 25–15–40 |
+
+On the headline metric the boost loses (27 against 16), and P@10 and RR
+agree; R@50 gains 0.004. The differences are small, and the boost does not
+earn an exception to "nothing boosts". **It goes.**
+But 05 §5.2 asks for more than its absence: "a resolved identifier
+restricts every leg to the records whose `keys` contain it". The harness
+now has the restriction as two more arms:
+- `any`: tagged with any named identifier;
+- `all`: tagged with all of them.
+They run through the facet filters' own prefilter. The code then follows
+the spec's rule if restricting loses nothing against `none`. If it loses,
+the numbers go to the operator with 05 §5.2's restriction rule in
+question. The boost's removal waits for that run, so the code changes
+once, to what the spec and the numbers agree on.

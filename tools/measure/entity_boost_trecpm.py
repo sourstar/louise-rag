@@ -14,6 +14,18 @@ catalogues them (`medline/trec-pm-2017`, `medline/trec-pm-2018`):
 Judged documents that are not PubMed (2017's AACR/ASCO abstracts) are left
 out. The query is the participants' common baseline: disease, then gene.
 
+THE ARMS (each topic searched once per arm, the order rotating per topic):
+- `boost`: as deployed — the boost on the fused score;
+- `none`: no boost, no restriction — a query with no identifier;
+- `any`: 05 §5.2 as written, a resolved identifier RESTRICTS every leg to
+  the records tagged with it (`doc_keys`, the tagger's stand-in for a
+  record's `keys`) — tagged with ANY of the named identifiers;
+- `all`: the same, tagged with ALL of them (the spec says "a resolved
+  identifier restricts", and leaves several open).
+The restriction is the facet filters' own prefilter (`book_ids`), so the
+arm runs the code path a filter runs. An identifier tagging nothing here
+restricts to nothing and returns nothing, as 05 §5.2 says a filter does.
+
 Two steps:
   1. prepare (anywhere): `python tools/measure/entity_boost_trecpm.py prepare
      --pm 2017 topics2017.xml qrels-final-abstracts.txt
@@ -33,17 +45,18 @@ both arms were reranked; the boost can only differ where it APPLIED (a
 candidate tagged with an entity the query named), and that subset is
 reported apart.
 """
-from __future__ import annotations
-
 import json
 import math
 import re
 import sys
 import xml.etree.ElementTree as ET
 
-BOOSTS = {"boost": None, "none": 0.0}      # None: as deployed
+#: arm -> (boost: None = as deployed, restriction: None / "any" / "all")
+ARMS = {"boost": (None, None), "none": (0.0, None), "any": (0.0, "any"), "all": (0.0, "all")}
+BASELINE = "none"
 K = 10
 DEPTH = 50
+METRICS = ("ndcg", "ndcg_condensed", "p", "rr", "judged", "r_depth")
 
 
 # ---- prepare: TREC's files -> DATA -------------------------------------------------------
@@ -108,25 +121,44 @@ def metrics(ranked: list[str], rels: dict[str, int], k: int = K, depth: int = DE
 
 
 def summarise(rows: list[dict]) -> dict:
-    """Means per arm over the topics both arms reranked; the same over the
-    topics where the boost applied; and per metric, the topics where the
-    boost won, lost or tied."""
-    both = [r for r in rows if not r.get("error") and all(r["reranked"].values())]
-    applied = [r for r in both if r["applied"]]
-    out = {"topics": len(rows), "counted": len(both), "boost_applied": len(applied)}
-    for name, subset in (("all", both), ("applied", applied)):
-        block = {}
-        for m in ("ndcg", "ndcg_condensed", "p", "rr", "judged", "r_depth"):
-            a = [r["arms"]["boost"][m] for r in subset]
-            b = [r["arms"]["none"][m] for r in subset]
+    """Per arm, its means over the topics every arm reranked, and per metric
+    the topics it won, lost and tied against the baseline (`none`); the same
+    over the topics where a named identifier tagged something (`applied`)."""
+    counted = [r for r in rows if not r.get("error") and r["reranked"] and all(r["reranked"].values())]
+    applied = [r for r in counted if r["applied"]]
+    out = {"topics": len(rows), "counted": len(counted), "applied": len(applied)}
+    arms = sorted({a for r in counted for a in r["arms"]}, key=list(ARMS).index)
+    for name, subset in (("all_topics", counted), ("applied_topics", applied)):
+        block: dict = {}
+        for arm in arms:
             if not subset:
                 continue
-            block[m] = {"boost": round(sum(a) / len(a), 4), "none": round(sum(b) / len(b), 4),
-                        "boost_won": sum(x > y for x, y in zip(a, b)),
-                        "boost_lost": sum(x < y for x, y in zip(a, b)),
-                        "tied": sum(x == y for x, y in zip(a, b))}
+            per = {}
+            for m in METRICS:
+                a = [r["arms"][arm][m] for r in subset]
+                b = [r["arms"][BASELINE][m] for r in subset]
+                per[m] = {"mean": round(sum(a) / len(a), 4)}
+                if arm != BASELINE:
+                    per[m].update(won=sum(x > y for x, y in zip(a, b)),
+                                  lost=sum(x < y for x, y in zip(a, b)),
+                                  tied=sum(x == y for x, y in zip(a, b)))
+            ms = [r["ms"][arm] for r in subset if r.get("ms", {}).get(arm) is not None]
+            per["ms_median"] = sorted(ms)[len(ms) // 2] if ms else None
+            block[arm] = per
         out[name] = block
     return out
+
+
+def tagged(con, plugin: str, entity_ids: list[str], mode: str) -> set[int]:
+    """The records of `plugin` tagged with ANY (`mode="any"`) or ALL of the
+    named identifiers: the restriction 05 §5.2 describes, from `doc_keys`
+    (driven by its entity index — the order the 2026-09-21 hang taught)."""
+    marks = ",".join("?" * len(entity_ids))
+    sql = (f"SELECT d.native_id FROM doc_keys k CROSS JOIN documents d ON d.uid = k.uid "
+           f"WHERE k.entity_id IN ({marks}) AND d.source = ?")
+    if mode == "all":
+        sql += f" GROUP BY d.native_id HAVING COUNT(DISTINCT k.entity_id) = {len(set(entity_ids))}"
+    return {int(r[0]) for r in con.execute(sql, [*entity_ids, plugin]) if str(r[0]).isdigit()}
 
 
 def pmid_of(hit: dict) -> str:
@@ -138,38 +170,50 @@ def pmid_of(hit: dict) -> str:
 # ---- search: on the node ------------------------------------------------------------------
 
 def run(data: list[dict], collection: str = "pubmed") -> list[dict]:
+    import time
     from app import query_service, retrieval
     deployed = retrieval.ENTITY_BOOST
     seen: dict = {}
-    orig_tagged, orig_reranked = retrieval._tagged_among, retrieval._reranked
+    restriction: list = [None]
+    orig_one, orig_reranked = retrieval._search_one_collection, retrieval._reranked
 
-    def tagged(*a, **kw):
-        got = orig_tagged(*a, **kw)
-        seen["applied"] = seen.get("applied", False) or bool(got)
-        return got
+    def one(con, coll, query, k, mode, translate, entity_ids, *args, **kw):
+        if entity_ids:
+            seen["applied"] = seen.get("applied", False) or bool(
+                tagged(con, coll.plugin, list(entity_ids), "any"))
+            if restriction[0] and kw.get("book_ids") is None:
+                kw["book_ids"] = tagged(con, coll.plugin, list(entity_ids), restriction[0])
+                seen["restricted_to"] = len(kw["book_ids"])
+        return orig_one(con, coll, query, k, mode, translate, entity_ids, *args, **kw)
 
     def reranked(*a, **kw):
         out = orig_reranked(*a, **kw)
         seen["reranked"] = seen.get("reranked", True) and bool(out[1])
         seen.setdefault("why", out[2])
         return out
-    retrieval._tagged_among, retrieval._reranked = tagged, reranked
+    retrieval._search_one_collection, retrieval._reranked = one, reranked
     rows = []
+    names = list(ARMS)
     try:
         for n, topic in enumerate(data):
             row = {"qid": topic["qid"], "query": topic["query"], "arms": {}, "reranked": {},
-                   "applied": False, "error": None}
-            order = list(BOOSTS) if n % 2 == 0 else list(reversed(BOOSTS))
+                   "ms": {}, "restricted_to": {}, "applied": False, "error": None}
+            order = names[n % len(names):] + names[:n % len(names)]
             for arm in order:
-                retrieval.ENTITY_BOOST = deployed if BOOSTS[arm] is None else BOOSTS[arm]
+                boost, restriction[0] = ARMS[arm]
+                retrieval.ENTITY_BOOST = deployed if boost is None else boost
                 seen.clear()
+                t0 = time.monotonic()
                 try:
                     hits = query_service.run_search([collection], topic["query"], DEPTH, "hybrid", True)["hits"]
                 except Exception as e:   # noqa: BLE001 — recorded, the next topic goes on
                     row["error"] = f"{arm}: {type(e).__name__}: {e}"[:200]
                     break
+                row["ms"][arm] = round((time.monotonic() - t0) * 1000)
                 row["arms"][arm] = metrics([pmid_of(h) for h in hits], topic["rels"])
-                row["reranked"][arm] = seen.get("reranked", False)
+                # an arm restricted to nothing returns nothing, and has nothing to rerank
+                row["reranked"][arm] = seen.get("reranked", False) or (not hits and "restricted_to" in seen)
+                row["restricted_to"][arm] = seen.get("restricted_to")
                 row["applied"] = row["applied"] or seen.get("applied", False)
                 if not row["reranked"][arm]:
                     row.setdefault("why", {})[arm] = seen.get("why")
@@ -177,7 +221,7 @@ def run(data: list[dict], collection: str = "pubmed") -> list[dict]:
             rows.append(row)
     finally:
         retrieval.ENTITY_BOOST = deployed
-        retrieval._tagged_among, retrieval._reranked = orig_tagged, orig_reranked
+        retrieval._search_one_collection, retrieval._reranked = orig_one, orig_reranked
     print(json.dumps(summarise(rows), indent=1), file=sys.stderr)
     return rows
 

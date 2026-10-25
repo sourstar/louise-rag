@@ -61,35 +61,74 @@ def test_the_metrics_are_trec_eval_s_and_sakai_s():
     assert m.metrics([], rels)["ndcg"] == 0.0
 
 
-def test_the_summary_counts_only_topics_both_arms_reranked_and_the_applied_apart():
-    def row(boost, none, applied=True, reranked=True):
-        arm = lambda v: dict.fromkeys(("ndcg", "ndcg_condensed", "p", "rr", "judged", "r_depth"), v)
-        return {"arms": {"boost": arm(boost), "none": arm(none)}, "applied": applied,
-                "reranked": {"boost": reranked, "none": True}, "error": None}
-    s = m.summarise([row(0.5, 0.4), row(0.3, 0.3, applied=False), row(0.9, 0.1, reranked=False)])
-    assert (s["topics"], s["counted"], s["boost_applied"]) == (3, 2, 1)
-    assert s["all"]["ndcg"] == {"boost": 0.4, "none": 0.35, "boost_won": 1, "boost_lost": 0, "tied": 1}
-    assert s["applied"]["ndcg"]["boost"] == 0.5
+def test_the_summary_compares_every_arm_with_the_baseline_over_topics_all_arms_reranked():
+    def row(values, applied=True, reranked=True):
+        arm = lambda v: dict.fromkeys(m.METRICS, v)
+        return {"arms": {a: arm(v) for a, v in values.items()}, "applied": applied,
+                "reranked": {a: (reranked if a == "any" else True) for a in values},
+                "ms": {a: 100 for a in values}, "error": None}
+    s = m.summarise([row({"boost": 0.5, "none": 0.4, "any": 0.6, "all": 0.4}),
+                     row({"boost": 0.3, "none": 0.3, "any": 0.2, "all": 0.3}, applied=False),
+                     row({"boost": 0.9, "none": 0.1, "any": 0.9, "all": 0.9}, reranked=False)])
+    assert (s["topics"], s["counted"], s["applied"]) == (3, 2, 1), "a topic one arm did not rerank is left out"
+    assert s["all_topics"]["none"]["ndcg"] == {"mean": 0.35}
+    assert s["all_topics"]["any"]["ndcg"] == {"mean": 0.4, "won": 1, "lost": 1, "tied": 0}
+    assert s["applied_topics"]["boost"]["ndcg"] == {"mean": 0.5, "won": 1, "lost": 0, "tied": 0}
+    assert s["all_topics"]["all"]["ms_median"] == 100
 
 
-def test_the_arms_run_through_the_search_and_the_boost_is_restored(monkeypatch, capsys):
+def test_the_restriction_is_the_records_tagged_with_any_or_all_of_the_identifiers():
+    import sqlite3
+    con = sqlite3.connect(":memory:")
+    con.executescript("""
+        CREATE TABLE documents (uid TEXT PRIMARY KEY, source TEXT, native_id TEXT);
+        CREATE TABLE doc_keys (uid TEXT, entity_id TEXT, PRIMARY KEY (uid, entity_id));
+        CREATE INDEX idx_doc_keys_entity ON doc_keys(entity_id);
+        INSERT INTO documents VALUES ('pubmed:1','pubmed','1'), ('pubmed:2','pubmed','2'),
+                                     ('pubmed:3','pubmed','3'), ('other:4','other','4');
+        INSERT INTO doc_keys VALUES ('pubmed:1','hgnc:KRAS'), ('pubmed:1','hgnc:BRAF'),
+                                    ('pubmed:2','hgnc:BRAF'), ('other:4','hgnc:BRAF');
+    """)
+    assert m.tagged(con, "pubmed", ["hgnc:KRAS", "hgnc:BRAF"], "any") == {1, 2}
+    assert m.tagged(con, "pubmed", ["hgnc:KRAS", "hgnc:BRAF"], "all") == {1}
+    assert m.tagged(con, "pubmed", ["hgnc:TP53"], "any") == set()
+
+
+def test_the_arms_run_through_the_search_and_everything_is_restored(monkeypatch, capsys):
     from app import query_service, retrieval
-    deployed = retrieval.ENTITY_BOOST
-    calls = []
+    deployed, real_one = retrieval.ENTITY_BOOST, retrieval._search_one_collection
+    seen = []
+
+    def one_collection(con, coll, query, k, mode, translate, entity_ids, *args, **kw):
+        seen.append((retrieval.ENTITY_BOOST, kw.get("book_ids")))
+        return {}
+
+    class Coll:
+        plugin = "pubmed"
 
     def search(collections, query, k, mode, translate):
-        calls.append(retrieval.ENTITY_BOOST)
-        retrieval._tagged_among(None, None, [], [])
+        retrieval._search_one_collection(None, Coll(), query, k, mode, translate, ["hgnc:CDK4"])
+        book_ids = seen[-1][1]
+        if book_ids is not None and not book_ids:
+            return {"hits": []}
         retrieval._reranked(query, [], None, 8.0, 50)
-        order = ["10073554", "10065107"] if retrieval.ENTITY_BOOST else ["10065107", "10073554"]
+        order = ["10073554", "10065107"] if retrieval.ENTITY_BOOST or book_ids else ["10065107", "10073554"]
         return {"hits": [{"chunk_id": f"pubmed:{p}:0:1"} for p in order]}
-    monkeypatch.setattr(query_service, "run_search", search)
-    monkeypatch.setattr(retrieval, "_tagged_among", lambda *a, **k: {10073554})
+    monkeypatch.setattr(retrieval, "_search_one_collection", one_collection)
     monkeypatch.setattr(retrieval, "_reranked", lambda q, hits, *a, **k: (hits, True, None))
+    monkeypatch.setattr(m, "tagged", lambda con, plugin, ids, mode: {10073554} if mode == "any" else set())
+    monkeypatch.setattr(query_service, "run_search", search)
     data = m.prepare([(2017, TOPICS_2017, QRELS_2017), (2018, TOPICS_2018, QRELS_2018)])
     rows = m.run(data)
-    assert calls == [deployed, 0.0, 0.0, deployed], "the deployed boost, then none; the order alternates"
-    assert retrieval.ENTITY_BOOST == deployed, "restored"
-    assert rows[0]["applied"] and all(rows[0]["reranked"].values())
-    assert rows[0]["arms"]["boost"]["rr"] == 1.0 and rows[0]["arms"]["none"]["rr"] == 0.5
+    assert [b for b, _ in seen[:4]] == [deployed, 0.0, 0.0, 0.0], "boost as deployed, then none, any, all"
+    assert seen[2][1] == {10073554} and seen[3][1] == set(), "any: the tagged records; all: none tagged"
+    assert retrieval.ENTITY_BOOST == deployed and retrieval._search_one_collection is one_collection, \
+        "restored to what was there before the run"
+    first = rows[0]
+    assert first["applied"] and all(first["reranked"].values()), "an arm restricted to nothing counts"
+    assert first["arms"]["boost"]["rr"] == 1.0 and first["arms"]["none"]["rr"] == 0.5
+    assert first["arms"]["any"]["rr"] == 1.0 and first["arms"]["all"]["ndcg"] == 0.0
+    assert first["restricted_to"] == {"boost": None, "none": None, "any": 1, "all": 0}
+    assert rows[1]["arms"] and list(rows[1]["ms"]) == ["none", "any", "all", "boost"], "the order rotates"
     assert '"counted": 2' in capsys.readouterr().err
+    assert real_one is not None
