@@ -23,6 +23,7 @@ import json
 import shutil
 import sqlite3
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +40,9 @@ VALIDATION_FILE = "validation.json"
 PLAN_PAGE = 5000
 PLAN_PAGE_SQL = ("SELECT rowid, uid, native_id, path, lang, in_scope, error FROM documents "
                  "WHERE rowid>? ORDER BY rowid LIMIT ?")
+#: the in-memory record's key for its parse's issues (app/issues.py) — not a
+#: 09 §9.5 key, so no line could carry it even if it were left on
+ISSUES_KEY = "_issues"
 
 
 class BuildError(RuntimeError):
@@ -131,6 +135,12 @@ def plan(collection, con_src, con_build, *, log=print, stop=None) -> int:
     plugin = collection.plugin_instance()
     origin = _origin_plugin(collection)
     scheme = slicing.scheme_for(origin)
+    # what the slicing needs beyond a record — wikidata's family map, pinned
+    # by the Codex (pack-format.md §2, amended 2026-10-24); None elsewhere
+    try:
+        context = slicing.context_for(collection, log=log, stop=stop)
+    except slicing.ContextUnavailable as e:
+        raise BuildError(str(e)) from None
     last = int(_meta(con_build, "plan_rowid", -1))
     planned = 0
     t0 = time.monotonic()
@@ -149,11 +159,11 @@ def plan(collection, con_src, con_build, *, log=print, stop=None) -> int:
         for row in page:
             if not row["in_scope"] or row["error"] is not None:
                 continue
-            slice_name = slicing.slice_hint(origin, row)
+            slice_name = slicing.slice_hint(origin, row, context)
             if slice_name is None:
                 try:
                     doc = plugin_io.canonical_doc(plugin, row)
-                    slice_name = scheme.slice_of(doc, int(row["native_id"]))
+                    slice_name = slicing.slice_of(scheme, doc, int(row["native_id"]), context)
                 except (UnindexableDocument, Exception) as e:   # noqa: BLE001 — recorded, never fatal
                     con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
                                       (row["uid"], f"plan: {type(e).__name__}: {e}"[:200]))
@@ -174,6 +184,74 @@ def plan(collection, con_src, con_build, *, log=print, stop=None) -> int:
             t0 = time.monotonic()
     _set_meta(con_build, "plan_done", "1")
     return planned
+
+
+@dataclass(frozen=True)
+class HeldRecords:
+    """RECORD LINES ALREADY BUILT, taken instead of parsing (RULE 1; 02 §2.7,
+    amended 2026-10-24): a daughter that changes only the slicing — a family
+    map — or a re-creation that does, reuses its mother's record lines byte
+    for byte. `shard_dir` holds the parts, `paths` lists them (a snapshot's
+    shards, relative to `shard_dir`). Each record is cut into chunks again
+    for its part's `chunks_root` — the chunker, never the parser."""
+    shard_dir: Path
+    paths: tuple[str, ...]
+
+
+def held_records_of(root: Path, name: str) -> HeldRecords:
+    """The records a held collection's latest snapshot lists."""
+    from ..hold import carry as carry_mod, collection as col
+    snap = carry_mod.latest_snapshot(Path(root), name)
+    return HeldRecords(col.shard_dir_of(Path(root), name), tuple(s.path for s in snap.shards))
+
+
+def _held_index(con_build, held: HeldRecords, log) -> None:
+    """uid → (part, frame, line) over every part `held` lists, from each
+    part's own trailing index (no record decoded); resumable at a part."""
+    con_build.execute("CREATE TABLE IF NOT EXISTS held(uid TEXT PRIMARY KEY, path TEXT NOT NULL, "
+                      "frame INTEGER NOT NULL, line INTEGER NOT NULL) WITHOUT ROWID")
+    done = int(_meta(con_build, "held_parts", 0))
+    for k in range(done, len(held.paths)):
+        rel = held.paths[k]
+        index = records.read_index(held.shard_dir / rel)
+        con_build.execute("BEGIN IMMEDIATE")
+        con_build.executemany("INSERT OR REPLACE INTO held(uid,path,frame,line) VALUES(?,?,?,?)",
+                              [(uid, rel, fl[0], fl[1]) for uid, fl in index.uids.items()])
+        _set_meta(con_build, "held_parts", k + 1)
+        con_build.execute("COMMIT")
+    if done < len(held.paths):
+        log(f"[pack build] the records of {len(held.paths)} held part(s) indexed for reuse")
+
+
+def _held_values(collection, con_build, held: HeldRecords, srcs: list[dict]) -> list[tuple[bool, object]]:
+    """`parallel.compute("record")`'s answer, from held record lines."""
+    out: list[tuple[bool, object]] = []
+    for src in srcs:
+        at = con_build.execute("SELECT path, frame, line FROM held WHERE uid=?", (src["uid"],)).fetchone()
+        if at is None:
+            out.append((False, {"type": "NotHeld", "msg": "not among the held records reused"}))
+            continue
+        try:
+            out.append((True, _record_from_line(collection, records.read_record_at(
+                held.shard_dir / at["path"], int(at["frame"]), int(at["line"])))))
+        except Exception as e:   # noqa: BLE001 — recorded per document by the caller
+            out.append((False, {"type": type(e).__name__, "msg": str(e)[:500]}))
+    return out
+
+
+def _record_from_line(collection, line: dict) -> tuple[dict, int, bytes, dict[str, str]]:
+    """`_record_of`'s answer for a record line already built: the line as
+    it is, its layer, and its chunks cut again for the part's
+    `chunks_root` (a pure function of the line's sections, invariant 3)."""
+    native_id = int(line["native_id"])
+    layer = layers_mod.layer_index(collection, native_id)
+    chunks = 0
+    chunk_blob = bytearray()
+    for c in layers_mod.chunker_for_document(collection, native_id)(
+            line["uid"], native_id, [tuple(s) for s in line.get("sections") or []]):
+        chunks += 1
+        chunk_blob += hold_records.chunk_contribution(c["id"], c["text"])
+    return {**line, "layer": layer, "chunks": chunks}, layer, bytes(chunk_blob), {}
 
 
 def _record_of(collection, plugin, row) -> tuple[dict, int, bytes, dict[str, str]]:
@@ -233,17 +311,36 @@ def _record_of(collection, plugin, row) -> tuple[dict, int, bytes, dict[str, str
         #
         # DISTINCT plates, where `figures` above lists APPEARANCES: the
         # container stores each once (09 §9.5), and a book repeating one
-        # plate 703 times would otherwise read it 703 times. `carried`
-        # False is absent on purpose — the entry says the origin has the
-        # image and this collection does not admit it, so there are no
-        # bytes to fetch and the container must not hold any.
+        # plate 703 times would otherwise read it 703 times. Every plate
+        # is here whatever its type or size — SVG, GIF, over a cap — since
+        # 08 §8.7's amendment of 2026-10-25 ("Every plate"): the container
+        # stores opaque bytes and only display applies the closed list. A
+        # `carried` False entry (a record from before it) has no bytes to
+        # fetch, and the container must not hold any.
         plates = {f.sha256: f.href for f in (doc.figures or []) if f.carried}
+    # THE ORIGIN'S INCONSISTENCIES this parse met (06 §6.1, amended
+    # 2026-10-25), beside the record and never in its line: `canonical_line`
+    # writes 09 §9.5's keys alone, and `pack_slices` pops this one before the
+    # record is buffered. A list (possibly empty) means "parsed"; a record
+    # taken from a held line has none, and records nothing.
+    record[ISSUES_KEY] = [(i.code, i.detail) for i in (doc.issues or [])]
     # NOTE: no validation here. This runs in a parse-pool child, where an
     # exception becomes one skipped row rather than a failed build — so a
     # fidelity defect raised here would quietly DROP documents from the
     # pack, which is worse than what it was meant to prevent. The check
     # belongs in pack_slices, in the process that can abort.
     return record, layer, bytes(chunk_blob), plates
+
+
+def _refuse_too_many_figures(record: dict) -> None:
+    """08 §8.7's cap on what a record may name: over it the BUILD aborts, as
+    for a missing `origin_hash` — dropping figures would re-aim every
+    `[Illustration…]` marker after them (09 §9.5)."""
+    from ..hold import figures as figures_mod
+    n = len(record.get("figures") or [])
+    if n > figures_mod.MAX_PER_RECORD:
+        raise ValueError(f"{record['uid']}: names {n:,} figures, over 08 §8.7's "
+                         f"{figures_mod.MAX_PER_RECORD:,} per record; not packed")
 
 
 def _write_figures(plugin, pack_dir: Path, slice_name: str, shard_n: int,
@@ -304,7 +401,8 @@ def _write_figures(plugin, pack_dir: Path, slice_name: str, shard_n: int,
 
 def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_shard: int,
                 until: str | None = None, log=print, stop=None,
-                closed: dict[str, dict[int, tuple[str, str]]] | None = None
+                closed: dict[str, dict[int, tuple[str, str]]] | None = None,
+                held: HeldRecords | None = None
                 ) -> tuple[int, int, int, int, bool]:
     """Pass 2. Returns (shards written, records, chunks, skipped, interrupted).
     `until`: the snapshot cutoff (cutoff.py) — records outside it are
@@ -321,8 +419,15 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
     closed parts are records counted into `records_per_shard`. Without it
     (a slice's first build, the legacy `pack build`) every part is counted.
     Until 2026-10-12 a fresh build re-cut every slice by count, so one book
-    gone from the origin re-issued every later part of its slice."""
-    closed = closed or {}
+    gone from the origin re-issued every later part of its slice.
+
+    A Codex whose slicing cuts parts BY CONTENT (`slicing.parts`, 02 §2.2
+    amended 2026-10-24) keeps no closed parts: a record ends its part by its
+    own uid's fingerprint (slicing.ends_part), so the layout is a pure
+    function of each slice's records — a from-scratch build, a resumed one
+    and a daughter's give the same parts byte for byte."""
+    content_rule = slicing.parts_rule_of(getattr(getattr(collection, "codex", None), "slicing", None))
+    closed = {} if content_rule is not None else (closed or {})
     plugin = collection.plugin_instance()
     origin = _origin_plugin(collection)
     # THE SHARD'S SHAPE, from the Codex and never from a record (09 §9.5):
@@ -339,6 +444,33 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
     order = getattr(plugin, "native_id_order", "bytes")
     slices = [r["slice"] for r in con_build.execute("SELECT DISTINCT slice FROM plan ORDER BY slice")]
     written = n_records = n_chunks = n_skipped = 0
+    # THE ORIGIN'S INCONSISTENCIES (06 §6.1, amended 2026-10-25): what each
+    # parse met, recorded in the manifest a page at a time (app/issues.py —
+    # one keyed read per page, a write only where a document has or had
+    # one), logged once each, and summed here for the build's own line
+    from .. import issues as issues_mod
+    codes = issues_mod.declared(plugin)
+    page_issues: list[tuple[str, list]] = []
+    met: dict[str, int] = {}
+    undated_out = 0
+
+    def flush_issues() -> None:
+        if page_issues:
+            issues_mod.record_many(con_src, page_issues, codes=codes)
+            page_issues.clear()
+
+    def say_issues() -> None:
+        if met:
+            log(f"[pack build] {collection.name}: origin inconsistencies met — "
+                + ", ".join(f"{c} {n:,}" for c, n in sorted(met.items()))
+                + f" (`louise hold issues list {collection.name}`)")
+        if undated_out:
+            # 06 §6.2 excludes them; the operator's choice A forbids doing it
+            # silently (STATUS, 2026-10-25)
+            log(f"[pack build] {collection.name}: {undated_out:,} record(s) EXCLUDED from the "
+                f"snapshot cut at {until}: no cutoff date — a defect to fix, flagged as "
+                f"`cutoff-undated`")
+
     for slice_name in slices:
         done = con_build.execute(
             "SELECT n, last_ord, last_uid FROM shards WHERE slice=? ORDER BY n DESC LIMIT 1",
@@ -446,19 +578,35 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
         # at a time — parse + chunk + hash per document is the whole cost
         # of a pack pass, and it is pure Python (amendment 47)
         page_size = max(50, min(records_per_shard, 500))
-        for page_start in range(0, len(rows), page_size):
+        # THE PAGES STREAM (parallel.compute_pages): the pool computes the
+        # next pages while this thread writes the current one, instead of a
+        # barrier per page — München's profile, 2026-10-24: one page at a
+        # time kept ~1.3 of 4 cpus busy on wikipedia-v8, 47.8 % of the
+        # children's samples idle behind each page's longest article
+        pending: deque = deque()
+
+        def pages_of():
+            for page_start in range(0, len(rows), page_size):
+                page = rows[page_start:page_start + page_size]
+                srcs = []
+                for prow in page:
+                    src = con_src.execute(
+                        "SELECT uid, native_id, path, lang FROM documents WHERE uid=?",
+                        (prow["uid"],)).fetchone()
+                    srcs.append(dict(src) if src is not None else None)
+                pending.append((page, srcs))
+                yield [s for s in srcs if s is not None]
+        stream = ((_held_values(collection, con_build, held, wanted) for wanted in pages_of())
+                  if held is not None else parallel.compute_pages("record", collection, pages_of()))
+        for results in stream:
+            page, srcs = pending.popleft()
             if stop is not None and stop.is_set():
+                stream.close()                 # what the pool still holds is cancelled
+                say_issues()
                 log(f"[pack build] stop requested — {slice_name}: {len(buf)} buffered records "
                     f"discarded, resumes at shard {next_n}")
                 return written, n_records, n_chunks, n_skipped, True
-            page = rows[page_start:page_start + page_size]
-            srcs = []
-            for prow in page:
-                src = con_src.execute(
-                    "SELECT uid, native_id, path, lang FROM documents WHERE uid=?",
-                    (prow["uid"],)).fetchone()
-                srcs.append(dict(src) if src is not None else None)
-            computed = iter(parallel.compute("record", collection, [s for s in srcs if s is not None]))
+            computed = iter(results)
             for prow, src in zip(page, srcs):
                 done_rows += 1
                 if src is None:
@@ -471,6 +619,16 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                                       (prow["uid"], f"pack: {value.get('type')}: {value.get('msg')}"[:200]))
                     continue
                 record, layer, chunk_blob, plates = value
+                found = record.pop(ISSUES_KEY, None)
+                if found is not None:
+                    found = list(found)
+                    why = cutoff_mod.undated(origin, record)
+                    if why is not None:
+                        found.append(("cutoff-undated", why + (
+                            f"; excluded from the snapshot cut at {until}" if until else "")))
+                    page_issues.append((src["uid"], found))
+                    for code, _ in found:
+                        met[code] = met.get(code, 0) + 1
                 if not record.get("origin_hash"):
                     # CORPUS FIDELITY (invariant 11). `origin_hash` is the
                     # only link between a packed record and the origin bytes
@@ -490,6 +648,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                         f"verified against its origin (CLAUDE.md invariant 11). "
                         f"Fix the plugin's canonical_doc; do not pack.")
                 _refuse_uncredited_origin(collection, record)
+                _refuse_too_many_figures(record)
                 if record["uid"] != src["uid"]:
                     n_skipped += 1
                     con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
@@ -498,6 +657,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                 outside = cutoff_mod.excluded(origin, record, until)
                 if outside is not None:
                     n_skipped += 1
+                    undated_out += outside.startswith("no cutoff date")
                     con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
                                       (prow["uid"], f"cutoff: {outside}"[:200]))
                     continue
@@ -534,7 +694,8 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                     shard_plates.setdefault(figure_hash, (src, href))
                 layer_counts[layer] = layer_counts.get(layer, 0) + 1
                 last_row = prow
-                if next_n not in bounds and len(buf) >= records_per_shard:
+                if (slicing.ends_part(record["uid"], len(buf), content_rule) if content_rule is not None
+                        else next_n not in bounds and len(buf) >= records_per_shard):
                     close_shard(last_row)
                     if time.monotonic() - t0 > 30:
                         log(f"[pack build] {slice_name}: shard {next_n - 1} written "
@@ -543,10 +704,15 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                     if stop is not None and stop.is_set():
                         # the unit is a shard: what the page still holds is
                         # recomputed on resume
+                        stream.close()
+                        flush_issues()
+                        say_issues()
                         log(f"[pack build] stop requested — {slice_name}: resumes at shard {next_n}")
                         return written, n_records, n_chunks, n_skipped, True
+            flush_issues()
         close_shard(last_row)
         log(f"[pack build] {slice_name}: {next_n - 1} shard(s)")   # next_n is the NEXT index: one past the last written
+    say_issues()
     return written, n_records, n_chunks, n_skipped, False
 
 
@@ -581,7 +747,8 @@ def write_manifest(collection, con_build, pack_dir: Path, *, snapshot: str, name
         publisher = node_keys.public_key_hex(key)
     m = manifest_mod.new_manifest(
         plugin=origin, name=name, snapshot=snapshot, license_class=license_class,
-        terms_sha256=terms_sha, slicing={**scheme.describe, "records_per_shard": records_per_shard},
+        terms_sha256=terms_sha, slicing={**slicing.describe_for(collection, scheme),
+                                         "records_per_shard": records_per_shard},
         layers=[l.as_manifest() for l in layers_mod.layers_for(collection)],
         cleaning_version=config.CLEANING_VERSION,
         origin={"plugin": origin, "corpus_snapshot": getattr(collection, "snapshot", None),
@@ -626,7 +793,10 @@ def write_manifest(collection, con_build, pack_dir: Path, *, snapshot: str, name
 
 def build(collection, pack_dir: Path, *, snapshot: str | None = None, name: str | None = None,
           records_per_shard: int | None = None, until: str | None = None, sign: bool = True,
-          log=print, stop=None, closed: dict | None = None) -> BuildResult:
+          log=print, stop=None, closed: dict | None = None, held: HeldRecords | None = None) -> BuildResult:
+    """`held`: take each record's line from records already built (a mother's
+    parts) instead of parsing it — RULE 1, for a daughter or re-creation
+    whose records are the same records (`HeldRecords`)."""
     from .. import licensing
     if licensing.state_for(collection) == licensing.MISSING:
         # a pack carries the data onward: it must not carry data whose
@@ -665,9 +835,14 @@ def build(collection, pack_dir: Path, *, snapshot: str | None = None, name: str 
             total = con_build.execute("SELECT COUNT(*) FROM plan").fetchone()[0]
             log(f"[pack build] plan: {total} documents in "
                 f"{con_build.execute('SELECT COUNT(DISTINCT slice) FROM plan').fetchone()[0]} slice(s)")
+        if held is not None:
+            if int(getattr(getattr(collection, "codex", None), "record_line", 1) or 1) != 1:
+                raise BuildError(f"{collection.name}: records with figures are not reused from held "
+                                 f"parts (their figure containers would have to travel too)")
+            _held_index(con_build, held, log)
         written, n_rec, n_chunks, n_skip, interrupted = pack_slices(
             collection, con_src, con_build, pack_dir, records_per_shard=rps, until=until,
-            log=log, stop=stop, closed=closed)
+            log=log, stop=stop, closed=closed, held=held)
         if interrupted:
             return BuildResult(pack_dir, 0, written, n_rec, n_chunks, n_skip, True, None)
         manifest_path = write_manifest(collection, con_build, pack_dir, snapshot=snapshot,

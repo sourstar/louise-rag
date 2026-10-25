@@ -1,5 +1,8 @@
 # Discovering peers and collections — proposal
 
+> **Superseded** (2026-10-25, handover) by `docs/04-sharing.md` §4.2: digests, neighbours, the peer list and the offer are built (`app/share/gossip.py`, `peers.py`, `offer.py`), and the mainline DHT finds swarms by the swarm key.
+
+
 Companion to the torrent transport (`app/acquire/transport_torrent.py`,
 `app/acquire/torrent_publish.py`), which is implemented and tested. **Nothing
 in this document is implemented yet**; §5's Phase-2 plan stands until amended.

@@ -31,6 +31,8 @@ def _hits(prefix, n):
 
 
 class _Resp:
+    status_code = 200
+
     def __init__(self, data):
         self._data = data
 
@@ -162,7 +164,6 @@ def _stub_pipeline(monkeypatch, lists):
                         lambda con, c, q, k, mode, tr, tagged, plan=None, depth=0: {
                             "catalog": [], "merged": lists[c.name], "translations": {},
                             "timings": {"catalog": 0.0}, "scope": {}})
-    # (the entity boost lives inside _search_one_collection now, stubbed above)
     monkeypatch.setattr(retrieval, "_attach_work_fields", lambda con, c, hits, q: hits)
     monkeypatch.setattr(retrieval, "_attach_metadata_and_enqueue", lambda con, c, hits: None)
     monkeypatch.setattr(retrieval.refs, "get_store", lambda: None)

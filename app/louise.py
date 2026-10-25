@@ -1,4 +1,4 @@
-"""louise â the command line. docs/07-commands.md.
+"""louise — the command line. docs/07-commands.md.
 
     louise hold collection create <plugin> --recipe FILE [--space-from CODEX]
                                     [--platform-image D] [--root DIR]
@@ -7,7 +7,7 @@
                                     [--encoder URL [--query-encoder URL] [--api A]
                                      [--embed-model M] [--query-model M]]
                                     [--calibration-set FILE] [--name N] --accept
-    louise hold collection continue <codex> --platform-image D --continues-through <snapshot>
+    louise hold collection continue <codex> --platform-image D --through <snapshot>
                                     [--origin FILE] [--origin-reachable-until <snapshot>]
     louise hold collection replace <codex> --defect FILE [--platform-image D] [--space FILE]
     louise hold collection list
@@ -29,6 +29,7 @@
     louise hold vectors check <collection> [--snapshot ID] [--sample F] [--seed HEX] [--drop]
     louise hold check <collection> [--checks A,B] [--sample F] [--seed HEX] [--snapshot ID] [--json]
     louise hold records show <collection> (<record-id> | --shard <slice>/<n>) [--raw]
+    louise hold issues list <collection> [--code C] [--limit N] [--json]
     louise hold snapshot delta <collection> <from> <to>
     louise hold index build <collection> --vector | show <collection>
     louise hold config show|apply [<collection>]
@@ -39,7 +40,7 @@
 The previous tree (`python -m app.cli`, 07 §7.6) is retired (2026-10-08):
 every name it had that is still useful is one of these.
 
-One flag of Â§7.3's tree is accepted and refused here rather than
+One flag of §7.3's tree is accepted and refused here rather than
 silently doing something else, because what it needs is not built yet:
 `--encoder-image` / `--encoder-weights`, which must re-embed the
 calibration set to fill the space's `calibration` and `envelope` (migration
@@ -84,8 +85,8 @@ def _not_yet(flag: str, step: str) -> None:
 
 
 def _recipe(path: str) -> dict:
-    """A recipe is TOML (07 Â§7.3). JSON is accepted for a file that is
-    already a whole Codex â what `create` took before the template existed,
+    """A recipe is TOML (07 §7.3). JSON is accepted for a file that is
+    already a whole Codex — what `create` took before the template existed,
     and what a test fixture is easiest to write."""
     p = Path(path)
     if p.suffix == ".json":
@@ -175,6 +176,11 @@ def create_deposit(root, name: str, *, platform_image: str | None = None,
         block = _recipe(path) if path else None
         if block is not None and "space" in block:
             block = block["space"]
+        if block is None and encoder and models:
+            # RULE 2 (2026-10-25): the node determines the first deposit
+            # collection's space itself — a held Codex in the space whose
+            # weights the deposit encoder's stated run loads, copied whole
+            source = _space_of_served_model(root, encoder, api, models[0])
     codex = deposit.create(
         root, name, platform_image=preflight_create({}, platform_image),
         encoder_url=encoder, embed_model=models[0] if models else None,
@@ -191,6 +197,24 @@ def create_deposit(root, name: str, *, platform_image: str | None = None,
         query_model=models[1] if models else None)
 
 
+def _space_of_served_model(root, encoder: str, api: str, model: str):
+    """A held text Codex whose space the model at `encoder` runs — the one
+    whose `space.encoder.weights` are the weights the model's stated run
+    loads (app/encoder_resolve.py: verified against the run id; a name never
+    decides) and whose space has no query encoder of its own, since a
+    deposit's encoder is symmetric (02 §2.9). The oldest by name, so the
+    choice is stable; None where the model states no run or no held space
+    is its."""
+    from app import encoder_resolve
+    weights = encoder_resolve.served_weights(encoder, api, model)
+    if not weights:
+        return None
+    found = sorted((n, c) for n, c in col._held(Path(root))
+                   if getattr(c, "space", None) is not None and c.modality == "text"
+                   and c.space.encoder.weights == weights and c.space.query.encoder is None)
+    return found[0][1] if found else None
+
+
 def cmd_create_annotations(a) -> int:
     """`hold collection create annotations --annotates C --from-snapshot S
     --claims FILE --name N` (07 §7.3; 02 §2.10): an annotations collection
@@ -198,16 +222,17 @@ def cmd_create_annotations(a) -> int:
     first snapshot (signed with the node key when there is one) and its
     collection file. Prints the new collection's id."""
     from app.hold import annotations as ann
-    missing = [f for f, v in (("--annotates", a.annotates), ("--from-snapshot", a.from_snapshot),
-                              ("--claims", a.claims), ("--name", a.name)) if not v]
+    missing = [f for f, v in (("--claims", a.claims), ("--name", a.name)) if not v]
     if missing:
-        raise CodexError(f"create annotations takes {', '.join(missing)}: the collection it "
-                         f"annotates, the target snapshot the claims hold from, the claims "
-                         f"file and the new collection's name (02 §2.10)")
+        raise CodexError(f"create annotations takes {', '.join(missing)}: the claims file and "
+                         f"the new collection's name (02 §2.10); the targets and their snapshots "
+                         f"are the claims' unless --annotates and --from-snapshot name them")
     if a.recipe:
         raise CodexError("create annotations takes no --recipe: its Codex is fixed by 02 §2.10 "
                          "and named by the flags")
-    targets = annotation_targets(a.annotates, a.from_snapshot)
+    # named: as named, one --from-snapshot per --annotates; a target alone: its
+    # newest held snapshot; none: the collections the claims name (RULE 2)
+    targets = ann.resolve_targets(a.root, Path(a.claims).read_bytes(), a.annotates, a.from_snapshot)
     container = getattr(a, "container", None) or "jsonl"
     if getattr(a, "dry_run", False):
         _print(ann.preview(a.root, targets=targets, container=container,
@@ -362,6 +387,36 @@ def cmd_deposit_list(a) -> int:
     return 0
 
 
+def cmd_issues_list(a) -> int:
+    """`hold issues list <collection> [--code C] [--limit N] [--json]` (06
+    §6.1, 07 §7.3, amended 2026-10-25): the origin's inconsistencies the
+    last parse of each document met, by uid; the counts per code and each
+    code's meaning first (on stderr, or in the JSON). Read-only: no lock."""
+    from app import collections as collections_mod, issues
+    from app.hold import records as rec
+    name, codex = col.resolve(a.root, a.collection)
+    plugin = collections_mod.PLUGIN_REGISTRY.get(codex.plugin)
+    meaning = issues.declared(plugin) if plugin is not None else dict(issues.PLATFORM)
+    if a.code is not None and a.code not in meaning:
+        raise CodexError(f"{a.code!r} is no issue code of {name} ({codex.plugin}); its codes: "
+                         f"{', '.join(sorted(meaning))}")
+    con = issues.open_read(rec._paths(a.root, name)[1] / "manifest.sqlite")
+    try:
+        summary = issues.summary(con, plugin) if con is not None else {"total": 0, "by_code": {}}
+        items = list(issues.listing(con, code=a.code, limit=a.limit)) if con is not None else []
+    finally:
+        if con is not None:
+            con.close()
+    if a.json:
+        _print({"issues": {"collection": name, "codes": meaning, **summary, "items": items}})
+        return 0
+    for code, got in sorted(summary["by_code"].items()):
+        print(f"{code}\t{got['documents']:,}\t{got['meaning']}", file=sys.stderr)
+    for it in items:
+        print(f"{it['uid']}\t{it['code']}\t{it['detail']}")
+    return 0
+
+
 def cmd_deposit_show(a) -> int:
     from app.hold import deposit
     _print(deposit.show(a.collection, a.key))
@@ -390,7 +445,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                 query_encoder: str | None = None, name: str | None = None,
                 calibration_set: str | None = None, api: str | None = None,
                 embed_model: str | None = None, query_model: str | None = None,
-                calibration_from: str | None = None):
+                calibration_from: str | None = None, embed: str = "off"):
     """`hold collection create <plugin> --recipe FILE` — for the command
     line and for its route alike (07 §7.4: the web interface is a client of
     the same function, not a second implementation). Returns the Codex and
@@ -414,6 +469,13 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
     # SHA-256 of nothing, and the live gutenberg Codex carries exactly that
     # placeholder (found 2026-09-14), so no identity may name no build again.
     platform_image = preflight_create(recipe, platform_image)
+    # A SLICING THE PLUGIN DERIVES AT CREATION (wikidata's family map,
+    # pack-format.md §2 amended 2026-10-24): the block goes into the Codex,
+    # the map into the SHARD. A recipe that states its own slicing keeps it
+    slicing_member = None
+    source_of = tpl.source_for(plugin)
+    if callable(getattr(source_of, "creation_slicing", None)) and "slicing" not in recipe:
+        recipe["slicing"], slicing_member = source_of.creation_slicing(name or plugin)
     if space_from:
         source = col.read(root, space_from)
         want = recipe.get("cleaning_version", 1)
@@ -422,13 +484,13 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                 f"--space-from names a Codex whose cleaning_version is "
                 f"{source.cleaning_version} and this collection's is {want}. "
                 f"The flag exists so that two collections land in one space by "
-                f"construction (02 Â§2.7), and it copies no cleaner version the "
+                f"construction (02 §2.7), and it copies no cleaner version the "
                 f"plugin could not run")
         space = source.space.to_dict()
         # The two computed fields do not travel: `create` re-embeds
         # the set with this node's encoder and writes its OWN
-        # reference. Neither is inside `space_id` (02 Â§2.4), so the
-        # two collections still land in one space by construction â
+        # reference. Neither is inside `space_id` (02 §2.4), so the
+        # two collections still land in one space by construction —
         # and a difference here is real news about the encoder build,
         # which is why it is re-measured rather than copied.
         drifted = (space.pop("envelope"), space["calibration"].pop("vectors"))
@@ -457,8 +519,8 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                          query_model=query_model)
               if encoder else (None, None))
     credits = tpl.expand_archives(recipe.get("archives") or ())
-    # The creator's key: 09 Â§9.12 makes the calibration member's `key`
-    # header required and Â§9.4 lists its signature among a snapshot's files
+    # The creator's key: 09 §9.12 makes the calibration member's `key`
+    # header required and §9.4 lists its signature among a snapshot's files
     # without allowing null, so there is no unsigned collection. Loaded by
     # PATH (invariant 8) and never printed.
     from app.bundles import keys as node_keys
@@ -475,7 +537,7 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
                                                                   models[1], api=api, query=True)
                                                 if query_encoder else None),
                                    space_version=source.version if space_from else None,
-                                   credits=credits, pairs=pairs,
+                                   credits=credits, pairs=pairs, slicing_member=slicing_member,
                                    # RULE 1: a held twin's document-side reference reused
                                    calibration_from=(col.shard_dir_of(
                                        Path(root), col.resolve(root, calibration_from)[0])
@@ -485,11 +547,14 @@ def create_from(root, plugin: str, recipe: dict, *, platform_image: str | None =
         print(f"warning: --space-from {space_from} recorded reference "
               f"vectors {drifted[1]} and this node's encoder produced "
               f"{codex.space.calibration.vectors}. Both collections are "
-              f"in space {codex.space_id} â calibration is not inside "
-              f"space_id â but the two builds are not the same build.",
+              f"in space {codex.space_id} — calibration is not inside "
+              f"space_id — but the two builds are not the same build.",
               file=sys.stderr)
+    # `embed`: what the file spends (07 §7.8) — off for the command; the
+    # node's default for the Library's create from its own recipe (RULE 2)
     return codex, _write_held_file(root, codex, encoder, query_encoder, api=api,
-                                   embed_model=models[0], query_model=models[1])
+                                   embed_model=models[0], query_model=models[1],
+                                   embed=embed)
 
 
 def _encoder_key_args(p) -> None:
@@ -647,10 +712,10 @@ def _write_held_file(root, codex, encoder: str | None = None,
 
 
 def _utc_now() -> str:
-    """09 Â§9.1's time: RFC 3339 in UTC to the second.
+    """09 §9.1's time: RFC 3339 in UTC to the second.
 
-    THE ONE PLACE the clock is read. Nothing under `app/hold/` reads it â
-    every signed body takes its `time` from a caller â so that a test can
+    THE ONE PLACE the clock is read. Nothing under `app/hold/` reads it —
+    every signed body takes its `time` from a caller — so that a test can
     pin what was signed, and so that two objects signed in one command
     cannot disagree about when it ran.
     """
@@ -665,7 +730,7 @@ NO_ENCODER = (
     "it was created with. `hold collection create` embeds the "
     "512-text calibration set with the encoder the recipe names "
     "and writes the reference vectors' hash into the Codex "
-    "(06 Â§6.6); there is no offline path that produces a valid "
+    "(06 §6.6); there is no offline path that produces a valid "
     "Codex, because a placeholder there is a collection no peer "
     "can ever join")
 
@@ -723,10 +788,10 @@ def check_reference_runs(space: dict, recipe, runs: set, *, query: bool = False)
 
 def _embed_for_recipe(space: dict, url: str | None, model: str | None = None, *,
                       api: str = "openai", query: bool = False):
-    """The encoder `create` embeds the calibration set with (06 Â§6.6).
+    """The encoder `create` embeds the calibration set with (06 §6.6).
 
-    There is no Codex yet â the two hashes this produces are Codex
-    fields â so the endpoint is resolved from the RECIPE's space block.
+    There is no Codex yet — the two hashes this produces are Codex
+    fields — so the endpoint is resolved from the RECIPE's space block.
     The endpoint is `--encoder URL`, the one the new file will name. It
     was EMBED_URL; there is no default encoder now (operator, 2026-09-18).
 
@@ -774,11 +839,6 @@ def _embed_for_recipe(space: dict, url: str | None, model: str | None = None, *,
 
 
 def cmd_derive(a) -> int:
-    if a.encoder_image or a.encoder_weights:
-        _not_yet("--encoder-image/--encoder-weights",
-                 "`hold embedder calibrate`, which re-embeds the calibration "
-                 "set for the new encoder (migration step 3)")
-
     mother = col.read(a.root, a.codex_id)
     space_from = col.read(a.root, a.space_from) if a.space_from else None
     space = cx.space_from_dict(_json(a.space)) if a.space else None
@@ -861,7 +921,7 @@ def _inherited_encoder(root, sister: cx.Codex, mother: cx.Codex,
 
 def _acceptance(mother: cx.Codex, sister: cx.Codex) -> None:
     """Creating a sister is an acceptance, of the space and of what follows
-    from it (02 Â§2.7). What can be said without the SHARD on disk is said
+    from it (02 §2.7). What can be said without the SHARD on disk is said
     here; how many chunks are already covered arrives with the coverage map."""
     same = sister.space_id == mother.space_id
     verdict = "matches" if same else "DIFFERS FROM"
@@ -869,7 +929,7 @@ def _acceptance(mother: cx.Codex, sister: cx.Codex) -> None:
                    if same else
                    "her mother's vectors do NOT carry over: this Codex breaks "
                    "with every vector that exists")
-    print(f"space_id {verdict} the mother's ({sister.space_id[:23]}â¦)",
+    print(f"space_id {verdict} the mother's ({sister.space_id[:23]}…)",
           file=sys.stderr)
     print(f"  {consequence}", file=sys.stderr)
     if sister.credits:
@@ -879,23 +939,31 @@ def _acceptance(mother: cx.Codex, sister: cx.Codex) -> None:
                                                   for c in sister.credits),
               file=sys.stderr)
     else:
-        print("  credits: none â she owes nothing and starts from zero",
+        print("  credits: none — she owes nothing and starts from zero",
               file=sys.stderr)
 
 
 def cmd_continue(a) -> int:
     origin = Origin(**_json(a.origin)) if a.origin else None
+    slicing = member = None
+    if getattr(a, "reslice", False):
+        # the slicing the plugin gives a collection created NOW (wikidata: the
+        # map of the code's family list over the pack's class tree), so the
+        # daughter is what a creation from scratch would be (02 §2.7, A1g)
+        mother_name, mother = col.resolve(a.root, a.codex_id)
+        source = tpl.source_for(mother.plugin)
+        if not callable(getattr(source, "creation_slicing", None)):
+            raise CodexError(f"--reslice: the {mother.plugin} plugin derives no slicing at creation")
+        slicing, member = source.creation_slicing(mother_name)
     d = col.continue_(a.root, a.codex_id, platform_image=a.platform_image,
                       continues_through=a.continues_through, origin=origin,
-                      origin_reachable_until=a.origin_reachable_until)
+                      origin_reachable_until=a.origin_reachable_until,
+                      slicing=slicing, slicing_member=member)
     print(d.collection_id)
     return 0
 
 
 def cmd_replace(a) -> int:
-    if a.encoder_image or a.encoder_weights:
-        _not_yet("--encoder-image/--encoder-weights",
-                 "`hold embedder calibrate` (migration step 3)")
     df = _json(a.defect)
     defect = Defect(df["check"], df["toolchain"], tuple(df["witnesses"]),
                     df["expected"], df["observed"], df["rationale"])
@@ -1070,7 +1138,7 @@ def cmd_node_pause(a) -> int:
 #: runs. Wrapped, not rewritten — the module keeps its own flags, and
 #: `python -m tools.<module>` keeps working until step 12 retires it.
 DEV_TOOLS = {"schedule-report": "sched_report", "embedder-profile": "profile_embed",
-             "refs-sync": "sync_refs"}
+             "refs-sync": "sync_refs", "wikidata-classes": "wikidata_classes"}
 
 
 def cmd_dev_tool(a) -> int:
@@ -1340,6 +1408,96 @@ def cmd_dev_drop_rows(a) -> int:
     return 0
 
 
+def cmd_dev_reindex(a) -> int:
+    """`louise dev reindex <collection> --ids FILE [--yes]`: the documents
+    FILE lists (one uid a line) queued for the text-index stage again —
+    `fts_done = 0`, nothing else — so the worker re-cuts them from the live
+    parse, rewrites their text-index entries (delete-then-insert) and their
+    `documents.chunks`. Embedding is untouched: their vectors are the
+    records' (2026-10-25: gutenberg rows indexed under an earlier parse kept
+    stale chunk counts and text, `tools/measure/chunks_drift.py` lists them).
+    A document out of scope or not yet extracted is left alone and counted.
+    The collection's write lock held. A dry run without --yes."""
+    import time
+    from app import db
+    from app.hold import records as rec
+    name, codex = col.resolve(a.root, a.collection)
+    uids = sorted({line.strip() for line in Path(a.ids).read_text(encoding="utf-8").splitlines()
+                   if line.strip()})
+    coll = rec.local_collection(a.root, name, codex)
+    if a.yes:
+        _take_write_lock(a.root, name, "louise dev reindex", exit_code=2)
+    con = db.connect(coll)
+    try:
+        eligible = 0
+        for i in range(0, len(uids), 900):
+            part = uids[i:i + 900]
+            eligible += con.execute(
+                f"SELECT COUNT(*) FROM documents WHERE uid IN ({','.join('?' * len(part))}) "
+                f"AND in_scope=1 AND rdf_done=1", part).fetchone()[0]
+        if not a.yes:
+            print(f"[reindex] would queue {eligible} of {len(uids)} listed document(s) of {name} for the "
+                  f"text-index stage (fts_done = 0; embedding untouched) — --yes", file=sys.stderr)
+            return 0
+        con.execute("BEGIN IMMEDIATE")
+        queued = 0
+        for i in range(0, len(uids), 900):
+            part = uids[i:i + 900]
+            queued += con.execute(
+                f"UPDATE documents SET fts_done=0, updated_at=? WHERE uid IN ({','.join('?' * len(part))}) "
+                f"AND in_scope=1 AND rdf_done=1", [int(time.time()), *part]).rowcount
+        con.execute("COMMIT")
+    finally:
+        con.close()
+    _print({"collection": name, "listed": len(uids), "queued": queued, "left_alone": len(uids) - queued,
+            "note": "the worker's text-index stage re-cuts them; embedding untouched"})
+    return 0
+
+
+def cmd_dev_index_drift(a) -> int:
+    """`louise dev index-drift <collection> [--shards S,…] [--cut-all]
+    [--sample F] [--seed HEX] [--snapshot ID] [--ids-out FILE]`: the
+    documents whose served state — the manifest's chunk count and hashes,
+    the text index — disagrees with the latest held snapshot's records
+    (app/hold/drift.py; the 127-part gap, STATUS 2026-10-25). Read-only;
+    exit 1 when a document is named, 0 when every one agrees, 130 when a
+    signal ended the walk at a part boundary. `--ids-out` is `dev reindex
+    --ids`'s input."""
+    from app.hold import drift, records as rec, seed as seed_mod
+    name, codex = col.resolve(a.root, a.collection)
+    snapshot = seed_mod.latest_snapshot(Path(a.root), name, a.snapshot)
+    local = rec.local_collection(a.root, name, codex)
+    shards = [s.strip() for s in a.shards.split(",") if s.strip()] if a.shards else None
+    try:
+        seed = bytes.fromhex(a.seed) if a.seed else os.urandom(32)
+    except ValueError:
+        raise CodexError(f"--seed is 32 bytes as hex, got {a.seed!r}") from None
+    stop = threading.Event()             # 07 §7.7: a signal ends the walk at the next part
+    before = {}
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            before[sig] = signal.signal(sig, lambda *_a: stop.set())
+        except (ValueError, OSError):    # not the main thread
+            pass
+    try:
+        report = drift.run(a.root, name, codex, snapshot, local, shards=shards, cut_all=a.cut_all,
+                           sample=a.sample, seed=seed, log=lambda m: print(m, file=sys.stderr),
+                           stop=stop.is_set)
+    finally:
+        for sig, handler in before.items():
+            signal.signal(sig, handler)
+    ids = report.pop("ids")
+    if a.ids_out:
+        drift.write_ids(Path(a.ids_out), ids)
+        report["ids_out"] = str(a.ids_out)
+    print(drift.summary_line(report), file=sys.stderr)
+    _print(report)
+    if report["interrupted"]:
+        print("[index-drift] interrupted at a part boundary: the report covers the parts walked", file=sys.stderr)
+        return 130
+    return 1 if report["named"] else 0
+
+
 def cmd_dev_unindexable(a) -> int:
     """`louise dev unindexable <collection> <uid> [--yes]`: a document this
     image's plugin now refuses (`UnindexableDocument`, e.g. gutenberg's parser
@@ -1428,7 +1586,7 @@ def cmd_dev_carry(a) -> int:
     out = {"carry": carry_mod.carry(a.root, from_name, to_name, copy=a.copy,
                                     apply=a.yes, keep=producer,
                                     rebuilt=getattr(a, "rebuilt", False), recut=recut,
-                                    log=say)}
+                                    resliced=getattr(a, "resliced", False), log=say)}
     if recut and producer:
         say(f"[carry] the cut is crossed with --keep {a.keep}: only that archive's rows stay, "
             f"so no row the character cut shortened is left to recut (A1e)")
@@ -1511,6 +1669,52 @@ def cmd_node_show(a) -> int:
     return 0
 
 
+#: The web process `node start` runs beside the worker: the image's own
+#: command (Dockerfile), so one node started either way serves the same app.
+WEB_COMMAND = ("-m", "uvicorn", "app.api:app", "--host", "0.0.0.0")
+WEB_STOP_WAIT_S = 30.0
+
+
+def cmd_node_start(a) -> int:
+    """`node start [--acquire-only | --seed-only] [--only worker|web]` (07
+    §7.3): the daemon — the worker's rounds and the web interface — until
+    stopped. A mode flag sets the node's mode as `node pause` does (it
+    survives a restart, §7.8). `--only` runs one of the two, which is how a
+    deployment with one container each runs them. Exit: the worker's —
+    0 after `node stop`, 130 on a signal (§7.7)."""
+    import subprocess
+    from app import config, node_state
+    if a.acquire_only or a.seed_only:
+        state = "acquire-only" if a.acquire_only else "seed-only"
+        node_state.set_worker_state(state, by=f"louise node start --{state}")
+    web_argv = [sys.executable, *WEB_COMMAND, "--port", str(config.PORT)]
+    if a.only == "web":
+        os.execv(sys.executable, web_argv)
+    web = subprocess.Popen(web_argv) if a.only is None else None
+    try:
+        from app import worker
+        return worker.main()
+    finally:
+        if web is not None and web.poll() is None:
+            web.terminate()
+            try:
+                web.wait(timeout=WEB_STOP_WAIT_S)
+            except subprocess.TimeoutExpired:
+                web.kill()
+                web.wait()
+
+
+def cmd_node_stop(a) -> int:
+    """`node stop` (07 §7.3): asks the worker to finish its current units,
+    commit and exit 0 — through the node's state, which every container of
+    the node shares; it does not wait for the exit."""
+    from app import node_state
+    node_state.request_stop()
+    _print({"node": "stopping", "store": str(node_state.path()),
+            "says": "the worker finishes its current units, commits and exits 0"})
+    return 0
+
+
 def cmd_node_resume(a) -> int:
     from app import node_state
     if a.collection:
@@ -1526,7 +1730,7 @@ def cmd_node_resume(a) -> int:
 
 
 #: 07 §7.3 writes `share <collection>`: the collection stands where a verb would
-_SHARE_VERBS = ("collection", "fetch", "contribute", "attest", "peers", "-h", "--help", "offer")
+_SHARE_VERBS = ("collection", "serve", "fetch", "contribute", "attest", "peers", "-h", "--help", "offer")
 
 
 def cmd_share(a) -> int:
@@ -1715,6 +1919,8 @@ def _fetch_members_here(root, name: str, *, slices, kinds, session=None) -> dict
     con = sqlite3.connect(manifest, isolation_level=None)
     con.row_factory = sqlite3.Row
     try:
+        from app import db
+        db.wal(con)            # invariant 6: the first opener of a fresh manifest decides its mode
         with peers_connection() as node_con:
             hints = transport.hints_for(node_con, codex.collection_id, now=time.time())
         return transport.fetch_members(root, name, codex, slices=slices, kinds=tuple(kinds),
@@ -2077,8 +2283,18 @@ def cmd_show(a) -> int:
     out.pop("refused", None)
     out.update(_copy_state(a.root, name, codex).to_json())
     out.update(_show_shard(a.root, name))
+    # 06 §6.1 (amended 2026-10-25): the origin's inconsistencies the last
+    # parse of each document met, counted per code (`hold issues list`)
+    out["issues"] = _issues_summary(a.root, name, codex)
     _print(out)
     return 0
+
+
+def _issues_summary(root, name: str, codex) -> dict:
+    from app import collections as collections_mod, issues
+    from app.hold import records as rec
+    return issues.summary_at(rec._paths(root, name)[1] / "manifest.sqlite",
+                             collections_mod.PLUGIN_REGISTRY.get(codex.plugin))
 
 
 def _show_shard(root, name: str) -> dict:
@@ -2192,6 +2408,10 @@ def cmd_records_build(a) -> int:
     # collection's own, `<root>/<name>/origin` (07 §7.8); --corpus names
     # another, for a node whose origins are not there yet
     corpus = a.corpus or (Path(a.root) / name / "origin")
+    # the parse pool takes the whole quota here (config.build_parse_processes)
+    from app import config
+    if config.BUILD_WHOLE_QUOTA:
+        config.PARSE_PROCESSES = config.build_parse_processes()
     # Invariant 2: SIGTERM or SIGINT finishes the current unit and exits 130.
     # Without this a stop KILLED the build: its parse pool's children were
     # re-parented to init and kept running (2026-09-21).
@@ -2203,7 +2423,8 @@ def cmd_records_build(a) -> int:
             pass
     result = rec.build(a.root, a.collection, corpus_dir=corpus,
                        snapshot_id=a.snapshot_id,
-                       records_per_shard=a.records_per_shard, stop=stop)
+                       records_per_shard=a.records_per_shard, stop=stop,
+                       records_from=getattr(a, "records_from", None))
     return 130 if result.interrupted else 0
 
 
@@ -3433,11 +3654,11 @@ def _read_member(member):
 
 
 def cmd_embedder_check(a) -> int:
-    """`hold embedder check` â the calibration gate of 03 Â§3.3.
+    """`hold embedder check` — the calibration gate of 03 §3.3.
 
     Exit 0 on a pass, 1 on a fail, 3 when the encoder was unreachable:
-    03 Â§3.1's third outcome is INCONCLUSIVE, "neither a failure nor a
-    pass", and 07 Â§7.7 reserves 3 for exactly that. A gate that exited 1
+    03 §3.1's third outcome is INCONCLUSIVE, "neither a failure nor a
+    pass", and 07 §7.7 reserves 3 for exactly that. A gate that exited 1
     on an unreachable endpoint would flag a collection for a network
     problem.
     """
@@ -3453,7 +3674,7 @@ def cmd_embedder_check(a) -> int:
         return 3
     verdict = "PASS" if run.ok else "FAIL"
     print(f"{verdict}  {run.why()}")
-    print(f"  space       {run.space_id[:23]}â¦")
+    print(f"  space       {run.space_id[:23]}…")
     print(f"  encoder     {codex.space.encoder.label or cx.encoder_field(codex)[1][:23]}")
     print(f"  tolerance   {run.tolerance}")
     print(f"  seed        {run.seed.hex()}")
@@ -3528,9 +3749,9 @@ def _embedder_check_runs(a, name, codex) -> int:
 
 
 def cmd_embedder_benchmark(a) -> int:
-    """`hold embedder benchmark` â the same run, reporting the rate.
+    """`hold embedder benchmark` — the same run, reporting the rate.
 
-    03 Â§3.3 measures it on the same pass as the gate, so this is not a
+    03 §3.3 measures it on the same pass as the gate, so this is not a
     second measurement: it runs the gate and reports the number the
     statement would carry.
     """
@@ -3541,8 +3762,8 @@ def cmd_embedder_benchmark(a) -> int:
         print(f"louise: deferred: {e}", file=sys.stderr)
         return 3
     print(f"{run.tokens_per_s} tokens/s over {512} calibration texts "
-          f"({'compliant' if run.ok else 'NOT COMPLIANT â the rate of a '
-             'non-compliant encoder weights nothing (04 Â§4.5)'})")
+          f"({'compliant' if run.ok else 'NOT COMPLIANT — the rate of a '
+             'non-compliant encoder weights nothing (04 §4.5)'})")
     return 0 if run.ok else 1
 
 
@@ -3569,7 +3790,7 @@ def cmd_embedder_calibrate(a) -> int:
 
 
 def _gate(a):
-    """Run the gate for a collection, resolving its encoder the way 07 Â§7.8
+    """Run the gate for a collection, resolving its encoder the way 07 §7.8
     resolves one: the collection's own endpoint, and nothing else — there
     is no default encoder (operator, 2026-09-18)."""
     from app import embeddings
@@ -3581,7 +3802,7 @@ def _gate(a):
     if not member.is_file():
         raise CodexError(
             f"{name}: no calibration member at {member.name}. It is written "
-            f"by `hold collection create` (09 Â§9.12) and is a member of every "
+            f"by `hold collection create` (09 §9.12) and is a member of every "
             f"snapshot; without it there is nothing to compare against")
     reference = _read_reference(member, codex)
 
@@ -3598,8 +3819,8 @@ def _gate(a):
         except emb.GateDeferred:
             raise
         except Exception as e:                      # noqa: BLE001
-            # 03 Â§3.1: an unreachable encoder is INCONCLUSIVE, not a
-            # failure â "it produces no attestation and no flag, it is
+            # 03 §3.1: an unreachable encoder is INCONCLUSIVE, not a
+            # failure — "it produces no attestation and no flag, it is
             # reported with its reason, and it is retried".
             raise emb.GateDeferred(
                 f"the encoder for {name} was unreachable or failed: {e}") from e
@@ -3611,7 +3832,7 @@ def _read_reference(member, codex):
     from safetensors.numpy import load_file
     tensors = load_file(str(member))
     if "vectors" not in tensors:
-        raise CodexError(f"{member.name}: no `vectors` tensor (09 Â§9.12)")
+        raise CodexError(f"{member.name}: no `vectors` tensor (09 §9.12)")
     return tensors["vectors"].tolist()
 
 
@@ -3698,7 +3919,7 @@ def cmd_embedder_rebaseline(a) -> int:
 
 
 def _write_statement(a, run, codex):
-    """`--accept`. 09 Â§9.12: the statement is "kept in `state/`"."""
+    """`--accept`. 09 §9.12: the statement is "kept in `state/`"."""
     from app.bundles import keys as node_keys
     from app.hold import collection as col, embedder as emb
 
@@ -3861,9 +4082,29 @@ def cmd_config_apply(a) -> int:
     """`hold config apply [<collection>]` (07 §7.8): the files applied now,
     as the node applies them at start — a runtime embed-mode override gives
     way to the file's value. Exit 1 when a named file is refused (an
-    `[encoder]` it does not name: what `embed materialize` reported)."""
-    from app import effective_config
+    `[encoder]` it does not name: what `embed materialize` reported).
+
+    `--set KEY=VALUE …` (07 §7.8 "Pickup", 2026-10-25) writes the values into
+    the collection's file first, through its one writer — the Library's
+    (app/collection_file.py) — then applies it. A key that is not a value of
+    the file, a value the node would refuse, or `--set` with no collection
+    is exit 2 with nothing written, the keys named. Desired state goes into
+    the file only (invariant 10): the state database changes only by the
+    apply, as at start."""
+    from app import collection_file, effective_config
+    written = None
+    if getattr(a, "set", None):
+        if not a.collection:
+            raise CodexError("--set writes one collection's file: `hold config apply <collection> "
+                             f"--set KEY=VALUE`; the keys are {collection_file.accepted()} (07 §7.8)")
+        try:
+            written = collection_file.set_values(a.collection,
+                                                 collection_file.parse_assignments(a.set))
+        except collection_file.SetRefused as e:
+            raise CodexError(str(e)) from None
     out = effective_config.apply(a.collection)
+    if written is not None:
+        out = {"written": written, **out}
     _print(out)
     return 1 if out["refused"] else 0
 
@@ -3880,15 +4121,36 @@ def _node_collections(name: str | None) -> list:
 
 
 def cmd_records_fetch(a) -> int:
-    """`hold records fetch <collection> [--profile P] [--dry-run]` (07 §7.3):
-    the acquisition spec run for a profile — the file's, unless one is
-    named (app/hold/records_fetch.py). Was `corpus add` / `corpus grow`."""
+    """`hold records fetch <collection> [--slice … | --profile P] [--snapshot
+    ID] [--dry-run]` (07 §7.3): the acquisition spec run for slices or a
+    profile — the file's, unless one is named — to a snapshot's cutoff when
+    one is named; the slices a complete fetch took recorded in the file
+    (app/hold/records_fetch.py). Was `corpus add` / `corpus grow`."""
     from app import db
+    from app.acquire.specs import ACQUIRE_REGISTRY
     from app.hold import records_fetch
     collection = _node_collections(a.collection)[0]
-    profile = a.profile or collection.profile or "demo"
+    if getattr(collection, "source", "origin") == "shard":
+        # the loader's own rule (acquire_enabled with source = "shard"):
+        # the origin's files would land in the SHARD this copy reads
+        raise CodexError(f"{collection.name} is held from peers (source = \"shard\", 07 §7.8): "
+                         f"its corpus is the SHARD, and `share fetch {collection.name} --slice …` "
+                         f"takes more of it, not the origin")
+    if a.slice is None and a.snapshot is None:
+        profile = a.profile or collection.profile or "demo"
+        with _closing(db.connect(collection)) as con:
+            return records_fetch.fetch(collection, con, profile, dry_run=a.dry_run)
+    spec = ACQUIRE_REGISTRY.get(collection.plugin)
+    if spec is None:
+        raise CodexError(f"{collection.name}: no acquisition spec is registered for "
+                         f"plugin {collection.plugin!r}")
+    sel = records_fetch.select(collection, spec, slices=a.slice, profile=a.profile,
+                               snapshot_id=a.snapshot)
+    for note in sel.notes:
+        print(f"louise: {collection.name}: {note}", file=sys.stderr)
     with _closing(db.connect(collection)) as con:
-        return records_fetch.fetch(collection, con, profile, dry_run=a.dry_run)
+        return records_fetch.fetch(collection, con, sel.profile, dry_run=a.dry_run,
+                                   until=sel.until, record=sel.record)
 
 
 def cmd_node_health(a) -> int:
@@ -4034,10 +4296,18 @@ def cmd_user(a) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    top = argparse.ArgumentParser(prog="louise", description="Louise â knowledge, kept.")
+    top = argparse.ArgumentParser(prog="louise", description="Louise — knowledge, kept.")
     surfaces = top.add_subparsers(dest="surface", required=True, metavar="hold|share|node|user")
     node = surfaces.add_parser("node", help="the node's mode, or one collection paused (07 §7.3, §7.7)")
     nverbs = node.add_subparsers(dest="verb", required=True)
+    p = nverbs.add_parser("start", help="the daemon: the worker's rounds and the web interface, until stopped")
+    p.add_argument("--acquire-only", action="store_true", dest="acquire_only")
+    p.add_argument("--seed-only", action="store_true", dest="seed_only")
+    p.add_argument("--only", choices=("worker", "web"), default=None,
+                   help="run one of the two (a deployment with a container each)")
+    p.set_defaults(fn=cmd_node_start)
+    p = nverbs.add_parser("stop", help="the worker finishes its current units, commits and exits 0")
+    p.set_defaults(fn=cmd_node_stop)
     p = nverbs.add_parser("pause", help="the node: nothing, seeding only, or download and seeding only, "
                                        "until resume; or ONE collection: its write lock released at "
                                        "the end of the current unit, nothing run for it until resume")
@@ -4076,7 +4346,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("plugin", nargs="?", default=None,
                    help="the plugin the collection is of; omit when the file is a whole Codex")
     p.add_argument("--recipe", default=None,
-                   help="TOML with every Codex field the plugin does not default (06 Â§6.6); "
+                   help="TOML with every Codex field the plugin does not default (06 §6.6); "
                         "`create deposit` takes none")
     p.add_argument("--name", default=None,
                    help="the collection's name; `create deposit` requires it (02 §2.9)")
@@ -4137,7 +4407,6 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(p); p.add_argument("codex_id")
     p.add_argument("--space-from", help="a Codex whose space and layers to copy byte for byte")
     p.add_argument("--space", help="JSON file with the space block")
-    p.add_argument("--encoder-image"); p.add_argument("--encoder-weights")
     p.add_argument("--layers", help="JSON file with the layers list")
     p.add_argument("--update", help="JSON file: cadence, day, grace_days")
     p.add_argument("--work", help="JSON file: tokens, per")
@@ -4155,17 +4424,20 @@ def build_parser() -> argparse.ArgumentParser:
                         "own in one (09 §9.12)")
     p.add_argument("--name", default=None, help="her local name (default: the plugin's, 07 §7.8)")
     p.add_argument("--accept", action="store_true", required=True,
-                   help="creating a sister is an acceptance (02 Â§2.7)")
+                   help="creating a sister is an acceptance (02 §2.7)")
     p.set_defaults(fn=cmd_derive)
 
     p = verbs.add_parser("continue", help="a daughter: a new toolchain, the same space")
     root_arg(p); p.add_argument("codex_id")
     p.add_argument("--platform-image", required=True)
-    p.add_argument("--continues-through", required=True,
-                   help="the mother's LAST snapshot â the boundary, named from "
+    p.add_argument("--through", "--continues-through", dest="continues_through", required=True,
+                   help="the mother's LAST snapshot — the boundary, named from "
                         "the side that already exists")
     p.add_argument("--origin", help="JSON file with the new origin block")
     p.add_argument("--origin-reachable-until")
+    p.add_argument("--reslice", action="store_true",
+                   help="the slicing a creation would get now (wikidata: the family map of the "
+                        "code's families) — every record and vector reused (A1g)")
     p.set_defaults(fn=cmd_continue)
 
     p = verbs.add_parser("replace", help="a corrective sister, with its reproducible defect")
@@ -4174,7 +4446,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="JSON file: check, toolchain, witnesses, expected, observed, rationale")
     p.add_argument("--platform-image")
     p.add_argument("--space", help="JSON file with the space block")
-    p.add_argument("--encoder-image"); p.add_argument("--encoder-weights")
     p.set_defaults(fn=cmd_replace)
 
     p = verbs.add_parser("list", help="collections held, with their lineage")
@@ -4301,15 +4572,25 @@ def build_parser() -> argparse.ArgumentParser:
                        help="the cutoff to build to")
         p.add_argument("--shard-records", type=int, dest="records_per_shard",
                        help="override the Codex's slicing.shard_records (tests)")
+        p.add_argument("--records-from", dest="records_from", metavar="COLLECTION",
+                       help="take the record lines of this held collection's latest snapshot "
+                            "instead of parsing — a daughter or re-creation that changes only "
+                            "the slicing (RULE 1)")
 
     p = rverbs.add_parser("build", help="parse, slice, shard, hash")
     args_records_build(p); p.set_defaults(fn=cmd_records_build)
-    p = rverbs.add_parser("fetch", help="run the acquisition spec for a profile (06 §6.2): "
+    p = rverbs.add_parser("fetch", help="run the acquisition spec for slices or a profile (06 §6.2): "
                                         "the origin's files, on the node's budget")
     p.add_argument("collection")
-    p.add_argument("--profile", default=None,
-                   help="a profile the acquisition spec declares (default: the "
-                        "collection file's)")
+    which = p.add_mutually_exclusive_group()
+    which.add_argument("--slice", nargs="+", default=None, metavar="SLICE",
+                       help="the slices to fetch, as the SHARD's paths name them (lang=it), or "
+                            "`all`; what a complete fetch took is recorded in the collection's file")
+    which.add_argument("--profile", default=None,
+                       help="a profile the acquisition spec declares (default: the "
+                            "collection file's)")
+    p.add_argument("--snapshot", default=None, metavar="ID",
+                   help="run the spec to this snapshot's cutoff (2026-09), by the origin's cutoff rule")
     p.add_argument("--dry-run", action="store_true", dest="dry_run",
                    help="print the plan — files, bytes, the licence state — and fetch nothing")
     p.set_defaults(fn=cmd_records_fetch)
@@ -4368,6 +4649,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_records_show)
 
     # ---- hold config ----------------------------------------------------
+    iss = nouns.add_parser("issues", help="the origin's inconsistencies the parses met (06 §6.1)")
+    isverbs = iss.add_subparsers(dest="verb", required=True)
+    p = isverbs.add_parser("list", help="each document's flagged origin inconsistencies, by uid, "
+                                        "with the counts per code")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--code", default=None, help="only this code's documents")
+    p.add_argument("--limit", type=int, default=None, help="at most N documents' issues")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_issues_list)
+
     cfg = nouns.add_parser("config", help="the effective configuration, each value with its tier (07 §7.8)")
     cverbs = cfg.add_subparsers(dest="verb", required=True)
     p = cverbs.add_parser("show", help="each collection's effective values and the tier each comes from")
@@ -4376,6 +4667,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = cverbs.add_parser("apply", help="apply the files now, as the node does at start: a runtime "
                                         "override gives way to the file's value")
     p.add_argument("collection", nargs="?", default=None)
+    p.add_argument("--set", action="append", default=None, metavar="KEY=VALUE", dest="set",
+                   help="write one value into the collection's file first, then apply it; "
+                        "repeatable (embed=off, share=true, encoder.url=…; 07 §7.8)")
     p.set_defaults(fn=cmd_config_apply)
 
     # ---- hold snapshot --------------------------------------------------
@@ -4431,10 +4725,10 @@ def build_parser() -> argparse.ArgumentParser:
     embd = nouns.add_parser("embedder", help="is this peer's encoder the space's?")
     everbs = embd.add_subparsers(dest="verb", required=True)
 
-    p = everbs.add_parser("check", help="the calibration gate (03 Â§3.3)")
+    p = everbs.add_parser("check", help="the calibration gate (03 §3.3)")
     root_arg(p); p.add_argument("collection")
     p.add_argument("--accept", action="store_true",
-                   help="record a passing run as this peer's statement (09 Â§9.12)")
+                   help="record a passing run as this peer's statement (09 §9.12)")
     p.set_defaults(fn=cmd_embedder_check)
 
     p = everbs.add_parser("benchmark", help="tokens per second on the calibration set")
@@ -4686,7 +4980,9 @@ def build_parser() -> argparse.ArgumentParser:
     dverbs = dev.add_subparsers(dest="verb", required=True)
     for verb, what in (("schedule-report", "what the worker spent its rounds on (tools/sched_report.py)"),
                        ("embedder-profile", "the concurrency an endpoint sustains (tools/profile_embed.py)"),
-                       ("refs-sync", "reference tables from their origins; writes (tools/sync_refs.py)")):
+                       ("refs-sync", "reference tables from their origins; writes (tools/sync_refs.py)"),
+                       ("wikidata-classes", "why the family map gives a class its family, and what candidate "
+                                            "roots would move (tools/wikidata_classes.py)")):
         p = dverbs.add_parser(verb, help=what, add_help=False)
         p.add_argument("rest", nargs=argparse.REMAINDER, help="the instrument's own flags")
         p.set_defaults(fn=cmd_dev_tool)
@@ -4728,6 +5024,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ids", required=True, metavar="FILE", help="one chunk id a line")
     p.add_argument("--yes", action="store_true")
     p.set_defaults(fn=cmd_dev_drop_rows)
+    p = dverbs.add_parser("reindex", help="the documents a file lists queued for the text-index stage "
+                                          "again (fts_done = 0), embedding untouched; writes only with "
+                                          "--yes (the collection's lock)")
+    root_arg(p)
+    p.add_argument("collection")
+    p.add_argument("--ids", required=True, metavar="FILE", help="one uid a line")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(fn=cmd_dev_reindex)
+    p = dverbs.add_parser("index-drift", help="the documents whose manifest counts, hashes or text index "
+                                              "disagree with the latest held snapshot's records; read-only, "
+                                              "exit 1 when any is named")
+    root_arg(p)
+    p.add_argument("collection")
+    p.add_argument("--shards", metavar="SLICE/NNNNN,…", help="these parts alone (default: every part)")
+    p.add_argument("--cut-all", action="store_true",
+                   help="cut every record, not only the parts whose manifest total is not the snapshot's")
+    p.add_argument("--sample", default="0.05", metavar="F",
+                   help="the fraction of parts whose text index is compared chunk by chunk with the "
+                        "records (03 §3.2's seeded sample); 0 for none")
+    p.add_argument("--seed", help="32 bytes as hex; the default is fresh OS entropy, printed in the report")
+    p.add_argument("--snapshot", help="which snapshot (default: the latest held)")
+    p.add_argument("--ids-out", metavar="FILE",
+                   help="the uids `dev reindex --ids` repairs, one a line")
+    p.set_defaults(fn=cmd_dev_index_drift)
     p = dverbs.add_parser("unindexable", help="a document the plugin now refuses: out of every index "
                                               "and its error written at once; writes only with --yes")
     root_arg(p); p.add_argument("collection"); p.add_argument("uid")
@@ -4750,6 +5070,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="into a space that differs only by cutting by tokens (A1e): then drop "
                         "the rows the character cut shortened, not an archive's, and embed "
                         "their documents again")
+    p.add_argument("--resliced", action="store_true",
+                   help="into a collection that differs only by its slicing, its parts cut by "
+                        "content (A1g: a family map added): every vector carried; then "
+                        "`hold records build <to> --records-from <from>`")
     p.add_argument("--predecessor-rows", action="store_true", dest="predecessor_rows",
                    help="after a same-space carry made before provenance was kept: the "
                         "source's coverage rows copied unkeyed and its bundle tree linked "
@@ -4780,7 +5104,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     share = surfaces.add_parser("share", help="bytes leaving here, and the announcement that they exist (04)")
     shverbs = share.add_subparsers(dest="verb", required=True)
-    p = shverbs.add_parser("collection", help="serve what you hold — and announce it; --stop to stop")
+    p = shverbs.add_parser("collection", aliases=["serve"],
+                           help="serve what you hold — and announce it; --stop to stop")
     root_arg(p); p.add_argument("collection")
     p.add_argument("--slices", default=None)
     p.add_argument("--kinds", default=None)
@@ -4855,7 +5180,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--translate", action="store_true")
     p.add_argument("--all-languages", action="store_true")
     p.add_argument("--filter", action="append", metavar="FACET=VALUE",
-                   help="restrict the legs to a facet value (05 §5.2); FACET=!VALUE excludes")
+                   help="restrict the legs to a facet value (05 §5.2); a range facet takes FROM..TO, "
+                        "either end omitted for open; FACET=!VALUE excludes")
     p.set_defaults(fn=cmd_ask_search)
     p = akverbs.add_parser("chat", help="the chat model with the three tools of 05 §5.4; needs CHAT_URL")
     p.add_argument("question", nargs="+")

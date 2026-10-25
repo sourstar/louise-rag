@@ -248,8 +248,15 @@ def _paths(root, name: str):
     return base / "shard", base / STATE, base / STATE / BUILD
 
 
+def _say(line: str) -> None:
+    """A build's log line, flushed: its stdout is a pipe (docker's log), so
+    unflushed lines arrive in bursts, and a live build read 40 parts behind
+    itself looked frozen (München, 2026-10-25)."""
+    print(line, flush=True)
+
+
 def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
-          records_per_shard: int | None = None, log=print, stop=None):
+          records_per_shard: int | None = None, log=_say, stop=None, records_from: str | None = None):
     """`louise hold records build <collection>` — parse, slice, shard, hash.
 
     The build runs into a STAGING directory under the collection's state,
@@ -260,6 +267,11 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
     builder also writes a `manifest.json`, a `TERMS.txt` and a
     `validation.json` of its own shape, none of which are SHARD members
     under a Codex.
+
+    `records_from`: a held collection whose latest snapshot's record lines
+    are taken instead of parsing (RULE 1; a daughter or a re-creation that
+    changes only the slicing, 02 §2.7 amended 2026-10-24) — refused unless
+    the two Codexes differ in nothing that decides a record but the slicing.
 
     Returns the underlying `BuildResult`. The shard entries 09 §9.4 needs
     are in the staging build database, where `hold snapshot create` reads
@@ -322,9 +334,21 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
     from . import snapshot as sn
     rps = int(records_per_shard or slicing.scheme_for(pack_build._origin_plugin(src)).records_per_shard)
     closed = sn.closed_parts(seeder.current_snapshot(shard_dir), rps)
+    reused = None
+    if records_from is not None:
+        from .seed import record_differences
+        from_name, mother = col.resolve(Path(root), records_from)
+        other = [d for d in record_differences(mother, codex) if d != "slicing"]
+        if other:
+            raise RecordsError(f"{name}: --records-from {from_name}: the two differ in {', '.join(other)}, "
+                               f"which decide record bytes (02 §2.7) — its records are not this "
+                               f"collection's, and they are parsed, never taken")
+        reused = pack_build.held_records_of(Path(root), from_name)
+        log(f"[records build] {name}: record lines taken from {from_name}'s latest snapshot "
+            f"({len(reused.paths)} parts), cut by this collection's slicing — none parsed (RULE 1)")
     result = pack_build.build(
         src, staging, snapshot=snapshot_id, name=name, sign=False,
-        records_per_shard=records_per_shard, log=log, stop=stop, closed=closed)
+        records_per_shard=records_per_shard, log=log, stop=stop, closed=closed, held=reused)
     if result.interrupted:
         # A stopped build promotes NOTHING: what it cut stays in staging,
         # recorded, and the next run resumes it. Promoting the finished part

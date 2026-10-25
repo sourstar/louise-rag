@@ -6,7 +6,12 @@ deposit add` is written byte-exact under the collection's `origin/`, and
 that directory is the corpus `discover` lists and `fetch` reads:
 
     origin/<native_id>/<key>            the deposited bytes, exactly
-    origin/<native_id>/.deposit.json    {key, deposited_at, url}
+    origin/<native_id>/.deposit.json    {key, deposited_at, url[, form]}
+
+A URL source's page (06 §6.7, amended 2026-10-25, operator: "Keep all") is
+kept as the page's bytes exactly as fetched, under its LocalRecall key
+(`source-….txt`) like any deposit; the sidecar's `form: "html"` says the
+bytes are a page, and the record is parsed from them (`html.py`).
 
 One directory per deposit, named by its node-wide deposit number, so the
 file inside keeps the name the client gave it — the key LocalAGI lists and
@@ -16,6 +21,19 @@ never starts with a dot (02 §2.9).
 Nothing here writes. `app/hold/deposit.py` places the bytes and runs the
 worker's own stages over them; this module only reads what is there, like
 any plugin reads its corpus.
+
+THE ORIGIN FORM, and why — invariant 11 wants it recorded beside the
+plugin (06 §6.4, §6.7). The origin is the client, and the form is the
+BYTES AS THE CLIENT SENT THEM (the Codex's `origin.form`, "deposit: the
+bytes as the client sent them"; docs/notes/deposit-collections.md A3):
+`.txt`, `.md` or `.pdf`, chosen by the client, stored byte-exact and
+hashed as stored — never a conversion of them, because no other copy
+exists anywhere for a verifier to re-fetch. A URL source's page is kept
+as FETCHED, the response's bytes (`form: "html"` in the sidecar; 06 §6.7
+amended 2026-10-25, operator: "Keep all"), not the text extracted from
+it, so the record — and what the page says about itself — is re-derived
+from the page. A `.git` or `sitemap.xml` source is one deposit of the
+texts joined, its form the `.txt` key it is stored under.
 """
 from __future__ import annotations
 
@@ -43,10 +61,24 @@ PDF_SUFFIX = ".pdf"
 #: `extra` keys are fixed for a collection's life (09 §9.5), and a text
 #: deposit beside a PDF one must not be two shapes. `url` is a source's
 #: (06 §6.7); the `pdf_*` keys are what a PDF says about itself (promise
-#: 9), null for a text deposit.
-EXTRA_KEYS = ("key", "deposited_at", "url", "pdf_title", "pdf_author",
-              "pdf_subject", "pdf_keywords", "pdf_creator", "pdf_producer",
-              "pdf_creation_date", "pdf_mod_date", "pdf_pages")
+#: 9), null for a text deposit. Parser 2's keys:
+EXTRA_KEYS_2 = ("key", "deposited_at", "url", "pdf_title", "pdf_author",
+                "pdf_subject", "pdf_keywords", "pdf_creator", "pdf_producer",
+                "pdf_creation_date", "pdf_mod_date", "pdf_pages")
+#: Parser 3's (06 §6.7, amended 2026-10-25, operator: "Keep all"): what a
+#: source's page says about itself, null on every other deposit.
+#: `html_meta` and `html_links` are every `<meta>` and `<link>` of the page
+#: with all their attributes as written, in its order (Open Graph's `og:*`
+#: among them); `html_jsonld` every JSON-LD block as written; the others
+#: are the values the record's own fields come from, as the page gave them.
+HTML_KEYS = ("html_lang", "html_description", "html_keywords", "html_author",
+             "html_published", "html_modified", "html_canonical", "html_meta",
+             "html_links", "html_jsonld")
+EXTRA_KEYS = EXTRA_KEYS_2 + HTML_KEYS
+
+#: The sidecar's `form` for a URL source's page (absent on every other
+#: deposit, whose form is its key's extension).
+FORM_HTML = "html"
 _PDF_META = {"Title": "pdf_title", "Author": "pdf_author", "Subject": "pdf_subject",
              "Keywords": "pdf_keywords", "Creator": "pdf_creator",
              "Producer": "pdf_producer", "CreationDate": "pdf_creation_date",
@@ -135,12 +167,21 @@ def pdf_content(key: str, data: bytes) -> tuple[list[tuple[str, str]], dict]:
     return sections, meta
 
 
-def check_content(key: str, data: bytes) -> None:
+def check_content(key: str, data: bytes, form: str | None = None) -> None:
     """What `add` checks before storing anything: the form is taken and the
-    bytes are what it says they are."""
+    bytes are what it says they are. A source's page (`form` "html") is
+    kept whatever its bytes are — they are the origin's, never refused for
+    their encoding — but must give some text."""
     check_key(key)
     if not accepted(key):
         raise DepositError(f"{key}: a deposit is .txt, .md or .pdf (06 §6.7)")
+    if form is not None:
+        if form != FORM_HTML:
+            raise DepositError(f"{key}: no deposit form {form!r} (06 §6.7)")
+        from . import html
+        if not html.page_text(data).strip():
+            raise DepositError(f"{key}: the page has no text")
+        return
     if is_pdf(key):
         pdf_content(key, data)
     else:
@@ -168,8 +209,13 @@ def fixed_layer(ctx: int) -> dict:
 class DepositSource:
     source_id = "deposit"
     protocol_version = PROTOCOL_VERSION
-    #: 2: PDF (step 16b), and `extra` carries every key of EXTRA_KEYS.
-    PARSER_VERSION = 2
+    #: 2: PDF (step 16b), and `extra` carries every key of EXTRA_KEYS_2.
+    #: 3: a source's page kept and parsed from its bytes, what it says
+    #: about itself in the record (`HTML_KEYS`; 06 §6.7, amended
+    #: 2026-10-25). A collection keeps the shape its Codex names for its
+    #: life (09 §9.5), so parse answers each collection at ITS parser
+    #: version — 2 or 3 (`parser_version_of`).
+    PARSER_VERSION = 3
     # Nothing is taken from a third party by the plugin itself; a URL
     # source is 04 §4.4's and has its own rule (step 16e).
     license_class = LicenseClass.GREEN
@@ -227,27 +273,87 @@ class DepositSource:
         data = raw.data if raw.data is not None else p.read_bytes()
         if not accepted(key):
             raise UnindexableDocument(f"{key}: not a form a deposit takes (06 §6.7)")
-        extra = dict.fromkeys(EXTRA_KEYS)
+        version = parser_version_of(p)
+        extra = dict.fromkeys(EXTRA_KEYS if version >= 3 else EXTRA_KEYS_2)
         extra.update(key=key, deposited_at=meta.get("deposited_at"),
                      url=meta.get("url") or None)
-        title, creators, date, subjects = key, [], None, []
+        title, creators, date, subjects, lang = key, [], None, [], "und"
         try:
-            if is_pdf(key):
+            if meta.get("form") == FORM_HTML:
+                from . import html
+                sections = sections_of_text(html.page_text(data))
+                if version >= 3:
+                    title, creators, date, subjects, lang = _page_fields(data, extra, key)
+            elif meta.get("form") is not None:
+                raise DepositError(f"{key}: no deposit form {meta['form']!r} (06 §6.7)")
+            elif is_pdf(key):
                 sections, pdf_meta = pdf_content(key, data)
                 extra.update(pdf_meta)
                 title = extra["pdf_title"] or key
                 creators = [extra["pdf_author"]] if extra["pdf_author"] else []
                 date = _pdf_date(extra["pdf_creation_date"])
-                subjects = [k.strip() for k in re.split(r"[;,]", extra["pdf_keywords"] or "")
-                            if k.strip()]
+                subjects = _keywords(extra["pdf_keywords"])
             else:
                 sections = sections_of_text(decode_text(key, data))
         except DepositError as e:
             raise UnindexableDocument(str(e)) from e
         return CanonicalDoc(
             uid=f"{self.source_id}:{raw.ref.native_id}", title=title,
-            creators=creators, language="und", date=date, subjects=subjects,
+            creators=creators, language=lang, date=date, subjects=subjects,
             keys=[], extra=extra, sections=sections, raw_hash=raw.raw_hash)
+
+
+def _keywords(value: str | None) -> list[str]:
+    return [k.strip() for k in re.split(r"[;,]", value or "") if k.strip()]
+
+
+def _page_fields(data: bytes, extra: dict, key: str):
+    """A page's record fields from what it says about itself (invariant
+    11): `title`, `creators`, `date`, `subjects` and `lang` where 09 §9.5
+    has a home for them, the values as the page wrote them and everything
+    else in `extra.html_*`."""
+    from . import html
+    h = html.head(data)
+    extra.update(
+        html_lang=h.lang,
+        html_description=h.named("description"),
+        html_keywords=h.named("keywords"),
+        html_author=h.named("author"),
+        html_published=h.named("article:published_time", "datePublished",
+                               "dcterms.created", "dcterms.issued", "dc.date", "date"),
+        html_modified=h.named("article:modified_time", "og:updated_time", "dateModified",
+                              "dcterms.modified", "last-modified"),
+        html_canonical=h.link("canonical"),
+        html_meta=h.meta, html_links=h.links, html_jsonld=h.jsonld)
+    title = html.clean(h.title) or html.clean(h.named("og:title")) or key
+    author = html.clean(extra["html_author"])
+    return (title, [author] if author else [], html.date_of(extra["html_published"]),
+            _keywords(extra["html_keywords"]), html.language_of(h.lang))
+
+
+_parser_versions: dict[tuple[str, int], int] = {}
+
+
+def parser_version_of(locator: Path) -> int:
+    """The parser version the deposit's collection's Codex names — read
+    from `<collection>/shard/codex.json` (07 §7.8: `origin/<n>/<key>` sits
+    beside `shard/`), cached on the file's path and mtime. A collection
+    created before parser 3 keeps parser 2's record shape for its life (09
+    §9.5); a deposit with no Codex beside it (a test's bytes) is parsed at
+    this image's version."""
+    codex = Path(locator).parent.parent.parent / "shard" / "codex.json"
+    try:
+        stamp = (str(codex), codex.stat().st_mtime_ns)
+    except OSError:
+        return DepositSource.PARSER_VERSION
+    got = _parser_versions.get(stamp)
+    if got is None:
+        try:
+            got = int(json.loads(codex.read_bytes())["parser"]["version"])
+        except (OSError, ValueError, KeyError, TypeError):
+            got = DepositSource.PARSER_VERSION
+        _parser_versions[stamp] = got
+    return got
 
 
 def read_sidecar(d: Path) -> dict | None:

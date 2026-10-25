@@ -84,6 +84,13 @@ class Run:
     fingerprint: str | None = None
     batch_invariant: bool | None = None
     role: str = "document"            # "document" | "query"
+    # CLAUDE.md invariant 12 (operator, 2026-10-18; measured by the gate since
+    # 2026-10-25, the operator's choice A): the sixteen embedded one at a
+    # time a second time, in reverse order, came back byte for byte. False
+    # fails the run whatever its cosines: a vector its own run cannot
+    # reproduce cannot be checked by anyone. None where no single-text pass
+    # was asked for.
+    reproducible: bool | None = None
 
     @property
     def passed(self) -> int:
@@ -102,7 +109,8 @@ class Run:
         """03 §3.3, both conjuncts, both over the drawn n: "at least
         `min_pass` reach cosine >= `tolerance` … and the median of those n
         does too"."""
-        return self.passed >= self.min_pass and self.median >= self.tolerance
+        return (self.passed >= self.min_pass and self.median >= self.tolerance
+                and self.reproducible is not False)
 
     def why(self) -> str:
         if self.ok:
@@ -114,6 +122,11 @@ class Run:
                          f"{self.tolerance} (needs {self.min_pass})")
         if self.median < self.tolerance:
             parts.append(f"median {self.median:.4f} is below {self.tolerance}")
+        if self.reproducible is False:
+            parts.append("the run did not give back its own bytes: the sixteen fingerprint texts, "
+                         "embedded one at a time again in reverse order, came back different "
+                         "(CLAUDE.md invariant 12; set the vendor's reproducibility mode and "
+                         "one request at a time, docs/notes/approved-encoders.md)")
         return "; ".join(parts)
 
 
@@ -135,26 +148,23 @@ def cosine(a: Sequence[float], b: Sequence[float]) -> float:
 COSINE_ROUNDING = 1e-6
 
 
-def within_band(single: Sequence[Sequence[float]], batched: Sequence[Sequence[float]],
-                again) -> bool:
-    """03 §3.3's batch check (amended 2026-10-12, operator: amendment b).
-    Equal bytes pass at once. Otherwise the batched answers are judged
-    against the run's OWN run-to-run variation: `again()` embeds the same
-    texts one at a time a second time, and every batched vector must be as
-    close to its single-text answer as the closest-to-worst single-text
-    repeat is — the lowest cosine between the two single-text passes,
-    less f32 rounding. A batching fault like 2026-07's (a vector for
-    another text) is far outside any such band; last-bit noise is not."""
+def batch_invariant(single: Sequence[Sequence[float]], batched: Sequence[Sequence[float]]) -> bool:
+    """03 §3.3's batch check (*amended 2026-10-25*, operator's choice A,
+    CLAUDE.md invariant 12): the batched answers are the single-text ones
+    byte for byte, or the run is validated for one-at-a-time work only. The
+    band of 2026-10-12 (batched answers within the single-text passes'
+    own variation) is gone: under invariant 12 a run's single-text passes
+    are equal, so the only band left was f32 rounding, and a batched vector
+    that a checker embedding one text cannot reproduce is not admitted."""
     from . import fingerprint
-    if fingerprint.of(batched) == fingerprint.of(single):
-        return True
-    if len(batched) != len(single):
-        return False
-    repeat = again()
-    if len(repeat) != len(single):
-        return False
-    band = min(cosine(a, b) for a, b in zip(single, repeat))
-    return min(cosine(a, b) for a, b in zip(single, batched)) >= band - COSINE_ROUNDING
+    return len(batched) == len(single) and fingerprint.of(batched) == fingerprint.of(single)
+
+
+def reproduces(single: Sequence[Sequence[float]], again: Sequence[Sequence[float]]) -> bool:
+    """Invariant 12 measured: the same texts one at a time, a second pass
+    (the caller sends it in reverse order), give the same bytes."""
+    from . import fingerprint
+    return len(again) == len(single) and fingerprint.of(again) == fingerprint.of(single)
 
 
 def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
@@ -240,14 +250,17 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
     # LOWER bound on throughput rather than an invented number.
     tokens = sum(max(1, cal.item_chars(t) // 4) for t in texts)
 
-    taken = invariant = None
+    taken = invariant = reproducible = None
     if embed_one is not None:
         from . import fingerprint
         sixteen = [texts[i] for i in fingerprint.indices(texts)]
         single = embed_one(sixteen)
         taken = fingerprint.of(single)
+        # invariant 12, in another order (the fresh-load half stays the
+        # measurement harness's: llama-intel-arc-b70 capture.py)
+        reproducible = reproduces(single, list(reversed(embed_one(list(reversed(sixteen))))))
         if contribute is not None:
-            invariant = within_band(single, contribute(sixteen), lambda: embed_one(sixteen))
+            invariant = batch_invariant(single, contribute(sixteen))
 
     return Run(
         space_id=codex.space_id,
@@ -261,6 +274,7 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
         max_input_tokens=codex.space.ctx,
         tokens_per_s=int(tokens / elapsed),
         stated=stated, fingerprint=taken, batch_invariant=invariant, role=role,
+        reproducible=reproducible,
     )
 
 

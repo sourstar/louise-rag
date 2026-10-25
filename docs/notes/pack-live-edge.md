@@ -1,5 +1,8 @@
 # The live edge: running ahead of a frozen pack, and contributing the work
 
+> **Superseded** (2026-10-25, handover) by `docs/04-sharing.md` §4.5 (contributing work), which absorbed most of it.
+
+
 *Proposal, 2026-08-28. For review — nothing here is built.*
 
 A pack is **closed**: `gutenberg-2026-06` holds what the origin held on

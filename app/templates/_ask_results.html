@@ -145,6 +145,8 @@
     {% for f in h.plates %}
     {% if f.kind == 'img' %}{% set src = '/api/ask/figure?' ~ ({'collection': h.source_collection, 'uid': h.uid, 'hash': f.hash}|urlencode) %}
     <figure class="plate"><a href="{{ src }}" target="_blank" rel="noopener" title="open the plate full size"><img src="{{ src }}" loading="lazy" alt="{{ f.caption or 'plate' }}"></a>{% if f.caption %}<figcaption dir="auto">{{ f.caption }}</figcaption>{% endif %}</figure>
+    {% elif f.kind == 'download' %}{% set dl = '/api/ask/figure?' ~ ({'collection': h.source_collection, 'uid': h.uid, 'hash': f.hash, 'download': 1}|urlencode) %}
+    <a class="badge plate-download" href="{{ dl }}" download rel="noopener" title="{{ f.why }} — stored and shared, offered as a file">🖼 {{ f.caption or 'illustration' }} — not displayable ({{ f.media_type or 'unknown type' }}, {{ f.size }}) — download</a>
     {% elif f.kind == 'link' %}
     <a class="badge lapis plate-link" href="{{ f.href }}" target="_blank" rel="noopener" title="{{ f.why }} — the origin shows it">🖼 {{ f.caption or 'illustration' }} — at the source ↗</a>
     {% else %}

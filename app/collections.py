@@ -675,7 +675,7 @@ MEMBER_KINDS = ("records", "vectors", "buckets", "index", "relations", "figures"
 #: 07 §7.7: "the default is records and vectors".
 DEFAULT_KINDS = ("records", "vectors")
 #: Keys a Codex file carried before 07 §7.8 spelled the file out. Each is
-#: still read; `web._write_codex_toml` writes one back only where the Codex
+#: still read; `collection_file._write_codex_toml` writes one back only where the Codex
 #: and the tree do not give the same answer.
 DEPRECATED_CODEX_KEYS = ("profile", "acquire_enabled", "genesis_archive",
                          "snapshot", "corpus_dir", "extras")
@@ -726,9 +726,14 @@ def codex_defaults(codex, name: str, slices, kinds, source: str = "origin") -> d
 
     - `profile`: the acquisition spec's spelling of `slices = "all"` — the
       profile that selects everything. Profiles are local (09 §9.17); the
-      file names the selection.
+      file names the selection. A LIST of slices the origin delivers whole
+      (`spec.slice_profiles`) is spelt by their profiles, combined: what
+      `records fetch --slice` recorded, so the monthly cycle continues it
+      (07 §7.3, amended 2026-10-25). A list it does not deliver whole — a
+      `share fetch` selection of parts — derives none, as before.
     - `acquire_enabled`: the node fetches what the file holds — every
-      slice, records among the kinds — from an origin the plugin can fetch.
+      slice, or the slices the origin delivers whole, records among the
+      kinds — from an origin the plugin can fetch.
       Never when `source = "shard"`: the SHARD is the corpus, and a fetched
       collection acquiring from the origin would write the origin's files
       into it — the second peer's worker started an rsync of the whole
@@ -743,10 +748,17 @@ def codex_defaults(codex, name: str, slices, kinds, source: str = "origin") -> d
     spec = ACQUIRE_REGISTRY.get(codex.plugin)
     everything = acquire_spec.everything_profile(spec) if spec is not None else None
     credited = _credited_archives(codex)
+    if slices == "all":
+        profile = everything
+    elif slices and spec is not None and source != "shard":
+        # a fetched copy's list is parts taken from peers, never an origin fetch
+        profile = acquire_spec.profile_for_slices(spec, slices)
+    else:
+        profile = None
     return {
         "everything": everything,
-        "profile": everything if slices == "all" else None,
-        "acquire_enabled": bool(everything and slices == "all" and "records" in kinds and source != "shard"),
+        "profile": profile,
+        "acquire_enabled": bool(profile and "records" in kinds and source != "shard"),
         "genesis_archive": credited[0] if credited and "vectors" in kinds else None,
         "snapshot": (acquire_spec.pinned_snapshot(spec, codex.origin.spec)
                      if spec is not None else None),
@@ -866,6 +878,16 @@ def config_toml_path(name: str) -> Path:
     exists yet). The file existing IS the collection existing — creation and
     removal act on this path, never on a database row."""
     return _config_dir() / "collections" / f"{name}.toml"
+
+
+def recipe_path(plugin: str) -> Path:
+    """Where this node keeps its recipe for a plugin (06 §6.6; 07 §7.8,
+    amended 2026-10-25): `$CONFIG_DIR/recipes/<plugin>.toml`, desired state
+    an operator writes once. The Library's *new collection* names a plugin
+    and a local name, and the node creates it from this file (RULE 2): the
+    space, the work budget and the description are the creator's choices,
+    made on the command line or in this file, never in a dialog."""
+    return _config_dir() / "recipes" / f"{plugin}.toml"
 
 
 def collections_dir() -> Path:

@@ -1,8 +1,13 @@
 """Model work by priority — docs/notes/scheduling.md §12.
 
 THE LEVELS. Every request to a model server carries one, lowest first:
-corpus embedding, translation, chat, reranking, query embedding (operator,
-2026-09-19). The worker runs at CORPUS; the web process declares each call's
+corpus embedding, then a query's steps IN THEIR ORDER — its translation, its
+embedding, its rerank, its answer — so a query further along goes first
+(operator, 2026-10-25: "Embedding shall have the lower priority and query
+processing the highest; the subsequent steps of a query in process shall be
+processed first to avoid wasting the effort spent for the previous steps";
+the 2026-09-19 order put query embedding on top and chat below it). The
+worker runs at CORPUS; the web process declares each call's
 level with `interactive()`.
 
 ONE GATE PER ENDPOINT. Every request to one model server passes that
@@ -14,15 +19,20 @@ banks nothing while away (§10: idle costs neither the entitlement nor
 earns credit). An unbounded gate (capacity None) admits at once: it orders
 nothing, and exists so that bounding an endpoint is configuration, not code.
 
-LEVELS ORDER WHERE REQUESTS MEET, AT A SHARED GATE, and nowhere else: query
-before corpus on one encoder, chat before translation on one CHAT_URL. Corpus
-work does NOT stand aside from the whole device while something interactive
-runs on another model. It did for one deploy, and measured live
-(2026-09-20) it slowed chat: alone on the card, token-by-token decoding lets
-the Arc drop its clock, so a chat call took 87-92 s (a mean of 990 MHz)
-against 65-72 s beside corpus work (2,695 MHz). With the clock pinned,
-standing aside bought chat 3 s and cost corpus its whole share
-(docs/notes/scheduling.md §12).
+LEVELS ORDER WHERE REQUESTS MEET, AT A SHARED GATE: a query's steps among
+themselves, and before corpus work, on one endpoint. AND CORPUS WORK STANDS
+ASIDE FROM THE WHOLE CARD while any step of a person's query is live on the
+node (operator, 2026-10-25): its next request waits while the claim below
+is held, bounded by its own timeout (a deferral), and wakes on stop. A
+request already sent finishes; a GPU request is not pre-empted. The night of
+2026-10-24 showed what sharing the card cost a query: 130 of 5,792 reranks
+refused with HTTP 500 and a person's rerank took 42.6 s, both beside
+normattiva's re-embed (scheduling-log.md). This was tried once and removed
+on 2026-09-20: alone on the card, token-by-token decoding let the Arc drop
+its clock, so chat took 87-92 s at 990 MHz against 65-72 s beside corpus
+work. What answers that is the GPU governor, which holds the clock at its
+maximum for the claim's lifetime (64.2 s standing aside with the clock
+pinned, docs/notes/scheduling.md §12).
 
 THE CLAIM. The web process still holds a claim in `state/node.sqlite` while
 any interactive call runs (`interactive()`). It is what the GPU governor
@@ -54,10 +64,11 @@ from . import config
 
 class Level(IntEnum):
     CORPUS = 0
+    # a query's steps, in order: the later step goes first
     TRANSLATE = 1
-    CHAT = 2
+    QUERY = 2
     RERANK = 3
-    QUERY = 4
+    CHAT = 4
 
 
 class GateTimeout(httpx.ConnectTimeout):
@@ -210,6 +221,8 @@ class Gate:
         w = _Waiter(lvl, plg, next(self._seq))
         started = time.monotonic()
         deadline = None if timeout is None else started + timeout
+        if lvl == Level.CORPUS:
+            _stand_aside(self.name, deadline, timeout)
         with self._cv:
             self._join(plg)
             self._waiting.append(w)
@@ -353,6 +366,30 @@ def interactive_active() -> bool:
     with _claim_lock:
         _claim_seen["claim"] = (now, active)
     return active
+
+
+def stand_aside(name: str, timeout: float | None) -> None:
+    """`_stand_aside` for a caller about to do corpus work outside a gate
+    (the warm that loads a corpus encoder): nothing at any other level."""
+    if current()[0] == Level.CORPUS:
+        _stand_aside(name, None if timeout is None else time.monotonic() + timeout, timeout)
+
+
+def _stand_aside(name: str, deadline: float | None, timeout: float | None) -> None:
+    """Corpus work's next request waits while a person's query holds the
+    node's claim (any of its steps, on any model of the card): bounded by the
+    request's own deadline — then `GateTimeout`, a deferral — and woken by
+    stop. The claim is read memoised (`interactive_active`), so the wait
+    costs one store read per GATE_POLL_S, not per request."""
+    while interactive_active():
+        if _stopping.is_set():
+            raise GateTimeout(f"{name}: the process is stopping")
+        now = time.monotonic()
+        if deadline is not None and now >= deadline:
+            raise GateTimeout(f"{name}: stood aside for a person's query for the whole "
+                              f"{timeout:.0f}s (level corpus)")
+        _stopping.wait(config.GATE_POLL_S if deadline is None
+                       else max(0.0, min(config.GATE_POLL_S, deadline - now)))
 
 
 class _Board:

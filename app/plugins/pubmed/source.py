@@ -12,6 +12,16 @@ detected as a real change, not a phantom insert) but is permanently excluded
 from further stage processing by the existing `WHERE error IS NULL` gates —
 no manifest schema change needed. A later baseline/updatefile pass over the
 same files re-derives the identical tombstone (idempotent).
+
+THE ORIGIN FORM, and why — invariant 11 wants it recorded beside the
+plugin (06 §6.4). NLM serves the citations as the annual BASELINE and the
+daily UPDATEFILES (MEDLINE XML, gzipped, each with an `.md5` sidecar) and
+through the E-utilities API. Taken: the baseline and updatefiles
+containers, read as published (`PUBMED_SPEC`) — the archival form the
+origin itself versions and checksums, and the only one that carries the
+`DeleteCitation` tombstones. The API returns the same records paginated,
+unversioned and with no checksum a verifier could re-fetch against.
+docs/notes/pack-format.md, "Which origin form, and why".
 """
 import hashlib
 from pathlib import Path
@@ -20,7 +30,7 @@ from xml.etree import ElementTree as ET
 from ...acquire.checksum import verify_sidecar
 from ...acquire.spec import ChecksumSource
 from .. import cursor
-from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass,
+from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, Issue, LicenseClass,
                     Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc)
 from . import medline, pack
 
@@ -67,8 +77,40 @@ def _verify_md5_sidecar(container: Path) -> None:
         _verified_cache.add(key)
 
 
+#: The origin's inconsistencies this plugin's parse reports (06 §6.1,
+#: amended 2026-10-25; app/issues.py). The parser already falls back from
+#: PubDate to its MedlineDate year and then to ArticleDate, so a record with
+#: no date at all is one NCBI gave no date of any kind (operator's choice A,
+#: STATUS 2026-10-25).
+ISSUES = {
+    "no-publication-date": "the citation states no publication date of any kind (PubDate year, "
+                           "MedlineDate year, ArticleDate); `date` is null",
+    "no-title": "neither ArticleTitle nor VernacularTitle has text; the record's title is empty",
+    "other-abstract-only": "the citation's only abstract is an OtherAbstract; `sections` hold "
+                           "the title alone (docs/notes/pubmed-other-abstracts.md)",
+}
+
+
+def issues_of(meta: dict, date: str | None) -> list[Issue]:
+    """What `parse` met in one citation — read off what it already parsed."""
+    out = []
+    if date is None:
+        raw = (meta.get("extra") or {}).get("pub_date_raw") or ""
+        out.append(Issue("no-publication-date",
+                         f"PubDate {raw!r} has no year and there is no ArticleDate" if raw
+                         else "no PubDate and no ArticleDate"))
+    if not (meta.get("title") or "").strip():
+        out.append(Issue("no-title", "ArticleTitle and VernacularTitle are both empty or absent"))
+    others = (meta.get("extra") or {}).get("other_abstracts") or []
+    if not meta.get("abstract") and others:
+        out.append(Issue("other-abstract-only", ", ".join(
+            f"{o.get('type') or 'untyped'}/{o.get('language') or '?'}" for o in others)))
+    return out
+
+
 class PubmedSource:
     source_id = "pubmed"
+    ISSUES = ISSUES
     #: What `plugin_io.origin_locator` translates to 09 §9.5's `#` when it
     #: writes the record's `origin`. The locator stays opaque outside this
     #: plugin; only its member SEPARATOR is declared, because the record
@@ -237,6 +279,7 @@ class PubmedSource:
         sections = [("Title", meta["title"])]
         if meta["abstract"]:
             sections.append(("Abstract", meta["abstract"]))
+        date = medline.publication_date(elem)
         return CanonicalDoc(
             uid=f"{self.source_id}:{meta['pmid']}",
             title=meta["title"],
@@ -254,7 +297,7 @@ class PubmedSource:
             # chunk id, no chunks_root and no vector.
             creators=medline.authors(elem),
             language=medline.language(elem),
-            date=medline.publication_date(elem),
+            date=date,
             # WITH THE QUALIFIER. "Neoplasms/genetics", not "Neoplasms" —
             # §9.5's own pubmed example writes it that way and this
             # plugin declares `subjects` a tree facet with separator "/",
@@ -282,4 +325,5 @@ class PubmedSource:
             extra={**meta["extra"], "authors": meta["authors_full"]},
             sections=sections,
             raw_hash=raw.raw_hash,
+            issues=issues_of(meta, date),
         )

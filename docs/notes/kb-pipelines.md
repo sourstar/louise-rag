@@ -7,6 +7,8 @@ that Louise offers. I would like to build knowledge base pipelines to group
 collections/annotations, and fuse the results with rerankers and rrf."
 Nothing is built. Three decisions are in §6.*
 
+**FUTURE (operator, 2026-10-24): "Keep the pipelines as a future implementation. Before we must conclude ongoing migrations and measurements."** Decided so far: D1 by rank through the pertinence gate (spec §P3a); D3 after it works here. Open: D2 (LocalAI model YAML with a `pipeline.retrieval` block, recommended, or a Louise TOML file). Nothing is built until the migrations and measurements in progress are concluded.
+
 **WAITING (operator, 2026-10-22): "Write the specs but wait for the end of the current developments. Then we summarize what's planned and we decide. Some decisions need time to decant."** Specs: [`kb-pipelines-spec.md`](kb-pipelines-spec.md), [`kb-protocol-extensions.md`](kb-protocol-extensions.md).
 
 ## 1. Where things stand
@@ -201,6 +203,12 @@ two lists. A pipeline could merge them into one list.
 Recommendation: by rank. If nothing is said: by rank, since this is what
 was asked.
 
+*Refined by the operator, 2026-10-24: merge "only if it makes sense" —
+any collection returns something, pertinent or not.* A leg passes a
+**pertinence gate** before it is fused: one cross-encoder scores each leg's
+best records on its one scale, and a leg below a threshold measured on
+labelled queries is left out and named (spec §P3a).
+
 **D2 — Where a pipeline is defined.**
 
 | choice | effect |
@@ -219,3 +227,9 @@ Recommendation: Louise. If nothing is said: Louise.
 | never | our own extensions only (§3A) |
 
 Recommendation: after. If nothing is said: after.
+
+**DECIDED (operator, 2026-10-24): after.** Upstream hears from us once the
+pipeline runs here: issues for §3B 1–3 (the third reshaped by D2's
+proposal of 2026-10-24 into a `pipeline.retrieval` stage of a LocalAI model
+YAML, beside the realtime pipeline's `vad`/`transcription`/`llm`/`tts`),
+PRs only where the maintainers welcome them.

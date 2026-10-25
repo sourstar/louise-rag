@@ -31,14 +31,16 @@ def pystem_algorithm(group: str) -> str | None:
         return config.STEMMER_LANGS[group]
     return None
 
-def _schema(group: str, validity: bool = False) -> tantivy.Schema:
+def _schema(group: str, validity: bool = False, names: bool = False) -> tantivy.Schema:
     """Per GROUP, deliberately: adding a field changes the schema, and
     tantivy refuses to open an index whose on-disk schema differs. Scoping
     body_stem to the groups that use it means adopting PyStemmer for one
     language rebuilds ONE index instead of every index on the node.
     `validity`: a versioned collection's three columns (app/validity.py),
     fast fields a search ranges over; only such a collection's indexes
-    carry them, so every other index keeps its schema."""
+    carry them, so every other index keeps its schema. `names`: the exact
+    names a record is found by and its popularity (`index_names_of`), only
+    in a collection whose plugin gives them (wikidata), for the same reason."""
     b = tantivy.SchemaBuilder()
     b.add_integer_field("book_id", stored=True, indexed=True, fast=True)
     if validity:
@@ -56,6 +58,10 @@ def _schema(group: str, validity: bool = False) -> tantivy.Schema:
         # stems get their own field so `body` keeps the ORIGINAL text for
         # snippets; not stored, because nobody reads stems
         b.add_text_field("body_stem", stored=False, tokenizer_name="stem_tok")
+    if names:
+        # whole names as keys (`name_key`), matched exactly; doc ids only
+        b.add_text_field(NAME_KEYS, stored=False, tokenizer_name="raw", index_option="basic")
+        b.add_integer_field(POPULARITY, stored=False, indexed=False, fast=True)
     return b.build()
 
 def _analyzer_for(group: str) -> tantivy.TextAnalyzer:
@@ -94,7 +100,7 @@ def get_index(group: str, collection=None) -> tantivy.Index:
         from app import validity as validity_mod
         with_validity = validity_mod.declared(collection) is not None
         try:
-            idx = tantivy.Index(_schema(group, with_validity), path=str(path))
+            idx = tantivy.Index(_schema(group, with_validity, names_capable(collection)), path=str(path))
         except Exception as e:
             raise RuntimeError(_open_failure(path, e)) from None
         idx.register_tokenizer("lang_tok", _analyzer_for(group))
@@ -225,14 +231,17 @@ def group_documents(collection=None) -> dict[str, int]:
 
 
 def _add_one(writer, algorithm, lang: str, book_id: int, chunks: list[dict],
-             extra: dict | None = None):
+             extra: dict | None = None, names: tuple | None = None):
     writer.delete_documents("book_id", book_id)
-    for c in chunks:
+    for i, c in enumerate(chunks):
         fields = dict(book_id=book_id, chunk_id=c["id"],
                       chapter=c["chapter"] or "", lang=lang or "und",
                       body=c["text"])
         if extra:
             fields.update(extra)          # a versioned collection's columns
+        if names is not None and i == 0:
+            # the record's names on its FIRST chunk alone: one hit per record
+            fields[NAME_KEYS], fields[POPULARITY] = name_keys(names[0]), int(names[1])
         fields.update(_indexed(algorithm, c["chapter"] or "", c["text"]))
         writer.add_document(tantivy.Document(**fields))
 
@@ -303,7 +312,9 @@ def close_all() -> None:
 def index_books(entries, collection=None) -> None:
     """Index several documents through ONE writer per language group.
 
-    `entries` is an iterable of (lang, book_id, chunks).
+    `entries` is an iterable of (lang, book_id, chunks[, columns[, names]]):
+    `names` is `index_names_of`'s (pairs, popularity) for a collection whose
+    plugin gives them, else None.
 
     The per-document writer this replaced cost a fresh 64 MB allocation, a
     commit and a merge wait for EVERY document — a fixed cost that does not
@@ -324,7 +335,12 @@ def index_books(entries, collection=None) -> None:
     for entry in entries:
         lang, book_id, chunks = entry[0], entry[1], entry[2]
         extra = entry[3] if len(entry) > 3 else None     # app/validity.py's columns
-        by_group.setdefault(group_for(lang), []).append((lang, book_id, chunks, extra))
+        names = entry[4] if len(entry) > 4 else None
+        parts = by_section_language(lang, chunks, section_languages(collection))
+        for k, (part_lang, part) in enumerate(parts):
+            # the names ride on the record's first part (its first chunk)
+            by_group.setdefault(group_for(part_lang), []).append(
+                (part_lang, book_id, part, extra, names if k == 0 else None))
     for group, items in by_group.items():
         idx = get_index(group, collection)
         algorithm = pystem_algorithm(group)
@@ -332,8 +348,8 @@ def index_books(entries, collection=None) -> None:
                                      else collections_mod.default_collection().fts_dir),
                                 group), idx)
         with lock:
-            for lang, book_id, chunks, extra in items:
-                _add_one(writer, algorithm, lang, book_id, chunks, extra)
+            for lang, book_id, chunks, extra, names in items:
+                _add_one(writer, algorithm, lang, book_id, chunks, extra, names)
             writer.commit()
         # NOT wait_merging_threads(): the merges run on the writer's own
         # threads and the writer is kept, so nothing here waits for them —
@@ -341,19 +357,198 @@ def index_books(entries, collection=None) -> None:
         # write transaction.
 
 
+#: a record IN SEVERAL LANGUAGES (ISO 639-2 `mul`): wikidata's entity, one
+#: section per language, its heading the language's code (09 §9.5;
+#: wikidata-build-plan.md "What is a record")
+MULTILINGUAL = "mul"
+
+
+# ---- names (operator, 2026-10-24: wikidata, "names only") -----------------
+#
+# A collection whose plugin gives `index_names(extra)` (wikidata) is also
+# searched BY NAME: every label and alias of a record, in every language,
+# indexed as a whole-name key on its first chunk, with its popularity.
+# A question finds a record when one of the question's word sequences IS one
+# of its names — Wikidata's own "near match" (WikibaseCirrusSearch), ranked
+# the way it ranks: the longer name first ("Monaco di Baviera" before
+# "Monaco"), then the more linked entity (sitelinks) — so a famous entity is
+# not outranked by an obscure one for having more names, as BM25 over a bag
+# of every name would rank it (a field's length divides its score). The
+# names enter no record, no section and no vector: index only, rebuilt from
+# the records like the rest of the text index.
+#
+# THE STANDARD ALTERNATIVE in full: Elasticsearch with WikibaseCirrusSearch's
+# mapping (per-language label fields, `labels_all`, near-match and a
+# popularity rescore) — a search service beside tantivy; it pays if names
+# need fuzzy or prefix matching, which exact keys do not give.
+
+NAME_KEYS, POPULARITY = "name_keys", "popularity"
+#: the longest word sequence of a question tried as a name
+NAME_MAX_WORDS = 8
+#: a one-word sequence shorter than this (in ASCII) is no name worth a hit
+NAME_MIN_CHARS = 3
+
+
+def names_capable(collection) -> bool:
+    plugin = collections_mod.PLUGIN_REGISTRY.get(getattr(collection, "plugin", None))
+    return callable(getattr(plugin, "index_names", None))
+
+
+def index_names_of(collection, extra: dict | None) -> tuple | None:
+    """`(pairs, popularity)` from a record's `extra`, or None."""
+    plugin = collections_mod.PLUGIN_REGISTRY.get(getattr(collection, "plugin", None))
+    fn = getattr(plugin, "index_names", None)
+    return fn(extra or {}) if callable(fn) else None
+
+
+def name_key(text: str) -> str:
+    """A name as it is matched: NFKC, case-folded, without diacritics, every
+    run of what is not a letter or digit one space. The question's word
+    sequences are made the same way, so "Pechino", "PECHINO" and "pechino"
+    are one key, and "Beyoncé" is "beyonce"."""
+    import unicodedata
+    t = unicodedata.normalize("NFKD", unicodedata.normalize("NFKC", text or "").casefold())
+    t = "".join(ch for ch in t if not unicodedata.combining(ch))
+    return " ".join("".join(ch if ch.isalnum() else " " for ch in t).split())
+
+
+def name_keys(pairs) -> list[str]:
+    """Every name twice: `|<key>` (any language) and `<lang>|<key>` (the
+    language's base code: `en-gb` → `en`), for a search limited to
+    languages. Sorted, so a record is indexed the same way every time."""
+    out: set[str] = set()
+    for lang, name in pairs:
+        k = name_key(name)
+        if k:
+            out.add("|" + k)
+            out.add(f"{str(lang).split('-')[0].lower()}|{k}")
+    return sorted(out)
+
+
+def _name_grams(query: str) -> dict[int, list[str]]:
+    """The question's word sequences by length, longest first."""
+    words = name_key(query).split()
+    out: dict[int, list[str]] = {}
+    for n in range(min(NAME_MAX_WORDS, len(words)), 0, -1):
+        grams = sorted({" ".join(words[i:i + n]) for i in range(len(words) - n + 1)})
+        if n == 1:
+            grams = [g for g in grams if not (g.isascii() and len(g) < NAME_MIN_CHARS)]
+        if grams:
+            out[n] = grams
+    return out
+
+
+def search_names(collection, query: str, limit: int, langs: list[str] | None = None,
+                 book_ids: list[int] | None = None, validity: dict | None = None) -> list[dict]:
+    """The records one of whose names IS a word sequence of `query` — in any
+    language, or in one of `langs` when the search is limited to languages —
+    longest name first, then the most linked, as `search` returns hits (the
+    record's first chunk). `[]` for a collection without names."""
+    if not names_capable(collection) or limit <= 0:
+        return []
+    grams = _name_grams(query)
+    if not grams:
+        return []
+    prefixes = [f"{l.split('-')[0].lower()}|" for l in langs] if langs else ["|"]
+    out: list[dict] = []
+    seen: set[int] = set()
+    try:
+        for n, gs in grams.items():
+            keys = [p + g for p in prefixes for g in gs]
+            band: list[dict] = []
+            for group in existing_groups(collection):
+                idx = get_index(group, collection)
+                idx.reload()
+                q = tantivy.Query.term_set_query(idx.schema, NAME_KEYS, keys)
+                if book_ids:
+                    q = tantivy.Query.boolean_query([
+                        (tantivy.Occur.Must, q),
+                        (tantivy.Occur.Must, tantivy.Query.term_set_query(idx.schema, "book_id", book_ids))])
+                if validity:
+                    from app import validity as validity_mod
+                    for f in validity_mod.fts_filters(idx.schema, validity):
+                        q = tantivy.Query.boolean_query([(tantivy.Occur.Must, q), (tantivy.Occur.Must, f)])
+                searcher = idx.searcher()
+                for pop, addr in searcher.search(q, limit, order_by_field=POPULARITY).hits:
+                    doc = searcher.doc(addr)
+                    band.append({"book_id": doc["book_id"][0], "chunk_id": doc["chunk_id"][0],
+                                 "chapter": doc["chapter"][0] if doc["chapter"] else "",
+                                 "lang": doc["lang"][0], "text": doc["body"][0],
+                                 "popularity": int(pop), "source": f"names:{group}"})
+            # the band in one order on every peer: the most linked, then the record
+            band.sort(key=lambda h: (-h["popularity"], tie_key(h["chunk_id"])))
+            for h in band:
+                if h["book_id"] in seen:
+                    continue
+                seen.add(h["book_id"])
+                h["score"] = float(n) + min(h["popularity"], 999_999) / 1_000_000
+                out.append(h)
+                if len(out) >= limit:
+                    return out
+    except Exception:
+        return out
+    return out
+
+
+def section_languages(collection) -> tuple[str, ...]:
+    """The languages a collection's `mul` records are written in, one section
+    each, headed by the code: its plugin's declared `languages` (wikidata:
+    `("en",)`; the Codex's list, fixed for the collection's life, 02 §2.7).
+    `()` for a plugin that declares none — every other one today. The ONE
+    source for the text leg here and for the legs that filter by the record's
+    language (`retrieval.limited_langs`)."""
+    plugin = collections_mod.PLUGIN_REGISTRY.get(getattr(collection, "plugin", None))
+    return tuple(getattr(plugin, "languages", ()) or ())
+
+
+def by_section_language(lang: str, chunks: list[dict],
+                        languages: tuple[str, ...] = ()) -> list[tuple[str, list[dict]]]:
+    """A document's chunks as (language, chunks) by the index group they go
+    to. A `mul` record's sections are each written in ONE language, named by
+    its heading: each is indexed in that language's group, stemmed as that
+    language, with that language stored — so "in English" finds a wikidata
+    entity's English text, and the English stemmer reads it (2026-10-24: all
+    75.9 M of the node's sat in `other`, unstemmed, and every language-limited
+    search skipped them).
+
+    ONLY A HEADING THE PLUGIN DECLARES (`languages`, `section_languages`)
+    names a language. The first form took any two or three letters for a
+    code, and a `mul` record headed otherwise would have been filed under a
+    language that is not one: pubmed's structured abstracts carry "AIM",
+    gutenberg's chapters "II" and "IV" (caught 2026-10-24, before any node
+    ran it). Any other heading keeps the record's `mul`, in `other`, as before.
+    Every other record: one part, its own language, as before. The list is
+    fixed for the collection's life, so a re-index never leaves a part in a
+    group it has left. A heading `<language>:<part>` — wikidata's history
+    section, `en:history` (parser 2) — is that language's text too."""
+    if (lang or "") != MULTILINGUAL or not languages:
+        return [(lang, chunks)]
+    parts: dict[str, list[dict]] = {}
+    for c in chunks:
+        head = (c.get("chapter") or "").strip().split(":", 1)[0]
+        parts.setdefault(head if head in languages else MULTILINGUAL, []).append(c)
+    return list(parts.items()) or [(lang, chunks)]
+
+
 def index_book(lang: str, book_id: int, chunks: list[dict], collection=None):
     """One document, one commit — for callers that genuinely have one."""
     index_books([(lang, book_id, chunks)], collection)
 
 def delete_book(lang: str, book_id: int, collection=None):
-    group = group_for(lang)
-    idx = get_index(group, collection)
+    """A `mul` record's sections may be in several groups
+    (`by_section_language`): it is deleted from each group its sections can
+    be in, and from `other`."""
     base = (collection.fts_dir if collection is not None
             else collections_mod.default_collection().fts_dir)
-    writer, lock = _writer((str(base), group), idx)
-    with lock:
-        writer.delete_documents("book_id", book_id)
-        writer.commit()
+    groups = [group_for(lang)]
+    if (lang or "") == MULTILINGUAL:
+        groups = list(dict.fromkeys([group_for(l) for l in section_languages(collection)] + groups))
+    for group in groups:
+        idx = get_index(group, collection)
+        writer, lock = _writer((str(base), group), idx)
+        with lock:
+            writer.delete_documents("book_id", book_id)
+            writer.commit()
 
 def rewrite_without(group: str, collection=None) -> int:
     """Rewrite this group's index from its own live documents, so that what
@@ -371,6 +566,12 @@ def rewrite_without(group: str, collection=None) -> int:
     O(the group's documents), which is why only an erasable collection's
     erase calls it — a deposit collection is small (an agent's memory, the
     files one person uploaded). Returns the documents kept."""
+    if names_capable(collection):
+        # the names are indexed, not stored: a rewrite from the stored fields
+        # would drop every one of them, silently. No such collection erases
+        # (wikidata keeps its records); one that did rebuilds from its records
+        raise RuntimeError(f"{group}: a text index with names (fts.search_names) is rebuilt from "
+                           f"its records, never rewritten from its stored fields")
     idx = get_index(group, collection)
     base = (collection.fts_dir if collection is not None
             else collections_mod.default_collection().fts_dir)
@@ -417,6 +618,54 @@ def book_chunks(group: str, book_id: int, collection=None) -> list[dict]:
             "lang": doc["lang"][0],
             "text": doc["body"][0],
         })
+    return out
+
+
+def chunk_counts(collection, book_ids: list[int]) -> dict[int, int]:
+    """How many chunks the text index holds for each of `book_ids`, summed
+    over every language group (a document's sections can land in several,
+    `by_section_language`). One term-set query and tantivy's own `terms`
+    aggregation over the `book_id` fast field per group, no stored document
+    read: 1.1 µs a document in windows of 2,000, measured on 1.6M chunks
+    (2026-10-25, `louise dev index-drift`). A document the index lacks is
+    absent from the result. Keep a window under tantivy's bucket limit
+    (65,000)."""
+    out: dict[int, int] = {}
+    if not book_ids:
+        return out
+    for group in existing_groups(collection):
+        idx = get_index(group, collection)
+        idx.reload()
+        q = tantivy.Query.term_set_query(idx.schema, "book_id", list(book_ids))
+        got = idx.searcher().aggregate(q, {"n": {"terms": {"field": "book_id", "size": len(book_ids) + 1}}})
+        for b in got["n"]["buckets"]:
+            k = int(b["key"])
+            out[k] = out.get(k, 0) + int(b["doc_count"])
+    return out
+
+
+def stored_chunks(collection, book_ids: list[int]) -> dict[int, list[tuple[str, str, str]]]:
+    """Every stored chunk of each of `book_ids` as (chunk id, heading, text),
+    over every group, sorted by chunk id — what the text index would give a
+    reader, for comparing with a record's own cut. Reads stored documents,
+    so it is the costly half of `dev index-drift` and runs on its sample."""
+    out: dict[int, list[tuple[str, str, str]]] = {}
+    if not book_ids:
+        return out
+    for group in existing_groups(collection):
+        idx = get_index(group, collection)
+        idx.reload()
+        q = tantivy.Query.term_set_query(idx.schema, "book_id", list(book_ids))
+        searcher = idx.searcher()
+        total = searcher.search(q, 1, count=True).count
+        if not total:
+            continue
+        for _score, addr in searcher.search(q, total).hits:
+            doc = searcher.doc(addr)
+            out.setdefault(int(doc["book_id"][0]), []).append(
+                (doc["chunk_id"][0], doc["chapter"][0] if doc["chapter"] else "", doc["body"][0]))
+    for v in out.values():
+        v.sort()
     return out
 
 
@@ -467,9 +716,9 @@ def search(group: str, query: str, limit: int = 20, collection=None,
            book_ids: list[int] | None = None, langs: list[str] | None = None,
            validity: dict | None = None) -> list[dict]:
     """book_ids, when given, is a hard prefilter (Tantivy term-set query
-    ANDed with the text query) — not used by retrieval.search()'s default
-    entity-boost wiring (a soft score bonus instead), but a real, directly
-    testable primitive for a future "search only within this entity" mode.
+    ANDed with the text query) — the facet filters' restriction (05 §5.2:
+    "a filter restricts; nothing boosts"), and the one a resolved
+    identifier's would be.
     `langs` is the same kind of prefilter on the stored `lang`, for the
     mixed groups (cjk, other) when a query is restricted to languages."""
     try:

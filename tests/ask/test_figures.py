@@ -7,6 +7,8 @@ held, carried plate checked against its hash and its real type, 404 for
 anything else and 403 for a red collection. And the snapshot's uid → shard
 lookup the two stand on, in the collection's own id order and per slice."""
 import hashlib
+import struct
+import zlib
 from types import SimpleNamespace
 
 import pytest
@@ -21,8 +23,16 @@ from app.pack import records as pack_records
 from tests.deposit.test_deposit_identity import node  # noqa: F401
 from tests.hold.conftest import TERMS, a_root, pubmed
 
-PLATE_A = b"\x89PNG\r\n\x1a\n" + b"plate A"
-PLATE_C = b"\x89PNG\r\n\x1a\n" + b"plate C"
+def png(width: int, height: int, tail: bytes) -> bytes:
+    """A PNG's signature and IHDR — all a display check reads (08 §8.7:
+    the caps are applied to the DECLARED dimensions, before any pixel)."""
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + struct.pack(">I", len(ihdr)) + b"IHDR" + ihdr
+            + struct.pack(">I", zlib.crc32(b"IHDR" + ihdr)) + tail)
+
+
+PLATE_A = png(640, 480, b"plate A")
+PLATE_C = png(640, 480, b"plate C")
 H_A = "sha256:" + hashlib.sha256(PLATE_A).hexdigest()
 H_B = "sha256:" + "bb" * 32
 H_C = "sha256:" + hashlib.sha256(PLATE_C).hexdigest()
@@ -104,7 +114,7 @@ def test_a_chunk_carries_the_plates_whose_markers_fall_inside_it(node):  # noqa:
         in_text = [c["text"][m.end():].split("]", 1)[0].lstrip(":").strip() for m in F.MARKER.finditer(c["text"])]
         assert [f["caption"] for f in figs] == in_text, (c["text"], figs)
         for f in figs:
-            assert set(f) == {"hash", "media_type", "caption", "state"}, "never the bytes"
+            assert set(f) == {"hash", "media_type", "bytes", "caption", "state"}, "never the bytes themselves"
     placed = [f for c in chunks for f in per_seq[c["seq"]]]
     states = {(f["hash"], f["caption"]): f["state"] for f in placed}
     assert states == {(H_A, "The frontispiece"): "held", (H_B, "A map"): "not-carried", (H_C, ""): "not-held"}
@@ -135,13 +145,16 @@ def test_the_route_serves_a_held_carried_plate_and_nothing_else(node, monkeypatc
     assert r.status_code == 200 and r.content == PLATE_A and r.headers["content-type"] == "image/png"
     r = client.get("/api/ask/figure", params={"collection": name, "uid": "pubmed:10", "hash": H_B})
     assert r.status_code == 404 and "not carried" in r.json()["error"]
-    # bytes that are not the type the record names are not served as it
+    # bytes that are not the type the record names are not SHOWN as it (08
+    # §8.7 amended 2026-10-25: the disagreement refuses display, and the
+    # plate is still the collection's, offered as a file)
     fig.write_container(fig.path_for(d, "year=2023", 2), {H_A: PLATE_A, H_C: PLATE_C})
     record = _record("10", [dict(FIGURES[3], media_type="image/jpeg")])
     pack_records.write_shard(d / "records/year=2023/00002.jsonl.zst", [record], record_line=2)
     pack_records.reset_caches()
-    with pytest.raises(F.FigureNotServed, match="not the image/jpeg"):
-        F.figure_bytes(name, "pubmed:10", H_C)
+    assert F.figure_bytes(name, "pubmed:10", H_C) == (PLATE_C, "image/jpeg")
+    r = client.get("/api/ask/figure", params={"collection": name, "uid": "pubmed:10", "hash": H_C})
+    assert r.status_code == 415 and "not the image/jpeg" in r.json()["error"] and r.content != PLATE_C
 
 
 def test_a_red_collection_s_figures_are_never_served(node, monkeypatch):  # noqa: F811
@@ -214,3 +227,69 @@ def test_a_parts_placement_is_built_once_then_looked_up(node, monkeypatch):  # n
     assert again == first
     assert [h["record_plates"] for h in again] == [4] * len(seqs) + [0]
     assert any(h["figures"] for h in again), "the fixture places plates"
+
+
+# ---- 08 §8.7 amended 2026-10-25 ("Every plate"): display is the gate ------
+
+SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+BOMB = png(10_000, 10_000, b"a few hundred kilobytes that decode to gigabytes")
+H_SVG = "sha256:" + hashlib.sha256(SVG).hexdigest()
+H_BOMB = "sha256:" + hashlib.sha256(BOMB).hexdigest()
+
+
+def test_the_display_rule_is_the_closed_list_within_the_caps():
+    assert F.not_displayable(PLATE_A, "image/png") is None
+    jpeg = (b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+            b"\xff\xc0\x00\x11\x08\x01\xe0\x02\x80\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01")
+    assert F.declared_size(jpeg, "image/jpeg") == (640, 480)
+    assert F.not_displayable(jpeg, "image/jpeg") is None
+    assert "not a type this page shows" in F.not_displayable(SVG, "image/svg+xml")
+    assert "not the image/png" in F.not_displayable(SVG, "image/png"), "the bytes decide, never the record"
+    assert "64-megapixel" in F.not_displayable(BOMB, "image/png"), "the DECLARED dimensions, before any pixel"
+    big = png(100, 100, b"\0" * (F.MAX_DISPLAY_BYTES + 1))
+    assert "16 MiB" in F.not_displayable(big, "image/png")
+    assert "declares no dimensions" in F.not_displayable(b"\x89PNG\r\n\x1a\n" + b"short", "image/png")
+    # what an entry alone answers: its type and its size
+    assert F.entry_not_displayable({"media_type": "image/svg+xml", "bytes": 12_000}).startswith(
+        "image/svg+xml, 11.7 KB")
+    assert "16 MiB" in F.entry_not_displayable({"media_type": "image/png", "bytes": F.MAX_DISPLAY_BYTES + 1})
+    assert F.entry_not_displayable({"media_type": "image/png", "bytes": 10}) is None
+
+
+def test_a_plate_display_refuses_is_carried_and_served_only_as_a_download(node, monkeypatch):  # noqa: F811
+    """Stored and shared like any plate; never inline, never as
+    image/svg+xml: without `download` the route answers 415 and no bytes, so
+    an <img> pointed at it gets nothing to decode; with it, octet-stream and
+    `attachment`, so a browser saves it and never renders it."""
+    codex, name, d, snap = an_illustrated_copy(node)
+    monkeypatch.setattr(collections_mod, "louise_root", lambda: node.parent)
+    fig.write_container(fig.path_for(d, "year=2023", 2), {H_A: PLATE_A, H_SVG: SVG, H_BOMB: BOMB})
+    text = "Words.\n\n[Illustration: A plan]\n\nMore.\n\n[Illustration: A bomb]\n\nEnd."
+    entries = [{"hash": H_SVG, "media_type": "image/svg+xml", "bytes": len(SVG), "seq": 0, "carried": True},
+               {"hash": H_BOMB, "media_type": "image/png", "bytes": len(BOMB), "seq": 1, "carried": True}]
+    pack_records.write_shard(d / "records/year=2023/00002.jsonl.zst", [_record("10", entries, text)],
+                             record_line=2)
+    pack_records.reset_caches()
+    app = FastAPI()
+    app.include_router(api.router)
+    client = TestClient(app)
+    for h, raw, why, ext in ((H_SVG, SVG, "image/svg+xml", "svg"), (H_BOMB, BOMB, "64-megapixel", "png")):
+        assert F.figure_bytes(name, "pubmed:10", h)[0] == raw, "carried and held: the bytes are there"
+        r = client.get("/api/ask/figure", params={"collection": name, "uid": "pubmed:10", "hash": h})
+        assert r.status_code == 415 and why in r.json()["error"] and raw not in r.content
+        assert not r.headers["content-type"].startswith("image/")
+        r = client.get("/api/ask/figure", params={"collection": name, "uid": "pubmed:10", "hash": h,
+                                                   "download": 1})
+        assert r.status_code == 200 and r.content == raw, "byte for byte"
+        assert r.headers["content-type"] == "application/octet-stream"
+        assert r.headers["content-disposition"] == f'attachment; filename="{fig.bare(h)[:16]}.{ext}"'
+        assert r.headers["x-content-type-options"] == "nosniff"
+    # the display path: held, and the SVG said not displayable with its type and size
+    collection = SimpleNamespace(name=name, layers=codex.layers)
+    record, shard = F.record_of(d, snap, "pubmed:10", "numeric")
+    placed = [f for figs in F.for_record(collection, record, F.held_hashes(d, shard)).values() for f in figs]
+    assert [f["state"] for f in placed] == ["held", "held"]
+    shown = F.mentions("[Illustration: A plan] and [Illustration: A bomb]", placed, link="https://o/x")
+    assert shown[0]["kind"] == "download" and shown[0]["media_type"] == "image/svg+xml"
+    assert shown[0]["bytes"] == len(SVG) and shown[0]["why"].startswith("not displayable: image/svg+xml")
+    assert shown[1]["kind"] == "img", "its header is read at the route: the <img> gets a 415, never the bytes"

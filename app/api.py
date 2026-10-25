@@ -272,10 +272,14 @@ class ControlBody(BaseModel):
 
 class HoldCreateBody(BaseModel):
     plugin: str
-    recipe: str | dict           # the recipe TOML's text, or the table itself
+    # the recipe TOML's text, or the table itself; absent: the node's own
+    # recipe for the plugin (`collections.recipe_path`; RULE 2, 2026-10-25)
+    recipe: str | dict | None = None
     space_from: str | None = None
     platform_image: str | None = None
-    encoder: str | None = None   # this node's endpoint for it — required, no default
+    # this node's endpoint for it; absent: the node decides it from the
+    # recipe's weights (`suggest_encoder`; RULE 2, 2026-10-25)
+    encoder: str | None = None
     # a bi-encoder's query side (MedCPT): its endpoint. The Codex pins its
     # reference vectors too (09 §9.12), so `create` embeds the set with it
     query_encoder: str | None = None
@@ -285,6 +289,22 @@ class HoldCreateBody(BaseModel):
     embed_model: str | None = None
     query_model: str | None = None
     name: str | None = None      # the local name; default: the plugin's (07 §7.8)
+    # what the file takes and spends (07 §7.8): absent, the node decides —
+    # for a create from the node's own recipe, every slice and "on-demand"
+    # (DEFAULT_EMBED_MODE), as the Library's take holds the whole of what it
+    # takes; for a create from a recipe given here, what the command writes
+    # (no slice, embed off), as before
+    slices: str | list[str] | None = None
+    embed: str | None = None
+
+
+def _plain_create_refusal(plugin: str) -> str:
+    path = collections_mod.recipe_path(plugin)
+    return (f"this node has no recipe for {plugin}: a new {plugin} collection's encoder, work "
+            f"budget and description are its creator's choices, made once — on the command line "
+            f"(`louise hold collection create {plugin} --recipe FILE`) or by saving the recipe as "
+            f"{path} — after which the Library creates one from a name alone. A {plugin} "
+            f"collection a peer offers is taken from \"Offered by peers\" with no recipe at all")
 
 
 @app.post("/api/hold/collection/create", dependencies=[Depends(auth.require_admin)])
@@ -305,28 +325,69 @@ def hold_collection_create(body: HoldCreateBody):
     from .hold.codex import CodexError
     if body.plugin not in collections_mod.PLUGIN_REGISTRY:
         raise HTTPException(409, f"unknown plugin: {body.plugin!r}")
+    # PLUG AND PLAY (RULE 2, amended 2026-10-25): the Library names a plugin
+    # and a local name; the recipe is the node's own for that plugin
+    recipe_text = body.recipe
+    from_node = recipe_text is None
+    if from_node:
+        path = collections_mod.recipe_path(body.plugin)
+        if not path.is_file():
+            raise HTTPException(409, _plain_create_refusal(body.plugin))
+        recipe_text = path.read_text(encoding="utf-8")
     try:
-        recipe = (tomllib.loads(body.recipe) if isinstance(body.recipe, str)
-                  else dict(body.recipe))
+        recipe = (tomllib.loads(recipe_text) if isinstance(recipe_text, str)
+                  else dict(recipe_text))
     except tomllib.TOMLDecodeError as e:
         raise HTTPException(409, f"the recipe is not TOML: {e}") from None
+    encoder, query_encoder = body.encoder, body.query_encoder
+    api, embed_model, query_model = body.api, body.embed_model, body.query_model
+    decided = ""
     try:
         louise.preflight_create(recipe, body.platform_image)
-        if not body.encoder:
-            raise CodexError(louise.NO_ENCODER)
+        if not encoder:
+            # the node decides the encoder from the recipe's weights — the
+            # space of `space_from` where one is named — and refuses, in
+            # plain words, where nothing it runs loads them: a Codex holds
+            # reference vectors only its own encoder computes (06 §6.6)
+            space = recipe.get("space")
+            if body.space_from:
+                from .hold import collection as col
+                space = col.read(louise._default_root(), body.space_from).space
+            from . import encoder_resolve
+            if not encoder_resolve.space_weights(space)[0]:
+                raise CodexError("the recipe names no space.encoder.weights, and a collection's "
+                                 "encoder is found by its weights: a recipe carries its [space] "
+                                 "(06 §6.6), or --space-from names a held collection's")
+            s = suggest_encoder(None, space=space)
+            if not s["resolved"]:
+                raise CodexError(
+                    f"{s['missing'] or 'the node could not decide the encoder'}. A new collection's "
+                    f"description holds reference vectors only its own encoder computes (06 §6.6), "
+                    f"so nothing was created; once the model is there, create it again — or name "
+                    f"one by hand on the command line: --encoder URL --embed-model M")
+            encoder, api = s["url"], s["api"]
+            embed_model, query_model = s["embed_model"], s["query_model"]
+            if encoder_resolve.has_query_encoder(space):
+                query_encoder = encoder
+            decided = s["note"]
         # the file's api and model keys (07 §7.8, amended 2026-10-09), refused
         # at once: an endpoint naming no model, with no key naming it, is a
         # refusal that needs no work — and never answered with the label
-        louise.check_api(body.api)
-        louise.model_keys(body.encoder, body.query_encoder, embed_model=body.embed_model,
-                          query_model=body.query_model)
+        louise.check_api(api)
+        louise.model_keys(encoder, query_encoder, embed_model=embed_model,
+                          query_model=query_model)
+        slices = body.slices if body.slices is not None else ("all" if from_node else [])
+        if isinstance(slices, str) and slices != "all":
+            raise CodexError('slices is "all" or a list of slice names')
+        embed = louise.check_embed_mode(body.embed or ("on-demand" if from_node else "off"))
     except CodexError as e:
         raise HTTPException(409, str(e)) from None
-    cli = f"louise hold collection create {body.plugin} --recipe FILE --encoder {body.encoder}"
-    if body.query_encoder:
-        cli += f" --query-encoder {body.query_encoder}"
-    for flag, value in (("--api", body.api), ("--embed-model", body.embed_model),
-                        ("--query-model", body.query_model)):
+    cli = (f"louise hold collection create {body.plugin} --recipe "
+           f"{collections_mod.recipe_path(body.plugin) if from_node else 'FILE'} --encoder {encoder}")
+    if query_encoder:
+        cli += f" --query-encoder {query_encoder}"
+    for flag, value in (("--api", api), ("--embed-model", embed_model),
+                        ("--query-model", query_model)):
         if value:
             cli += f" {flag} {value}"
     if body.space_from:
@@ -335,12 +396,14 @@ def hold_collection_create(body: HoldCreateBody):
         cli += f" --name {body.name}"
     job_id = jobs.submit(jobs.CREATE, {
         # the text as sent: a TOML date is not JSON, and the job parses it
-        "plugin": body.plugin, "recipe": body.recipe, "space_from": body.space_from,
-        "platform_image": body.platform_image, "encoder": body.encoder,
-        "query_encoder": body.query_encoder, "api": body.api,
-        "embed_model": body.embed_model, "query_model": body.query_model,
-        "name": body.name, "cli": cli})
-    return JSONResponse(status_code=202, content=jobs.view(jobs.get(job_id)))
+        "plugin": body.plugin, "recipe": recipe_text, "space_from": body.space_from,
+        "platform_image": body.platform_image, "encoder": encoder,
+        "query_encoder": query_encoder, "api": api,
+        "embed_model": embed_model, "query_model": query_model,
+        "name": body.name, "cli": cli, "slices": slices, "embed": embed})
+    return JSONResponse(status_code=202, content={**jobs.view(jobs.get(job_id)),
+                                                  "decided": decided, "slices": slices,
+                                                  "embed": embed})
 
 
 #: an uploaded claims file is held here until the worker's job reads it
@@ -373,13 +436,14 @@ async def hold_collection_create_annotations(
     from .hold.codex import CodexError
     name, annotates, from_snapshot = name.strip(), annotates.strip(), from_snapshot.strip()
     title, summary, annotator, snapshot = title.strip(), summary.strip(), annotator.strip(), snapshot.strip()
-    missing = [f for f, v in (("annotates", annotates), ("from_snapshot", from_snapshot)) if not v]
+    # PLUG AND PLAY (RULE 2, amended 2026-10-25): the name and the claims
+    # file are the user's; the targets are the collections the claims' uids
+    # name, each from its newest held snapshot, the title and summary are
+    # derived and the annotator is the claims' contributor — all decided by
+    # the node (`annotations.resolve_targets`), the flags still taken
     if not dry_run and not name:
-        missing.append("name")
-    if missing:
-        raise HTTPException(409, f"create annotations takes {', '.join(missing)}: the collection it "
-                                 f"annotates, the target snapshot the claims hold from and the new "
-                                 f"collection's name (02 §2.10)")
+        raise HTTPException(409, "create annotations takes a name: the new collection's local name "
+                                 "(02 §2.10)")
     # the body, bounded as it streams: a claims file is one JSON object a
     # line, and one beyond this is a mistake the web process does not buffer
     parts, received = [], 0
@@ -394,8 +458,12 @@ async def hold_collection_create_annotations(
                                  "JSON claim per line)")
     root = louise._default_root()
     try:
-        # several targets: comma-separated, one snapshot per target (02 §2.10, 2026-10-20)
-        targets = louise.annotation_targets(annotates, from_snapshot)
+        # several targets: comma-separated, one snapshot per target (02 §2.10, 2026-10-20);
+        # none named: decided from the claims (RULE 2)
+        targets = await run_in_threadpool(ann.resolve_targets, root, data, annotates or None,
+                                          from_snapshot or None)
+        annotates = ",".join(t for t, _ in targets)
+        from_snapshot = ",".join(s for _, s in targets)
         if not dry_run:
             louise.preflight_create({}, platform_image or None)
             from .hold import collection as hold_col
@@ -529,48 +597,66 @@ def node_model_server(held=None) -> tuple[str, str]:
     return "", ""
 
 
-def suggest_encoder(codex) -> dict:
+def suggest_encoder(codex, *, space=None) -> dict:
     """What a collection's `[encoder]` says on THIS node, decided by the node
-    (RULE 2): the model server is the node's (`node_model_server`); the model
-    NAMES are taken from a held collection in the same space (the same
-    `space.encoder.weights`: its file already says). `resolved` is whether
-    the node can embed and search this collection as it stands; when it
-    cannot, `missing` says in plain words what would supply it. `models` is
-    the server's list, for the command line and the create form. Nothing
-    here is a default encoder (operator, 2026-09-18): the file still names
-    its own, and the create holds the server's stated run to the Codex's
-    weights, so a wrong name is refused, never written."""
+    (RULE 2, amended 2026-10-25): the model server is the node's
+    (`node_model_server`); the model NAMES are, in order, a held
+    collection's in the same space (the same `space.encoder.weights` and
+    query weights: its file already says), else the models on that server
+    whose stated runs load exactly those weights (app/encoder_resolve.py —
+    a model counts only if its weights digest matches; a name never
+    decides). `resolved` is whether the node can embed and search this
+    collection as it stands; when it cannot, `missing` says in plain words
+    what would supply it. `models` is the server's list, for the command
+    line. Nothing here is a default encoder (operator, 2026-09-18): the file
+    still names its own, and the create holds the server's stated run to
+    the Codex's weights, so a wrong name is refused, never written.
+
+    `space`: a recipe's `[space]` table, for a create, where no Codex exists
+    yet; otherwise the Codex's."""
+    from . import encoder_resolve
     held = collections_mod.load_all()
     url, api = node_model_server(held)
     out = {"url": url, "api": api, "embed_model": "", "query_model": "",
            "known_from": None, "models": [], "resolved": False, "missing": "", "note": ""}
-    space = getattr(codex, "space", None)
-    weights = getattr(getattr(space, "encoder", None), "weights", None)
-    qenc = getattr(getattr(space, "query", None), "encoder", None)
-    qweights = getattr(qenc, "weights", None) if qenc is not None else None
-    label = getattr(getattr(space, "encoder", None), "label", "") or ""
+    space = space if space is not None else getattr(codex, "space", None)
+    weights, qweights, label = encoder_resolve.space_weights(space)
     if weights:
         for c in held:
-            cw = getattr(getattr(getattr(c.codex, "space", None), "encoder", None), "weights", None)
-            if cw == weights and getattr(c, "url", None):
+            cw, cq, _ = encoder_resolve.space_weights(getattr(c.codex, "space", None))
+            # both sides: a held file in another query space names the wrong query model
+            if cw == weights and (cq or None) == qweights and getattr(c, "url", None):
                 out.update(url=c.url.rstrip("/"), api=c.api, embed_model=c.model,
                            query_model=(c.query_model or c.model), known_from=c.name, resolved=True)
                 break
     if out["url"]:
         out["models"] = _models_at(out["url"])
-    if codex is None:
+    if weights and out["url"] and not out["resolved"]:
+        found = encoder_resolve.on_server(out["url"], out["api"], out["models"], space)
+        if found is not None:
+            out.update(embed_model=found[0], query_model=found[1], known_from="server", resolved=True)
+    what = label or f"weights {str(weights)[:23]}…"
+    if codex is None and space is None:
         out["note"] = "the collection's description is pulled when it is taken; the encoder is decided then"
+    elif out["resolved"] and out["known_from"] == "server":
+        out["note"] = (f"this node's model server runs this collection's encoder ({what}) as "
+                       f"{out['embed_model']!r}" + (f" and {out['query_model']!r} for questions"
+                                                    if out["query_model"] != out["embed_model"] else "")
+                       + ": its stated run loads the very weights the collection names")
     elif out["resolved"]:
         out["note"] = (f"the same encoder as your collection {out['known_from']!r}: this node embeds "
                        f"and searches it as it does that one")
     elif not out["url"]:
         out["missing"] = ("this node knows no model server yet (no collection names one, and the "
-                          "platform's [deposit] names no encoder)")
+                          "platform's [deposit] names no encoder): name one in platform.toml's "
+                          "[deposit] encoder, and this node embeds and searches the collection")
         out["note"] = "held, not searched here: " + out["missing"]
     else:
-        out["missing"] = (f"no model on this node's server ({out['url']}) is known to run this "
-                          f"collection's encoder ({label or 'weights ' + str(weights)[:23] + '…'}); "
-                          f"install it there, and this node embeds and searches the collection")
+        out["missing"] = (f"no model on this node's server ({out['url']}) serves this collection's "
+                          f"encoder ({what}; weights {str(weights)[:23]}…): install it there — add "
+                          f"the model to the server, behind VeGa so its runs state their weights — "
+                          f"and this node embeds and searches the collection; until then it is "
+                          f"held — its texts and the peers' vectors arrive — and not searched here")
         out["note"] = "held, not searched here: " + out["missing"]
     out["weights"] = {"document": weights, "query": qweights}
     return out
@@ -1143,3 +1229,9 @@ def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
                      len(result["hits"]), _source_qualified_ids(result["hits"]))
 
     return StreamingResponse(sse(), media_type="text/event-stream")
+
+
+# LAST: every command of the tree as one route (07 §7.4, app/api_commands.py).
+# Registered after every explicit route, which therefore answers first.
+from . import api_commands  # noqa: E402
+app.include_router(api_commands.router)

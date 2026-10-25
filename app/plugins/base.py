@@ -89,6 +89,14 @@ NativeIdOrder = Literal["bytes", "numeric"]
 #: does not implement, and the version is part of the image the Codex names
 #: by digest.
 PROTOCOL_VERSION = 1
+#: `origin_versions` (06 §6.2): the origin keeps its history / replaces in place.
+ORIGIN_HISTORY, ORIGIN_REPLACES = "history", "replaces"
+
+
+def origin_versions(plugin) -> str:
+    """A plugin's `origin_versions`; ORIGIN_HISTORY — keep — when it says nothing."""
+    v = getattr(plugin, "origin_versions", ORIGIN_HISTORY)
+    return v if v in (ORIGIN_HISTORY, ORIGIN_REPLACES) else ORIGIN_HISTORY
 
 
 @dataclass(frozen=True)
@@ -174,10 +182,13 @@ class Figure:
     alignment from the first repeat onward, and 39% of Gutenberg's
     illustrated books repeat a plate.
 
-    `carried` False means the origin HAS the image and this collection may
-    not admit it — a media type outside 08 §8.7's closed list, SVG above
-    all. The entry is still written: a reader meeting a caption and no
-    picture must be able to tell "not here yet" from "not here ever".
+    `carried` is True for every image the origin has (operator, 2026-10-25:
+    "Every plate", 08 §8.7 amended): a type outside 08 §8.7's closed list
+    or a figure over its caps is carried as opaque bytes like any other,
+    and only DISPLAY refuses it. False remains in the format for records
+    written before the amendment (gutenberg parser ≤ 10), which named an
+    SVG without carrying it; a reader must still tell "not here yet" from
+    "not here ever" for those.
     """
     href: str
     media_type: str
@@ -204,6 +215,25 @@ class Figure:
 
 
 @dataclass(frozen=True)
+class Issue:
+    """An INCONSISTENCY IN THE ORIGIN that a parse met (06 §6.1, amended
+    2026-10-25, operator: "any inconsistency is logged and flagged"): a
+    catalogue entry missing or damaged, an image the epub references and
+    does not hold, a record with no date of any kind. Not an error — the
+    document parses and its record is written — and not part of the
+    record: it never reaches a record line, `content_hash`, `origin_hash`
+    or a chunk, so reporting one more or one fewer moves no byte any peer
+    holds and bumps no PARSER_VERSION. Whoever runs the parse records it in
+    the collection's local state (app/issues.py), keyed (uid, code).
+
+    `code` is one the plugin declares in its `ISSUES` (or a platform code,
+    app/issues.py `PLATFORM`); `detail` says which file, element or value,
+    in plain words."""
+    code: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
 class CanonicalDoc:
     """architecture-v2.md §2 — the source-agnostic document shape every
     plugin's parse() produces."""
@@ -221,10 +251,14 @@ class CanonicalDoc:
     #: plugin that yields none, which is what keeps a figureless
     #: collection's record line byte-identical to `record_line` 1.
     figures: list[Figure] = field(default_factory=list)
+    #: the origin's inconsistencies this parse met (`Issue`), OUTSIDE the
+    #: record: `pack/build.py` writes the line from the fields above and
+    #: never reads this one. Empty for a plugin that reports none.
+    issues: list[Issue] = field(default_factory=list)
 
 
 @dataclass
-class DiscoverState:        # not frozen: received/committed advance during the scan
+class DiscoverState:       # not frozen: received/committed advance during the scan
     """Whatever a CorpusSource needs to enumerate its documents. The
     orchestrator constructs and supplies this; Gutenberg only reads
     `corpus_root`. `state_dir` (the collection's data directory, beside its
@@ -301,6 +335,14 @@ class CorpusSource(Protocol):
     chunking_profile: str
     mutability: Mutability
     native_id_order: NativeIdOrder
+    #: 06 §6.2 (amended 2026-10-25, operator: "what really matters in the
+    #: end is the verifiability"): does the origin keep earlier versions a
+    #: verifier can still fetch (`ORIGIN_HISTORY`, the default when a plugin
+    #: says nothing) or overwrite them in place (`ORIGIN_REPLACES`)? A
+    #: superseded part version is kept only where it can still be checked
+    #: against its origin (01 promise 7, 02 §2.3; app/hold/shard.py).
+    #: Outside the Codex: it decides what a node keeps, never a byte.
+    origin_versions: str
 
     # 06 §6.1's `default_layers`, `default_slicing` and `default_facets`, as
     # plain dicts: this module stays free of app.hold so that it can be
@@ -312,6 +354,10 @@ class CorpusSource(Protocol):
     default_layers: list           # [{chunker: {id, version, params}, rule}]
     default_slicing: dict          # 09 §9.3's slicing block
     default_facets: list           # [{field, kind, separator, authority}] — 05 §5.7
+    # Optional (06 §6.1, amended 2026-10-25): {code: one-line meaning} for
+    # every `Issue` this plugin's parse may report; a plugin without it
+    # reports none. A code outside it is refused when recorded.
+    ISSUES: dict[str, str]
 
     def discover(self, state: DiscoverState) -> Iterator[DocRef]: ...
     def fetch(self, ref: DocRef) -> RawDoc: ...

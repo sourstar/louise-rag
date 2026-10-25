@@ -23,6 +23,7 @@ ggml-org/llama.cpp and mudler/LocalAI. The near hits, and why they differ:
 | [wmde-wikidata-embedding-project.md](wmde-wikidata-embedding-project.md) | philippesaade-wmde (WikidataTextEmbedding and the HF datasets) | stale vectors kept as current (~14 %); text depends on a live wiki page; the corpus drops entity data; the card's counts |
 | [ggml-llama-cpp-sycl.md](ggml-llama-cpp-sycl.md) | ggml-org/llama.cpp | SYCL embeddings non-reproducible through oneDNN's GEMM |
 | [mudler-localai.md](mudler-localai.md) | mudler/LocalAI | B1–B14 of localai-bugs.md, condensed |
+| [wikidata.md](wikidata.md) | the Wikidata team (WMDE) | STANDING (operator, 2026-10-24): every improvement to Wikidata the build finds — data defects, missing labels as a worklist, and an index of the two WMDE code files |
 
 Not included, because there is no reproducer yet:
 - jina-v3's batched `encode` failing in `torch.unique` on the B70; a plain

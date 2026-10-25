@@ -745,31 +745,37 @@ louise hold vectors show &lt;collection&gt;     # coverage, producers</pre>
   <h2>Adding a collection</h2>
   <p class="note lead"><b>In short:</b> a collection is a Codex plus one small file saying what this node holds of it — <code>hold collection create</code> writes both.</p>
   <p class="note">
-    <b>1. Write a recipe.</b> A TOML with every Codex field the plugin does
-    not default: at least its <code>[space]</code> and <code>[work]</code>
-    blocks, or <code>--space-from</code> a collection already held for the
-    space (06 §6.6). The recipes under <code>config/recipes/</code> are
-    worked examples.
+    <b>1. The recipe — once, by an operator.</b> A TOML with every Codex
+    field the plugin does not default: at least its <code>[space]</code> and
+    <code>[work]</code> blocks, or <code>--space-from</code> a collection
+    already held for the space (06 §6.6). Saved as
+    <code>config/recipes/&lt;plugin&gt;.toml</code>, it is this node's recipe
+    for that plugin.
   </p>
   <p class="note">
     <b>2. Create it.</b> On the Library page, <i>Add a collection</i>: pick
-    the plugin, paste the recipe, <i>Create on this node</i>. The same from
-    a shell:
+    the source and give it a name — nothing else is asked. The node uses its
+    recipe for the source, finds on its model server the model whose stated
+    run loads the recipe's encoder weights (a model's name never decides),
+    takes every slice and embeds on demand; where no model there runs the
+    encoder, it says which to install and creates nothing. The same from a
+    shell, where every choice can be named:
   </p>
-  <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE [--space-from &lt;collection&gt;]</pre>
+  <pre class="cli">louise hold collection create &lt;plugin&gt; --recipe FILE --name &lt;name&gt; [--encoder URL --api A --embed-model M --query-model M] [--space-from &lt;collection&gt;]</pre>
   <p class="note">
     <b>The annotations type</b> (02 §2.10) is in the same drop-down and
-    takes no recipe: a name, the held collection it annotates with the
-    target snapshot its claims hold from (prefilled with the one held
-    now), an optional title, summary and annotator, and the claims file
-    (JSON Lines, one claim per line). <i>Check claims</i> runs the check
-    and writes nothing; <i>Create</i> runs the same check, refuses with the
-    reason on a failing claim, and queues the create for the worker, which
-    signs the first snapshot. Such a collection has no space and no
-    encoder: it is held, checked and shared like any other, and its card
-    in the Library shows what it annotates and how many claims it holds.
+    takes no recipe: a name and the claims file (JSON Lines, one claim per
+    line). The node reads from the claims which held collections they are
+    about, checks them against each one's newest snapshot, derives the title
+    and summary and credits the claims' contributor. <i>Check claims</i>
+    runs the check and writes nothing; <i>Create</i> runs the same check,
+    refuses with the reason on a failing claim, and queues the create for
+    the worker, which signs the first snapshot. Such a collection has no
+    space and no encoder: it is held, checked and shared like any other,
+    and its card in the Library shows what it annotates and how many claims
+    it holds.
   </p>
-  <pre class="cli">louise hold collection create annotations --annotates &lt;collection&gt; --from-snapshot &lt;id&gt; --claims FILE --name &lt;name&gt; [--dry-run]</pre>
+  <pre class="cli">louise hold collection create annotations --claims FILE --name &lt;name&gt; [--annotates &lt;collection&gt; --from-snapshot &lt;id&gt;] [--title T] [--summary S] [--annotator A] [--dry-run]</pre>
   <p class="note">
     It embeds the calibration set with the encoder the recipe names, writes
     the Codex into the collection's SHARD, prints its id, and writes the
@@ -777,9 +783,9 @@ louise hold vectors show &lt;collection&gt;     # coverage, producers</pre>
     the file existing is the collection being held:
   </p>
   <pre class="cli">codex  = "sha256:…"            # the collection this name holds, for its life
-slices = []                    # "all" to fetch everything; nothing until you say so
+slices = []                    # "all" to fetch everything (the Library's create writes "all")
 kinds  = ["records", "vectors"]
-embed  = "off"                 # off | on-demand | all: what this node spends
+embed  = "off"                 # off | on-demand | all: what this node spends (the Library's: on-demand)
 share  = false
 # title = "…"                  # this node's own listing name, never published
 

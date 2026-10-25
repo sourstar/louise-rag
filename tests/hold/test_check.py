@@ -1109,3 +1109,16 @@ def test_the_bound_weighs_only_the_units_it_reaches():
     keep, bound = chk._origin_units_taken(ctx, dict.fromkeys(sizes))
     assert keep == set() and len(asked) == chk.UNWEIGHED_STOP
     assert bound["origin_units_unlisted"] == chk.UNWEIGHED_STOP
+
+
+def test_every_check_03_names_answers():
+    """03 §3.2's table, read from the document: every check it names is a
+    key of CHECKS — a check not built answers INCONCLUSIVE with its reason
+    rather than being refused as unknown (model-agreement was, until
+    2026-10-25)."""
+    import re
+    from pathlib import Path
+    doc = (Path(__file__).resolve().parents[2] / "docs" / "03-checking.md").read_text(encoding="utf-8")
+    table = doc.split("## 3.2", 1)[1].split("\n\n**", 1)[0]
+    named = set(re.findall(r"^\| `([a-z-]+)`", table, re.M))
+    assert "model-agreement" in named and named <= set(chk.CHECKS), named - set(chk.CHECKS)

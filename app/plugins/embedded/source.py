@@ -23,6 +23,16 @@ Locator (plugin-opaque, survives the manifest): one or more segments
     "<shard path>::<start_row>::<end_row>"     joined by "|"
 end_row exclusive; a second segment covers an article whose rows straddle a
 shard boundary.
+
+THE ORIGIN FORM, and why — invariant 11 wants it recorded beside the
+plugin (06 §6.4). The origin is the PRODUCER's published dataset
+(`EMBEDDED_SPEC`: Upstash's `wikipedia-2024-06-bge-m3` on the Hugging Face
+Hub), taken as its parquet shards exactly as published: their rows are the
+only form its vectors attach to — the producer's own text, cut at the
+producer's own boundaries — so a re-derivation from Wikipedia's dumps
+would be another corpus, not this one. What the dumps give is the
+`wikipedia` plugin's dump layer; this archive is that collection's layer 1
+(docs/notes/wikipedia-two-layers.md).
 """
 import hashlib
 import json

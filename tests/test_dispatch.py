@@ -118,15 +118,66 @@ def test_an_unbounded_gate_orders_nothing_and_waits_for_nothing():
         assert inside.wait(2), "an unbounded gate admitted at once"
 
 
-def test_corpus_does_not_stand_aside_for_interactive_work_on_other_models(monkeypatch):
-    """It did for one deploy. Measured live (2026-09-20), it slowed chat:
-    alone on the card, token-by-token decoding lets the Arc drop its clock
-    (87-92 s at 990 MHz, against 65-72 s beside corpus work). Levels order
-    requests where they meet, at a shared gate, and nowhere else."""
+def test_corpus_stands_aside_on_the_whole_card_while_a_person_s_query_runs(monkeypatch):
+    """Operator, 2026-10-25: "Embedding shall have the lower priority and
+    query processing the highest". Corpus work's next request, on ANY model,
+    waits while the node's claim is held — then goes at once. (It did not
+    from 2026-09-20: alone on the card the Arc dropped its clock and slowed
+    chat; the GPU governor now holds the clock for the claim's lifetime.)"""
+    claim_until = time.monotonic() + 0.3
+    monkeypatch.setattr(dispatch, "interactive_active", lambda: time.monotonic() < claim_until)
+    g = dispatch.gate("http://gpu-enc", 1)
+    t0 = time.monotonic()
+    with g.admit(Level.CORPUS, "normattiva", timeout=5):
+        waited = time.monotonic() - t0
+    assert 0.25 <= waited < 2, "it waited for the query, and not longer"
+    for level in (Level.TRANSLATE, Level.QUERY, Level.RERANK, Level.CHAT):
+        claim_until = time.monotonic() + 5
+        t0 = time.monotonic()
+        with g.admit(level, "web", timeout=1):
+            assert time.monotonic() - t0 < 0.2, f"a query's {level.name.lower()} step never stands aside"
+
+
+def test_standing_aside_is_bounded_and_a_deferral_and_wakes_on_stop(monkeypatch):
     monkeypatch.setattr(dispatch, "interactive_active", lambda: True)
     g = dispatch.gate("http://gpu-enc", 1)
-    with g.admit(Level.CORPUS, "gutenberg", timeout=1):
-        pass
+    with pytest.raises(dispatch.GateTimeout, match="stood aside for a person's query") as err:
+        with g.admit(Level.CORPUS, "normattiva", timeout=0.2):
+            pass
+    assert worker.transient_failure(err.value), "a deferral: nothing is written on the document"
+    got = []
+
+    def corpus():
+        try:
+            with g.admit(Level.CORPUS, "normattiva", timeout=60):
+                got.append("admitted")
+        except dispatch.GateTimeout:
+            got.append("deferred")
+    t = threading.Thread(target=corpus, daemon=True)
+    t.start()
+    time.sleep(0.2)
+    dispatch.stop_all()
+    t.join(2)
+    assert got == ["deferred"], "SIGTERM wakes a corpus request standing aside"
+
+
+def test_a_query_s_later_step_goes_first_at_a_shared_gate():
+    """"The subsequent steps of a query in process shall be processed first
+    to avoid wasting the effort spent for the previous steps": its answer,
+    then its rerank, then its embedding, then its translation, then corpus."""
+    g = dispatch.gate("http://shared", 1)
+    started, release, order = threading.Event(), threading.Event(), []
+    holder = _hold(g, Level.CORPUS, "a", started, release, order)
+    started.wait(5)
+    waiters = []
+    for level in (Level.CORPUS, Level.TRANSLATE, Level.QUERY, Level.RERANK, Level.CHAT):
+        waiters.append(_queue(g, level, "web" if level else "a", order))
+        _waiting(g, len(waiters))
+    release.set()
+    for t in [holder, *waiters]:
+        t.join(5)
+    assert [lvl for lvl, _ in order] == [Level.CORPUS, Level.CHAT, Level.RERANK, Level.QUERY,
+                                         Level.TRANSLATE, Level.CORPUS]
 
 
 def _held(g):

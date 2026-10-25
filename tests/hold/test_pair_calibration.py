@@ -113,11 +113,11 @@ def test_a_text_space_create_writes_the_same_member_and_signature(tmp_path):
     member, sig = shard_mod.calibration_paths(codex.space.calibration.set)
     assert hashlib.sha256((d / member).read_bytes()).hexdigest() == TEXT_MEMBER
     assert hashlib.sha256((d / sig).read_bytes()).hexdigest() == TEXT_SIG
-    # collection_id moved with gutenberg's parser 9 (2026-10-11) and 10
-    # (2026-10-22), which a template-made Codex names; the space and the
-    # member did not
+    # collection_id moved with gutenberg's parser 9 (2026-10-11), 10
+    # (2026-10-22) and 11 (2026-10-25, every plate), which a template-made
+    # Codex names; the space and the member did not
     assert (codex.collection_id, codex.space_id) == (
-        "sha256:f53040eb6550e8bf5a4d27667aa87aa50ff0a1590afa0518325e1eee12cb9acb",
+        "sha256:094802b2ec0f81f121f25ad66500b9af6889c0f6aef3989532c9f4ad6ea6f04b",
         "sha256:3a1937eb9e109ad70c692dd2c8ff83c0d37f926290551a5de55102c67d6754e4")
     assert (codex.space.calibration.vectors, codex.space.envelope,
             codex.space.calibration.query_vectors) == (CAL_VECS, ENVELOPE, CAL_QVECS)
@@ -359,7 +359,9 @@ def test_the_gate_embeds_every_pair_as_a_pair(tmp_path):
     assert run.ok and run.passed == 16 and run.batch_invariant is True
     assert seen["embed"] == PAIRS
     sixteen = [PAIRS[i] for i in fp.indices(PAIRS)]
-    assert seen["one"] == seen["contribute"] == sixteen
+    assert seen["contribute"] == sixteen
+    assert seen["one"] == sixteen + sixteen[::-1], "again one at a time, reversed (invariant 12)"
+    assert run.reproducible is True
     assert all(isinstance(x, tuple) for x in seen["one"])
     by_len = sorted(range(cal.SIZE), key=lambda i: (cal.item_bytes(PAIRS[i]), i))
     assert fp.indices(PAIRS)[0] == by_len[0] and fp.indices(PAIRS)[-1] == by_len[-1]

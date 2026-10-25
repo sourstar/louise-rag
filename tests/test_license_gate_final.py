@@ -85,8 +85,6 @@ TOOLS = [
     ("build_space_artifact", lambda m, name, tmp: m.main([name, str(tmp)])),
     ("backfill_pubmed_authors", lambda m, name, tmp: m.main(["--collection", name])),
     ("calibrate_space", lambda m, name, tmp: m.record_live([], name, tmp)),
-    ("pack_convert", lambda m, name, tmp: m.main(
-        ["--plugin", "gutenberg", "--corpus", str(tmp), "--out", str(tmp / "out")])),
 ]
 
 

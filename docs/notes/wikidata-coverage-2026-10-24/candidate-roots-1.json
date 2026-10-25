@@ -1,0 +1,19 @@
+{
+ "families": ["scholarly", "heritage", "built", "event", "person", "place", "organization", "work", "taxon",
+              "astronomy", "molecular", "internal", "property", "lexeme", "other"],
+ "roots": {
+  "scholarly": [13442814],
+  "heritage": [4989906, 839954, 358, 39614],
+  "built": [811979, 391414],
+  "event": [1656682, 645883, 198, 1689296, 3199915, 179057, 123349687, 741507, 130260549],
+  "person": [5],
+  "place": [486972, 56061, 271669, 15324, 473972, 6256, 3624078],
+  "organization": [43229],
+  "work": [17537576, 3331189, 47461344, 49848],
+  "taxon": [16521],
+  "astronomy": [6999, 523, 318],
+  "molecular": [113145171, 7187, 8054, 59199015],
+  "internal": [17442446]
+ },
+ "fallback": []
+}

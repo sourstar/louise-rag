@@ -57,6 +57,16 @@ def no_runner_says_what_it_holds(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_served_weights_are_remembered():
+    """app/encoder_resolve.py caches, per process, the weights each model on
+    a server states. A test's fake server must not answer for the next."""
+    from app import encoder_resolve
+    encoder_resolve.reset_cache()
+    yield
+    encoder_resolve.reset_cache()
+
+
+@pytest.fixture(autouse=True)
 def no_model_is_pinned(monkeypatch):
     """app/model_pins.py pins a LocalAI model while it processes. No test's
     runner has LocalAI's pin API and its hosts do not exist, so nothing is
@@ -65,6 +75,18 @@ def no_model_is_pinned(monkeypatch):
     monkeypatch.setattr(model_pins, "_applies", lambda server, model: False)
     model_pins._retry_after.clear()
     yield
+
+
+@pytest.fixture(autouse=True)
+def no_disk_floor(monkeypatch):
+    """The vector store's free-space floor (app/disk_guard.py, 32 GiB) is the
+    HOST's business: a runner with less free disk deferred every vector
+    import in three unrelated tests (test_accept's survivor 2026-10-19,
+    test_deprecate and test_bundle_worker 2026-10-23, at 19.5 GiB free). The
+    tests of the floor set their own values (tests/test_disk_guard.py)."""
+    from app import config
+    monkeypatch.setattr(config, "VECTORS_MIN_FREE_GB", 0.0)
+    monkeypatch.setattr(config, "VECTORS_MIN_FREE_FRACTION", 0.0)
 
 
 @pytest.fixture(autouse=True)
@@ -160,6 +182,7 @@ def serial_parse_pool(monkeypatch):
     back in explicitly (PARSE_PROCESSES=2)."""
     from app import config
     monkeypatch.setattr(config, "PARSE_PROCESSES", 1)
+    monkeypatch.setattr(config, "BUILD_WHOLE_QUOTA", False)
 
 
 @pytest.fixture

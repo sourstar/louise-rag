@@ -10,7 +10,9 @@ may end at `<namespace>:<id>` left unresolved).
 One table, `wikidata_entity`, one row per entity: the id (the primary
 key, so `ask lookup wikidata:Q42` is one `get`), its kind (`item` or
 `property`), and ONE label with its language — the first of the pack's
-languages that has one, `mul` last, the same preference the plugin's
+languages that has one, `mul` next, then the entity's name by the
+plugin's order (names.py, the pack's `name` table; operator, 2026-10-24:
+an id is meaningless to a reader) — the same preference the plugin's
 `title` follows. It is synced from the label table the wikidata plugin
 derives from the pinned dump (`pack.py`: `labels.sqlite` beside the
 dump, `label(id, lang, label)` for the Codex's languages), the newest
@@ -100,8 +102,10 @@ def pick_label(labels: dict[str, str], languages: tuple[str, ...]) -> tuple[str,
 class WikidataRefSource:
     source_id = SOURCE_ID
     #: 2: one row per entity keyed by its id (was one per (id, language),
-    #: keyed `Q42|en`, which no lookup by canonical id could reach)
-    ref_version = 2
+    #: keyed `Q42|en`, which no lookup by canonical id could reach).
+    #: 3: an entity with no label in the pack's languages nor mul takes its
+    #: name (the pack's `name` table) instead of having no row
+    ref_version = 3
     namespaces = NAMESPACES
     protocol_version = 1
 
@@ -136,32 +140,59 @@ class WikidataRefSource:
         con = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
         try:
             rows: list[dict] = []
-            current: str | None = None
-            labels: dict[str, str] = {}
-
-            def flush() -> dict | None:
-                if current is None or not is_entity_id(current):
-                    return None
-                picked = pick_label(labels, languages)
+            # the two tables in id order, merged: an entity's labels, then its name
+            for eid, labels, name in _merged(_grouped(con.execute(
+                    "SELECT id, lang, label FROM label ORDER BY id, lang")), _names(con)):
+                if not is_entity_id(eid):
+                    continue
+                picked = pick_label(labels, languages) or name
                 if picked is None:
-                    return None
-                lang, label = picked
-                return {"id": current, "kind": kind_of(current), "lang": lang, "label": label}
-
-            for eid, lang, label in con.execute("SELECT id, lang, label FROM label ORDER BY id, lang"):
-                if eid != current:
-                    row = flush()
-                    if row is not None:
-                        rows.append(row)
-                    current, labels = eid, {}
-                    if len(rows) >= BATCH:
-                        yield RefRecordBatch(table=ENTITY.name, rows=tuple(rows))
-                        rows = []
-                labels[lang] = label
-            row = flush()
-            if row is not None:
-                rows.append(row)
+                    continue
+                rows.append({"id": eid, "kind": kind_of(eid), "lang": picked[0], "label": picked[1]})
+                if len(rows) >= BATCH:
+                    yield RefRecordBatch(table=ENTITY.name, rows=tuple(rows))
+                    rows = []
             if rows:
                 yield RefRecordBatch(table=ENTITY.name, rows=tuple(rows))
         finally:
             con.close()
+
+
+def _grouped(cursor) -> Iterator[tuple[str, dict[str, str]]]:
+    """(id, {lang: label}) per entity, from rows in id order."""
+    current: str | None = None
+    labels: dict[str, str] = {}
+    for eid, lang, label in cursor:
+        if eid != current:
+            if current is not None:
+                yield current, labels
+            current, labels = eid, {}
+        labels[lang] = label
+    if current is not None:
+        yield current, labels
+
+
+def _names(con: sqlite3.Connection) -> Iterator[tuple[str, tuple[str, str]]]:
+    """(id, (lang, name)) in id order; nothing from a pack without the table."""
+    try:
+        cursor = con.execute("SELECT id, lang, label FROM name ORDER BY id")
+    except sqlite3.OperationalError:
+        return
+    for eid, lang, label in cursor:
+        yield eid, (lang, label)
+
+
+def _merged(groups: Iterator, named: Iterator) -> Iterator[tuple[str, dict[str, str], tuple[str, str] | None]]:
+    """Two id-ordered streams as one (SQLite's BINARY order is Python's for
+    these ASCII ids): (id, labels, name or None)."""
+    a, b = next(groups, None), next(named, None)
+    while a is not None or b is not None:
+        if b is None or (a is not None and a[0] < b[0]):
+            yield a[0], a[1], None
+            a = next(groups, None)
+        elif a is None or b[0] < a[0]:
+            yield b[0], {}, b[1]
+            b = next(named, None)
+        else:
+            yield a[0], a[1], b[1]
+            a, b = next(groups, None), next(named, None)

@@ -402,14 +402,43 @@ def last_listing(shard_dir: Path, rel: str, other_than: str | None = None) -> tu
     return None
 
 
+_origin_versions: dict[tuple[str, int], bool] = {}
+
+
+def origin_keeps_history(shard_dir: Path) -> bool:
+    """Does this SHARD's origin keep earlier versions (06 §6.2's
+    `origin_versions`)? Read from the Codex's `plugin` (`shard/codex.json`),
+    cached on the file's path and mtime. A SHARD with no Codex, or a plugin
+    this node does not register (annotations), keeps — the default."""
+    import json
+    codex = Path(shard_dir) / "codex.json"
+    try:
+        stamp = (str(codex), codex.stat().st_mtime_ns)
+    except OSError:
+        return True
+    got = _origin_versions.get(stamp)
+    if got is None:
+        from app.plugins import base
+        try:
+            from app.collections import PLUGIN_REGISTRY
+            plugin = PLUGIN_REGISTRY.get(json.loads(codex.read_bytes()).get("plugin"))
+        except (OSError, ValueError, AttributeError):
+            plugin = None
+        got = plugin is None or base.origin_versions(plugin) == base.ORIGIN_HISTORY
+        _origin_versions[stamp] = got
+    return got
+
+
 def keep_superseded(target: Path, shard_dir: Path | None, new_root: str) -> Path | None:
     """Before a new version (`new_root`) replaces `target`: when the newest
     held snapshot listing that path names other bytes, and the file there is
     that version (its size), rename it to its superseded name and keep it
     (02 §2.3: "the version it supersedes is renamed with the id of the last
     snapshot that listed it and kept, so an old snapshot can still be served
-    and checked"). Bytes no snapshot lists are nobody's version and are
-    replaced. The old version's root comes from the snapshot, never from
+    and checked") — where the origin keeps its history. Where it replaces
+    in place (`origin_keeps_history`), the old version can no longer be
+    checked against the source and is replaced (01 promise 7). Bytes no
+    snapshot lists are nobody's version and are replaced. The old version's root comes from the snapshot, never from
     hashing the file: a monthly rebuild promotes every part and plate
     container, and re-reading them all (gutenberg: ~95 GB) per promotion
     would be the cost of the rule. The moved path, or None.
@@ -419,6 +448,8 @@ def keep_superseded(target: Path, shard_dir: Path | None, new_root: str) -> Path
     the producer and on every peer that fetched."""
     if shard_dir is None or not target.is_file():
         return None
+    if not origin_keeps_history(Path(shard_dir)):
+        return None                       # 02 §2.3: the origin replaces in place
     listed = last_listing(shard_dir, target.relative_to(shard_dir).as_posix(), other_than=new_root)
     if listed is None:
         return None                       # no other version listed: nothing to keep

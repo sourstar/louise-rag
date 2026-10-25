@@ -75,6 +75,26 @@ def test_a_text_that_fits_is_one_chunk_and_a_long_one_repeats_head_and_sticky_li
                                                     params={"tokenizer": SHA, "max_tokens": 40})), "deterministic"
 
 
+def test_a_history_section_is_cut_as_a_language_s_text_and_leaves_its_chunks_as_they_were():
+    """Parser 2's history section (`en:history`) after the English text:
+    the English chunks keep their ids and their text, so their vectors are
+    carried; the history's windows repeat its own head and `instance of`."""
+    text = _q3331_text()
+    history = ("tunnel de la Croix-Rousse, road tunnel in Lyon. Other statements include:\n"
+               "- instance of: road tunnel\n- operator: Grand Lyon (end time: 1 January 2015)\n"
+               "- operator: Courly (end time: 1 January 1969)")
+    params = {"tokenizer": SHA, "max_tokens": 24}
+    alone = list(chunker.chunk_wikidata_text("wikidata:3331", 3331, [("en", text)], params=params))
+    both = list(chunker.chunk_wikidata_text("wikidata:3331", 3331, [("en", text), ("en:history", history)],
+                                            params=params))
+    assert both[:len(alone)] == alone, "the English chunks byte for byte, ids included"
+    tail = both[len(alone):]
+    assert len(tail) == 2 and {c["chapter"] for c in tail} == {"en:history"}
+    assert all(c["text"].startswith("tunnel de la Croix-Rousse, road tunnel in Lyon. Other statements include:\n"
+                                    "- instance of: road tunnel\n- operator: ") for c in tail)
+    assert [c["id"] for c in tail] == [f"wikidata:3331:{len(alone) + i}:1" for i in range(2)]
+
+
 def test_an_over_long_statement_is_cut_at_the_token_that_fits_and_the_rules_refuse_what_they_must():
     head = "Thing, a thing. Attributes include:"
     sticky = "instance of: thing"

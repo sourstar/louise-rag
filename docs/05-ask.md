@@ -30,6 +30,20 @@ language groups' ranks 1–3 when the query went to every group as typed
 (fused rank 113). A result's `legs` (§5.3) names `catalog` beside `text`
 and `vector`.
 
+**Names, for a collection whose records have them** (*amended 2026-10-24*,
+operator: wikidata, "names only"). Its plugin gives each record's names —
+every label and alias, every language — and its popularity (wikidata: the
+wiki pages linking it). The text leg then has one more list, from the
+reader's own words: the records one of whose names IS a word sequence of
+the query, the longer name first ("Monaco di Baviera" before "Monaco"),
+then the more popular; a search limited to languages matches names in
+those languages only. Names are index-only: they enter no record, no
+section and no vector, and a peer rebuilds them from the records'
+`extra`. A multilingual (`mul`) record's sections are indexed each in its
+own language (*amended 2026-10-24*), and a search limited to languages
+keeps such a record in every leg when one of its sections is in an asked
+language.
+
 **A leg's list is the same on every peer with the same members**
 (*amended 2026-10-20*). Equal scores order by the record's uid bytes, then
 the chunk's place in its record, the earliest first; a group of equal
@@ -131,10 +145,10 @@ default that question is relevance to the query text: `question` is the
 literal `"relevance"`, every collection's legs carry it, and in this
 version every collection's legs carry nothing else — so there is one
 list, and the rule below costs nothing until there is not. A collection
-may contribute a leg that answers another question — the genome
-collections' by-sequence leg answers *homology*, their annotation text
-answers *function* — and legs answering different questions are never
-fused: each question is its own list, presented beside the others and
+may contribute a leg that answers another question — a by-sequence leg
+answering *homology* beside annotation text answering *function*, say;
+no collection held today declares one — and legs answering different
+questions are never fused: each question is its own list, presented beside the others and
 named. Where a non-default leg is DECLARED, and how two collections
 establish that their legs answer the same question, is the search-axes
 amendment; nothing in this version declares one, and an implementation
@@ -179,30 +193,41 @@ identifier that is itself a URI carries its scheme as its namespace and
 is written verbatim, never prefixed twice:
 `urn:nir:stato:legge:2003-10-31;306`, namespace `urn`.
 Where the origin's identifier is not qualified on its own, the
-namespace's registration says how it is qualified: a genomic region
-carries its assembly, `region:grch38:13:32316461-32316527`. A plugin
+namespace's registration says how it is qualified, as a Wikidata item is
+`wikidata:Q42`. A plugin
 writes only registered ids into a record's `keys` (§6.1), and a
 namespace is registered before any record uses it, because `keys` are
 bytes of the record and therefore of its `content_hash`.
 
-**A filter restricts; nothing boosts.** Two things restrict the legs: a
-resolved identifier, and a value given for one of the collection's
-declared facets (§5.7) — `subjects` is `Neoplasms/genetics`, `creators`
+**A filter restricts; nothing boosts** (one exception, measured: the
+catalogue's first record keeps the first place after the reranker, §5.6). Two things restrict the legs,
+and only when the reader gives them: an identifier (a filter on `keys`),
+and a value for one of the collection's declared facets (§5.7) — `subjects` is `Neoplasms/genetics`, `creators`
 is `Austen, Jane`, `date` is within a range. Both narrow which records
 the legs may return, and the free-text query then ranks within that
 narrowing; neither adds a list of its own, and neither moves a score.
 A filter that matches nothing returns nothing, which is an answer: the
 value is not in what this peer holds, and §5.7 says what is. A boost
 would hide that, and would make two peers rank one query differently
-unless its weight were pinned in the Codex, so there is none.
+unless its weight were pinned in the Codex, so there is none (the
+catalogue's first place, §5.6, is a fixed position, not a weight, and is
+the same on every peer).
 
-In a collection whose
-records carry `keys`, a resolved identifier restricts every leg to the
-records whose `keys` contain it; the free-text query then ranks within
-that restriction. In a collection whose records carry no `keys`, the
-identifier restricts nothing and the free-text query runs as it would
-have. An identifier that resolves to no reference row and no record is
-returned as *unresolved*; it never produces an empty fact.
+**An identifier the query names pins its facts and restricts nothing**
+(*amended 2026-10-25*, operator). It is resolved and its facts are pinned
+beside the lists (§5.4); the legs run as they would have, and no rank
+moves. A reader who wants only the records tagged with an identifier gives
+it as a filter, `keys` = `hgnc:1101`: every leg is then restricted to the
+records tagged with it, and the free-text query ranks within that
+restriction. It is bounded and refused when too broad, as a facet value
+is (§5.7). A collection with no record tagged with it admits nothing
+under it. Restricting by default was measured, and it lost. On TREC
+Precision Medicine 2017–18 (80 topics, NIST's judgements), NDCG@10 was
+0.3143 unrestricted, 0.3002 restricted to the records tagged with any
+named identifier, and 0.2983 with all of them, each about 2 s slower: a
+relevant record the tagger missed was hidden (docs/notes/query-campaign.md).
+An identifier that resolves to no reference row and no record is returned
+as *unresolved*; it never produces an empty fact.
 
 **Translation is an expand step, off by default.** When it is on, the
 peer translates the query into each collection's MAIN languages and,
@@ -307,13 +332,13 @@ The fields, with their values:
 | `chunk_id` | the record's best chunk (§5.1); in a reranked list, the chunk that scored the record (§5.6, *amended 2026-10-10*) |
 | `layer` | the layer that cut the chunk, derived from the Codex (02 §2.3) |
 | `rank` | the record's position in the list as presented |
-| `legs` | `{text, vector}` — the record's rank in each leg that ranked it, `null` in a leg that did not |
+| `legs` | `{text, vector, catalog}` — the record's rank in each leg that ranked it, `null` in a leg that did not |
 | `trust_level` | `unverified` · `checked` · `verified` · `flagged` (§3.6) |
 | `certification` | `{certified_by, anchor_state}` — the certifier's key and `anchored` · `stale` · `mismatch` (§3.7); `null` for an open collection |
 | `verified_on_use` | `local` · `imported` · `verified` · `failed`: this peer produced the vector; produced elsewhere and not yet re-embedded here; re-embedded and within tolerance; re-embedded and outside it. A chunk whose producer is unknown is `imported`, never `local` |
 | `producer_key` | the key that signed the chunk's vector — this peer's own key for `local` |
 | `text` or `origin_url` | the chunk's text; for a red-class collection the origin's page and never the text |
-| `figures` | the plates whose `[Illustration…]` markers fall inside this chunk, in order: `{hash, media_type, caption, state}` — NEVER the bytes. `null` where the collection carries no figures at all, `[]` where this chunk has none. `state` is `held` · `not-held` · `not-carried`, below |
+| `figures` | the plates whose `[Illustration…]` markers fall inside this chunk, in order: `{hash, media_type, bytes, caption, state}` — NEVER the bytes themselves; `bytes` is their size as the record names it (*amended 2026-10-25*), so a client can say "not displayable: image/svg+xml, 12 KB" without fetching them (08 §8.7). `null` where the collection carries no figures at all, `[]` where this chunk has none. `state` is `held` · `not-held` · `not-carried`, below |
 | `annotations` | the claims an annotations collection held here makes about this record (02 §2.10; *amended 2026-10-09*), `[]` where none does. Each entry is `{collection_id, snapshot_id, claim, type, relation, role, record: {uid, title, lang, held}, subject_lang, object_lang, method, confidence, contributor, state, trust_level}`. `record` is the record at the claim's other end, as the target holds it, and `role` is this record's end, `subject` or `object`. *Amended 2026-10-20*: a `mention` entry carries `chunk_id`, `start`, `end` and `surface`, so the reader places it in the chunk it was read from and highlights it; a `relation` is attached at either entity's record; a `community` is a fact beside each member (02 §2.10, 09 §9.5). `state` is `current`, `stale` or `unknown`, below |
 | `editions` | present only on a work's one hit (below; *amended 2026-10-09*): the work's other records, `{uid, title, lang, held, rank, chunk_id}` — `rank` and `chunk_id` where the record was in the list before the grouping, `null` where it was not |
 | `freshness` | present only on request: `current` · `newer-at-source` · `unreachable` · `unavailable` — the last when the plugin has no per-record current form for this record (one read from a static archive, a copy built before records carried a content hash), said rather than guessed (*amended 2026-10-07*) |
@@ -335,9 +360,13 @@ entries and no others.
 kind of absence it is facing.** `held` — this peer has the bytes.
 `not-held` — the collection carries this plate and this peer does not
 have the member yet, so asking again later works. `not-carried` — the
-origin has an image here that the collection does not admit (09 §9.5's
-`carried: false`), so asking again NEVER works and the reader should
-stop looking. `figures: null` is the fourth and commonest case: this
+origin has an image here that the collection does not hold (09 §9.5's
+`carried: false`, written before 2026-10-25 for a type outside 08 §8.7's
+list; every plate is carried since), so asking again NEVER works and the
+reader should stop looking. A `held` plate is still SHOWN only when 08
+§8.7's display rule admits it — `image/jpeg` or `image/png`, within the
+caps; any other is said to be not displayable, with its type and size,
+and offered as a download (07 §7.4). `figures: null` is the fourth and commonest case: this
 collection has no plates at all, and a caption in the text is all there
 has ever been.
 
@@ -466,14 +495,16 @@ The three tools, their parameters and what they return are part of the
 platform image and change only with it:
 
 ```
-louise_search(query, collections?, space?, filters?, limit?, rerank_depth?,
-              as_of?, freshness?, translate?, all_languages?)
+louise_search(query, collections?, annotations?, space?, filters?, limit?,
+              rerank_depth?, as_of?, freshness?, translate?, all_languages?)
     → {lists: [{space_id, question, hits: [<result, §5.3>]}],   -- question is "relevance" (§5.1)
        facts: [<fact, §5.3>], unresolved: [<canonical id>],
        withheld: [{collection_id, shards, reason}],
        legs_withheld: [{collection_id, leg, reason}],     -- leg is "vector"; the copy IS searched, on its text leg (§5.3)
        translations: [...]}   -- shards: a list, or "all" for a copy in quarantine (§5.3)
-    filters: {<facet field>: <value> | {not: <value>}}
+    filters: {keys?: <canonical id> | {not: <canonical id>},      -- §5.2, amended 2026-10-25
+              <facet field>: <value> | {not: <value>}}         -- a range facet's value is "FROM..TO",
+                                                               -- either end omitted for open (§5.7; amended 2026-10-25)
 louise_lookup(id)
     → {facts: [<fact, §5.3>], unresolved: [<canonical id>]}
 louise_traverse(id, relation?, depth?, resolve_in?)   -- resolve_in: the collections an edge into another collection is resolved against (§5.5; added 2026-10-07)
@@ -482,13 +513,13 @@ louise_traverse(id, relation?, depth?, resolve_in?)   -- resolve_in: the collect
 ```
 
 `collections` names collections by id, prefix or local name (07 §7.7)
-and `annotations` (*amended 2026-10-19*) names, by local name, the
+and defaults to every collection the peer holds and may use.
+`annotations` (*amended 2026-10-19*) names, by local name, the
 annotations collections consulted — absent, every one held; `[]`, none.
 They are never legs (invariant 4): the choice decides whether a
 collection's work claims group a work's editions into one hit (§5.3)
 and whether its claims come beside the hits. The Ask page offers each
-held one as a chip and remembers the choice in the browser.
-and defaults to every collection the peer holds and may use; `space`
+held one as a chip and remembers the choice in the browser. `space`
 restricts the search to the collections in one space; `limit` is the
 number of results per list, 10 by default and at most 100.
 `rerank_depth` is how many of each list the reranker orders (§5.6), 50
@@ -621,7 +652,10 @@ the language plan made.
 **The catalogue's first record keeps the first place** (*amended
 2026-10-21*, docs/notes/query-campaign.md run 4). After the reranker's
 order, the record the catalogue leg (§5.1) ranks first moves to position
-1, and nothing else moves. The reranker judges passages: a biography's
+1, and nothing else moves. It is the one exception to §5.2's "nothing
+boosts" and to fusion by reciprocal rank alone, kept because it measures
+best (operator, 2026-10-25: "The final goal is the quality of the
+information retrieval"; CLAUDE.md invariant 4). The reranker judges passages: a biography's
 passage that names "Moby Dick" beat the novel's own pages, and once the
 instructed vector leg brought books about a work among the candidates,
 titles fell from MRR 0.738 before the reranker to 0.578 after it.
@@ -697,7 +731,25 @@ PubMed's `"Neoplasms/genetics"` is the descriptor `Neoplasms` and its
 qualifier `genetics`, so the tree has two levels, and a taxonomy with
 five separators has five. `kind: "range"` is ordered rather than
 enumerated — dates — and is listed as bounds, not as every value.
-Building it is one pass over the metadata of the records held:
+
+**A range is filtered in its type's order** (*amended 2026-10-25*,
+built). The Codex declares the kind and not the type, so the type is
+the field's: `date` is a date (09 §9.5), and another range field
+(`extra.<key>`) is a date or a number by its values — never both, or it
+is not filterable and the listing says so; a value of neither is counted
+as unparsed and is in no range. A date is the span its precision names,
+`1999` the whole year and `1999-06` the whole month, and `FROM..TO` (07
+§7.3) runs from the first day of FROM to the last of TO, both included.
+A record is admitted when one of its values lies wholly within the
+range — what is certainly in it, not what may be — and a number is
+compared as a number. The values are read out of the record parts
+held, part by part and again only for a part re-issued, because the
+manifest carries no `date` and no `extra`; the filter reads them through
+an index ordered by the start of each span, and stops as soon as more
+records than the legs take (§5.2's 20 000) are admitted, so a range too
+broad is refused for what it admits, at a cost bounded by that number.
+
+Building the listing is one pass over the metadata of the records held:
 
 ```
 Neoplasms          26,443
@@ -719,7 +771,9 @@ peer and the listing says why; a tree whose full paths pass that bound
 is counted to depth 1 — PubMed's descriptors without their qualifiers —
 and the listing says `depth: 1`. The index a filter reads (§5.2) holds
 only values narrow enough for a filter to use, at most 20 000 records
-each, and no more than 20 million rows per field; a broader value is
+each (a range facet's holds every value, since one range is answered
+from many; *amended 2026-10-25*), and no more than 20 million rows per
+field; a broader value is
 refused by its count, a deeper one than the depth counted is refused
 naming the value to filter by, and the listing says per field whether
 it is `filterable` here.

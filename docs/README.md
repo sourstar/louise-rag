@@ -3,12 +3,15 @@
 **Louise — knowledge, kept.**
 
 Louise is a RAG platform you run yourself, online or off. It comes with
-Wikipedia, Project Gutenberg, PubMed and the genome databases, and any
-other source can be added by implementing a plugin. Copies of a
+Wikipedia, Wikidata, Project Gutenberg, PubMed and Normattiva (Italian
+legislation), with gene and variant references (HGNC, ClinVar, gnomAD,
+HomoloGene) as facts pinned beside medical answers, and any other source can be added by implementing a plugin. Copies of a
 collection — the documents and the embeddings both — pass directly
 between the people who have them, so nobody re-does work that's already
 been done, and the original source isn't asked for the same download
 again and again.
+
+A new maintainer starts with [HANDOVER.md](HANDOVER.md).
 
 Read these in order. Each one assumes the ones before it and nothing
 after it. Document 9 is the reference the others point into: it fixes

@@ -598,6 +598,30 @@ def read_fields(path: Path, uid: str, fields: Sequence[str]) -> dict:
     return out
 
 
+def iter_fields(path: Path, fields: Sequence[str]) -> Iterator[dict]:
+    """Stream every record's `fields`, in order, without the rest — what a
+    pass over one field of every record held needs (a range facet's values,
+    app/ask/ranges.py): from a Parquet part only those columns are
+    decompressed, as `read_fields` does for one record; a frame part has no
+    columns, so each record is read and cut."""
+    if not is_parquet(path):
+        for record in iter_records(path):
+            yield {f: record.get(f) for f in fields}
+        return
+    pf = _parquet_file(path)
+    names = set(pf.schema_arrow.names)
+    cols = [f for f in fields if f in names]
+    for g in range(pf.metadata.num_row_groups):
+        table = pf.read_row_group(g, columns=cols)
+        data = {c: table.column(c).to_pylist() for c in cols}
+        for i in range(table.num_rows):
+            out: dict = {}
+            for f in fields:
+                v = data[f][i] if f in data else None
+                out[f] = json.loads(v) if (f in NESTED_KEYS and v is not None) else v
+            yield out
+
+
 def read_record_at(path: Path, frame: int, line: int) -> dict:
     return json.loads(cached_frame(path, frame)[line])
 

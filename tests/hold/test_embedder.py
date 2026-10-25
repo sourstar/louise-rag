@@ -389,23 +389,22 @@ def _jitter(vectors, eps, seed):
     return out
 
 
-def test_batched_answers_within_the_single_text_repeat_band_are_batch_invariant():
-    """An engine whose single-text answers move run to run by last-bit noise,
-    and whose batched answers move no more: invariant at those settings."""
+def test_batched_answers_are_batch_invariant_only_when_the_bytes_are_equal():
+    """03 §3.3, amended 2026-10-25 (operator's choice A, invariant 12): the
+    2026-10-12 band is gone. Last-bit noise between the batched and the
+    single-text answers is a run validated for one-at-a-time work only, and
+    2026-07's fault (a vector for another text) is as before."""
     base = fake_embed([f"text {i}" for i in range(16)])
-    single, repeat = _jitter(base, 1e-4, 1), _jitter(base, 1e-4, 2)
-    batched = _jitter(base, 1e-5, 3)
-    assert emb.within_band(single, batched, lambda: repeat) is True
+    assert emb.batch_invariant(base, [list(v) for v in base]) is True
+    assert emb.batch_invariant(base, _jitter(base, 1e-5, 3)) is False, "noise is not equal bytes"
+    assert emb.batch_invariant(base, [base[1], base[0]] + base[2:]) is False
+    assert emb.batch_invariant(base, base[:15]) is False
 
 
-def test_batched_answers_outside_the_band_are_not():
-    """A deterministic single-text engine (repeats equal) leaves no band:
-    batched answers that differ beyond f32 rounding fail, and a vector for
-    another text — 2026-07's fault — fails whatever the band."""
+def test_a_run_that_does_not_give_back_its_own_bytes_fails_the_gate():
+    """Invariant 12, measured by the gate: the sixteen one at a time again,
+    in reverse order, must come back byte for byte, or the run fails
+    whatever its cosines."""
     base = fake_embed([f"text {i}" for i in range(16)])
-    assert emb.within_band(base, _jitter(base, 1e-3, 4), lambda: base) is False
-    swapped = [base[1], base[0]] + base[2:]
-    noisy = _jitter(base, 1e-4, 5)
-    assert emb.within_band(base, swapped, lambda: noisy) is False
-    assert emb.within_band(base, list(base), lambda: (_ for _ in ()).throw(AssertionError("asked"))) \
-        is True, "equal bytes: no second pass"
+    assert emb.reproduces(base, [list(v) for v in base]) is True
+    assert emb.reproduces(base, _jitter(base, 1e-7, 6)) is False

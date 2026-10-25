@@ -6,6 +6,28 @@ functions call directly so the `rdf` stage never pays for a full-text read and
 the `fts`/`embed` stages never re-parse metadata — matching today's exact lazy
 I/O cost per stage, which parse() alone (always returning the full
 CanonicalDoc) can't express.
+
+THE ORIGIN FORM, and why — invariant 11 wants it recorded beside the
+plugin (06 §6.4). Project Gutenberg publishes a book in several forms
+beside its catalogue entry `pg<id>.rdf`: epubs (illustrated and plain), a
+`.txt`, html, mobi/kf8. ONE rule, in order (`FORMS`, `pick_form`;
+operator 2026-09-11, the epub first since parser 7):
+
+  * the first READABLE epub, the illustrated edition first — the plates
+    are only there, and it is the form the origin keeps most current;
+  * else the `.txt`, the text the epub is made from;
+  * else the catalogue entry alone: a record with no body, rather than an
+    error saying the book does not exist (~1,199 entries have nothing
+    else).
+
+The rdf travels beside the chosen form in `origin_hash` (parser 9), so
+the record's creators, dates and subjects are verifiable too. html and
+mobi/kf8 are re-renderings of the same text and are never read (the
+acquisition spec does not fetch mobi/kf8). A verifier applying the rule to
+the same book directory reaches the same form, and `extra.form` names it
+per record. The cost — an epub and a `.txt` do not clean to the same text
+— is in pg_epub.py; the history (`.txt` only before parser 7) in
+docs/notes/pack-format.md, "Which origin form, and why".
 """
 import hashlib
 import re
@@ -15,7 +37,7 @@ from pathlib import Path
 
 from .. import cursor
 from ..base import (CanonicalDoc, CorpusSource, DiscoverState, DocRef, Erasure,
-                    Figure,
+                    Figure, Issue,
                     LicenseClass, Modality, Mutability, PROTOCOL_VERSION,
                     PrivacyClass, RawDoc, UnindexableDocument)
 from . import pg_text, rdf
@@ -92,12 +114,7 @@ def pick_form(book_dir: Path, book_id: int) -> tuple[str | None, Path | None, bo
     # .txt, so the plain edition is the next candidate — shortest name
     # first, which is stable and does not depend on directory order
     # (invariant 3).
-    illustrated = pg_epub.find_epub(book_dir, book_id)
-    plain = sorted((p for p in entries
-                    if p.suffix.lower() == ".epub" and p.is_file()
-                    and p != illustrated),
-                   key=lambda p: (len(p.name), p.name))
-    for candidate in ([illustrated] if illustrated is not None else []) + plain:
+    for candidate in epub_candidates(book_dir, book_id, entries):
         if pg_epub.readable(candidate):
             return "epub", candidate, False
 
@@ -112,6 +129,47 @@ def pick_form(book_dir: Path, book_id: int) -> tuple[str | None, Path | None, bo
         if meta.is_file() and meta.stat().st_size > 0:
             return "rdf", meta, False
     return None, None, False
+
+
+def epub_candidates(book_dir: Path, book_id: int, entries: list[Path] | None = None) -> list[Path]:
+    """The epubs the reading rule tries, in its order: the illustrated
+    edition, then the plain ones, shortest name first (`pick_form`)."""
+    from . import pg_epub
+    if entries is None:
+        try:
+            entries = sorted(book_dir.iterdir())
+        except OSError:
+            return []
+    illustrated = pg_epub.find_epub(book_dir, book_id)
+    plain = sorted((p for p in entries
+                    if p.suffix.lower() == ".epub" and p.is_file()
+                    and p != illustrated),
+                   key=lambda p: (len(p.name), p.name))
+    return ([illustrated] if illustrated is not None else []) + plain
+
+
+def skipped_epubs(book_dir: Path, book_id: int, read: Path) -> list[Path]:
+    """The epubs the rule tried before the file it read — each one it could
+    not read (a ZERO-BYTE `pg<id>-images.epub`, a broken zip). No file is
+    opened again: `pick_form` takes the first readable candidate, so every
+    one before `read`, and every one when the book was read in another
+    form, failed `pg_epub.readable`."""
+    cands = epub_candidates(book_dir, book_id)
+    return cands[:cands.index(read)] if read in cands else cands
+
+
+#: Every inconsistency in the origin this plugin's parse reports (06 §6.1,
+#: amended 2026-10-25; app/issues.py). The catalogue entry's three are
+#: rdf.py's, and the worker's rdf stage checks those alone.
+ISSUES = {
+    **rdf.ISSUES,
+    "epub-unreadable": "an epub in the book's directory cannot be read (zero bytes, or not a zip "
+                       "with a package document); the reading rule took the next form",
+    "epub-image-missing": "the epub's text references an image file the epub does not contain; "
+                          "the reference is dropped from the text and the figures",
+    "epub-document-missing": "the epub's reading order (spine) names a document the epub does "
+                             "not contain or its manifest does not list; that text is not read",
+}
 
 
 #: a year of print: 1000-2099, not inside a longer number
@@ -237,7 +295,30 @@ class GutenbergSource:
     #: catalogue entry, so a release that drops the note readmits the book
     #: by itself. Every other record is unchanged; the collection that
     #: adopts this parser is a new one whose vectors carry.
-    PARSER_VERSION = 10
+    #: 11 since 2026-10-25 (operator: "Every plate"): EVERY image the epub
+    #: has is carried, SVG, GIF, WEBP and anything over 08 §8.7's caps
+    #: included — `carried: true` where 10 wrote `false` and left the bytes
+    #: behind (invariant 11). The caps and the closed list bind DISPLAY now
+    #: (app/ask/figures.py). The record LINE moves for the books that had
+    #: such an image (measured 2026-09-09: 2,407 SVG and 46 GIF images, ten
+    #: books), and their figures containers gain those plates; `sections`,
+    #: `content_hash`, `origin_hash` and every chunk do not — a figure is
+    #: never in `content_hash` (09 §9.5) and the marker never depended on
+    #: the type. The collection that adopts this parser is a new one whose
+    #: vectors all carry (02 §2.4 A1c, `louise dev carry --rebuilt`).
+    PARSER_VERSION = 11
+    #: 06 §6.2: Project Gutenberg rewrites a book's files under the same
+    #: number, and keeps no earlier version anyone can fetch — a part this
+    #: collection re-issues can only be checked against its newer self, so
+    #: its superseded version is not kept (01 promise 7, 02 §2.3).
+    origin_versions = "replaces"
+    #: the origin's inconsistencies parse reports (06 §6.1, amended
+    #: 2026-10-25). Not part of parse()'s OUTPUT in PARSER_VERSION's sense:
+    #: they reach no record, so reporting them moved no version.
+    ISSUES = ISSUES
+    #: what `read_metadata` — the worker's rdf stage — checks: the catalogue
+    #: entry's codes alone, so it never clears an epub's
+    METADATA_ISSUES = frozenset(rdf.ISSUES)
     modality = Modality.TEXT
     # PG does withdraw a text on a copyright claim, and the tombstone
     # stays: a removal is never silent (04 §4.4).
@@ -392,6 +473,15 @@ class GutenbergSource:
         meta = rdf.parse(book_dir, native_id)
         _refuse_if_broken(meta, native_id)
         suffix = raw.path.suffix.lower()
+        # the origin's inconsistencies (06 §6.1, amended 2026-10-25): the
+        # catalogue entry's, every epub the rule could not read, and what the
+        # epub's own walk drops — outside the record, which they never touch
+        found: list[Issue] = list(meta.get("issues") or ())
+        unread = skipped_epubs(book_dir, native_id, raw.path)
+        if unread:
+            found.append(Issue("epub-unreadable", ", ".join(
+                f"{p.name} ({p.stat().st_size:,} bytes)" for p in unread)
+                + f"; read {raw.path.name}"))
         plates: list = []
         text_header: dict[str, str] = {}
         text_toc: list[str] = []
@@ -410,7 +500,7 @@ class GutenbergSource:
                 # paths left with no body go to `text_toc`, as the regex
                 # path's contents-page lines do
                 sections, text_toc = pg_epub.sections(raw.path)
-                found = pg_epub.figures(raw.path)
+                plates_found = pg_epub.figures(raw.path, found)
                 text_header = pg_epub.header_fields(raw.path)
             except (zipfile.BadZipFile, zlib.error, pg_epub.EpubError, OSError) as e:
                 raise UnindexableDocument(
@@ -422,7 +512,7 @@ class GutenbergSource:
             plates = [Figure(href=f.href, media_type=f.media_type,
                              sha256=f.sha256, bytes=f.bytes, caption=f.caption,
                              seq=f.seq, carried=f.carried)
-                      for f in found]
+                      for f in plates_found]
         elif suffix == ".rdf":
             # Metadata only: a catalogue entry, not a book. `sections` is
             # empty and stays empty — inventing a section from the title
@@ -550,6 +640,7 @@ class GutenbergSource:
             sections=sections,
             figures=plates,
             raw_hash=raw.raw_hash,
+            issues=found,
         )
 
     # --- non-protocol helpers used by worker.py/summarize.py for lazy,

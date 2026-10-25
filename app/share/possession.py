@@ -144,9 +144,17 @@ def index(root: Path, name: str, codex, con) -> "Possession":
             bundles.setdefault(uid, {}).setdefault(h, []).append(bundle_id)
     result = Possession({u: sorted(hs) for u, hs in held.items()}, bundles, producers, fileless, shards)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_bytes(json.dumps({"fingerprint": fp, "index": result.to_json()}).encode())
-    os.replace(tmp, path)
+    # a temp file of its OWN, as `part_records`' (f386934): the worker's round
+    # and a CLI `hold vectors show` rebuild the index at once when a bundle
+    # lands, and one shared `.json.tmp` let the second rename find nothing
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(json.dumps({"fingerprint": fp, "index": result.to_json()}).encode())
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
     _memo[key] = (fp, result)
     # every rebuild said, with its cost: a fetch beat that accepts bundles
     # one by one rebuilds once per bundle (review, 2026-10-22), and this
@@ -183,6 +191,55 @@ def part_records(root: Path, name: str, snapshot, shard) -> list[tuple[str, str]
         Path(tmp).unlink(missing_ok=True)
         raise
     return got
+
+
+def explain_part(root: Path, name: str, codex, con, part: str, snapshot=None) -> dict[str, Any]:
+    """Why a part counts what it counts — read-only, for a person: every
+    accepted coverage row that could hold its records (this collection's
+    and its predecessors', whatever the shard key, as `index` reads them),
+    with the test each one passes or fails:
+    - `counted`: its shard id carries a prefix `index` reads (`prefixes`);
+    - `files`: its `possession.json` is under `bundle_dir`;
+    - `uids`, `same_hash`: of this part's records, how many uids the bundle
+      holds, and how many with the record's CURRENT content hash.
+    Then the part's own figures: records, chunks, and what `covered` gives."""
+    from app.hold import seed
+    from app.share import contribute
+    snapshot = snapshot or seed.latest_snapshot(Path(root), name)
+    sl, n = part.rsplit("/", 1)
+    shard = next(s for s in snapshot.shards if s.slice == sl and s.n == int(n))
+    recs = part_records(root, name, snapshot, shard)
+    want = dict(recs)
+    pre = prefixes(root, name, codex)
+    cids = {p.split("/", 1)[0] for p in pre}
+    rows = []
+    for bundle_id, sh, producer, accepted_at in con.execute(
+            "SELECT bundle_id, shard, producer, accepted_at FROM coverage WHERE accepted_at IS NOT NULL"):
+        if sh.split("/", 1)[0] not in cids:
+            continue
+        sid = "/".join(sh.rsplit("/", 2)[1:])
+        try:
+            got = json.loads((contribute.bundle_dir(root, name, codex, sid, bundle_id)
+                              / "possession.json").read_bytes())
+            files = True
+        except (OSError, ValueError):
+            got, files = {}, False
+        uids = [u for u in want if u in got]
+        if not uids and (files or sid != part):
+            continue                    # holds nothing of this part
+        rows.append({"bundle_id": bundle_id, "shard": sh, "producer": producer, "accepted_at": accepted_at,
+                     "counted": any(sh.startswith(p) for p in pre), "files": files, "uids": len(uids),
+                     "same_hash": sum(1 for u in uids if got[u] == want[u])})
+    ids = [u for u, _ in recs]
+    chunks = 0
+    for i in range(0, len(ids), 900):
+        chunk_ids = ids[i:i + 900]
+        chunks += con.execute(f"SELECT COALESCE(SUM(chunks), 0) FROM documents WHERE uid IN "
+                              f"({','.join('?' * len(chunk_ids))})", chunk_ids).fetchone()[0]
+    from app.share import coverage as cov
+    return {"part": part, "records": len(recs), "chunks": int(chunks), "shard_chunks": int(shard.chunks),
+            "covered": covered(root, name, codex, con, snapshot).get(cov.shard_id(codex, part)),
+            "prefixes": pre, "bundles": sorted(rows, key=lambda r: (r["shard"], r["bundle_id"]))}
 
 
 def covered_uids(held: dict[str, list[str]], records: Iterable[tuple[str, str]]) -> set[str]:

@@ -126,6 +126,7 @@ def test_snapshot_index_parses_dates_newest_first(monkeypatch):
 
     class _Response:
         text = html
+        content = html.encode()
         def raise_for_status(self): return None
 
     class _Client:
@@ -138,8 +139,13 @@ def test_snapshot_index_parses_dates_newest_first(monkeypatch):
             return _Response()
 
     import httpx
+
+    from app.acquire import budget
     monkeypatch.setattr(httpx, "Client", _Client)
+    drawn = []
+    monkeypatch.setattr(budget, "acquire_bytes", drawn.append)
     assert specs.wikipedia_snapshots("enwiki") == ("20260801", "20260701", "20260601")
+    assert drawn == [len(html.encode())], "invariant 5: the listing's bytes are drawn"
 
 
 def test_only_eight_digit_names_are_accepted(monkeypatch):
@@ -147,6 +153,7 @@ def test_only_eight_digit_names_are_accepted(monkeypatch):
     class _Response:
         text = ('<a href="latest/">x</a><a href="../../etc/">y</a>'
                 '<a href="2026080/">short</a><a href="20260801/">ok</a>')
+        content = text.encode()
         def raise_for_status(self): return None
 
     class _Client:

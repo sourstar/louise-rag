@@ -54,8 +54,10 @@ codex = {
   space: {
     encoder: {weights: "sha256:…", label: "medcpt-article",
               engine: {name: "llama.cpp", build: "b10630", variant: "sycl", image: "sha256:…",
-                       args: ["llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls", "--port", "${PORT}"],
-                       env: {}, device: "Intel(R) Arc(TM) Pro B70 Graphics"}},
+                       args: ["llama-server", "-m", "${WEIGHTS}", "--embedding", "--pooling", "cls", "-np", "1", "--port", "${PORT}"],
+                       env: {GGML_SYCL_ENABLE_DNN: "0"}, device: "Intel(R) Arc(TM) Pro B70 Graphics"}},
+                                     -- env carries the vendor's bitwise-reproducibility mode (CLAUDE.md
+                                     -- invariant 12; notes/approved-encoders.md); one stream, -np 1
                                      -- the engine the reference vectors came from; not in space_id (§2.4)
     dim: 768, dtype: "f16", ctx: 512, pooling: "cls", normalise: true,
                                      -- dtype: f16 | f32 | i8 | i5 | i4 (09 §9.6)
@@ -151,8 +153,8 @@ the function that turns text into vectors, and the contract around it
 names the pre-embedded archives whose vectors this collection carries,
 and is derived rather than chosen (§2.7). `work` is the work parameter
 (§2.4). `modality` says what the bytes are, so that
-an encoder or a reranker of the wrong kind — a language model over the
-reference genomes — is refused rather than merely worse. `erasure` says
+an encoder or a reranker of the wrong kind — a language model over bytes
+that are not text — is refused rather than merely worse. `erasure` says
 how content may leave: `append-only` (the Gazzetta Ufficiale: nothing
 leaves without a recorded tombstone), `retractable` (PubMed: the
 publisher may withdraw a record, and the tombstone says so), `erasable`
@@ -306,7 +308,7 @@ its closed part — so the part still verifies and 01's promise 7 holds
 — until that part is next re-issued, when it is dropped from the file.
 A record the origin no longer supplies cannot be re-parsed, so its own
 going re-issues its part in the next snapshot, one record shorter; the
-version it supersedes is kept (below), and no later part moves, because
+version it supersedes is kept or dropped as below, and no later part moves, because
 the build cuts every closed part where it ended (*amended 2026-10-12*,
 operator: a build used to re-cut a slice by count, and one book gone
 re-issued every later part).
@@ -318,6 +320,26 @@ whatever the origin's own revision fields say. Sources that never
 delete (PubMed flags retractions) need only tombstones; sources that
 edit (Wikipedia) re-issue parts, and their history is the chain of
 snapshots.
+
+**Parts cut by content** (*amended 2026-10-24*, operator: a daughter that
+changes the slicing — wikidata's family map — must reuse every record and
+vector of its mother and be "functionally equivalent to a new collection
+created from scratch"). A Codex whose slicing block declares `parts:
+{rule: "content", min, max}` (09 §9.3) cuts each slice's records, in
+order, where a record ENDS its part: the part holds at least `min` records
+and the first 8 bytes of SHA-256 over the record's uid, read big-endian,
+are divisible by `shard_records − min`, or it holds `max`
+(content-defined chunking, LBFS and FastCDC's bounds, with the record as
+the unit). The layout is then a PURE FUNCTION of the slice's records at the
+snapshot: a from-scratch build, a resumed one, an update and a daughter
+give the same parts byte for byte, and the rules above for closed parts do
+not apply — there is nothing to keep: a record changed, gone, or moved to
+another slice re-issues its own part and, at worst, the parts up to the
+next boundary; a record's slice is the one its fields give at each
+snapshot, not the one it was first published in. Parts are numbered in
+order within the slice, so a part split or merged renumbers the later
+parts of that slice; their bytes do not change, and transport shares them
+by root (09 §9.16). Collections created before keep the count cut.
 
 A daughter's first snapshot (§2.7) has `previous` = the hash of the
 mother's snapshot `continues_through`; the parts it inherits are listed
@@ -332,7 +354,8 @@ for that cutoff is incomplete (exit 3; the codes are 07 §7.7).
 
 ## 2.3 Records
 
-Records are the parsed text of documents and nothing else — no markup,
+Records are the parsed text of documents, with everything the origin
+asserts about each entity (01 promise 9), and nothing else — no markup,
 no origin files, no local extras. They are sliced by declared keys
 (year, language) and cut into parts so that one part is one unit of transfer,
 of embedding and of verification. `slicing.shard_records` is chosen per
@@ -351,9 +374,15 @@ records/<slice>/NNNNN.jsonl.zst                     -- the newest version of par
 records/<slice>/NNNNN.<snapshot id>.jsonl.zst       -- a superseded version, kept; the id is the last snapshot that listed it
 ```
 
-A re-issued part keeps its path; the version it supersedes is renamed
-with the id of the last snapshot that listed it and kept, so an old
-snapshot can still be served and checked (01, promise 7).
+A re-issued part keeps its path. Where the origin keeps its history (06
+§6.2's `origin_versions = "history"`: Wikipedia's and Wikidata's
+revisions, Normattiva's versions in force), the version it supersedes is
+renamed with the id of the last snapshot that listed it and kept, so an
+old snapshot can still be served and checked. Where the origin replaces
+in place (`"replaces"`: Project Gutenberg), the superseded version can no
+longer be checked against the source and is not kept: the promotion
+overwrites it, and a part no longer held is not served (01, promise 7;
+*amended 2026-10-25*, operator: A).
 
 A record is one line: the keys `uid`, `native_id`, `lang`, `title`,
 `creators`, `date`, `subjects`, `keys`, `sections`, `extra`,
@@ -385,6 +414,15 @@ selected; a wrong layer is caught rather than reproduced.
 inspecting one record still sees it — from the tool, which knows the
 Codex, rather than from bytes that cannot.
 
+**Nor what the parse thought of the origin.** *Amended 2026-10-25
+(operator: "… any inconsistency is logged and flagged").* The
+inconsistencies a parse meets in the origin — a missing catalogue entry,
+a broken image reference, a record with no date the cutoff can use — are
+reported beside the record and never in it (06 §6.1): they are this
+peer's local state, recorded per document in the state database (07
+§7.8) by every build, and a record line, its `content_hash` and every
+part's roots are the same bytes with or without them.
+
 Every record carries two hashes. `content_hash` is BLAKE2b-128 of
 `canonical-json([title, [[heading, text], …]])` — the cleaned text and
 nothing else; it decides what "changed" means. `origin_hash` is
@@ -412,8 +450,15 @@ credited pre-embedded archive supplies is located there instead — its
 `origin` a URL into that archive — while `origin.spec` locates the rest
 (06 §6.4).
 
-A corpus may be **pruned** — what is not used is dropped — but never
-altered in a way that breaks that reproduction.
+A corpus is **pruned** only by a rule written in the plugin's guidelines
+and in its Codex form before it applies (*amended 2026-10-25*, CLAUDE.md
+invariant 11, operator 2026-10-24: "nothing is pruned unless written").
+Cost is answered by choosing what to embed, never by leaving entities out
+of the records, and pruning never breaks that reproduction. A
+structurally independent part of a collection — a language of
+Wikipedia, a family of Wikidata, Wikidata's lexemes — is a slice a peer
+may hold or not and embed or not; it is never a separate collection, and
+never left out (operator, 2026-10-24).
 A record without an `origin_hash` is refused at build, because a SHARD
 that verifies internally while being permanently unverifiable against
 its source is the worst thing a collection can ship.
@@ -690,10 +735,14 @@ whole set with its own encoder and
 passes when, over `quorum.n` texts drawn from it by the seeded rule of
 03 §3.2, at least `quorum.min_pass` reach cosine ≥ `tolerance` and the
 median of those n does (`hold embedder check`, 03 §3.3). A peer that
-runs `space.encoder.engine` as written, on the device it names, may get
+runs `space.encoder.engine` as written, on the device it names, gets
 the reference vectors back bit for bit — their hash is then
 `space.calibration.vectors` itself, the exact reproduction the engine is
-frozen for — but the gate asks only for the tolerance. The whole set
+frozen for; a mismatch there is a determinism defect of that run, never
+a matter of tolerance (*amended 2026-10-25*, CLAUDE.md invariant 12: found
+by the bit-exact measurement before the engine embeds, by review until
+the gate runs it). The gate itself asks the tolerance, which is for other
+engines and other hardware. The whole set
 is embedded because the statement it produces reports over all of it,
 and because T0's envelope and T1's probe set are the whole set too. A
 peer that fails may still search with what it holds. The same
@@ -707,7 +756,10 @@ a fixed rule from the collection's own records, and the member carries it
 (09 §9.12, *amended 2026-10-08*).
 
 The **index** is a set of centre points trained once on a corpus-wide
-sample. Every vector's label is its nearest centre, and search probes a
+sample. *(Not built, 2026-10-25: the node searches its local LanceDB
+index, which no peer shares; the centres member, the labels and their two
+checks below are the design, not the code — 07 §7.3's `index build`
+says what `--vector` builds today.)* Every vector's label is its nearest centre, and search probes a
 few buckets instead of everything. The training is fixed so that anyone
 can reproduce it (`centres`, 03 §3.2): k-means with k = ⌈√n⌉, capped at
 65,536, on a sample of min(200,000, n) chunks chosen by a deterministic
@@ -759,7 +811,6 @@ local, and its form is 09 §9.10.
 ├── records/<slice>/NNNNN.jsonl.zst      -- and NNNNN.<snapshot id>.jsonl.zst for superseded versions (§2.3)
 ├── relations/<slice>/NNNNN.jsonl.zst    -- typed edges between records (§5.5; 09 §9.14)
 ├── figures/<slice>/NNNNN.fig.zst        -- the plates that part's records name (09 §9.5); fetchable or not
-├── index/<slice>/NNNNN/                 -- the text index of that part (optional to share; a cache)
 └── vectors/<space>/…                    -- as above
 ```
 
@@ -816,6 +867,20 @@ parent nodes and children (09 §9.5), a process pool has children, a
 directory has a parent: those are the canonical words for those things
 and they keep them. Naming what is ours should cost a reader none of
 the words they already know.
+
+A daughter whose only change is her SLICING — wikidata's family map with a
+family added (*amended 2026-10-24*, operator: "if a new family is added a
+daughter allows you to reuse all the vectors and corpus of the mother. It
+must be functionally equivalent to a new collection created from scratch")
+— reuses both whole: her parts are built from her mother's record lines
+(`hold records build --records-from`, none parsed, each cut into chunks
+again for its part's `chunks_root`), her vector table is her mother's
+(`dev carry --resliced`, amendment A1g: the same records, chunks and space,
+other parts). Her parts are cut by content (§2.2), so they are byte for
+byte the parts a collection created from scratch with her slicing has;
+`hold collection continue --reslice` refuses a daughter that changes the
+slicing and cuts by count. Until a collection is published, the same
+steps serve a re-creation (RULE 1).
 
 A daughter whose parser adds to every record a section the mother's did
 not have — a Wikidata entity's text in one more language
@@ -893,8 +958,14 @@ carry (amendment A1, *amended 2026-10-09*): into a collection with the
 same records whose space differs only by engine or by a declared input
 form equal to the one the vectors were produced in, after `vectors-sample`
 under a validated run passes at the target's tolerance; a sister who
-changes the weights, the layers' chunkers or anything else in the
-function starts from zero as before. Her parts are byte-identical, so
+changes the weights or anything else in the function starts from zero as
+before. *Amendment A1h (RULE 1, 2026-10-25):* a sister, or a re-creation,
+that changes the layers or their chunkers keeps the vector of every chunk
+whose id, text and input form are unchanged, under the same weights,
+query side and epoch — a by-the-book build computes the same vector — and
+embeds every other chunk; `vectors-sample` passes before use, as for any
+carry. (The carry by chunk is built when the first such change needs it;
+until then such a change starts from zero.) Her parts are byte-identical, so
 they need not be built again either:
 `hold snapshot create --shards-from` links them, each checked against its
 source snapshot's `root`, and the snapshot it freezes is the one her own
@@ -1127,11 +1198,16 @@ construction, so the vectors and every credit copy with her. A
 corrective sister starts from zero by definition and inherits no
 vectors and no archive credit — but it keeps the corpus and community
 entries, which were never about the vectors it discarded.
+While nothing official has been published from a collection, its
+correction is not a corrective sister at all: it is a re-creation under
+the same name's successor, carrying what is identical (RULE 1; operator,
+2026-10-24: "No official daughters so far").
 
 **A cleaning change is not a sister.** Cleaning output *is* the record
 (§2.3), so changing `cleaning_version` re-derives every record from the
 origin: different `content_hash`, different parts, different chunk
-ids, nothing carried over but the origin itself. Calling that a sister
+ids, nothing carried over but the origin itself — and, under RULE 1
+(A1h), the vector of every chunk whose text did not change. Calling that a sister
 would empty the word of the one thing it means. It is a collection of
 its own, standing beside the first over the same origin, with no
 relation claimed and neither superseded.
@@ -1249,8 +1325,9 @@ classes (§4.4), which is the actual need.
 `notes/deposit-collections.md`.*
 
 A **deposit collection** is the collection a client of this node writes
-over HTTP (07 §7.4): an agent's memory, the files a person uploads, the
-text of a URL they subscribe it to. Its plugin is `deposit` (06 §6.7);
+over HTTP (07 §7.4): an agent's memory, the files a person uploads, a
+URL they subscribe it to — a page kept as fetched and its record parsed
+from it (06 §6.7, amended 2026-10-25, operator: "Keep all"). Its plugin is `deposit` (06 §6.7);
 it is `privacy: never-share` and `erasure: erasable`, and neither may
 be changed.
 
@@ -1291,9 +1368,17 @@ and nothing serves it.
 - `space`: the encoder is the node's deposit default,
   `granite-embedding-107m-multilingual` unless `platform.toml` names
   another (07 §7.8), or the one `create` is given. The first deposit
-  collection on an encoder is given its space block once — a file, or a
-  Codex to copy it from. The first deposit
-  collection on an encoder runs `create`'s calibration; every later one
+  collection on an encoder takes its space block from what the operator
+  names — a Codex to copy (`--space-from`, `[deposit] space_from`) or a
+  space file (`--space`, `[deposit] space`) — and, where nothing is
+  named, from what the node holds (*amended 2026-10-25*, RULE 2: it was
+  "given its space block once"): a held text Codex whose
+  `space.encoder.weights` are the weights the deposit encoder's stated
+  run loads — verified against its run id, a model's name never
+  deciding — and with no query encoder of its own, copied whole as
+  `--space-from` copies it. With none of these, `create` says so and
+  creates nothing. One given a space file runs `create`'s calibration;
+  every later one
   copies that space block whole — encoder, engine, calibration,
   envelope, tolerance — because the calibration set does not depend on
   the corpus (03 §3.3) and the bytes would be identical. The encoder is
@@ -1380,6 +1465,11 @@ What it does **not** have:
     claim's end belongs to the target its uid's plugin prefix says. The
     version is inside `collection_id`, so the two collections of 2026-10-09
     keep version 7 and their bytes (09 §9.3).
+  - *Amended 2026-10-25* (RULE 2): the creator need not name them. The
+    node reads the targets from the claims — each end's plugin prefix
+    names one held collection of that plugin, never guessed between two
+    — and `from_snapshot` is each target's newest held snapshot, the one
+    `hold annotations update` re-checks against (07 §7.4).
 - `plugin` is `annotations`: the claims' uids are `annotations:<n>` and
   their relation types are `annotations:<type>`.
 - `origin.spec` is `{source_id: "annotations", nonce}`, the deposit rule

@@ -1,5 +1,8 @@
 # Figures in the cleaned corpus — an open question, and it blocks full import
 
+> **Superseded** (2026-10-25, handover) by decided and applied on 2026-09-09 ([figures-amendment-plan.md](figures-amendment-plan.md), `docs/08-adversarial.md`, `docs/09-formats.md` §9.5).
+
+
 Raised by the operator, 2026-09-08, and deliberately left open: **what
 may go into a cleaned corpus besides text?** Some books cannot be
 understood without their plates — architecture, interior design,

@@ -84,6 +84,14 @@ def test_a_stopped_pass_resumes_at_the_chunk_without_parsing_what_it_has(tmp_pat
             calls["n"] += 1
         return real(s, *a, **k)
     monkeypatch.setattr(dump_mod.json, "loads", counting)
+    real_finish = pack._finish
+
+    def finish(*a, **k):
+        # the passes after the chunks (names, class tree, families) parse what
+        # they need from the pack's own lines: not the chunk pass counted here
+        monkeypatch.setattr(dump_mod.json, "loads", real)
+        return real_finish(*a, **k)
+    monkeypatch.setattr(pack, "_finish", finish)
     meta = pack.build(dump, languages=("en",), chunk=2)
     assert meta["complete"] and meta["chunks"] == 3 and meta["entities"] == 6
     assert calls["n"] == 4, "the two entities of the complete chunk were skipped, not parsed"
@@ -112,8 +120,9 @@ def _pack_bytes(dump: Path) -> dict:
     meta.pop("mtime_ns"), meta.pop("size")            # two dumps' own signatures
     con = sqlite3.connect(d / "labels.sqlite")
     labels = con.execute("SELECT id, lang, label FROM label ORDER BY id, lang").fetchall()
+    names = con.execute("SELECT id, lang, label FROM name ORDER BY id").fetchall()
     con.close()
-    return {"meta": meta, "labels": labels,
+    return {"meta": meta, "labels": labels, "names": names,
             "chunks": {p.name: p.read_bytes() for p in sorted(d.glob("*.parquet"))},
             "stray": sorted(p.name for p in d.glob("*.tmp"))}
 
@@ -127,10 +136,10 @@ def test_the_parallel_pass_writes_the_serial_pass_byte_for_byte(tmp_path, chunk)
     m2 = pack.build(parallel, languages=("en", "fr"), chunk=chunk, workers=3, log=said.append)
     assert m2["complete"] and m2["entities"] == m1["entities"] == 6 and m2["pruned"] == m1["pruned"] == 1
     a, b = _pack_bytes(serial), _pack_bytes(parallel)
-    assert a["meta"] == b["meta"] and a["labels"] == b["labels"]
+    assert a["meta"] == b["meta"] and a["labels"] == b["labels"] and a["names"] == b["names"]
     assert a["chunks"] == b["chunks"], "every chunk file the same bytes"
     assert b["stray"] == [], "no tmp file left"
-    assert "3 processes" in said[-1]
+    assert any("3 processes" in m for m in said), "the chunk pass's last line (the names follow it)"
 
 
 def test_a_stopped_parallel_pass_resumes_at_its_last_committed_chunk(tmp_path):
@@ -262,6 +271,12 @@ def test_a_pack_built_beside_the_dump_is_adopted_into_the_cache_and_resumes_ther
             calls["n"] += 1
         return real(s, *a, **k)
     monkeypatch.setattr(dump_mod.json, "loads", counting)
+    real_finish = pack._finish
+
+    def finish(*a, **k):
+        monkeypatch.setattr(dump_mod.json, "loads", real)     # the passes after the chunks: not counted
+        return real_finish(*a, **k)
+    monkeypatch.setattr(pack, "_finish", finish)
     meta = pack.build(dump, languages=("en",), chunk=2, workers=1, log=said.append)
     assert meta["complete"] and meta["chunks"] == 3
     assert calls["n"] == 4, "resumed after the adopted chunk: its two entities were not parsed again"
@@ -375,3 +390,30 @@ def test_the_pinned_snapshot_alone_is_read_and_a_bad_dump_is_one_container_error
     (broken / "wikidata-20261020-all.json.bz2").write_bytes(b"not bz2 at all")
     refs = list(src.discover(DiscoverState(corpus_root=tmp_path, snapshot="20261020")))
     assert len(refs) == 1 and refs[0].scope == "container" and "not usable" in refs[0].error
+
+
+def test_parse_adds_a_history_section_after_the_language_s_text(tmp_path):
+    """Parser 2 (operator, 2026-10-24): what the best-rank filter drops, as a
+    section `en:history` after the English text, which stays byte for byte;
+    an entity whose filter drops nothing has no such section."""
+    extra = [b'{"type":"property","id":"P137","datatype":"wikibase-item","labels":{"en":{"language":"en",'
+             b'"value":"operator"}},"claims":{}}',
+             b'{"type":"property","id":"P582","datatype":"time","labels":{"en":{"language":"en",'
+             b'"value":"end time"},"fr":{"language":"fr","value":"date de fin"}},"claims":{}}',
+             b'{"type":"item","id":"Q2874","labels":{"en":{"language":"en","value":"Grand Lyon"}},"claims":{}}']
+    dump = a_dump(tmp_path, lines=entity_lines() + extra)
+    src = WikidataSource(languages=("en", "fr"))
+    (tmp_path / "state").mkdir()
+    refs = {r.native_id: r for r in src.discover(DiscoverState(corpus_root=tmp_path, state_dir=tmp_path / "state"))}
+    raw = src.fetch(refs["3331"])
+    doc = src.parse(raw)
+    assert [h for h, _ in doc.sections] == ["en", "en:history", "fr", "fr:history"]
+    labels, obj = pack.labels(dump), json.loads(raw.data)
+    assert doc.sections[0][1] == textify.entity_text(obj, "en", labels), "the English text as before"
+    assert doc.sections[1][1] == textify.history_text(obj, "en", labels)
+    assert doc.sections[1][1].endswith("Other statements include:\n- instance of: Q2354973\n"
+                                       "- operator: Grand Lyon (end time: 1 January 2015)")
+    assert doc.sections[3][1] == textify.history_text(obj, "fr", labels)
+    assert "Les autres déclarations incluent:\n" in doc.sections[3][1], "French: its own connective"
+    assert [h for h, _ in src.parse(src.fetch(refs["2711"])).sections] == ["en", "fr"], \
+        "nothing dropped by the rank filter: no history section"

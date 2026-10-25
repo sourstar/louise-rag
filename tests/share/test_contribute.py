@@ -5,6 +5,7 @@ its own ladder, records the coverage and announces a `bundle` event; a
 second pass finds nothing open; a heavier neighbour takes the shards it
 leads; the seeder serves the bundles as members."""
 import json
+from pathlib import Path
 import time
 
 import pytest
@@ -900,6 +901,101 @@ def test_the_view_counts_a_predecessor_s_coverage_by_possession(ready):
                                f"({','.join('?' * len(uids))})", uids).fetchone()[0]
     assert union[cov.shard_id(codex, sid)] == min(int(shard.chunks), int(expect))
     assert all(v == 0 for k, v in union.items() if k != cov.shard_id(codex, sid)), "nothing else covered"
+
+
+def test_a_possession_count_that_fails_is_no_figure_never_the_rows_undercount(ready, monkeypatch):
+    """2026-10-25: a cache-file race made `possession.covered` raise, and the
+    view fell back to the rows: 114,154 of 10,471,327 chunks covered for
+    10,164,506 — a re-minted collection's rows hold only its own bundles.
+    Now the caller gets `CoverageUnknown`; the publish pass defers on it."""
+    import pytest
+    from app.hold import land as landing
+    from app.share import counting, possession
+    root, snapshot, codex, kw = ready
+    shard = snapshot.shards[0]
+    sid = f"{shard.slice}/{shard.n:05d}"
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    _predecessor(root, codex, kw["con"], f"{shard.slice}/{shard.n + 3:05d}",
+                 {r["uid"]: r["content_hash"] for r in records})
+
+    def raced(*a, **k):
+        raise FileNotFoundError("[Errno 2] No such file or directory: 'x.json.tmp'")
+    monkeypatch.setattr(possession, "covered", raced)
+    with pytest.raises(counting.CoverageUnknown, match="could not be counted by possession.*FileNotFoundError"):
+        counting.view_kwargs(root, "gutenberg", codex, kw["con"])
+    for check, key in (("roots", OURS), ("chunks", OURS), ("records-vs-origin", PEER)):
+        attested(root, codex, snapshot, check=check, key=key)
+    with pytest.raises(counting.CoverageUnknown):
+        contribute.once(root, "gutenberg", codex, live=[rendezvous.Peer(OUR_KEY, 1000.0)], **kw)
+
+
+def test_a_re_minted_collection_with_no_snapshot_yet_counts_its_rows(ready, monkeypatch):
+    from app.hold import seed
+    from app.hold.codex import CodexError
+    from app.share import counting, possession
+    root, snapshot, codex, kw = ready
+    monkeypatch.setattr(contribute, "predecessors", lambda root, name: ["sha256:" + "aa" * 32])
+
+    def none_yet(root, name, snapshot_id=None):
+        raise CodexError(f"{name} holds no snapshot: there are no parts to name")
+    monkeypatch.setattr(seed, "latest_snapshot", none_yet)
+    monkeypatch.setattr(possession, "covered", lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked")))
+    view = counting.view_kwargs(root, "gutenberg", codex, kw["con"])
+    assert view["union"] == counting.union_counts(root, "gutenberg", codex, cov.rows(kw["con"]))
+
+
+def test_a_part_s_coverage_is_explained_bundle_by_bundle(ready):
+    """2026-10-25, the Perugia hand-over: two peers holding the same 380
+    bundles counted 9,010 chunks apart over 127 parts. `explain_part` says,
+    per bundle that could hold the part's records, which test it passes."""
+    from app.hold import land as landing
+    from app.share import possession
+    root, snapshot, codex, kw = ready
+    shard = snapshot.shards[0]
+    sid = f"{shard.slice}/{shard.n:05d}"
+    records = landing.records_for(root, "gutenberg", snapshot, sid, None)
+    first, second = records[0], records[1]
+    good = _predecessor(root, codex, kw["con"], f"{shard.slice}/{shard.n + 3:05d}",
+                        {first["uid"]: first["content_hash"], second["uid"]: "0" * 32})
+    gone = _predecessor(root, codex, kw["con"], sid, {second["uid"]: second["content_hash"]},
+                        bundle_id="sha256:" + "e" * 64, files=False)
+    other_seg = "sha256:" + "d" * 64
+    cov.record(kw["con"], bundle_id=other_seg, shard=f"{PREDECESSOR}/5ac3c5810f2cd56a/{sid}", producer=PEER_KEY,
+               uids=[first["uid"]], chunks=1, tiers={t: "pass" for t in cov.TIERS}, source=cov.FETCHED,
+               accepted_at="2026-10-20T00:00:00Z")
+    out = possession.explain_part(root, "gutenberg", codex, kw["con"], sid)
+    by = {b["bundle_id"]: b for b in out["bundles"]}
+    assert (by[good]["counted"], by[good]["files"], by[good]["uids"], by[good]["same_hash"]) == (True, True, 2, 1), \
+        "one record held with its current hash, one changed since"
+    assert (by[gone]["files"], by[gone]["uids"]) == (False, 0), "a row with no files here covers nothing"
+    assert by[other_seg]["counted"] is False, "a row under another space segment is not read by the index"
+    assert out["records"] == len(records) and out["covered"] is not None and out["prefixes"]
+
+
+def test_the_index_cache_has_a_temp_file_of_its_own(ready, monkeypatch):
+    """The same race as `part_records` (f386934), one function up: a CLI and
+    the worker rebuilding the index at once shared `<index>.json.tmp`."""
+    from app.share import possession
+    root, snapshot, codex, kw = ready
+    cov.ensure_schema(kw["con"])
+    real_replace = possession.os.replace
+    nested = {"done": False}
+
+    def replace(src, dst):
+        if not nested["done"] and str(dst).endswith(possession.INDEX):
+            nested["done"] = True
+            possession._memo.clear()
+            Path(dst).unlink(missing_ok=True)
+            possession.index(root, "gutenberg", codex, kw["con"])     # the other writer, first
+        real_replace(src, dst)
+    monkeypatch.setattr(possession.os, "replace", replace)
+    possession._memo.clear()
+    (root / "gutenberg" / "state" / "share" / possession.INDEX).unlink(missing_ok=True)
+    possession.index(root, "gutenberg", codex, kw["con"])
+    assert nested["done"]
+    left = [p.name for p in (root / "gutenberg" / "state" / "share").iterdir() if p.name.endswith(".tmp")
+            or p.name.startswith("." + possession.INDEX)]
+    assert left == [], "no temp file left behind"
 
 
 def test_the_held_path_signs_none_of_a_predecessor_s_rows_and_never_counts_them_as_coverage(ready):

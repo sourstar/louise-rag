@@ -118,6 +118,18 @@ def withheld_from(names: list[str] | None, *, private: bool = False) -> list[dic
     return out
 
 
+#: the records tagged with an identifier (05 §5.2's `keys` filter), read
+#: from `doc_keys` alone. Joined to `documents` for `in_scope` it cost a
+#: random lookup into pubmed's 40 M rows per tagged record: BRCA2's 12,053
+#: took 12.8 s cold and 2.4 s warm, and HGNC:5172 paid 20,001 lookups
+#: before it could be refused (München, 2026-10-25). The native id is the
+#: uid's (`<plugin>:<native_id>`), and an out-of-scope id in the prefilter
+#: admits nothing the legs could return. The count comes first, from the
+#: entity index alone, so a refusal reads no row.
+TAGGED_COUNT_SQL = "SELECT count(*) FROM (SELECT 1 FROM doc_keys WHERE entity_id = ? LIMIT ?)"
+TAGGED_SQL = "SELECT uid FROM doc_keys WHERE entity_id = ? LIMIT ?"
+
+
 def book_ids_for(filters: dict | None):
     """05 §5.2's restriction per collection, as a callable the legs take:
     None for no filter; for a collection with a Codex, the records its
@@ -144,8 +156,19 @@ def book_ids_for(filters: dict | None):
             with closing(db.connect(collection)) as con:
                 return [int(r[0]) for r in con.execute(
                     "SELECT native_id FROM documents WHERE in_scope=1") if str(r[0]).isdigit()]
+        def tagged(identifier: str, limit: int) -> tuple[int, list[int]]:
+            # 05 §5.2 (amended 2026-10-25): the records tagged with an
+            # identifier the reader asked for; (count up to `limit`, ids —
+            # none read when the count reaches the limit)
+            with closing(db.connect(collection)) as con:
+                n = con.execute(TAGGED_COUNT_SQL, (identifier, limit)).fetchone()[0]
+                if n >= limit:
+                    return n, []
+                ids = (str(r[0]).partition(":")[2] for r in con.execute(TAGGED_SQL, (identifier, limit)))
+                return n, [int(i) for i in ids if i.isdigit()]
         return filters_mod.book_ids_for(codex, root / collection.name / "index", filters,
-                                        snapshot_id=snap.snapshot_id if snap else None, all_ids=all_ids)
+                                        snapshot_id=snap.snapshot_id if snap else None, all_ids=all_ids,
+                                        tagged=tagged)
     return resolve
 
 

@@ -81,9 +81,11 @@ consistent, because there is nobody to prove them to.
    the record by hash (09 §9.5). It is admitted for the same reason the
    text is: it is what the document says. "Never anything executable"
    binds it hardest of all, because a figure is the one thing here a
-   viewer RENDERS — so the admitted types are a closed list, SVG is not
-   on it, and the type is checked against the bytes rather than believed
-   (08 §8.7).
+   viewer RENDERS — so every figure the origin has is carried as opaque
+   bytes, and only DISPLAY decodes: the types it shows are a closed
+   list, SVG is not on it, and the type is checked against the bytes
+   rather than believed (08 §8.7, *amended 2026-10-25, operator: "Every
+   plate"*).
 2. **A peer takes the portion it wants** — one language, one period, with
    or without vectors — and knows from the Codex and the snapshot what
    it is getting before the first byte.
@@ -107,12 +109,18 @@ consistent, because there is nobody to prove them to.
    reproduction outweighs any number of assurances.
 6. **No node is in charge.** Once one honest peer holds a collection, it
    can keep it available and up to date if everyone else disappears.
-7. **Nothing published is deleted.** A superseded collection stays
-   available and verifiable; catalogues mark it, nothing removes it. A
-   tombstoned record is no exception: its text stays in the closed part
-   of the snapshot that carried it, which remains shareable and
-   verifiable as that snapshot, and from the snapshot that tombstones it
-   the record is excluded from search and from embedding (02 §2.2).
+7. **Nothing published is recalled, and everything held is
+   verifiable** (*amended 2026-10-25*, operator: "what really matters in
+   the end is the verifiability"). A superseded collection stays
+   available; catalogues mark it, nothing removes it. Within a
+   collection, what is kept follows the origin: where the origin keeps
+   its history, a superseded part is kept and an old snapshot can still
+   be served and checked; where the origin replaces in place (Project
+   Gutenberg), the superseded version is dropped once the newer snapshot
+   holds its replacement, because it can no longer be checked against
+   the source (02 §2.3, 06 §6.2). A tombstoned record is excluded from
+   search and from embedding from the snapshot that tombstones it (02
+   §2.2).
 8. **Nothing proceeds with a known defect. "Fix it after" is never, ever
    an option.** Not for one more run, not for the batch already queued,
    not for the deploy that is otherwise ready, not for the hour it would
@@ -120,8 +128,8 @@ consistent, because there is nobody to prove them to.
    it is fixed first — including work in flight and work unrelated to
    it.
 
-   Promise 7 is why. Nothing published is deleted, so a wrong artefact
-   is never recalled, only superseded, and every peer that adopted it in
+   Promise 7 is why. Nothing published is recalled, so a wrong artefact
+   is only superseded, and every peer that adopted it in
    the meantime still holds it. Promise 5 is what makes it dangerous
    rather than merely useless: trust here is reproduction, so the
    artefact that matters is not the one that crashes — it is the one
@@ -204,7 +212,7 @@ they are needed.
 | holdings | what your copy actually has — which slices, which kinds |
 | space | a function from cleaned text to vectors: the model's weights and its settings, the layers and the cleaning version, named by `space_id` (02 §2.4) — not the engine that runs the model. One collection, one space; collections in one space are searched as one ranked list (05 §5.1), and vectors from different spaces are never compared |
 | engine | how a model is run: the serving software, its build, the image holding it — or, for a backend a model runner installs, the backend's installed files — its arguments and environment, the device (02 §2.4). The Codex freezes the one its reference vectors came from, so anyone can run it again; a peer may run any engine that passes the calibration gate, once per run, and the platform serving it states the run of every answer by a receipt, so only validated runs write vectors (03 §3.3) |
-| VeGa | the Vector Gate: the part of a node's model platform that makes every vector's provenance provable — a wrapper between the model runner and each real backend, which issues a receipt for every answer, and the service that holds the receipts and the runs they name for the writer to read (03 §3.3, 09 §9.12). The runner (LocalAI) is outside the trust path and alone manages the card's memory. VeGa replaces RAGE, the RAG Engine — the former name and the former design, a front that stated the run in a header of each answer and serves until it retires; the node's app keeps the name `louise-rage` (operator, 2026-10-08) |
+| VeGa | the Vector Gate: the part of a node's model platform that makes every vector's provenance provable — a wrapper between the model runner and each real backend, which issues a receipt for every answer, and the service that holds the receipts and the runs they name for the writer to read (03 §3.3, 09 §9.12). The runner (LocalAI) is outside the trust path and alone manages the card's memory. An endpoint not behind VeGa may state its run in the `Louise-Run` header instead (09 §9.12). The node's app is named `louise-rage` |
 | receipt | VeGa's statement, for one embedding input, of the run that answered it, bound to the input the backend received and the vector it returned by their digests; a vector — a query's included — is taken only with its receipt: none is a deferral, one that does not match a refusal (03 §3.3, 09 §9.12) |
 | bundle (signed block) | a batch of vectors on a collection's own records, signed by the key that produced them; the unit in which embedding work travels — 03 §3.5, 09 §9.7; 08 §8.6 says *signed block* |
 | attestation | the signed result of one completed check — collection, snapshot, check, seed and sampled parts, result, the verifier's key (03 §3.6, 09 §9.8); it travels as an event, and trust levels are counted from attestations, never from assurances |

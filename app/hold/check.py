@@ -273,13 +273,69 @@ def check_roots(ctx: Ctx) -> Outcome:
                        f"are not the snapshot's root")
 
 
+def _family_map(ctx: Ctx):
+    """The family map the Codex's slicing names, read from its SHARD member
+    and checked against the sha256 (pack-format.md §2, amended
+    2026-10-24): `(map or None, the failure or None)`. The map's reader is
+    pure (app/plugins/wikidata/families.py: JSON and hashlib), so a peer that
+    is only checking still needs no plugin machinery."""
+    import hashlib
+    from app.pack import slicing as sl
+    named = sl.family_map_of(getattr(ctx.codex, "slicing", None))
+    if named is None:
+        return None, None
+    p = ctx.shard_tree / sl.map_member(named)
+    if not p.is_file():
+        return None, f"{sl.map_member(named)}:missing"
+    raw = p.read_bytes()
+    if "sha256:" + hashlib.sha256(raw).hexdigest() != named:
+        return None, f"{sl.map_member(named)}:hash"
+    from app.plugins.wikidata import families
+    return families.load_map(raw), None
+
+
+def _slice_unless_walked(fmap, record: dict) -> str | None:
+    """The slice the map gives a record, or None when one of its classes is
+    newer than the map (placed by the dump's own links, which a record
+    alone does not carry: not checked here)."""
+    from app.plugins.wikidata import families
+    x = record.get("extra") or {}
+    classes = list(families.item_values((x.get("claims") or {}).get("P31")))
+    if any(q > fmap.max_item and q not in fmap.classes for q in classes):
+        return None
+    return families.slice_name(families.family_code(x, fmap), str(x.get("id") or ""), fmap.families)
+
+
+def _cut_by_content(rule, uids: list[str], last_of_slice: bool) -> bool:
+    """A part cut by content ends at its first record the rule ends a part
+    with, and nowhere else; the slice's last part may end with the slice."""
+    from app.pack import slicing as sl
+    for i, uid in enumerate(uids, 1):
+        if sl.ends_part(uid, i, rule):
+            return i == len(uids)
+    return last_of_slice
+
+
 def check_records(ctx: Ctx) -> Outcome:
     """"every sampled record's `content_hash` recomputes from its own title
     and sections and it carries an `origin_hash`; each sampled shard's
     `records_root` recomputes from its records' `content_hash` values in
-    order" (03 §3.2)."""
+    order" (03 §3.2) — and, where the Codex slices by a family map
+    (2026-10-24), the map member hashes to it and every sampled record whose
+    classes the map knows sits in the slice the map gives it; where it cuts
+    parts by content (02 §2.2, amended 2026-10-24), each sampled part ends
+    at its first record the rule ends a part with — the last part of a
+    slice at the slice's end."""
+    from app.pack import slicing as sl
     shards = _shards(ctx, "records")
     seen, failed, ran = 0, [], []
+    fmap, broken = _family_map(ctx)
+    if broken:
+        failed.append(broken)
+    rule = sl.parts_rule_of(getattr(ctx.codex, "slicing", None))
+    last_n: dict[str, int] = {}
+    for s in ctx.snapshot.shards if rule is not None else ():
+        last_n[s.slice] = max(last_n.get(s.slice, 0), s.n)
     for s in shards:
         try:
             records = ctx.records_of(s)
@@ -287,9 +343,11 @@ def check_records(ctx: Ctx) -> Outcome:
             continue
         ran.append(s)
         hashes: list[str] = []            # the root's input, kept; the records are not
+        uids: list[str] = []
         for r in records:
             seen += 1
             hashes.append(r["content_hash"])
+            uids.append(r["uid"])
             sections = [tuple(x) for x in r.get("sections") or []]
             if rec.content_hash(r.get("title") or "", sections) != r["content_hash"]:
                 failed.append(r["uid"])
@@ -298,9 +356,13 @@ def check_records(ctx: Ctx) -> Outcome:
                 # permanently unverifiable against its source, which is the
                 # worst artefact we could ship.
                 failed.append(r["uid"])
+            elif fmap is not None and _slice_unless_walked(fmap, r) not in (None, s.slice):
+                failed.append(f"{r['uid']}:slice")
         root = rec.records_root(hashes)
         if root != s.records_root:
             failed.append(f"{s.slice}/{s.n:05d}:records_root")
+        if rule is not None and not _cut_by_content(rule, uids, s.n == last_n.get(s.slice)):
+            failed.append(f"{s.slice}/{s.n:05d}:cut")
     if not ran:
         return Outcome("records", INCONCLUSIVE,
                        why="this peer holds none of the sampled shards")
@@ -1008,10 +1070,11 @@ def check_figures(ctx: Ctx) -> Outcome:
     that is the one thing the hash on the record line exists to catch.
 
     A `carried: false` entry names a plate the ORIGIN has and this
-    collection does not admit (a media type outside 08 §8.7, a figure over
-    a cap). It is not counted as named: there is nothing to hold and never
-    will be, and counting it would make `named - held` grow with every
-    refused SVG.
+    collection did not carry — a record written before 08 §8.7's amendment
+    of 2026-10-25 ("Every plate"), which left SVGs behind; every plate is
+    carried since. It is not counted as named: there is nothing to hold and
+    never will be, and counting it would make `named - held` grow with
+    every such entry.
     """
     from . import figures as figures_mod
 
@@ -1032,6 +1095,9 @@ def check_figures(ctx: Ctx) -> Outcome:
         ran.append(s)
         want: set[str] = set()
         for r in records:
+            if len(r.get("figures") or []) > figures_mod.MAX_PER_RECORD:
+                failed.append(f"{r.get('uid')}:names {len(r['figures'])} figures, over "
+                              f"{figures_mod.MAX_PER_RECORD} (08 §8.7)")
             for f in r.get("figures") or []:
                 if f.get("carried") is False:
                     continue
@@ -1095,6 +1161,10 @@ CHECKS: dict[str, Callable[[Ctx], Outcome]] = {
     "evaluation": _not_yet(
         "evaluation", "needs the suite `space.evaluation` names; this "
                       "collection declares none" ),
+    "model-agreement": _not_yet(
+        "model-agreement", "re-runs a `model` method's claims (02 §2.10); "
+                           "not built — no collection has a `model` method "
+                           "yet, and its floor is measured before the first"),
 }
 
 

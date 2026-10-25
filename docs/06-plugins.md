@@ -66,7 +66,9 @@ different output for some input. A bump is never a new snapshot of the
 same collection: the Codex names `parser.version`, so the collection
 that carries the new parser is a daughter (§2.7, `continues`) unless
 `records-vs-origin` under the new image proves it equivalent (§3.4), in
-which case nothing changes.
+which case nothing changes. While nothing official has been published
+from the collection, it is re-created instead, carrying what is
+identical (RULE 1, 02 §2.4 A1c; operator, 2026-10-24).
 
 The classes are the plugin's **defaults**, because they are properties
 of the source: `hold collection create` copies them into the Codex, and
@@ -211,7 +213,9 @@ class CanonicalDoc:
 @dataclass(frozen=True)
 class Figure:
     hash: str                       # H over `data` — SHA-256, not BLAKE2b (09 §9.5)
-    media_type: str                 # one of 08 §8.7's admitted types
+    media_type: str                 # the origin's type, whatever it is — every plate is
+                                    # carried; 08 §8.7's closed list binds display only
+                                    # (amended 2026-10-25, "Every plate")
     bytes: int                      # len(data)
     seq: int                        # order of first appearance in the text, from 0
     data: bytes                     # the plate itself; the only field that does not
@@ -243,6 +247,49 @@ read one part of a document — but the platform never *requires* them:
 every stage falls back to `fetch` and `parse`, and any other method is
 ignored.
 
+### Issues: the origin's inconsistencies
+
+*Amended 2026-10-25 (operator: "Add any inconsistency found in the
+corpora in a report. Make the parsers such that on a regular basis any
+inconsistency is logged and flagged"; the report is
+`notes/corpus-inconsistencies.md`).* An origin is not always consistent
+with itself: a book without its catalogue entry, an epub naming an image
+it does not hold, a citation with no date of any kind. Where `parse`
+meets one and works around it — reads the next form, drops the broken
+reference, leaves a field null — it says so, as data:
+
+```python
+@dataclass(frozen=True)
+class Issue:
+    code: str                       # one the plugin declares in ISSUES
+    detail: str                     # which file, element or value, in plain words
+
+CanonicalDoc.issues: list[Issue]    # [] when the parse met none
+ISSUES: dict[str, str]              # the plugin's codes, each with a one-line meaning
+```
+
+An issue is never part of the record. No record line, `content_hash`,
+`origin_hash` or chunk carries it, so a parser that reports one more or
+one fewer changes no byte any peer holds: it is not output in
+`PARSER_VERSION`'s sense, and reporting it bumps nothing. A code a plugin
+does not declare is refused when recorded. The platform has codes of its
+own for what it checks itself: `cutoff-undated`, a record without the
+date its `cutoff_rule` reads (§6.2).
+
+Whoever runs the parse records what it met in the collection's state
+database (07 §7.8) — `hold records build` for every record it parses,
+on every build, the cutoff check included; the node's metadata stage for
+every document it extracts, for the codes that stage's read examines —
+keyed (uid, code): per document the codes the parse checked are deleted,
+then what it met is inserted, so a re-parse replaces them and an origin
+that was fixed clears them. Each issue is logged once, when it is first
+recorded, and once when it clears, with the collection's name. They are
+FLAGGED, never errors: the document is parsed, kept and served; `hold
+collection show`, `node health` and the Library's card count them per
+code, and `hold issues list` lists them (07 §7.3). Where an origin
+cannot supply a document at all, that is still `Unavailable` (above),
+not an issue.
+
 ### The terms text
 
 A yellow or red source ships its terms as published, byte-exact, at a
@@ -254,6 +301,18 @@ of §4.4 is a timestamp and that hash (09 §9.13). A green source ships
 none and its Codex carries `terms_sha256: null`.
 
 ## 6.2 Acquisition
+
+**Whether the origin keeps its versions** (*amended 2026-10-25*,
+operator: "what really matters in the end is the verifiability"). A plugin
+declares `origin_versions`: `"history"` when the origin keeps earlier
+versions a verifier can still fetch (Wikipedia and Wikidata by revision
+id, Normattiva by the version in force), `"replaces"` when it overwrites
+in place (Project Gutenberg rewrites a book under the same number). A
+superseded part version is kept only under `"history"` (02 §2.3, 01
+promise 7). A plugin that declares nothing keeps (`"history"`); pubmed,
+deposit and embedded declare nothing until their origins are checked. The
+declaration is the plugin's and outside the Codex: it decides what a node
+keeps, never a byte that is hashed.
 
 A plugin that fetches its own corpus ships an **acquisition spec**:
 transport (HTTPS, rsync, a model hub, a torrent), base URL, how the
@@ -287,7 +346,12 @@ plugin declares and a snapshot cannot be computed without (§2.2):
   files published before it (PubMed); for a listing with a per-record
   date, the records whose date is at or before it (Gutenberg, by the
   release date). A record without the date the rule needs is excluded
-  and counted, never kept;
+  and counted, never kept — and never silently: it is a defect to fix,
+  recorded on every build as the issue `cutoff-undated` (§6.1) whether
+  or not the build has a cutoff, and named in the build's log when one
+  excludes it (*amended 2026-10-25*, operator, "Dateless records, choice
+  A": "A record a dated snapshot cannot place is a defect to fix, never a
+  silent exclusion");
 - `unit` — how a record's origin bytes are reached (§6.4);
 - `form` — which origin form was taken, and why (§6.4).
 
@@ -477,9 +541,14 @@ category is genuinely unclear — (d) or the entity's own — goes to the
 operator; §6.1's plugin note is where the answer is recorded, beside the
 FORM choice.
 
-Beyond that a plugin may **prune** — drop the ePub when the plain text
-is kept, drop markup, drop dump indexes — but never alter a record in a
-way that prevents reproducing it from the origin. Concretely: every record's
+Within those four a plugin drops what it must — the ePub when the plain
+text is the form kept, markup, a dump's index files. Nothing else is
+**pruned** unless a rule is written in the plugin's guidelines and in its
+Codex form before the collection is created (wikidata's scholarly
+articles are the case; CLAUDE.md invariant 11, operator 2026-10-24:
+"nothing is pruned unless written"); cost is answered by what is
+embedded, never by leaving entities out of the records. And nothing may
+alter a record in a way that prevents reproducing it from the origin. Concretely: every record's
 `origin_hash` is the hash of the bytes it was parsed from, and the Codex
 names the acquisition spec and parser version that produced it, so a
 verifier can re-fetch a sample and re-parse it (§3.2). A record with no
@@ -659,7 +728,14 @@ content; a resolver never returns a bare symbol.
    writes the reference vectors' hashes into
    `space.calibration` and their envelope into `space.envelope`, and
    stores the vectors as the SHARD member `calibration/<set>.safetensors`
-   (§2.4, 09 §9.12). A pair space's set is the exception: 512 pairs drawn
+   (§2.4, 09 §9.12). Where no `--encoder` is given — the Library gives
+   none — the node determines all of it (*amended 2026-10-25*, RULE 2):
+   its model server, and on it the model whose stated run loads exactly
+   the recipe's `space.encoder.weights` (the query side's its own), a
+   model's name never deciding (07 §7.4); where none does, the refusal
+   names the encoder to install and nothing is written. The recipe
+   itself, for a create that names only a plugin and a local name, is
+   the node's `recipes/<plugin>.toml` (07 §7.8). A pair space's set is the exception: 512 pairs drawn
    beforehand from the collection's records by a fixed rule, given to
    `create` as a file and carried in the member (09 §9.12, *amended
    2026-10-08*). The Codex's hash is the collection's identity.
@@ -745,10 +821,11 @@ Anything else, text that is not valid UTF-8, and a PDF that yields no
 text (a scan: there is no OCR) are refused when they arrive, and never
 stored. `origin_hash` is BLAKE2b-128 of the bytes as deposited, and the
 record's `origin` is their path under `origin/`. `extra` carries `key`
-(the name the client gave), `deposited_at`, `url` for a source's text,
-and the `pdf_*` keys — what a PDF says about itself, and its page count —
-every one present on every deposit, null where it does not apply, because
-a collection's `extra` keys are fixed for its life (09 §9.5).
+(the name the client gave), `deposited_at`, `url` for a source's deposit,
+the `pdf_*` keys — what a PDF says about itself, and its page count —
+and, from parser 3 (amended 2026-10-25), the `html_*` keys of a source's
+page (below), every one present on every deposit, null where it does not
+apply, because a collection's `extra` keys are fixed for its life (09 §9.5).
 
 **URL sources.** A deposit collection may be subscribed to URLs, each
 with a refresh interval in minutes (default 60). The subscription is
@@ -763,7 +840,36 @@ URL:
   concatenated;
 - ending `sitemap.xml`: every page the sitemap lists, fetched and their
   texts joined;
-- anything else: the one page, its HTML converted to text.
+- anything else: the one page, **kept as fetched** — its bytes are the
+  deposit — and its record parsed from them (below).
+
+*Amended 2026-10-25, operator: "Keep all".* A page is the origin unit
+of its deposit: the response's bytes are written byte-exact under the
+source's key, the sidecar saying `form: "html"`, so `origin_hash` is
+BLAKE2b-128 of the page and the record's `origin` locates it. The record
+is parsed from those bytes: the text is the page's HTML converted to
+text exactly as before (decoded as UTF-8, an undecodable byte replaced;
+scripts and styles left out), so an unchanged page cuts the same
+chunks, and `show` answers that text as it did. What the page says about
+itself is kept (invariant 11, §6.4): its `<title>` (else `og:title`)
+as `title`, `<meta name=author>` in `creators`, the published date
+(`article:published_time`, `datePublished`, `dcterms.created`, …) as
+`date`, `<meta name=keywords>` in `subjects`, the primary subtag of
+`<html lang>` as `lang`; and in `extra` the values as the page wrote them
+— `html_lang`, `html_description`, `html_keywords`, `html_author`,
+`html_published`, `html_modified`, `html_canonical` — with every
+`<meta>` (Open Graph's `og:*` among them) and every `<link>`, all their
+attributes as written, in `html_meta` and `html_links`, and every JSON-LD
+block in `html_jsonld`. These are parser 3's keys, null on every other
+deposit. A collection keeps the record shape its Codex's parser names
+for its life (09 §9.5): one created at parser 2 keeps its pages as
+fetched too, but its records keep parser 2's shape. A refetch that
+returns the same bytes, from the same URL, writes nothing; a changed page
+replaces the deposit whole. A source deposited as text before the
+amendment is replaced by its page at its next refresh. What is kept is
+the response's body, not its HTTP headers — WARC (ISO 28500) is the
+standard form for keeping both, should a header be wanted. A sitemap's
+pages and a repository's files are still kept as the text they give.
 
 A source is fetched when it is added, then again whenever its interval
 has passed — by the worker's sources thread, and only where the node's
@@ -772,10 +878,13 @@ or downloading-only node lets its due sources wait. The deposit is
 replaced whole each time, and a fetch that fails or returns nothing keeps
 the previous one. A repository's files are those LocalRecall counts as
 text (by extension), each after a `--- File: <path> ---` line; a page's
-HTML is read as text with its scripts and styles left out; a page is at
-most 50 MB and 30 s, a clone 10 minutes. A streamed page draws from the
-budget per chunk; a clone, which no rate cap reaches, is charged once it
-has landed. Removing the source
+HTML is read as text with its scripts and styles left out (and the page
+itself kept, above); a page is at
+most 50 MB and 30 s, a clone 2 GiB and 10 minutes. A streamed page draws
+from the budget per chunk; a clone, which no rate cap reaches, draws as it
+lands: its `.git` is measured every half second and git's process group
+paused while each increment is drawn, so an exhausted budget pauses the
+transfer (*amended 2026-10-25*: it was charged once it had landed). Removing the source
 erases its deposit (02 §2.9). Every fetch draws from the transfer
 budget, and none happens before §4.4's rule for web sources is met: a
 git repository over SSH with this node's key (`GIT_PRIVATE_KEY_FILE`,

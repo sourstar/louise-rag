@@ -68,18 +68,22 @@ louise hold
                                                                        write a Codex; print its id. A pair space (09 §9.3) names its calibration set's file,
                                                                        the pairs `tools/build_pair_calibration_set.py` drew from the collection's records
                                                                        (09 §9.12); `--space-from` a pair space reads it from that space's member
+                                                                       [--calibration-from NAME]: a held collection whose document-side reference vectors and envelope the new
+                                                                       Codex reuses (RULE 1) — the same space but the query side; only the query side is embedded (added 2026-10-25)
                                                                        (amended 2026-10-08)
               create deposit --name N [--encoder URL [--api A] [--embed-model M] [--query-model M]] [--space-from CODEX | --space FILE]
                                                                        a deposit collection (02 §2.9): no recipe; the node's deposit encoder unless one is named
-              create annotations --annotates C --from-snapshot S [--annotates C2 --from-snapshot S2 …] --claims FILE --name N [--title T] [--summary S] [--annotator A] [--snapshot ID] [--container jsonl|parquet] [--dry-run]
+              create annotations --claims FILE --name N [--annotates C [--from-snapshot S] [--annotates C2 --from-snapshot S2 …]] [--title T] [--summary S] [--annotator A] [--snapshot ID] [--container jsonl|parquet] [--dry-run]
                                                                        an annotations collection (02 §2.10; amended 2026-10-09): no recipe, no encoder; each claim's
                                                                        target hashes read from C's snapshot S; writes the parts, the relations, the first snapshot
                                                                        (signed with the node's key when there is one) and the file; prints its id. `--dry-run`
-                                                                       (2026-10-19) checks the file against S exactly as the write would and prints the counts
+                                                                       (2026-10-19) checks the file against S exactly as the write would and prints the counts.
+                                                                       Without --annotates the targets are the held collections the claims' uids name, each
+                                                                       from its newest snapshot; a target without --from-snapshot, its newest (2026-10-25, §7.4)
                                                                        (claims, target records named, by type and method), writing nothing. Several claims
                                                                        files for one collection are merged first with `tools/annotations_merge.py` (the
                                                                        wikidata claims whole, a matcher claim only where its books are not one work yet)
-              derive <codex> [--space-from CODEX | --space FILE | --encoder-weights D --engine FILE] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
+              derive <codex> [--space-from CODEX | --space FILE] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
                                                                        a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
                                                                        Prints what would be inherited — vectors, coverage, credits — and waits for --accept;
               derive … [--encoder URL [--query-encoder URL] [--api A] [--embed-model M] [--query-model M]] [--calibration-set FILE] [--name N]
@@ -89,7 +93,9 @@ louise hold
                                                                        without it, with no terminal, exit 2. To inherit nothing, change the space (02 §2.7)
               continue <codex> --platform-image D --through ID [--origin FILE] [--origin-reachable-until ID]
                                                                        a daughter: new toolchain, same space
-              replace <codex> --defect FILE [--platform-image D] [--space FILE | --encoder-weights D --engine FILE]
+                                                                       [--reslice]: the slicing a creation would get now (wikidata's family map), every record and vector
+                                                                       reused (02 §2.2, A1g; added 2026-10-25). `--continues-through` is --through's earlier spelling, kept
+              replace <codex> --defect FILE [--platform-image D] [--space FILE]
                                                                        a corrective sister, with its reproducible defect
               ack <collection> [--yes]                                 print the licence terms; record this peer's acknowledgement
               ack <collection> --origin-unchecked [--yes]              print what passed and what could not run; record the decision to use a copy whose origin could not be checked (03 §3.6)
@@ -97,7 +103,9 @@ louise hold
               certify <collection> <snapshot>                          sign a snapshot as this collection's certifier
               forget <collection> [--kinds …] [--yes] [--dry-run] [--here]  stop holding: remove this peer's copy and its state; --here when no worker runs
               rename <collection> <new-name> [--dry-run]               the same collection under another local name; nothing recomputed
-              list [--all]                                             collections held, by lineage; --all includes the dormant
+              migrate <collection> [--apply]                           the 09 §9.3 fields a Codex predates added, each as null — collection_id moves; printed unless --apply
+              list                                                     collections held, by lineage (amended 2026-10-25: `--all` dropped — dormant is a state of the
+                                                                       network's catalogue, 04 §4.7, and every held collection is listed)
               show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, and the copy's state — refused, quarantine or in use — with every reason
   annotations update <collection> [--claims FILE] [--against TARGET=SNAPSHOT …] [--snapshot ID] [--dry-run]
                                                                        (amended 2026-10-23, operator: updated, not replaced; 02 §2.10) the next snapshot of the SAME
@@ -112,11 +120,18 @@ louise hold
   source      add <collection> <url> [--interval MIN]                  subscribe a deposit collection to a URL; fetched now, then every interval (06 §6.7)
               erase <collection> <url> [--yes]                         end the subscription and erase its deposit
               list <collection>                                        the subscriptions, each with its last fetch
+  issues      list <collection> [--code C] [--limit N]                 the origin's inconsistencies the last parse of each document met, by uid, with the
+                                                                       counts per code and each code's meaning (06 §6.1; added 2026-10-25, operator: "… logged and flagged")
   config      show [<collection>]                                      the effective configuration, each value with its tier (§7.8)
               apply [<collection>] [--set KEY=VALUE …]                 write the effective values into the files; the node applies them
+                                                                       (`--set` built 2026-10-25: one collection's file, below)
   records     fetch <collection> [--slice … | --profile P] [--snapshot ID]
-                                                                       run the acquisition spec to the cutoff, for these slices or the profile's (06 §6.2)
+                                                                       run the acquisition spec to the cutoff, for these slices or the profile's (06 §6.2);
+                                                                       the slices fetched recorded in the file (built 2026-10-25, below)
               build <collection> [--snapshot ID]                       parse, slice, cut into parts, hash
+                                                                       [--corpus DIR]: another origin directory than the collection's own; [--records-from C]: the record lines
+                                                                       of a held collection's latest snapshot taken instead of parsing — a re-creation changing only the slicing (RULE 1)
+              validation <collection>                                  validation.json written from the Codex's plan (03 §3.2)
               check <collection> [--origin] [--seal [--live DIR]] [--sample F]
                                                                        records against their own hashes and roots, against the origin, against the seal
               seal <collection> <snapshot> --files DIR --trusted-list FILE --lotl FILE --lotl-signers FILE
@@ -158,12 +173,17 @@ louise hold
                                                                        embedded a new reference at an `api = "vega"` endpoint to the recipe's engine and weights,
                                                                        and refuse a mismatch before anything is written (added 2026-10-09)
   vectors     build <collection> [--shard <slice>/<n> | --delta ID]    embed; a signed bundle about every 15,000 chunks
-              import <collection> (<file> | --archive ID [--retry]) [--strict]
+              import <collection> (--bundle DIR | --archive ID [--retry] [--corpus DIR] [--shards …]) [--snapshot ID]
+                     [--strict --allow KEY …] [--require-t3] [--budget] [--seed HEX]
                                                                        a signed bundle, or a public pre-embedded archive, through the ladder
+                                                                       --strict admits only the --allow keys; --require-t3 exits 3 rather than import when no encoder answers;
+                                                                       --budget subjects the arrival to 08 §8.2's allowance (amended 2026-10-25: the bundle is a directory, 09 §9.7)
               export <collection> [--shard <slice>/<n>] --out DIR      a signed bundle of what this peer produced — a DIRECTORY of four files (09 §9.7), not a container
+                                                                       [--max-chunks N]: chunks per bundle, 15,000 unless said, split on record boundaries
               check <collection> [--drop]                              are stored vectors still what this encoder produces; --drop removes the ones that are not
               show <collection>                                        coverage, producers, verification
   index       build <collection> [--text | --vector]                   the text index per part; the centres and labels of the space
+                                                                       [--type T] [--partitions N]: the vector index type and its IVF partitions (default: VECTOR_INDEX_TYPE, from the row count)
               show <collection>
   check       <collection> [--checks …] [--sample F] [--seed HEX]      run the validation plan; print the report
               [--live DIR]                                             `origin-seal` in live mode: the sealed files under DIR re-validated now (03 §3.7)
@@ -179,6 +199,7 @@ louise share
   fetch <collection> [--slice …] [--kinds …] [--snapshot ID]           take a portion
         [--from ADDRESS] [--dht] [--encoder URL] [--name N]            … from a peer given by hand, or found
         [--api A] [--embed-model M] [--query-model M]                  … the rest of the file's [encoder] (§7.8, amended 2026-10-09)
+        [--embed off|on-demand|all|p2p]                                … what this node's encoder spends on it, into the file (§7.8; off unless said)
   contribute [<collection>] [--once] [--interval S]                    vectors build, under rendezvous, shared
   attest <collection> [--checks …]                                     check, shared
   peers show                                                           who this peer knows, what they hold
@@ -186,21 +207,25 @@ louise share
   offer                                                                the collections neighbours announce that this node does not hold, and who serves each (04 §4.2); `fetch` takes one (added 2026-10-20)
 
 louise ask
-  search <query> [--collections …] [--space …] [--limit N] [--rerank-depth N] [--as-of DATE] [--freshness] [--translate [--all-languages]] [--filter FACET=VALUE | --filter FACET=!VALUE …]
+  search <query> [--collections …] [--space …] [--limit N] [--rerank-depth N] [--as-of DATE] [--freshness] [--translate [--all-languages]] [--filter FACET=VALUE | --filter FACET=!VALUE | --filter FACET=[!]FROM..TO …]
                                                                        the fused list of §5.1, with what §5.3 says about each result; --as-of searches the snapshot
                                                                        current at that date (§5.1); --filter restricts the legs and never ranks (§5.2, §5.7; amended
                                                                        2026-10-07 from per-facet flags: one flag, the facet named in its value, since the facets are
-                                                                       the collection's and not known before it is)
+                                                                       the collection's and not known before it is); --filter keys=<id> keeps the records tagged with an
+                                                                       identifier, which a query naming it never does by itself (§5.2, amended 2026-10-25)
   facets <collection> [<field>] [--under VALUE]                        the fields this collection can be filtered on, or one field's values with this peer's counts (§5.7)
   lookup <id>                                                          a fact by key, from a reference source
-  traverse <id> [--relation T] [--depth N] [--resolve-in C …]           the records reached along declared relations (§5.5); --resolve-in names the collections an
+  traverse <id> [--relation T] [--depth N] [--collection C] [--resolve-in C …]
+                                                                       the records reached along declared relations (§5.5), in --collection's edges; --resolve-in names the collections an
                                                                        edge into another collection is resolved against, nothing else is (added 2026-10-07)
   chat <question> [--collections …] [--json]                           the model with the three tools of §5.4 and nothing else; needs CHAT_URL (§7.8)
   serve                                                                expose search, lookup and traversal as MCP tools
 
 louise node
-  start [--acquire-only | --seed-only]                                 the daemon; runs until stopped
-  stop                                                                 finish the current units, commit, exit
+  start [--acquire-only | --seed-only] [--only worker|web]             the daemon — the worker's rounds and the web interface; runs until stopped; a mode flag sets the
+                                                                       node's mode as `pause` does; `--only` runs one of the two, a container each (amended 2026-10-25)
+  stop                                                                 the worker finishes its current units, commits, exits 0 — asked through state/node.sqlite, which
+                                                                       every container of the node shares; it does not wait (built 2026-10-25)
   show                                                                 state per collection, the current stage, the last round's cost, overrides in force
   pause [<collection>] [--acquire-only | --seed-only]                  a runtime override: the node's mode — nothing, seeding only, or download and seeding only — until resume; it survives a restart (§7.8)
   resume [<collection>]
@@ -209,12 +234,32 @@ louise node
 louise dev                                                             operator instruments; read-only unless the line says otherwise
   schedule-report      what the worker spent its rounds on
   embedder-profile     the concurrency an endpoint sustains
-  migrate schema [<collection>]                                        apply pending schema changes to a state database; writes; never runs on its own
+  migrate schema [<collection>] [--no-backup]                          apply pending schema changes to a state database; a .bak copy first unless --no-backup; writes; never runs on its own
   refs-sync            reference tables from their origins; writes
+  wikidata-classes <dump> [--candidate roots.json]                     why the family map gives a class its family (its shortest P279 path to each family's root), and what candidate roots would move, estimated from the codes pass (added 2026-10-24)
   genesis recheck <collection>                                         reopen final archive shards that still have documents the archive could serve; writes
   genesis recount <collection> [--yes]                                 an archive ledger's docs and chunks recounted from chunk_verification; writes only with --yes (added 2026-10-08)
   drop-rows <collection> --ids FILE [--yes]                            02 §2.4's remedy: the rows FILE lists (a chunk id a line) dropped and their documents marked to embed
                                                                        again — what `vectors check --drop`, which leaves an empty row, does not; the collection's lock held; writes (added 2026-10-19)
+  reindex <collection> --ids FILE [--yes]                              the documents FILE lists (a uid a line) queued for the text-index stage again — fts_done = 0, embedding untouched; for rows indexed under an earlier parse (`index-drift --ids-out` lists them); writes (added 2026-10-25)
+  index-drift <collection> [--shards S,…] [--cut-all] [--sample F] [--seed HEX] [--snapshot ID] [--ids-out FILE]
+                                                                       the documents whose SERVED state disagrees with the latest held snapshot's records (added
+                                                                       2026-10-25, the 127-part gap): the manifest's chunk count against the record's own cut, the
+                                                                       text index's count against both, on a seeded `--sample` of parts (03 §3.2's rule, 0.05 unless
+                                                                       said, 0 for none) the index's stored chunks against the cut chunk for chunk, the manifest's
+                                                                       `content_hash` against the record's and its `txt_hash` against the record's `origin_hash`.
+                                                                       Rows the worker has not indexed, or will re-index itself (a version below the current), are
+                                                                       counted, not named. Walked a part at a time in windows of 2,000 records; a part is cut only
+                                                                       where its manifest total is not the snapshot's `chunks`, or with --cut-all. --ids-out: the
+                                                                       uids `reindex --ids` repairs (chunks, index, text; never one whose live origin moved). Exit 1
+                                                                       when a document is named; prints the seconds it took. Not a plan row: it checks this node's
+                                                                       derived state, not the copy, and proves nothing to another peer (03 §3.2)
+  unindexable <collection> <uid> [--yes]                               a document the plugin now refuses: out of every index, its error written at once; writes
+  mark-embedded <collection>                                           documents whose every chunk has a vector here and whose row says embed_done = 0, marked; writes
+  deprecate-duplicates <collection> [--yes]                            this peer's bundles duplicating another of its own for a part, deprecated (03 §3.6; 09 §9.8):
+                                                                       served one more day, never offered for a new fetch; writes
+  withdraw-covered <collection> [--yes]                                this peer's bundles whose every record another bundle held here covers, withdrawn (09 §9.8); writes
+  adopt-bundles <collection>                                           an existing collection's state/bundles moved under BUNDLES_ROOT and linked, as a new one's is (§7.8); writes
   carry <from> <to> [--copy] [--keep producer:<archive>] [--rebuilt|--reconcile|--resign|--recut] [--yes]  amendment A1 (02 §2.4): the manifest (after a TRUNCATE checkpoint), index/ and lance/ moved
                                                                        — or copied, reflinked where it can — into a collection with the same records whose space
                                                                        differs only by engine or input form, both write locks held; refused unless the agreement of
@@ -240,6 +285,8 @@ louise dev                                                             operator 
                                                                        by tokens; then every row over the source's ctx x 4 characters that no archive made is
                                                                        dropped and its document embedded again, in one read of the table; a dense-script row
                                                                        refuses it, nothing written — dropped too where every input was embedded alone (a pair layer)
+                                                                       --resliced (A1g): into a collection differing only by its slicing, every vector carried, then `records build <to>
+                                                                       --records-from <from>`; --scan: with --keep, one pass over the vector table instead of a walk by document
 ```
 
 `--dry-run`, `--json` and `--yes` are not shown per line; §7.7 says which
@@ -329,9 +376,29 @@ reader needs at the command line:
   A slice fetched once is recorded in the file so the monthly cycle
   continues it. *As built (2026-10-08, step 12):* the old `corpus
   add|grow`, wrapped — `--profile P` (default: the file's `profile`) and
-  `--dry-run`; `--slice` and recording what was fetched in the file are
-  not built yet. A missing acknowledgement is exit 2, naming `hold
-  collection ack`.
+  `--dry-run`. A missing acknowledgement is exit 2, naming `hold
+  collection ack`. *Amended 2026-10-25 (built):* `--slice` names slices
+  as the SHARD's paths do, or `all`. An origin delivers whole only the
+  slices its acquisition spec declares (`slice_profiles`, the local half,
+  09 §9.17) — Wikipedia's and the pre-embedded archive's `lang=<code>`,
+  one dump or directory each; a slice under one (`lang=it/pages=3M`) is
+  fetched as that one, and said; a slice the origin does not deliver
+  apart — every PubMed update file may hold any year — is exit 2, naming
+  the slices it does deliver and `--slice all`. A fetch that completes
+  (exit 0) writes what it took into the file's `slices`, joined with what
+  the file says (`all` wins; a `profile` the file still names is spelt as
+  its slices, and one no list spells is refused before anything moves),
+  through the file's one writer; the node then derives the profile and
+  fetches it every cycle (`acquire_enabled` follows unless the file
+  states one). A dry run, a refusal, a failure or a stop records nothing.
+  `--snapshot ID` runs the spec to that snapshot's cutoff by the origin's
+  cutoff rule (06 §6.2): an origin of update files takes the files its
+  listing dates before the cutoff; a dated-dump origin takes the dump its
+  Codex pins, refused (exit 2) when the Codex pins none or a dump not
+  before the cutoff; an origin that keeps only its present state (a full
+  resync, a zip rebuilt in place) is fetched as it is now, and the
+  command says that `records build --snapshot ID` applies the cutoff per
+  record. An id not of the Codex's cadence is exit 2.
 - **`records build`.** Refuses (exit 2) a record without `origin_hash`
   (02 §2.3), refuses one whose `native_id` sorts before the open part's
   `first_id` (02 §2.2), and writes a tombstone for a document the origin
@@ -371,8 +438,8 @@ reader needs at the command line:
   identity is refused for them (exit 2).
 - **`vectors build`.** `--delta ID` embeds exactly `delta.added ∪
   delta.changed` of snapshot `ID` — a snapshot id, never a file. About every
-  fifteen thousand chunks a bundle (09 §9.7) is signed and merged into the
-  part's vector file (02 §2.4); the bundle is kept for `share`.
+  fifteen thousand chunks a bundle (09 §9.7) is signed and its rows written
+  to the collection's LanceDB table (09 §9.6); the bundle is kept for `share`.
 - **`vectors import`.** A bundle binds its space and, per record, the
   content hash it embedded; its `collection` and `snapshot_id` are
   provenance and gate nothing (03 §3.5; 09 §9.7). `import` refuses at
@@ -439,7 +506,28 @@ reader needs at the command line:
   labelled `environment`, `files`, `state database` — or `codex` for what
   the space fixes. `apply` replaces each runtime embed-mode override by
   the file's value, as the node does at start, and names (exit 1) a file
-  the node refuses. `--set` is not built yet (2026-10-08).
+  the node refuses. *Amended 2026-10-25 (built):* `--set KEY=VALUE`,
+  repeatable, names a collection and writes its file first, through the
+  file's one writer — the Library's, so the embed-mode and sharing
+  controls and `--set` leave the same bytes (app/collection_file.py) —
+  then applies it. The keys are the file's editable values, as `config
+  show` names them: `embed` (`embed_mode` too: `off`, `on-demand`, `all`,
+  `p2p`), `share`, `title`, `slices`, `kinds`, `share_slices`,
+  `share_kinds` (comma-separated; `all` lifts a narrowing),
+  `encoder.url`, `encoder.query_url`, `encoder.api`,
+  `encoder.embed_model`, `encoder.query_model`, `reranker.url` (empty:
+  no `[reranker]`), `reranker.api`, `reranker.rerank_model`,
+  `reranker.window`. Never `codex` or `source` (§7.8). The values are set
+  together, the file rendered whole and loaded back by the node's own
+  loader before it replaces the old one: an unknown key, a malformed
+  value, a model its URL does not name, `share = true` on a never-share
+  collection, `embed = p2p` with `share = false` in one call, or `--set`
+  without a collection is exit 2 with nothing written, the keys named.
+  `embed = p2p` alone turns sharing on and `share = false` alone under
+  `p2p` takes the mode to `all`, as the Library does after asking (§7.8);
+  the output names what else changed. A collection the node refuses for
+  naming no encoder is given one this way. The file's comments do not
+  survive the rewrite.
 - **`check`.** Runs the plan (03 §3.2) with the seed given or a fresh
   one. A check's outcome is `pass`, `fail` or `inconclusive` (03 §3.1);
   the first two yield an attestation (09 §9.8), signed when this peer
@@ -640,31 +728,52 @@ reader needs at the command line:
   is not a migration and happens on first open. Changing an existing
   schema happens here only; a process that finds a schema other than its
   own refuses to write that collection and says so in `hold collection
-  show`.
+  show`. *Amended 2026-10-25 (operator: "… logged and flagged"):* a
+  table ADDED beside the existing ones, which no older process reads and
+  which changes no existing row, is created on open like a new database's
+  — `issues` (06 §6.1) is the one such table; there is nothing for this
+  command to do for it, and nothing to refuse.
+- **`issues list`.** *Added 2026-10-25 (06 §6.1).* The inconsistencies in
+  the origin that the last parse of each document met: `uid`, code and
+  detail a line on stdout, the counts per code with each code's meaning
+  on stderr first (both under `issues` with `--json`). `--code` keeps one
+  code's documents, read through its index; `--limit` stops after N. A
+  code the collection's plugin does not declare is exit 2, naming the
+  codes it does. Read-only, no lock. `hold collection show` prints the
+  same counts under `issues`, `node health` one line per collection, and
+  the Library's card their total; none of them blocks anything — an
+  issue is the origin's, flagged for a person to look at, and the
+  document stays parsed and served.
 
 ## 7.4 The API
 
 The Python API is the same tree with dots:
 
 ```
-app/hold/     codex.py  collection.py  config.py  records.py  snapshot.py  embedder.py  vectors.py  index.py  check.py  key.py
-app/share/    serve.py  fetch.py  contribute.py  attest.py  peers.py
-app/ask/      search.py  plan.py  tools.py
-app/node/     worker.py  web.py  control.py
-app/plugins/  base.py  <source>/
+app/louise.py   the tree: one function per command, calling the modules below
+app/hold/       codex.py  collection.py  records.py  records_fetch.py  snapshot.py  embedder.py  vectors.py  vectors_build.py
+                vectors_check.py  check.py  node_key.py  deposit.py  sources.py  annotations.py  carry.py  forget.py  rename.py  certify.py  seals.py
+                (`hold issues`: app/issues.py, which the build and the node's metadata stage write through too)
+app/share/      seeder.py (serve)  fetch.py  contribute.py  attest.py  peers.py  offer.py  deprecate.py  withdraw.py
+app/ask/        api.py (search, the routes)  filters.py  facets.py  lookup.py  traverse.py  chat.py  mcp.py
+node            app/worker.py (the rounds)  app/api.py + app/web.py (HTTP, the pages)  app/node_state.py (the mode)  app/jobs.py
+app/plugins/    base.py  <source>/
 ```
 
 These are the modules the command tree names, one per noun, and the
-listing is that surface rather than a directory listing: a module that
-backs no command sits beside them (`hold/shard.py`, the member names and
-roots of 09 §9.16, which `records`, `snapshot`, `check`, `serve` and
-`fetch` all read) and is free to exist, but it never becomes the place a
-command's behaviour lives.
+listing is that surface rather than a directory listing (*amended
+2026-10-25* to the layout the migration left: `node` is not a package,
+and a noun may span two modules — `vectors.py` and `vectors_build.py`): a
+module that backs no command sits beside them (`hold/shard.py`, the
+member names and roots of 09 §9.16, which `records`, `snapshot`, `check`,
+`serve` and `fetch` all read) and is free to exist, but it never becomes
+the place a command's behaviour lives.
 
 `hold.records.build(collection, snapshot)` is what `louise hold records
-build` calls and nothing else; `share.contribute(collection)` calls
-`hold.vectors.build` and then `share.serve`; `share <collection>` is
-`share.serve(collection, slices, kinds)`, and `share serve <collection>`
+build` calls and nothing else; `share.contribute(collection)` builds the
+vectors of the parts this peer leads and announces them; `share
+<collection>` writes what is served into the collection's file, and the
+worker's seeder (`share.seeder`) serves it — `share serve <collection>`
 is its long form. A test that greps for a command's name finds the
 function that implements it and the section of these documents that
 describes it. Every function is idempotent and resumable: a write is
@@ -701,6 +810,24 @@ process, which holds only the public key (§7.8; operator, 2026-09-29):
 follows one. A create waits while the node's mode does not embed. The web interface is a client of these routes and
 shows the command line of every action it offers.
 
+*Built 2026-10-25 (operator: "Http api, I choose A"), app/api_commands.py.*
+One route answers every command of the tree, built from `louise`'s own
+parser, so a command added to the tree is a route; an explicit route for
+the same path answers first. Positional arguments are keys too, by name
+(`{"collection": "pubmed"}`); a list is a flag's several values; `true`
+sets a switch. A `GET` (`show`, `list`) runs the command at once — the
+CLI itself, in a child process, bounded at two minutes — and the status
+is its exit code as above. EVERY `POST` is queued (202) and run by the
+worker's command thread, one at a time, in every mode: the worker holds
+the key and the locks, and a command may outlive any request. Its job's
+result carries `exit`, `status`, `output` (the `--json` object) and
+`message`; a command a stop interrupts is queued again (invariant 2). Not
+routed: `node start` (the daemon itself), `ask` (its own routes, answered
+at once under the user's token), `user` (prints a token once, which a job
+row would keep — invariant 8; `/admin/api/users`), `dev` (operator
+instruments stay on the command line, RULE 2). Every route takes the admin
+token.
+
 *Amended 2026-10-19.* `hold collection create annotations` (§7.3; 02
 §2.10) is `POST /api/hold/collection/create-annotations`, whose input
 that is not a flag is the claims file: the flags are query parameters
@@ -725,6 +852,68 @@ nothing; otherwise the fetch is queued for the worker (202), which signs
 the pulls, runs in every mode, and `GET /api/jobs/<id>` follows it. The
 Library's *Offered by peers* is a client of both.
 
+*Amended 2026-10-25 (CLAUDE.md RULE 2: "A regular user chooses what only
+they can know — a local name — and nothing else").* Every Library dialog
+asks a local name, plus what only the user has — the source (plugin) of a
+new collection, the claims file of an annotations collection — and SENDS
+nothing else; the routes keep every key above for the command line and
+scripts, and work when only those are given. The node determines the
+rest:
+
+- **The encoder** (`encoder`, `api`, `embed_model`, `query_model`, and
+  `query_encoder` on create), for a take and a create alike, by WEIGHTS:
+  the server is the node's model server (the address its collection
+  files share, else `platform.toml`'s `[deposit] encoder`); the models
+  are a held collection's in the same space (the same document and query
+  weights), else the models on that server whose STATED RUN — a VeGa
+  receipt or `Louise-Run`, its description verified against the run id
+  (03 §3.3, 09 §9.12) — loads exactly the Codex's `space.encoder.weights`
+  (and `space.query.encoder.weights` for the query side). A model counts
+  only if its weights digest matches; its name orders which models are
+  asked first and never decides, and a model that states no run does not
+  count (app/encoder_resolve.py). Where none matches, a TAKE is held
+  anyway — its texts and the peers' vectors arrive, embed `off`; its file
+  names no `[encoder]`, so it is shown under *Held, not served* with its
+  reason and is not searched until one is added (the 2026-09-18 rule
+  above stands) — and the answer says in plain words which model to
+  install; a CREATE is
+  refused (409) in the same words and creates nothing, since a Codex
+  holds reference vectors only its own encoder computes (06 §6.6).
+  `GET /api/encoders/suggest[?collection_id=]` answers what the node
+  decided, for the take dialog to say before anything is queued.
+- **The recipe** of `POST /api/hold/collection/create` without a
+  `recipe`: the node's own for the plugin, `recipes/<plugin>.toml` (§7.8);
+  without one, the 409 says where it goes and that a collection a peer
+  offers is taken with none. What the file then takes and spends is the
+  node's too: every slice and the default kinds, `embed = "on-demand"`
+  (`slices`, `embed` in the body change it; a create given a `recipe`
+  writes what the command writes, no slice and `off`).
+- **An annotations collection's targets**: `annotates` and
+  `from_snapshot` may be omitted — each claim end's uid names its
+  target's plugin by its prefix (09 §9.3), the target is the collection
+  of that plugin held here (where several are, the one whose newest
+  snapshot holds every record named; several still, nothing is guessed
+  and the 409 says to name it with `--annotates`), held from its newest
+  snapshot, as `hold annotations update` re-checks; a target named
+  without its snapshot takes its newest. The title and summary are
+  derived from the targets and the claims, the annotator is the claims'
+  one contributor (several: the 409 says to give a file with one, or
+  `--annotator`). `hold collection create annotations` takes the same
+  omissions.
+- **What a take holds**: the whole collection, every slice and kind, the
+  latest snapshot, embed `p2p` where the encoder resolved and `off` where
+  it did not (above).
+
+**The web interface's own routes** (*added 2026-10-25*) are the pages'
+clients, not commands, and no client outside the node should rely on
+them: `/api/status`, `/api/stats`, `/api/events` (the pages' event
+stream), `/api/scope`, `/api/discover`, `/api/reset`, `/api/books…` (the
+reader), `/api/encoders/suggest`, `/admin/library/…`, `/admin/network…`,
+`/admin/system…`. Three routes from before the tree are KEPT for the
+clients that call them, each the same as a command: `/api/control` (`node
+pause` / `resume`), `/api/search` (`ask search`) and `/api/verify` (T4 on
+demand, 03 §3.5).
+
 **One route is not JSON, and it is the only one.**
 
 ```
@@ -746,6 +935,17 @@ red-class figure is never served, exactly as its text never is. The
 peer answers 404 for a hash it does not hold and for one the record
 marks `carried: false` — the result object already told the caller
 which of those it was, before the request was made.
+
+*Amended 2026-10-25 (operator: "Every plate", 08 §8.7):* every plate is
+carried and served, but only a DISPLAYABLE one is answered inline under
+its type — `image/jpeg` or `image/png` that the bytes really are, within
+16 MiB and 64 megapixels declared in the header. Any other answers `415`
+with the reason (type, size) and no bytes, so an `<img>` pointed at it
+has nothing to decode. `&download=1` asks for the file: the bytes, byte
+for byte, as `application/octet-stream` with `Content-Disposition:
+attachment; filename="<hash prefix>.<ext>"` — never inline, never
+`image/svg+xml` — for a displayable plate as for any other. Every answer
+carries `X-Content-Type-Options: nosniff`.
 
 **Two routes are not under `/api` at all** (*added 2026-10-07*): the
 documents 09 §9.11 fixes at a certifier's domain, served by the node for
@@ -904,9 +1104,9 @@ unknown command. The table says where each went.
 |---|---|
 | `corpus add` / `grow` (`--profile P`) | `hold records fetch --profile P` — both fetched; neither created |
 | `corpus add --ack-terms FILE` | `hold collection ack` |
-| the web interface's *new collection* | `hold collection create --recipe FILE`; the annotations type, `hold collection create annotations` (*amended 2026-10-19*) |
+| the web interface's *new collection* | `hold collection create --recipe FILE`; the annotations type, `hold collection create annotations` (*amended 2026-10-19*). It asks the source and a local name — and the claims file — only; the recipe is `recipes/<plugin>.toml`, the encoder, the targets and the rest are the node's (§7.4, *amended 2026-10-25*) |
 | `corpus status` | `hold collection show` |
-| `pack build`, `tools/pack_convert` | `hold records build` |
+| `pack build`, `tools/pack_convert` (removed 2026-10-25) | `hold records build` |
 | `pack verify` | `hold check` |
 | `pack cat` / `dump` | `hold records show` / `hold records show --shard` |
 | `pack adopt`, a pack with `manifest.json` and several spaces | none: every pre-Codex pack was migrated in step 8, and `dev adopt` and `dev migrate pack` were dropped unbuilt (*amended 2026-10-08*) |
@@ -914,7 +1114,7 @@ unknown command. The table says where each went.
 | `snapshot vectors` | `hold vectors build --delta` |
 | `space repin` | `hold collection derive`, then `hold collection forget <mother> --kinds vectors` when the mother's vectors are no longer wanted here. Nothing is re-pinned in place: a shared space is never destroyed under the peers that hold it |
 | `backend check` / `rebaseline` | `hold embedder check`, `hold embedder rebaseline`. The probe baseline and its cosine threshold give way to validating each run once and checking the run identity on every answer (03 §3.3). The batch-integrity check becomes the gate's `batch_invariant`. A Codex below version 3 keeps the probe baseline (`app/verify/backend_gate.py`); its changed backend is accepted with `hold embedder rebaseline` (*2026-10-08*) |
-| `tools/calibrate_space`, `build_space_artifact` | `hold embedder calibrate` |
+| `tools/calibrate_space`, `build_space_artifact` | `hold embedder calibrate` (`tools/calibrate_space.py` stays as the statistics module that command imports — app/hold/calibrate.py — and as `--live`'s cross-backend harness; not a command) |
 | `bundle keygen` / `trust` / `trust --quarantine` | `hold key create` / `trust` / `trust --deny` |
 | `bundle export` / `import` / `status` | `hold vectors export` / `import` / `show` |
 | `bundle resweep`, `tools/vector_compliance`, `vector_sweep` | `hold vectors check [--drop]` |
@@ -930,10 +1130,10 @@ unknown command. The table says where each went.
 | `torrent publish`, `torrent seed` | `share <collection>`; serving is the node's |
 | `python -m app.worker`, `python -m app.api` | `louise node start` |
 | `/api/control`, the Library's pause and embed-mode controls | `node pause` / `resume`, `hold config apply --set embed=…` |
-| `/admin/…`, `/api/search`, `/api/verify` | `/api/hold/…`, `/api/ask/search`; T4 needs no route — it runs on use |
+| `/admin/…`, `/api/search`, `/api/verify` | `/api/hold/…`, `/api/ask/search`; T4 runs on use (`/api/search` and `/api/verify` are kept for their clients, §7.4) |
 | `/v1/chat/completions` | kept as an alias of `/api/ask/chat` for clients that speak that protocol |
 | LocalAGI's `/api/collections/…` | kept as aliases of `hold deposit`, `hold source` and `ask search` for LocalAGI (§7.4) |
-| `tools/sched_report`, `profile_embed`, `migrate_manifest`, `sync_refs` | `dev schedule-report`, `dev embedder-profile`, `dev migrate schema`, `dev refs-sync` (`dev load-profile` retired with RAGE, 2026-10-18: it measured reloads through RAGE's admin API) |
+| `tools/sched_report`, `profile_embed`, `migrate_manifest`, `sync_refs`, `wikidata_classes` | `dev schedule-report`, `dev embedder-profile`, `dev migrate schema`, `dev refs-sync`, `dev wikidata-classes` (`dev load-profile` retired with RAGE, 2026-10-18: it measured reloads through RAGE's admin API) |
 
 ## 7.7 Contracts: exit codes, arguments, output, concurrency, interruption
 
@@ -993,22 +1193,35 @@ flag keeps the old word until the code follows.
 `<pack-dir>` is a filesystem path to a pre-Codex pack (§7.6); it is the
 one argument in the tree that is a path and not a name, which is why it
 says so. A
-facet flag is named for its field — `--subjects`, `--creators`,
-`--not-subjects` — and is accepted only for a field the collection's
-Codex declares (02 §2.1); any other is exit 2, listing the fields that
+filter is `--filter FIELD=VALUE` (`FIELD=!VALUE` excludes), and is
+accepted for a field the collection's Codex declares as a facet (02 §2.1)
+and for `keys`, the identifier filter every collection has (05 §5.2,
+amended 2026-10-25); any other field is exit 2, listing the fields that
 are. A `tree` facet matches a value and everything under it, so
-`--subjects Neoplasms` takes `Neoplasms/genetics` with it; a `range`
-facet takes `FROM..TO`, either end omitted for open.
+`--filter subjects=Neoplasms` takes `Neoplasms/genetics` with it; a `range`
+facet takes `FROM..TO`, either end omitted for open (`2000..`,
+`..1999`), and `!FROM..TO` excludes it as `!` excludes any value
+(*amended 2026-10-25*, built: `ask search --filter date=2000..2005`, the
+same string in `filters` of `/api/ask/search` and of `louise_search`).
+Both ends are included and are read as the facet's type orders them,
+never as text: `date` is a date (09 §9.5), and a value of
+`YYYY` or `YYYY-MM` is the whole year or month, so `2000..2005` runs from
+the first day of 2000 to the last of 2005; any other range field is a
+date or a number by its values. A record is admitted when one of its
+values lies wholly within the range — `1999-06..` does not admit a record
+dated only `1999`. A malformed range, a range on a `flat` or `tree`
+facet, or a single value on a `range` facet is exit 2, naming what is
+accepted.
 `--profile` takes a profile name the collection's acquisition spec
 declares (06 §6.2) and expands to that profile's slices; it may not be
-combined with `--slice`. `--space` and `--work` take a TOML holding
-that Codex block in the form 09 §9.3 fixes; `--encoder-weights` and
-`--engine` are shorthand for a `--space` file changing only
-`space.encoder` — the weights digest, and the engine as a TOML file in
-09 §9.3's form — and any other field a new encoder needs — `dim`,
-`ctx`, `pooling`, `normalise`, `query`, `tolerance` — is given in
-`--space`, the calibration and envelope being computed from the named
-encoder as `create` computes them.
+combined with `--slice` (exit 2). `--set` takes `KEY=VALUE`, a key of
+the collection's file as `hold config show` names it (§7.3, amended
+2026-10-25). `--space` and `--work` take a TOML holding
+that Codex block in the form 09 §9.3 fixes; a new encoder is named by
+its whole space block (*amended 2026-10-25*: the `--encoder-weights D
+--engine FILE` shorthand for `derive` and `replace` was never built and
+is dropped — one way to name a space, the calibration and envelope
+computed from the named encoder as `create` computes them).
 `--kinds` takes the kind names of 02 §2.6; the default is records and
 vectors. `--checks` takes the check names of 03 §3.2. `--seed` takes 32
 bytes as hex (03 §3.2).
@@ -1076,9 +1289,10 @@ one home.
 
 | tier | carries | changes by |
 |---|---|---|
-| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `NODE_PUBLIC_KEY_PATH`, `ADMIN_TOKEN_FILE`, `DEPOSIT_TOKEN_FILE`, `GIT_PRIVATE_KEY_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `TRANSLATE_MODEL` (the model TRANSLATE_URL's server is asked for, as `CHAT_MODEL` is for chat; amended 2026-10-09), `RERANK_URL`, `GPU_PROBE_URL`, `RAGE_URL`, `VEGA_URL` | restart |
+| **environment** — identity | `LOUISE_ROOT` (the one directory), `NODE_KEY_PATH`, `NODE_PUBLIC_KEY_PATH`, `ADMIN_TOKEN_FILE`, `DEPOSIT_TOKEN_FILE`, `GIT_PRIVATE_KEY_FILE`, `CHAT_URL`, `TRANSLATE_URL`, `TRANSLATE_MODEL` (the model TRANSLATE_URL's server is asked for, as `CHAT_MODEL` is for chat; amended 2026-10-09), `RERANK_URL`, `GPU_PROBE_URL`, `VEGA_URL` | restart |
 | **files** — desired state | `platform.toml` and `collections/<name>.toml` under `LOUISE_ROOT` | editing the file; `hold config apply` |
 | **files** — desired state | `users.toml` beside `platform.toml` (*amended 2026-10-22*): the users of §7.4, each token as its SHA-256 only; when each was last seen is `state/users-seen.json`, not desired state | `louise user …`, the admin API — never by hand |
+| **files** — desired state | `recipes/<plugin>.toml` beside `collections/` (*amended 2026-10-25, RULE 2*): this node's recipe for a plugin (06 §6.6) — what the Library's *new collection*, which names a plugin and a local name only, creates from | editing the file |
 | **state database** — runtime overrides | the node's mode — `node pause`, `--seed-only`, `--acquire-only` — in force until `resume` | the commands; a restart keeps them |
 
 Desired state is never written into the database, and a runtime override
@@ -1117,11 +1331,9 @@ unset means the chat model translates (05 §5.2); `CHAT_URL`
 unset refuses `ask chat` (exit 2); `RERANK_URL` unset returns
 `reranked: false` (05 §5.6) for every collection whose file names no
 `[reranker]` of its own; `GPU_PROBE_URL` unset leaves the node's GPU
-panel empty and says why, and nothing else changes; `RAGE_URL` — the
-node's model container (03 §3.3) — unset leaves the System page without
-the container's models and their controls, and the node then learns a
-run only from the answers it gets, which is enough to check every one
-of them. `VEGA_URL` is where the receipts of an `api = "vega"` encoder
+panel empty and says why, and nothing else changes (`RAGE_URL` was
+retired with RAGE, 2026-10-18: a run is learnt from VeGa's receipts).
+`VEGA_URL` is where the receipts of an `api = "vega"` encoder
 are read (`/vega/receipts`, `/vega/runs/<run_id>`); unset, every answer of
 such an encoder is a deferral and nothing is written or searched through
 it (amended 2026-10-08, docs/notes/vega.md). Secrets are named
@@ -1202,8 +1414,8 @@ source = "origin"                              # origin | shard: where the docum
 
 [encoder]                                      # required: a collection names its own encoder, there is no default
                                                # the endpoint that serves the Codex's encoder: a MODEL on the node's model
-                                               # container RAGE, never a device — RAGE places the model on a device, and
-                                               # states the run, device included, with every answer (03 §3.3)
+                                               # server (LocalAI, behind VeGa), never a device — VeGa states the run,
+                                               # device included, with a receipt for every answer (03 §3.3)
 url = "http://nas:30450/upstream/medcpt-article"   # the SERVER, never the endpoint: the client appends
                                                # /v1/embeddings (openai, vega) or /api/embed (ollama) — a url that
                                                # already ends in either is wrong (amended 2026-10-09)
@@ -1247,10 +1459,14 @@ answered with the space's encoder label, which names no model any server
 is asked for — and so is a flag that is not the model its URL names. The
 calibration set is embedded on that `api` with those models. The flags
 are node-local, beside `--encoder`, and never in the recipe, whose
-`space` block is hashed into the Codex; the Library's create route takes
+`space` block is hashed into the Codex; the create route takes
 them as `api`, `embed_model` and `query_model`, and `share fetch
 --encoder` takes the same three flags (amended 2026-10-09; 2026-10-08
-fell back to the label). A deposit
+fell back to the label). The Library sends none of them: where a route is
+given no `encoder`, the NODE determines all four — its model server, and
+the model there whose stated run loads the Codex's weights, each side its
+own — and where nothing it runs loads them it says so in plain words
+instead of asking (§7.4, *amended 2026-10-25*, RULE 2). A deposit
 collection's file (02 §2.9) takes `[deposit]`'s `encoder`, `api`,
 `embed_model` and `query_model` — the models, where `[deposit]` names
 none, from the URL, under the same refusal. `[deposit]` is checked at
@@ -1336,7 +1552,7 @@ collection is another name.
 │   ├── pubmed.toml
 │   └── pubmed/
 │       ├── shard/           the copy, the SHARD (`drag/` until 2026-10-11): exactly the tree of 02 §2.6 — what `share` serves, and nothing else; the bytes may live on other storage, mounted here
-│       ├── state/           manifest.sqlite, cursor, ack.json, attestations/, bundles/, lock — this peer's alone
+│       ├── state/           manifest.sqlite (with the origin's flagged issues, 06 §6.1), cursor, ack.json, attestations/, bundles/, lock — this peer's alone
 │       ├── index/           the text index of the parts held, and the facet values (05 §5.7)
 │       ├── lance/           the vector table search reads
 │       └── origin/          the origin files the records are parsed from — 06 §6.2's corpus directory, kept for records-vs-origin; the bytes may live on other storage, mounted here
@@ -1429,7 +1645,8 @@ command yet — `hold vectors check --drop` is the spec's.
 A deposit collection (02 §2.9) has the same tree, and its `shard/` holds
 only `codex.json` and the calibration member. Its `origin/` holds the
 deposits, byte-exact — one directory per deposit, named by its deposit
-number, with the file under the name the client gave it — and is the
+number, with the file under the name the client gave it (a URL source's
+page as fetched, under its source key: 06 §6.7, amended 2026-10-25) — and is the
 only copy of them anywhere; `state/`, `index/` and `lance/` hold what is
 derived from them, and erasing a deposit removes it from all four.
 

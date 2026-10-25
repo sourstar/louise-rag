@@ -170,10 +170,12 @@ def wikipedia_snapshots(wiki: str = "enwiki", timeout: float = 30.0) -> tuple[st
     """
     import httpx
 
+    from . import budget
     url = f"https://dumps.wikimedia.org/{wiki}/"
     headers = {"User-Agent": _WIKI_USER_AGENT}
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
         response = client.get(url, headers=headers)
+        budget.acquire_bytes(len(response.content))      # invariant 5: a listing moves bytes
         response.raise_for_status()
     found = {m for m in re.findall(r'href="(\d{8})/"', response.text)
              if _SNAPSHOT_RE.match(m)}
@@ -215,6 +217,9 @@ WIKIPEDIA_SPEC = AcquisitionSpec(
         "all": Filter(),
     },
     profile_mode="additive",
+    # a language's dump holds every `lang=<code>/pages=…` slice of it: the
+    # slices the origin delivers whole (07 §7.3 `records fetch --slice`)
+    slice_profiles={f"lang={lang}": lang for lang in _WIKI_DUMP_BYTES},
     estimated_bytes={"demo": _WIKI_DUMP_BYTES["tr"] + _WIKI_PROPS_BYTES["tr"],
                      **{lang: n + _WIKI_PROPS_BYTES[lang] for lang, n in _WIKI_DUMP_BYTES.items()},
                      "all": sum(_WIKI_DUMP_BYTES.values()) + sum(_WIKI_PROPS_BYTES.values())},
@@ -259,6 +264,7 @@ EMBEDDED_SPEC = AcquisitionSpec(
     # perfectly coherent corpus. Growing adds a language rather than
     # replacing one.
     profile_mode="additive",
+    slice_profiles={f"lang={lang}": lang for lang in _EMBEDDED_LANG_BYTES},
     estimated_bytes={
         "demo": _EMBEDDED_LANG_BYTES["tr"],
         **_EMBEDDED_LANG_BYTES,
@@ -431,14 +437,18 @@ def wikidata_snapshots(timeout: float = 30.0, *, probe: int = 6) -> tuple[str, .
     newest dump — each of the newest `probe` directories is listed and kept
     only where `wikidata-<date>-all.json.bz2` is among its files."""
     import httpx
+
+    from . import budget
     headers = {"User-Agent": _WIKI_USER_AGENT}
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
         r = client.get(f"https://dumps.wikimedia.org/{_WIKIDATA_DIR}/", headers=headers)
+        budget.acquire_bytes(len(r.content))             # invariant 5: a listing moves bytes
         r.raise_for_status()
         dates = sorted({m for m in re.findall(r'href="(\d{8})/"', r.text) if _SNAPSHOT_RE.match(m)}, reverse=True)
         out = []
         for date in dates[:probe]:
             listing = client.get(f"https://dumps.wikimedia.org/{_WIKIDATA_DIR}/{date}/", headers=headers)
+            budget.acquire_bytes(len(listing.content))
             if listing.status_code != 200:
                 continue
             if f"wikidata-{date}-all.json.bz2" in listing.text:

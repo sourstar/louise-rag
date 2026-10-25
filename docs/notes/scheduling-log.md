@@ -968,3 +968,288 @@ delete memory, scans, and the versions it lets cleanup drop (78 GB here).
 
 **Still open:** the maintainer's nice under a saturated CPU, if the nights
 after this deploy still show the refresh starved.
+
+### 2026-10-24 — the records build streams its pages; the parse pool is sized from the cpu quota — PREPARED, two steps
+
+**The defect, measured (München, py-spy 18:15–18:20 CEST, read-only).**
+`hold records build wikipedia-v8` in its own container, 4-cpu quota
+(`cpu.max` 400000/100000), nice 19, the deployed image. `os.cpu_count()` 12,
+so `PARSE_PROCESSES` defaulted to 11: 11 children in 4 cpus. docker stats
+every 8 s over 96 s: mean ~132 % (1.3 of 4 cpus). py-spy record 120 s,
+`--subprocesses --idle`, 89,973 samples: 47.8 % children idle waiting for
+work; per child, 7–45 % of its time parsing, two children doing most of it;
+the parent 100 % in the wait for the page. Cause: `pack_slices` hands
+`parallel.compute` ONE page of ≤500 documents and waits for its slowest part
+before reading the next, and the batch deadline (`PARSE_TIMEOUT_S` 120 s over
+the WHOLE page) threw 15 pages away in 18 h and parsed them again serially.
+Rate this run: 8.15 M records in 18.8 h, ~120 rec/s (an en slice of ~300 k:
+~185 rec/s; en/0M 5 h).
+
+**Scenario.** wikipedia-v8's records build alone in its container (the
+worker's other collections in theirs); slices de, en finished to
+en/pages=27M; the rest of en, then es, fa, fr, it, ja, pt, ru, tr, zh.
+`chunks/doc` not yet recorded for the window — read it from the build log's
+part entries (`chunks` / `records`) before and after, per rule 3.
+
+**The changes, ONE per step (scheduling.md §6, 8):**
+1. *The pool size* — `config.available_cpus()`: affinity and the cgroup quota
+   (`cpu.max`, v1 `cfs_quota_us`), as the JVM, Go (automaxprocs) and .NET
+   read it; `PARSE_PROCESSES` defaults to it − 1 (3 here). On the running
+   image the same step is `PARSE_PROCESSES=3` in the build container's env:
+   no deploy, measured first.
+2. *The page stream* — `parallel.compute_pages`: page k+1's parts are
+   submitted while page k is with the caller (window kept full across
+   pages, the admission budget unchanged, parts still cut by `work_span`);
+   the timeout bounds the wait for the NEXT answer (no part answered for
+   `PARSE_TIMEOUT_S`), and on a timeout only the unanswered parts are
+   computed in-process. Cost tests: tests/test_parallel.py (the next page
+   submitted before the caller takes this one; a stalled part costs only
+   itself). Byte-identical parts: `test_pack_records_are_computed_by_the_pool`.
+
+**Expected, unmeasured:** step 1 removes the oversubscription (the straggler
+gets a whole cpu, the timeouts go); step 2 keeps the 3 children fed — together
+~1.3 → ~3.5–4 cpus, 2.5–3× on the remaining ~61 M records.
+
+**The before numbers were contended** (München, 18:40 CEST): the profile and the
+hour before it ran while the wikidata pack's version-3 upgrade held 6–7 of
+the 12 cores (17:13–18:35 CEST): 108.5 rec/s, 252 chunks/s, 2.32 chunks/doc.
+Right after it ended (18:36 CEST, 208 s, 51 parts): 479 rec/s, 2,361 chunks/s,
+4.93 chunks/doc, docker stats 100–418 %, with stretches at exactly ~100 %
+(one core: the page barrier). So the BEFORE is a clean hour of en,
+18:40–19:40 CEST, nothing else heavy; then step 1 (19:40–20:40, PARSE_PROCESSES=3),
+then step 2 (a833c1e, 20:45–21:45), all normalised by chunks.
+
+**BASELINE, clean (18:40–19:40 CEST; deployed image, PARSE_PROCESSES 11,
+nothing else heavy).** docker stats ×12: mean 232 % (100–391; three readings
+at exactly ~100 %). 382 parts, 759,764 records, 2,888,004 chunks, 3.80
+chunks/doc, 230.7 rec/s, 877 chunks/s; no "[parse pool]" line. By slice:
+en/28M 1.03 chunks/doc, 161 rec/s; en/29M 1.93, 233 rec/s; en/2M's first
+236 k records 8.63, 357 rec/s, 3,080 chunks/s. CPU per chunk: 232 % × 3,600 s
+/ 2,888,004 = 2.9 ms.
+
+**STEP 1 (19:41–20:41 CEST; same image, PARSE_PROCESSES=3).** Mean 221 %
+(101–309). 127 parts, all en/2M's next 252 k records, 689,593 chunks, 2.74
+chunks/doc, 76.6 rec/s, 210 chunks/s; no "[parse pool]" line. CPU per chunk
+11.5 ms — FOUR times the baseline's, on the same slice: the cost follows the
+wikitext (templates, tables, refs), not the chunks, so rule 3's unit does
+not normalise this build and the two hours are not comparable on
+throughput. What IS comparable is the utilisation: 3 children held the same
+~2.2 cpus as 11, and neither hour timed out — once the node was quiet the
+oversubscription was not what capped it (it was under contention, before).
+The ~100 % phases (one core: the page barrier, the serial parent) recur in
+both: step 2's target.
+
+**The fair A/B (agreed with München):** the same page range built twice in a
+scratch build dir, the deployed tree and a833c1e, CPU only — wall time,
+CPU-s per record and the utilisation on IDENTICAL records. That, not an hour
+of a different stretch, decides step 2.
+
+**STEP 2 (a833c1e tree, 20:41:55–21:41:55 CEST, PARSE_PROCESSES default
+= quota − 1 = 3).** docker stats ×12: 300 301 302 300 194 300 308 302 307 163
+301 100 → mean 265 % (100–308); readings at ~100 % (one core): 1/12 (baseline
+3/12, step 1 2/12). 355 parts in en/30M–32M, 705,733 records, 1,971,340
+chunks, 2.79 chunks/doc, 214.1 rec/s, 598 chunks/s; no "[parse pool]" line.
+CPU-s per record: baseline 11.0 ms, step 1 31.6 ms (en/2M's heavy stretch),
+step 2 13.5 ms — content-bound, not comparable across steps. Utilisation
+232 % → 221 % → 265 %, and flat at the pool's ceiling (3 children) in step 2:
+the stream keeps the children fed, the barrier pauses are gone, the
+parent's own share is small. One cpu of the 4 stays mostly idle.
+
+**Byte identity, fixtures (architecture, 2026-10-24).** The live staging
+holds parts cut by c3a7612 (to 20:41) and by a833c1e (from en/30M on). The
+same 700-record corpus (gutenberg-mini's three books ×, sizes varied so
+children finish out of order), records_per_shard 60, 3 real children,
+built under each tree: 12 parts, sha256 identical. Not the proof on
+wikipedia's own records — the A/B's byte check is — but the paths the two
+trees differ in (pack_slices' page stream, slice_of) cut the same bytes.
+
+**Next, step 3 — the 4th child, in the A/B:** the A/B adds a third arm,
+a833c1e with PARSE_PROCESSES=4, on the same 250 k records. If it holds
+~400 % with no "[parse pool]" line and a lower wall time than arm 2, the
+records build's default becomes the whole quota (the build's parent only
+feeds and writes); the node worker keeps quota − 1 (its parent runs the
+round loop and the API). That change ships with these numbers in its
+commit, not before.
+
+**THE A/B (München, 2026-10-25; origin/main e330ed5,
+docs/notes/records-ab-2026-10-25/run2-*.json).** en/2M's first 250,000
+records, 2,096,112 chunks, 125 parts, 4-cpu quota, nice 19, the live build
+stopped:
+
+| arm | wall s | cpu s | cpu s/record | mean util | one-core readings | min–max % |
+|---|---|---|---|---|---|---|
+| c3a7612 (11 children) | 761.2 | 2015.0 | 0.00806 | 265 % | 6 of 95 | 100–355 |
+| a833c1e (3 children) | 629.5 | 1775.5 | 0.00710 | 282 % | 0 of 78 | 149–307 |
+| a833c1e, PARSE_PROCESSES=4 | 543.8 | 1824.7 | 0.00730 | 336 % | 0 of 67 | 132–400 |
+| c3dcb4c (3 children) | 622.9 | 1767.3 | 0.00707 | 284 % | 0 of 77 | 176–308 |
+
+The parts (n, sha256, records_root, chunks_root) were identical in all
+seven runs (these four and the first run's three), and no arm logged a
+"[parse pool]" line.
+- Step 2 is 1.21× faster than the old pool on wall time, at 12 % less CPU
+  per record.
+- c3dcb4c costs nothing against it.
+- The 4th child is 1.16× faster on wall time at +3 % CPU per record. It
+  meets two of the three rules (lower wall, no fallback). The third,
+  ~400 %, it misses: it averaged 336 %, peaking at 400.
+
+DECIDED (architecture): the 4th child is taken.
+`config.build_parse_processes()` gives `hold records build` the whole
+quota unless PARSE_PROCESSES is set; the worker keeps quota − 1.
+
+The first A/B run (11:17–12:50) is VOID for speed. Its harness reached the
+container on stdin, so the spawned children found no main file and
+disabled themselves, and every arm ran on one core. Its parts still count
+for the byte check.
+
+
+### 2026-10-25 — query processing highest, corpus embedding lowest, a query's later step first (operator) — PREPARED
+
+**Operator:** "Embedding shall have the lower priority and query processing
+the highest; the subsequent steps of a query in process shall be processed
+first to avoid wasting the effort spent for the previous steps."
+
+**Change (app/dispatch.py, app/embeddings.py):**
+- The levels are a query's steps in order: CORPUS < TRANSLATE < QUERY
+  (embedding) < RERANK < CHAT (the answer). The 2026-09-19 order put query
+  embedding on top and chat below the rerank. Where a query's steps meet at
+  one gate, the one further along goes first.
+- Corpus work stands aside ON THE WHOLE CARD while any step of a person's
+  query holds the node's claim. Its next request, and the warm that may load
+  a corpus encoder, wait for the claim to clear. A request already sent
+  finishes. The wait is bounded by the request's own timeout (then a
+  deferral, nothing on the document) and wakes on stop.
+- The 2026-09-20 removal of this yield was for chat's clock (87–92 s at
+  990 MHz alone). The GPU governor now holds the clock for the claim's
+  lifetime; pinned, standing aside measured 64.2 s against 67.5 s.
+
+**BEFORE (the night of 2026-10-24, München).** Scenario, corrected
+2026-10-25 08:45: normattiva embedded NOTHING (embed off, nothing left). The
+corpus work on vega-qwen3-embedding-4b was GUTENBERG's on-demand embedding,
+of the books the campaign's own searches touched: 65 documents, 6,556 chunks
+embedded and 6,330 reused, ~10.0 M tokens, EMBED_BATCH 1 at concurrency 2,
+7,028 requests served in 3,035 s (0.43 s each). Also running: the
+campaign's run 5 tail and the heading full search (3 arms, reranker on) from
+23:04, and the records build on CPU. The GPU was at 85–86.5 % VRAM at the
+reclaimer's 4 fires.
+- /v1/rerank (louise-rerank-bge, parallel:1): 5,662 × 200, **130 × 500
+  (2.2 %)**, all between 23:00 and 03:00 CEST. None by day (50 calls, one
+  test beside 16 embedding batches).
+- Queries losing their rerank: **19 % of first searches** (95/496), 3 % of
+  repeats.
+- Live searches: t_rerank **30.4 s** (20:05) and **42.6 s** (00:06; that
+  minute normattiva sent 86 embedding calls, and 2 of the 5 reranks were
+  refused).
+
+**AFTER (to fill), same scenario:**
+- the per-call 500 rate (the harness logs every refused call with LocalAI's
+  body, d6ddc85);
+- rerank ms per call;
+- per-query misses;
+- live t_rerank;
+- the on-demand corpus work's documents/hour while the campaign runs: what
+  corpus pays, since its requests now wait whenever a query step is live.
+
+**Claim per step, not per query (operator, 2026-10-25: "subsequent steps
+first does not mean keep the gpu unloaded for a long time").** Measured
+the same morning, the deployed path with every HTTP call timed, 3 gutenberg
+searches and 1 Ask:
+- translation: chat 0.3–1.3 s, MADLAD 0.5–1.3 s;
+- gap (a), the text legs: 1.0–2.3 s;
+- query embedding: 0.08–0.1 s warm (4.4 s once, cold);
+- gap (b), dense search, fusion, attach, tokenize: 0.7–1.1 s;
+- 3–6 reranks of 0.3–4.4 s, 9–37 ms apart;
+- in Ask, gap (c) of 2.2 s before a 5.2 s answer.
+The gaps total 3.4–4.1 s per query of 11.6–16.7 s. A corpus request (one
+text, 0.43 s) that starts in a gap shares the card with the next step for
+at most ~0.43 s, or ~0.9 s for the two in flight. A whole-query claim
+(04b4f50) would have idled the card for the gaps and deferred corpus work
+for the whole query. Reverted (1b8d8cc): corpus stands aside while a step
+runs and fills the gaps between steps.
+
+Deployed together with the one-retry on a 5xx (b573be4). The per-call 500
+rate is the priority's alone, because the harness counts every POST,
+retried or not.
+
+### 2026-10-25 — the parse pool keeps its children, and a stopped build leaves — PREPARED
+
+**The defect (München, 2026-10-25 10:58–11:15 CET, read-only py-spy).**
+wikipedia-v8's live build, on a833c1e's tree, did not exit on SIGTERM. Its
+part was committed (en/60M part 103, 10:58:45) and main had returned. The
+main thread was joining two pool manager threads in `_python_exit`, the two
+queue feeders were blocked in `_send`, and no parse child was alive. It was
+SIGKILLed at 11:15, with nothing lost. The causes are scheduling.md §5,
+pitfall 19: CPython gh-115634 (a 3.12 pool loses the children that retire at
+`max_tasks_per_child`), and a pool thrown away with `shutdown(wait=False)`
+that the exit then joins with no bound.
+
+**Reproduced here (3.12.3 against 3.13.16, which carries the upstream
+fix):**
+- 8 parts on 2 children retiring after 2 tasks: 3.12 answered 4 and had 0
+  children left; 3.13 answered all 8;
+- the watchdog's `shutdown(wait=False, cancel_futures=True)` and then a
+  normal exit: 3.12 was still there after 30 s, 3.13 left in 0.1 s;
+- a stream whose children retire after every part, stopped: with the
+  pool shut down before its children were terminated (3.14's order), 2
+  exits in 8 hung on 3.12; terminated first, 0 in 12 on 3.12 and 0 in 12
+  on 3.13.
+
+**The change (one):** `parallel._Executor` (the gh-115634 backport),
+`parallel.discard` (stop a pool thrown away), and the exit stopping the
+pool first. A hung wikidata pack pool is discarded the same way, and the
+build's log lines are flushed.
+
+**BEFORE (München, from build-night.log, which has no per-line timestamps,
+so the counts are per run).** Every one of the 34 lines is "[parse pool]
+TimeoutError: computing this batch in-process":
+- the c3a7612 image, `PARSE_PROCESSES` 11 (2026-10-24 23:25 → 10-25 07:00):
+  15 lines in 1,409 part lines;
+- step 1 (`PARSE_PROCESSES` 3, one hour): 0 lines in 74 part lines;
+- the a833c1e run (~14.3 h, up to the hung stop): 4 lines in 1,271 part
+  lines, and it ENDED with no child in the container;
+- earlier runs: 9, 3 and 3 lines.
+A/B arm 1 (the c3a7612 image) did 250,000 records, 2,096,112 chunks and 125
+parts in 1,865.5 s wall for 1,859.7 cpu-s: one core of four, which is the
+serial in-process path a pool without children falls back to.
+
+**Check before it goes live (München):** arm 4, c3dcb4c's tree on the same
+250 k records. Its parts (n, sha256, records_root, chunks_root) must be
+identical to arms 1–3; until they are, the build stays held.
+
+**Scenario for AFTER:** the live wikipedia-v8 build in its container, 4-cpu
+quota, `PARSE_PROCESSES` 3, `PARSE_TASKS_PER_CHILD` 500, after the A/B arms.
+
+**AFTER (to fill):**
+- "[parse pool]" fallback lines per hour (BEFORE: count them in the build
+  log since a833c1e);
+- live parse children every 60 s (expected: 3 throughout);
+- the time from `wikipedia-build.sh stop` to exit (BEFORE: never; SIGKILL
+  after 15 min);
+- rec/s and chunks/s against step 1's hour, on comparable slices (rule 3).
+
+**AFTER so far (München):** the live build restarted on c3dcb4c at 13:37:36
+CET. The sampler reads 3 children at ~300 % (13:40, 13:41). The A/B arm
+on c3dcb4c: no "[parse pool]" line, 622.9 s, parts byte-identical.
+
+### 2026-10-25 — the build uses every core; the page stream refills on any answer (operator) — DEPLOYED on the build 15:20 CET
+
+**The operator:** "Use all the cores", then "Fix it, we are wasting CPU time."
+
+**BEFORE (München).** The build container ran at `--cpus 12`, `PARSE_PROCESSES` 12, on c3dcb4c: 223 rec/s. The cpu sat at one core (99–100 %) in many 60 s samples between 400 and 1,180 %. py-spy `--gil` on the parent showed the GIL held ~8 % of the time, so the parent's Python was not the limit. `compute_pages` was:
+- a part that had answered held its slot until its page was consumed in order;
+- the loop waited on the OLDEST part alone, refilling nothing meanwhile;
+- it read at most three pages ahead.
+So one long article in the oldest page left 11 children idle.
+
+**The change (21da0e3, München; reviewed and merged by architecture).** The window counts only RUNNING parts. Any answer returns the loop to the top, which refills. The watchdog deadline is reset by any answer and after each yield. `PAGES_AHEAD` is 16, the memory bound. Results stay in page and part order. The cost test `test_one_slow_part_does_not_hold_back_the_pages_after_it` fails on the old code and passes now.
+
+**A/B, 12 cpus, the same 250 k records** (parts identical to the earlier five runs):
+
+| arm | wall | cpu s | cpu s/record | mean util | one-core readings |
+|---|---|---|---|---|---|
+| c3dcb4c, 12 children | 408.5 s | 2830 | 0.0113 | 693 % | 1 of 51 |
+| 21da0e3, 12 children | 334.2 s | 3324 | 0.0133 | 995 % | 1 of 41 |
+
+On 4 cpus the arms were 544–630 s. Live since 15:20: 572 rec/s and 1,750 chunks/s over the first 5 minutes, against the morning's 223 rec/s and 322 chunks/s on a different stretch. CPU per record is higher at 12 children (SMT siblings, memory bandwidth). The operator asked for throughput.
+
+**Note (review).** A part that answered and waits for its page's turn still counts in `_held` and in the occupancy meter until consumed. That is harmless for the build, which is alone in its container, and `compute_pages` is not used by the worker. Revisit if it ever is.

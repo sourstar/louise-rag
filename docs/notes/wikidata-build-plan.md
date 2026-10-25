@@ -32,8 +32,18 @@ canonical id `wikidata:Q42` / `wikidata:P31` — the namespace
 `wikidata-refs` registers (§4) — and in `extra.id`. The rule is a pure
 function of the origin's key, recorded here (06 §6.1).
 
+**Names in search** (*operator, 2026-10-24: "names only"*). The text stays
+English (D3), but every label and alias of an entity, in every language, is
+searchable by name: index-only keys on the record's first chunk, ranked
+longer-name-first then by sitelinks (05 §5.1 amended; `fts.search_names`).
+The records are unchanged.
+
 **What is a record.** One entity, one record. `title` is the label in the
-first language of the list that has one (else the id); `lang` is `"mul"`
+first language of the list that has one, else `mul`, else — parser 2,
+operator 2026-10-24: "showing an id is meaningless for humans" — the name
+by names.py's order (the original name in Latin characters, any label in
+Latin characters, the original name, any label), the id only for an
+entity with no label and no name statement; `lang` is `"mul"`
 (an entity has no one language; 09 §9.5 asks for 639 codes and `und`;
 `mul` is ISO 639-2's "multiple languages" and 639-3's); `creators` `[]`;
 `date` null; `subjects` `[]`; `keys` the entity's canonical id and the
@@ -47,7 +57,11 @@ references, `snaktype`, `datatype`), `sitelinks` with badges, `lastrevid`,
 `sections`: one section per language of the Codex's list, heading the
 language code, text the TEXTIFIED entity in that language — Wikimedia's
 textifier, vendored at the pinned commits — so `content_hash` covers the
-text that is embedded, and the chunker is a pure cutter.
+text that is embedded, and the chunker is a pure cutter. Each followed,
+where the rank filter drops something, by that language's HISTORY section,
+heading `<code>:history` (parser 2, operator 2026-10-24: "Go with family
+slices and the history section now"; the rule in
+wikidata-completeness-report.md §4, the code `textify.history_text`).
 
 **Pruned entities.** Scholarly articles (`P31` = `Q13442814`, any rank)
 are not records: ~46 M of the ~115 M entities, as the design's corpus
@@ -80,7 +94,11 @@ label table at the same time. `discover` reads the pack's index columns;
 blocks, seekable with an offset index) is measured first (§5): if it is,
 the locator can name the block and the pack shrinks to an index.
 
-**Slicing and parts.** One id-range key, `range` = `native_id // 10⁷`
+**Slicing and parts.** *Amended 2026-10-24 (operator: "Go with A"): a
+collection created from then on is sliced `family=<f>/range=<n>` by a family
+map pinned at creation — wikidata-family-slices.md, app/plugins/wikidata/
+families.py; the collection of 2026-10-20 keeps the id ranges below.* One
+id-range key, `range` = `native_id // 10⁷`
 (slices `range=0`, `range=1`, …, properties in `range=100`), `order:
 numeric`, `shard_records` 20,000 (≈ 50,000 chunks a part at 2.5 chunks an
 entity over four languages; PubMed's parts are 30,000 records) — about
@@ -283,3 +301,216 @@ pins no files. Next: the fetch and the first streaming scan (§2), the first
 snapshot, the gate against the document run, then §4.5's model-identity
 check is done and gutenberg-graph's methods (gutenberg-graph-amendments.md,
 steps 4–5) can run against its vectors.
+
+## Parser 2 (2026-10-24): a referenced label falls back to `mul`
+
+The vendored textifier looked a referenced entity's label up in the
+language, then in the fallback language. Upstream's `get_lang_val` — and
+our rendering of the entity's OWN label — tries `mul` in between. Since
+2024 `mul` is Wikidata's default label, the name in every language, so an
+entity labelled only in `mul` was written as its id (`Q…`) in the text of
+every entity naming it. Found while designing the section below, before
+any record existed: `PARSER_VERSION = 2` (textify.py `Normalizer._chain`;
+tests/test_plugins_wikidata_textify.py). Parser 2 also carries Italian
+connectives (W1 of upstream-reports/wikidata.md), inert for an English
+collection. Counted on the node (München, 2026-10-24,
+`tools/wikidata_coverage.py mul`, 8,823 kept entities in 100 row groups —
+a clustered sample): 280 English texts change (3.2 %); of 155,247 label
+lookups, 870 were written as an id by parser 1 and 506 by parser 2. What
+parser 1 wrote as ids: "PlayStation 2" (Q10680), "Marcel Vibert",
+"Bodendenkmal", and taxa — Suidae, Rallidae, Bovidae — whose scientific
+name is their `mul` label. The label table: 93,171,448 English rows,
+20,594,687 `mul`, 10,598,629 entities with `mul` and no English.
+
+Titled by their id (no English, no `mul` label), counted exactly over the
+node's manifest: 15,765,162 of the 75,896,183 kept records, 20.8 % — about
+one in five, not the one in four first read off 20 entities; 18.1 M of the
+dump's 121.9 M entities (14.9 %) have neither. The examples are such
+entities as Q3235171 (fr "Les Roses de la vie", de "Die Rosen des
+Lebens", hu "Az élet rózsái"), Q3242104 (ru, fr) and Q3239462 (fr "ligne de
+Charpal", nl "spoorlijn Charpal").
+
+**No id where a name exists** (operator, 2026-10-24: "As a general rule
+showing an id is meaningless for humans; in case there are multiple non
+English languages use in order: 1. the original name if it can be
+determined and if it's in latin characters 2. Any other language in latin
+characters. 3. The name in the original language if it can be
+determined"). names.py, in parser 2, everywhere an id would be read:
+- the order: the ORIGINAL NAME — what the entity states as its own name
+  (native label P1705, name in native language P1559, official name P1448,
+  title P1476, name P2561), then its label in its ORIGINAL LANGUAGE where
+  it states one (language of the work or name P407, original language of a
+  film or series P364, native language P103 — each a language item, read
+  as its Wikimedia code P424 through the pack's `language` table) — in
+  Latin characters; else a label in Latin characters; else the original
+  name in its script; else any label (the general rule). Among labels
+  (operator, the same day: "Go with your recommendation and the language
+  lookup"): the languages of the entity's own wiki pages first, then
+  French, Spanish, Italian, German, then the order Wikidata lists them,
+  then the code. A place's official language (P37, on its country) would
+  determine more originals — written down, not built;
+- where: the record's `title`, the entity's own name at the head of its
+  text, the name of every entity its text refers to, and the reference
+  source's label (`ask lookup`);
+- the pack (PACK_VERSION 2): `labels.sqlite` gains `language(id, code)`
+  (every language item's P424, written with the chunks) and `name(id,
+  lang, label)` for every entity with no English and no `mul` label,
+  written by a pass over the pack's own lines AFTER the chunks — a name
+  may need the code of a language item later in the dump. RULE 1, named: a
+  complete version-1 pack is UPGRADED in place — a pass for the codes
+  (only lines naming P424 are parsed), a pass for the names (a byte check
+  skips every line holding an English or `mul` label) — not rebuilt from
+  the bz2; chunk files and label rows stay byte for byte those a version-2
+  pass writes (tests/test_plugins_wikidata_names.py). Parser 2 parses
+  only from a pack whose names are done (`pack.ready`); before that every
+  document DEFERS, so no title or text is written without its names.
+  UPGRADED on the node 2026-10-24 (München, 66af9bc, 8 CPUs capped, ~7.4
+  used, 3.2 GB): 37 min 38 s — the codes pass 1,175 s and the names pass
+  1,080 s over the 1,220 chunk files, both bound by decompression; 2,215
+  language codes, 17,954,384 names (of the 18.1 M entities with neither an
+  English nor a `mul` label; the rest have no label at all). A rebuild from
+  the bz2 is the hours-long pass of 2026-10-20.
+
+The Codex of 2026-10-20 names parser 1, so wikidata is CREATED AGAIN from
+the same recipe before Monday's records build: nothing was published (no
+snapshot, share off), so nothing is superseded. RULE 1, named: the
+calibration's document side is reused (`hold collection create
+--calibration-from wikidata`, only the query side embedded); the pack is
+a cache of the dump and stays; the text index was to be rebuilt on Monday
+anyway. The new collection's manifest is discovered again from the pack's
+index columns.
+
+## Full text in more languages for monuments, buildings and events (operator, 2026-10-24)
+
+*"I want that also monuments, buildings and events are full text translated
+as well / As ancient and uncommon words (barbacane, barbican) if it fits /
+Any improvement to wikidata goes in a report to be submitted to the
+wikidata team for integration."*
+
+**How.** A daughter (D3, and 02 §2.7's sentence on it) after the English
+collection is built. For the entities of the selection, its parser writes
+one more section per added language: the same textifier, fed Wikidata's
+OWN labels in that language. That is the translation Wikidata already
+holds — a property's label exists in nearly every language, a value's
+label where editors wrote one, else `mul`, else English. Not machine
+translation, for three reasons:
+- a record is reproduced from the dump (records-vs-origin, invariant 11);
+- translating before embedding made retrieval worse where we measured it
+  (translate-before-embed.md, classical-translation.md), and MADLAD costs
+  seconds a passage on the shared card;
+- jina-v3 reads Italian, German, French and Spanish as they are.
+
+The English sections stay byte-identical, so their vectors are carried by
+chunk hash: only the new sections are embedded.
+
+**The selection** is a pure function of the dump:
+- every entity whose P31 is in the P279 closure of architectural structure
+  (Q811979: buildings, bridges, towers…), monument (Q4989906),
+  archaeological site (Q839954), event (Q1656682) or occurrence
+  (Q1190554);
+- every CLASS in those closures. "Ancient and uncommon words" fit here as
+  the classes they are: a barbican ("barbacane") is a class of
+  fortification; the run says which roots reach it (`--find`), and whether
+  a root such as architectural element is needed for words like merlon;
+- every entity with a heritage designation (P1435).
+
+Words as words are Wikidata's lexemes, a separate dump D1 did not take:
+a collection of their own, if ever wanted.
+
+**The pack** needs the added languages in its label table. Today a
+language change rebuilds the whole pack from the bz2; the chunk files do
+not depend on the languages, so a labels-only pass over the pack's own
+lines is the RULE 1 shortcut (to build with the daughter).
+
+**Measured first**, read-only on the node (`tools/wikidata_coverage.py
+classes`):
+- entities and classes per root;
+- per language, how much of their text Wikidata's labels write;
+- each added language's cost in chunks and tokens, through the real
+  chunker on a sample;
+- P279 cycles in the closures, and the most-referenced entities with no
+  label in each language: W3 and W4 of
+  [upstream-reports/wikidata.md](upstream-reports/wikidata.md).
+
+**Measured** (München, 2026-10-24, dump 20261012, 6 processes, 51 min;
+outputs in [wikidata-coverage-2026-10-24/](wikidata-coverage-2026-10-24/)):
+
+| root | classes in the tree | instances |
+|---|---|---|
+| built structure Q811979 | 24,378 | 5,640,728 |
+| — of which building Q41176 | 8,164 | 2,949,836 |
+| monument Q4989906 | 1,431 | 672,737 |
+| archaeological site Q839954 | 595 | 363,793 |
+| planned event Q1656682 | 56,778 | 1,441,964 |
+| occurrence Q1190554 | 442,711 | 3,895,782 |
+| heritage designation only (P1435) | — | 513,755 |
+| **selected, all together** | | **10,437,567** |
+
+- Wikidata's own names for them (label or `mul`): English 72.5 %, German
+  25.3 %, French 21.2 %, Spanish 12.7 %, Italian 11.6 %. The rest of the
+  text is better covered: of the 192 M labels their texts look up (118 M
+  of them property names), English 99.0 %, French 94.2 %, German 91.4 %,
+  Spanish 89.4 %, Italian 86.0 % exist.
+- One more language for all of them: 10.5 M chunks, 1.61 G tokens (a
+  sample of 10,359 rendered through the real chunker: 1.01 chunks and 154
+  tokens an entity) — 3.7 months of wikidata's `work.tokens` (430 M a
+  month), 222 h of the card at 2,016 tokens/s. Four languages: 15 months.
+- Only where Wikidata names the entity in that language: it 1.21 M, de
+  2.64 M, fr 2.21 M, es 1.33 M — 7.4 M sections, 1.14 G tokens, 2.7 months
+  for all four. Those are the sections whose name is in their language;
+  the others would be an English name in a translated frame.
+- "Barbacane" fits: barbican (Q23394) is a subclass of built structure and
+  building, and the Italian-only class "Barbacane" (Q3634551) sits under
+  it; merlon (Q23419) comes in through its class. Machicolation (Q23398)
+  does not: it is under architectural element (Q391414), a root to add for
+  such words.
+- The occurrence tree is not "events" as a reader means it: clinical
+  trials (391,649), doctoral theses, statutory instruments, parliamentary
+  motions, red giant stars and coins come in through chains of P279
+  (W5 of the report). Its roots are re-measured with each class's chain
+  (`--top`, the path per class) before the daughter: planned event, and
+  the classes of occurrence that are events.
+- No textifier error on 10.4 M entities.
+
+**When parser 3 lands.** The daughter's parser is a new PARSER_VERSION
+(the Codex binds `parser: {id, version}` and no parameters, so the
+languages and the roots are the version's), and an image whose wikidata
+parser is 3 can no longer build the parser-2 English collection
+(03 §3.4: not equivalent by versions). So parser 3 reaches the branch only
+when the daughter is created from the English collection's last snapshot,
+in the same deploy; until then every deploy carries parser 2. Its pack
+needs (in-place passes, RULE 1, as the names): the labels of the added
+languages, and the P279 edges for the closure.
+
+**Open for the operator, with those numbers:** the languages, and
+whether a language's section is written for every selected entity or only
+where Wikidata names it in that language. Recommended: it, de, fr, es,
+only where named (2.7 months of the budget, against 15). If nothing is
+said: that.
+
+## What the dump says that the text dropped or misread — checked (operator, 2026-10-24)
+
+*"Check if there is any other information from wikidata that we silently
+ignore like the original language."* The record keeps the whole entity
+(`extra`, invariant 11); this is about the TEXT — what is read, searched
+and embedded — and the selection.
+
+| what | was | now |
+|---|---|---|
+| `novalue` ("no architect", "no end time") | "has architect" — the opposite (upstream) | "architect: no value", Wikibase's wording; parser 2 |
+| `somevalue` and its qualifiers (an unknown date's earliest/latest bounds) | "has date of death", qualifiers dropped (upstream) | "date of death: unknown value (earliest date: 1450)"; parser 2 |
+| a lexeme, form or sense value | the datavalue's Python repr (upstream) | its id (`L7`); parser 2 |
+| a quantity's uncertainty (`upperBound`/`lowerBound`) | dropped (our formatter) | "52±1.5 metre", as Wikibase shows it; parser 2 |
+| an entity's original language (P407, P364, P103) | unused | the names rule (above) |
+| statements the best-rank filter drops: a property's normal-rank values when one is preferred — former countries, former names, past populations | dropped (upstream's "truthy" choice) | COUNTED in the next run (`dropped_by_rank`); a decision with the numbers |
+| references to merged or deleted entities: the JSON dump carries no redirects | written as ids | COUNTED (`to_absent_entities`); the redirect table is a small dump of its own, a source to add |
+| Wikimedia's own pages as records — categories, templates, disambiguations, lists | kept as records, embedded | COUNTED (`--count-roots Q17442446`, Wikimedia internal item); pruning them is a decision |
+| Wikidata's lexemes (words, their senses and glosses, in many languages) | not taken (D1) | the natural home of "ancient and uncommon words": a small collection of their own |
+| sitelink titles (a Wikipedia article's title) | not among the names searched | mostly equal to labels; left |
+| references (sources) of statements | off (upstream default) | left: provenance, kept in `extra` |
+| a place's official language (P37, through its country) | unused | written down in names.py, not built |
+
+The four parser-2 changes landed before any wikidata record exists, so
+they cost no recomputation; the counted ones come with tonight's second
+classes run.
+

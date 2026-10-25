@@ -25,9 +25,11 @@ from pathlib import Path
 #: plugin -> why its parse may read beyond what fetch hashed. Each reason is
 #: an argument about records-vs-origin, never a convenience.
 EXEMPT = {
-    "deposit": "parse reads `.deposit.json` (the client's file name, the deposit time, a URL) "
-               "beside the file fetch hashes. Louise writes it once, at the deposit, and a deposit "
-               "collection publishes no record (02 §2.9): there is no origin to verify against.",
+    "deposit": "parse reads `.deposit.json` (the client's file name, the deposit time, a URL, a "
+               "source page's form) beside the file fetch hashes, and the collection's own "
+               "`shard/codex.json` for the parser version whose record shape it keeps. Louise writes "
+               "both once, and a deposit collection publishes no record (02 §2.9): there is no "
+               "origin to verify against.",
     "wikidata": "parse reads the dump's LABEL TABLE (app/plugins/wikidata/pack.py, labels.sqlite) beside "
                 "the entity's own line that fetch hashes: an entity's text names other entities' labels, "
                 "which are other lines of the SAME dump. 06 §6.4 (amended 2026-10-19): the table is a derived "

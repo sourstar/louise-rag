@@ -346,6 +346,32 @@ def _iso_week_id(year: int, week: int, offset: int) -> str:
     return f"{y:04d}-W{w:02d}"
 
 
+def cutoff_instant(snapshot_id: str, *, cadence: str, day: int, clock: str) -> datetime:
+    """The cutoff of snapshot `snapshot_id`: 00:00:00 in the origin's clock
+    on `update.day` of the period after the one the id names (09 §9.4) — the
+    inverse of `snapshot_id_for`. Refused for an id not of the cadence's
+    form (`2026-09` monthly, `2026-W36` weekly; 07 §7.7)."""
+    from zoneinfo import ZoneInfo
+    import re
+    form = {"monthly": r"^\d{4}-(0[1-9]|1[0-2])$", "weekly": r"^\d{4}-W\d{2}$"}.get(cadence)
+    if form is None:
+        raise CodexError(f"cadence must be monthly|weekly, got {cadence!r}")
+    if not re.match(form, snapshot_id or ""):
+        raise CodexError(f"snapshot {snapshot_id!r} is not a {cadence} snapshot id "
+                         f"({'2026-09' if cadence == 'monthly' else '2026-W36'}; 07 §7.7)")
+    try:
+        nxt = next_snapshot_id(snapshot_id)
+        if cadence == "monthly":
+            y, m = (int(x) for x in nxt.split("-"))
+            on = date(y, m, day)
+        else:
+            y, w = nxt.split("-W")
+            on = date.fromisocalendar(int(y), int(w), day)
+    except ValueError as e:
+        raise CodexError(f"snapshot {snapshot_id!r}: {e}") from None
+    return datetime(on.year, on.month, on.day, tzinfo=ZoneInfo(clock))
+
+
 def next_snapshot_id(snapshot_id: str) -> str:
     """The next period of the same cadence, read off the id's own form."""
     if "-W" in snapshot_id:
@@ -902,6 +928,12 @@ def _files(shard_dir, codex, snapshot_id: str | None = None) -> dict:
 
     member, sig = shard_mod.calibration_paths(codex.space.calibration.set)
     required = [shard_mod.VALIDATION_PATH, member, sig]
+    # the family map a slicing names (09 §9.4, amended 2026-10-24): required
+    # where the Codex names one — its records' slices are read through it
+    from app.pack import slicing as slicing_mod
+    named = slicing_mod.family_map_of(getattr(codex, "slicing", None))
+    if named is not None:
+        required.append(slicing_mod.map_member(named))
     nullable = [shard_mod.TERMS_PATH]
     if snapshot_id is not None:
         nullable.append(shard_mod.seals_path(snapshot_id))

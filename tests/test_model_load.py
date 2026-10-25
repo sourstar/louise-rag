@@ -54,6 +54,23 @@ class Runner:
         self.system_reads = 0
         self.calls: list[dict] = []
         self.lock = threading.Lock()
+        #: each load is a new backend process, as LocalAI's are
+        self.pids: dict[str, int] = {}
+        self._next_pid = 1000
+        #: models LocalAI's reclaimer evicts just before a real request
+        #: reaches them (another model's load, between the check and the call)
+        self.evict_before: set[str] = set()
+
+    def pid(self, model: str) -> int:
+        if model not in self.pids:
+            self._next_pid += 1
+            self.pids[model] = self._next_pid
+        return self.pids[model]
+
+    def evict(self, model: str) -> None:
+        with self.lock:
+            self.loaded.discard(model)
+            self.pids.pop(model, None)
 
     # GET <server>/system
     def get(self, url, timeout=None, **_kw):
@@ -65,7 +82,8 @@ class Runner:
         if self.system_status != 200:
             return httpx.Response(self.system_status, request=request, text="not found")
         return httpx.Response(200, request=request, json={
-            "backends": ["llama-cpp"], "loaded_models": [{"id": m} for m in held]})
+            "backends": ["llama-cpp"],
+            "loaded_models": [{"id": m, "process": {"pid": self.pid(m)}} for m in held]})
 
     def _serve(self, url: str, model: str, timeout: float) -> None:
         with self.lock:
@@ -82,6 +100,8 @@ class Runner:
     def post(self, url, json=None, timeout=None, headers=None, **_kw):     # noqa: A002
         with self.lock:
             self.calls.append({"url": url, "json": json, "timeout": timeout})
+        if not _is_warm(json) and json.get("model") in self.evict_before:
+            self.evict(json["model"])
         self._serve(url, json.get("model"), timeout)
         request = httpx.Request("POST", url)
         if url.endswith("/v1/embeddings"):
@@ -150,6 +170,60 @@ def test_the_rerank_budget_starts_after_the_load(runner):
     cold, = model_load.recent()
     assert (cold.model, cold.caller, cold.outcome) == ("louise-rerank-bge", "rerank", "loaded")
     assert cold.seconds >= 0.3
+
+
+def test_an_eviction_after_a_cached_check_is_still_warmed_outside_the_rerank_budget(runner):
+    """2026-10-25: a search's query embedding read `/system` (the reranker
+    loaded), another model's load then evicted the idle reranker, and the
+    rerank's check believed the cached answer: the load went INSIDE the
+    budget. The rerank asks fresh."""
+    runner.loaded.add("louise-rerank-bge")
+    assert "louise-rerank-bge" in model_load.loaded_models(SERVER), "the query side's check"
+    runner.evict("louise-rerank-bge")
+    hits = [{"text": f"t{i}"} for i in range(3)]
+    ranked, ok, why = retrieval._reranked("q", hits, RERANKER, 0.1, 50)
+    assert ok is True and why is None, "the 0.3 s load stays out of the 0.1 s budget"
+    assert len(runner.warms()) == 1 and runner.real()[0]["timeout"] == 0.1
+
+
+def test_a_cold_start_the_rerank_paid_inside_its_budget_is_named_and_recorded(runner, published):
+    """Evicted between the check and the request (the reclaimer is another
+    process): the request loads it inside its budget and times out. The
+    fallback says so, and the event log has the cold start."""
+    runner.loaded.add("louise-rerank-bge")
+    runner.evict_before.add("louise-rerank-bge")
+    hits = [{"text": f"t{i}"} for i in range(3)]
+    ranked, ok, why = retrieval._reranked("q", hits, RERANKER, 0.1, 50)
+    assert ok is False and ranked == hits
+    assert why == "the reranker was evicted before the request and loaded again inside its 0.1 s budget"
+    cold, = model_load.recent()
+    assert (cold.model, cold.caller) == ("louise-rerank-bge", "rerank") and cold.outcome.startswith("failed: evicted")
+    assert "evicted between the check and the request" in model_load.message(cold)
+
+
+def test_a_rerank_that_is_merely_slow_keeps_its_own_reason(runner, monkeypatch):
+    """A warm reranker that does not answer in time is not a cold start."""
+    runner.loaded.add("louise-rerank-bge")
+
+    def slow(url, json=None, timeout=None, **_kw):     # noqa: A002
+        raise httpx.ReadTimeout("timed out", request=httpx.Request("POST", url))
+    monkeypatch.setattr(embeddings.httpc, "post", slow)
+    ranked, ok, why = retrieval._reranked("q", [{"text": "t"}], RERANKER, 0.1, 50)
+    assert ok is False and why == "the reranker did not answer within 0.1 s"
+    assert model_load.recent() == []
+
+
+def test_corpus_work_keeps_the_cached_answer_and_a_person_s_burst_shares_one_read(runner):
+    from app import dispatch
+    runner.loaded.add("vega-bge-m3")
+    with dispatch.working_as(dispatch.Level.CORPUS):
+        embeddings.embed_calibration(ENCODER, ["a"], timeout=0.1)
+        time.sleep(model_load.INTERACTIVE_TTL_S + 0.05)
+        embeddings.embed_calibration(ENCODER, ["b"], timeout=0.1)
+    assert runner.system_reads == 1, "the worker's hot path: one read per SYSTEM_TTL_S"
+    for text in ("c", "d", "e"):
+        embeddings.embed_calibration(ENCODER, [text], query=True, timeout=0.1)
+    assert runner.system_reads == 2, "a query's variants, one read; older answers are not trusted"
 
 
 def test_a_loaded_model_is_not_warmed_and_system_is_asked_once_per_ttl(runner):

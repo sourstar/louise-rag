@@ -433,7 +433,41 @@ def test_the_build_says_why_its_staging_manifest_is_unsigned(isolated_config, tm
     assert line.endswith("unsigned (the snapshot carries the signature)") and "NODE_KEY_PATH" not in line
 
 
-def test_a_re_issued_part_keeps_the_version_it_supersedes(isolated_config, tmp_path, corpus_dir):
+@pytest.fixture
+def keeps_history(monkeypatch):
+    """The gutenberg fixture as an origin that KEEPS its history (06 §6.2's
+    `origin_versions`): Project Gutenberg itself replaces in place, so its
+    superseded versions are not kept (01 promise 7, 02 §2.3)."""
+    from app.collections import PLUGIN_REGISTRY
+    monkeypatch.setattr(PLUGIN_REGISTRY["gutenberg"], "origin_versions", "history")
+    monkeypatch.setattr(shard_mod, "_origin_versions", {})
+
+
+def test_a_part_of_an_origin_that_replaces_in_place_keeps_no_old_version(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """01 promise 7 (amended 2026-10-25, operator: A): everything held is
+    verifiable. Gutenberg overwrites a book in place, so the version a
+    re-issue supersedes can no longer be checked against the source and is
+    not kept."""
+    from pathlib import Path
+    monkeypatch.setattr(shard_mod, "_origin_versions", {})
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    shard_dir = col.shard_dir_of(root, "gutenberg")
+    assert not shard_mod.origin_keeps_history(shard_dir)
+    first = snap.shards[0]
+    old = (shard_dir / first.path).read_bytes()
+    new = tmp_path / "staged" / "00001.jsonl.zst"
+    new.parent.mkdir()
+    new.write_bytes(old + b"a different version")
+    shard_mod.promote(new, shard_dir / first.path, shard_dir=shard_dir)
+    assert (shard_dir / first.path).read_bytes() == old + b"a different version"
+    assert not (shard_dir / shard_mod.superseded_name(Path(first.path), "2026-08")).exists()
+
+
+def test_a_re_issued_part_keeps_the_version_it_supersedes(isolated_config, tmp_path, corpus_dir,
+                                                          keeps_history):
     """02 §2.3: "A re-issued part keeps its path; the version it supersedes
     is renamed with the id of the last snapshot that listed it and kept".
     Until 2026-10-12 every promotion overwrote it, on the producer
@@ -470,7 +504,7 @@ def test_a_re_issued_part_keeps_the_version_it_supersedes(isolated_config, tmp_p
 
 
 def test_next_months_build_re_issues_a_changed_part_and_keeps_the_old_one(
-        isolated_config, tmp_path, corpus_dir):
+        isolated_config, tmp_path, corpus_dir, keeps_history):
     """The monthly update, end to end. Until 2026-10-12 a finished build's
     plan was never cleared, so the next build resumed it and re-promoted the
     same parts: no revised or new record ever reached a later snapshot."""

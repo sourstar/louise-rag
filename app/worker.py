@@ -36,8 +36,8 @@ from typing import Callable
 import httpx
 
 from . import (catalog, chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
-                dispatch, embeddings, encoder_timeouts, entities, fts, model_load, model_pins, node_state, plugin_io, refs,
-                sched, sizing, spaces, stats)
+                dispatch, embeddings, encoder_timeouts, entities, fts, issues as issues_mod, model_load, model_pins,
+                node_state, plugin_io, refs, sched, sizing, spaces, stats)
 from .dispatch import Level
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
@@ -75,6 +75,32 @@ def _handle_sigterm(signum, frame):
         dispatch.stop_all()
     except Exception:
         pass
+
+#: `louise node stop` (07 §7.3) reaches the worker through node_state; a
+#: stop asked for is exit 0, a signal 130 (§7.7). Polled by its own thread,
+#: never by a stage: a round does not grow a read of the node's state.
+_stop_requested = threading.Event()
+STOP_POLL_S = 2.0
+
+
+def _watch_stop_request(poll_s: float = STOP_POLL_S) -> None:
+    from . import node_state
+    while not _stop.wait(poll_s):
+        if node_state.take_stop_request():
+            _stop_requested.set()
+            _handle_sigterm(None, None)
+            return
+
+
+def _start_stop_watch() -> threading.Thread:
+    """A request left from before this start is not this run's: cleared
+    first, so `node stop` on a stopped node does not stop the next start."""
+    from . import node_state
+    node_state.take_stop_request()
+    t = threading.Thread(target=_watch_stop_request, name="stop-watch", daemon=True)
+    t.start()
+    return t
+
 
 def _load_chunks(row, collection):
     plugin = collection.plugin_instance()
@@ -215,6 +241,10 @@ def stage_rdf(con, row, collection) -> None:
     if not con.in_transaction:               # direct callers wrap the stage
         con.execute("BEGIN IMMEDIATE")
     entries = [_rdf_one(con, row, collection, plugin, now, meta=first)]
+    # the origin's inconsistencies each read met (06 §6.1, amended
+    # 2026-10-25), recorded in this same transaction for the codes the read
+    # checks — `None` when a plugin's lazy read says nothing about them
+    found = [(row["uid"], first["issues"])] if first.get("issues") is not None else []
     n = 1
     for peer, (ok, meta) in zip(peers, metas[1:]):
         if not ok:
@@ -224,6 +254,11 @@ def stage_rdf(con, row, collection) -> None:
             n += 1
         except Exception:   # noqa: BLE001
             continue
+        if meta.get("issues") is not None:
+            found.append((peer["uid"], meta["issues"]))
+    if found:
+        issues_mod.record_many(con, found, codes=issues_mod.declared(plugin),
+                               checked=plugin_io.metadata_checks(plugin), now=now)
     # The catalog index is committed HERE, before the caller commits the
     # marks (invariant 2). A failure is CatalogUnavailable: the transaction
     # rolls back and the batch is deferred, never recorded as an error.
@@ -387,18 +422,30 @@ def stage_fts(con, row, collection) -> None:
     # the batch's fetch/parse/chunk goes to the PARSE POOL (amendment 47):
     # one (ok, chunks) per row, in order; the selected row's failure IS the
     # round's, a peer's failure drops the peer
-    results = parallel.chunks_for_rows(collection, [row, *peers])
+    # a collection whose records are also found by NAME (wikidata, operator
+    # 2026-10-24): the same parse gives each record's names (fts.search_names)
+    with_names = fts.names_capable(collection)
+    results = (parallel.chunks_names_for_rows if with_names else parallel.chunks_for_rows)(
+        collection, [row, *peers])
+    names_of: dict[str, tuple | None] = {}
+
+    def _unpack(r, value):
+        if with_names:
+            names_of[r["uid"]] = value.get("names")
+            return value["chunks"]
+        return value
     ok, first = results[0]
     if not ok:
         parallel.raise_for(first)
-    chunks = first
+    chunks = _unpack(row, first)
     batch = [(row, chunks)]
     n_chunks = len(chunks)
-    for peer, (ok, peer_chunks) in zip(peers, results[1:]):
+    for peer, (ok, peer_value) in zip(peers, results[1:]):
         if n_chunks >= config.FTS_BATCH_CHUNKS:
             break
         if not ok:
             continue            # a peer never fails the round
+        peer_chunks = _unpack(peer, peer_value)
         batch.append((peer, peer_chunks))
         n_chunks += len(peer_chunks)
 
@@ -406,7 +453,8 @@ def stage_fts(con, row, collection) -> None:
     # before the lock like every other load; `{}` for every other collection
     from app import validity
     cols = validity.columns_for(con, collection, [int(r["native_id"]) for r, _ in batch])
-    fts.index_books(((r["lang"], int(r["native_id"]), ch, cols.get(int(r["native_id"])))
+    fts.index_books(((r["lang"], int(r["native_id"]), ch, cols.get(int(r["native_id"])),
+                      names_of.get(r["uid"]))
                      for r, ch in batch), collection)
 
     # the tantivy commit landed; only the tags and marks remain — SQLite
@@ -2114,7 +2162,7 @@ def _maintain_ask_indexes(con, collection) -> bool:
         # 2026-10-07 pass over pubmed reached 34 GB and the kernel killed the
         # worker; a field too wide to count says so, and stops with the node
         built = ask_facets.build(con, codex, root / collection.name / "index", snapshot_id=snap.snapshot_id,
-                                 stop=_stop.is_set,
+                                 stop=_stop.is_set, shard_dir=shard_tree, snapshot=snap,
                                  log=lambda m: db.log_event(con, "warn", "ask", m[:400]))
         did = did or bool(built)
         try:
@@ -4527,7 +4575,7 @@ def _publisher_beat(budget_s: float | None = None) -> dict[str, dict]:
     raises; a refusal or a deferral is said once per collection."""
     from contextlib import closing
     from .hold import embedder as emb
-    from .share import contribute
+    from .share import contribute, counting
     budget_s = config.PUBLISH_BUDGET_S if budget_s is None else budget_s
     done: dict[str, dict] = {}
     try:
@@ -4581,7 +4629,7 @@ def _publisher_beat(budget_s: float | None = None) -> dict[str, dict]:
                     f"{len(out['awaiting'])} led part(s) await the embed stage, "
                     f"{len(out['left_to_fetch'])} left to the fetch"
                     + (" — interrupted at the budget, resumes next beat" if out.get("interrupted") else ""))
-        except (contribute.ContributeRefused, emb.GateDeferred) as e:
+        except (contribute.ContributeRefused, emb.GateDeferred, counting.CoverageUnknown) as e:
             if _publish_said.get(c.name) != str(e) and con is not None:
                 _publish_said[c.name] = str(e)
                 db.log_event(con, "info", "share", f"[{c.name}] publish: not this beat — {e}"[:500])
@@ -4866,6 +4914,9 @@ JOB_POLL_S = 2.0
 #: call cannot be cut, and one not done by then is queued again at the next
 #: start (app/jobs.py) — the pipeline joins keep the rest of the grace period
 JOB_STOP_WAIT_S = 20.0
+#: api_commands.KILL_AFTER_S and a margin: the command thread requeues its
+#: job after the child has gone, which this waits for.
+COMMAND_STOP_WAIT_S = 75.0
 #: how often finished jobs are swept
 JOB_SWEEP_S = 600.0
 
@@ -4926,6 +4977,7 @@ def run_forever():
     # default SIGHUP and leave rsync writing with nobody to stop it
     signal.signal(signal.SIGHUP, _handle_sigterm)
     _register_stack_dump()
+    _start_stop_watch()
     from . import jobs, run_check
     all_collections = collections_mod.load_all()
     # the record of which kept statements THIS start has re-checked, which
@@ -4994,6 +5046,12 @@ def run_forever():
     threading.Thread(target=jobs_mod.serve_deposits, args=(_stop,),
                      kwargs={"log": lambda m: print(m, flush=True)},
                      name="deposits", daemon=True).start()
+    # any command POSTed to its route (07 §7.4, app/api_commands.py): one at
+    # a time, on a thread of its own — a records build must not hold a create
+    command_thread = threading.Thread(target=jobs_mod.serve_commands, args=(_stop,),
+                                      kwargs={"log": lambda m: print(m, flush=True)},
+                                      name="commands", daemon=True)
+    command_thread.start()
     # a deposit collection's URL sources (06 §6.7): their own thread, since a
     # sitemap is many pages and a clone takes minutes
     from .hold import sources as sources_mod
@@ -5192,6 +5250,9 @@ def run_forever():
     if job_thread.is_alive():
         print("[info:jobs] node: the job in hand did not finish before the stop; "
               "it is queued again at the next start", flush=True)
+    # a command in hand was sent SIGTERM by its thread; it finishes its unit
+    # or is killed (api_commands.KILL_AFTER_S), and is queued again either way
+    command_thread.join(timeout=COMMAND_STOP_WAIT_S)
     _join_pipeline_threads()
     _release_locks()                     # the node holds a lock only while it runs
     parallel.shutdown()             # the parse pool's children go with the worker
@@ -5217,7 +5278,8 @@ def _warn_if_pid1() -> None:
 def main() -> int:
     """`python -m app.worker`. docs/07 §7.7: the node "stops every
     collection at its unit and exits 130 on a signal" — invariant 2 says
-    the same — and it exited 0. `_stop` is set only by the signal handler."""
+    the same — and it exited 0. `_stop` is set by the signal handler, and
+    by `node stop`'s request, which exits 0 (`_stop_requested`)."""
     _warn_if_pid1()
     # the public key the web process recognises must be this key's half
     # (app/identity.py): a node whose two processes disagree about who it is
@@ -5229,6 +5291,13 @@ def main() -> int:
         print(f"REFUSED TO START: {e}", file=sys.stderr, flush=True)
         return 2
     run_forever()
+    return exit_code()
+
+
+def exit_code() -> int:
+    """0 for `node stop` or a run that ended by itself, 130 for a signal (07 §7.7)."""
+    if _stop_requested.is_set():
+        return 0
     return 130 if _stop.is_set() else 0
 
 

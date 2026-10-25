@@ -1,5 +1,8 @@
 # Implementation Prompt Pack
 
+> **Superseded** (2026-10-25, handover) by the specification in `docs/01`–`09` and `CLAUDE.md`; its repository assumptions (the `gutenberg-rag` tree, `docs/architecture-v2.md`) are obsolete.
+
+
 Companion to `p2p-rag-architecture-v2.md`. Repo assumptions: the existing `gutenberg-rag`
 tree at the root, the architecture doc at `docs/architecture-v2.md`, this file's CLAUDE.md
 section saved as `CLAUDE.md` at the repo root.

@@ -388,6 +388,8 @@ def manifest(root, name: str) -> sqlite3.Connection:
     p.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(p, timeout=30, isolation_level=None)
     con.row_factory = sqlite3.Row
+    from app import db
+    db.wal(con)            # invariant 6: the first opener of a fresh manifest decides its mode
     con.execute("PRAGMA busy_timeout=30000")
     return ensure_schema(con)
 

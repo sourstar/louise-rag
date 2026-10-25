@@ -8,8 +8,11 @@ manifest's metadata columns — `lang`, `authors` (joined by `; `),
 `subjects` (joined by `|`) — one pass per field, cached under `index/`
 beside the text index for the snapshot it was built for (05 §5.7: "the
 index is local and derived"). A `tree` facet splits each value on its
-separator and counts every prefix path; a `range` facet lists bounds. A
-field the manifest does not carry is said so, not guessed.
+separator and counts every prefix path; a `range` facet lists bounds, and
+— since the manifest carries no `date` and no `extra` — its values are read
+out of the record parts held instead (app/ask/ranges.py; amended
+2026-10-25). A flat or tree field the manifest does not carry is said so,
+not guessed.
 
 EVERY COST HERE IS BOUNDED, after the 2026-10-07 incident: the first
 version kept every (value, id) of a field in a list and every distinct
@@ -175,24 +178,70 @@ def listing(collection: str, field: str | None = None, under: str | None = None,
     with closing(cov.manifest(root, name)) as con:
         if field is None:
             return fields(con, codex, index_dir, snapshot_id=sid)
-        return values(con, codex, index_dir, field, snapshot_id=sid, under=under)
+        return values(con, codex, index_dir, field, snapshot_id=sid, under=under,
+                      shard_dir=col.shard_dir_of(root, name), snapshot=snap)
 
 
 def _cache_path(index_dir: Path, field: str) -> Path:
     return Path(index_dir) / CACHE / f"{field}.json"
 
 
+def _write_cache(index_dir: Path, field: str, got: dict[str, Any]) -> None:
+    p = _cache_path(index_dir, field)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f".{p.name}.tmp")
+    tmp.write_text(json.dumps(got, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(p)
+
+
+def _build_range(f: dict[str, Any], index_dir: Path, *, shard_dir: Path, snapshot, snapshot_id: str | None,
+                 now: float | None, stop: Callable[[], bool] | None) -> dict[str, Any]:
+    """A range facet (amended 2026-10-25): its values are read out of the
+    record parts held — the manifest carries no `date` and no `extra` — into
+    the postings a range filter reads (app/ask/ranges.py); the cache holds
+    its bounds and its type."""
+    from app.ask import filters as filters_mod, ranges
+    pcon = filters_mod.connect(Path(index_dir))
+    try:
+        got = ranges.index(pcon, f["field"], shard_dir=shard_dir, snapshot=snapshot, snapshot_id=snapshot_id,
+                           rows_bound=POSTINGS_ROWS_BOUND, stop=stop)
+    except ranges.Stopped as e:
+        raise NotBuilt(str(e)) from None
+    finally:
+        pcon.close()
+    return {"field": f["field"], "kind": "range", "separator": None, "authority": f.get("authority"), **got,
+            "snapshot_id": snapshot_id, "built_at": time.time() if now is None else now}
+
+
 def build(con, codex, index_dir: Path, *, snapshot_id: str | None, fields=None, now: float | None = None,
-          stop: Callable[[], bool] | None = None, log: Callable[[str], None] | None = None) -> list[str]:
+          stop: Callable[[], bool] | None = None, log: Callable[[str], None] | None = None,
+          shard_dir: Path | None = None, snapshot=None) -> list[str]:
     """Count every declared facet (or `fields`), write the cache, and write
     the postings a filter reads for the values narrow enough to use; the
     fields written. What a maintainer calls at each snapshot. Memory is
     bounded whatever the collection's size: a pass streams, the counts
-    stop at MAX_DISTINCT, the postings at POSTINGS_ROWS_BOUND."""
+    stop at MAX_DISTINCT, the postings at POSTINGS_ROWS_BOUND. A range
+    facet is read from the record parts of `snapshot` held in `shard_dir`,
+    and skipped without them."""
     from app.ask import filters as filters_mod
-    wanted = [f["field"] for f in declared(codex)] if fields is None else list(fields)
+    kinds = {f["field"]: f for f in declared(codex)}
+    wanted = list(kinds) if fields is None else list(fields)
     written = []
     for field in wanted:
+        f = kinds.get(field)
+        if f is not None and f["kind"] == "range":
+            if shard_dir is None or snapshot is None:
+                continue
+            got = _build_range(f, index_dir, shard_dir=shard_dir, snapshot=snapshot, snapshot_id=snapshot_id,
+                               now=now, stop=stop)
+            _write_cache(index_dir, field, got)
+            written.append(field)
+            if log and not got["postings"]["built"]:
+                log(f"facets: {field}: range postings not built — {got['postings']['why']}")
+            elif log and got["postings"].get("unparsed"):
+                log(f"facets: {field}: {got['postings']['unparsed']} values are not a {got.get('type')} "
+                    f"and are in no range")
+            continue
         if field not in COLUMNS:
             continue
         got = count(con, codex, field, stop=stop)
@@ -234,11 +283,7 @@ def build(con, codex, index_dir: Path, *, snapshot_id: str | None, fields=None, 
                 pcon.close()
             got["postings"] = {"built": False, "why": got.get("why")}
         got.update({"snapshot_id": snapshot_id, "built_at": time.time() if now is None else now})
-        p = _cache_path(index_dir, field)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_name(f".{p.name}.tmp")
-        tmp.write_text(json.dumps(got, sort_keys=True, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(p)
+        _write_cache(index_dir, field, got)
         written.append(field)
         if log:
             if got.get("values") is None and got["kind"] != "range":
@@ -287,14 +332,30 @@ def fields(con, codex, index_dir: Path, *, snapshot_id: str | None) -> dict[str,
 
 
 def values(con, codex, index_dir: Path, field: str, *, snapshot_id: str | None, under: str | None = None,
-           documents: int | None = None) -> dict[str, Any]:
+           documents: int | None = None, shard_dir: Path | None = None, snapshot=None) -> dict[str, Any]:
     """`ask facets <collection> <field> [--under VALUE]`: the values with this
     peer's counts, from the cache for this snapshot or counted now when the
     collection is small enough; `under` keeps one subtree of a tree facet
-    (its own count first)."""
+    (its own count first). A range facet is listed as its bounds, read from
+    the record parts held (`shard_dir`, `snapshot`)."""
     got = cached(index_dir, field, snapshot_id=snapshot_id)
     if got is None:
         f = facet_of(codex, field)
+        if f["kind"] == "range":
+            held = [s for s in (snapshot.shards if snapshot is not None else ())
+                    if shard_dir is not None and (Path(shard_dir) / s.path).is_file()]
+            if not held:
+                raise FacetError(f"{field!r}: the manifest carries no column for it; its values are read "
+                                 f"from the record parts, and none is held here")
+            n = sum(int(s.records) for s in held)
+            if n > BUILD_BOUND:
+                raise NotBuilt(f"{field!r} over {n} records is read by the node's index maintainer, "
+                               f"not on request; ask again when it has run")
+            build(con, codex, index_dir, snapshot_id=snapshot_id, fields=[field], shard_dir=shard_dir,
+                  snapshot=snapshot)
+            got = cached(index_dir, field, snapshot_id=snapshot_id)
+            got.setdefault("note", "counts are this peer's: what it holds and can search")
+            return got
         if field not in COLUMNS:
             raise FacetError(f"{field!r}: the manifest carries no column for it yet (05 §5.7)")
         n = documents if documents is not None else con.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
