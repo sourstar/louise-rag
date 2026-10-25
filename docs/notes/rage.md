@@ -1,5 +1,8 @@
 # RAGE — the RAG Engine: one container for every model
 
+> **Superseded** (2026-10-25, handover) by LocalAI with the VeGa wrapper ([vega.md](vega.md)); RAGE was retired on 2026-10-18 (STATUS.md).
+
+
 *Accepted 2026-10-03: the lifecycle — admission, eviction, preload,
 park — moves to LocalAI and RAGE keeps the run identity alone
 ([`rage-over-localai.md`](rage-over-localai.md); 03 §3.3 and 09 §9.12

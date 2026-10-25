@@ -1,5 +1,8 @@
 # The pack: how a collection is packaged, shared and checked
 
+> **Superseded** (2026-10-25, handover) by `docs/02-collections.md` and `docs/09-formats.md` (the SHARD); `pack build` / `verify` are retired (`docs/07-commands.md` §7.6). Kept for the pack's on-disk details the plugins still read.
+
+
 *Design, 2026-08-26. Status: PARTLY BUILT the same day — the record
 shards, slicing, `pack build` / `verify`, the `packed` plugin, per-slice
 torrents, chunker layers and the local vector index exist (amendment 43;

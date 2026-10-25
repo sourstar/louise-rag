@@ -1,5 +1,8 @@
 # Who signs a pre-embedded archive's bundles — open, and it blocks crediting
 
+> **Superseded** (2026-10-25, handover) by decided on 2026-09-08 (the sections below at "Decided"); `docs/03-checking.md` §3.5 carries the rule.
+
+
 Found while implementing migration step 1 (the platform's archive
 registry), 2026-09-08. It does not block the proof-of-concept import, and
 it does not block anything that uses this node's own vectors. It blocks

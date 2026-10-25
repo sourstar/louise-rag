@@ -1,5 +1,8 @@
 # Not embedding the same thing twice
 
+> **Superseded** (2026-10-25, handover) by `docs/02-collections.md` §2.4 (carries) and `docs/06-plugins.md` §6.3 (chunk-hash reuse), which absorbed most of it.
+
+
 *Proposal, 2026-08-28. For review — nothing here is built.*
 
 The point of exchanging vectors is that the community pays for an embedding

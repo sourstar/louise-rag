@@ -30,7 +30,7 @@ through with the commit that closes them.
 | item | where | decision |
 |---|---|---|
 | `louise node start` / `node stop` (the worker and web started by `python -m app.worker` / uvicorn) | 07 §7.3, CLAUDE.md invariant 2 | build (thin commands over today's entry points) |
-| One route per command, `/api/<surface>/<noun>/<verb>` | 07 §7.4 | build (one generic route from the command tree), or amend to the routes that exist — see §6 |
+| One route per command, `/api/<surface>/<noun>/<verb>` | 07 §7.4 | **build** (operator, 2026-10-25: A): one generic route over the command tree, `--json` output, exit → status, signing verbs queued as jobs |
 | The `centres`, `labels`, `model-agreement` and `evaluation` checks (INCONCLUSIVE stubs; `model-agreement` refused) | 03 §3.2 | build `model-agreement` as INCONCLUSIVE-until-built at least; mark the four "not built" in 03 |
 | `index build --vector` trains and ships the centres member | 02 §2.4 (07 marks it) | mark in 02 |
 | `derive` / `replace --encoder-weights --engine` | 07 §7.3 | build or amend |
@@ -72,7 +72,8 @@ through with the commit that closes them.
 
 ## 6. Decisions for the operator
 
-- The HTTP API: one route per command (as 07 says) or the routes that exist (amend 07).
+- ~~The HTTP API~~ — decided: A, build the generic route (2026-10-25).
+- Retention: "everything held is verifiable", what is kept following the origin (proposed A, 2026-10-25; draft before code).
 - pubmed's OtherAbstract records ([pubmed-other-abstracts.md](pubmed-other-abstracts.md)).
 - A periodic snapshot of the origin mirror's dataset (STATUS).
 - `normattiva-archive`: create after timing one year of the export.

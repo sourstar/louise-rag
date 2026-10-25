@@ -1,5 +1,8 @@
 # Runtime serving: the embedder pool (llama-swap)
 
+> **Superseded** (2026-10-25, handover) by LocalAI with the VeGa wrapper ([vega.md](vega.md), [approved-encoders.md](approved-encoders.md)); llama-swap was replaced by RAGE, then RAGE by LocalAI.
+
+
 Status: specification. Scope: the external container that serves embeddings
 to Louise for both query and creation, on one machine. This document fixes
 the design decisions; it is not yet an implementation.

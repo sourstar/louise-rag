@@ -1,5 +1,8 @@
 # Certified collections: when one key is the point
 
+> **Superseded** (2026-10-25, handover) by `docs/02-collections.md` §2.8 and `docs/03-checking.md` §3.7, which adopted it.
+
+
 *Proposal, 2026-09-05. For review — nothing here is built. Companion to
 `no-central-node.md`: that document removes every required authority
 from open collections; this one reintroduces exactly one, on purpose,

@@ -231,7 +231,7 @@ are the ones that have drifted; prefer to add a test when you touch them.
     Codex names the acquisition spec and parser version that produced it
     (docs/02 §2.3, docs/06 §6.4), so `records-vs-origin` can re-fetch a
     sample and reproduce it. A record with no `origin_hash` is REFUSED at
-    build (`hold records build`; `pack build` until the migration lands),
+    build (`hold records build`; `pack build` is retired),
     never warned about: a SHARD whose records all verify
     internally while being permanently unverifiable against the source is
     the worst artefact we could ship, and it is published once and adopted

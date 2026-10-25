@@ -1,5 +1,8 @@
 # Step 4 — `hold vectors build | import | export | check`: what it must wrap
 
+> **Superseded** (2026-10-25, handover) by the built `hold vectors` commands (`docs/07-commands.md` §7.3); a pre-implementation study of migration step 4, kept for history.
+
+
 *Written 2026-09-08, on the `louise` branch, before any step-4 code.*
 Eight agents read the specification and the existing `app/bundles/`,
 `app/verify/` and `app/spaces/` against each other. This is their record:
