@@ -38,7 +38,9 @@ TOOLS: list[dict[str, Any]] = [
                          "description": "the annotations collections consulted, by local name: their work "
                                         "claims group a work's editions into one hit and their claims come "
                                         "beside the hits (05 §5.3); default: every one held, [] none"},
-         "filters": {"type": "object", "description": "{facet field: value | {not: value}}"},
+         "filters": {"type": "object", "description": "{facet field: value | {not: value}}; a range "
+                                                      "facet's value is FROM..TO, either end omitted "
+                                                      "for open (2000.., ..1999)"},
          "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
          "rerank_depth": {"type": "integer", "minimum": 1, "maximum": 300, "default": 50},
          "as_of": {"type": "string", "description": "YYYY-MM-DD: the snapshot current at that date"},

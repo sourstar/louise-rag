@@ -205,7 +205,7 @@ louise share
   offer                                                                the collections neighbours announce that this node does not hold, and who serves each (04 §4.2); `fetch` takes one (added 2026-10-20)
 
 louise ask
-  search <query> [--collections …] [--space …] [--limit N] [--rerank-depth N] [--as-of DATE] [--freshness] [--translate [--all-languages]] [--filter FACET=VALUE | --filter FACET=!VALUE …]
+  search <query> [--collections …] [--space …] [--limit N] [--rerank-depth N] [--as-of DATE] [--freshness] [--translate [--all-languages]] [--filter FACET=VALUE | --filter FACET=!VALUE | --filter FACET=[!]FROM..TO …]
                                                                        the fused list of §5.1, with what §5.3 says about each result; --as-of searches the snapshot
                                                                        current at that date (§5.1); --filter restricts the legs and never ranks (§5.2, §5.7; amended
                                                                        2026-10-07 from per-facet flags: one flag, the facet named in its value, since the facets are
@@ -1169,7 +1169,19 @@ and for `keys`, the identifier filter every collection has (05 §5.2,
 amended 2026-10-25); any other field is exit 2, listing the fields that
 are. A `tree` facet matches a value and everything under it, so
 `--filter subjects=Neoplasms` takes `Neoplasms/genetics` with it; a `range`
-facet takes `FROM..TO`, either end omitted for open (not built yet).
+facet takes `FROM..TO`, either end omitted for open (`2000..`,
+`..1999`), and `!FROM..TO` excludes it as `!` excludes any value
+(*amended 2026-10-25*, built: `ask search --filter date=2000..2005`, the
+same string in `filters` of `/api/ask/search` and of `louise_search`).
+Both ends are included and are read as the facet's type orders them,
+never as text: `date` is a date (09 §9.5), and a value of
+`YYYY` or `YYYY-MM` is the whole year or month, so `2000..2005` runs from
+the first day of 2000 to the last of 2005; any other range field is a
+date or a number by its values. A record is admitted when one of its
+values lies wholly within the range — `1999-06..` does not admit a record
+dated only `1999`. A malformed range, a range on a `flat` or `tree`
+facet, or a single value on a `range` facet is exit 2, naming what is
+accepted.
 `--profile` takes a profile name the collection's acquisition spec
 declares (06 §6.2) and expands to that profile's slices; it may not be
 combined with `--slice` (exit 2). `--set` takes `KEY=VALUE`, a key of

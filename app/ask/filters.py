@@ -5,9 +5,11 @@ query then ranks within that narrowing. Nothing boosts. Migration step 11.
 A filter is `{<facet field>: <value> | {"not": <value>}}`. It resolves,
 per collection, to the set of records whose facet holds the value — a
 flat facet by the value itself, a tree facet by the value or any path
-under it — read from the postings the facet index keeps beside the
-counts (`index/facets/postings.sqlite`, built by the maintainer per
-snapshot for a collection the counts are built for). The legs take the
+under it, a range facet by `FROM..TO`, either end omitted for open, a
+record admitted when one of its values lies wholly in the range
+(app/ask/ranges.py; amended 2026-10-25) — read from the postings the facet
+index keeps beside the counts (`index/facets/postings.sqlite`, built by
+the maintainer per snapshot for a collection the counts are built for). The legs take the
 set as a prefilter (`book_ids`); a filter that matches nothing returns
 nothing, which is an answer (05 §5.2). A filter over a facet the Codex
 does not declare is refused; one over a collection whose postings are
@@ -20,6 +22,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from app.ask import ranges
 from app.hold.codex import CodexError
 
 POSTINGS = "postings.sqlite"
@@ -60,6 +63,7 @@ def connect(index_dir: Path) -> sqlite3.Connection:
     con.row_factory = sqlite3.Row
     for stmt in _SCHEMA:
         con.execute(stmt)
+    ranges.ensure_schema(con)
     return con
 
 
@@ -117,6 +121,22 @@ def _ids(pcon, field: str, value: str, *, tree_sep: str | None) -> set[int]:
     return out
 
 
+_UNTYPED = ranges.Range(None, None, "")   # a range whose type the built index decides
+
+
+def _range_or_refuse(field: str, value: str, type_: str | None) -> ranges.Range:
+    """The range given for a range facet, read in the order its type
+    demands; the syntax alone (`_UNTYPED`) where the type is the values'
+    and they are not read yet. Malformed: refused, naming what is accepted."""
+    try:
+        if type_ is None:
+            ranges.split(value)
+            return _UNTYPED
+        return ranges.parse(value, type_)
+    except ranges.RangeError as e:
+        raise FilterError(f"{field!r}: {e}; {ranges.ACCEPTS} (07 §7.3)") from None
+
+
 def book_ids_for(codex, index_dir: Path, filters: dict[str, Any] | None, *, snapshot_id: str | None,
                  all_ids=None, tagged=None) -> set[int] | None:
     """The records the filters admit — None for no filter, a set (possibly
@@ -148,20 +168,43 @@ def book_ids_for(codex, index_dir: Path, filters: dict[str, Any] | None, *, snap
             if f is None:
                 raise FilterError(f"{field!r} is not a facet of this collection (05 §5.7); it declares "
                                   f"{', '.join(declared) or 'none'}")
+            negate = isinstance(spec, dict) and "not" in spec
+            value = str(spec["not"]) if negate else str(spec)
+            rng = None
             if f["kind"] == "range":
-                raise FilterError(f"{field!r}: a range facet filters by bounds, which is not built yet")
+                rng = _range_or_refuse(field, value, ranges.declared_type(field))
+            elif ranges.looks_like_range(value):
+                ranged = [d["field"] for d in declared.values() if d["kind"] == "range"]
+                raise FilterError(f"{field!r} is a {f['kind']} facet: it takes a value"
+                                  f"{' and everything under it' if f['kind'] == 'tree' else ''}, not a range; "
+                                  f"FROM..TO is for a range facet, and this collection's are "
+                                  f"{', '.join(ranged) or 'none'} (05 §5.7)")
             cache = facets.cached(index_dir, field, snapshot_id=snapshot_id)
             built = built_for(pcon, field)
             if built is None or (snapshot_id is not None and built != snapshot_id) or cache is None:
                 why = ""
-                if cache is not None and cache.get("values") is None:
+                if cache is not None and f["kind"] != "range" and cache.get("values") is None:
                     why = f": {cache.get('why')}"
                 elif cache is not None and (cache.get("postings") or {}).get("why"):
                     why = f": {cache['postings']['why']}"
                 raise FilterError(f"{field!r}: its values are not indexed on this peer for snapshot "
                                   f"{snapshot_id}{why or ' yet; the node’s index maintainer builds them'}")
-            negate = isinstance(spec, dict) and "not" in spec
-            value = str(spec["not"]) if negate else str(spec)
+            if rng is not None:
+                if rng is _UNTYPED and cache.get("type") is not None:
+                    rng = _range_or_refuse(field, value, cache["type"])
+                try:
+                    # a field with no value held: no range admits anything
+                    ids = set() if rng is _UNTYPED else ranges.ids(pcon, field, rng, limit=MAX_IDS)
+                except ranges.TooBroad:
+                    said = (f"excluding {field!r} in {value} needs its records" if negate
+                            else f"{field!r} in {value} admits records")
+                    raise FilterError(f"{said}, more than the {MAX_IDS} the legs take as a prefilter; "
+                                      f"narrow it (05 §5.2)") from None
+                if negate:
+                    drop |= ids
+                else:
+                    keep = ids if keep is None else keep & ids
+                continue
             sep = f.get("separator") if f["kind"] == "tree" else None
             depth = cache.get("depth")
             if depth is not None and sep and len(value.split(sep)) > depth:
