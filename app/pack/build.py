@@ -323,6 +323,17 @@ def _record_of(collection, plugin, row) -> tuple[dict, int, bytes, dict[str, str
     return record, layer, bytes(chunk_blob), plates
 
 
+def _refuse_too_many_figures(record: dict) -> None:
+    """08 §8.7's cap on what a record may name: over it the BUILD aborts, as
+    for a missing `origin_hash` — dropping figures would re-aim every
+    `[Illustration…]` marker after them (09 §9.5)."""
+    from ..hold import figures as figures_mod
+    n = len(record.get("figures") or [])
+    if n > figures_mod.MAX_PER_RECORD:
+        raise ValueError(f"{record['uid']}: names {n:,} figures, over 08 §8.7's "
+                         f"{figures_mod.MAX_PER_RECORD:,} per record; not packed")
+
+
 def _write_figures(plugin, pack_dir: Path, slice_name: str, shard_n: int,
                    plates: dict, log) -> None:
     """The shard's figures container (09 §9.5), read back from the origin.
@@ -590,6 +601,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                         f"verified against its origin (CLAUDE.md invariant 11). "
                         f"Fix the plugin's canonical_doc; do not pack.")
                 _refuse_uncredited_origin(collection, record)
+                _refuse_too_many_figures(record)
                 if record["uid"] != src["uid"]:
                     n_skipped += 1
                     con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",

@@ -1095,6 +1095,9 @@ def check_figures(ctx: Ctx) -> Outcome:
         ran.append(s)
         want: set[str] = set()
         for r in records:
+            if len(r.get("figures") or []) > figures_mod.MAX_PER_RECORD:
+                failed.append(f"{r.get('uid')}:names {len(r['figures'])} figures, over "
+                              f"{figures_mod.MAX_PER_RECORD} (08 §8.7)")
             for f in r.get("figures") or []:
                 if f.get("carried") is False:
                     continue

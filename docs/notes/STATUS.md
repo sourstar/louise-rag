@@ -47,7 +47,8 @@ it left open is below.
   re-creation carrying what is identical (02 §2.4 A1c, `louise dev carry
   --rebuilt`), as parser 9 was; nothing has been run against a
   live node. 4,096 figures per record stays in 08 as a cap on what a
-  record may name, and is not enforced in code yet (it never was).
+  record may name: enforced since 2026-10-25 (the build aborts over it,
+  `hold check`'s `figures` row fails it; it never was before).
 
 - **arXiv — PARKED (operator, 2026-10-22).** A blueprint only: docs/notes/arxiv-plugin.md (bulk forms, licences, pre-embeddings) and docs/notes/arxiv-collection.md (the abstracts collection, every version linked, only the latest embedded; the encoder on hold with a 20,000-abstract / 500-question measurement kept). Nothing built, nothing downloaded; no session works on it until the operator resumes it.
 

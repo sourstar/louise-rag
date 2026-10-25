@@ -18,8 +18,8 @@ through with the commit that closes them.
 
 | item | owner | state |
 |---|---|---|
-| Every plate carried; display admits JPEG/PNG only (operator) | CODE | being built |
-| A web source's page kept byte-exact (operator) | CODE | being built |
+| Every plate carried; display admits JPEG/PNG only (operator) | CODE | merged (693ffcc); gutenberg parser 11 → RULE 1 re-creation on the node (NODE) |
+| A web source's page kept byte-exact (operator) | CODE | merged (fc4467f); deposit parser 3 |
 | The Library's dialogs ask only a name (RULE 2) | CODE | being built |
 | A deposit source's clone draws from the budget first (invariant 5) | CODE | next |
 | A dateless record is a defect, never a silent exclusion (operator: A) | CODE + NODE | counts asked of München |
