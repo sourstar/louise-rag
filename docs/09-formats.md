@@ -1715,7 +1715,7 @@ states a run follows all five:
   receipt.
 - **`options`.** For an engine that receives its load options over its
   own protocol, the options as the runner sent them (§9.3) — behind
-  a front reads at every launch from the runner's record of that load, never
+  a front, read at every launch from the runner's record of that load, never
   from its configuration, which the runner completes with defaults of
   its own; behind VeGa the load call itself, which the wrapper receives.
   The environment the runner sets for it is its `env`, not an option.
