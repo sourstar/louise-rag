@@ -20,7 +20,7 @@ through with the commit that closes them.
 |---|---|---|
 | Every plate carried; display admits JPEG/PNG only (operator) | CODE | merged (693ffcc); gutenberg parser 11 → RULE 1 re-creation on the node (NODE) |
 | A web source's page kept byte-exact (operator) | CODE | merged (fc4467f); deposit parser 3 |
-| The Library's dialogs ask only a name (RULE 2) | CODE | being built |
+| The Library's dialogs ask only a name (RULE 2) | CODE | merged (16abd91): encoder by stated weights (app/encoder_resolve.py), recipe from `config/recipes/<plugin>.toml`, annotations targets from the claims. Kept, by the operator's earlier requests: the card's embed-mode, shared and grow-profile controls (no CLI sets them until `hold config apply --set` exists); a take with no matching model is held, not served |
 | A deposit source's clone draws from the budget as it lands (invariant 5) | CODE | done 2026-10-25 |
 | A dateless record is a defect, never a silent exclusion (operator: A) | CODE + NODE | counts asked of München |
 | Batched answers equal single-text bytes; the gate measures reproduction (operator: A) | CODE | done (c9ac138) |
@@ -47,11 +47,11 @@ through with the commit that closes them.
 
 | item | decision |
 |---|---|
-| Legacy routes still served: `/api/control`, `/api/search`, `/api/verify` (07 §7.6 says replaced) | amend: list them as kept for clients, or retire them |
-| Routes with no spec entry: `/api/status`, `/stats`, `/events`, `/scope`, `/discover`, `/reset`, `/books*`, `/encoders/suggest`, `/admin/library/*`, `/admin/network*`, `/admin/system*` | amend (07 §7.4: the web pages' own routes, named as such) |
+| ~~Legacy routes still served~~ | amended 2026-10-25: kept for their clients (07 §7.4) |
+| ~~Routes with no spec entry~~ (07 §7.4 names them, 2026-10-25): `/api/status`, `/stats`, `/events`, `/scope`, `/discover`, `/reset`, `/books*`, `/encoders/suggest`, `/admin/library/*`, `/admin/network*`, `/admin/system*` | amend (07 §7.4: the web pages' own routes, named as such) |
 | ~~Commands not in the tree~~ (in 07 since 2026-10-25; tests/test_commands_in_spec.py keeps them there): `hold records validation`, `hold collection migrate`, `dev unindexable`, `dev adopt-bundles`, `mark-embedded`, `withdraw-covered`, `deprecate-duplicates`, `louise user …` | amend 07 §7.3 |
 | ~~Flags not in the tree~~ (same): `create --calibration-from`, `continue --reslice`, `dev carry --resliced/--scan`, `vectors import --require-t3/--allow/--budget`, `index build --type/--partitions`, `share fetch --embed`, `ask traverse --collection` | amend 07 §7.3 |
-| 07 §7.4's module listing (`app/node/`, `hold/config`, …) does not match `app/` | amend to the real layout |
+| ~~07 §7.4's module listing~~ | amended 2026-10-25 to the real layout |
 
 ## 4. Defects in the text or code
 

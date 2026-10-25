@@ -678,24 +678,29 @@ reader needs at the command line:
 The Python API is the same tree with dots:
 
 ```
-app/hold/     codex.py  collection.py  config.py  records.py  snapshot.py  embedder.py  vectors.py  index.py  check.py  key.py
-app/share/    serve.py  fetch.py  contribute.py  attest.py  peers.py
-app/ask/      search.py  plan.py  tools.py
-app/node/     worker.py  web.py  control.py
-app/plugins/  base.py  <source>/
+app/louise.py   the tree: one function per command, calling the modules below
+app/hold/       codex.py  collection.py  records.py  records_fetch.py  snapshot.py  embedder.py  vectors.py  vectors_build.py
+                vectors_check.py  check.py  node_key.py  deposit.py  sources.py  annotations.py  carry.py  forget.py  rename.py  certify.py  seals.py
+app/share/      seeder.py (serve)  fetch.py  contribute.py  attest.py  peers.py  offer.py  deprecate.py  withdraw.py
+app/ask/        api.py (search, the routes)  filters.py  facets.py  lookup.py  traverse.py  chat.py  mcp.py
+node            app/worker.py (the rounds)  app/api.py + app/web.py (HTTP, the pages)  app/node_state.py (the mode)  app/jobs.py
+app/plugins/    base.py  <source>/
 ```
 
 These are the modules the command tree names, one per noun, and the
-listing is that surface rather than a directory listing: a module that
-backs no command sits beside them (`hold/shard.py`, the member names and
-roots of 09 §9.16, which `records`, `snapshot`, `check`, `serve` and
-`fetch` all read) and is free to exist, but it never becomes the place a
-command's behaviour lives.
+listing is that surface rather than a directory listing (*amended
+2026-10-25* to the layout the migration left: `node` is not a package,
+and a noun may span two modules — `vectors.py` and `vectors_build.py`): a
+module that backs no command sits beside them (`hold/shard.py`, the
+member names and roots of 09 §9.16, which `records`, `snapshot`, `check`,
+`serve` and `fetch` all read) and is free to exist, but it never becomes
+the place a command's behaviour lives.
 
 `hold.records.build(collection, snapshot)` is what `louise hold records
-build` calls and nothing else; `share.contribute(collection)` calls
-`hold.vectors.build` and then `share.serve`; `share <collection>` is
-`share.serve(collection, slices, kinds)`, and `share serve <collection>`
+build` calls and nothing else; `share.contribute(collection)` builds the
+vectors of the parts this peer leads and announces them; `share
+<collection>` writes what is served into the collection's file, and the
+worker's seeder (`share.seeder`) serves it — `share serve <collection>`
 is its long form. A test that greps for a command's name finds the
 function that implements it and the section of these documents that
 describes it. Every function is idempotent and resumable: a write is
@@ -825,6 +830,16 @@ rest:
 - **What a take holds**: the whole collection, every slice and kind, the
   latest snapshot, embed `p2p` where the encoder resolved and `off` where
   it did not (above).
+
+**The web interface's own routes** (*added 2026-10-25*) are the pages'
+clients, not commands, and no client outside the node should rely on
+them: `/api/status`, `/api/stats`, `/api/events` (the pages' event
+stream), `/api/scope`, `/api/discover`, `/api/reset`, `/api/books…` (the
+reader), `/api/encoders/suggest`, `/admin/library/…`, `/admin/network…`,
+`/admin/system…`. Three routes from before the tree are KEPT for the
+clients that call them, each the same as a command: `/api/control` (`node
+pause` / `resume`), `/api/search` (`ask search`) and `/api/verify` (T4 on
+demand, 03 §3.5).
 
 **One route is not JSON, and it is the only one.**
 
@@ -1042,7 +1057,7 @@ unknown command. The table says where each went.
 | `torrent publish`, `torrent seed` | `share <collection>`; serving is the node's |
 | `python -m app.worker`, `python -m app.api` | `louise node start` |
 | `/api/control`, the Library's pause and embed-mode controls | `node pause` / `resume`, `hold config apply --set embed=…` |
-| `/admin/…`, `/api/search`, `/api/verify` | `/api/hold/…`, `/api/ask/search`; T4 needs no route — it runs on use |
+| `/admin/…`, `/api/search`, `/api/verify` | `/api/hold/…`, `/api/ask/search`; T4 runs on use (`/api/search` and `/api/verify` are kept for their clients, §7.4) |
 | `/v1/chat/completions` | kept as an alias of `/api/ask/chat` for clients that speak that protocol |
 | LocalAGI's `/api/collections/…` | kept as aliases of `hold deposit`, `hold source` and `ask search` for LocalAGI (§7.4) |
 | `tools/sched_report`, `profile_embed`, `migrate_manifest`, `sync_refs`, `wikidata_classes` | `dev schedule-report`, `dev embedder-profile`, `dev migrate schema`, `dev refs-sync`, `dev wikidata-classes` (`dev load-profile` retired with RAGE, 2026-10-18: it measured reloads through RAGE's admin API) |
