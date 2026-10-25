@@ -293,6 +293,22 @@ CREATE TABLE IF NOT EXISTS chunk_hashes (
   native_id INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_chunk_hashes_native ON chunk_hashes(native_id);
+-- 06 §6.1 (amended 2026-10-25, operator: "any inconsistency is logged and
+-- flagged"): the inconsistencies in the ORIGIN that the last parse of each
+-- document met (app/issues.py). Keyed (uid, code); a parse replaces the
+-- codes it checked for its document, so a re-parse of a fixed origin clears
+-- them. Local state, never travels, in no record. Additive: created on open
+-- like every local table, existing rows untouched (07 §7.3 `dev migrate
+-- schema`, amended the same day).
+CREATE TABLE IF NOT EXISTS issues (
+  uid TEXT NOT NULL,
+  code TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  first_seen INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  PRIMARY KEY (uid, code)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_issues_code ON issues(code, uid);
 """
 
 class ManifestConnection(sqlite3.Connection):

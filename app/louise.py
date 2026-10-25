@@ -29,6 +29,7 @@
     louise hold vectors check <collection> [--snapshot ID] [--sample F] [--seed HEX] [--drop]
     louise hold check <collection> [--checks A,B] [--sample F] [--seed HEX] [--snapshot ID] [--json]
     louise hold records show <collection> (<record-id> | --shard <slice>/<n>) [--raw]
+    louise hold issues list <collection> [--code C] [--limit N] [--json]
     louise hold snapshot delta <collection> <from> <to>
     louise hold index build <collection> --vector | show <collection>
     louise hold config show|apply [<collection>]
@@ -383,6 +384,36 @@ def cmd_deposit_list(a) -> int:
     else:
         for k in keys:
             print(k)
+    return 0
+
+
+def cmd_issues_list(a) -> int:
+    """`hold issues list <collection> [--code C] [--limit N] [--json]` (06
+    §6.1, 07 §7.3, amended 2026-10-25): the origin's inconsistencies the
+    last parse of each document met, by uid; the counts per code and each
+    code's meaning first (on stderr, or in the JSON). Read-only: no lock."""
+    from app import collections as collections_mod, issues
+    from app.hold import records as rec
+    name, codex = col.resolve(a.root, a.collection)
+    plugin = collections_mod.PLUGIN_REGISTRY.get(codex.plugin)
+    meaning = issues.declared(plugin) if plugin is not None else dict(issues.PLATFORM)
+    if a.code is not None and a.code not in meaning:
+        raise CodexError(f"{a.code!r} is no issue code of {name} ({codex.plugin}); its codes: "
+                         f"{', '.join(sorted(meaning))}")
+    con = issues.open_read(rec._paths(a.root, name)[1] / "manifest.sqlite")
+    try:
+        summary = issues.summary(con, plugin) if con is not None else {"total": 0, "by_code": {}}
+        items = list(issues.listing(con, code=a.code, limit=a.limit)) if con is not None else []
+    finally:
+        if con is not None:
+            con.close()
+    if a.json:
+        _print({"issues": {"collection": name, "codes": meaning, **summary, "items": items}})
+        return 0
+    for code, got in sorted(summary["by_code"].items()):
+        print(f"{code}\t{got['documents']:,}\t{got['meaning']}", file=sys.stderr)
+    for it in items:
+        print(f"{it['uid']}\t{it['code']}\t{it['detail']}")
     return 0
 
 
@@ -2206,8 +2237,18 @@ def cmd_show(a) -> int:
     out.pop("refused", None)
     out.update(_copy_state(a.root, name, codex).to_json())
     out.update(_show_shard(a.root, name))
+    # 06 §6.1 (amended 2026-10-25): the origin's inconsistencies the last
+    # parse of each document met, counted per code (`hold issues list`)
+    out["issues"] = _issues_summary(a.root, name, codex)
     _print(out)
     return 0
+
+
+def _issues_summary(root, name: str, codex) -> dict:
+    from app import collections as collections_mod, issues
+    from app.hold import records as rec
+    return issues.summary_at(rec._paths(root, name)[1] / "manifest.sqlite",
+                             collections_mod.PLUGIN_REGISTRY.get(codex.plugin))
 
 
 def _show_shard(root, name: str) -> dict:
@@ -4515,6 +4556,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_records_show)
 
     # ---- hold config ----------------------------------------------------
+    iss = nouns.add_parser("issues", help="the origin's inconsistencies the parses met (06 §6.1)")
+    isverbs = iss.add_subparsers(dest="verb", required=True)
+    p = isverbs.add_parser("list", help="each document's flagged origin inconsistencies, by uid, "
+                                        "with the counts per code")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--code", default=None, help="only this code's documents")
+    p.add_argument("--limit", type=int, default=None, help="at most N documents' issues")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_issues_list)
+
     cfg = nouns.add_parser("config", help="the effective configuration, each value with its tier (07 §7.8)")
     cverbs = cfg.add_subparsers(dest="verb", required=True)
     p = cverbs.add_parser("show", help="each collection's effective values and the tier each comes from")

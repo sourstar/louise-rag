@@ -120,6 +120,8 @@ louise hold
   source      add <collection> <url> [--interval MIN]                  subscribe a deposit collection to a URL; fetched now, then every interval (06 §6.7)
               erase <collection> <url> [--yes]                         end the subscription and erase its deposit
               list <collection>                                        the subscriptions, each with its last fetch
+  issues      list <collection> [--code C] [--limit N]                 the origin's inconsistencies the last parse of each document met, by uid, with the
+                                                                       counts per code and each code's meaning (06 §6.1; added 2026-10-25, operator: "… logged and flagged")
   config      show [<collection>]                                      the effective configuration, each value with its tier (§7.8)
               apply [<collection>] [--set KEY=VALUE …]                 write the effective values into the files; the node applies them
   records     fetch <collection> [--slice … | --profile P] [--snapshot ID]
@@ -671,7 +673,22 @@ reader needs at the command line:
   is not a migration and happens on first open. Changing an existing
   schema happens here only; a process that finds a schema other than its
   own refuses to write that collection and says so in `hold collection
-  show`.
+  show`. *Amended 2026-10-25 (operator: "… logged and flagged"):* a
+  table ADDED beside the existing ones, which no older process reads and
+  which changes no existing row, is created on open like a new database's
+  — `issues` (06 §6.1) is the one such table; there is nothing for this
+  command to do for it, and nothing to refuse.
+- **`issues list`.** *Added 2026-10-25 (06 §6.1).* The inconsistencies in
+  the origin that the last parse of each document met: `uid`, code and
+  detail a line on stdout, the counts per code with each code's meaning
+  on stderr first (both under `issues` with `--json`). `--code` keeps one
+  code's documents, read through its index; `--limit` stops after N. A
+  code the collection's plugin does not declare is exit 2, naming the
+  codes it does. Read-only, no lock. `hold collection show` prints the
+  same counts under `issues`, `node health` one line per collection, and
+  the Library's card their total; none of them blocks anything — an
+  issue is the origin's, flagged for a person to look at, and the
+  document stays parsed and served.
 
 ## 7.4 The API
 
@@ -681,6 +698,7 @@ The Python API is the same tree with dots:
 app/louise.py   the tree: one function per command, calling the modules below
 app/hold/       codex.py  collection.py  records.py  records_fetch.py  snapshot.py  embedder.py  vectors.py  vectors_build.py
                 vectors_check.py  check.py  node_key.py  deposit.py  sources.py  annotations.py  carry.py  forget.py  rename.py  certify.py  seals.py
+                (`hold issues`: app/issues.py, which the build and the node's metadata stage write through too)
 app/share/      seeder.py (serve)  fetch.py  contribute.py  attest.py  peers.py  offer.py  deprecate.py  withdraw.py
 app/ask/        api.py (search, the routes)  filters.py  facets.py  lookup.py  traverse.py  chat.py  mcp.py
 node            app/worker.py (the rounds)  app/api.py + app/web.py (HTTP, the pages)  app/node_state.py (the mode)  app/jobs.py
@@ -1465,7 +1483,7 @@ collection is another name.
 │   ├── pubmed.toml
 │   └── pubmed/
 │       ├── shard/           the copy, the SHARD (`drag/` until 2026-10-11): exactly the tree of 02 §2.6 — what `share` serves, and nothing else; the bytes may live on other storage, mounted here
-│       ├── state/           manifest.sqlite, cursor, ack.json, attestations/, bundles/, lock — this peer's alone
+│       ├── state/           manifest.sqlite (with the origin's flagged issues, 06 §6.1), cursor, ack.json, attestations/, bundles/, lock — this peer's alone
 │       ├── index/           the text index of the parts held, and the facet values (05 §5.7)
 │       ├── lance/           the vector table search reads
 │       └── origin/          the origin files the records are parsed from — 06 §6.2's corpus directory, kept for records-vs-origin; the bytes may live on other storage, mounted here

@@ -408,6 +408,15 @@ selected; a wrong layer is caught rather than reproduced.
 inspecting one record still sees it — from the tool, which knows the
 Codex, rather than from bytes that cannot.
 
+**Nor what the parse thought of the origin.** *Amended 2026-10-25
+(operator: "… any inconsistency is logged and flagged").* The
+inconsistencies a parse meets in the origin — a missing catalogue entry,
+a broken image reference, a record with no date the cutoff can use — are
+reported beside the record and never in it (06 §6.1): they are this
+peer's local state, recorded per document in the state database (07
+§7.8) by every build, and a record line, its `content_hash` and every
+part's roots are the same bytes with or without them.
+
 Every record carries two hashes. `content_hash` is BLAKE2b-128 of
 `canonical-json([title, [[heading, text], …]])` — the cleaned text and
 nothing else; it decides what "changed" means. `origin_hash` is

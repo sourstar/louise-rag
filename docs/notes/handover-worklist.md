@@ -22,7 +22,7 @@ through with the commit that closes them.
 | A web source's page kept byte-exact (operator) | CODE | merged (fc4467f); deposit parser 3 |
 | The Library's dialogs ask only a name (RULE 2) | CODE | merged (16abd91): encoder by stated weights (app/encoder_resolve.py), recipe from `config/recipes/<plugin>.toml`, annotations targets from the claims. Kept, by the operator's earlier requests: the card's embed-mode, shared and grow-profile controls (no CLI sets them until `hold config apply --set` exists); a take with no matching model is held, not served |
 | A deposit source's clone draws from the budget as it lands (invariant 5) | CODE | done 2026-10-25 |
-| A dateless record is a defect, never a silent exclusion (operator: A) | CODE + NODE | counts asked of München |
+| A dateless record is a defect, never a silent exclusion (operator: A) | CODE + NODE | CODE done 2026-10-25: flagged as `cutoff-undated` on every build (06 §6.1/§6.2, corpus-inconsistencies.md); NODE: the count comes with the next build of gutenberg and pubmed, then the fix (the RDF census is running) |
 | Batched answers equal single-text bytes; the gate measures reproduction (operator: A) | CODE | done (c9ac138) |
 
 ## 2. Spec says it, code does not have it

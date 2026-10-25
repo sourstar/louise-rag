@@ -1630,6 +1630,16 @@ def _copy_state(collection) -> dict:
                 "vector_leg": True, "vector_leg_reason": ""}
 
 
+def _issue_counts(con) -> dict[str, int]:
+    """{code: documents} for the card; {} rather than an error — the Library
+    never raises for a count."""
+    from . import issues
+    try:
+        return issues.counts(con)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _collection_shelf(collection: collections_mod.Collection,
                        measured: dict | None = None,
                        worker_state: str = "running") -> dict:
@@ -2041,6 +2051,9 @@ def _collection_shelf(collection: collections_mod.Collection,
                          else (spec.profile_mode if spec else "incremental")),
         "profile_parts": acquire_spec.profile_parts(collection.profile or ""),
         "blocked": blocked, "unindexable": unindexable,
+        # the origin's inconsistencies flagged, per code (06 §6.1, amended
+        # 2026-10-25): the code index alone, a cost in issues not documents
+        "issues": _issue_counts(con),
         "embed_ready": embed_ready,
         "embed_in_flight": min(in_flight, embed_ready),
         "embed_waiting": max(0, embed_ready - in_flight),

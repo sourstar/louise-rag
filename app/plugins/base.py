@@ -207,6 +207,25 @@ class Figure:
 
 
 @dataclass(frozen=True)
+class Issue:
+    """An INCONSISTENCY IN THE ORIGIN that a parse met (06 §6.1, amended
+    2026-10-25, operator: "any inconsistency is logged and flagged"): a
+    catalogue entry missing or damaged, an image the epub references and
+    does not hold, a record with no date of any kind. Not an error — the
+    document parses and its record is written — and not part of the
+    record: it never reaches a record line, `content_hash`, `origin_hash`
+    or a chunk, so reporting one more or one fewer moves no byte any peer
+    holds and bumps no PARSER_VERSION. Whoever runs the parse records it in
+    the collection's local state (app/issues.py), keyed (uid, code).
+
+    `code` is one the plugin declares in its `ISSUES` (or a platform code,
+    app/issues.py `PLATFORM`); `detail` says which file, element or value,
+    in plain words."""
+    code: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
 class CanonicalDoc:
     """architecture-v2.md §2 — the source-agnostic document shape every
     plugin's parse() produces."""
@@ -224,10 +243,14 @@ class CanonicalDoc:
     #: plugin that yields none, which is what keeps a figureless
     #: collection's record line byte-identical to `record_line` 1.
     figures: list[Figure] = field(default_factory=list)
+    #: the origin's inconsistencies this parse met (`Issue`), OUTSIDE the
+    #: record: `pack/build.py` writes the line from the fields above and
+    #: never reads this one. Empty for a plugin that reports none.
+    issues: list[Issue] = field(default_factory=list)
 
 
 @dataclass
-class DiscoverState:        # not frozen: received/committed advance during the scan
+class DiscoverState:       # not frozen: received/committed advance during the scan
     """Whatever a CorpusSource needs to enumerate its documents. The
     orchestrator constructs and supplies this; Gutenberg only reads
     `corpus_root`. `state_dir` (the collection's data directory, beside its
@@ -315,6 +338,10 @@ class CorpusSource(Protocol):
     default_layers: list           # [{chunker: {id, version, params}, rule}]
     default_slicing: dict          # 09 §9.3's slicing block
     default_facets: list           # [{field, kind, separator, authority}] — 05 §5.7
+    # Optional (06 §6.1, amended 2026-10-25): {code: one-line meaning} for
+    # every `Issue` this plugin's parse may report; a plugin without it
+    # reports none. A code outside it is refused when recorded.
+    ISSUES: dict[str, str]
 
     def discover(self, state: DiscoverState) -> Iterator[DocRef]: ...
     def fetch(self, ref: DocRef) -> RawDoc: ...

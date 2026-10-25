@@ -76,7 +76,7 @@ import zipfile
 from pathlib import Path
 
 from .. import eli
-from ..base import (CanonicalDoc, DiscoverState, DocRef, Edge, Erasure, LicenseClass,
+from ..base import (CanonicalDoc, DiscoverState, DocRef, Edge, Erasure, Issue, LicenseClass,
                     Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc,
                     UnindexableDocument)
 from . import akn, rendition
@@ -229,8 +229,20 @@ def _zip_rank(zpath: Path) -> int:
     return _ZIP_FORM_RANK.get(zpath.parent.name, len(_ZIP_FORM_RANK))
 
 
+#: The origin's inconsistencies this plugin's parse reports (06 §6.1,
+#: amended 2026-10-25; app/issues.py), from the multivigenza review.
+ISSUES = {
+    "expression-before-publication": "an ORIGINALE's FRBRExpression date precedes its Gazzetta "
+                                     "publication (a typo at the origin); validity starts at the "
+                                     "entry-into-force note or the publication date",
+    "frbr-expression-stale": "a consolidated version's FRBRExpression date is not the version date "
+                             "its member name and ELI alias carry; the name is read",
+}
+
+
 class NormattivaSource:
     source_id = "normattiva"
+    ISSUES = ISSUES
     LOCATOR_SEP = _LOCATOR_SEP
     ELI_PROFILE = PROFILE
     VALIDITY_FLOOR = VALIDITY_FLOOR
@@ -383,6 +395,17 @@ class NormattivaSource:
         in_force = False if (repealed_in_full or "abrogati" in zpath.name) else None
         entry_into_force = _entry_into_force(act.preface_notes)
         expression_date = act.frbr.get("expression", {}).get("date") or None
+        # the origin's inconsistencies (06 §6.1, amended 2026-10-25), each
+        # one the parser already worked around in silence (review §1, §7)
+        found = []
+        if form == "ORIGINALE" and expression_date and expression_date < gu:
+            found.append(Issue("expression-before-publication",
+                               f"FRBRExpression date {expression_date} precedes the publication "
+                               f"{gu}; validity starts at {original_start(expression_date, entry_into_force, gu)}"))
+        if form == "VIGENZA" and vig and expression_date and expression_date != vig:
+            found.append(Issue("frbr-expression-stale",
+                               f"FRBRExpression date {expression_date}, the member name's version "
+                               f"date {vig}; the version is read from the name"))
 
         extra = {
             # ELI rule 5: the fixed keys (eli.EXTRA_KEYS)
@@ -462,6 +485,7 @@ class NormattivaSource:
             extra={k: v for k, v in extra.items() if v not in (None, "", [], {})},
             sections=rendition.sections(act),
             raw_hash=raw.raw_hash,
+            issues=found,
         )
 
     def relations(self, doc: CanonicalDoc):

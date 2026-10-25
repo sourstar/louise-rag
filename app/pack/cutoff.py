@@ -15,7 +15,13 @@ decision is the plugin's:
 
 Dates compare as normalised "YYYY-MM-DD" strings; a record with no date
 under a plugin that has a rule is excluded and counted (`skipped`), never
-silently kept — a snapshot must be reproducible from the rule alone.
+silently kept — a snapshot must be reproducible from the rule alone. And
+never SILENTLY excluded either (operator, 2026-10-25, "Dateless records,
+choice A": "A record a dated snapshot cannot place is a defect to fix,
+never a silent exclusion"): `undated` names it, and `hold records build`
+records it as the platform's issue `cutoff-undated` on every build, with or
+without a cutoff (app/issues.py), so it is logged and flagged before any
+dated snapshot needs it.
 """
 import re
 
@@ -70,6 +76,23 @@ def record_key(plugin: str, record: dict) -> str | None:
         extra = record.get("extra") or {}
         return normalise(extra.get("revised") or record.get("date"))
     return None
+
+
+#: what each per-record rule reads, in words, for the issue's detail
+KEY_OF = {
+    "gutenberg": "extra.issued (PG's release date, dcterms:issued in pg<N>.rdf)",
+    "pubmed": "extra.revised (DateRevised, else DateCompleted) nor a publication date",
+}
+
+
+def undated(plugin: str, record: dict) -> str | None:
+    """None when the record carries the date its plugin's cutoff rule reads,
+    or there is no per-record rule; else the issue's detail."""
+    if plugin not in KEY_OF:
+        return None
+    if record_key(plugin, record) is not None:
+        return None
+    return f"no {KEY_OF[plugin]}; rule `{rule_for(plugin)}`"
 
 
 def excluded(plugin: str, record: dict, until: str | None) -> str | None:

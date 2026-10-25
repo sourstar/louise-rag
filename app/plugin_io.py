@@ -141,12 +141,18 @@ def origin_unit(plugin, origin: str, base) -> tuple[str, int | None]:
 
 
 def metadata(plugin, row) -> dict:
+    """The rdf stage's fields for one document — and, under `issues`, the
+    origin's inconsistencies the read met (06 §6.1, amended 2026-10-25),
+    which the stage records for the codes `metadata_checks` names. A
+    plugin's lazy `read_metadata` that says nothing about issues returns no
+    `issues` key, and nothing is recorded for it."""
     if hasattr(plugin, "read_metadata"):
         return plugin.read_metadata(Path(row["path"]), int(row["native_id"]))
     doc = canonical_doc(plugin, row)
     meta = {"title": doc.title, "authors": "; ".join(doc.creators),
             "lang": doc.language, "subjects": "|".join(doc.subjects),
-            "bookshelves": str(doc.extra.get("bookshelves", ""))}
+            "bookshelves": str(doc.extra.get("bookshelves", "")),
+            "issues": list(doc.issues or ())}
     # one record per Expression (app/validity.py): the start of validity,
     # the Work and whether the version has text, for the rdf stage to record
     from app import validity
@@ -156,6 +162,16 @@ def metadata(plugin, row) -> dict:
         if got is not None:
             meta["validity"] = got
     return meta
+
+
+def metadata_checks(plugin) -> frozenset[str]:
+    """The issue codes `metadata` examines for this plugin: every code the
+    plugin declares when it falls back to the full parse, and only what a
+    lazy `read_metadata` declares it reads (`METADATA_ISSUES`) otherwise —
+    so the rdf stage never clears what only the full parse can see."""
+    if hasattr(plugin, "read_metadata"):
+        return frozenset(getattr(plugin, "METADATA_ISSUES", ()) or ())
+    return frozenset(getattr(plugin, "ISSUES", None) or {})
 
 
 def work_identity(meta: dict) -> str:

@@ -247,6 +247,49 @@ read one part of a document — but the platform never *requires* them:
 every stage falls back to `fetch` and `parse`, and any other method is
 ignored.
 
+### Issues: the origin's inconsistencies
+
+*Amended 2026-10-25 (operator: "Add any inconsistency found in the
+corpora in a report. Make the parsers such that on a regular basis any
+inconsistency is logged and flagged"; the report is
+`notes/corpus-inconsistencies.md`).* An origin is not always consistent
+with itself: a book without its catalogue entry, an epub naming an image
+it does not hold, a citation with no date of any kind. Where `parse`
+meets one and works around it — reads the next form, drops the broken
+reference, leaves a field null — it says so, as data:
+
+```python
+@dataclass(frozen=True)
+class Issue:
+    code: str                       # one the plugin declares in ISSUES
+    detail: str                     # which file, element or value, in plain words
+
+CanonicalDoc.issues: list[Issue]    # [] when the parse met none
+ISSUES: dict[str, str]              # the plugin's codes, each with a one-line meaning
+```
+
+An issue is never part of the record. No record line, `content_hash`,
+`origin_hash` or chunk carries it, so a parser that reports one more or
+one fewer changes no byte any peer holds: it is not output in
+`PARSER_VERSION`'s sense, and reporting it bumps nothing. A code a plugin
+does not declare is refused when recorded. The platform has codes of its
+own for what it checks itself: `cutoff-undated`, a record without the
+date its `cutoff_rule` reads (§6.2).
+
+Whoever runs the parse records what it met in the collection's state
+database (07 §7.8) — `hold records build` for every record it parses,
+on every build, the cutoff check included; the node's metadata stage for
+every document it extracts, for the codes that stage's read examines —
+keyed (uid, code): per document the codes the parse checked are deleted,
+then what it met is inserted, so a re-parse replaces them and an origin
+that was fixed clears them. Each issue is logged once, when it is first
+recorded, and once when it clears, with the collection's name. They are
+FLAGGED, never errors: the document is parsed, kept and served; `hold
+collection show`, `node health` and the Library's card count them per
+code, and `hold issues list` lists them (07 §7.3). Where an origin
+cannot supply a document at all, that is still `Unavailable` (above),
+not an issue.
+
 ### The terms text
 
 A yellow or red source ships its terms as published, byte-exact, at a
@@ -291,7 +334,12 @@ plugin declares and a snapshot cannot be computed without (§2.2):
   files published before it (PubMed); for a listing with a per-record
   date, the records whose date is at or before it (Gutenberg, by the
   release date). A record without the date the rule needs is excluded
-  and counted, never kept;
+  and counted, never kept — and never silently: it is a defect to fix,
+  recorded on every build as the issue `cutoff-undated` (§6.1) whether
+  or not the build has a cutoff, and named in the build's log when one
+  excludes it (*amended 2026-10-25*, operator, "Dateless records, choice
+  A": "A record a dated snapshot cannot place is a defect to fix, never a
+  silent exclusion");
 - `unit` — how a record's origin bytes are reached (§6.4);
 - `form` — which origin form was taken, and why (§6.4).
 

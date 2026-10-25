@@ -423,8 +423,10 @@ def _decode(raw: bytes) -> str:
         return raw.decode("utf-8", errors="replace")
 
 
-def _documents(z: zipfile.ZipFile) -> list[tuple[str, _Text]]:
-    """Every spine document, parsed, in reading order."""
+def _documents(z: zipfile.ZipFile, missing: list[str] | None = None) -> list[tuple[str, _Text]]:
+    """Every spine document, parsed, in reading order. `missing`, when
+    given, collects what the spine names and the epub does not hold — an
+    inconsistency of the origin (app/issues.py), skipped as before."""
     manifest, spine = _manifest_and_spine(z)
     # the classes the book's stylesheets set in italics (`_Text`), and the
     # document's own <style> on top
@@ -434,14 +436,18 @@ def _documents(z: zipfile.ZipFile) -> list[tuple[str, _Text]]:
     for idref in spine:
         entry = manifest.get(idref)
         if entry is None:
-            continue                        # a spine id with no manifest item
+            if missing is not None:         # a spine id with no manifest item
+                missing.append(f"spine item {idref!r} has no manifest entry")
+            continue
         href, media = entry
         if media and "html" not in media and "xml" not in media:
             continue
         try:
             raw = z.read(href)
         except KeyError:
-            continue                        # a manifest item that is not there
+            if missing is not None:         # a manifest item that is not there
+                missing.append(f"{href} is not in the epub")
+            continue
         text = _decode(raw)
         inline = _STYLE_BLOCK.findall(text)
         p = _Text(css | italic_classes(" ".join(inline)) if inline else css)
@@ -451,7 +457,7 @@ def _documents(z: zipfile.ZipFile) -> list[tuple[str, _Text]]:
     return out
 
 
-def _walk(z: zipfile.ZipFile) -> tuple[str, list[tuple[str, str, bool]]]:
+def _walk(z: zipfile.ZipFile, issues: list | None = None) -> tuple[str, list[tuple[str, str, bool]]]:
     """`(text with one sentinel per surviving image, [(target, alt, carried)])`.
 
     THE ONE PLACE the filtering happens, which is what makes 09 §9.5's
@@ -477,13 +483,21 @@ def _walk(z: zipfile.ZipFile) -> tuple[str, list[tuple[str, str, bool]]]:
     book (`source.parse` -> `UnindexableDocument`), never one plate.
     The TEXT is exactly what parser 10 wrote — the marker never depended on
     the type — so no chunk moves.
+
+    `issues`, when given, receives the origin's inconsistencies the walk
+    meets (06 §6.1, amended 2026-10-25; app/issues.py) — a BROKEN
+    REFERENCE, a spine document the epub lacks — which it drops exactly as
+    before, and now says so. Nothing else changes: the text and the figure
+    list are the same with or without it.
     """
     names = set(z.namelist())
     cover = cover_href(z)
     text_parts: list[str] = []
     images: list[tuple[str, str, bool]] = []
+    absent_docs: list[str] = []
+    broken: list[str] = []
 
-    for href, parsed in _documents(z):
+    for href, parsed in _documents(z, absent_docs):
         base = posixpath.dirname(href)
         pieces = parsed.text().split(_IMG)
         text_parts.append(pieces[0])
@@ -493,8 +507,24 @@ def _walk(z: zipfile.ZipFile) -> tuple[str, list[tuple[str, str, bool]]]:
             if target in names and target != cover:
                 images.append((target, alt, True))
                 text_parts.append(_IMG)
+            elif target not in names and target != cover \
+                    and not src.startswith("data:") and "://" not in src:
+                # a file the package should hold and does not; an inline
+                # `data:` image or a remote URL is no file of the epub's
+                broken.append(target)
             text_parts.append(tail)
 
+    if issues is not None:
+        from ..base import Issue
+        if broken:
+            distinct = list(dict.fromkeys(broken))
+            issues.append(Issue("epub-image-missing", (
+                f"{len(broken)} image reference(s) to {len(distinct)} file(s) the epub lacks: "
+                + ", ".join(distinct[:5]) + (", …" if len(distinct) > 5 else ""))))
+        if absent_docs:
+            issues.append(Issue("epub-document-missing", (
+                f"{len(absent_docs)} spine document(s) not read: " + "; ".join(absent_docs[:5])
+                + ("; …" if len(absent_docs) > 5 else ""))))
     return "".join(text_parts), images
 
 
@@ -716,7 +746,7 @@ def sections(path: Path) -> tuple[list[tuple[str, str]], list[str]]:
 # --------------------------------------------------------------------------
 # the plates
 
-def figures(path: Path) -> list[Figure]:
+def figures(path: Path, issues: list | None = None) -> list[Figure]:
     """Every APPEARANCE of a plate, in reading order — one entry per marker
     in the text, so `figures[N]` is the Nth `[Illustration…]` (09 §9.5).
 
@@ -728,10 +758,13 @@ def figures(path: Path) -> list[Figure]:
 
     Hashed here and never later: `sha256` is what names the figure in the
     record, and the bytes travel separately as a member.
+
+    `issues` receives what `_walk` meets (one walk serves both: the record's
+    parse already pays for this one).
     """
     out: list[Figure] = []
     with zipfile.ZipFile(path) as z:
-        _, images = _walk(z)
+        _, images = _walk(z, issues)
         raws: dict[str, bytes] = {}
         for seq, (target, alt, carried) in enumerate(images):
             if target not in raws:

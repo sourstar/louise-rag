@@ -2246,7 +2246,10 @@ saves it only after the manifest commits.
 `origin` (from the `DocRef`) and `content_hash` when it writes the
 record (§9.5). It adds no layer: which layer a document falls in is
 derived from the Codex's rules whenever it is needed, never stored
-(02 §2.3).
+(02 §2.3). Its `issues` (`[{code, detail}]`, 06 §6.1, *amended
+2026-10-25*) are none of these bytes: the platform records them in the
+peer's state database and writes nothing of them into a record, a part
+or any other object of this document.
 
 `Edge`: `{to: str, type: str}` — what `relations()` yields, one call
 per parsed document (06 §6.1). `to` is the uid the edge points at, which
