@@ -1167,6 +1167,23 @@ fix):**
 pool first. A hung wikidata pack pool is discarded the same way, and the
 build's log lines are flushed.
 
+**BEFORE (München, from build-night.log, which has no per-line timestamps,
+so the counts are per run).** Every one of the 34 lines is "[parse pool]
+TimeoutError: computing this batch in-process":
+- the c3a7612 image, `PARSE_PROCESSES` 11 (2026-10-24 23:25 → 10-25 07:00):
+  15 lines in 1,409 part lines;
+- step 1 (`PARSE_PROCESSES` 3, one hour): 0 lines in 74 part lines;
+- the a833c1e run (~14.3 h, up to the hung stop): 4 lines in 1,271 part
+  lines, and it ENDED with no child in the container;
+- earlier runs: 9, 3 and 3 lines.
+A/B arm 1 (the c3a7612 image) did 250,000 records, 2,096,112 chunks and 125
+parts in 1,865.5 s wall for 1,859.7 cpu-s: one core of four, which is the
+serial in-process path a pool without children falls back to.
+
+**Check before it goes live (München):** arm 4, c3dcb4c's tree on the same
+250 k records. Its parts (n, sha256, records_root, chunks_root) must be
+identical to arms 1–3; until they are, the build stays held.
+
 **Scenario for AFTER:** the live wikipedia-v8 build in its container, 4-cpu
 quota, `PARSE_PROCESSES` 3, `PARSE_TASKS_PER_CHILD` 500, after the A/B arms.
 

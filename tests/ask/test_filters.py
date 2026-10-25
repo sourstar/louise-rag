@@ -100,7 +100,7 @@ def test_a_filtered_federation_is_restricted_per_collection_and_says_how_many(mo
     from app.hold import collection as col
     from app.share import seeder
     monkeypatch.setattr(filters, "book_ids_for",
-                        lambda codex, index_dir, f, *, snapshot_id, all_ids=None: {3, 4})
+                        lambda codex, index_dir, f, *, snapshot_id, all_ids=None, tagged=None: {3, 4})
     monkeypatch.setattr(seeder, "current_snapshot", lambda shard_tree: None)
     monkeypatch.setattr(seeder, "cached_snapshot", lambda shard_tree: None)
     monkeypatch.setattr(col, "shard_dir_of", lambda root, name: None)
@@ -118,3 +118,55 @@ def test_an_empty_restriction_returns_nothing_before_any_leg_runs(monkeypatch):
     out = retrieval._search_one_collection(None, SimpleNamespace(name="x", plugin="x"), "q", 5, "hybrid", False,
                                            [], plan, 0, book_ids=set())
     assert out["merged"] == [] and out["filtered"] == 0 and called == []
+
+
+# ---- the identifier filter (05 §5.2, amended 2026-10-25: an identifier restricts only when asked) ----
+
+def test_an_identifier_restricts_only_as_a_filter_the_reader_gives(tmp_path):
+    con, codex = manifest(tmp_path), a_codex()
+    idx = tmp_path / "index"
+    facets.build(con, codex, idx, snapshot_id="2026-08")
+    tags = {"hgnc:1101": [1, 3], "hgnc:1100": [3]}
+    tagged = lambda value, limit: tags.get(value, [])[:limit]  # noqa: E731
+    ids = lambda f: filters.book_ids_for(codex, idx, f, snapshot_id="2026-08", tagged=tagged,  # noqa: E731
+                                         all_ids=lambda: [1, 2, 3, 4])
+    assert ids({"keys": "hgnc:1101"}) == {1, 3}
+    assert ids({"keys": "hgnc:1101", "lang": "en"}) == {1}, "with a facet, they intersect"
+    assert ids({"keys": {"not": "hgnc:1100"}}) == {1, 2, 4}
+    assert ids({"keys": "hgnc:9999"}) == set(), "tagged nowhere here: nothing, which is an answer"
+    assert filters.book_ids_for(codex, idx, {"keys": "hgnc:1101"}, snapshot_id="2026-08") == set(), \
+        "a collection with no tagged records admits nothing"
+
+
+def test_an_identifier_too_broad_for_the_legs_is_refused_not_cut(tmp_path, monkeypatch):
+    monkeypatch.setattr(filters, "MAX_IDS", 2)
+    asked = []
+
+    def tagged(value, limit):
+        asked.append(limit)
+        return [1, 2, 3, 4][:limit]
+    with pytest.raises(filters.FilterError, match="admits more than 2"):
+        filters.book_ids_for(a_codex(), tmp_path, {"keys": "hgnc:5172"}, snapshot_id=None, tagged=tagged)
+    assert asked == [3], "read one past the bound, never the whole entity"
+
+
+def test_the_tagged_records_are_read_by_the_entity_index(tmp_path):
+    """The heaviest gene tags 265,237 pubmed documents: the read is driven by
+    `idx_doc_keys_entity`, one primary-key lookup per row, stopped by LIMIT."""
+    from app import collections as collections_mod, db
+    c = collections_mod.Collection(
+        name="pubmedish", plugin="pubmed", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path / "corpus", manifest_path=tmp_path / "m" / "manifest.db",
+        fts_dir=tmp_path / "m" / "fts", lance_dir=tmp_path / "m" / "lancedb")
+    con = db.connect(c)
+    con.executemany("INSERT INTO documents(uid, source, native_id, path, in_scope) VALUES (?,?,?,?,?)",
+                    [(f"pubmed:{i}", "pubmed", str(i), "x", 1 if i != 3 else 0) for i in range(1, 5)])
+    con.executemany("INSERT INTO doc_keys(uid, entity_id) VALUES (?,?)",
+                    [("pubmed:1", "hgnc:1101"), ("pubmed:3", "hgnc:1101"), ("pubmed:2", "hgnc:1100")])
+    con.commit()
+    plan = [str(r[-1]).upper() for r in con.execute("EXPLAIN QUERY PLAN " + query_service.TAGGED_SQL,
+                                                     ("hgnc:1101", 10))]
+    assert any("IDX_DOC_KEYS_ENTITY" in row for row in plan), plan
+    assert not any("TEMP B-TREE" in row or row.startswith("SCAN") for row in plan), plan
+    got = [int(r[0]) for r in con.execute(query_service.TAGGED_SQL, ("hgnc:1101", 10))]
+    assert got == [1], "an out-of-scope record is not admitted"

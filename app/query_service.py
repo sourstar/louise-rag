@@ -118,6 +118,12 @@ def withheld_from(names: list[str] | None, *, private: bool = False) -> list[dic
     return out
 
 
+#: the records tagged with an identifier (05 §5.2's `keys` filter): the
+#: entity index drives, each row one primary-key lookup, LIMIT bounds it
+TAGGED_SQL = ("SELECT d.native_id FROM doc_keys k CROSS JOIN documents d ON d.uid = k.uid "
+              "WHERE k.entity_id = ? AND d.in_scope = 1 LIMIT ?")
+
+
 def book_ids_for(filters: dict | None):
     """05 §5.2's restriction per collection, as a callable the legs take:
     None for no filter; for a collection with a Codex, the records its
@@ -144,8 +150,16 @@ def book_ids_for(filters: dict | None):
             with closing(db.connect(collection)) as con:
                 return [int(r[0]) for r in con.execute(
                     "SELECT native_id FROM documents WHERE in_scope=1") if str(r[0]).isdigit()]
+        def tagged(identifier: str, limit: int) -> list[int]:
+            # 05 §5.2 (amended 2026-10-25): the records tagged with an
+            # identifier the reader asked for, driven by the entity index
+            # (CROSS JOIN: the order the 2026-09-21 hang taught), bounded
+            with closing(db.connect(collection)) as con:
+                return [int(r[0]) for r in con.execute(TAGGED_SQL, (identifier, limit))
+                        if str(r[0]).isdigit()]
         return filters_mod.book_ids_for(codex, root / collection.name / "index", filters,
-                                        snapshot_id=snap.snapshot_id if snap else None, all_ids=all_ids)
+                                        snapshot_id=snap.snapshot_id if snap else None, all_ids=all_ids,
+                                        tagged=tagged)
     return resolve
 
 

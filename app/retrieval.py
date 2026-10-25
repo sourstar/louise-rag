@@ -897,8 +897,8 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
     search's language plan, made once for all its collections; without one
     this collection plans alone. Each leg goes at least `depth` deep, so a
     reranker asked for its top N has N candidates to order. `entity_ids`,
-    the entities the query names, change no rank (05 §5.2: nothing boosts);
-    whether they restrict the legs is the operator's open decision. Returns
+    the entities the query names, change no rank and restrict nothing
+    (05 §5.2, amended 2026-10-25); the `keys` filter arrives as `book_ids`. Returns
     {"catalog", "merged", "translations", "timings", "scope"}."""
     timings: dict[str, float] = {}
     vector_leg: str | None = None      # why the vector leg was withheld, if it was
@@ -1064,9 +1064,10 @@ def _search_one_collection(con, collection, query: str, k: int, mode: str, trans
     # 05 §5.2: nothing boosts. The +1/60 an entity-tagged candidate used to
     # get lost on TREC Precision Medicine (80 topics, NDCG@10 0.3073 against
     # 0.3143 without it, docs/notes/query-campaign.md), and the spec never
-    # allowed it. The entities the query names are pinned as facts beside
-    # the lists; whether they also RESTRICT the legs (05 §5.2's other rule,
-    # which lost too: 0.3002 / 0.2983) is the operator's to decide.
+    # allowed it. Nor do the entities the query names restrict the legs
+    # (amended 2026-10-25, operator: restricting lost too, 0.3002 / 0.2983):
+    # they are pinned as facts beside the lists, and a reader who wants the
+    # tagged records alone asks with the `keys` filter (app/ask/filters.py).
 
     return {"catalog": catalog_hits[:CATALOG_PROMPT], "merged": merged, "translations": plan.translations,
             "timings": timings, "scope": scope, "vector_leg": vector_leg,

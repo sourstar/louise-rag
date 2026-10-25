@@ -190,7 +190,8 @@ louise ask
                                                                        the fused list of §5.1, with what §5.3 says about each result; --as-of searches the snapshot
                                                                        current at that date (§5.1); --filter restricts the legs and never ranks (§5.2, §5.7; amended
                                                                        2026-10-07 from per-facet flags: one flag, the facet named in its value, since the facets are
-                                                                       the collection's and not known before it is)
+                                                                       the collection's and not known before it is); --filter keys=<id> keeps the records tagged with an
+                                                                       identifier, which a query naming it never does by itself (§5.2, amended 2026-10-25)
   facets <collection> [<field>] [--under VALUE]                        the fields this collection can be filtered on, or one field's values with this peer's counts (§5.7)
   lookup <id>                                                          a fact by key, from a reference source
   traverse <id> [--relation T] [--depth N] [--resolve-in C …]           the records reached along declared relations (§5.5); --resolve-in names the collections an

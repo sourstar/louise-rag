@@ -31,8 +31,25 @@ _SCHEMA = (
 )
 
 
+#: 05 §5.2 (amended 2026-10-25): the identifier filter. Not a facet a Codex
+#: declares: every collection has it, and admits under it the records tagged
+#: with the identifier (the manifest's `doc_keys`), none where nothing is
+KEYS = "keys"
+
+
 class FilterError(CodexError):
     exit_code = 2
+
+
+def _tagged_ids(tagged, value: str, negate: bool) -> set[int]:
+    """The records tagged with identifier `value`, bounded as a facet
+    value's postings are: more than MAX_IDS is refused, never cut."""
+    ids = set(tagged(value, MAX_IDS + 1)) if tagged is not None else set()
+    if len(ids) > MAX_IDS:
+        said = (f"excluding {KEYS!r} = {value!r} needs more than {MAX_IDS} records" if negate
+                else f"{KEYS!r} = {value!r} admits more than {MAX_IDS} records")
+        raise FilterError(f"{said}, the most the legs take as a prefilter; narrow it (05 §5.2)")
+    return ids
 
 
 def connect(index_dir: Path) -> sqlite3.Connection:
@@ -100,10 +117,11 @@ def _ids(pcon, field: str, value: str, *, tree_sep: str | None) -> set[int]:
 
 
 def book_ids_for(codex, index_dir: Path, filters: dict[str, Any] | None, *, snapshot_id: str | None,
-                 all_ids=None) -> set[int] | None:
+                 all_ids=None, tagged=None) -> set[int] | None:
     """The records the filters admit — None for no filter, a set (possibly
     empty) otherwise. `all_ids` is a callable giving every record's
-    native_id, needed for a `not` alone. A value's COUNT, from the facet
+    native_id, needed for a `not` alone. `tagged(identifier, limit)` gives
+    the records tagged with an identifier, for the `keys` filter. A value's COUNT, from the facet
     cache, is read before its postings: the postings hold only values of
     at most MAX_IDS records (app/ask/facets.py), so a broader value is
     refused here as too broad, and the postings read are complete."""
@@ -116,6 +134,14 @@ def book_ids_for(codex, index_dir: Path, filters: dict[str, Any] | None, *, snap
     pcon = connect(index_dir)
     try:
         for field, spec in filters.items():
+            if field == KEYS:
+                negate = isinstance(spec, dict) and "not" in spec
+                ids = _tagged_ids(tagged, str(spec["not"]) if negate else str(spec), negate)
+                if negate:
+                    drop |= ids
+                else:
+                    keep = ids if keep is None else keep & ids
+                continue
             f = declared.get(field)
             if f is None:
                 raise FilterError(f"{field!r} is not a facet of this collection (05 §5.7); it declares "

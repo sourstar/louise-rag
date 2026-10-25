@@ -354,7 +354,6 @@ exception). `test_entity_boost.py` now checks that a tagged candidate keeps
 its fused score; the P0.3 test (`test_retrieval_entities.py`) checks that
 a tag moves nothing.
 
-**The operator's to decide:** 05 §5.2's "a resolved identifier restricts
-every leg". The code has never done it; on this set it loses (not
-significantly) and costs 2 s. The choices (amend it, or implement it) are
-put to the operator; until then nothing restricts by default.
+**Decided (operator, 2026-10-25: A):** 05 §5.2 is amended. An identifier
+the query names pins its facts and restricts nothing; the restriction is
+the reader's to ask for, with the `keys` filter.

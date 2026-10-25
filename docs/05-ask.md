@@ -199,9 +199,9 @@ writes only registered ids into a record's `keys` (§6.1), and a
 namespace is registered before any record uses it, because `keys` are
 bytes of the record and therefore of its `content_hash`.
 
-**A filter restricts; nothing boosts.** Two things restrict the legs: a
-resolved identifier, and a value given for one of the collection's
-declared facets (§5.7) — `subjects` is `Neoplasms/genetics`, `creators`
+**A filter restricts; nothing boosts.** Two things restrict the legs,
+and only when the reader gives them: an identifier (a filter on `keys`),
+and a value for one of the collection's declared facets (§5.7) — `subjects` is `Neoplasms/genetics`, `creators`
 is `Austen, Jane`, `date` is within a range. Both narrow which records
 the legs may return, and the free-text query then ranks within that
 narrowing; neither adds a list of its own, and neither moves a score.
@@ -210,13 +210,21 @@ value is not in what this peer holds, and §5.7 says what is. A boost
 would hide that, and would make two peers rank one query differently
 unless its weight were pinned in the Codex, so there is none.
 
-In a collection whose
-records carry `keys`, a resolved identifier restricts every leg to the
-records whose `keys` contain it; the free-text query then ranks within
-that restriction. In a collection whose records carry no `keys`, the
-identifier restricts nothing and the free-text query runs as it would
-have. An identifier that resolves to no reference row and no record is
-returned as *unresolved*; it never produces an empty fact.
+**An identifier the query names pins its facts and restricts nothing**
+(*amended 2026-10-25*, operator). It is resolved and its facts are pinned
+beside the lists (§5.4); the legs run as they would have, and no rank
+moves. A reader who wants only the records tagged with an identifier gives
+it as a filter, `keys` = `hgnc:1101`: every leg is then restricted to the
+records tagged with it, and the free-text query ranks within that
+restriction. It is bounded and refused when too broad, as a facet value
+is (§5.7). A collection with no record tagged with it admits nothing
+under it. Restricting by default was measured, and it lost. On TREC
+Precision Medicine 2017–18 (80 topics, NIST's judgements), NDCG@10 was
+0.3143 unrestricted, 0.3002 restricted to the records tagged with any
+named identifier, and 0.2983 with all of them, each about 2 s slower: a
+relevant record the tagger missed was hidden (docs/notes/query-campaign.md).
+An identifier that resolves to no reference row and no record is returned
+as *unresolved*; it never produces an empty fact.
 
 **Translation is an expand step, off by default.** When it is on, the
 peer translates the query into each collection's MAIN languages and,

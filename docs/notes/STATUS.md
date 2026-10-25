@@ -353,7 +353,7 @@ Fixed in `app/parallel.py`:
 
 Also: a hung wikidata pack pool is stopped the same way, and the build's log lines are flushed. Tests: tests/test_parallel_exit.py, under 3.13 and 3.12. Measurement row: [scheduling-log.md](scheduling-log.md); pitfall 19 in [scheduling.md](scheduling.md) §5.
 
-### 2026-10-25: the entity boost removed — 05 §5.2, "nothing boosts", measured; the identifier restriction is the operator's to decide
+### 2026-10-25: the entity boost removed — 05 §5.2, "nothing boosts", measured; an identifier restricts only as a filter (operator: A)
 
 The search added 1/60 to the fused score of a candidate the query's entity tags. 05 §5.2 forbids it (task #33, found by PR #4). Measured on TREC Precision Medicine 2017–18 (80 topics, NIST's judgements, [query-campaign.md](query-campaign.md)), NDCG@10 was:
 - no boost, no restriction: 0.3143;
@@ -362,7 +362,7 @@ The search added 1/60 to the fused score of a candidate the query's entity tags.
 
 None of the differences is significant. The boost is removed, with its lookup; the tests now check that a tag moves nothing. Deployed after tonight's priority measurement (one change per deploy).
 
-OPEN: 05 §5.2 also says "a resolved identifier restricts every leg", which the code has never done. Amend or implement is put to the operator; until then nothing restricts by default.
+DECIDED (operator, "I agree with A"): 05 §5.2 amended. An identifier the query names pins its facts and restricts nothing; a reader who wants the tagged records alone asks with `--filter keys=<id>` (`filters: {"keys": …}` in the API), bounded and refused when too broad as a facet value is. Built in `app/ask/filters.py` and `query_service.TAGGED_SQL` (driven by the entity index, plan-checked); tests in tests/ask/test_filters.py.
 
 ### 2026-10-25: Perugia's hand-over, and the coverage count that lied (Perugia, München)
 
