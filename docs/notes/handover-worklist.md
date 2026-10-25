@@ -58,7 +58,7 @@ through with the commit that closes them.
 - ~~07 §7.3: the `reindex` entry was spliced into `drop-rows`' text.~~ (5da3dd9)
 - ~~app/louise.py: 24 mojibake sequences, visible in `--help`.~~ (repaired 2026-10-25)
 - ~~CLAUDE.md: "`pack build` until the migration lands".~~ (5da3dd9)
-- tools/calibrate_space.py, tools/pack_convert.py: retired by 07 §7.6 — remove or say what still uses them.
+- ~~tools/calibrate_space.py, tools/pack_convert.py~~: pack_convert removed (nothing used it); calibrate_space kept as the statistics `hold embedder calibrate` imports (07 §7.6, 2026-10-25).
 
 ## 5. Invariants enforced by review alone
 

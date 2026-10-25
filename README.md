@@ -278,8 +278,9 @@ stage. A chunking change bumps that chunker's own version in the Codex
 - One worker process per node — the bottleneck is the embed endpoint.
 - The S3 transport is declared but not built; splitting one download over
   several connections is off by default (`segments_per_file`).
-- The committed calibration numbers are synthetic stand-ins; run
-  `tools/calibrate_space.py --live` against two real backends for real ones.
+- A space's tolerance is calibrated against real backends by `louise hold
+  embedder calibrate` (docs/03 §3.3); the committed fixture numbers under
+  `tests/fixtures/calibration` are synthetic stand-ins for the tests.
 
 ## License
 

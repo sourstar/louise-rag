@@ -1033,7 +1033,7 @@ unknown command. The table says where each went.
 | `corpus add --ack-terms FILE` | `hold collection ack` |
 | the web interface's *new collection* | `hold collection create --recipe FILE`; the annotations type, `hold collection create annotations` (*amended 2026-10-19*). It asks the source and a local name — and the claims file — only; the recipe is `recipes/<plugin>.toml`, the encoder, the targets and the rest are the node's (§7.4, *amended 2026-10-25*) |
 | `corpus status` | `hold collection show` |
-| `pack build`, `tools/pack_convert` | `hold records build` |
+| `pack build`, `tools/pack_convert` (removed 2026-10-25) | `hold records build` |
 | `pack verify` | `hold check` |
 | `pack cat` / `dump` | `hold records show` / `hold records show --shard` |
 | `pack adopt`, a pack with `manifest.json` and several spaces | none: every pre-Codex pack was migrated in step 8, and `dev adopt` and `dev migrate pack` were dropped unbuilt (*amended 2026-10-08*) |
@@ -1041,7 +1041,7 @@ unknown command. The table says where each went.
 | `snapshot vectors` | `hold vectors build --delta` |
 | `space repin` | `hold collection derive`, then `hold collection forget <mother> --kinds vectors` when the mother's vectors are no longer wanted here. Nothing is re-pinned in place: a shared space is never destroyed under the peers that hold it |
 | `backend check` / `rebaseline` | `hold embedder check`, `hold embedder rebaseline`. The probe baseline and its cosine threshold give way to validating each run once and checking the run identity on every answer (03 §3.3). The batch-integrity check becomes the gate's `batch_invariant`. A Codex below version 3 keeps the probe baseline (`app/verify/backend_gate.py`); its changed backend is accepted with `hold embedder rebaseline` (*2026-10-08*) |
-| `tools/calibrate_space`, `build_space_artifact` | `hold embedder calibrate` |
+| `tools/calibrate_space`, `build_space_artifact` | `hold embedder calibrate` (`tools/calibrate_space.py` stays as the statistics module that command imports — app/hold/calibrate.py — and as `--live`'s cross-backend harness; not a command) |
 | `bundle keygen` / `trust` / `trust --quarantine` | `hold key create` / `trust` / `trust --deny` |
 | `bundle export` / `import` / `status` | `hold vectors export` / `import` / `show` |
 | `bundle resweep`, `tools/vector_compliance`, `vector_sweep` | `hold vectors check [--drop]` |
