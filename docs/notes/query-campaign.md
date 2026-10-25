@@ -217,3 +217,42 @@ the tables. The failures grew over the run (1, 2, 5, 5, 9, 14, 13, 18, 8 per
 (set to p2p in the Library then). This is a reranker budget under load, not
 a fault of any variant. Where the reranker gives no answer, the product
 shows the fused order, in which the catalogue is already one of the legs.
+
+## The entity boost against 05 §5.2 — measured on TREC Precision Medicine (prepared 2026-10-25)
+
+`retrieval.ENTITY_BOOST` adds 1/60 (one virtual rank-1 vote) to the fused
+score of a candidate tagged with an entity the query names. 05 §5.2 says "a
+filter restricts; nothing boosts". The spec wins until it is changed, so
+this is a known defect (task #33, found by PR #4). Either the boost goes, or
+05 §5.2 is amended with its weight pinned. That choice waits on a number,
+because no labelled pubmed set existed (Run 2: "stays unmeasured until a
+labelled pubmed set exists").
+
+**The set is a standard one:** TREC Precision Medicine 2017 and 2018,
+scientific abstracts. Its topics name a disease and a gene or variant, and
+NIST assessors judged the PubMed abstracts 0/1/2, independently of
+Louise's tagging. The files are TREC's own, as ir_datasets catalogues
+them; the node fetches them, since this sandbox cannot reach
+trec.nist.gov. Judged documents that are not PubMed (AACR/ASCO) are left
+out. The query is the participants' common baseline: disease, then gene.
+
+**The harness:** `tools/measure/entity_boost_trecpm.py` (prepare anywhere;
+search on the node with `DATA` prepended, as the other harnesses do). It
+uses the deployed path with the reranker on, and runs each topic twice,
+with the boost as deployed and with 0, the order alternating.
+
+**Metrics, per topic, at 10:**
+- NDCG (trec_eval's, unjudged counted as 0) and the condensed NDCG (Sakai
+  2007: unjudged documents removed, because Louise contributed nothing to
+  the pool);
+- P, RR, the judged share, R@50.
+
+A topic counts only when both arms were reranked. Topics where the boost
+applied (a candidate tagged with a named entity) are reported apart: only
+there can the arms differ.
+
+**Reading it:**
+- no loss without the boost → drop it and test_entity_boost.py becomes its
+  negative;
+- a gain with it → amend 05 §5.2 with the weight pinned in the Codex.
+Either way it is a fusion change, so the numbers go in its commit.
