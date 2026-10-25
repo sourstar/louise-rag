@@ -340,6 +340,14 @@ The node's wikidata (75,896,183 documents, all `lang = "mul"` by design: an enti
 
 "Implement docs/notes/annotation-collections.md immediately … Annotations must be updated not replaced." `hold annotations update` / the API route / the Library card's *re-check claims* and *update with a claims file*: the next snapshot of the same collection, its claims re-checked against the targets' newest snapshots (records twin included), kept claims keeping their uids, left-out ones tombstoned, superseded parts and the replaced claims file kept (annotation-collections.md "Updating"; 02 §2.10, 07 §7.3, 09 §9.4 amended). Found on the way, and fixed: a peer never followed ANY collection's next snapshot — the pull acted on `snapshot` events that no code emits; it now follows what its neighbours' digests list (`accept.newer_from_digests`), annotations collections included. One update a period (monthly for gutenberg-book-editions: its next is 2026-10, written now; the one after from November).
 
+### 2026-10-25: Perugia's hand-over, and the coverage count that lied (Perugia, München)
+
+Perugia shuts down for a long time (operator). Its 1,008 bundles (336,586 chunks) were already on the node. 848 chunks of 9 books (lang=en/00872–00875), held only there, were bundled (4 bundles, 1,168 chunks) for the node to take in. The 13 München-key bundles it held cover parts the node covers fully. Perugia stays up until München's per-part confirmation.
+
+Found on the way:
+- **a race** (f386934, Perugia): two writers of one possession cache entry shared a temp file;
+- **a silent fallback** (5863f81): `counting.view_kwargs` caught the race's error and counted the rows. For a re-minted collection that is only its own bundles: 114,154 covered for 10,164,506. A failed count is now `CoverageUnknown`, never the undercount. The publish pass defers, leading's "every doubt embeds" stands by name, and the CLI and card show no figure.
+
 ### 2026-10-25: the gap between the corpus and Wikidata is recorded — "rumors" (operator)
 
 "'The gap' shall be recorded, it is an additional pillar that can be optionally used for searches, the 'rumors'. Review over review of wikidata the current 'rumors' shrink, but they are part of the collection." Design in [rumors.md](rumors.md):
