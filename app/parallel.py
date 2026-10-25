@@ -682,6 +682,19 @@ def _finished(f):
         return None
 
 
+#: pages `compute_pages` may read ahead of the one its caller takes next: the
+#: memory bound of the stream (a wikipedia page is ≤500 records). 2026-10-25,
+#: München's profile at 12 children: at two pages ahead, one long article in
+#: the oldest page held back every later page, and the cpu sat at one core
+#: for stretches between 800 % readings.
+PAGES_AHEAD = 16
+
+
+def _running(inflight) -> int:
+    """Parts submitted and not answered yet: the children they occupy."""
+    return sum(1 for *_x, f in inflight if f is not None and not f.done())
+
+
 def compute_pages(kind: str, collection, pages):
     """`compute` over a STREAM of pages: one result list per page, in order,
     with the pool's window kept full ACROSS pages — the parts of page k+1
@@ -714,14 +727,17 @@ def compute_pages(kind: str, collection, pages):
     exhausted = False
     _want(name, 1)
     mine = 0
+    deadline = time.monotonic() + config.PARSE_TIMEOUT_S
     try:
         while True:
             ex = pool()
             n = processes()
             budget = n * IN_FLIGHT_PER_CHILD
-            # fill the window: read pages ahead only while there is room
-            while not exhausted and (ex is None or mine < slots(name, budget)) \
-                    and next_page - emit <= 2:
+            # fill the window: read pages ahead while parts are RUNNING below
+            # the budget — a part that answered but waits behind a slower one
+            # for its page's turn holds no child, so it holds no slot either
+            while not exhausted and (ex is None or _running(inflight) < slots(name, budget)) \
+                    and next_page - emit <= PAGES_AHEAD:
                 page = next(pages, None)
                 if page is None:
                     exhausted = True
@@ -756,27 +772,37 @@ def compute_pages(kind: str, collection, pages):
                 sizes.pop(emit, None)
                 emit += 1
                 yield out
+                # the caller's time with a page is not the pool's silence
+                deadline = time.monotonic() + config.PARSE_TIMEOUT_S
             if not inflight:
                 if exhausted:
                     return
                 continue
-            page_no, i, part, fut = inflight.popleft()
+            page_no, i, part, fut = inflight[0]
             if fut is None:
+                inflight.popleft()
                 results[page_no][i] = _compute(kind, collection, part)
                 continue
             try:
                 # THE WATCHDOG: no part answered for PARSE_TIMEOUT_S, not
                 # "this part took longer" — one long article on a busy core
                 # is progress as long as its neighbours keep finishing
-                deadline = time.monotonic() + config.PARSE_TIMEOUT_S
-                while not fut.done():
-                    waiting = [fut] + [f for *_x, f in inflight if f is not None and not f.done()]
+                if not fut.done():
+                    waiting = [f for *_x, f in inflight if f is not None and not f.done()]
                     done, _ = wait(waiting, timeout=max(0.0, deadline - time.monotonic()),
                                    return_when=FIRST_COMPLETED)
                     if done:
+                        # progress, though perhaps not the oldest part: back to
+                        # the top, which refills the slots the finished ones freed
+                        # (2026-10-25: waiting on the oldest alone left 11 of 12
+                        # children idle behind one long article)
                         deadline = time.monotonic() + config.PARSE_TIMEOUT_S
-                    elif time.monotonic() >= deadline:
+                        continue
+                    if time.monotonic() >= deadline:
                         raise TimeoutError(f"no part answered for {config.PARSE_TIMEOUT_S:.0f} s")
+                    continue
+                inflight.popleft()
+                deadline = time.monotonic() + config.PARSE_TIMEOUT_S
                 got = fut.result()
                 owner.pop(fut, None)
                 mine -= 1
@@ -784,6 +810,8 @@ def compute_pages(kind: str, collection, pages):
                 _note_success()
                 results[page_no][i] = got
             except (BrokenProcessPool, TimeoutError, OSError, CancelledError) as e:
+                if inflight and inflight[0][3] is fut:
+                    inflight.popleft()        # the oldest part, computed in-process below
                 mine -= 1
                 _occupy(name, -1)
                 for _p, _i, _part, f in inflight:
