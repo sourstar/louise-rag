@@ -4905,6 +4905,9 @@ JOB_POLL_S = 2.0
 #: call cannot be cut, and one not done by then is queued again at the next
 #: start (app/jobs.py) — the pipeline joins keep the rest of the grace period
 JOB_STOP_WAIT_S = 20.0
+#: api_commands.KILL_AFTER_S and a margin: the command thread requeues its
+#: job after the child has gone, which this waits for.
+COMMAND_STOP_WAIT_S = 75.0
 #: how often finished jobs are swept
 JOB_SWEEP_S = 600.0
 
@@ -5034,6 +5037,12 @@ def run_forever():
     threading.Thread(target=jobs_mod.serve_deposits, args=(_stop,),
                      kwargs={"log": lambda m: print(m, flush=True)},
                      name="deposits", daemon=True).start()
+    # any command POSTed to its route (07 §7.4, app/api_commands.py): one at
+    # a time, on a thread of its own — a records build must not hold a create
+    command_thread = threading.Thread(target=jobs_mod.serve_commands, args=(_stop,),
+                                      kwargs={"log": lambda m: print(m, flush=True)},
+                                      name="commands", daemon=True)
+    command_thread.start()
     # a deposit collection's URL sources (06 §6.7): their own thread, since a
     # sitemap is many pages and a clone takes minutes
     from .hold import sources as sources_mod
@@ -5232,6 +5241,9 @@ def run_forever():
     if job_thread.is_alive():
         print("[info:jobs] node: the job in hand did not finish before the stop; "
               "it is queued again at the next start", flush=True)
+    # a command in hand was sent SIGTERM by its thread; it finishes its unit
+    # or is killed (api_commands.KILL_AFTER_S), and is queued again either way
+    command_thread.join(timeout=COMMAND_STOP_WAIT_S)
     _join_pipeline_threads()
     _release_locks()                     # the node holds a lock only while it runs
     parallel.shutdown()             # the parse pool's children go with the worker

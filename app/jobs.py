@@ -59,7 +59,13 @@ SHARE_FETCH = "share-fetch"
 #: that is embedding a calibration set for minutes; in every mode, because
 #: an agent writing its memory is not the node's background work.
 DEPOSIT = "deposit"
-KINDS = (CREATE, CREATE_ANNOTATIONS, UPDATE_ANNOTATIONS, EXPORT, DEPOSIT, SHARE_FETCH)
+#: Any command of the tree, POSTed to its route (07 §7.4,
+#: app/api_commands.py): `python -m app.louise <argv>` run by the worker,
+#: which holds the key and the locks. Its own thread (`serve_commands`),
+#: one at a time — a records build may take hours and must not hold a
+#: create behind it; in every mode, as the same command typed on the node.
+COMMAND = "command"
+KINDS = (CREATE, CREATE_ANNOTATIONS, UPDATE_ANNOTATIONS, EXPORT, DEPOSIT, SHARE_FETCH, COMMAND)
 
 #: A deposit job's row names a key, and 02 §2.9 lets nothing name an erased
 #: deposit: the web deletes the row when it has read the result (`forget`),
@@ -153,6 +159,8 @@ def waiting_because(job: Job, mode: str) -> str | None:
     """Why a queued job is not running, in the Library's words."""
     if job.state != QUEUED:
         return None
+    if job.kind == COMMAND:
+        return "queued: the worker runs commands one at a time, in order"
     if job.kind not in kinds_allowed(mode):
         label = dict(node_state.MODE_LABELS).get(mode, mode)
         return (f"waiting: the node is set to “{label}”, and creating a "
@@ -431,6 +439,47 @@ def serve_deposits(stop, poll_s: float = 0.2, log=print) -> None:
                 continue
             if done is None:
                 stop.wait(poll_s)
+    finally:
+        con.close()
+
+
+def serve_commands(stop, poll_s: float = 1.0, log=print) -> None:
+    """The command thread: every queued COMMAND, oldest first, until `stop`
+    is set. A command the stop interrupts — the child sent SIGTERM finishes
+    its unit and exits 130 (07 §7.7) — is queued again, as a running job is
+    at the next start (`requeue_running`): every command is resumable and
+    safe to re-run (invariant 2)."""
+    from . import api_commands
+    con = connect()
+    try:
+        while not stop.is_set():
+            try:
+                job = claim(con, (COMMAND,))
+            except sqlite3.Error:
+                stop.wait(poll_s)
+                continue
+            if job is None:
+                stop.wait(poll_s)
+                continue
+            what = job.args.get("command", "?")
+            log(f"[info:jobs] job {job.id} (louise {what}) started")
+            try:
+                got = api_commands.run(job.args["argv"], stop=stop)
+            except Exception as e:                      # noqa: BLE001
+                fail(con, job.id, f"{type(e).__name__}: {e}")
+                log(f"[warn:jobs] job {job.id} (louise {what}) failed: {e}")
+                continue
+            if got.get("interrupted"):
+                con.execute("UPDATE jobs SET state=?, started=NULL WHERE id=?", (QUEUED, job.id))
+                log(f"[info:jobs] job {job.id} (louise {what}) interrupted, queued again")
+            elif got["exit"] == 0:
+                finish(con, job.id, got)
+                log(f"[info:jobs] job {job.id} (louise {what}) done")
+            else:
+                con.execute("UPDATE jobs SET state=?, result=?, error=?, finished=? WHERE id=?",
+                            (FAILED, json.dumps(got, sort_keys=True), got["message"][-2000:],
+                             time.time(), job.id))
+                log(f"[warn:jobs] job {job.id} (louise {what}) exit {got['exit']}")
     finally:
         con.close()
 

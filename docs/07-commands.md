@@ -730,6 +730,24 @@ process, which holds only the public key (§7.8; operator, 2026-09-29):
 follows one. A create waits while the node's mode does not embed. The web interface is a client of these routes and
 shows the command line of every action it offers.
 
+*Built 2026-10-25 (operator: "Http api, I choose A"), app/api_commands.py.*
+One route answers every command of the tree, built from `louise`'s own
+parser, so a command added to the tree is a route; an explicit route for
+the same path answers first. Positional arguments are keys too, by name
+(`{"collection": "pubmed"}`); a list is a flag's several values; `true`
+sets a switch. A `GET` (`show`, `list`) runs the command at once — the
+CLI itself, in a child process, bounded at two minutes — and the status
+is its exit code as above. EVERY `POST` is queued (202) and run by the
+worker's command thread, one at a time, in every mode: the worker holds
+the key and the locks, and a command may outlive any request. Its job's
+result carries `exit`, `status`, `output` (the `--json` object) and
+`message`; a command a stop interrupts is queued again (invariant 2). Not
+routed: `node start` (the daemon itself), `ask` (its own routes, answered
+at once under the user's token), `user` (prints a token once, which a job
+row would keep — invariant 8; `/admin/api/users`), `dev` (operator
+instruments stay on the command line, RULE 2). Every route takes the admin
+token.
+
 *Amended 2026-10-19.* `hold collection create annotations` (§7.3; 02
 §2.10) is `POST /api/hold/collection/create-annotations`, whose input
 that is not a flag is the claims file: the flags are query parameters

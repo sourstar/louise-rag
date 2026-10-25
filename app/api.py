@@ -1143,3 +1143,9 @@ def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
                      len(result["hits"]), _source_qualified_ids(result["hits"]))
 
     return StreamingResponse(sse(), media_type="text/event-stream")
+
+
+# LAST: every command of the tree as one route (07 §7.4, app/api_commands.py).
+# Registered after every explicit route, which therefore answers first.
+from . import api_commands  # noqa: E402
+app.include_router(api_commands.router)
