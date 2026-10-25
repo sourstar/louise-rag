@@ -26,14 +26,6 @@ def get_cached(con, book_id: int):
     return dict(row) if row else None
 
 def summarize_book(con, book_id: int, force: bool = False) -> dict:
-    """`_summarize_book`, with the node's claim held from the first chapter
-    to the reduce (dispatch.query_in_process): a person waits on it."""
-    from . import dispatch
-    with dispatch.query_in_process():
-        return _summarize_book(con, book_id, force)
-
-
-def _summarize_book(con, book_id: int, force: bool = False) -> dict:
     if not force:
         cached = get_cached(con, book_id)
         if cached:

@@ -435,23 +435,6 @@ _board = _Board()
 
 
 @contextmanager
-def query_in_process():
-    """A person's query, from its first step to its last: the node's claim
-    held for the whole of it, not per model call. Between two steps (the
-    legs, the fusion, a chat round's tool call) no model call is live, and a
-    per-call claim let corpus work slip a request in that the next step then
-    waited behind (München, 2026-10-25: the clock flickered 1400/400 between
-    a search's reranks). Operator: "the subsequent steps of a query in
-    process shall be processed first". Nests: an inner call holds nothing
-    more."""
-    _board.enter()
-    try:
-        yield
-    finally:
-        _board.leave()
-
-
-@contextmanager
 def interactive(level: Level):
     """An interactive model call at `level`: declares the level for the
     requests inside, and holds the node's claim for as long as the call
