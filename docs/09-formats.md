@@ -1679,22 +1679,22 @@ run_id = H( canonical JSON of
 The platform computes it from what it launched, never from a
 declaration, and states it in one of two ways (*amended 2026-10-08*,
 docs/notes/vega.md): VeGa by a **receipt** for every input (below);
-RAGE, until it retires, in the response header `Louise-Run` of every
-answer, which stays defined as it was for the endpoints behind RAGE and
-counts for nothing on an answer through VeGa. Each describes a run on
-request — VeGa at `GET /vega/runs/<run_id>`, RAGE at
+a **front** — an endpoint not behind VeGa — in the response header
+`Louise-Run` of every answer, which counts for nothing on an answer
+through VeGa. Each describes a run on
+request — VeGa at `GET /vega/runs/<run_id>`, a front at
 `GET /louise/runs/<run_id>` — answering with that same object, which is
 where a statement's `engine`, `weights` and `driver` come from.
 
 Five things make "what it launched" computable, and a platform that
 states a run follows all five:
-- **`image`.** Behind RAGE: a process cannot see the digest of the image
-  it runs in; only the container runtime knows it. RAGE therefore learns
+- **`image`.** Behind a front: a process cannot see the digest of the image
+  it runs in; only the container runtime knows it. A front therefore learns
   its `image` from a deployment pinned by digest and refuses to start
   otherwise: a tag is not an image. A digest-pinned deployment IS the
   observation, since the runtime runs nothing else. An engine the
   runner installed after the image was built — a backend fetched at
-  run time — is not in that image, and RAGE states no run for it.
+  run time — is not in that image, and a front states no run for it.
   Behind VeGa every engine is such a backend, and its `image` is the
   tree digest of its installed files (§9.3), which the wrapper computes
   at every load while the backend loads, reading again only a file whose
@@ -1705,7 +1705,7 @@ states a run follows all five:
   variables set for the engine — never the process's raw argument vector
   and environment, which carry a port, a path and a container's host
   name that change at every start and would make every restart another
-  run. RAGE checks that the process serving the answer is the one it
+  run. A front checks that the process serving the answer is the one it
   read them for — by pid and start time, before and after the answer —
   and that it matches them; a process that does not match states none.
   VeGa's wrapper is the backend's parent: the vector is the one it
@@ -1715,7 +1715,7 @@ states a run follows all five:
   receipt.
 - **`options`.** For an engine that receives its load options over its
   own protocol, the options as the runner sent them (§9.3) — behind
-  RAGE read at every launch from the runner's record of that load, never
+  a front reads at every launch from the runner's record of that load, never
   from its configuration, which the runner completes with defaults of
   its own; behind VeGa the load call itself, which the wrapper receives.
   The environment the runner sets for it is its `env`, not an option.

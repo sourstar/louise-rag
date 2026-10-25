@@ -235,12 +235,9 @@ changed an input or a vector, or sent a request to a backend without
 the wrapper, is caught by the writer and never trusted. Together they
 are a trusted processing platform: a model reloaded with another flag,
 a backend upgraded, a driver updated underneath it is each a different
-run, and says so on its next receipt. The second part was RAGE, the RAG
-Engine, until 2026-10-08: a front that computed the run from the
-process the kernel showed and stated it in a header of each answer
-(09 §9.12, `Louise-Run`; operator, 2026-10-03). It serves until VeGa
-replaces it, and an endpoint behind it is held to the rules below with
-its header in place of a receipt.
+run, and says so on its next receipt. An endpoint not behind VeGa that
+states its run in the `Louise-Run` header of each answer (09 §9.12) is
+held to the rules below with the header in place of a receipt.
 
 - **Embedding** (`vectors build`, `share contribute`): a vector is
   written only if the answer that carried it names a run validated for
