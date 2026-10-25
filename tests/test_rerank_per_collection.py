@@ -31,6 +31,8 @@ def _hits(prefix, n):
 
 
 class _Resp:
+    status_code = 200
+
     def __init__(self, data):
         self._data = data
 

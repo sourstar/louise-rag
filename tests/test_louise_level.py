@@ -194,4 +194,4 @@ def test_a_streamed_answer_is_read_in_either_protocol(chat_server, monkeypatch):
 
 def test_the_levels_header_names_are_the_specs():
     assert dispatch.LEVEL_HEADER == "Louise-Level"
-    assert [l.name.lower() for l in Level] == ["corpus", "translate", "chat", "rerank", "query"]
+    assert [l.name.lower() for l in Level] == ["corpus", "translate", "query", "rerank", "chat"]

@@ -250,6 +250,10 @@ def _request_vectors(batch: list[Item], timeout: float,
     # the caller's level, for the model container's clock (09 §9.12): CORPUS
     # from the worker, QUERY from a search — whatever this thread works as
     level = dispatch.level_headers()
+    # corpus work stands aside on the whole card while a person's query runs
+    # (app/dispatch.py, operator 2026-10-25) — its warm, which may LOAD a
+    # model beside the query's, included; the gate checks again at admission
+    dispatch.stand_aside(recipe.url, timeout)
     # the model's LOAD is not this request's: warmed first, under its own
     # bound, when the runner says it is not loaded (app/model_load.py)
     _warm_first(batch, recipe, level)

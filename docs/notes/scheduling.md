@@ -970,6 +970,18 @@ embedding. The operator's rules:*
 - *The threads feeding the GPU outrank indexing and parsing: "the CPU
   load to feed the GPU is trivial but crucial".*
 
+**Amended 2026-10-25 (operator): "Embedding shall have the lower
+priority and query processing the highest; the subsequent steps of a query
+in process shall be processed first to avoid wasting the effort spent for
+the previous steps."**
+- The levels are now a query's steps in order: CORPUS < TRANSLATE < QUERY <
+  RERANK < CHAT.
+- Corpus work stands aside on the WHOLE CARD while a query holds the claim:
+  its next request waits, bounded by its own timeout, and wakes on stop.
+- The device-wide yield removed on 2026-09-20 returns, because the GPU
+  governor now holds the clock that its absence cost chat.
+- Why: the night of 2026-10-24 (scheduling-log.md).
+
 ### What was measured first
 
 All on the live node, read-only, with the `xe` driver's per-client

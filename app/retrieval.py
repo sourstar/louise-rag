@@ -611,7 +611,7 @@ def _rerank_call(recipe, body: dict, timeout: float, deadline: float) -> dict:
         with dispatch.call(recipe.url, dispatch.Level.RERANK, timeout=timeout):
             r = httpc.post(recipe.url, json=body, timeout=timeout,
                            headers=dispatch.level_headers())
-        if getattr(r, "status_code", 200) >= 500 and attempt == 1:
+        if r.status_code >= 500 and attempt == 1:
             left = deadline - time.monotonic() - RERANK_RETRY_PAUSE_S
             if left >= 1.0:
                 time.sleep(RERANK_RETRY_PAUSE_S)

@@ -1850,8 +1850,11 @@ refusal.
 **The request's level.** Every request a node makes to a model endpoint
 — an encoder, a reranker, the chat model, the translation model —
 carries the request header `Louise-Level`, one of `corpus` ·
-`translate` · `chat` · `rerank` · `query`, lowest first: the node's own
-order of model work. It is advisory. RAGE uses it to hold the device's
+`translate` · `query` · `rerank` · `chat`, lowest first: the node's own
+order of model work — corpus embedding, then a query's steps in their order,
+so a query further along goes first (*amended 2026-10-25, operator*: the
+same five values; the order was corpus · translate · chat · rerank · query).
+It is advisory. RAGE uses it to hold the device's
 clock while a person waits, and may use it for nothing an answer
 depends on: the same request gives the same answer at every level, and
 an endpoint that ignores the header loses nothing but speed.

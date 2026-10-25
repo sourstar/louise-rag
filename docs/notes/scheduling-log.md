@@ -1070,3 +1070,49 @@ records build's default becomes the whole quota (the build's parent only
 feeds and writes); the node worker keeps quota − 1 (its parent runs the
 round loop and the API). That change ships with these numbers in its
 commit, not before.
+
+### 2026-10-25 — query processing highest, corpus embedding lowest, a query's later step first (operator) — PREPARED
+
+**Operator:** "Embedding shall have the lower priority and query processing
+the highest; the subsequent steps of a query in process shall be processed
+first to avoid wasting the effort spent for the previous steps."
+
+**Change (app/dispatch.py, app/embeddings.py):**
+- The levels are a query's steps in order: CORPUS < TRANSLATE < QUERY
+  (embedding) < RERANK < CHAT (the answer). The 2026-09-19 order put query
+  embedding on top and chat below the rerank. Where a query's steps meet at
+  one gate, the one further along goes first.
+- Corpus work stands aside ON THE WHOLE CARD while any step of a person's
+  query holds the node's claim. Its next request, and the warm that may load
+  a corpus encoder, wait for the claim to clear. A request already sent
+  finishes. The wait is bounded by the request's own timeout (then a
+  deferral, nothing on the document) and wakes on stop.
+- The 2026-09-20 removal of this yield was for chat's clock (87–92 s at
+  990 MHz alone). The GPU governor now holds the clock for the claim's
+  lifetime; pinned, standing aside measured 64.2 s against 67.5 s.
+
+**BEFORE (the night of 2026-10-24, München).** Scenario: normattiva
+re-embedding (vega-qwen3-embedding-4b) from 22:30 by its cron; the campaign's
+run 5 tail and the heading full search (3 arms, reranker on) from 23:04; the
+records build on CPU; the GPU at 85–86.5 % VRAM at the reclaimer's 4 fires.
+- /v1/rerank (louise-rerank-bge, parallel:1): 5,662 × 200, **130 × 500
+  (2.2 %)**, all between 23:00 and 03:00 CEST. None by day (50 calls, one
+  test beside 16 embedding batches).
+- Queries losing their rerank: **19 % of first searches** (95/496), 3 % of
+  repeats.
+- Live searches: t_rerank **30.4 s** (20:05) and **42.6 s** (00:06; that
+  minute normattiva sent 86 embedding calls, and 2 of the 5 reranks were
+  refused).
+
+**AFTER (to fill), same scenario:**
+- the per-call 500 rate (the harness logs every refused call with LocalAI's
+  body, d6ddc85);
+- rerank ms per call;
+- per-query misses;
+- live t_rerank;
+- normattiva's documents/hour while the campaign runs: what corpus pays,
+  since its requests now wait whenever a query is live.
+
+Deployed together with the one-retry on a 5xx (b573be4). The per-call 500
+rate is the priority's alone, because the harness counts every POST,
+retried or not.
