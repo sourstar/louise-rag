@@ -72,6 +72,8 @@ through with the commit that closes them.
 
 ## 6. Decisions for the operator
 
+- ~~Gene references (HGNC, ClinVar, gnomAD, HomoloGene)~~ — kept (operator, 2026-10-25): not needed by PubMed's records, but they give gene fact cards and tag PubMed documents for the `keys` filter.
+
 - ~~The HTTP API~~ — decided: A, build the generic route (2026-10-25).
 - ~~Retention~~ — decided A (2026-10-25): applied to 01, 02, 04, 06, CLAUDE.md and app/hold/shard.py; pubmed's `origin_versions` still to check.
 - pubmed's OtherAbstract records ([pubmed-other-abstracts.md](pubmed-other-abstracts.md)).
