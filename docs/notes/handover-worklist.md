@@ -55,9 +55,9 @@ through with the commit that closes them.
 
 ## 4. Defects in the text or code
 
-- 07 §7.3: the `reindex` entry was spliced into `drop-rows`' text.
-- app/louise.py: 24 mojibake sequences ("Â§"), visible in `--help`.
-- CLAUDE.md: "`pack build` until the migration lands" — the migration is complete and `pack build` is retired.
+- ~~07 §7.3: the `reindex` entry was spliced into `drop-rows`' text.~~ (5da3dd9)
+- ~~app/louise.py: 24 mojibake sequences, visible in `--help`.~~ (repaired 2026-10-25)
+- ~~CLAUDE.md: "`pack build` until the migration lands".~~ (5da3dd9)
 - tools/calibrate_space.py, tools/pack_convert.py: retired by 07 §7.6 — remove or say what still uses them.
 
 ## 5. Invariants enforced by review alone
@@ -94,7 +94,7 @@ LocalAI and upstream bug reports and the Wikidata report (the operator
 files them); the Gazzetta's certified records (a certifier body); the
 card's fan (firmware or xe driver).
 
-## 9. Notes superseded but not marked at their top
+## 9. ~~Notes superseded but not marked at their top~~ (5da3dd9: each now opens with what superseded it)
 
 architecture-v2.md, p2p-rag-architecture-v2.md, p2p-discovery.md,
 lockss-p2p-evaluation.md, implementation-prompts.md, pack-format.md,
