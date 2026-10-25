@@ -249,6 +249,18 @@ Everything except two items travels through this repository.
 | **Phase 2** — swarm | **built** per 04 §4.2: BitTorrent v2 via libtorrent, digests, neighbours, the peer list and the offer (`app/share/gossip.py`, `peers.py`, `offer.py`). [`p2p-discovery.md`](p2p-discovery.md) is the earlier design. |
 | **Phase 3** — decentralize | no DHT of our own; libtorrent's mainline DHT finds swarms by the collection's swarm key (04 §4.2). |
 
+### 2026-10-25: the operator's decisions on the spec audit — every plate, keep all, the catalogue exception, CLAUDE.md aligned, a run gives back its own bytes, no silent dateless records
+
+From the audit of docs 01–09 against CLAUDE.md (2c6642e), the operator decided:
+- **"Every plate."** Every image the origin has is carried as opaque bytes, SVG and over-cap ones included. Only display decodes, and it admits only JPEG/PNG within the caps; any other plate is offered as a download (being built: a gutenberg parser bump, re-created under RULE 1).
+- **"Keep all."** A web page subscribed to a deposit is kept byte-exact, and its record is parsed from it (being built).
+- **"The final goal is the quality of the information retrieval."** The catalogue's first record after the reranker is kept, named as invariant 4's one exception (05 §5.6).
+- **"Align claude to the code."** Invariants 1, 4 and 10 updated.
+- **Batching, choice A.** The gate fails a run whose single-text passes differ (invariant 12, now measured). Batched answers must equal the single-text bytes, or the run is limited to one-at-a-time work (the 2026-10-12 band is gone).
+- **Dateless records, choice A.** A record a dated snapshot cannot place is a defect to fix, never a silent exclusion. Gutenberg's cause is a missing or damaged pg<N>.rdf in our copy. PubMed's record parser already falls back to MedlineDate and ArticleDate, so a dateless PubMed record means NCBI gave no date of any kind. Counts are asked of München before the fix.
+- **RULE 2.** The Library's dialogs ask only a name; the node resolves the encoder from the Codex's weights (being built).
+- **Invariant 5.** A deposit source's git clone draws from the bandwidth budget before it starts (next).
+
 ### 2026-10-25: the records build A/B — every part byte-identical; the build takes the whole cpu quota
 
 München ran en/2M's first 250,000 records of wikipedia-v8 (2,096,112 chunks, 125 parts, a 4-cpu quota) under four trees. The 125 parts were byte-identical in all seven runs. Wall time:
