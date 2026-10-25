@@ -50,17 +50,27 @@ def test_a_class_takes_its_nearest_root_and_a_tie_goes_to_the_first_family():
         (300, 811979), (300, 43229),  # one step to built structure and to organization: built, first
         (400, 401), (401, 400), (401, 271669),   # a P279 cycle under landform: settled once
         (500, 13442814), (13442814, 17537576),  # under scholarly article, itself a root under creative work
-        # a legal act one step under Wikimedia internal item and three under
-        # creative work (the node's first map, 2026-10-24): internal is a
-        # FALLBACK, so the work wins; a category reaches nothing else
-        (600, 17442446), (600, 700), (700, 800), (800, 17537576), (601, 17442446),
+        # a statutory instrument as the node's dump has it (2026-10-25):
+        # → statutory instrument → legislation → "Wikidata item that needs to
+        # be split" → Wikidata item → Wikimedia internal item, and far under
+        # creative work. Legislation is a WORK root, so the instrument is a
+        # work; a category one step under internal is internal (no fallback)
+        (600, 700), (700, 49371), (49371, 91615393), (91615393, 16222597),
+        (16222597, 17442446), (49371, 800), (800, 801), (801, 802), (802, 17537576),
+        (601, 17442446), (601, 610), (610, 611), (611, 17537576),
     ])
     got = families.nearest_roots(child, parent)
     code = {v: k for k, v in families.CODE.items()}
     assert code[got[100]] == "place" and code[got[300]] == "built"
     assert code[got[400]] == code[got[401]] == "place"
     assert code[got[13442814]] == code[got[500]] == "scholarly", "a root is its own family's, at distance 0"
-    assert code[got[600]] == "work" and code[got[601]] == "internal"
+    assert code[got[600]] == code[got[49371]] == "work" and code[got[601]] == "internal"
+    without = {f: rs for f, rs in families.ROOTS.items()}
+    without["work"] = tuple(r for r in without["work"] if r != 49371)
+    got = families.nearest_roots(child, parent, without)
+    assert code[got[600]] == "internal", "without legislation's root, the one bad edge decides"
+    got = families.nearest_roots(child, parent, fallback=("internal",))
+    assert code[got[601]] == "work", "as a FALLBACK internal loses even its categories (the second map)"
     assert code[got[5]] == "person" and 999 not in got
 
 
@@ -648,15 +658,17 @@ def test_a_class_s_shortest_path_to_each_family_s_root_explains_the_map():
     assert families.paths_to_roots(lambda q: up.get(q, ()), 601, depth=1) == {"internal": [601, 17442446]}
     child, parent = zip(*[(c, p) for c, ps in up.items() for p in ps])
     fmap = families.load_map(families.build_map(child, parent, max_item=10**9, dump="d"))
-    assert fmap.name(fmap.code_of_class(601)) == "work", "internal is a FALLBACK: the longer path won"
+    assert fmap.name(fmap.code_of_class(601)) == "internal", "the nearer root wins"
+    fmap = families.load_map(families.build_map(child, parent, max_item=10**9, dump="d", fallback=("internal",)))
+    assert fmap.name(fmap.code_of_class(601)) == "work", "as a FALLBACK, the longer path won (the second map)"
 
 
 def test_a_candidate_s_family_sizes_are_estimated_from_the_classes_that_decided():
     child, parent = (601, 601, 610, 611, 3305213), (17442446, 610, 611, 17537576, 17537576)
-    old = families.load_map(families.build_map(child, parent, max_item=10**9, dump="d"))
-    new = families.load_map(families.build_map(child, parent, max_item=10**9, dump="d", fallback=()))
+    old = families.load_map(families.build_map(child, parent, max_item=10**9, dump="d", fallback=("internal",)))
+    new = families.load_map(families.build_map(child, parent, max_item=10**9, dump="d"))
     work, internal, other = old.code("work"), old.code("internal"), old.other
-    deciding = {(work, 601): 10, (work, 3305213): 4, (other, 523): 2}
+    deciding = {(work, 601): 10, (work, 3305213): 4, (other, 999999): 2}
     sizes, moved = families.preview(deciding, {work: 15, other: 5}, old, new)
     assert sizes["work"] == 5 and sizes["internal"] == 10 and sizes["other"] == 5
     assert moved == [("work", "internal", 601, 10)]

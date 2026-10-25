@@ -116,6 +116,49 @@ minutes and without another pass. The first candidate,
 Its paths and preview decide each root. The legislation that once landed in
 `internal` is checked by its own path.
 
+**The third revision, adopted 2026-10-25 (the code's roots).** The paths
+and preview of candidate 1 (München, 07:10 CET; on main,
+`wikidata-coverage-2026-10-24/{families-162b7654fcd2c534,candidate-roots-1}.classes.json`)
+confirmed both unverified ids: Q6999 "astronomical object" and Q3024240
+"historical country", the latter reaching `place`. Every large move went
+where intended:
+- Wikimedia categories, disambiguation pages, templates, lists and modules → `internal`;
+- stars, galaxies, radio sources, binaries, asteroids and quasars → `astronomy`;
+- chemical entities, genes, proteins and stereoisomers → `molecular`;
+- versions/editions (830 k), written works (156 k), documents (139 k), issues and volumes → `work`;
+- cemeteries (277 k) → `heritage`.
+
+Legislation stayed in `work`, but by one edge. Its path to `internal` runs
+legislation (Q49371) → "Wikidata item that needs to be split" (Q91615393) →
+Wikidata item → Wikimedia internal item: 6–8 steps, against 8–10 to creative
+work. So **legislation is a `work` root**, and the bad edge goes in the
+standing report to Wikidata.
+
+Estimated entities per family (records and pruned):
+
+| family | entities |
+|---|---|
+| scholarly | 46,125,519 |
+| heritage | 3,206,992 |
+| built | 3,169,402 |
+| event | 1,473,369 |
+| person | 13,736,789 |
+| place | 6,773,578 |
+| organization | 3,668,794 |
+| work | 9,833,914 |
+| taxon | 4,168,953 |
+| astronomy | 8,380,425 |
+| molecular | 3,538,551 |
+| internal | 9,247,136 |
+| property | 13,972 |
+| other | 8,569,598 (was 22.5 M) |
+
+Left in `other`, deliberately: collections and collectables, items of
+collection or exhibition, clinical trials, family names, and "constitutional
+republic", which countries also carry while their country and
+sovereign-state classes are `place`. The creation map and the codes under
+these rules (a pass of about an hour), then their report, decide `create`.
+
 **Families, in precedence order** (an entity in several takes the first):
 
 | family | an entity is in it when | measured (dump 20261012) |

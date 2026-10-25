@@ -42,37 +42,48 @@ from typing import Callable, Iterable, Mapping, Optional
 #: read by it, so a family added here later leaves every pinned map — and the
 #: collection it slices — readable as it was (wikidata-family-slices.md §7)
 FAMILIES: tuple[str, ...] = ("scholarly", "heritage", "built", "event", "person", "place", "organization",
-                             "work", "taxon", "internal", "property", "lexeme", "other")
+                             "work", "taxon", "astronomy", "molecular", "internal", "property", "lexeme",
+                             "other")
 CODE: dict[str, int] = {f: i + 1 for i, f in enumerate(FAMILIES)}
 OTHER = CODE["other"]
 #: the classes whose subclasses (P279, any depth) make a family, by number
-#: (wikidata-family-slices.md §5, revised 2026-10-24 on the node's first
-#: report, München's review):
+#: (wikidata-family-slices.md §5). Revised twice on 2026-10-24 from the
+#: node's top-class lists, each revision trading one error for another; the
+#: third, below, was chosen on the dump's own P279 paths and a preview of
+#: every family's size (`louise dev wikidata-classes`, candidate-roots-1 plus
+#: legislation; München, 2026-10-25):
 #: scholarly article; HERITAGE — monument, archaeological site, heritage
-#: site (and, per entity, a heritage designation); BUILT — built structure,
-#: architectural element (the first map put every street, house and gas
-#: station in "heritage"); planned event, military operation, war, calamity,
-#: massacre, explosion, geographically localized event, severe weather,
-#: demonstration or protest; human; PLACE — human settlement, administrative
-#: territorial entity, landform, body of water, protected area ("geographical
-#: feature" took church buildings nearer than built structure did);
-#: organization; creative work; taxon; Wikimedia internal item
+#: site, cemetery (and, per entity, a heritage designation); BUILT — built
+#: structure, architectural element; EVENT — planned event, military
+#: operation, war, calamity, massacre, explosion, geographically localized
+#: event, severe weather, demonstration or protest; human; PLACE — human
+#: settlement, administrative territorial entity, landform, body of water,
+#: protected area, country, sovereign state; organization; WORK — creative
+#: work, version/edition/translation, written work, document, legislation
+#: (legislation's path to "Wikimedia internal item" runs through one
+#: mis-modelled edge, "Wikidata item that needs to be split": as a root it no
+#: longer hangs on that edge); taxon; ASTRONOMY — astronomical object, star,
+#: galaxy; MOLECULAR — type of chemical entity, gene, protein, group of
+#: stereoisomers; Wikimedia internal item
 ROOTS: dict[str, tuple[int, ...]] = {
     "scholarly": (13442814,),
-    "heritage": (4989906, 839954, 358),
+    "heritage": (4989906, 839954, 358, 39614),
     "built": (811979, 391414),
     "event": (1656682, 645883, 198, 1689296, 3199915, 179057, 123349687, 741507, 130260549),
     "person": (5,),
-    "place": (486972, 56061, 271669, 15324, 473972),
+    "place": (486972, 56061, 271669, 15324, 473972, 6256, 3624078),
     "organization": (43229,),
-    "work": (17537576,),
+    "work": (17537576, 3331189, 47461344, 49848, 49371),
     "taxon": (16521,),
+    "astronomy": (6999, 523, 318),
+    "molecular": (113145171, 7187, 8054, 59199015),
     "internal": (17442446,),
 }
-#: FALLBACK families take only the classes no other root reaches: the first
-#: map filed UK Statutory Instruments, Irish SIs and acts of parliament under
-#: Wikimedia internal item (a polluted path nearer than creative work's)
-FALLBACK: tuple[str, ...] = ("internal",)
+#: FALLBACK families take only the classes no other root reaches. None since
+#: 2026-10-25: as a fallback, `internal` lost every Wikimedia category,
+#: disambiguation page, template and list (~8.7 M) to creative work's longer
+#: path; the legislation it once drew is held by its own root instead
+FALLBACK: tuple[str, ...] = ()
 #: well-known classes the report places, by number, so a map is read before
 #: `create` without guessing from top-25 lists: city, municipality, comune of
 #: Italy, commune of France, municipality of Germany, church building,
