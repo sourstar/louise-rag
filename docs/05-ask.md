@@ -473,7 +473,8 @@ louise_search(query, collections?, space?, filters?, limit?, rerank_depth?,
        withheld: [{collection_id, shards, reason}],
        legs_withheld: [{collection_id, leg, reason}],     -- leg is "vector"; the copy IS searched, on its text leg (§5.3)
        translations: [...]}   -- shards: a list, or "all" for a copy in quarantine (§5.3)
-    filters: {<facet field>: <value> | {not: <value>}}
+    filters: {<facet field>: <value> | {not: <value>}}   -- a range facet's value is "FROM..TO",
+                                                         -- either end omitted for open (§5.7; amended 2026-10-25)
 louise_lookup(id)
     → {facts: [<fact, §5.3>], unresolved: [<canonical id>]}
 louise_traverse(id, relation?, depth?, resolve_in?)   -- resolve_in: the collections an edge into another collection is resolved against (§5.5; added 2026-10-07)
@@ -697,7 +698,25 @@ PubMed's `"Neoplasms/genetics"` is the descriptor `Neoplasms` and its
 qualifier `genetics`, so the tree has two levels, and a taxonomy with
 five separators has five. `kind: "range"` is ordered rather than
 enumerated — dates — and is listed as bounds, not as every value.
-Building it is one pass over the metadata of the records held:
+
+**A range is filtered in its type's order** (*amended 2026-10-25*,
+built). The Codex declares the kind and not the type, so the type is
+the field's: `date` is a date (09 §9.5), and another range field
+(`extra.<key>`) is a date or a number by its values — never both, or it
+is not filterable and the listing says so; a value of neither is counted
+as unparsed and is in no range. A date is the span its precision names,
+`1999` the whole year and `1999-06` the whole month, and `FROM..TO` (07
+§7.3) runs from the first day of FROM to the last of TO, both included.
+A record is admitted when one of its values lies wholly within the
+range — what is certainly in it, not what may be — and a number is
+compared as a number. The values are read out of the record parts
+held, part by part and again only for a part re-issued, because the
+manifest carries no `date` and no `extra`; the filter reads them through
+an index ordered by the start of each span, and stops as soon as more
+records than the legs take (§5.2's 20 000) are admitted, so a range too
+broad is refused for what it admits, at a cost bounded by that number.
+
+Building the listing is one pass over the metadata of the records held:
 
 ```
 Neoplasms          26,443
@@ -719,7 +738,9 @@ peer and the listing says why; a tree whose full paths pass that bound
 is counted to depth 1 — PubMed's descriptors without their qualifiers —
 and the listing says `depth: 1`. The index a filter reads (§5.2) holds
 only values narrow enough for a filter to use, at most 20 000 records
-each, and no more than 20 million rows per field; a broader value is
+each (a range facet's holds every value, since one range is answered
+from many; *amended 2026-10-25*), and no more than 20 million rows per
+field; a broader value is
 refused by its count, a deeper one than the depth counted is refused
 naming the value to filter by, and the listing says per field whether
 it is `filterable` here.

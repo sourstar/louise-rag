@@ -4855,7 +4855,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--translate", action="store_true")
     p.add_argument("--all-languages", action="store_true")
     p.add_argument("--filter", action="append", metavar="FACET=VALUE",
-                   help="restrict the legs to a facet value (05 §5.2); FACET=!VALUE excludes")
+                   help="restrict the legs to a facet value (05 §5.2); a range facet takes FROM..TO, "
+                        "either end omitted for open; FACET=!VALUE excludes")
     p.set_defaults(fn=cmd_ask_search)
     p = akverbs.add_parser("chat", help="the chat model with the three tools of 05 §5.4; needs CHAT_URL")
     p.add_argument("question", nargs="+")

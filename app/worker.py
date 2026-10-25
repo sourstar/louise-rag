@@ -2114,7 +2114,7 @@ def _maintain_ask_indexes(con, collection) -> bool:
         # 2026-10-07 pass over pubmed reached 34 GB and the kernel killed the
         # worker; a field too wide to count says so, and stops with the node
         built = ask_facets.build(con, codex, root / collection.name / "index", snapshot_id=snap.snapshot_id,
-                                 stop=_stop.is_set,
+                                 stop=_stop.is_set, shard_dir=shard_tree, snapshot=snap,
                                  log=lambda m: db.log_event(con, "warn", "ask", m[:400]))
         did = did or bool(built)
         try:
