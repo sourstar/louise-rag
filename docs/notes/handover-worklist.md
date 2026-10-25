@@ -33,7 +33,7 @@ through with the commit that closes them.
 | One route per command, `/api/<surface>/<noun>/<verb>` | 07 §7.4 | **build** (operator, 2026-10-25: A): one generic route over the command tree, `--json` output, exit → status, signing verbs queued as jobs |
 | The `centres`, `labels`, `model-agreement` and `evaluation` checks (INCONCLUSIVE stubs; `model-agreement` refused) | 03 §3.2 | build `model-agreement` as INCONCLUSIVE-until-built at least; mark the four "not built" in 03 |
 | `index build --vector` trains and ships the centres member | 02 §2.4 (07 marks it) | mark in 02 |
-| `derive` / `replace --encoder-weights --engine` | 07 §7.3 | build or amend |
+| ~~`derive` / `replace --encoder-weights --engine`~~ | 07 §7.3 | amended 2026-10-25: never built, dropped; `--space FILE` names a new encoder |
 | `hold config apply --set` (and 07 §7.6 telling users to run it) | 07 | build |
 | `records fetch --slice/--snapshot` | 07 (marked) | build |
 | `range` facet filter | 07 (marked) | build |
@@ -49,8 +49,8 @@ through with the commit that closes them.
 |---|---|
 | Legacy routes still served: `/api/control`, `/api/search`, `/api/verify` (07 §7.6 says replaced) | amend: list them as kept for clients, or retire them |
 | Routes with no spec entry: `/api/status`, `/stats`, `/events`, `/scope`, `/discover`, `/reset`, `/books*`, `/encoders/suggest`, `/admin/library/*`, `/admin/network*`, `/admin/system*` | amend (07 §7.4: the web pages' own routes, named as such) |
-| Commands not in the tree: `hold records validation`, `hold collection migrate`, `dev unindexable`, `dev adopt-bundles`, `mark-embedded`, `withdraw-covered`, `deprecate-duplicates`, `louise user …` | amend 07 §7.3 |
-| Flags not in the tree: `create --calibration-from`, `continue --reslice`, `dev carry --resliced/--scan`, `vectors import --require-t3/--allow/--budget`, `index build --type/--partitions`, `share fetch --embed`, `ask traverse --collection` | amend 07 §7.3 |
+| ~~Commands not in the tree~~ (in 07 since 2026-10-25; tests/test_commands_in_spec.py keeps them there): `hold records validation`, `hold collection migrate`, `dev unindexable`, `dev adopt-bundles`, `mark-embedded`, `withdraw-covered`, `deprecate-duplicates`, `louise user …` | amend 07 §7.3 |
+| ~~Flags not in the tree~~ (same): `create --calibration-from`, `continue --reslice`, `dev carry --resliced/--scan`, `vectors import --require-t3/--allow/--budget`, `index build --type/--partitions`, `share fetch --embed`, `ask traverse --collection` | amend 07 §7.3 |
 | 07 §7.4's module listing (`app/node/`, `hold/config`, …) does not match `app/` | amend to the real layout |
 
 ## 4. Defects in the text or code

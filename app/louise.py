@@ -781,11 +781,6 @@ def _embed_for_recipe(space: dict, url: str | None, model: str | None = None, *,
 
 
 def cmd_derive(a) -> int:
-    if a.encoder_image or a.encoder_weights:
-        _not_yet("--encoder-image/--encoder-weights",
-                 "`hold embedder calibrate`, which re-embeds the calibration "
-                 "set for the new encoder (migration step 3)")
-
     mother = col.read(a.root, a.codex_id)
     space_from = col.read(a.root, a.space_from) if a.space_from else None
     space = cx.space_from_dict(_json(a.space)) if a.space else None
@@ -911,9 +906,6 @@ def cmd_continue(a) -> int:
 
 
 def cmd_replace(a) -> int:
-    if a.encoder_image or a.encoder_weights:
-        _not_yet("--encoder-image/--encoder-weights",
-                 "`hold embedder calibrate` (migration step 3)")
     df = _json(a.defect)
     defect = Defect(df["check"], df["toolchain"], tuple(df["witnesses"]),
                     df["expected"], df["observed"], df["rationale"])
@@ -4260,7 +4252,6 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(p); p.add_argument("codex_id")
     p.add_argument("--space-from", help="a Codex whose space and layers to copy byte for byte")
     p.add_argument("--space", help="JSON file with the space block")
-    p.add_argument("--encoder-image"); p.add_argument("--encoder-weights")
     p.add_argument("--layers", help="JSON file with the layers list")
     p.add_argument("--update", help="JSON file: cadence, day, grace_days")
     p.add_argument("--work", help="JSON file: tokens, per")
@@ -4300,7 +4291,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="JSON file: check, toolchain, witnesses, expected, observed, rationale")
     p.add_argument("--platform-image")
     p.add_argument("--space", help="JSON file with the space block")
-    p.add_argument("--encoder-image"); p.add_argument("--encoder-weights")
     p.set_defaults(fn=cmd_replace)
 
     p = verbs.add_parser("list", help="collections held, with their lineage")

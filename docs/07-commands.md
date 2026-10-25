@@ -68,6 +68,8 @@ louise hold
                                                                        write a Codex; print its id. A pair space (09 §9.3) names its calibration set's file,
                                                                        the pairs `tools/build_pair_calibration_set.py` drew from the collection's records
                                                                        (09 §9.12); `--space-from` a pair space reads it from that space's member
+                                                                       [--calibration-from NAME]: a held collection whose document-side reference vectors and envelope the new
+                                                                       Codex reuses (RULE 1) — the same space but the query side; only the query side is embedded (added 2026-10-25)
                                                                        (amended 2026-10-08)
               create deposit --name N [--encoder URL [--api A] [--embed-model M] [--query-model M]] [--space-from CODEX | --space FILE]
                                                                        a deposit collection (02 §2.9): no recipe; the node's deposit encoder unless one is named
@@ -79,7 +81,7 @@ louise hold
                                                                        (claims, target records named, by type and method), writing nothing. Several claims
                                                                        files for one collection are merged first with `tools/annotations_merge.py` (the
                                                                        wikidata claims whole, a matcher claim only where its books are not one work yet)
-              derive <codex> [--space-from CODEX | --space FILE | --encoder-weights D --engine FILE] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
+              derive <codex> [--space-from CODEX | --space FILE] [--layers FILE] [--update FILE] [--work FILE] [--archives ID …] --accept
                                                                        a sister: same corpus, new space or new schedule; refuses one that differs in nothing.
                                                                        Prints what would be inherited — vectors, coverage, credits — and waits for --accept;
               derive … [--encoder URL [--query-encoder URL] [--api A] [--embed-model M] [--query-model M]] [--calibration-set FILE] [--name N]
@@ -89,7 +91,9 @@ louise hold
                                                                        without it, with no terminal, exit 2. To inherit nothing, change the space (02 §2.7)
               continue <codex> --platform-image D --through ID [--origin FILE] [--origin-reachable-until ID]
                                                                        a daughter: new toolchain, same space
-              replace <codex> --defect FILE [--platform-image D] [--space FILE | --encoder-weights D --engine FILE]
+                                                                       [--reslice]: the slicing a creation would get now (wikidata's family map), every record and vector
+                                                                       reused (02 §2.2, A1g; added 2026-10-25). `--continues-through` is --through's earlier spelling, kept
+              replace <codex> --defect FILE [--platform-image D] [--space FILE]
                                                                        a corrective sister, with its reproducible defect
               ack <collection> [--yes]                                 print the licence terms; record this peer's acknowledgement
               ack <collection> --origin-unchecked [--yes]              print what passed and what could not run; record the decision to use a copy whose origin could not be checked (03 §3.6)
@@ -97,6 +101,7 @@ louise hold
               certify <collection> <snapshot>                          sign a snapshot as this collection's certifier
               forget <collection> [--kinds …] [--yes] [--dry-run] [--here]  stop holding: remove this peer's copy and its state; --here when no worker runs
               rename <collection> <new-name> [--dry-run]               the same collection under another local name; nothing recomputed
+              migrate <collection> [--apply]                           the 09 §9.3 fields a Codex predates added, each as null — collection_id moves; printed unless --apply
               list                                                     collections held, by lineage (amended 2026-10-25: `--all` dropped — dormant is a state of the
                                                                        network's catalogue, 04 §4.7, and every held collection is listed)
               show <collection>                                        Codex, snapshots, holdings, trust, certification, vitality, configuration, and the copy's state — refused, quarantine or in use — with every reason
@@ -118,6 +123,9 @@ louise hold
   records     fetch <collection> [--slice … | --profile P] [--snapshot ID]
                                                                        run the acquisition spec to the cutoff, for these slices or the profile's (06 §6.2)
               build <collection> [--snapshot ID]                       parse, slice, cut into parts, hash
+                                                                       [--corpus DIR]: another origin directory than the collection's own; [--records-from C]: the record lines
+                                                                       of a held collection's latest snapshot taken instead of parsing — a re-creation changing only the slicing (RULE 1)
+              validation <collection>                                  validation.json written from the Codex's plan (03 §3.2)
               check <collection> [--origin] [--seal [--live DIR]] [--sample F]
                                                                        records against their own hashes and roots, against the origin, against the seal
               seal <collection> <snapshot> --files DIR --trusted-list FILE --lotl FILE --lotl-signers FILE
@@ -159,12 +167,17 @@ louise hold
                                                                        embedded a new reference at an `api = "vega"` endpoint to the recipe's engine and weights,
                                                                        and refuse a mismatch before anything is written (added 2026-10-09)
   vectors     build <collection> [--shard <slice>/<n> | --delta ID]    embed; a signed bundle about every 15,000 chunks
-              import <collection> (<file> | --archive ID [--retry]) [--strict]
+              import <collection> (--bundle DIR | --archive ID [--retry] [--corpus DIR] [--shards …]) [--snapshot ID]
+                     [--strict --allow KEY …] [--require-t3] [--budget] [--seed HEX]
                                                                        a signed bundle, or a public pre-embedded archive, through the ladder
+                                                                       --strict admits only the --allow keys; --require-t3 exits 3 rather than import when no encoder answers;
+                                                                       --budget subjects the arrival to 08 §8.2's allowance (amended 2026-10-25: the bundle is a directory, 09 §9.7)
               export <collection> [--shard <slice>/<n>] --out DIR      a signed bundle of what this peer produced — a DIRECTORY of four files (09 §9.7), not a container
+                                                                       [--max-chunks N]: chunks per bundle, 15,000 unless said, split on record boundaries
               check <collection> [--drop]                              are stored vectors still what this encoder produces; --drop removes the ones that are not
               show <collection>                                        coverage, producers, verification
   index       build <collection> [--text | --vector]                   the text index per part; the centres and labels of the space
+                                                                       [--type T] [--partitions N]: the vector index type and its IVF partitions (default: VECTOR_INDEX_TYPE, from the row count)
               show <collection>
   check       <collection> [--checks …] [--sample F] [--seed HEX]      run the validation plan; print the report
               [--live DIR]                                             `origin-seal` in live mode: the sealed files under DIR re-validated now (03 §3.7)
@@ -180,6 +193,7 @@ louise share
   fetch <collection> [--slice …] [--kinds …] [--snapshot ID]           take a portion
         [--from ADDRESS] [--dht] [--encoder URL] [--name N]            … from a peer given by hand, or found
         [--api A] [--embed-model M] [--query-model M]                  … the rest of the file's [encoder] (§7.8, amended 2026-10-09)
+        [--embed off|on-demand|all|p2p]                                … what this node's encoder spends on it, into the file (§7.8; off unless said)
   contribute [<collection>] [--once] [--interval S]                    vectors build, under rendezvous, shared
   attest <collection> [--checks …]                                     check, shared
   peers show                                                           who this peer knows, what they hold
@@ -195,7 +209,8 @@ louise ask
                                                                        identifier, which a query naming it never does by itself (§5.2, amended 2026-10-25)
   facets <collection> [<field>] [--under VALUE]                        the fields this collection can be filtered on, or one field's values with this peer's counts (§5.7)
   lookup <id>                                                          a fact by key, from a reference source
-  traverse <id> [--relation T] [--depth N] [--resolve-in C …]           the records reached along declared relations (§5.5); --resolve-in names the collections an
+  traverse <id> [--relation T] [--depth N] [--collection C] [--resolve-in C …]
+                                                                       the records reached along declared relations (§5.5), in --collection's edges; --resolve-in names the collections an
                                                                        edge into another collection is resolved against, nothing else is (added 2026-10-07)
   chat <question> [--collections …] [--json]                           the model with the three tools of §5.4 and nothing else; needs CHAT_URL (§7.8)
   serve                                                                expose search, lookup and traversal as MCP tools
@@ -213,7 +228,7 @@ louise node
 louise dev                                                             operator instruments; read-only unless the line says otherwise
   schedule-report      what the worker spent its rounds on
   embedder-profile     the concurrency an endpoint sustains
-  migrate schema [<collection>]                                        apply pending schema changes to a state database; writes; never runs on its own
+  migrate schema [<collection>] [--no-backup]                          apply pending schema changes to a state database; a .bak copy first unless --no-backup; writes; never runs on its own
   refs-sync            reference tables from their origins; writes
   wikidata-classes <dump> [--candidate roots.json]                     why the family map gives a class its family (its shortest P279 path to each family's root), and what candidate roots would move, estimated from the codes pass (added 2026-10-24)
   genesis recheck <collection>                                         reopen final archive shards that still have documents the archive could serve; writes
@@ -221,6 +236,12 @@ louise dev                                                             operator 
   drop-rows <collection> --ids FILE [--yes]                            02 §2.4's remedy: the rows FILE lists (a chunk id a line) dropped and their documents marked to embed
                                                                        again — what `vectors check --drop`, which leaves an empty row, does not; the collection's lock held; writes (added 2026-10-19)
   reindex <collection> --ids FILE [--yes]                              the documents FILE lists (a uid a line) queued for the text-index stage again — fts_done = 0, embedding untouched; for rows indexed under an earlier parse (tools/measure/chunks_drift.py lists them); writes (added 2026-10-25)
+  unindexable <collection> <uid> [--yes]                               a document the plugin now refuses: out of every index, its error written at once; writes
+  mark-embedded <collection>                                           documents whose every chunk has a vector here and whose row says embed_done = 0, marked; writes
+  deprecate-duplicates <collection> [--yes]                            this peer's bundles duplicating another of its own for a part, deprecated (03 §3.6; 09 §9.8):
+                                                                       served one more day, never offered for a new fetch; writes
+  withdraw-covered <collection> [--yes]                                this peer's bundles whose every record another bundle held here covers, withdrawn (09 §9.8); writes
+  adopt-bundles <collection>                                           an existing collection's state/bundles moved under BUNDLES_ROOT and linked, as a new one's is (§7.8); writes
   carry <from> <to> [--copy] [--keep producer:<archive>] [--rebuilt|--reconcile|--resign|--recut] [--yes]  amendment A1 (02 §2.4): the manifest (after a TRUNCATE checkpoint), index/ and lance/ moved
                                                                        — or copied, reflinked where it can — into a collection with the same records whose space
                                                                        differs only by engine or input form, both write locks held; refused unless the agreement of
@@ -246,6 +267,8 @@ louise dev                                                             operator 
                                                                        by tokens; then every row over the source's ctx x 4 characters that no archive made is
                                                                        dropped and its document embedded again, in one read of the table; a dense-script row
                                                                        refuses it, nothing written — dropped too where every input was embedded alone (a pair layer)
+                                                                       --resliced (A1g): into a collection differing only by its slicing, every vector carried, then `records build <to>
+                                                                       --records-from <from>`; --scan: with --keep, one pass over the vector table instead of a walk by document
 ```
 
 `--dry-run`, `--json` and `--yes` are not shown per line; §7.7 says which
@@ -1009,13 +1032,11 @@ facet takes `FROM..TO`, either end omitted for open (not built yet).
 `--profile` takes a profile name the collection's acquisition spec
 declares (06 §6.2) and expands to that profile's slices; it may not be
 combined with `--slice`. `--space` and `--work` take a TOML holding
-that Codex block in the form 09 §9.3 fixes; `--encoder-weights` and
-`--engine` are shorthand for a `--space` file changing only
-`space.encoder` — the weights digest, and the engine as a TOML file in
-09 §9.3's form — and any other field a new encoder needs — `dim`,
-`ctx`, `pooling`, `normalise`, `query`, `tolerance` — is given in
-`--space`, the calibration and envelope being computed from the named
-encoder as `create` computes them.
+that Codex block in the form 09 §9.3 fixes; a new encoder is named by
+its whole space block (*amended 2026-10-25*: the `--encoder-weights D
+--engine FILE` shorthand for `derive` and `replace` was never built and
+is dropped — one way to name a space, the calibration and envelope
+computed from the named encoder as `create` computes them).
 `--kinds` takes the kind names of 02 §2.6; the default is records and
 vectors. `--checks` takes the check names of 03 §3.2. `--seed` takes 32
 bytes as hex (03 §3.2).
