@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -168,9 +169,19 @@ def part_records(root: Path, name: str, snapshot, shard) -> list[tuple[str, str]
     got = [(r["uid"], r.get("content_hash")) for r in
            landing.records_for(Path(root), name, snapshot, f"{shard.slice}/{shard.n:05d}", None)]
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_bytes(json.dumps(got).encode())
-    os.replace(tmp, p)
+    # a temp file of its OWN (tempfile.mkstemp): the worker's round and a CLI
+    # `hold vectors show` fill the same missing entry at once, and one shared
+    # `.json.tmp` let the second rename find nothing — the exception sent
+    # `counting.view_kwargs` to its row-count fallback, 114,154 of 10.47 M
+    # covered for one call (Perugia, 2026-10-25)
+    fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(json.dumps(got).encode())
+        os.replace(tmp, p)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
     return got
 
 
