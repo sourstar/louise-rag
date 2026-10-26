@@ -3,6 +3,14 @@
 **Last updated: 2026-10-25.** What exists, what is designed but unbuilt,
 and what is deliberately not being built. Read this before planning work.
 
+**2026-10-26: the node was powered off 02:33–21:22 CET**, cleanly, by a
+`systemctl poweroff` from a truenas_admin session (not the UPS), with the CPU
+at 90–91 °C for hours under the 12-core records build. Monday's daytime queue
+(the deploy, gutenberg's re-index, wikidata's re-creation, the first weekday
+stop) did not run and moves to the next day. The rerank AFTER pass stopped
+at 07:00 partway. gutenberg embeds fully in the quiet hours (22:30–06:00,
+cron 6 and 5), from 2026-10-26.
+
 **Where things stand (2026-10-25).**
 - **wikidata** is re-created on Monday 2026-10-26 on family map
   `sha256:78399d60…` (approved, 29398cf). It keeps the version-3 pack and
