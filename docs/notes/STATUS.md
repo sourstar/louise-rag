@@ -12,7 +12,12 @@ at 07:00 partway. gutenberg embeds fully in the quiet hours (22:30–06:00,
 cron 6 and 5), from 2026-10-26. Operator, the same night: "Quiet hours
 light gpu usage (quiet) and cpu usage reduced to 8 cores only" — the card's
 max clock is capped in 22:30–06:00 (the night embedding runs slower and
-quieter) and the records build gets 8 cores.
+quieter) and the records build gets 8 cores. The card's noise (operator):
+0.2 sone idle (the radial fan never below 800 RPM, no zero-fan mode), 3.1
+sone at full load (2,020 RPM), coil whine alone ~0.9 sone. The night target
+is the fan at ≤ ~1,200 RPM, set by the card's power limit (hwmon
+`power1_max`) where writable, the clock cap otherwise; München measures the
+value and its throughput cost.
 
 **Where things stand (2026-10-25).**
 - **wikidata** is re-created on Monday 2026-10-26 on family map
