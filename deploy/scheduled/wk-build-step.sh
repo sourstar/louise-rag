@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # wikipedia-v8's records build, as wk-build.sh, with EXTRA docker arguments (the tree mounted at /srv,
-# the pool's size); resumable. The operator, 2026-10-25: "Use all the cores" — every core of the
-# node, at nice 19: a person's query and the GPU chain's harness run at nice 0 and go first.
+# the pool's size); resumable. 8 cores (the operator, 2026-10-26; all of them since 10-25 before), at
+# nice 19: a person's query and the GPU chain's harness run at nice 0 and go first.
 set -euo pipefail
 W=ix-louise-rag-worker-1
 CAP=${CAP:-24g}
-CPUS=${CPUS:-$(nproc)}
+# the operator, 2026-10-26: "cpu usage reduced to 8 cores only"
+CPUS=${CPUS:-8}
 IMG=$(docker inspect "$W" -f '{{.Image}}')
 ENVF=$(mktemp); chmod 600 "$ENVF"; trap 'rm -f "$ENVF"' EXIT
 docker inspect "$W" -f '{{range .Config.Env}}{{println .}}{{end}}' | grep -v '^$' > "$ENVF"

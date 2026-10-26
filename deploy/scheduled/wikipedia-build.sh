@@ -19,9 +19,9 @@ start)
   if ! grep -q "gh-115634" /mnt/ssd4/apps/louise-rag/src/app/parallel.py; then
     extra="-v ${BUILD_SRC:-/root/louise-build-src}:/srv:ro -w /srv -e PYTHONPATH=/srv -e PYTHONDONTWRITEBYTECODE=1"
   fi
-  # the pool takes the whole quota, every core (the operator, 2026-10-25: "Use all the cores";
+  # the pool takes the whole quota: 8 cores (the operator, 2026-10-26; "Use all the cores" before;
   # 6694b19 sizes it so by itself, c3dcb4c's tree needs PARSE_PROCESSES)
-  extra="$extra -e PARSE_PROCESSES=$(nproc)"
+  extra="$extra -e PARSE_PROCESSES=${CPUS:-8}"
   EXTRA="$extra" nohup setsid bash /root/wk-build-step.sh >>"$BUILD_LOG" 2>&1 </dev/null &
   sleep 20
   echo "== $(date '+%F %T') start: $(docker ps --filter "name=^${C}$" --format '{{.Status}}') EXTRA=${extra:-none}"

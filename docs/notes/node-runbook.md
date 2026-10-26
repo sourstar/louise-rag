@@ -135,13 +135,20 @@ byte-identical (`tools/measure/records_ab.py`).
 | 19 | 08:00 Mon–Fri | wikipedia-v8 build start |
 | 20 | 13:30, 22:30 Mon–Fri | wikipedia-v8 build start |
 | 21 | 00:05 Sat, Sun | wikipedia-v8 build start (idempotent) |
-| 5–12 | — | DISABLED, kept: earlier gutenberg/pubmed/wikidata windows |
+| 6 / 5 | 22:30 / 06:00 daily | gutenberg embed on-demand → all + GPU clock capped / all → on-demand + clock restored |
+| 7–12 | — | DISABLED, kept: earlier pubmed/wikidata/contribute windows |
 
-- **Quiet hours** (the operator's, the NAS is where people live):
-  - heavy GPU work (sustained embedding, long campaigns) runs 22:30–06:00 only; on
-    weekends the operator may set other hours;
-  - CPU work follows the windows in the table;
-  - a short GPU probe (< 5 min, at most one an hour) is fine by day.
+- **Quiet hours** (the operator's, 2026-10-26; the NAS is where people live):
+  **22:30–06:00: GPU light (max clock capped), CPU per the windows (build ≤ 8 cores);
+  by day, short GPU probes only.**
+  - "GPU light": `deploy/scheduled/gpu-cap.sh on` at 22:30 writes the B70's
+    `max_freq` down to half its maximum (rp0/2 = 1400 MHz), `off` at 06:00 gives it
+    back (cron 6 / cron 5, beside gutenberg's embed switch). A clock changes how fast
+    a vector comes, never its bytes (invariant 12 untouched). The governor's hold
+    (`HOLD_FRACTION` 0.5 of rp0) equals the cap, never above it. Log:
+    `/root/louise-scheduled/gpu-cap.log`.
+  - The build: `wk-build-step.sh` `CPUS=8` (`PARSE_PROCESSES` 8).
+  - A short GPU probe by day: < 5 min, at most one an hour.
 - **One-off timed work**: `deploy/scheduled/in-window.sh <END> <script> <log>` runs a
   resumable script and SIGTERMs only its own containers at END (label
   `louise.in-window=<id>`).
@@ -156,7 +163,7 @@ byte-identical (`tools/measure/records_ab.py`).
   - **stop**: SIGTERM; the build finishes its part, commits, exits; after 15 min it
     SIGKILLs. Safe: the parts are staged and resumable.
 - `deploy/scheduled/wk-build-step.sh` runs the container:
-  - `--cpus $(nproc)`, `PARSE_PROCESSES` = the cores, 24 GB, nice 19;
+  - `--cpus 8`, `PARSE_PROCESSES` 8 (the operator, 2026-10-26), 24 GB, nice 19;
   - output to `/root/wikipedia-v8/build-night.log`.
 - **Progress**: the staged build database
   `data/collections/wikipedia-v8/state/build/.build/build.db`. The table `shards`
