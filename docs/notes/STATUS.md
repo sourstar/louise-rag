@@ -3,9 +3,9 @@
 **Last updated: 2026-10-25.** What exists, what is designed but unbuilt,
 and what is deliberately not being built. Read this before planning work.
 
-**2026-10-26: the node was powered off 02:33–21:22 CET**, cleanly, by a
-`systemctl poweroff` from a truenas_admin session (not the UPS), with the CPU
-at 90–91 °C for hours under the 12-core records build. Monday's daytime queue
+**2026-10-26: the node was powered off 02:33–21:22 CET** by the operator,
+intentionally (not the heat, not the UPS); the CPU had been at 90–91 °C for
+hours under the 12-core records build. Monday's daytime queue
 (the deploy, gutenberg's re-index, wikidata's re-creation, the first weekday
 stop) did not run and moves to the next day. The rerank AFTER pass stopped
 at 07:00 partway. gutenberg embeds fully in the quiet hours (22:30–06:00,
@@ -14,8 +14,8 @@ no one is in the room. Keep both cpu and gpu quiet during the day." So the
 DAY is quiet: the GPU limited to keep its fan at or below ~1,200 RPM (the
 card's power limit, hwmon `power1_max`, where writable; its clock cap
 otherwise) and the records build at 4 cores. The night (22:30–06:00) has no
-noise limit: GPU uncapped, the build at 8 cores (reduced from 12 for the
-heat: 90–91 °C). The card's noise (operator): 0.2 sone idle (the radial fan
+noise limit: GPU uncapped, the build at 8 cores (the operator's
+reduction from 12; 90–91 °C was measured at 12). The card's noise (operator): 0.2 sone idle (the radial fan
 never below 800 RPM), 3.1 sone at full load (2,020 RPM), coil whine ~0.9 sone.
 
 **Where things stand (2026-10-25).**
