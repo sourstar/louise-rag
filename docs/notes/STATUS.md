@@ -9,14 +9,14 @@ hours under the 12-core records build. Monday's daytime queue
 (the deploy, gutenberg's re-index, wikidata's re-creation, the first weekday
 stop) did not run and moves to the next day. The rerank AFTER pass stopped
 at 07:00 partway. gutenberg embeds fully in the quiet hours (22:30–06:00,
-cron 6 and 5), from 2026-10-26. Operator, the same night: "In the night the noise is not an issue because
-no one is in the room. Keep both cpu and gpu quiet during the day." So the
-DAY is quiet: the GPU limited to keep its fan at or below ~1,200 RPM (the
-card's power limit, hwmon `power1_max`, where writable; its clock cap
-otherwise) and the records build at 4 cores. The night (22:30–06:00) has no
-noise limit: GPU uncapped, the build at 8 cores (the operator's
-reduction from 12; 90–91 °C was measured at 12). The card's noise (operator): 0.2 sone idle (the radial fan
-never below 800 RPM), 3.1 sone at full load (2,020 RPM), coil whine ~0.9 sone.
+cron 6 and 5), from 2026-10-26. THE NODE'S SCHEDULE (operator, 2026-10-26, every day, node time): QUIET
+06:00–08:00, 12:00–13:30 and 16:30–22:30 — the records build stopped, the GPU
+power-limited (fan ≤ ~1,200 RPM) with on-demand embedding only; DAY
+08:00–12:00 and 13:30–16:30 — the build at 8 cores, the GPU uncapped and
+gutenberg embedding fully (queries keep priority); NIGHT 22:30–06:00 — the
+build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
+idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
+measured (published figures disagree).
 
 **Where things stand (2026-10-25).**
 - **wikidata** is re-created on Monday 2026-10-26 on family map
