@@ -83,23 +83,45 @@ _stop_requested = threading.Event()
 STOP_POLL_S = 2.0
 
 
-def _watch_stop_request(poll_s: float = STOP_POLL_S) -> None:
+def _watch_stop_request(poll_s: float = STOP_POLL_S, end: threading.Event | None = None) -> None:
     from . import node_state
     while not _stop.wait(poll_s):
+        if end is not None and end.is_set():
+            return
         if node_state.take_stop_request():
             _stop_requested.set()
             _handle_sigterm(None, None)
             return
 
 
+#: the running watch and its own end: `run_forever` ends it on the way out, so a
+#: watch never outlives its run (2026-10-27: one left polling by a test whose
+#: `_stop` was cleared before it woke read the default node store for the
+#: rest of the suite)
+_stop_watch: tuple[threading.Thread, threading.Event] | None = None
+
+
 def _start_stop_watch() -> threading.Thread:
     """A request left from before this start is not this run's: cleared
     first, so `node stop` on a stopped node does not stop the next start."""
+    global _stop_watch
     from . import node_state
     node_state.take_stop_request()
-    t = threading.Thread(target=_watch_stop_request, name="stop-watch", daemon=True)
+    end = threading.Event()
+    t = threading.Thread(target=_watch_stop_request, kwargs={"end": end}, name="stop-watch", daemon=True)
     t.start()
+    _stop_watch = (t, end)
     return t
+
+
+def _end_stop_watch() -> None:
+    global _stop_watch
+    if _stop_watch is None:
+        return
+    t, end = _stop_watch
+    _stop_watch = None
+    end.set()
+    t.join(timeout=2 * STOP_POLL_S)
 
 
 def _load_chunks(row, collection):
@@ -4970,6 +4992,13 @@ def _register_stack_dump() -> bool:
 
 
 def run_forever():
+    try:
+        _run_forever()
+    finally:
+        _end_stop_watch()       # the watch never outlives its run
+
+
+def _run_forever():
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)
     # a hangup too: rsync leads its own session (transport_rsync), so a
