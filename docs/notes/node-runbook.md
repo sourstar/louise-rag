@@ -131,24 +131,51 @@ byte-identical (`tools/measure/records_ab.py`).
 | id | when | what |
 |---|---|---|
 | 13 / 14 | 06:00 / 22:30 daily | normattiva pause / resume |
-| 18 | 06:00, 12:00, 17:00 Mon–Fri | wikipedia-v8 build stop |
-| 19 | 08:00 Mon–Fri | wikipedia-v8 build start |
-| 20 | 13:30, 22:30 Mon–Fri | wikipedia-v8 build start |
-| 21 | 00:05 Sat, Sun | wikipedia-v8 build start (idempotent) |
-| 6 / 5 | 22:30 / 06:00 daily | gutenberg embed on-demand → all + GPU clock capped / all → on-demand + clock restored |
-| 7–12 | — | DISABLED, kept: earlier pubmed/wikidata/contribute windows |
+| 18 | 06:00, 12:00 daily | `node-period.sh quiet` |
+| 19 | 16:30 daily | `node-period.sh quiet` |
+| 20 | 08:00 daily | `node-period.sh day` |
+| 21 | 13:30 daily | `node-period.sh day` |
+| 6 | 22:30 daily | `node-period.sh night` |
+| 5, 7–12 | — | DISABLED, kept: the earlier 06:00 switch, pubmed/wikidata/contribute windows |
 
-- **Quiet hours** (the operator's, 2026-10-26; the NAS is where people live):
-  **22:30–06:00: GPU light (max clock capped), CPU per the windows (build ≤ 8 cores);
-  by day, short GPU probes only.**
-  - "GPU light": `deploy/scheduled/gpu-cap.sh on` at 22:30 writes the B70's
-    `max_freq` down to half its maximum (rp0/2 = 1400 MHz), `off` at 06:00 gives it
-    back (cron 6 / cron 5, beside gutenberg's embed switch). A clock changes how fast
-    a vector comes, never its bytes (invariant 12 untouched). The governor's hold
-    (`HOLD_FRACTION` 0.5 of rp0) equals the cap, never above it. Log:
-    `/root/louise-scheduled/gpu-cap.log`.
-  - The build: `wk-build-step.sh` `CPUS=8` (`PARSE_PROCESSES` 8).
-  - A short GPU probe by day: < 5 min, at most one an hour.
+- **The day's periods** (the operator, 2026-10-26; replaces every earlier window; every
+  day, weekends too; the NAS is where people live). `deploy/scheduled/node-period.sh
+  night|day|quiet` applies one (log `/root/louise-scheduled/node-period.log`):
+
+| period | wikipedia build | GPU | gutenberg embed |
+|---|---|---|---|
+| 22:30–06:00 night | 12 cores | power limit 230 W (the card's own) | `all` |
+| 08:00–12:00, 13:30–16:30 day | 8 cores | 230 W | `all` |
+| 06:00–08:00, 12:00–13:30, 16:30–22:30 QUIET | stopped (SIGTERM, resumes at its next part) | power limit 100 W | `on-demand` |
+
+  - The quiet limit is the B70's `power1_cap` (xe hwmon, PL1), the only lever on its
+    noise: its blower has no pwm (firmware-controlled), and `fancontrol.py` reads its
+    rpm but never sets it. A power limit changes how fast a vector comes, never its
+    bytes (invariant 12 untouched). `gpu-cap.sh` (the max-clock cap) is retired with
+    cron 5; max_freq stays at rp0.
+  - **Measured 2026-10-26** 22:45–23:12, kernel 6.18.52-production+truenas,
+    `power_steps.py` (scratch): steady qwen3-embedding-4b load (16 texts of 2.4k
+    chars a request, two in flight, beside gutenberg's own embedding), 30 s settle
+    then 150 s at 5 s samples per step:
+
+| power1_cap | draw | blower avg / max rpm | pkg °C | MHz | texts/s |
+|---|---|---|---|---|---|
+| 230 W | 199.6 W | 1619 / 1847 | 71.9 | 2320 | 6.2 |
+| 190 W | 189.6 W | 1703 / 1833 | 73.7 | 2300 | 4.5 |
+| 160 W | 159.9 W | 1546 / 1619 | 70.9 | 1876 | 5.1 |
+| 130 W | 129.9 W | 1319 / 1875 | 67.5 | 1482 | 5.1 |
+| 110 W | 110.0 W | 1213 / 1261 | 65.0 | 1039 | 3.4 |
+| 90 W | 90.0 W | 1050 / 1105 | 62.1 | 641 | 1.7 |
+| 75 W | 78.3 W | 880 / 1154 | 60.2 | 400 | 1.5 |
+
+    The target was blower ≤ ~1,200 rpm: 110 W sits on it, so 100 W leaves margin for
+    a warmer room. texts/s is noisy (gutenberg embedded beside the load). At idle the
+    blower reads 0–48 rpm (the card stops it).
+  - `fancontrol.py` uses the blower's rpm as an input only: the top intakes rise above
+    1,600 rpm (a starved blower), the airflow balance counts it as 12 CFM at 2,000 rpm,
+    and `gpu_wake` acts only on a sleeping GPU above 1,000 rpm. A limited blower
+    lowers all three in the right direction; nothing there changed.
+  - A short GPU probe in a quiet period: < 5 min, at most one an hour.
 - **One-off timed work**: `deploy/scheduled/in-window.sh <END> <script> <log>` runs a
   resumable script and SIGTERMs only its own containers at END (label
   `louise.in-window=<id>`).
@@ -163,7 +190,7 @@ byte-identical (`tools/measure/records_ab.py`).
   - **stop**: SIGTERM; the build finishes its part, commits, exits; after 15 min it
     SIGKILLs. Safe: the parts are staged and resumable.
 - `deploy/scheduled/wk-build-step.sh` runs the container:
-  - `--cpus 8`, `PARSE_PROCESSES` 8 (the operator, 2026-10-26), 24 GB, nice 19;
+  - `--cpus` and `PARSE_PROCESSES` from `CPUS` (12 at night, 8 by day: §6), 24 GB, nice 19;
   - output to `/root/wikipedia-v8/build-night.log`.
 - **Progress**: the staged build database
   `data/collections/wikipedia-v8/state/build/.build/build.db`. The table `shards`
