@@ -73,6 +73,8 @@ through with the commit that closes them.
 
 ## 6. Decisions for the operator
 
+- Node profiles (quiet / day / night) from one file, and collections switched to full embedding by their own `embed` — proposal [node-profiles-design.md](node-profiles-design.md), for review 2026-10-27.
+
 - Repository renamed to `project-louise` (operator, 2026-10-25; done by the operator on GitHub). Then: the 9 `github.com/sourstar/louise-rag` references updated (User-Agents, LocalAI gallery, one test); the image, app and data-path names `louise-rag` stay.
 
 - ~~Gene references (HGNC, ClinVar, gnomAD, HomoloGene)~~ — kept (operator, 2026-10-25): not needed by PubMed's records, but they give gene fact cards and tag PubMed documents for the `keys` filter.

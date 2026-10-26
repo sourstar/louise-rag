@@ -1,0 +1,41 @@
+# PROPOSAL (2026-10-26), for the operator's review — not read by any code yet.
+# The node's quiet / day / night profiles, as they would sit in platform.toml
+# (desired state, Tier 2). Design: docs/notes/node-profiles-design.md.
+
+[schedule]
+# Which profile is active, by local wall-clock time. The SAME grammar as
+# [bandwidth] schedule (app/transfer/schedule.py): clauses separated by ";",
+# the first match wins, a window may wrap midnight, "else" covers the rest.
+profile = "06:00-08:00 quiet; 08:00-12:00 day; 12:00-13:30 quiet; 13:30-16:30 day; 16:30-22:30 quiet; else night"
+# Optional, per weekday; a day without a line uses `profile` above.
+# sat = "08:00-22:30 quiet; else night"
+# sun = "08:00-22:30 quiet; else night"
+
+[profiles.quiet]
+cpu_cores = 0                 # records builds pause at the end of their current part; queries are never limited
+gpu = "quiet"                 # one of [gpu.levels]
+sustained_embedding = false   # an `embed = "all"` collection embeds only what queries touch
+
+[profiles.day]
+cpu_cores = 8
+gpu = "full"
+sustained_embedding = true
+
+[profiles.night]
+cpu_cores = 12
+gpu = "full"
+sustained_embedding = true
+
+[gpu.levels.full]
+power_limit = "max"           # the card's own limit, restored
+
+[gpu.levels.quiet]
+power_limit = "50%"           # of the card's maximum, until the fan measurement gives watts ("120W")
+max_clock = "50%"             # used only where the driver offers no writable power limit
+fan_max_rpm = 1200            # applied only if the driver lets software set the fan; otherwise a target the measurement checks
+
+# Collections say WHAT to embed in their own file, as today:
+#   collections/gutenberg.toml     embed = "all"
+#   louise hold config apply gutenberg --set embed=all
+# and, optionally, WHEN, if not in every profile that allows sustained embedding:
+#   embed_profiles = ["night"]    # e.g. pubmed only at night
