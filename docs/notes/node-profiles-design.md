@@ -85,3 +85,9 @@ cores): the kernel's limit, while the app limits itself below it.
 2. The app sizes its own pools; the container's `cpu.max` stays a fixed ceiling.
 3. Embedding runs in every profile, local or p2p as each collection says; the
    quiet GPU is power-limited, not idle.
+4. *(2026-10-27 21:31, supersedes the quiet GPU level of decision 3.)* The
+   operator: "Set the GPU to maximum speed." In the node's `platform.toml`,
+   `[profiles.quiet] gpu = "full"` (it was `"quiet"`, 110 W). The governor
+   applied 230 W at 21:31:20. The quiet profile still pauses background CPU
+   work (`cpu_cores = 0`). The `[gpu.levels.quiet]` table stays declared and
+   unused. Backup: `/root/platform.toml.bak-20261027-gpufull`.
