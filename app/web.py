@@ -1443,7 +1443,6 @@ def _document_counts(collection) -> tuple[dict | None, float]:
         if now - at > _counts_ttl_for(name) or _counted_over_another_range(collection, counts):
             _refresh_counts_async(collection)
         return counts, now - at
-    _refresh_counts_async(collection)
     # THE STORED COUNTS AT ONCE where the manifest has them (below): a
     # restart's first views waited the cold wait for every collection whose
     # scan had not landed — 2 s each, on every view, 4.6-13 s for the
@@ -1451,7 +1450,10 @@ def _document_counts(collection) -> tuple[dict | None, float]:
     # for a collection that never stored any.
     # Not after an action (`invalidate_counts`): stored counts older than it
     # are what the operator just changed.
+    # Read BEFORE the refresh starts, so a refresh that lands at once is
+    # the synchronous answer, never mistaken for a stored one.
     stored = _stored_counts(collection)
+    _refresh_counts_async(collection)
     if stored is not None and stored[1] > max(_counts_invalidated_at.get(name, 0.0),
                                               _counts_all_invalidated_at):
         counts, at = stored
