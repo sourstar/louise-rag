@@ -32,10 +32,10 @@ Assisted-by: Claude Code
  create mode 100644 backend/cpp/llama-cpp/embedding_tokens_test.cpp
 
 diff --git a/backend/cpp/llama-cpp/CMakeLists.txt b/backend/cpp/llama-cpp/CMakeLists.txt
-index 3c195c3..a2e875d 100644
+index 773a13b..45c3000 100644
 --- a/backend/cpp/llama-cpp/CMakeLists.txt
 +++ b/backend/cpp/llama-cpp/CMakeLists.txt
-@@ -141,4 +141,10 @@ if(LLAMA_GRPC_BUILD_TESTS)
+@@ -159,4 +159,10 @@ if(LLAMA_GRPC_BUILD_TESTS)
      target_include_directories(stream_peer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
      target_compile_features(stream_peer_test PRIVATE cxx_std_17)
      add_test(NAME stream_peer_test COMMAND stream_peer_test)
@@ -132,10 +132,10 @@ index 0000000..322e252
 +    return failed == 0 ? 0 : 1;
 +}
 diff --git a/backend/cpp/llama-cpp/grpc-server.cpp b/backend/cpp/llama-cpp/grpc-server.cpp
-index 3b90873..f03cc02 100644
+index 21e556b..7f5ecb3 100644
 --- a/backend/cpp/llama-cpp/grpc-server.cpp
 +++ b/backend/cpp/llama-cpp/grpc-server.cpp
-@@ -60,6 +60,7 @@
+@@ -68,6 +68,7 @@
  #include "passthrough_options.h"
  #include "stream_peer.h"
  #include "tts_request_options.h"
@@ -143,7 +143,7 @@ index 3b90873..f03cc02 100644
  #include <getopt.h>
  #include <grpcpp/ext/proto_server_reflection_plugin.h>
  #include <grpcpp/grpcpp.h>
-@@ -2898,6 +2899,21 @@ public:
+@@ -3008,6 +3009,21 @@ public:
          // for the shape of input/content, see tokenize_input_prompts()
          json prompt = body.at("embeddings");
  
@@ -166,13 +166,13 @@ index 3b90873..f03cc02 100644
          auto tokenized_prompts = tokenize_input_prompts(ctx_server.impl->vocab, ctx_server.impl->mctx, prompt, true, true LOCALAI_MTMD_INIT_OPT_ARG(ctx_server.impl->init_opt));
          for (const auto & tokens : tokenized_prompts) {
 diff --git a/backend/cpp/llama-cpp/prepare.sh b/backend/cpp/llama-cpp/prepare.sh
-index a7fe9ab..409ed87 100644
+index 82d13b4..61107a4 100644
 --- a/backend/cpp/llama-cpp/prepare.sh
 +++ b/backend/cpp/llama-cpp/prepare.sh
-@@ -75,6 +75,10 @@ cp -r parent_watch_test.cpp llama.cpp/tools/grpc-server/
- # test (run via backend/cpp/run-unit-tests.sh; also buildable under ctest).
- cp -r stream_peer.h llama.cpp/tools/grpc-server/
- cp -r stream_peer_test.cpp llama.cpp/tools/grpc-server/
+@@ -84,6 +84,10 @@ cp -r stream_peer_test.cpp llama.cpp/tools/grpc-server/
+ # unit test (compiled only when -DLLAMA_GRPC_BUILD_TESTS=ON).
+ cp -r slot_cache.h llama.cpp/tools/grpc-server/
+ cp -r slot_cache_test.cpp llama.cpp/tools/grpc-server/
 +# Special tokens around Embedding's token ids (included by grpc-server.cpp)
 +# and its standalone unit test.
 +cp -r embedding_tokens.h llama.cpp/tools/grpc-server/

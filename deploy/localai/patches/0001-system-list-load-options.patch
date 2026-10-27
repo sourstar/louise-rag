@@ -116,10 +116,10 @@ index 83f7daa..238f296 100644
 +	})
  })
 diff --git a/core/schema/localai.go b/core/schema/localai.go
-index 44a859c..568c736 100644
+index 479cdfb..c2cd193 100644
 --- a/core/schema/localai.go
 +++ b/core/schema/localai.go
-@@ -211,6 +211,16 @@ type SysInfoModel struct {
+@@ -221,6 +221,16 @@ type SysInfoModel struct {
  	// SizeVRAM is DRM-accounted resident device memory in bytes. Nil means
  	// the backend process tree has no complete supported reading.
  	SizeVRAM *uint64 `json:"size_vram,omitempty"`
@@ -137,10 +137,10 @@ index 44a859c..568c736 100644
  
  // SysInfoProcess is a point-in-time reading of one backend process.
 diff --git a/pkg/model/initializers.go b/pkg/model/initializers.go
-index 2ae9242..99a2de1 100644
+index 1af257d..4bd958e 100644
 --- a/pkg/model/initializers.go
 +++ b/pkg/model/initializers.go
-@@ -202,6 +202,7 @@ func (ml *ModelLoader) spawnGRPCModel(backend, uri string, o *Options, modelID,
+@@ -223,6 +223,7 @@ func (ml *ModelLoader) spawnGRPCModel(backend, uri string, o *Options, modelID,
  		ml.stopLoadProcess(client, modelID)
  		return nil, fmt.Errorf("could not load model (no success): %s", res.Message)
  	}
@@ -300,10 +300,10 @@ index 3af79ab..991dba2 100644
  func (m *Model) IsRecentlyHealthy() bool {
  	m.Lock()
 diff --git a/swagger/docs.go b/swagger/docs.go
-index f155d52..7990dde 100644
+index 007d8f7..d83ff49 100644
 --- a/swagger/docs.go
 +++ b/swagger/docs.go
-@@ -8260,6 +8260,14 @@ const docTemplate = `{
+@@ -9546,6 +9546,14 @@ const docTemplate = `{
                  "id": {
                      "type": "string"
                  },
@@ -319,10 +319,10 @@ index f155d52..7990dde 100644
                      "description": "Process is the backend process serving the model on this host. Absent\nwhen the model has no local process (a distributed worker holds it) or\nthe process could not be read.",
                      "allOf": [
 diff --git a/swagger/swagger.json b/swagger/swagger.json
-index dd53808..0f159f5 100644
+index 443e0e7..a07092b 100644
 --- a/swagger/swagger.json
 +++ b/swagger/swagger.json
-@@ -8257,6 +8257,14 @@
+@@ -9543,6 +9543,14 @@
                  "id": {
                      "type": "string"
                  },
@@ -338,10 +338,10 @@ index dd53808..0f159f5 100644
                      "description": "Process is the backend process serving the model on this host. Absent\nwhen the model has no local process (a distributed worker holds it) or\nthe process could not be read.",
                      "allOf": [
 diff --git a/swagger/swagger.yaml b/swagger/swagger.yaml
-index f4d10dd..43865bd 100644
+index d990a3e..7a64b40 100644
 --- a/swagger/swagger.yaml
 +++ b/swagger/swagger.yaml
-@@ -2798,6 +2798,20 @@ definitions:
+@@ -3249,6 +3249,20 @@ definitions:
          type: string
        id:
          type: string
@@ -362,3 +362,6 @@ index f4d10dd..43865bd 100644
        process:
          allOf:
          - $ref: '#/definitions/schema.SysInfoProcess'
+-- 
+2.55.0.windows.3
+

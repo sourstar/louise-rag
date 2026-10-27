@@ -1,6 +1,6 @@
 # LocalAI patches, applied in this order with `git am` onto the base: the
 # source our llama.cpp backend images are built from. Each is described, with
 # its upstream status, in docs/notes/localai-bugs.md.
-base 58830f7ac508845a6f4efa32cfca06af422d4d82
+base ec9274027eadd552d56f2c6c1fe86cd9216a991a
 0001-system-list-load-options.patch
 0002-llama-cpp-embed-token-ids.patch

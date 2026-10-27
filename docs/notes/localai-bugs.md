@@ -398,7 +398,7 @@ holds the series, the files and this section to each other.
 
 ### P1. `GET /system` lists the options each loaded model was given
 
-*Base: master
+*Base: `v4.12.1` [`ec92740`](https://github.com/mudler/LocalAI/tree/ec9274027eadd552d56f2c6c1fe86cd9216a991a) since 2026-10-27; written on master
 [`58830f7`](https://github.com/mudler/LocalAI/tree/58830f7ac508845a6f4efa32cfca06af422d4d82)
 (2026-10-02). File: `0001-system-list-load-options.patch`. 9 files, 201
 lines added, none removed.*
@@ -452,8 +452,8 @@ which the DEBUG log already shows.
 
 ### P2. llama.cpp backend: `Embedding` embeds the token ids it is given
 
-*Base: `v4.11.0` = master
-[`58830f7`](https://github.com/mudler/LocalAI/tree/58830f7ac508845a6f4efa32cfca06af422d4d82),
+*Base: `v4.12.1`
+[`ec92740`](https://github.com/mudler/LocalAI/tree/ec9274027eadd552d56f2c6c1fe86cd9216a991a) since 2026-10-27 (first `v4.11.0` = `58830f7`),
 after P1 (they touch different files). File:
 `0002-llama-cpp-embed-token-ids.patch`. 5 files, 99 lines added, none
 removed.*
@@ -504,6 +504,20 @@ run — gutenberg worst 0.999999, normattiva 1.000000, pubmed document 0.999999
 and query 1.000000, wikipedia 0.9997 (whole set 0.9990) — and nothing was
 re-embedded. The first run stopped at step 7: a 512-token model sent a
 2,465-token text whole; every model is now measured with a window.
+
+**Rebased on `v4.12.1`** ([`ec92740`](https://github.com/mudler/LocalAI/tree/ec9274027eadd552d56f2c6c1fe86cd9216a991a),
+2026-10-27, after the app moved to v4.12.1; operator: "a backend update is
+advisable, just re-apply the known patches if still needed"). B14 is still
+there: v4.12.1's `grpc-server.cpp` never reads `EmbeddingTokens`. P2's only
+conflict was its `prepare.sh` hunk (upstream added `slot_cache.h` above it);
+the code hunks applied unchanged. llama.cpp moves from `a868c3e` to
+`c0fd786`, so each SYCL model on it is a new run: measured (invariant 12)
+and gated, as on 2026-10-18. P1 still applies and stays in the series; it
+patches LocalAI's server, not the backend image, and the node's server is
+stock. louise-python is not rebuilt: v4.12.1's `backend.proto` only adds
+(SlotCache, TTSLive, MotionStream, voice fields), its `common/` files are
+byte-identical, and the VeGa wrapper forwards any method it does not
+intercept as bytes.
 
 **Tokens against HF's** (bge-m3's `tokenizer.json`): 475 of 512 identical.
 The other 37 are one thing: the text ends with a space, and HF's tokenizer
