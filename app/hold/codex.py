@@ -24,6 +24,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field, replace
+from functools import cached_property
 from typing import Any, Callable, Iterable, Iterator
 
 CODEX_KIND = "louise-codex"
@@ -901,10 +902,13 @@ class Codex:
 
     # ---- derived identities -------------------------------------------------
 
-    @property
+    @cached_property
     def collection_id(self) -> str:
         """The identity. Two creators who write the same recipe under
-        different titles write the same collection."""
+        different titles write the same collection. Computed once per
+        Codex (frozen; `replace` makes a new one): the Library's coverage
+        view asked it once per part, 18 % of a warm view (München,
+        2026-10-27)."""
         return digest(canonical_json(self.identity_dict()))
 
     @property

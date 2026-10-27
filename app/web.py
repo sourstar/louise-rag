@@ -2793,19 +2793,65 @@ def _p2p_summary(collection) -> dict | None:
     2026-10-19): the bounty list — open parts, the parts this node leads and
     leaves to peers — and availability — chunks from bundles made here and
     taken from peers. From the coverage map and the digests (09 §9.10; 04
-    §4.5), the same functions the command line prints; at most once a
-    `_P2P_TTL_S` per collection (the leader ordering is ~0.4 s for 1,600
-    parts). None for a collection without a Codex or a snapshot."""
-    import time as _time
-    from contextlib import closing
+    §4.5), the same functions the command line prints. None for a
+    collection without a Codex or a snapshot.
+
+    OFF THE REQUEST PATH, as the document counts are: the last value is
+    served at once and refreshed behind it, one refresh per collection at a
+    time, at most once a `_P2P_TTL_S`. A cold cache waits
+    `_COUNTS_COLD_WAIT_S`, then the card renders without the line. On the
+    request path, every bundle gutenberg accepted made the next view
+    recompute coverage over 1,639 parts — 6-14 s each, every 1-3 min, and
+    seven views stacked on the same rebuild (München, 2026-10-27)."""
     codex = getattr(collection, "codex", None)
     if codex is None or getattr(codex, "space", None) is None:
         return None
     key = str(collection.manifest_path)
+    now = time.time()
     hit = _p2p_cache.get(key)
-    now = _time.time()
-    if hit is not None and now - hit[0] < _P2P_TTL_S:
+    if hit is not None:
+        if now - hit[0] >= _P2P_TTL_S:
+            _p2p_refresh_async(collection, key)
         return hit[1]
+    _p2p_refresh_async(collection, key)
+    deadline = now + _COUNTS_COLD_WAIT_S
+    while time.time() < deadline:
+        hit = _p2p_cache.get(key)
+        if hit is not None:
+            return hit[1]
+        time.sleep(0.05)
+    return None
+
+
+_p2p_refreshing: dict[str, float] = {}
+_p2p_lock = threading.Lock()
+
+
+def _p2p_refresh_async(collection, key: str) -> None:
+    """One refresh in flight per collection; the guard expires
+    (`_COUNTS_REFRESH_ABANDON_S`) so a hung one never freezes the line."""
+    now = time.time()
+    with _p2p_lock:
+        started = _p2p_refreshing.get(key)
+        if started is not None and now - started < _COUNTS_REFRESH_ABANDON_S:
+            return
+        _p2p_refreshing[key] = now
+
+    def _run() -> None:
+        try:
+            _p2p_cache[key] = (time.time(), _p2p_compute(collection))
+        finally:
+            with _p2p_lock:
+                _p2p_refreshing.pop(key, None)
+    threading.Thread(target=_run, name=f"p2p:{collection.name}", daemon=True).start()
+
+
+def _p2p_compute(collection) -> dict | None:
+    """`_p2p_summary`'s value, computed (~0.4 s for 1,600 parts warm; the
+    coverage over every part after a bundle lands)."""
+    from contextlib import closing
+    codex = collection.codex
+    now = time.time()
     out: dict | None = None
     try:
         from app.hold import collection as col
@@ -2842,7 +2888,6 @@ def _p2p_summary(collection) -> dict | None:
                         out["left"] = sum(1 for k in lead.values() if k is not None and k != own)
     except Exception:   # noqa: BLE001 — a card line, never a failed page
         out = None
-    _p2p_cache[key] = (now, out)
     return out
 
 
