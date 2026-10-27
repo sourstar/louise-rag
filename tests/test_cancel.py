@@ -219,6 +219,25 @@ def test_a_caller_who_leaves_stops_the_search(monkeypatch):
     assert asyncio.run(ask()), "the search thread stopped at its next checkpoint"
 
 
+def test_a_caller_who_leaves_is_said_in_the_log(monkeypatch, capsys):
+    """uvicorn logs no line for a caller who left: a question that got no
+    answer left no trace (München, 2026-10-27, 65 s of cold model loads)."""
+    monkeypatch.setattr(cancel, "POLL_S", 0.01)
+
+    def a_long_search():
+        while True:
+            cancel.checkpoint()
+            time.sleep(0.005)
+
+    async def ask():
+        with pytest.raises(cancel.Cancelled):
+            await cancel.while_connected(_Caller(stays=3), a_long_search)
+
+    asyncio.run(ask())
+    out = capsys.readouterr().out
+    assert "the caller left after" in out and "the search is cancelled" in out
+
+
 def test_a_caller_who_stays_gets_the_answer(monkeypatch):
     monkeypatch.setattr(cancel, "POLL_S", 0.01)
 
