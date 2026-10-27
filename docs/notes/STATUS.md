@@ -114,12 +114,15 @@ it left open is below.
   record may name: enforced since 2026-10-25 (the build aborts over it,
   `hold check`'s `figures` row fails it; it never was before).
 
-- **MADLAD on llama.cpp — PLAN SAVED (operator, 2026-10-27).**
+- **MADLAD on llama.cpp — DEFERRED to a separate session (operator, 2026-10-27: "keep things as they are, record the llama.cpp improvement, I will do it in a separated session").**
+  - **Live:** MADLAD stays on torch. The live backend and every validated run are untouched.
   - **Done:** P3 is in deploy/localai/patches. llama-server now runs the encoder of T5 models (localai-bugs.md B16/P3).
-  - **Measured on the card:** a P3 test backend runs MADLAD in 6.29 GB, cold 9.5–11 s, warm 0.4–1.8 s per translation, one at a time. Torch: 17–38 s cold, 3.2 s per question batched.
-  - **Saved for later:** the interface-conformant design, per-sequence encoder outputs in a T5-only `llama_memory_enc_dec` with no public API (~900 lines), the device store, and cached cross K/V. Its staged plan and gates are in [llama-cpp-encoder-decoder.md](llama-cpp-encoder-decoder.md) §9.
-  - **Next:** the simpler MADLAD-only step the operator asked for, translator-choice.md "Waves".
-  - **Not deployed:** the live backend and every validated run are untouched.
+  - **Measured on the card:** a P3 test backend runs MADLAD in 6.29 GB, cold 9.5–11 s. One slot gives 3.03 s per translation (~18 s per question); 91.5 % of 3,078 translations are identical to torch's. Torch: 17–38 s cold, 3.2 s per question batched.
+  - **The two ways forward, both recorded:**
+    - "Waves" (P3b), server only, T5 only: translator-choice.md, "Waves".
+    - The interface-conformant per-sequence memory, staged with gates: [llama-cpp-encoder-decoder.md](llama-cpp-encoder-decoder.md) §9.
+    - The gates before torch is replaced: translator-choice.md, "Waves", "Gates".
+  - **Left in place for that session:** the test artefacts, listed in translator-choice.md, "Waves", "Where the work stands".
 
 - **arXiv — PARKED (operator, 2026-10-22).** A blueprint only: docs/notes/arxiv-plugin.md (bulk forms, licences, pre-embeddings) and docs/notes/arxiv-collection.md (the abstracts collection, every version linked, only the latest embedded; the encoder on hold with a 20,000-abstract / 500-question measurement kept). Nothing built, nothing downloaded; no session works on it until the operator resumes it.
 

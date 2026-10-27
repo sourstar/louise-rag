@@ -293,14 +293,16 @@ Recommendation: B, measured first (T2 and T3). If T3 passes, a question's langua
 - Whether upstream wants refusal rather than forcing for `-np > 1` without `-kvu`, and whether it accepts a T5-only state suffix with no version bump.
 - ~~To check before P3 itself deploys: whether the shared-prefix grouping (server-decision.cpp:1270-1290) can make two same-language segments parent and child under P3.~~ **Answered 2026-10-27.** `server_decision_group_tasks` groups tasks in chunks of `n_slots`, and a chunk of one never has children (`end - i < 2`). P3 runs with `parallel:1`, so it never groups. A multi-slot stage must turn the grouping off for encoder-decoder targets: a child copies its parent's decoder state and never encodes its own prompt.
 - Not checked: MADLAD GGUF `n_ctx_train`, the deployed `n_ubatch` and flash-attention setting; `ggml_set_rows`/`get_rows` into F32 on SYCL and ROCm; the column-count kernel choice on SYCL.
-- Whether the cross K/V recompute dominates step time on the card (T10). That decides stage 3, and whether `-np 1` with cached K/V would reach the speed target without concurrency.
+- ~~Whether the cross K/V recompute dominates step time on the card (T10).~~ Measured 2026-10-27: it does not. Time per output token goes ×1.10 from 7 to 192 input tokens (~170 ms per token), so stage 3 is low value and `-np 1` cannot reach the speed target. Batching can (localai-bugs.md P3, "On the card").
 - No public predicate for "encoder-decoder with cross-attention" exists. P3 keeps matching the arch string until upstream adds one.
 
 ## 9. Implementation plan (saved for later, operator 2026-10-27)
 
 *The operator asked to save this plan for a future implementation and to
-build a simpler MADLAD-only step first (translator-choice.md, "Waves").
-Nothing below is built. Each stage ships only after its gate.*
+propose a simpler MADLAD-only step (translator-choice.md, "Waves").
+Then, the same day: keep things as they are; the llama.cpp improvement is
+done in a separate session. MADLAD stays on torch. Nothing below is built.
+Each stage ships only after its gate.*
 
 | Stage | What | Where | Gate before it ships |
 |---|---|---|---|

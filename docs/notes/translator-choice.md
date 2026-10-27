@@ -320,7 +320,11 @@ llamacpp". It costs a 17–38 s cold load and 7.2 GB on the card, against
 - Reading: `python tools/measure/translator_choice_reading.py tools/measure/out/xlate_choice/reading/old tools/measure/out/xlate_choice/reading`
   (python:3.12-slim + sacrebleu 2.4.3).
 
-## Waves: the simpler MADLAD-only step (proposed 2026-10-27)
+## Waves: the simpler MADLAD-only step (proposed 2026-10-27, deferred)
+
+*Operator, 2026-10-27: "No, keep things as they are, record the llama.cpp
+improvement, I will do it in a separated session." MADLAD stays on torch.
+Nothing below is built.*
 
 *The operator asked for a simpler patch than the per-sequence memory
 (llama-cpp-encoder-decoder.md §9), one that impacts no other model.
@@ -367,3 +371,27 @@ still makes every SYCL embedder a new engine, measured and gated once
 2. Waves' own byte test: the same question twice gives the same bytes
    (llama-cpp-encoder-decoder.md T3).
 3. Invariant 12 on the rebuilt backend's embedders.
+4. Architecture's client change: one `/v1/completions` per segment, the
+   `<2xx>` prompt, and transformers' `clean_up_tokenization_spaces`
+   replacements applied to the output.
+
+**Where the work stands (2026-10-27), left in place for that session:**
+- The patch: `deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch`.
+  It is a LocalAI commit adding
+  `backend/cpp/llama-cpp/patches/0003-server-encoder-decoder.patch` on
+  llama.cpp c0fd786.
+- On the node (all created by this work; nothing loads them unless asked):
+
+  | What | Where | Size |
+  |---|---|---|
+  | Test backend | `/mnt/ssd5/apps/localai/backends/louise-sycl-f16-llama-cpp-p3test` | 438 MB |
+  | Test backend tar | `/mnt/ssd5/apps/localai/backends/.louise-llama-cpp-sycl_f16-p3test.tar` | 282 MB |
+  | Model files | `/mnt/ssd5/apps/localai/models/madlad-p3-test.yaml` (bf16), `madlad-p3-test-f16.yaml` (one slot, `parallel:1`, `cache_ram:0`, context 512) | — |
+  | GGUFs | `/mnt/ssd5/apps/models/madlad/madlad400-3b-mt-{bf16,f16}.gguf` | 5.5 GB each |
+  | Scripts and results | `/root/madlad-gguf`: `t5cmp.py` (compare against torch; `URL#MODEL` for LocalAI), `t10.py` (cost per output token), `cmp-card-f16.jsonl` | 1.6 MB |
+  | Pre-P2-rollout backends | `/mnt/ssd5/apps/localai/backends-bak-20261027` | 709 MB |
+
+- On the dev PC:
+  - `/tmp/lcpp`, the llama.cpp working tree with the patch (218 MB);
+  - `/tmp/t5f`, `/tmp/t5b`, `/tmp/tmp.9KixJbUrfa` (141 MB together);
+  - the Docker volume `lcpp-cpu-build`, used for the CPU check.
