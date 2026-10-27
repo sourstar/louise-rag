@@ -364,9 +364,24 @@ def pades_envelope(pdf: bytes) -> bytes:
         raise SealError("the PDF carries no signature")
     sig = sigs[0]
     try:
-        return bytes(sig.sig_object["/Contents"]).rstrip(b"\x00")
+        raw = bytes(sig.sig_object["/Contents"])
     except Exception as e:   # noqa: BLE001
         raise SealError(f"the PDF's signature has no /Contents: {e}") from None
+    return der_value(raw)
+
+
+def der_value(raw: bytes) -> bytes:
+    """The one DER (or BER) value at the start of `raw`, cut at the length
+    its own header states: a PDF reserves /Contents and pads it with
+    zeros. Stripping the zeros instead (as before 2026-10-27) ate a
+    signature whose last byte is 0x00 — one in 256 — and the envelope no
+    longer parsed (the gate caught it on a random test key)."""
+    from asn1crypto import parser
+    try:
+        _cls, _method, _tag, header, contents, trailer = parser.parse(raw, strict=False)
+    except Exception as e:   # noqa: BLE001 — asn1crypto raises its own kinds
+        raise SealError(f"not a CMS envelope: {e}") from None
+    return header + contents + trailer
 
 
 def parse_pades(pdf: bytes) -> dict[str, Any]:

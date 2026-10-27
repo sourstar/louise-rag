@@ -52,6 +52,32 @@ def test_a_request_left_from_before_the_start_is_cleared(root, events):
         t.join(timeout=5)
 
 
+def test_the_watch_ends_with_its_run_even_when_stop_is_cleared_first(root, events):
+    # 2026-10-27: a test cleared `_stop` before the watch woke, and the watch
+    # polled the default node store for the rest of the suite
+    t = worker._start_stop_watch()
+    worker._stop.set()
+    worker._stop.clear()                # before the watch can see it
+    worker._end_stop_watch()
+    assert not t.is_alive() and worker._stop_watch is None
+
+
+def test_a_run_that_raises_ends_its_watch(root, events, monkeypatch):
+    # the gate's second leak: a run left by an exception never reached its shutdown
+    import signal
+    from app import collections as collections_mod
+
+    def boom():
+        raise RuntimeError("load failed")
+    monkeypatch.setattr(collections_mod, "load_all", boom)
+    monkeypatch.setattr(signal, "signal", lambda *a: None)    # the test's own handlers stay
+    with pytest.raises(RuntimeError, match="load failed"):
+        worker.run_forever()
+    assert worker._stop_watch is None
+    import threading
+    assert not any(t.name == "stop-watch" and t.is_alive() for t in threading.enumerate())
+
+
 def test_node_stop_writes_the_request(root, capsys):
     a = louise.build_parser().parse_args(["node", "stop"])
     assert a.fn(a) == 0
