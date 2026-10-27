@@ -541,6 +541,21 @@ stock. louise-python is not rebuilt: v4.12.1's `backend.proto` only adds
 byte-identical, and the VeGa wrapper forwards any method it does not
 intercept as bytes.
 
+**LIVE on the node, 2026-10-27 13:00**
+(`deploy/vega/switch/rollout-p2-20261027.sh`, series digest
+`e79a808b4808`, replacing `louise-sycl-f16-llama-cpp` in place, with the old
+tree in `backends-bak-20261027`):
+- bge-m3, granite, medcpt-query and qwen3-embedding-4b: each 16/16
+  bit-identical over 2 fresh loads × 2 shuffled passes at a window of 511.
+- bge-m3 also 16/16 at 1,024, and the cut scan refused 0 of 512 there.
+- Gates passed:
+  - gutenberg: 16/16 at 1.000000;
+  - pubmed: document whole set worst 0.999998, query worst 1.000000;
+  - wikipedia: whole set worst 0.9990.
+- wikipedia-v8 was not gated, because its paused records build held the
+  collection's lock.
+- Nothing was re-embedded.
+
 **Tokens against HF's** (bge-m3's `tokenizer.json`): 475 of 512 identical.
 The other 37 are one thing: the text ends with a space, and HF's tokenizer
 adds a trailing `▁` that llama.cpp, as SentencePiece, does not. The first
