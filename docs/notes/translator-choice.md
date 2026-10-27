@@ -319,3 +319,51 @@ llamacpp". It costs a 17–38 s cold load and 7.2 GB on the card, against
 - `python tools/measure/translator_choice_score.py --old tools/measure/out/onelang --live tools/measure/out/onelang_live --results search.jsonl --times tools/measure/out/xlate_choice`
 - Reading: `python tools/measure/translator_choice_reading.py tools/measure/out/xlate_choice/reading/old tools/measure/out/xlate_choice/reading`
   (python:3.12-slim + sacrebleu 2.4.3).
+
+## Waves: the simpler MADLAD-only step (proposed 2026-10-27)
+
+*The operator asked for a simpler patch than the per-sequence memory
+(llama-cpp-encoder-decoder.md §9), one that impacts no other model.
+Measured first (localai-bugs.md P3, "On the card"):*
+- *one slot: 3.03 s per translation, ~18 s per question;*
+- *time per output token is flat in the input length (×1.10 from 7 to 192
+  tokens). So decode steps carry a fixed cost, not the cross recompute,
+  and batching is the lever, not a cross K/V cache.*
+
+**What it is:** a server-only addition to P3 (a P3b), under the same guard
+(architecture `t5` with a decoder, generation tasks only). The library is
+not touched.
+- MADLAD's model file alone asks for several slots (`parallel:7`). LocalAI's
+  backend already turns the unified KV cache on by default
+  (`grpc-server.cpp:604`), which several T5 slots need.
+- The server never encodes while a slot of the model is generating.
+- When none is, every slot waiting to start is encoded in ONE encode call,
+  each on its own sequence id. The library already keeps the rows of one
+  call tagged per sequence, and the encoder masks sequences apart
+  (llama-graph.cpp:496-499).
+- Those slots then decode together, one batched step for all, as the
+  server does for any model.
+- Shared-prefix grouping stays off for these slots: a child would copy its
+  parent's decoder state and never encode.
+- A short gathering window (a few ms) keeps one question's languages, sent
+  at once by the client, in one wave.
+
+**Expected:** ~one translation's time per question (~3 s here), against
+~18 s; not measured.
+**Size:** ~60–100 lines on top of P3 (an estimate).
+**Other models:** no code of theirs changes. Rebuilding the shared backend
+still makes every SYCL embedder a new engine, measured and gated once
+(invariant 12).
+
+| Option | Pros | Cons |
+|---|---|---|
+| P3, one slot (status quo of the test) | Each translation alone, reproducible per translation | ~18 s per question: slower than torch |
+| **P3b, waves** | Server only, T5 only, small; per-question time like torch's; 9.5–11 s cold against 17–38 s | A translation's bytes depend on its wave's members; waves depend on arrival; the client sends one request per segment (architecture's change) |
+| Per-sequence memory (§9 stage 1) | Slots fully independent; upstream's shape | ~900 lines in the library's busiest files |
+| Keep torch | Measured, batched, serving | 17–38 s cold, a Python process, 7.2 GB |
+
+**Gates before MADLAD-on-llama.cpp replaces torch:**
+1. Retrieval on the 451 + 39 queries, as this note's measurement ran it.
+2. Waves' own byte test: the same question twice gives the same bytes
+   (llama-cpp-encoder-decoder.md T3).
+3. Invariant 12 on the rebuilt backend's embedders.

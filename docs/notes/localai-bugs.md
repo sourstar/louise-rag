@@ -641,8 +641,25 @@ converted from our own weights by llama.cpp's converter, 2026-10-27):
   `clean_up_tokenization_spaces` (true in MADLAD's config) is applied. The
   other 10 diverge greedily at one token, 8 of them in zh/ja/ko.
 - Speed: 2.26 s median per translation on 8 CPU threads.
-- On the card: next (load time, speed per query, the 490 queries, and
-  retrieval as translator-choice.md measured it).
+**On the card**, 2026-10-27, measured with gutenberg embedding beside it.
+Test backend `louise-sycl-f16-llama-cpp-p3test` (series `5c7ec99992cf`);
+test model `madlad-p3-test-f16`, an f16 GGUF converted from our weights,
+one slot. The live backend was not touched.
+- **Format:** bf16 and f16 give the same translations; f16 is 2–3× faster
+  warm.
+- **Memory and load:** 6.29 GB on the card (torch: 6.71 GB). The first
+  request, load included, takes 9.5–11 s (torch: 17–38 s).
+- **The 490 queries (3,078 translations):** 2,815 identical to torch's
+  after the cleanup (91.5 %). The differences by target: zh 48/488,
+  ja 69/490, ko 69/490, fi 26/466, de 22/421, fr 21/412, en 8/311.
+- **Speed:** median 3.03 s per translation (max 10.3 s), one language at a
+  time. A question's 6–7 languages take ~18 s, against torch's 3.2 s for
+  the batch.
+- **Stage 0 (T10, llama-cpp-encoder-decoder.md §9):** 48 output tokens
+  take ~170 ms each, whatever the input length (7 → 192 tokens: ×1.10). The
+  cross-attention recompute does not dominate; a fixed cost per decode step
+  does, and that is what decoding several translations together amortizes.
+  Hence translator-choice.md "Waves".
 
 **Only `/completion` with a raw prompt** is right for these models: a chat
 template is text they were not trained on. The client sends one request
