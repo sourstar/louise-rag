@@ -108,7 +108,8 @@ def _row(collection, report, refusal: str | None, paused: set[str]) -> dict[str,
         from pathlib import Path
         shard_tree = Path(collection.corpus_dir)
         violated = list(integrity.violations(shard_tree.parent.parent, shard_tree.parent.name, codex))
-    stages = [{"stage": s.name, "state": s.state, "waiting": s.waiting, "reason": s.reason}
+    stages = [{"stage": s.name, "state": s.state, "waiting": s.waiting, "reason": s.reason,
+               **({"over": True} if s.over else {})}
               for s in (report.stages if report else []) if s.state != "idle" or s.waiting]
     doing = next((s["stage"] for s in stages if s["state"] == "running"), None)
     return {"name": collection.name,

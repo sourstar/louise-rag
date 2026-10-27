@@ -76,6 +76,13 @@ _WAITING = {
     "embed": "in_scope=1 AND rdf_done=1 AND fts_done=1 AND embed_done=0",
 }
 _INDEXED = "documents INDEXED BY idx_documents_scope"
+#: A stage count stops here and says "over": COUNT(*) walks the waiting rows
+#: along the covering index, 16.6 s for wikidata's 72.9 M during discovery
+#: and 24 s for wikipedia-v8 mid-build, so `node show` took 20-33 s (München,
+#: 2026-10-27). Exact below the cap, ~0.25 s at it. The standard bounded
+#: count (a LIMIT under the COUNT); the stage's state does not depend on
+#: the size, only on whether there is any.
+WAITING_CAP = 1_000_000
 
 IDLE, RUNNING, HELD, BLOCKED = "idle", "running", "held", "blocked"
 
@@ -151,10 +158,13 @@ class Stage:
     waiting: int
     state: str
     reason: str = ""
+    #: True when `waiting` is the cap (WAITING_CAP): there are more
+    over: bool = False
 
     def line(self) -> str:
         mark = {IDLE: "  ", RUNNING: "->", HELD: "..", BLOCKED: "!!"}[self.state]
-        got = f"{mark} {self.name:<7} {self.waiting:>12,}  {self.state}"
+        n = f"over {self.waiting:,}" if self.over else f"{self.waiting:,}"
+        got = f"{mark} {self.name:<7} {n:>17}  {self.state}"
         return f"{got}  — {self.reason}" if self.reason else got
 
 
@@ -222,7 +232,8 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -
     for name, where in _WAITING.items():
         try:
             waiting = con.execute(
-                f"SELECT COUNT(*) FROM {_INDEXED} WHERE {where}").fetchone()[0]
+                f"SELECT COUNT(*) FROM (SELECT 1 FROM {_INDEXED} WHERE {where} "
+                f"LIMIT {WAITING_CAP + 1})").fetchone()[0]
         except Exception as e:  # noqa: BLE001 — NAMED, never skipped. A stage
             # that silently vanished from the report would read as an
             # all-clear, which is the one failure a health check must not
@@ -249,7 +260,8 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -
             state, reason = HELD, held
         else:
             state = RUNNING
-        report.stages.append(Stage(name, waiting, state, reason))
+        over = waiting > WAITING_CAP
+        report.stages.append(Stage(name, min(waiting, WAITING_CAP), state, reason, over))
     return report
 
 
