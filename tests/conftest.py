@@ -11,6 +11,10 @@ import os
 
 import pytest
 
+# the web's background warm of the question path's models (app/warmup.py)
+# is off in tests: a test that starts the app talks to no model server
+os.environ["LOUISE_WARMUP"] = "0"
+
 FIXTURE_CORPUS = Path(__file__).parent / "fixtures" / "gutenberg-mini" / "corpus"
 
 
