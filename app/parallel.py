@@ -35,7 +35,7 @@ from concurrent.futures import FIRST_COMPLETED, CancelledError, ProcessPoolExecu
 from concurrent.futures import process as _cf_process
 from concurrent.futures.process import BrokenProcessPool
 
-from . import config
+from . import config, cpu_limit
 
 # config knobs a child must share with the parent: everything that shapes
 # a chunk, a record or a plugin's file access
@@ -619,6 +619,11 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
     # collection that is really using them.
     name = getattr(collection, "name", None)
     budget = n * IN_FLIGHT_PER_CHILD
+    # THE NODE PROFILE'S CORES (app/cpu_limit.py), read once per unit: at
+    # most that many parts in flight. A unit is never stalled half-way: under
+    # a pause (0) the one already begun finishes on one child, and the pause
+    # itself is its caller's, at the unit boundary (worker._cpu_paused)
+    lim = cpu_limit.current()
     # BOUNDED: the pool is an optimisation, and a caller that waits on it
     # forever is worse than no pool at all — live 2026-08-28, pubmed's
     # pipeline thread sat in the executor with every child gone, so the
@@ -646,7 +651,7 @@ def compute(kind: str, collection, rows) -> list[tuple[bool, object]]:
         out: list[tuple[bool, object]] = []
         nxt = 0
         while nxt < len(parts) or futures:
-            cap = slots(name, budget)
+            cap = cpu_limit.cap(slots(name, budget), lim, floor=1)
             while nxt < len(parts) and len(futures) < cap:
                 futures.append(ex.submit(_compute, kind, collection, parts[nxt]))
                 nxt += 1
@@ -695,7 +700,23 @@ def _running(inflight) -> int:
     return sum(1 for *_x, f in inflight if f is not None and not f.done())
 
 
-def compute_pages(kind: str, collection, pages):
+class Interrupted(Exception):
+    """`compute_pages` was paused by the node profile and its `stop` was set
+    meanwhile: what was in flight was handed over, nothing more is coming.
+    The caller handles it as its stop at a page boundary (invariant 2)."""
+
+
+def _submit(ex, kind, collection, part):
+    """A part to the pool, or None — broken, or stopped by another caller
+    meanwhile — and then it is computed in-process."""
+    try:
+        return ex.submit(_compute, kind, collection, part)
+    except RuntimeError as e:
+        _note_failure(e, ex)
+        return None
+
+
+def compute_pages(kind: str, collection, pages, *, stop=None, say=None):
     """`compute` over a STREAM of pages: one result list per page, in order,
     with the pool's window kept full ACROSS pages — the parts of page k+1
     are submitted while page k's are still running and while the caller
@@ -714,30 +735,57 @@ def compute_pages(kind: str, collection, pages):
     the parts not yet answered — and only they — are computed in-process,
     the finished ones kept, and the next pages go to a fresh pool. Parts are
     cut per page by `_partition` (unit boundaries, `work_span`), as before.
-    A generator: closing it cancels what is in flight."""
+    A generator: closing it cancels what is in flight.
+
+    THE NODE PROFILE (app/cpu_limit.py, operator 2026-10-27): parts are
+    submitted one at a time while the parts RUNNING are below
+    `min(the window, the profile's cores)`, the cores re-read at each page
+    boundary (`say` gets each change, once). `0` pauses: nothing new is
+    submitted or read, what is in flight finishes and its pages are handed
+    over (the caller commits what they complete), and then the stream waits,
+    bounded, until a profile allows cores again — or raises `Interrupted`
+    when `stop` is set meanwhile. Results never depend on the limit: a part
+    is the same part whenever it runs, and pages come out in order."""
     from collections import deque
     name = getattr(collection, "name", None)
+    watch = cpu_limit.Watch(say)
+    lim = watch.limit()                   # re-read at each page boundary, below
     pages = iter(pages)
-    inflight: deque = deque()            # (page_no, part_rows, future or None)
+    inflight: deque = deque()            # (page_no, part_no, part_rows, future or None = in-process)
+    queued: deque = deque()              # (page_no, part_no, part_rows): cut, waiting for a slot
     owner: dict = {}                      # future -> the executor it was submitted to
     results: dict[int, list] = {}         # page_no -> list of per-part results, in part order
-    sizes: dict[int, int] = {}            # page_no -> number of parts
     next_page = 0                         # pages read so far
     emit = 0                              # the next page to yield
     exhausted = False
     _want(name, 1)
     mine = 0
     deadline = time.monotonic() + config.PARSE_TIMEOUT_S
+
+    def submit_queued(ex, cap: int) -> None:
+        """What waits, oldest first, while the parts RUNNING are below the
+        cap — a part that answered but waits behind a slower one for its
+        page's turn holds no child, so it holds no slot either."""
+        nonlocal mine
+        while queued and (ex is None or _running(inflight) < cap):
+            page_no, i, part = queued.popleft()
+            fut = _submit(ex, kind, collection, part) if ex is not None else None
+            if fut is not None:
+                owner[fut] = ex
+                mine += 1
+                _occupy(name, 1)
+            inflight.append((page_no, i, part, fut))
+
     try:
         while True:
             ex = pool()
             n = processes()
-            budget = n * IN_FLIGHT_PER_CHILD
-            # fill the window: read pages ahead while parts are RUNNING below
-            # the budget — a part that answered but waits behind a slower one
-            # for its page's turn holds no child, so it holds no slot either
-            while not exhausted and (ex is None or _running(inflight) < slots(name, budget)) \
-                    and next_page - emit <= PAGES_AHEAD:
+            cap = cpu_limit.cap(slots(name, n * IN_FLIGHT_PER_CHILD), lim)
+            if lim.cores != 0:
+                submit_queued(ex, cap)
+            # read pages ahead, once what was read is all submitted
+            while not exhausted and not queued and lim.cores != 0 \
+                    and (ex is None or _running(inflight) < cap) and next_page - emit <= PAGES_AHEAD:
                 page = next(pages, None)
                 if page is None:
                     exhausted = True
@@ -745,22 +793,12 @@ def compute_pages(kind: str, collection, pages):
                 rows = [dict(r) if not isinstance(r, dict) else r for r in page]
                 parts = ([rows] if ex is None or len(rows) <= 1
                          else _partition(collection, rows, n * PARTS_PER_CHILD)) if rows else []
-                sizes[next_page] = len(parts)
                 results[next_page] = [None] * len(parts)
-                for i, part in enumerate(parts):
-                    fut = None
-                    if ex is not None and len(rows) > 1:
-                        try:
-                            fut = ex.submit(_compute, kind, collection, part)
-                        except RuntimeError as e:
-                            # broken, or stopped by another caller meanwhile:
-                            # this part in-process
-                            _note_failure(e, ex)
-                    if fut is not None:
-                        owner[fut] = ex
-                        mine += 1
-                        _occupy(name, 1)
-                    inflight.append((next_page, i, part, fut))
+                if ex is None or len(rows) <= 1:
+                    inflight.extend((next_page, i, part, None) for i, part in enumerate(parts))
+                else:
+                    queued.extend((next_page, i, part) for i, part in enumerate(parts))
+                    submit_queued(ex, cap)
                 next_page += 1
                 if ex is None:
                     break                 # serial: one page at a time
@@ -769,14 +807,22 @@ def compute_pages(kind: str, collection, pages):
                 out: list = []
                 for r in results.pop(emit):
                     out.extend(r)
-                sizes.pop(emit, None)
                 emit += 1
                 yield out
+                # a page boundary: the profile's cores, again (cached, TTL)
+                lim = watch.limit()
                 # the caller's time with a page is not the pool's silence
                 deadline = time.monotonic() + config.PARSE_TIMEOUT_S
             if not inflight:
-                if exhausted:
+                if exhausted and not queued:
                     return
+                if lim.cores == 0:
+                    # PAUSED, with nothing left in flight: wait at this
+                    # boundary, bounded, honouring the caller's stop
+                    if not cpu_limit.wait_while_paused(stop, watch):
+                        raise Interrupted("stopped while the node profile paused the pool")
+                    lim = watch.limit()
+                    deadline = time.monotonic() + config.PARSE_TIMEOUT_S
                 continue
             page_no, i, part, fut = inflight[0]
             if fut is None:
@@ -821,7 +867,8 @@ def compute_pages(kind: str, collection, pages):
                         _occupy(name, -1)
                 _note_failure(e, owner.get(fut))
                 owner.clear()
-                # what was not answered, in-process; what finished is kept
+                # what was not answered, in-process; what finished is kept;
+                # what was still queued goes to the next pool
                 results[page_no][i] = _compute(kind, collection, part)
                 for p_no, j, rest, f in inflight:
                     results[p_no][j] = (_finished(f) if f is not None else None) \
@@ -856,6 +903,18 @@ _prefetched: OrderedDict = OrderedDict()      # (collection, key) -> True
 _MAX_PREFETCH_MEMO = 512
 
 
+def prefetch_allowed() -> bool:
+    """A pool, and no node-profile limit below its size. A prefetch is fired
+    and forgotten, outside any window, so it is not counted in flight: under
+    a limit it is not sent, and the stage that needs the preparation pays
+    for it inside its own limited window, as it did before prefetch existed
+    (app/cpu_limit.py)."""
+    if pool() is None:
+        return False
+    cores = cpu_limit.current().cores
+    return cores is None or cores >= processes()
+
+
 def prefetch(collection, rows) -> list[str]:
     """Fire-and-forget: ask the pool to PREPARE what documents ahead of the
     current batch will need — a plugin's derived cache, built once and
@@ -870,7 +929,7 @@ def prefetch(collection, rows) -> list[str]:
     preparation simply means the stage pays for it later, as before."""
     from . import plugin_io
     ex = pool()
-    if ex is None:
+    if ex is None or not prefetch_allowed():
         return []
     try:
         plugin = collection.plugin_instance()

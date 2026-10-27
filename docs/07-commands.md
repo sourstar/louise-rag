@@ -1282,6 +1282,13 @@ A re-run after 130 continues from the last committed unit and writes the
 same bytes it would have written uninterrupted. The node stops every
 collection at its unit and exits 130 on a signal, 0 on `node stop`.
 
+*Amended 2026-10-27 (node profiles, docs/notes/node-profiles-design.md).* A
+profile's `cpu_cores` is not an interruption: `records build` and the
+node's parse stages keep at most that many parse-pool parts in flight,
+re-read at each page or batch, and `0` holds them at the same unit — the
+work in flight finished and committed — until a profile allows cores again,
+with no exit. A signal during that hold is the ordinary one: 130.
+
 ## 7.8 Configuration and the state directory
 
 Three tiers, sorted by how often they change. Every value has exactly

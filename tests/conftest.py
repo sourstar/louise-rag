@@ -17,7 +17,7 @@ def fresh_worker_state():
     """Module-level cursors and memos are per PROCESS, so one test's
     completed walk must not decide the next test's selection (that leak
     is exactly the bug the re-index cursor's key had in production)."""
-    from app import (dispatch, encoder_timeouts, language_plan, parallel, sched, sizing,
+    from app import (cpu_limit, dispatch, encoder_timeouts, language_plan, parallel, sched, sizing,
                      translate, worker)
     from app.bundles import genesis
     dispatch.reset()
@@ -35,6 +35,9 @@ def fresh_worker_state():
     parallel.forget_prefetched()
     parallel.forget_users()
     parallel.reset_failures()
+    # the node profile's cached limit and each collection's watch of it
+    cpu_limit.reset()
+    worker._cpu_watches.clear()
     # the beat reaches `_log_shares` now; its 600 s throttle must not carry
     # one test's log into the next
     worker._last_shares_log = 0.0
@@ -189,6 +192,21 @@ def serial_parse_pool(monkeypatch):
 def corpus_dir(tmp_path) -> Path:
     dest = tmp_path / "corpus"
     shutil.copytree(FIXTURE_CORPUS, dest)
+    return dest
+
+
+def gutenberg_books(dest: Path, n: int, first: int = 20000) -> Path:
+    """A gutenberg corpus of `n` books at `dest`, cycled from the mini
+    fixture's three under new ids (~2.5 KB each): enough rows for a build of
+    several pages (a page is at least 50 records, app/pack/build.py)."""
+    templates = sorted(p for p in FIXTURE_CORPUS.iterdir() if p.is_dir())
+    for k in range(n):
+        src = templates[k % len(templates)]
+        old, new = src.name, str(first + k)
+        (dest / new).mkdir(parents=True)
+        for f in src.iterdir():
+            (dest / new / f.name.replace(old, new)).write_bytes(
+                f.read_bytes().replace(old.encode(), new.encode()))
     return dest
 
 

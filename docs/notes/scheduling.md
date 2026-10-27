@@ -941,6 +941,21 @@ Neither of these touches the GPU feed: the embed thread does not use the
 pool, and children sit at the worker's nice + 10, so feeding the encoder
 outranks parsing by construction (§12).
 
+**The node profile's cores (2026-10-27, `app/cpu_limit.py`).** Admission
+has a second ceiling: the profile's `cpu_cores`
+(node-profiles-design.md). The pool keeps its children; what is capped is
+the parts in flight, `min(window, cores)`, and the page stream now submits
+part by part instead of a whole page at once, so the cap holds exactly.
+The limit is read once per page or batch, from a cache trusted 30 s or until
+the profile's own end. `0` is a pause at that boundary. In the worker it is
+`_cpu_paused`, which stands rdf, fts and the archive pass down; embedding,
+bundles and scans go on. A prefetch is not counted in any window, so it is
+not sent while a limit binds. Measured on a fixture build (6,000 gutenberg
+books, 3 children, 4-core VM shared with other jobs, 5 alternating runs,
+median): before 4.18 s, after with no profile 4.06 s, with a non-binding
+profile 4.20 s — the check is in the noise. A cached read is 10.6 µs and a
+re-read 0.32 ms. With a binding profile of 2 cores the build takes 5.01 s.
+
 **And the reason it survived six reworks: nothing measured occupancy.** A
 starved pool and a slow pool look identical from outside — both show long
 batches. The batch log has duration and size, `docker stats` has the

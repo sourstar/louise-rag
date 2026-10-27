@@ -44,7 +44,7 @@ are never limited by a profile.
 
 | setting | applied by | how |
 |---|---|---|
-| `cpu_cores` | the records build and the worker's parse pool | the pool's size is `min(cpu_cores, the cgroup quota)` (`config.available_cpus`); a change resizes it at the next page; `0` finishes the current part, commits and waits, then resumes when a profile allows. No container is stopped or started |
+| `cpu_cores` | the records build and the worker's parse pool (`app/cpu_limit.py`, built 2026-10-27) | the pool keeps its size (`config.available_cpus`); the parts IN FLIGHT are kept at `min(cpu_cores, the pool's window)`, re-read at each page (build) or batch (worker), cached 30 s or until the profile's own end. `0` pauses at that boundary: the pages in flight are finished and handed over, the parts they complete committed by the build's own per-part commit, the open part's records kept in memory; the worker's rdf, fts and archive passes stand down (embedding, bundles and scans go on). It waits in a bounded sleep that honours SIGTERM (exit 130, nothing committed lost) and resumes when a profile allows cores. Each change is logged once per collection ("profile quiet: paused until 08:00"); an unreadable `platform.toml` is logged and the last good limit kept. No container is stopped or started |
 | `gpu` level | the GPU governor app (already writes the card's `min_freq`) | writes hwmon `power1_max` (the standard Linux power limit) where writable, else `max_freq`; restores on leaving the level; keeps its query hold at or below the cap |
 | fans | the operator's `fancontrol.py`, optionally | reads `louise node show` to cap case fans in `quiet` |
 
