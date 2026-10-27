@@ -23,16 +23,16 @@ tokenize identically to transformers' on all 3,078.
 
 Assisted-by: Claude Code
 ---
- .../patches/0003-server-encoder-decoder.patch | 141 ++++++++++++++++++
- 1 file changed, 141 insertions(+)
+ .../patches/0003-server-encoder-decoder.patch | 166 ++++++++++++++++++
+ 1 file changed, 166 insertions(+)
  create mode 100644 backend/cpp/llama-cpp/patches/0003-server-encoder-decoder.patch
 
 diff --git a/backend/cpp/llama-cpp/patches/0003-server-encoder-decoder.patch b/backend/cpp/llama-cpp/patches/0003-server-encoder-decoder.patch
 new file mode 100644
-index 0000000..da312cc
+index 0000000..cdbf6e4
 --- /dev/null
 +++ b/backend/cpp/llama-cpp/patches/0003-server-encoder-decoder.patch
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,166 @@
 +server: run the encoder of encoder-decoder models (T5, MADLAD-400)
 +
 +llama-server never ran the encoder: on a T5-family GGUF it decoded the prompt
@@ -42,9 +42,13 @@ index 0000000..da312cc
 +support as a TODO (fairydreaming's t5-server branch, Dec 2024, unmerged);
 +#26565 (Aug 2026) closed stale, no PR.
 +
-+- launch_slot_with_task: for a model with an encoder, the prompt's tokens move
-+  to the slot's encoder input and the task's prompt becomes the decoder start
-+  token (BOS when the model names none); cache_prompt is off for the task.
++- which models: an encoder-decoder target (architecture "t5" with a decoder),
++  for generation tasks only. llama_model_has_encoder() alone is also true of
++  T5ENCODER (encoder-only embedding models) and of EAGLE3 and DFLASH (draft
++  heads): none of the code below runs for them, or for any other model.
++- launch_slot_with_task: for such a model, the prompt's tokens move to the
++  slot's encoder input and the task's prompt becomes the decoder start token
++  (BOS when the model names none); cache_prompt is off for the task.
 +- update_slots, when the slot starts its prompt: the slot's sequence is
 +  cleared, then the encoder reads the input in one ubatch on the slot's
 +  sequence id (an input longer than n_ubatch is refused, not asserted on);
@@ -56,8 +60,9 @@ index 0000000..da312cc
 +
 +Only /completion (a raw prompt) is right for these models: a chat template
 +is text they were not trained on.
++
 +diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-+index a18b754..0a817ae 100644
++index a18b754..7fefa90 100644
 +--- a/tools/server/server-context.cpp
 ++++ b/tools/server/server-context.cpp
 +@@ -351,6 +351,11 @@ struct server_slot {
@@ -72,11 +77,31 @@ index 0000000..da312cc
 +     // sampling
 +     json json_schema;
 + 
-+@@ -1231,6 +1236,13 @@ private:
++@@ -947,6 +952,12 @@ public:
++     //  - and, with thread-safe APIs (e.g., tokenizer calls)
++     llama_model * model_tgt = nullptr;
++ 
+++    // the target is an encoder-decoder model (T5, MADLAD): its generation reads
+++    // the prompt with the encoder. Not llama_model_has_encoder() alone, which is
+++    // also true of encoder-only models (T5ENCODER) and of speculative draft
+++    // heads (EAGLE3, DFLASH), whose requests stay as they are
+++    bool enc_dec = false;
+++
++     mtmd_context * mctx = nullptr;
++     // note: video_params.ffmpeg_bin_dir points into params_base, which outlives this struct
++     mtmd_helper_init_opt init_opt = mtmd_helper_init_opt_default();
++@@ -1231,6 +1242,20 @@ private:
 + 
 +         vocab = llama_model_get_vocab(model_tgt);
 + 
-++        if (llama_model_has_encoder(model_tgt) && params_base.n_parallel > 1) {
+++        {
+++            char arch[64] = {};
+++            llama_model_meta_val_str(model_tgt, "general.architecture", arch, sizeof(arch));
+++            enc_dec = llama_model_has_encoder(model_tgt) && llama_model_has_decoder(model_tgt)
+++                && std::string(arch) == "t5";
+++        }
+++
+++        if (enc_dec && params_base.n_parallel > 1) {
 ++            // the encoder's output is kept once per context, not per sequence
 ++            // (llama_cross): a second slot's encode would overwrite the first's
 ++            SRV_WRN("encoder-decoder model with %d slots: its encoder output is shared by the context, "
@@ -86,11 +111,11 @@ index 0000000..da312cc
 +         try {
 +             decision.init(model_tgt);
 +         } catch (const std::exception & e) {
-+@@ -1379,6 +1391,19 @@ private:
++@@ -1379,6 +1404,19 @@ private:
 + 
 +         slots.clear();
 + 
-++        if (llama_model_has_encoder(model_tgt)) {
+++        if (enc_dec) {
 ++            // the probe below decodes, and an encoder-decoder model's decoder reads
 ++            // the encoder's output (it asserts "llama_encode must be called first"):
 ++            // one token encoded on sequence 0 gives it that; every request encodes
@@ -106,7 +131,7 @@ index 0000000..da312cc
 +         ctx_tgt_seq_rm_type = common_context_can_seq_rm(ctx_tgt);
 +         if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
 +             SRV_WRN("%s", "speculative decoding not supported by this context\n");
-+@@ -1960,6 +1985,27 @@ private:
++@@ -1960,6 +1998,27 @@ private:
 +         // the per-request limit takes priority over the global one
 +         slot.n_predict_max = task.params.n_predict != -1 ? task.params.n_predict : params_base.n_predict;
 + 
@@ -116,7 +141,7 @@ index 0000000..da312cc
 ++        // Nothing is reused from the previous prompt: the cross-attention of
 ++        // every cached position belongs to another encoder input.
 ++        slot.enc_tokens.clear();
-++        if (llama_model_has_encoder(model_tgt) && task.n_tokens() > 0) {
+++        if (enc_dec && task.need_sampling() && task.n_tokens() > 0) {
 ++            if (task.tokens.has_mtmd) {
 ++                send_error(task, "an encoder-decoder model takes text only", ERROR_TYPE_INVALID_REQUEST);
 ++                return false;
@@ -134,7 +159,7 @@ index 0000000..da312cc
 +         slot.task = std::make_unique<const server_task>(std::move(task));
 + 
 +         slot.state = slot.task->is_child()
-+@@ -3650,6 +3696,39 @@ private:
++@@ -3650,6 +3709,39 @@ private:
 +                             return;
 +                         }
 + 

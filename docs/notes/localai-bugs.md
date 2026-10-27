@@ -611,7 +611,13 @@ answered `<2cs><2cs>…` (2026-09-18), and MADLAD went on PyTorch:
   that belong to another encoder input.
 
 **What it changes:**
-- `launch_slot_with_task`: for a model with an encoder, the prompt's tokens
+- **Which models:** an encoder-decoder target (architecture `t5` with a
+  decoder), for generation tasks only. `llama_model_has_encoder()` alone is
+  also true of T5ENCODER (encoder-only embedding models) and of EAGLE3 and
+  DFLASH (speculative draft heads): none of P3's code runs for them, or for
+  any other model (found 2026-10-27, before deploying: the first version
+  keyed on `llama_model_has_encoder()` alone).
+- `launch_slot_with_task`: for such a model, the prompt's tokens
   become the slot's encoder input, and the task's prompt becomes the decoder
   start token (BOS where none is named). `cache_prompt` is off for that
   task. A multimodal prompt is refused.
