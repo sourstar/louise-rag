@@ -248,6 +248,37 @@ with `cache_ram:0`. Neither the 7B (1.0 GB) nor EuroLLM (0.7 GB) showed it.
    - Every one needs the sanity check of item 1 above.
    - A new `[translate] model / shape` config key: ask first.
 
+## Why MADLAD runs on torch, not llama.cpp (2026-10-27)
+
+*Operator: "why we went for the python path instead of the obvious
+llamacpp". It costs a 17–38 s cold load and 7.2 GB on the card, against
+4–8 s for the llama.cpp models (model-profile.md).*
+
+- **No decision on record.** MADLAD started as our own PyTorch server
+  (`deploy/madlad-translate/server.py`, the RAGE era). On 2026-10-03 it
+  became a LocalAI Python backend that wraps the server's model code
+  unchanged (rage-over-localai.md), and it now runs on louise-python.
+- **llama.cpp's library runs T5**, MADLAD's architecture
+  (`llama_model_has_encoder`, `llama_encode` in `include/llama.h`), but
+  only its `tools/completion` CLI calls it.
+- **Its server does not.** At c0fd786 (the commit our backend builds),
+  `tools/server` never calls `llama_encode`, and neither does LocalAI's
+  `backend/cpp/llama-cpp/grpc-server.cpp` at v4.12.1, which is built from
+  that server. So no LocalAI llama.cpp backend can serve an encoder-decoder
+  model, and the "obvious" path does not exist through LocalAI.
+- **The alternatives, if the load time matters:**
+  - MADLAD on OpenVINO through optimum-intel's seq2seq export. It would run
+    in the same louise-python backend, where MedCPT already loads on
+    OpenVINO in 2.4–3.6 s.
+  - Encoder-decoder support patched into our llama.cpp backend (a P3).
+    That is a larger change to carry, and the place for it is upstream
+    llama.cpp's server.
+  - CTranslate2, the standard runtime for MADLAD/T5. It has no Intel GPU
+    path (CUDA and CPU only).
+  - Whichever runtime, its output is compared with today's on the 451 + 39
+    queries before it serves. Translation is never hashed into a space, so
+    the change needs no recalibration.
+
 ## Reproduce
 
 **On the node, in `/root/xlate-choice`:**
