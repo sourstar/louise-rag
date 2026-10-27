@@ -254,10 +254,16 @@ with `cache_ram:0`. Neither the 7B (1.0 GB) nor EuroLLM (0.7 GB) showed it.
 llamacpp". It costs a 17–38 s cold load and 7.2 GB on the card, against
 4–8 s for the llama.cpp models (model-profile.md).*
 
-- **No decision on record.** MADLAD started as our own PyTorch server
-  (`deploy/madlad-translate/server.py`, the RAGE era). On 2026-10-03 it
-  became a LocalAI Python backend that wraps the server's model code
-  unchanged (rage-over-localai.md), and it now runs on louise-python.
+- **The decision is on record, in the code**
+  (`deploy/madlad-translate/server.py`'s docstring, node, 2026-09-18). A
+  MADLAD GGUF loaded in llama-server, but its encoder never ran: the server
+  wrote `<2cs><2cs>…`, and Ollama hung. Only llama.cpp's completion tool
+  translated correctly, one text per process with 18 s of load. So MADLAD
+  went on PyTorch XPU. On 2026-10-03 that server's model code became a
+  LocalAI Python backend unchanged (rage-over-localai.md), and it now runs
+  on louise-python. Its generation settings are greedy (`BEAMS` 1),
+  96-token sentence segments, batches of 32, and
+  `max_new = min(512, 2 × longest + 16)`.
 - **llama.cpp's library runs T5**, MADLAD's architecture
   (`llama_model_has_encoder`, `llama_encode` in `include/llama.h`), but
   only its `tools/completion` CLI calls it.

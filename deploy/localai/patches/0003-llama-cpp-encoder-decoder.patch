@@ -1,0 +1,179 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 27 Oct 2026 16:56:54 +0100
+Subject: [PATCH] fix(llama-cpp): run the encoder of encoder-decoder models
+ (T5, MADLAD)
+
+The llama.cpp backend is llama-server's code, and llama-server never runs
+the encoder of an encoder-decoder model: a T5-family GGUF (MADLAD-400-3B-MT)
+is decoded as if decoder-only and answers garbage (`<2cs><2cs>...`), though
+the library and llama.cpp's completion tool run it correctly (llama.cpp
+#5763, #26565, no upstream fix).
+
+Carry the server change as a llama.cpp patch beside the two this backend
+already applies (patches/0003-server-encoder-decoder.patch): the prompt goes
+through the encoder when the slot starts, the decoder starts from the
+model's decoder start token, the prompt cache is off for such a task, and
+the seq_rm probe at load encodes a token first.
+
+Checked on CPU at llama.cpp c0fd786 with MADLAD-400-3B-MT (bf16 GGUF): 130
+query translations, 120 identical to transformers' after its
+clean_up_tokenization (the rest diverge greedily at one token); the prompts
+tokenize identically to transformers' on all 3,078.
+
+Assisted-by: Claude Code
+---
+ .../patches/0003-server-encoder-decoder.patch | 141 ++++++++++++++++++
+ 1 file changed, 141 insertions(+)
+ create mode 100644 backend/cpp/llama-cpp/patches/0003-server-encoder-decoder.patch
+
+diff --git a/backend/cpp/llama-cpp/patches/0003-server-encoder-decoder.patch b/backend/cpp/llama-cpp/patches/0003-server-encoder-decoder.patch
+new file mode 100644
+index 0000000..da312cc
+--- /dev/null
++++ b/backend/cpp/llama-cpp/patches/0003-server-encoder-decoder.patch
+@@ -0,0 +1,141 @@
++server: run the encoder of encoder-decoder models (T5, MADLAD-400)
++
++llama-server never ran the encoder: on a T5-family GGUF it decoded the prompt
++as if the model were decoder-only and wrote `<2cs><2cs>...` (MADLAD-400-3B-MT,
++2026-09-18), while the library (llama_model_has_encoder, the ENCODE process
++type) and tools/completion run it correctly. Upstream: #5763 left server
++support as a TODO (fairydreaming's t5-server branch, Dec 2024, unmerged);
++#26565 (Aug 2026) closed stale, no PR.
++
++- launch_slot_with_task: for a model with an encoder, the prompt's tokens move
++  to the slot's encoder input and the task's prompt becomes the decoder start
++  token (BOS when the model names none); cache_prompt is off for the task.
++- update_slots, when the slot starts its prompt: the slot's sequence is
++  cleared, then the encoder reads the input in one ubatch on the slot's
++  sequence id (an input longer than n_ubatch is refused, not asserted on);
++  the decoder then runs as for any model.
++- load_model: one token is encoded before the seq_rm probe, which decodes,
++  and a T5 decoder asserts without an encoder output.
++- the encoder output is one per context (llama_cross), so more than one slot
++  is warned about: concurrent requests would read each other's.
++
++Only /completion (a raw prompt) is right for these models: a chat template
++is text they were not trained on.
++diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
++index a18b754..0a817ae 100644
++--- a/tools/server/server-context.cpp
+++++ b/tools/server/server-context.cpp
++@@ -351,6 +351,11 @@ struct server_slot {
++     std::vector<common_adapter_lora_info> lora;
++     int32_t alora_invocation_start = -1;
++ 
+++    // encoder-decoder models (T5, MADLAD): the prompt, read by the encoder
+++    // (llama_process ENCODE) when the slot starts; the task's own prompt is then
+++    // the decoder's start token
+++    llama_tokens enc_tokens;
+++
++     // sampling
++     json json_schema;
++ 
++@@ -1231,6 +1236,13 @@ private:
++ 
++         vocab = llama_model_get_vocab(model_tgt);
++ 
+++        if (llama_model_has_encoder(model_tgt) && params_base.n_parallel > 1) {
+++            // the encoder's output is kept once per context, not per sequence
+++            // (llama_cross): a second slot's encode would overwrite the first's
+++            SRV_WRN("encoder-decoder model with %d slots: its encoder output is shared by the context, "
+++                    "so concurrent requests can read each other's; use 1 slot\n", params_base.n_parallel);
+++        }
+++
++         try {
++             decision.init(model_tgt);
++         } catch (const std::exception & e) {
++@@ -1379,6 +1391,19 @@ private:
++ 
++         slots.clear();
++ 
+++        if (llama_model_has_encoder(model_tgt)) {
+++            // the probe below decodes, and an encoder-decoder model's decoder reads
+++            // the encoder's output (it asserts "llama_encode must be called first"):
+++            // one token encoded on sequence 0 gives it that; every request encodes
+++            // its own prompt over it
+++            common_batch batch_enc(ctx_tgt);
+++            batch_enc.add(llama_vocab_eos(vocab), 0, 0, false);
+++            if (llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_ENCODE, batch_enc.get()) != 0) {
+++                SRV_ERR("%s", "failed to encode the probe token of an encoder-decoder model\n");
+++                return false;
+++            }
+++        }
+++
++         ctx_tgt_seq_rm_type = common_context_can_seq_rm(ctx_tgt);
++         if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
++             SRV_WRN("%s", "speculative decoding not supported by this context\n");
++@@ -1960,6 +1985,27 @@ private:
++         // the per-request limit takes priority over the global one
++         slot.n_predict_max = task.params.n_predict != -1 ? task.params.n_predict : params_base.n_predict;
++ 
+++        // an encoder-decoder model reads the prompt with its encoder, and its
+++        // decoder starts from the decoder start token: the prompt moves to the
+++        // slot's encoder input, and the task's prompt becomes that one token.
+++        // Nothing is reused from the previous prompt: the cross-attention of
+++        // every cached position belongs to another encoder input.
+++        slot.enc_tokens.clear();
+++        if (llama_model_has_encoder(model_tgt) && task.n_tokens() > 0) {
+++            if (task.tokens.has_mtmd) {
+++                send_error(task, "an encoder-decoder model takes text only", ERROR_TYPE_INVALID_REQUEST);
+++                return false;
+++            }
+++            slot.enc_tokens = task.tokens.get_text_tokens();
+++            llama_token dec_start = llama_model_decoder_start_token(model_tgt);
+++            if (dec_start == LLAMA_TOKEN_NULL) {
+++                dec_start = llama_vocab_bos(vocab);
+++            }
+++            task.tokens = server_tokens(llama_tokens{ dec_start }, false);
+++            task.params.cache_prompt = false;
+++            slot.prompt.clear();
+++        }
+++
++         slot.task = std::make_unique<const server_task>(std::move(task));
++ 
++         slot.state = slot.task->is_child()
++@@ -3650,6 +3696,39 @@ private:
++                             return;
++                         }
++ 
+++                        // encoder-decoder models: the encoder reads the prompt now, right
+++                        // before this slot's decoder, which attends to its output
+++                        if (!slot.enc_tokens.empty()) {
+++                            const int32_t n_enc = (int32_t) slot.enc_tokens.size();
+++                            if (n_enc > n_ubatch) {
+++                                // the encoder asserts on it: it reads the whole input in one ubatch
+++                                send_error(slot,
+++                                           string_format("input (%d tokens) is too large for the encoder. increase the "
+++                                                         "physical batch size (current batch size: %d)", n_enc, n_ubatch),
+++                                           ERROR_TYPE_EXCEED_CONTEXT_SIZE);
+++                                slot.release();
+++                                return;
+++                            }
+++                            // the previous request's decoder state goes first: the batch's
+++                            // positions (0..n) are checked against what the memory holds for the
+++                            // sequence, and nothing of it is reused (cache_prompt is off)
+++                            slot.mem.seq_rm(slot.id, -1, -1);
+++                            // the slot's own sequence id: the decoder's cross-attention mask
+++                            // pairs its positions with the encoder outputs of the same sequence
+++                            common_batch batch_enc(ctx_tgt);
+++                            for (int32_t i = 0; i < n_enc; ++i) {
+++                                batch_enc.add(slot.enc_tokens[i], i, slot.id, false);
+++                            }
+++                            const int32_t ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_ENCODE, batch_enc.get());
+++                            slot.enc_tokens.clear();
+++                            if (ret != 0) {
+++                                send_error(slot, string_format("failed to encode the prompt (llama_process ENCODE: %d)", ret), ERROR_TYPE_SERVER);
+++                                slot.release();
+++                                return;
+++                            }
+++                            SLT_DBG(slot, "encoded %d prompt tokens\n", n_enc);
+++                        }
+++
++                         if (!slot.can_split()) {
++                             if (slot.task->n_tokens() > n_ubatch) {
++                                 send_error(slot,
+-- 
+2.55.0.windows.3
+

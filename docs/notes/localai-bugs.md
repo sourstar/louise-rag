@@ -37,8 +37,11 @@ the source):*
 | B12 | defect | `intel-transformers` (v4.11.0's, as the gallery installed it 2026-10-05): optimum-intel 1.15.0 imports `openvino.runtime`, which the openvino 2026.4.1 beside it no longer has, so EVERY `OVModel*` type fails to load (`ModuleNotFoundError`, checked on the node 2026-10-17). `intel-rerankers` has optimum-intel 2.2.0 and is not affected | none since louise-python (docs/notes/backend-consolidation.md, U4) | not filed |
 | B13 | defect | transformers backend, `Embedding`: prints every input in full to stderr ("Calculated embeddings for: …"), a whole document per line in LocalAI's log | — (U3) | not filed |
 | B14 | defect | llama.cpp backend, `Embedding`: ignores `EmbeddingTokens`, which `/v1/embeddings` fills when given token ids; it embeds the empty text beside them and refuses it ("Input content cannot be empty"), so no client can embed tokens | **blocking** for a space that cuts by tokens: without token ids an input cannot always be cut to exactly its first N tokens (3 of 512 at 1,024 on the AMD peer); P2 | not filed; found 2026-10-18, source in §B14 |
+| B15 | defect | `v4.12.1`: backend downloads are staged at `${basepath}/downloading` = `//downloading`, unwritable by LocalAI's user, so every backend install and auto-upgrade fails | backend updates (the operator wants them); set `LOCALAI_DOWNLOAD_STAGING_PATH` | not filed; §B15 |
+| B16 | defect | llama.cpp backend (llama-server's code): never runs the encoder of an encoder-decoder model; a T5-family GGUF is decoded as if decoder-only and answers garbage (`<2cs><2cs>…`) | MADLAD cannot run on llama.cpp, so it runs on torch (17–38 s cold); P3 | upstream llama.cpp #5763 / #26565, no fix; §P3 |
 | **P1** | **patch we carry** | `GET /system` lists the options each loaded model was given, with their hash | none since VeGa: the wrapper receives `LoadModel` itself (vega.md §1). It was blocking for RAGE; kept for upstream | not filed; [`deploy/localai/patches/0001-system-list-load-options.patch`](../../deploy/localai/patches/0001-system-list-load-options.patch) |
 | **P2** | **patch we carry** | llama.cpp backend: `Embedding` embeds `EmbeddingTokens`, with the special tokens a text gets (B14) | **blocking** for the token cut: VeGa's wrapper sends a cut as its first tokens to a backend that embeds them (`Gate._probe`) | not filed; [`deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch`](../../deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch) |
+| **P3** | **patch we carry** | llama.cpp backend: the encoder of an encoder-decoder model runs (B16), as a llama.cpp patch in the backend's own `patches/` | MADLAD on llama.cpp (operator, 2026-10-27: "we need anyway a patched llama.cpp") | not filed; [`deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch`](../../deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch) |
 | R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: RAGE checks before and after instead | not filed |
 | R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (rage-over-localai §8.2) | not filed |
 | R3 | request | read API keys from a file, not only from `LOCALAI_API_KEY` | only if LocalAI's own UI is published (invariant 8) | not filed |
@@ -583,6 +586,62 @@ comes back bit-identical to the text's, from as many tokens
 (`Gate._probe`). A stock backend refuses the empty text, so it can never
 pass for one that embeds the ids; its inputs are cut as text, exactly or
 refused, as before.
+
+### P3. llama.cpp backend: the encoder of encoder-decoder models runs
+
+*Base: `v4.12.1` (`ec92740`), after P1 and P2. File:
+`0003-llama-cpp-encoder-decoder.patch`. It adds
+`backend/cpp/llama-cpp/patches/0003-server-encoder-decoder.patch`, a
+llama.cpp patch that the backend's `prepare.sh` applies to llama.cpp
+`c0fd786` beside upstream's own two. 80 lines added to
+`tools/server/server-context.cpp`.*
+
+**Why.** B16. MADLAD-400-3B-MT is a T5 model. The library runs its encoder
+(`llama_model_has_encoder`, `LLAMA_PROCESS_TYPE_ENCODE`), and
+`tools/completion` calls it. llama-server never does, so a GGUF of it
+answered `<2cs><2cs>…` (2026-09-18), and MADLAD went on PyTorch:
+17–38 s cold and 7.2 GB (translator-choice.md).
+
+**Upstream:**
+- fairydreaming's `t5-server` branch (Dec 2024) was never merged; 0x4139's
+  fork (Mar 2025) is the same 31 lines.
+- #26565 (Aug 2026) closed stale with no reply.
+- Both forks rewrite the prompt inside the prompt loop. Today's slot holds
+  its task as `const`, and the prompt cache would reuse decoder positions
+  that belong to another encoder input.
+
+**What it changes:**
+- `launch_slot_with_task`: for a model with an encoder, the prompt's tokens
+  become the slot's encoder input, and the task's prompt becomes the decoder
+  start token (BOS where none is named). `cache_prompt` is off for that
+  task. A multimodal prompt is refused.
+- `update_slots`, when the slot starts its prompt:
+  - its sequence is cleared first (the encoder batch's positions are
+    checked against what the memory holds);
+  - the encoder reads the input in one ubatch on the slot's sequence id,
+    which the decoder's cross-attention mask pairs with its own;
+  - an input longer than `n_ubatch` is refused, rather than asserted on.
+- `load_model`: one EOS token is encoded before `common_context_can_seq_rm`,
+  whose probe decodes; a T5 decoder asserts "llama_encode must be called
+  first" without it.
+- More than one slot is warned about, because `llama_cross` holds one
+  encoder output per context. Our models run one slot.
+
+**Checked on CPU** (llama.cpp `c0fd786` + the patch, MADLAD bf16 GGUF
+converted from our own weights by llama.cpp's converter, 2026-10-27):
+- Tokens: all 3,078 query prompts tokenize identically to transformers'.
+- Translations: 120 of 130 are identical to the torch backend's
+  (`tools/measure/out/xlate_choice/q_madlad.jsonl`), once transformers'
+  `clean_up_tokenization_spaces` (true in MADLAD's config) is applied. The
+  other 10 diverge greedily at one token, 8 of them in zh/ja/ko.
+- Speed: 2.26 s median per translation on 8 CPU threads.
+- On the card: next (load time, speed per query, the 490 queries, and
+  retrieval as translator-choice.md measured it).
+
+**Only `/completion` with a raw prompt** is right for these models: a chat
+template is text they were not trained on. The client sends one request
+per segment (`<2xx> segment`), where today's backend takes the whole batch
+as one JSON prompt (translator-choice.md, "Code changes").
 
 ---
 
