@@ -88,7 +88,7 @@ from typing import Any, Callable, Iterable, Iterator, Optional
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from app import config, parallel
+from app import config, cpu_limit, parallel
 from app.plugins.wikidata import dump as dump_mod, families, ids, names
 
 #: 2 (2026-10-24): the `name` table; 3 (2026-10-24): the class tree and the
@@ -472,6 +472,7 @@ def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[st
             con.close()
         return _finish(dump, d, result, say=say, stop=stop, workers=n_workers) if result.get("complete") \
             else result
+    watch = cpu_limit.Watch(lambda m: say(f"[wikidata] pack: {dump.name}: {m}"))
     with dump_mod.open_dump(dump) as stream:
         result = dump_mod.ReadResult()
         count = 0
@@ -493,6 +494,10 @@ def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[st
                 say(f"[wikidata] pack: {dump.name}: {skip + count} entities, {chunk_no} chunk file(s), "
                     f"{time.monotonic() - t0:.0f} s")
                 if stop is not None and stop():
+                    con.close()
+                    return meta
+                # the node profile's pause (app/cpu_limit.py), at this chunk's commit
+                if watch.limit().cores == 0 and not cpu_limit.wait_while_paused(stop, watch):
                     con.close()
                     return meta
         # the tail: the last, partial chunk — complete only when the stream ended whole
@@ -808,11 +813,18 @@ def _lines_pass(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Connecti
                 f"{time.monotonic() - t0:.0f} s")
         return not (stop is not None and stop()) or k + 1 == len(files)
 
+    # THE NODE PROFILE'S CORES (app/cpu_limit.py, operator 2026-10-27): at
+    # most that many chunk files computing at once, re-read at each chunk's
+    # commit; 0 pauses there — what is computing finishes and is committed,
+    # then a bounded wait that honours `stop` (False: resumable, as a stop)
+    watch = cpu_limit.Watch(lambda m: say(f"[wikidata] pack: {dump.name}: {what}: {m}"))
     n = 1 if _parallel_failed else workers
     if n <= 1:
         if serial_init is not None:
             serial_init(*init_args)
         for k in range(start, len(files)):
+            if watch.limit().cores == 0 and not cpu_limit.wait_while_paused(stop, watch):
+                return False
             if not commit(k, job(files[k])):
                 return False
         return True
@@ -820,22 +832,35 @@ def _lines_pass(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Connecti
     ex = ProcessPoolExecutor(max_workers=n, mp_context=multiprocessing.get_context("spawn"),
                              initializer=init or _child_nice, initargs=init_args)
     try:
-        todo = iter(range(start, len(files)))
+        nxt = start
         pending: deque = deque()
+        lim = watch.limit()
 
         def fill() -> None:
-            while len(pending) < n + 2:
-                k = next(todo, None)
-                if k is None:
-                    return
-                pending.append((k, ex.submit(job, files[k])))
+            # computing (not merely answered and waiting for its turn to
+            # commit) below the profile's cores; the parent holds at most
+            # n + 2 results either way
+            nonlocal nxt
+            while nxt < len(files) and len(pending) < n + 2 and lim.cores != 0 \
+                    and sum(1 for _k, f in pending if not f.done()) < cpu_limit.cap(n + 2, lim):
+                pending.append((nxt, ex.submit(job, files[nxt])))
+                nxt += 1
         fill()
-        while pending:
+        while True:
+            if not pending:
+                if nxt >= len(files):
+                    return True
+                # paused, with nothing computing: wait at this boundary
+                if not cpu_limit.wait_while_paused(stop, watch):
+                    return False
+                lim = watch.limit()
+                fill()
+                continue
             k, fut = pending.popleft()
             if not commit(k, fut.result(timeout=CHUNK_TIMEOUT_S)):
                 return False
+            lim = watch.limit()                  # a chunk's commit: the unit boundary
             fill()
-        return True
     except (BrokenProcessPool, TimeoutError) as e:
         _parallel_failed = True
         hung = isinstance(e, TimeoutError)
@@ -1105,7 +1130,7 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
     from concurrent.futures.process import BrokenProcessPool
 
     from collections import deque
-    from concurrent.futures import ThreadPoolExecutor, wait as wait_futures
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait as wait_futures
 
     done = int(meta["chunks"])
     skip = done * chunk
@@ -1127,6 +1152,45 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
 
     def in_flight() -> int:
         return len(current) + sum(len(f) for _, f in closed)
+
+    # THE NODE PROFILE'S CORES (app/cpu_limit.py, operator 2026-10-27): at
+    # most that many slices computing, looked up (cached) before each slice
+    # is handed to the pool; the children are kept. 0 pauses at that
+    # boundary: the slices computing finish, every chunk they complete is
+    # written and committed, the open chunk stays in memory, and a bounded
+    # wait honours `stop` (then the pass ends as a stop does, resumable)
+    watch = cpu_limit.Watch(lambda m: say(f"[wikidata] pack: {dump.name}: {m}"))
+
+    def computing() -> list[Future]:
+        return [f for f in current if not f.done()] + [f for _, fs in closed for f in fs if not f.done()]
+
+    def admit() -> bool:
+        """Room for one more slice under the profile; False when stopped during a pause."""
+        while True:
+            lim = watch.limit()
+            if lim.cores == 0:
+                running = computing()
+                if running:
+                    done_, _ = wait_futures(running, timeout=CHUNK_TIMEOUT_S)
+                    if not done_:
+                        raise TimeoutError(f"no slice answered for {CHUNK_TIMEOUT_S:.0f} s")
+                    continue
+                while closed:                  # every complete chunk written and committed
+                    if not write_head():
+                        return False
+                if writing:
+                    commit_written()
+                    if state.get("stopped"):
+                        return False
+                if not cpu_limit.wait_while_paused(stop, watch):
+                    return False
+                continue
+            running = computing()
+            if len(running) < cpu_limit.cap(workers, lim):
+                return True
+            done_, _ = wait_futures(running, timeout=CHUNK_TIMEOUT_S, return_when=FIRST_COMPLETED)
+            if not done_:
+                raise TimeoutError(f"no slice answered for {CHUNK_TIMEOUT_S:.0f} s")
 
     def write_meta() -> None:
         tmp_meta = _meta_path(d).with_name("meta.json.tmp")
@@ -1192,6 +1256,8 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
                 in_chunk += 1
                 if len(lines) < sub and in_chunk < chunk:
                     continue
+                if not admit():
+                    return meta
                 current.append(ex.submit(_rows_job, lines, line_start, languages))
                 line_start += len(lines)
                 lines = []
@@ -1219,6 +1285,8 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
             raise PackError(f"{dump.name}: the dump ended before its closing bracket (truncated download?)")
         meta["entities"] = line_start + len(lines)
         if lines:
+            if not admit():
+                return meta
             current.append(ex.submit(_rows_job, lines, line_start, languages))
         if current:
             closed.append((chunk_no, current))

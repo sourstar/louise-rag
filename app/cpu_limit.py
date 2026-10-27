@@ -159,14 +159,23 @@ class Watch:
         return lim
 
 
+def stopped(stop) -> bool:
+    """An event's `is_set()`, or a callable's answer; None never stops."""
+    if stop is None:
+        return False
+    is_set = getattr(stop, "is_set", None)
+    return bool(is_set() if is_set is not None else stop())
+
+
 def wait_while_paused(stop=None, watch: Watch | None = None) -> bool:
     """A paused caller's wait, at its unit boundary: True when a profile
     allows cores again, False when `stop` (SIGTERM, the node's mode, the
     collection's removal) is set first. Bounded: it looks every
-    PAUSE_TICK_S, so a stop is honoured within a tick."""
+    PAUSE_TICK_S, so a stop is honoured within a tick. `stop` is an event
+    (anything with `is_set`) or a callable answering "stop now?"."""
     watch = watch or Watch()
     while True:
-        if stop is not None and stop.is_set():
+        if stopped(stop):
             return False
         if watch.limit().cores != 0:
             return True

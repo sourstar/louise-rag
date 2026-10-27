@@ -289,6 +289,11 @@ class DiscoverState:       # not frozen: received/committed advance during the s
     committed: int = 0
     on_commit: list = field(default_factory=list)
     snapshot: str | None = None
+    #: the scan's stop (an event: SIGTERM, the node's mode, the collection's
+    #: removal), or None. A source whose discover runs long work of its own
+    #: (wikidata's pack pass) ends it at its unit when this is set, and the
+    #: node profile's pause in that work waits on it (app/cpu_limit.py)
+    stop: Any = None
 
 
 class UnindexableDocument(RuntimeError):

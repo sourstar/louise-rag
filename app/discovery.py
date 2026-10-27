@@ -141,7 +141,8 @@ def sync_collection(con, collection, *, stop=None, adopt: bool = False) -> dict:
 
     state = DiscoverState(corpus_root=root,
                            state_dir=collection.manifest_path.parent,
-                           snapshot=getattr(collection, "snapshot", None))
+                           snapshot=getattr(collection, "snapshot", None),
+                           stop=stop)
     seen = 0
     # STREAMING with last-write-wins BY ORDER. A source may yield the same
     # uid more than once in one sweep (PubMed updatefiles revising a baseline

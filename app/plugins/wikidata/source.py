@@ -198,7 +198,9 @@ class WikidataSource:
                 continue
             try:
                 if not pack.is_complete(dump, self.languages):
-                    meta = pack.build(dump, languages=self.languages)
+                    stop = getattr(state, "stop", None)
+                    meta = pack.build(dump, languages=self.languages,
+                                      stop=stop.is_set if stop is not None else None)
                     if not meta.get("complete"):
                         yield DocRef(source_id=self.source_id, native_id=dump.name, locator=str(dump),
                                      scope="container", error="pack build stopped before the end; resumes next scan")
