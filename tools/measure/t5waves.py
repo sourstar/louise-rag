@@ -12,8 +12,9 @@ line (cmp-card-f16.jsonl). Every query's languages are the reference's.
 Writes to OUT_DIR:
   t4.jsonl     one request at a time (a wave of one): llama vs P3's llama (CMP) —
                identical expected — and vs torch;
-  t3.jsonl     each query's languages sent at once, TWICE: wave A == wave B
-               (the gate) and in-wave vs alone (informational);
+  t3.jsonl     each query's languages sent at once; for the first --t3-n
+               queries TWICE (wave A == wave B, the gate) and each language
+               alone (in-wave vs alone, informational); the rest once;
   q_waves.jsonl the wave translations in REFERENCE's shape, for
                tools/measure/translator_choice_search.py (the retrieval gate);
   summary.txt  counts and seconds.
@@ -70,6 +71,7 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=490, help="queries to run (evenly spaced)")
     ap.add_argument("--t4", default=None, help="P3's cmp-card-f16.jsonl: the one-slot bytes to match")
     ap.add_argument("--t4-n", type=int, default=60, help="queries for T4 (one at a time)")
+    ap.add_argument("--t3-n", type=int, default=100, help="queries run twice and alone (T3); the rest once")
     a = ap.parse_args()
     srv = Server(a.server)
     out = Path(a.out)
@@ -111,11 +113,12 @@ def main() -> None:
     q_secs = []
     with open(out / "t3.jsonl", "w", encoding="utf-8") as f3, \
             open(out / "q_waves.jsonl", "w", encoding="utf-8") as fq:
-        for ref in refs:
+        for i, ref in enumerate(refs):
             q = queries[ref["qid"]]
             codes = [c for c, w in ref["translations"].items() if w is not None]
             if not codes:
                 continue
+            twice = i < a.t3_n
 
             def wave() -> tuple[dict[str, str], float]:
                 t0 = time.perf_counter()
@@ -124,25 +127,28 @@ def main() -> None:
                 return got, time.perf_counter() - t0
 
             wave_a, sa = wave()
-            wave_b, sb = wave()
             q_secs.append(sa)
-            alone = {c: srv.translate(c, q["query"])[0] for c in codes}
-            for c in codes:
-                total += 1
-                same_ab += wave_a[c] == wave_b[c]
-                same_alone += wave_a[c] == alone[c]
-                f3.write(json.dumps({"qid": ref["qid"], "to": c, "wave_a": wave_a[c], "wave_b": wave_b[c],
-                                     "alone": alone[c], "torch": ref["translations"][c],
-                                     "same_ab": wave_a[c] == wave_b[c], "same_alone": wave_a[c] == alone[c]},
-                                    ensure_ascii=False) + "\n")
+            sb = 0.0
+            if twice:
+                wave_b, sb = wave()
+                alone = {c: srv.translate(c, q["query"])[0] for c in codes}
+                for c in codes:
+                    total += 1
+                    same_ab += wave_a[c] == wave_b[c]
+                    same_alone += wave_a[c] == alone[c]
+                    f3.write(json.dumps({"qid": ref["qid"], "to": c, "wave_a": wave_a[c], "wave_b": wave_b[c],
+                                         "alone": alone[c], "torch": ref["translations"][c],
+                                         "same_ab": wave_a[c] == wave_b[c], "same_alone": wave_a[c] == alone[c]},
+                                        ensure_ascii=False) + "\n")
             fq.write(json.dumps({"qid": ref["qid"], "lang": ref["lang"], "model": "madlad-waves",
                                  "translations": {c: wave_a.get(c) for c in ref["translations"]}},
                                 ensure_ascii=False) + "\n")
             f3.flush()
             fq.flush()
-            print(f"{ref['qid']}: {len(codes)} languages in {sa:.2f} s (again {sb:.2f} s)", flush=True)
+            print(f"{ref['qid']}: {len(codes)} languages in {sa:.2f} s" + (f" (again {sb:.2f} s)" if twice else ""), flush=True)
     q_secs.sort()
-    line = (f"T3 same group twice: {same_ab}/{total} identical ({'PASS' if same_ab == total else 'FAIL'}); "
+    line = (f"T3 same group twice ({min(a.t3_n, len(refs))} queries): {same_ab}/{total} identical "
+            f"({'PASS' if same_ab == total else 'FAIL'}); "
             f"in-wave == alone for {same_alone}/{total} (informational); "
             f"median {q_secs[len(q_secs) // 2]:.2f} s per question, p90 {q_secs[int(len(q_secs) * 0.9)]:.2f} s")
     print(line)
