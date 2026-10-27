@@ -103,13 +103,6 @@ def plan(root: Path, old: str, new: str) -> dict[str, Any]:
             moves["origin_kept"] = {"folder": str(t), "also_linked_by": shared}
         else:
             moves["origin"] = [str(t), str(t.with_name(new))]
-    # the fast drive's caches keyed on what moves (app/derived.py): carried
-    # with it, or the next lookup rebuilds them from the origin
-    from app import derived
-    pairs = [moves[k] for k in ("shard", "origin", "bundles") if k in moves] + [moves["directory"]]
-    caches = derived.carried(pairs)
-    if caches:
-        moves["caches"] = caches
     return moves
 
 
@@ -167,29 +160,35 @@ def _relink(link: Path, target: Path) -> None:
 
 def _cache_moves(moves: dict[str, Any]) -> list[tuple[Path, Path]]:
     """[(cache dir, its new place)] for every derived cache keyed on a folder
-    under what the rename moves. Every key `derived.place` is given is a
-    folder, so the walk lists folders only, of whichever side exists (before
-    or after the move: a rerun finds the same pairs), never into a link."""
-    from app import config, derived
-    if config.CACHE_DIR is None or not Path(config.CACHE_DIR).is_dir():
+    or FILE under what the rename moves: wikidata's pack is keyed on the dump
+    file (app/plugins/wikidata/pack.py `_target`), the others on a folder.
+    The walk is of whichever side exists (before or after the move: a rerun
+    finds the same pairs), never into a link, and a key is computed only
+    against the caches the fast drive holds: one resolve per moved root, a
+    hash per entry (an origin of a million files, gutenberg's, is a walk,
+    not a million resolves)."""
+    from app import derived
+    held = derived.held()
+    if not held:
         return []
+    tags = {c.name for c in held}
     pairs: dict[str, str] = {}
     for kind in ("directory", "shard", "origin", "bundles"):
         if kind not in moves:
             continue
         a, b = Path(moves[kind][0]), Path(moves[kind][1])
         walked = b if b.is_dir() else a
-        for here, dirs, _files in os.walk(walked):
+        ra, rb = derived.resolved(a), derived.resolved(b)
+        for here, dirs, files in os.walk(walked):
             dirs[:] = [d for d in dirs if not (Path(here) / d).is_symlink()]
             rel = Path(here).relative_to(walked)
-            pairs[derived.tag(a / rel)] = derived.tag(b / rel)
-    out = []
-    for kind_dir in sorted(p for p in Path(config.CACHE_DIR).iterdir() if p.is_dir()):
-        for old_tag, new_tag in pairs.items():
-            src, dst = kind_dir / old_tag, kind_dir / new_tag
-            if old_tag != new_tag and (src.exists() or dst.exists()):
-                out.append((src, dst))
-    return out
+            for name in [None, *(f for f in files if not (Path(here) / f).is_symlink())]:
+                r = rel if name is None else rel / name
+                old_tag = derived.key(ra / r)
+                if old_tag in tags:
+                    pairs[old_tag] = derived.key(rb / r)
+    return [(c, c.with_name(pairs[c.name])) for c in held
+            if c.name in pairs and pairs[c.name] != c.name]
 
 
 def rename(root: Path, old: str, new: str, *, dry_run: bool = False) -> dict[str, Any]:
@@ -205,12 +204,6 @@ def rename(root: Path, old: str, new: str, *, dry_run: bool = False) -> dict[str
     state.mkdir(parents=True, exist_ok=True)
     (state / MARKER).write_text(json.dumps(moves, sort_keys=True), encoding="utf-8")
     done: dict[str, Any] = {}
-    # 0b. the fast drive's caches, first: their keys are computed from the
-    # folders' places before anything moves, and a resumed rename finds them
-    # already carried (derived.carry is idempotent)
-    if moves.get("caches"):
-        from app import derived
-        done["caches"] = derived.carry(moves["caches"])
     # 1. the shared folders, then the links that name them
     for kind, link_name in (("shard", col.SHARD_DIR), ("origin", "origin"),
                             ("bundles", f"state/{col.BUNDLES_DIR}")):

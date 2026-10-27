@@ -178,7 +178,7 @@ def test_a_rename_carries_the_fast_drives_caches_with_what_it_moves(node, monkey
     """A cache is keyed on its origin's resolved path (app/derived.py): a
     moved origin found none and rebuilt it from the dump — wikidata's pack,
     hours (München, 2026-10-27). The rename carries every cache keyed on a
-    folder it moves, or on a file or folder directly in it."""
+    folder or file under what it moves."""
     from app import config, derived
     tmp, root, cfg, codex = node
     cache = tmp / "cache"
@@ -190,17 +190,18 @@ def test_a_rename_carries_the_fast_drives_caches_with_what_it_moves(node, monkey
     (pack / "labels.sqlite").write_bytes(b"labels")
     other = derived.place("wikidata-pack", tmp / "elsewhere.bz2")
     other.mkdir(parents=True)
-    planned = rn.rename(root, "old", "new", dry_run=True)
-    assert [c["kind"] for c in planned["caches"]] == ["wikidata-pack"]
-    out = rn.rename(root, "old", "new")
     moved = derived.place("wikidata-pack", tmp / "corpora" / "new" / "latest-all.json.bz2")
+    planned = rn.rename(root, "old", "new", dry_run=True)
+    assert planned["caches"] == [[str(pack), str(moved)]], "the dump FILE is a key, not only folders"
+    out = rn.rename(root, "old", "new")
     assert (moved / "labels.sqlite").read_bytes() == b"labels" and not pack.exists()
     assert other.is_dir(), "a cache of another origin stays"
-    assert out["done"]["caches"] == [f"wikidata-pack: {pack.name} -> {moved.name}"]
+    assert out["done"]["caches"] == {str(moved): "moved"}
+    assert rn.rename(root, "new", "new2", dry_run=True)["caches"], "and the next rename finds it again"
 
 
 def test_no_fast_drive_no_cache_work(node, monkeypatch):
     from app import config
     tmp, root, cfg, codex = node
     monkeypatch.setattr(config, "CACHE_DIR", None)
-    assert "caches" not in rn.rename(root, "old", "new", dry_run=True)
+    assert rn.rename(root, "old", "new", dry_run=True)["caches"] == []

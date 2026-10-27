@@ -26,7 +26,19 @@ from app import config
 def tag(origin: Path) -> str:
     """16 hex of the origin's resolved path — the key page_props has used
     for its temporary pack since 2026-09."""
-    return hashlib.blake2b(str(Path(origin).resolve()).encode("utf-8"), digest_size=8).hexdigest()
+    return key(Path(origin).resolve())
+
+
+def resolved(path: Path) -> Path:
+    """`path` resolved, or — gone — its parent resolved and its name kept."""
+    path = Path(path)
+    return path.resolve() if path.exists() else path.parent.resolve() / path.name
+
+
+def key(resolved_path: Path) -> str:
+    """`tag` of a path already resolved: a rename keys a whole walked tree
+    from one resolve of its root (app/hold/rename.py)."""
+    return hashlib.blake2b(str(resolved_path).encode("utf-8"), digest_size=8).hexdigest()
 
 
 def place(kind: str, origin: Path) -> Path | None:
@@ -66,66 +78,11 @@ def adopt(src: Path, dst: Path) -> bool:
     return True
 
 
-def _entries(folder: Path, depth: int):
-    """`folder` and its entries to `depth` levels (1: its children), as found."""
-    yield folder
-    if depth <= 0 or not folder.is_dir():
-        return
-    try:
-        children = sorted(folder.iterdir())
-    except OSError:
-        return
-    for child in children:
-        yield from _entries(child, depth - 1)
-
-
-def carried(pairs, depth: int = 1) -> list[dict]:
-    """The caches a rename must carry: for each folder moved `a -> b`, every
-    cache keyed on `a` or on an entry of it (to `depth`; every kind in use
-    keys on the origin or the SHARD tree, a file or folder directly in it, or
-    the tree itself), with the key it will have once moved. A cache is keyed
-    on its origin's resolved path (`tag`), so a moved origin would otherwise
-    find nothing and rebuild for hours (wikidata's pack: München,
-    2026-10-27). One listing per moved folder; nothing when no fast drive is
-    named or it holds no cache."""
-    if config.CACHE_DIR is None:
+def held() -> list[Path]:
+    """Every cache the fast drive holds, `<CACHE_DIR>/<kind>/<tag>`, sorted;
+    none when no fast drive is named (a rename carries them,
+    app/hold/rename.py). A dot-name is a copy in progress (`adopt`)."""
+    if config.CACHE_DIR is None or not Path(config.CACHE_DIR).is_dir():
         return []
-    root = Path(config.CACHE_DIR)
-    if not root.is_dir():
-        return []
-    held = {(k.name, t.name) for k in root.iterdir() if k.is_dir()
-            for t in k.iterdir() if t.is_dir() and not t.name.startswith(".")}
-    if not held:
-        return []
-    keys: dict[str, tuple[Path, Path]] = {}
-    for a, b in pairs:
-        ra = Path(os.path.realpath(a))
-        rb = Path(os.path.realpath(Path(b).parent)) / Path(b).name
-        if not ra.exists():
-            continue
-        for p in _entries(ra, depth):
-            keys[tag(p)] = (p, rb / p.relative_to(ra))
-    out = []
-    for kind, t in sorted(held):
-        if t in keys:
-            old, new = keys[t]
-            out.append({"kind": kind, "from": t, "to": tag(new), "key": str(old), "new_key": str(new)})
-    return out
-
-
-def carry(moves: list[dict]) -> list[str]:
-    """Move each cache of `carried` to its new key: renamed whole within its
-    kind's directory. Idempotent — a cache already under its new key is done;
-    one under both is left as it is and said (a resumed rename never deletes
-    a cache)."""
-    if config.CACHE_DIR is None:
-        return []
-    root, said = Path(config.CACHE_DIR), []
-    for m in moves:
-        src, dst = root / m["kind"] / m["from"], root / m["kind"] / m["to"]
-        if src.exists() and not dst.exists():
-            os.rename(src, dst)
-            said.append(f"{m['kind']}: {m['from']} -> {m['to']}")
-        elif src.exists() and dst.exists():
-            said.append(f"{m['kind']}: both {m['from']} and {m['to']} exist; left as they are")
-    return said
+    return sorted(t for k in Path(config.CACHE_DIR).iterdir() if k.is_dir()
+                  for t in k.iterdir() if not t.name.startswith("."))
