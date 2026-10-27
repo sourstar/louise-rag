@@ -125,6 +125,19 @@ def test_07s_spellings_parse():
     assert a.fn is louise.cmd_share and a.collection == "gutenberg"
 
 
+def test_a_plain_create_refuses_dry_run_before_anything_is_made(tmp_path, monkeypatch):
+    # 2026-10-27: `create wikidata --dry-run` created wikidata-p2 on the node
+    from app.hold.codex import CodexError
+    recipe = tmp_path / "r.json"
+    recipe.write_text("{}", encoding="utf-8")
+    a = louise.build_parser().parse_args(
+        ["hold", "collection", "create", "wikidata", "--recipe", str(recipe), "--name", "x",
+         "--root", str(tmp_path / "c"), "--dry-run"])
+    with pytest.raises(CodexError, match="belongs to `create annotations`"):
+        a.fn(a)
+    assert not (tmp_path / "c").exists()
+
+
 def test_every_share_verb_escapes_the_bare_form():
     """`share <collection>` is rewritten to `share collection <collection>`
     unless the word is a verb: a verb missing from `_SHARE_VERBS` would be
