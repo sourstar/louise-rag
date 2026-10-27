@@ -42,6 +42,7 @@ the source):*
 | **P1** | **patch we carry** | `GET /system` lists the options each loaded model was given, with their hash | none since VeGa: the wrapper receives `LoadModel` itself (vega.md §1). It was blocking for RAGE; kept for upstream | not filed; [`deploy/localai/patches/0001-system-list-load-options.patch`](../../deploy/localai/patches/0001-system-list-load-options.patch) |
 | **P2** | **patch we carry** | llama.cpp backend: `Embedding` embeds `EmbeddingTokens`, with the special tokens a text gets (B14) | **blocking** for the token cut: VeGa's wrapper sends a cut as its first tokens to a backend that embeds them (`Gate._probe`) | not filed; [`deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch`](../../deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch) |
 | **P3** | **patch we carry** | llama.cpp backend: the encoder of an encoder-decoder model runs (B16), as a llama.cpp patch in the backend's own `patches/` | MADLAD on llama.cpp (operator, 2026-10-27: "we need anyway a patched llama.cpp") | not filed; [`deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch`](../../deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch) |
+| **P4** | **patch we carry** | llama.cpp backend: encoder-decoder slots are encoded together, in WAVES, and decode in one batch (on P3, which ran one slot) | MADLAD on llama.cpp at torch's speed: a question's 7 languages in one wave instead of 7 × 3 s | not filed; [`deploy/localai/patches/0004-llama-cpp-encoder-decoder-waves.patch`](../../deploy/localai/patches/0004-llama-cpp-encoder-decoder-waves.patch) |
 | R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: RAGE checks before and after instead | not filed |
 | R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (rage-over-localai §8.2) | not filed |
 | R3 | request | read API keys from a file, not only from `LOCALAI_API_KEY` | only if LocalAI's own UI is published (invariant 8) | not filed |
@@ -665,6 +666,57 @@ one slot. The live backend was not touched.
 template is text they were not trained on. The client sends one request
 per segment (`<2xx> segment`), where today's backend takes the whole batch
 as one JSON prompt (translator-choice.md, "Code changes").
+
+### P4. llama.cpp backend: encoder-decoder slots are encoded in waves
+
+*Base: `v4.12.1` (`ec92740`), after P1–P3. File:
+`0004-llama-cpp-encoder-decoder-waves.patch`. It adds
+`backend/cpp/llama-cpp/patches/0004-server-encoder-decoder-waves.patch`,
+applied by the backend's `prepare.sh` after P3's. 173 lines added and 40
+removed in `tools/server/server-context.cpp`, every one under P3's
+`enc_dec` guard (architecture `t5` with a decoder, generation tasks).*
+
+**Why.** P3 ran one slot: llama.cpp keeps ONE encoder output per context
+(`llama_context::cross`, tagged per sequence), and every encode replaces
+it whole, so a second slot's encode would overwrite the first's. One slot
+is 3.03 s per translation on the card and ~18 s per question (its 6–7
+languages), against torch's 3.2 s for the batch. Measured first (T10,
+above): a decode step costs the same whatever the input length, so the
+lever is decoding several translations in one batch — what torch does.
+The per-sequence encoder memory (docs/notes/llama-cpp-encoder-decoder.md
+§3, ~900 lines in the library) stays the upstream shape; this is the
+server-only step (translator-choice.md "Waves"), built 2026-10-27.
+
+**What it changes:**
+- `enc_dec_waves()`, run by `pre_decode` before the batch is built: the
+  slots in STARTED whose prompt the encoder has not read are gathered for
+  a window (`LLAMA_ENC_DEC_WAVE_MS`, default 50 ms — a client's concurrent
+  requests arrive within a few ms), or until every slot holds a request or
+  the waiting tokens fill one ubatch. Then the longest prefix of them, in
+  CONTENT order (their tokens; slot id as the tie-break), that fits one
+  ubatch is encoded in ONE `llama_process(ENCODE)` call, each on its own
+  sequence id (the library tags the rows per sequence and the cross mask
+  pairs them). An input longer than `n_ubatch` is refused, not asserted
+  on. While a wave decodes, new slots wait in STARTED.
+- The batch follows the wave's content order (`slot_order`), so the KV
+  cells a wave takes depend on what is translated, never on which slot
+  took which request or on arrival order: the same group gives the same
+  bytes.
+- `release()` clears an encoder-decoder slot's prompt (its KV cells), so
+  the next wave starts from the same empty pool.
+- `n > 1` (`n_cmpl`) is refused: a child copies its parent's decoder state
+  and never encodes.
+- Other models: no code path of theirs changes.
+
+**Checked on CPU** (llama.cpp `c0fd786` + P3 + P4, a random-weight T5 with
+the TEST tokenizer, 7 slots, ubatch 1024, 2026-10-27): a lone request is
+byte-identical to P3's; the same 7 prompts in 4 arrival orders give the
+same 7 outputs (T3); a request arriving while a wave decodes is answered
+after it; an input over `n_ubatch` and `n > 1` are refused with 400 and
+the server goes on; 60 requests after a burst leave every slot empty.
+**On the card:** the gates in tools/measure/t5waves.py (T4 against P3's
+one-slot bytes, T3, in-wave vs alone, seconds per question), then the
+retrieval comparison on the 451 + 39 queries (translator-choice.md).
 
 ---
 

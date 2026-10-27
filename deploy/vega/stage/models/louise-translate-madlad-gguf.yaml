@@ -1,0 +1,39 @@
+# louise-translate-madlad-gguf — MADLAD-400-3B-MT on our llama.cpp backend
+# (series base ec92740 + P1..P4: the encoder runs, P3; slots encoded in waves,
+# P4), 2026-10-27. Its own backend, `louise-sycl-f16-llama-cpp-t5`, built from
+# the four-patch series: the shared backend the SYCL embedders run on is NOT
+# rebuilt for it, so no embedder becomes a new engine (invariant 12) tonight.
+# Raw completion prompts, one per segment: "<2xx> segment" (app/translate.py,
+# the t5 shape); greedy. 7 slots decode one question's languages in one wave;
+# a wave is at most one ubatch (1024) of encoder tokens, 7 x 96-token segments
+# fit; the KV pool (context_size) holds 7 slots x up to 512 decoder positions.
+# JSON, which is YAML.
+{
+  "name": "louise-translate-madlad-gguf",
+  "backend": "louise-sycl-f16-llama-cpp-t5",
+  "context_size": 4096,
+  "env": {
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  },
+  "flash_attention": "off",
+  "gpu_layers": 999,
+  "mmap": true,
+  "threads": 6,
+  "known_usecases": ["completion"],
+  "options": [
+    "parallel:7",
+    "cache_ram:0",
+    "ubatch:1024"
+  ],
+  "parameters": {
+    "batch": 1024,
+    "model": "weights/madlad/madlad400-3b-mt-f16.gguf",
+    "temperature": 0,
+    "top_k": 1,
+    "seed": 0
+  },
+  "template": {
+    "completion": "{{.Input}}"
+  }
+}
