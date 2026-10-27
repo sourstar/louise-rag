@@ -23,7 +23,11 @@ cpu_cores = 12
 gpu = "full"
 
 [gpu.levels.full]
-power_limit = "max"           # the card's own limit
+power_limit = "max"           # the card's own limit, as the governor reads it at start.
+# A card with no power1_rated_max (the node's B70 on 6.18: power1_cap only)
+# cannot tell its own limit from a quiet one a governor left behind, so a
+# restart in a quiet window would read 110 W as "max". There, give watts:
+# power_limit = "230W"
 
 [gpu.levels.quiet]
 power_limit = "50%"           # of the card's maximum, until the fan measurement gives watts ("120W")

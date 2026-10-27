@@ -7,6 +7,21 @@ against RAGE ([`rage-prior-art.md`](rage-prior-art.md)); the patches and
 requests come from [`rage-over-localai.md`](rage-over-localai.md), accepted
 2026-10-03.*
 
+*Checked against v4.12.1 (2026-10-27; 308 commits from v4.11.0, read in
+the source):*
+- *The watchdog and reclaimer are unchanged (`pkg/model/watchdog*.go`), and
+  so are `/v1/embeddings` and the llama.cpp `Embedding`, so B3, B4, B9, B11
+  and B14 stand.*
+- *`backend.proto` only adds fields (+90 lines, nothing renumbered), so a
+  v4.11.0 backend still speaks to a v4.12.1 app.*
+- *P1 applies cleanly. P2 needs its `prepare.sh` hunk re-based: a context
+  line moved and the code hunks are untouched.*
+- *v4.12.1 itself fixes one thing, SSRF on user-supplied URLs (#12853).
+  It matters only to a LocalAI open to untrusted users, which ours is not.*
+- *`LOCALAI_AUTO_UPGRADE_BACKENDS` still defaults to false. Upgrading the
+  app alone leaves every installed backend, and so every stated engine
+  (invariant 12), as it is.*
+
 | id | kind | what | for us | upstream |
 |---|---|---|---|---|
 | B1 | defect | transformers backend, OpenVINO: the device test is always true, so the GPU-only settings never apply | — | not filed |

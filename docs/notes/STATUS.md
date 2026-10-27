@@ -18,6 +18,20 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-27 10:25 (München).** Image a773d05 is deployed: profiles live,
+period crons 6/18–21 disabled (not deleted).
+- **The node's platform.toml:** full = "230W" absolute (the B70 has
+  power1_cap and no rated max), quiet = "110W".
+- **The build:** it stopped in 2 s on the new tree; the old one was
+  SIGKILLed after 15 min. It runs again under a fixed 12-core ceiling, and
+  the profile limits it to 8 by day.
+- **Wikidata (re-created, parser 2):** the worker kept the deleted
+  collection under its name until 8e22177 (identity by collection_id). Its
+  stale catalog was moved aside. Discovery runs at ~9,600 docs/s (~2 h),
+  parse at ~120 docs/s. The forgotten 37 GB stays on ssd4 until the 09:00
+  snapshot expires.
+- **Pending:** the 12:00 boundary check.
+
 **2026-10-27 08:30 (München, read-only counts).** Deploy 16a4349 done:
 the node key and the admin token are read from a secrets dataset by path;
 the web holds no private key. gutenberg 96.4 % embedded (2,850 waiting),
