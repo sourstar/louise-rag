@@ -158,9 +158,13 @@ async def while_connected(request, fn: Callable[..., Any], *args: Any, **kwargs:
             # (2026-10-27: 65 s of cold model loads, the browser gone, nothing
             # in any log — München)
             path = getattr(getattr(request, "url", None), "path", "?")
-            print(f"{time.strftime('%H:%M:%S')} [web info:ask] {path}: the caller left after "
-                  f"{time.monotonic() - t0:.1f} s; the search is cancelled", flush=True)
+            _say(f"{path}: the caller left after {time.monotonic() - t0:.1f} s; "
+                 f"the search is cancelled")
             raise Cancelled()
+
+
+def _say(msg: str) -> None:
+    print(f"{time.strftime('%H:%M:%S')} [web info:ask] {msg}", flush=True)
 
 
 def _consume(future: asyncio.Future) -> None:

@@ -65,3 +65,30 @@ def test_the_window_is_read_from_the_file_with_a_default():
     for bad in (-1, "512", True):
         with pytest.raises(ValueError, match="window"):
             collections_mod.parse_reranker(base | {"window": bad}, where="f")
+
+
+def test_the_reranker_is_warmed_before_its_tokenizer_cuts(monkeypatch):
+    """The cut asks the reranker's own tokenizer: cold, that request WAS the
+    load — its 10 s timeout ran out, the text was cut by bytes, the next
+    text started a second load, and no cold start was logged (München,
+    2026-10-27 15:42). Warm first; a load past its bound keeps the fused
+    order before anything is tokenized."""
+    order: list[str] = []
+    monkeypatch.setattr(retrieval, "_warm_reranker", lambda r: order.append("warm"))
+    monkeypatch.setattr(retrieval, "fit_to_window",
+                        lambda texts, r: order.append("cut") or texts)
+    hits = [{"uid": "a", "text": "x"}, {"uid": "b", "text": "y"}]
+    try:
+        retrieval._rerank_list("q", hits, _recipe(), 5.0)
+    except Exception:   # noqa: BLE001 — only the order before the call matters here
+        pass
+    assert order[:2] == ["warm", "cut"]
+
+    order.clear()
+    from app import model_load
+
+    def cold(r):
+        raise model_load.LoadTimeout("model loading took longer than 60 s", model="m", bound_s=60)
+    monkeypatch.setattr(retrieval, "_warm_reranker", cold)
+    got, reranked = retrieval._rerank_list("q", hits, _recipe(), 5.0)
+    assert order == [] and reranked is False, "nothing tokenized for a model still loading"

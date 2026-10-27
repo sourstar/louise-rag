@@ -432,6 +432,14 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
             texts.append(f"{title}\n\n{body_text}" if title else body_text)
             owner.append((i, c))
     budget_s = budget_s * max(1.0, len(texts) / max(1, len(head)))
+    # WARMED BEFORE THE CUT: the cut asks the reranker's own tokenizer, and a
+    # cold one took that request as its load — 10 s timeout, the text cut by
+    # bytes instead of tokens, a second load started by the next text, and
+    # no cold start logged (München, 2026-10-27 15:42)
+    try:
+        _warm_reranker(recipe)
+    except model_load.LoadTimeout as e:
+        return _fused_order(hits, str(e))
     texts = fit_to_window(texts, recipe)
     # the query each text is judged against: its record's language's variant
     variants = {k.lower(): v for k, v in (queries or {}).items() if v}
@@ -439,10 +447,6 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
     for t, (i, _c) in enumerate(owner):
         lang = (head[i].get("lang") or "").lower()
         groups.setdefault(variants.get(lang) or query, []).append(t)
-    try:
-        _warm_reranker(recipe)
-    except model_load.LoadTimeout as e:
-        return _fused_order(hits, str(e))
     deadline = time.monotonic() + budget_s
     scores: dict[int, float] = {}
     for q, idx in groups.items():
