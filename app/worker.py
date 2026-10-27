@@ -94,7 +94,8 @@ def _watch_stop_request(poll_s: float = STOP_POLL_S, end: threading.Event | None
             return
 
 
-#: the running watch and its own end: `run_forever` ends it on the way out, so a
+#: the running watch and its own end: `run_forever` ends it on the way out
+#: (`_ends_stop_watch`, an exception included), so a
 #: watch never outlives its run (2026-10-27: one left polling by a test whose
 #: `_stop` was cleared before it woke read the default node store for the
 #: rest of the suite)
@@ -122,6 +123,19 @@ def _end_stop_watch() -> None:
     _stop_watch = None
     end.set()
     t.join(timeout=2 * STOP_POLL_S)
+
+
+def _ends_stop_watch(fn):
+    """The run's watch ends however the run does — a return or an exception."""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _end_stop_watch()
+    return run
 
 
 def _load_chunks(row, collection):
@@ -4991,6 +5005,7 @@ def _register_stack_dump() -> bool:
         return False
 
 
+@_ends_stop_watch
 def run_forever():
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)
@@ -5278,7 +5293,6 @@ def run_forever():
     _join_pipeline_threads()
     _release_locks()                     # the node holds a lock only while it runs
     parallel.shutdown()             # the parse pool's children go with the worker
-    _end_stop_watch()               # the watch never outlives its run
     for c in all_collections:
         db.log_event(cons[c.name], "info", "worker", "worker stopped (signal)")
     node_con.close()
