@@ -328,6 +328,7 @@ def test_discover_defers_while_the_pack_is_upgraded(tmp_path, monkeypatch):
 
     def stopping(*a, **kw):
         calls.append(1)
+        kw.pop("stop", None)              # the scan's own (none here): this one stops at once
         return real(*a, stop=lambda: True, **kw)
     monkeypatch.setattr(pack, "build", stopping)
     src = WikidataSource()
