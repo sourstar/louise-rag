@@ -36,7 +36,7 @@ per-record cutoff (gutenberg, pubmed), with or without a cutoff.
 
 | inconsistency | count | Louise today | flag | upstream |
 |---|---|---|---|---|
-| A book directory without its catalogue entry `pg<N>.rdf` | not counted — census running on the node (München, 2026-10-25). Example: book 10's directory holds no `pg10.rdf` (1342's does) | the record is parsed from the text with no title, authors, subjects, language (`und`) or release date; nothing is invented | `rdf-missing` (+ `cutoff-undated`) | no |
+| A book directory without its catalogue entry `pg<N>.rdf` | **73 of 79,753 book directories** (census of the mirror, read-only, München, 2026-10-25 16:45, `/root/rdf_census.py` → `/root/rdf-census.json`). Among them: 186, 195, 1072, 1767, 1789, 5613, 9121, 9126, 9135, 9142. *Correction (2026-10-27): book 10, cited here before as an example, has its `pg10.rdf`.* Every `pg<N>.rdf` present parses and carries `dcterms:issued`: 0 empty, 0 unparseable, 0 without a date | the record is parsed from the text with no title, authors, subjects, language (`und`) or release date; nothing is invented | `rdf-missing` (+ `cutoff-undated`) | no |
 | A `pg<N>.rdf` that is empty or not well-formed XML | not counted | as a missing entry | `rdf-unreadable` | no |
 | A `pg<N>.rdf` with no `pgterms:ebook` element | not counted | as a missing entry | `rdf-no-ebook` | no |
 | A catalogue entry with no `dcterms:issued` (release date) | not counted (see above) | the record has no `extra.issued`; a dated snapshot excludes it and the build says so | `cutoff-undated` | no |

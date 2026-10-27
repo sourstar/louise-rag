@@ -96,7 +96,9 @@ real `/data/state` (model-pins.json) during the node's suite: being found.
   build (docs/notes/corpus-inconsistencies.md). A sample of 120,000 pubmed baseline citations
   holds none without DateRevised or DateCompleted. gutenberg's one build
   skip is book 673, whose encoding the origin declares broken. The census
-  of the mirror's 79,770 `pg<N>.rdf` files is running (book 10 has none).
+  of the mirror (2026-10-25): 73 of 79,753 book directories have no
+  `pg<N>.rdf`; every one present parses and carries `dcterms:issued`
+  (corpus-inconsistencies.md).
   gutenberg holds no superseded part versions. LocalAI's watchdog kills a
   model busy for more than 10 min (`busy_timeout`); its idle timeout is
   disabled. The ZFS ARC is capped at 16 GB.
