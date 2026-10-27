@@ -117,6 +117,24 @@ def test_errored_documents_are_counted_only_when_asked(con, monkeypatch):
     assert embed.waiting == 5, "the five include the two errored: exact exclusion costs 23x"
 
 
+def test_a_stage_count_stops_at_the_cap_and_says_over(con, monkeypatch):
+    """COUNT(*) walks the waiting rows: 16.6 s for wikidata's 72.9 M during
+    discovery, and `node show` took 20-33 s (München, 2026-10-27). Exact
+    below the cap; at it, the cap and `over`; the state does not change."""
+    monkeypatch.setattr(health, "WAITING_CAP", 3)
+    _docs(con, 5, rdf=0, fts=0)
+    _docs(con, 2, start=100)
+    _scope(monkeypatch, "all")
+    got = {s.name: s for s in health.inspect(con, Collection()).stages}
+    assert (got["rdf"].waiting, got["rdf"].over, got["rdf"].state) == (3, True, health.RUNNING)
+    assert (got["embed"].waiting, got["embed"].over) == (2, False), "exact below the cap"
+    assert "over 3" in got["rdf"].line()
+    plan = " ".join(r[3] for r in con.execute(
+        f"EXPLAIN QUERY PLAN SELECT COUNT(*) FROM (SELECT 1 FROM {health._INDEXED} "
+        f"WHERE {health._WAITING['rdf']} LIMIT 4)"))
+    assert "COVERING INDEX idx_documents_scope" in plan and "TEMP B-TREE" not in plan
+
+
 def test_the_stages_are_reported_in_pipeline_order(con, monkeypatch):
     _docs(con, 1)
     _scope(monkeypatch, "all")
