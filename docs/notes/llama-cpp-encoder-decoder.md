@@ -10,7 +10,7 @@
 2. The existing `llama_memory_seq_*`, `llama_memory_clear` and `llama_state_seq_*` calls then carry the encoder output. An encode replaces only its own sequences' output. A decode reads only the rows of the sequences in its ubatch. A sequence with no encoder output gets `-1`.
 3. Two fixes none of the three designs had complete. First, force `cparams.kv_unified` in the context constructor, not only inside the memory, or the first multi-slot graph aborts. Second, the server must encode after its whole-sequence `seq_rm` (server-context.cpp:4041), not before it.
 4. Stage 2 is what upstream reviewers asked for: a persistent device buffer, written through `apply()` and `ggml_set_rows` from an optional `init_encode`.
-5. For Louise, no design makes a translation run among 7 concurrent ones byte-identical to the same translation run alone. Under the bit-exact rule of 2026-10-20, concurrency ships only if the §6 tests pass, or if the operator chooses a different reproducibility unit (§8).
+5. No design makes a translation run among 7 concurrent ones byte-identical to the same translation run alone. No written rule requires it for query translation: invariant 12 binds encoders, and the 2026-10-20 amendment (02, "Methods whose output is not bit-exact") binds model-made claims stored in a collection, which it lets be checked by agreement. The unit of reproducibility for concurrent translation is the operator's choice (§8). *(Corrected by the session after the workflow, which had read the 2026-10-20 amendment as binding translation.)*
 
 ## 2. What llama.cpp's interface already offers, and where
 
@@ -205,7 +205,7 @@ Outside llama.cpp's own logic, a rebuilt backend is a new engine identity for qw
 
 | Option | Pros | Cons |
 |---|---|---|
-| **Status quo: P3, one slot (`parallel:1`)** | Deployed shape. Each translation is alone, so it meets the bit-exact rule as measured. No new carry. | ~5-6 s per question (7 languages in series). `llama_cross` is still never saved and never freed. |
+| **Status quo: P3, one slot (`parallel:1`)** | Deployed shape. Each translation is alone, so it is reproducible per translation. No new carry. | ~5-6 s per question (7 languages in series). `llama_cross` is still never saved and never freed. |
 | **One ENCODE carrying all 7 prompts, then batched decode** (no library change) | Correct today: rows are tagged per sequence (llama-context.cpp:1751-1763), and the mask pairs them. | Not slot-compatible: any later encode overwrites every in-flight sequence. Needs new server code anyway. Encoder shapes differ from a lone run. |
 | **D1, P4-min:** `llama_cross` per sequence plus a `llama_kv_cache` subclass holding a pointer to it | Smallest diff (~520 lines). No graph change. A lone sequence's bytes are identical by construction. | A memory pointing into its context, valid only by member order. Its behaviour depends on the base's internal virtual calls. No row selection, so a sequence's bytes depend on idle slots' rows. Still a host copy. Would be rewritten as D2 for upstream. |
 | **Recommended: D2 stage 1 plus the §3 grafts** | Uses llama.cpp's own abstractions: no public API, a memory that owns the store, a context subclass, arch dispatch. Seq ops, state and the prompt cache carry the output. Row selection isolates a sequence from idle rows. | ~900 lines. A new internal status touches shared switches (no-ops for others). A copied split loop can drift. Still a host copy. Hunks in hot graph files. |
@@ -281,11 +281,11 @@ Outside llama.cpp's own logic, a rebuilt backend is a new engine identity for qw
 
 | Choice | Effect | Pros | Cons |
 |---|---|---|---|
-| A. Per translation: keep `parallel:1` (status quo) | ~5-6 s per question | Meets the 2026-10-20 rule as it is measured today. The library work still fixes state and children. | No speed-up for Louise. |
+| A. Per translation: keep `parallel:1` (status quo) | ~5-6 s per question | Reproducible per translation. The library work still fixes state and children. | No speed-up for Louise. |
 | B. Per question group: one question's languages run together in a fixed order, lowest slot ids, one group at a time on that server | expected 2-3 s, not measured | Reproducible when the same question is reprocessed (T3). Like the torch backend, which translates in batches. | A language's translation depends on which other languages were asked with it. A second user's question waits for the group. Needs §3.5 item 7 and a client-side order. |
 | C. Fixed per-sequence shapes: several KV streams with per-stream pos_bucket and cross mask, fixed encoder regions | might give A's guarantee with concurrency | The strongest guarantee, if it holds. | Not designed and not measured. The weight matmuls still run 7 columns. The largest change, against open upstream TODOs (llama-kv-cache.cpp:1808, llama-graph.cpp:1134). |
 
-Recommendation: B, adopted only if T2 fails and T3 passes. If the operator says nothing, A stays: the 2026-10-20 rule is fail-closed, so no concurrent translation is deployed.
+Recommendation: B, measured first (T2 and T3). If T3 passes, a question's languages are reproducible as a group, as the torch backend's batches already are. If the operator says nothing, A stays, and no concurrent translation is deployed.
 
 **Technical, not yet answered:**
 - Whether the store belongs in `llama_memory` or in an encoder-decoder context. No maintainer has said; #26565 asked and was closed stale.
