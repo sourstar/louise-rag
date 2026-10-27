@@ -30,6 +30,15 @@ period crons 6/18–21 disabled (not deleted).
   stale catalog was moved aside. Discovery runs at ~9,600 docs/s (~2 h),
   parse at ~120 docs/s. The forgotten 37 GB stays on ssd4 until the 09:00
   snapshot expires.
+- **Space freed, with the operator's yes (2026-10-27 22:10).**
+  - `ssd4/apps/louise-rag@auto-2026-09-21_08-00` (297 GB, the pre-migration
+    state under a `truenas` hold) was released and destroyed. ssd4 went from
+    327 GB free to 620 GB.
+  - Its replica `tank/backup/ssd4/apps/louise-rag@auto-2026-09-21_08-00`
+    (272 GB) keeps its `keep-20260921` hold, so replication's SOURCE
+    retention cannot prune it: it is the backup of that state.
+  - `/root/wikidata-catalog-stale-20261027` (206 MB, the re-created
+    wikidata's stale catalog) was deleted.
 - **The 12:00 boundary check passed (checked 21:50).** The build is no
   longer stopped. It paused itself at the end of its unit at 12:00 ("profile
   quiet: paused until 13:30") and resumed at 13:30 on the next part (ja/3M:
