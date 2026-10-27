@@ -142,6 +142,7 @@ reversed orders, every score or token compared as bytes.
 | the same | + `GGML_SYCL_ENABLE_OPT=0` | **BIT-EXACT**, 3 runs of 3 loads × 3 answers. Every switch off (OPT/GRAPH/FUSION=0, flash attention off) is NOT, 3 of 3 runs |
 | index-translate-9b, `vega-llama-cpp-gen` | DNN=0, `parallel:1` | BIT-EXACT, 3 loads × 3 greedy answers (a real translation) |
 | vega-dar-legal-it, louise-python-20261021a | `LOUISE_TORCH_DETERMINISTIC=1` | **BIT-EXACT**: 32 of normattiva's texts (24 spread + the 8 longest) × 3 fresh loads × 2 shuffled passes, 192 vectors; 20 of 20 re-embedded vectors equal to a fresh encode (float16) |
+| vega-jina-v3 and vega-jina-v3-query, louise-python-20261021a (2026-10-27, before wikidata's re-creation; `tools/vega_repro_check.py --n 64 --loads 3 --repeats 2 --window 1024`) | `LOUISE_TORCH_DETERMINISTIC=1` | **BIT-EXACT**: 64 of the platform's calibration texts × 3 fresh loads × 2 shuffled passes, 384 vectors, each side |
 | vega-medcpt-article-ov, louise-python-20261021b (OpenVINO) | `LOUISE_BITEXACT_MEASURED=louise-python-20261021b` | **BIT-EXACT**: 32 PubMed (title, abstract) pairs × 3 fresh loads × 2 shuffled passes, 192 vectors |
 | louise-rerank-medcpt, the same tree | the same | **BIT-EXACT**, 20 × 3 × 2 |
 

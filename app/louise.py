@@ -99,6 +99,12 @@ def cmd_create(a) -> int:
         return cmd_create_deposit(a)
     if a.plugin == "annotations":
         return cmd_create_annotations(a)
+    if getattr(a, "dry_run", False):
+        # 2026-10-27: the flag was read by `create annotations` alone, and a
+        # plain create given it minted a collection (wikidata-p2 on the node)
+        raise CodexError("--dry-run belongs to `create annotations`; a plain create has no "
+                         "dry run — its own pre-check refuses a bad recipe before any card time, "
+                         "and anything that passes it is created")
     if not a.recipe:
         raise CodexError("--recipe is required: a collection is a plugin and a "
                          "recipe (06 §6.6); only `create deposit` needs none")
