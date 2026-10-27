@@ -7,6 +7,8 @@ deployment.
 import shutil
 from pathlib import Path
 
+import os
+
 import pytest
 
 FIXTURE_CORPUS = Path(__file__).parent / "fixtures" / "gutenberg-mini" / "corpus"
@@ -115,6 +117,12 @@ def no_checkout_config(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path_factory.mktemp("no-config")))
 
 
+#: The real data directory and node root, read ONCE at import, before any
+#: fixture repoints the environment — what the guard below must watch.
+_REAL_DATA = Path(os.getenv("DATA_DIR", "/data"))
+_REAL_ROOT = Path(os.getenv("LOUISE_ROOT") or _REAL_DATA)
+
+
 @pytest.fixture(autouse=True)
 def no_real_data_dir(tmp_path_factory, monkeypatch):
     """No test resolves the real data directory: `config.DATA_DIR` is an
@@ -123,7 +131,15 @@ def no_real_data_dir(tmp_path_factory, monkeypatch):
     whose reference store sits beside DATA_DIR, and created the real
     /data/refs.db (2026-10-08)."""
     from app import config
-    monkeypatch.setattr(config, "DATA_DIR", tmp_path_factory.mktemp("no-data"))
+    empty = tmp_path_factory.mktemp("no-data")
+    monkeypatch.setattr(config, "DATA_DIR", empty)
+    # AND the environment, which `config.louise_root()` reads at call time: a
+    # node's container sets LOUISE_ROOT to the real /data, so every test
+    # without `isolated_config` resolved the node's own state — the suite
+    # run on the node wrote /data/state/.model-pins.lock (2026-10-27), and
+    # with LOUISE_ROOT pointed at a stand-in, node.sqlite and trust.json too
+    monkeypatch.setenv("LOUISE_ROOT", str(empty))
+    monkeypatch.setenv("DATA_DIR", str(empty))
 
 
 @pytest.fixture(autouse=True)
@@ -139,14 +155,14 @@ def the_real_node_store_is_never_touched():
     before, it must be absent after; present (a node's volume mounted), its
     top level and the entries in it must be unchanged — one listing and a
     stat per entry, never a walk of a node's tree."""
-    import os
-    data = Path(os.getenv("DATA_DIR", "/data"))
-    real = Path(os.getenv("LOUISE_ROOT") or data) / "state" / "node.sqlite"
+    data = _REAL_DATA
+    real = _REAL_ROOT / "state" / "node.sqlite"
 
     def _stamp():
         out = []
         for p in (real, real.with_name(real.name + "-wal"),
-                  real.with_name("rechecked.json"), real.with_name("trust.json")):
+                  real.with_name("rechecked.json"), real.with_name("trust.json"),
+                  real.with_name("model-pins.json"), real.with_name(".model-pins.lock")):
             try:
                 st = p.stat()
                 out.append((st.st_size, st.st_mtime_ns))
