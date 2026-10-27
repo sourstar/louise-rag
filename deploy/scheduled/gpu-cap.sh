@@ -1,4 +1,12 @@
 #!/bin/bash
+# RETIRED 2026-10-27 — replaced by the GPU governor app's profile level (app/gpu_level.py,
+# app/gpu_governor.py, deploy/truenas-gpu-governor.yaml): platform.toml's [schedule] picks the
+# profile, its [gpu.levels.<name>] is applied every tick (hwmon power1_max where writable, else
+# max_freq), never under the query hold, and restored on a clean stop (docs/notes/node-profiles-design.md,
+# docs/notes/node-runbook.md §9). Kept, not deleted: München's crons still call it until the
+# switch-over. Remove its crons when platform.toml gets its [schedule]: both would limit the card,
+# on different timetables.
+#
 # gpu-cap.sh on|off — the operator, 2026-10-26: "Quiet hours light gpu usage (quiet)". In the quiet
 # hours (22:30-06:00, cron 6 / cron 5 with set-embed.sh) the B70's max_freq is capped at half its
 # own maximum (rp0); at 06:00 it is given back. A clock changes how fast a vector comes, never its

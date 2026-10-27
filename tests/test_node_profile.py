@@ -72,6 +72,9 @@ def test_no_schedule_is_no_profile():
     (lambda r: r["profiles"]["day"].update(sustained_embedding=True), "takes cpu_cores and gpu"),
     (lambda r: r["gpu"]["levels"]["quiet"].update(power_limit="half"), "power_limit"),
     (lambda r: r["gpu"]["levels"]["quiet"].update(power_limit="150%"), "1-100"),
+    # each key takes its own unit: a power limit in MHz, a clock in watts
+    (lambda r: r["gpu"]["levels"]["quiet"].update(power_limit="1400MHz"), "number of W"),
+    (lambda r: r["gpu"]["levels"]["quiet"].update(max_clock="120W"), "number of MHz"),
     (lambda r: r["schedule"].update(holiday="else night"), "weekdays"),
 ])
 def test_a_malformed_file_is_refused_at_load(edit, match):

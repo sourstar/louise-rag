@@ -102,10 +102,14 @@ class Profiles:
         return Active(profile=p, level=self.levels[p.gpu], until=until, next=nxt)
 
 
-def _limit(value: Any, key: str) -> str:
+def _limit(value: Any, key: str, unit: str) -> str:
+    """`unit` is the one absolute unit this key takes: W for power_limit,
+    MHz for max_clock. A power limit in MHz was accepted until the applier
+    (app/gpu_level.py) had to read it, 2026-10-27; refused at load since."""
     text = str(value).strip()
-    if not _LIMIT.match(text):
-        raise ProfileError(f"{key} is \"max\", \"N%\" or a number of W (power) / MHz (clock), got {value!r}")
+    m = _LIMIT.match(text)
+    if not m or (m.group(3) and m.group(3).lower() != unit.lower()):
+        raise ProfileError(f"{key} is \"max\", \"N%\" or a number of {unit}, got {value!r}")
     if text.endswith("%") and not 1 <= int(text[:-1]) <= 100:
         raise ProfileError(f"{key} percentage is 1-100, got {value!r}")
     return text
@@ -129,8 +133,8 @@ def parse(raw: dict[str, Any]) -> Profiles | None:
         rpm = lv.get("fan_max_rpm")
         if rpm is not None and (not isinstance(rpm, int) or isinstance(rpm, bool) or rpm <= 0):
             raise ProfileError(f"[gpu.levels.{name}] fan_max_rpm is a positive number of RPM")
-        levels[name] = GpuLevel(name, _limit(lv.get("power_limit", "max"), f"[gpu.levels.{name}] power_limit"),
-                                _limit(lv.get("max_clock", "max"), f"[gpu.levels.{name}] max_clock"), rpm)
+        levels[name] = GpuLevel(name, _limit(lv.get("power_limit", "max"), f"[gpu.levels.{name}] power_limit", "W"),
+                                _limit(lv.get("max_clock", "max"), f"[gpu.levels.{name}] max_clock", "MHz"), rpm)
     profiles: dict[str, Profile] = {}
     for name, p in (raw.get("profiles") or {}).items():
         if not isinstance(p, dict):

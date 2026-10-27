@@ -273,6 +273,8 @@ def governor() -> dict:
         return {"state": "absent"}
     if payload.get("error"):
         return {"state": "error", "error": payload["error"]}
+    # `level`: the profile's GPU level as applied (app/gpu_level.py `status`)
     return {"state": "running", "pinned": bool(payload.get("pinned")),
-            "rest_mhz": payload.get("rest_mhz"), "max_mhz": payload.get("max_mhz")}
+            "rest_mhz": payload.get("rest_mhz"), "max_mhz": payload.get("max_mhz"),
+            "hold_mhz": payload.get("hold_mhz"), "level": payload.get("level")}
 

@@ -225,10 +225,30 @@ byte-identical (`tools/measure/records_ab.py`).
 
 - **What**: while a query holds the node claim, it sets the card's `min_freq` to half
   its maximum (`app/gpu_clock.py` `HOLD_FRACTION`), and gives it back at the claim's end.
+- **The profile's GPU level** (2026-10-27, `app/gpu_level.py`;
+  [node-profiles-design.md](node-profiles-design.md)): every tick it takes the level
+  platform.toml's `[schedule]` puts in force now and writes only a difference —
+  hwmon `power1_max` ("N%" of `power1_rated_max`, "NW", "max" = as read at its start);
+  where that is absent or read-only, `max_freq` (`max_clock`: "N%" of `rp0_freq`,
+  "NMHz"). The query hold is clamped to the cap; a cap below a live hold waits for it
+  to end (`pending`). `fan_max_rpm` only through a writable `fanN_max`; xe has none,
+  so the status says `fan: firmware-controlled`. A clean stop restores the card's own
+  limits. platform.toml without `[schedule]`: nothing is written. A file that does
+  not load is logged once and the last level kept. A limit changes how fast a vector
+  comes, never its bytes. It reads the hwmon and freq files once at start and only
+  writes after: no new wakes, no forcewake.
 - **Install**: from `deploy/truenas-gpu-governor.yaml`; it binds
-  `/sys/class/drm/card0/device/tile0/gt0/freq0`. Check `card0` is `0000:03:00.0` first.
+  `/sys/class/drm/card0/device/tile0/gt0/freq0` and `/sys/class/drm/card0/device/hwmon`
+  (writable), the config directory read-only, and sets `TZ` to the node's. Check
+  `card0` is `0000:03:00.0` first.
+- **Switching over from gpu-cap.sh** (retired, kept for the crons): redeploy the app
+  from the yaml, check its log names `power1_max` (or the `max_freq` fallback and
+  why), then add `[schedule]`/`[profiles]`/`[gpu.levels]` to platform.toml and remove
+  the `gpu-cap.sh` crons in the same step — both running would limit the card on
+  two timetables.
 - **Health**: its heartbeat is `control.gpu_governor` in `node.sqlite`, refreshed every
-  few seconds; the System tab's GPU fragment shows it.
+  few seconds, with the applied level under `level`; the System tab's GPU fragment
+  and `louise node show` (`profile.gpu_applied`) show it.
 - **Restart**: a crash restarts it. A `docker kill` counts as a manual stop, so bring
   it back with `midclt call app.start louise-gpu-governor`.
 

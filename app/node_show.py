@@ -151,6 +151,12 @@ def show() -> dict[str, Any]:
         profile = prof.to_dict() if prof is not None else None
     except node_profile.ProfileError as e:
         profile = {"error": str(e)}
+    if profile is not None:
+        # what the GPU governor has APPLIED (app/gpu_level.py), beside what
+        # the profile asks: a power limit or a clock ceiling, the fan, or why
+        # not; None when the governor is not running
+        from app import gpu
+        profile["gpu_applied"] = gpu.governor().get("level")
     return {"mode": ov["mode"], "overrides": ov,
             # the quiet / day / night profile in force (platform.toml [schedule]):
             # what background CPU work and the card may use now, and until when

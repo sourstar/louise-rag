@@ -45,7 +45,7 @@ are never limited by a profile.
 | setting | applied by | how |
 |---|---|---|
 | `cpu_cores` | the records build and the worker's parse pool | the pool's size is `min(cpu_cores, the cgroup quota)` (`config.available_cpus`); a change resizes it at the next page; `0` finishes the current part, commits and waits, then resumes when a profile allows. No container is stopped or started |
-| `gpu` level | the GPU governor app (already writes the card's `min_freq`) | writes hwmon `power1_max` (the standard Linux power limit) where writable, else `max_freq`; restores on leaving the level; keeps its query hold at or below the cap |
+| `gpu` level | the GPU governor app (`app/gpu_level.py`, built 2026-10-27; it already wrote the card's `min_freq`) | reconciles every tick, writing only a difference: hwmon `power1_max` (the standard Linux power limit; "N%" of `power1_rated_max`, "NW", "max" = as read at its start) where writable, else `max_freq` ("N%" of `rp0_freq`, "NMHz"); a level a killed governor left on the card is not taken for the card's own. The query hold is clamped to the cap, and a cap below a live hold waits for it to end. `fan_max_rpm` only through a writable `fanN_max`, else the status says `fan: firmware-controlled` (xe). The card's own limits restored on a clean stop; no `[schedule]`, nothing written; a file that does not load keeps the last level. Shown in `control.gpu_governor` `level`, `node show` `profile.gpu_applied` and the System tab. Retires `gpu-cap.sh` |
 | fans | the operator's `fancontrol.py`, optionally | reads `louise node show` to cap case fans in `quiet` |
 
 The container's `cpu.max` stays as a fixed hard ceiling (the night's 12

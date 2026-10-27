@@ -72,7 +72,16 @@
   <span class="badge err">GPU governor cannot set the clock</span> <span class="note">{{ governor.error }}</span>
 {% else %}
   <span class="badge ok">GPU governor</span>
-  <span class="note">{% if governor.pinned %}clock held at {{ governor.max_mhz }} MHz — interactive work is running{% else %}clock free (minimum {{ governor.rest_mhz }} MHz); held at {{ governor.max_mhz }} MHz while interactive work runs{% endif %}</span>
+  {% set held = governor.hold_mhz or governor.max_mhz %}
+  <span class="note">{% if governor.pinned %}clock held at {{ held }} MHz — interactive work is running{% else %}clock free (minimum {{ governor.rest_mhz }} MHz); held at {{ held }} MHz while interactive work runs{% endif %}</span>
+  {% set lv = governor.level %}
+  {% if lv and (lv.name or lv.error) %}
+  <div class="note gpu-level">GPU level <b>{{ lv.name or "none" }}</b>{% if lv.profile %} (profile {{ lv.profile }}){% endif %}:
+    {% if lv.via == "power1_max" %}power limit {{ lv.power_w }} W ({{ lv.power_limit }}; the card's own {{ lv.power_own_w }} W){% elif lv.via == "max_freq" %}clock ceiling {{ lv.max_freq_mhz }} MHz ({{ lv.max_clock }}; {{ lv.power_note }}){% else %}no writable limit{% endif %}
+    · fan {{ lv.fan }}{% if lv.pending %} · {{ lv.pending }}{% endif %}
+    {% if lv.error %}<span class="badge err">level not applied</span> {{ lv.error }}{% endif %}
+    — a limit changes how fast a vector comes, never its bytes</div>
+  {% endif %}
 {% endif %}
 </div>
 {% endif %}
