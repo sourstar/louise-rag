@@ -35,7 +35,8 @@ from typing import Callable
 
 import httpx
 
-from . import (catalog, chunking, collections as collections_mod, config, db, discovery, layers as layers_mod, parallel,
+from . import (catalog, chunking, collections as collections_mod, config, cpu_limit, db, discovery,
+                layers as layers_mod, parallel,
                 dispatch, embeddings, encoder_timeouts, entities, fts, issues as issues_mod, model_load, model_pins,
                 node_state, plugin_io, refs, sched, sizing, spaces, stats)
 from .dispatch import Level
@@ -389,7 +390,7 @@ def _prefetch_ahead(con, collection, stage: str, row) -> None:
     # probes at all. Four of five plugins have no derived cache, and a
     # serial node has no background — running the lookahead for them would
     # be pure cost on the hot path.
-    if parallel.pool() is None:
+    if not parallel.prefetch_allowed():          # serial, or under a profile's limit
         return
     try:
         if not hasattr(collection.plugin_instance(), "prepare"):
@@ -3396,17 +3397,21 @@ def _run_one_step(con, collection, last_idle_log: dict,
     # on THAT thread (_drain_remote_archive in the pipeline loop), never
     # here on the GPU-serial main loop; a local archive, or any archive of
     # a collection that runs its whole pipeline here, is drained here.
-    if collection.genesis_archive and not (pipeline_active and _remote_archive(collection)):
+    # the node profile pauses the parse-pool work (an archive pass, rdf, fts)
+    # at this unit boundary; embedding goes on (app/cpu_limit.py)
+    cpu_paused = _cpu_paused(con, collection)
+    if collection.genesis_archive and not cpu_paused \
+            and not (pipeline_active and _remote_archive(collection)):
         # same phase rule as the pipeline thread (_archive_yields): a pass
         # that would starve the encoder waits for one fts batch first
         if not _archive_yields(con, collection) and \
                 _drain_remote_archive(con, collection, _stop):
             return True
     scope = db.get_scope(con)
-    if pipeline_active:
+    if pipeline_active or cpu_paused:
         stage, row = _next_embed(con, scope, collection)
         if stage == "embed" and not _embedding_allowed(con, collection):
-            return False        # rdf/fts continue on the pipeline thread
+            return False        # rdf/fts continue on the pipeline thread, or the profile's pause ends
     else:
         stage, row = _next_book(con, scope, collection=collection)
         if stage == "embed" and not _embedding_allowed(con, collection):
@@ -3423,7 +3428,7 @@ def _run_one_step(con, collection, last_idle_log: dict,
         rows = _embed_candidates(con, scope, 1, collection)
         if rows:
             row = rows[0]
-        elif pipeline_active:
+        elif pipeline_active or cpu_paused:
             return False
         else:
             stage, row = _next_book(con, scope, embed_allowed=False, collection=collection)
@@ -3435,7 +3440,7 @@ def _run_one_step(con, collection, last_idle_log: dict,
             return _embed_parallel(con, collection, recipe)
     if row is None:
         now = time.time()
-        if not pipeline_active and \
+        if not pipeline_active and not cpu_paused and \
                 now - last_idle_log.get(collection.name, 0.0) > 300:
             # "CAUGHT UP" IS A CLAIM, AND IT WAS FALSE. A stage that is
             # switched OFF selects no row, exactly like a stage with
@@ -3496,6 +3501,28 @@ _parse_held = _ParseHeld()
 #: EmbedInterrupted between slices; what is written stays, the document is
 #: deferred untouched, and it resumes from there when everything runs again.
 _embed_stop = _AnyStop(_stop, _parse_held)
+#: THE NODE PROFILE'S CORES (app/cpu_limit.py; operator, 2026-10-27): one
+#: watch per collection, keyed on its manifest's path, so each collection's
+#: log says each change of the profile once ("profile quiet: paused until
+#: 08:00", "profile day: 8 cores")
+_cpu_watches: dict[str, cpu_limit.Watch] = {}
+
+
+def _cpu_paused(con, collection) -> bool:
+    """Whether the node's profile pauses this collection's parse-pool work
+    now (cpu_cores = 0): rdf, fts and the archive pass. Asked at the unit
+    boundary — the unit already running finishes and commits — and cheap
+    (a cached read, app/cpu_limit.py). It never pauses embedding, bundles or
+    scans: a profile limits background CPU, and a collection's own `embed`
+    runs in every profile (decision 3, docs/notes/node-profiles-design.md).
+    The N-core limit itself is applied by the pool (`parallel.compute`)."""
+    watch = _cpu_watches.setdefault(str(collection.manifest_path), cpu_limit.Watch())
+    lim, line = watch.see()
+    if line is not None:
+        db.log_event(con, "warn" if lim.error else "info", "worker", line)
+    return lim.cores == 0
+
+
 #: collections whose corpus may have changed, or whose scan was cut short,
 #: while the mode ran no parsing: scanned when everything runs again
 _scan_owed: set[str] = set()
@@ -3805,6 +3832,14 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                 # import is CPU/IO work (reads, T3's sixteen, Lance writes),
                 # and on the thread that feeds an encoder it would idle it.
                 if producers and _drain_bundle_inbox(con, collection):
+                    continue
+                # THE NODE PROFILE (app/cpu_limit.py): cpu_cores = 0 pauses
+                # the parse-pool work below at this unit boundary — the last
+                # unit committed, nothing begun — in a bounded sleep that
+                # re-checks the stop. Bundles above go on: p2p embedding
+                # runs in every profile (decision 3)
+                if _cpu_paused(con, collection):
+                    time.sleep(config.WORKER_IDLE_SLEEP)
                     continue
                 # A REMOTE archive (amendment 38) is applied HERE, on the
                 # collection's own thread, never on the GPU-serial main

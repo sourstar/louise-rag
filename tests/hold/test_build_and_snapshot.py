@@ -422,6 +422,83 @@ def test_the_build_command_exits_130_when_stopped(
     assert seen["stop"] is not None, "the command hands the build a stop to honour"
 
 
+def test_sigterm_while_the_profile_pauses_the_build_exits_130_and_loses_nothing(
+        isolated_config, tmp_path, monkeypatch):
+    """The node profile's `cpu_cores = 0` (app/cpu_limit.py) pauses the build
+    at a page boundary; a SIGTERM during that pause is honoured within a tick:
+    exit 130, every part committed before it kept, and the re-run writes the
+    same bytes as a build never paused or stopped (invariant 2)."""
+    import os
+    import signal
+    import threading
+    import time
+    from app import cpu_limit, louise, node_profile
+    from app.node_profile import Active, GpuLevel, Profile
+    from tests.conftest import gutenberg_books
+    corpus = gutenberg_books(tmp_path / "many", 160)
+    monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", PLATFORM)
+    reference = _collection(tmp_path / "reference")
+    _build(reference, corpus, records_per_shard=20)
+    parts = {p.relative_to(reference / "gutenberg" / "shard"): p.read_bytes()
+             for p in (reference / "gutenberg" / "shard" / "records").rglob("*.jsonl.zst")}
+
+    root = _collection(tmp_path / "paused")
+    profile = {"cores": 4}
+    monkeypatch.setattr(node_profile, "active", lambda now=None: Active(
+        Profile("quiet" if profile["cores"] == 0 else "day", profile["cores"], "full"),
+        GpuLevel("full"), None, None))
+    monkeypatch.setattr(cpu_limit, "TTL_S", 0.0)
+    monkeypatch.setattr(cpu_limit, "PAUSE_TICK_S", 0.01)
+    cpu_limit.reset()
+    paused = threading.Event()
+    real_wait = cpu_limit.wait_while_paused
+
+    def waiting(stop=None, watch=None):
+        paused.set()
+        return real_wait(stop, watch)
+    monkeypatch.setattr(cpu_limit, "wait_while_paused", waiting)
+    staging = root / "gutenberg" / "state" / "build"
+    original = rec.build
+
+    def pause_after_a_part(*a, **k):
+        # the profile turns quiet once the build has committed its first part
+        def watch_parts():
+            while not list(staging.rglob("*.jsonl.zst")):
+                time.sleep(0.005)
+            profile["cores"] = 0
+        threading.Thread(target=watch_parts, daemon=True).start()
+        return original(*a, **k)
+    monkeypatch.setattr(rec, "build", pause_after_a_part)
+
+    def sigterm_once_paused():
+        assert paused.wait(60), "the build never paused"
+        os.kill(os.getpid(), signal.SIGTERM)
+    handlers = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
+    killer = threading.Thread(target=sigterm_once_paused, daemon=True)
+    killer.start()
+    try:
+        code = louise.main(["hold", "records", "build", "gutenberg", "--root", str(root),
+                            "--corpus", str(corpus), "--shard-records", "20"])
+    finally:
+        for s, h in handlers.items():
+            signal.signal(s, h)
+    killer.join(5)
+    assert code == 130
+    kept = {p.relative_to(staging): p.read_bytes() for p in staging.rglob("*.jsonl.zst")}
+    assert kept, "the parts committed before the pause are kept"
+    assert all(parts[path] == data for path, data in kept.items()), "a committed part is the reference's"
+    assert len(kept) < len(parts), "the build was paused before its end"
+    assert not list((root / "gutenberg" / "shard").rglob("*.jsonl.zst")), "nothing promoted"
+
+    profile["cores"] = None
+    monkeypatch.setattr(rec, "build", original)
+    second = _build(root, corpus, records_per_shard=20)
+    assert not second.interrupted
+    got = {p.relative_to(root / "gutenberg" / "shard"): p.read_bytes()
+           for p in (root / "gutenberg" / "shard" / "records").rglob("*.jsonl.zst")}
+    assert got == parts, "the resumed build wrote other bytes than one never paused"
+
+
 def test_the_build_says_why_its_staging_manifest_is_unsigned(isolated_config, tmp_path, corpus_dir):
     """`hold records build` asks the pack builder for no signature — its
     manifest is staging, and the snapshot is what is signed. The line said

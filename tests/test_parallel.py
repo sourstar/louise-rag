@@ -148,6 +148,56 @@ def test_pack_records_are_computed_by_the_pool(isolated_config, tmp_path, corpus
         assert (pack_dir / s["path"]).read_bytes() == (serial_dir / s["path"]).read_bytes()
 
 
+def test_a_build_under_a_changing_profile_writes_the_serial_bytes(isolated_config, tmp_path, monkeypatch):
+    """The node profile (app/cpu_limit.py) changes how many parts run, never
+    what they produce: a build whose limit goes 12 -> 0 (paused) -> 8 -> 1
+    through real children writes every part byte-identical to a serial build."""
+    from app import cpu_limit, node_profile
+    from app.node_profile import Active, GpuLevel, Profile
+    from app.pack import build as pack_build, manifest as manifest_mod
+    from tests.conftest import gutenberg_books
+    corpus = gutenberg_books(tmp_path / "many", 160)
+    c, rows = _gutenberg(tmp_path, corpus)
+    assert len(rows) == 160                          # 50 a page: several pages per slice
+
+    def build(dest):
+        said: list[str] = []
+        pack_build.build(c, dest, records_per_shard=20, sign=False,
+                         log=lambda m: said.append(m))
+        return said
+    serial_dir = tmp_path / "packs" / "serial"
+    build(serial_dir)
+
+    reads = {"n": 0}
+    phases = [12, 12, 0, 0, 0, 0, 8, 8, 8, 1]
+
+    def scripted(now=None):
+        cores = phases[min(reads["n"], len(phases) - 1)]
+        reads["n"] += 1
+        return Active(Profile({0: "quiet", 12: "night"}.get(cores, "day"), cores, "full"),
+                      GpuLevel("full"), None, None)
+    monkeypatch.setattr(node_profile, "active", scripted)
+    monkeypatch.setattr(cpu_limit, "TTL_S", 0.0)
+    monkeypatch.setattr(cpu_limit, "PAUSE_TICK_S", 0.01)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 3)
+    cpu_limit.reset()                                # the serial build's read, cached for TTL_S
+    parallel.shutdown()
+    try:
+        pooled_dir = tmp_path / "packs" / "pooled"
+        said = build(pooled_dir)
+    finally:
+        parallel.shutdown()
+    profile_lines = [m for m in said if "profile" in m]
+    assert any("paused" in m for m in profile_lines) and any("8 cores" in m for m in profile_lines) \
+        and any("1 core" in m for m in profile_lines), profile_lines
+    assert reads["n"] >= len(phases), "every phase was in force for part of the build"
+    m = manifest_mod.load(pooled_dir)
+    assert [s["path"] for s in m["shards"]] == [s["path"] for s in manifest_mod.load(serial_dir)["shards"]]
+    assert len(m["shards"]) >= 8
+    for s in m["shards"]:
+        assert (pooled_dir / s["path"]).read_bytes() == (serial_dir / s["path"]).read_bytes(), s["path"]
+
+
 def test_a_pool_that_does_not_answer_never_blocks_the_caller(isolated_config, tmp_path,
                                                               corpus_dir, monkeypatch):
     """Regression (2026-08-28, found with py-spy on the live node): the
