@@ -12,8 +12,8 @@ P=${1:-}
 S=/root/louise-scheduled
 LOG=$S/node-period.log
 H=$(ls -d /sys/class/drm/card0/device/hwmon/hwmon* 2>/dev/null | head -1)
-#: the GPU power limit in the quiet periods, watts: 110 W held the fan at 1,213 rpm avg, 100 W leaves margin (steps 2026-10-26, runbook §6)
-QUIET_W=${QUIET_W:-100}
+#: the GPU power limit in the quiet periods, watts: 110 W, the operator's (2026-10-26); it held the fan at 1,213 rpm avg (runbook §6)
+QUIET_W=${QUIET_W:-110}
 #: the card's own limit, given back outside the quiet periods
 FULL_W=230
 say() { echo "== $(date '+%F %T') $P: $*" >> "$LOG"; }

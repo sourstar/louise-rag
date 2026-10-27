@@ -18,16 +18,20 @@ and what is deliberately not being built. Read this before planning work.
   deployed). The entity boost is removed and an identifier restricts only
   as the reader's `keys` filter (05 §5.2 amended; deploys after tonight's
   measurement).
-- **Open defects:** the node passes `ADMIN_TOKEN` as an env VALUE to the
-  worker and web (invariant 8; deploy/truenas-app.yaml takes
-  `ADMIN_TOKEN_FILE`, the node's app is not yet on it); the node key's
-  backup is `/mnt/tank/homes/alanari/louise-node.key` (+ `.pub`, 2026-10-25,
-  checked byte-identical and its public half derived from it), which is on
-  the same machine: an off-machine copy is the operator's to keep;
-  the node's private key sits in `/config`, which the LAN-facing web
-  mounts read-write — the yaml gives it to the worker alone, read-only
-  (both moved to a secrets dataset in the next deploy);
-  the reranker's HTTP 500s under load (cause not found);
+- **Secrets by path (invariant 8), deployed 16a4349 (2026-10-27):** the
+  node key moved by rename to `secrets/private/node.key` (worker only,
+  read-only; same key text and signature before and after), the admin
+  token to `secrets/admin/admin-token` (`ADMIN_TOKEN_FILE`), no token value
+  in either container's env (deploy/16f/move_secrets.py). The key's backup
+  `/mnt/tank/homes/alanari/louise-node.key` is on the same machine: an
+  off-machine copy is the operator's to keep.
+- **Open defects:** the reranker's HTTP 500s under load (cause not found);
+  tests/verify/test_writer_streaming.py reaches the real
+  `/data/state/model-pins.json` through `model_pins.release` (an earlier
+  test's pin collected), unguarded by the node-store check;
+  the 06:00 cron stop of the wikipedia-v8 build took over 15 min and was
+  SIGKILLed after a committed part (2026-10-27, old build tree; the
+  deployed tree's bounded stop is timed at 12:00);
   the 127-part gap (stale counts and text index): `louise dev index-drift`
   names the documents, `dev reindex` fixes them, on the node 2026-10-26.
 - **Parked:** arXiv and the knowledge-base pipelines.
