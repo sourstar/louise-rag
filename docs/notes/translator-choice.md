@@ -273,6 +273,24 @@ llamacpp". It costs a 17–38 s cold load and 7.2 GB on the card, against
   - Encoder-decoder support patched into our llama.cpp backend (a P3).
     That is a larger change to carry, and the place for it is upstream
     llama.cpp's server.
+    - **Upstream status, checked 2026-10-27:**
+      - The T5 author's own server branch (fairydreaming `t5-server`,
+        Dec 2024) was never merged ("not very optimal").
+      - Issue #26565 (Aug 2026) was closed as stale with no maintainer
+        reply and no PR. It names the fix: `update_slots()` has no
+        `llama_model_has_encoder()` branch.
+      - Its prototype encodes the prompt, turns prompt caching off, and
+        decodes from the decoder-start token, one request at a time.
+      - `llama_context::cross` is one buffer per context, so it holds only
+        with a single slot. Our models already run `parallel: 1`.
+      - Only `/completions` with a raw prompt is right for T5. A chat
+        template corrupts its input.
+    - **As our P3:** a llama.cpp patch carried through LocalAI's
+      `backend/cpp/llama-cpp/patches/` (as upstream carries its own two).
+      - Cost: a rebase at every llama.cpp bump of its hottest function,
+        and the client sends one request per target language in place of
+        today's one batched call. Whether that is faster than torch's 3.2 s
+        per query is unmeasured.
   - CTranslate2, the standard runtime for MADLAD/T5. It has no Intel GPU
     path (CUDA and CPU only).
   - Whichever runtime, its output is compared with today's on the 451 + 39
