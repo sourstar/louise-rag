@@ -1266,6 +1266,10 @@ _COUNTS_MAX_AGE_S = 1800.0
 # how long a COLD page view waits for the first scan before rendering
 # "counting…" instead — small manifests answer well inside this
 _COUNTS_COLD_WAIT_S = 2.0
+#: when `invalidate_counts` last dropped a collection's counts (or all):
+#: stored counts older than that are not served in place of the cold wait
+_counts_invalidated_at: dict[str, float] = {}
+_counts_all_invalidated_at = 0.0
 
 
 def _archive_spans(collection) -> list[tuple[int, int]]:
@@ -1440,6 +1444,18 @@ def _document_counts(collection) -> tuple[dict | None, float]:
             _refresh_counts_async(collection)
         return counts, now - at
     _refresh_counts_async(collection)
+    # THE STORED COUNTS AT ONCE where the manifest has them (below): a
+    # restart's first views waited the cold wait for every collection whose
+    # scan had not landed — 2 s each, on every view, 4.6-13 s for the
+    # first five minutes after a deploy (München, 2026-10-27). The wait is
+    # for a collection that never stored any.
+    # Not after an action (`invalidate_counts`): stored counts older than it
+    # are what the operator just changed.
+    stored = _stored_counts(collection)
+    if stored is not None and stored[1] > max(_counts_invalidated_at.get(name, 0.0),
+                                              _counts_all_invalidated_at):
+        counts, at = stored
+        return counts, max(0.0, time.time() - at)
     deadline = time.time() + _COUNTS_COLD_WAIT_S
     while time.time() < deadline:
         with _counts_lock:
@@ -1589,15 +1605,17 @@ def invalidate_counts(collection=None) -> None:
     And bumps the generation, so a refresh already in flight — counted
     before the action — is discarded when it lands instead of standing in
     for the fresh count the view straight after the action starts."""
-    global _counts_epoch
+    global _counts_epoch, _counts_all_invalidated_at
     with _counts_lock:
         if collection is None:
             _counts_cache.clear()
             _counts_epoch += 1
+            _counts_all_invalidated_at = time.time()
         else:
             key = _counts_key(collection)
             _counts_cache.pop(key, None)
             _counts_gen[key] = _counts_gen.get(key, 0) + 1
+            _counts_invalidated_at[key] = time.time()
 
 
 def _worker_stats() -> dict:
