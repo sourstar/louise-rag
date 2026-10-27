@@ -5,3 +5,4 @@ base ec9274027eadd552d56f2c6c1fe86cd9216a991a
 0001-system-list-load-options.patch
 0002-llama-cpp-embed-token-ids.patch
 0003-llama-cpp-encoder-decoder.patch
+0004-llama-cpp-encoder-decoder-waves.patch

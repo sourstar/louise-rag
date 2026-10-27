@@ -1,0 +1,360 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 27 Oct 2026 21:44:03 +0000
+Subject: [PATCH] fix(llama-cpp): encode encoder-decoder slots together, in
+ waves (T5, MADLAD)
+
+On top of the encoder-decoder support (patches/0003), which ran one slot
+because llama.cpp keeps one encoder output per context. The slots about
+to start are now encoded together in one call - a wave - gathered for a
+few ms, in content order, and decode in one batch; a new request waits
+while a wave decodes. Carried as a llama.cpp patch beside the others
+(patches/0004-server-encoder-decoder-waves.patch).
+
+Checked on CPU with a random-weight T5: a lone request byte-identical to
+0003; the same 7 prompts in 4 arrival orders give the same 7 outputs; a
+late arrival is answered after the wave; an input over n_ubatch and n > 1
+are refused; 60 requests after a burst leave every slot empty.
+
+Assisted-by: Claude Code
+---
+ .../0004-server-encoder-decoder-waves.patch   | 327 ++++++++++++++++++
+ 1 file changed, 327 insertions(+)
+ create mode 100644 backend/cpp/llama-cpp/patches/0004-server-encoder-decoder-waves.patch
+
+diff --git a/backend/cpp/llama-cpp/patches/0004-server-encoder-decoder-waves.patch b/backend/cpp/llama-cpp/patches/0004-server-encoder-decoder-waves.patch
+new file mode 100644
+index 00000000..5e2c4bf5
+--- /dev/null
++++ b/backend/cpp/llama-cpp/patches/0004-server-encoder-decoder-waves.patch
+@@ -0,0 +1,327 @@
++server: encode encoder-decoder slots together, in waves (T5, MADLAD-400)
++
++On top of 0003 (the encoder runs). The library keeps ONE encoder output per
++context (llama_context::cross), tagged per sequence, and every encode
++replaces it whole; 0003 therefore ran one slot. Here the slots about to
++start are encoded TOGETHER in one llama_process(ENCODE) call - a wave - and
++only while no slot holds a live encoder output; they then decode in one
++batch, as the server batches any slots. Measured first (one slot, Intel Arc
++B70, MADLAD f16): the time per output token is flat in the input length
++(x1.10 from 7 to 192 tokens), so batching the decode is the lever.
++
++- enc_dec_waves(), called from pre_decode before the batch is built: the
++  STARTED slots whose prompt is not encoded yet are gathered for a short
++  window (LLAMA_ENC_DEC_WAVE_MS, default 50; a client's concurrent requests
++  arrive within a few ms), or until every slot holds a request or the
++  waiting tokens fill one ubatch; then the longest prefix of them, in
++  CONTENT order (their tokens, slot id as tie-break), that fits one ubatch
++  is encoded in one call, each on its own sequence id. An input longer than
++  n_ubatch is refused, not asserted on. While a wave decodes (enc_live),
++  new slots wait in STARTED; the prompt loop skips a slot whose encoder has
++  not read its prompt.
++- the batch follows the wave's content order (slot_order in pre_decode),
++  so the KV cells a wave takes depend on what is translated, not on which
++  slot took which request or on arrival order: the same group gives the
++  same bytes (checked: 7 prompts in 4 shuffled orders, identical).
++- release() clears an encoder-decoder slot's prompt (its KV cells), so the
++  next wave starts from the same empty pool; the flags reset.
++- n > 1 (n_cmpl) is refused for these models: a child copies its parent's
++  decoder state and never encodes, so its sequence would have no encoder
++  output.
++- the load-time warning about several slots becomes an info line.
++
++Other models: nothing of their code path changes (every addition is under
++enc_dec; slot_order is the slot order for them).
++
++diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
++index 7fefa9058..cbb28dd60 100644
++--- a/tools/server/server-context.cpp
+++++ b/tools/server/server-context.cpp
++@@ -27,6 +27,9 @@
++ #include <random>
++ #include <utility>
++ #include <fstream>
+++#include <thread>
+++#include <chrono>
+++#include <cstdlib>
++ 
++ // fix problem with std::min and std::max
++ #if defined(_WIN32)
++@@ -355,6 +358,13 @@ struct server_slot {
++     // (llama_process ENCODE) when the slot starts; the task's own prompt is then
++     // the decoder's start token
++     llama_tokens enc_tokens;
+++    // its encoder output is in the context's one llama_cross (see enc_dec_waves):
+++    // no encode runs until this slot is released
+++    bool enc_live = false;
+++    // its place in its wave's content order; the batches follow it
+++    int32_t wave_rank = -1;
+++    // when it began waiting for a wave (us): the gathering window's clock
+++    int64_t t_enc_wait = 0;
++ 
++     // sampling
++     json json_schema;
++@@ -600,9 +610,15 @@ struct server_slot {
++ 
++             // do not keep context of the child slots - the parent's context is enough
++             // nor of the stateless slots - no task ever reuses it
++-            if (task->is_child() || task->is_stateless()) {
+++            // nor of an encoder-decoder slot: its decoder positions belong to one encoder
+++            // input, and freeing them gives the next wave the same cells as the last
+++            if (task->is_child() || task->is_stateless() || enc_live) {
++                 prompt_clear();
++             }
+++            enc_live   = false;
+++            wave_rank  = -1;
+++            t_enc_wait = 0;
+++            enc_tokens.clear();
++ 
++             callback_on_reset(*this);
++ 
++@@ -1249,11 +1265,11 @@ private:
++                 && std::string(arch) == "t5";
++         }
++ 
++-        if (enc_dec && params_base.n_parallel > 1) {
+++        if (enc_dec) {
++             // the encoder's output is kept once per context, not per sequence
++-            // (llama_cross): a second slot's encode would overwrite the first's
++-            SRV_WRN("encoder-decoder model with %d slots: its encoder output is shared by the context, "
++-                    "so concurrent requests can read each other's; use 1 slot\n", params_base.n_parallel);
+++            // (llama_cross): the slots are encoded together, in waves (enc_dec_waves)
+++            SRV_INF("encoder-decoder model: %d slot(s) are encoded in waves of up to one ubatch, "
+++                    "gathered for %" PRId64 " ms\n", params_base.n_parallel, enc_dec_wave_us() / 1000);
++         }
++ 
++         try {
++@@ -1885,6 +1901,122 @@ private:
++         return output;
++     }
++ 
+++    // the gathering window of an encoder-decoder wave: a client's concurrent requests
+++    // (one question into its languages) arrive within a few ms of each other.
+++    // LLAMA_ENC_DEC_WAVE_MS overrides the default, for measurements.
+++    static int64_t enc_dec_wave_us() {
+++        static const int64_t us = [] {
+++            const char * env = std::getenv("LLAMA_ENC_DEC_WAVE_MS");
+++            const int64_t ms = env ? std::atoll(env) : 50;
+++            return std::max<int64_t>(0, ms) * 1000;
+++        }();
+++        return us;
+++    }
+++
+++    // Encoder-decoder models (T5, MADLAD). The library keeps ONE encoder output per
+++    // context (llama_cross), tagged per sequence, and every encode replaces it whole.
+++    // So the slots about to start are encoded TOGETHER, in one call - a WAVE - and
+++    // only while no slot holds a live encoder output; they then decode in one batch,
+++    // as the server batches any slots. A wave is gathered for a short window, so a
+++    // client's concurrent requests share one. Its members are ordered by their
+++    // tokens: the bytes a wave gives depend on WHAT is in it, never on arrival order
+++    // or slot ids. A wave is at most one ubatch of tokens (the encoder reads its
+++    // whole input in one); what does not fit waits for the next.
+++    void enc_dec_waves() {
+++        std::vector<server_slot *> waiting;
+++        for (auto & slot : slots) {
+++            if (!slot.is_processing()) {
+++                continue;
+++            }
+++            if (slot.enc_live) {
+++                return; // a wave is decoding: nothing is encoded over its output
+++            }
+++            if (slot.state == SLOT_STATE_STARTED && !slot.enc_tokens.empty()) {
+++                waiting.push_back(&slot);
+++            }
+++        }
+++        if (waiting.empty()) {
+++            return;
+++        }
+++
+++        const int32_t n_ubatch = llama_n_ubatch(ctx_tgt);
+++
+++        int64_t t_oldest = waiting[0]->t_enc_wait;
+++        size_t  n_tokens = 0;
+++        for (const auto * slot : waiting) {
+++            t_oldest  = std::min(t_oldest, slot->t_enc_wait);
+++            n_tokens += slot->enc_tokens.size();
+++        }
+++        const bool full = waiting.size() >= slots.size() || n_tokens >= (size_t) n_ubatch;
+++        if (!full && ggml_time_us() - t_oldest < enc_dec_wave_us()) {
+++            // gathering; nothing decodes meanwhile, so the loop would spin: a ms of rest
+++            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+++            return;
+++        }
+++
+++        // content order, slot id as the tie-break
+++        std::stable_sort(waiting.begin(), waiting.end(), [](const server_slot * a, const server_slot * b) {
+++            return a->enc_tokens != b->enc_tokens ? a->enc_tokens < b->enc_tokens : a->id < b->id;
+++        });
+++
+++        // the wave: the longest prefix of that order that fits one encode
+++        std::vector<server_slot *> wave;
+++        int32_t n_enc = 0;
+++        for (auto * slot : waiting) {
+++            const int32_t n = (int32_t) slot->enc_tokens.size();
+++            if (n > n_ubatch) {
+++                // the encoder asserts on it: it reads the whole input in one ubatch
+++                send_error(*slot,
+++                           string_format("input (%d tokens) is too large for the encoder. increase the "
+++                                         "physical batch size (current batch size: %d)", n, n_ubatch),
+++                           ERROR_TYPE_EXCEED_CONTEXT_SIZE);
+++                slot->release();
+++                continue;
+++            }
+++            if (n_enc + n > n_ubatch) {
+++                break;
+++            }
+++            wave.push_back(slot);
+++            n_enc += n;
+++        }
+++        if (wave.empty()) {
+++            return;
+++        }
+++
+++        const int64_t t_start = ggml_time_us();
+++
+++        common_batch batch_enc(ctx_tgt);
+++        int32_t rank = 0;
+++        for (auto * slot : wave) {
+++            // nothing of a previous request is reused: the batch's positions (0..n) are
+++            // checked against what the memory holds for the sequence (cache_prompt is off)
+++            slot->mem.seq_rm(slot->id, -1, -1);
+++            // the slot's own sequence id: the decoder's cross-attention mask pairs its
+++            // positions with the encoder outputs of the same sequence
+++            for (int32_t i = 0; i < (int32_t) slot->enc_tokens.size(); ++i) {
+++                batch_enc.add(slot->enc_tokens[i], i, slot->id, false);
+++            }
+++            slot->wave_rank = rank++;
+++        }
+++
+++        const int32_t ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_ENCODE, batch_enc.get());
+++        if (ret != 0) {
+++            for (auto * slot : wave) {
+++                send_error(*slot, string_format("failed to encode the prompt (llama_process ENCODE: %d)", ret), ERROR_TYPE_SERVER);
+++                slot->release();
+++            }
+++            return;
+++        }
+++
+++        for (auto * slot : wave) {
+++            slot->enc_tokens.clear();
+++            slot->enc_live = true;
+++        }
+++
+++        SRV_INF("encoder-decoder wave: %zu slot(s), %d tokens encoded in %.1f ms, %zu still waiting\n",
+++                wave.size(), n_enc, (ggml_time_us() - t_start) / 1000.0, waiting.size() - wave.size());
+++    }
+++
++     bool launch_slot_with_task(server_slot & slot, server_task && task) {
++         // process per-request lora adapters
++         if (!task.params.lora.empty()) {
++@@ -2009,7 +2141,14 @@ private:
++                 send_error(task, "an encoder-decoder model takes text only", ERROR_TYPE_INVALID_REQUEST);
++                 return false;
++             }
+++            if (task.is_parent() || task.is_child()) {
+++                // a child copies its parent's decoder state and never encodes: its
+++                // sequence would have no encoder output
+++                send_error(task, "an encoder-decoder model does not support n > 1", ERROR_TYPE_INVALID_REQUEST);
+++                return false;
+++            }
++             slot.enc_tokens = task.tokens.get_text_tokens();
+++            slot.t_enc_wait = ggml_time_us();
++             llama_token dec_start = llama_model_decoder_start_token(model_tgt);
++             if (dec_start == LLAMA_TOKEN_NULL) {
++                 dec_start = llama_vocab_bos(vocab);
++@@ -3500,8 +3639,29 @@ private:
++         std::vector<server_slot *> generating;
++         std::vector<server_slot *> drafting;
++ 
+++        // encoder-decoder models: the slots about to start are encoded together (a wave)
+++        if (enc_dec) {
+++            enc_dec_waves();
+++        }
+++
+++        // the order the slots enter the batch: by id, or - an encoder-decoder wave - by
+++        // the wave's content order, so the batch (and the KV cells it takes) follows
+++        // what is translated, never which slot took which request
+++        std::vector<server_slot *> slot_order;
+++        slot_order.reserve(slots.size());
+++        for (auto & slot : slots) {
+++            slot_order.push_back(&slot);
+++        }
+++        if (enc_dec) {
+++            std::stable_sort(slot_order.begin(), slot_order.end(), [](const server_slot * a, const server_slot * b) {
+++                const int32_t ra = a->wave_rank < 0 ? INT32_MAX : a->wave_rank;
+++                const int32_t rb = b->wave_rank < 0 ? INT32_MAX : b->wave_rank;
+++                return ra != rb ? ra < rb : a->id < b->id;
+++            });
+++        }
+++
++         // determine which slots are generating and drafting
++-        iterate(slots, [&](server_slot & slot) {
+++        iterate(slot_order, [&](server_slot & slot) {
++             if (slot.state != SLOT_STATE_GENERATING) {
++                 return;
++             }
++@@ -3639,7 +3799,7 @@ private:
++         if (params_base.cont_batching || batch.size() == 0) {
++             bool add_ok = true; // false means the batch is full, skip remaining slots
++ 
++-            iterate(slots, [&](server_slot & slot) {
+++            iterate(slot_order, [&](server_slot & slot) {
++                 if (!add_ok || batch.size() >= n_batch) {
++                     return; // batch is full, skip remaining slots
++                 }
++@@ -3648,6 +3808,12 @@ private:
++                     return;
++                 }
++ 
+++                // encoder-decoder: a slot whose prompt the encoder has not read yet waits for
+++                // its wave (enc_dec_waves) and enters the batch in the pass that encodes it
+++                if (!slot.enc_tokens.empty()) {
+++                    return;
+++                }
+++
++                 // check if we can batch this slot with the previous one
++                 if (slot_batched && !slot_batched->can_batch_with(slot)) {
++                     return;
++@@ -3709,39 +3875,6 @@ private:
++                             return;
++                         }
++ 
++-                        // encoder-decoder models: the encoder reads the prompt now, right
++-                        // before this slot's decoder, which attends to its output
++-                        if (!slot.enc_tokens.empty()) {
++-                            const int32_t n_enc = (int32_t) slot.enc_tokens.size();
++-                            if (n_enc > n_ubatch) {
++-                                // the encoder asserts on it: it reads the whole input in one ubatch
++-                                send_error(slot,
++-                                           string_format("input (%d tokens) is too large for the encoder. increase the "
++-                                                         "physical batch size (current batch size: %d)", n_enc, n_ubatch),
++-                                           ERROR_TYPE_EXCEED_CONTEXT_SIZE);
++-                                slot.release();
++-                                return;
++-                            }
++-                            // the previous request's decoder state goes first: the batch's
++-                            // positions (0..n) are checked against what the memory holds for the
++-                            // sequence, and nothing of it is reused (cache_prompt is off)
++-                            slot.mem.seq_rm(slot.id, -1, -1);
++-                            // the slot's own sequence id: the decoder's cross-attention mask
++-                            // pairs its positions with the encoder outputs of the same sequence
++-                            common_batch batch_enc(ctx_tgt);
++-                            for (int32_t i = 0; i < n_enc; ++i) {
++-                                batch_enc.add(slot.enc_tokens[i], i, slot.id, false);
++-                            }
++-                            const int32_t ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_ENCODE, batch_enc.get());
++-                            slot.enc_tokens.clear();
++-                            if (ret != 0) {
++-                                send_error(slot, string_format("failed to encode the prompt (llama_process ENCODE: %d)", ret), ERROR_TYPE_SERVER);
++-                                slot.release();
++-                                return;
++-                            }
++-                            SLT_DBG(slot, "encoded %d prompt tokens\n", n_enc);
++-                        }
++-
++                         if (!slot.can_split()) {
++                             if (slot.task->n_tokens() > n_ubatch) {
++                                 send_error(slot,
+-- 
+2.43.0
+
