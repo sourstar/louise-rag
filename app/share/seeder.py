@@ -265,9 +265,20 @@ def publish(collection, snapshot: sn.Snapshot, shard_dir: Path, state_dir: Path,
     for old in torrents_dir.glob("*.torrent") if torrents_dir.is_dir() else []:
         if str(old) not in keep:
             old.unlink()
+    from app.share import possession
     for old in share_root.iterdir() if share_root.is_dir() else []:
-        if old.is_dir() and old.name not in (TORRENTS_DIR, snapshot.snapshot_id):
+        if old.is_dir() and old.name not in (TORRENTS_DIR, snapshot.snapshot_id, possession.PARTS):
             shutil.rmtree(old, ignore_errors=True)
+    # the parts' record lists (possession.part_records) are keyed on the part
+    # ROOT, read once per root: kept across republishes — swept with the rest,
+    # every Library view decoded the whole SHARD again on the request path,
+    # 170 s every few minutes while gutenberg contributed (München,
+    # 2026-10-27) — and pruned to the roots this snapshot still has
+    roots = {f"{str(s.root).split(':')[-1]}.json" for s in snapshot.shards}
+    parts_dir = share_root / possession.PARTS
+    for old in parts_dir.glob("*.json") if parts_dir.is_dir() else []:
+        if old.name not in roots:
+            old.unlink(missing_ok=True)
     db.set_control(con, seeding.TORRENT_PUBLISHED_KEY, json.dumps(entries))
     db.set_control(con, CONTROL_KEY, json.dumps({
         "snapshot_id": snapshot.snapshot_id, "snapshot_hash": snapshot.hash,

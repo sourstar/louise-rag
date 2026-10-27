@@ -81,6 +81,31 @@ def test_publish_serves_one_torrent_per_member_file_with_the_snapshots_infohash(
     assert len(seeding.read_published(con)) == 2
 
 
+def test_a_republish_keeps_the_parts_record_lists_of_this_snapshot(node, monkeypatch):  # noqa: F811
+    """possession.part_records reads a part's records once per part ROOT into
+    state/share/part-uids. The republish swept that directory with the old
+    snapshots', so every Library view decoded the whole SHARD again on the
+    request path: 170 s every few minutes while gutenberg contributed
+    (München, 2026-10-27). Kept now; a root no longer in the snapshot goes."""
+    from app.share import possession
+    c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
+    con = db.connect(c)
+    state = node / c.name / "state"
+    parts = state / "share" / possession.PARTS
+    parts.mkdir(parents=True)
+    held = [parts / f"{str(s.root).split(':')[-1]}.json" for s in snap.shards]
+    for p in held:
+        p.write_text('[["a:1", "sha256:00"]]', encoding="utf-8")
+    gone = parts / ("ab" * 32 + ".json")
+    gone.write_text("[]", encoding="utf-8")
+    (state / "share" / "2026-07").mkdir()
+    seeder.publish(c, snap, d, state, con)
+    seeder.publish(c, snap, d, state, con)
+    assert all(p.read_text(encoding="utf-8") == '[["a:1", "sha256:00"]]' for p in held)
+    assert not gone.exists(), "a part root the snapshot no longer has is pruned"
+    assert not (state / "share" / "2026-07").exists(), "an old snapshot's files still go"
+
+
 def test_a_file_that_is_not_what_the_snapshot_says_is_refused_not_served(node, monkeypatch):  # noqa: F811
     c, codex, snap, d, files = a_shared_collection(node, monkeypatch)
     with open(d / f"records/{SLICE}/00002.jsonl.zst", "ab") as f:
