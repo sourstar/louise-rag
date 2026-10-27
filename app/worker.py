@@ -3469,6 +3469,9 @@ def _run_one_step(con, collection, last_idle_log: dict,
 # the same manifest). The main loop keeps embed: GPU-serial ACROSS
 # collections is doctrine, and one owner enforces it.
 _pipeline_threads: dict[str, tuple[threading.Thread, threading.Event]] = {}
+# what each per-collection thread was started for (`_identity`), by thread
+# name: a name that now holds another collection gets a new thread
+_thread_identity: dict[str, str] = {}
 _paused = threading.Event()          # set = the mode fetches nothing: paused, seed-only
 # set = "download/seeding only": the bytes keep moving and NOTHING reads
 # them — no scan, no rdf, no fts, no index maintenance, no embedding
@@ -3592,8 +3595,8 @@ def _live_collection(collection):
         fresh = _live_collections.get(collection.name)
     if fresh is None:
         return collection
-    if fresh.manifest_path != collection.manifest_path:
-        return collection
+    if fresh.manifest_path != collection.manifest_path or _identity(fresh) != _identity(collection):
+        return collection       # another collection under the name: this thread is stopped
     return fresh
 # When each collection was last scanned; module-level because both the
 # main loop (interval trigger) and the pipeline threads (completion) write
@@ -3905,8 +3908,8 @@ def _sync_pipeline_threads(all_collections) -> None:
     live = {c.name: c for c in all_collections}
     for name in list(_pipeline_threads):
         thread, gone = _pipeline_threads[name]
-        if name not in live:
-            gone.set()
+        if name not in live or _thread_identity.get(thread.name) != _identity(live[name]):
+            gone.set()                      # removed, or the name holds another collection
             del _pipeline_threads[name]
         elif not thread.is_alive():
             del _pipeline_threads[name]     # crashed/finished: restart below
@@ -3917,6 +3920,7 @@ def _sync_pipeline_threads(all_collections) -> None:
                                        args=(collection, gone),
                                        name=f"pipeline-{name}", daemon=True)
             _pipeline_threads[name] = (thread, gone)
+            _thread_identity[thread.name] = _identity(collection)
             thread.start()
 
 
@@ -3994,8 +3998,8 @@ def _sync_embed_producers(collections) -> None:
     live = {c.name: c for c in collections}
     for name in list(_embed_producers):
         thread, gone = _embed_producers[name]
-        if name not in live:
-            gone.set()
+        if name not in live or _thread_identity.get(thread.name) != _identity(live[name]):
+            gone.set()                      # removed, or the name holds another collection
             del _embed_producers[name]
         elif not thread.is_alive():
             del _embed_producers[name]      # crashed: restarted below
@@ -4005,6 +4009,7 @@ def _sync_embed_producers(collections) -> None:
             thread = threading.Thread(target=_embed_producer, args=(collection, gone),
                                       name=f"embed-{name}", daemon=True)
             _embed_producers[name] = (thread, gone)
+            _thread_identity[thread.name] = _identity(collection)
             thread.start()
 
 
@@ -4239,6 +4244,15 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
     known = {c.name for c in all_collections}
     now_names = {c.name for c in current}
     previous_by_name = {c.name: c for c in all_collections}
+    # A NAME THAT NOW HOLDS ANOTHER COLLECTION leaves and joins again, its
+    # handles closed first. 2026-10-27: `forget wikidata` then `rename
+    # wikidata-p2 wikidata` between two rounds; the name never went missing,
+    # so the worker kept seven connections and the lock of the deleted
+    # manifest, wrote the old rows into the new collection's catalog index
+    # and never discovered the new one (caches key on identity, not a name).
+    current_by_name = {c.name: c for c in current}
+    replaced = {n for n in known & now_names
+                if _identity(previous_by_name[n]) != _identity(current_by_name[n])}
     # BEFORE the change detection below, so the discovery it requests is
     # run by the pipeline thread against the NEW object and not the one
     # that thread was started with.
@@ -4250,7 +4264,7 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
     # recorded via the UI would sit inert until the next interval scan.
     for kept in current:
         prev = previous_by_name.get(kept.name)
-        if prev is None or kept.name not in cons:
+        if prev is None or kept.name not in cons or kept.name in replaced:
             continue
         if prev.embed_mode_default != kept.embed_mode_default:
             _apply_tier2_embed_mode(cons[kept.name], kept, "TOML edit")
@@ -4268,6 +4282,10 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
             else:
                 _discover(cons[kept.name], kept, "config-changed")
             last_discover[kept.name] = time.time()
+
+    for name in sorted(replaced):
+        _leave(name, cons, current, previous_by_name, last_discover, "replaced by another collection")
+    known -= replaced
 
     for added in [c for c in current if c.name not in known]:
         # A re-added collection must not inherit a set stop event, or its
@@ -4316,39 +4334,51 @@ def _sync_collections(all_collections, cons, last_discover, pipeline: bool = Fal
         last_discover[added.name] = time.time()
 
     for gone in sorted(known - now_names):
-        db.log_event(cons[gone], "info", "worker",
-                     f"collection {gone!r} removed — ingestion stopped, data kept")
-        # its embedders leave the card when no held collection names them
-        _sweep_unheld_embedders(current, cons[gone])
-        # Signal the byte-moving threads HERE, not at _sync_pipeline_threads:
-        # that runs later in the round and not at all in non-pipeline mode or
-        # while the node is paused. Waking the transfer manager is required
-        # too — a thread parked in the token bucket or on an endpoint slot
-        # checks the predicate only after its wait returns, so setting the
-        # event without the wake is inert for the whole wait cap.
-        _gone_event(gone).set()
-        try:
-            get_manager().wake_all()
-        except Exception:   # noqa: BLE001 — never let telemetry stop a removal
-            pass
-        for table in (_acquire_threads, _acquire_done, _archive_threads,
-                      _archive_log_state, _archive_last_kick, _sizing_names,
-                      _license_nagged, _profile_nagged, _pipeline_idle_log):
-            table.pop(gone, None)
-        # its index and vector handles, keyed on paths a re-created collection
-        # of the same name reuses (normattiva, 2026-10-13: 244 fts errors)
-        left = previous_by_name.get(gone)
-        if left is not None:
-            from . import catalog as catalog_mod, embeddings as embeddings_mod, fts as fts_mod
-            fts_mod.forget(left.fts_dir)
-            catalog_mod.forget(left)
-            embeddings_mod.forget(left)
-        cons[gone].close()
-        del cons[gone]
-        last_discover.pop(gone, None)
-        _take_discovery_request(gone)   # never scan a removed collection
+        _leave(gone, cons, current, previous_by_name, last_discover,
+               "removed — ingestion stopped, data kept")
 
     return [c for c in current if c.name in cons]
+
+
+def _identity(c) -> str:
+    """What a name holds: its Codex's collection_id, else its manifest's path."""
+    codex = getattr(c, "codex", None)
+    return getattr(codex, "collection_id", None) or str(Path(c.manifest_path))
+
+
+def _leave(gone: str, cons, current, previous_by_name, last_discover, why: str) -> None:
+    """A collection the worker stops holding: its threads signalled, its
+    handles (manifest, text index, catalog, vectors) closed and forgotten."""
+    db.log_event(cons[gone], "info", "worker", f"collection {gone!r} {why}")
+    # its embedders leave the card when no held collection names them
+    _sweep_unheld_embedders(current, cons[gone])
+    # Signal the byte-moving threads HERE, not at _sync_pipeline_threads:
+    # that runs later in the round and not at all in non-pipeline mode or
+    # while the node is paused. Waking the transfer manager is required
+    # too — a thread parked in the token bucket or on an endpoint slot
+    # checks the predicate only after its wait returns, so setting the
+    # event without the wake is inert for the whole wait cap.
+    _gone_event(gone).set()
+    try:
+        get_manager().wake_all()
+    except Exception:   # noqa: BLE001 — never let telemetry stop a removal
+        pass
+    for table in (_acquire_threads, _acquire_done, _archive_threads,
+                  _archive_log_state, _archive_last_kick, _sizing_names,
+                  _license_nagged, _profile_nagged, _pipeline_idle_log):
+        table.pop(gone, None)
+    # its index and vector handles, keyed on paths a re-created collection
+    # of the same name reuses (normattiva, 2026-10-13: 244 fts errors)
+    left = previous_by_name.get(gone)
+    if left is not None:
+        from . import catalog as catalog_mod, embeddings as embeddings_mod, fts as fts_mod
+        fts_mod.forget(left.fts_dir)
+        catalog_mod.forget(left)
+        embeddings_mod.forget(left)
+    cons[gone].close()
+    del cons[gone]
+    last_discover.pop(gone, None)
+    _take_discovery_request(gone)   # never scan a removed collection
 
 
 # Telemetry must not be published by the thread whose work it describes. The
