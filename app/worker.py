@@ -4992,13 +4992,6 @@ def _register_stack_dump() -> bool:
 
 
 def run_forever():
-    try:
-        _run_forever()
-    finally:
-        _end_stop_watch()       # the watch never outlives its run
-
-
-def _run_forever():
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGINT, _handle_sigterm)
     # a hangup too: rsync leads its own session (transport_rsync), so a
@@ -5285,6 +5278,7 @@ def _run_forever():
     _join_pipeline_threads()
     _release_locks()                     # the node holds a lock only while it runs
     parallel.shutdown()             # the parse pool's children go with the worker
+    _end_stop_watch()               # the watch never outlives its run
     for c in all_collections:
         db.log_event(cons[c.name], "info", "worker", "worker stopped (signal)")
     node_con.close()

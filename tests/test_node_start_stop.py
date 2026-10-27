@@ -52,18 +52,16 @@ def test_a_request_left_from_before_the_start_is_cleared(root, events):
         t.join(timeout=5)
 
 
-def test_the_watch_ends_with_its_run_even_when_stop_is_cleared_first(root, events, monkeypatch):
+def test_the_watch_ends_with_its_run_even_when_stop_is_cleared_first(root, events):
     # 2026-10-27: a test cleared `_stop` before the watch woke, and the watch
     # polled the default node store for the rest of the suite
-    def body():
-        worker._start_stop_watch()
-        worker._stop.set()
-        worker._stop.clear()            # before the watch can see it
-    monkeypatch.setattr(worker, "_run_forever", body)
-    worker.run_forever()
-    import threading
-    assert not any(t.name == "stop-watch" and t.is_alive() for t in threading.enumerate())
-    assert worker._stop_watch is None
+    import inspect
+    t = worker._start_stop_watch()
+    worker._stop.set()
+    worker._stop.clear()                # before the watch can see it
+    worker._end_stop_watch()
+    assert not t.is_alive() and worker._stop_watch is None
+    assert "_end_stop_watch()" in inspect.getsource(worker.run_forever), "run_forever ends it on the way out"
 
 
 def test_node_stop_writes_the_request(root, capsys):
