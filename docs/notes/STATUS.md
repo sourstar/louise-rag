@@ -30,7 +30,21 @@ period crons 6/18–21 disabled (not deleted).
   stale catalog was moved aside. Discovery runs at ~9,600 docs/s (~2 h),
   parse at ~120 docs/s. The forgotten 37 GB stays on ssd4 until the 09:00
   snapshot expires.
-- **Pending:** the 12:00 boundary check.
+- **The 12:00 boundary check passed (checked 21:50).** The build is no
+  longer stopped. It paused itself at the end of its unit at 12:00 ("profile
+  quiet: paused until 13:30") and resumed at 13:30 on the next part (ja/3M:
+  part 139 before, 143 one second after). The same happened at 16:30, until
+  22:30. No exit, no part cut twice.
+- **Rerank AFTER, partial (the 2026-10-26 pass, 50030dc).** 214 of the 496
+  queries ran before the 02:33 power-off:
+  - 1 query lost its rerank (0.5 %), to a timeout, not a 500. BEFORE: 117 of
+    613 rows (19 %).
+  - No refused call in the harness log.
+  - Median 8.5 s per arm search (BEFORE 6.9 s).
+
+  A complete fresh pass runs on today's image from 22:30 to 06:00
+  (/root/campaign-after3.sh). The scenario differs from 10-24: gutenberg
+  embeds "all" at 230 W, not on demand.
 
 **2026-10-27 08:30 (München, read-only counts).** Deploy 16a4349 done:
 the node key and the admin token are read from a secrets dataset by path;
