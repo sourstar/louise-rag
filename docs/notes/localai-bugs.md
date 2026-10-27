@@ -384,6 +384,28 @@ Greek decoded as Latin-1; 352, Danish; 372, Latin), all 622 with HF's.
 **Fix: P2.** Embed the ids, with the special tokens a text gets, so that
 embedding a text's tokens is embedding the text.
 
+### B15. `v4.12.1`: backend downloads are staged at `//downloading`
+
+*Seen on the node 2026-10-27, the first hour on v4.12.1.*
+
+v4.12.1 stages every backend download in `DownloadStagingPath`
+(`core/cli/run.go` L54, default `${basepath}/downloading`). In the
+container `basepath` is `/`, and LocalAI runs as `apps`, which cannot
+write there. So every backend install and auto-upgrade failed:
+"failed to create staging directory: mkdir //downloading: permission
+denied" (`pkg/oci/image.go` L340). The node's LocalAI keeps
+`auto_upgrade_backends: true`, because the operator wants backend updates.
+
+**Set on the node:** `LOCALAI_DOWNLOAD_STAGING_PATH=/backends/.downloading`
+in the app's `additional_envs`. It sits on the backends' own filesystem,
+so the final rename stays on one disk, and LocalAI does not list a
+dot-named entry as a backend. **Caution:** `app.update` replaces the whole
+`localai` values block it is given. Sending only `additional_envs`
+silently reset `image_selector` to the CPU image for 38 s (12:42:42–43:20).
+Nothing was written meanwhile: gutenberg deferred, because its answers did
+not come from a validated run. Always send `image_selector: intel_image`
+with the envs.
+
 ---
 
 
