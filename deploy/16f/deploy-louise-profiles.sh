@@ -112,8 +112,12 @@ docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
     tests/hold/test_carry.py tests/ask/ tests/test_annotations_from_titles.py tests/test_gutenberg_broken_encoding.py tests/test_unindexable_stability.py tests/test_catalog_index.py tests/share/test_contribute.py tests/share/test_remint_end_to_end.py tests/share/test_accept.py tests/test_gutenberg_scan_signature.py tests/test_users.py tests/deposit/test_openai_stores.py tests/share/test_predecessors_lock.py tests/test_invariant_guards.py tests/test_image_constraints.py tests/test_model_pins.py tests/test_rewrite_drain.py tests/test_model_load.py tests/test_rerank_reasons.py tests/test_dispatch.py tests/test_louise_level.py tests/test_rerank_per_collection.py tests/share/test_possession_part_cache.py \
     tests/test_invariant_8_secrets.py tests/test_deploy_move_secrets.py tests/test_identity.py tests/test_node_init.py \
     tests/test_parallel.py tests/test_parallel_exit.py tests/test_issues.py tests/ask/test_figures.py \
-    tests/test_gpu_level.py tests/test_gpu_governor.py tests/hold/test_rename.py tests/test_node_start_stop.py \
+    tests/test_gpu_level.py tests/test_gpu_governor.py tests/test_node_start_stop.py tests/test_worker_hot_reload.py \
     $(cd "$ROOT/src.new" && ls tests/test_node_profile*.py tests/test_cpu_limit*.py 2>/dev/null)
+# test_rename.py in its own run: in one invocation with tests/ask/ its directory's
+# conftest `codex` fixture is not found (2026-10-27; alone and in the full suite it passes)
+docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
+  louise-rag:staged timeout -s KILL 900 python -m pytest -q -p no:cacheprovider tests/hold/test_rename.py
 docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv -v "$ROOT/config:/config:ro" \
   -e CONFIG_DIR=/config louise-rag:staged python -c "
 from app import node_profile as np
