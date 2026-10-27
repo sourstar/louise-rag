@@ -18,6 +18,17 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-27 08:30 (München, read-only counts).** Deploy 16a4349 done:
+the node key and the admin token are read from a secrets dataset by path;
+the web holds no private key. gutenberg 96.4 % embedded (2,850 waiting),
+its 762 drift ids re-indexed today; normattiva and pubmed 100 % embedded;
+wikidata in quarantine until its re-creation (no snapshot yet);
+wikipedia-v8 ~55 M of ~75 M records built (upper bound by shards), ~540
+rec/s at 8 cores. The 06:00 build stop did NOT finish in 15 minutes and was
+SIGKILLed (old tree; part 119 committed, nothing lost); the 12:00 stop is
+the first on the deployed tree with the bounded stop. A test touched the
+real `/data/state` (model-pins.json) during the node's suite: being found.
+
 **Where things stand (2026-10-25).**
 - **wikidata** is re-created on Monday 2026-10-26 on family map
   `sha256:78399d60…` (approved, 29398cf). It keeps the version-3 pack and
