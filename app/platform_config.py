@@ -270,6 +270,9 @@ class PlatformConfig:
     # and for nothing else: never the licence, never the gate, never a test
     # that FAILED. Read by app/copy_state.py:in_use_before().
     quarantine_in_use_before: tuple[str, ...] = ()
+    # [schedule] / [profiles] / [gpu.levels] — the node's quiet, day and night
+    # profiles (app/node_profile.py); None when the file declares no schedule
+    profiles: Any = None
     source_path: Path | None = None          # None = defaults (no file on disk)
 
 
@@ -563,7 +566,15 @@ def _load_one(path: Path) -> PlatformConfig:
                           codex_only=codex_only_raw,
                           quarantine=quarantine_raw,
                           quarantine_in_use_before=tuple(before_raw),
+                          profiles=_profiles(raw),
                           source_path=path)
+
+
+def _profiles(raw: dict[str, Any]):
+    """[schedule] / [profiles] / [gpu.levels], parsed and checked at load so a
+    typo is refused at boot, not at the next quiet period."""
+    from . import node_profile
+    return node_profile.parse(raw)
 
 
 def _deposit(raw: Any, path: Path) -> DepositConfig:

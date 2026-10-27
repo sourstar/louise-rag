@@ -145,7 +145,16 @@ def show() -> dict[str, Any]:
         rows.append({"name": name, "collection_id": None, "state": "refused", "reasons": [str(why)],
                      "paused": False, "embed": None, "integrity_violated": [], "doing": None, "stages": []})
     from app import disk_guard
+    from app import node_profile
+    try:
+        prof = node_profile.active()
+        profile = prof.to_dict() if prof is not None else None
+    except node_profile.ProfileError as e:
+        profile = {"error": str(e)}
     return {"mode": ov["mode"], "overrides": ov,
+            # the quiet / day / night profile in force (platform.toml [schedule]):
+            # what background CPU work and the card may use now, and until when
+            "profile": profile,
             # every filesystem under a collection's vectors: below its floor,
             # nothing writes vectors there (app/disk_guard.py)
             "disk": disk_guard.status(loaded),

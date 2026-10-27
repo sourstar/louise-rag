@@ -1,7 +1,9 @@
 # Node profiles: quiet, day and night, from one file
 
-*Proposal, 2026-10-26, for the operator's review. Nothing is built. The
-operator, the same day: "Design a configuration for the quiet/performance
+*Decided 2026-10-27 (operator: "1 and 2 your recommendations, 3 full
+local/p2p, the whole point of quiet gpu is to use it"); being built. The
+resolver is `app/node_profile.py`, `node show` gives the profile in force.
+The operator, 2026-10-26: "Design a configuration for the quiet/performance
 cpu/gpu processing and also to switch collections to full embedding. We can
 start with a configuration file." Example file:
 [node-profiles.example.toml](node-profiles.example.toml).*
@@ -21,51 +23,38 @@ editing several crons and scripts that must agree.
 ## The proposal
 
 **One declaration.** A `[schedule]` and `[profiles]` section in
-`platform.toml`, as in the example file. Each profile says three things:
-- `cpu_cores`: how many cores background CPU work may use;
-- `gpu`: a GPU level (`full`, `quiet`);
-- `sustained_embedding`: whether collections set to embed everything may do so now.
+`platform.toml`, as in the example file. Each profile says two things:
+`cpu_cores`, how many cores background CPU work may use (0 = paused at the
+end of its unit), and `gpu`, a level (`full`, `quiet`). The schedule picks
+the active profile by local time, in the grammar `[bandwidth] schedule`
+already uses (the same parser, `parse_named`).
 
-The schedule picks the active profile by local time, in the grammar
-`[bandwidth] schedule` already uses, with the same parser.
+**Collections say WHAT, in every profile.** A collection's file says
+`embed = "all"` (or `p2p`, `on-demand`, `off`), set with `louise hold
+config apply <c> --set embed=all`. That is the one way to switch a
+collection to full embedding, and it holds in every profile: a quiet GPU is
+a power-limited one, still used (decision 3). No file is rewritten on a
+timer; `set-embed.sh` retires.
 
-**Collections keep saying WHAT.** A collection's file says `embed = "all"`
-(or `on-demand`, `off`, `p2p`), set with `louise hold config apply <c> --set
-embed=all`. That command is built and is the one way to switch a collection
-to full embedding. The profile says WHEN: while `sustained_embedding` is
-false, an `all` collection behaves as `on-demand`, embedding only what
-queries touch. An optional `embed_profiles = ["night"]` in a collection's
-file narrows it further. No file is rewritten on a timer, and nothing is
-written into the state database (invariant 10). The effective mode is
-computed by the same function the worker uses, and `hold config show` gives
-it with its reason ("on-demand: quiet until 08:00").
-
-**Precedence.** In order, each wins over the next:
-1. the node's mode (`node pause`, acquire-only, seed-only), the manual override that survives a restart;
-2. the active profile;
-3. the collection's own `embed`.
-
-Queries are never limited by a profile.
+**Precedence.** The node's mode (`node pause`, acquire-only, seed-only),
+the manual override that survives a restart, wins over the profile. Queries
+are never limited by a profile.
 
 ## Who applies what
 
 | setting | applied by | how |
 |---|---|---|
-| sustained embedding | the worker | reads the active profile each round; a change takes effect at the next round |
 | `cpu_cores` | the records build and the worker's parse pool | the pool's size is `min(cpu_cores, the cgroup quota)` (`config.available_cpus`); a change resizes it at the next page; `0` finishes the current part, commits and waits, then resumes when a profile allows. No container is stopped or started |
 | `gpu` level | the GPU governor app (already writes the card's `min_freq`) | writes hwmon `power1_max` (the standard Linux power limit) where writable, else `max_freq`; restores on leaving the level; keeps its query hold at or below the cap |
-| fans | the operator's `fancontrol.py`, optionally | reads `louise node profile show --json` to cap case fans in `quiet` |
+| fans | the operator's `fancontrol.py`, optionally | reads `louise node show` to cap case fans in `quiet` |
 
 The container's `cpu.max` stays as a fixed hard ceiling (the night's 12
 cores): the kernel's limit, while the app limits itself below it.
 
 ## What the operator sees
 
-- `louise node profile show`: the active profile, until when, the next one,
-  and what each applier did (pool size, GPU limit, which collections are
-  waiting for their profile).
-- The Library's card says it in plain words: "embedding resumes at 08:00 (quiet hours)".
-- `node show` gains one line: the active profile.
+- `louise node show` (and `GET /api/node/show`): the profile in force, its
+  cores and GPU level, until when, and the next one.
 
 ## Standards, and why not them
 
@@ -90,28 +79,9 @@ cores): the kernel's limit, while the app limits itself below it.
   is intended.
 - The six crons are retired only after a week where both agree.
 
-## Decisions for the operator
+## Decisions (operator, 2026-10-27)
 
-**1. Where the schedule lives.**
-
-| option | pros | cons |
-|---|---|---|
-| a section of `platform.toml` (recommended) | one node-level file with `[bandwidth]`'s schedule beside it | `platform.toml` grows |
-| a separate `profiles.toml` | can be edited on its own | a second node-level file to keep in step |
-
-**2. How CPU is limited.**
-
-| option | pros | cons |
-|---|---|---|
-| the app sizes its pools, `cpu.max` as a fixed ceiling (recommended) | no container restarts; a change applies at the next page | relies on the app honouring it, with the kernel's ceiling as the backstop |
-| the host resets `cpu.max` per period (today) | the kernel enforces each period | stops and starts containers; schedule copies in crons |
-
-**3. Embedding during quiet periods.**
-
-| option | pros | cons |
-|---|---|---|
-| on-demand: only what queries touch (recommended) | search works fully at any hour | a query can briefly load the GPU in a quiet period |
-| off | silence guaranteed | a new query's documents wait until the next day period |
-
-If the operator says nothing, the recommended options are built after the
-review.
+1. The schedule lives in `platform.toml`.
+2. The app sizes its own pools; the container's `cpu.max` stays a fixed ceiling.
+3. Embedding runs in every profile, local or p2p as each collection says; the
+   quiet GPU is power-limited, not idle.
