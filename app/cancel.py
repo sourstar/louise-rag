@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import threading
+import time
 from typing import Any, Callable
 
 #: how often an endpoint asks whether its caller is still there: a quarter
@@ -143,6 +144,7 @@ async def while_connected(request, fn: Callable[..., Any], *args: Any, **kwargs:
     Cancelled it raises is never reported as an unretrieved exception."""
     from starlette.concurrency import run_in_threadpool
     token = Token()
+    t0 = time.monotonic()
     work = asyncio.ensure_future(run_in_threadpool(run, token, fn, *args, **kwargs))
     while True:
         done, _ = await asyncio.wait({work}, timeout=POLL_S)
@@ -151,6 +153,13 @@ async def while_connected(request, fn: Callable[..., Any], *args: Any, **kwargs:
         if await request.is_disconnected():
             token.cancel()
             work.add_done_callback(_consume)
+            # SAID, because nothing else is: uvicorn logs no line for a caller
+            # who left, so a question that got no answer left no trace at all
+            # (2026-10-27: 65 s of cold model loads, the browser gone, nothing
+            # in any log — München)
+            path = getattr(getattr(request, "url", None), "path", "?")
+            print(f"{time.strftime('%H:%M:%S')} [web info:ask] {path}: the caller left after "
+                  f"{time.monotonic() - t0:.1f} s; the search is cancelled", flush=True)
             raise Cancelled()
 
 
