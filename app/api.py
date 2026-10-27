@@ -55,6 +55,10 @@ async def lifespan(app: FastAPI):
         # chunking config — node-wide, no per-collection answer exists
         print(f"BOOT VALIDATION FAILED: {e}", file=sys.stderr)
         sys.exit(1)
+    # the question path's models, loaded in the background (app/warmup.py;
+    # operator, 2026-10-27): the first question after a restart waited ~65 s
+    from . import warmup
+    warmup.start()
     yield
 
 app = FastAPI(title="louise-rag", lifespan=lifespan)
