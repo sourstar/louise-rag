@@ -33,7 +33,7 @@
   <div class="note">{{ mode_says.get(worker_state, '') }}</div>
 </div>
 
-  <div class="note">counts: {% if counts_age < 5 %}fresh{% else %}up to {{ (counts_age // 60)|int }} min {{ (counts_age % 60)|int }} s old{% endif %} — each collection is recounted every 2 min, a large one less often (its card says when)</div>
+  <div class="note">counts: {% if counts_age < 5 %}fresh{% else %}up to {{ (counts_age // 60)|int }} min {{ (counts_age % 60)|int }} s old{% endif %} — while this page is open each collection is recounted every 2 min, a large one less often (its card says when); after a time nobody looked, the first view shows the last count with its age</div>
 <div class="grid">
 {% for c in shelves %}
 <div class="panel" data-collection="{{ c.name }}">
@@ -124,7 +124,7 @@
   {% elif c.embed_mode == 'off' %}{% set dense_color = 'var(--muted)' %}
   {% elif c.embed_mode == 'lazy' %}{% set dense_color = 'var(--amber)' %}
   {% else %}{% set dense_color = 'var(--brass)' if worker_state == 'running' else 'var(--muted)' %}{% endif %}
-  <div class="stage"><div class="lbl"><span title="{{ stage_title }}" style="color:{{ dense_color }}">{{ dense_label }}</span><span>{{ c.embed_done|num }} / {{ indexable|num }}{% if c.counts_age is defined and c.counts_age > 120 %} <span class="muted" title="the figures are a count of the manifest, recounted every {{ ((c.counts_every or 120) / 60)|round|int }} min: the work moves between counts">(counted {{ (c.counts_age / 60)|round|int }} min ago, every {{ ((c.counts_every or 120) / 60)|round|int }} min)</span>{% endif %}{% if c.stage_etas.embed %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.embed }}">({{ c.stage_etas.embed }})</span>{% endif %}</span></div>
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}" style="color:{{ dense_color }}">{{ dense_label }}</span><span>{{ c.embed_done|num }} / {{ indexable|num }}{% if c.counts_age is defined and c.counts_age > 120 %} <span class="muted" title="the figures are a count of the manifest, recounted every {{ ((c.counts_every or 120) / 60)|round|int }} min while the page is viewed: the work moves between counts">(counted {{ (c.counts_age / 60)|round|int }} min ago, every {{ ((c.counts_every or 120) / 60)|round|int }} min)</span>{% endif %}{% if c.stage_etas.embed %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.embed }}">({{ c.stage_etas.embed }})</span>{% endif %}</span></div>
     <div class="spine"><span style="width:{{ (100*c.embed_done/indexable)|round(1) if indexable else 0 }}%;background:var(--lapis)"></span></div></div>
   <div class="note">
     delta freshness: {{ c.last_discover_text }} ·
