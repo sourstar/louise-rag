@@ -146,7 +146,7 @@ byte-identical (`tools/measure/records_ab.py`).
 |---|---|---|---|
 | 22:30–06:00 night | 12 cores | power limit 230 W (the card's own) | `all` |
 | 08:00–12:00, 13:30–16:30 day | 8 cores | 230 W | `all` |
-| 06:00–08:00, 12:00–13:30, 16:30–22:30 QUIET | stopped (SIGTERM, resumes at its next part) | power limit 100 W | `on-demand` |
+| 06:00–08:00, 12:00–13:30, 16:30–22:30 QUIET | stopped (SIGTERM, resumes at its next part) | power limit 110 W | `on-demand` |
 
   - The quiet limit is the B70's `power1_cap` (xe hwmon, PL1), the only lever on its
     noise: its blower has no pwm (firmware-controlled), and `fancontrol.py` reads its
@@ -168,8 +168,8 @@ byte-identical (`tools/measure/records_ab.py`).
 | 90 W | 90.0 W | 1050 / 1105 | 62.1 | 641 | 1.7 |
 | 75 W | 78.3 W | 880 / 1154 | 60.2 | 400 | 1.5 |
 
-    The target was blower ≤ ~1,200 rpm: 110 W sits on it, so 100 W leaves margin for
-    a warmer room. texts/s is noisy (gutenberg embedded beside the load). At idle the
+    The target was blower ≤ ~1,200 rpm: 110 W sits on it; the operator chose 110 W (2026-10-26).
+    texts/s is noisy (gutenberg embedded beside the load). At idle the
     blower reads 0–48 rpm (the card stops it).
   - `fancontrol.py` uses the blower's rpm as an input only: the top intakes rise above
     1,600 rpm (a starved blower), the airflow balance counts it as 12 CFM at 2,000 rpm,

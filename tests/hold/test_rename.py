@@ -99,6 +99,29 @@ def test_an_interrupted_rename_is_finished_by_running_it_again(node, monkeypatch
     assert con.execute("SELECT path FROM documents WHERE uid='a:1'").fetchone()[0].startswith(f"{root}/new/")
 
 
+def test_a_cache_keyed_on_a_moved_folder_follows_it(node, monkeypatch):
+    """2026-10-27: a cache is keyed on its origin's resolved path, so the
+    origin's move orphaned wikidata's pack (~60 GB, hours from the bz2). Every
+    cache keyed on a folder under what moves goes to the new path's key."""
+    from app import config, derived
+    tmp, root, cfg, codex = node
+    monkeypatch.setattr(config, "CACHE_DIR", tmp / "cache")
+    dump = tmp / "corpora" / "old" / "akn"
+    pack = tmp / "cache" / "wikidata-pack" / derived.tag(dump)
+    pack.mkdir(parents=True)
+    (pack / "meta.json").write_text("{}", encoding="utf-8")
+    other = tmp / "cache" / "wikidata-pack" / derived.tag(tmp / "corpora" / "elsewhere")
+    other.mkdir()
+    planned = rn.rename(root, "old", "new", dry_run=True)
+    moved_to = tmp / "cache" / "wikidata-pack" / derived.tag(tmp / "corpora" / "new" / "akn")
+    assert planned["caches"] == [[str(pack), str(moved_to)]] and pack.is_dir()
+    out = rn.rename(root, "old", "new")
+    assert (moved_to / "meta.json").is_file() and not pack.exists()
+    assert other.is_dir(), "a cache of another origin stays"
+    assert out["done"]["caches"] == {str(moved_to): "moved"}
+    assert derived.place("wikidata-pack", tmp / "corpora" / "new" / "akn") == moved_to
+
+
 def test_forget_takes_its_shard_folder_and_leaves_a_shared_origin(node):
     """With the shared roots, `forget` removed the directory and its links but
     left `<SHARDS_ROOT>/<name>` behind under the name; a collection renamed to

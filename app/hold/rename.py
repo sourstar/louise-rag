@@ -19,7 +19,13 @@ holds it, so a rename recomputes nothing. What carries it, and moves:
 5. the held file `collections/<old>.toml` → `<new>.toml`, LAST: until then
    the node holds the collection under its old name;
 6. a per-collection pause (`node pause <old>`) moves with it, so a paused
-   collection stays paused under its new name.
+   collection stays paused under its new name;
+7. the fast drive's derived caches (app/derived.py) keyed on a folder under
+   anything that moved — wikidata's pack under its dump, pubmed's under its
+   containers, a part cache under the SHARD tree — renamed to the new
+   path's key. A cache is keyed on its origin's resolved path, so a moved
+   origin would otherwise orphan it: wikidata's ~60 GB pack, hours from the
+   bz2 (found 2026-10-27, before the re-creation's rename ran).
 
 The caller holds the collection's write lock: a running node holds it, and
 `node pause <old>` releases it (07 §7.7). Every step is idempotent and the
@@ -159,13 +165,40 @@ def _relink(link: Path, target: Path) -> None:
     os.replace(tmp, link)                    # the link swapped whole, never absent
 
 
+def _cache_moves(moves: dict[str, Any]) -> list[tuple[Path, Path]]:
+    """[(cache dir, its new place)] for every derived cache keyed on a folder
+    under what the rename moves. Every key `derived.place` is given is a
+    folder, so the walk lists folders only, of whichever side exists (before
+    or after the move: a rerun finds the same pairs), never into a link."""
+    from app import config, derived
+    if config.CACHE_DIR is None or not Path(config.CACHE_DIR).is_dir():
+        return []
+    pairs: dict[str, str] = {}
+    for kind in ("directory", "shard", "origin", "bundles"):
+        if kind not in moves:
+            continue
+        a, b = Path(moves[kind][0]), Path(moves[kind][1])
+        walked = b if b.is_dir() else a
+        for here, dirs, _files in os.walk(walked):
+            dirs[:] = [d for d in dirs if not (Path(here) / d).is_symlink()]
+            rel = Path(here).relative_to(walked)
+            pairs[derived.tag(a / rel)] = derived.tag(b / rel)
+    out = []
+    for kind_dir in sorted(p for p in Path(config.CACHE_DIR).iterdir() if p.is_dir()):
+        for old_tag, new_tag in pairs.items():
+            src, dst = kind_dir / old_tag, kind_dir / new_tag
+            if old_tag != new_tag and (src.exists() or dst.exists()):
+                out.append((src, dst))
+    return out
+
+
 def rename(root: Path, old: str, new: str, *, dry_run: bool = False) -> dict[str, Any]:
     from . import collection as col
     from app import node_state
     root = Path(root)
     moves = plan(root, old, new)
     if dry_run:
-        return {**moves, "dry_run": True}
+        return {**moves, "caches": [[str(a), str(b)] for a, b in _cache_moves(moves)], "dry_run": True}
     base, dest = Path(moves["directory"][0]), Path(moves["directory"][1])
     # 0. the plan, where it survives the directory's own rename
     state = (dest if dest.exists() else base) / "state"
@@ -196,6 +229,11 @@ def rename(root: Path, old: str, new: str, *, dry_run: bool = False) -> dict[str
         node_state.set_paused(new, True)
         node_state.set_paused(old, False)
     done["paused"] = paused
+    # 4b. the derived caches keyed on what moved
+    # (a cache already at both keys is left: nothing moved over another, and
+    # a cache is re-creatable, so it never stops the rename half-way)
+    done["caches"] = {str(b): "both kept" if a.exists() and b.exists() else _move(a, b)
+                      for a, b in _cache_moves(moves)}
     # 5. the held file, last: until here the node held it under its old name
     held_old, held_new = Path(moves["held_file"][0]), Path(moves["held_file"][1])
     done["held_file"] = _move(held_old, held_new) if (held_old.exists() or held_new.exists()) else "none"
