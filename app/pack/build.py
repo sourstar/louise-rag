@@ -27,7 +27,7 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
-from .. import config, db, layers as layers_mod, parallel, plugin_io
+from .. import config, cpu_limit, db, layers as layers_mod, parallel, plugin_io
 from ..hold import shard as shard_mod, records as hold_records
 from ..plugins.base import UnindexableDocument
 from . import cutoff as cutoff_mod, manifest as manifest_mod, records, slicing
@@ -596,8 +596,29 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                     srcs.append(dict(src) if src is not None else None)
                 pending.append((page, srcs))
                 yield [s for s in srcs if s is not None]
-        stream = ((_held_values(collection, con_build, held, wanted) for wanted in pages_of())
-                  if held is not None else parallel.compute_pages("record", collection, pages_of()))
+        # THE NODE PROFILE'S CORES (app/cpu_limit.py, operator 2026-10-27):
+        # the pool keeps at most that many parts in flight, re-read at each
+        # page; 0 pauses at a page boundary — the pages in flight are taken
+        # and the parts they complete committed, the open part's records stay
+        # buffered — until a profile allows cores again. A stop meanwhile is
+        # this loop's stop at a page boundary. Bytes never depend on it.
+        say = lambda m: log(f"[pack build] {collection.name}: {m}")   # noqa: E731
+        halted: list[bool] = []
+
+        def held_pages():
+            watch = cpu_limit.Watch(say)
+            for wanted in pages_of():
+                if watch.limit().cores == 0 and not cpu_limit.wait_while_paused(stop, watch):
+                    raise parallel.Interrupted("stopped while the node profile paused the build")
+                yield _held_values(collection, con_build, held, wanted)
+
+        def guarded(raw):
+            try:
+                yield from raw
+            except parallel.Interrupted:
+                halted.append(True)
+        stream = guarded(held_pages() if held is not None else
+                         parallel.compute_pages("record", collection, pages_of(), stop=stop, say=say))
         for results in stream:
             page, srcs = pending.popleft()
             if stop is not None and stop.is_set():
@@ -710,6 +731,11 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                         log(f"[pack build] stop requested — {slice_name}: resumes at shard {next_n}")
                         return written, n_records, n_chunks, n_skipped, True
             flush_issues()
+        if halted:
+            say_issues()
+            log(f"[pack build] stop requested while the node profile paused the build — "
+                f"{slice_name}: {len(buf)} buffered records discarded, resumes at shard {next_n}")
+            return written, n_records, n_chunks, n_skipped, True
         close_shard(last_row)
         log(f"[pack build] {slice_name}: {next_n - 1} shard(s)")   # next_n is the NEXT index: one past the last written
     say_issues()

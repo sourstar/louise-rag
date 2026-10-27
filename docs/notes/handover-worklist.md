@@ -29,6 +29,7 @@ through with the commit that closes them.
 
 | item | where | decision |
 |---|---|---|
+| The Library's document counts read every row (pubmed 40M, wikipedia-v8 75M: a core or two per refresh, capped at 10 % of the time; measured on the node 2026-10-25) | app/web.py `_document_counts` | build running counts kept by the stages (no operator answer; the default) |
 | ~~`louise node start` / `node stop`~~ | 07 §7.3, CLAUDE.md invariant 2 | built 2026-10-25 (stop through state/node.sqlite, exit 0) |
 | ~~One route per command, `/api/<surface>/<noun>/<verb>`~~ | 07 §7.4 | built 2026-10-25 (app/api_commands.py; operator: A) |
 | ~~The `centres`, `labels`, `model-agreement` and `evaluation` checks~~ | 03 §3.2 | marked "not built" in 03; `model-agreement` INCONCLUSIVE with its reason, no longer refused (2026-10-25) |
@@ -71,6 +72,8 @@ through with the commit that closes them.
 | 12 fresh loads | needs a GPU: stays with the measurement harness |
 
 ## 6. Decisions for the operator
+
+- Node profiles (quiet / day / night) from one file, and collections switched to full embedding by their own `embed` — proposal [node-profiles-design.md](node-profiles-design.md), for review 2026-10-27.
 
 - Repository renamed to `project-louise` (operator, 2026-10-25; done by the operator on GitHub). Then: the 9 `github.com/sourstar/louise-rag` references updated (User-Agents, LocalAI gallery, one test); the image, app and data-path names `louise-rag` stay.
 

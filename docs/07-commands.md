@@ -355,7 +355,11 @@ reader needs at the command line:
   folders under the shared roots (an origin folder another held
   collection also links stays where it is), the absolute paths the
   manifest stores, a per-collection pause and the held file move, the
-  held file last; the new name must be free. It takes the collection's
+  held file last; the new name must be free. The fast drive's caches
+  keyed on a folder or file under what moves (wikidata's pack is keyed on
+  the dump file) are carried to their new key (*amended 2026-10-27*: they are keyed on
+  the origin's resolved path, app/derived.py, and a moved origin rebuilt
+  wikidata's pack from the dump); `--dry-run` lists them. It takes the collection's
   lock, so a running node pauses the collection first (§7.7); an
   interrupted rename is finished by running it again.
 - **`forget`.** Removes the copy, or with `--kinds` only those members,
@@ -1281,6 +1285,13 @@ signal does not shorten that. The unit per stage:
 A re-run after 130 continues from the last committed unit and writes the
 same bytes it would have written uninterrupted. The node stops every
 collection at its unit and exits 130 on a signal, 0 on `node stop`.
+
+*Amended 2026-10-27 (node profiles, docs/notes/node-profiles-design.md).* A
+profile's `cpu_cores` is not an interruption: `records build` and the
+node's parse stages keep at most that many parse-pool parts in flight,
+re-read at each page or batch, and `0` holds them at the same unit — the
+work in flight finished and committed — until a profile allows cores again,
+with no exit. A signal during that hold is the ordinary one: 130.
 
 ## 7.8 Configuration and the state directory
 

@@ -941,6 +941,44 @@ Neither of these touches the GPU feed: the embed thread does not use the
 pool, and children sit at the worker's nice + 10, so feeding the encoder
 outranks parsing by construction (§12).
 
+**The node profile's cores (2026-10-27, `app/cpu_limit.py`).** Admission
+has a second ceiling: the profile's `cpu_cores`
+(node-profiles-design.md). The pool keeps its children; what is capped is
+the parts in flight, `min(window, cores)`, and the page stream now submits
+part by part instead of a whole page at once, so the cap holds exactly.
+The limit is read once per page or batch, from a cache trusted 30 s or until
+the profile's own end. `0` is a pause at that boundary. In the worker it is
+`_cpu_paused`, which stands rdf, fts and the archive pass down; embedding,
+bundles and scans go on. A prefetch is not counted in any window, so it is
+not sent while a limit binds. Wikidata's pack pass (its entity slices and its
+passes over the chunk files, two pools of its own) follows the same limit and
+pause, and gets the scan's stop through `DiscoverState.stop`.
+
+Measured on a 4-core VM shared with other jobs (7 alternating runs, median;
+before = the code without the applier):
+
+| | before | no profile | profile 12 (not binding) | profile 2 |
+|---|---|---|---|---|
+| records build, 6,000 gutenberg books, 3 children | 3.85 s | 3.98 s | 3.74 s | 4.75 s |
+| wikidata pack pass, 30,000 entities, 3 workers | 4.92 s | 4.76 s | 4.95 s | 5.16 s |
+
+The check is within the ±4 % noise. A cached read costs 10.6 µs and a
+re-read 0.32 ms. The first records figures (4.18/4.06/4.20/5.01 s, 5 runs)
+came from a harness that set things up at import time, which spawned
+children re-ran. They were taken again with the setup inside `main()`.
+
+**Not reached by the profile, and why:**
+- `lbzip2 -n <workers>` under the wikidata pass: its thread count is fixed
+  at start. Its pipe is read only as fast as the limited pool takes slices,
+  so it decompresses ahead by a pipe buffer at most, and it sits blocked
+  during a pause.
+- tantivy's writer threads (fts) and the Lance runtime (the index
+  maintainer): native threads, not a pool Python sizes. fts stands down at
+  0; the maintainer is not limited.
+- `tools/wikidata_coverage.py`: a hand-run tool, not the node's work.
+- The `ThreadPoolExecutor`s in app/ wait on HTTP (embedding, transfers,
+  retrieval), and embedding runs in every profile (decision 3).
+
 **And the reason it survived six reworks: nothing measured occupancy.** A
 starved pool and a slow pool look identical from outside — both show long
 batches. The batch log has duration and size, `docker stats` has the

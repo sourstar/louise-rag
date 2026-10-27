@@ -163,8 +163,8 @@ def _key(server: str, model: str) -> str:
 
 
 @contextmanager
-def _state() -> Iterator[dict]:
-    p = _path()
+def _state(path: Path | None = None) -> Iterator[dict]:
+    p = path if path is not None else _path()
     p.parent.mkdir(parents=True, exist_ok=True)
     with open(p.with_name(".model-pins.lock"), "a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -319,14 +319,18 @@ def _drop(st: dict, gone: Callable[[str, float], bool], now: float) -> list[tupl
     return dropped
 
 
-def release(holder: str) -> None:
+def release(holder: str, path: Path | None = None) -> None:
     """`holder` is done with every model it held; a model whose last holder
-    this was gets its prior state back."""
+    this was gets its prior state back. `path`: the record the hold was
+    written to — given by the exit hook, which runs after the environment
+    that chose the record may have changed (CLAUDE.md: bookkeeping keys on
+    physical identity)."""
+    target = path if path is not None else _path()
     try:
-        with _state() as st:
+        with _state(target) as st:
             _drop(st, lambda h, t: h == holder, time.time())
     except OSError as e:
-        _say("error", f"model pin: the record {_path()} could not be written ({e}); "
+        _say("error", f"model pin: the record {target} could not be written ({e}); "
                       f"{holder}'s pins are restored when it goes stale")
 
 
@@ -438,7 +442,9 @@ def hold_for_process(url: str | None, model: str | None, kind: str, *,
     holder = process_holder(kind)
     if holder not in _process_holders:
         _process_holders.add(holder)
-        atexit.register(release, holder)
+        # the record this hold is written to, not the one the environment
+        # names at exit (a test's root is gone by then, a node's /data is not)
+        atexit.register(release, holder, _path())
     return hold(url, model, holder, collection=collection)
 
 

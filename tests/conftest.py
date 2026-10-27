@@ -7,6 +7,8 @@ deployment.
 import shutil
 from pathlib import Path
 
+import os
+
 import pytest
 
 FIXTURE_CORPUS = Path(__file__).parent / "fixtures" / "gutenberg-mini" / "corpus"
@@ -17,7 +19,7 @@ def fresh_worker_state():
     """Module-level cursors and memos are per PROCESS, so one test's
     completed walk must not decide the next test's selection (that leak
     is exactly the bug the re-index cursor's key had in production)."""
-    from app import (dispatch, encoder_timeouts, language_plan, parallel, sched, sizing,
+    from app import (cpu_limit, dispatch, encoder_timeouts, language_plan, parallel, sched, sizing,
                      translate, worker)
     from app.bundles import genesis
     dispatch.reset()
@@ -35,6 +37,9 @@ def fresh_worker_state():
     parallel.forget_prefetched()
     parallel.forget_users()
     parallel.reset_failures()
+    # the node profile's cached limit and each collection's watch of it
+    cpu_limit.reset()
+    worker._cpu_watches.clear()
     # the beat reaches `_log_shares` now; its 600 s throttle must not carry
     # one test's log into the next
     worker._last_shares_log = 0.0
@@ -112,6 +117,12 @@ def no_checkout_config(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path_factory.mktemp("no-config")))
 
 
+#: The real data directory and node root, read ONCE at import, before any
+#: fixture repoints the environment — what the guard below must watch.
+_REAL_DATA = Path(os.getenv("DATA_DIR", "/data"))
+_REAL_ROOT = Path(os.getenv("LOUISE_ROOT") or _REAL_DATA)
+
+
 @pytest.fixture(autouse=True)
 def no_real_data_dir(tmp_path_factory, monkeypatch):
     """No test resolves the real data directory: `config.DATA_DIR` is an
@@ -120,7 +131,15 @@ def no_real_data_dir(tmp_path_factory, monkeypatch):
     whose reference store sits beside DATA_DIR, and created the real
     /data/refs.db (2026-10-08)."""
     from app import config
-    monkeypatch.setattr(config, "DATA_DIR", tmp_path_factory.mktemp("no-data"))
+    empty = tmp_path_factory.mktemp("no-data")
+    monkeypatch.setattr(config, "DATA_DIR", empty)
+    # AND the environment, which `config.louise_root()` reads at call time: a
+    # node's container sets LOUISE_ROOT to the real /data, so every test
+    # without `isolated_config` resolved the node's own state — the suite
+    # run on the node wrote /data/state/.model-pins.lock (2026-10-27), and
+    # with LOUISE_ROOT pointed at a stand-in, node.sqlite and trust.json too
+    monkeypatch.setenv("LOUISE_ROOT", str(empty))
+    monkeypatch.setenv("DATA_DIR", str(empty))
 
 
 @pytest.fixture(autouse=True)
@@ -136,14 +155,14 @@ def the_real_node_store_is_never_touched():
     before, it must be absent after; present (a node's volume mounted), its
     top level and the entries in it must be unchanged — one listing and a
     stat per entry, never a walk of a node's tree."""
-    import os
-    data = Path(os.getenv("DATA_DIR", "/data"))
-    real = Path(os.getenv("LOUISE_ROOT") or data) / "state" / "node.sqlite"
+    data = _REAL_DATA
+    real = _REAL_ROOT / "state" / "node.sqlite"
 
     def _stamp():
         out = []
         for p in (real, real.with_name(real.name + "-wal"),
-                  real.with_name("rechecked.json"), real.with_name("trust.json")):
+                  real.with_name("rechecked.json"), real.with_name("trust.json"),
+                  real.with_name("model-pins.json"), real.with_name(".model-pins.lock")):
             try:
                 st = p.stat()
                 out.append((st.st_size, st.st_mtime_ns))
@@ -189,6 +208,21 @@ def serial_parse_pool(monkeypatch):
 def corpus_dir(tmp_path) -> Path:
     dest = tmp_path / "corpus"
     shutil.copytree(FIXTURE_CORPUS, dest)
+    return dest
+
+
+def gutenberg_books(dest: Path, n: int, first: int = 20000) -> Path:
+    """A gutenberg corpus of `n` books at `dest`, cycled from the mini
+    fixture's three under new ids (~2.5 KB each): enough rows for a build of
+    several pages (a page is at least 50 records, app/pack/build.py)."""
+    templates = sorted(p for p in FIXTURE_CORPUS.iterdir() if p.is_dir())
+    for k in range(n):
+        src = templates[k % len(templates)]
+        old, new = src.name, str(first + k)
+        (dest / new).mkdir(parents=True)
+        for f in src.iterdir():
+            (dest / new / f.name.replace(old, new)).write_bytes(
+                f.read_bytes().replace(old.encode(), new.encode()))
     return dest
 
 

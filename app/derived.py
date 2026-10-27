@@ -26,7 +26,19 @@ from app import config
 def tag(origin: Path) -> str:
     """16 hex of the origin's resolved path — the key page_props has used
     for its temporary pack since 2026-09."""
-    return hashlib.blake2b(str(Path(origin).resolve()).encode("utf-8"), digest_size=8).hexdigest()
+    return key(Path(origin).resolve())
+
+
+def resolved(path: Path) -> Path:
+    """`path` resolved, or — gone — its parent resolved and its name kept."""
+    path = Path(path)
+    return path.resolve() if path.exists() else path.parent.resolve() / path.name
+
+
+def key(resolved_path: Path) -> str:
+    """`tag` of a path already resolved: a rename keys a whole walked tree
+    from one resolve of its root (app/hold/rename.py)."""
+    return hashlib.blake2b(str(resolved_path).encode("utf-8"), digest_size=8).hexdigest()
 
 
 def place(kind: str, origin: Path) -> Path | None:
@@ -64,3 +76,13 @@ def adopt(src: Path, dst: Path) -> bool:
         shutil.copy2(src, tmp)
     os.replace(tmp, dst)
     return True
+
+
+def held() -> list[Path]:
+    """Every cache the fast drive holds, `<CACHE_DIR>/<kind>/<tag>`, sorted;
+    none when no fast drive is named (a rename carries them,
+    app/hold/rename.py). A dot-name is a copy in progress (`adopt`)."""
+    if config.CACHE_DIR is None or not Path(config.CACHE_DIR).is_dir():
+        return []
+    return sorted(t for k in Path(config.CACHE_DIR).iterdir() if k.is_dir()
+                  for t in k.iterdir() if not t.name.startswith("."))

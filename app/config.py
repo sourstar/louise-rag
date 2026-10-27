@@ -302,6 +302,11 @@ GOVERNOR_FREQ_DIR = os.getenv("GOVERNOR_FREQ_DIR", "/gpufreq")
 GOVERNOR_POLL_S = float(os.getenv("GOVERNOR_POLL_S", "0.25"))
 GOVERNOR_HEARTBEAT_S = float(os.getenv("GOVERNOR_HEARTBEAT_S", "5"))
 GOVERNOR_STALE_S = float(os.getenv("GOVERNOR_STALE_S", "30"))
+# ...and the card's hwmon, bound writable for the profile's power limit
+# (app/gpu_level.py): the card's `device/hwmon/` (hwmonN inside, N changing
+# across boots) or a hwmonN itself. Absent, the read-only one under
+# GOVERNOR_DRM_DIR is used and the level falls back to `max_freq`.
+GOVERNOR_HWMON_DIR = os.getenv("GOVERNOR_HWMON_DIR", "/gpuhwmon")
 # ...and the card's history it keeps (fan, temperatures, power, clock): one
 # sample every 10 s, a week of them (3.6 MB, flat once pruning starts;
 # measured 2026-09-19), found under this /sys/class/drm.

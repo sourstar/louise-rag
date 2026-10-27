@@ -157,3 +157,52 @@ def parse_schedule(value: str | None) -> Schedule:
                 f"whole day should be written as 'else <factor>'")
         windows.append((start, end, _parse_factor(m_win.group(5))))
     return Schedule(windows=tuple(windows), default_factor=default_factor)
+
+
+@dataclass(frozen=True)
+class NamedSchedule:
+    """The window grammar above with NAMES in place of factors — the node's
+    profiles (platform.toml `[schedule] profile`, docs/notes/node-profiles-design.md):
+    "06:00-08:00 quiet; 08:00-12:00 day; else night"."""
+    windows: tuple[tuple[int, int, str], ...] = ()
+    default: str | None = None
+
+    def value_at(self, wall_minutes: int) -> str | None:
+        minute = wall_minutes % _MINUTES_PER_DAY
+        for start, end, name in self.windows:
+            if (start <= minute < end) if start <= end else (minute >= start or minute < end):
+                return name
+        return self.default
+
+
+def parse_named(value: str, names: frozenset[str] | set[str]) -> NamedSchedule:
+    """'06:00-08:00 quiet; else night' -> NamedSchedule; every name must be one
+    of `names`, and the windows plus `else` must cover the whole day."""
+    windows: list[tuple[int, int, str]] = []
+    default: str | None = None
+    for clause in (value or "").split(";"):
+        if not clause.strip():
+            continue
+        m_else = _ELSE_RE.match(clause)
+        m_win = None if m_else else _WINDOW_RE.match(clause)
+        name = (m_else or m_win).group(1 if m_else else 5).strip() if (m_else or m_win) else None
+        if name is None:
+            raise ScheduleError(f"cannot parse clause {clause.strip()!r} in {value!r} — "
+                                f"expected 'HH:MM-HH:MM <name>' or 'else <name>'")
+        if name not in names:
+            raise ScheduleError(f"{name!r} in {value!r} is not a profile; the profiles are "
+                                f"{', '.join(sorted(names))}")
+        if m_else:
+            if default is not None:
+                raise ScheduleError(f"more than one 'else' clause in {value!r}")
+            default = name
+            continue
+        start = _parse_hhmm(m_win.group(1), m_win.group(2), clause)
+        end = _parse_hhmm(m_win.group(3), m_win.group(4), clause)
+        if start == end:
+            raise ScheduleError(f"zero-length window in {clause.strip()!r}")
+        windows.append((start, end, name))
+    out = NamedSchedule(windows=tuple(windows), default=default)
+    if default is None and any(out.value_at(m) is None for m in range(_MINUTES_PER_DAY)):
+        raise ScheduleError(f"{value!r} leaves part of the day without a profile: add 'else <name>'")
+    return out

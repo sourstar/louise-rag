@@ -3,6 +3,32 @@
 **Last updated: 2026-10-25.** What exists, what is designed but unbuilt,
 and what is deliberately not being built. Read this before planning work.
 
+**2026-10-26: the node was powered off 02:33–21:22 CET** by the operator,
+intentionally (not the heat, not the UPS); the CPU had been at 90–91 °C for
+hours under the 12-core records build. Monday's daytime queue
+(the deploy, gutenberg's re-index, wikidata's re-creation, the first weekday
+stop) did not run and moves to the next day. The rerank AFTER pass stopped
+at 07:00 partway. gutenberg embeds fully in the quiet hours (22:30–06:00,
+cron 6 and 5), from 2026-10-26. THE NODE'S SCHEDULE (operator, 2026-10-26, every day, node time): QUIET
+06:00–08:00, 12:00–13:30 and 16:30–22:30 — the records build stopped, the GPU
+power-limited (fan ≤ ~1,200 RPM) with on-demand embedding only; DAY
+08:00–12:00 and 13:30–16:30 — the build at 8 cores, the GPU uncapped and
+gutenberg embedding fully (queries keep priority); NIGHT 22:30–06:00 — the
+build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
+idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
+measured (published figures disagree).
+
+**2026-10-27 08:30 (München, read-only counts).** Deploy 16a4349 done:
+the node key and the admin token are read from a secrets dataset by path;
+the web holds no private key. gutenberg 96.4 % embedded (2,850 waiting),
+its 762 drift ids re-indexed today; normattiva and pubmed 100 % embedded;
+wikidata in quarantine until its re-creation (no snapshot yet);
+wikipedia-v8 ~55 M of ~75 M records built (upper bound by shards), ~540
+rec/s at 8 cores. The 06:00 build stop did NOT finish in 15 minutes and was
+SIGKILLed (old tree; part 119 committed, nothing lost); the 12:00 stop is
+the first on the deployed tree with the bounded stop. A test touched the
+real `/data/state` (model-pins.json) during the node's suite: being found.
+
 **Where things stand (2026-10-25).**
 - **wikidata** is re-created on Monday 2026-10-26 on family map
   `sha256:78399d60…` (approved, 29398cf). It keeps the version-3 pack and
