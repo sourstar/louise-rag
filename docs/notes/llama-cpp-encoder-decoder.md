@@ -295,3 +295,22 @@ Recommendation: B, measured first (T2 and T3). If T3 passes, a question's langua
 - Not checked: MADLAD GGUF `n_ctx_train`, the deployed `n_ubatch` and flash-attention setting; `ggml_set_rows`/`get_rows` into F32 on SYCL and ROCm; the column-count kernel choice on SYCL.
 - Whether the cross K/V recompute dominates step time on the card (T10). That decides stage 3, and whether `-np 1` with cached K/V would reach the speed target without concurrency.
 - No public predicate for "encoder-decoder with cross-attention" exists. P3 keeps matching the arch string until upstream adds one.
+
+## 9. Implementation plan (saved for later, operator 2026-10-27)
+
+*The operator asked to save this plan for a future implementation and to
+build a simpler MADLAD-only step first (translator-choice.md, "Waves").
+Nothing below is built. Each stage ships only after its gate.*
+
+| Stage | What | Where | Gate before it ships |
+|---|---|---|---|
+| 0 | **Measure the cross recompute (T10).** One slot, P3 test backend: the same output length from a short input and a long input. Time per token against `n_enc` decides between stage 3 and concurrency. | read-only, the node | none: a measurement |
+| 1 | **Per-sequence encoder memory**: `llama_memory_enc_dec` (T5 only, created in `create_memory`), plus the §3 grafts: `kv_unified` forced in cparams; encode after the server's `seq_rm`; shared-prefix grouping off for encoder-decoder targets. Only adds lines. | P4, deploy/localai/patches | T1, T4–T9; T2/T3 per the operator's unit of reproducibility (§8); T11 (invariant 12 on the embedders, gates) |
+| 2 | **Device store**: `init_encode`, a persistent buffer, `ggml_set_rows`/`get_rows`. Settle the failure semantics first (§8). | upstream PR 2; carried only if stage 1 is not enough | `set_rows`/`get_rows` F32 checked on SYCL and ROCm; T1 again |
+| 3 | **Cached cross K/V** per layer. Removes ~268 MFLOP per encoder row per step. | P5, or upstream PR 4 | T10 shows the recompute dominates; 0.9–1.75 GiB fits beside the node's models; T2–T4 again |
+| U | **Upstream.** An issue written by the operator (CONTRIBUTING.md:19-25: no AI-written issue or PR text), citing §7's references; then PRs, CPU first, each with T1. | ggml-org/llama.cpp | the operator writes the issue |
+
+**What stays true whichever stage runs:**
+- Every rebuild of the shared llama.cpp backend is a new engine for every SYCL embedder. It is measured bit-identical (invariant 12) and gated before it serves. Nothing is re-embedded when it passes.
+- MADLAD replaces the torch path only after translator-choice.md's comparison on the 451 + 39 queries.
+- The client change (one `/v1/completions` per segment, the `<2xx>` prompt, transformers' `clean_up_tokenization_spaces`) belongs to the architecture session.
