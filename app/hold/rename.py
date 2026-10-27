@@ -97,6 +97,13 @@ def plan(root: Path, old: str, new: str) -> dict[str, Any]:
             moves["origin_kept"] = {"folder": str(t), "also_linked_by": shared}
         else:
             moves["origin"] = [str(t), str(t.with_name(new))]
+    # the fast drive's caches keyed on what moves (app/derived.py): carried
+    # with it, or the next lookup rebuilds them from the origin
+    from app import derived
+    pairs = [moves[k] for k in ("shard", "origin", "bundles") if k in moves] + [moves["directory"]]
+    caches = derived.carried(pairs)
+    if caches:
+        moves["caches"] = caches
     return moves
 
 
@@ -165,6 +172,12 @@ def rename(root: Path, old: str, new: str, *, dry_run: bool = False) -> dict[str
     state.mkdir(parents=True, exist_ok=True)
     (state / MARKER).write_text(json.dumps(moves, sort_keys=True), encoding="utf-8")
     done: dict[str, Any] = {}
+    # 0b. the fast drive's caches, first: their keys are computed from the
+    # folders' places before anything moves, and a resumed rename finds them
+    # already carried (derived.carry is idempotent)
+    if moves.get("caches"):
+        from app import derived
+        done["caches"] = derived.carry(moves["caches"])
     # 1. the shared folders, then the links that name them
     for kind, link_name in (("shard", col.SHARD_DIR), ("origin", "origin"),
                             ("bundles", f"state/{col.BUNDLES_DIR}")):

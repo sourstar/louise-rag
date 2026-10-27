@@ -355,7 +355,11 @@ reader needs at the command line:
   folders under the shared roots (an origin folder another held
   collection also links stays where it is), the absolute paths the
   manifest stores, a per-collection pause and the held file move, the
-  held file last; the new name must be free. It takes the collection's
+  held file last; the new name must be free. The fast drive's caches
+  keyed on a folder that moves, or on a file or folder directly in it, are
+  carried to their new key first (*amended 2026-10-27*: they are keyed on
+  the origin's resolved path, app/derived.py, and a moved origin rebuilt
+  wikidata's pack from the dump); `--dry-run` lists them. It takes the collection's
   lock, so a running node pauses the collection first (§7.7); an
   interrupted rename is finished by running it again.
 - **`forget`.** Removes the copy, or with `--kinds` only those members,
