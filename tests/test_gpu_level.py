@@ -111,6 +111,23 @@ def test_the_power_limit_is_applied_and_max_freq_left_alone(tmp_path):
     assert _n(h / "power1_max") == 230 * W, "max restores the value read at start"
 
 
+def test_a_card_with_power1_cap_alone_is_limited_through_it(tmp_path):
+    # 2026-10-27, the node's B70 on kernel 6.18: `power1_cap` 230 W rw, no
+    # `power1_max`, no `power1_rated_max` — the level fell to max_freq
+    d, h = _card(tmp_path), _hwmon(tmp_path, power=None, rated=None)
+    (h / "power1_cap").write_text(f"{230 * W}\n")
+    (h / "power1_crit").write_text(f"{460 * W}\n")
+    log = _Log()
+    a, g = gpu_level.LevelApplier(d, h, log=log), Governor(d)
+    a.reconcile(GpuLevel("quiet", power_limit="110W"), g, "quiet")
+    assert _n(h / "power1_cap") == 110 * W and _n(d / "max_freq") == 2800
+    assert a.status()["via"] == "power1_cap" and "power1_cap 110 W" in log[-1]
+    a.reconcile(FULL, g, "day")
+    assert _n(h / "power1_cap") == 230 * W, "max is the cap read at start"
+    a.restore(g)
+    assert _n(h / "power1_crit") == 460 * W, "the critical limit is never written"
+
+
 def test_no_profile_writes_nothing(tmp_path):
     d, h = _card(tmp_path), _hwmon(tmp_path, power=180 * W)
     a = gpu_level.LevelApplier(d, h, log=_Log())

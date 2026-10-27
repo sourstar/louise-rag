@@ -4,8 +4,11 @@
 WHAT. A level (`[gpu.levels.<name>]` in platform.toml, app/node_profile.py)
 says three things; this module makes the card say them:
 - `power_limit` -> the xe hwmon `power1_max` (microwatts), the standard Linux
-  power limit: "max" is the card's own (as read at start), "N%" is N % of
-  `power1_rated_max` (or of the card's own where there is none), "NW" watts;
+  power limit — or `power1_cap`, the hwmon ABI's power cap, where the driver
+  exposes that instead (the node's B70 on kernel 6.18: `power1_cap` 230 W
+  rw, no `power1_max`, no `power1_rated_max`; found 2026-10-27): "max" is
+  the card's own (as read at start), "N%" is N % of `power1_rated_max` (or
+  of the card's own where there is none), "NW" watts;
 - `max_clock` -> `max_freq`, ONLY where no writable power limit exists:
   "max" the card's own, "N%" of `rp0_freq`, "NMHz";
 - `fan_max_rpm` -> a writable `fanN_max` (hwmon ABI, RPM) only. Where the
@@ -153,14 +156,18 @@ class LevelApplier:
         self.freq = freq_dir
         self.hwmon = hwmon
         # -- the power limit
-        self.pmax = hwmon / "power1_max" if hwmon is not None else None
+        self.pmax = None
+        if hwmon is not None:
+            self.pmax = next((hwmon / n for n in ("power1_max", "power1_cap")
+                              if (hwmon / n).is_file()), hwmon / "power1_max")
+        self.plimit = self.pmax.name if self.pmax is not None else "power1_max"
         self.power_start = _num(self.pmax)
         rated = _num(hwmon / "power1_rated_max") if hwmon is not None else None
         self.power_rated = rated if rated and rated > 0 else None
         if self.power_start is None:
-            self.power_ok, self.power_why = False, "no power1_max"
+            self.power_ok, self.power_why = False, "no power1_max nor power1_cap"
         elif not _writable(self.pmax):
-            self.power_ok, self.power_why = False, "power1_max is read-only"
+            self.power_ok, self.power_why = False, f"{self.plimit} is read-only"
         else:
             self.power_ok, self.power_why = True, None
         # -- the clock ceiling
@@ -206,7 +213,7 @@ class LevelApplier:
                     continue
                 if lv.power_limit.lower() != "max" and ours == self.power_start:
                     self.power_own = self.power_rated
-                    self.log(f"power1_max {_w(self.power_start)} at start is what level "
+                    self.log(f"{self.plimit} {_w(self.power_start)} at start is what level "
                              f"{lv.name!r} writes, left by a governor that did not restore it: "
                              f"the card's own is power1_rated_max {_w(self.power_rated)}")
                     break
@@ -246,12 +253,12 @@ class LevelApplier:
             try:
                 self.pmax.write_text(str(want_power))
                 self.power_now = want_power
-                wrote.append(f"power1_max {_w(want_power)}")
+                wrote.append(f"{self.plimit} {_w(want_power)}")
             except OSError as e:
                 if e.errno not in _NOT_WRITABLE:
-                    return self._refuse(f"cannot write power1_max {want_power}: {type(e).__name__}: {e}")
+                    return self._refuse(f"cannot write {self.plimit} {want_power}: {type(e).__name__}: {e}")
                 self.power_ok = False
-                self.power_why = f"power1_max refused the write: {type(e).__name__}: {e}"
+                self.power_why = f"{self.plimit} refused the write: {type(e).__name__}: {e}"
                 self.log(f"{self.power_why}; the level goes to max_freq instead")
         # 2. else the clock ceiling, never under the query hold
         if not self.power_ok:
@@ -329,9 +336,9 @@ class LevelApplier:
             try:
                 self.pmax.write_text(str(self.power_own))
                 self.power_now = self.power_own
-                done.append(f"power1_max {_w(self.power_own)}")
+                done.append(f"{self.plimit} {_w(self.power_own)}")
             except OSError as e:
-                self.log(f"cannot restore power1_max: {type(e).__name__}: {e}")
+                self.log(f"cannot restore {self.plimit}: {type(e).__name__}: {e}")
         if self.clock_ok and self.clock_own is not None and self.clock_now != self.clock_own:
             target = max(self.clock_own, holder.current_min())
             try:
@@ -353,7 +360,7 @@ class LevelApplier:
 
     # --------------------------------------------------------------- status
     def status(self) -> dict[str, Any]:
-        via = "power1_max" if self.power_ok else ("max_freq" if self.clock_ok else None)
+        via = self.plimit if self.power_ok else ("max_freq" if self.clock_ok else None)
         return {"name": self.name, "profile": self.profile, **self.spec,
                 "via": via,
                 "power_w": None if self.power_now is None else self.power_now / 1e6,
