@@ -18,6 +18,23 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 18:00 (München, relayed). EVERY CHECK CLOSES.** pubmed's LAST
+facets pass ended 15:23:19Z: `[pubmed info:ask] facets counted for snapshot
+2026-08: creators, date, lang, subjects (2352s)` — 39.2 min on the busy
+node (16.5 min this morning on a paused one); the marker
+`collections/pubmed/index/facets/snapshot.json` (143 B: hash, indexed_at,
+snapshot_id 2026-08) written at that second; gutenberg's after its 15 s
+pass. Then the deploy of ce64954 (15:23–15:27Z, image 19883176, the same
+identity): the worker started 15:26:20Z and in its first 4.5 min NO
+ask/facets line for any collection; the shares line reads `pubmed: 32% in 1
+turns (1s, 0 units …)` — pubmed's start cost went from 2,352 s to 1 s.
+Three deploys a day used to cost three passes of the index resource. The
+glue: the 3-paragraph text via `/ask/translate` glued 0 in en→fr, en→it,
+en→de ("…de la période Heian [1]. Les premiers forgerons…" at the former
+spot). Both days' defects of the Ask page's translation (the refused
+answer, the silent miss, the glued sentences) and the maintainer's
+per-start recount are closed, deployed and measured.
+
 **2026-10-28 17:40 (München, relayed). WIKIPEDIA-V8 RECORDS BUILD DONE, 14:26
 CET (13:26Z).** /root/wikipedia-v8/build-night.log: `[pack build] manifest:
 188 slice(s), 37501 shard(s), 74811753 records, 267178070 chunks, unsigned
