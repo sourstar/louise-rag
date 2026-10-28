@@ -18,6 +18,20 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 21:00 (architecture). FRANCE, GERMANY AND THE EU: A DESIGN.**
+The operator asked for "the equivalent of normattiva collection for french,
+german and European laws". The note is
+[`legal-fr-de-eu.md`](legal-fr-de-eu.md), a proposal on the template.
+France (DILA LEGI + JORF) has every version, per ARTICLE, so the record
+there is one version of one article. The EU (Cellar) has every version
+of every act, per language, as Normattiva does. No origin publishes
+German federal law's past versions today. NeuRIS's model holds them and
+lists them as planned. Four decisions are the operator's: Germany's
+origin, the EU languages embedded, one shared space, and how the encoder
+is chosen when no expert questions exist in French or German. This
+session's network reaches none of the origins, so the probes are owed
+from the node before anything is pinned.
+
 **2026-10-28 20:40 (München, relayed). WIKIPEDIA-V8'S FIRST SNAPSHOT EXISTS.**
 `[snapshot create] wikipedia-v8: 2026-09 — 74811753 records, 267178070
 chunks, 37501 shard(s), hash sha256:0100e7b9736ca41f53f2f00780f696ab0c541122f636b8233190fd25626b83af`,
