@@ -13,13 +13,20 @@
 #     whether a bulk zip is served;
 #   - Cellar: content negotiation for an act and a consolidated version
 #     (XHTML, Formex), and one SPARQL count window.
-# Nothing here is a baseline download: the whole run moves under ~20 MB.
-# Only curl and python3 are used (python3 for JSON and a tar listing).
+# Nothing here is a baseline download, BY CONSTRUCTION: every request is
+# capped at MAX_FILE bytes, and a header check is a HEAD. Only curl and
+# python3 are used (python3 for JSON and a tar listing).
+#
+# FIXED 2026-10-28: `head_of` was a GET with its body discarded
+# (`-o /dev/null -D -`), not a HEAD; on the 1.1 GB LEGI baseline it moved
+# 486 MB before --max-time cut it (München's first run). It is `curl -I`
+# now, and no request may exceed MAX_FILE.
 set -u
-UA="louise-probe/1 (operator's node; legal template step 1)"
-C=(curl -sS -A "$UA" --max-time 120)
+UA="louise-probe/2 (operator's node; legal template step 1)"
+MAX_FILE=20000000
+C=(curl -sS -A "$UA" --max-time 120 --max-filesize "$MAX_FILE")
 section() { printf '\n===== %s =====\n' "$*"; }
-head_of() { "${C[@]}" -o /dev/null -D - "$@" | tr -d '\r' | grep -iE '^(HTTP/|content-type|content-length|accept-ranges|location|last-modified|etag|x-ratelimit|retry-after)'; }
+head_of() { "${C[@]}" -I "$@" | tr -d '\r' | grep -iE '^(HTTP/|content-type|content-length|accept-ranges|location|last-modified|etag|x-ratelimit|retry-after)'; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
 # ---------------------------------------------------------------- France --
@@ -97,7 +104,10 @@ for it in items[:2]:
     print(json.dumps(it, ensure_ascii=False)[:1500])
 EOF
     section "NeuRIS at $NEURIS: changelog, bulk"
-    for path in "/v1/legislation/changelog" "/v1/legislation/bulk-zip-links" "/v1/bulk"; do
+    # the changelog asks for `from` and `to` (a 422 without them, first run)
+    for path in "/v1/legislation/changelog?from=2026-10-21&to=2026-10-28" \
+                "/v1/legislation/changelog?from=2026-10-21T00:00:00Z&to=2026-10-28T00:00:00Z" \
+                "/v1/legislation/bulk-zip-links" "/v1/bulk"; do
         printf -- '-- %s\n' "$path"
         head_of "$NEURIS$path"
         "${C[@]}" "$NEURIS$path" -H 'Accept: application/json' | head -c 800; echo
@@ -109,8 +119,11 @@ CELLAR=https://publications.europa.eu/resource/celex
 for celex in 32016R0679 02016R0679-20160504; do
     for accept in 'application/xhtml+xml' 'application/xml;type=fmx4' 'application/xml;notice=branch'; do
         section "Cellar $celex, Accept: $accept"
-        "${C[@]}" -o /dev/null -D - -H "Accept: $accept" -H 'Accept-Language: eng' "$CELLAR/$celex" \
-            | tr -d '\r' | grep -iE '^(HTTP/|content-type|location)'
+        # no -L: the answer is a 303 or a 300 and its small body, never the document
+        "${C[@]}" -D "$TMP/h" -o "$TMP/b" -H "Accept: $accept" -H 'Accept-Language: eng' "$CELLAR/$celex"
+        tr -d '\r' < "$TMP/h" | grep -iE '^(HTTP/|content-type|location)'
+        # a 300 lists the manifestations it could give (Formex, first run)
+        grep -q ' 300' "$TMP/h" && head -c 1500 "$TMP/b" && echo
     done
 done
 
