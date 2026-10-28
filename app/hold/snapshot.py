@@ -505,6 +505,11 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
             f"09 §9.4 were computed — rebuild them; a snapshot may not carry "
             f"a root it did not compute (first: {missing[0]})")
 
+    # THE MEMBERS FIRST: they are a few small files, and a missing one is a
+    # refusal. Checked after the delta, wikipedia-v8's first snapshot read
+    # its whole 102 GB SHARD for 43 minutes and was then refused for a
+    # validation.json nobody had written (München, 2026-10-28).
+    files = _files(shard_dir, codex, snapshot_id)
     previous, prev_hashes = _previous(shard_dir, snapshot_id)
     # `writer`: a part whose bytes the previous snapshot already listed was
     # compressed by whoever wrote it then; a new version by this platform
@@ -536,7 +541,7 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
         delta=delta,
         relations=_relation_shards(shard_dir, shards),
         figures=_figures_shards(shard_dir, codex, shards),
-        files=_files(shard_dir, codex, snapshot_id),
+        files=files,
     )
 
     out = shard_dir / shard_mod.snapshot_path(snapshot_id)

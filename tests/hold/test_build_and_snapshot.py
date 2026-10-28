@@ -158,6 +158,20 @@ def test_the_first_snapshot_marks_every_record_added(
     assert snap.delta.changed == () and snap.delta.tombstoned == ()
 
 
+def test_a_missing_member_is_refused_before_a_record_is_read(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """wikipedia-v8 (2026-10-28): 43 minutes reading a 102 GB SHARD, then
+    refused for a validation.json nobody had written. The members are
+    checked first."""
+    root = _collection(tmp_path)
+    rec.build(root, "gutenberg", corpus_dir=corpus_dir, log=lambda *_: None, records_per_shard=2)
+    from app.pack import records as pack_records
+    monkeypatch.setattr(pack_records, "iter_records", lambda p: (_ for _ in ()).throw(
+        AssertionError("a record was read before the members were checked")))
+    with pytest.raises(CodexError, match="validation.json is missing.*hold records validation"):
+        sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+
+
 def test_a_snapshot_file_is_written_whole_or_not_at_all(
         isolated_config, tmp_path, corpus_dir, monkeypatch):
     """A kill while the file was written left a truncated snapshot, and the
