@@ -18,6 +18,34 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 16:45 (architecture). THE ANSWER THAT WOULD NOT TRANSLATE.**
+Operator: "I made a search on all languages, then I chose to translate the
+results, everything has been translated but the answer." Cause, from the
+web log and two measurements on the deployed engine (München): the page
+sends the answer to MADLAD first and alone, and REFUSES a translation whose
+`[n]` differ from the original's (the links would open the wrong entries).
+MADLAD does not keep them: on a 3,300-character answer with 36 markers, six
+dropped into Italian (a whole paragraph lost its `[8]`, `[8][9]`), all back
+but renumbered into English (`[8]` → `[10]`); its `- ` list lines collapsed
+into one sentence; a cited sentence glued to the next. The operator's
+3,913-character all-languages answer had many citations, so the guard
+refused it, and the page said so only in a small note (a plain MISS said
+nothing at all — a defect). The same model on torch had the same exposure
+(translator-choice.md, "[n] citations at risk"); the switch did not cause
+it. FIX on main: the citations never reach the model (taken out of each
+segment, put back inside its sentence's final stop; a cited sentence closes
+its segment; a run written after the stop stays with the sentence it
+follows), list and heading markers are kept out the same way and their
+line breaks kept, a missed answer is said on the page, and every translate
+stream request logs its outcome (`[… info:translate] stream into it: 13
+items — 12 translated (3 cached), 1 missed, 7.0 s`) so the next report
+reads off the web log. Tests: tests/test_translate_t5.py (three),
+tests/browser/ask_translation_order.js step 5. Record:
+[translator-choice.md "The [n] citations never reach MADLAD"](translator-choice.md),
+[madlad-bugs-report.md row 15](madlad-bugs-report.md). Deploy: with the
+next deploy (the web alone would do; the worker's restart pays pubmed's
+facets pass once more and writes the marker, then never again).
+
 **2026-10-28 16:00 (München, relayed): THE NODE RUNS AGAIN since 12:53.** Node
 resumed, wikidata's per-collection pause lifted, normattiva keeps its day pause
 (the 22:30 cron lifts it), the records build restarted with PARSE_PROCESSES=12

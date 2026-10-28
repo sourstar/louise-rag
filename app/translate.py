@@ -202,6 +202,30 @@ _LANG_TOKEN = re.compile(r"<2([A-Za-z0-9_\-]+)>")
 _PARAGRAPH = re.compile(r"\n\s*\n")
 _SENTENCE = re.compile(r"(?<=[.!?;:。！？；])\s+")
 _SPACE = re.compile(r"\s+")
+#: an inline citation as the chat model is asked to write it (retrieval.
+#: CITE_REMINDER: "[2] or [2][5]") and as the Ask page links it (ask.html
+#: linkCitations): digits in square brackets, nothing else. MADLAD does not
+#: keep them (measured on the node 2026-10-28, a 3,300-character answer with
+#: 36 markers: six dropped into Italian, "[8]" renumbered "[10]" into
+#: English), so they never reach the model: `_strip_cites` takes them out of
+#: a segment and `_cite` puts them back after it — the standard handling of
+#: inline codes in machine translation (XLIFF/Okapi: codes are removed before
+#: the engine and restored after; translator-choice.md).
+_CITE = re.compile(r"\[\d+\]")
+#: a run of citations with the space before it: "castle [1][2]." -> "castle."
+_CITE_RUN = re.compile(r"(?:\s*\[\d+\])+")
+#: a run written after a sentence's stop cites THAT sentence ("castle. [1] In
+#: London"); it is moved inside the stop so the cut keeps it with its sentence
+#: (across at most one line break: a run opening a new paragraph is that paragraph's)
+_CITE_AFTER_STOP = re.compile(r"([.!?;:。！？；])([^\S\n]*\n?[^\S\n]*)((?:\[\d+\](?:\s*\[\d+\])*))")
+_WORD = re.compile(r"\w")
+_STOPS = ".!?;:"
+_CJK_STOPS = "。！？；"
+#: a line that is structure, not a wrapped line — a list item, a heading: the
+#: break before it (and after a heading) is kept, and the marker itself stays
+#: out of the model's sight (MADLAD drops "- " and makes one sentence of a
+#: list: the node, 2026-10-28)
+_LEAD = re.compile(r"^[ \t]*(?:[-*•]|\d+[.)]|#{1,6})[ \t]+")
 
 _shape_cache: tuple[float, str] | None = None
 
@@ -274,12 +298,14 @@ def estimate_tokens(text: str) -> int:
     return int(n) + 1
 
 
-def split_segments(text: str, max_tokens: int, count) -> list[list[str]]:
+def split_segments(text: str, max_tokens: int, count, close_after=None) -> list[list[str]]:
     """`text` as paragraphs of segments, each at most `max_tokens` by `count`
     where a sentence allows it — deploy/madlad-translate/server.py's rule,
     so the two shapes cut a text the same way. A paragraph's own line wraps
     are layout, not content (a Gutenberg page wraps at 70 columns), so it is
-    flattened first; paragraph breaks survive."""
+    flattened first; paragraph breaks survive. `close_after(sentence)` true
+    ends the segment after that sentence (the t5 shape closes one after a
+    cited sentence, so a segment's citations are its last sentence's)."""
     paragraphs = []
     for para in _PARAGRAPH.split(text.replace("\r\n", "\n").replace("\r", "\n")):
         para = _SPACE.sub(" ", para).strip()
@@ -308,10 +334,71 @@ def split_segments(text: str, max_tokens: int, count) -> list[list[str]]:
                     current = p
                 else:
                     current = trial
+            if close_after is not None and current and close_after(sentence):
+                segs.append(current)
+                current = ""
         if current:
             segs.append(current)
         paragraphs.append(segs)
     return paragraphs
+
+
+def _blocks(text: str) -> list[tuple[str, str, str]]:
+    """`text` as (separator before, lead, body) blocks for the t5 cut: a blank
+    line separates paragraphs ("\n\n"); a line break before a list item or a
+    heading, or after a heading, is structure ("\n") and the item's or
+    heading's marker is the block's `lead`, kept out of the model's sight;
+    every other line break is a wrapped line, flattened by `split_segments`."""
+    out: list[tuple[str, str, str]] = []
+    sep = ""
+    for para in _PARAGRAPH.split(text.replace("\r\n", "\n").replace("\r", "\n")):
+        lines = [ln for ln in para.split("\n") if ln.strip()]
+        if not lines:
+            continue
+        block: list[str] = []
+        for ln in lines:
+            if block and (_LEAD.match(ln) or _LEAD.match(block[0])):
+                out.append((sep, *_lead(" ".join(block))))
+                sep, block = "\n", []
+            block.append(ln.strip())
+        out.append((sep, *_lead(" ".join(block))))
+        sep = "\n\n"
+    return out
+
+
+def _lead(block: str) -> tuple[str, str]:
+    m = _LEAD.match(block)
+    return (m.group(0).strip() + " ", block[m.end():]) if m else ("", block)
+
+
+def _strip_cites(segment: str) -> tuple[str, str]:
+    """A segment without its citations, and the citations as one run to put
+    back after it: ("castle [1]. In London [2][3].") -> ("castle. In London.",
+    "[1] [2][3]")."""
+    runs = [r.strip() for r in _CITE_RUN.findall(segment)]
+    return _SPACE.sub(" ", _CITE_RUN.sub("", segment)).strip(), " ".join(runs)
+
+
+def _cite(text: str, cites: str) -> str:
+    """`cites` back on the translated segment, inside its final stop as the
+    chat model writes them ("castello [1]."), after it otherwise."""
+    if not cites:
+        return text
+    if not text:
+        return cites
+    if text[-1] in _STOPS:
+        return f"{text[:-1].rstrip()} {cites}{text[-1]}"
+    if text[-1] in _CJK_STOPS:
+        return f"{text[:-1]}{cites}{text[-1]}"
+    return f"{text} {cites}"
+
+
+def _bare_count(sentence: str) -> int:
+    return estimate_tokens(_CITE_RUN.sub("", sentence))
+
+
+def _cited(sentence: str) -> bool:
+    return _CITE.search(sentence) is not None
 
 
 def clean_up(text: str) -> str:
@@ -362,40 +449,51 @@ def _t5_translate(items: list[tuple[str, str]]) -> list[str | None]:
     """The t5 shape of `translate`: each item cut into segments as the torch
     backend cuts them, every segment one request, the requests of one call
     sent at once (T5_CONCURRENCY) so the server takes them in one wave; the
-    pieces put back with the text's paragraph breaks. An unknown target is
-    None; an empty or runaway output (a llama.cpp translator can run on:
-    translator-choice.md) makes its item None; any failed request fails the
-    call, as one failed batch did."""
+    pieces put back with the text's paragraph breaks and list lines
+    (`_blocks`). The `[n]` citations and the list markers never reach the
+    model (`_strip_cites`, `_lead`): a segment ends with the sentence that
+    carries a citation, its citations go back after it (`_cite`), and a run
+    written after a stop stays with the sentence it follows. An unknown
+    target is None; an empty or runaway output (a llama.cpp translator can
+    run on: translator-choice.md) makes its item None; any failed request
+    fails the call, as one failed batch did."""
     known = languages()
     out: list[str | None] = [None] * len(items)
-    jobs: list[tuple[int, int, int, str, str]] = []       # (item, paragraph, segment, code, text)
-    shapes: dict[int, list[int]] = {}
+    jobs: list[tuple[int, int, int, str, str]] = []       # (item, block, segment, code, text)
+    shapes: dict[int, list[tuple[str, str, int]]] = {}    # item -> (separator, lead, segments) per block
+    done: dict[tuple[int, int, int], str] = {}
+    cites: dict[tuple[int, int, int], str] = {}
     for i, (text, to) in enumerate(items):
         code = target_code(to)
         if code not in known:
             continue
-        paragraphs = split_segments(text, MAX_SEG_TOKENS, estimate_tokens)
-        shapes[i] = [len(p) for p in paragraphs]
-        for pi, segs in enumerate(paragraphs):
+        shapes[i] = []
+        for bi, (sep, lead, body) in enumerate(_blocks(_CITE_AFTER_STOP.sub(r" \3\1\2", text))):
+            segs = [seg for para in split_segments(body, MAX_SEG_TOKENS, _bare_count, close_after=_cited)
+                    for seg in para]
+            shapes[i].append((sep, lead, len(segs)))
             for si, seg in enumerate(segs):
-                jobs.append((i, pi, si, code, seg))
-    if not jobs:
-        return out
-    with dispatch.call(config.TRANSLATE_URL, dispatch.Level.TRANSLATE, timeout=TIMEOUT_S):
-        headers = dispatch.level_headers()      # read here: a pool thread carries no level
-        with ThreadPoolExecutor(max_workers=min(T5_CONCURRENCY, len(jobs))) as pool:
-            got = list(pool.map(lambda j: _t5_completion(j[3], j[4], TIMEOUT_S, headers), jobs))
-    done: dict[tuple[int, int, int], str] = {}
+                bare, cites[(i, bi, si)] = _strip_cites(seg)
+                if _WORD.search(bare):
+                    jobs.append((i, bi, si, code, bare))
+                else:
+                    done[(i, bi, si)] = bare            # only citations, a rule ("---"): nothing to translate
+    got: list[str] = []
+    if jobs:
+        with dispatch.call(config.TRANSLATE_URL, dispatch.Level.TRANSLATE, timeout=TIMEOUT_S):
+            headers = dispatch.level_headers()      # read here: a pool thread carries no level
+            with ThreadPoolExecutor(max_workers=min(T5_CONCURRENCY, len(jobs))) as pool:
+                got = list(pool.map(lambda j: _t5_completion(j[3], j[4], TIMEOUT_S, headers), jobs))
     failed: set[int] = set()
-    for (i, pi, si, _code, seg), text in zip(jobs, got):
+    for (i, bi, si, _code, seg), text in zip(jobs, got):
         if not text or len(text) > 4 * len(seg) + 64:
             failed.add(i)
-        done[(i, pi, si)] = text
-    for i, counts in shapes.items():
+        done[(i, bi, si)] = text
+    for i, blocks in shapes.items():
         if i in failed:
             continue
-        out[i] = "\n\n".join(" ".join(done[(i, pi, si)] for si in range(n))
-                             for pi, n in enumerate(counts))
+        out[i] = "".join(sep + lead + " ".join(_cite(done[(i, bi, si)], cites[(i, bi, si)]) for si in range(n))
+                         for bi, (sep, lead, n) in enumerate(blocks))
     return out
 
 

@@ -339,6 +339,24 @@ def _remember(lang: str, text: str, value: str) -> None:
     _translation_cache[(lang, text)] = value
 
 
+def _log_translation(lang: str, items: int, got: int, cached: int, missed: int, secs: float) -> None:
+    """One log line per stream request, so what the page did with a
+    translation can be read back from the web log (2026-10-28: the answer
+    stayed untranslated and nothing recorded whether it was asked for,
+    translated or missed). Through the default collection's manifest, as
+    the query log is; never fatal."""
+    try:
+        con = db.connect()
+        try:
+            db.log_event(con, "info", "translate",
+                         f"stream into {lang}: {items} items — {got} translated ({cached} cached), "
+                         f"{missed} missed, {secs:.1f} s")
+        finally:
+            con.close()
+    except Exception:   # noqa: BLE001 — a log line never fails the page
+        pass
+
+
 def _mt_items(lang: str, items: list[tuple[str, str, str]]
               ) -> tuple[dict[str, str], list[str]] | None:
     """(id, text, src) items through the translation model (app/translate.py):
@@ -545,13 +563,15 @@ def ask_translate_stream(body: TranslateBody):
         if not lang or lang == "original":
             yield line({"done": True, "failed": False, "missed": []})
             return
-        got = 0
+        t0 = time.monotonic()
+        got = cached = 0
         missed: list[str] = []
         pending: list[tuple[str, str, str]] = []
         for cid, text, src in items:
             hit = _translation_cache.get((lang, text))
             if hit is not None:
                 got += 1
+                cached += 1
                 yield line({"id": cid, "text": hit})
             else:
                 pending.append((cid, text, src))
@@ -616,6 +636,7 @@ def ask_translate_stream(body: TranslateBody):
             else:
                 missed.append(cid)
                 yield line({"id": cid, "missed": True})
+        _log_translation(lang, len(items), got, cached, len(missed), time.monotonic() - t0)
         yield line({"done": True, "failed": got == 0 and bool(missed), "missed": missed})
 
     return StreamingResponse(gen(), media_type="application/x-ndjson",

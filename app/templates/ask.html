@@ -612,6 +612,9 @@ async function tqRun(job,lang){
             // the citations moved: the answer is worth less than its links
             if(m.text!==undefined)answerNote='the answer kept its original language — translating it '
                                              +'would have broken its [n] citations';
+            // a miss is SAID, as an entry's is: the answer stayed in its
+            // language with no word about it (operator, 2026-10-28)
+            else answerNote='the answer could not be translated — showing its original';
           }
           continue;
         }
@@ -636,7 +639,8 @@ async function tqRun(job,lang){
   for(const g of job.groups){
     for(const u of g.els)if((g.kind==='reader'?rd.inflight:tq.inflight).has(u)){missedSet(g).add(u); settle(g,u,()=>restoreUnit(u))}
     if(g.kind==='screen' && !tq.cache.has(ckey(lang,g.text)))tq.missed.add(ckey(lang,g.text));
-    if(g.kind==='answer' && answerShown!==lang){tq.answerMissed=true; if(a.classList.contains('translating'))showAnswer(answerRaw,answerLang)}
+    if(g.kind==='answer' && answerShown!==lang){tq.answerMissed=true; answerNote=answerNote||'the answer could not be translated — showing its original';
+      if(a.classList.contains('translating'))showAnswer(answerRaw,answerLang)}
   }
   if(failed){
     tq.failed=lang;
