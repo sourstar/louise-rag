@@ -50,7 +50,8 @@ worker's scheduled check keyed on the snapshot ID and would take the
 re-created 2026-09 for the one it checked. Fixed beside it: the record
 keeps the snapshot's HASH, and a different hash under the same id is due
 (a record from before compares by id, as it did, so this once the check
-is run by hand).
+is run by hand). MERGED 3e9b198 (PR #43); München: deploy, move 2026-09
+aside if never shared, dry run, relocate at 22:30, snapshot, check by hand.
 
 **2026-10-28 21:00 (architecture). FRANCE, GERMANY AND THE EU: A DESIGN.**
 The operator asked for "the equivalent of normattiva collection for french,
