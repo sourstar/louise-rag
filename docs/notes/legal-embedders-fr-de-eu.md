@@ -262,8 +262,24 @@ retrieval evaluation:
 
 So the bake-off learns one reader, the BEIR layout, and not one reader
 per set. Its metric code, which is pinned by tests, stays as it is.
-EUR-Lex-Sum and LEMUR become BEIR-shaped by their stated method (summary
-or metadata as the query, the act as the gold), in a small adapter each.
+**Built (2026-10-28):**
+
+    python -m tools.encoder_bakeoff fetch --suite bsard --out /data/bakeoff-bsard
+    python -m tools.encoder_bakeoff embed --out /data/bakeoff-bsard --name bge-m3 --url … --model bge-m3
+    python -m tools.encoder_bakeoff score --out /data/bakeoff-bsard
+    python -m tools.encoder_bakeoff report --out /data/bakeoff-bsard
+
+- Suites: `jurifindit`, `bsard`, `syntec`, `legalquad`, `gerdalir-small`
+  and `gdpr-holdings`. Each directory holds one set.
+- The report shows nDCG@10 and MRR@10 beside the bake-off's own columns.
+
+Not built yet:
+- GerLayQA, EU2UK, EUR-Lex-Sum and LEMUR are not published in the BEIR
+  layout, so each needs a small adapter to it. For EUR-Lex-Sum and LEMUR
+  the query is the summary or the metadata and the gold is the act, by
+  their stated method.
+- GerLayQA's corpus is our own NeuRIS § records, so it waits for the
+  plugin.
 
 Per collection, the candidates and the sets:
 
