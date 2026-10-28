@@ -107,6 +107,7 @@ report the interval, not just the point; measure at the depth the system uses
 - [ ] Free space checked before and after
 - [ ] Artefacts on a host path, and cleaned up — no container left running
 - [ ] Numbers labelled measured / modelled / published
+- [ ] A difference CLASSIFIED: wrong (a bug — finite but unrelated, a NaN, a value outside its definition) or arithmetic order (valid last bits): only the first is reported upstream; the second is controlled, never filed (approved-encoders.md "Bugs against arithmetic order")
 - [ ] Written where it belongs
 
 ## 7. Added 2026-10-18 (the AMD peer)
