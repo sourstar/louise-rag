@@ -31,7 +31,14 @@ not worse) met. `louise-translate-madlad` = the GGUF F16 on
 byte-identical to main d372ba5's stage file; the torch model kept as
 `louise-translate-madlad-torch` (backout = one copy and a reload). The node
 stays paused (MADLAD only, operator 09:51) until the operator lifts it.
-Cleanup of the test backends and models: architecture's call (below).
+Cleanup DONE 13:0x (München, on architecture's decision): the three test
+backends (f8b4 t5, t5diag, p3test; 438 MB each) and their tars removed through
+LocalAI, ~2.2 GB freed; the five test-model YAMLs and the two GGUF YAML backups
+MOVED to `/root/madlad-gguf/removed-test-models-20261028/` (LocalAI's
+`/v1/models` lists them until its next restart — harmless, nothing names
+them); kept: the live T5 engine and tar, the torch model and its .bak, every
+recorded output under `/root/madlad-gguf`, the `kq-rt2635` image and
+`/root/kq/*.txt` until the upstream PR is filed, the GGUF weights.
 
 **2026-10-28 14:30 (München, relayed).** P5 TAR GATED GREEN ON THE F16 CACHE:
 `louise-llama-cpp-sycl_f16-c68167b65cb0.tar` (P1–P5) installed as
