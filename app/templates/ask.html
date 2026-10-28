@@ -75,6 +75,12 @@
   </div>
 </div>
 
+{# THE RELAY'S NOTICES (operator, 2026-10-28): a connection the browser
+   dropped, a question that makes no progress, a question the node dropped —
+   said here, with what can be done about it. #}
+<div id="relay-note" class="note" role="status" aria-live="polite"
+     style="display:none;border:1px solid var(--brass);padding:8px 12px;margin:8px 0"></div>
+
 <div id="answer-pane" style="display:none" class="panel">
   <h2>Answer</h2>
   <div id="answer" style="white-space:pre-wrap;line-height:1.6"></div>
@@ -188,6 +194,93 @@ function rememberCounts(){try{localStorage.setItem('ask.counts',JSON.stringify(c
           document.getElementById('rerank-depth').value=c.rerank_depth;count('limit');count('rerank-depth')}
   }catch(e){}
 })();
+// ---- the relay: a question is a job on the node (operator, 2026-10-28) ----
+//
+// "Prepare a web proxy so that the web gui session is not reset by the
+// browser dropping a query. Also if the query is stuck or dropped I should
+// see a notification in the gui." The page STARTS the search and the answer
+// on the node (POST /ask/relay) and LISTENS to them (EventSource). The job
+// runs whatever happens to the connection: the browser reconnects by itself
+// and names the last event it saw (Last-Event-ID), so nothing is lost; a
+// reload finds the question again (sessionStorage, this tab only). The
+// notice bar says when the connection is lost, when the question makes no
+// progress, and when the node dropped it — with Cancel or Run again.
+const RELAY_STORE='ask.relay';
+const relays={search:null,answer:null};       // {id, es, ended}
+let relayState={};                            // what a reload needs, saved per tab
+function relaySave(patch){
+  relayState={...relayState,...(patch||{})};
+  for(const k of ['search','answer'])if(relays[k])relayState[k]={id:relays[k].id,ended:relays[k].ended};
+  try{sessionStorage.setItem(RELAY_STORE,JSON.stringify(relayState))}catch(e){}
+}
+function relayNote(text,actions){
+  const n=document.getElementById('relay-note'); if(!n)return;
+  if(!text){n.style.display='none';n.textContent='';return}
+  n.textContent=text+' ';
+  for(const [label,fn] of actions||[]){const b=document.createElement('button');b.textContent=label;b.onclick=fn;n.appendChild(b);n.appendChild(document.createTextNode(' '))}
+  n.style.display='block';
+}
+function relayStuck(kind,d){
+  relayNote('the '+kind+' has made no progress for '+Math.round(d.quiet_s||0)+' s (last step: '+(d.where||'?')
+            +') — still waiting on the node.',[['Cancel',()=>relayCancel(kind)]]);
+}
+function relayDropped(kind,why){
+  relayNote('the '+kind+' was dropped: '+(why||'no reason given')+'.',
+            [['Run again',()=>kind==='answer'?ask():search()]]);
+}
+async function relayCancel(kind){
+  const r=relays[kind]; if(!r||r.ended)return;
+  try{await fetch('/ask/relay/'+encodeURIComponent(r.id),{method:'DELETE'})}catch(e){}
+}
+async function relayStart(kind,payload,replaces){
+  const r=await fetch('/ask/relay',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({kind,[kind]:payload,replaces})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.detail||r.statusText);
+  return d.id;
+}
+// listen to a job until its end; resolves with the end ({state, reason}),
+// never rejects. `on.result`, `on.delta` get the job's own events.
+function relayListen(kind,id,on){
+  if(relays[kind]&&relays[kind].es)relays[kind].es.close();
+  return new Promise(resolve=>{
+    const es=new EventSource('/ask/relay/'+encodeURIComponent(id)+'/events');
+    const rec={id,es,ended:false}; relays[kind]=rec; relaySave();
+    let lost=false;
+    const finish=d=>{if(rec.ended)return; rec.ended=true; es.close(); relaySave(); resolve(d)};
+    es.addEventListener('status',e=>{
+      const s=JSON.parse(e.data);
+      if(lost){lost=false; relayNote(''); toast('reconnected — the '+kind+' kept running on the node')}
+      if(s.stuck)relayStuck(kind,s);
+    });
+    es.addEventListener('result',e=>{on.result&&on.result(JSON.parse(e.data))});
+    es.addEventListener('delta',e=>{on.delta&&on.delta(JSON.parse(e.data).text)});
+    es.addEventListener('stuck',e=>relayStuck(kind,JSON.parse(e.data)));
+    es.addEventListener('moving',()=>relayNote(''));
+    es.addEventListener('end',e=>{
+      const d=JSON.parse(e.data);
+      if(d.state==='done')relayNote(''); else relayDropped(kind,d.reason);
+      finish(d);
+    });
+    es.onerror=()=>{
+      if(rec.ended)return;
+      if(es.readyState===EventSource.CLOSED){
+        // refused (404): the node no longer holds the question
+        relayDropped(kind,'the node no longer holds it (it restarted, or the question ended long ago)');
+        finish({state:'dropped'}); return;
+      }
+      lost=true;
+      relayNote('connection to the node lost — reconnecting; the '+kind+' keeps running there.');
+    };
+  });
+}
+function showResults(d){
+  // the answer is written from THIS search (one question, one search)
+  lastSearch=d.search_id;
+  document.getElementById('results').innerHTML=d.html;
+  wireHits();
+  applyLanguage();
+}
 async function search(){
   const q=document.getElementById('q').value.trim(); if(!q)return false;
   // the node's model answers one request at a time: a translation still
@@ -201,18 +294,39 @@ async function search(){
   document.getElementById('answer-pane').style.display='none';
   document.getElementById('answer').textContent='';
   document.getElementById('results').innerHTML='<div class="note">searching…</div>';
-  const r=await fetch('/ask/query',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({query:q,collections:scopeCollections(),annotations:scopeAnnotations(),
-                         mode:document.getElementById('mode').value,
-                         show_in:selectedLang(),...counts()})});
-  // the answer is written from THIS search (one question, one search)
-  lastSearch=r.headers.get('X-Louise-Search');
-  document.getElementById('results').innerHTML=await r.text();
-  wireHits();
-  applyLanguage();
-  return true;
+  relayNote('');
+  // a new question replaces this page's questions still running
+  const replaces=['search','answer'].map(k=>relays[k]).filter(r=>r&&!r.ended).map(r=>r.id);
+  for(const k of ['search','answer'])if(relays[k]){if(relays[k].es)relays[k].es.close(); relays[k]=null}
+  let id;
+  try{
+    id=await relayStart('search',{query:q,collections:scopeCollections(),annotations:scopeAnnotations(),
+                                  mode:document.getElementById('mode').value,
+                                  show_in:selectedLang(),...counts()},replaces);
+  }catch(e){
+    document.getElementById('results').innerHTML='';
+    relayDropped('search','it could not start ('+(e.message||e)+')'); return false;
+  }
+  relayState={q}; relaySave();
+  let got=false;
+  const end=await relayListen('search',id,{result:d=>{showResults(d); got=true}});
+  if(!got){document.getElementById('results').innerHTML=''; return false}
+  return end.state==='done';
 }
 let lastSearch=null;
+function startAnswer(){
+  const pane=document.getElementById('answer-pane'), a=document.getElementById('answer');
+  pane.style.display='block'; a.textContent='thinking…';
+  let started=false;
+  return {pane,a,delta:t=>{if(!started){a.textContent='';started=true} a.textContent+=t}};
+}
+function finishAnswer(a,want){
+  // the answer AS GENERATED, so a later switch has something to translate
+  // and switching back to "original" restores it byte for byte
+  if(a.textContent==='thinking…')a.textContent='';
+  answerRaw=a.textContent; answerLang=want; answerShown=want;
+  linkCitations();
+}
 async function ask(){
   const want=selectedLang();
   // THE ANSWER BEFORE THE ENTRIES (operator, 2026-10-21: the answer box
@@ -224,28 +338,50 @@ async function ask(){
   try{
   if(!await search())return;
   const q=document.getElementById('q').value.trim();
-  const pane=document.getElementById('answer-pane'), a=document.getElementById('answer');
-  pane.style.display='block'; a.textContent='thinking…';
+  const {pane,a,delta}=startAnswer();
   // an answer was asked for: it starts where the reader can see its first word
   pane.scrollIntoView({block:'start'});
-  const r=await fetch('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({messages:[{role:'user',content:q}],stream:true,collections:scopeCollections(),
-                         annotations:scopeAnnotations(),answer_lang:want,search_id:lastSearch,...counts()})});
-  const reader=r.body.getReader(); const dec=new TextDecoder(); a.textContent=''; let buf='';
-  for(;;){const {done,value}=await reader.read(); if(done)break;
-    buf+=dec.decode(value,{stream:true});
-    let i; while((i=buf.indexOf('\n\n'))>=0){
-      const line=buf.slice(0,i).trim(); buf=buf.slice(i+2);
-      if(!line.startsWith('data:'))continue;
-      const data=line.slice(5).trim(); if(data==='[DONE]')continue;
-      try{const j=JSON.parse(data); a.textContent+=j.choices[0].delta.content||''}catch(e){}
-    }}
-  // the answer AS GENERATED, so a later switch has something to translate
-  // and switching back to "original" restores it byte for byte
-  answerRaw=a.textContent; answerLang=want; answerShown=want;
-  linkCitations();
+  let id;
+  try{
+    id=await relayStart('answer',{messages:[{role:'user',content:q}],collections:scopeCollections(),
+                                  annotations:scopeAnnotations(),answer_lang:want,search_id:lastSearch,
+                                  ...counts()},[]);
+  }catch(e){a.textContent=''; relayDropped('answer','it could not start ('+(e.message||e)+')'); return}
+  relaySave({answer_lang:want});
+  await relayListen('answer',id,{delta});
+  finishAnswer(a,want);
   }finally{tq.hold=false}
   tqPump();              // the entries, now that the answer is out
+}
+// A RELOAD PICKS THE QUESTION UP AGAIN: the tab's last search and answer,
+// from the node, replayed from their first event — still running or
+// finished. A question the node no longer holds is said only if it was
+// still running when the page left (a finished one simply expired).
+async function relayRestore(){
+  let s=null; try{s=JSON.parse(sessionStorage.getItem(RELAY_STORE)||'null')}catch(e){}
+  if(!s||!s.search||!s.search.id)return;
+  relayState=s;
+  const held=async j=>{try{return (await fetch('/ask/relay/'+encodeURIComponent(j.id))).ok}catch(e){return false}};
+  if(!await held(s.search)){
+    try{sessionStorage.removeItem(RELAY_STORE)}catch(e){}
+    if(!s.search.ended||(s.answer&&!s.answer.ended))
+      relayDropped(s.answer&&!s.answer.ended?'answer':'search','the node no longer holds it (it restarted while the page was away)');
+    return;
+  }
+  document.getElementById('q').value=s.q||'';
+  document.getElementById('results').innerHTML='<div class="note">picking up the last question…</div>';
+  tq.hold=!!s.answer;
+  try{
+    let got=false;
+    await relayListen('search',s.search.id,{result:d=>{showResults(d); got=true}});
+    if(!got){document.getElementById('results').innerHTML=''; return}
+    if(s.answer&&s.answer.id){
+      const {a,delta}=startAnswer();
+      await relayListen('answer',s.answer.id,{delta});
+      finishAnswer(a,s.answer_lang===undefined?selectedLang():s.answer_lang);
+    }
+  }finally{tq.hold=false}
+  tqPump();
 }
 // ---- translated content -------------------------------------------------
 //
@@ -825,5 +961,6 @@ function linkCitations(){
     if(h)openReader(h.dataset.collection,h.dataset.book,h.dataset.cid,h.dataset.title)}});
 }
 wireHits();
+relayRestore();
 </script>
 {% endblock %}

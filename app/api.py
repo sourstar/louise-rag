@@ -1122,12 +1122,16 @@ def source_entries(hits: list[dict]) -> list[dict]:
     return out
 
 
-def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
-    con = _con()   # query_log lives in the default collection's manifest regardless
+def _answer_messages(body: ChatBody, query: str, result: dict) -> list[dict]:
     messages = retrieval.build_answer_messages(query, result, answer_lang=body.answer_lang)
     # keep prior turns for conversational context (before the sources turn)
     history = [m for m in body.messages[:-1] if m.get("role") in ("user", "assistant")]
-    messages = [messages[0]] + history[-6:] + [messages[1]]
+    return [messages[0]] + history[-6:] + [messages[1]]
+
+
+def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
+    con = _con()   # query_log lives in the default collection's manifest regardless
+    messages = _answer_messages(body, query, result)
     rid = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     if not body.stream:
@@ -1146,93 +1150,120 @@ def _chat_answer(body: ChatBody, query: str, result: dict, t0: float):
             out["louise_sources"] = source_entries(result["hits"])
         return out
 
+    def chunk(delta: str) -> str:
+        return "data: " + json.dumps({
+            "id": rid, "object": "chat.completion.chunk", "created": int(time.time()),
+            "model": body.model,
+            "choices": [{"index": 0, "delta": {"content": delta},
+                         "finish_reason": None}]}) + "\n\n"
+
     def sse():
-        # THE ANSWER'S STREAM, RELAYED FROM A THREAD (2026-10-13: "the answer
-        # was cut", and nothing had recorded how it ended). `pump` reads the
-        # endpoint, so this generator never blocks longer than KEEPALIVE_S:
-        # while nothing has arrived — the cold start, the prompt, a model
-        # that thinks before it writes — an SSE comment goes out instead,
-        # which the page ignores and anything on the way counts as traffic.
-        # And the stream's END is said: an answer the endpoint capped, failed
-        # or closed early gets a visible note and a warn line, where before
-        # it ended exactly like a whole one. Every answer gets one log line
-        # with its size and timing, so the next report has a measurement.
-        q: queue.Queue = queue.Queue()
-        stop = threading.Event()
-
-        def pump() -> None:
-            try:
-                it = llm.chat_stream(messages, temperature=body.temperature)
-                while not stop.is_set():
-                    try:
-                        q.put(("delta", next(it)))
-                    except StopIteration as s:
-                        q.put(("end", s.value))
-                        return
-                it.close()          # the reader left: the endpoint stops writing
-            except BaseException as e:      # noqa: BLE001 — said to the reader below
-                q.put(("error", e))
-        threading.Thread(target=contextvars.copy_context().run, args=(pump,),
-                         name="chat-stream", daemon=True).start()
-
-        def chunk(delta: str) -> str:
-            return "data: " + json.dumps({
-                "id": rid, "object": "chat.completion.chunk", "created": int(time.time()),
-                "model": body.model,
-                "choices": [{"index": 0, "delta": {"content": delta},
-                             "finish_reason": None}]}) + "\n\n"
-
-        chars = 0
-        first: float | None = None
-        why: str | None = None
-        if body.sources:
-            # before the first word: an OpenAI client ignores the extra key
-            yield "data: " + json.dumps({
-                "id": rid, "object": "chat.completion.chunk", "created": int(time.time()),
-                "model": body.model, "choices": [{"index": 0, "delta": {}, "finish_reason": None}],
-                "louise_sources": source_entries(result["hits"])}, default=str) + "\n\n"
+        # the OpenAI framing of `answer_parts`, which the Ask page's relay
+        # reads too (app/relay.py): one path from the model to every reader
+        parts = answer_parts(body, query, result, t0, messages=messages, con=con)
         try:
-            while True:
-                try:
-                    kind, value = q.get(timeout=KEEPALIVE_S)
-                except queue.Empty:
+            for kind, value in parts:
+                if kind == "sources":
+                    # before the first word: an OpenAI client ignores the extra key
+                    yield "data: " + json.dumps({
+                        "id": rid, "object": "chat.completion.chunk", "created": int(time.time()),
+                        "model": body.model, "choices": [{"index": 0, "delta": {}, "finish_reason": None}],
+                        "louise_sources": value}, default=str) + "\n\n"
+                elif kind == "keepalive":
                     yield ": keepalive\n\n"
-                    continue
-                if kind == "delta":
-                    if first is None:
-                        first = time.time() - t0
-                    chars += len(value)
+                elif kind == "delta":
                     yield chunk(value)
-                    continue
-                if kind == "error":
-                    why = f"the endpoint failed ({type(value).__name__}: {value})"
-                elif value is None or not value.whole:
-                    why = value.why() if value is not None else "the stream said no end"
-                break
-        except GeneratorExit:
-            stop.set()
-            raise
-        secs = time.time() - t0
-        if why is not None:
-            yield chunk(f"\n[answer cut: {why}]")
-            db.log_event(con, "warn", "chat",
-                         f"answer cut after {chars} chars, {secs:.1f} s: {why}")
-        elif first is None:
-            db.log_event(con, "info", "chat", f"answer: empty, {secs:.1f} s")
-        else:
-            db.log_event(con, "info", "chat",
-                         f"answer: {chars} chars in {secs:.1f} s, first word at {first:.1f} s")
-        done = {"id": rid, "object": "chat.completion.chunk",
-                "created": int(time.time()), "model": body.model,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
-        yield f"data: {json.dumps(done)}\n\n"
-        yield "data: [DONE]\n\n"
-        timings = dict(result["timings"])
-        timings["total"] = round((time.time() - t0) * 1000, 1)
-        db.log_query(con, "chat", query, "hybrid", body.limit, timings,
-                     len(result["hits"]), _source_qualified_ids(result["hits"]))
+                elif kind == "cut":
+                    yield chunk(f"\n[answer cut: {value}]")
+            done = {"id": rid, "object": "chat.completion.chunk",
+                    "created": int(time.time()), "model": body.model,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+            yield f"data: {json.dumps(done)}\n\n"
+            yield "data: [DONE]\n\n"
+        finally:
+            parts.close()           # the reader left: the model stops writing
 
     return StreamingResponse(sse(), media_type="text/event-stream")
+
+
+def answer_parts(body: ChatBody, query: str, result: dict, t0: float, *,
+                 messages: list[dict] | None = None, con=None):
+    """The answer as it comes from the model: ("sources", entries) first when
+    asked, then ("delta", text) and ("keepalive", None) while nothing has
+    arrived for KEEPALIVE_S, and ("cut", why) when the stream ended short.
+    The answer's log lines are written at its end. Closing the generator
+    stops the model writing.
+
+    THE ANSWER'S STREAM, RELAYED FROM A THREAD (2026-10-13: "the answer
+    was cut", and nothing had recorded how it ended). `pump` reads the
+    endpoint, so this generator never blocks longer than KEEPALIVE_S: while
+    nothing has arrived — the cold start, the prompt, a model that thinks
+    before it writes — a keepalive goes out instead, which the page ignores
+    and anything on the way counts as traffic. And the stream's END is said:
+    an answer the endpoint capped, failed or closed early gets a visible
+    note and a warn line, where before it ended exactly like a whole one.
+    Every answer gets one log line with its size and timing, so the next
+    report has a measurement."""
+    con = con if con is not None else _con()
+    messages = messages if messages is not None else _answer_messages(body, query, result)
+    q: queue.Queue = queue.Queue()
+    stop = threading.Event()
+
+    def pump() -> None:
+        try:
+            it = llm.chat_stream(messages, temperature=body.temperature)
+            while not stop.is_set():
+                try:
+                    q.put(("delta", next(it)))
+                except StopIteration as s:
+                    q.put(("end", s.value))
+                    return
+            it.close()          # the reader left: the endpoint stops writing
+        except BaseException as e:      # noqa: BLE001 — said to the reader below
+            q.put(("error", e))
+    threading.Thread(target=contextvars.copy_context().run, args=(pump,),
+                     name="chat-stream", daemon=True).start()
+
+    chars = 0
+    first: float | None = None
+    why: str | None = None
+    if body.sources:
+        yield ("sources", source_entries(result["hits"]))
+    try:
+        while True:
+            try:
+                kind, value = q.get(timeout=KEEPALIVE_S)
+            except queue.Empty:
+                yield ("keepalive", None)
+                continue
+            if kind == "delta":
+                if first is None:
+                    first = time.time() - t0
+                chars += len(value)
+                yield ("delta", value)
+                continue
+            if kind == "error":
+                why = f"the endpoint failed ({type(value).__name__}: {value})"
+            elif value is None or not value.whole:
+                why = value.why() if value is not None else "the stream said no end"
+            break
+    except GeneratorExit:
+        stop.set()
+        raise
+    secs = time.time() - t0
+    if why is not None:
+        yield ("cut", why)
+        db.log_event(con, "warn", "chat",
+                     f"answer cut after {chars} chars, {secs:.1f} s: {why}")
+    elif first is None:
+        db.log_event(con, "info", "chat", f"answer: empty, {secs:.1f} s")
+    else:
+        db.log_event(con, "info", "chat",
+                     f"answer: {chars} chars in {secs:.1f} s, first word at {first:.1f} s")
+    timings = dict(result["timings"])
+    timings["total"] = round((time.time() - t0) * 1000, 1)
+    db.log_query(con, "chat", query, "hybrid", body.limit, timings,
+                 len(result["hits"]), _source_qualified_ids(result["hits"]))
 
 
 # LAST: every command of the tree as one route (07 §7.4, app/api_commands.py).

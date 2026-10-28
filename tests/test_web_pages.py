@@ -1009,7 +1009,7 @@ def test_ask_writes_the_answer_before_translating_the_entries(client):
     body = js[js.index("async function ask()"):]
     hold = body.index("tq.hold=true")
     search = body.index("await search()")
-    answer = body.index("fetch('/v1/chat/completions'")
+    answer = body.index("relayStart('answer'")         # through the relay (app/relay.py)
     release = body.index("tq.hold=false")
     entries = body.index("tqPump();")
     assert hold < search < answer < release < entries
@@ -1019,7 +1019,7 @@ def test_a_new_search_or_switch_stops_the_translation_in_flight(client):
     js = client.get("/ask").text
     assert "langAbort.abort()" in js and "signal:ctl.signal" in js
     search = js[js.index("async function search()"):js.index("async function ask()")]
-    assert search.index("stopTranslating()") < search.index("fetch('/ask/query'"), \
+    assert search.index("stopTranslating()") < search.index("relayStart('search'"), \
         "the model is freed before the search needs it"
 
 

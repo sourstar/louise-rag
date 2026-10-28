@@ -756,3 +756,67 @@ def test_the_records_build_takes_the_whole_quota_unless_told(monkeypatch):
     assert config.build_parse_processes() == 4
     monkeypatch.setenv("PARSE_PROCESSES", "2")
     assert config.build_parse_processes() == 2, "an operator's setting wins"
+
+
+# ---- an idle pool gives its memory back (München, 2026-10-28) --------------
+#
+# Twelve children held 10.8 GiB, idle and resident 26-42 minutes after the
+# quiet profile stopped parsing and through a pause; wikipedia-v8's first
+# snapshot could not start beside them. The beat thread now releases a pool
+# nobody has been inside for PARSE_IDLE_RELEASE_S.
+
+def test_an_idle_pool_is_released_and_its_children_end(isolated_config, tmp_path, corpus_dir,
+                                                       two_processes):
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    assert parallel.chunks_for_rows(c, rows[:4])          # a real pool, with children
+    ex = parallel._pool
+    children = list(ex._processes.values())
+    assert children and all(p.is_alive() for p in children)
+    now = time.monotonic()
+    assert parallel.release_idle(600.0, now=now) == 0, "just used: not idle"
+    assert parallel.release_idle(0, now=now + 10_000) == 0, "0 keeps the pool for the process's life"
+    assert parallel.release_idle(600.0, now=now + 601) == 2
+    assert parallel._pool is None and not parallel.health()["pool"]
+    for p in children:
+        p.join(5)
+    assert not any(p.is_alive() for p in children), "the children ended: their memory is back"
+    # the next parse starts a fresh pool and computes the same chunks
+    again = parallel.chunks_for_rows(c, rows[:4])
+    assert parallel._pool is not None and parallel._pool is not ex
+    assert again == parallel._compute("chunks", c, rows[:4])
+
+
+def test_a_pool_with_a_caller_inside_is_never_released(monkeypatch):
+    """A batch inside `compute`/`compute_pages`, or a slot held, is use —
+    however long it lasts (a paused records build waits inside its stream)."""
+    stopped = []
+
+    class Pool:
+        def shutdown(self, wait=True, cancel_futures=False):
+            stopped.append(True)
+
+    monkeypatch.setattr(parallel, "_pool", Pool())
+    monkeypatch.setattr(parallel, "_pool_size", 11)
+    parallel.forget_users()
+    parallel._want("wikipedia", 1)
+    later = time.monotonic() + 10_000
+    assert parallel.release_idle(600.0, now=later) == 0, "a caller is inside"
+    parallel._want("wikipedia", -1)
+    parallel._occupy("wikipedia", 1)
+    assert parallel.release_idle(600.0, now=later) == 0, "a slot is held"
+    parallel._occupy("wikipedia", -1)
+    assert parallel.release_idle(600.0, now=time.monotonic()) == 0, "the caller just left"
+    assert parallel.release_idle(600.0, now=later) == 11 and stopped == [True]
+    assert parallel._pool is None
+
+
+def test_the_worker_beat_releases_the_pool_and_says_so(monkeypatch):
+    """The call sits on the beat thread beside the shares line (telemetry-
+    shaped work, never a pipeline thread), and a release is one log line."""
+    import inspect
+    src = inspect.getsource(worker)
+    beat = src[src.index("_log_shares(con, [c.manifest_path for c in collections])"):]
+    beat = beat[:beat.index("except Exception")]
+    assert "parallel.release_idle(config.PARSE_IDLE_RELEASE_S)" in beat
+    assert "parse pool released:" in beat
+    assert config.PARSE_IDLE_RELEASE_S == 600.0

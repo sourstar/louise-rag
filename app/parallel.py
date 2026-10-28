@@ -47,6 +47,9 @@ _pool: ProcessPoolExecutor | None = None
 _pool_size = 0
 _failures = 0
 _disabled = False
+#: when a caller last asked for the pool or left it (monotonic): the
+#: start of its idleness for `release_idle`. Under `_held_lock`.
+_last_active = time.monotonic()
 #: executors this process has thrown away: a failure surfacing from one of
 #: them later is not a new failure of the pool (`_note_failure`)
 _discarded: "weakref.WeakSet[ProcessPoolExecutor]" = weakref.WeakSet()
@@ -192,9 +195,46 @@ def pool() -> ProcessPoolExecutor | None:
                 max_tasks_per_child=max(1, int(config.PARSE_TASKS_PER_CHILD)))
             _pool_size = n
         ex = _pool
+    _touch()
     if old is not None:
         discard(old)
     return ex
+
+
+def _touch() -> None:
+    global _last_active
+    with _held_lock:
+        _last_active = time.monotonic()
+
+
+def release_idle(idle_s: float, *, now: float | None = None) -> int:
+    """The pool stopped (`discard`) when nobody has been inside it for
+    `idle_s` seconds: no batch in `compute`/`compute_pages`, no slot held,
+    and no `pool()` call meanwhile. Returns how many children it had (0 when
+    nothing was released). The next `pool()` starts a fresh one.
+
+    WHY (München, 2026-10-28): the children keep the plugin caches they grew
+    while parsing — 12 of them held 10.8 GiB, idle and resident for 26-42
+    minutes after the node's quiet profile stopped parsing and through a
+    pause, and wikipedia-v8's first snapshot could not start beside them. A
+    pause stops the work, not the memory. Called by the worker's beat thread
+    (telemetry-shaped, never a pipeline thread); a prefetch in flight is
+    cancelled with the pool, and the stage that needed it pays later, as a
+    failed prefetch always did. loky's reusable executor shuts idle workers
+    down the same way (its `timeout`); this pool stays the standard
+    library's, with the gh-115634 fix above."""
+    global _pool, _pool_size
+    if idle_s <= 0:
+        return 0
+    with _lock:
+        with _held_lock:
+            busy = bool(_wanting) or bool(_held)
+            idle_for = (time.monotonic() if now is None else now) - _last_active
+        if _pool is None or busy or idle_for < idle_s:
+            return 0
+        ex, n, _pool, _pool_size = _pool, _pool_size, None, 0
+    discard(ex)
+    return n
 
 
 def shutdown() -> None:
@@ -476,7 +516,9 @@ def _occupy(name: str | None, delta: int) -> None:
 
 
 def _want(name: str | None, delta: int) -> None:
+    global _last_active
     with _held_lock:
+        _last_active = time.monotonic()     # entering or leaving: not idle now
         got = _wanting.get(name, 0) + delta
         if got > 0:
             _wanting[name] = got

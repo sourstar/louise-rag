@@ -21,6 +21,8 @@ them (pause/resume, per-collection reset, rescan) stay frictionless
 one-click calls with no CLI-equivalent string in their modal, rather than
 fabricating one.
 """
+import asyncio
+import contextlib
 import json
 import re
 from collections import OrderedDict
@@ -44,7 +46,7 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from . import (auth, cancel, collections as collections_mod, config, db, discovery, gpu, llm,
-                node_state, platform_config, query_service, reader, retrieval, spaces)
+                node_state, platform_config, query_service, reader, relay, retrieval, spaces)
 from . import translate as mt
 from . import collection_file
 # the collection file's one writer, moved to app/collection_file.py (2026-10-25);
@@ -752,6 +754,153 @@ async def ask_query(request: Request, body: AskQueryBody):
     resp = TEMPLATES.TemplateResponse(request, "_ask_results.html", {"result": result})
     resp.headers["X-Louise-Search"] = keep_search(body.query, result)
     return resp
+
+
+# ---- the relay: the page's questions as jobs (operator, 2026-10-28) ----------
+#
+# "Prepare a web proxy so that the web gui session is not reset by the
+# browser dropping a query. Also if the query is stuck or dropped I should
+# see a notification in the gui." The page starts a job here and listens to
+# it as Server-Sent Events; a connection the browser drops is picked up
+# again where it stopped (`Last-Event-ID`), a reload finds the job again, and
+# a job that is stuck or dropped says so (app/relay.py). /ask/query and
+# /v1/chat/completions stay as they are for every other client.
+
+class RelayBody(BaseModel):
+    kind: str = Field(pattern="^(search|answer)$")
+    search: AskQueryBody | None = None
+    answer: dict | None = None          # /v1/chat/completions' body (api.ChatBody)
+    replaces: list[str] = []            # this page's earlier jobs, cancelled first
+
+
+def _relay_owner(request: Request) -> str:
+    v = getattr(request.state, "viewer", None)
+    return f"{v.role}:{v.name}" if v is not None else "nobody"
+
+
+def _relay_search(job: relay.Job, body: AskQueryBody) -> None:
+    result = _ask_result(body)
+    html = TEMPLATES.env.get_template("_ask_results.html").render(result=result)
+    job.emit("result", html=html, search_id=keep_search(body.query, result),
+             hits=len(result.get("hits") or []))
+
+
+def _relay_answer(job: relay.Job, chat) -> None:
+    """The answer as /v1/chat/completions writes it (`api.answer_parts`), its
+    words relayed as `delta` events. Each word is progress; a keepalive is
+    not (a model that writes nothing for STUCK_S is stuck)."""
+    from . import api
+    user = [m for m in chat.messages if m.get("role") == "user"]
+    if not user:
+        raise ValueError("no user message")
+    query = api._text_of(user[-1].get("content", ""))
+    t0 = time.time()
+    kept = kept_search(chat.search_id, query)
+    if kept is not None:
+        result = {**kept, "timings": {"total": 0.0, "search": "reused"}}
+    else:
+        result = api._run_search(
+            api.collections_for_model(chat.model, chat.collections), query, chat.limit, "hybrid", True,
+            verify=chat.verify, rerank_depth=chat.rerank_depth, all_languages=chat.all_languages,
+            **({"show_in": chat.answer_lang} if chat.answer_lang else {}),
+            **({"annotations": chat.annotations} if chat.annotations is not None else {}))
+    job.touch("answer: waiting for the model")
+    with contextlib.closing(api.answer_parts(chat, query, result, t0)) as parts:
+        for kind, value in parts:
+            job.token.check()               # cancelled: closing() stops the model writing
+            if kind == "delta":
+                job.touch("answer")
+                job.emit("delta", text=value)
+            elif kind == "cut":
+                job.emit("delta", text=f"\n[answer cut: {value}]")
+                job.emit("cut", why=value)
+
+
+@ask_router.post("/ask/relay")
+def relay_start(request: Request, body: RelayBody):
+    """Start the page's search or answer as a job; `{"id"}` to listen to."""
+    owner = _relay_owner(request)
+    if body.kind == "search":
+        if body.search is None:
+            raise HTTPException(422, "a search job needs `search`")
+        q = body.search
+        job = relay.start("search", owner, lambda j: _relay_search(j, q), label=q.query,
+                          replaces=body.replaces)
+    else:
+        from .api import ChatBody
+        try:
+            chat = ChatBody(**{**(body.answer or {}), "stream": True})
+        except Exception as e:   # noqa: BLE001 — pydantic's message, to the page
+            raise HTTPException(422, f"an answer job needs /v1/chat/completions' body: {e}")
+        job = relay.start("answer", owner, lambda j: _relay_answer(j, chat),
+                          label=str((chat.messages or [{}])[-1].get("content", ""))[:80],
+                          replaces=body.replaces)
+    return {"id": job.id}
+
+
+def _relay_job(request: Request, job_id: str) -> relay.Job:
+    job = relay.get(job_id, _relay_owner(request))
+    if job is None:
+        raise HTTPException(404, "the node does not hold this question: it restarted, or the "
+                                 f"question ended more than {relay.KEEP_S / 60:.0f} minutes ago")
+    return job
+
+
+@ask_router.get("/ask/relay/{job_id}")
+def relay_status(request: Request, job_id: str):
+    return _relay_job(request, job_id).status()
+
+
+@ask_router.delete("/ask/relay/{job_id}")
+def relay_cancel(request: Request, job_id: str):
+    _relay_job(request, job_id)
+    return {"cancelled": relay.cancel_job(job_id, _relay_owner(request), "cancelled by the reader")}
+
+
+def _sse(seq: int | None, kind: str, data: dict) -> str:
+    return ((f"id: {seq}\n" if seq is not None else "") + f"event: {kind}\n"
+            + "data: " + json.dumps(data, ensure_ascii=False, default=str) + "\n\n")
+
+
+#: how often the events stream looks at its job, and sends a comment when
+#: it has had nothing to say, so nothing on the way thinks it idle
+RELAY_POLL_S = 0.25
+RELAY_KEEPALIVE_S = 5.0
+
+
+@ask_router.get("/ask/relay/{job_id}/events")
+async def relay_events(request: Request, job_id: str, after: int = 0):
+    """The job's events from the one after `Last-Event-ID` (the browser's
+    reconnect) or `after`. First a `status` without an id — where the job
+    stands now, never replayed — then every event with its number; the
+    stream ends with the job's `end`. The job keeps running when this
+    connection goes; it is cancelled only when nobody has listened for
+    relay.GRACE_S."""
+    job = _relay_job(request, job_id)
+    last = request.headers.get("last-event-id", "")
+    start_at = int(last) if last.strip().isdigit() else max(0, after)
+
+    async def gen():
+        seq, quiet = start_at, 0.0
+        job.attach()
+        try:
+            yield "retry: 2000\n\n" + _sse(None, "status", job.status())
+            while True:
+                for ev in job.since(seq):
+                    yield _sse(ev.seq, ev.kind, ev.data)
+                    seq, quiet = ev.seq, 0.0
+                if job.state != relay.RUNNING and seq >= job.last_seq:
+                    return
+                await asyncio.sleep(RELAY_POLL_S)
+                quiet += RELAY_POLL_S
+                if quiet >= RELAY_KEEPALIVE_S:
+                    yield ": keepalive\n\n"
+                    quiet = 0.0
+        finally:
+            job.detach()
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # ONE QUESTION, ONE SEARCH (München, 2026-10-22, measured on the node: the

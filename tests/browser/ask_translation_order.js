@@ -43,6 +43,16 @@ const hitOf = t => { const m = t.trim().match(/^(?:<|R|Title |Chapter |Book |Par
     const u = new URL(req.url);
     if (u.pathname === '/ask') return req.respond({ status: 200, contentType: 'text/html', body: file('ask.html') });
     if (u.pathname === '/ask/query') return req.respond({ status: 200, contentType: 'text/html', body: file('results.html') });
+    // the page's search goes through the relay (app/relay.py): one job, its result, its end
+    if (u.pathname === '/ask/relay' && req.method === 'POST')
+      return req.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 's1' }) });
+    if (u.pathname === '/ask/relay/s1/events')
+      return req.respond({ status: 200, contentType: 'text/event-stream', body:
+        'retry: 50\n\nevent: status\ndata: {"state":"running"}\n\n'
+        + 'id: 1\nevent: result\ndata: ' + JSON.stringify({ html: file('results.html'), search_id: 'x' }) + '\n\n'
+        + 'id: 2\nevent: end\ndata: {"state":"done","reason":""}\n\n' });
+    if (u.pathname === '/ask/relay/s1')
+      return req.respond({ status: 200, contentType: 'application/json', body: '{"state":"done"}' });
     let m = u.pathname.match(/^\/read\/c\/(\d+)\/screen$/);
     if (m) return req.respond({ status: 200, contentType: 'application/json', body: file(`screen_${m[1]}.json`) });
     m = u.pathname.match(/^\/read\/c\/(\d+)$/);
