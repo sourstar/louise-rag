@@ -18,6 +18,22 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 20:40 (München, relayed). WIKIPEDIA-V8'S FIRST SNAPSHOT EXISTS.**
+`[snapshot create] wikipedia-v8: 2026-09 — 74811753 records, 267178070
+chunks, 37501 shard(s), hash sha256:0100e7b9736ca41f53f2f00780f696ab0c541122f636b8233190fd25626b83af`,
+signed by the node's key. Exit 0, 39 min 15 s (17:54:10–18:33:25Z), peak
+7.6 GiB under the 16 GB cap, on ef7b6f7 (the uids-only delta). The file is
+1,896,867,042 bytes (2026-09.json; its delta lists every record), the
+signature beside it, no temporary left. Next: the worker's scheduled check
+(gated by the node's mode, not the cpu profile: within one 600 s beat),
+then `hold collection show`, then the deploy of 5d01178. The old
+`wikipedia` is untouched. ALSO this evening (the operator's question,
+"gutenberg is 23 seconds from the end … only 3 entries"): nothing stuck —
+the mirror changed book 36037 and added 79875 and 79876 at ~17:00 CET; they
+wait for parsing, which the quiet profile pauses until 22:30, and then
+embed. The Library's "23 s" is the embedding of their chunks, which cannot
+start before the parse: a display defect, offered to the operator.
+
 **2026-10-28 20:00 (München, relayed). WIKIPEDIA-V8'S SNAPSHOT, SECOND TRY.**
 The operator chose the leaner code and a running node: ef7b6f7 deployed
 16:47–16:50Z, the node resumed 16:50:51Z (quiet profile to 22:30), 35 GB
