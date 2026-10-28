@@ -18,6 +18,21 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 15:00 (München, relayed). MADLAD SWITCHED TO llama.cpp, AND IT
+STAYS.** The third A1 (12:21–12:43; the same 60 questions through /api/search,
+gutenberg one at a time, the gutenberg corpus embedding on the card in both
+passes — MORE load during the GGUF pass, 1,168 embedding calls against 970):
+translation median 1.44 s against torch's 1.85 (−22 %), p90 2.21 against 2.57
+(−14 %); search total 10.07 against 11.08 s; 60/60 answered; 342/381
+translations identical to torch, 59/60 the same top hit, 56/60 the same
+twelve; waves 6 slots ×43, 7 ×21, none split. Criterion (a median gain, p90
+not worse) met. `louise-translate-madlad` = the GGUF F16 on
+`vega-llama-cpp-t5` (engine c68167b65cb0, P1–P5), the deployed YAML
+byte-identical to main d372ba5's stage file; the torch model kept as
+`louise-translate-madlad-torch` (backout = one copy and a reload). The node
+stays paused (MADLAD only, operator 09:51) until the operator lifts it.
+Cleanup of the test backends and models: architecture's call (below).
+
 **2026-10-28 14:30 (München, relayed).** P5 TAR GATED GREEN ON THE F16 CACHE:
 `louise-llama-cpp-sycl_f16-c68167b65cb0.tar` (P1–P5) installed as
 `vega-llama-cpp-t5`; MADLAD with the default F16 cache: T4 379/379 = P3's
