@@ -335,6 +335,39 @@ fails, what it touches here, the workaround, where it is recorded.
 | LocalAI's memory reclaimer | memory held by another process evicts every model, one per 500 ms | the shared card | pinned off | localai-bugs.md B4 |
 | **upstream, not seen here** | reorder/OPT corruption of quantized models (llama.cpp #21893; `GGML_SYCL_ENABLE_OPT=0`); fused XMX dequant-GEMM NaNs since #29107 for K- and IQ-quants (#30892, fixed by #30604; else `GGML_SYCL_XMX_GATHER_TYPES=0`) — F16 weights never enter that path; flash-attention corruption (#19276 on an Xe2 iGPU; #30624 sparse FA at long context) — T5 cannot use FA; device-lost and reset storms under sustained load (compute-runtime #966; `SYCL_UR_USE_LEVEL_ZERO_V2=0`, PCIe Gen4, a 1,000 W PSU); compute-runtime 26.27 with a level-zero loader before 1.32 segfaults llama.cpp (#972); hybrid models' gibberish (#24168); no scaling with parallel slots (a speed limit: Jonathan Mann's B70 benchmarks) | our models are F16 and never quantized; our driver is 26.05 | pin the driver to a measured version; keep `parallel:1` where bit-exactness is required | this row |
 
+## Bugs against arithmetic order (2026-10-28)
+
+*Operator, 2026-10-28: "Note the implementations to avoid future mistakes."
+A difference between two runs is one of two things, and only one of them
+is a defect. The test is: is the answer WRONG, or only different in the
+last bits? Wrong = finite values unrelated to the right ones (NMSE far
+above the tolerance), a softmax outside [0, 1], a NaN, text that is not a
+translation. Order = valid values that differ in the last bits because the
+arithmetic was summed in another order. The first is reported upstream and
+sidestepped; the second is controlled by invariant 12's modes and never
+filed as a bug.*
+
+**Actual bugs met in this project, and their upstream status (checked
+2026-10-28):**
+
+| bug | layer | upstream | what we do |
+|---|---|---|---|
+| F16×F32 batched matmul wrong when `a` is not contiguous across its batch dims (the KQ product over the F16 K cache for two or more decoder tokens; upstream's own `test-backend-ops` suite fails 32 cases on the B70) | Intel's SYCL stack under `ggml_sycl_mul_mat_batched_sycl` — oneMKL's `gemm_batch` with pointer arrays, or the compiler/runtime beneath it; not attributed | **not reported.** Nearest: ggml-org/llama.cpp #27771 (bf16, `bs=[1,3]`, permuted operand, Arc 140T: an oneDNN 2-byte alignment fault, f16 passed there; closed stale 2026-10-16), #28384 (other ops failing `test-backend-ops` on bmg-g31) | f32 KV cache; upstream-bugs.md S1 for the operator to file; **a cheap attribution test is open**: the same binary in a container with compute-runtime 26.27.39122.14 (+ level-zero loader 1.32) or 26.35.39758.10 against the node's 26.05 |
+| fp32 softmax wrong at row lengths 513–768, 1025–1280, 1537–1792 (torch) | reported against torch-xpu-ops; **gone after a driver update** | intel/torch-xpu-ops #4772: opened 2026-08-02 by a B70 owner on driver 26.05.37020.3 (ours), Intel could not reproduce on a nightly, a second B70 on PPA driver **26.27.39122.14** saw no error; **closed completed 2026-08-25 with no code change identified** | SDPA in jina-v3 (upstream-bugs.md V2). The node runs the affected driver: a driver update is the candidate fix, to be MEASURED with our reproducer before anything trusts it |
+| reduced-precision GEMM wrong on Battlemage in torch (fp16 zeros, bf16 NaN; `nn.Linear`) | torch's GEMM path on Xe2; no root cause | intel/torch-xpu-ops #5220 (B580, Windows): not reproducible on a newer build, closed completed 2026-10-26 | not met here (our torch models run fp32/bf16 through SDPA); listed because it is the same family |
+| the gutenberg batching incident (several texts in one request corrupted long sequences; `EMBED_BATCH=1` since) | unknown; today's batched-matmul reproducer is the first lead | **not reported** | one text per request; re-test with the reproducer binary when the embedder's attention path is known |
+| a non-finite vector, occasionally | unknown | **not reported** | `embeddings._numeric_failure` retries |
+
+**Arithmetic order, not bugs — do not file, do control:**
+
+| behaviour | the mechanism | the control |
+|---|---|---|
+| oneDNN gemm bytes differ run to run | kernels chosen by heuristic | `GGML_SYCL_ENABLE_DNN=0` (invariant 12) |
+| torch's defaults differ on short inputs | atomics and reduction order | `LOUISE_TORCH_DETERMINISTIC=1` |
+| a question's languages in different waves give a last-bit flip (1 in 626) | batch shape changes the summation order; any backend, CUDA included | one wave per question: `LLAMA_ENC_DEC_WAVE_MS` long enough, or accept per-wave reproducibility |
+| the chat model's first answer after a load; the reranker at an oversized context | the same class | `parallel:1`, the window as context |
+| the f32 cache's 29 against 16 ms per token | the fallback path's cost | a price, not a fault; the F16 kernels return with the upstream fix |
+
 ## Adding a device class
 
 New peers with other hardware (AMD ROCm/Vulkan, NVIDIA CUDA, Apple Metal)
