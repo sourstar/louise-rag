@@ -896,7 +896,10 @@ on the same index: descriptive n = 451 MRR 0.254 / R@10 0.446 / R@50 0.627 on
 both sides (+3/−1, p = 0.625), titles n = 39 identical. Files
 `/root/madlad-gguf/waves-p5/`. **The F16 cache is cleared for MADLAD on
 engine c68167b65cb0.** Step 4, A1 through Louise under sharing, decides the
-switch (a median gain with p90 not worse). The live shared engine
+switch (a median gain with p90 not worse) — **MET 12:21–12:43: translation
+median 1.44 s against torch's 1.85 (−22 %), p90 2.21 against 2.57, 60/60,
+342/381 identical, under more load than the torch pass; SWITCHED, and it
+stays** (translator-choice.md). The live shared engine
 `louise-sycl-f16-llama-cpp` carries the same wrong path (no live model takes
 it: embedders and chat run FA on, the rerankers have no cache); it is NOT
 rebuilt for this alone — every space on it would be re-gated — the next

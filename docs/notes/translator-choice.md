@@ -448,3 +448,13 @@ c68167b65cb0): T4 379/379 = P3's bytes, T3 626/626 and 616/626, retrieval
 paired-equal to torch, 16.3 ms per token, **0.68 s per question in waves (p90
 0.96) against the f32 cache's 1.12 and torch's 3.2** — 4.7× torch on an idle
 card. The third A1 (through Louise, under sharing) decides.
+
+**SWITCHED 2026-10-28 12:43, and it stays.** The third A1, through Louise
+under gutenberg sharing (the GGUF pass under more load than torch's):
+translation median **1.44 s against 1.85 (−22 %)**, p90 **2.21 against 2.57
+(−14 %)**, search total 10.07 against 11.08 s, 60/60 answered, 342/381
+translations identical, 59/60 the same top hit. Engine c68167b65cb0 (P1–P5),
+the F16 cache, `parallel:7`. The gain through Louise is a fifth, not the
+4.7× of the idle card: a question's six languages cost torch one batched call
+of 1.85 s, and the wave 1.44 s beside the embedder. The idle 0.68 s says the
+rest is the card's sharing, scheduling.md's business, not the translator's.
