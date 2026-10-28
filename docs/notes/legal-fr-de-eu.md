@@ -537,6 +537,51 @@ platform mechanism beyond §5.1's check and §5.2's namespace owner.
    read to its absence, 2026-10-28); `tools/legal_pilot.py coverage`,
    then `run`.
 
+### 7.1 What the probe found (2026-10-28 23:48, the node; raw log `/root/legal-probe-20261028-2348.log`)
+
+**[P]** marks a fact probed from the node. It settles the [S] beside it in
+§2–§4.
+
+**France (DILA).**
+- **The LEGI baseline:** `Freemium_legi_global_20250713-140000.tar.gz`,
+  1,171,027,316 B. **Range works** (206 on 0-1023).
+- **LEGI's listing:** 481 files, the baseline plus one increment per
+  working day since 2025-07-12. The newest, `LEGI_20261028-212713`, is
+  4.9 MB: 2,485 files (1,402 `LEGIARTI`, 713 `LEGISCTA`, 368 `LEGITEXT`)
+  and two deletion lists.
+- **A `TEXTELR` carries its `VERSIONS`**, each with `etat`, `debut` and
+  `fin` (VIGUEUR 2025-04-01→2999-01-01, MODIFIE 1994-07-01→2025-04-01).
+  This is the version chain §2.2 builds the record on.
+- **JORF:** 873 files, TWO increments on some days (`…-002650`,
+  `…-211214`). The newest is 4.2 MB, 8,879 files. **`ID_ELI` is present**
+  (`https://www.legifrance.gouv.fr/eli/jo/2026/10/28/0252`).
+
+**Germany (NeuRIS).**
+- **Only `testphase.rechtsinformationen.bund.de` answers.** The
+  production host has no DNS record from the node.
+- `/v1/legislation` lists **5,511** expressions, each with an ELI
+  (`eli/bund/bgbl-1/2026/318/2026-10-22/1/deu`), `legislationLegalForce`,
+  `abbreviation`, and three encodings: HTML,
+  **XML (`regelungstext-1.xml`)** and a zip.
+- **There is no bulk zip** (`bulk-zip-links`: 404), so the listing is
+  the inventory.
+- **The changelog needs `from` and `to`** (422 without them).
+
+**EU (Cellar).**
+- Content negotiation answers **303** for XHTML (`…/DOC_1`) and for the
+  notice (`xml/branch`), for the act and for a consolidated version alike.
+- **Formex answers 300 Multiple Choices**, so its manifestation is
+  chosen from the list. The probe now prints that list.
+- **SPARQL answers:** 400 consolidated versions of 2016 regulations,
+  counted in 4.3 s.
+
+**The probe's own defect, fixed.** Its header check was a GET with the
+body discarded, not a HEAD. On the baseline it moved **486 MB** before
+`--max-time` cut it: 0.5 GB where the script promised under 20 MB. It is
+`curl -I` now, and every request is capped at 20 MB (`--max-filesize`).
+The rerun covers what the first left open: the changelog with
+`from`/`to`, and Formex's choices.
+
 **The proposed order: France, then the EU, then Germany.** France has
 every version, a bulk form, an open licence and the article grain that
 is the one new mechanism — the most to learn, the least to wait for. The
