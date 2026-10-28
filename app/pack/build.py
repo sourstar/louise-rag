@@ -634,6 +634,11 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                     n_skipped += 1
                     continue
                 ok, value = next(computed)
+                if not ok and value.get("type") == "OriginOutsideBase":
+                    # A record that cannot locate its origin bytes is not made,
+                    # and the build stops, as for a missing `origin_hash`: a
+                    # skipped record is a quietly incomplete SHARD (invariant 11)
+                    raise BuildError(f"{prow['uid']}: {value.get('msg')}")
                 if not ok:
                     n_skipped += 1
                     con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",

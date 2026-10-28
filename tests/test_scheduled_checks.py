@@ -24,6 +24,13 @@ def test_due_by_snapshot_and_by_cadence(tmp_path):
     assert sc.due(tmp_path, "c", codex, "2026-W40", now=NOW + 8 * 86400), "a cadence later"
     monthly = SimpleNamespace(update=SimpleNamespace(cadence="monthly"))
     assert not sc.due(tmp_path, "c", monthly, "2026-W40", now=NOW + 8 * 86400)
+    # a snapshot is its hash: one withdrawn unshared and made again under the same id is new
+    sc.record(tmp_path, "c", "2026-09", {"outcome": "pass"}, now=NOW, snapshot_hash="sha256:aa")
+    assert not sc.due(tmp_path, "c", monthly, "2026-09", now=NOW + 60, snapshot_hash="sha256:aa")
+    assert sc.due(tmp_path, "c", monthly, "2026-09", now=NOW + 60, snapshot_hash="sha256:bb")
+    # a record from before the hash was kept compares by id, as it did
+    sc.record(tmp_path, "c", "2026-09", {"outcome": "pass"}, now=NOW)
+    assert not sc.due(tmp_path, "c", monthly, "2026-09", now=NOW + 60, snapshot_hash="sha256:bb")
     assert sc.last(tmp_path, "c")["outcome"] == "pass"
 
 
