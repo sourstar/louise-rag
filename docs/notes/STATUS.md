@@ -18,6 +18,37 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 23:59 (architecture). THE LEGAL COLLECTIONS: DECIDED, RESEARCHED,
+AND A BAKE-OFF THAT MEASURES WHAT LOUISE SERVES.** The operator decided
+legal-fr-de-eu.md's §8:
+- **D1:** Germany from NeuRIS. gesetze-im-internet's third-party archive is
+  not used.
+- **EU law is one collection per language**, English, French, German and
+  Italian first. This is the operator's named exception to invariant 11,
+  written in CLAUDE.md and 02 §2.3.
+- **D3:** a proper legal encoder for each of the four; Qwen3-Embedding-8B
+  as the compromise for the others.
+- **D4:** published evaluation sets, not our own.
+
+The research is in [`legal-embedders-fr-de-eu.md`](legal-embedders-fr-de-eu.md):
+- No French or German counterpart to DAR-legal-it exists.
+- AgentPublic/legi already embeds all of LEGI with bge-m3; a RULE 1
+  carry if bge-m3 wins.
+- BM25 beats every dense model on German case law (GerDaLIRSmall).
+- Kanon 2 and Voyage are API-only, so ruled out.
+- The graphs are LEGI's links and Cellar's CDM.
+
+`tools/encoder_bakeoff.py`, the harness that chose DAR-legal-it, now:
+- reads the BEIR layout;
+- has suites for BSARD, Syntec, LegalQuAD, GerDaLIRSmall, GDPR, and
+  EUR-Lex-Sum and LEMUR in every EU language;
+- measures BM25 through `app/fts.py` itself, and the hybrid through
+  `retrieval._merge_rrf`.
+
+**An encoder is chosen on its hybrid MRR@10.** The origin probes are
+scripted (`tools/measure/probe_legal_origins.sh`). Owed from the node:
+the probe log and LegalQuAD, then GerDaLIRSmall.
+
 **2026-10-28 23:00 (architecture). A LATER SNAPSHOT'S DELTA SAID NOTHING
 CHANGED; FIXED BEFORE THE FIRST ONE.** `snapshot create` read the previous
 snapshot's parts at their paths, after the build had promoted the new
