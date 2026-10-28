@@ -102,7 +102,7 @@ grep -q "^def _batch_bound" "$ROOT/src.new/app/translate.py"                    
 grep -q "^def _strip_cites" "$ROOT/src.new/app/translate.py"                             # b7a0324: the [n] out of the model's sight
 grep -q '^MARKER = "snapshot.json"' "$ROOT/src.new/app/ask/facets.py"                    # b7a0324: the facets pass marked durably
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
-grep -q '"cache_type_k": "f32"' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # b68820c
+! grep -q 'cache_type_' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # d372ba5: the F16 cache (P5); b68820c had f32
 test ! -e "$ROOT/src.new/deploy/reference"
 echo "staged: $(find "$ROOT/src.new" -name '*.py' | wc -l) python files"
 
