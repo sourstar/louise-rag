@@ -18,6 +18,18 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 12:00 (architecture).** DRIVER UPDATE, operator's decision on
+the one-shape question (approved-encoders.md "Known limits", upstream-bugs.md
+S1): the ATTRIBUTION TEST FIRST — the same test-backend-ops reproducer binary
+under compute-runtime 26.35.39758.10 (kobuk-team PPA) in a throwaway
+container, no host change, München runs it after A1, never beside it. Then,
+only if 26.35 passes: the SYCL backend tars rebuilt on 26.35 (a new engine:
+every llama.cpp model re-gated; loader ≥ 1.32 per compute-runtime #972);
+if it fails the same: the upstream report S1 with both results. The torch
+runtime (the app image's 26.05, softmax fault V2) is updated later, in a
+quiet window, through a louise-python image on the same PPA recipe, and
+re-gated. The kernel driver (xe) is TrueNAS's and carries none of our bugs.
+
 **2026-10-28 11:30 (architecture).** The MADLAD switch to llama.cpp was
 tried at ~10:40 and BACKED OUT at 10:47 (torch live, node paused, records
 build held — operator 09:51, "MADLAD only", until lifted). The fault was the
