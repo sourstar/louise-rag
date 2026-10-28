@@ -423,3 +423,12 @@ over the F16 kernels the card cannot run right for several slots). Cold load
 ~10 s against 17–38 s, 6.3 GB plus ~2 GB of cache against 7.2 GB. The torch
 model stays installed as `louise-translate-madlad-torch` for backout. Details:
 localai-bugs.md P4 "Measured on the card".
+
+**The first switch was backed out at 10:47 (torch live) on a client defect**
+— the shape probe read LocalAI's `/v1/tokenize` answer for `<2en>` as two
+tokens and took the server for the torch backend; the warm's unbounded JSON
+prompt then ran 92 s. The probe now reads the vocabulary, every batch
+request is bounded, and the paired test (A1: 60 questions through
+/api/search under sharing, torch against GGUF) is rerun on the fixed client
+before the second attempt. The numbers above stand: they were measured
+against the server, not through the client. localai-bugs.md P4 "Backed out".

@@ -59,16 +59,33 @@ def health_url() -> str:
     return f"{config.TRANSLATE_URL}/v1/models"
 
 
-def _completion(request: dict, timeout: float, headers: dict[str, str] | None = None):
-    """One request in the completion shape: `request` as the prompt, the
-    answer read back from the completion's text."""
-    body = {"prompt": json.dumps(request, ensure_ascii=False)}
+def _completion(request: dict, timeout: float, headers: dict[str, str] | None = None,
+                max_tokens: int | None = None):
+    """One request in the batch shape: `request` as the prompt, the answer
+    read back from the completion's text. Every request carries a bound:
+    the torch backend ignores it, and a llama.cpp runner that was taken for
+    the batch shape by mistake then costs seconds, not the 92 s of
+    2026-10-28 (the first switch, backed out), when the JSON prompt ran to
+    the slot's limit."""
+    body = {"prompt": json.dumps(request, ensure_ascii=False),
+            "max_tokens": max_tokens if max_tokens is not None else _batch_bound(request)}
     if config.TRANSLATE_MODEL:
         body["model"] = config.TRANSLATE_MODEL
     r = httpx.post(f"{config.TRANSLATE_URL}/v1/completions", json=body,
                    timeout=timeout, headers=headers or {})
     r.raise_for_status()
     return json.loads(r.json()["choices"][0]["text"])
+
+
+def _batch_bound(request: dict) -> int:
+    """The output bound of a batch-shape request: the torch backend's own
+    per-segment bound (min(512, 2 × input + 32)) summed over the items, plus
+    the JSON around them — generous for a true batch answer, and a few
+    seconds on a llama.cpp runner that should never have been asked."""
+    items = request.get("items") if isinstance(request, dict) else None
+    if not items:
+        return BATCH_MAX_TOKENS
+    return min(32768, 256 + sum(2 * estimate_tokens(str(it.get("text", ""))) + 64 for it in items))
 
 
 def warm() -> None:
@@ -89,7 +106,7 @@ def warm() -> None:
             _t5_completion("it", "OK", bound_s, {dispatch.LEVEL_HEADER: "translate"}, max_tokens=4)
         else:
             _completion({"items": [{"text": "OK", "to": "it"}]}, bound_s,
-                        {dispatch.LEVEL_HEADER: "translate"})
+                        {dispatch.LEVEL_HEADER: "translate"}, max_tokens=16)
 
     model_load.ensure_loaded(config.TRANSLATE_URL, config.TRANSLATE_MODEL, warm_request,
                              caller="translation", max_age_s=0.0)
@@ -169,6 +186,11 @@ _SHAPE_TTL_S = 600.0
 MAX_SEG_TOKENS = 96
 #: concurrent requests of one call: the server's slots (parallel:7, one wave)
 T5_CONCURRENCY = 7
+#: a llama.cpp runner is MADLAD when its vocabulary holds at least this many
+#: `<2xx>` target tokens (MADLAD has ~450; a chat model none)
+T5_MIN_CODES = 16
+#: the bound of a batch-shape request that is not a translation of items
+BATCH_MAX_TOKENS = 4096
 #: an ISO code the platform stores -> the token MADLAD was trained with,
 #: where the two name the same language differently
 ALIASES = {"tl": "fil", "gla": "gd", "oji": "oj", "iw": "he", "in": "id", "ji": "yi"}
@@ -200,19 +222,34 @@ def _tokenize(text: str, timeout: float) -> list[int] | None:
 def shape(timeout: float = 10.0) -> str:
     """Which shape TRANSLATE_URL's server speaks, determined from it and
     trusted `_SHAPE_TTL_S`; a server that cannot be asked is the batch
-    shape for this call only (the call then fails as it always did)."""
-    global _shape_cache
+    shape for this call only (the call then fails as it always did).
+
+    A runner with no tokenizer route is the python backend: the batch shape.
+    One with the route is a llama.cpp runner, and MADLAD is told by its
+    VOCABULARY — the `<2xx>` target tokens `_t5_languages` reads off
+    /v1/detokenize (kept for `languages()`) — never by how the route
+    tokenizes "<2en>": LocalAI's /v1/tokenize splits it into two pieces
+    (recorded on the node 2026-10-28: `[805, 38]`), while the completion
+    path reads it as one token. The first switch was backed out on that
+    difference: the probe said batch, and the warm's JSON prompt ran 92 s."""
+    global _shape_cache, _languages
     with _lock:
         cached = _shape_cache
     if cached is not None and time.monotonic() - cached[0] < _SHAPE_TTL_S:
         return cached[1]
     try:
         tokens = _tokenize("<2en>", timeout)
+        if tokens is None:
+            got, codes = SHAPE_BATCH, None
+        else:
+            codes = _t5_languages(timeout=max(timeout, 30.0))
+            got = SHAPE_T5 if len(codes) >= T5_MIN_CODES else SHAPE_BATCH
     except Exception:   # noqa: BLE001 — unreachable: undetermined, asked again next time
         return SHAPE_BATCH
-    got = SHAPE_T5 if tokens is not None and len(tokens) == 1 else SHAPE_BATCH
     with _lock:
         _shape_cache = (time.monotonic(), got)
+        if got == SHAPE_T5:
+            _languages = (time.monotonic(), codes)   # the scan is the language list too
     return got
 
 
