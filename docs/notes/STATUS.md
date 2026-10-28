@@ -99,6 +99,12 @@ window (a ≤ 8-token text, then the 16 calibration texts again; by the code
 the plain fused GEMM refuses K-quants, so nothing is expected) — the script
 is ready on the node, `/root/madlad-gguf/emb_history.py`. Stages 1–2 wait
 for after the switch, as planned.
+**10:30: the f32-cache GATES PASS** (München, card idle from 09:51): retrieval
+paired-equal to torch on both sets, in-wave vs alone 614/626, waves 1.12 s per
+question against torch's 3.2 s (2.9× faster), one twice-mismatch in 626 from a
+group split into different waves under load, the f32 cache's price +79 % per
+token (localai-bugs.md P4). **The switch proceeds**: branch merged to main,
+the tar as vega-llama-cpp-t5, the YAML swap, the Louise deploy.
 
 **2026-10-27 10:25 (München).** Image a773d05 is deployed: profiles live,
 period crons 6/18–21 disabled (not deleted).

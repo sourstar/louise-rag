@@ -408,3 +408,18 @@ still makes every SYCL embedder a new engine, measured and gated once
   - `/tmp/lcpp`, the llama.cpp working tree with the patch (218 MB);
   - `/tmp/t5f`, `/tmp/t5b`, `/tmp/tmp.9KixJbUrfa` (141 MB together);
   - the Docker volume `lcpp-cpu-build`, used for the CPU check.
+
+## Result, 2026-10-28: MADLAD on llama.cpp replaces the torch translator
+
+The gates of tools/measure/t5waves.py on the shipped configuration (series
+f8b4acdcdcb8 = P1–P4, the f32 KV cache that sidesteps the SYCL fault,
+`parallel:7`), the card idle: retrieval paired-equal to torch MADLAD on the
+same index (descriptive n = 451: MRR 0.254 / R@10 0.446 / R@50 0.627 on both
+sides, +3/−1, p = 0.625; titles n = 39 identical); in-wave vs alone 614 of 626
+(bar 90 %); the same group twice 625 of 626 (the one row: a group split into
+different waves under load); **1.12 s per question (p90 1.56 s) against
+torch's 3.2 s** — 2.9× faster, at 29.2 ms per token (the f32 cache's +79 %
+over the F16 kernels the card cannot run right for several slots). Cold load
+~10 s against 17–38 s, 6.3 GB plus ~2 GB of cache against 7.2 GB. The torch
+model stays installed as `louise-translate-madlad-torch` for backout. Details:
+localai-bugs.md P4 "Measured on the card".

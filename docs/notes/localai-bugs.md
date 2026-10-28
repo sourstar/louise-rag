@@ -770,6 +770,28 @@ nothing live has changed** (the torch translator serves; the test
 backend and model are unloaded). In-wave vs alone (bar 90 %) is now a gate
 in tools/measure/t5waves.py, not a report (fb014fe).
 
+**The f32-cache gates, 2026-10-28 08:00–10:30 (München; from 09:51 the card
+otherwise idle at the operator's order): PASS.** T3, the same group twice:
+625 of 626 identical — the one row (WQ9339507 pl→en, "from his trip" against
+"from a trip") came from the contended hour, when a question's group split
+into waves of 2–5 slots where the paused run made waves of 6–7, and the batch
+shape flips a last bit: a property of waves, recorded, not a defect. In-wave
+vs alone 614 of 626 (PASS, bar 90 %; the 12 are one-word or punctuation
+variants). Torch agreement: wave 555, alone 556 of 626. T4 as information:
+372 of 379 identical to P3, 7 one-word variants, torch 342 against 343.
+**Timing, node paused:** waves median **1.12 s per question**, p90 1.56 s,
+against torch's 3.2 s (2.9× faster); one at a time 0.72 s per translation;
+per token, one slot, paired on the same idle card: **29.2 ms on f32 against
+16.3 ms on F16 — the f32 cache's own price, +79 % per token** (the generic
+f32 path copies the K view per head; the F16 kernels come back when
+upstream fixes the KQ product, upstream-bugs.md S1); 36.1 ms per step per
+slot in waves. **Retrieval gate**, paired against torch MADLAD on the same
+index (490 questions): descriptive n = 451 MRR 0.254 / R@10 0.446 / R@50
+0.627 on both sides (+3/−1, p = 0.625); titles n = 39 identical. **Switched
+2026-10-28:** this branch merged to main, the f8b4acdcdcb8 tar installed as
+`vega-llama-cpp-t5`, `louise-translate-madlad` is the GGUF with the f32
+cache, the torch model kept as `louise-translate-madlad-torch` for backout.
+
 
 ### P5 (staged). llama.cpp backend: the encoder output is kept per sequence
 

@@ -12,7 +12,10 @@
 # The KV cache is f32, not the default f16: on the B70 the SYCL F16-cache path
 # decodes WRONG text whenever two or more slots decode in one batch (alone and
 # on the CPU right; localai-bugs.md P4 "Measured on the card", 2026-10-28); the
-# f32 cache is correct at +9 % time and ~1.9 GB for 7 slots x 512 positions.
+# f32 cache is correct; its price, measured paused, is +79 % per token (29.2 against
+# 16.3 ms), still 1.12 s per question in waves against torch's 3.2 s, and ~2 GB of
+# cache for 7 slots x 512 positions. The F16 cache comes back when upstream fixes the
+# product (upstream-bugs.md S1).
 # JSON, which is YAML.
 {
   "name": "louise-translate-madlad",
