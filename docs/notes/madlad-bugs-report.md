@@ -20,6 +20,7 @@ one and is controlled, not filed.*
 | 7 | **LocalAI**, `/models/reload` | Adds configs but does not drop removed ones: `/v1/models` lists the five removed test models until the next restart (a request to one fails; nothing names them) | the cleanup | **noted, not filed**; clears at LocalAI's next restart | [STATUS.md 2026-10-28 15:00](STATUS.md) |
 | 8 | **upstream's test coverage** (`test-backend-ops` × `supports_op`) | The SYCL backend declares the suite's permuted F16 cases with n ≥ 2 and `ne3 > 1` "not supported", and the permuted cases it does run have n = 1: the decoder's own KQ shape was never tested on SYCL | the root-cause work of bug 1 | **FIXED in the PR text**: P5 adds the decoder KQ shape (16 heads, n = 2, 4, 7) unconditionally; the exhaustive sweep stays in `deploy/localai/patches/diag/` | [upstream-reports/ggml-llama-cpp-sycl.md §2](upstream-reports/ggml-llama-cpp-sycl.md), [diag/README.md](../../deploy/localai/patches/diag/README.md) |
 | 9 | **our process** | P4 was written without LocalAI's own llama.cpp patches 0001/0002 beneath it; the first build failed | the first build on the node | **FIXED** by the rebase (1062ba80); the build script applies the series onto the base exactly as CI does | [localai-bugs.md P4](localai-bugs.md) |
+| 15 | **MADLAD, the model itself** (on llama.cpp as on torch) + **our Ask page** | Does not keep the answer's `[n]` citations: measured on the deployed engine, a 3,300-character answer with 36 markers lost six into Italian (a whole paragraph's `[8]`, `[8][9]`) and had them renumbered into English (`[8]` → `[10]`); its `- ` list lines collapsed into one sentence; a cited sentence glued to the next. The page refuses a translation whose markers differ (the links would open the wrong entries), so the operator's 3,913-character all-languages answer stayed English while every entry translated — and a plain miss of the answer was shown with no word at all | the operator's report (2026-10-28, "everything has been translated but the answer"), the web log's 13 stream requests, two measurements with and without `[n]` in both directions | **FIXED, ours**: the citations and the list markers never reach the model (taken out of each segment, put back inside the sentence's final stop; a cited sentence closes its segment); a missed answer is said; every stream request logs its outcome. Not a bug of the switch: torch had the same exposure | [translator-choice.md "The [n] citations never reach MADLAD"](translator-choice.md), [STATUS.md 2026-10-28 16:45](STATUS.md) |
 
 ## 2. Re-examined in this development (the operator's driver question)
 
@@ -49,4 +50,6 @@ one upstream gap (2) patched by us with two upstream issues open; one design
 limit (3) worked around and re-designed; two LocalAI inconsistencies (6, 7)
 noted. The switch happened on the third attempt because bugs 4 and 1, in that
 order, stood between the idle measurement and the measured gain through
-Louise.
+Louise. Found by the operator the same afternoon, after the switch: the
+model's own loss of `[n]` citations (15), an exposure the torch backend
+shared, fixed in our client with its silent miss.

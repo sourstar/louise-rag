@@ -158,9 +158,40 @@ model not knowing it is acceptable — the translation model is the one
 trained for such terms). The two remedies considered, if it is reopened: a sharper answer
 instruction (translate every word taken from the sources, keeping only
 personal names, titles and quotations), at no extra cost; or the answer
-post-translated by the translation model, one call more per answer and the
-[n] citations at risk (the page already falls back to the original when
-they move).
+post-translated by the translation model, one call more per answer.
+
+### The [n] citations never reach MADLAD (2026-10-28)
+
+The answer IS post-translated when the reader switches the page's language
+after it was written, and the page refuses a translation whose `[n]` differ
+from the original's (the links would open the wrong entries). The operator
+saw every entry translate and the answer stay English after an
+all-languages search: MADLAD does not keep the markers. Measured on the
+node, a 3,300-character answer with 36 markers (München, the deployed
+llama.cpp engine): into Italian six markers dropped (a whole paragraph lost
+its `[8]`, `[8][9]`), into English all 36 back but `[8]` renumbered `[10]`
+and `[9]` `[11]`; the `- ` list lines collapsed into one sentence; a cited
+sentence glued to the next ("Heian[1].I primi"). The same model on the
+torch backend had the same exposure ("[n] citations at risk", above); the
+switch did not cause it, the all-languages answer (3,913 characters, many
+citations) exposed it.
+
+So app/translate.py's t5 path keeps them out of the model's sight — the
+standard handling of inline codes in machine translation (XLIFF/Okapi: the
+codes are removed before the engine and restored after): the cut closes a
+segment after a sentence that carries a citation, the segment's `[n]` are
+taken out before the request and put back inside the sentence's final stop
+after it ("castello [1]."); a run the chat model wrote after the stop
+("banned in 1876. [8]") stays with the sentence it follows; a list item's
+or heading's marker is kept out the same way and its line break kept; a
+missed answer is now SAID on the page (it was silent), and every stream
+request logs its outcome (`[… info:translate] stream into it: 13 items — 12
+translated (3 cached), 1 missed, 7.0 s`). Tests:
+tests/test_translate_t5.py ("the [n] citations and the list lines never
+reach the model"), tests/browser/ask_translation_order.js step 5. Not
+done: the torch backend (deploy/madlad-translate/server.py, the backout)
+cuts and reassembles on the server and keeps the old exposure; it is not
+serving.
 
 Within the translation model, one passage now gets one translation
 (52b1433): an entry's visible lines are translated first, then replaced by
