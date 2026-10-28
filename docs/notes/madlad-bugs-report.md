@@ -1,0 +1,52 @@
+# Bugs found in the MADLAD-on-llama.cpp development (2026-10-27 → 28)
+
+*Operator, 2026-10-28: "Make a report of the bugs found." One row per bug:
+where it is, what it does, how we found it, its status on our side and
+upstream, and where the detail lives. The classification rule is
+[approved-encoders.md "Bugs against arithmetic order"](approved-encoders.md):
+a bug gives a WRONG answer; a last-bit difference from summation order is not
+one and is controlled, not filed.*
+
+## 1. Found in this development
+
+| # | where | what | found how | status | record |
+|---|---|---|---|---|---|
+| 1 | **ggml-sycl** (llama.cpp's SYCL backend), `ggml_sycl_mul_mat_batched_sycl` | In a build with oneDNN compiled in, src1 is converted with oneDNN's FLAT copy and then, when oneMKL runs instead (`GGML_SYCL_ENABLE_DNN=0`, our bit-reproducible mode), read with CONTIGUOUS strides. Every non-contiguous src1 is read wrong: the permuted queries of two or more decoder tokens over an F16 K cache, any strided view with `ne13 > 1`. Symptom: a T5 decoding several slots in one batch gives wrong text (first tokens right, then divergence, deterministic); one slot right; the CPU right. Upstream since bdca38376 (#14677, 2025-07-14); nobody saw it because upstream's suite excludes the permuted F16 shapes with n ≥ 2 as "not supported" and its remaining permuted cases have n = 1, where the permuted layout is the contiguous one. | P4's waves gate (T3: in-wave == alone 0/626); isolated with a diagnostic build sending one op class at a time to the CPU; reproduced with upstream's own `test-backend-ops` (32 FAIL, exactly the `ne13 = 3` strided cases); the runtime ruled out (26.27 and 26.35 identical); the root cause by code reading; confirmed by the same binary passing everything with oneDNN on | **FIXED, ours: P5 in the series** (`deploy/localai/patches/0005-…`), verified on the card: `test-backend-ops` 226/0/60 (was 191/32), the decoder sweep 272/0 (was 34/238), the whole MUL_MAT suite 2276/0; MADLAD on the F16 cache gated green and SWITCHED. **Upstream: a pull request ready to file** (the operator files). The shared engine `louise-sycl-f16-llama-cpp` carries the same path (no live model takes it: FA on) and takes P5 at its next rebuild | [localai-bugs.md P5](localai-bugs.md), [upstream-bugs.md S1](upstream-bugs.md), [upstream-reports/ggml-llama-cpp-sycl.md §2](upstream-reports/ggml-llama-cpp-sycl.md) |
+| 2 | **LocalAI's llama.cpp backend** (llama-server's code) | Never runs the encoder of an encoder-decoder model; a T5 GGUF is decoded as decoder-only and answers garbage (`<2cs><2cs>…`) | the first MADLAD GGUF load | **FIXED, ours: P3**; upstream llama.cpp #5763 / #26565 open, no fix | [localai-bugs.md B16, P3](localai-bugs.md) |
+| 3 | **llama.cpp library**, `llama_context::cross` | ONE encoder output per context, replaced whole by every encode: slots cannot be encoded while others decode (a design limit, not a wrong answer) | the review of llama.cpp's encoder-decoder support (operator, 2026-10-27 21:40) | **worked around: P4** (waves); **fixed in design: stages 1–2 built and tested on the CPU, staged as 0006/0007**, their card gates in a quiet window | [llama-cpp-encoder-decoder.md](llama-cpp-encoder-decoder.md), [localai-bugs.md P4, P6/P7 (staged)](localai-bugs.md) |
+| 4 | **our client**, `app/translate.py shape()` | Told the llama.cpp server from the torch backend by `/v1/tokenize("<2en>")` returning ONE token; LocalAI's route does not parse special tokens and answers two pieces (`[805, 38]`), so the probe said "batch", cached it 600 s, and the warm sent a JSON prompt with no `max_tokens`: 92 s to the slot's limit. Backed out the first switch. | the first switch attempt (10:40), under the operator's paired test | **FIXED (PR #22)**: the shape is told by the model's VOCABULARY (`/v1/detokenize` scan, ≥ 16 `<2xx>` codes, kept as the language list), every batch request bounded; tests against the recorded two-piece answer | [localai-bugs.md P4 "Backed out"](localai-bugs.md) |
+| 5 | **our process** | The server-side gates (t5waves.py) never exercised the client's `shape()`; the client was first run against the real server under the operator's test. And a test pinning the upstream route's body (`test_localai_backends`) was not in the suites run before the push: the deploy stopped on it. | the backouts of 10:47 and the stopped deploy | **FIXED (PR #23)**; rule drawn: a switch test runs THROUGH the client (A1), and the full suite runs before a push that touches a shared module | [STATUS.md 2026-10-28](STATUS.md) |
+| 6 | **LocalAI**, `/v1/tokenize` | Does not parse special tokens, while `/v1/completions` does: the same `<2en>` is two pieces on one route and one token on the other | bug 4 | **noted, not filed**; we no longer depend on it | [localai-bugs.md P4 "Backed out"](localai-bugs.md) |
+| 7 | **LocalAI**, `/models/reload` | Adds configs but does not drop removed ones: `/v1/models` lists the five removed test models until the next restart (a request to one fails; nothing names them) | the cleanup | **noted, not filed**; clears at LocalAI's next restart | [STATUS.md 2026-10-28 15:00](STATUS.md) |
+| 8 | **upstream's test coverage** (`test-backend-ops` × `supports_op`) | The SYCL backend declares the suite's permuted F16 cases with n ≥ 2 and `ne3 > 1` "not supported", and the permuted cases it does run have n = 1: the decoder's own KQ shape was never tested on SYCL | the root-cause work of bug 1 | **FIXED in the PR text**: P5 adds the decoder KQ shape (16 heads, n = 2, 4, 7) unconditionally; the exhaustive sweep stays in `deploy/localai/patches/diag/` | [upstream-reports/ggml-llama-cpp-sycl.md §2](upstream-reports/ggml-llama-cpp-sycl.md), [diag/README.md](../../deploy/localai/patches/diag/README.md) |
+| 9 | **our process** | P4 was written without LocalAI's own llama.cpp patches 0001/0002 beneath it; the first build failed | the first build on the node | **FIXED** by the rebase (1062ba80); the build script applies the series onto the base exactly as CI does | [localai-bugs.md P4](localai-bugs.md) |
+
+## 2. Re-examined in this development (the operator's driver question)
+
+| # | where | what | status | record |
+|---|---|---|---|---|
+| 10 | **torch on XPU**, fp32 softmax | Wrong for row lengths 513–768, 1025–1280, 1537–1792 (finite, normalised, unrelated; the same every run) on the app image's runtime 26.05.37020.3 | intel/torch-xpu-ops #4772 closed 2026-08-25 with no code change; another B70 on 26.27 saw no error. Ours: the SDPA route avoids it; the runtime update (a louise-python image on the kobuk PPA, every torch model re-gated) is a later quiet-window item. **Not the cause of bug 1**: the SYCL backend bundles its own 26.27 runtime | [upstream-bugs.md V2](upstream-bugs.md), [gpu-silent-wrong-vectors.md](gpu-silent-wrong-vectors.md) |
+| 11 | **torch on XPU**, defaults | Non-reproducible vectors for short inputs (308 of 512 texts across loads) | controlled: `LOUISE_TORCH_DETERMINISTIC=1`; filed as V1, ready | [upstream-bugs.md V1](upstream-bugs.md) |
+| 12 | **the embedder on llama.cpp SYCL**, the gutenberg batching incident | Several texts in one request corrupted long sequences; `EMBED_BATCH=1` since | **open, unreported; cause unknown.** Bug 1 is not it by itself: with flash attention off it would have broken single-text requests too (any prompt of two or more tokens takes the same path), and the embedders run flash attention on. A re-test with `EMBED_BATCH > 1` on the shared engine once it carries P5 would say whether the incident survives | [approved-encoders.md "Bugs against arithmetic order"](approved-encoders.md) |
+| 13 | **the card**, a non-finite vector occasionally | NaN | open, unreported; `embeddings._numeric_failure` retries | [gpu-silent-wrong-vectors.md §1](gpu-silent-wrong-vectors.md) |
+| 14 | **the Arc Pro B70's known limits**, upstream's | reorder/OPT corruption of quantized models, fused XMX dequant NaNs, flash-attention corruption on Xe2, device-lost storms, the loader ≥ 1.32 requirement of 26.27 | none met here; recorded with their workarounds | [approved-encoders.md "Known limits"](approved-encoders.md) |
+
+## 3. Not bugs (met in this development, controlled, never filed)
+
+| behaviour | mechanism | control |
+|---|---|---|
+| oneDNN GEMM bytes differ run to run | kernels chosen by heuristic | `GGML_SYCL_ENABLE_DNN=0` (invariant 12) — the very mode that exposed bug 1 |
+| a question's languages split across waves give a last-bit flip (1 of 626) | the batch shape changes the summation order | accepted; A1 showed no split waves at the default window |
+| the chat model's first answer after a load | the same class | `parallel:1`; the use is unaffected |
+| the f32 KV cache's 29 against 16 ms per token | a fallback path's price while bug 1 stood | gone with P5 |
+| `GGML_SYCL_FA_ONEDNN=1` beside `GGML_SYCL_ENABLE_DNN=0` for the flash-attention models | oneDNN's flash attention may carry the same heuristic drift as its GEMM | **open question** (München, 2026-10-28), to be MEASURED on the embedders' fresh-load reproducibility before anything is changed |
+
+## 4. What the development cost, in bugs
+
+Three defects of ours (4, 5, 9), all fixed the same day with tests; one
+upstream bug with a wrong answer (1), found, fixed and verified by us, and
+one upstream gap (2) patched by us with two upstream issues open; one design
+limit (3) worked around and re-designed; two LocalAI inconsistencies (6, 7)
+noted. The switch happened on the third attempt because bugs 4 and 1, in that
+order, stood between the idle measurement and the measured gain through
+Louise.
