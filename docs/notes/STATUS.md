@@ -62,6 +62,50 @@ what fits without breaking the interfaces, exclusive node use tonight).
   (YAML swap under the same model name, a Louise deploy) comes only after
   the gates, then regular activities resume.
 
+**2026-10-28 09:00 (architecture).** P4 FAILS on the card: T4 and T3 pass
+(379/379 = P3's bytes, 0.43 s a translation; 626/626 the same twice) but a
+wave decodes WRONG text — in-wave against alone 0/626, the first tokens
+right then divergence, the wrong text following the slot. The same backend
+and weights on the CPU are RIGHT (E2), so it is a SYCL kernel at two or
+more decoder tokens; the strict SYCL env (E1) and fp32 weight gemms (E3)
+change nothing. Diagnosis by instrument, not by guess: R0 (an f32 KV
+cache, no build) and the diag patch `deploy/localai/patches/diag/0005…`
+(`GGML_SYCL_CPU_OPS` sends an op class to the CPU; one build, one load per
+class) — localai-bugs.md P4 "Measured on the card". **The switch is on
+hold; nothing live changed**; the torch translator serves. Online check of
+the B70's known limits (operator's ask): none matches; the list is in
+approved-encoders.md "Known limits of the Arc Pro B70".
+R0 (09:05): CORRECT with `cache_type_k/v: f32` — the fault is in the F16-cache
+path and the f32 cache is the workaround. NAMED (09:40, diag build): the KQ
+product over the F16 K cache at N ≥ 2 (`ggml_sycl_mul_mat_batched_sycl`);
+upstream-bugs.md S1 drafted for the operator; the gates re-run on the f32
+cache (both K and V), then the switch.
+**Stage 1 BUILT (operator 2026-10-28: "once this stage is consolidated implement
+stage 1 and 2")**: the per-sequence encoder memory (`llama_memory_enc_dec`,
+localai-bugs.md P5 staged) passes its CPU tests (library T1 a–h, the store
+unit test, P4's server checks; a late request answered in 0.06 s instead of
+after the wave). It is STAGED, not in the series: it goes to the card only
+after the switch and the regular activities have resumed, then its own
+gates. **Stage 2 BUILT too** (P6 staged, `staged/0006…`): the store on the
+device, written by the encoder graph and committed after the compute, read by
+the decoder's `ggml_get_rows`; the same CPU tests pass, a lone request stays
+byte-identical to P3. Both stages go to the card in ONE rebuild after the
+switch, with `test-backend-ops -o SET_ROWS,GET_ROWS` beside the gates.
+**Operator, 09:xx (to München): "Keep working on MADLAD only."** So today: T3 →
+the paused timing sample → the retrieval gate → the merge → the switch, plus the
+KQ-shape reproducer (MADLAD's own fault). DEFERRED until the operator says
+otherwise: the vega-qwen3-embedding-4b history probe for llama.cpp #30892's
+window (a ≤ 8-token text, then the 16 calibration texts again; by the code
+the plain fused GEMM refuses K-quants, so nothing is expected) — the script
+is ready on the node, `/root/madlad-gguf/emb_history.py`. Stages 1–2 wait
+for after the switch, as planned.
+**10:30: the f32-cache GATES PASS** (München, card idle from 09:51): retrieval
+paired-equal to torch on both sets, in-wave vs alone 614/626, waves 1.12 s per
+question against torch's 3.2 s (2.9× faster), one twice-mismatch in 626 from a
+group split into different waves under load, the f32 cache's price +79 % per
+token (localai-bugs.md P4). **The switch proceeds**: branch merged to main,
+the tar as vega-llama-cpp-t5, the YAML swap, the Louise deploy.
+
 **2026-10-27 10:25 (München).** Image a773d05 is deployed: profiles live,
 period crons 6/18–21 disabled (not deleted).
 - **The node's platform.toml:** full = "230W" absolute (the B70 has

@@ -43,6 +43,8 @@ the source):*
 | **P2** | **patch we carry** | llama.cpp backend: `Embedding` embeds `EmbeddingTokens`, with the special tokens a text gets (B14) | **blocking** for the token cut: VeGa's wrapper sends a cut as its first tokens to a backend that embeds them (`Gate._probe`) | not filed; [`deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch`](../../deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch) |
 | **P3** | **patch we carry** | llama.cpp backend: the encoder of an encoder-decoder model runs (B16), as a llama.cpp patch in the backend's own `patches/` | MADLAD on llama.cpp (operator, 2026-10-27: "we need anyway a patched llama.cpp") | not filed; [`deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch`](../../deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch) |
 | **P4** | **patch we carry** | llama.cpp backend: encoder-decoder slots are encoded together, in WAVES, and decode in one batch (on P3, which ran one slot) | MADLAD on llama.cpp at torch's speed: a question's 7 languages in one wave instead of 7 × 3 s | not filed; [`deploy/localai/patches/0004-llama-cpp-encoder-decoder-waves.patch`](../../deploy/localai/patches/0004-llama-cpp-encoder-decoder-waves.patch) |
+| **P5 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder output is kept PER SEQUENCE (`llama_memory_enc_dec`, stage 1 of llama-cpp-encoder-decoder.md), so a slot is encoded while others decode; on P3 and P4 | a late request joins the next decode step instead of waiting for the wave; the upstream shape (no public API) | not filed; [`deploy/localai/patches/staged/0005-llama-cpp-encoder-decoder-memory.patch`](../../deploy/localai/patches/staged/0005-llama-cpp-encoder-decoder-memory.patch); moves into the series after its card gates |
+| **P6 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder outputs live ON THE DEVICE (stage 2: a persistent store written by the encoder graph, read by the decoder's `ggml_get_rows`; no host copies), on P5 | the shape upstream asked for (a persistent buffer, no host copies); the per-step upload gone | not filed; [`deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-store.patch`](../../deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-store.patch); moves into the series with P5 after the card gates |
 | R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: RAGE checks before and after instead | not filed |
 | R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (rage-over-localai §8.2) | not filed |
 | R3 | request | read API keys from a file, not only from `LOCALAI_API_KEY` | only if LocalAI's own UI is published (invariant 8) | not filed |
@@ -717,6 +719,193 @@ the server goes on; 60 requests after a burst leave every slot empty.
 **On the card:** the gates in tools/measure/t5waves.py (T4 against P3's
 one-slot bytes, T3, in-wave vs alone, seconds per question), then the
 retrieval comparison on the 451 + 39 queries (translator-choice.md).
+
+**Measured on the card, 2026-10-28 (München, the node paused):** T4 PASSES —
+379 of 379 one-at-a-time translations byte-identical to P3's, 0.43 s each;
+a 7-slot wave answers a question in 1.2–1.6 s against torch's 3.2 s; T3
+PASSES (626 of 626 the same twice: deterministic). **But a wave decodes
+WRONG**: in-wave against alone 0 of 626 equal, in-wave against torch 0 of
+626. Two identical prompts in one wave come back as two different wrong
+texts (`' Le gardien de la lampe.'`, `' Le gardien allum .'` for `' Le
+gardien du phare alluma la lampe.'`), the first two or three tokens right,
+then divergence; which text a request gets follows its SLOT, not the
+request. Ruled out, each with the same bytes: E1, the strict SYCL env
+(`GGML_SYCL_ENABLE_FUSION/GRAPH/OPT=0`); **E2, the same backend, GGUF and
+weights on the CPU (`gpu_layers: 0`): CORRECT** — so the server logic of
+P4 is right and the fault is a SYCL kernel at two or more decoder tokens
+(or two or more encoder sequences); E3, `GGML_SYCL_DYNAMIC_PRECISION=F32`
+(every weight mul_mat an fp32 gemm): still wrong, so not the fp16-operand
+gemm the F16 build uses at N ≥ 2. What differs between one and several
+decoder tokens in `ggml-sycl` (read, not yet measured): the attention over
+the F16 cache leaves the N = 1 kernels (`mul_mat_vec_p021`, `_nc`) for
+oneMKL `gemm_batch` in half at tiny M and N (M = the key count, N = the
+slots), `set_rows` writes several cells, the cross-attention's F32,
+permuted K goes through the generic driver's 2-D copies with several
+columns, and the position bias is a 3-D permute-and-cont. Nobody runs an
+encoder-decoder with several slots on SYCL; upstream has no matching
+report (searched 2026-10-28: ggml-org/llama.cpp #21893 reorder/OPT
+corruption, #30892 fused XMX dequant-GEMM NaNs — quantized types only,
+F16 weights never enter it — #19276 and #30624 flash-attention
+corruption, which T5 cannot use; intel/compute-runtime #966, #972).
+**The instrument:** `deploy/localai/patches/diag/0005-llama-cpp-sycl-cpu-ops-diag.patch`
+(`GGML_SYCL_CPU_OPS=OP[:cond]...` makes the device decline an op class, so
+the scheduler runs it on the CPU): one build, then one model load per op
+class on the real failing probe; and R0 before it, `cache_type_k/v: f32`
+in the YAML (no build), which takes the cache attention off the F16
+kernels. **R0 (09:05): CORRECT with the f32 cache**, so the fault is in the
+F16-cache path (the half `gemm_batch` of the attention, its conversions, or
+the cache write), and the f32 cache is the workaround (+9 % time, 2× cache
+memory). **NAMED (09:40, the diag build 03c771b88d03, München):** declining
+the KQ product over the F16 K cache alone (`MUL_MAT:f16:nc:nN:p`) restores
+the bytes; declining the KQV product alone does not; a K cache in f32 alone is
+right, a V cache in f32 alone is not. So: `ggml_sycl_mul_mat_batched_sycl`
+for the permuted F16 K view and the permuted queries at N ≥ 2 (the half
+conversion of q, then oneMKL `gemm_batch` at M = the key count), on this
+card. Upstream report drafted: upstream-bugs.md S1; the shape reproducer
+`diag/test-backend-ops-kq-shapes.patch`. **Shipped with the f32 cache (both
+K and V: the V-side call is the same library function at the mirror shape,
+proven only at N = 2); the gates re-run on it. Until they pass the switch
+does not happen;
+nothing live has changed** (the torch translator serves; the test
+backend and model are unloaded). In-wave vs alone (bar 90 %) is now a gate
+in tools/measure/t5waves.py, not a report (fb014fe).
+
+**The f32-cache gates, 2026-10-28 08:00–10:30 (München; from 09:51 the card
+otherwise idle at the operator's order): PASS.** T3, the same group twice:
+625 of 626 identical — the one row (WQ9339507 pl→en, "from his trip" against
+"from a trip") came from the contended hour, when a question's group split
+into waves of 2–5 slots where the paused run made waves of 6–7, and the batch
+shape flips a last bit: a property of waves, recorded, not a defect. In-wave
+vs alone 614 of 626 (PASS, bar 90 %; the 12 are one-word or punctuation
+variants). Torch agreement: wave 555, alone 556 of 626. T4 as information:
+372 of 379 identical to P3, 7 one-word variants, torch 342 against 343.
+**Timing, node paused:** waves median **1.12 s per question**, p90 1.56 s,
+against torch's 3.2 s (2.9× faster); one at a time 0.72 s per translation;
+per token, one slot, paired on the same idle card: **29.2 ms on f32 against
+16.3 ms on F16 — the f32 cache's own price, +79 % per token** (the generic
+f32 path copies the K view per head; the F16 kernels come back when
+upstream fixes the KQ product, upstream-bugs.md S1); 36.1 ms per step per
+slot in waves. **Retrieval gate**, paired against torch MADLAD on the same
+index (490 questions): descriptive n = 451 MRR 0.254 / R@10 0.446 / R@50
+0.627 on both sides (+3/−1, p = 0.625); titles n = 39 identical. **Switched
+2026-10-28:** this branch merged to main, the f8b4acdcdcb8 tar installed as
+`vega-llama-cpp-t5`, `louise-translate-madlad` is the GGUF with the f32
+cache, the torch model kept as `louise-translate-madlad-torch` for backout.
+
+
+### P5 (staged). llama.cpp backend: the encoder output is kept per sequence
+
+*Base: `v4.12.1` (`ec92740`), after P1–P4. File:
+`deploy/localai/patches/staged/0005-llama-cpp-encoder-decoder-memory.patch`
+(staged: built and tested on the CPU 2026-10-28, NOT in `series` until its
+card gates pass — staged/README.md). It adds
+`backend/cpp/llama-cpp/patches/0005-encoder-decoder-memory.patch`, applied
+by the backend's `prepare.sh` after P4's: 323 lines added and 23 removed
+across `src/` (new `llama-memory-enc-dec.h/.cpp`, 10 files), `tests/` and
+`tools/server/server-context.cpp`.*
+
+**Why.** P4 encodes the slots about to start together because the library
+keeps ONE encoder output per context (`llama_context::cross`), and must
+therefore hold a new request until the running wave has decoded. Stage 1
+of docs/notes/llama-cpp-encoder-decoder.md gives T5 its own memory: the
+decoder's `llama_kv_cache` plus a host-side store of encoder rows, each
+owned by the sequences it was encoded for. An encode replaces the rows of
+the batch's sequences and keeps every other sequence's; a decoder ubatch
+uploads the rows its sequences own (by contiguous runs: a lone sequence is
+one run, the same bytes as before) and masks each token to its own
+sequence's rows; a sequence with no rows is refused (a new internal status
+`LLAMA_MEMORY_STATUS_FAILED_INPUT`, `-1` from `llama_decode`). A
+whole-sequence removal, `clear` and `seq_keep` release the rows, `seq_cp`
+shares them, the sequence state carries them as a suffix (magic `T5XE`,
+version 1; `PARTIAL_ONLY` writes none). For `n_seq_max > 1` the context
+forces `kv_unified`, so the self-attention mask and the KV views agree.
+No public API changes; only `LLM_ARCH_T5` constructs the memory;
+`llama_cross` and the graph parameter stay, filled as before, for the
+carried patch (deletions wait for the upstream PR).
+
+**Deviations from the note's §3**, each for a reason found in the code:
+- `init_update` is delegated to the decoder cache (its update context is
+  only used by the shift graphs, which never build the T5 decoder);
+- the graph reserve sizes the cross tensors to `n_seq_max × min(n_ubatch,
+  n_ctx_train)` rows (the note said `n_seq_max × n_ubatch`): a T5 input
+  longer than its window is refused by the server, and the scheduler
+  reallocates if a live graph is ever larger;
+- the cross inputs decide by `arch == LLM_ARCH_T5 && mctx`, not by a
+  dynamic cast; the encoder graph has no memory context and never reaches
+  them.
+
+**Server (on P4):** a wave is encoded while earlier ones decode (the
+`enc_live` gate is gone; the 1 ms rest only when nothing decodes); the
+prompt start skips its whole `seq_rm` for a slot the wave just encoded
+(it would release the rows just stored); the load-time probe encode and
+`common_context_can_seq_rm` (which decodes after a clear) are skipped for
+these models, speculative decoding stays unsupported; the forced unified
+cache is mirrored in `params_base.kv_unified`. `n > 1` stays refused.
+
+**Checked on the CPU** (random-weight T5, `tests/test-llama-archs -a
+'^t5$'`; `tests/test-enc-dec-store`; the tiny-model server checks of P4):
+a sequence alone gives the bytes of a one-sequence context; two sequences
+decoding in one batch are each within nmse 1e-4 of their solo runs, NOT
+bitwise (as §6 T2 predicted: the batched kernels differ); a whole removal,
+a clear and a truncated state restore leave `-1` with no abort and the
+other sequence untouched; a partial removal, `seq_cp` and a restored
+state keep the output; the store's replace/compact/share/keep semantics
+and its bound (`n_seq_max × n_ubatch`) hold; a lone server request is
+byte-identical to P3's, the same 7 prompts in 3 orders give the same
+bytes, 60 requests after a burst leave every slot empty, and a request
+arriving while a wave decodes is answered in 0.06 s (P4: after the wave).
+
+**Card gates before it moves into the series** (staged/README.md): the
+f32-cache MADLAD backend rebuilt with it AND P6 — T3, in-wave vs alone (bar
+90 %), a lone request against P4's bytes, seconds per question — then
+the retrieval comparison. Stage 2 (the device store) is P6 below.
+
+### P6 (staged). llama.cpp backend: the encoder outputs live on the device
+
+*Base: `v4.12.1` (`ec92740`), after P1–P5. File:
+`deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-store.patch`
+(staged with P5: built and tested on the CPU 2026-10-28, NOT in `series`
+until the card gates pass — staged/README.md). It adds
+`backend/cpp/llama-cpp/patches/0006-encoder-decoder-store.patch`, applied
+by the backend's `prepare.sh` after P5's.*
+
+**Why.** Stage 2 of docs/notes/llama-cpp-encoder-decoder.md, the shape
+upstream asked for (a persistent buffer, no host copies: PR #11213
+r1969892524, #22728). P5 kept the encoder rows on the host and uploaded a
+ubatch's rows at every decode step; here the store is one F32 tensor in
+its own backend buffer, `(n_seq_max + 1)` REGIONS of `n_ubatch` rows
+(MADLAD at `-np 7 -ub 1024`: 8 × 1024 × 1024 floats, 32 MiB on the card).
+The encoder graph writes its output rows into the lowest free region with
+`ggml_set_rows` (its context, `init_encode`, assigns the region; a new
+default-nullptr virtual on `llama_memory_i`), and `llama_context::encode`
+COMMITS after the compute succeeded — the batch's sequences leave the rows
+they owned and own the new ones — so a failed encode keeps the old output
+(the §8 question, settled as write-beside plus a post-compute commit). A
+sequence owns rows in one region at a time, so a free region always
+exists. The decoder gathers the rows its ubatch's sequences own with
+`ggml_get_rows` on an I32 index input; the mask is unchanged. The
+synchronize and memcpy of the encoder output and the per-step upload are
+gone for T5. Sequence operations move no data: they are owner bookkeeping
+on the rows. State writes carry the rows through the io's tensor path
+(suffix version 2: the owned rows of each used region at their in-region
+index), so `llama_memory_get_buffers` sees the store's buffer and a
+single-sequence restore lands in a free region. Each state write of the
+whole context and each single-sequence restore is region-shaped; a
+file from a store of another shape (`n_embd`, region size) is refused.
+
+**Checked on the CPU**: the same tests as P5 — `tests/test-llama-archs -a
+'^t5$'` (a sequence alone bitwise equal to a one-sequence context; two
+sequences in one batch within nmse 1e-4 of their solo runs; whole removal,
+clear and a truncated restore leave `-1`; partial removal, `seq_cp` and a
+restored state keep the output), `tests/test-enc-dec-store` rewritten for
+the device-backed store (regions chosen lowest-free and released by the
+commit, shared rows, `seq_cp`/`seq_keep`, the `n_seq_max + 1` bound, state
+whole and per sequence, truncated and foreign files refused), and the P4
+server checks (a lone request byte-identical to P3, the same 7 prompts in 3
+orders, bursts, a late request answered in 0.06 s).
+
+**Card gates** with P5 (one rebuild): plus `test-backend-ops -o
+SET_ROWS,GET_ROWS` on the node for F32, which the device store relies on.
 
 ---
 

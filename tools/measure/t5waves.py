@@ -13,8 +13,9 @@ Writes to OUT_DIR:
   t4.jsonl     one request at a time (a wave of one): llama vs P3's llama (CMP) —
                identical expected — and vs torch;
   t3.jsonl     each query's languages sent at once; for the first --t3-n
-               queries TWICE (wave A == wave B, the gate) and each language
-               alone (in-wave vs alone, informational); the rest once;
+               queries TWICE (wave A == wave B, a gate) and each language
+               alone (in-wave == alone for >= 90 %, THE gate: a wave must
+               translate as the slot alone does); the rest once;
   q_waves.jsonl the wave translations in REFERENCE's shape, for
                tools/measure/translator_choice_search.py (the retrieval gate);
   summary.txt  counts and seconds.
@@ -147,9 +148,14 @@ def main() -> None:
             fq.flush()
             print(f"{ref['qid']}: {len(codes)} languages in {sa:.2f} s" + (f" (again {sb:.2f} s)" if twice else ""), flush=True)
     q_secs.sort()
+    # in-wave vs alone is a GATE (2026-10-28: the card decoded corrupted text in
+    # waves while alone was right, and "twice" passed because the corruption
+    # was deterministic). Last-bit differences flip a token now and then, so
+    # the bar is 90 %, and every difference is in t3.jsonl to be read.
+    alone_ok = total > 0 and same_alone >= 0.9 * total
     line = (f"T3 same group twice ({min(a.t3_n, len(refs))} queries): {same_ab}/{total} identical "
             f"({'PASS' if same_ab == total else 'FAIL'}); "
-            f"in-wave == alone for {same_alone}/{total} (informational); "
+            f"in-wave == alone for {same_alone}/{total} ({'PASS' if alone_ok else 'FAIL'}, bar 90 %); "
             f"median {q_secs[len(q_secs) // 2]:.2f} s per question, p90 {q_secs[int(len(q_secs) * 0.9)]:.2f} s")
     print(line)
     summary.append(line)

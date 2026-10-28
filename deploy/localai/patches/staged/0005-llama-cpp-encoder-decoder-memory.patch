@@ -1,0 +1,705 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 28 Oct 2026 07:32:53 +0000
+Subject: [PATCH] fix(llama-cpp): the encoder output of an encoder-decoder
+ model is kept per sequence
+
+On top of the encoder-decoder support (patches/0003) and the waves
+(patches/0004): T5 gets its own memory (llama_memory_enc_dec), the
+decoder's KV cache plus the encoder outputs per sequence, so a slot is
+encoded while others decode and a late request joins the next decode step
+instead of waiting for the wave. A sequence without an encoder output is
+refused (-1), never asserted on. No public API changes; only T5 reaches
+the new code. Carried as a llama.cpp patch beside the others
+(patches/0005-encoder-decoder-memory.patch).
+
+Checked on the CPU with a random-weight T5: the library tests (a lone
+sequence bitwise equal to a one-sequence context, two sequences in one
+batch within nmse 1e-4 of their solo runs, removals and state), and the
+0004 server checks (byte-identical to 0003 alone, the same 7 prompts in 3
+orders, bursts).
+
+Assisted-by: Claude Code
+---
+ .../patches/0005-encoder-decoder-memory.patch | 672 ++++++++++++++++++
+ 1 file changed, 672 insertions(+)
+ create mode 100644 backend/cpp/llama-cpp/patches/0005-encoder-decoder-memory.patch
+
+diff --git a/backend/cpp/llama-cpp/patches/0005-encoder-decoder-memory.patch b/backend/cpp/llama-cpp/patches/0005-encoder-decoder-memory.patch
+new file mode 100644
+index 00000000..ea080cc0
+--- /dev/null
++++ b/backend/cpp/llama-cpp/patches/0005-encoder-decoder-memory.patch
+@@ -0,0 +1,672 @@
++llama: the encoder output of an encoder-decoder model is kept per sequence (llama_memory_enc_dec)
++
++Stage 1 of docs/notes/llama-cpp-encoder-decoder.md (Louise), on top of
++0003 (the server runs the encoder) and 0004 (slots encoded in waves). The
++library kept ONE encoder output per context (llama_context::cross) and every
++llama_encode replaced it whole, so a slot could not be encoded while others
++decoded. T5 now gets its own memory: the decoder's llama_kv_cache plus a
++host-side store of encoder rows owned by the sequences they were encoded
++for. An encode replaces the rows of the batch's sequences and keeps every
++other sequence's; a decoder ubatch uploads the rows its sequences own and
++masks each token to its own sequence's rows; a sequence with no rows is
++refused (a new internal status, LLAMA_MEMORY_STATUS_FAILED_INPUT, -1 from
++llama_decode). A whole-sequence removal, clear, and seq_keep release the
++rows; seq_cp shares them; the sequence state carries them as a suffix
++(magic T5XE). For n_seq_max > 1 the context forces kv_unified, so the mask
++and the KV views agree. No public API changes. Only T5 constructs the
++memory; llama_cross and the graph parameter stay for the carried patch.
++
++Server (0004's waves, unchanged in shape): a wave is encoded while earlier
++ones decode (a late request joins the next step instead of waiting), the
++prompt start keeps the rows the wave just stored, the load-time probe
++encode and the partial-removal probe (which decodes after a clear) are
++gone for these models, and the forced unified cache is mirrored in the
++server's bookkeeping.
++
++Checked on the CPU (random-weight T5, tests/test-llama-archs -a '^t5$',
++tests/test-enc-dec-store): a sequence alone gives the bytes of a
++one-sequence context; two sequences decoding in one batch are each within
++nmse 1e-4 of their solo runs (not bitwise, as predicted); a whole removal,
++a clear and a truncated state restore leave -1 without an abort; a partial
++removal, seq_cp and a restored state keep the output. The tiny-model
++server checks of 0004 pass (lone request byte-identical to 0003, the same
++7 prompts in 3 orders, 60 requests after a burst); the late request is
++answered in 0.06 s instead of after the wave.
++
++diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
++index 97250c2e8..799fa6536 100644
++--- a/src/CMakeLists.txt
+++++ b/src/CMakeLists.txt
++@@ -30,6 +30,7 @@ set(LLAMA_CORE_SOURCES
++     llama-memory.cpp
++     llama-moe-cache.cpp
++     llama-memory-hybrid.cpp
+++    llama-memory-enc-dec.cpp
++     llama-memory-hybrid-iswa.cpp
++     llama-memory-hybrid-idx.cpp
++     llama-memory-recurrent.cpp
++diff --git a/src/llama-context.cpp b/src/llama-context.cpp
++index 9ee64b566..35de5fd1e 100644
++--- a/src/llama-context.cpp
+++++ b/src/llama-context.cpp
++@@ -7,6 +7,7 @@
++ #include "llama-batch.h"
++ #include "llama-io.h"
++ #include "llama-memory.h"
+++#include "llama-memory-enc-dec.h"
++ #include "llama-mmap.h"
++ #include "llama-model.h"
++ #include "llama-moe-cache.h"
++@@ -358,6 +359,13 @@ llama_context::llama_context(
++ 
++     cparams.op_offload     = params.op_offload;
++     cparams.kv_unified     = params.kv_unified;
+++
+++    // an encoder-decoder model's memory (llama_memory_enc_dec) keeps the decoder's cache in one
+++    // stream, so the self-attention mask and the KV views agree for every n_seq_max
+++    if (model.arch == LLM_ARCH_T5 && cparams.n_seq_max > 1 && !cparams.kv_unified) {
+++        LLAMA_LOG_WARN("%s: encoder-decoder model with n_seq_max = %u: forcing kv_unified = true\n", __func__, cparams.n_seq_max);
+++        cparams.kv_unified = true;
+++    }
++     cparams.moe_cache_size = params.moe_cache_size;
++ 
++     // initialized later
++@@ -965,6 +973,7 @@ bool llama_context::memory_update(bool optimize) {
++                 }
++             case LLAMA_MEMORY_STATUS_FAILED_PREPARE:
++             case LLAMA_MEMORY_STATUS_FAILED_COMPUTE:
+++            case LLAMA_MEMORY_STATUS_FAILED_INPUT:
++                 {
++                     LLAMA_LOG_ERROR("%s: failed to prepare memory update\n", __func__);
++                     return false;
++@@ -1743,6 +1752,12 @@ int llama_context::encode(const llama_batch_ext & batch_inp) {
++ 
++         synchronize();
++ 
+++        // the memory keeps the output per sequence: the batch's sequences get this one,
+++        // every other sequence keeps its own (llama_memory_enc_dec)
+++        if (memory) {
+++            static_cast<llama_memory_enc_dec *>(memory.get())->enc_store(ubatch, (const float *) embd.data, t_embd->ne[0]);
+++        }
+++
++         cross.n_embd = t_embd->ne[0];
++         cross.n_enc  = t_embd->ne[1];
++         cross.v_embd.resize(cross.n_embd*cross.n_enc);
++@@ -1959,6 +1974,13 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
++ 
++                     return -2;
++                 }
+++            case LLAMA_MEMORY_STATUS_FAILED_INPUT:
+++                {
+++                    // an encoder-decoder sequence decoded before its llama_encode
+++                    LLAMA_LOG_ERROR("%s: a sequence of the batch of size %d has no encoder output\n", __func__, balloc->get_n_tokens());
+++
+++                    return -1;
+++                }
++         }
++ 
++         break;
++diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
++index 2bc3a291a..c4390be57 100644
++--- a/src/llama-graph.cpp
+++++ b/src/llama-graph.cpp
++@@ -14,6 +14,7 @@
++ #include "llama-kv-cache-msa.h"
++ #include "llama-kv-cache-dsv4.h"
++ #include "llama-memory-hybrid.h"
+++#include "llama-memory-enc-dec.h"
++ #include "llama-memory-hybrid-iswa.h"
++ #include "llama-memory-recurrent.h"
++ 
++@@ -432,6 +433,30 @@ bool llm_graph_input_rs::can_reuse(const llm_graph_params & params) {
++ void llm_graph_input_cross_embd::set_input(const llama_ubatch * ubatch) {
++     GGML_UNUSED(ubatch);
++ 
+++    if (cross_embd && mctx) {
+++        // the rows the ubatch's sequences own, uploaded by contiguous runs (a lone sequence is one run)
+++        if (mctx->is_full()) {
+++            return;
+++        }
+++        assert(cross_embd->type == GGML_TYPE_F32);
+++
+++        const auto * store = mctx->get_store();
+++        const auto & rows  = mctx->get_rows();
+++        GGML_ASSERT((int64_t) rows.size() == cross_embd->ne[1]);
+++
+++        const size_t row_bytes = (size_t) store->n_embd()*sizeof(float);
+++        for (size_t i = 0; i < rows.size();) {
+++            size_t j = i + 1;
+++            while (j < rows.size() && rows[j] == rows[j - 1] + 1) {
+++                ++j;
+++            }
+++            ggml_backend_tensor_set(cross_embd, store->row(rows[i]), i*row_bytes, (j - i)*row_bytes);
+++            i = j;
+++        }
+++
+++        return;
+++    }
+++
++     if (cross_embd && !cross->v_embd.empty()) {
++         assert(cross_embd->type == GGML_TYPE_F32);
++ 
++@@ -1133,6 +1158,42 @@ void llm_graph_input_attn_cross::set_input(const llama_ubatch * ubatch) {
++     GGML_ASSERT(ggml_backend_buffer_is_host(cross_kq_mask->buffer));
++     GGML_ASSERT(!ubatch->equal_seqs()); // TODO: use ubatch->n_seqs instead of failing
++ 
+++    if (mctx) {
+++        // the mask pairs each token with the rows its sequence owns (llama_memory_enc_dec)
+++        if (mctx->is_full()) {
+++            return;
+++        }
+++        const auto * store = mctx->get_store();
+++        const auto & rows  = mctx->get_rows();
+++        GGML_ASSERT((int64_t) rows.size() == n_enc);
+++
+++        const auto fill_mask_rows = [&](auto * data) {
+++            using T = std::remove_reference_t<decltype(*data)>;
+++            for (int i = 0; i < n_tokens; ++i) {
+++                for (int j = 0; j < n_enc; ++j) {
+++                    float f = -INFINITY;
+++
+++                    const auto & owners = store->owners_of(rows[j]);
+++                    for (int s = 0; s < ubatch->n_seq_id[i]; ++s) {
+++                        if (owners.count(ubatch->seq_id[i][s]) > 0) {
+++                            f = 0.0f;
+++                        }
+++                    }
+++
+++                    data[i*n_enc + j] = llama_cast<T>(f);
+++                }
+++            }
+++        };
+++
+++        if (cross_kq_mask->type == GGML_TYPE_F16) {
+++            fill_mask_rows((ggml_fp16_t *) cross_kq_mask->data);
+++        } else {
+++            fill_mask_rows((float *) cross_kq_mask->data);
+++        }
+++
+++        return;
+++    }
+++
++     const auto fill_mask = [&](auto * data) {
++         using T = std::remove_reference_t<decltype(*data)>;
++         for (int i = 0; i < n_tokens; ++i) {
++@@ -2821,11 +2882,41 @@ ggml_tensor * llm_graph_context::build_inp_cls() const {
++     return cur;
++ }
++ 
+++// the encoder rows a decoder ubatch attends: the rows its sequences own in the memory's
+++// store, or, for the graph reserve, the most a store can hold for the batch's sequences
+++static int64_t enc_dec_n_enc(const llama_memory_enc_dec_context * mctx, const llama_hparams & hparams, const llama_cparams & cparams) {
+++    if (!mctx->is_full()) {
+++        const auto & rows = mctx->get_rows();
+++        GGML_ASSERT(!rows.empty() && "a decoder ubatch of a sequence with no encoder output");
+++        return (int64_t) rows.size();
+++    }
+++    // one sequence: unchanged (the model's window). Several: each at most the ubatch
+++    // the encoder reads in one call, capped by the window
+++    if (cparams.n_seq_max <= 1) {
+++        return hparams.n_ctx_train;
+++    }
+++    return (int64_t) cparams.n_seq_max * std::min(cparams.n_ubatch, hparams.n_ctx_train);
+++}
+++
++ ggml_tensor * llm_graph_context::build_inp_cross_embd() const {
++-    auto inp = std::make_unique<llm_graph_input_cross_embd>(cross);
+++    const auto * mctx_ed = (arch == LLM_ARCH_T5 && mctx) ? static_cast<const llama_memory_enc_dec_context *>(mctx) : nullptr;
+++
+++    auto inp = std::make_unique<llm_graph_input_cross_embd>(cross, mctx_ed);
++ 
++     auto & cur = inp->cross_embd;
++ 
+++    if (mctx_ed) {
+++        const int64_t n_enc = enc_dec_n_enc(mctx_ed, hparams, cparams);
+++
+++        cur = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hparams.n_embd_inp(), n_enc);
+++        ggml_set_input(cur);
+++        ggml_set_name(cur, "cross_embd");
+++
+++        res->add_input(std::move(inp));
+++
+++        return cur;
+++    }
+++
++     // if we have the output embeddings from the encoder, use them directly
++     // TODO: needs more work to be correct, for now just use the tensor shape
++     //if (cross->t_embd) {
++@@ -3567,9 +3658,11 @@ ggml_tensor * llm_graph_context::build_attn(
++ }
++ 
++ llm_graph_input_attn_cross * llm_graph_context::build_attn_inp_cross() const {
++-    auto inp = std::make_unique<llm_graph_input_attn_cross>(cross);
+++    const auto * mctx_ed = (arch == LLM_ARCH_T5 && mctx) ? static_cast<const llama_memory_enc_dec_context *>(mctx) : nullptr;
+++
+++    auto inp = std::make_unique<llm_graph_input_attn_cross>(cross, mctx_ed);
++ 
++-    const int32_t n_enc = !cross->v_embd.empty() ? cross->n_enc : hparams.n_ctx_train;
+++    const int32_t n_enc = mctx_ed ? (int32_t) enc_dec_n_enc(mctx_ed, hparams, cparams) : !cross->v_embd.empty() ? cross->n_enc : hparams.n_ctx_train;
++ 
++     // flash attention requires an f16 mask
++     const auto type_mask = cparams.flash_attn ? GGML_TYPE_F16 : GGML_TYPE_F32;
++diff --git a/src/llama-graph.h b/src/llama-graph.h
++index f66bedb32..1f172939e 100644
++--- a/src/llama-graph.h
+++++ b/src/llama-graph.h
++@@ -35,6 +35,7 @@ class llama_kv_cache_dsv4_context;
++ class llama_kv_cache_iswa_context;
++ class llama_memory_recurrent_context;
++ class llama_memory_hybrid_context;
+++class llama_memory_enc_dec_context;
++ class llama_memory_hybrid_iswa_context;
++ 
++ // certain models (typically multi-modal) can produce different types of graphs
++@@ -304,6 +305,10 @@ class llm_graph_input_cross_embd : public llm_graph_input_i {
++ public:
++     llm_graph_input_cross_embd(
++             const llama_cross * cross) : cross(cross) {}
+++    // the rows the ubatch's sequences own in the memory's store (llama_memory_enc_dec)
+++    llm_graph_input_cross_embd(
+++            const llama_cross * cross,
+++            const llama_memory_enc_dec_context * mctx) : cross(cross), mctx(mctx) {}
++     virtual ~llm_graph_input_cross_embd() = default;
++ 
++     void set_input(const llama_ubatch * ubatch) override;
++@@ -311,6 +316,8 @@ public:
++     ggml_tensor * cross_embd; // F32 [n_embd, n_outputs_enc]
++ 
++     const llama_cross * cross;
+++
+++    const llama_memory_enc_dec_context * mctx = nullptr;
++ };
++ 
++ class llm_graph_input_attn_no_cache : public llm_graph_input_i {
++@@ -664,6 +671,8 @@ public:
++ class llm_graph_input_attn_cross : public llm_graph_input_i {
++ public:
++     llm_graph_input_attn_cross(const llama_cross * cross) : cross(cross) {}
+++    // the rows the ubatch's sequences own in the memory's store (llama_memory_enc_dec)
+++    llm_graph_input_attn_cross(const llama_cross * cross, const llama_memory_enc_dec_context * mctx) : cross(cross), mctx(mctx) {}
++     ~llm_graph_input_attn_cross() = default;
++ 
++     void set_input(const llama_ubatch * ubatch) override;
++@@ -674,6 +683,8 @@ public:
++     ggml_tensor * cross_kq_mask_cnv = nullptr; // F32/F16 [n_outputs_enc, n_batch, 1, 1]
++ 
++     const llama_cross * cross = nullptr;
+++
+++    const llama_memory_enc_dec_context * mctx = nullptr;
++ };
++ 
++ class llm_graph_input_mem_hybrid : public llm_graph_input_i {
++diff --git a/src/llama-memory.cpp b/src/llama-memory.cpp
++index 961dd74ef..780296246 100644
++--- a/src/llama-memory.cpp
+++++ b/src/llama-memory.cpp
++@@ -21,6 +21,7 @@ llama_memory_status llama_memory_status_combine(llama_memory_status s0, llama_me
++             }
++         case LLAMA_MEMORY_STATUS_FAILED_PREPARE:
++         case LLAMA_MEMORY_STATUS_FAILED_COMPUTE:
+++        case LLAMA_MEMORY_STATUS_FAILED_INPUT:
++             {
++                 return s0;
++             }
++@@ -38,6 +39,7 @@ llama_memory_status llama_memory_status_combine(llama_memory_status s0, llama_me
++             }
++         case LLAMA_MEMORY_STATUS_FAILED_PREPARE:
++         case LLAMA_MEMORY_STATUS_FAILED_COMPUTE:
+++        case LLAMA_MEMORY_STATUS_FAILED_INPUT:
++             {
++                 return s1;
++             }
++@@ -56,6 +58,7 @@ bool llama_memory_status_is_fail(llama_memory_status status) {
++             }
++         case LLAMA_MEMORY_STATUS_FAILED_PREPARE:
++         case LLAMA_MEMORY_STATUS_FAILED_COMPUTE:
+++        case LLAMA_MEMORY_STATUS_FAILED_INPUT:
++             {
++                 return true;
++             }
++diff --git a/src/llama-memory.h b/src/llama-memory.h
++index b33c7aee4..3fb1ef2cf 100644
++--- a/src/llama-memory.h
+++++ b/src/llama-memory.h
++@@ -32,6 +32,7 @@ enum llama_memory_status {
++     LLAMA_MEMORY_STATUS_NO_UPDATE,
++     LLAMA_MEMORY_STATUS_FAILED_PREPARE,
++     LLAMA_MEMORY_STATUS_FAILED_COMPUTE,
+++    LLAMA_MEMORY_STATUS_FAILED_INPUT, // a sequence of the batch misses an input the memory needs (an encoder output)
++ };
++ 
++ // helper function for combining the status of two memory contexts
++diff --git a/src/llama-model.cpp b/src/llama-model.cpp
++index 803a8329e..94438b925 100644
++--- a/src/llama-model.cpp
+++++ b/src/llama-model.cpp
++@@ -15,6 +15,7 @@
++ #include "llama-kv-cache-msa.h"
++ #include "llama-kv-cache-dsv4.h"
++ #include "llama-memory-hybrid.h"
+++#include "llama-memory-enc-dec.h"
++ #include "llama-memory-hybrid-iswa.h"
++ #include "llama-memory-hybrid-idx.h"
++ #include "llama-memory-recurrent.h"
++@@ -2798,6 +2799,24 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
++             {
++                 res = nullptr;
++             } break;
+++        case LLM_ARCH_T5:
+++            {
+++                // encoder-decoder: the decoder's KV cache plus the encoder outputs, per sequence
+++                res = new llama_memory_enc_dec(
+++                        *this,
+++                        hparams,
+++                        params.type_k,
+++                        params.type_v,
+++                        !cparams.flash_attn,
+++                        cparams.offload_kqv,
+++                        cparams.kv_unified,
+++                        cparams.n_ctx_seq,
+++                        cparams.n_seq_max,
+++                        1,
+++                        hparams.n_swa,
+++                        hparams.swa_type,
+++                        nullptr);
+++            } break;
++         case LLM_ARCH_MINIMAX_M3:
++             {
++                 // sparse (MSA) layers carry an indexer key cache, but leading dense layers do not
++diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
++index 991bf5479..88816af90 100644
++--- a/tests/CMakeLists.txt
+++++ b/tests/CMakeLists.txt
++@@ -225,6 +225,7 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
++     # TODO: after `test-llama-archs` is refactored to not link internal symbols, we can move all related tests out of
++     #       this branch and run them on all platforms
++     llama_build(test-llama-archs.cpp)
+++    llama_build_and_test(test-enc-dec-store.cpp)
++ 
++     set(MODEL_DIR "${CMAKE_CURRENT_BINARY_DIR}/test-models/")
++     file(MAKE_DIRECTORY "${MODEL_DIR}")
++diff --git a/tests/test-llama-archs.cpp b/tests/test-llama-archs.cpp
++index 94a22ff2f..3d49d1a02 100644
++--- a/tests/test-llama-archs.cpp
+++++ b/tests/test-llama-archs.cpp
++@@ -585,7 +585,8 @@ static std::pair<llama_model_ptr, llama_context_ptr> get_model_and_ctx(
++         struct gguf_context * gguf_ctx, FILE * file, const size_t seed, const float stdev,
++         const std::vector<ggml_backend_dev_t> & devs,
++         const llama_split_mode split_mode = LLAMA_SPLIT_MODE_LAYER, bool encode = false,
++-        const llama_model_tensor_buft_override * tensor_buft_overrides = nullptr, const size_t moe_cache_size = 0) {
+++        const llama_model_tensor_buft_override * tensor_buft_overrides = nullptr, const size_t moe_cache_size = 0,
+++        const uint32_t n_seq_max = 1) {
++     GGML_ASSERT((gguf_ctx == nullptr) != (file == nullptr));
++     llama_model_params model_params = llama_model_default_params();
++     model_params.progress_callback = silent_model_load_progress;
++@@ -599,6 +600,7 @@ static std::pair<llama_model_ptr, llama_context_ptr> get_model_and_ctx(
++     ctx_params.n_ctx = 0;
++     ctx_params.n_threads = 4;
++     ctx_params.n_threads_batch = 4;
+++    ctx_params.n_seq_max = n_seq_max;
++     if (!encode) {
++         ctx_params.n_ubatch = 64;
++     }
++@@ -934,6 +936,137 @@ static int save_models(const std::string & arch_filter, const size_t seed, const
++     return 0;
++ }
++ 
+++// encoder-decoder memory (llama_memory_enc_dec): sequences encode and decode independently
+++static int ed_encode(llama_context * ctx, const std::vector<llama_token> & toks, llama_seq_id seq) {
+++    common_batch batch(ctx);
+++    for (size_t i = 0; i < toks.size(); ++i) {
+++        batch.add(toks[i], (llama_pos) i, seq, false);
+++    }
+++    return llama_process(ctx, LLAMA_PROCESS_TYPE_ENCODE, batch.get());
+++}
+++
+++// one token at pos for each of the sequences; the logits per sequence in out (empty on error)
+++static int ed_decode(llama_context * ctx, llama_token tok, llama_pos pos, const std::vector<llama_seq_id> & seqs, std::vector<std::vector<float>> & out) {
+++    const uint32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(llama_get_model(ctx)));
+++    common_batch batch(ctx);
+++    for (const auto s : seqs) {
+++        batch.add(tok, pos, s, true);
+++    }
+++    out.clear();
+++    const int ret = llama_process(ctx, LLAMA_PROCESS_TYPE_DECODE, batch.get());
+++    if (ret != 0) {
+++        return ret;
+++    }
+++    for (size_t i = 0; i < seqs.size(); ++i) {
+++        const float * l = llama_get_logits_ith(ctx, (int32_t) i);
+++        out.emplace_back(l, l + n_vocab);
+++    }
+++    return 0;
+++}
+++
+++static bool test_enc_dec_memory(gguf_context * gguf_ctx, const size_t seed, const float stdev, const std::vector<llama_token> & tokens) {
+++    bool ok = true;
+++    const auto check = [&](bool cond, const char * what) {
+++        if (!cond) {
+++            LOG("    enc-dec memory: FAIL %s\n", what);
+++            ok = false;
+++        }
+++    };
+++    const std::vector<llama_token> in_a(tokens.begin(),      tokens.begin() + 12);
+++    const std::vector<llama_token> in_b(tokens.begin() + 12, tokens.begin() + 20);
+++    const llama_token t1 = tokens[20], t2 = tokens[21], t3 = tokens[22], t4 = tokens[23];
+++
+++    std::vector<std::vector<float>> a0, a1, a2, b0, b1, tmp;
+++
+++    // the reference: each input alone, in a one-sequence context
+++    auto ref_a = get_model_and_ctx(gguf_ctx, nullptr, seed, stdev, {}, LLAMA_SPLIT_MODE_LAYER, true);
+++    llama_token start = llama_model_decoder_start_token(ref_a.first.get());
+++    if (start == LLAMA_TOKEN_NULL) {
+++        start = llama_vocab_bos(llama_model_get_vocab(ref_a.first.get()));
+++    }
+++    if (start == LLAMA_TOKEN_NULL) {
+++        start = 0;
+++    }
+++    check(ed_encode(ref_a.second.get(), in_a, 0) == 0, "reference: encode a");
+++    check(ed_decode(ref_a.second.get(), start, 0, {0}, a0) == 0, "reference: decode a0");
+++    check(ed_decode(ref_a.second.get(), t1,    1, {0}, a1) == 0, "reference: decode a1");
+++    check(ed_decode(ref_a.second.get(), t2,    2, {0}, a2) == 0, "reference: decode a2");
+++    auto ref_b = get_model_and_ctx(gguf_ctx, nullptr, seed, stdev, {}, LLAMA_SPLIT_MODE_LAYER, true);
+++    check(ed_encode(ref_b.second.get(), in_b, 0) == 0, "reference: encode b");
+++    check(ed_decode(ref_b.second.get(), start, 0, {0}, b0) == 0, "reference: decode b0");
+++    check(ed_decode(ref_b.second.get(), t1,    1, {0}, b1) == 0, "reference: decode b1");
+++    if (!ok) {
+++        return false;
+++    }
+++
+++    // (h) four sequences with kv_unified left false: the library forces the unified cache
+++    auto mc = get_model_and_ctx(gguf_ctx, nullptr, seed, stdev, {}, LLAMA_SPLIT_MODE_LAYER, true, nullptr, 0, 4);
+++    llama_context * ctx = mc.second.get();
+++    llama_memory_t   mem = llama_get_memory(ctx);
+++    check(mem != nullptr, "(h) a memory exists");
+++    if (!ok) {
+++        return false;
+++    }
+++
+++    // (a) two encodes in separate calls keep both outputs; a lone decode gives the solo bytes
+++    check(ed_encode(ctx, in_a, 0) == 0, "(a) encode seq 0");
+++    check(ed_encode(ctx, in_b, 1) == 0, "(a) encode seq 1");
+++    check(ed_decode(ctx, start, 0, {0}, tmp) == 0 && tmp[0] == a0[0], "(a) seq 0 alone == its solo run, bitwise");
+++    check(ed_decode(ctx, start, 0, {1}, tmp) == 0 && tmp[0] == b0[0], "(a) seq 1 alone == its solo run, bitwise");
+++
+++    // (b) both in one batch: each within nmse 1e-4 of its solo run; bitwise equality reported
+++    check(ed_decode(ctx, t1, 1, {0, 1}, tmp) == 0 && tmp.size() == 2, "(b) two sequences decode in one batch");
+++    if (tmp.size() == 2) {
+++        check(nmse(a1[0], tmp[0]) <= 1e-4, "(b) seq 0 batched ~ solo");
+++        check(nmse(b1[0], tmp[1]) <= 1e-4, "(b) seq 1 batched ~ solo");
+++        LOG("    enc-dec memory: (b) batched decode bitwise equal to solo: seq 0 %s, seq 1 %s\n",
+++            tmp[0] == a1[0] ? "yes" : "no", tmp[1] == b1[0] ? "yes" : "no");
+++    }
+++
+++    // (c) a whole removal drops the encoder output: that sequence cannot decode, the other is unaffected
+++    llama_memory_seq_rm(mem, 1, -1, -1);
+++    check(ed_decode(ctx, start, 0, {1}, tmp) == -1, "(c) a decode without encoder output returns -1");
+++    std::vector<std::vector<float>> w0;
+++    check(ed_decode(ctx, t2, 2, {0}, w0) == 0 && !w0.empty() && nmse(a2[0], w0[0]) <= 1e-4, "(c) seq 0 unaffected");
+++    if (!ok) {
+++        return false;
+++    }
+++
+++    // (d) a partial removal keeps it
+++    check(llama_memory_seq_rm(mem, 0, 2, -1), "(d) partial seq_rm");
+++    check(ed_decode(ctx, t2, 2, {0}, tmp) == 0 && tmp[0] == w0[0], "(d) re-decode after a partial removal, bitwise");
+++
+++    // (e) seq_cp shares the encoder output
+++    llama_memory_seq_cp(mem, 0, 2, -1, -1);
+++    std::vector<std::vector<float>> v0, v2;
+++    check(ed_decode(ctx, t3, 3, {2}, v2) == 0, "(e) the copy decodes");
+++    check(ed_decode(ctx, t3, 3, {0}, v0) == 0, "(e) the source decodes");
+++    if (!v0.empty() && !v2.empty()) {
+++        check(nmse(v0[0], v2[0]) <= 1e-4, "(e) copy ~ source");
+++    }
+++
+++    // (f) a sequence's state carries its encoder output
+++    const size_t size = llama_state_seq_get_size(ctx, 0);
+++    std::vector<uint8_t> buf(size);
+++    check(llama_state_seq_get_data(ctx, buf.data(), size, 0) == size, "(f) state_seq_get_data");
+++    check(llama_state_seq_get_size_ext(ctx, 0, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY) < size, "(f) PARTIAL_ONLY carries no encoder rows");
+++    std::vector<std::vector<float>> u0, u3;
+++    check(ed_decode(ctx, t4, 4, {0}, u0) == 0, "(f) the source decodes at 4");
+++    llama_memory_clear(mem, true);
+++    check(llama_state_seq_set_data(ctx, buf.data(), size, 3) == size, "(f) state_seq_set_data into seq 3");
+++    check(ed_decode(ctx, t4, 4, {3}, u3) == 0 && !u3.empty() && !u0.empty() && nmse(u0[0], u3[0]) <= 1e-4, "(f) the restored sequence decodes as the source did");
+++    check(llama_state_seq_set_data(ctx, buf.data(), size - 16, 3) == 0, "(f) a truncated state is refused");
+++    check(ed_decode(ctx, start, 0, {3}, tmp) == -1, "(f) nothing decodes after a failed restore");
+++
+++    // (g) clear drops every output
+++    check(ed_encode(ctx, in_a, 0) == 0, "(g) encode again");
+++    llama_memory_clear(mem, true);
+++    check(ed_decode(ctx, start, 0, {0}, tmp) == -1, "(g) a decode after clear returns -1");
+++
+++    LOG("    enc-dec memory: %s\n", ok ? "OK" : "FAIL");
+++    return ok;
+++}
+++
++ static int test_backends(const std::string & arch_filter, const size_t seed, const float stdev, const int verbosity, const char * target_backend) {
++     struct user_data_t {
++         struct {
++@@ -1074,6 +1207,7 @@ static int test_backends(const std::string & arch_filter, const size_t seed, con
++             }
++             std::pair<llama_model_ptr, llama_context_ptr> model_and_ctx_cpu;
++             std::vector<float> logits_cpu;
+++            bool enc_dec_ok = true;
++             for (device_config & dc : dev_configs) {
++                 if (dc.host_experts && (!moe || !host_experts_test(arch))) {
++                     continue;
++@@ -1099,6 +1233,9 @@ static int test_backends(const std::string & arch_filter, const size_t seed, con
++                     if (logits_cpu.empty()) {
++                         model_and_ctx_cpu = get_model_and_ctx(gguf_ctx.get(), nullptr, seed, stdev, {}, LLAMA_SPLIT_MODE_LAYER, encode);
++                         logits_cpu = get_logits(model_and_ctx_cpu.first.get(), model_and_ctx_cpu.second.get(), tokens, encode);
+++                        if (arch == LLM_ARCH_T5) {
+++                            enc_dec_ok = test_enc_dec_memory(gguf_ctx.get(), seed, stdev, tokens);
+++                        }
++                     }
++                     if (dc.split_mode != LLAMA_SPLIT_MODE_TENSOR || llm_arch_supports_sm_tensor(arch)) {
++                         test_executed = true;
++@@ -1185,6 +1322,9 @@ static int test_backends(const std::string & arch_filter, const size_t seed, con
++ 
++                 if (test_executed) {
++                     n_tests++;
+++                    if (arch == LLM_ARCH_T5 && !enc_dec_ok) {
+++                        test_ok = false;
+++                    }
++                     if (!test_ok) {
++                         n_failed++;
++                         all_ok = false;
++diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
++index cbb28dd60..46ae57ba2 100644
++--- a/tools/server/server-context.cpp
+++++ b/tools/server/server-context.cpp
++@@ -1266,8 +1266,14 @@ private:
++         }
++ 
++         if (enc_dec) {
++-            // the encoder's output is kept once per context, not per sequence
++-            // (llama_cross): the slots are encoded together, in waves (enc_dec_waves)
+++            // the memory keeps an encoder output per sequence (llama_memory_enc_dec); the slots
+++            // about to start are encoded together, in waves (enc_dec_waves), and decode as the
+++            // server batches any slots. For several slots the library forces one KV stream:
+++            // mirror it, so the slot bookkeeping (idle-slot clearing, checkpoints) agrees
+++            if (params_base.n_parallel > 1 && !params_base.kv_unified) {
+++                SRV_INF("%s", "encoder-decoder model: the context uses a unified KV cache (forced by the library)\n");
+++                params_base.kv_unified = true;
+++            }
++             SRV_INF("encoder-decoder model: %d slot(s) are encoded in waves of up to one ubatch, "
++                     "gathered for %" PRId64 " ms\n", params_base.n_parallel, enc_dec_wave_us() / 1000);
++         }
++@@ -1421,19 +1427,13 @@ private:
++         slots.clear();
++ 
++         if (enc_dec) {
++-            // the probe below decodes, and an encoder-decoder model's decoder reads
++-            // the encoder's output (it asserts "llama_encode must be called first"):
++-            // one token encoded on sequence 0 gives it that; every request encodes
++-            // its own prompt over it
++-            common_batch batch_enc(ctx_tgt);
++-            batch_enc.add(llama_vocab_eos(vocab), 0, 0, false);
++-            if (llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_ENCODE, batch_enc.get()) != 0) {
++-                SRV_ERR("%s", "failed to encode the probe token of an encoder-decoder model\n");
++-                return false;
++-            }
+++            // the memory keeps an encoder output per sequence (llama_memory_enc_dec) and
+++            // refuses a decode without one, so the partial-removal probe (two tokens decoded
+++            // after a clear) cannot run here; speculative decoding is not supported anyway
+++            ctx_tgt_seq_rm_type = COMMON_CONTEXT_SEQ_RM_TYPE_NO;
+++        } else {
+++            ctx_tgt_seq_rm_type = common_context_can_seq_rm(ctx_tgt);
++         }
++-
++-        ctx_tgt_seq_rm_type = common_context_can_seq_rm(ctx_tgt);
++         if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
++             SRV_WRN("%s", "speculative decoding not supported by this context\n");
++         }
++@@ -1921,15 +1921,18 @@ private:
++     // client's concurrent requests share one. Its members are ordered by their
++     // tokens: the bytes a wave gives depend on WHAT is in it, never on arrival order
++     // or slot ids. A wave is at most one ubatch of tokens (the encoder reads its
++-    // whole input in one); what does not fit waits for the next.
+++    // whole input in one); what does not fit waits for the next. The memory keeps an
+++    // encoder output per sequence (llama_memory_enc_dec), so a wave is encoded while
+++    // earlier ones decode: a late request joins the next decode step.
++     void enc_dec_waves() {
++         std::vector<server_slot *> waiting;
+++        bool decoding = false;
++         for (auto & slot : slots) {
++             if (!slot.is_processing()) {
++                 continue;
++             }
++             if (slot.enc_live) {
++-                return; // a wave is decoding: nothing is encoded over its output
+++                decoding = true;
++             }
++             if (slot.state == SLOT_STATE_STARTED && !slot.enc_tokens.empty()) {
++                 waiting.push_back(&slot);
++@@ -1949,8 +1952,10 @@ private:
++         }
++         const bool full = waiting.size() >= slots.size() || n_tokens >= (size_t) n_ubatch;
++         if (!full && ggml_time_us() - t_oldest < enc_dec_wave_us()) {
++-            // gathering; nothing decodes meanwhile, so the loop would spin: a ms of rest
++-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+++            // gathering; when nothing decodes meanwhile the loop would spin: a ms of rest
+++            if (!decoding) {
+++                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+++            }
++             return;
++         }
++ 
++@@ -4171,7 +4176,11 @@ private:
++ 
++                     SLT_TRC(slot, "cached n_tokens = %d, memory_seq_rm [%d, end)\n", slot.prompt.n_tokens(), p0);
++ 
++-                    slot.mem.seq_rm(slot.id, p0, -1);
+++                    // an encoder-decoder slot's wave cleared its sequence before encoding it, and
+++                    // a whole removal here would release the encoder output just stored
+++                    if (!(enc_dec && slot.enc_live && p0 == 0)) {
+++                        slot.mem.seq_rm(slot.id, p0, -1);
+++                    }
++ 
++                     // shared prompt prefix: once it is processed, the children continue from it with their own prompt
++                     bool wait_shared = false;

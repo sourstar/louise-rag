@@ -1,32 +1,50 @@
-# louise-translate-madlad — staged in the LocalAI app (docs/notes/vega.md §12),
-# beside the live RAGE; no Louise collection uses it yet. MADLAD-400-3B-MT on torch
-# XPU, `Predict`: the batch as one JSON prompt (app/translate.py, the completion
-# shape), so NO template and none of echo, cutstrings, extract_regex, trimspace
-# or trimsuffix. Backend louise-madlad (its own torch 2.14.0+xpu; built for this app
-# by deploy/vega/stage/build_louise_backend.sh). Every load option is RAGE's
-# madlad.yaml; the weights the same host files, mounted read-only.
+# louise-translate-madlad — MADLAD-400-3B-MT on our llama.cpp backend (series
+# base ec92740 + P1..P4: the encoder runs, P3; slots encoded in waves, P4),
+# live since 2026-10-28 under the name TRANSLATE_MODEL has always had, so no
+# app setting moved: app/translate.py determines the shape from the server
+# (the t5 shape: one raw "<2xx> segment" completion per segment, greedy; a
+# question's languages sent at once decode in one wave). Its own backend,
+# `vega-llama-cpp-t5`: the shared embedder backend was not rebuilt
+# for it, so no embedder became a new engine (invariant 12). A wave is at most
+# one ubatch (1024) of encoder tokens — seven 96-token segments fit; the KV
+# pool (context_size) holds 7 slots x up to 512 decoder positions.
+# The torch model it replaced is kept as louise-translate-madlad-torch (backout).
+# The KV cache is f32, not the default f16: on the B70 the SYCL F16-cache path
+# decodes WRONG text whenever two or more slots decode in one batch (alone and
+# on the CPU right; localai-bugs.md P4 "Measured on the card", 2026-10-28); the
+# f32 cache is correct; its price, measured paused, is +79 % per token (29.2 against
+# 16.3 ms), still 1.12 s per question in waves against torch's 3.2 s, and ~2 GB of
+# cache for 7 slots x 512 positions. The F16 cache comes back when upstream fixes the
+# product (upstream-bugs.md S1).
 # JSON, which is YAML.
 {
   "name": "louise-translate-madlad",
-  "backend": "vega-louise-python-20261021a",
-  "context_size": 512,
+  "backend": "vega-llama-cpp-t5",
+  "context_size": 4096,
+  "cache_type_k": "f32",
+  "cache_type_v": "f32",
+  "env": {
+    "GGML_SYCL_ENABLE_DNN": "0",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  },
+  "flash_attention": "off",
+  "gpu_layers": 999,
+  "mmap": true,
   "threads": 6,
-  "gpu_layers": 0,
+  "known_usecases": ["completion"],
+  "options": [
+    "parallel:7",
+    "cache_ram:0",
+    "ubatch:1024"
+  ],
   "parameters": {
-    "model": "weights/madlad/madlad400-3b-mt-bf16",
-    "batch": 32,
+    "batch": 1024,
+    "model": "weights/madlad/madlad400-3b-mt-f16.gguf",
+    "temperature": 0,
+    "top_k": 1,
     "seed": 0
   },
-  "options": [
-    "task:madlad",
-    "device:xpu",
-    "dtype:bfloat16",
-    "max_seg_tokens:96",
-    "beams:1",
-    "max_items:512"
-  ],
-  "env": {
-    "LOUISE_TORCH_DETERMINISTIC": "1",
-    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  "template": {
+    "completion": "{{.Input}}"
   }
 }
