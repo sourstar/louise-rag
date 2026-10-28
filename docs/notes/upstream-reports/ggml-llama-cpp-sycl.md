@@ -96,6 +96,9 @@ n = 2, 4, 7, which fails before the fix at every n ≥ 2 and every key count
 the flat copy only when the oneDNN GEMM will run, leaving `s11/s12/s13` and
 `is_src1_cont_2` as they are; otherwise the gather (`to_fp16_nc_sycl`) with
 the contiguous strides, as the non-oneDNN build has always done. 26 lines in
-ggml-sycl.cpp, 8 in tests/test-backend-ops.cpp. Verified on the B70 with
-`test-backend-ops` (the 32, and the sweep) — *to be filled in after the card
-run*.
+ggml-sycl.cpp, 8 in tests/test-backend-ops.cpp. Verified on the B70 (c0fd786 + the
+patch, SYCL F16, oneAPI 2025.3.0, `GGML_SYCL_ENABLE_DNN=0`): `-o MUL_MAT -p
+"type_a=f16,type_b=f32"` 226 OK / 0 FAIL / 60 not supported (191 / 32 / 60
+before; the three new cases included), the exhaustive decoder sweep 272 / 0
+(34 / 238 before), the whole `-o MUL_MAT` suite 2276 OK / 0 FAIL / 592 not
+supported.
