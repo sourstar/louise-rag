@@ -44,6 +44,7 @@ the source):*
 | **P3** | **patch we carry** | llama.cpp backend: the encoder of an encoder-decoder model runs (B16), as a llama.cpp patch in the backend's own `patches/` | MADLAD on llama.cpp (operator, 2026-10-27: "we need anyway a patched llama.cpp") | not filed; [`deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch`](../../deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch) |
 | **P4** | **patch we carry** | llama.cpp backend: encoder-decoder slots are encoded together, in WAVES, and decode in one batch (on P3, which ran one slot) | MADLAD on llama.cpp at torch's speed: a question's 7 languages in one wave instead of 7 × 3 s | not filed; [`deploy/localai/patches/0004-llama-cpp-encoder-decoder-waves.patch`](../../deploy/localai/patches/0004-llama-cpp-encoder-decoder-waves.patch) |
 | **P5 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder output is kept PER SEQUENCE (`llama_memory_enc_dec`, stage 1 of llama-cpp-encoder-decoder.md), so a slot is encoded while others decode; on P3 and P4 | a late request joins the next decode step instead of waiting for the wave; the upstream shape (no public API) | not filed; [`deploy/localai/patches/staged/0005-llama-cpp-encoder-decoder-memory.patch`](../../deploy/localai/patches/staged/0005-llama-cpp-encoder-decoder-memory.patch); moves into the series after its card gates |
+| **P6 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder outputs live ON THE DEVICE (stage 2: a persistent store written by the encoder graph, read by the decoder's `ggml_get_rows`; no host copies), on P5 | the shape upstream asked for (a persistent buffer, no host copies); the per-step upload gone | not filed; [`deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-store.patch`](../../deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-store.patch); moves into the series with P5 after the card gates |
 | R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: RAGE checks before and after instead | not filed |
 | R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (rage-over-localai §8.2) | not filed |
 | R3 | request | read API keys from a file, not only from `LOCALAI_API_KEY` | only if LocalAI's own UI is published (invariant 8) | not filed |
@@ -833,9 +834,56 @@ bytes, 60 requests after a burst leave every slot empty, and a request
 arriving while a wave decodes is answered in 0.06 s (P4: after the wave).
 
 **Card gates before it moves into the series** (staged/README.md): the
-f32-cache MADLAD backend rebuilt with it — T3, in-wave vs alone (bar
+f32-cache MADLAD backend rebuilt with it AND P6 — T3, in-wave vs alone (bar
 90 %), a lone request against P4's bytes, seconds per question — then
-the retrieval comparison. Stage 2 (the device store) follows it.
+the retrieval comparison. Stage 2 (the device store) is P6 below.
+
+### P6 (staged). llama.cpp backend: the encoder outputs live on the device
+
+*Base: `v4.12.1` (`ec92740`), after P1–P5. File:
+`deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-store.patch`
+(staged with P5: built and tested on the CPU 2026-10-28, NOT in `series`
+until the card gates pass — staged/README.md). It adds
+`backend/cpp/llama-cpp/patches/0006-encoder-decoder-store.patch`, applied
+by the backend's `prepare.sh` after P5's.*
+
+**Why.** Stage 2 of docs/notes/llama-cpp-encoder-decoder.md, the shape
+upstream asked for (a persistent buffer, no host copies: PR #11213
+r1969892524, #22728). P5 kept the encoder rows on the host and uploaded a
+ubatch's rows at every decode step; here the store is one F32 tensor in
+its own backend buffer, `(n_seq_max + 1)` REGIONS of `n_ubatch` rows
+(MADLAD at `-np 7 -ub 1024`: 8 × 1024 × 1024 floats, 32 MiB on the card).
+The encoder graph writes its output rows into the lowest free region with
+`ggml_set_rows` (its context, `init_encode`, assigns the region; a new
+default-nullptr virtual on `llama_memory_i`), and `llama_context::encode`
+COMMITS after the compute succeeded — the batch's sequences leave the rows
+they owned and own the new ones — so a failed encode keeps the old output
+(the §8 question, settled as write-beside plus a post-compute commit). A
+sequence owns rows in one region at a time, so a free region always
+exists. The decoder gathers the rows its ubatch's sequences own with
+`ggml_get_rows` on an I32 index input; the mask is unchanged. The
+synchronize and memcpy of the encoder output and the per-step upload are
+gone for T5. Sequence operations move no data: they are owner bookkeeping
+on the rows. State writes carry the rows through the io's tensor path
+(suffix version 2: the owned rows of each used region at their in-region
+index), so `llama_memory_get_buffers` sees the store's buffer and a
+single-sequence restore lands in a free region. Each state write of the
+whole context and each single-sequence restore is region-shaped; a
+file from a store of another shape (`n_embd`, region size) is refused.
+
+**Checked on the CPU**: the same tests as P5 — `tests/test-llama-archs -a
+'^t5$'` (a sequence alone bitwise equal to a one-sequence context; two
+sequences in one batch within nmse 1e-4 of their solo runs; whole removal,
+clear and a truncated restore leave `-1`; partial removal, `seq_cp` and a
+restored state keep the output), `tests/test-enc-dec-store` rewritten for
+the device-backed store (regions chosen lowest-free and released by the
+commit, shared rows, `seq_cp`/`seq_keep`, the `n_seq_max + 1` bound, state
+whole and per sequence, truncated and foreign files refused), and the P4
+server checks (a lone request byte-identical to P3, the same 7 prompts in 3
+orders, bursts, a late request answered in 0.06 s).
+
+**Card gates** with P5 (one rebuild): plus `test-backend-ops -o
+SET_ROWS,GET_ROWS` on the node for F32, which the device store relies on.
 
 ---
 

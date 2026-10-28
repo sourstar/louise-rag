@@ -65,7 +65,11 @@ localai-bugs.md P5 staged) passes its CPU tests (library T1 a–h, the store
 unit test, P4's server checks; a late request answered in 0.06 s instead of
 after the wave). It is STAGED, not in the series: it goes to the card only
 after the switch and the regular activities have resumed, then its own
-gates. Stage 2 (the device store) next.
+gates. **Stage 2 BUILT too** (P6 staged, `staged/0006…`): the store on the
+device, written by the encoder graph and committed after the compute, read by
+the decoder's `ggml_get_rows`; the same CPU tests pass, a lone request stays
+byte-identical to P3. Both stages go to the card in ONE rebuild after the
+switch, with `test-backend-ops -o SET_ROWS,GET_ROWS` beside the gates.
 
 **2026-10-27 10:25 (München).** Image a773d05 is deployed: profiles live,
 period crons 6/18–21 disabled (not deleted).

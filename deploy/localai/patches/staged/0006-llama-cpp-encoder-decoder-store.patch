@@ -1,0 +1,1292 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 28 Oct 2026 07:46:22 +0000
+Subject: [PATCH] fix(llama-cpp): the encoder outputs of an encoder-decoder
+ model live on the device
+
+On top of patches/0005 (the encoder output per sequence): the store is one
+F32 tensor in its own backend buffer, written by the encoder graph
+(ggml_set_rows) into the region the encode's memory context assigns and
+committed after the compute, read by the decoder graph (ggml_get_rows).
+No host copies of the encoder output remain; sequence operations move no
+data; state writes carry the rows through the tensor path. No public API
+changes; only T5 reaches the new code. Carried as a llama.cpp patch beside
+the others (patches/0006-encoder-decoder-store.patch).
+
+Checked on the CPU with a random-weight T5: the 0005 library tests, the
+store unit test rewritten for the device store, and the 0004 server checks.
+
+Assisted-by: Claude Code
+---
+ .../patches/0006-encoder-decoder-store.patch  | 1262 +++++++++++++++++
+ 1 file changed, 1262 insertions(+)
+ create mode 100644 backend/cpp/llama-cpp/patches/0006-encoder-decoder-store.patch
+
+diff --git a/backend/cpp/llama-cpp/patches/0006-encoder-decoder-store.patch b/backend/cpp/llama-cpp/patches/0006-encoder-decoder-store.patch
+new file mode 100644
+index 00000000..f32f7a47
+--- /dev/null
++++ b/backend/cpp/llama-cpp/patches/0006-encoder-decoder-store.patch
+@@ -0,0 +1,1262 @@
++llama: the encoder outputs of an encoder-decoder model live on the device (llama_memory_enc_dec, stage 2)
++
++Stage 2 of docs/notes/llama-cpp-encoder-decoder.md (Louise), on top of 0005.
++The per-sequence store is one F32 tensor in its own backend buffer,
++(n_seq_max + 1) regions of n_ubatch rows. llama_memory_i gains
++init_encode(ubatch), a virtual with a nullptr default: the encoder-decoder
++memory answers with the lowest free region, the T5 encoder graph writes
++its output rows there with ggml_set_rows, and llama_context::encode commits
++after the compute succeeded, so a failed encode keeps the old output. The
++decoder gathers the rows its ubatch's sequences own with ggml_get_rows on
++an I32 index input. The synchronize and memcpy of the encoder output and
++the per-step upload are gone; sequence operations move no data. State
++writes carry the rows through the io's tensor path (suffix version 2), so
++llama_memory_get_buffers sees the store and a single-sequence restore lands
++in a free region. No public API changes; only T5 reaches the new code.
++
++Checked on the CPU with the same tests as 0005: tests/test-llama-archs -a
++'^t5$' (a lone sequence bitwise equal to a one-sequence context; two in
++one batch within nmse 1e-4; removals, clear, seq_cp, a restored and a
++truncated state), tests/test-enc-dec-store rewritten for the device store
++(regions lowest-free and released by the commit, shared rows, the
++n_seq_max + 1 bound, state whole and per sequence, foreign files refused),
++and the 0004 server checks (a lone request byte-identical to 0003, the
++same 7 prompts in 3 orders, 60 requests after a burst, a late request
++answered in 0.06 s).
++
++diff --git a/src/llama-context.cpp b/src/llama-context.cpp
++index 35de5fd1e..18bcfec6f 100644
++--- a/src/llama-context.cpp
+++++ b/src/llama-context.cpp
++@@ -1654,8 +1654,17 @@ int llama_context::encode(const llama_batch_ext & batch_inp) {
++     //       ref: https://github.com/ggml-org/llama.cpp/pull/12181#issuecomment-2730451223
++     cparams.causal_attn = false;
++ 
+++    // an encoder-decoder memory assigns this encode its store rows; the output is committed to the
+++    // batch's sequences only after the compute succeeded, so a failed encode keeps the old output
+++    llama_memory_context_ptr mctx_enc = memory ? memory->init_encode(ubatch) : nullptr;
+++    if (mctx_enc && llama_memory_status_is_fail(mctx_enc->get_status())) {
+++        LLAMA_LOG_ERROR("%s: the memory refused the encode of %u tokens\n", __func__, n_tokens);
+++        cparams.causal_attn = causal_attn_org;
+++        return -1;
+++    }
+++
++     ggml_status status;
++-    const auto * res = process_ubatch(ubatch, LLM_GRAPH_TYPE_ENCODER, nullptr, status);
+++    const auto * res = process_ubatch(ubatch, LLM_GRAPH_TYPE_ENCODER, mctx_enc.get(), status);
++ 
++     cparams.causal_attn = causal_attn_org;
++ 
++@@ -1747,17 +1756,16 @@ int llama_context::encode(const llama_batch_ext & batch_inp) {
++     }
++ 
++     // TODO: hacky solution
++-    if (model.arch == LLM_ARCH_T5 && t_embd) {
+++    if (model.arch == LLM_ARCH_T5 && t_embd && mctx_enc) {
+++        // the memory keeps the output per sequence, on the device: the encoder graph wrote this
+++        // encode's rows, the batch's sequences now own them (llama_memory_enc_dec)
+++        const auto * ctx_enc = static_cast<const llama_memory_enc_dec_encode_context *>(mctx_enc.get());
+++        static_cast<llama_memory_enc_dec *>(memory.get())->enc_commit(ubatch, ctx_enc->get_region());
+++    } else if (model.arch == LLM_ARCH_T5 && t_embd) {
++         //cross.t_embd = t_embd;
++ 
++         synchronize();
++ 
++-        // the memory keeps the output per sequence: the batch's sequences get this one,
++-        // every other sequence keeps its own (llama_memory_enc_dec)
++-        if (memory) {
++-            static_cast<llama_memory_enc_dec *>(memory.get())->enc_store(ubatch, (const float *) embd.data, t_embd->ne[0]);
++-        }
++-
++         cross.n_embd = t_embd->ne[0];
++         cross.n_enc  = t_embd->ne[1];
++         cross.v_embd.resize(cross.n_embd*cross.n_enc);
++diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
++index c4390be57..7a26a1c65 100644
++--- a/src/llama-graph.cpp
+++++ b/src/llama-graph.cpp
++@@ -433,26 +433,16 @@ bool llm_graph_input_rs::can_reuse(const llm_graph_params & params) {
++ void llm_graph_input_cross_embd::set_input(const llama_ubatch * ubatch) {
++     GGML_UNUSED(ubatch);
++ 
++-    if (cross_embd && mctx) {
++-        // the rows the ubatch's sequences own, uploaded by contiguous runs (a lone sequence is one run)
+++    if (mctx) {
+++        // the store rows the ubatch's sequences own: the graph gathers them (ggml_get_rows)
++         if (mctx->is_full()) {
++             return;
++         }
++-        assert(cross_embd->type == GGML_TYPE_F32);
++-
++-        const auto * store = mctx->get_store();
++-        const auto & rows  = mctx->get_rows();
++-        GGML_ASSERT((int64_t) rows.size() == cross_embd->ne[1]);
+++        const auto & rows = mctx->get_rows();
+++        GGML_ASSERT(rows_idx && (int64_t) rows.size() == rows_idx->ne[0]);
++ 
++-        const size_t row_bytes = (size_t) store->n_embd()*sizeof(float);
++-        for (size_t i = 0; i < rows.size();) {
++-            size_t j = i + 1;
++-            while (j < rows.size() && rows[j] == rows[j - 1] + 1) {
++-                ++j;
++-            }
++-            ggml_backend_tensor_set(cross_embd, store->row(rows[i]), i*row_bytes, (j - i)*row_bytes);
++-            i = j;
++-        }
+++        std::vector<int32_t> idx(rows.begin(), rows.end());
+++        ggml_backend_tensor_set(rows_idx, idx.data(), 0, idx.size()*sizeof(int32_t));
++ 
++         return;
++     }
++@@ -1149,6 +1139,20 @@ bool llm_graph_input_dsv4::can_reuse(const llm_graph_params & params) {
++     return res;
++ }
++ 
+++void llm_graph_input_enc_rows::set_input(const llama_ubatch * ubatch) {
+++    GGML_ASSERT(rows && mctx);
+++
+++    const int64_t n = rows->ne[0];
+++    GGML_ASSERT(n == (int64_t) ubatch->n_tokens);
+++
+++    std::vector<int64_t> idx(n);
+++    const int64_t row0 = mctx->get_row0();
+++    for (int64_t i = 0; i < n; ++i) {
+++        idx[i] = row0 + i;
+++    }
+++    ggml_backend_tensor_set(rows, idx.data(), 0, n*sizeof(int64_t));
+++}
+++
++ void llm_graph_input_attn_cross::set_input(const llama_ubatch * ubatch) {
++     GGML_ASSERT(cross_kq_mask);
++ 
++@@ -2908,8 +2912,11 @@ ggml_tensor * llm_graph_context::build_inp_cross_embd() const {
++     if (mctx_ed) {
++         const int64_t n_enc = enc_dec_n_enc(mctx_ed, hparams, cparams);
++ 
++-        cur = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hparams.n_embd_inp(), n_enc);
++-        ggml_set_input(cur);
+++        inp->rows_idx = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_enc);
+++        ggml_set_input(inp->rows_idx);
+++        ggml_set_name(inp->rows_idx, "cross_rows");
+++
+++        cur = ggml_get_rows(ctx0, mctx_ed->get_store()->tensor(), inp->rows_idx);
++         ggml_set_name(cur, "cross_embd");
++ 
++         res->add_input(std::move(inp));
++diff --git a/src/llama-graph.h b/src/llama-graph.h
++index 1f172939e..262af5bc6 100644
++--- a/src/llama-graph.h
+++++ b/src/llama-graph.h
++@@ -36,6 +36,7 @@ class llama_kv_cache_iswa_context;
++ class llama_memory_recurrent_context;
++ class llama_memory_hybrid_context;
++ class llama_memory_enc_dec_context;
+++class llama_memory_enc_dec_encode_context;
++ class llama_memory_hybrid_iswa_context;
++ 
++ // certain models (typically multi-modal) can produce different types of graphs
++@@ -314,12 +315,26 @@ public:
++     void set_input(const llama_ubatch * ubatch) override;
++ 
++     ggml_tensor * cross_embd; // F32 [n_embd, n_outputs_enc]
+++    ggml_tensor * rows_idx = nullptr; // I32 [n_outputs_enc], the store rows the ubatch's sequences own (llama_memory_enc_dec)
++ 
++     const llama_cross * cross;
++ 
++     const llama_memory_enc_dec_context * mctx = nullptr;
++ };
++ 
+++// the store rows an encode writes: the region its context assigned (llama_memory_enc_dec)
+++class llm_graph_input_enc_rows : public llm_graph_input_i {
+++public:
+++    llm_graph_input_enc_rows(const llama_memory_enc_dec_encode_context * mctx) : mctx(mctx) {}
+++    virtual ~llm_graph_input_enc_rows() = default;
+++
+++    void set_input(const llama_ubatch * ubatch) override;
+++
+++    ggml_tensor * rows = nullptr; // I64 [n_tokens]
+++
+++    const llama_memory_enc_dec_encode_context * mctx;
+++};
+++
++ class llm_graph_input_attn_no_cache : public llm_graph_input_i {
++ public:
++     llm_graph_input_attn_no_cache(const llama_hparams & hparams, const llama_cparams & cparams) :
++diff --git a/src/llama-memory-enc-dec.cpp b/src/llama-memory-enc-dec.cpp
++index 098a40e47..298eb7d43 100644
++--- a/src/llama-memory-enc-dec.cpp
+++++ b/src/llama-memory-enc-dec.cpp
++@@ -5,6 +5,8 @@
++ #include "llama-model.h"
++ 
++ #include <algorithm>
+++#include <cassert>
+++#include <cinttypes>
++ #include <climits>
++ #include <stdexcept>
++ 
++@@ -13,13 +15,58 @@
++ //
++ 
++ static constexpr uint32_t LLAMA_CROSS_STORE_MAGIC   = 0x45583554u; // "T5XE"
++-static constexpr uint32_t LLAMA_CROSS_STORE_VERSION = 1;
+++static constexpr uint32_t LLAMA_CROSS_STORE_VERSION = 2;
+++
+++llama_cross_store::llama_cross_store(int64_t n_embd, uint32_t n_regions, uint32_t region_rows, ggml_backend_buffer_type_t buft) :
+++    n_embd_(n_embd), n_regions_(n_regions), region_rows_(region_rows) {
+++    GGML_ASSERT(n_embd > 0 && n_regions > 0 && region_rows > 0);
+++
+++    ggml_init_params params = {
+++        /*.mem_size   =*/ ggml_tensor_overhead(),
+++        /*.mem_buffer =*/ nullptr,
+++        /*.no_alloc   =*/ true,
+++    };
+++    ctx.reset(ggml_init(params));
+++    if (!ctx) {
+++        throw std::runtime_error("failed to create ggml context for the encoder output store");
+++    }
+++
+++    store = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, n_embd, (int64_t) n_regions * region_rows);
+++    ggml_format_name(store, "cross_store");
+++
+++    buf.reset(ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), buft));
+++    if (!buf) {
+++        throw std::runtime_error("failed to allocate the encoder output store");
+++    }
+++    ggml_backend_buffer_clear(buf.get(), 0);
++ 
++-void llama_cross_store::replace(const llama_ubatch & ubatch, const float * embd, int64_t n_embd) {
++-    GGML_ASSERT(n_embd > 0);
++-    GGML_ASSERT(n_embd_ == 0 || n_embd_ == n_embd);
+++    owners.resize(capacity());
+++}
++ 
++-    n_embd_ = n_embd;
+++bool llama_cross_store::region_free(uint32_t region) const {
+++    const uint32_t row0 = region * region_rows_;
+++    for (uint32_t r = row0; r < row0 + region_rows_; ++r) {
+++        if (!owners[r].empty()) {
+++            return false;
+++        }
+++    }
+++    return true;
+++}
+++
+++int32_t llama_cross_store::alloc_region(uint32_t n_tokens) const {
+++    if (n_tokens == 0 || n_tokens > region_rows_) {
+++        return -1;
+++    }
+++    for (uint32_t region = 0; region < n_regions_; ++region) {
+++        if (region_free(region)) {
+++            return (int32_t) region;
+++        }
+++    }
+++    return -1;
+++}
+++
+++void llama_cross_store::commit(const llama_ubatch & ubatch, uint32_t region) {
+++    GGML_ASSERT(region < n_regions_ && ubatch.n_tokens <= region_rows_);
++ 
++     std::set<llama_seq_id> seqs;
++     for (uint32_t i = 0; i < ubatch.n_tokens; ++i) {
++@@ -28,21 +75,20 @@ void llama_cross_store::replace(const llama_ubatch & ubatch, const float * embd,
++         }
++     }
++ 
+++    // the batch's sequences leave every row they owned
++     for (auto & o : owners) {
++         for (const auto s : seqs) {
++             o.erase(s);
++         }
++     }
++-    compact();
++ 
++-    v_embd.insert(v_embd.end(), embd, embd + (size_t) ubatch.n_tokens * n_embd);
++-    owners.reserve(owners.size() + ubatch.n_tokens);
+++    const uint32_t row0 = region * region_rows_;
++     for (uint32_t i = 0; i < ubatch.n_tokens; ++i) {
++-        std::set<llama_seq_id> o;
+++        auto & o = owners[row0 + i];
+++        o.clear();
++         for (int s = 0; s < ubatch.n_seq_id[i]; ++s) {
++             o.insert(ubatch.seq_id[i][s]);
++         }
++-        owners.push_back(std::move(o));
++     }
++ }
++ 
++@@ -55,20 +101,23 @@ bool llama_cross_store::has(llama_seq_id seq_id) const {
++     return false;
++ }
++ 
++-void llama_cross_store::clear() {
++-    v_embd.clear();
++-    owners.clear();
+++void llama_cross_store::clear(bool data) {
+++    for (auto & o : owners) {
+++        o.clear();
+++    }
+++    if (data) {
+++        ggml_backend_buffer_clear(buf.get(), 0);
+++    }
++ }
++ 
++ void llama_cross_store::seq_rm(llama_seq_id seq_id) {
++     if (seq_id < 0) {
++-        clear();
+++        clear(false);
++         return;
++     }
++     for (auto & o : owners) {
++         o.erase(seq_id);
++     }
++-    compact();
++ }
++ 
++ void llama_cross_store::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst) {
++@@ -81,7 +130,6 @@ void llama_cross_store::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst)
++             o.insert(seq_id_dst);
++         }
++     }
++-    compact();
++ }
++ 
++ void llama_cross_store::seq_keep(llama_seq_id seq_id) {
++@@ -92,12 +140,14 @@ void llama_cross_store::seq_keep(llama_seq_id seq_id) {
++             o.clear();
++         }
++     }
++-    compact();
++ }
++ 
++ std::vector<uint32_t> llama_cross_store::rows_for(const llama_ubatch & ubatch) const {
++     std::vector<uint32_t> res;
++     for (uint32_t r = 0; r < owners.size(); ++r) {
+++        if (owners[r].empty()) {
+++            continue;
+++        }
++         bool owned = false;
++         for (uint32_t s = 0; s < ubatch.n_seqs_unq && !owned; ++s) {
++             owned = owners[r].count(ubatch.seq_id_unq[s]) > 0;
++@@ -109,63 +159,101 @@ std::vector<uint32_t> llama_cross_store::rows_for(const llama_ubatch & ubatch) c
++     return res;
++ }
++ 
++-// drop the rows no sequence owns, keeping the order of the rest
++-void llama_cross_store::compact() {
++-    uint32_t w = 0;
++-    for (uint32_t r = 0; r < owners.size(); ++r) {
++-        if (owners[r].empty()) {
++-            continue;
++-        }
++-        if (w != r) {
++-            owners[w] = std::move(owners[r]);
++-            std::copy(row(r), row(r) + n_embd_, v_embd.begin() + (size_t) w * n_embd_);
++-        }
++-        ++w;
+++uint32_t llama_cross_store::n_rows() const {
+++    uint32_t n = 0;
+++    for (const auto & o : owners) {
+++        n += !o.empty();
++     }
++-    owners.resize(w);
++-    v_embd.resize((size_t) w * n_embd_);
+++    return n;
++ }
++ 
++-void llama_cross_store::state_write(llama_io_write_i & io, llama_seq_id seq_id) const {
++-    std::vector<uint32_t> rows;
++-    for (uint32_t r = 0; r < owners.size(); ++r) {
++-        if (seq_id < 0 || owners[r].count(seq_id) > 0) {
++-            rows.push_back(r);
+++// the data of ascending rows, by contiguous runs
+++template <typename F>
+++static void for_runs(const std::vector<uint32_t> & rows, F && f) {
+++    for (size_t i = 0; i < rows.size();) {
+++        size_t j = i + 1;
+++        while (j < rows.size() && rows[j] == rows[j - 1] + 1) {
+++            ++j;
++         }
+++        f(rows[i], (uint32_t) (j - i));
+++        i = j;
++     }
+++}
++ 
++-    const uint32_t magic   = LLAMA_CROSS_STORE_MAGIC;
++-    const uint32_t version = LLAMA_CROSS_STORE_VERSION;
++-    const uint32_t n_embd  = (uint32_t) n_embd_;
++-    const uint32_t n_rows  = (uint32_t) rows.size();
+++void llama_cross_store::state_write(llama_io_write_i & io, llama_seq_id seq_id) const {
+++    const uint32_t magic       = LLAMA_CROSS_STORE_MAGIC;
+++    const uint32_t version     = LLAMA_CROSS_STORE_VERSION;
+++    const uint32_t n_embd      = (uint32_t) n_embd_;
+++    const uint32_t region_rows = region_rows_;
++ 
++-    io.write(&magic,   sizeof(magic));
++-    io.write(&version, sizeof(version));
++-    io.write(&n_embd,  sizeof(n_embd));
++-    io.write(&n_rows,  sizeof(n_rows));
+++    io.write(&magic,       sizeof(magic));
+++    io.write(&version,     sizeof(version));
+++    io.write(&n_embd,      sizeof(n_embd));
+++    io.write(&region_rows, sizeof(region_rows));
++ 
++     if (seq_id < 0) {
++-        for (const auto r : rows) {
++-            const uint32_t n_owners = (uint32_t) owners[r].size();
++-            io.write(&n_owners, sizeof(n_owners));
++-            for (const auto s : owners[r]) {
++-                const int32_t id = s;
++-                io.write(&id, sizeof(id));
+++        // the owned rows, region by region, at their in-region index
+++        uint32_t n_used = 0;
+++        for (uint32_t region = 0; region < n_regions_; ++region) {
+++            n_used += !region_free(region);
+++        }
+++        io.write(&n_used, sizeof(n_used));
+++
+++        for (uint32_t region = 0; region < n_regions_; ++region) {
+++            if (region_free(region)) {
+++                continue;
++             }
+++            const uint32_t row0 = region * region_rows_;
+++
+++            std::vector<uint32_t> rows;
+++            for (uint32_t r = row0; r < row0 + region_rows_; ++r) {
+++                if (!owners[r].empty()) {
+++                    rows.push_back(r);
+++                }
+++            }
+++
+++            const uint32_t n_owned = (uint32_t) rows.size();
+++            io.write(&n_owned, sizeof(n_owned));
+++            for (const auto r : rows) {
+++                const uint32_t idx      = r - row0;
+++                const uint32_t n_owners = (uint32_t) owners[r].size();
+++                io.write(&idx,      sizeof(idx));
+++                io.write(&n_owners, sizeof(n_owners));
+++                for (const auto s : owners[r]) {
+++                    const int32_t id = s;
+++                    io.write(&id, sizeof(id));
+++                }
+++            }
+++
+++            for_runs(rows, [&](uint32_t r, uint32_t n) {
+++                io.write_tensor(store, (size_t) r * row_bytes(), (size_t) n * row_bytes());
+++            });
++         }
+++
+++        return;
++     }
++ 
++-    for (const auto r : rows) {
++-        io.write(row(r), (size_t) n_embd_ * sizeof(float));
+++    std::vector<uint32_t> rows;
+++    for (uint32_t r = 0; r < owners.size(); ++r) {
+++        if (owners[r].count(seq_id) > 0) {
+++            rows.push_back(r);
+++        }
++     }
+++
+++    const uint32_t n_rows = (uint32_t) rows.size();
+++    io.write(&n_rows, sizeof(n_rows));
+++
+++    for_runs(rows, [&](uint32_t r, uint32_t n) {
+++        io.write_tensor(store, (size_t) r * row_bytes(), (size_t) n * row_bytes());
+++    });
++ }
++ 
++ void llama_cross_store::state_read(llama_io_read_i & io, llama_seq_id seq_id, uint32_t n_seq_max) {
++-    uint32_t magic, version, n_embd, n_rows;
++-    io.read(&magic,   sizeof(magic));
++-    io.read(&version, sizeof(version));
++-    io.read(&n_embd,  sizeof(n_embd));
++-    io.read(&n_rows,  sizeof(n_rows));
+++    uint32_t magic, version, n_embd, region_rows;
+++    io.read(&magic,       sizeof(magic));
+++    io.read(&version,     sizeof(version));
+++    io.read(&n_embd,      sizeof(n_embd));
+++    io.read(&region_rows, sizeof(region_rows));
++ 
++     if (magic != LLAMA_CROSS_STORE_MAGIC) {
++         throw std::runtime_error("encoder output state: bad magic");
++@@ -173,45 +261,86 @@ void llama_cross_store::state_read(llama_io_read_i & io, llama_seq_id seq_id, ui
++     if (version != LLAMA_CROSS_STORE_VERSION) {
++         throw std::runtime_error("encoder output state: unsupported version");
++     }
++-    if (n_embd_ != 0 && n_embd != (uint32_t) n_embd_) {
+++    if (n_embd != (uint32_t) n_embd_) {
++         throw std::runtime_error("encoder output state: n_embd mismatch");
++     }
++-    if (n_rows > 0 && n_embd == 0) {
++-        throw std::runtime_error("encoder output state: rows without an embedding size");
+++    if (region_rows != region_rows_) {
+++        throw std::runtime_error("encoder output state: region size mismatch");
++     }
++ 
++-    std::vector<std::set<llama_seq_id>> new_owners(n_rows);
++     if (seq_id < 0) {
++-        clear();
++-        for (uint32_t r = 0; r < n_rows; ++r) {
++-            uint32_t n_owners;
++-            io.read(&n_owners, sizeof(n_owners));
++-            if (n_owners == 0 || n_owners > n_seq_max) {
++-                throw std::runtime_error("encoder output state: bad owner count");
+++        clear(false);
+++
+++        uint32_t n_used;
+++        io.read(&n_used, sizeof(n_used));
+++        if (n_used > n_regions_) {
+++            throw std::runtime_error("encoder output state: more regions than the store holds");
+++        }
+++
+++        for (uint32_t k = 0; k < n_used; ++k) {
+++            const int32_t region = alloc_region(1);
+++            if (region < 0) {
+++                throw std::runtime_error("encoder output state: no free region");
+++            }
+++            const uint32_t row0 = (uint32_t) region * region_rows_;
+++
+++            uint32_t n_owned;
+++            io.read(&n_owned, sizeof(n_owned));
+++            if (n_owned == 0 || n_owned > region_rows_) {
+++                throw std::runtime_error("encoder output state: bad row count");
++             }
++-            for (uint32_t k = 0; k < n_owners; ++k) {
++-                int32_t id;
++-                io.read(&id, sizeof(id));
++-                if (id < 0 || (uint32_t) id >= n_seq_max) {
++-                    throw std::runtime_error("encoder output state: bad sequence id");
+++
+++            std::vector<uint32_t> rows;
+++            uint32_t idx_prev = 0;
+++            for (uint32_t i = 0; i < n_owned; ++i) {
+++                uint32_t idx, n_owners;
+++                io.read(&idx,      sizeof(idx));
+++                io.read(&n_owners, sizeof(n_owners));
+++                if (idx >= region_rows_ || (i > 0 && idx <= idx_prev) || n_owners == 0 || n_owners > n_seq_max) {
+++                    throw std::runtime_error("encoder output state: bad row");
+++                }
+++                idx_prev = idx;
+++                for (uint32_t j = 0; j < n_owners; ++j) {
+++                    int32_t id;
+++                    io.read(&id, sizeof(id));
+++                    if (id < 0 || (uint32_t) id >= n_seq_max) {
+++                        throw std::runtime_error("encoder output state: bad sequence id");
+++                    }
+++                    owners[row0 + idx].insert(id);
++                 }
++-                new_owners[r].insert(id);
+++                rows.push_back(row0 + idx);
++             }
+++
+++            for_runs(rows, [&](uint32_t r, uint32_t n) {
+++                io.read_tensor(store, (size_t) r * row_bytes(), (size_t) n * row_bytes());
+++            });
++         }
++-    } else {
++-        seq_rm(seq_id);
++-        for (auto & o : new_owners) {
++-            o = { seq_id };
++-        }
+++
+++        return;
++     }
++ 
++-    if (n_rows > 0) {
++-        n_embd_ = n_embd;
++-        const size_t n0 = v_embd.size();
++-        v_embd.resize(n0 + (size_t) n_rows * n_embd);
++-        io.read(v_embd.data() + n0, (size_t) n_rows * n_embd * sizeof(float));
++-        owners.insert(owners.end(), new_owners.begin(), new_owners.end());
+++    seq_rm(seq_id);
+++
+++    uint32_t n_rows;
+++    io.read(&n_rows, sizeof(n_rows));
+++    if (n_rows == 0) {
+++        return;
+++    }
+++    if (n_rows > region_rows_) {
+++        throw std::runtime_error("encoder output state: more rows than a region holds");
++     }
+++
+++    const int32_t region = alloc_region(n_rows);
+++    if (region < 0) {
+++        throw std::runtime_error("encoder output state: no free region");
+++    }
+++    const uint32_t row0 = (uint32_t) region * region_rows_;
+++
+++    for (uint32_t i = 0; i < n_rows; ++i) {
+++        owners[row0 + i] = { seq_id };
+++    }
+++
+++    io.read_tensor(store, (size_t) row0 * row_bytes(), (size_t) n_rows * row_bytes());
++ }
++ 
++ //
++@@ -228,12 +357,17 @@ llama_memory_enc_dec::llama_memory_enc_dec(
++                          bool    unified,
++                      uint32_t    kv_size,
++                      uint32_t    n_seq_max,
+++                     uint32_t    n_ubatch,
++                      uint32_t    n_pad,
++                      uint32_t    n_swa,
++                llama_swa_type    swa_type,
++                llama_memory_t    mem_other) :
++     dec(new llama_kv_cache(model, hparams, type_k, type_v, v_trans, offload, unified, kv_size, n_seq_max, n_pad, n_swa, swa_type, mem_other, nullptr, nullptr, nullptr)),
+++    // every sequence holds at most one encode of up to n_ubatch rows, plus one region for the encode in flight
+++    store(hparams.n_embd, n_seq_max + 1, n_ubatch, offload ? ggml_backend_dev_buffer_type(model.dev_layer(0)) : ggml_backend_cpu_buffer_type()),
++     n_seq_max(n_seq_max) {
+++    LLAMA_LOG_INFO("%s: encoder output store: %u regions of %u rows x %" PRId64 " floats on %s\n", __func__,
+++            store.n_regions(), store.region_rows(), store.n_embd(), ggml_backend_buft_name(ggml_backend_buffer_get_type(store.buffer())));
++ }
++ 
++ llama_memory_context_ptr llama_memory_enc_dec::init_batch(llama_batch_allocr & balloc, uint32_t n_ubatch, bool embd_all) {
++@@ -289,13 +423,24 @@ llama_memory_context_ptr llama_memory_enc_dec::init_update(llama_context * lctx,
++     return dec->init_update(lctx, optimize);
++ }
++ 
+++llama_memory_context_ptr llama_memory_enc_dec::init_encode(const llama_ubatch & ubatch) {
+++    const int32_t region = store.alloc_region(ubatch.n_tokens);
+++    if (region < 0) {
+++        LLAMA_LOG_ERROR("%s: no free region in the encoder output store for %u tokens (%u regions of %u rows; every sequence holds one encode)\n",
+++                __func__, ubatch.n_tokens, store.n_regions(), store.region_rows());
+++        return std::make_unique<llama_memory_enc_dec_encode_context>(LLAMA_MEMORY_STATUS_FAILED_PREPARE);
+++    }
+++
+++    return std::make_unique<llama_memory_enc_dec_encode_context>(this, ubatch, (uint32_t) region);
+++}
+++
++ bool llama_memory_enc_dec::get_can_shift() const {
++     return dec->get_can_shift();
++ }
++ 
++ void llama_memory_enc_dec::clear(bool data) {
++     dec->clear(data);
++-    store.clear();
+++    store.clear(data);
++ }
++ 
++ bool llama_memory_enc_dec::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
++@@ -336,7 +481,9 @@ llama_pos llama_memory_enc_dec::seq_pos_max(llama_seq_id seq_id) const {
++ }
++ 
++ std::map<ggml_backend_buffer_type_t, size_t> llama_memory_enc_dec::memory_breakdown() const {
++-    return dec->memory_breakdown();
+++    auto mb = dec->memory_breakdown();
+++    mb[ggml_backend_buffer_get_type(store.buffer())] += ggml_backend_buffer_get_size(store.buffer());
+++    return mb;
++ }
++ 
++ void llama_memory_enc_dec::state_write(llama_io_write_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) const {
++@@ -367,8 +514,8 @@ void llama_memory_enc_dec::state_read(llama_io_read_i & io, llama_seq_id seq_id,
++     }
++ }
++ 
++-void llama_memory_enc_dec::enc_store(const llama_ubatch & ubatch, const float * embd, int64_t n_embd) {
++-    store.replace(ubatch, embd, n_embd);
+++void llama_memory_enc_dec::enc_commit(const llama_ubatch & ubatch, uint32_t region) {
+++    store.commit(ubatch, region);
++ }
++ 
++ //
++@@ -406,3 +553,35 @@ const std::vector<uint32_t> & llama_memory_enc_dec_context::get_rows() const {
++ 
++     return i_sel < sels.size() ? sels[i_sel] : none;
++ }
+++
+++//
+++// llama_memory_enc_dec_encode_context
+++//
+++
+++llama_memory_enc_dec_encode_context::llama_memory_enc_dec_encode_context(llama_memory_status status) : status(status) {}
+++
+++llama_memory_enc_dec_encode_context::llama_memory_enc_dec_encode_context(llama_memory_enc_dec * mem, const llama_ubatch & ubatch, uint32_t region) :
+++    status(LLAMA_MEMORY_STATUS_SUCCESS),
+++    mem(mem),
+++    ubatch(ubatch),
+++    region(region) {
+++}
+++
+++bool llama_memory_enc_dec_encode_context::next() {
+++    return false;
+++}
+++
+++bool llama_memory_enc_dec_encode_context::apply() {
+++    // the rows are written by the encoder graph and committed after its compute
+++    return !llama_memory_status_is_fail(status);
+++}
+++
+++llama_memory_status llama_memory_enc_dec_encode_context::get_status() const {
+++    return status;
+++}
+++
+++const llama_ubatch & llama_memory_enc_dec_encode_context::get_ubatch() const {
+++    assert(status == LLAMA_MEMORY_STATUS_SUCCESS);
+++
+++    return ubatch;
+++}
++diff --git a/src/llama-memory-enc-dec.h b/src/llama-memory-enc-dec.h
++index e0d0a931b..e5e12a4cf 100644
++--- a/src/llama-memory-enc-dec.h
+++++ b/src/llama-memory-enc-dec.h
++@@ -5,6 +5,8 @@
++ #include "llama-kv-cache.h"
++ #include "llama-memory.h"
++ 
+++#include "ggml-cpp.h"
+++
++ #include <memory>
++ #include <set>
++ #include <vector>
++@@ -13,48 +15,69 @@
++ // llama_cross_store
++ //
++ 
++-// the encoder outputs of an encoder-decoder model (T5): one row per encoder token, each row
++-// owned by the sequences it was encoded for. An encode REPLACES the rows of the batch's
++-// sequences and keeps every other sequence's rows, so sequences encode and decode
++-// independently. Host side (stage 1); the decoder graph uploads the rows its ubatch's
++-// sequences own. Rows are bounded by n_seq_max x n_ubatch: an encode holds at most n_ubatch
++-// tokens and a sequence owns at most one encode.
+++// the encoder outputs of an encoder-decoder model (T5), on the device: one F32 row per encoder
+++// token, each row owned by the sequences it was encoded for. The tensor is (n_seq_max + 1)
+++// REGIONS of n_ubatch rows: an encode writes the lowest free region (the encoder graph's
+++// ggml_set_rows) and is COMMITTED after its compute succeeded - the batch's sequences then
+++// leave every row they owned and own the new ones, so a failed encode keeps the old output.
+++// A sequence owns rows in at most one region (one encode), so a free region always exists.
+++// The decoder gathers the rows its ubatch's sequences own with ggml_get_rows.
++ class llama_cross_store {
++ public:
++-    // the batch's sequences leave every row they own (rows left with no owner go, order kept),
++-    // then the batch's tokens are appended as new rows: embd is [n_embd, ubatch.n_tokens] F32
++-    void replace(const llama_ubatch & ubatch, const float * embd, int64_t n_embd);
+++    llama_cross_store(int64_t n_embd, uint32_t n_regions, uint32_t region_rows, ggml_backend_buffer_type_t buft);
+++
+++    ggml_tensor * tensor() const { return store; }
+++
+++    ggml_backend_buffer_t buffer() const { return buf.get(); }
+++
+++    int64_t  n_embd()      const { return n_embd_; }
+++    uint32_t n_regions()   const { return n_regions_; }
+++    uint32_t region_rows() const { return region_rows_; }
+++    uint32_t capacity()    const { return n_regions_ * region_rows_; }
+++
+++    // the lowest region with no owned row, for an encode of n_tokens rows; -1 when none fits
+++    int32_t alloc_region(uint32_t n_tokens) const;
+++
+++    // after the encode computed into the region: the batch's sequences leave every row they owned,
+++    // the region's first ubatch.n_tokens rows take the batch's owners
+++    void commit(const llama_ubatch & ubatch, uint32_t region);
++ 
++     bool has(llama_seq_id seq_id) const;
++ 
++-    void clear();
+++    // data == true also zeroes the device rows
+++    void clear(bool data);
++     void seq_rm  (llama_seq_id seq_id); // seq_id < 0: every row
++     void seq_cp  (llama_seq_id seq_id_src, llama_seq_id seq_id_dst); // dst leaves its rows, then joins src's
++     void seq_keep(llama_seq_id seq_id);
++ 
++-    // the rows owned by the ubatch's sequences, in store order
+++    // the rows owned by the ubatch's sequences, ascending
++     std::vector<uint32_t> rows_for(const llama_ubatch & ubatch) const;
++ 
++-    int64_t  n_embd() const { return n_embd_; }
++-    uint32_t n_rows() const { return (uint32_t) owners.size(); }
++-
++-    const float * row(uint32_t i) const { return v_embd.data() + (size_t) i * n_embd_; }
+++    // rows with an owner
+++    uint32_t n_rows() const;
++ 
++-    const std::set<llama_seq_id> & owners_of(uint32_t i) const { return owners[i]; }
+++    const std::set<llama_seq_id> & owners_of(uint32_t row) const { return owners[row]; }
++ 
++-    // the state suffix: magic, version, n_embd, n_rows, the owners (whole-store writes only),
++-    // the F32 rows. A single-sequence read tags its rows with the destination sequence.
+++    // the state suffix: magic, version, n_embd, region_rows, then the owned rows (region by
+++    // region, at their in-region index) and their data through the io's tensor path. A
+++    // single-sequence write holds that sequence's rows; its read tags them with the destination.
++     void state_write(llama_io_write_i & io, llama_seq_id seq_id) const;
++     void state_read (llama_io_read_i  & io, llama_seq_id seq_id, uint32_t n_seq_max);
++ 
++ private:
++-    void compact();
+++    bool region_free(uint32_t region) const;
++ 
++-    int64_t n_embd_ = 0;
+++    size_t row_bytes() const { return (size_t) n_embd_ * sizeof(float); }
++ 
++-    std::vector<float> v_embd; // n_rows x n_embd
+++    int64_t  n_embd_;
+++    uint32_t n_regions_;
+++    uint32_t region_rows_;
++ 
++-    std::vector<std::set<llama_seq_id>> owners;
+++    ggml_context_ptr        ctx;
+++    ggml_backend_buffer_ptr buf;
+++    ggml_tensor *           store = nullptr; // F32 [n_embd, n_regions*region_rows]
+++
+++    std::vector<std::set<llama_seq_id>> owners; // per row; empty = free
++ };
++ 
++ //
++@@ -76,6 +99,7 @@ public:
++                          bool    unified,
++                      uint32_t    kv_size,
++                      uint32_t    n_seq_max,
+++                     uint32_t    n_ubatch,
++                      uint32_t    n_pad,
++                      uint32_t    n_swa,
++                llama_swa_type    swa_type,
++@@ -96,6 +120,8 @@ public:
++ 
++     llama_memory_context_ptr init_update(llama_context * lctx, bool optimize) override;
++ 
+++    llama_memory_context_ptr init_encode(const llama_ubatch & ubatch) override;
+++
++     bool get_can_shift() const override;
++ 
++     void clear(bool data) override;
++@@ -118,9 +144,9 @@ public:
++     // llama_memory_enc_dec specific API
++     //
++ 
++-    // called by llama_context::encode() after the encoder graph computed: the batch's sequences
++-    // get this output, every other sequence keeps its own
++-    void enc_store(const llama_ubatch & ubatch, const float * embd, int64_t n_embd);
+++    // called by llama_context::encode() once the encoder graph computed into the region the
+++    // encode's context assigned: the batch's sequences get this output, every other keeps its own
+++    void enc_commit(const llama_ubatch & ubatch, uint32_t region);
++ 
++     const llama_cross_store & get_store() const { return store; }
++ 
++@@ -162,7 +188,7 @@ public:
++ 
++     const llama_cross_store * get_store() const { return store; }
++ 
++-    // the encoder rows the current ubatch's sequences own, in store order; empty for the full context
+++    // the encoder rows the current ubatch's sequences own, ascending; empty for the full context
++     const std::vector<uint32_t> & get_rows() const;
++ 
++     bool is_full() const { return full; }
++@@ -177,3 +203,40 @@ private:
++ 
++     bool full = false;
++ };
+++
+++// an encode's context: the store region its output is written to (the encoder graph's set_rows),
+++// committed by llama_context::encode() after the compute
+++class llama_memory_enc_dec_encode_context : public llama_memory_context_i {
+++public:
+++    explicit llama_memory_enc_dec_encode_context(llama_memory_status status);
+++
+++    llama_memory_enc_dec_encode_context(llama_memory_enc_dec * mem, const llama_ubatch & ubatch, uint32_t region);
+++
+++    ~llama_memory_enc_dec_encode_context() = default;
+++
+++    bool next()  override;
+++    bool apply() override;
+++
+++    llama_memory_status  get_status() const override;
+++    const llama_ubatch & get_ubatch() const override;
+++
+++    //
+++    // llama_memory_enc_dec_encode_context specific API
+++    //
+++
+++    ggml_tensor * get_store_tensor() const { return mem->get_store().tensor(); }
+++
+++    uint32_t get_region() const { return region; }
+++
+++    // the first row of the region
+++    uint32_t get_row0() const { return region * mem->get_store().region_rows(); }
+++
+++private:
+++    const llama_memory_status status;
+++
+++    llama_memory_enc_dec * mem = nullptr;
+++
+++    llama_ubatch ubatch;
+++
+++    uint32_t region = 0;
+++};
++diff --git a/src/llama-memory.h b/src/llama-memory.h
++index 3fb1ef2cf..53ddfc9d7 100644
++--- a/src/llama-memory.h
+++++ b/src/llama-memory.h
++@@ -99,6 +99,13 @@ struct llama_memory_i {
++     // status == LLAMA_MEMORY_STATUS_NO_UPDATE if there is nothing to update
++     virtual llama_memory_context_ptr init_update(llama_context * lctx, bool optimize) = 0;
++ 
+++    // an encode's context (encoder-decoder models): where its output rows go. nullptr for a
+++    // memory that keeps no encoder output; a failed status refuses the encode
+++    virtual llama_memory_context_ptr init_encode(const llama_ubatch & ubatch) {
+++        GGML_UNUSED(ubatch);
+++        return nullptr;
+++    }
+++
++     // getters
++     virtual bool get_can_shift() const = 0;
++ 
++diff --git a/src/llama-model.cpp b/src/llama-model.cpp
++index 94438b925..ac51ca90d 100644
++--- a/src/llama-model.cpp
+++++ b/src/llama-model.cpp
++@@ -2812,6 +2812,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
++                         cparams.kv_unified,
++                         cparams.n_ctx_seq,
++                         cparams.n_seq_max,
+++                        cparams.n_ubatch,
++                         1,
++                         hparams.n_swa,
++                         hparams.swa_type,
++diff --git a/src/models/t5.cpp b/src/models/t5.cpp
++index a5ddbebf9..8b08aa85b 100644
++--- a/src/models/t5.cpp
+++++ b/src/models/t5.cpp
++@@ -1,5 +1,7 @@
++ #include "models.h"
++ 
+++#include "../llama-memory-enc-dec.h"
+++
++ void llama_model_t5::load_arch_hparams(llama_model_loader & ml) {
++     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,      hparams.f_norm_rms_eps);
++     ml.get_key(LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT, hparams.n_rel_attn_bkts);
++@@ -352,6 +354,24 @@ llama_model_t5::graph<true>::graph(const llama_model & model, const llm_graph_pa
++     cb(cur, "result_norm", -1);
++     res->t_embd = cur;
++ 
+++    // the memory keeps the output per sequence on the device (llama_memory_enc_dec): this
+++    // encode's rows go to the region its context assigned, committed after the compute
+++    if (mctx) {
+++        const auto * mctx_enc = static_cast<const llama_memory_enc_dec_encode_context *>(mctx);
+++
+++        auto inp = std::make_unique<llm_graph_input_enc_rows>(mctx_enc);
+++
+++        inp->rows = ggml_new_tensor_1d(ctx0, GGML_TYPE_I64, n_tokens);
+++        ggml_set_input(inp->rows);
+++        ggml_set_name(inp->rows, "enc_rows");
+++
+++        ggml_tensor * stored = ggml_set_rows(ctx0, mctx_enc->get_store_tensor(), cur, inp->rows);
+++        ggml_set_name(stored, "cross_store_out");
+++        ggml_build_forward_expand(gf, stored);
+++
+++        res->add_input(std::move(inp));
+++    }
+++
++     ggml_build_forward_expand(gf, cur);
++ }
++ 
++diff --git a/tests/test-enc-dec-store.cpp b/tests/test-enc-dec-store.cpp
++index ea327bab7..9d4453650 100644
++--- a/tests/test-enc-dec-store.cpp
+++++ b/tests/test-enc-dec-store.cpp
++@@ -1,5 +1,5 @@
++ // the per-sequence encoder output store of an encoder-decoder memory (llama_memory_enc_dec),
++-// and the memory status it adds: no model, no backend
+++// on a CPU buffer, and the memory status it adds: no model
++ #include "../src/llama-memory-enc-dec.h"
++ #include "../src/llama-io.h"
++ #include "../src/llama-memory.h"
++@@ -72,8 +72,22 @@ static std::vector<float> rows_of(float base, uint32_t n, int64_t n_embd) {
++     return v;
++ }
++ 
+++// what an encode does: a free region, the rows written, the commit; the region taken
+++static int32_t encode(llama_cross_store & st, const llama_ubatch & ub, float base) {
+++    const int32_t region = st.alloc_region(ub.n_tokens);
+++    if (region < 0) {
+++        return region;
+++    }
+++    const auto   data      = rows_of(base, ub.n_tokens, st.n_embd());
+++    const size_t row_bytes = (size_t) st.n_embd() * sizeof(float);
+++    ggml_backend_tensor_set(st.tensor(), data.data(), (size_t) region * st.region_rows() * row_bytes, (size_t) ub.n_tokens * row_bytes);
+++    st.commit(ub, (uint32_t) region);
+++    return region;
+++}
+++
++ static bool row_is(const llama_cross_store & st, uint32_t r, float base, uint32_t i) {
++-    const float * row = st.row(r);
+++    std::vector<float> row(st.n_embd());
+++    ggml_backend_tensor_get(st.tensor(), row.data(), (size_t) r * st.n_embd() * sizeof(float), row.size() * sizeof(float));
++     for (int64_t j = 0; j < st.n_embd(); ++j) {
++         if (row[j] != base + i + 0.001f * j) {
++             return false;
++@@ -94,7 +108,11 @@ static std::vector<uint32_t> rows_for(const llama_cross_store & st, std::vector<
++ struct mem_writer : llama_io_write_i {
++     std::vector<uint8_t> buf;
++     void write(const void * src, size_t size) override { buf.insert(buf.end(), (const uint8_t *) src, (const uint8_t *) src + size); }
++-    void write_tensor(ggml_tensor *, size_t, size_t) override { throw std::runtime_error("no tensors here"); }
+++    void write_tensor(ggml_tensor * tensor, size_t offset, size_t size) override {
+++        std::vector<uint8_t> tmp(size);
+++        ggml_backend_tensor_get(tensor, tmp.data(), offset, size);
+++        buf.insert(buf.end(), tmp.begin(), tmp.end());
+++    }
++     size_t n_bytes() override { return buf.size(); }
++ };
++ 
++@@ -109,137 +127,142 @@ struct mem_reader : llama_io_read_i {
++         memcpy(dst, buf.data() + pos, size);
++         pos += size;
++     }
++-    void read_tensor(ggml_tensor *, size_t, size_t) override { throw std::runtime_error("no tensors here"); }
+++    void read_tensor(ggml_tensor * tensor, size_t offset, size_t size) override {
+++        if (pos + size > buf.size()) {
+++            throw std::runtime_error("end of buffer");
+++        }
+++        ggml_backend_tensor_set(tensor, buf.data() + pos, offset, size);
+++        pos += size;
+++    }
++     size_t n_bytes() override { return pos; }
++ };
++ 
++-static void test_replace_and_select() {
+++static void test_regions_and_select() {
++     const int64_t n_embd = 4;
++-    llama_cross_store st;
+++    // 4 regions of 4 rows
+++    llama_cross_store st(n_embd, 4, 4, ggml_backend_cpu_buffer_type());
+++    CHECK(st.capacity() == 16 && st.n_rows() == 0);
++ 
++-    // seq 0: 3 rows, seq 1: 2 rows
++-    {
++-        fake_ubatch ub({ {0}, {0}, {0} });
++-        st.replace(ub.ub, rows_of(10.0f, 3, n_embd).data(), n_embd);
++-    }
++-    {
++-        fake_ubatch ub({ {1}, {1} });
++-        st.replace(ub.ub, rows_of(20.0f, 2, n_embd).data(), n_embd);
++-    }
+++    // seq 0: 3 rows into region 0, seq 1: 2 rows into region 1
+++    fake_ubatch ub0({ {0}, {0}, {0} });
+++    fake_ubatch ub1({ {1}, {1} });
+++    CHECK(encode(st, ub0.ub, 10.0f) == 0);
+++    CHECK(encode(st, ub1.ub, 20.0f) == 1);
++     CHECK(st.n_rows() == 5);
++     CHECK(st.has(0) && st.has(1) && !st.has(2));
++     CHECK((rows_for(st, {0}) == std::vector<uint32_t>{0, 1, 2}));
++-    CHECK((rows_for(st, {1}) == std::vector<uint32_t>{3, 4}));
++-    CHECK((rows_for(st, {1, 0}) == std::vector<uint32_t>{0, 1, 2, 3, 4})); // store order, not request order
+++    CHECK((rows_for(st, {1}) == std::vector<uint32_t>{4, 5}));
+++    CHECK((rows_for(st, {1, 0}) == std::vector<uint32_t>{0, 1, 2, 4, 5})); // ascending, not request order
+++    CHECK(row_is(st, 0, 10.0f, 0) && row_is(st, 2, 10.0f, 2) && row_is(st, 5, 20.0f, 1));
++ 
++-    // re-encode seq 0 with one row: its old rows go, seq 1's rows move up unchanged, the new row is last
++-    {
++-        fake_ubatch ub({ {0} });
++-        st.replace(ub.ub, rows_of(30.0f, 1, n_embd).data(), n_embd);
++-    }
+++    // re-encode seq 0 with one row: the lowest free region is 2 (0 and 1 are owned at alloc time),
+++    // then region 0 is released by the commit
+++    fake_ubatch ub0b({ {0} });
+++    CHECK(encode(st, ub0b.ub, 30.0f) == 2);
++     CHECK(st.n_rows() == 3);
++-    CHECK((rows_for(st, {1}) == std::vector<uint32_t>{0, 1}));
++-    CHECK((rows_for(st, {0}) == std::vector<uint32_t>{2}));
++-    CHECK(row_is(st, 0, 20.0f, 0) && row_is(st, 1, 20.0f, 1) && row_is(st, 2, 30.0f, 0));
++-    CHECK(st.owners_of(2) == std::set<llama_seq_id>{0});
+++    CHECK((rows_for(st, {0}) == std::vector<uint32_t>{8}));
+++    CHECK((rows_for(st, {1}) == std::vector<uint32_t>{4, 5}));
+++    CHECK(row_is(st, 8, 30.0f, 0));
+++    CHECK(st.owners_of(8) == std::set<llama_seq_id>{0});
+++    // the next encode takes region 0 again
+++    fake_ubatch ub3({ {3}, {3} });
+++    CHECK(encode(st, ub3.ub, 40.0f) == 0);
++ 
++     // a row shared by two sequences (examples/batched encodes a prompt once for several sequences)
++-    {
++-        fake_ubatch ub({ {2, 3}, {2, 3} });
++-        st.replace(ub.ub, rows_of(40.0f, 2, n_embd).data(), n_embd);
++-    }
++-    CHECK(st.n_rows() == 5 && st.has(2) && st.has(3));
++-    CHECK((rows_for(st, {3}) == std::vector<uint32_t>{3, 4}));
++-    st.seq_rm(2);
++-    CHECK(st.n_rows() == 5 && !st.has(2) && st.has(3));
++-    CHECK(st.owners_of(3) == std::set<llama_seq_id>{3});
++-    st.seq_rm(3);
++-    CHECK(st.n_rows() == 3 && !st.has(3));
+++    fake_ubatch ub45({ {4, 5}, {4, 5} });
+++    CHECK(encode(st, ub45.ub, 50.0f) == 3);
+++    CHECK(st.has(4) && st.has(5));
+++    CHECK((rows_for(st, {5}) == std::vector<uint32_t>{12, 13}));
+++    st.seq_rm(4);
+++    CHECK(!st.has(4) && st.has(5) && st.owners_of(12) == std::set<llama_seq_id>{5});
+++    st.seq_rm(5);
+++    CHECK(!st.has(5) && st.n_rows() == 5);
+++    CHECK(st.alloc_region(1) == 3); // the region is free again
++ 
++     // seq_cp onto a destination that already has rows: it leaves them and joins the source's
++-    {
++-        fake_ubatch ub({ {3} });
++-        st.replace(ub.ub, rows_of(50.0f, 1, n_embd).data(), n_embd);
++-    }
++-    CHECK(st.n_rows() == 4);
++     st.seq_cp(1, 3);
++-    CHECK(st.n_rows() == 3);
++     CHECK((rows_for(st, {3}) == rows_for(st, {1})));
++-    CHECK(st.owners_of(0) == std::set<llama_seq_id>({1, 3}));
+++    CHECK(st.owners_of(4) == std::set<llama_seq_id>({1, 3}));
+++    CHECK(st.alloc_region(1) == 0); // seq 3's old region 0 is free
++     st.seq_cp(7, 3); // a source with no rows: dst ends with none
++-    CHECK(!st.has(3) && st.has(1) && st.n_rows() == 3);
+++    CHECK(!st.has(3) && st.has(1));
++ 
++     // seq_keep narrows to one sequence
++     st.seq_cp(1, 3);
++     st.seq_keep(1);
++     CHECK(st.has(1) && !st.has(0) && !st.has(3));
++     CHECK(st.n_rows() == 2);
++-    CHECK(st.owners_of(0) == std::set<llama_seq_id>{1} && st.owners_of(1) == std::set<llama_seq_id>{1});
+++    CHECK(st.owners_of(4) == std::set<llama_seq_id>{1} && st.owners_of(5) == std::set<llama_seq_id>{1});
+++
+++    // a region cannot take more rows than it has
+++    fake_ubatch big({ {6}, {6}, {6}, {6}, {6} });
+++    CHECK(st.alloc_region(big.ub.n_tokens) == -1);
++ 
++     st.seq_rm(-1);
++     CHECK(st.n_rows() == 0 && !st.has(1));
+++    // the data stays until a data clear
+++    CHECK(row_is(st, 4, 20.0f, 0));
+++    st.clear(true);
+++    CHECK(!row_is(st, 4, 20.0f, 0));
++ }
++ 
++ static void test_bound() {
++-    // n_seq_max sequences re-encoded many times never exceed n_seq_max x n_ubatch rows
+++    // n_seq_max sequences re-encoded many times always find a region: n_seq_max + 1 regions suffice
++     const int64_t n_embd = 2;
++     const uint32_t n_seq_max = 4, n_ubatch = 8;
++-    llama_cross_store st;
+++    llama_cross_store st(n_embd, n_seq_max + 1, n_ubatch, ggml_backend_cpu_buffer_type());
++     for (int round = 0; round < 10; ++round) {
++         for (llama_seq_id s = 0; s < (llama_seq_id) n_seq_max; ++s) {
++             std::vector<std::vector<llama_seq_id>> owners(n_ubatch, std::vector<llama_seq_id>{ s });
++             fake_ubatch ub(owners);
++-            st.replace(ub.ub, rows_of((float) round, n_ubatch, n_embd).data(), n_embd);
+++            CHECK(encode(st, ub.ub, (float) round) >= 0);
++         }
++-        CHECK(st.n_rows() <= n_seq_max * n_ubatch);
+++        CHECK(st.n_rows() == n_seq_max * n_ubatch);
++     }
++-    CHECK(st.n_rows() == n_seq_max * n_ubatch);
++-    CHECK(row_is(st, 0, 9.0f, 0)); // the last round's rows
+++    const auto rows = rows_for(st, {2});
+++    CHECK(rows.size() == n_ubatch && row_is(st, rows[0], 9.0f, 0)); // the last round's rows
++ }
++ 
++ static void test_state() {
++     const int64_t n_embd = 3;
++-    llama_cross_store st;
++-    {
++-        fake_ubatch ub({ {0}, {0} });
++-        st.replace(ub.ub, rows_of(1.0f, 2, n_embd).data(), n_embd);
++-    }
++-    {
++-        fake_ubatch ub({ {1}, {1}, {1} });
++-        st.replace(ub.ub, rows_of(2.0f, 3, n_embd).data(), n_embd);
++-    }
+++    llama_cross_store st(n_embd, 4, 4, ggml_backend_cpu_buffer_type());
+++    fake_ubatch ub0({ {0}, {0} });
+++    fake_ubatch ub1({ {1}, {1}, {1} });
+++    CHECK(encode(st, ub0.ub, 1.0f) == 0);
+++    CHECK(encode(st, ub1.ub, 2.0f) == 1);
++ 
++     // the whole store
++     mem_writer w;
++     st.state_write(w, -1);
++     {
++-        llama_cross_store st2;
+++        llama_cross_store st2(n_embd, 4, 4, ggml_backend_cpu_buffer_type());
++         mem_reader r(w.buf);
++         st2.state_read(r, -1, 8);
++         CHECK(r.n_bytes() == w.buf.size());
++-        CHECK(st2.n_rows() == 5 && st2.n_embd() == n_embd);
++-        CHECK((rows_for(st2, {1}) == std::vector<uint32_t>{2, 3, 4}));
++-        CHECK(row_is(st2, 3, 2.0f, 1));
+++        CHECK(st2.n_rows() == 5);
+++        CHECK((rows_for(st2, {1}) == std::vector<uint32_t>{4, 5, 6}));
+++        CHECK(row_is(st2, 5, 2.0f, 1) && row_is(st2, 0, 1.0f, 0));
++     }
++ 
++-    // one sequence, restored into another: tagged with the destination
+++    // one sequence, restored into another: tagged with the destination, in a free region
++     mem_writer w1;
++     st.state_write(w1, 1);
++     {
++-        llama_cross_store st2;
+++        llama_cross_store st2(n_embd, 4, 4, ggml_backend_cpu_buffer_type());
++         mem_reader r(w1.buf);
++         st2.state_read(r, 5, 8);
++         CHECK(st2.n_rows() == 3 && st2.has(5) && !st2.has(1));
++-        CHECK(row_is(st2, 0, 2.0f, 0));
+++        CHECK((rows_for(st2, {5}) == std::vector<uint32_t>{0, 1, 2}));
+++        CHECK(row_is(st2, 0, 2.0f, 0) && row_is(st2, 2, 2.0f, 2));
++         // restoring again replaces the destination's rows
++         mem_reader r2(w1.buf);
++         st2.state_read(r2, 5, 8);
++         CHECK(st2.n_rows() == 3);
++     }
++ 
++-    // a truncated suffix throws and leaves the store as it was
+++    // a truncated suffix throws
++     {
++-        llama_cross_store st2;
+++        llama_cross_store st2(n_embd, 4, 4, ggml_backend_cpu_buffer_type());
++         std::vector<uint8_t> cut(w1.buf.begin(), w1.buf.end() - 5);
++         mem_reader r(cut);
++         bool thrown = false;
++@@ -251,9 +274,9 @@ static void test_state() {
++         CHECK(thrown);
++     }
++ 
++-    // a bad magic throws
+++    // a bad magic throws; a store of another shape refuses the file
++     {
++-        llama_cross_store st2;
+++        llama_cross_store st2(n_embd, 4, 4, ggml_backend_cpu_buffer_type());
++         std::vector<uint8_t> bad = w.buf;
++         bad[0] ^= 0xff;
++         mem_reader r(bad);
++@@ -264,6 +287,16 @@ static void test_state() {
++             thrown = true;
++         }
++         CHECK(thrown);
+++
+++        llama_cross_store st3(n_embd, 4, 8, ggml_backend_cpu_buffer_type());
+++        mem_reader r3(w.buf);
+++        thrown = false;
+++        try {
+++            st3.state_read(r3, -1, 8);
+++        } catch (const std::exception &) {
+++            thrown = true;
+++        }
+++        CHECK(thrown);
++     }
++ }
++ 
++@@ -274,18 +307,18 @@ static void test_status() {
++     CHECK(llama_memory_status_is_fail(LLAMA_MEMORY_STATUS_FAILED_PREPARE));
++     CHECK(llama_memory_status_is_fail(LLAMA_MEMORY_STATUS_FAILED_COMPUTE));
++ 
++-    CHECK(llama_memory_status_combine(LLAMA_MEMORY_STATUS_FAILED_INPUT, LLAMA_MEMORY_STATUS_SUCCESS)   == LLAMA_MEMORY_STATUS_FAILED_INPUT);
+++    CHECK(llama_memory_status_combine(LLAMA_MEMORY_STATUS_FAILED_INPUT, LLAMA_MEMORY_STATUS_SUCCESS)      == LLAMA_MEMORY_STATUS_FAILED_INPUT);
++     CHECK(llama_memory_status_combine(LLAMA_MEMORY_STATUS_SUCCESS,      LLAMA_MEMORY_STATUS_FAILED_INPUT) == LLAMA_MEMORY_STATUS_FAILED_INPUT);
++     CHECK(llama_memory_status_combine(LLAMA_MEMORY_STATUS_NO_UPDATE,    LLAMA_MEMORY_STATUS_FAILED_INPUT) == LLAMA_MEMORY_STATUS_FAILED_INPUT);
++     // the four old values give what they gave
++-    CHECK(llama_memory_status_combine(LLAMA_MEMORY_STATUS_SUCCESS,   LLAMA_MEMORY_STATUS_NO_UPDATE) == LLAMA_MEMORY_STATUS_SUCCESS);
++-    CHECK(llama_memory_status_combine(LLAMA_MEMORY_STATUS_NO_UPDATE, LLAMA_MEMORY_STATUS_NO_UPDATE) == LLAMA_MEMORY_STATUS_NO_UPDATE);
++-    CHECK(llama_memory_status_combine(LLAMA_MEMORY_STATUS_FAILED_PREPARE, LLAMA_MEMORY_STATUS_SUCCESS) == LLAMA_MEMORY_STATUS_FAILED_PREPARE);
++-    CHECK(llama_memory_status_combine(LLAMA_MEMORY_STATUS_SUCCESS, LLAMA_MEMORY_STATUS_FAILED_COMPUTE) == LLAMA_MEMORY_STATUS_FAILED_COMPUTE);
+++    CHECK(llama_memory_status_combine(LLAMA_MEMORY_STATUS_SUCCESS,        LLAMA_MEMORY_STATUS_NO_UPDATE)      == LLAMA_MEMORY_STATUS_SUCCESS);
+++    CHECK(llama_memory_status_combine(LLAMA_MEMORY_STATUS_NO_UPDATE,      LLAMA_MEMORY_STATUS_NO_UPDATE)      == LLAMA_MEMORY_STATUS_NO_UPDATE);
+++    CHECK(llama_memory_status_combine(LLAMA_MEMORY_STATUS_FAILED_PREPARE, LLAMA_MEMORY_STATUS_SUCCESS)        == LLAMA_MEMORY_STATUS_FAILED_PREPARE);
+++    CHECK(llama_memory_status_combine(LLAMA_MEMORY_STATUS_SUCCESS,        LLAMA_MEMORY_STATUS_FAILED_COMPUTE) == LLAMA_MEMORY_STATUS_FAILED_COMPUTE);
++ }
++ 
++ int main() {
++-    test_replace_and_select();
+++    test_regions_and_select();
++     test_bound();
++     test_state();
++     test_status();
