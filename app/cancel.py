@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import sys
 import threading
 import time
 from typing import Any, Callable
@@ -52,6 +53,15 @@ class Token:
         self._event = threading.Event()
         self._lock = threading.Lock()
         self._watched: list = []
+        #: when the search last passed a checkpoint, and in which function:
+        #: what tells a STUCK search from a slow one (app/relay.py says so
+        #: to the page; operator, 2026-10-28)
+        self.last_progress = time.monotonic()
+        self.where = "start"
+
+    def progress(self, where: str) -> None:
+        self.last_progress = time.monotonic()
+        self.where = where
 
     @property
     def cancelled(self) -> bool:
@@ -99,9 +109,12 @@ def current() -> Token | None:
 
 def checkpoint() -> None:
     """Stop here if the caller has gone. Outside a cancellable search (the
-    worker, a CLI, a test) there is no token and this does nothing."""
+    worker, a CLI, a test) there is no token and this does nothing. Every
+    checkpoint is also PROGRESS: the time and the function that reached it
+    are kept on the token (`Token.progress`)."""
     token = _current.get()
     if token is not None:
+        token.progress(sys._getframe(1).f_code.co_name)
         token.check()
 
 

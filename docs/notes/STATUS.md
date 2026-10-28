@@ -18,6 +18,36 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 19:30 (architecture). THE ASK PAGE ASKS THROUGH A RELAY.**
+Operator: "Prepare a web proxy so that the web gui session is not reset by
+the browser dropping a query. Also if the query is stuck or dropped I
+should see a notification in the gui." Before: a search lived as long as
+its request (`cancel.while_connected`; 12:05Z that day: "/ask/query: the
+caller left after 43.8 s; the search is cancelled"), so a dropped
+connection, a sleeping phone or a reload lost the question. Now the page
+starts the search and the answer as jobs in the web process
+(app/relay.py; `POST /ask/relay`) and listens to them as Server-Sent
+Events (`GET /ask/relay/<id>/events`): the browser's EventSource
+reconnects by itself and names the last event it saw (`Last-Event-ID`,
+the standard's own resume), a reload finds the question again
+(sessionStorage, per tab), and a notice bar says when the connection is
+lost (and toasts its return), when the question has made no progress for
+60 s and at which step (every `cancel.checkpoint` is progress now, and
+every word of an answer) — with Cancel — and when the node dropped it —
+with Run again. Kept: no search runs for nobody (2026-09-21) — a job nobody
+listens to for 120 s is cancelled through the same token; a new question
+cancels the page's running ones; a job is its owner's alone; a finished
+one is kept 10 minutes. `/ask/query` and `/v1/chat/completions` are
+unchanged for other clients; the answer's model loop is one function for
+both (`api.answer_parts`). Spec: 07 §7.4's paragraph on the Ask page
+(amended). Tests: tests/test_relay.py (replay after a drop, the grace,
+stuck/moving, expiry, owner, replace, failure, the routes and an answer
+job end to end), tests/browser/ask_relay.js (19 checks: the reconnect
+names Last-Event-ID, stuck and lost said, results and answer kept through a
+reload, a dropped question said with Run again, a restarted node said, an
+expired finished one silent). Deploys with the next change; the web
+service alone carries it.
+
 **2026-10-28 18:45 (architecture). WIKIPEDIA-V8'S SNAPSHOT: the operator's
 go ("Do it now and do it yourself"); this session drives, München runs.**
 Two guards first. (a) `/root/hold-wikipedia-build` is set ("built
