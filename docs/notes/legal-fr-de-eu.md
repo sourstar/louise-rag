@@ -1,6 +1,6 @@
 # France, Germany and the EU — three legal collections on Normattiva's template (2026-10-28)
 
-**Status: PROPOSAL. Nothing is built.** Asked by the operator, 2026-10-28:
+**Status: DECIDED (§8, operator 2026-10-28); nothing is built.** Asked by the operator, 2026-10-28:
 "I need the equivalent of normattiva collection for french, german and
 European laws, prepare a design note." The decisions that are the
 operator's are in §8, each in the one shape (CLAUDE.md, Style).
@@ -540,6 +540,41 @@ EU second, because its resolver is what joins it to Normattiva and to
 France. Germany last, because its history is not published yet (D1).
 
 ## 8. Decisions for the operator
+
+**DECIDED, operator, 2026-10-28** (verbatim: "D1 yes, D2 grow collection
+parameter per language, D3 one encoder per language if it fits, find
+proper embedders like DAR legal it, D4 do not reinvent the wheel, find
+papers, we already have something"):
+
+- **D1 → A.** Germany from the NeuRIS API now.
+- **D2 → per language, grown.** Which languages of a collection are
+  embedded is a per-language parameter that grows one language at a time.
+  Every language is held as a slice (invariant 11), and adding one later
+  re-fetches nothing.
+- **D3 → one encoder per language where one fits.** For each language, a
+  legal-domain retriever chosen as DAR-legal-it was for Italian. Where
+  none fits, a general multilingual model. How this is carried without
+  breaking "one collection = one space" (invariant 1):
+  - A language's space is shared across collections by `space_from`.
+    French = LEGI + the EU's French slice; German = NeuRIS + the EU's
+    German slice; Italian = Normattiva's DAR-legal-it space + the EU's
+    Italian slice.
+  - The EU collection reaches each of those spaces through a SISTER per
+    encoder, holding the same records (02 §2.7) and embedding only the
+    languages of its space (the node's `slices`).
+  - The languages with no fitting legal encoder share one multilingual
+    sister.
+  - Growing a language means adding it to that sister's `slices`, or
+    giving it its own sister once a fitting encoder exists.
+- **D4 → published sets, no set of our own.** The encoder is measured on
+  the evaluation sets the papers already publish (§5.4, and the research
+  of 2026-10-28 below), preferring expert questions over lay ones and lay
+  over synthetic, and statutes over case law. Each set passes the licence
+  gate before use (invariant 9; GerLayQA is research-only). This replaces
+  the template's "expert questions in the domain and language" for these
+  three collections.
+
+The questions as they were put follow.
 
 **D1 — Germany's origin.** Where German federal law comes from, given
 that no origin publishes its past versions today (§3.1).
