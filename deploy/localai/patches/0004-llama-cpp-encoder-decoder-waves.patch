@@ -24,7 +24,7 @@ Assisted-by: Claude Code
 
 diff --git a/backend/cpp/llama-cpp/patches/0004-server-encoder-decoder-waves.patch b/backend/cpp/llama-cpp/patches/0004-server-encoder-decoder-waves.patch
 new file mode 100644
-index 00000000..5e2c4bf5
+index 00000000..5e6adb3e
 --- /dev/null
 +++ b/backend/cpp/llama-cpp/patches/0004-server-encoder-decoder-waves.patch
 @@ -0,0 +1,327 @@
@@ -290,7 +290,7 @@ index 00000000..5e2c4bf5
 +         // determine which slots are generating and drafting
 +-        iterate(slots, [&](server_slot & slot) {
 ++        iterate(slot_order, [&](server_slot & slot) {
-+             if (slot.state != SLOT_STATE_GENERATING) {
++             if (slot.state != SLOT_STATE_GENERATING || slot.task->type == SERVER_TASK_TYPE_TTS) {
 +                 return;
 +             }
 +@@ -3639,7 +3799,7 @@ private:
