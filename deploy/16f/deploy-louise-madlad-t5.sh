@@ -14,6 +14,9 @@
 # Second run, 2c7ab36 (24d41b9): the t5 shape told by the vocabulary (the real /v1/tokenize
 # makes "<2en>" two pieces, so 931887e's client took the batch shape: a 92 s warm), and every
 # batch-shape request bounded by max_tokens.
+# Third run, b7a0324: the answer's [n] kept out of MADLAD's sight (it dropped and renumbered
+# them, so the Ask page refused the answer), a missed answer said on the page, the stream
+# logged; pubmed's facets pass marked durably (index/facets/snapshot.json), paid once more here.
 # Before it, deploy-louise-profiles.sh — main (2026-10-27): node profiles (platform.toml [schedule]/[profiles]/
 # [gpu.levels]; app/node_profile.py, app/cpu_limit.py, app/gpu_level.py — power1_cap where the
 # card has no power1_max), rename carries the fast drive caches (b50d844), a plain create
@@ -96,6 +99,8 @@ grep -q "^def stand_aside" "$ROOT/src.new/app/dispatch.py"                      
 grep -q "mkstemp" "$ROOT/src.new/app/share/possession.py"                              # a0c43b6 (f386934)
 grep -q '^SHAPE_T5 = "t5"' "$ROOT/src.new/app/translate.py"                              # 3c376ca
 grep -q "^def _batch_bound" "$ROOT/src.new/app/translate.py"                             # 24d41b9: the shape by vocabulary, max_tokens
+grep -q "^def _strip_cites" "$ROOT/src.new/app/translate.py"                             # b7a0324: the [n] out of the model's sight
+grep -q '^MARKER = "snapshot.json"' "$ROOT/src.new/app/ask/facets.py"                    # b7a0324: the facets pass marked durably
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
 grep -q '"cache_type_k": "f32"' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # b68820c
 test ! -e "$ROOT/src.new/deploy/reference"
