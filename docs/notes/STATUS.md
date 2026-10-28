@@ -43,12 +43,14 @@ CET (13:26Z).** /root/wikipedia-v8/build-night.log: `[pack build] manifest:
 `WIKIPEDIA BUILD DONE`. The build spanned images: its last run (12:53, 12
 CPUs) on 0ef4e4a, earlier runs on d793c72 and before. 03 §3.4 (RULE 1
 amendment, equivalence by version): images running the same parser and
-chunker versions ARE equivalent; `git diff d793c72 0ef4e4a --
-app/plugins/wikipedia app/layers.py` is EMPTY, so those two are; the images
-before d793c72 need the same one-line check against the list in
-build-night.log before the snapshot is created. Then: `hold snapshot
-create`, the plan's checks (`chunks`, `records-vs-origin`), quarantine
-lifted. The operator's step; München starts nothing; no hold file set, the
+chunker versions ARE equivalent, and nothing needs checking by hand — `hold
+records build` refused every run whose image was not (`equivalence.
+require_reference`), and `hold snapshot create` asks again (corrected 18:20:
+an earlier line here asked for a manual check of the older images). Then:
+`hold snapshot create`, `hold check --origin` (roots, chunks,
+records-vs-origin, vectors-sample: the vector proof of wikipedia-qids.md
+§3 step 7), `hold collection show` for what is left before use; the old
+`wikipedia` paused and kept. The operator's go; München starts nothing; no hold file set, the
 build container gone (`--rm`). ALSO: pubmed's last facets pass (the one
 that writes the marker) runs since 14:44:30Z on a BUSY node (wikidata's
 parse, gutenberg's embedding; the worker at 227 % CPU, 4.7 GB) — this
