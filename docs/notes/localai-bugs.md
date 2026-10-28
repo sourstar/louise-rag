@@ -867,10 +867,20 @@ while the suite's permuted F16 cases with n ≥ 2 and `ne3 > 1` are "not
 supported" by `supports_op`, which is why nobody saw it. The patch adds the
 decoder KQ shape (16 heads, n = 2, 4, 7) to `test-backend-ops`.
 
-**Gate (München, after the switch; the card).** (1) `test-backend-ops` on
-the fixed build, SYCL F16, DNN=0: `-o MUL_MAT -p "type_a=f16,type_b=f32"`
-→ 0 FAIL (32 before), `GGML_TEST_KQ_SHAPES=1` with the diag patch → 0 FAIL
-(238 before); (2) the backend tar rebuilt with series P1–P4 + P5 (a new
+**Confirmed on the card before any rebuild (München, 2026-10-28 11:43): the
+same binary with `GGML_SYCL_ENABLE_DNN=1` — only that env changed — passes
+everything: upstream's F16×F32 filter 223 OK / 0 FAIL / 60 n.s. (DNN=0: 191 /
+32 / 60), the KQ shapes 272 / 0 (DNN=0: 34 / 238); logs
+`/root/kq/{std-f16,kq-run}-dnn1.txt`.** The oneDNN path reads the strides;
+the oneMKL path read the flat copy as contiguous.
+
+**Gate (München; the card).** (1) DONE 2026-10-28 11:55 — `test-backend-ops`
+from plain c0fd786 + P5's embedded patch + the diag KQ-shapes patch, SYCL F16,
+oneAPI 2025.3.0, DNN=0 (sha256 `01ec9540…`): `-o MUL_MAT -p
+"type_a=f16,type_b=f32"` **226 OK / 0 FAIL / 60 n.s.** (191 / 32 before; the
+three more OK are P5's decoder KQ cases), `GGML_TEST_KQ_SHAPES=1` **272 / 0**
+(34 / 238), the whole `-o MUL_MAT` suite **2276 OK / 0 FAIL / 592 n.s.**; logs
+`/root/kq/{std-f16,kq-run,mm-all}-p5.txt`. (2) the backend tar rebuilt with series P1–P4 + P5 (a new
 engine); MADLAD with the F16 KV cache (the two `cache_type_*: f32` lines
 dropped from the YAML): T4 bytes against P3, T3 in-wave == alone and the same
 group twice, the retrieval gate paired to torch — tools/measure/t5waves.py;

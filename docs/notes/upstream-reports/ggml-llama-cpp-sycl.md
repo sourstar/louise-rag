@@ -82,8 +82,9 @@ The 32: every `k_v`-strided case with `ne13 = 3` — `m∈{128,129}, n=1,
 k∈{1056,1057}, k_v=2k, bs∈{[1,3],[2,3],[4,3],[8,3]}, nr∈{[1,1],[4,1]},
 per=[0,1,2,3]` (e.g. `m=128,n=1,k=1056,bs=[1,3],nr=[1,1],per=[0,1,2,3],k_v=2112`:
 NMSE 1.38) — and none with `bs=[x,1]`, which take `mul_mat_vec_nc`, not the
-batched path. With `GGML_SYCL_ENABLE_DNN=1` the same binary is expected to
-pass them all (the oneDNN path reads the strides). The suite's permuted
+batched path. With `GGML_SYCL_ENABLE_DNN=1` the same binary passes them all — 223 OK /
+0 FAIL / 60 not supported, only that variable changed (the oneDNN path reads
+the strides). The suite's permuted
 F16×F32 cases with n ≥ 2 all have `ne3 > 1` and are "not supported" by
 `supports_op`, so the decoder's own shape was never covered: the PR adds
 `test_mul_mat(F16, F32, 64, n, 128, {16, 1}, {1, 1}, {0, 2, 1, 3})` for
@@ -95,6 +96,9 @@ n = 2, 4, 7, which fails before the fix at every n ≥ 2 and every key count
 the flat copy only when the oneDNN GEMM will run, leaving `s11/s12/s13` and
 `is_src1_cont_2` as they are; otherwise the gather (`to_fp16_nc_sycl`) with
 the contiguous strides, as the non-oneDNN build has always done. 26 lines in
-ggml-sycl.cpp, 8 in tests/test-backend-ops.cpp. Verified on the B70 with
-`test-backend-ops` (the 32, and the sweep) — *to be filled in after the card
-run*.
+ggml-sycl.cpp, 8 in tests/test-backend-ops.cpp. Verified on the B70 (c0fd786 + the
+patch, SYCL F16, oneAPI 2025.3.0, `GGML_SYCL_ENABLE_DNN=0`): `-o MUL_MAT -p
+"type_a=f16,type_b=f32"` 226 OK / 0 FAIL / 60 not supported (191 / 32 / 60
+before; the three new cases included), the exhaustive decoder sweep 272 / 0
+(34 / 238 before), the whole `-o MUL_MAT` suite 2276 OK / 0 FAIL / 592 not
+supported.

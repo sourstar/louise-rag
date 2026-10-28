@@ -39,8 +39,10 @@ more decoder tokens (the wrong text in waves), and upstream's own suite's 32
 strided cases with ne13 > 1, exactly the set München's log holds. Not the
 card, not the driver, not oneMKL. FIX = **P5** in the series
 (deploy/localai/patches/0007-…; localai-bugs.md P5), an upstream PR to file
-(upstream-reports/ggml-llama-cpp-sycl.md, second section). Gate: München
-runs test-backend-ops on the fixed build (0 FAIL expected), then the tar
+(upstream-reports/ggml-llama-cpp-sycl.md, second section). Confirmed 11:43:
+the same binary with GGML_SYCL_ENABLE_DNN=1 passes everything (223/0/60;
+272/0). Gate (1) PASSED 11:55: test-backend-ops on c0fd786 + P5 → 226/0/60, 272/0,
+the whole MUL_MAT suite 2276/0/592 — then, then the tar
 with P1–P4 + P5 and MADLAD on the F16 cache through t5waves.py; then the
 second switch (−44 % per token). The f32 switch in flight stands.
 
