@@ -815,7 +815,11 @@ The worker logs each resource's accounting every `SHARES_LOG_INTERVAL_S`
 (stage `sched`), from the stats thread — telemetry is never published by
 the thread doing the work. `python -m tools.sched_report --shares` prints
 the recent lines. Without this the fair share is an assertion; with it, a
-change can be judged on the general picture.
+change can be judged on the general picture. **The figures are CUMULATIVE since the worker start** — turns, units and
+seconds add up across rounds, and the line says "(since start)" since
+2026-10-28, when `pubmed: 99% in 36 turns (1102s, 1 units, units cost
+1067.1s)` was read as 1,067 s a round: it was ONE unit, the facets pass
+after a worker start, in 36 idle turns.
 
 ### The rest of the model, as built
 

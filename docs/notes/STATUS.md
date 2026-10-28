@@ -18,6 +18,32 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 16:00 (München, relayed): THE NODE RUNS AGAIN since 12:53.** Node
+resumed, wikidata's per-collection pause lifted, normattiva keeps its day pause
+(the 22:30 cron lifts it), the records build restarted with PARSE_PROCESSES=12
+(profile night with 12 cores until 17:00 by the operator's TEMP line, then
+quiet, where the build pauses itself until 22:30), writing zh/pages=6M. The
+corpus embedders load on demand (gutenberg 12 docs / 612 chunks at 12:55).
+First `dev schedule-report` (13:05–13:14): wikidata rdf 2,122/s, fts 1,858/s;
+gutenberg embed 759 docs remaining (ETA 12.7 h); wikipedia-v8 41,174,362
+waiting for embedding (quarantine); parse pool 11 processes, 0 failures,
+3.1 of 11 slots in flight; gate corpus 5,827 admitted, waited 899 s, served
+1,255 s. **pubmed's 1,067 s index unit — FOUND AND FIXED (München's log, architecture's
+fix).** Not per round: the `[sched]` shares line is CUMULATIVE since the worker
+start (36 turns, 1 unit, 1,067 s = one unit in 36 turns; the line now says
+"since start"). The one unit is the facets/edges/content-hash pass of
+`_maintain_ask_indexes` for pubmed's unchanged snapshot 2026-08 — three
+streamed passes over 40M rows, 16.5 min — run after EVERY WORKER START, because
+the "indexed for snapshot X" marker was `worker._ask_indexed`, an in-memory
+dict; today's three deploys cost three passes (09:30, 10:20 and the night's).
+And `_fill_content_hashes` loaded every record hash of the snapshot (40M) into
+memory before checking whether any row lacked one. Fix: a durable marker
+(snapshot id + hash) under the collection's index/facets, consulted at start
+and written only after a pass that raised nothing; the missing-row check
+before the hash load; the pass's duration in its log line
+(tests/ask/test_maintain.py). Deployed with the next change — never alone,
+since a restart is what costs the pass.
+
 **2026-10-28 15:30 (operator): THE HOLD IS LIFTED (choice A).** The 09:51
 "MADLAD only" order is over: the node resumes, wikidata's per-collection pause
 lifts, the records build restarts by hand (8 cores in the DAY band), the

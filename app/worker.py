@@ -2146,10 +2146,15 @@ def _fill_content_hashes(con, collection) -> int:
     snapshot that will carry them."""
     from app.share import possession
     root = collections_mod.louise_root() / "collections"
+    # the rows first, the hashes second: `record_hashes` reads every record
+    # hash of the snapshot into memory (pubmed: 40M), which is worth doing
+    # only when a row lacks one (2026-10-28)
+    missing = [u for (u,) in con.execute("SELECT uid FROM documents WHERE content_hash IS NULL")]
+    if not missing:
+        return 0
     hashes = possession.record_hashes(root, collection.name)
     if not hashes:
         return 0
-    missing = [u for (u,) in con.execute("SELECT uid FROM documents WHERE content_hash IS NULL")]
     rows = [(hashes[u], u) for u in missing if u in hashes]
     if not rows:
         return 0
@@ -2184,21 +2189,32 @@ def _maintain_ask_indexes(con, collection) -> bool:
     key = (snap.snapshot_id, snap.hash)
     if _ask_indexed.get(collection.name) == key:
         return False
+    index_dir = root / collection.name / "index"
+    if ask_facets.read_marker(index_dir) == key:
+        # indexed whole by an earlier process for this very snapshot: a
+        # restart does not recount (the marker is written below only after a
+        # pass that raised nothing)
+        _ask_indexed[collection.name] = key
+        return False
+    t0 = time.monotonic()
     did = False
+    failed = False
     try:
         did = _fill_content_hashes(con, collection) or did
     except Exception as e:   # noqa: BLE001 — one fill, not the maintainer
+        failed = True
         db.log_event(con, "warn", "ask", f"content hashes: {type(e).__name__}: {e}"[:300])
     try:
         got = ask_traverse.index_edges(con, shard_tree, snap)
         did = did or bool(got["shards"])
     except Exception as e:   # noqa: BLE001 — one index, not the maintainer
+        failed = True
         db.log_event(con, "warn", "ask", f"edges: {type(e).__name__}: {e}"[:300])
     try:
         # bounded whatever the collection's size (app/ask/facets.py): the
         # 2026-10-07 pass over pubmed reached 34 GB and the kernel killed the
         # worker; a field too wide to count says so, and stops with the node
-        built = ask_facets.build(con, codex, root / collection.name / "index", snapshot_id=snap.snapshot_id,
+        built = ask_facets.build(con, codex, index_dir, snapshot_id=snap.snapshot_id,
                                  stop=_stop.is_set, shard_dir=shard_tree, snapshot=snap,
                                  log=lambda m: db.log_event(con, "warn", "ask", m[:400]))
         did = did or bool(built)
@@ -2209,12 +2225,20 @@ def _maintain_ask_indexes(con, collection) -> bool:
             synced = validity.sync_vectors(con, collection, lock_con=con)
             did = did or bool(synced)
         except Exception as e:   # noqa: BLE001 — one index, not the maintainer
+            failed = True
             db.log_event(con, "warn", "ask", f"validity columns: {type(e).__name__}: {e}"[:300])
         if built:
-            db.log_event(con, "info", "ask", f"facets counted for snapshot {snap.snapshot_id}: {', '.join(built)}")
+            db.log_event(con, "info", "ask", f"facets counted for snapshot {snap.snapshot_id}: {', '.join(built)} "
+                                             f"({time.monotonic() - t0:.0f}s)")
     except Exception as e:   # noqa: BLE001
+        failed = True
         db.log_event(con, "warn", "ask", f"facets: {type(e).__name__}: {e}"[:300])
     _ask_indexed[collection.name] = key
+    if not failed and not _stop.is_set():
+        try:
+            ask_facets.write_marker(index_dir, snap.snapshot_id, snap.hash)
+        except OSError as e:
+            db.log_event(con, "warn", "ask", f"snapshot marker not written: {e}"[:300])
     return did
 
 
@@ -4445,7 +4469,9 @@ def _log_shares(con, live_paths=None) -> None:
             + ")"
             for n, e in sorted(busy.items())
         ]
-        db.log_event(con, "info", "sched", f"{resource} — " + "; ".join(parts))
+        # CUMULATIVE since the worker start, not a round's figures: München
+        # read 36 turns / 1 unit / 1,067 s as "1,067 s a round" (2026-10-28)
+        db.log_event(con, "info", "sched", f"{resource} (since start) — " + "; ".join(parts))
     # THE PARSE POOL'S ADMISSION — the time average of tasks IN FLIGHT,
     # capped at the pool size. Everything else here measures how long
     # something took; this says whether the pool was ALLOWED work, and its
