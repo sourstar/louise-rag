@@ -101,6 +101,7 @@ grep -q '^SHAPE_T5 = "t5"' "$ROOT/src.new/app/translate.py"                     
 grep -q "^def _batch_bound" "$ROOT/src.new/app/translate.py"                             # 24d41b9: the shape by vocabulary, max_tokens
 grep -q "^def _strip_cites" "$ROOT/src.new/app/translate.py"                             # b7a0324: the [n] out of the model's sight
 grep -q '^MARKER = "snapshot.json"' "$ROOT/src.new/app/ask/facets.py"                    # b7a0324: the facets pass marked durably
+grep -q "^def _unglue" "$ROOT/src.new/app/translate.py"                                  # ce64954: a space back between glued sentences
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
 ! grep -q 'cache_type_' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # d372ba5: the F16 cache (P5); b68820c had f32
 test ! -e "$ROOT/src.new/deploy/reference"
