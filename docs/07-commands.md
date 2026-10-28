@@ -132,6 +132,10 @@ louise hold
                                                                        [--corpus DIR]: another origin directory than the collection's own; [--records-from C]: the record lines
                                                                        of a held collection's latest snapshot taken instead of parsing — a re-creation changing only the slicing (RULE 1)
               validation <collection>                                  validation.json written from the Codex's plan (03 §3.2)
+              relocate <collection> --corpus DIR [--workers N] [--dry-run]
+                                                                       every record's `origin` written again from the manifest by the build's own function, the parts
+                                                                       that change rewritten by the build's own writer — byte for byte a rebuild (RULE 1); refused while
+                                                                       a snapshot lists the parts (amended 2026-10-28: wikipedia-v8's archive records carried bare names)
               check <collection> [--origin] [--seal [--live DIR]] [--sample F]
                                                                        records against their own hashes and roots, against the origin, against the seal
               seal <collection> <snapshot> --files DIR --trusted-list FILE --lotl FILE --lotl-signers FILE
