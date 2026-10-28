@@ -18,6 +18,22 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 12:30 (architecture).** ATTRIBUTION TEST DONE (München, 11:03):
+runtime 26.35 (39758.17, IGC 2.41.15, loader 1.32) fails the IDENTICAL
+`test-backend-ops` case sets as the bundled 26.27 — the KQ matmul fault is
+NOT the GPU runtime's or IGC's (upstream-bugs.md S1). Consequences: the tar
+rebuild on 26.35 is off the table for this fault (the F16 kernels do not
+come back by a runtime step; the f32 cache stays); the upstream report is
+READY TO FILE with both results, second section of
+upstream-reports/ggml-llama-cpp-sycl.md — the operator files it. What
+remains above the runtime: oneMKL's pointer-array `gemm_batch` (oneAPI
+2025.3.0 in the backend) or ggml-sycl's pointer/stride setup, or the xe
+kernel driver; a discriminator (route the non-contiguous case through the
+strided `gemm_batch` after a contiguous copy, in the diag build) would
+need another card window. The deploy of 2c7ab36 stopped on a test PR #22
+had not run (test_localai_backends pins the upstream-route body to the
+prompt); fixed by PR #23 (main 0ef4e4a); München redeploys and runs A1.
+
 **2026-10-28 12:00 (architecture).** DRIVER UPDATE, operator's decision on
 the one-shape question (approved-encoders.md "Known limits", upstream-bugs.md
 S1): the ATTRIBUTION TEST FIRST — the same test-backend-ops reproducer binary
