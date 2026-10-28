@@ -393,8 +393,9 @@ def test_the_platforms_client_and_the_backend_agree_on_the_one_prompt(tmp_path, 
     assert mt.languages() == frozenset({"de", "it", "la"})
     assert mt.translate([("über", "it"), ("x", "zz"), ("y", "la")]) == \
         ["<2it>|ÜBER", None, "<2la>|Y"]
-    assert len(asked) == 2 and set(asked[-1]) == {"prompt"}, \
-        "the model is the URL's (`…/upstream/<model>`, 07 §7.8)"
+    assert len(asked) == 2 and set(asked[-1]) == {"prompt", "max_tokens"}, \
+        "the model is the URL's (`…/upstream/<model>`, 07 §7.8); the bound rides along (the backend ignores it)"
+    assert all(0 < a["max_tokens"] <= 32768 for a in asked), "every batch request bounded (translate._completion)"
     assert sorted(seen["batches"][-1]) == ["<2it> über", "<2la> y"], "one pass for the batch"
     assert mt.health_url() == "http://models:8080/upstream/madlad/v1/models"
     mt.reset()
