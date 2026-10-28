@@ -565,13 +565,28 @@ platform mechanism beyond §5.1's check and §5.2's namespace owner.
   **XML (`regelungstext-1.xml`)** and a zip.
 - **There is no bulk zip** (`bulk-zip-links`: 404), so the listing is
   the inventory.
-- **The changelog needs `from` and `to`** (422 without them).
+- **The changelog needs `from` and `to`** as an OffsetDateTime
+  (`2026-10-21T00:00:00Z`; a bare date is a 422). Over 21–28 October it
+  answered `changed: []`, `deleted: []`, **`allChanged: true`**: the test
+  phase signals a full refresh, not a delta. **The delta is therefore the
+  listing compared with what is held**, by each expression's ELI and dates.
+  The changelog is read and its `allChanged` obeyed; it is never trusted to
+  be empty.
 
 **EU (Cellar).**
 - Content negotiation answers **303** for XHTML (`…/DOC_1`) and for the
   notice (`xml/branch`), for the act and for a consolidated version alike.
-- **Formex answers 300 Multiple Choices**, so its manifestation is
-  chosen from the list. The probe now prints that list.
+- **Formex answers 300 Multiple Choices**, listing its manifestation and
+  items. **Consolidated versions HAVE Formex**, which settles the "not
+  confirmed" of §4.1:
+  - `02016R0679-20160504` → manifestation `…0022.01`, items
+    `CL2016R0679EN0000020.0001.xml` (the body) and `….doc.xml` (the
+    wrapper);
+  - the act → manifestation `…0006.02`, `L_2016119EN.01000101.xml` and
+    `.doc.xml`, in the reverse order.
+
+  A fetcher reads the 300's item list, or asks the manifestation URI's
+  `DOC_n` directly, and picks the body by its name, never by its order.
 - **SPARQL answers:** 400 consolidated versions of 2016 regulations,
   counted in 4.3 s.
 
@@ -579,8 +594,9 @@ platform mechanism beyond §5.1's check and §5.2's namespace owner.
 body discarded, not a HEAD. On the baseline it moved **486 MB** before
 `--max-time` cut it: 0.5 GB where the script promised under 20 MB. It is
 `curl -I` now, and every request is capped at 20 MB (`--max-filesize`).
-The rerun covers what the first left open: the changelog with
-`from`/`to`, and Formex's choices.
+The rerun (23:53, 12 s, ≤ 9 MiB for all the node's traffic) answered
+what the first left open: the changelog and Formex's choices above. A
+HEAD carries no cap now (curl reported the baseline's HEAD as error 63).
 
 **The proposed order: France, then the EU, then Germany.** France has
 every version, a bulk form, an open licence and the article grain that

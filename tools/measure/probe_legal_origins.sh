@@ -26,7 +26,9 @@ UA="louise-probe/2 (operator's node; legal template step 1)"
 MAX_FILE=20000000
 C=(curl -sS -A "$UA" --max-time 120 --max-filesize "$MAX_FILE")
 section() { printf '\n===== %s =====\n' "$*"; }
-head_of() { "${C[@]}" -I "$@" | tr -d '\r' | grep -iE '^(HTTP/|content-type|content-length|accept-ranges|location|last-modified|etag|x-ratelimit|retry-after)'; }
+# a HEAD moves no body, so it carries no cap: with one, curl reports a
+# large file's HEAD as error 63 ("Maximum file size exceeded")
+head_of() { curl -sS -A "$UA" --max-time 120 -I "$@" | tr -d '\r' | grep -iE '^(HTTP/|content-type|content-length|accept-ranges|location|last-modified|etag|x-ratelimit|retry-after)'; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
 # ---------------------------------------------------------------- France --
