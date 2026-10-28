@@ -18,6 +18,28 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 17:40 (München, relayed). WIKIPEDIA-V8 RECORDS BUILD DONE, 14:26
+CET (13:26Z).** /root/wikipedia-v8/build-night.log: `[pack build] manifest:
+188 slice(s), 37501 shard(s), 74811753 records, 267178070 chunks, unsigned
+(the snapshot carries the signature)`, `[records build] wikipedia-v8:
+74811753 records in 37501 shard(s), 37501 promoted into the SHARD`,
+`WIKIPEDIA BUILD DONE`. The build spanned images: its last run (12:53, 12
+CPUs) on 0ef4e4a, earlier runs on d793c72 and before. 03 §3.4 (RULE 1
+amendment, equivalence by version): images running the same parser and
+chunker versions ARE equivalent; `git diff d793c72 0ef4e4a --
+app/plugins/wikipedia app/layers.py` is EMPTY, so those two are; the images
+before d793c72 need the same one-line check against the list in
+build-night.log before the snapshot is created. Then: `hold snapshot
+create`, the plan's checks (`chunks`, `records-vs-origin`), quarantine
+lifted. The operator's step; München starts nothing; no hold file set, the
+build container gone (`--rm`). ALSO: pubmed's last facets pass (the one
+that writes the marker) runs since 14:44:30Z on a BUSY node (wikidata's
+parse, gutenberg's embedding; the worker at 227 % CPU, 4.7 GB) — this
+morning's 16.5 min were on a paused node — not done at 15:17Z; the `[sched]`
+line shows 0 units for it because a unit counts when it ends. München
+waits for the marker before any restart (the deploy of ce64954 waits with
+it; a restart mid-pass would run the pass again).
+
 **2026-10-28 17:15 (München, relayed). THE ANSWER TRANSLATES AGAIN.** PR #32
 (b7a0324) deployed 14:42Z (image 67009223, the same identity; the deploy
 script's first attempt stopped on its own check for the stage YAML's removed
