@@ -2438,8 +2438,16 @@ def cmd_records_relocate(a) -> int:
     from app.hold import collection as c, relocate as rl
     name, _codex = c.resolve(a.root, a.collection)
     _take_write_lock(a.root, name, "hold records relocate")
-    rl.relocate(a.root, a.collection, corpus_dir=a.corpus, workers=a.workers, dry_run=a.dry_run)
-    return 0
+    # Invariant 2: SIGTERM or SIGINT finishes the parts in hand and exits 130
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, lambda *_a: stop.set())
+        except (ValueError, OSError):                # not the main thread
+            pass
+    got = rl.relocate(a.root, a.collection, corpus_dir=a.corpus, workers=a.workers,
+                      dry_run=a.dry_run, stop=stop)
+    return 130 if got.interrupted else 0
 
 
 def cmd_records_validation(a) -> int:

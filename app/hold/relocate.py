@@ -27,11 +27,22 @@ REFUSED while a snapshot lists the parts: a snapshot's parts never change
 (02 §2.2). A snapshot that was never shared is removed first, by its
 operator; one that was shared is superseded by the next period's, never
 rewritten.
+
+RESUMABLE (invariant 2). The unit is a part. Its build row is committed
+BEFORE the rewritten file takes the part's place: a stop between the two
+leaves the row naming bytes the old file does not hold, and a re-run finds
+that file's origins still wrong and writes it again — the same bytes the
+row names. The other order left a corrected file under the old row, which a
+re-run skips (its origins are right) and `snapshot create` would list.
+SIGTERM or SIGINT finishes the parts in hand, commits, exits 130; the
+children ignore both — the parent decides.
 """
 from __future__ import annotations
 
 import os
+import signal
 import sqlite3
+import threading
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +57,7 @@ class Result:
     records: int = 0             # records read
     relocated: int = 0           # records whose origin changed
     examples: tuple = ()         # a few (uid, old, new), for the log
+    interrupted: bool = False    # stopped by a signal; a re-run continues
 
 
 #: per child: the manifest connection and the plugin, opened once
@@ -54,6 +66,8 @@ _child: dict = {}
 
 def _init(name: str, plugin_id: str, corpus: str, manifest: str, record_line: int) -> None:
     from app import collections as collections_mod
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, signal.SIG_IGN)   # the parent decides (module docstring)
     plugin = collections_mod.PLUGIN_REGISTRY[plugin_id]
     _child.update(plugin=plugin, corpus=Path(corpus), record_line=record_line,
                   con=sqlite3.connect(f"file:{manifest}?mode=ro", uri=True))
@@ -106,7 +120,8 @@ def _relocate_part(path: str, dry_run: bool) -> dict:
 
 
 def relocate(root, ref: str, *, corpus_dir, workers: int | None = None,
-             dry_run: bool = False, log=print) -> Result:
+             dry_run: bool = False, stop: threading.Event | None = None,
+             log=print) -> Result:
     from app import config
     from . import collection as col, records as hold_records
 
@@ -137,33 +152,42 @@ def relocate(root, ref: str, *, corpus_dir, workers: int | None = None,
     # SPAWNED, as the parse pool's children are (app/parallel.py): a fork of a
     # process holding threads and SQLite connections is undefined
     import multiprocessing
-    with ProcessPoolExecutor(max_workers=n, initializer=_init, initargs=init,
-                             mp_context=multiprocessing.get_context("spawn")) as pool:
+    pool = ProcessPoolExecutor(max_workers=n, initializer=_init, initargs=init,
+                               mp_context=multiprocessing.get_context("spawn"))
+    try:
         for got in pool.map(_relocate_part, list(expected), [dry_run] * len(expected), chunksize=4):
             result.parts += 1
             result.records += got["records"]
             result.relocated += got["changed"]
             examples.extend(got["examples"][:max(0, 3 - len(examples))])
-            if not got["changed"] or dry_run:
-                continue
-            slice_, num, rel, n_rec, n_chunks, records_root = expected[got["path"]]
-            if (got["records_written"], got["chunks"], got["records_root"]) != (n_rec, n_chunks, records_root):
-                Path(got["tmp"]).unlink(missing_ok=True)
-                raise CodexError(f"{rel}: counts or records_root differ from the build's row; "
-                                 f"nothing replaced")
-            os.replace(got["tmp"], got["path"])
-            bdb.execute("UPDATE shards SET bytes=?, sha256=?, root=? WHERE slice=? AND n=?",
-                        (got["bytes"], got["sha256"], got["root"], slice_, num))
-            bdb.commit()
-            result.rewritten += 1
-            if result.rewritten % 500 == 0:
-                log(f"[records relocate] {name}: {result.rewritten} part(s) rewritten, "
-                    f"{result.relocated:,} record(s) relocated, {result.parts} of {len(rows)} read")
-    bdb.close()
+            if got["changed"] and not dry_run:
+                slice_, num, rel, n_rec, n_chunks, records_root = expected[got["path"]]
+                if (got["records_written"], got["chunks"], got["records_root"]) != (n_rec, n_chunks, records_root):
+                    raise CodexError(f"{rel}: counts or records_root differ from the build's row; "
+                                     f"nothing replaced")
+                # THE ROW FIRST, then the file (module docstring, RESUMABLE)
+                bdb.execute("UPDATE shards SET bytes=?, sha256=?, root=? WHERE slice=? AND n=?",
+                            (got["bytes"], got["sha256"], got["root"], slice_, num))
+                bdb.commit()
+                os.replace(got["tmp"], got["path"])
+                result.rewritten += 1
+                if result.rewritten % 500 == 0:
+                    log(f"[records relocate] {name}: {result.rewritten} part(s) rewritten, "
+                        f"{result.relocated:,} record(s) relocated, {result.parts} of {len(rows)} read")
+            if stop is not None and stop.is_set():
+                result.interrupted = True
+                break
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+        bdb.close()
+        # parts written by children whose answer was not taken: never in place
+        for left in shard_dir.rglob("*.relocated"):
+            left.unlink(missing_ok=True)
     result.examples = tuple(examples)
     for uid, old, new in examples:
         log(f"[records relocate] {name}: {uid}: {old!r} -> {new!r}")
     log(f"[records relocate] {name}: {result.parts} part(s) read, {result.records:,} record(s); "
         f"{result.relocated:,} relocated in {result.rewritten} part(s)"
-        + (" (dry run: nothing written)" if dry_run else ""))
+        + (" (dry run: nothing written)" if dry_run else "")
+        + (" — STOPPED by a signal; run it again to continue" if result.interrupted else ""))
     return result
