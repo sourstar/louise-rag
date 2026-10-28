@@ -123,7 +123,9 @@ def relocate(root, ref: str, *, corpus_dir, workers: int | None = None,
     if not db_path.is_file():
         raise CodexError(f"{name}: no build database at {db_path}")
     local = hold_records.local_collection(root, name, codex, corpus_dir=corpus_dir)
+    from app import db
     bdb = sqlite3.connect(db_path)
+    db.wal(bdb)   # the build made it WAL; a no-op that keeps it so (invariant 6)
     rows = bdb.execute("SELECT slice, n, path, records, chunks, records_root FROM shards "
                        "ORDER BY slice, n").fetchall()
     result = Result()
