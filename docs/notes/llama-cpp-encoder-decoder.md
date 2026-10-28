@@ -304,6 +304,14 @@ Then, the same day: keep things as they are; the llama.cpp improvement is
 done in a separate session. MADLAD stays on torch. Nothing below is built.
 Each stage ships only after its gate.*
 
+*2026-10-27 night, that session: the server-only alternative to stage 1 —
+translator-choice.md "Waves" — was built as P4 (localai-bugs.md), reviewed
+against this note: it needs no library change, no public symbol, and gives
+decision B of §8 (per question group) by construction, the batch following
+the wave's content order. Stage 1 (the per-sequence memory) and stage 2
+remain the upstream path; the measurements of T2–T4 run on the card through
+tools/measure/t5waves.py.*
+
 | Stage | What | Where | Gate before it ships |
 |---|---|---|---|
 | 0 | **Measure the cross recompute (T10).** One slot, P3 test backend: the same output length from a short input and a long input. Time per token against `n_enc` decides between stage 3 and concurrency. | read-only, the node | none: a measurement |

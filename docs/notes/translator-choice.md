@@ -326,6 +326,19 @@ llamacpp". It costs a 17–38 s cold load and 7.2 GB on the card, against
 improvement, I will do it in a separated session." MADLAD stays on torch.
 Nothing below is built.*
 
+*That session: 2026-10-27 night (operator: "Review the proposed improvings of
+llama.cpp to use madlad model, without breaking the existing interfaces …
+implement and test the code, I give you the exclusive use of the CPU/GPU
+tonight"). BUILT as P4 (localai-bugs.md): the wave scheduler in the server,
+under P3's guard, plus Louise's client side — app/translate.py's t5 shape
+(one raw `<2xx> segment` prompt per segment, the torch backend's cut, a
+call's segments sent at once, the clean-up; the shape determined from the
+server, never configured). The model runs on its OWN backend
+(`louise-sycl-f16-llama-cpp-t5`, deploy/vega/stage/models/louise-translate-madlad-gguf.yaml),
+so the shared embedder backend was not rebuilt and no embedder became a new
+engine. The gates below are run by tools/measure/t5waves.py; their results
+are recorded in STATUS.md as they land.*
+
 *The operator asked for a simpler patch than the per-sequence memory
 (llama-cpp-encoder-decoder.md §9), one that impacts no other model.
 Measured first (localai-bugs.md P3, "On the card"):*

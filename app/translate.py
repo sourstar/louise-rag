@@ -21,12 +21,19 @@ server's own POST /translate and GET /languages, and TRANSLATE_API that chose
 between the two, were retired at 15g. One prompt
 carries the whole batch, because LocalAI calls the model once per prompt and
 the model translates a batch in one pass (operator, 2026-10-03).
+
+THE T5 SHAPE (2026-10-27): MADLAD on our llama.cpp backend (localai-bugs.md
+P3, P4) takes one raw prompt per segment, "<2xx> segment"; this client cuts,
+sends a call's segments at once and puts the pieces back. Which shape the
+server speaks is determined from the server (`shape`), never configured.
 """
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
@@ -74,11 +81,18 @@ def warm() -> None:
     its usual empty answer."""
     if not config.TRANSLATE_MODEL:
         return
-    model_load.ensure_loaded(
-        config.TRANSLATE_URL, config.TRANSLATE_MODEL,
-        lambda bound_s: _completion({"items": [{"text": "OK", "to": "it"}]}, bound_s,
-                                    {dispatch.LEVEL_HEADER: "translate"}),
-        caller="translation", max_age_s=0.0)
+
+    def warm_request(bound_s: float) -> None:
+        # the shape probe asks the model's tokenizer, which loads the model
+        # when cold: bounded like the request that follows it
+        if shape(bound_s) == SHAPE_T5:
+            _t5_completion("it", "OK", bound_s, {dispatch.LEVEL_HEADER: "translate"}, max_tokens=4)
+        else:
+            _completion({"items": [{"text": "OK", "to": "it"}]}, bound_s,
+                        {dispatch.LEVEL_HEADER: "translate"})
+
+    model_load.ensure_loaded(config.TRANSLATE_URL, config.TRANSLATE_MODEL, warm_request,
+                             caller="translation", max_age_s=0.0)
 
 
 def languages() -> frozenset[str]:
@@ -92,8 +106,11 @@ def languages() -> frozenset[str]:
         return cached[1]
     try:
         warm()
-        answer = _completion({"languages": True}, 10.0)
-        got = frozenset(str(c) for c in answer.get("languages", []))
+        if shape() == SHAPE_T5:
+            got = _t5_languages()
+        else:
+            answer = _completion({"languages": True}, 10.0)
+            got = frozenset(str(c) for c in answer.get("languages", []))
     except Exception:   # noqa: BLE001 — unreachable is "no languages", not an error
         return frozenset()
     with _lock:
@@ -102,9 +119,10 @@ def languages() -> frozenset[str]:
 
 
 def reset() -> None:
-    global _languages
+    global _languages, _shape_cache
     with _lock:
         _languages = None
+        _shape_cache = None
 
 
 def translate(items: list[tuple[str, str]]) -> list[str | None]:
@@ -115,15 +133,233 @@ def translate(items: list[tuple[str, str]]) -> list[str | None]:
     request = {"items": [{"text": t, "to": to} for t, to in items]}
     try:
         warm()
-        with dispatch.call(config.TRANSLATE_URL, dispatch.Level.TRANSLATE,
-                           timeout=TIMEOUT_S):
-            answer = _completion(request, TIMEOUT_S, dispatch.level_headers())
-        out = answer.get("translations")
+        if shape() == SHAPE_T5:
+            out = _t5_translate(items)
+        else:
+            with dispatch.call(config.TRANSLATE_URL, dispatch.Level.TRANSLATE,
+                               timeout=TIMEOUT_S):
+                answer = _completion(request, TIMEOUT_S, dispatch.level_headers())
+            out = answer.get("translations")
     except Exception:   # noqa: BLE001 — the caller falls back and says so
         return []
     if not isinstance(out, list) or len(out) != len(items):
         return []
     return [o if isinstance(o, str) and o.strip() else None for o in out]
+
+
+# ---- the two shapes of TRANSLATE_URL's server (2026-10-27) ----------------------------
+#
+# SHAPE_BATCH is the louise-python backend above: one JSON prompt carries the
+# whole batch, and it segments, packs and reassembles the texts itself.
+# SHAPE_T5 is MADLAD on our llama.cpp backend (docs/notes/localai-bugs.md P3,
+# P4): a raw completion per SEGMENT, "<2xx> segment", greedy; the segmenting
+# (deploy/madlad-translate/server.py's, ported below), the batching and the
+# reassembly are this client's, and a question's languages go out at once so
+# the server encodes and decodes them in one wave (P4). The shape is
+# DETERMINED from the server, never configured (RULE 2): a runner whose
+# tokenizer makes ONE token of "<2en>" is a T5 translator with MADLAD's target
+# tokens; the python backend has no tokenizer route.
+
+SHAPE_BATCH = "batch"
+SHAPE_T5 = "t5"
+#: how long a determined shape is trusted
+_SHAPE_TTL_S = 600.0
+#: a segment's size in (estimated) tokens: MADLAD saw sentences, its window
+#: is 512; 96 is what the torch backend packs to (deploy/madlad-translate)
+MAX_SEG_TOKENS = 96
+#: concurrent requests of one call: the server's slots (parallel:7, one wave)
+T5_CONCURRENCY = 7
+#: an ISO code the platform stores -> the token MADLAD was trained with,
+#: where the two name the same language differently
+ALIASES = {"tl": "fil", "gla": "gd", "oji": "oj", "iw": "he", "in": "id", "ji": "yi"}
+#: transformers' clean_up_tokenization, which MADLAD's config switches on
+#: (clean_up_tokenization_spaces: true): the torch backend's output had it
+_CLEAN = ((" .", "."), (" ?", "?"), (" !", "!"), (" ,", ","), (" ' ", "'"), (" n't", "n't"),
+          (" 'm", "'m"), (" 's", "'s"), (" 've", "'ve"), (" 're", "'re"))
+_LANG_TOKEN = re.compile(r"<2([A-Za-z0-9_\-]+)>")
+_PARAGRAPH = re.compile(r"\n\s*\n")
+_SENTENCE = re.compile(r"(?<=[.!?;:。！？；])\s+")
+_SPACE = re.compile(r"\s+")
+
+_shape_cache: tuple[float, str] | None = None
+
+
+def _tokenize(text: str, timeout: float) -> list[int] | None:
+    """The runner's tokens for `text` (LocalAI /v1/tokenize, served by the
+    model's own tokenizer); None when it has no such route or fails."""
+    body = {"content": text}
+    if config.TRANSLATE_MODEL:
+        body["model"] = config.TRANSLATE_MODEL
+    r = httpx.post(f"{config.TRANSLATE_URL}/v1/tokenize", json=body, timeout=timeout)
+    if r.status_code != 200:
+        return None
+    tokens = r.json().get("tokens")
+    return tokens if isinstance(tokens, list) else None
+
+
+def shape(timeout: float = 10.0) -> str:
+    """Which shape TRANSLATE_URL's server speaks, determined from it and
+    trusted `_SHAPE_TTL_S`; a server that cannot be asked is the batch
+    shape for this call only (the call then fails as it always did)."""
+    global _shape_cache
+    with _lock:
+        cached = _shape_cache
+    if cached is not None and time.monotonic() - cached[0] < _SHAPE_TTL_S:
+        return cached[1]
+    try:
+        tokens = _tokenize("<2en>", timeout)
+    except Exception:   # noqa: BLE001 — unreachable: undetermined, asked again next time
+        return SHAPE_BATCH
+    got = SHAPE_T5 if tokens is not None and len(tokens) == 1 else SHAPE_BATCH
+    with _lock:
+        _shape_cache = (time.monotonic(), got)
+    return got
+
+
+def target_code(code: str) -> str:
+    code = code.strip().lower()
+    return ALIASES.get(code, code)
+
+
+def estimate_tokens(text: str) -> int:
+    """About how many tokens MADLAD's tokenizer makes of `text`: one per CJK,
+    kana, Hangul or full-width character, one per 3.5 others. An estimate on
+    the short side: segments come out a little longer than the torch
+    backend's exact 96, well inside the model's 512 and the wave's 1,024."""
+    n = 0.0
+    for ch in text:
+        o = ord(ch)
+        if (0x2E80 <= o <= 0x9FFF) or (0xAC00 <= o <= 0xD7AF) or (0xF900 <= o <= 0xFAFF) \
+                or (0xFF00 <= o <= 0xFFEF):
+            n += 1.0
+        elif not ch.isspace():
+            n += 1 / 3.5
+    return int(n) + 1
+
+
+def split_segments(text: str, max_tokens: int, count) -> list[list[str]]:
+    """`text` as paragraphs of segments, each at most `max_tokens` by `count`
+    where a sentence allows it — deploy/madlad-translate/server.py's rule,
+    so the two shapes cut a text the same way. A paragraph's own line wraps
+    are layout, not content (a Gutenberg page wraps at 70 columns), so it is
+    flattened first; paragraph breaks survive."""
+    paragraphs = []
+    for para in _PARAGRAPH.split(text.replace("\r\n", "\n").replace("\r", "\n")):
+        para = _SPACE.sub(" ", para).strip()
+        if not para:
+            continue
+        segs: list[str] = []
+        current = ""
+        for sentence in _SENTENCE.split(para):
+            pieces = [sentence]
+            if count(sentence) > max_tokens:
+                # a "sentence" longer than the window: cut on words
+                words, pieces, piece = sentence.split(" "), [], ""
+                for w in words:
+                    trial = f"{piece} {w}".strip()
+                    if piece and count(trial) > max_tokens:
+                        pieces.append(piece)
+                        piece = w
+                    else:
+                        piece = trial
+                if piece:
+                    pieces.append(piece)
+            for p in pieces:
+                trial = f"{current} {p}".strip()
+                if current and count(trial) > max_tokens:
+                    segs.append(current)
+                    current = p
+                else:
+                    current = trial
+        if current:
+            segs.append(current)
+        paragraphs.append(segs)
+    return paragraphs
+
+
+def clean_up(text: str) -> str:
+    for a, b in _CLEAN:
+        text = text.replace(a, b)
+    return text.strip()
+
+
+def _t5_completion(code: str, segment: str, timeout: float, headers: dict[str, str] | None = None,
+                   max_tokens: int | None = None) -> str:
+    """One segment through the model: the raw prompt MADLAD was trained with,
+    greedy, the output bounded as the torch backend bounds a batch
+    (min(512, 2 × input + margin)); the completion's text, cleaned up."""
+    prompt = f"<2{code}> {segment}"
+    body = {"prompt": prompt, "temperature": 0, "top_k": 1, "seed": 0,
+            "max_tokens": max_tokens if max_tokens is not None else min(512, 2 * estimate_tokens(prompt) + 32)}
+    if config.TRANSLATE_MODEL:
+        body["model"] = config.TRANSLATE_MODEL
+    r = httpx.post(f"{config.TRANSLATE_URL}/v1/completions", json=body, timeout=timeout,
+                   headers=headers or {})
+    r.raise_for_status()
+    return clean_up(r.json()["choices"][0]["text"])
+
+
+def _t5_languages(timeout: float = 30.0) -> frozenset[str]:
+    """The target codes the MODEL knows, read off its own vocabulary: every
+    `<2xx>` token, found by detokenizing the token ids in chunks (LocalAI
+    /v1/detokenize renders special tokens as their pieces); a chunk past the
+    vocabulary's end fails and is halved, down to one id. About 70 requests
+    once per TTL, a few seconds. The platform's own codes too, where
+    ALIASES maps them to a known one."""
+    codes: set[str] = set()
+    start, step = 0, 4096
+    while step >= 1 and start < 1_000_000:
+        body: dict = {"tokens": list(range(start, start + step))}
+        if config.TRANSLATE_MODEL:
+            body["model"] = config.TRANSLATE_MODEL
+        r = httpx.post(f"{config.TRANSLATE_URL}/v1/detokenize", json=body, timeout=timeout)
+        if r.status_code != 200:
+            step //= 2                       # past the end: narrow the chunk
+            continue
+        codes |= set(_LANG_TOKEN.findall(r.json().get("content") or ""))
+        start += step
+    return frozenset(codes | {a for a, c in ALIASES.items() if c in codes})
+
+
+def _t5_translate(items: list[tuple[str, str]]) -> list[str | None]:
+    """The t5 shape of `translate`: each item cut into segments as the torch
+    backend cuts them, every segment one request, the requests of one call
+    sent at once (T5_CONCURRENCY) so the server takes them in one wave; the
+    pieces put back with the text's paragraph breaks. An unknown target is
+    None; an empty or runaway output (a llama.cpp translator can run on:
+    translator-choice.md) makes its item None; any failed request fails the
+    call, as one failed batch did."""
+    known = languages()
+    out: list[str | None] = [None] * len(items)
+    jobs: list[tuple[int, int, int, str, str]] = []       # (item, paragraph, segment, code, text)
+    shapes: dict[int, list[int]] = {}
+    for i, (text, to) in enumerate(items):
+        code = target_code(to)
+        if code not in known:
+            continue
+        paragraphs = split_segments(text, MAX_SEG_TOKENS, estimate_tokens)
+        shapes[i] = [len(p) for p in paragraphs]
+        for pi, segs in enumerate(paragraphs):
+            for si, seg in enumerate(segs):
+                jobs.append((i, pi, si, code, seg))
+    if not jobs:
+        return out
+    with dispatch.call(config.TRANSLATE_URL, dispatch.Level.TRANSLATE, timeout=TIMEOUT_S):
+        headers = dispatch.level_headers()      # read here: a pool thread carries no level
+        with ThreadPoolExecutor(max_workers=min(T5_CONCURRENCY, len(jobs))) as pool:
+            got = list(pool.map(lambda j: _t5_completion(j[3], j[4], TIMEOUT_S, headers), jobs))
+    done: dict[tuple[int, int, int], str] = {}
+    failed: set[int] = set()
+    for (i, pi, si, _code, seg), text in zip(jobs, got):
+        if not text or len(text) > 4 * len(seg) + 64:
+            failed.add(i)
+        done[(i, pi, si)] = text
+    for i, counts in shapes.items():
+        if i in failed:
+            continue
+        out[i] = "\n\n".join(" ".join(done[(i, pi, si)] for si in range(n))
+                             for pi, n in enumerate(counts))
+    return out
 
 
 # ---- reading translation by source language (operator, 2026-10-12) -------------------
