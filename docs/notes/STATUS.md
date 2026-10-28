@@ -18,6 +18,16 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 14:30 (München, relayed).** P5 TAR GATED GREEN ON THE F16 CACHE:
+`louise-llama-cpp-sycl_f16-c68167b65cb0.tar` (P1–P5) installed as
+`vega-llama-cpp-t5`; MADLAD with the default F16 cache: T4 379/379 = P3's
+bytes, T3 626/626 and 616/626, retrieval paired-equal to torch, 16.3 ms per
+token (f32 29.2), **0.68 s per question in waves, p90 0.96** (f32 1.12; torch
+3.2). The F16 cache is cleared for MADLAD on this engine; the stage YAML
+drops its two `cache_type_*` lines (localai-bugs.md P5). Step 4 running: A1
+through Louise under gutenberg sharing, torch first, then the GGUF F16 under
+the live name; switch only on a median gain with p90 not worse.
+
 **2026-10-28 13:30 (München, relayed).** A1 ON THE FIXED CLIENT (0ef4e4a
 deployed 10:17Z): the GGUF with the f32 cache works through Louise with
 torch's quality (60/60 answered, 341/381 translations identical, 59/60 the

@@ -880,11 +880,23 @@ oneAPI 2025.3.0, DNN=0 (sha256 `01ec9540…`): `-o MUL_MAT -p
 "type_a=f16,type_b=f32"` **226 OK / 0 FAIL / 60 n.s.** (191 / 32 before; the
 three more OK are P5's decoder KQ cases), `GGML_TEST_KQ_SHAPES=1` **272 / 0**
 (34 / 238), the whole `-o MUL_MAT` suite **2276 OK / 0 FAIL / 592 n.s.**; logs
-`/root/kq/{std-f16,kq-run,mm-all}-p5.txt`. (2) the backend tar rebuilt with series P1–P4 + P5 (a new
-engine); MADLAD with the F16 KV cache (the two `cache_type_*: f32` lines
-dropped from the YAML): T4 bytes against P3, T3 in-wave == alone and the same
-group twice, the retrieval gate paired to torch — tools/measure/t5waves.py;
-(3) the per-token time back near 16.3 ms. The live shared engine
+`/root/kq/{std-f16,kq-run,mm-all}-p5.txt`. (2) and (3) DONE 2026-10-28 12:02–12:18 (München;
+node paused, card otherwise idle): the tar `louise-llama-cpp-sycl_f16-c68167b65cb0.tar`
+(series digest **c68167b65cb0**, main ed4e9e7 = P1–P5; sha256 `0fed8958…07dba2`;
+a new engine) installed as `vega-llama-cpp-t5`; MADLAD on the **F16 KV cache**
+(the YAML of the f32 run minus its two `cache_type_*` lines; `parallel:7`,
+`ubatch:1024`, DNN=0), t5waves fb014fe: **T4 379/379 = P3's bytes** (343/379 =
+torch; 0.43 s per translation); **T3 same group twice 626/626, in-wave == alone
+616/626** (bar 90 %; the 10 are word variants, "raconte l'amour" / "sur
+l'amour"; torch agreement 556 in waves, 560 alone); **0.68 s per question, p90
+0.96 s** (f32 cache: 1.12 / 1.56; torch 3.2); **per token 16.3 ms** one slot
+(= the F16 figure of the morning), 21.6 ms per slot step in waves (f32: 36.1);
+waves 1 slot ×802, 6 ×187, 7 ×62, none still waiting; retrieval paired to torch
+on the same index: descriptive n = 451 MRR 0.254 / R@10 0.446 / R@50 0.627 on
+both sides (+3/−1, p = 0.625), titles n = 39 identical. Files
+`/root/madlad-gguf/waves-p5/`. **The F16 cache is cleared for MADLAD on
+engine c68167b65cb0.** Step 4, A1 through Louise under sharing, decides the
+switch (a median gain with p90 not worse). The live shared engine
 `louise-sycl-f16-llama-cpp` carries the same wrong path (no live model takes
 it: embedders and chat run FA on, the rerankers have no cache); it is NOT
 rebuilt for this alone — every space on it would be re-gated — the next

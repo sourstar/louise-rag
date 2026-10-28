@@ -442,3 +442,9 @@ per token on a shared card. The F16 cache comes back with P5 (localai-bugs.md:
 the card fault was ggml-sycl's own src1 conversion on the oneMKL path, fixed
 by us); the third attempt is on the P5 tar, A1 again, and the switch only on
 a measured gain.
+
+**P5 on the card, 12:02–12:18: the F16 cache gated green** (engine
+c68167b65cb0): T4 379/379 = P3's bytes, T3 626/626 and 616/626, retrieval
+paired-equal to torch, 16.3 ms per token, **0.68 s per question in waves (p90
+0.96) against the f32 cache's 1.12 and torch's 3.2** — 4.7× torch on an idle
+card. The third A1 (through Louise, under sharing) decides.
