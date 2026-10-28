@@ -18,6 +18,27 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 17:15 (München, relayed). THE ANSWER TRANSLATES AGAIN.** PR #32
+(b7a0324) deployed 14:42Z (image 67009223, the same identity; the deploy
+script's first attempt stopped on its own check for the stage YAML's removed
+f32 lines, fixed node-side). Checks: the 3,300-character answer-sized text
+via `/ask/translate` into Italian 7.7 s, markers EQUAL 36/36 (the Meiji
+paragraph's `[8]`, `[8][9]` kept), paragraph breaks 11/11, the six `- `
+lines each on its own line, nothing glued after a marker; into English
+4.9 s, 36/36, no renumbering. The operator's question replayed through the
+page's own calls (search 17.0 s, answer 2,049 characters with 6 markers in
+14.3 s, the answer alone into Italian 5.2 s): markers 6/6, breaks 5/5; the
+web log now reads `[gutenberg info:translate] stream into it: 1 items — 1
+translated (0 cached), 0 missed, 5.2 s`. ONE DEFECT LEFT, not the
+citations': now and then the model writes two sentences of one segment as
+one word ("…fonti storiche e letterarie.Le prime spade…"; en→fr "…s.Les"
+once in three paragraphs, it and de clean) — the output drops a space the
+input had. Fixed in `clean_up` (`_unglue`: a stop between two lowercase
+letters and an uppercase letter gets its space back; abbreviations, numbers,
+lowercase continuations untouched), tested; deploys once pubmed's marker
+has landed. pubmed's facets pass (the last one) runs since 14:44:30Z;
+gutenberg's took 15 s and logged its duration.
+
 **2026-10-28 16:45 (architecture). THE ANSWER THAT WOULD NOT TRANSLATE.**
 Operator: "I made a search on all languages, then I chose to translate the
 results, everything has been translated but the answer." Cause, from the

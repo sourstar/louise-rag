@@ -193,6 +193,17 @@ done: the torch backend (deploy/madlad-translate/server.py, the backout)
 cuts and reassembles on the server and keeps the old exposure; it is not
 serving.
 
+Verified on the node after the deploy (München, 14:42Z): the 3,300-character
+text 36/36 markers both ways, breaks and list lines kept, 7.7 s into
+Italian (7.0 s before the fix: the cited sentences now close their
+segments, so there are more, shorter requests). One more defect of the
+model's output seen there, not the citations': now and then two sentences
+of one segment come back as one word ("letterarie.Le prime"; en→fr once in
+three paragraphs, it and de clean) — the output drops a space the input
+had. `clean_up` puts it back (`_unglue`): a sentence stop between two
+lowercase letters and an uppercase letter is such a join, an abbreviation
+("Ph.D.", "U.S.A.", "e.g."), a number or a lowercase continuation is not.
+
 Within the translation model, one passage now gets one translation
 (52b1433): an entry's visible lines are translated first, then replaced by
 the reader's whole-paragraph translation when the queue brings it, so the

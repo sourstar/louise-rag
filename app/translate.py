@@ -404,7 +404,26 @@ def _cited(sentence: str) -> bool:
 def clean_up(text: str) -> str:
     for a, b in _CLEAN:
         text = text.replace(a, b)
-    return text.strip()
+    return _unglue(text.strip())
+
+
+def _unglue(text: str) -> str:
+    """The space back between two sentences the model wrote as one word —
+    "letterarie.Le prime spade" (the node, 2026-10-28: now and then, in a
+    segment of two sentences, the output drops the space the input had). A
+    stop between two lowercase letters and an uppercase letter is such a
+    join; an abbreviation ("Ph.D.", "U.S.A.", "e.g.") or a number is not."""
+    out: list[str] = []
+    for i, ch in enumerate(text):
+        out.append(ch)
+        if ch in _STOPS[:3] and i >= 2 and i + 1 < len(text) and _lower(text[i - 2]) \
+                and _lower(text[i - 1]) and text[i + 1].isalpha() and text[i + 1].isupper():
+            out.append(" ")
+    return "".join(out)
+
+
+def _lower(ch: str) -> bool:
+    return ch.isalpha() and ch.islower()
 
 
 def _t5_completion(code: str, segment: str, timeout: float, headers: dict[str, str] | None = None,
