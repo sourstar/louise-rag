@@ -158,6 +158,28 @@ def test_the_first_snapshot_marks_every_record_added(
     assert snap.delta.changed == () and snap.delta.tombstoned == ()
 
 
+def test_a_snapshot_file_is_written_whole_or_not_at_all(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """A kill while the file was written left a truncated snapshot, and the
+    re-run was refused as two snapshots under one id. Written beside and
+    renamed: a failed write leaves no snapshot, and the re-run creates it."""
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    out = root / "gutenberg" / "shard" / shard_mod.snapshot_path("2026-08")
+    real = Path.write_bytes
+
+    def dies(self, data):
+        real(self, data[: len(data) // 2])
+        raise OSError("killed mid-write")
+    monkeypatch.setattr(Path, "write_bytes", dies)
+    with pytest.raises(OSError):
+        sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    monkeypatch.undo()
+    assert not out.exists(), "no truncated snapshot under the id"
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    assert out.read_bytes() == snap.canonical()
+
+
 def test_a_first_snapshot_reads_uids_only_and_writes_the_same_delta(
         isolated_config, tmp_path, corpus_dir, monkeypatch):
     """wikipedia-v8 (2026-10-28): 74.8 M records, and the uid → content_hash

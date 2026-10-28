@@ -12,6 +12,7 @@ are not in a member that depends on an encoder.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Iterable
@@ -550,7 +551,12 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
             f"{name}: {snapshot_id} exists with different bytes. A snapshot is "
             f"content-addressed and is written once; two under one id is a "
             f"dispute between peers (04 §4.3), not something to overwrite here")
-    out.write_bytes(snap.canonical())
+    # ATOMIC: a snapshot killed while its file was being written (wikipedia-
+    # v8's is ~2 GB) left a truncated file, and the re-run was then refused
+    # as "two different snapshots under one id". Written beside, then renamed.
+    tmp = out.with_name(out.name + ".tmp")
+    tmp.write_bytes(snap.canonical())
+    os.replace(tmp, out)
     mark_frozen(db_path, snapshot_id)
     log(f"[snapshot create] {name}: {snapshot_id} — {snap.records} records, "
         f"{snap.chunks} chunks, {len(shards)} shard(s), hash {snap.hash[:23]}…")
