@@ -1,6 +1,6 @@
 # louise-translate-madlad-gguf — MADLAD-400-3B-MT on our llama.cpp backend
 # (series base ec92740 + P1..P4: the encoder runs, P3; slots encoded in waves,
-# P4), 2026-10-27. Its own backend, `louise-sycl-f16-llama-cpp-t5`, built from
+# P4), 2026-10-27. Its own backend, `vega-llama-cpp-t5`, built from
 # the four-patch series: the shared backend the SYCL embedders run on is NOT
 # rebuilt for it, so no embedder becomes a new engine (invariant 12) tonight.
 # Raw completion prompts, one per segment: "<2xx> segment" (app/translate.py,
@@ -10,7 +10,7 @@
 # JSON, which is YAML.
 {
   "name": "louise-translate-madlad-gguf",
-  "backend": "louise-sycl-f16-llama-cpp-t5",
+  "backend": "vega-llama-cpp-t5",
   "context_size": 4096,
   "env": {
     "GGML_SYCL_ENABLE_DNN": "0",

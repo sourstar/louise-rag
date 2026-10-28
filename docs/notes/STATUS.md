@@ -29,7 +29,7 @@ what fits without breaking the interfaces, exclusive node use tonight).
   backend's cut, a call's segments sent at once, the model's target codes
   read off its vocabulary, the shape determined from the server.
 - **Decision:** the model runs on its OWN backend
-  (`louise-sycl-f16-llama-cpp-t5`, series f8b4acdcdcb8 after München's
+  (`vega-llama-cpp-t5`, series f8b4acdcdcb8 after München's
   rebase onto LocalAI's own llama.cpp patches); the shared embedder backend
   was not rebuilt, so no embedder became a new engine.
 - **The window slipped:** this session was restarted several times during

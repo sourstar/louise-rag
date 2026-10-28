@@ -334,7 +334,7 @@ under P3's guard, plus Louise's client side — app/translate.py's t5 shape
 (one raw `<2xx> segment` prompt per segment, the torch backend's cut, a
 call's segments sent at once, the clean-up; the shape determined from the
 server, never configured). The model runs on its OWN backend
-(`louise-sycl-f16-llama-cpp-t5`, deploy/vega/stage/models/louise-translate-madlad-gguf.yaml),
+(`vega-llama-cpp-t5`, deploy/vega/stage/models/louise-translate-madlad-gguf.yaml),
 so the shared embedder backend was not rebuilt and no embedder became a new
 engine. The gates below are run by tools/measure/t5waves.py; their results
 are recorded in STATUS.md as they land.*
