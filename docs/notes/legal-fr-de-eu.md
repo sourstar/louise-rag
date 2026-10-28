@@ -513,7 +513,8 @@ platform mechanism beyond §5.1's check and §5.2's namespace owner.
 
 ## 7. The order of work, per collection (the template's checklist)
 
-1. **Probe from the node** (this session cannot): Range, listing sizes,
+1. **Probe from the node** (this session cannot) — scripted as
+   `tools/measure/probe_legal_origins.sh` (2026-10-28), pasted raw: Range, listing sizes,
    whether long responses are cut, what a HEAD says; LEGI's baseline and
    one increment; NeuRIS's `bulk-zip-links` and the changelog; one
    Cellar HEAD per manifestation and a counted SPARQL window. Write the
