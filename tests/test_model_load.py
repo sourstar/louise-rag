@@ -112,6 +112,10 @@ class Runner:
             n = len(json["documents"])
             return httpx.Response(200, request=request, json={"results": [
                 {"index": i, "relevance_score": float(i)} for i in range(n)]})
+        if url.endswith("/v1/tokenize"):
+            # the python translator has no tokenizer route (app/translate.py's
+            # shape probe reads this as the batch shape)
+            return httpx.Response(500, request=request, json={"error": "unimplemented"})
         if url.endswith("/v1/completions"):
             asked = jsonlib.loads(json["prompt"])
             text = jsonlib.dumps({"translations": [f"[{i['to']}] {i['text']}"
@@ -252,7 +256,9 @@ def test_translation_timeout_excludes_the_load(runner, monkeypatch):
     monkeypatch.setattr(translate, "TIMEOUT_S", 0.1)
     monkeypatch.setattr(translate.httpx, "post", runner.post)
     assert translate.translate([("whale", "it")]) == ["[it] whale"]
-    assert [c["timeout"] for c in runner.calls] == [5.0, 0.1]
+    # the shape probe and the warm are bounded by the LOAD bound; the request keeps its own
+    assert [c["timeout"] for c in runner.calls] == [5.0, 5.0, 0.1]
+    assert runner.calls[0]["url"].endswith("/v1/tokenize")
 
 
 def test_chat_timeout_excludes_the_load(runner, monkeypatch):

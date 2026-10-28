@@ -18,6 +18,29 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 07:00 (architecture).** MADLAD on llama.cpp, the night's
+work (operator, 2026-10-27 21:40: review the llama.cpp improvements, implement
+what fits without breaking the interfaces, exclusive node use tonight).
+- **Built:** P4, the wave scheduler (localai-bugs.md): the slots about to
+  start are encoded together and decode in one batch; a lone request is
+  byte-identical to P3 (CPU, random-weight T5); the same group in any
+  arrival order gives the same bytes. Louise's client, the t5 shape of
+  app/translate.py: one raw `<2xx> segment` prompt per segment, the torch
+  backend's cut, a call's segments sent at once, the model's target codes
+  read off its vocabulary, the shape determined from the server.
+- **Decision:** the model runs on its OWN backend
+  (`vega-llama-cpp-t5`, series f8b4acdcdcb8 after München's
+  rebase onto LocalAI's own llama.cpp patches); the shared embedder backend
+  was not rebuilt, so no embedder became a new engine.
+- **The window slipped:** this session was restarted several times during
+  the night; the "ready" reached München at 06:45, the gates
+  (tools/measure/t5waves.py: T4 against P3's one-slot bytes, T3 same group
+  twice, seconds per question; then the 451 + 39 retrieval comparison) run
+  in the morning with the node paused, the wikipedia build held and the
+  rerank AFTER pass finished (04:14). Nothing live has changed; the switch
+  (YAML swap under the same model name, a Louise deploy) comes only after
+  the gates, then regular activities resume.
+
 **2026-10-27 10:25 (München).** Image a773d05 is deployed: profiles live,
 period crons 6/18–21 disabled (not deleted).
 - **The node's platform.toml:** full = "230W" absolute (the B70 has
