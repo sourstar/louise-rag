@@ -83,7 +83,73 @@ work of Mimouni et al.) released no data [U]. FiscalQA Pro releases
 
 ## 2. German — NeuRIS (+ EUR-Lex in German)
 
-*Pending: the German research pass.*
+**Legal embedders now exist with licences; a statute retriever does not.**
+Since 2026 there are Apache-2.0 legal embedders trained on German data.
+None was trained on statutes and chosen on statute questions.
+`litil-embed-0.6b` alone has statutes in its training: 2,150 rows of
+heading → §.
+
+Two findings that shape the measurement [V]:
+- **No MTEB task measures German statute retrieval.** GerDaLIRSmall and
+  LegalQuAD are both case law. "AILAStatutes" is Indian.
+- **BM25 wins GerDaLIRSmall** (59.4 against at most 54.7 dense) and ties
+  the best on LegalQuAD (76.8 against 77.2). BM25 is therefore a
+  mandatory baseline, and the hybrid with the text index is likely to
+  matter more here than in Italian.
+
+nDCG@10 on GerDaLIRSmall / LegalQuAD, from MTEB's results files [V]:
+
+| model | base / size / dim | licence (card) | German training data | score |
+|---|---|---|---|---|
+| litillabs/litil-embed-0.6b | Qwen3-Emb-0.6B lineage, 32k, 1024 | Apache-2.0 | GerDaLIR (MIT); **federal statutes heading→§, 2,150 rows (ODbL)**; GermanQuAD | 45.2 / 70.5 |
+| Hanno-Labs/dinghy-law-4b-v1 | Qwen3-Emb-4B, 2560 | Apache-2.0 | Schleswig-Holstein decisions (MIT); de-Wikipedia legal articles; no non-commercial source | 46.9 / 74.0 |
+| Hanno-Labs/dinghy-law-8b-v1 | Nemotron-3-Embed-8B | OpenMDW-1.1 | as the 4b | 54.7 / 77.1 — its base untuned scores 53.7 / 77.2, so the fine-tune adds nothing |
+| litillabs/octen-law-8b-v1 | Octen-8B, 4096 | Apache-2.0 | 20k German + 10k de-Wikipedia pairs | 47.9 / 74.1 |
+| NGA-KR/law-embed-0.6b-r70, litil-colbert-300m | — | Apache-2.0, **conflicts**: trained on GerLayQA (non-commercial); the first tuned against the MTEB test sets | — | ruled out |
+| Euler-Legal-Embedding-V1 | Qwen3-Emb-8B, 1,536 tokens | Apache-2.0, **gated: EU users disallowed** | unnamed | 40.3 / 64.8; ruled out |
+| malteos/most-embed-de | Nemotron-3-1B | **CC-BY-NC-4.0** | customer support | ruled out |
+| baselines | | | | BM25 59.4 / 76.8; Nemotron-3-Embed-8B 53.7 / 77.2; bge-m3 – / 50.4; mE5-large-instruct 21.3 / 51.3 |
+
+Evaluation sets:
+
+| set | paper | law | questions | how written | gold | licence |
+|---|---|---|---|---|---|---|
+| **GerLayQA** | Büttner & Habernal, EACL 2024 | **BGB** (StGB, ZPO too) | 21.5k / 1.6k / 1.3k | real lay questions, answered by lawyers citing §§ | the §§ | "strictly non-commercial, scientific research" [V]; an HF re-host saying Apache-2.0 is wrong |
+| LegalQuAD | Hoppe et al., IEEE AIKE 2021 | court decisions | 200 | about one decision | the decision | CC BY 4.0, MTEB [V] |
+| GerDaLIR(Small) | Wrzalik & Krechel, NLLP 2021 | case law | 12.3k | derived from citations | the cited decision | MIT, MTEB [V] |
+| SteuerEx | arXiv 2602.11081 | tax law | 115 exam questions, expert-validated | — | graded statements, no retrieval gold | open [V] |
+| Swiss sets (SCALE doc2doc; swiss-legal-ag-lu-qa) | 2306.09237; 2026 | Swiss federal | 131k machine / 300 reviewed | — | article | CC BY-SA / CDLA-Permissive [V] |
+
+GerLayQA is the only German statute set. It is lay, not expert, and its
+terms are non-commercial: measurement only, after the licence gate, as
+JuriFindIT already is. The case-law sets check generality.
+
+**Pre-embeddings: none to carry.**
+- `ftopal/german-law-dataset-with-embeddings` (6,746 laws, February 2024)
+  names no model and no licence [V].
+- `cwinkler/bgh-embeddings-*` covers case law only.
+- NeuRIS publishes no vectors, and its bulk XML is "planned" [V].
+
+**Graphs:**
+- `openlegaldata/legal-citation-graph-germany`: case/law → case/law edges
+  including the cited section, 7,438,459 edges (dump 2026-05-20), ODbL,
+  Parquet [V].
+- `harshildarji/bundesrecht`: the structure tree of 6,873 laws down to
+  the Unterbuchstabe, amendment-status entries and a reference resolver,
+  ODbL, JSONL, 2026-05-01 [V]. A check for our NeuRIS parser's structure
+  and references.
+- `legal-networks/gesetze-im-internet`: GII's versioned XML, daily since
+  May 2020 (BSD-3) [V]. **This is German law's missing history since
+  2019** — the past versions §3.1 of the design says no origin publishes.
+  It is a third-party archive of GII, not the origin, so it is evidence,
+  not a source to embed: its use is a decision (invariant 11's
+  re-fetchable origin).
+- Coupette et al., "Measuring Law Over Time" (2021): statute
+  cross-reference graphs 1998–2019 from juris; the code is BSD-2, the
+  data licence is unverified [U].
+- NeuRIS exposes no norm-to-norm reference endpoint [U]. The references
+  are therefore parsed from the Akoma Ntoso, and the two graphs above
+  check them.
 
 ## 3. EU — one collection per language
 
@@ -176,6 +242,12 @@ Others:
 - **France, links:** AgentPublic's `links` column is a check, not a
   source. Our records carry LEGI's `<LIENS>` themselves, and the two
   are compared on a sample.
+- **Germany:** no vectors to carry. BM25 must be a baseline: it beats
+  every dense model on GerDaLIRSmall.
+- **Germany, history:** `legal-networks/gesetze-im-internet` holds GII's
+  daily versions since 2020. That is the evidence for D1's "history before
+  our first snapshot absent", and it is open to an operator decision, not
+  taken.
 - **EU:** the graph comes from the CDM per act; EvoEU is a historical
   cross-check.
 
@@ -198,7 +270,7 @@ Per collection, the candidates and the sets:
 | collection | candidates | sets |
 |---|---|---|
 | LEGI (fr) | bge-m3, Qwen3-Embedding-8B, lemone-embed-pro | BSARD (test), Syntec, FiscalQA Pro if its licence allows |
-| NeuRIS (de) | *pending §2* | *pending §2* |
+| NeuRIS (de) | litil-embed-0.6b, dinghy-law-4b-v1, Nemotron-3-Embed-8B (if llama.cpp serves it), Qwen3-Embedding-8B; **BM25 and the hybrid** | GerLayQA (BGB, StGB, ZPO) on our § records; LegalQuAD and GerDaLIRSmall as the case-law check |
 | EU-en | Qwen3-Embedding-8B, Nemotron-3-Embed-8B (if llama.cpp serves it), bge-m3 | EU2UK test, EUR-Lex-Sum-en, LEMUR-en, MLEB GDPR |
 | EU-it | DAR-legal-it, Qwen3-Embedding-8B | JuriFindIT (EU acts) |
 | EU-fr, EU-de | the national winners | EUR-Lex-Sum, LEMUR in their language |
