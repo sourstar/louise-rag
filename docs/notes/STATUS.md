@@ -59,6 +59,13 @@ path and the f32 cache is the workaround. NAMED (09:40, diag build): the KQ
 product over the F16 K cache at N ≥ 2 (`ggml_sycl_mul_mat_batched_sycl`);
 upstream-bugs.md S1 drafted for the operator; the gates re-run on the f32
 cache (both K and V), then the switch.
+**Stage 1 BUILT (operator 2026-10-28: "once this stage is consolidated implement
+stage 1 and 2")**: the per-sequence encoder memory (`llama_memory_enc_dec`,
+localai-bugs.md P5 staged) passes its CPU tests (library T1 a–h, the store
+unit test, P4's server checks; a late request answered in 0.06 s instead of
+after the wave). It is STAGED, not in the series: it goes to the card only
+after the switch and the regular activities have resumed, then its own
+gates. Stage 2 (the device store) next.
 
 **2026-10-27 10:25 (München).** Image a773d05 is deployed: profiles live,
 period crons 6/18–21 disabled (not deleted).

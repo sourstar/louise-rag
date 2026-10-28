@@ -43,6 +43,7 @@ the source):*
 | **P2** | **patch we carry** | llama.cpp backend: `Embedding` embeds `EmbeddingTokens`, with the special tokens a text gets (B14) | **blocking** for the token cut: VeGa's wrapper sends a cut as its first tokens to a backend that embeds them (`Gate._probe`) | not filed; [`deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch`](../../deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch) |
 | **P3** | **patch we carry** | llama.cpp backend: the encoder of an encoder-decoder model runs (B16), as a llama.cpp patch in the backend's own `patches/` | MADLAD on llama.cpp (operator, 2026-10-27: "we need anyway a patched llama.cpp") | not filed; [`deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch`](../../deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch) |
 | **P4** | **patch we carry** | llama.cpp backend: encoder-decoder slots are encoded together, in WAVES, and decode in one batch (on P3, which ran one slot) | MADLAD on llama.cpp at torch's speed: a question's 7 languages in one wave instead of 7 × 3 s | not filed; [`deploy/localai/patches/0004-llama-cpp-encoder-decoder-waves.patch`](../../deploy/localai/patches/0004-llama-cpp-encoder-decoder-waves.patch) |
+| **P5 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder output is kept PER SEQUENCE (`llama_memory_enc_dec`, stage 1 of llama-cpp-encoder-decoder.md), so a slot is encoded while others decode; on P3 and P4 | a late request joins the next decode step instead of waiting for the wave; the upstream shape (no public API) | not filed; [`deploy/localai/patches/staged/0005-llama-cpp-encoder-decoder-memory.patch`](../../deploy/localai/patches/staged/0005-llama-cpp-encoder-decoder-memory.patch); moves into the series after its card gates |
 | R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: RAGE checks before and after instead | not filed |
 | R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (rage-over-localai §8.2) | not filed |
 | R3 | request | read API keys from a file, not only from `LOCALAI_API_KEY` | only if LocalAI's own UI is published (invariant 8) | not filed |
@@ -767,6 +768,74 @@ does not happen;
 nothing live has changed** (the torch translator serves; the test
 backend and model are unloaded). In-wave vs alone (bar 90 %) is now a gate
 in tools/measure/t5waves.py, not a report (fb014fe).
+
+
+### P5 (staged). llama.cpp backend: the encoder output is kept per sequence
+
+*Base: `v4.12.1` (`ec92740`), after P1–P4. File:
+`deploy/localai/patches/staged/0005-llama-cpp-encoder-decoder-memory.patch`
+(staged: built and tested on the CPU 2026-10-28, NOT in `series` until its
+card gates pass — staged/README.md). It adds
+`backend/cpp/llama-cpp/patches/0005-encoder-decoder-memory.patch`, applied
+by the backend's `prepare.sh` after P4's: 323 lines added and 23 removed
+across `src/` (new `llama-memory-enc-dec.h/.cpp`, 10 files), `tests/` and
+`tools/server/server-context.cpp`.*
+
+**Why.** P4 encodes the slots about to start together because the library
+keeps ONE encoder output per context (`llama_context::cross`), and must
+therefore hold a new request until the running wave has decoded. Stage 1
+of docs/notes/llama-cpp-encoder-decoder.md gives T5 its own memory: the
+decoder's `llama_kv_cache` plus a host-side store of encoder rows, each
+owned by the sequences it was encoded for. An encode replaces the rows of
+the batch's sequences and keeps every other sequence's; a decoder ubatch
+uploads the rows its sequences own (by contiguous runs: a lone sequence is
+one run, the same bytes as before) and masks each token to its own
+sequence's rows; a sequence with no rows is refused (a new internal status
+`LLAMA_MEMORY_STATUS_FAILED_INPUT`, `-1` from `llama_decode`). A
+whole-sequence removal, `clear` and `seq_keep` release the rows, `seq_cp`
+shares them, the sequence state carries them as a suffix (magic `T5XE`,
+version 1; `PARTIAL_ONLY` writes none). For `n_seq_max > 1` the context
+forces `kv_unified`, so the self-attention mask and the KV views agree.
+No public API changes; only `LLM_ARCH_T5` constructs the memory;
+`llama_cross` and the graph parameter stay, filled as before, for the
+carried patch (deletions wait for the upstream PR).
+
+**Deviations from the note's §3**, each for a reason found in the code:
+- `init_update` is delegated to the decoder cache (its update context is
+  only used by the shift graphs, which never build the T5 decoder);
+- the graph reserve sizes the cross tensors to `n_seq_max × min(n_ubatch,
+  n_ctx_train)` rows (the note said `n_seq_max × n_ubatch`): a T5 input
+  longer than its window is refused by the server, and the scheduler
+  reallocates if a live graph is ever larger;
+- the cross inputs decide by `arch == LLM_ARCH_T5 && mctx`, not by a
+  dynamic cast; the encoder graph has no memory context and never reaches
+  them.
+
+**Server (on P4):** a wave is encoded while earlier ones decode (the
+`enc_live` gate is gone; the 1 ms rest only when nothing decodes); the
+prompt start skips its whole `seq_rm` for a slot the wave just encoded
+(it would release the rows just stored); the load-time probe encode and
+`common_context_can_seq_rm` (which decodes after a clear) are skipped for
+these models, speculative decoding stays unsupported; the forced unified
+cache is mirrored in `params_base.kv_unified`. `n > 1` stays refused.
+
+**Checked on the CPU** (random-weight T5, `tests/test-llama-archs -a
+'^t5$'`; `tests/test-enc-dec-store`; the tiny-model server checks of P4):
+a sequence alone gives the bytes of a one-sequence context; two sequences
+decoding in one batch are each within nmse 1e-4 of their solo runs, NOT
+bitwise (as §6 T2 predicted: the batched kernels differ); a whole removal,
+a clear and a truncated state restore leave `-1` with no abort and the
+other sequence untouched; a partial removal, `seq_cp` and a restored
+state keep the output; the store's replace/compact/share/keep semantics
+and its bound (`n_seq_max × n_ubatch`) hold; a lone server request is
+byte-identical to P3's, the same 7 prompts in 3 orders give the same
+bytes, 60 requests after a burst leave every slot empty, and a request
+arriving while a wave decodes is answered in 0.06 s (P4: after the wave).
+
+**Card gates before it moves into the series** (staged/README.md): the
+f32-cache MADLAD backend rebuilt with it — T3, in-wave vs alone (bar
+90 %), a lone request against P4's bytes, seconds per question — then
+the retrieval comparison. Stage 2 (the device store) follows it.
 
 ---
 
