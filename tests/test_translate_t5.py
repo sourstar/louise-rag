@@ -22,7 +22,8 @@ _spec = importlib.util.spec_from_file_location(
 torch_server = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(torch_server)
 
-CODES = ["en", "fr", "de", "it", "fi", "ja", "zh", "fil", "la"]
+CODES = ["en", "fr", "de", "it", "fi", "ja", "zh", "fil", "la", "es", "pt", "nl", "sv", "pl", "ru",
+         "el", "tr", "ko", "hu", "cs", "da", "ro"]
 
 
 class _Resp:
@@ -38,13 +39,14 @@ class _Resp:
 
 
 def _t5_server(monkeypatch, *, vocab=5000, lang_ids=None, calls=None, fail_after=None, concurrent=None):
-    """A LocalAI serving MADLAD on llama.cpp: /v1/tokenize (5 bytes a token,
-    `<2xx>` one token), /v1/detokenize (the `<2xx>` pieces at `lang_ids`, a
-    chunk past `vocab` fails), /v1/completions (`xx|SEGMENT` upper-cased,
-    padded with the spaces the clean-up strips)."""
+    """A LocalAI serving MADLAD on llama.cpp: /v1/tokenize (5 bytes a token;
+    `<2xx>` TWO pieces, as the node's route answers it — recorded 2026-10-28,
+    `{"tokens": [805, 38]}` for "<2en>"), /v1/detokenize (the `<2xx>` pieces
+    at `lang_ids`, a chunk past `vocab` fails), /v1/completions (`xx|SEGMENT`
+    upper-cased, padded with the spaces the clean-up strips)."""
     monkeypatch.setattr(config, "TRANSLATE_URL", "http://gpu:30286")
     monkeypatch.setattr(config, "TRANSLATE_MODEL", "louise-translate-madlad-gguf")
-    lang_ids = lang_ids if lang_ids is not None else {4990 + i: c for i, c in enumerate(CODES)}
+    lang_ids = lang_ids if lang_ids is not None else {4970 + i: c for i, c in enumerate(CODES)}
     in_flight = {"now": 0, "max": 0}
     lock = threading.Lock()
 
@@ -54,7 +56,7 @@ def _t5_server(monkeypatch, *, vocab=5000, lang_ids=None, calls=None, fail_after
         if url.endswith("/v1/tokenize"):
             text = json["content"]
             if text.startswith("<2") and text.endswith(">") and text.count("<") == 1:
-                return _Resp({"tokens": [4990]})
+                return _Resp({"tokens": [805, 38]})   # the route does not parse the special token
             return _Resp({"tokens": list(range((len(text.encode()) + 4) // 5))})
         if url.endswith("/v1/detokenize"):
             ids = json["tokens"]
@@ -96,10 +98,19 @@ def _no_gate(monkeypatch):
 def test_the_shape_is_read_off_the_server_and_cached(monkeypatch):
     calls = []
     _t5_server(monkeypatch, calls=calls)
-    assert mt.shape() == mt.SHAPE_T5
+    assert mt.shape() == mt.SHAPE_T5, "told by the vocabulary, not by the two-piece tokenize answer"
     assert mt.shape() == mt.SHAPE_T5
     assert [c for c in calls if c[0] == "tokenize"] == [("tokenize", {"content": "<2en>", "model": "louise-translate-madlad-gguf"})], \
         "one probe, then the cache"
+    assert 1 < len([c for c in calls if c[0] == "detokenize"]) < 40, "the probe scans the vocabulary once"
+    n_scans = len([c for c in calls if c[0] == "detokenize"])
+    assert set(CODES) <= mt.languages() and len([c for c in calls if c[0] == "detokenize"]) == n_scans, \
+        "the scan is the language list too: no second scan"
+    mt.reset()
+    # a llama.cpp runner WITHOUT MADLAD's target tokens (a chat model): the batch shape
+    calls.clear()
+    _t5_server(monkeypatch, calls=calls, lang_ids={})
+    assert mt.shape() == mt.SHAPE_BATCH
     mt.reset()
     # the python backend has no tokenizer route: the batch shape
     monkeypatch.setattr(mt.httpx, "post", lambda url, json=None, timeout=None, headers=None: _Resp({"error": "unimplemented"}, 500))
@@ -176,8 +187,8 @@ def test_warm_sends_the_t5_probe_and_a_four_token_completion(monkeypatch):
     _t5_server(monkeypatch, calls=calls)
     mt.warm()
     kinds = [c[0] for c in calls]
-    assert kinds == ["tokenize", "completions"]
-    assert calls[1][1]["max_tokens"] == 4 and calls[1][1]["prompt"] == "<2it> OK"
+    assert kinds[0] == "tokenize" and kinds[-1] == "completions" and set(kinds[1:-1]) == {"detokenize"}, kinds
+    assert calls[-1][1]["max_tokens"] == 4 and calls[-1][1]["prompt"] == "<2it> OK"
 
 
 def test_the_batch_shape_is_untouched(monkeypatch):
@@ -186,11 +197,13 @@ def test_the_batch_shape_is_untouched(monkeypatch):
     monkeypatch.setattr(config, "TRANSLATE_URL", "http://gpu:30286")
     monkeypatch.setattr(config, "TRANSLATE_MODEL", "louise-translate-madlad")
     seen = []
+    bodies = []
 
     def post(url, json=None, timeout=None, headers=None):
         seen.append(url.rsplit("/", 1)[-1])
         if url.endswith("/v1/tokenize"):
             return _Resp({"error": "unimplemented"}, 500)
+        bodies.append(json)
         asked = __import__("json").loads(json["prompt"])
         if asked == {"languages": True}:
             return _Resp({"choices": [{"text": __import__("json").dumps({"languages": ["it", "fr"]})}]})
@@ -201,3 +214,5 @@ def test_the_batch_shape_is_untouched(monkeypatch):
     assert mt.translate([("hello", "it")]) == ["it:hello"]
     assert mt.languages() == frozenset({"it", "fr"})
     assert seen.count("tokenize") == 1, "the shape probe once; the batch shape thereafter"
+    assert all(0 < b["max_tokens"] <= 32768 for b in bodies), "every batch request is bounded"
+    assert min(b["max_tokens"] for b in bodies) == 16, "the warm probe tightest"

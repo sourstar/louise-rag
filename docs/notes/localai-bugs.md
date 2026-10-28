@@ -791,6 +791,21 @@ index (490 questions): descriptive n = 451 MRR 0.254 / R@10 0.446 / R@50
 2026-10-28:** this branch merged to main, the f8b4acdcdcb8 tar installed as
 `vega-llama-cpp-t5`, `louise-translate-madlad` is the GGUF with the f32
 cache, the torch model kept as `louise-translate-madlad-torch` for backout.
+**Backed out the same morning (10:47), torch live again — a CLIENT defect,
+not the backend's:** `app/translate.py shape()` told MADLAD-on-llama.cpp from
+the torch backend by `/v1/tokenize("<2en>")` returning ONE token; LocalAI's
+tokenize route does not parse special tokens and answers `[805, 38]` (two
+pieces; the completion path does parse them, which is why every gate passed
+with raw `<2xx> seg` prompts), so the probe said "batch" and cached it 600 s,
+the warm sent a JSON prompt with no `max_tokens`, and the model generated to
+its limit, 92 s, under the operator's paired test (A1, 60 questions through
+/api/search beside gutenberg sharing). The gates had never exercised
+`shape()`: t5waves.py speaks to the server directly. Fixed: the shape is told
+by the VOCABULARY (`_t5_languages`' `/v1/detokenize` scan finds ≥ 16 `<2xx>`
+codes; the scan is kept as the language list, so it costs nothing extra),
+every batch-shape request carries a `max_tokens` bound (torch ignores it), and
+the test fake answers the recorded two-piece tokenize. A1 is rerun on the
+fixed client before the switch is tried again.
 
 
 ### P5 (staged). llama.cpp backend: the encoder output is kept per sequence

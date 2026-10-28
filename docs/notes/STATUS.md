@@ -18,6 +18,19 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 11:30 (architecture).** The MADLAD switch to llama.cpp was
+tried at ~10:40 and BACKED OUT at 10:47 (torch live, node paused, records
+build held — operator 09:51, "MADLAD only", until lifted). The fault was the
+client's: `translate.shape()` took the GGUF server for the torch backend
+because LocalAI's `/v1/tokenize` splits `<2en>` into two pieces; the warm's
+unbounded JSON prompt ran 92 s under the operator's paired test. Fixed in
+app/translate.py (the shape read off the vocabulary; every batch request
+bounded; the test fake answers the recorded `[805, 38]`) — localai-bugs.md P4
+"Backed out". Next: München redeploys the client, reruns A1 (60 questions
+through /api/search under gutenberg sharing, torch vs GGUF), then the switch
+with the one-minute backout. The server-side numbers (1.12 s per question
+against 3.2 s) stand.
+
 **2026-10-28 07:45 (München).** The exclusive window for MADLAD on llama.cpp
 (operator, via the architecture session) ran 06:46–07:20. The node is
 paused only while gates run, and is running again since 07:20. The records
