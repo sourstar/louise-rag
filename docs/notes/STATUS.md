@@ -18,6 +18,18 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 15:30 (operator): THE HOLD IS LIFTED (choice A).** The 09:51
+"MADLAD only" order is over: the node resumes, wikidata's per-collection pause
+lifts, the records build restarts by hand (8 cores in the DAY band), the
+corpus embedders load on demand. MADLAD stays as switched. What is left for
+MADLAD, none of it serving today's translator: the staged stages 1–2
+(0006 memory / 0007 store — one card build and the gates, ~90 min, in a quiet
+window; their gain is unproven for our traffic, no wave was split in A1), the
+upstream PR for P5 (the operator files; then the kq image and logs on the
+node go), and the shared engine's next rebuild carrying P5. The wave-window
+env (`LLAMA_ENC_DEC_WAVE_MS`) is dropped: not needed at the default. The
+embedder history probe stays deferred to a quiet window.
+
 **2026-10-28 15:00 (München, relayed). MADLAD SWITCHED TO llama.cpp, AND IT
 STAYS.** The third A1 (12:21–12:43; the same 60 questions through /api/search,
 gutenberg one at a time, the gutenberg corpus embedding on the card in both
