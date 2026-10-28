@@ -159,6 +159,12 @@ def test_the_clean_up_is_transformers_and_a_runaway_or_a_failure_is_honest(monke
     _t5_server(monkeypatch)
     # transformers' clean_up_tokenization, rule for rule (" n't" -> "n't" eats the space before it too)
     assert mt.clean_up(" Il a dit : « non » . Vous ' re ici , n't ? ") == "Il a dit : « non ». Vous're ici,n't?"
+    # two sentences the model wrote as one word are two again (the node, 2026-10-28:
+    # "letterarie.Le prime"); an abbreviation, a number, a lowercase continuation are left
+    assert mt.clean_up("fonti storiche e letterarie.Le prime spade furono dritte!Poi curve?Sì.") == \
+        "fonti storiche e letterarie. Le prime spade furono dritte! Poi curve? Sì."
+    assert mt.clean_up("Ph.D. in U.S.A. at 3.5 e.g. ecc.il resto; l'ombra.Œuvre") == \
+        "Ph.D. in U.S.A. at 3.5 e.g. ecc.il resto; l'ombra. Œuvre"
     out = mt.translate([("RUNAWAY", "fr"), ("fine", "fr")])
     assert out == [None, "fr|FINE"], "an output many times its input is no translation"
     calls = []
