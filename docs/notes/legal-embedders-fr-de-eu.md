@@ -271,6 +271,25 @@ per set. Its metric code, which is pinned by tests, stays as it is.
   and `gdpr-holdings`. Each directory holds one set.
 - The report shows nDCG@10 and MRR@10 beside the bake-off's own columns.
 
+**What Louise serves is the hybrid, and that is what is measured.** A
+search fuses the word leg (tantivy, BM25, the language's stemmer) with the
+vector leg by RRF, then reranks; it never answers with vectors alone.
+
+    python -m tools.encoder_bakeoff lexical --out /data/bakeoff-bsard --lang fr
+
+- `lexical` ranks the set with `app/fts.py` itself: a fresh index built
+  by `fts.index_books`, each question through `fts.search`. No BM25
+  library stands in for it.
+- `score` then fuses each encoder's ranking with it through
+  `retrieval._merge_rrf`, the search's own fusion (k = 60, its depth, its
+  tie rule).
+- The report has three rows per encoder: **BM25 (Louise)**, **⟨encoder⟩**
+  and **⟨encoder⟩ + BM25 (RRF)**.
+
+**The rule:** an encoder is chosen on its HYBRID MRR@10 — what it adds to
+the word leg — with ties broken by cost (size, dimensions). The reranker
+after the fusion is not measured yet.
+
 Not built yet:
 - GerLayQA, EU2UK, EUR-Lex-Sum and LEMUR are not published in the BEIR
   layout, so each needs a small adapter to it. For EUR-Lex-Sum and LEMUR

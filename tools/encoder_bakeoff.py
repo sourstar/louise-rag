@@ -76,6 +76,20 @@ set; `fetch --suite` names the set (SUITES), and one output directory holds
 one set. A document is `title + " " + text` as MTEB embeds it; a query
 counts when the qrels give it a document with score > 0, as BEIR does. The
 metric code is the same for every set.
+
+WHAT LOUISE SERVES IS THE HYBRID (2026-10-28). A search is never the vector
+leg alone: the word leg (tantivy, BM25, the language's stemmer) and the
+vector leg are fused by RRF (05 §5.1), then reranked. On German case law
+BM25 alone beats every dense model (GerDaLIRSmall nDCG@10 59.4 against at
+most 54.7, MTEB's results), so an encoder is chosen on what it ADDS to the
+word leg. `lexical` ranks the set with app/fts.py itself — a fresh index
+built by `fts.index_books`, each question through `fts.search`, the
+analyzer, stemmer and query parsing Louise serves, not a BM25 library — and
+`score` then fuses each encoder's ranking with it through
+`retrieval._merge_rrf`, the search's own fusion (RRF_K, its depth, its tie
+rule). The report gives three rows per encoder set: BM25, the encoder, and
+the two fused. Both legs read the same truncated text per document; the
+reranker after the fusion is not measured here yet.
 """
 
 from __future__ import annotations
@@ -393,21 +407,112 @@ def metrics_for(ranking: list[int], relevant: set[int], ks) -> dict[str, float]:
     return out
 
 
-def score_run(doc: np.ndarray, qry: np.ndarray, corpus: Corpus,
-              queries: Queries, ks=KS) -> dict[str, float]:
+def rank_dense(doc: np.ndarray, qry: np.ndarray, corpus: Corpus,
+               top: int = max(KS)) -> list[list[int]]:
+    """Each query's top documents by cosine, as corpus ids, best first."""
     d = doc / np.linalg.norm(doc, axis=1, keepdims=True)
     q = qry / np.linalg.norm(qry, axis=1, keepdims=True)
     ids = np.asarray(corpus.ids)
-    top = max(ks)
-    totals: dict[str, float] = {}
+    out = []
     for i in range(q.shape[0]):
         sims = d @ q[i]
         best = np.argpartition(-sims, min(top, len(sims) - 1))[:top]
         best = best[np.argsort(-sims[best])]
-        row = metrics_for([int(x) for x in ids[best]], set(queries.relevant[i]), ks)
-        for key, value in row.items():
+        out.append([int(x) for x in ids[best]])
+    return out
+
+
+def metrics_of(rankings: list[list[int]], queries: Queries, ks=KS) -> dict[str, float]:
+    """The metrics averaged over the queries — one ranking each, any leg."""
+    totals: dict[str, float] = {}
+    for ranking, relevant in zip(rankings, queries.relevant):
+        for key, value in metrics_for(ranking, set(relevant), ks).items():
             totals[key] = totals.get(key, 0.0) + value
-    return {key: value / q.shape[0] for key, value in totals.items()}
+    return {key: value / len(rankings) for key, value in totals.items()}
+
+
+def score_run(doc: np.ndarray, qry: np.ndarray, corpus: Corpus,
+              queries: Queries, ks=KS) -> dict[str, float]:
+    return metrics_of(rank_dense(doc, qry, corpus, max(ks)), queries, ks)
+
+
+#: the lexical run's directory; its label in the report
+LEXICAL, LEXICAL_LABEL = "bm25", "BM25 (Louise)"
+#: the record prefix of the chunk ids the index and the fusion see:
+#: `<prefix>:<corpus id>:<seq>:<version>`, so `retrieval.record_of` reads the
+#: corpus id back as the record
+_RECORD = "bakeoff"
+
+
+def _chunk_id(cid: int) -> str:
+    return f"{_RECORD}:{cid}:0:1"
+
+
+def _record_id(record: str) -> int:
+    return int(record.split(":", 1)[1])
+
+
+def lexical(out: Path, lang: str, max_chars: int, batch: int = 5000) -> int:
+    """The word leg as Louise serves it, over this set: a fresh tantivy index
+    built by app/fts.py (the language group's analyzer and stemmer), each
+    question through `fts.search`. One chunk per document, the same
+    truncated text the encoders read."""
+    import shutil
+    from app import collections as collections_mod, fts
+    corpus, queries = load(out, max_chars)
+    run = out / LEXICAL
+    index_dir = run / "index"
+    shutil.rmtree(index_dir, ignore_errors=True)
+    run.mkdir(parents=True, exist_ok=True)
+    # an ad-hoc collection, as tests/test_fts_batching.py builds one: a plugin
+    # with no validity columns and no name index gives the plain schema; the
+    # text fields, analyzer and query are the same for every plugin
+    c = collections_mod.Collection(
+        name="bakeoff", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=out, manifest_path=run / "unused.sqlite", fts_dir=index_dir,
+        lance_dir=run / "unused-lance")
+    entries = [(lang, i, [{"id": _chunk_id(cid), "chapter": "", "text": text}])
+               for i, (cid, text) in enumerate(zip(corpus.ids, corpus.texts))]
+    for k in range(0, len(entries), batch):
+        fts.index_books(entries[k:k + batch], c)
+    group = fts.group_for(lang)
+    from app import retrieval
+    rankings, empty = [], 0
+    for text in queries.texts:
+        hits = fts.search(group, text, limit=max(KS), collection=c)
+        empty += not hits
+        rankings.append([_record_id(retrieval.record_of(h)) for h in hits])
+    fts.close_all()
+    (run / "ranking-bare.json").write_text(json.dumps(rankings) + "\n", encoding="utf-8")
+    (run / "run-bare.json").write_text(json.dumps(
+        {"name": LEXICAL_LABEL, "slug": "bare", "kind": "lexical", "lang": lang,
+         "group": group, "max_chars": max_chars, "documents": len(corpus.ids),
+         "queries": len(rankings), "empty": empty}, indent=2) + "\n", encoding="utf-8")
+    print(f"{LEXICAL_LABEL}: {len(corpus.ids)} documents in group {group!r}, "
+          f"{len(rankings)} queries, {empty} with no hit")
+    return 0
+
+
+def fuse(text: list[int], vector: list[int], depth: int = max(KS)) -> list[int]:
+    """The two legs' rankings fused as a search fuses them:
+    `retrieval._merge_rrf` itself, at `depth`, its tie rule included."""
+    from app import retrieval
+    lists = [[{"chunk_id": _chunk_id(cid), "source": source, "lang": ""} for cid in ids]
+             for ids, source in ((text, f"fts:{_RECORD}"), (vector, "dense"))]
+    merged = retrieval._merge_rrf(lists, depth)
+    return [_record_id(retrieval.record_of(m)) for m in merged][:depth]
+
+
+def _lexical_rankings(out: Path, max_chars: int, n_queries: int) -> list[list[int]] | None:
+    meta_path = out / LEXICAL / "run-bare.json"
+    if not meta_path.exists():
+        return None
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if meta.get("max_chars") != max_chars or meta.get("queries") != n_queries:
+        raise SystemExit(f"the BM25 run was built with max_chars {meta.get('max_chars')} and "
+                         f"{meta.get('queries')} queries, this score with {max_chars} and "
+                         f"{n_queries}: run `lexical` again")
+    return json.loads((out / LEXICAL / "ranking-bare.json").read_text(encoding="utf-8"))
 
 
 def runs_in(out: Path) -> list[tuple[Path, dict]]:
@@ -426,8 +531,16 @@ def label_of(meta: dict) -> str:
 
 def score(out: Path, max_chars: int) -> int:
     corpus, queries = load(out, max_chars)
+    lexical_rankings = _lexical_rankings(out, max_chars, len(queries.texts))
     for run, meta in runs_in(out):
         slug = meta["slug"]
+        if meta.get("kind") == "lexical":
+            result = metrics_of(lexical_rankings, queries)
+            (run / f"scores-{slug}.json").write_text(
+                json.dumps(result, indent=2) + "\n", encoding="utf-8")
+            print(f"{label_of(meta)}: mrr@10 {result['mrr@10']:.4f}  "
+                  f"ndcg@10 {result['ndcg@10']:.4f}")
+            continue
         if meta.get("limit"):
             # Recall@k against a truncated corpus is not a smaller version of
             # the real number, it is a larger one: every document removed is a
@@ -439,11 +552,18 @@ def score(out: Path, max_chars: int) -> int:
             continue
         doc = np.load(run / "corpus.npy")
         qry = np.load(run / f"queries-{slug}.npy")
-        result = score_run(doc, qry, corpus, queries)
+        dense = rank_dense(doc, qry, corpus)
+        result = metrics_of(dense, queries)
         (run / f"scores-{slug}.json").write_text(
             json.dumps(result, indent=2) + "\n", encoding="utf-8")
         print(f"{label_of(meta)}: mrr@100 {result['mrr@100']:.4f}  "
               f"recall@10 {result['recall@10']:.4f}")
+        if lexical_rankings is not None:
+            fused = metrics_of([fuse(t, v) for t, v in zip(lexical_rankings, dense)], queries)
+            (run / f"fused-{slug}.json").write_text(
+                json.dumps(fused, indent=2) + "\n", encoding="utf-8")
+            print(f"{label_of(meta)} + BM25 (RRF): mrr@10 {fused['mrr@10']:.4f}  "
+                  f"ndcg@10 {fused['ndcg@10']:.4f}")
     return 0
 
 
@@ -464,6 +584,9 @@ def report(out: Path) -> int:
         if not scores.exists():
             continue
         rows[label_of(meta)] = json.loads(scores.read_text(encoding="utf-8"))
+        fused = run / f"fused-{meta['slug']}.json"
+        if fused.exists():
+            rows[f"{label_of(meta)} + BM25 (RRF)"] = json.loads(fused.read_text(encoding="utf-8"))
         if meta.get("query_prefix"):
             prefixes[meta["slug"]] = meta["query_prefix"]
     if not rows:
@@ -496,13 +619,17 @@ def main(argv=None) -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for cmd in ("fetch", "embed", "score", "report"):
+    for cmd in ("fetch", "embed", "lexical", "score", "report"):
         p = sub.add_parser(cmd)
         p.add_argument("--out", type=Path, required=True)
         if cmd == "fetch":
             p.add_argument("--suite", default="jurifindit", choices=sorted(SUITES),
                            help="the set; one directory holds one")
-        if cmd in ("embed", "score"):
+        if cmd == "lexical":
+            p.add_argument("--lang", required=True,
+                           help="the set's language (ISO 639-1): it picks the "
+                                "index's analyzer and stemmer, as a record's does")
+        if cmd in ("embed", "lexical", "score"):
             p.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
         if cmd == "embed":
             p.add_argument("--name", required=True)
@@ -527,6 +654,8 @@ def main(argv=None) -> int:
     if a.cmd == "embed":
         return embed(a.out, a.name, a.url, a.model, a.dim, a.ctx,
                      a.concurrency, a.max_chars, a.query_prefix, a.limit)
+    if a.cmd == "lexical":
+        return lexical(a.out, a.lang, a.max_chars)
     if a.cmd == "score":
         return score(a.out, a.max_chars)
     return report(a.out)

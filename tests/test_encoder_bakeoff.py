@@ -439,3 +439,88 @@ def test_a_cut_download_leaves_nothing_a_rerun_would_trust(tmp_path, monkeypatch
     with pytest.raises(httpx.ReadError):
         b._download("https://example.invalid/x", target)
     assert not target.exists() and not list(tmp_path.iterdir())
+
+
+# ---- the hybrid: BM25 as Louise serves it, fused as a search fuses ------
+
+def test_fuse_is_reciprocal_rank_with_k_60() -> None:
+    from tools.encoder_bakeoff import fuse
+    # 1: 1/61 + 1/62 = 0.032522; 3: 1/63 + 1/61 = 0.032266;
+    # 2: 1/62 = 0.016129; 4: 1/63 = 0.015873
+    assert fuse([1, 2, 3], [3, 1, 4]) == [1, 3, 2, 4]
+
+
+def test_fuse_breaks_ties_by_record_bytes_as_the_search_does() -> None:
+    from tools.encoder_bakeoff import fuse
+    assert fuse([5], [6]) == [5, 6]
+    # "bakeoff:10" < "bakeoff:9": the uid's bytes, not the number
+    assert fuse([9], [10]) == [10, 9]
+
+
+def test_fuse_takes_each_leg_to_depth() -> None:
+    """A record past a leg's depth gets nothing from that leg, as in the
+    search: 3 is the vector leg's first and the text leg's third."""
+    from tools.encoder_bakeoff import fuse
+    # depth 3: 3 = 1/63 + 1/61 first; then 1 (1/61); 2 and 5 tie at 1/62
+    assert fuse([1, 2, 3], [3, 5, 6], depth=3) == [3, 1, 2]
+    # depth 2: the text leg stops at 2, so 3 has 1/61 alone and ties with 1
+    assert fuse([1, 2, 3], [3, 5, 6], depth=2) == [1, 3]
+
+
+def test_lexical_ranks_with_the_served_word_index_and_score_fuses(tmp_path) -> None:
+    """End to end on a small German set: the index app/fts.py builds, its
+    stemmer (Kaution ~ Kautionen), the hybrid row beside the encoder's."""
+    from tools import encoder_bakeoff as bake
+    out = _beir(tmp_path, "legalquad",
+                corpus=[{"_id": "a", "title": "", "text": "Die Rückzahlung der Kautionen nach dem Mietvertrag"},
+                        {"_id": "b", "title": "", "text": "Die Kündigung des Arbeitsvertrags durch den Arbeitgeber"},
+                        {"_id": "c", "title": "", "text": "Der Schadensersatz nach einem Verkehrsunfall"}],
+                queries=[{"_id": "q1", "text": "Wann bekomme ich meine Kaution zurück?"},
+                         {"_id": "q2", "text": "fristlose Kündigung Arbeitgeber"}],
+                qrels=[{"query-id": "q1", "corpus-id": "a", "score": 1},
+                       {"query-id": "q2", "corpus-id": "b", "score": 1}], parquet=False)
+    assert bake.lexical(out, "de", 20_000) == 0
+    rankings = json.loads((out / "bm25" / "ranking-bare.json").read_text())
+    assert rankings[0][0] == 0 and rankings[1][0] == 1, "positions of a and b"
+    meta = json.loads((out / "bm25" / "run-bare.json").read_text())
+    assert meta["group"] == "de" and meta["empty"] == 0
+    # an encoder that ranks every query's relevant document last
+    run = out / "m"
+    run.mkdir()
+    np.save(run / "corpus.npy", np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32))
+    np.save(run / "queries-bare.npy", np.array([[0, 0.2, 1], [0.2, 0, 1]], dtype=np.float32))
+    (run / "run-bare.json").write_text(json.dumps({"name": "m", "slug": "bare"}))
+    assert bake.score(out, 20_000) == 0
+    bm25 = json.loads((out / "bm25" / "scores-bare.json").read_text())
+    dense = json.loads((run / "scores-bare.json").read_text())
+    fused = json.loads((run / "fused-bare.json").read_text())
+    assert bm25["mrr@10"] == pytest.approx(1.0)
+    assert dense["mrr@10"] < fused["mrr@10"] <= bm25["mrr@10"]
+
+
+def test_a_bm25_run_of_other_settings_is_refused(tmp_path) -> None:
+    from tools import encoder_bakeoff as bake
+    out = _beir(tmp_path, "legalquad", corpus=[{"_id": "a", "title": "", "text": "Kaution"}],
+                queries=[{"_id": "q", "text": "Kaution"}],
+                qrels=[{"query-id": "q", "corpus-id": "a", "score": 1}], parquet=False)
+    bake.lexical(out, "de", 20_000)
+    with pytest.raises(SystemExit, match="run `lexical` again"):
+        bake.score(out, 10_000)
+
+
+def test_the_report_shows_bm25_the_encoder_and_the_two_fused(tmp_path, capsys) -> None:
+    from tools.encoder_bakeoff import report
+    out = _beir(tmp_path, "legalquad", corpus=[{"_id": "a", "title": "", "text": "x"}],
+                queries=[{"_id": "q", "text": "y"}],
+                qrels=[{"query-id": "q", "corpus-id": "a", "score": 1}], parquet=False)
+    for name, files in (("bm25", {"scores-bare.json": {"mrr@10": 0.6}}),
+                        ("m", {"scores-bare.json": {"mrr@10": 0.4}, "fused-bare.json": {"mrr@10": 0.7}})):
+        d = out / name
+        d.mkdir()
+        (d / "run-bare.json").write_text(json.dumps({"name": "BM25 (Louise)" if name == "bm25" else "m",
+                                                     "slug": "bare"}))
+        for f, v in files.items():
+            (d / f).write_text(json.dumps(v))
+    report(out)
+    shown = capsys.readouterr().out
+    assert "BM25 (Louise)" in shown and "m + BM25 (RRF)" in shown and "0.7000" in shown
