@@ -186,6 +186,39 @@ def _cache_path(index_dir: Path, field: str) -> Path:
     return Path(index_dir) / CACHE / f"{field}.json"
 
 
+MARKER = "snapshot.json"         # under the cache: the snapshot the maintainer last indexed whole
+
+
+def marker_path(index_dir: Path) -> Path:
+    return Path(index_dir) / CACHE / MARKER
+
+
+def read_marker(index_dir: Path) -> tuple[str, str] | None:
+    """`(snapshot_id, hash)` of the snapshot whose facets, edges and content
+    hashes the maintainer last indexed without a failure, or None. Durable
+    on purpose: the worker held this only in memory until 2026-10-28, and
+    every restart recounted pubmed's facets — three streamed passes over
+    40M rows, 16.5 minutes of the index resource per deploy (München)."""
+    p = marker_path(index_dir)
+    if not p.is_file():
+        return None
+    try:
+        got = json.loads(p.read_text(encoding="utf-8"))
+        return str(got["snapshot_id"]), str(got["hash"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def write_marker(index_dir: Path, snapshot_id: str, snapshot_hash: str, *, now: float | None = None) -> None:
+    p = marker_path(index_dir)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f".{p.name}.tmp")
+    tmp.write_text(json.dumps({"snapshot_id": snapshot_id, "hash": snapshot_hash,
+                               "indexed_at": time.time() if now is None else now}, sort_keys=True),
+                   encoding="utf-8")
+    tmp.replace(p)
+
+
 def _write_cache(index_dir: Path, field: str, got: dict[str, Any]) -> None:
     p = _cache_path(index_dir, field)
     p.parent.mkdir(parents=True, exist_ok=True)
