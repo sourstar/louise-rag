@@ -18,6 +18,32 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 13:30 (München, relayed).** A1 ON THE FIXED CLIENT (0ef4e4a
+deployed 10:17Z): the GGUF with the f32 cache works through Louise with
+torch's quality (60/60 answered, 341/381 translations identical, 59/60 the
+same top hit) but is NOT faster under gutenberg sharing — translation median
+1.95 s against torch's 1.68 s (+16 %), p90 and search total equal. The
+switch condition is a gain, so München BACKED OUT to torch at 11:42; the
+node is paused again (MADLAD only). The f32 cache's +79 % per token eats the
+idle 2.9×. The way to a gain is the F16 cache, back with P5 (below). The
+GGUF YAML is kept on the node (`…yaml.gguf-20261028b`), the T5 backend
+stays installed, 0ef4e4a stays deployed (both shapes).
+
+**2026-10-28 13:00 (architecture).** ROOT CAUSE OF THE CARD FAULT FOUND, by
+code reading, after the attribution test ruled the runtime out: ggml-sycl's
+`ggml_sycl_mul_mat_batched_sycl`, in a build with oneDNN compiled in (ours),
+converts src1 with oneDNN's flat copy and then, when oneMKL runs instead
+(`GGML_SYCL_ENABLE_DNN=0`, invariant 12's mode), reads it with contiguous
+strides — every non-contiguous src1 wrong: the permuted queries of two or
+more decoder tokens (the wrong text in waves), and upstream's own suite's 32
+strided cases with ne13 > 1, exactly the set München's log holds. Not the
+card, not the driver, not oneMKL. FIX = **P5** in the series
+(deploy/localai/patches/0007-…; localai-bugs.md P5), an upstream PR to file
+(upstream-reports/ggml-llama-cpp-sycl.md, second section). Gate: München
+runs test-backend-ops on the fixed build (0 FAIL expected), then the tar
+with P1–P4 + P5 and MADLAD on the F16 cache through t5waves.py; then the
+second switch (−44 % per token). The f32 switch in flight stands.
+
 **2026-10-28 12:30 (architecture).** ATTRIBUTION TEST DONE (München, 11:03):
 runtime 26.35 (39758.17, IGC 2.41.15, loader 1.32) fails the IDENTICAL
 `test-backend-ops` case sets as the bundled 26.27 — the KQ matmul fault is

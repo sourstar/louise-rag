@@ -4,29 +4,29 @@ Date: Wed, 28 Oct 2026 07:46:22 +0000
 Subject: [PATCH] fix(llama-cpp): the encoder outputs of an encoder-decoder
  model live on the device
 
-On top of patches/0005 (the encoder output per sequence): the store is one
+On top of patches/0006 (the encoder output per sequence): the store is one
 F32 tensor in its own backend buffer, written by the encoder graph
 (ggml_set_rows) into the region the encode's memory context assigns and
 committed after the compute, read by the decoder graph (ggml_get_rows).
 No host copies of the encoder output remain; sequence operations move no
 data; state writes carry the rows through the tensor path. No public API
 changes; only T5 reaches the new code. Carried as a llama.cpp patch beside
-the others (patches/0006-encoder-decoder-store.patch).
+the others (patches/0007-encoder-decoder-store.patch).
 
 Checked on the CPU with a random-weight T5: the 0005 library tests, the
 store unit test rewritten for the device store, and the 0004 server checks.
 
 Assisted-by: Claude Code
 ---
- .../patches/0006-encoder-decoder-store.patch  | 1262 +++++++++++++++++
+ .../patches/0007-encoder-decoder-store.patch  | 1262 +++++++++++++++++
  1 file changed, 1262 insertions(+)
- create mode 100644 backend/cpp/llama-cpp/patches/0006-encoder-decoder-store.patch
+ create mode 100644 backend/cpp/llama-cpp/patches/0007-encoder-decoder-store.patch
 
-diff --git a/backend/cpp/llama-cpp/patches/0006-encoder-decoder-store.patch b/backend/cpp/llama-cpp/patches/0006-encoder-decoder-store.patch
+diff --git a/backend/cpp/llama-cpp/patches/0007-encoder-decoder-store.patch b/backend/cpp/llama-cpp/patches/0007-encoder-decoder-store.patch
 new file mode 100644
 index 00000000..f32f7a47
 --- /dev/null
-+++ b/backend/cpp/llama-cpp/patches/0006-encoder-decoder-store.patch
++++ b/backend/cpp/llama-cpp/patches/0007-encoder-decoder-store.patch
 @@ -0,0 +1,1262 @@
 +llama: the encoder outputs of an encoder-decoder model live on the device (llama_memory_enc_dec, stage 2)
 +

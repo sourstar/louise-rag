@@ -43,8 +43,9 @@ the source):*
 | **P2** | **patch we carry** | llama.cpp backend: `Embedding` embeds `EmbeddingTokens`, with the special tokens a text gets (B14) | **blocking** for the token cut: VeGa's wrapper sends a cut as its first tokens to a backend that embeds them (`Gate._probe`) | not filed; [`deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch`](../../deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch) |
 | **P3** | **patch we carry** | llama.cpp backend: the encoder of an encoder-decoder model runs (B16), as a llama.cpp patch in the backend's own `patches/` | MADLAD on llama.cpp (operator, 2026-10-27: "we need anyway a patched llama.cpp") | not filed; [`deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch`](../../deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch) |
 | **P4** | **patch we carry** | llama.cpp backend: encoder-decoder slots are encoded together, in WAVES, and decode in one batch (on P3, which ran one slot) | MADLAD on llama.cpp at torch's speed: a question's 7 languages in one wave instead of 7 × 3 s | not filed; [`deploy/localai/patches/0004-llama-cpp-encoder-decoder-waves.patch`](../../deploy/localai/patches/0004-llama-cpp-encoder-decoder-waves.patch) |
-| **P5 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder output is kept PER SEQUENCE (`llama_memory_enc_dec`, stage 1 of llama-cpp-encoder-decoder.md), so a slot is encoded while others decode; on P3 and P4 | a late request joins the next decode step instead of waiting for the wave; the upstream shape (no public API) | not filed; [`deploy/localai/patches/staged/0005-llama-cpp-encoder-decoder-memory.patch`](../../deploy/localai/patches/staged/0005-llama-cpp-encoder-decoder-memory.patch); moves into the series after its card gates |
-| **P6 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder outputs live ON THE DEVICE (stage 2: a persistent store written by the encoder graph, read by the decoder's `ggml_get_rows`; no host copies), on P5 | the shape upstream asked for (a persistent buffer, no host copies); the per-step upload gone | not filed; [`deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-store.patch`](../../deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-store.patch); moves into the series with P5 after the card gates |
+| **P5** | **patch we carry** | llama.cpp backend (ggml-sycl): the batched F16 matmul converts a non-contiguous src1 for the GEMM that RUNS — the oneDNN flat copy only when oneDNN's GEMM runs, the gather for oneMKL (`GGML_SYCL_ENABLE_DNN=0`); before, the KQ product of two or more decoder tokens over an F16 K cache read the wrong queries (the P4 card fault, upstream-bugs.md S1) | the root cause of the wrong text in waves, found by code reading 2026-10-28 and matched by the 32-case pattern of upstream's own suite; the F16 KV cache back for MADLAD (−44 % per token against the f32 workaround) once the rebuilt tar passes its gates | **to file at ggml-org/llama.cpp as a PR** ([upstream-reports/ggml-llama-cpp-sycl.md](upstream-reports/ggml-llama-cpp-sycl.md), second section); [`deploy/localai/patches/0005-llama-cpp-sycl-batched-mul-mat-src1.patch`](../../deploy/localai/patches/0005-llama-cpp-sycl-batched-mul-mat-src1.patch) |
+| **P6 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder output is kept PER SEQUENCE (`llama_memory_enc_dec`, stage 1 of llama-cpp-encoder-decoder.md), so a slot is encoded while others decode; on P3 and P4 | a late request joins the next decode step instead of waiting for the wave; the upstream shape (no public API) | not filed; [`deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-memory.patch`](../../deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-memory.patch); moves into the series after its card gates |
+| **P7 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder outputs live ON THE DEVICE (stage 2: a persistent store written by the encoder graph, read by the decoder's `ggml_get_rows`; no host copies), on P5 | the shape upstream asked for (a persistent buffer, no host copies); the per-step upload gone | not filed; [`deploy/localai/patches/staged/0007-llama-cpp-encoder-decoder-store.patch`](../../deploy/localai/patches/staged/0007-llama-cpp-encoder-decoder-store.patch); moves into the series with P5 after the card gates |
 | R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: RAGE checks before and after instead | not filed |
 | R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (rage-over-localai §8.2) | not filed |
 | R3 | request | read API keys from a file, not only from `LOCALAI_API_KEY` | only if LocalAI's own UI is published (invariant 8) | not filed |
@@ -806,12 +807,84 @@ codes; the scan is kept as the language list, so it costs nothing extra),
 every batch-shape request carries a `max_tokens` bound (torch ignores it), and
 the test fake answers the recorded two-piece tokenize. A1 is rerun on the
 fixed client before the switch is tried again.
+**Second attempt, 2026-10-28 11:19–11:42 (München, client 0ef4e4a): quality
+equal, speed NOT better, backed out to torch at 11:42.** The same 60
+questions through /api/search under gutenberg sharing: translation median
+1.95 s against torch's 1.68 s (+16 %), p90 2.74 against 2.78, search total
+10.81 against 10.65 s; 341/381 translations identical to torch's, 59/60 the
+same top hit, 55/60 the same twelve; warm 7.8 s, shape t5, 498 languages, no
+split waves. Through Louise torch's one batched call costs 1.7 s for six
+languages, and the GGUF wave — 1.12 s on an idle card — lands at 1.95 s with
+the f32 cache (+79 % per token) beside the embedder. The switch condition is a
+gain; the F16 cache, back with P5, is the way to one (16.3 against 29.2 ms per
+token). The GGUF YAML is kept on the node as
+`models/louise-translate-madlad.yaml.gguf-20261028b`; results
+`/root/madlad-gguf/a1b-{torch,gguf}.jsonl`.
+**Root cause of the card fault found the same day: P5 below** — not the
+card, not the runtime, not oneMKL: ggml-sycl's own src1 conversion on the
+oneMKL path. The f32 cache stays until the P5 tar passes its gates.
 
 
-### P5 (staged). llama.cpp backend: the encoder output is kept per sequence
+### P5. llama.cpp backend (ggml-sycl): the batched F16 matmul converts src1 for the GEMM that runs
+
+*Base: `v4.12.1` (`ec92740`), after P1–P4 (independent of them: a ggml-sycl
+file). File: [`deploy/localai/patches/0005-llama-cpp-sycl-batched-mul-mat-src1.patch`](../../deploy/localai/patches/0005-llama-cpp-sycl-batched-mul-mat-src1.patch),
+which adds `backend/cpp/llama-cpp/patches/0005-sycl-batched-mul-mat-src1-strides.patch`
+(applies to plain `c0fd786`, checked with `patch --dry-run`). Written
+2026-10-28 by code reading; München's log of upstream's suite matched the
+prediction exactly; the card run of the fixed build is the gate.*
+
+**What.** `ggml_sycl_mul_mat_batched_sycl` (F16 src0 × F32 src1: the KQ
+product over an F16 K cache, the KQV product over an F16 V cache) converts
+src1 to F16 before its GEMM. A build with oneDNN compiled in
+(`GGML_SYCL_DNNL`, ours: the backend needs libdnnl.so.3) made a FLAT copy of
+src1's whole extent — right for oneDNN's GEMM, which reads src1's own strides
+— and then set `s11 = ne10, s12, s13` (the CONTIGUOUS strides) and
+`is_src1_cont_2 = true` whichever GEMM ran. When oneMKL runs instead of
+oneDNN — `GGML_SYCL_ENABLE_DNN=0`, which invariant 12 requires (oneDNN's
+heuristic drifts), or a device without an optimized oneDNN GEMM — its
+`gemm_batch` calls read the flat copy as contiguous: wrong data for every
+non-contiguous src1. The fix decides the GEMM once, before the conversion:
+flat copy for oneDNN (strides untouched), the gather `to_fp16_nc_sycl` with
+the contiguous strides for oneMKL. Upstream: since bdca38376 (`sycl: Hotfix
+for non dnnl codepath`, #14677, 2025-07-14) for a oneDNN build with the DNN
+switch off; the `has_optimized_gemm` runtime gate (#28985, 2026-10-02) sends
+devices without one down the same path with DNN=1. No upstream issue or PR
+(searched 2026-10-28, c0fd786 and master e486a4b; none of the 20 ggml-sycl
+commits since c0fd786 touch it).
+
+**Why it explains everything measured** (localai-bugs.md P4 "Measured on the
+card", upstream-bugs.md S1): the decoder's queries are PERMUTED (`[0,2,1,3]`)
+— for ONE token the permuted layout is the contiguous one (right: N = 1 was
+right, and takes `mul_mat_vec_p021` anyway), for two or more it is not
+(wrong: every N ≥ 2); the V side's src1 is the softmax output, contiguous
+(right: V f32 alone changed nothing); an F32 K cache takes the generic
+path (right: K f32 alone fixed the text); the GPU runtime is not involved
+(26.27 and 26.35 identical); upstream's suite fails EXACTLY its 32 strided
+F16×F32 views with `ne13 > 1` — `bs2 = 1` takes `mul_mat_vec_nc`, not the
+batched path — and its permuted cases with n = 1 pass (contiguous layout),
+while the suite's permuted F16 cases with n ≥ 2 and `ne3 > 1` are "not
+supported" by `supports_op`, which is why nobody saw it. The patch adds the
+decoder KQ shape (16 heads, n = 2, 4, 7) to `test-backend-ops`.
+
+**Gate (München, after the switch; the card).** (1) `test-backend-ops` on
+the fixed build, SYCL F16, DNN=0: `-o MUL_MAT -p "type_a=f16,type_b=f32"`
+→ 0 FAIL (32 before), `GGML_TEST_KQ_SHAPES=1` with the diag patch → 0 FAIL
+(238 before); (2) the backend tar rebuilt with series P1–P4 + P5 (a new
+engine); MADLAD with the F16 KV cache (the two `cache_type_*: f32` lines
+dropped from the YAML): T4 bytes against P3, T3 in-wave == alone and the same
+group twice, the retrieval gate paired to torch — tools/measure/t5waves.py;
+(3) the per-token time back near 16.3 ms. The live shared engine
+`louise-sycl-f16-llama-cpp` carries the same wrong path (no live model takes
+it: embedders and chat run FA on, the rerankers have no cache); it is NOT
+rebuilt for this alone — every space on it would be re-gated — the next
+rebuild carries P5 (approved-encoders.md "Known limits").
+
+
+### P6 (staged). llama.cpp backend: the encoder output is kept per sequence
 
 *Base: `v4.12.1` (`ec92740`), after P1–P4. File:
-`deploy/localai/patches/staged/0005-llama-cpp-encoder-decoder-memory.patch`
+`deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-memory.patch`
 (staged: built and tested on the CPU 2026-10-28, NOT in `series` until its
 card gates pass — staged/README.md). It adds
 `backend/cpp/llama-cpp/patches/0005-encoder-decoder-memory.patch`, applied
@@ -875,10 +948,10 @@ f32-cache MADLAD backend rebuilt with it AND P6 — T3, in-wave vs alone (bar
 90 %), a lone request against P4's bytes, seconds per question — then
 the retrieval comparison. Stage 2 (the device store) is P6 below.
 
-### P6 (staged). llama.cpp backend: the encoder outputs live on the device
+### P7 (staged). llama.cpp backend: the encoder outputs live on the device
 
 *Base: `v4.12.1` (`ec92740`), after P1–P5. File:
-`deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-store.patch`
+`deploy/localai/patches/staged/0007-llama-cpp-encoder-decoder-store.patch`
 (staged with P5: built and tested on the CPU 2026-10-28, NOT in `series`
 until the card gates pass — staged/README.md). It adds
 `backend/cpp/llama-cpp/patches/0006-encoder-decoder-store.patch`, applied

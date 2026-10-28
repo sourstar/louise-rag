@@ -11,7 +11,7 @@ encoded while others decode and a late request joins the next decode step
 instead of waiting for the wave. A sequence without an encoder output is
 refused (-1), never asserted on. No public API changes; only T5 reaches
 the new code. Carried as a llama.cpp patch beside the others
-(patches/0005-encoder-decoder-memory.patch).
+(patches/0006-encoder-decoder-memory.patch).
 
 Checked on the CPU with a random-weight T5: the library tests (a lone
 sequence bitwise equal to a one-sequence context, two sequences in one
@@ -21,15 +21,15 @@ orders, bursts).
 
 Assisted-by: Claude Code
 ---
- .../patches/0005-encoder-decoder-memory.patch | 672 ++++++++++++++++++
+ .../patches/0006-encoder-decoder-memory.patch | 672 ++++++++++++++++++
  1 file changed, 672 insertions(+)
- create mode 100644 backend/cpp/llama-cpp/patches/0005-encoder-decoder-memory.patch
+ create mode 100644 backend/cpp/llama-cpp/patches/0006-encoder-decoder-memory.patch
 
-diff --git a/backend/cpp/llama-cpp/patches/0005-encoder-decoder-memory.patch b/backend/cpp/llama-cpp/patches/0005-encoder-decoder-memory.patch
+diff --git a/backend/cpp/llama-cpp/patches/0006-encoder-decoder-memory.patch b/backend/cpp/llama-cpp/patches/0006-encoder-decoder-memory.patch
 new file mode 100644
 index 00000000..ea080cc0
 --- /dev/null
-+++ b/backend/cpp/llama-cpp/patches/0005-encoder-decoder-memory.patch
++++ b/backend/cpp/llama-cpp/patches/0006-encoder-decoder-memory.patch
 @@ -0,0 +1,672 @@
 +llama: the encoder output of an encoder-decoder model is kept per sequence (llama_memory_enc_dec)
 +

@@ -14,8 +14,9 @@
 # on the CPU right; localai-bugs.md P4 "Measured on the card", 2026-10-28); the
 # f32 cache is correct; its price, measured paused, is +79 % per token (29.2 against
 # 16.3 ms), still 1.12 s per question in waves against torch's 3.2 s, and ~2 GB of
-# cache for 7 slots x 512 positions. The F16 cache comes back when upstream fixes the
-# product (upstream-bugs.md S1).
+# cache for 7 slots x 512 positions. The F16 cache comes back with P5 (localai-bugs.md:
+# the product read the permuted queries with contiguous strides — ggml-sycl's own
+# conversion, found 2026-10-28), once the tar rebuilt with P5 passes its gates.
 # JSON, which is YAML.
 {
   "name": "louise-translate-madlad",

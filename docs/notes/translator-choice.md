@@ -432,3 +432,13 @@ request is bounded, and the paired test (A1: 60 questions through
 /api/search under sharing, torch against GGUF) is rerun on the fixed client
 before the second attempt. The numbers above stand: they were measured
 against the server, not through the client. localai-bugs.md P4 "Backed out".
+
+**Second attempt, 11:19–11:42: NOT switched.** Through Louise under gutenberg
+sharing the f32-cache GGUF answers with torch's quality (341/381 identical
+translations, 59/60 the same top hit) but no gain: translation median 1.95 s
+against 1.68 s (+16 %), p90 equal, search total equal. Torch stays live. The
+gain the idle measurement promised (2.9×) is eaten by the f32 cache's +79 %
+per token on a shared card. The F16 cache comes back with P5 (localai-bugs.md:
+the card fault was ggml-sycl's own src1 conversion on the oneMKL path, fixed
+by us); the third attempt is on the P5 tar, A1 again, and the switch only on
+a measured gain.
