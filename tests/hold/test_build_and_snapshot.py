@@ -158,6 +158,25 @@ def test_the_first_snapshot_marks_every_record_added(
     assert snap.delta.changed == () and snap.delta.tombstoned == ()
 
 
+def test_a_first_snapshot_reads_uids_only_and_writes_the_same_delta(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """wikipedia-v8 (2026-10-28): 74.8 M records, and the uid → content_hash
+    map of every one of them did not fit beside the node's running work. A
+    first snapshot's delta needs the uids alone; its bytes are the map's."""
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    shard_dir = root / "gutenberg" / "shard"
+    monkeypatch.setattr(sn, "_content_hashes", lambda *a: (_ for _ in ()).throw(
+        AssertionError("a first snapshot read the content hashes")))
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    monkeypatch.undo()
+    by_map = sn.compute_delta(None, sn._content_hashes(shard_dir, snap.shards))
+    assert snap.delta == by_map and len(snap.delta.added) == 3
+    # a uid met twice counts once, as the map's key did
+    twice = sn._first_delta(shard_dir, snap.shards + snap.shards)
+    assert twice == by_map
+
+
 def test_files_lists_validation_and_nulls_a_green_collections_terms(
         isolated_config, tmp_path, corpus_dir):
     """09 §9.4's `files`; 02 §2.6: green collections have no LICENSE-TERMS."""

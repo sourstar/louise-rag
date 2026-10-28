@@ -521,12 +521,18 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
               writer=before.get((r["slice"], r["n"], r["root"]), pack_records.WRITER))
         for r in rows)
 
-    current = _content_hashes(shard_dir, shards)
+    # A FIRST snapshot's delta is every record added: it needs the uids and
+    # never a content hash, and the map of both was wikipedia-v8's peak
+    # (74.8 M records: ~22 GB measured by extrapolation, on a 61 GB node with
+    # 18 GB available, 2026-10-28) where the uids alone take ~11 GB. The same
+    # bytes: compute_delta(None, current) is the sorted keys.
+    delta = (_first_delta(shard_dir, shards) if previous is None else
+             compute_delta(prev_hashes, _content_hashes(shard_dir, shards)))
     snap = Snapshot(
         collection_id=codex.collection_id, snapshot_id=snapshot_id,
         previous=previous.hash if previous else None,
         shards=shards,
-        delta=compute_delta(prev_hashes, current),
+        delta=delta,
         relations=_relation_shards(shard_dir, shards),
         figures=_figures_shards(shard_dir, codex, shards),
         files=_files(shard_dir, codex, snapshot_id),
@@ -672,7 +678,16 @@ def sign_snapshot(root, name: str, snapshot: "Snapshot", key, *,
 
 def _previous(shard_dir, snapshot_id: str):
     """The snapshot before this one in the chain, and its uid → content_hash
-    map. `None` when this is the first."""
+    map. `None` when this is the first.
+
+    OPEN (2026-10-28): a later snapshot holds this map AND the current one,
+    ~0.29 GB per million records each in Python — ~43 GB for wikipedia-v8's
+    74.8 M, more than its 61 GB node can spare. To fix before its next
+    snapshot: the two sides as Arrow tables (pyarrow, already a dependency
+    through Lance), uid as string and the hash as 32 fixed bytes, compared by
+    Arrow's own hash join — ~5 GB a side, no Python object per record. Parts
+    whose bytes both snapshots list (the same `root`) can be skipped outright:
+    identical bytes hold identical uids and hashes."""
     from pathlib import Path
     from . import shard as shard_mod
     d = Path(shard_dir) / "snapshots"
@@ -803,6 +818,24 @@ def _load_lazy(path, raw, container: str = "jsonl") -> Snapshot | None:
         h.update(raw[at:at + (1 << 22)])
     object.__setattr__(snap, "_raw_hash", "sha256:" + h.hexdigest())
     return snap
+
+
+def _first_delta(shard_dir, shards) -> Delta:
+    """A first snapshot's delta — every record added, nothing changed or
+    tombstoned — from the uids alone: what `compute_delta(None,
+    _content_hashes(...))` gives, without holding a content hash per record.
+    A uid read twice counts once, as the map's key did."""
+    from pathlib import Path
+    from app.pack import records as pack_records
+    uids: list[str] = []
+    for s in shards:
+        p = Path(shard_dir) / s.path
+        if p.is_file():
+            uids.extend(r["uid"] for r in pack_records.iter_records(p))
+    uids.sort()
+    added = tuple(u for k, u in enumerate(uids) if k == 0 or uids[k - 1] != u)
+    del uids
+    return Delta(added, (), ())
 
 
 def _content_hashes(shard_dir, shards) -> dict[str, str]:
