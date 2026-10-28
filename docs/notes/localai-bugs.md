@@ -718,6 +718,47 @@ the server goes on; 60 requests after a burst leave every slot empty.
 one-slot bytes, T3, in-wave vs alone, seconds per question), then the
 retrieval comparison on the 451 + 39 queries (translator-choice.md).
 
+**Measured on the card, 2026-10-28 (München, the node paused):** T4 PASSES —
+379 of 379 one-at-a-time translations byte-identical to P3's, 0.43 s each;
+a 7-slot wave answers a question in 1.2–1.6 s against torch's 3.2 s; T3
+PASSES (626 of 626 the same twice: deterministic). **But a wave decodes
+WRONG**: in-wave against alone 0 of 626 equal, in-wave against torch 0 of
+626. Two identical prompts in one wave come back as two different wrong
+texts (`' Le gardien de la lampe.'`, `' Le gardien allum .'` for `' Le
+gardien du phare alluma la lampe.'`), the first two or three tokens right,
+then divergence; which text a request gets follows its SLOT, not the
+request. Ruled out, each with the same bytes: E1, the strict SYCL env
+(`GGML_SYCL_ENABLE_FUSION/GRAPH/OPT=0`); **E2, the same backend, GGUF and
+weights on the CPU (`gpu_layers: 0`): CORRECT** — so the server logic of
+P4 is right and the fault is a SYCL kernel at two or more decoder tokens
+(or two or more encoder sequences); E3, `GGML_SYCL_DYNAMIC_PRECISION=F32`
+(every weight mul_mat an fp32 gemm): still wrong, so not the fp16-operand
+gemm the F16 build uses at N ≥ 2. What differs between one and several
+decoder tokens in `ggml-sycl` (read, not yet measured): the attention over
+the F16 cache leaves the N = 1 kernels (`mul_mat_vec_p021`, `_nc`) for
+oneMKL `gemm_batch` in half at tiny M and N (M = the key count, N = the
+slots), `set_rows` writes several cells, the cross-attention's F32,
+permuted K goes through the generic driver's 2-D copies with several
+columns, and the position bias is a 3-D permute-and-cont. Nobody runs an
+encoder-decoder with several slots on SYCL; upstream has no matching
+report (searched 2026-10-28: ggml-org/llama.cpp #21893 reorder/OPT
+corruption, #30892 fused XMX dequant-GEMM NaNs — quantized types only,
+F16 weights never enter it — #19276 and #30624 flash-attention
+corruption, which T5 cannot use; intel/compute-runtime #966, #972).
+**The instrument:** `deploy/localai/patches/diag/0005-llama-cpp-sycl-cpu-ops-diag.patch`
+(`GGML_SYCL_CPU_OPS=OP[:cond]...` makes the device decline an op class, so
+the scheduler runs it on the CPU): one build, then one model load per op
+class on the real failing probe; and R0 before it, `cache_type_k/v: f32`
+in the YAML (no build), which takes the cache attention off the F16
+kernels. **R0 (09:05): CORRECT with the f32 cache**, so the fault is in the
+F16-cache path (the half `gemm_batch` of the attention, its conversions, or
+the cache write), and the f32 cache is the workaround (+9 % time, 2× cache
+memory); the op is being named with the diag build (R1, then R1a/b or the
+K/V split). **Until then the switch does not happen;
+nothing live has changed** (the torch translator serves; the test
+backend and model are unloaded). In-wave vs alone (bar 90 %) is now a gate
+in tools/measure/t5waves.py, not a report (fb014fe).
+
 ---
 
 ## Requests

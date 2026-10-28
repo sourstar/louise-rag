@@ -41,6 +41,22 @@ what fits without breaking the interfaces, exclusive node use tonight).
   (YAML swap under the same model name, a Louise deploy) comes only after
   the gates, then regular activities resume.
 
+**2026-10-28 09:00 (architecture).** P4 FAILS on the card: T4 and T3 pass
+(379/379 = P3's bytes, 0.43 s a translation; 626/626 the same twice) but a
+wave decodes WRONG text — in-wave against alone 0/626, the first tokens
+right then divergence, the wrong text following the slot. The same backend
+and weights on the CPU are RIGHT (E2), so it is a SYCL kernel at two or
+more decoder tokens; the strict SYCL env (E1) and fp32 weight gemms (E3)
+change nothing. Diagnosis by instrument, not by guess: R0 (an f32 KV
+cache, no build) and the diag patch `deploy/localai/patches/diag/0005…`
+(`GGML_SYCL_CPU_OPS` sends an op class to the CPU; one build, one load per
+class) — localai-bugs.md P4 "Measured on the card". **The switch is on
+hold; nothing live changed**; the torch translator serves. Online check of
+the B70's known limits (operator's ask): none matches; the list is in
+approved-encoders.md "Known limits of the Arc Pro B70".
+R0 (09:05): CORRECT with `cache_type_k/v: f32` — the fault is in the F16-cache
+path and the f32 cache is the workaround; the op is being named (diag build).
+
 **2026-10-27 10:25 (München).** Image a773d05 is deployed: profiles live,
 period crons 6/18–21 disabled (not deleted).
 - **The node's platform.toml:** full = "230W" absolute (the B70 has

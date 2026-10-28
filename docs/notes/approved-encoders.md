@@ -314,6 +314,26 @@ Sources: [cuBLAS](https://docs.nvidia.com/cuda/cublas/) ·
 [Defeating Nondeterminism in LLM Inference](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/) ·
 [Bit-Exact AI Inference Verification](https://arxiv.org/abs/2606.00279)
 
+## Known limits of the Arc Pro B70 (2026-10-28)
+
+What the card, its driver (`libze-intel-gpu1 26.05.37020.3` in the LocalAI
+image, 26.18.38308.1 in RAGE's) and our stacks are known NOT to do right:
+our own measurements first, then upstream's reports (checked 2026-10-28;
+the curated list is github.com/riceharvest/awesome-b70). Each row: what
+fails, what it touches here, the workaround, where it is recorded.
+
+| limit | symptom | exposure here | workaround | record |
+|---|---|---|---|---|
+| oneDNN gemm heuristic (llama.cpp SYCL) | the same input gives different bytes run to run | every llama.cpp model | `GGML_SYCL_ENABLE_DNN=0` in the model's env, measured | invariant 12; "Bitwise reproducibility" above |
+| torch fp32 softmax at row lengths 513–768, 1025–1280, 1537–1792 | finite, normalised, UNRELATED vectors, the same every run | jina-v3's eager attention (replaced by SDPA); any torch model with an eager fp32 softmax over such lengths | SDPA, or a half softmax | gpu-silent-wrong-vectors.md; upstream-bugs.md V2; intel/compute-runtime #966 names the same bands (torch-xpu-ops #4772) |
+| torch's defaults on short inputs | 308 of 512 calibration texts not reproducible across loads | louise-python models | `LOUISE_TORCH_DETERMINISTIC=1` | upstream-bugs.md V1 |
+| **F16 KV cache with two or more sequences decoding in one batch (llama.cpp SYCL)** | the decoded text is WRONG (first tokens right, then divergence, following the slot); alone right; the CPU right; deterministic | MADLAD waves (P4). No live model decodes several slots on this card: chat and translate run `parallel:1`, the embedder and reranker only process prompts | `cache_type_k`/`cache_type_v: f32` in the model YAML (R0, correct, +9 % time, 2× cache memory); the op is being named | localai-bugs.md P4 "Measured on the card"; nothing upstream yet |
+| an oversized context (reranker ctx 16,384) | 1 of 20 scores differs on the first pass after a load | the reranker | ctx 2,560, the platform's window | the "by vendor" table above |
+| the chat model's first answer after a load | differs from the later ones from token ~25 | louise-chat-qwen3-8b | none; the use is unaffected, the run is not bit-exact | the same table |
+| a non-finite vector, occasionally | NaN | embeddings | `embeddings._numeric_failure` retries | gpu-silent-wrong-vectors.md §1 |
+| LocalAI's memory reclaimer | memory held by another process evicts every model, one per 500 ms | the shared card | pinned off | localai-bugs.md B4 |
+| **upstream, not seen here** | reorder/OPT corruption of quantized models (llama.cpp #21893; `GGML_SYCL_ENABLE_OPT=0`); fused XMX dequant-GEMM NaNs since #29107 for K- and IQ-quants (#30892, fixed by #30604; else `GGML_SYCL_XMX_GATHER_TYPES=0`) — F16 weights never enter that path; flash-attention corruption (#19276 on an Xe2 iGPU; #30624 sparse FA at long context) — T5 cannot use FA; device-lost and reset storms under sustained load (compute-runtime #966; `SYCL_UR_USE_LEVEL_ZERO_V2=0`, PCIe Gen4, a 1,000 W PSU); compute-runtime 26.27 with a level-zero loader before 1.32 segfaults llama.cpp (#972); hybrid models' gibberish (#24168); no scaling with parallel slots (a speed limit: Jonathan Mann's B70 benchmarks) | our models are F16 and never quantized; our driver is 26.05 | pin the driver to a measured version; keep `parallel:1` where bit-exactness is required | this row |
+
 ## Adding a device class
 
 New peers with other hardware (AMD ROCm/Vulkan, NVIDIA CUDA, Apple Metal)
