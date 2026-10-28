@@ -318,3 +318,124 @@ def test_score_run_is_unaffected_by_vector_magnitude() -> None:
     qry = np.array([[0.9, 0.1, 0.0]], dtype=np.float32)
     queries = Queries(texts=["q"], relevant=[[1]])
     assert score_run(doc, qry, corpus, queries, ks=(1,))["mrr@1"] == pytest.approx(1.0)
+
+
+# ---- the BEIR layout (2026-10-28: the published sets of D4) --------------
+
+def _beir(tmp_path, suite: str, corpus, queries, qrels, *, parquet: bool):
+    """A directory as `fetch --suite` leaves it, without the network."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from tools import encoder_bakeoff as b
+    out = tmp_path / suite
+    out.mkdir()
+    for kind, rows in (("corpus", corpus), ("queries", queries), ("qrels", qrels)):
+        name = b._local(kind, b.SUITES[suite]["files"][kind])
+        if parquet:
+            pq.write_table(pa.Table.from_pylist(rows), out / name)
+        else:
+            (out / name).write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    (out / "SOURCE.json").write_text(json.dumps({"suite": suite}), encoding="utf-8")
+    return out
+
+
+def test_a_beir_set_maps_its_ids_to_positions_and_keeps_judged_queries(tmp_path) -> None:
+    from tools.encoder_bakeoff import load
+    out = _beir(tmp_path, "legalquad",
+                corpus=[{"_id": "a", "title": "", "text": "erster"},
+                        {"_id": "b", "title": "§ 1", "text": "zweiter"},
+                        {"_id": "c", "title": "", "text": "dritter"}],
+                queries=[{"_id": "q1", "text": "frage eins"},
+                         {"_id": "q2", "text": "ohne urteil"},
+                         {"_id": "q3", "text": "frage drei"}],
+                qrels=[{"query-id": "q1", "corpus-id": "b", "score": 1},
+                       {"query-id": "q3", "corpus-id": "c", "score": 1},
+                       {"query-id": "q3", "corpus-id": "a", "score": 2},
+                       {"query-id": "q2", "corpus-id": "a", "score": 0}],
+                parquet=False)
+    corpus, queries = load(out, max_chars=1000)
+    assert corpus.ids == [0, 1, 2]
+    assert corpus.texts == ["erster", "§ 1 zweiter", "dritter"], "title + ' ' + text, as MTEB"
+    assert queries.texts == ["frage eins", "frage drei"], "a query judged only at 0 does not count"
+    assert queries.relevant == [[1], [0, 2]]
+
+
+def test_mteb_parquet_says_id_where_beir_says__id(tmp_path) -> None:
+    from tools.encoder_bakeoff import load
+    out = _beir(tmp_path, "bsard",
+                corpus=[{"id": "1", "title": "Art. 1", "text": "texte"}],
+                queries=[{"id": "9", "text": "question"}],
+                qrels=[{"query-id": "9", "corpus-id": "1", "score": 1}], parquet=True)
+    corpus, queries = load(out, max_chars=1000)
+    assert corpus.texts == ["Art. 1 texte"] and queries.relevant == [[0]]
+
+
+def test_a_judged_document_missing_from_the_corpus_is_refused(tmp_path) -> None:
+    from tools.encoder_bakeoff import load
+    out = _beir(tmp_path, "legalquad",
+                corpus=[{"_id": "a", "title": "", "text": "x"}],
+                queries=[{"_id": "q", "text": "y"}],
+                qrels=[{"query-id": "q", "corpus-id": "zz", "score": 1}], parquet=False)
+    with pytest.raises(SystemExit, match="not in the corpus"):
+        load(out, max_chars=1000)
+
+
+def test_one_directory_holds_one_set(tmp_path) -> None:
+    from tools.encoder_bakeoff import fetch
+    out = tmp_path / "set"
+    out.mkdir()
+    (out / "SOURCE.json").write_text(json.dumps({"suite": "bsard"}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="one directory, one set"):
+        fetch(out, "legalquad")
+    with pytest.raises(SystemExit, match="unknown suite"):
+        fetch(out, "nope")
+
+
+def test_a_directory_from_before_suites_is_jurifindit(tmp_path) -> None:
+    from tools.encoder_bakeoff import suite_of
+    (tmp_path / "SOURCE.json").write_text(json.dumps({"dataset": "jurifindit/JuriFindIT"}),
+                                          encoding="utf-8")
+    assert suite_of(tmp_path) == "jurifindit"
+
+
+def test_the_published_row_is_jurifindits_alone(tmp_path, capsys) -> None:
+    from tools.encoder_bakeoff import report
+    out = _beir(tmp_path, "legalquad", corpus=[{"_id": "a", "title": "", "text": "x"}],
+                queries=[{"_id": "q", "text": "y"}],
+                qrels=[{"query-id": "q", "corpus-id": "a", "score": 1}], parquet=False)
+    run = out / "m"
+    run.mkdir()
+    (run / "run-bare.json").write_text(json.dumps({"name": "m", "slug": "bare"}), encoding="utf-8")
+    (run / "scores-bare.json").write_text(json.dumps({"ndcg@10": 0.5, "mrr@10": 0.25}),
+                                          encoding="utf-8")
+    report(out)
+    shown = capsys.readouterr().out
+    assert "DAR-legal-it" not in shown and "0.5000" in shown and "0.2500" in shown
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    (empty / "SOURCE.json").write_text(json.dumps({"suite": "bsard"}), encoding="utf-8")
+    assert report(empty) == 0
+
+
+def test_a_cut_download_leaves_nothing_a_rerun_would_trust(tmp_path, monkeypatch) -> None:
+    import httpx
+    from tools import encoder_bakeoff as b
+
+    class Cut:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_bytes(self):
+            yield b'{"_id": "a"'
+            raise httpx.ReadError("cut")
+    monkeypatch.setattr(httpx, "stream", lambda *a, **k: Cut())
+    target = tmp_path / "corpus.jsonl"
+    with pytest.raises(httpx.ReadError):
+        b._download("https://example.invalid/x", target)
+    assert not target.exists() and not list(tmp_path.iterdir())

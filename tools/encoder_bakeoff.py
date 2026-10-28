@@ -65,6 +65,17 @@ plateauing at 2 anyway — `llama-intel-arc-b70`'s concurrency grid):
 LICENCE. JuriFindIT is CC-BY-NC-SA-4.0 — a gated class under invariant 9.
 `fetch` writes LICENCE.txt and a sha256 of every file beside the data so an
 acknowledgement can be recorded against bytes that were actually seen.
+
+OTHER SETS, ONE READER (2026-10-28). The French, German and EU collections
+choose their encoders on published sets, not on questions of our own
+(operator, D4 of docs/notes/legal-fr-de-eu.md: "do not reinvent the wheel").
+MTEB and MLEB publish theirs in the BEIR layout (Thakur et al., NeurIPS
+2021): a corpus, queries, and qrels of (query-id, corpus-id, score). That
+layout is the standard, so this reads it once rather than one reader per
+set; `fetch --suite` names the set (SUITES), and one output directory holds
+one set. A document is `title + " " + text` as MTEB embeds it; a query
+counts when the qrels give it a document with score > 0, as BEIR does. The
+metric code is the same for every set.
 """
 
 from __future__ import annotations
@@ -90,6 +101,33 @@ BASE = ("https://huggingface.co/datasets/jurifindit/JuriFindIT/"
 FILES = {"corpus.parquet": "corpus/corpus/0000.parquet",
          "questions-validation.parquet": "questions/validation/0000.parquet"}
 LICENCE = "CC-BY-NC-SA-4.0 — https://creativecommons.org/licenses/by-nc-sa/4.0/"
+
+_MTEB = {"corpus": "corpus/test-00000-of-00001.parquet",
+         "queries": "queries/test-00000-of-00001.parquet",
+         "qrels": "qrels/test-00000-of-00001.parquet"}
+_BEIR = {"corpus": "corpus.jsonl", "queries": "queries.jsonl", "qrels": "qrels/test.jsonl"}
+
+#: The sets this reads. Licences as their cards state them (2026-10-28); an
+#: "unknown" one is resolved before use like any other (invariant 9).
+#: docs/notes/legal-embedders-fr-de-eu.md says which collection each serves.
+SUITES: dict[str, dict] = {
+    "jurifindit": {"repo": "jurifindit/JuriFindIT", "layout": "jurifindit",
+                   "licence": LICENCE, "about": "it; Italian national and EU acts; 179 expert questions"},
+    "bsard": {"repo": "mteb/BSARDRetrieval.v2", "layout": "beir", "files": _MTEB,
+              "licence": "CC-BY-NC-SA-4.0",
+              "about": "fr; Belgian statutes; 222 citizens' questions labelled by jurists"},
+    "syntec": {"repo": "mteb/SyntecRetrieval", "layout": "beir", "files": _MTEB,
+               "licence": "unknown (the card says so)",
+               "about": "fr; a collective agreement; 100 hand-written questions"},
+    "legalquad": {"repo": "mteb/LegalQuAD", "layout": "beir", "files": _BEIR,
+                  "licence": "CC-BY-4.0", "about": "de; court decisions; 200 questions"},
+    "gerdalir-small": {"repo": "mteb/GerDaLIRSmall", "layout": "beir", "files": _BEIR,
+                       "licence": "MIT", "about": "de; case law; queries derived from citations"},
+    "gdpr-holdings": {"repo": "isaacus/gdpr-holdings-retrieval", "layout": "beir",
+                      "files": {**_BEIR, "qrels": "default.jsonl"},
+                      "licence": "CC-BY-NC-SA-4.0",
+                      "about": "en; GDPR decisions (MLEB); facts to holdings"},
+}
 
 # Every model in this bake-off declares ctx 8192, and llama.cpp REFUSES an
 # input past its context rather than truncating it, so the cut is ours to
@@ -121,32 +159,72 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def fetch(out: Path) -> int:
+def _download(url: str, target: Path) -> None:
+    """Whole or not at all: a file cut mid-stream would be taken as fetched
+    by the next run, and a truncated JSON-lines set loses queries silently."""
     import httpx
+    tmp = target.with_name(target.name + ".part")
+    try:
+        with httpx.stream("GET", url, follow_redirects=True, timeout=300) as r:
+            r.raise_for_status()
+            with tmp.open("wb") as fh:
+                for block in r.iter_bytes():
+                    fh.write(block)
+        tmp.replace(target)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def suite_of(out: Path) -> str:
+    """The set a directory holds. A SOURCE.json from before suites existed
+    names JuriFindIT's dataset and no suite."""
+    try:
+        meta = json.loads((out / "SOURCE.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return "jurifindit"
+    return meta.get("suite", "jurifindit")
+
+
+def _local(kind: str, remote: str) -> str:
+    return f"{kind}{''.join(Path(remote).suffixes)}"
+
+
+def fetch(out: Path, suite: str = "jurifindit") -> int:
+    if suite not in SUITES:
+        raise SystemExit(f"unknown suite {suite!r}; one of {', '.join(SUITES)}")
+    if (out / "SOURCE.json").exists() and suite_of(out) != suite:
+        raise SystemExit(f"{out} holds suite {suite_of(out)!r}: one directory, one set "
+                         f"(the runs in it are scored against it)")
+    spec = SUITES[suite]
     out.mkdir(parents=True, exist_ok=True)
+    if spec["layout"] == "jurifindit":
+        files = {name: f"{BASE}/{suffix}" for name, suffix in FILES.items()}
+        base = BASE
+    else:
+        base = f"https://huggingface.co/datasets/{spec['repo']}/resolve/main"
+        files = {_local(kind, remote): f"{base}/{remote}"
+                 for kind, remote in spec["files"].items()}
     digests = {}
-    for name, suffix in FILES.items():
+    for name, url in files.items():
         target = out / name
         if not target.exists():
-            with httpx.stream("GET", f"{BASE}/{suffix}", follow_redirects=True,
-                              timeout=300) as r:
-                r.raise_for_status()
-                with target.open("wb") as fh:
-                    for block in r.iter_bytes():
-                        fh.write(block)
+            _download(url, target)
         digests[name] = _sha256(target)
         print(f"{name}  {target.stat().st_size:,} bytes  sha256:{digests[name]}")
-    (out / "LICENCE.txt").write_text(LICENCE + "\n", encoding="utf-8")
+    licence = spec["licence"]
+    (out / "LICENCE.txt").write_text(licence + "\n", encoding="utf-8")
     (out / "SOURCE.json").write_text(
-        json.dumps({"dataset": "jurifindit/JuriFindIT", "licence": LICENCE,
-                    "base": BASE, "sha256": digests}, indent=2) + "\n",
-        encoding="utf-8")
-    print(f"\nLicence is {LICENCE}.\nInvariant 9: record an acknowledgement "
+        json.dumps({"suite": suite, "dataset": spec["repo"], "licence": licence,
+                    "about": spec["about"], "base": base, "sha256": digests},
+                   indent=2) + "\n", encoding="utf-8")
+    print(f"\nLicence is {licence}.\nInvariant 9: record an acknowledgement "
           f"against these digests before the data is used.")
     return 0
 
 
 def load(out: Path, max_chars: int) -> tuple[Corpus, Queries]:
+    if SUITES[suite_of(out)]["layout"] == "beir":
+        return _load_beir(out, max_chars)
     c = pq.read_table(out / "corpus.parquet").to_pylist()
     q = pq.read_table(out / "questions-validation.parquet").to_pylist()
     corpus = Corpus(ids=[r["id"] for r in c],
@@ -158,6 +236,51 @@ def load(out: Path, max_chars: int) -> tuple[Corpus, Queries]:
         raise SystemExit(f"{len(missing)} relevant ids are not in the corpus — "
                          f"recall@k is undefined against it")
     return corpus, queries
+
+
+def _rows(path: Path) -> list[dict]:
+    if path.suffix == ".parquet":
+        return pq.read_table(path).to_pylist()
+    with path.open(encoding="utf-8") as fh:
+        return [json.loads(line) for line in fh if line.strip()]
+
+
+def _id(row: dict) -> str:
+    # MTEB's newer parquet says `id`, BEIR and the older parquet `_id`
+    return str(row["_id"] if "_id" in row else row["id"])
+
+
+def _load_beir(out: Path, max_chars: int) -> tuple[Corpus, Queries]:
+    """A BEIR-layout set as this module's Corpus and Queries. Its string ids
+    become row positions, which is what `score_run` ranks by."""
+    files = SUITES[suite_of(out)]["files"]
+    at: dict[str, int] = {}
+    texts: list[str] = []
+    for r in _rows(out / _local("corpus", files["corpus"])):
+        title, body = (r.get("title") or "").strip(), r.get("text") or ""
+        at[_id(r)] = len(texts)
+        texts.append((f"{title} {body}" if title else body)[:max_chars])
+    relevant: dict[str, set[int]] = {}
+    missing: set[str] = set()
+    for r in _rows(out / _local("qrels", files["qrels"])):
+        if float(r["score"]) <= 0:
+            continue
+        cid = str(r["corpus-id"])
+        if cid not in at:
+            missing.add(cid)
+            continue
+        relevant.setdefault(str(r["query-id"]), set()).add(at[cid])
+    if missing:
+        raise SystemExit(f"{len(missing)} relevant ids are not in the corpus — "
+                         f"recall@k is undefined against it")
+    rows = {_id(r): r["text"] for r in _rows(out / _local("queries", files["queries"]))}
+    absent = set(relevant) - set(rows)
+    if absent:
+        raise SystemExit(f"{len(absent)} judged queries are not in the queries file")
+    keep = [qid for qid in rows if qid in relevant]
+    return (Corpus(ids=list(range(len(texts))), texts=texts),
+            Queries(texts=[rows[qid] for qid in keep],
+                    relevant=[sorted(relevant[qid]) for qid in keep]))
 
 
 def _recipe(url: str, model: str, dim: int | None, ctx: int, concurrency: int):
@@ -333,7 +456,8 @@ PUBLISHED = {"DAR-legal-it (published)": {
 
 
 def report(out: Path) -> int:
-    rows = dict(PUBLISHED)
+    # the published row is DAR-legal-it's on JuriFindIT, and on no other set
+    rows = dict(PUBLISHED) if suite_of(out) == "jurifindit" else {}
     prefixes: dict[str, str] = {}
     for run, meta in runs_in(out):
         scores = run / f"scores-{meta['slug']}.json"
@@ -342,8 +466,12 @@ def report(out: Path) -> int:
         rows[label_of(meta)] = json.loads(scores.read_text(encoding="utf-8"))
         if meta.get("query_prefix"):
             prefixes[meta["slug"]] = meta["query_prefix"]
+    if not rows:
+        print(f"{out}: no scored run yet (`embed`, then `score`)")
+        return 0
+    # nDCG@10 and MRR@10: what MTEB, MLEB and the legal papers report
     shown = ["recall@3", "recall@5", "recall@10", "recall@100",
-             "ndcg@5", "ndcg@100", "mrr@5", "mrr@100", "map@100"]
+             "ndcg@5", "ndcg@10", "ndcg@100", "mrr@5", "mrr@10", "mrr@100", "map@100"]
     width = max(len(name) for name in rows)
     print("| " + "model".ljust(width) + " | "
           + " | ".join(m.rjust(10) for m in shown) + " |")
@@ -355,10 +483,11 @@ def report(out: Path) -> int:
         print("| " + name.ljust(width) + " | " + " | ".join(cells) + " |")
     for slug, text in sorted(prefixes.items()):
         print(f"\n[{slug}] query prefix: {text!r}")
-    print("\nDAR-legal-it's row is its PUBLISHED table, not a run of this tool: "
-          "its truncation and corpus handling are unrecorded. The other rows "
-          "are comparable to each other exactly. A row with no [slug] embedded "
-          "queries bare, which is what this node serves today.")
+    if suite_of(out) == "jurifindit":
+        print("\nDAR-legal-it's row is its PUBLISHED table, not a run of this tool: "
+              "its truncation and corpus handling are unrecorded.")
+    print("\nThe rows are comparable to each other exactly. A row with no [slug] "
+          "embedded queries bare, which is what this node serves today.")
     return 0
 
 
@@ -370,6 +499,9 @@ def main(argv=None) -> int:
     for cmd in ("fetch", "embed", "score", "report"):
         p = sub.add_parser(cmd)
         p.add_argument("--out", type=Path, required=True)
+        if cmd == "fetch":
+            p.add_argument("--suite", default="jurifindit", choices=sorted(SUITES),
+                           help="the set; one directory holds one")
         if cmd in ("embed", "score"):
             p.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
         if cmd == "embed":
@@ -391,7 +523,7 @@ def main(argv=None) -> int:
                                 "every metric")
     a = ap.parse_args(argv)
     if a.cmd == "fetch":
-        return fetch(a.out)
+        return fetch(a.out, a.suite)
     if a.cmd == "embed":
         return embed(a.out, a.name, a.url, a.model, a.dim, a.ctx,
                      a.concurrency, a.max_chars, a.query_prefix, a.limit)
