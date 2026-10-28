@@ -1150,6 +1150,27 @@ reclaimer's 4 fires.
 - the on-demand corpus work's documents/hour while the campaign runs: what
   corpus pays, since its requests now wait whenever a query step is live.
 
+**AFTER (München, the night of 2026-10-27/28, 22:30–04:14; pass 3,
+`/root/heading-full-results-3.jsonl`).** NOT the same scenario. The GPU was
+at 230 W (the operator's order of 21:31), not 85 W. Gutenberg embedded
+"all" at concurrency 2, not on demand. Normattiva embedded (0.90 chunks/s at
+23:35), and wikidata's parse and the wikipedia-v8 records build shared the
+CPU.
+- /v1/rerank: 6,623 × 200, **14 × 500 (0.21 %)**, against 2.2 % (LocalAI
+  log, 21:30Z–03:15Z).
+- Queries losing their rerank on the first attempt: **9 of 496 at arm 0
+  (1.8 %)**, against 95 (19 %). Counting any arm, 13 (2.6 %) against 117
+  (23.6 %). All 13 are the harness's 14.4 s timeout, not a 500. After the
+  retry pass, 1 is left (WQ276015/zh/284).
+- Search time, arm 0, whole search: median **9.9 s**, p90 12.8 s, against
+  6.9 s and 13.5 s. Rerank ms per call: not logged by the harness or by
+  LocalAI's request line.
+- Live t_rerank: none, because nobody searched that night.
+- What corpus pays: gutenberg embedded 131 documents (0.56 chunks/s,
+  **22.8 docs/h**) during the pass, and 139 (2.43 chunks/s, **79.4
+  docs/h**) in the 1 h 45 min after it, with the same profile and level.
+  While a campaign runs, corpus keeps about 30 % of its rate.
+
 **Claim per step, not per query (operator, 2026-10-25: "subsequent steps
 first does not mean keep the gpu unloaded for a long time").** Measured
 the same morning, the deployed path with every HTTP call timed, 3 gutenberg

@@ -18,6 +18,27 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 07:45 (München).** The exclusive window for MADLAD on llama.cpp
+(operator, via the architecture session) ran 06:46–07:20. The node is
+paused only while gates run, and is running again since 07:20. The records
+build restarted with 12 parse processes; no cron starts it, so a stop needs
+a manual start.
+- **P4 (waves) FAILS on the card.** One slot is right. A slot decoding
+  beside another gives corrupted, deterministic text: two identical requests
+  at once already differ from alone. T4 passes (379/379 = P3's bytes, 0.43 s
+  per translation). T3 "twice" passes (626/626) but in-wave == alone 0/626.
+  The strict SYCL env (FUSION/GRAPH/OPT=0) changes nothing; on CPU the same
+  backend is right. So it is a SYCL fault at small n_tokens, not P4's
+  logic. The architecture session has it. Nothing live changed; the test
+  backend `louise-sycl-f16-llama-cpp-t5` and the models
+  `louise-translate-madlad-gguf` and `madlad-waves-cpu` stay installed.
+- **P4 rebased (1062ba80).** The build failed first: P4 was written without
+  LocalAI's own llama.cpp patches 0001/0002. Series digest f8b4acdcdcb8.
+- **Rerank AFTER, complete (pass 3, 22:30–04:14):** 0.21 % of calls refused
+  against 2.2 %, and 1.8 % of first searches lost their rerank against 19 %.
+  Numbers and the scenario are in scheduling-log.md, "query processing
+  highest", AFTER.
+
 **2026-10-28 07:00 (architecture).** MADLAD on llama.cpp, the night's
 work (operator, 2026-10-27 21:40: review the llama.cpp improvements, implement
 what fits without breaking the interfaces, exclusive node use tonight).
@@ -171,6 +192,7 @@ it left open is below.
     - The interface-conformant per-sequence memory, staged with gates: [llama-cpp-encoder-decoder.md](llama-cpp-encoder-decoder.md) §9.
     - The gates before torch is replaced: translator-choice.md, "Waves", "Gates".
   - **Left in place for that session:** the test artefacts, listed in translator-choice.md, "Waves", "Where the work stands".
+  - **2026-10-28: P4 (waves) built and gated on the card, FAILS** (the top of this file). In-wave output is corrupted on SYCL and correct on CPU. The switch is on hold.
 
 - **arXiv — PARKED (operator, 2026-10-22).** A blueprint only: docs/notes/arxiv-plugin.md (bulk forms, licences, pre-embeddings) and docs/notes/arxiv-collection.md (the abstracts collection, every version linked, only the latest embedded; the encoder on hold with a 20,000-abstract / 500-question measurement kept). Nothing built, nothing downloaded; no session works on it until the operator resumes it.
 
