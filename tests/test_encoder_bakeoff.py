@@ -524,3 +524,53 @@ def test_the_report_shows_bm25_the_encoder_and_the_two_fused(tmp_path, capsys) -
     report(out)
     shown = capsys.readouterr().out
     assert "BM25 (Louise)" in shown and "m + BM25 (RRF)" in shown and "0.7000" in shown
+
+
+# ---- sets made BEIR at fetch (EUR-Lex-Sum, LEMUR) ------------------------
+
+def _serve(monkeypatch, files: dict[str, list[dict]]):
+    """`_download` answered from memory: the URL's tail names the rows."""
+    from tools import encoder_bakeoff as b
+
+    def download(url, target):
+        rows = next(v for k, v in files.items() if url.endswith(k))
+        target.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    monkeypatch.setattr(b, "_download", download)
+
+
+def test_eurlex_sum_queries_test_summaries_against_every_splits_acts(tmp_path, monkeypatch) -> None:
+    from tools import encoder_bakeoff as b
+    _serve(monkeypatch, {
+        "data/german/train.json": [{"celex_id": "32001L0001", "reference": "Richtlinie eins", "summary": "s1"}],
+        "data/german/validation.json": [{"celex_id": "32002R0002", "reference": "Verordnung zwei", "summary": "s2"}],
+        "data/german/test.json": [{"celex_id": "32003L0003", "reference": "Richtlinie drei", "summary": "Worum geht es? Drei."},
+                                  {"celex_id": "32004L0004", "reference": "Richtlinie vier", "summary": ""}]})
+    out = tmp_path / "eurlex-sum-de"
+    assert b.fetch(out, "eurlex-sum-de") == 0
+    corpus, queries = b.load(out, 1000)
+    assert corpus.texts == ["Richtlinie eins", "Verordnung zwei", "Richtlinie drei", "Richtlinie vier"]
+    assert queries.texts == ["Worum geht es? Drei."], "a test act with no summary asks nothing"
+    assert queries.relevant == [[2]]
+    source = json.loads((out / "SOURCE.json").read_text())
+    assert source["suite"] == "eurlex-sum-de" and "NC-SA" in source["licence"]
+    assert {"raw/test.json", "corpus.jsonl", "qrels.jsonl"} <= set(source["sha256"])
+
+
+def test_lemur_takes_each_acts_first_row_and_its_metadata(tmp_path, monkeypatch, capsys) -> None:
+    from tools import encoder_bakeoff as b
+    _serve(monkeypatch, {"languages/it/test.jsonl": [
+        {"law_id": "32007D0364", "metadata": "DECISIONE DELLA COMMISSIONE del 23 maggio 2007", "text": "Il Consiglio..."},
+        {"law_id": "32007D0364", "metadata": "DECISIONE DELLA COMMISSIONE del 23 maggio 2007", "text": "pagina due"},
+        {"law_id": "31991L0271", "metadata": "DIRETTIVA DEL CONSIGLIO del 21 maggio 1991", "text": "acque reflue"}]})
+    out = tmp_path / "lemur-it"
+    b.fetch(out, "lemur-it")
+    corpus, queries = b.load(out, 1000)
+    assert corpus.texts == ["Il Consiglio...", "acque reflue"]
+    assert queries.texts[1] == "DIRETTIVA DEL CONSIGLIO del 21 maggio 1991" and queries.relevant == [[0], [1]]
+    assert "rows per act up to 2" in capsys.readouterr().out
+
+
+def test_every_eu_language_has_its_suites() -> None:
+    from tools.encoder_bakeoff import SUITES
+    for code in ("en", "fr", "de", "it", "pl", "mt"):
+        assert f"eurlex-sum-{code}" in SUITES and f"lemur-{code}" in SUITES

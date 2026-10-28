@@ -143,6 +143,88 @@ SUITES: dict[str, dict] = {
                       "about": "en; GDPR decisions (MLEB); facts to holdings"},
 }
 
+# SETS PUBLISHED IN ANOTHER SHAPE, MADE BEIR AT FETCH by their papers' own
+# method, one suite per language: the raw files land in raw/, the adapter
+# writes corpus/queries/qrels.jsonl beside them, and `load` reads those like
+# any BEIR set. Both cover every EU language — the compromise encoder's
+# evidence for the collections beyond the four (legal-embedders-fr-de-eu.md).
+_LOCAL = {"corpus": "corpus.jsonl", "queries": "queries.jsonl", "qrels": "qrels.jsonl"}
+#: EUR-Lex-Sum (Aumiller et al., EMNLP 2022): the EU's own summaries of its
+#: acts; a test summary is the query and its act the gold, among every
+#: split's acts — summary-to-act retrieval, as MLEB uses its Irish and UK
+#: summaries. Its card says CC BY 4.0 and its loader CC BY-NC-SA 4.0: the
+#: stricter is recorded, so it passes the gate as a gated set.
+_EURLEX_SUM = {"bg": "bulgarian", "cs": "czech", "da": "danish", "de": "german",
+               "el": "greek", "en": "english", "es": "spanish", "et": "estonian",
+               "fi": "finnish", "fr": "french", "ga": "irish", "hr": "croatian",
+               "hu": "hungarian", "it": "italian", "lt": "lithuanian", "lv": "latvian",
+               "mt": "maltese", "nl": "dutch", "pl": "polish", "pt": "portuguese",
+               "ro": "romanian", "sk": "slovak", "sl": "slovenian", "sv": "swedish"}
+for _code, _name in _EURLEX_SUM.items():
+    SUITES[f"eurlex-sum-{_code}"] = {
+        "repo": "dennlinger/eur-lex-sum", "layout": "beir", "adapter": "eurlex_sum",
+        "remote": {f"{split}.json": f"data/{_name}/{split}.json"
+                   for split in ("train", "validation", "test")},
+        "files": _LOCAL,
+        "licence": "CC-BY-NC-SA-4.0 (its loader; the card says CC BY 4.0 — the stricter is taken)",
+        "about": f"{_code}; EU acts; the EU's own summaries as queries (test split)"}
+#: LEMUR (Baba Ahmadi et al., EACL 2026 SRW): EU environmental acts; the
+#: act's metadata header is the query and its text the gold, over the test
+#: split. A law's first row is taken (the card describes rows as pages and
+#: as conversions; `fetch` prints how many rows a law has).
+_LEMUR = ("bg", "cs", "de", "el", "en", "es", "et", "fi", "fr", "ga", "hr", "hu", "it",
+          "lt", "lv", "mt", "nl", "pl", "pt", "ro", "sk", "sl", "sv")
+for _code in _LEMUR:
+    SUITES[f"lemur-{_code}"] = {
+        "repo": "G4KMU/LEMUR", "layout": "beir", "adapter": "lemur",
+        "remote": {"test.jsonl": f"languages/{_code}/test.jsonl"}, "files": _LOCAL,
+        "licence": "Apache-2.0",
+        "about": f"{_code}; EU environmental acts; the act's metadata as the query (test split)"}
+
+
+def _write_beir(out: Path, docs: dict[str, str], queries: dict[str, str]) -> None:
+    """`docs` id -> text, `queries` the gold document's id -> query text, in
+    the BEIR layout `load` reads: one relevant document per query."""
+    def lines(path: Path, rows) -> None:
+        path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
+                        encoding="utf-8")
+    lines(out / _LOCAL["corpus"], ({"_id": i, "title": "", "text": t} for i, t in docs.items()))
+    lines(out / _LOCAL["queries"], ({"_id": f"q:{i}", "text": t} for i, t in queries.items()))
+    lines(out / _LOCAL["qrels"], ({"query-id": f"q:{i}", "corpus-id": i, "score": 1}
+                                   for i in queries))
+
+
+def _adapt_eurlex_sum(raw: Path, out: Path) -> str:
+    docs: dict[str, str] = {}
+    queries: dict[str, str] = {}
+    for split in ("train", "validation", "test"):
+        for row in _rows(raw / f"{split}.json"):
+            docs.setdefault(row["celex_id"], row["reference"] or "")
+            if split == "test" and (row.get("summary") or "").strip():
+                queries[row["celex_id"]] = row["summary"]
+    _write_beir(out, docs, queries)
+    return f"{len(docs)} acts, {len(queries)} test summaries"
+
+
+def _adapt_lemur(raw: Path, out: Path) -> str:
+    docs: dict[str, str] = {}
+    queries: dict[str, str] = {}
+    rows_of: dict[str, int] = {}
+    for row in _rows(raw / "test.jsonl"):
+        law = row["law_id"]
+        rows_of[law] = rows_of.get(law, 0) + 1
+        if law in docs:
+            continue
+        docs[law] = row.get("text") or ""
+        if (row.get("metadata") or "").strip():
+            queries[law] = row["metadata"]
+    _write_beir(out, docs, queries)
+    return (f"{len(docs)} acts, {len(queries)} metadata queries; "
+            f"rows per act up to {max(rows_of.values(), default=0)}")
+
+
+_ADAPTERS = {"eurlex_sum": _adapt_eurlex_sum, "lemur": _adapt_lemur}
+
 # Every model in this bake-off declares ctx 8192, and llama.cpp REFUSES an
 # input past its context rather than truncating it, so the cut is ours to
 # make and must be identical for every model or the comparison is void.
@@ -211,9 +293,14 @@ def fetch(out: Path, suite: str = "jurifindit") -> int:
                          f"(the runs in it are scored against it)")
     spec = SUITES[suite]
     out.mkdir(parents=True, exist_ok=True)
+    adapter = spec.get("adapter")
     if spec["layout"] == "jurifindit":
         files = {name: f"{BASE}/{suffix}" for name, suffix in FILES.items()}
         base = BASE
+    elif adapter:
+        base = f"https://huggingface.co/datasets/{spec['repo']}/resolve/main"
+        (out / "raw").mkdir(exist_ok=True)
+        files = {f"raw/{name}": f"{base}/{remote}" for name, remote in spec["remote"].items()}
     else:
         base = f"https://huggingface.co/datasets/{spec['repo']}/resolve/main"
         files = {_local(kind, remote): f"{base}/{remote}"
@@ -225,6 +312,11 @@ def fetch(out: Path, suite: str = "jurifindit") -> int:
             _download(url, target)
         digests[name] = _sha256(target)
         print(f"{name}  {target.stat().st_size:,} bytes  sha256:{digests[name]}")
+    if adapter:
+        said = _ADAPTERS[adapter](out / "raw", out)
+        for name in _LOCAL.values():
+            digests[name] = _sha256(out / name)
+        print(f"made BEIR by its paper's method: {said}")
     licence = spec["licence"]
     (out / "LICENCE.txt").write_text(licence + "\n", encoding="utf-8")
     (out / "SOURCE.json").write_text(

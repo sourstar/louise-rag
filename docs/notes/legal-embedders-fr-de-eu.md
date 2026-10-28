@@ -196,7 +196,7 @@ MLM-only legal models are the worst zero-shot retrievers).
 |---|---|---|---|---|---|---|
 | JuriFindIT | Dalla Noce et al., EACL 2026 | it | 895 | expert | article (IT and EU acts) | CC BY-NC-SA 4.0, acknowledged on the node |
 | EU2UK / UK2EU | Chalkidis et al., EACL 2021 (2101.10726) | en | 300 test each | found: Cellar transposition links, curated by a co-author | document ↔ document | not stated [U] |
-| EUR-Lex-Sum | Aumiller et al., EMNLP 2022 (2210.13448) | **24** | up to 1,505 per language; 188 aligned in all | summaries written by professionals for the EU | the act (summary → act retrieval, as MLEB does with its Irish and UK sets) | CC BY 4.0 [V] |
+| EUR-Lex-Sum | Aumiller et al., EMNLP 2022 (2210.13448) | **24** | up to 1,505 per language; 188 aligned in all | summaries written by professionals for the EU | the act (summary → act retrieval, as MLEB does with its Irish and UK sets) | card CC BY 4.0, **its loader CC BY-NC-SA 4.0** [V]: the stricter is taken |
 | LEMUR | Baba Ahmadi et al., 2026 (2602.09570) | **25** | 20% test split of 1,174 environmental acts | found: the act's metadata header | the act body | Apache-2.0 [V] |
 | GDPR Holdings (MLEB) | 2510.19365 | en | 500 | GDPRHub | holdings of decisions (not acts) | CC BY-NC-SA 4.0 [V] |
 
@@ -290,13 +290,21 @@ vector leg by RRF, then reranks; it never answers with vectors alone.
 the word leg — with ties broken by cost (size, dimensions). The reranker
 after the fusion is not measured yet.
 
+**Built too (2026-10-28): EUR-Lex-Sum and LEMUR, made BEIR at fetch** by
+their papers' own method, one suite per language: `eurlex-sum-<code>` (24
+languages) and `lemur-<code>` (23):
+- EUR-Lex-Sum: a test summary is the query, and its act is the gold among
+  every split's acts.
+- LEMUR: the act's metadata header is the query, and its text the gold,
+  over the test split.
+
+Raw files and adapted files are hashed into `SOURCE.json`.
+
 Not built yet:
-- GerLayQA, EU2UK, EUR-Lex-Sum and LEMUR are not published in the BEIR
-  layout, so each needs a small adapter to it. For EUR-Lex-Sum and LEMUR
-  the query is the summary or the metadata and the gold is the act, by
-  their stated method.
-- GerLayQA's corpus is our own NeuRIS § records, so it waits for the
+- GerLayQA: its corpus is our own NeuRIS § records, so it waits for the
   plugin.
+- EU2UK: hosted on archive.org with no licence stated; it waits until one
+  is found.
 
 Per collection, the candidates and the sets:
 
