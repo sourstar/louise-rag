@@ -107,6 +107,8 @@ grep -q "os.replace(tmp, out)" "$ROOT/src.new/app/hold/snapshot.py"             
 grep -q '@ask_router.post("/ask/relay")' "$ROOT/src.new/app/web.py"                       # 32e1a01: the Ask relay
 grep -q "^def release_idle" "$ROOT/src.new/app/parallel.py"                               # 32e1a01: an idle parse pool released
 grep -q 'run `hold records validation`' "$ROOT/src.new/app/hold/snapshot.py"              # 5d01178: the members checked before the read
+grep -q "^class OriginOutsideBase" "$ROOT/src.new/app/plugin_io.py"                       # 3e9b198: an origin reaches the base through a link, or the build stops
+test -s "$ROOT/src.new/app/hold/relocate.py"                                              # 3e9b198: `hold records relocate`
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
 ! grep -q 'cache_type_' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # d372ba5: the F16 cache (P5); b68820c had f32
 test ! -e "$ROOT/src.new/deploy/reference"
