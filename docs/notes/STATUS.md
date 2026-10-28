@@ -55,7 +55,10 @@ hold; nothing live changed**; the torch translator serves. Online check of
 the B70's known limits (operator's ask): none matches; the list is in
 approved-encoders.md "Known limits of the Arc Pro B70".
 R0 (09:05): CORRECT with `cache_type_k/v: f32` — the fault is in the F16-cache
-path and the f32 cache is the workaround; the op is being named (diag build).
+path and the f32 cache is the workaround. NAMED (09:40, diag build): the KQ
+product over the F16 K cache at N ≥ 2 (`ggml_sycl_mul_mat_batched_sycl`);
+upstream-bugs.md S1 drafted for the operator; the gates re-run on the f32
+cache (both K and V), then the switch.
 
 **2026-10-27 10:25 (München).** Image a773d05 is deployed: profiles live,
 period crons 6/18–21 disabled (not deleted).

@@ -753,8 +753,17 @@ in the YAML (no build), which takes the cache attention off the F16
 kernels. **R0 (09:05): CORRECT with the f32 cache**, so the fault is in the
 F16-cache path (the half `gemm_batch` of the attention, its conversions, or
 the cache write), and the f32 cache is the workaround (+9 % time, 2× cache
-memory); the op is being named with the diag build (R1, then R1a/b or the
-K/V split). **Until then the switch does not happen;
+memory). **NAMED (09:40, the diag build 03c771b88d03, München):** declining
+the KQ product over the F16 K cache alone (`MUL_MAT:f16:nc:nN:p`) restores
+the bytes; declining the KQV product alone does not; a K cache in f32 alone is
+right, a V cache in f32 alone is not. So: `ggml_sycl_mul_mat_batched_sycl`
+for the permuted F16 K view and the permuted queries at N ≥ 2 (the half
+conversion of q, then oneMKL `gemm_batch` at M = the key count), on this
+card. Upstream report drafted: upstream-bugs.md S1; the shape reproducer
+`diag/test-backend-ops-kq-shapes.patch`. **Shipped with the f32 cache (both
+K and V: the V-side call is the same library function at the mirror shape,
+proven only at N = 2); the gates re-run on it. Until they pass the switch
+does not happen;
 nothing live has changed** (the torch translator serves; the test
 backend and model are unloaded). In-wave vs alone (bar 90 %) is now a gate
 in tools/measure/t5waves.py, not a report (fb014fe).
