@@ -141,9 +141,8 @@ JuriFindIT already is. The case-law sets check generality.
 - `legal-networks/gesetze-im-internet`: GII's versioned XML, daily since
   May 2020 (BSD-3) [V]. **This is German law's missing history since
   2019** — the past versions §3.1 of the design says no origin publishes.
-  It is a third-party archive of GII, not the origin, so it is evidence,
-  not a source to embed: its use is a decision (invariant 11's
-  re-fetchable origin).
+  It is a third-party archive of GII, not the origin. **Not used**
+  (operator, 2026-10-28: "no").
 - Coupette et al., "Measuring Law Over Time" (2021): statute
   cross-reference graphs 1998–2019 from juris; the code is BSD-2, the
   data licence is unverified [U].
@@ -245,9 +244,8 @@ Others:
 - **Germany:** no vectors to carry. BM25 must be a baseline: it beats
   every dense model on GerDaLIRSmall.
 - **Germany, history:** `legal-networks/gesetze-im-internet` holds GII's
-  daily versions since 2020. That is the evidence for D1's "history before
-  our first snapshot absent", and it is open to an operator decision, not
-  taken.
+  daily versions since 2020; not used (operator, "no"). The history before
+  our first snapshot comes from NeuRIS as it publishes it.
 - **EU:** the graph comes from the CDM per act; EvoEU is a historical
   cross-check.
 

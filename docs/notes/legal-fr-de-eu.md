@@ -549,7 +549,10 @@ parameter per language, D3 one encoder per language if it fits, find
 proper embedders like DAR legal it, D4 do not reinvent the wheel, find
 papers, we already have something"):
 
-- **D1 → A.** Germany from the NeuRIS API now.
+- **D1 → A.** Germany from the NeuRIS API now. The third-party daily
+  archive of gesetze-im-internet (since 2020) is NOT used for the history
+  before our first snapshot (operator, the same evening: "no"); past
+  versions come from NeuRIS as it publishes them.
 - **D2 → grown per language** — *amended the same evening*: "European
   laws, one collection per language, prepare the 4 main languages …
   Better to not mix up too many things in one collection". The EU is
