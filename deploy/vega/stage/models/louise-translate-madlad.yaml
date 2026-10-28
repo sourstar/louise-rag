@@ -9,11 +9,17 @@
 # one ubatch (1024) of encoder tokens — seven 96-token segments fit; the KV
 # pool (context_size) holds 7 slots x up to 512 decoder positions.
 # The torch model it replaced is kept as louise-translate-madlad-torch (backout).
+# The KV cache is f32, not the default f16: on the B70 the SYCL F16-cache path
+# decodes WRONG text whenever two or more slots decode in one batch (alone and
+# on the CPU right; localai-bugs.md P4 "Measured on the card", 2026-10-28); the
+# f32 cache is correct at +9 % time and ~1.9 GB for 7 slots x 512 positions.
 # JSON, which is YAML.
 {
   "name": "louise-translate-madlad",
   "backend": "vega-llama-cpp-t5",
   "context_size": 4096,
+  "cache_type_k": "f32",
+  "cache_type_v": "f32",
   "env": {
     "GGML_SYCL_ENABLE_DNN": "0",
     "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
