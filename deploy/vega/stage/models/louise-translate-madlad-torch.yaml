@@ -1,0 +1,33 @@
+# louise-translate-madlad-torch — the torch translator louise-translate-madlad
+# WAS until 2026-10-28 (MADLAD on llama.cpp, waves: localai-bugs.md P3, P4),
+# kept under this name for backout and for comparisons. MADLAD-400-3B-MT on
+# torch XPU, `Predict`: the batch as one JSON prompt (app/translate.py, the
+# batch shape), so NO template and none of echo, cutstrings, extract_regex,
+# trimspace or trimsuffix. Backend louise-python (its own torch 2.14.0+xpu;
+# built by deploy/vega/stage/build_louise_backend.sh); the weights the same
+# host files, mounted read-only. To back out: swap the two names and reload.
+# JSON, which is YAML.
+{
+  "name": "louise-translate-madlad-torch",
+  "backend": "vega-louise-python-20261021a",
+  "context_size": 512,
+  "threads": 6,
+  "gpu_layers": 0,
+  "parameters": {
+    "model": "weights/madlad/madlad400-3b-mt-bf16",
+    "batch": 32,
+    "seed": 0
+  },
+  "options": [
+    "task:madlad",
+    "device:xpu",
+    "dtype:bfloat16",
+    "max_seg_tokens:96",
+    "beams:1",
+    "max_items:512"
+  ],
+  "env": {
+    "LOUISE_TORCH_DETERMINISTIC": "1",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+  }
+}
