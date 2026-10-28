@@ -18,6 +18,27 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 18:45 (architecture). WIKIPEDIA-V8'S SNAPSHOT: the operator's
+go ("Do it now and do it yourself"); this session drives, München runs.**
+Two guards first. (a) `/root/hold-wikipedia-build` is set ("built
+2026-10-28 13:26Z … Do not rebuild"): after a snapshot the next `records
+build` plans afresh (`mark_frozen`), so a start would rebuild 75 M records;
+`wikipedia-build.sh start` now logs "held". München found NO build cron
+armed (the 10-24 windows' jobs are gone; today's runs were started by hand).
+(b) Memory: STOPPED before anything was created — the node has 61 GB, 18 GB
+available at 17:26 CET (the worker 15.6 GB, the ARC 15.7 GB, LocalAI 3.3,
+the web 2.7), and `snapshot create` held a uid → content_hash map of every
+record: measured here at 0.29 GB per million records, ~22 GB for 74.8 M.
+FIXED: a first snapshot's delta (every record added) is built from the uids
+alone, the same bytes (`_first_delta`; test: the delta equals the map's,
+the content hashes never read) — 0.15 GB per million, ~11 GB. OPEN, to fix
+before wikipedia-v8's next snapshot: a later snapshot holds two such maps
+(~43 GB at 74.8 M); the fix written beside `_previous` (Arrow tables and
+Arrow's hash join; parts both snapshots list by the same root skipped).
+Next: deploy, then `snapshot create` in its own container capped at 16 GB
+(never inside the worker), then the worker's scheduled check (within 10 min,
+3 h bound), `hold collection show`.
+
 **2026-10-28 18:00 (München, relayed). EVERY CHECK CLOSES.** pubmed's LAST
 facets pass ended 15:23:19Z: `[pubmed info:ask] facets counted for snapshot
 2026-08: creators, date, lang, subjects (2352s)` — 39.2 min on the busy
