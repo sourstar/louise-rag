@@ -11,6 +11,9 @@
 # `vega-llama-cpp-t5` and the model swap (louise-translate-madlad = the GGUF with an f32 KV
 # cache, the torch one kept as louise-translate-madlad-torch) go in between, then the full run
 # promotes and restarts, so the old client meets the new model for minutes, not longer.
+# Second run, 2c7ab36 (24d41b9): the t5 shape told by the vocabulary (the real /v1/tokenize
+# makes "<2en>" two pieces, so 931887e's client took the batch shape: a 92 s warm), and every
+# batch-shape request bounded by max_tokens.
 # Before it, deploy-louise-profiles.sh — main (2026-10-27): node profiles (platform.toml [schedule]/[profiles]/
 # [gpu.levels]; app/node_profile.py, app/cpu_limit.py, app/gpu_level.py — power1_cap where the
 # card has no power1_max), rename carries the fast drive caches (b50d844), a plain create
@@ -92,6 +95,7 @@ grep -q "^def _rerank_call" "$ROOT/src.new/app/retrieval.py"                    
 grep -q "^def stand_aside" "$ROOT/src.new/app/dispatch.py"                           # 50030dc (7cc6975)
 grep -q "mkstemp" "$ROOT/src.new/app/share/possession.py"                              # a0c43b6 (f386934)
 grep -q '^SHAPE_T5 = "t5"' "$ROOT/src.new/app/translate.py"                              # 3c376ca
+grep -q "^def _batch_bound" "$ROOT/src.new/app/translate.py"                             # 24d41b9: the shape by vocabulary, max_tokens
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
 grep -q '"cache_type_k": "f32"' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # b68820c
 test ! -e "$ROOT/src.new/deploy/reference"
