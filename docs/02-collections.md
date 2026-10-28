@@ -462,7 +462,9 @@ of the records, and pruning never breaks that reproduction. A
 structurally independent part of a collection — a language of
 Wikipedia, a family of Wikidata, Wikidata's lexemes — is a slice a peer
 may hold or not and embed or not; it is never a separate collection, and
-never left out (operator, 2026-10-24).
+never left out (operator, 2026-10-24). One exception, EU law: one
+collection per language (*amended 2026-10-28*, operator: "Better to not
+mix up too many things in one collection").
 A record without an `origin_hash` is refused at build, because a SHARD
 that verifies internally while being permanently unverifiable against
 its source is the worst thing a collection can ship.

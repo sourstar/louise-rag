@@ -237,7 +237,11 @@ are the ones that have drifted; prefer to add a test when you touch them.
     some collections." A structurally independent part — a language of
     Wikipedia, a family of Wikidata, Wikidata's lexemes — is a SLICE a node
     may hold or not and embed or not; it is never a separate collection and
-    never left out.
+    never left out. ONE EXCEPTION, by operator decision (2026-10-28:
+    "European laws, one collection per language … Better to not mix up
+    too many things in one collection"): EU law is ONE COLLECTION PER
+    LANGUAGE. A language not yet created is a collection not yet made,
+    never a pruning.
     Concretely: every record carries `origin_hash` — the hash of the origin
     unit it was parsed from — and `origin` locates that unit, while the
     Codex names the acquisition spec and parser version that produced it
