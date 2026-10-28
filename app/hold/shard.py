@@ -429,7 +429,8 @@ def origin_keeps_history(shard_dir: Path) -> bool:
     return got
 
 
-def keep_superseded(target: Path, shard_dir: Path | None, new_root: str) -> Path | None:
+def keep_superseded(target: Path, shard_dir: Path | None, new_root: str, *,
+                    until_next_snapshot: bool = False) -> Path | None:
     """Before a new version (`new_root`) replaces `target`: when the newest
     held snapshot listing that path names other bytes, and the file there is
     that version (its size), rename it to its superseded name and keep it
@@ -445,10 +446,17 @@ def keep_superseded(target: Path, shard_dir: Path | None, new_root: str) -> Path
 
     Until 2026-10-12 nothing did this: the name existed
     (`shard_path(..., superseded_by=)`) and every promotion overwrote, on
-    the producer and on every peer that fetched."""
+    the producer and on every peer that fetched.
+
+    `until_next_snapshot` — the PRODUCER's build: where the origin replaces
+    in place the version is kept too, until the next snapshot is frozen
+    (`snapshot.drop_replaced` removes it then). That snapshot's delta is
+    computed against it, and until then it is still the newest snapshot's
+    part. Overwritten at promotion, the delta read the NEW bytes at the old
+    path and every later snapshot said nothing changed (found 2026-10-28)."""
     if shard_dir is None or not target.is_file():
         return None
-    if not origin_keeps_history(Path(shard_dir)):
+    if not until_next_snapshot and not origin_keeps_history(Path(shard_dir)):
         return None                       # 02 §2.3: the origin replaces in place
     listed = last_listing(shard_dir, target.relative_to(shard_dir).as_posix(), other_than=new_root)
     if listed is None:
@@ -464,7 +472,7 @@ def keep_superseded(target: Path, shard_dir: Path | None, new_root: str) -> Path
 
 
 def promote(src: Path, target: Path, *, shard_dir: Path | None = None,
-            new_root: str | None = None) -> None:
+            new_root: str | None = None, until_next_snapshot: bool = False) -> None:
     """Move one finished file into the SHARD; `target` only ever appears
     whole. With `shard_dir`, a different version already at `target` that a
     held snapshot lists is kept under its superseded name first
@@ -481,7 +489,8 @@ def promote(src: Path, target: Path, *, shard_dir: Path | None = None,
     import shutil
     if shard_dir is not None and Path(target).is_file():
         keep_superseded(Path(target), Path(shard_dir),
-                        new_root if new_root is not None else pieces_root_of(Path(src)))
+                        new_root if new_root is not None else pieces_root_of(Path(src)),
+                        until_next_snapshot=until_next_snapshot)
     try:
         os.replace(src, target)
         return

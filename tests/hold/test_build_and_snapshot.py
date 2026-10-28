@@ -676,6 +676,10 @@ def test_next_months_build_re_issues_a_changed_part_and_keeps_the_old_one(
             assert not (shard_dir / shard_mod.superseded_name(Path(path), "2026-08")).exists()
     snap2 = sn.create(root, "gutenberg", snapshot_id="2026-09", log=lambda *_: None)
     assert snap2.shards[0].root != first.root and snap2.shards[0].path == first.path
+    # THE DELTA SEES IT (2026-10-28): it read the previous snapshot's parts
+    # after the build had promoted the new versions over them, and said
+    # nothing changed
+    assert snap2.delta.to_dict() == {"added": [], "changed": [uid], "tombstoned": []}
     assert all(s.writer == pack_records.WRITER for s in snap.shards)
     old_writer = {(s.slice, s.n): "pyarrow 0.0.1" for s in snap.shards}
     # the writer of an unchanged part is the one that wrote its bytes, carried

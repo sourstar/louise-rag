@@ -380,9 +380,13 @@ revisions, Normattiva's versions in force), the version it supersedes is
 renamed with the id of the last snapshot that listed it and kept, so an
 old snapshot can still be served and checked. Where the origin replaces
 in place (`"replaces"`: Project Gutenberg), the superseded version can no
-longer be checked against the source and is not kept: the promotion
-overwrites it, and a part no longer held is not served (01, promise 7;
-*amended 2026-10-25*, operator: A).
+longer be checked against the source and is not kept: the producer's build
+keeps it under its superseded name until the newer snapshot is frozen —
+that snapshot's delta is computed against it — and drops it then; a peer's
+promotion overwrites it; a part no longer held is not served (01, promise
+7; *amended 2026-10-25*, operator: A; *amended 2026-10-28*: overwritten at
+the build's promotion, the delta read the new bytes on both sides and said
+nothing changed).
 
 A record is one line: the keys `uid`, `native_id`, `lang`, `title`,
 `creators`, `date`, `subjects`, `keys`, `sections`, `extra`,

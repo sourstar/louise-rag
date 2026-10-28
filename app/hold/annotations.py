@@ -817,7 +817,7 @@ def write_snapshot(shard_tree: Path, staging: Path, codex: Codex,
     from . import shard as shard_mod, snapshot as sn
     shard_tree, staging = Path(shard_tree), Path(staging)
     out = shard_tree / shard_mod.snapshot_path(snapshot_id)
-    previous, _ = sn._previous(shard_tree, snapshot_id)
+    previous = sn._previous(shard_tree, snapshot_id)
     if previous is not None:
         raise AnnotationsError(
             f"this collection already has snapshot {previous.snapshot_id}: a later snapshot "
