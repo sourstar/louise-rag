@@ -459,6 +459,14 @@ PARSE_TIMEOUT_S = float(os.getenv("PARSE_TIMEOUT_S", "120"))
 # Consecutive pool failures after which this process stops using children
 # altogether and computes in-process until the next restart.
 PARSE_MAX_FAILURES = int(os.getenv("PARSE_MAX_FAILURES", "3"))
+# An idle parse pool is RELEASED after this many seconds with no caller
+# inside it (app/parallel.release_idle): its children hold the plugin caches
+# they grew while parsing — measured 10.8 GiB in 12 children, resident 26-42
+# min after the quiet profile stopped parsing and while the node was paused,
+# and they would have stayed until 22:30 (München, 2026-10-28). The next
+# parse starts a fresh pool. 0 keeps the pool for the process's life. loky's
+# reusable executor does the same with its `timeout` (300 s by default).
+PARSE_IDLE_RELEASE_S = float(os.getenv("PARSE_IDLE_RELEASE_S", "600"))
 
 # The local VECTOR INDEX (app/vector_index.py; pack-format.md §5, appendix
 # A). Without one every semantic query is a flat scan of the Lance table —

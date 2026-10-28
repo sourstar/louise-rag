@@ -1274,3 +1274,35 @@ So one long article in the oldest page left 11 children idle.
 On 4 cpus the arms were 544–630 s. Live since 15:20: 572 rec/s and 1,750 chunks/s over the first 5 minutes, against the morning's 223 rec/s and 322 chunks/s on a different stretch. CPU per record is higher at 12 children (SMT siblings, memory bandwidth). The operator asked for throughput.
 
 **Note (review).** A part that answered and waits for its page's turn still counts in `_held` and in the occupancy meter until consumed. That is harmless for the build, which is alone in its container, and `compute_pages` is not used by the worker. Revisit if it ever is.
+
+### 2026-10-28 — an idle parse pool gives its memory back — PREPARED
+
+**BEFORE (München, 17:26–17:42 CET).** The worker at 15.6–15.7 GiB and
+0.65 % CPU: 12 children of the parse pool (11 workers and the resource
+tracker), 10.8 GiB RSS together, ~1.0 GiB each, idle since the quiet profile
+stopped parsing at 17:00 (cpu_cores 0, at the end of its unit) and through a
+node pause at 17:41. They would have stayed until 22:30: the pool lives for
+the process's life (`app/parallel.py` `pool()`, created on first use). The
+node (61 GB, ARC ~16 GB) had 18 GB available, and wikipedia-v8's first
+snapshot could not start; a worker restart in paused mode gave 0.5 GiB.
+
+**SCENARIO.** Node running then paused; wikidata parsing and gutenberg
+embedding before 17:00; quiet profile from 17:00.
+
+**The change.** `parallel.release_idle(PARSE_IDLE_RELEASE_S)` on the beat
+thread, beside the shares line: when nobody has been inside the pool for
+600 s (no batch in `compute`/`compute_pages`, no slot held, no `pool()`
+call), it is stopped (`discard`) and the beat logs `parse pool released: N
+children idle 600 s`. The next parse starts a fresh pool. loky's reusable
+executor does the same with its `timeout` (300 s by default); the pool stays
+the standard library's, with the gh-115634 fix. Nothing in the round loop, a
+stage's selection or the admission changes. Tests: the children end and the
+next pool computes the same chunks; a caller inside or a held slot is never
+released; the beat carries the call.
+
+**To verify AFTER (deploy alone, after wikipedia-v8's check):** the log line
+10 min after the last parse of the quiet profile (17:00) or after a pause;
+`docker stats` for the worker before and after it; no `[parse pool]` failure
+line; the first parse after a release starts its children (a spawn and its
+plugin caches, seconds) and the batch's ms/doc against the same stage's
+before it.

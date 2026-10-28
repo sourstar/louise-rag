@@ -4972,6 +4972,13 @@ def _stats_publisher() -> None:
             # here, so this raised NameError every beat, the except below
             # swallowed it, and the fair-share lines never reached the log
             _log_shares(con, [c.manifest_path for c in collections])
+            # an idle parse pool gives its memory back (app/parallel.py
+            # release_idle; München 2026-10-28: 10.8 GiB held through a pause)
+            released = parallel.release_idle(config.PARSE_IDLE_RELEASE_S)
+            if released:
+                db.log_event(con, "info", "sched",
+                             f"parse pool released: {released} children idle "
+                             f"{config.PARSE_IDLE_RELEASE_S:.0f} s; the next parse starts a fresh pool")
         except Exception:   # noqa: BLE001 — telemetry must never kill the worker
             pass
     for c_con in seed_cons.values():
