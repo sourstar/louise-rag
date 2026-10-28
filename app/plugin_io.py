@@ -73,13 +73,22 @@ def _origin_one(plugin, locator: str, base) -> str:
         return path + (DEFAULT_MEMBER_SEP + member if member else "")
     p = Path(path)
     if base is not None:
-        try:
-            p = p.relative_to(Path(base))
-        except ValueError:
-            # Not under this peer's origin base — a hand-placed file, or a
-            # corpus moved since discovery. Fall back to the name rather
-            # than emitting an absolute path, which §9.5 forbids outright.
-            p = Path(p.name)
+        rel_p = relative_to_base(p, Path(base))
+        if rel_p is None:
+            # NOT UNDER THE ORIGIN BASE, by any path that reaches it. This
+            # used to fall back to the file's bare NAME — "000.parquet#0::15"
+            # — which locates nothing and, where every language of an
+            # archive has its own 000.parquet, cannot even say which file
+            # (wikipedia-v8, 2026-10-28: every record of the archive layer,
+            # its manifest paths carried from the old collection under
+            # /corpora/wikivec; records-vs-origin found none of 52,440).
+            # 09 §9.5: the origin locates the record's own bytes, or the
+            # record is not made.
+            raise OriginOutsideBase(
+                f"{path}: not under the origin base {base}, by its own path, "
+                f"its resolved path or a link the base holds; a record must "
+                f"locate its own origin bytes (09 §9.5, invariant 11)")
+        p = rel_p
     rel = p.as_posix()
     # 06 §6.4: a record whose text a credited archive supplies is located
     # IN that archive — a URL, never a path under this node's copy of it.
@@ -87,6 +96,58 @@ def _origin_one(plugin, locator: str, base) -> str:
     url_of = getattr(plugin, "origin_url_of", None)
     url = url_of(rel) if url_of else None
     return (url or rel) + (DEFAULT_MEMBER_SEP + member if member else "")
+
+
+class OriginOutsideBase(ValueError):
+    """A document's origin bytes are not under the collection's origin base
+    by any path that reaches it: no 09 §9.5 `origin` can be written for it."""
+
+
+#: base -> [(name, resolved target)] of the base's symbolic links, read once
+_base_links: dict[str, list[tuple[str, Path]]] = {}
+
+
+def relative_to_base(p: Path, base: Path) -> Path | None:
+    """`p` relative to the origin base, or None when nothing reaches it.
+
+    In order: `p` as given; both resolved (a base that is itself a link);
+    and through a symbolic link the base holds — the node's
+    `/corpora/wikipedia/data` is a link to `/corpora/wikivec/data`, so an
+    archive file found under the second is `data/<lang>/<file>` under the
+    first. A path already relative is taken as relative to the base."""
+    if not p.is_absolute():
+        return p
+    try:
+        return p.relative_to(base)
+    except ValueError:
+        pass
+    try:
+        rp, rb = p.resolve(), base.resolve()
+    except OSError:
+        return None
+    try:
+        return rp.relative_to(rb)
+    except ValueError:
+        pass
+    key = str(base)
+    if key not in _base_links:
+        links = []
+        try:
+            for child in base.iterdir():
+                if child.is_symlink():
+                    try:
+                        links.append((child.name, child.resolve()))
+                    except OSError:
+                        continue
+        except OSError:
+            pass
+        _base_links[key] = sorted(links)
+    for name, target in _base_links[key]:
+        try:
+            return Path(name) / rp.relative_to(target)
+        except ValueError:
+            continue
+    return None
 
 
 def local_locator(plugin, origin: str, base) -> tuple[Path, str]:

@@ -18,6 +18,40 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 21:30 (architecture). WIKIPEDIA-V8'S ARCHIVE RECORDS LOCATED
+NOTHING; FIXED IN CODE, REPAIRED BY RELOCATION.** The scheduled check
+(18:40–19:09Z, 1,785 s) passed everything it could run — roots, records and
+chunks on 3,741,872 records, calibration 16/16, vectors-sample 8,805 of
+8,805 at median 0.99999 — but `records-vs-origin` re-fetched none of
+52,440 sampled records, and the copy stays in quarantine. München's probe:
+every record of the archive layer (layer 1, the Upstash parquet) carries
+`origin` = `000.parquet#0::15`, a bare file name — ambiguous across the
+archive's ten languages and locating nothing; the dump layer's origins
+(`enwiki/20260801/…multistream.xml.bz2#a::b|…page_props.sql.gz#c::d`)
+resolve. CAUSE: the archive documents' manifest paths sit outside the
+origin base (`/corpora/wikipedia/data` is a link to `/corpora/wikivec/data`),
+and `plugin_io._origin_one` fell back to the file's NAME for any path
+outside the base — 09 §9.5 wants the archive's URL there. The dump half
+was never compared because a missing unit weighs nothing under the 256
+MiB bound and the first dump file drawn (19 GB) ended the selection —
+which 03 §3.2 specifies; once the archive records locate, the bound works
+as written. FIX: `plugin_io.relative_to_base` reaches the base by the
+path, the resolved path, or a link the base holds, and otherwise the
+build STOPS (`OriginOutsideBase`, like a missing `origin_hash`), never
+writes a name. REPAIR, RULE 1: `hold records relocate` recomputes every
+record's `origin` from the manifest with the build's own function and
+rewrites the parts that change with the build's own writer — byte for
+byte what a rebuild writes (test: a built collection, its origins
+corrupted, relocated, equals the build's parts and rows exactly), instead
+of re-parsing 74.8 M records over days. Refused while a snapshot lists the
+parts: the 2026-09 snapshot, never shared (quarantine), is moved aside
+first, then re-created, then checked by hand — by hand because the
+worker's scheduled check keyed on the snapshot ID and would take the
+re-created 2026-09 for the one it checked. Fixed beside it: the record
+keeps the snapshot's HASH, and a different hash under the same id is due
+(a record from before compares by id, as it did, so this once the check
+is run by hand).
+
 **2026-10-28 21:00 (architecture). FRANCE, GERMANY AND THE EU: A DESIGN.**
 The operator asked for "the equivalent of normattiva collection for french,
 german and European laws". The note is

@@ -2434,6 +2434,14 @@ def cmd_records_build(a) -> int:
     return 130 if result.interrupted else 0
 
 
+def cmd_records_relocate(a) -> int:
+    from app.hold import collection as c, relocate as rl
+    name, _codex = c.resolve(a.root, a.collection)
+    _take_write_lock(a.root, name, "hold records relocate")
+    rl.relocate(a.root, a.collection, corpus_dir=a.corpus, workers=a.workers, dry_run=a.dry_run)
+    return 0
+
+
 def cmd_records_validation(a) -> int:
     from app.hold import records as rec
     n = rec.write_validation(a.root, a.collection)
@@ -4604,6 +4612,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = rverbs.add_parser("validation", help="write validation.json from the Codex")
     root_arg(p); p.add_argument("collection")
     p.set_defaults(fn=cmd_records_validation)
+
+    p = rverbs.add_parser("relocate", help="every record's origin written again from the manifest by the "
+                                           "build's own function; the parts that change rewritten by the "
+                                           "build's writer (RULE 1; refused while a snapshot lists them)")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--corpus", required=True, metavar="DIR", help="the origin base the build used")
+    p.add_argument("--workers", type=int, default=None, help="parts in parallel (default: the cpu quota)")
+    p.add_argument("--dry-run", action="store_true", help="count what would change; write nothing")
+    p.set_defaults(fn=cmd_records_relocate)
 
     p = rverbs.add_parser("seal", help="the certifier captures the seals' evidence into seals/<snapshot>.json "
                                        "(03 §3.7; 09 §9.15), each seal validated offline first")
