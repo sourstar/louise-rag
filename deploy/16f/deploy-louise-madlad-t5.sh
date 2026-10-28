@@ -104,6 +104,9 @@ grep -q '^MARKER = "snapshot.json"' "$ROOT/src.new/app/ask/facets.py"           
 grep -q "^def _unglue" "$ROOT/src.new/app/translate.py"                                  # ce64954: a space back between glued sentences
 grep -q "^def _first_delta" "$ROOT/src.new/app/hold/snapshot.py"                         # 06ddecd: a first snapshot's delta from the uids alone (~11 GB)
 grep -q "os.replace(tmp, out)" "$ROOT/src.new/app/hold/snapshot.py"                       # de3ca8f: the snapshot file written whole or not at all
+grep -q '@ask_router.post("/ask/relay")' "$ROOT/src.new/app/web.py"                       # 32e1a01: the Ask relay
+grep -q "^def release_idle" "$ROOT/src.new/app/parallel.py"                               # 32e1a01: an idle parse pool released
+grep -q 'run `hold records validation`' "$ROOT/src.new/app/hold/snapshot.py"              # 5d01178: the members checked before the read
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
 ! grep -q 'cache_type_' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # d372ba5: the F16 cache (P5); b68820c had f32
 test ! -e "$ROOT/src.new/deploy/reference"
