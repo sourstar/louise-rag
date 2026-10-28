@@ -18,6 +18,22 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 20:00 (München, relayed). WIKIPEDIA-V8'S SNAPSHOT, SECOND TRY.**
+The operator chose the leaner code and a running node: ef7b6f7 deployed
+16:47–16:50Z, the node resumed 16:50:51Z (quiet profile to 22:30), 35 GB
+available. The snapshot (own container, 16 GB cap, 2 cpus, nice 19) READ
+THE WHOLE SHARD — 37,501 parts, 102,466,066,566 bytes, 36–39 MiB/s, peak
+5.1 GiB — and was then refused after 42 min 42 s: `validation.json is
+missing from the SHARD … run hold records validation`. Nothing was written.
+Two findings: the step `hold records validation` had not been run for
+wikipedia-v8 (it writes the Codex's validation block, 265 bytes; run at
+17:54Z); and THE DEFECT, ours: `snapshot create` checked its members AFTER
+the delta, so a missing file cost the whole read. Fixed: the members are
+checked first (test: a missing member is refused before a record is read).
+The peak, 5.1 GiB with the uids sorted, is under half the ~11 GB estimated
+from synthetic uids — wikipedia's are shorter. Third run since 17:54:10Z,
+the same way, ETA ~18:40Z plus the sort and the write.
+
 **2026-10-28 19:30 (architecture). THE ASK PAGE ASKS THROUGH A RELAY.**
 Operator: "Prepare a web proxy so that the web gui session is not reset by
 the browser dropping a query. Also if the query is stuck or dropped I
