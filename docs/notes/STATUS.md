@@ -70,6 +70,14 @@ device, written by the encoder graph and committed after the compute, read by
 the decoder's `ggml_get_rows`; the same CPU tests pass, a lone request stays
 byte-identical to P3. Both stages go to the card in ONE rebuild after the
 switch, with `test-backend-ops -o SET_ROWS,GET_ROWS` beside the gates.
+**Operator, 09:xx (to München): "Keep working on MADLAD only."** So today: T3 →
+the paused timing sample → the retrieval gate → the merge → the switch, plus the
+KQ-shape reproducer (MADLAD's own fault). DEFERRED until the operator says
+otherwise: the vega-qwen3-embedding-4b history probe for llama.cpp #30892's
+window (a ≤ 8-token text, then the 16 calibration texts again; by the code
+the plain fused GEMM refuses K-quants, so nothing is expected) — the script
+is ready on the node, `/root/madlad-gguf/emb_history.py`. Stages 1–2 wait
+for after the switch, as planned.
 
 **2026-10-27 10:25 (München).** Image a773d05 is deployed: profiles live,
 period crons 6/18–21 disabled (not deleted).
