@@ -1,0 +1,134 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 28 Oct 2026 06:50:54 +0000
+Subject: [PATCH] diag(llama-cpp): GGML_SYCL_CPU_OPS sends chosen SYCL ops to
+ the CPU
+
+A diagnostic build, never a release: on top of patches/0003 and 0004
+(encoder-decoder slots, waves), the SYCL device declines the op classes
+named by GGML_SYCL_CPU_OPS so the scheduler runs them on the CPU, and a
+wrong decode (T5 waves on an Arc Pro B70, right alone and on the CPU) is
+bisected to an op and a shape class, one two-minute run per class, with
+no further build. Carried as a llama.cpp patch beside the others
+(patches/0005-sycl-cpu-ops-diag.patch). Unset, nothing changes.
+
+Assisted-by: Claude Code
+---
+ .../patches/0005-sycl-cpu-ops-diag.patch      | 108 ++++++++++++++++++
+ 1 file changed, 108 insertions(+)
+ create mode 100644 backend/cpp/llama-cpp/patches/0005-sycl-cpu-ops-diag.patch
+
+diff --git a/backend/cpp/llama-cpp/patches/0005-sycl-cpu-ops-diag.patch b/backend/cpp/llama-cpp/patches/0005-sycl-cpu-ops-diag.patch
+new file mode 100644
+index 00000000..ddedcadf
+--- /dev/null
++++ b/backend/cpp/llama-cpp/patches/0005-sycl-cpu-ops-diag.patch
+@@ -0,0 +1,108 @@
++sycl: GGML_SYCL_CPU_OPS declines chosen ops so they run on the CPU (a diagnostic)
++
++A measurement instrument, not a fix. The decoded text of a T5 (MADLAD-400-3B,
++f16) comes out wrong on an Intel Arc Pro B70 whenever two or more sequences
++decode in one batch, while one sequence alone, and the same build on the CPU,
++are right (Louise, docs/notes/localai-bugs.md P4, 2026-10-28). The kernels
++that differ between one and several decoder tokens cannot be told apart by
++reading, so this patch lets the device DECLINE an op class by environment:
++
++  GGML_SYCL_CPU_OPS=MUL_MAT:f16:nc:nN,SOFT_MAX
++
++makes ggml_backend_sycl_device_supports_op() answer false for those ops and
++the scheduler runs them on the CPU backend, with copies. One build, then one
++run per op class, each on the real failing request, bisects the fault to an
++op and a shape class. Conditions, all of which must hold: n1 / nN (src1 has
++one / several columns), f16 / f32 (src0 type), c / nc (src0 contiguous or
++not), p / np (src1 permuted or not), k<N> (src0->ne[0] <= N), m<N>
++(src0->ne[1] <= N). Each entry logs once when it first declines. Not for
++SET_ROWS or any op writing a pre-allocated device tensor. Unset, nothing
++changes: the variable is read once and the check is a null-pointer test.
++
++diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
++index b380cbedf..7b5500919 100644
++--- a/ggml/src/ggml-sycl/ggml-sycl.cpp
+++++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
++@@ -7279,8 +7279,81 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
++     GGML_UNUSED(dev);
++ }
++ 
+++// GGML_SYCL_CPU_OPS (a diagnostic): ops this device DECLINES, so the scheduler runs them on the
+++// CPU backend and a wrong answer can be bisected to an op and a shape class without a rebuild.
+++// A comma list of OP[:cond]... with OP as ggml_op_name() prints it (MUL_MAT, SOFT_MAX, GET_ROWS,
+++// CONT, ADD, PAD, ...) and conds that must ALL hold: n1 / nN (src1 has one / several columns),
+++// f16 / f32 (src0 type), c / nc (src0 contiguous or not), p / np (src1 permuted or not),
+++// k<N> (src0->ne[0] <= N), m<N> (src0->ne[1] <= N). Each entry is logged the first time it
+++// declines. Not for SET_ROWS or any op that writes a pre-allocated device tensor: those must
+++// run where the tensor lives.
+++static bool ggml_sycl_cpu_op_declined(const ggml_tensor * op) {
+++    static const char * env = getenv("GGML_SYCL_CPU_OPS");
+++    if (env == nullptr || *env == '\0' || op->op == GGML_OP_NONE) {
+++        return false;
+++    }
+++    const char *        name = ggml_op_name(op->op);
+++    const ggml_tensor * s0   = op->src[0];
+++    const ggml_tensor * s1   = op->src[1];
+++    const std::string   list(env);
+++    size_t pos = 0;
+++    while (pos < list.size()) {
+++        size_t end = list.find(',', pos);
+++        if (end == std::string::npos) {
+++            end = list.size();
+++        }
+++        const std::string entry = list.substr(pos, end - pos);
+++        pos = end + 1;
+++        if (entry.empty()) {
+++            continue;
+++        }
+++        size_t colon = entry.find(':');
+++        if (entry.substr(0, colon == std::string::npos ? entry.size() : colon) != name) {
+++            continue;
+++        }
+++        bool ok = true;
+++        while (ok && colon != std::string::npos) {
+++            const size_t      next = entry.find(':', colon + 1);
+++            const std::string c    = entry.substr(colon + 1, next == std::string::npos ? std::string::npos : next - colon - 1);
+++            colon = next;
+++            if (c == "n1") {
+++                ok = s1 != nullptr && s1->ne[1] == 1;
+++            } else if (c == "nN") {
+++                ok = s1 != nullptr && s1->ne[1] > 1;
+++            } else if (c == "f16") {
+++                ok = s0 != nullptr && s0->type == GGML_TYPE_F16;
+++            } else if (c == "f32") {
+++                ok = s0 != nullptr && s0->type == GGML_TYPE_F32;
+++            } else if (c == "c") {
+++                ok = s0 != nullptr && ggml_is_contiguous(s0);
+++            } else if (c == "nc") {
+++                ok = s0 != nullptr && !ggml_is_contiguous(s0);
+++            } else if (c == "p") {
+++                ok = s1 != nullptr && ggml_is_permuted(s1);
+++            } else if (c == "np") {
+++                ok = s1 != nullptr && !ggml_is_permuted(s1);
+++            } else if (c.size() > 1 && c[0] == 'k') {
+++                ok = s0 != nullptr && s0->ne[0] <= atoll(c.c_str() + 1);
+++            } else if (c.size() > 1 && c[0] == 'm') {
+++                ok = s0 != nullptr && s0->ne[1] <= atoll(c.c_str() + 1);
+++            } else {
+++                ok = false; // an unknown condition never matches
+++            }
+++        }
+++        if (ok) {
+++            static std::vector<std::string> logged;
+++            if (std::find(logged.begin(), logged.end(), entry) == logged.end()) {
+++                logged.push_back(entry);
+++                GGML_LOG_INFO("%s: GGML_SYCL_CPU_OPS declines %s: %s -> CPU\n", __func__, entry.c_str(), name);
+++            }
+++            return true;
+++        }
+++    }
+++    return false;
+++}
+++
++ static bool ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, const ggml_tensor * op) {
++-    bool res = do_ggml_backend_sycl_device_supports_op(dev, op);
+++    bool res = !ggml_sycl_cpu_op_declined(op) && do_ggml_backend_sycl_device_supports_op(dev, op);
++     GGML_SYCL_DEBUG("[SYCL] call %s op->op=%s op->type=%s -> %s\n", __func__, ggml_op_name(op->op),
++                     ggml_type_name(op->type), res ? "true" : "false");
++     return res;
