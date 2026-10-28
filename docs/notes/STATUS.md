@@ -52,6 +52,12 @@ keeps the snapshot's HASH, and a different hash under the same id is due
 (a record from before compares by id, as it did, so this once the check
 is run by hand). MERGED 3e9b198 (PR #43); München: deploy, move 2026-09
 aside if never shared, dry run, relocate at 22:30, snapshot, check by hand.
+The NAS went down mid-dry-run (21:2x CET), which showed the real run could be
+cut too: relocate now commits a part's row BEFORE the file takes its place
+(the other order left a corrected file under the old row, which a re-run
+skips and the snapshot would list), and SIGTERM/SIGINT finish the parts in
+hand and exit 130 (invariant 2). Tested: a crash at either step and a stop
+are repaired by a re-run; the old order fails the test.
 
 **2026-10-28 21:00 (architecture). FRANCE, GERMANY AND THE EU: A DESIGN.**
 The operator asked for "the equivalent of normattiva collection for french,

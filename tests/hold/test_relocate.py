@@ -117,3 +117,59 @@ def test_the_build_stops_on_a_record_that_cannot_locate_its_origin(
     monkeypatch.setattr(plugin_io, "origin_locator", refuse)
     with pytest.raises(pack_build.BuildError, match="not under the origin base"):
         rec.build(root, "gutenberg", corpus_dir=corpus_dir, log=lambda *_: None, records_per_shard=2)
+
+
+def test_a_stop_finishes_the_part_in_hand_and_a_rerun_completes(isolated_config, tmp_path, corpus_dir):
+    """Invariant 2: a signal ends the run after the part in hand, its row and
+    file in place; nothing half-written is left; a re-run finishes the job."""
+    import threading
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    good_parts, good_rows = _parts(root), _rows(root)
+    assert len(good_parts) > 1
+    _break(root)
+    stop = threading.Event()
+    stop.set()
+    got = rl.relocate(root, "gutenberg", corpus_dir=corpus_dir, workers=1, stop=stop, log=lambda *_: None)
+    assert got.interrupted and got.rewritten == 1 and got.parts == 1
+    assert not list((root / "gutenberg" / "shard").rglob("*.relocated"))
+    again = rl.relocate(root, "gutenberg", corpus_dir=corpus_dir, workers=1, log=lambda *_: None)
+    assert not again.interrupted and again.rewritten == len(good_parts) - 1
+    assert _parts(root) == good_parts and _rows(root) == good_rows
+
+
+@pytest.mark.parametrize("at", ["commit", "replace"])
+def test_a_crash_between_the_row_and_the_file_is_repaired_by_a_rerun(isolated_config, tmp_path,
+                                                                      corpus_dir, monkeypatch, at):
+    """The row is committed before the file takes the part's place: a crash
+    at either step leaves a state a re-run repairs — never a corrected file
+    under the old row, which a re-run would skip (its origins are right) and
+    `snapshot create` would list. The other order fails the "commit" case."""
+    import types
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=2)
+    good_parts, good_rows = _parts(root), _rows(root)
+    _break(root)
+
+    def crash(*_a):
+        raise OSError("power lost")
+    if at == "replace":
+        monkeypatch.setattr(rl.os, "replace", crash)
+    else:
+        class Con:
+            def __init__(self, con):
+                self._con = con
+
+            def __getattr__(self, k):
+                return getattr(self._con, k)
+
+            def commit(self):
+                raise OSError("power lost")
+        monkeypatch.setattr(rl, "sqlite3", types.SimpleNamespace(
+            connect=lambda *a, **k: Con(sqlite3.connect(*a, **k))))
+    with pytest.raises(OSError):
+        rl.relocate(root, "gutenberg", corpus_dir=corpus_dir, workers=1, log=lambda *_: None)
+    monkeypatch.undo()
+    again = rl.relocate(root, "gutenberg", corpus_dir=corpus_dir, workers=1, log=lambda *_: None)
+    assert again.rewritten == len(good_parts)
+    assert _parts(root) == good_parts and _rows(root) == good_rows
