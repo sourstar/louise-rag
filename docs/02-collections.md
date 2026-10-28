@@ -380,9 +380,13 @@ revisions, Normattiva's versions in force), the version it supersedes is
 renamed with the id of the last snapshot that listed it and kept, so an
 old snapshot can still be served and checked. Where the origin replaces
 in place (`"replaces"`: Project Gutenberg), the superseded version can no
-longer be checked against the source and is not kept: the promotion
-overwrites it, and a part no longer held is not served (01, promise 7;
-*amended 2026-10-25*, operator: A).
+longer be checked against the source and is not kept: the producer's build
+keeps it under its superseded name until the newer snapshot is frozen —
+that snapshot's delta is computed against it — and drops it then; a peer's
+promotion overwrites it; a part no longer held is not served (01, promise
+7; *amended 2026-10-25*, operator: A; *amended 2026-10-28*: overwritten at
+the build's promotion, the delta read the new bytes on both sides and said
+nothing changed).
 
 A record is one line: the keys `uid`, `native_id`, `lang`, `title`,
 `creators`, `date`, `subjects`, `keys`, `sections`, `extra`,
@@ -458,7 +462,9 @@ of the records, and pruning never breaks that reproduction. A
 structurally independent part of a collection — a language of
 Wikipedia, a family of Wikidata, Wikidata's lexemes — is a slice a peer
 may hold or not and embed or not; it is never a separate collection, and
-never left out (operator, 2026-10-24).
+never left out (operator, 2026-10-24). One exception, EU law: one
+collection per language (*amended 2026-10-28*, operator: "Better to not
+mix up too many things in one collection").
 A record without an `origin_hash` is refused at build, because a SHARD
 that verifies internally while being permanently unverifiable against
 its source is the worst thing a collection can ship.

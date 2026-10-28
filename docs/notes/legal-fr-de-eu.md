@@ -1,6 +1,6 @@
 # France, Germany and the EU — three legal collections on Normattiva's template (2026-10-28)
 
-**Status: PROPOSAL. Nothing is built.** Asked by the operator, 2026-10-28:
+**Status: DECIDED (§8, operator 2026-10-28); nothing is built.** Asked by the operator, 2026-10-28:
 "I need the equivalent of normattiva collection for french, german and
 European laws, prepare a design note." The decisions that are the
 operator's are in §8, each in the one shape (CLAUDE.md, Style).
@@ -350,10 +350,13 @@ D1's choice.
   (electronically since 2013) [S]: every consolidated record says so.
 - End: derived, and checked against `cdm:resource_legal_date_end-of-validity`
   and `cdm:resource_legal_in-force` [S].
-- **Language is a slice** (invariant 11: a language of a collection is a
-  slice a node holds or not, embeds or not — never a separate
-  collection). All 24 are part of the collection; which a node embeds is
-  §8, D2. Completeness differs by language: an acceding state receives the
+- **One collection per language** (operator, 2026-10-28: "European
+  laws, one collection per language, prepare the 4 main languages …
+  Better to not mix up too many things in one collection"; the exception
+  is written in invariant 11 and 02 §2.3). English, French, German and
+  Italian are prepared first; the other twenty are collections made
+  later, on the same plugin, each with its language as a parameter.
+  *Superseded:* "language is a slice", the proposal before §8. Completeness differs by language: an acceding state receives the
   acquis in force at accession, Maltese had a backlog, Irish is complete
   only since 2022 [S] — stated per slice on the card.
 
@@ -540,6 +543,43 @@ EU second, because its resolver is what joins it to Normattiva and to
 France. Germany last, because its history is not published yet (D1).
 
 ## 8. Decisions for the operator
+
+**DECIDED, operator, 2026-10-28** (verbatim: "D1 yes, D2 grow collection
+parameter per language, D3 one encoder per language if it fits, find
+proper embedders like DAR legal it, D4 do not reinvent the wheel, find
+papers, we already have something"):
+
+- **D1 → A.** Germany from the NeuRIS API now.
+- **D2 → grown per language** — *amended the same evening*: "European
+  laws, one collection per language, prepare the 4 main languages …
+  Better to not mix up too many things in one collection". The EU is
+  **one collection per language**; the language is the plugin's
+  parameter. English, French, German and Italian are prepared now, and
+  another language is a new collection on the same plugin.
+- **D3 → one encoder per language where one fits** (with the amendment:
+  "find a proper embedder for the main 4 languages proposed, for the
+  others use a compromise so far"):
+  - English, French, German and Italian each get a legal-domain retriever
+    chosen as DAR-legal-it was for Italian.
+  - The other languages get one general multilingual model, the
+    compromise, until a fitting one is found.
+  - One collection is one space (invariant 1), so a language's space is
+    shared with its national collection by `space_from`. French = LEGI +
+    EU-fr; German = NeuRIS + EU-de; Italian = Normattiva's DAR-legal-it
+    space + EU-it. A question in one language then reaches its national
+    law and the EU's in one list.
+  - The sharing is checked at create: `space_from` copies the space block
+    and the layers, so the EU plugin's chunking must be the national
+    collection's (§4.2: articles, as Normattiva).
+- **D4 → published sets, no set of our own.** The encoder is measured on
+  the evaluation sets the papers already publish (§5.4, and the research
+  of 2026-10-28 below), preferring expert questions over lay ones and lay
+  over synthetic, and statutes over case law. Each set passes the licence
+  gate before use (invariant 9; GerLayQA is research-only). This replaces
+  the template's "expert questions in the domain and language" for these
+  three collections.
+
+The questions as they were put follow.
 
 **D1 — Germany's origin.** Where German federal law comes from, given
 that no origin publishes its past versions today (§3.1).

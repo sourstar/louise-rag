@@ -510,7 +510,7 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
     # its whole 102 GB SHARD for 43 minutes and was then refused for a
     # validation.json nobody had written (München, 2026-10-28).
     files = _files(shard_dir, codex, snapshot_id)
-    previous, prev_hashes = _previous(shard_dir, snapshot_id)
+    previous = _previous(shard_dir, snapshot_id)
     # `writer`: a part whose bytes the previous snapshot already listed was
     # compressed by whoever wrote it then; a new version by this platform
     from app.pack import records as pack_records
@@ -532,8 +532,20 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
     # (74.8 M records: ~22 GB measured by extrapolation, on a 61 GB node with
     # 18 GB available, 2026-10-28) where the uids alone take ~11 GB. The same
     # bytes: compute_delta(None, current) is the sorted keys.
-    delta = (_first_delta(shard_dir, shards) if previous is None else
-             compute_delta(prev_hashes, _content_hashes(shard_dir, shards)))
+    out = shard_dir / shard_mod.snapshot_path(snapshot_id)
+    # A RE-RUN for an id that exists takes that file's delta: the delta is a
+    # function of the previous snapshot and the parts' contents, both fixed
+    # in the bytes compared below (`previous`, every root) — so if those are
+    # identical the delta is too, and if they are not the run is refused
+    # whatever the delta says. Recomputed, a first snapshot's re-read the
+    # whole SHARD, and a later one's needed versions dropped at its freezing.
+    try:
+        existing = load(out) if out.is_file() else None
+    except Exception:   # noqa: BLE001 — unreadable: compared as bytes below, and refused
+        existing = None
+    delta = (existing.delta if existing is not None else
+             _first_delta(shard_dir, shards) if previous is None else
+             _later_delta(shard_dir, previous, shards, name=name, snapshot_id=snapshot_id))
     snap = Snapshot(
         collection_id=codex.collection_id, snapshot_id=snapshot_id,
         previous=previous.hash if previous else None,
@@ -544,13 +556,13 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
         files=files,
     )
 
-    out = shard_dir / shard_mod.snapshot_path(snapshot_id)
     out.parent.mkdir(parents=True, exist_ok=True)
     if out.is_file():
         if out.read_bytes() == snap.canonical():
             log(f"[snapshot create] {name}: {snapshot_id} already frozen, "
                 f"identical bytes")
             mark_frozen(db_path, snapshot_id)
+            drop_replaced(shard_dir, previous, snap)
             return snap
         raise CodexError(
             f"{name}: {snapshot_id} exists with different bytes. A snapshot is "
@@ -563,6 +575,10 @@ def create(root, ref: str, *, snapshot_id: str | None = None, log=print) -> Snap
     tmp.write_bytes(snap.canonical())
     os.replace(tmp, out)
     mark_frozen(db_path, snapshot_id)
+    dropped = drop_replaced(shard_dir, previous, snap)
+    if dropped:
+        log(f"[snapshot create] {name}: {dropped} replaced version(s) of {previous.snapshot_id} "
+            f"dropped (the origin replaces in place, 01 promise 7)")
     log(f"[snapshot create] {name}: {snapshot_id} — {snap.records} records, "
         f"{snap.chunks} chunks, {len(shards)} shard(s), hash {snap.hash[:23]}…")
     return snap
@@ -687,30 +703,162 @@ def sign_snapshot(root, name: str, snapshot: "Snapshot", key, *,
     return doc
 
 
-def _previous(shard_dir, snapshot_id: str):
-    """The snapshot before this one in the chain, and its uid → content_hash
-    map. `None` when this is the first.
-
-    OPEN (2026-10-28): a later snapshot holds this map AND the current one,
-    ~0.29 GB per million records each in Python — ~43 GB for wikipedia-v8's
-    74.8 M, more than its 61 GB node can spare. To fix before its next
-    snapshot: the two sides as Arrow tables (pyarrow, already a dependency
-    through Lance), uid as string and the hash as 32 fixed bytes, compared by
-    Arrow's own hash join — ~5 GB a side, no Python object per record. Parts
-    whose bytes both snapshots list (the same `root`) can be skipped outright:
-    identical bytes hold identical uids and hashes."""
+def _previous(shard_dir, snapshot_id: str) -> "Snapshot | None":
+    """The snapshot before this one in the chain; `None` when this is the
+    first. Loaded with its parts' container (`load`): read as JSONL, a
+    Parquet collection's parts had paths that did not exist."""
     from pathlib import Path
-    from . import shard as shard_mod
     d = Path(shard_dir) / "snapshots"
     if not d.is_dir():
-        return None, None
-    ids = sorted(p.stem for p in d.glob("*.json")
-                 if not p.name.endswith(".sig.json") and p.stem < snapshot_id)
+        return None
+    ids = sorted(p.name[:-len(".json")] for p in d.glob("*.json")
+                 if not p.name.endswith(".sig.json") and p.name[:-len(".json")] < snapshot_id)
     if not ids:
-        return None, None
-    raw = (d / f"{ids[-1]}.json").read_bytes()
-    prev = _load(raw)
-    return prev, _content_hashes(shard_dir, prev.shards)
+        return None
+    return load(d / f"{ids[-1]}.json")
+
+
+def _later_delta(shard_dir, previous: "Snapshot", shards, *, name: str,
+                 snapshot_id: str) -> Delta:
+    """A later snapshot's delta: `compute_delta` over the previous
+    snapshot's records and this one's — computed from the parts whose bytes
+    changed alone, each side as an Arrow table, by Arrow's hash join.
+
+    WHY (2026-10-28). It read the previous snapshot's parts at their paths,
+    after the build had promoted the new versions over them: both sides were
+    the new bytes, and every later snapshot would have said that nothing
+    changed, nothing was withdrawn, and nothing was added to a part that
+    already existed — an artefact that passes every check. The previous
+    version is read where it is held — its superseded name (02 §2.3; kept
+    until this snapshot is frozen where the origin replaces in place,
+    `shard.keep_superseded`) or its path when no new version replaced it —
+    and is that version only if its `records_root` is the one the previous
+    snapshot lists. Not held: refused, before any part is read.
+
+    THE SAME RESULT, LESS READ AND HELD. A part listed by both snapshots
+    under one `root` holds the same bytes, so the same uids and hashes on
+    both sides: it is not read. A uid is in one part of a snapshot (the
+    build's plan is keyed on it), so it cannot sit in such a part on one
+    side and in a changed part on the other. The two dicts of the old way
+    held ~0.29 GB per million records each in Python (~43 GB for
+    wikipedia-v8's 74.8 M); a side here is the uid and its 16 hash bytes,
+    ~45 bytes a record, and only for the parts that changed."""
+    from pathlib import Path
+    from . import shard as shard_mod
+
+    shard_dir = Path(shard_dir)
+    before = {(s.slice, s.n): s for s in previous.shards}
+    now = {(s.slice, s.n): s for s in shards}
+    gone_or_reissued = [(s, now.get(k)) for k, s in sorted(before.items())
+                        if k not in now or now[k].root != s.root]
+    new_or_reissued = [c for k, c in sorted(now.items())
+                       if k not in before or before[k].root != c.root]
+
+    # WHERE EACH PREVIOUS VERSION IS, by its listed size, before anything is
+    # read: a missing one is a refusal, not an hour of reading first
+    where: list[tuple[Shard, tuple[Path, ...]]] = []
+    missing: list[str] = []
+    for s, c in gone_or_reissued:
+        here = shard_dir / s.path
+        kept = shard_mod.superseded_name(here, previous.snapshot_id)
+        cands = tuple(p for p in ((kept, here) if c is not None else (here, kept))
+                      if p.is_file() and p.stat().st_size == s.bytes)
+        if not cands:
+            missing.append(s.path)
+        where.append((s, cands))
+    if missing:
+        raise CodexError(
+            f"{name}: {len(missing)} part version(s) that snapshot {previous.snapshot_id} lists are "
+            f"not held — neither at their path nor under their superseded name (first: "
+            f"{missing[0]}). The delta of {snapshot_id} is computed against them (02 §2.3), and a "
+            f"delta that guessed would pass every check while saying the wrong records changed. "
+            f"A peer holding {previous.snapshot_id} has them")
+    for c in new_or_reissued:
+        p = shard_dir / c.path
+        if not p.is_file():
+            raise CodexError(f"{name}: {c.path}, listed by the build, is not in the SHARD")
+
+    old = []
+    for s, cands in where:
+        got = next((t for t in map(lambda p: _pairs(p, s.records_root), cands) if t is not None), None)
+        if got is None:
+            raise CodexError(
+                f"{name}: {s.path}: no held copy has the records_root snapshot "
+                f"{previous.snapshot_id} lists ({s.records_root[:16]}…)")
+        old.append(got)
+    new = []
+    for c in new_or_reissued:
+        got = _pairs(shard_dir / c.path, c.records_root)
+        if got is None:
+            raise CodexError(f"{name}: {c.path}: its records_root is not the build's "
+                             f"({c.records_root[:16]}…)")
+        new.append(got)
+    return _join_delta(old, new, name=name)
+
+
+def _pairs(path, records_root: str):
+    """The part at `path` as an Arrow table of (uid, content hash as 16
+    bytes) in record order — or None when its `records_root` is not the one
+    given, i.e. it is not that version."""
+    import pyarrow as pa
+    from app.pack import records as pack_records
+    from . import records as rec
+    uids: list[str] = []
+    hashes: list[str] = []
+    for r in pack_records.iter_records(path):
+        uids.append(r["uid"])
+        hashes.append(r["content_hash"])
+    if rec.records_root(hashes) != records_root:
+        return None
+    return pa.table({"uid": pa.array(uids, pa.string()),
+                     "h": pa.array([bytes.fromhex(h) for h in hashes], pa.binary(16))})
+
+
+def _join_delta(old: list, new: list, *, name: str) -> Delta:
+    """`compute_delta` over two Arrow sides: a full outer hash join on the
+    uid (Arrow's Acero join — the named, proven algorithm, no Python object
+    per record until the lists of what changed are made)."""
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    empty = pa.table({"uid": pa.array([], pa.string()), "h": pa.array([], pa.binary(16))})
+    prev = pa.concat_tables(old) if old else empty
+    cur = pa.concat_tables(new) if new else empty
+    for side, t in (("previous", prev), ("current", cur)):
+        if t.num_rows and pc.count_distinct(t["uid"]).as_py() != t.num_rows:
+            raise CodexError(f"{name}: a uid stands in two parts of the {side} snapshot; "
+                             f"a record has one identity (09 §9.5)")
+    j = cur.rename_columns(["uid", "new"]).join(
+        prev.rename_columns(["uid", "old"]), keys="uid", join_type="full outer")
+    added = j.filter(pc.is_null(j["old"]))["uid"].to_pylist()
+    gone = j.filter(pc.is_null(j["new"]))["uid"].to_pylist()
+    both = j.filter(pc.and_(pc.is_valid(j["old"]), pc.is_valid(j["new"])))
+    changed = both.filter(pc.not_equal(both["old"], both["new"]))["uid"].to_pylist()
+    del j, both
+    return Delta(tuple(sorted(added)), tuple(sorted(changed)),
+                 tuple(Tombstone(u, "withdrawn") for u in sorted(gone)))
+
+
+def drop_replaced(shard_dir, previous: "Snapshot | None", current: "Snapshot") -> int:
+    """Where the origin REPLACES IN PLACE, the previous snapshot's versions
+    the build kept for this snapshot's delta (`shard.keep_superseded(...,
+    until_next_snapshot=True)`) go once this snapshot is frozen: they can no
+    longer be checked against the source (01 promise 7, 02 §2.3). Where the
+    origin keeps its history they are kept. The number dropped."""
+    from pathlib import Path
+    from . import shard as shard_mod
+    shard_dir = Path(shard_dir)
+    if previous is None or shard_mod.origin_keeps_history(shard_dir):
+        return 0
+    now = {e.path: e.root for e in (*current.shards, *current.relations, *current.figures)}
+    n = 0
+    for e in (*previous.shards, *previous.relations, *previous.figures):
+        if now.get(e.path) == e.root:
+            continue
+        kept = shard_mod.superseded_name(shard_dir / e.path, previous.snapshot_id)
+        if kept.is_file():
+            kept.unlink()
+            n += 1
+    return n
 
 
 #: codex.json path -> (mtime_ns, container): the container read beside a

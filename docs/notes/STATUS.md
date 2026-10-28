@@ -18,6 +18,29 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-28 23:00 (architecture). A LATER SNAPSHOT'S DELTA SAID NOTHING
+CHANGED; FIXED BEFORE THE FIRST ONE.** `snapshot create` read the previous
+snapshot's parts at their paths, after the build had promoted the new
+versions over them, so both sides were the new bytes. A revised gutenberg
+book gave `changed = []`; a withdrawn record or one added to an existing
+part was missed the same way, while every check passed. Consumers: as-of
+answers (`app/ask/asof.py`) and `hold chain delta`; `vectors --delta` uses
+roots and was not affected. SCOPE ZERO (München's probe): every collection
+on the node holds one snapshot, and the published ones (gutenberg 2026-09,
+pubmed 2026-08) are first snapshots. FIX: the previous version is read where
+it is held — its superseded name, or its path when nothing replaced it —
+and is that version only if its `records_root` is the listed one; one not
+held is refused by a stat, before anything is read. Where the origin
+replaces in place (gutenberg), the producer's build now keeps the replaced
+version until the next snapshot is frozen and the snapshot drops it, as 01
+promise 7 already said; 02 §2.3 amended (it said the promotion overwrites).
+Only parts whose root changed are read, and the two sides are Arrow tables
+(uid, 16 hash bytes) compared by Arrow's hash join, not two Python dicts
+(~43 GB for wikipedia-v8's 74.8 M records, task #48). A re-run for an
+existing id takes that file's delta: it is fixed by the `previous` and the
+roots the bytes compare. The previous snapshot is loaded with its container
+(as JSONL, a Parquet collection's parts had paths that did not exist).
+
 **2026-10-28 21:30 (architecture). WIKIPEDIA-V8'S ARCHIVE RECORDS LOCATED
 NOTHING; FIXED IN CODE, REPAIRED BY RELOCATION.** The scheduled check
 (18:40–19:09Z, 1,785 s) passed everything it could run — roots, records and

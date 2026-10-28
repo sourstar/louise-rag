@@ -525,7 +525,9 @@ def _promote_records(staging, shard_dir) -> int:
         for f in sorted(src.rglob(suffix)):
             target = dst / f.relative_to(src)
             target.parent.mkdir(parents=True, exist_ok=True)
-            shard_mod.promote(f, target, shard_dir=Path(shard_dir))
+            # the version it replaces stays until the next snapshot is
+            # frozen: that snapshot's delta is computed against it
+            shard_mod.promote(f, target, shard_dir=Path(shard_dir), until_next_snapshot=True)
             if kind == "records":
                 n += 1
     return n
