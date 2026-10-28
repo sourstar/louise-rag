@@ -109,6 +109,7 @@ grep -q "^def release_idle" "$ROOT/src.new/app/parallel.py"                     
 grep -q 'run `hold records validation`' "$ROOT/src.new/app/hold/snapshot.py"              # 5d01178: the members checked before the read
 grep -q "^class OriginOutsideBase" "$ROOT/src.new/app/plugin_io.py"                       # 3e9b198: an origin reaches the base through a link, or the build stops
 test -s "$ROOT/src.new/app/hold/relocate.py"                                              # 3e9b198: `hold records relocate`
+grep -q "interrupted: bool = False" "$ROOT/src.new/app/hold/relocate.py"                  # 6893b8a: relocate's row before its file; a stop exits 130, a re-run continues
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
 ! grep -q 'cache_type_' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # d372ba5: the F16 cache (P5); b68820c had f32
 test ! -e "$ROOT/src.new/deploy/reference"
