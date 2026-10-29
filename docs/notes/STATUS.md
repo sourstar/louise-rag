@@ -18,6 +18,36 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+**2026-10-29 02:45 (architecture). WIKIPEDIA-V8 REPAIRED AND CHECKED; THE FIRST
+ENCODER NUMBERS FOR THE LEGAL COLLECTIONS.**
+
+wikipedia-v8 (München):
+- relocate rewrote 11,086 parts and 21,983,119 records, equal to the dry
+  run, in 36 min;
+- snapshot 2026-09 is `c6e71a2b…`;
+- the hand check passed everything, records-vs-origin included (2,000
+  re-parsed, 0 differing, against 0 of 52,440 re-fetched before);
+- the quarantine cleared itself. The collection stays per-collection
+  paused until the operator decides.
+
+The bake-off, detailed in
+[`legal-embedders-fr-de-eu.md`](legal-embedders-fr-de-eu.md):
+- **Our word leg is MTEB's BM25:** LegalQuAD nDCG@10 0.762 against 0.768.
+- **bge-m3 is out:** fused, it never beats BM25 and loses twice.
+- **Qwen3-Embedding-4B fused never loses to BM25**, and wins significantly
+  on LEMUR en, fr and de. It is the compromise for the EU languages.
+- **DAR-legal-it ties it on Italian EU acts**, so EU-it in Normattiva's
+  space stands.
+
+Four defects of the tool were found by the node and fixed:
+- untagged inputs to VeGa models;
+- a smoke run that embedded every question;
+- "bare = what this node serves", false for Normattiva's `query: `;
+- the origin probe's GET that moved 486 MB.
+
+Waiting on the operator: the licence acknowledgement of BSARD, EUR-Lex-Sum
+and GDPR Holdings (NC-SA, for measurement), and the pause of wikipedia-v8.
+
 **2026-10-28 23:59 (architecture). THE LEGAL COLLECTIONS: DECIDED, RESEARCHED,
 AND A BAKE-OFF THAT MEASURES WHAT LOUISE SERVES.** The operator decided
 legal-fr-de-eu.md's §8:
