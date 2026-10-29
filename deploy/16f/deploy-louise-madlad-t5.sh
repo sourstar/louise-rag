@@ -114,6 +114,7 @@ grep -q "replaced version(s) of" "$ROOT/src.new/app/hold/snapshot.py"           
 grep -q 'add_argument("--api", choices=("openai", "vega")' "$ROOT/src.new/tools/encoder_bakeoff.py"   # 09e61a5: the bake-off tags vega- inputs
 grep -q "^def paired(" "$ROOT/src.new/tools/encoder_bakeoff.py"                            # 05adb54: the paired randomization test
 grep -q "queries = Queries(texts=queries.texts\[:limit\]" "$ROOT/src.new/tools/encoder_bakeoff.py"  # fd74d32: a smoke cuts the questions too
+grep -q 'p.add_argument("--from-collection"' "$ROOT/src.new/tools/encoder_bakeoff.py"        # 454c35c: the served query side
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
 ! grep -q 'cache_type_' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # d372ba5: the F16 cache (P5); b68820c had f32
 test ! -e "$ROOT/src.new/deploy/reference"
