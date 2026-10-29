@@ -123,6 +123,8 @@ _BEIR = {"corpus": "corpus.jsonl", "queries": "queries.jsonl", "qrels": "qrels/t
 
 #: The sets this reads. Licences as their cards state them (2026-10-28); an
 #: "unknown" one is resolved before use like any other (invariant 9).
+#: `green`: a permissive licence (CC BY, MIT, Apache-2.0), which invariant 9
+#: does not gate; every other set is gated until acknowledged.
 #: docs/notes/legal-embedders-fr-de-eu.md says which collection each serves.
 SUITES: dict[str, dict] = {
     "jurifindit": {"repo": "jurifindit/JuriFindIT", "layout": "jurifindit",
@@ -134,9 +136,11 @@ SUITES: dict[str, dict] = {
                "licence": "unknown (the card says so)",
                "about": "fr; a collective agreement; 100 hand-written questions"},
     "legalquad": {"repo": "mteb/LegalQuAD", "layout": "beir", "files": _BEIR,
-                  "licence": "CC-BY-4.0", "about": "de; court decisions; 200 questions"},
+                  "licence": "CC-BY-4.0", "green": True,
+                  "about": "de; court decisions; 200 questions"},
     "gerdalir-small": {"repo": "mteb/GerDaLIRSmall", "layout": "beir", "files": _BEIR,
-                       "licence": "MIT", "about": "de; case law; queries derived from citations"},
+                       "licence": "MIT", "green": True,
+                       "about": "de; case law; queries derived from citations"},
     "gdpr-holdings": {"repo": "isaacus/gdpr-holdings-retrieval", "layout": "beir",
                       "files": {**_BEIR, "qrels": "default.jsonl"},
                       "licence": "CC-BY-NC-SA-4.0",
@@ -178,7 +182,7 @@ for _code in _LEMUR:
     SUITES[f"lemur-{_code}"] = {
         "repo": "G4KMU/LEMUR", "layout": "beir", "adapter": "lemur",
         "remote": {"test.jsonl": f"languages/{_code}/test.jsonl"}, "files": _LOCAL,
-        "licence": "Apache-2.0",
+        "licence": "Apache-2.0", "green": True,
         "about": f"{_code}; EU environmental acts; the act's metadata as the query (test split)"}
 
 
@@ -323,8 +327,12 @@ def fetch(out: Path, suite: str = "jurifindit") -> int:
         json.dumps({"suite": suite, "dataset": spec["repo"], "licence": licence,
                     "about": spec["about"], "base": base, "sha256": digests},
                    indent=2) + "\n", encoding="utf-8")
-    print(f"\nLicence is {licence}.\nInvariant 9: record an acknowledgement "
-          f"against these digests before the data is used.")
+    if spec.get("green"):
+        print(f"\nLicence is {licence}: green, no acknowledgement needed (invariant 9 "
+              f"gates the yellow and red classes).")
+    else:
+        print(f"\nLicence is {licence}.\nInvariant 9: record an acknowledgement "
+              f"against these digests before the data is used.")
     return 0
 
 
@@ -389,11 +397,41 @@ def _load_beir(out: Path, max_chars: int) -> tuple[Corpus, Queries]:
                     relevant=[sorted(relevant[qid]) for qid in keep]))
 
 
-def _recipe(url: str, model: str, dim: int | None, ctx: int, concurrency: int):
+def api_for(model: str, api: str | None = None) -> str:
+    """The client the endpoint needs. A VeGa-wrapped model (the node serves
+    every GPU encoder as `vega-<name>`) refuses an untagged input, so it is
+    asked through the app's `api = "vega"` client: tagged inputs, receipts
+    from VEGA_URL verified against the bytes (docs/notes/vega.md). Until
+    2026-10-29 this tool sent every model untagged, and on the node every
+    GPU run was refused at its first request. `--api` overrides."""
+    if api:
+        return api
+    return "vega" if model.startswith("vega-") else "openai"
+
+
+def _recipe(url: str, model: str, dim: int | None, ctx: int, concurrency: int,
+            api: str = "openai"):
     from app import collections as collections_mod
-    return collections_mod.EmbedRecipe(url=url, api="openai", model=model,
+    return collections_mod.EmbedRecipe(url=url, api=api, model=model,
                                        dtype="f16", ctx=ctx, dim=dim,
                                        concurrency=concurrency)
+
+
+def _same_settings(run: Path, settings: dict) -> None:
+    """A run's shards are reusable only under the settings that made them —
+    the corpus shards most of all, which every query variant shares. Under
+    others the run would be one row from two encodings: plausible,
+    internally consistent and wrong (as `bakeoff_local` refuses it)."""
+    path = run / "settings.json"
+    if path.exists():
+        before = json.loads(path.read_text(encoding="utf-8"))
+        if before != settings:
+            changed = sorted(k for k in set(before) | set(settings) if before.get(k) != settings.get(k))
+            raise SystemExit(f"{run.name}: embedded before with different settings "
+                             f"({', '.join(changed)}); use another --name, or delete {run}")
+    else:
+        run.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _embed_sharded(texts: list[str], where: Path, recipe, *,
@@ -427,7 +465,7 @@ def slug_of(query_prefix: str) -> str:
 
 def embed(out: Path, name: str, url: str, model: str, dim: int | None,
           ctx: int, concurrency: int, max_chars: int,
-          query_prefix: str = "", limit: int | None = None) -> int:
+          query_prefix: str = "", limit: int | None = None, api: str | None = None) -> int:
     from app import config
     if config.EMBED_BATCH != 1:
         raise SystemExit(
@@ -442,8 +480,15 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
         # in two minutes rather than finding out 47 minutes into the real
         # one. It is NOT scoreable — see `score`.
         corpus = Corpus(ids=corpus.ids[:limit], texts=corpus.texts[:limit])
-    recipe = _recipe(url, model, dim, ctx, concurrency)
+    api = api_for(model, api)
+    if api == "vega" and not config.VEGA_URL:
+        raise SystemExit(f"{model} is a VeGa model and VEGA_URL is unset: its receipts "
+                         f"cannot be read (docs/notes/vega.md); run in the worker's env")
+    recipe = _recipe(url, model, dim, ctx, concurrency, api)
     run = out / name
+    # a smoke run's shards are not the real run's (its first shard is short)
+    _same_settings(run, {"url": url, "model": model, "api": api, "ctx": ctx, "dim": dim,
+                         "max_chars": max_chars, "limit": limit})
     slug = slug_of(query_prefix)
     print(f"{name} [{slug}]: {len(corpus.texts)} documents, "
           f"{len(queries.texts)} queries" + (f"  (LIMIT {limit})" if limit else ""))
@@ -455,7 +500,7 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
     np.save(run / "corpus.npy", doc)
     np.save(run / f"queries-{slug}.npy", qry)
     (run / f"run-{slug}.json").write_text(json.dumps(
-        {"name": name, "slug": slug, "url": url, "model": model, "ctx": ctx,
+        {"name": name, "slug": slug, "url": url, "model": model, "api": api, "ctx": ctx,
          "max_chars": max_chars, "query_prefix": query_prefix,
          "limit": limit, "dim": int(doc.shape[1]),
          "documents": int(doc.shape[0]), "queries": int(qry.shape[0])},
@@ -730,6 +775,9 @@ def main(argv=None) -> int:
             p.add_argument("--dim", type=int, default=None)
             p.add_argument("--ctx", type=int, default=8192)
             p.add_argument("--concurrency", type=int, default=1)
+            p.add_argument("--api", choices=("openai", "vega"), default=None,
+                           help="the endpoint's client; by default `vega` for a "
+                                "`vega-…` model (tagged inputs, receipts), else openai")
             p.add_argument("--query-prefix", default="",
                            help="prepended to QUERIES only, never to "
                                 "documents; recorded in the run's JSON. "
@@ -745,7 +793,7 @@ def main(argv=None) -> int:
         return fetch(a.out, a.suite)
     if a.cmd == "embed":
         return embed(a.out, a.name, a.url, a.model, a.dim, a.ctx,
-                     a.concurrency, a.max_chars, a.query_prefix, a.limit)
+                     a.concurrency, a.max_chars, a.query_prefix, a.limit, a.api)
     if a.cmd == "lexical":
         return lexical(a.out, a.lang, a.max_chars)
     if a.cmd == "score":

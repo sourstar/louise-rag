@@ -3422,6 +3422,10 @@ def cmd_check(a) -> int:
     if tried is not None and tried.result == chk.INCONCLUSIVE:
         from app import copy_state
         copy_state.note_origin_attempt(a.root, name, codex, why=tried.why, now=_utc_now())
+    elif tried is not None:
+        # a verdict: the note of an earlier attempt that could not run is gone
+        from app import copy_state
+        copy_state.clear_origin_attempt(a.root, name)
 
     if a.json:
         _print(report.to_json())

@@ -574,3 +574,66 @@ def test_every_eu_language_has_its_suites() -> None:
     from tools.encoder_bakeoff import SUITES
     for code in ("en", "fr", "de", "it", "pl", "mt"):
         assert f"eurlex-sum-{code}" in SUITES and f"lemur-{code}" in SUITES
+
+
+# ---- VeGa endpoints, and runs that may not mix settings (2026-10-29) ------
+
+def test_a_vega_model_is_asked_through_the_tagging_client() -> None:
+    """Every GPU encoder on the node is `vega-…`, and VeGa refuses an
+    untagged input: the first LegalQuAD runs died at the first request."""
+    from tools.encoder_bakeoff import api_for
+    assert api_for("vega-bge-m3") == "vega"
+    assert api_for("vega-qwen3-embedding-4b") == "vega"
+    assert api_for("xcheck-bge-m3-cpu") == "openai"
+    assert api_for("vega-bge-m3", "openai") == "openai", "--api overrides"
+
+
+def test_a_vega_run_reaches_the_app_client_as_vega(tmp_path, monkeypatch) -> None:
+    from tools import encoder_bakeoff as bake
+    seen = []
+    corpus = bake.Corpus(ids=[1, 2], texts=["a", "b"])
+    queries = bake.Queries(texts=["q"], relevant=[[1]])
+    monkeypatch.setattr(bake, "load", lambda out, max_chars: (corpus, queries))
+    monkeypatch.setattr("app.config.VEGA_URL", "http://vega")
+    monkeypatch.setattr("app.embeddings.embed_calibration",
+                        lambda recipe, texts, **kw: seen.append(recipe.api) or [[1.0, 0.0] for _ in texts])
+    assert bake.embed(tmp_path, "m", "http://x", "vega-bge-m3", None, 8192, 1, 20_000) == 0
+    assert set(seen) == {"vega"}
+    assert json.loads((tmp_path / "m" / "run-bare.json").read_text())["api"] == "vega"
+
+
+def test_a_vega_model_without_receipts_is_refused_before_anything_is_sent(tmp_path, monkeypatch) -> None:
+    from tools import encoder_bakeoff as bake
+    monkeypatch.setattr(bake, "load", lambda out, max_chars: (bake.Corpus([1], ["a"]), bake.Queries(["q"], [[1]])))
+    monkeypatch.setattr("app.config.VEGA_URL", "")
+    with pytest.raises(SystemExit, match="VEGA_URL is unset"):
+        bake.embed(tmp_path, "m", "http://x", "vega-bge-m3", None, 8192, 1, 20_000)
+
+
+def test_one_run_name_never_mixes_two_encodings(tmp_path, monkeypatch) -> None:
+    """The corpus shards are shared by every query variant of a run: another
+    model, URL or a smoke run's short shard under the same --name would be
+    one row from two encodings."""
+    from tools import encoder_bakeoff as bake
+    corpus = bake.Corpus(ids=[1, 2], texts=["a", "b"])
+    monkeypatch.setattr(bake, "load", lambda out, max_chars: (corpus, bake.Queries(["q"], [[1]])))
+    monkeypatch.setattr("app.embeddings.embed_calibration",
+                        lambda recipe, texts, **kw: [[1.0, 0.0] for _ in texts])
+    bake.embed(tmp_path, "m", "http://x", "model-a", None, 8192, 1, 20_000, limit=1)
+    with pytest.raises(SystemExit, match="different settings.*limit"):
+        bake.embed(tmp_path, "m", "http://x", "model-a", None, 8192, 1, 20_000)
+    with pytest.raises(SystemExit, match="different settings.*model"):
+        bake.embed(tmp_path, "m", "http://x", "model-b", None, 8192, 1, 20_000, limit=1)
+    assert bake.embed(tmp_path, "m", "http://x", "model-a", None, 8192, 1, 20_000,
+                      query_prefix="Q: ", limit=1) == 0, "a query variant is the same run"
+
+
+def test_a_green_set_asks_no_acknowledgement(tmp_path, monkeypatch, capsys) -> None:
+    from tools import encoder_bakeoff as b
+    _serve(monkeypatch, {"corpus.jsonl": [{"_id": "a", "title": "", "text": "x"}],
+                         "queries.jsonl": [{"_id": "q", "text": "y"}],
+                         "qrels/test.jsonl": [{"query-id": "q", "corpus-id": "a", "score": 1}]})
+    b.fetch(tmp_path / "lq", "legalquad")
+    said = capsys.readouterr().out
+    assert "green, no acknowledgement needed" in said and "record an acknowledgement" not in said
+    assert b.SUITES["bsard"].get("green") is None and b.SUITES["lemur-en"]["green"]

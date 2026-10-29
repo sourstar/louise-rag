@@ -286,6 +286,16 @@ vector leg by RRF, then reranks; it never answers with vectors alone.
 - The report has three rows per encoder: **BM25 (Louise)**, **⟨encoder⟩**
   and **⟨encoder⟩ + BM25 (RRF)**.
 
+**What the node serves (2026-10-29).** Every GPU encoder is VeGa-wrapped
+(`vega-bge-m3`, `vega-qwen3-embedding-4b`, …). **Qwen3-Embedding-8B is not
+served; the 4B is.** The 8B rows wait for a deploy of it, so the compromise
+is measured as the 4B first. The bake-off asks a `vega-…` model through the
+app's tagging client; its first GPU runs were refused for sending untagged
+inputs.
+
+**First number: BM25 (Louise) on LegalQuAD, nDCG@10 0.7618** against
+MTEB's BM25 76.8. Our word leg is MTEB's BM25, within 0.6 point.
+
 **The rule:** an encoder is chosen on its HYBRID MRR@10 — what it adds to
 the word leg — with ties broken by cost (size, dimensions). The reranker
 after the fusion is not measured yet.

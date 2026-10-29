@@ -329,6 +329,20 @@ def note_origin_attempt(root: Path, name: str, codex: Codex, *, why: str, now: s
     return out
 
 
+def clear_origin_attempt(root: Path, name: str) -> bool:
+    """A VERDICT came (pass or fail): the note of an attempt that could not
+    run says nothing now, and is removed rather than left to read as the
+    copy's last word (wikipedia-v8, 2026-10-29: the pass that cleared its
+    quarantine left the failed attempt of the evening before in place)."""
+    out = Path(root) / name / "state" / ORIGIN_TRIED
+    try:
+        out.unlink()
+    except FileNotFoundError:
+        return False
+    _states.clear()
+    return True
+
+
 def origin_ack(root: Path, name: str, codex: Codex) -> dict[str, Any] | None:
     raw = _read_json(Path(root) / name / "state" / ORIGIN_ACK)
     if raw and raw.get("kind") == "louise-origin-ack" \
