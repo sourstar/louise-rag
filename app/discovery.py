@@ -314,6 +314,16 @@ def _apply_batch(con, plugin, batch: list, counts: dict, stop, *, wait: bool,
                     (ref.locator, txt_name, lang, ref.mtime, ref.size,
                      raw.raw_hash, now, uid)))
                 local["changed"] += 1
+            elif row["path"] != ref.locator:
+                # the same bytes, re-stamped AND somewhere else: the locator
+                # is refreshed now, as the relocated branch below would on
+                # the next scan — until then the stale path kept the corpus
+                # reading as moved, and every start re-enumerated it
+                writes.append((
+                    "UPDATE documents SET path=?,txt_name=?,mtime=?,size=?,error=NULL,"
+                    "retries=0,updated_at=? WHERE uid=?",
+                    (ref.locator, txt_name, ref.mtime, ref.size, now, uid)))
+                local["relocated"] += 1
             else:
                 writes.append(("UPDATE documents SET mtime=?,size=? WHERE uid=?",
                                (ref.mtime, ref.size, uid)))
