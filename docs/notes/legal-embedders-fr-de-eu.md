@@ -345,6 +345,40 @@ hybrid, and why bge-m3 is out for German law.
 `--limit` now cuts the questions as well as the documents. A GerDaLIRSmall
 smoke embedded all 12,234 of them.
 
+**LEMUR, en / fr / de / it** (EU environmental acts; the query is the act's
+metadata header; about 225 acts each; one row per act; München 2026-10-29,
+main fd74d32). MRR@10, and the paired p against BM25:
+
+| row | en | fr | de | it |
+|---|---|---|---|---|
+| BM25 (Louise) | 0.864 | 0.888 | 0.860 | 0.862 |
+| vega-qwen3-embedding-4b | **0.934** (p 0.0002) | 0.914 (0.10) | **0.903** (0.024) | 0.886 (0.19) |
+| qwen3-4b + BM25 | 0.901 (0.0004) | **0.916** (0.0066) | 0.895 (0.0014) | 0.874 (0.24) |
+| vega-bge-m3 | 0.775 | 0.790 | 0.730 | 0.790 |
+| bge-m3 + BM25 | 0.851 (0.44) | 0.871 (0.28) | 0.829 (0.042, worse) | 0.842 (0.16) |
+
+**What the five sets say together** (LegalQuAD and the four LEMURs):
+- **bge-m3 is out.** Alone it loses to BM25 everywhere, and fused it never
+  wins and twice loses.
+- **The 4B fused never loses to BM25**, and wins significantly on three of
+  the five sets (LEMUR en, fr, de).
+- **In English the 4B alone beats its own fusion** (+0.032, p 0.005). A
+  vector leg much stronger than the word leg is diluted by RRF. That is the
+  reranker's job to repair, and worth measuring once the reranker row
+  exists.
+- **The caution: LEMUR is a title-shaped task.** The query is the act's
+  header (title, date, number), recall@100 is about 1.0, and BM25 already
+  reaches 0.86. It ranks encoders on finding an EU act by its description,
+  which a legal question is not. It is the green evidence, not the
+  deciding one.
+
+**So far:** Qwen3-Embedding-4B is the compromise for the EU languages
+without a legal encoder. A legal encoder must beat the 4B's hybrid at
+p < 0.01 to replace it. Next rows:
+- DAR-legal-it on `lemur-it` (EU-it shares Normattiva's space);
+- the French and German legal candidates once served;
+- BSARD and EUR-Lex-Sum once acknowledged.
+
 **The rule:** an encoder is chosen on its HYBRID MRR@10 — what it adds to
 the word leg — with ties broken by cost (size, dimensions) — and a tie is what the paired test cannot separate at p < 0.01. The reranker
 after the fusion is not measured yet.
