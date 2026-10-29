@@ -296,8 +296,32 @@ inputs.
 **First number: BM25 (Louise) on LegalQuAD, nDCG@10 0.7618** against
 MTEB's BM25 76.8. Our word leg is MTEB's BM25, within 0.6 point.
 
+**LegalQuAD (German court decisions, 200 questions; München 2026-10-29,
+main 09e61a5).** MRR@10 / nDCG@10:
+
+| row | alone | + BM25 (RRF) |
+|---|---|---|
+| BM25 (Louise) | 0.7258 / 0.7618 | — |
+| vega-bge-m3 | 0.4861 / 0.5383 | **0.6212** / 0.6704 — below BM25 alone |
+| vega-qwen3-embedding-4b, bare | 0.6530 / 0.6924 | **0.7457** / 0.7787 |
+| the same, Instruct prefix | 0.6556 / 0.6958 | 0.7345 / 0.7733 |
+
+What it shows so far:
+- **A weak vector leg pulls the hybrid below BM25 alone.** bge-m3
+  costs 10.5 points of MRR@10. The encoder decides whether fusion
+  helps or hurts.
+- The 4B's hybrid is +2.0 points over BM25. The Instruct prefix changes
+  nothing measurable.
+- **Two points on 200 questions is within noise** (per-query spread
+  ~0.4). The bake-off therefore now gives a paired randomization test
+  per row against BM25, and the leader against every other row
+  (`paired`, Smucker et al. CIKM 2007), before any of these is a
+  choice.
+- The set is case law, not statutes. It ranks encoders on German legal
+  language; it does not choose NeuRIS's.
+
 **The rule:** an encoder is chosen on its HYBRID MRR@10 — what it adds to
-the word leg — with ties broken by cost (size, dimensions). The reranker
+the word leg — with ties broken by cost (size, dimensions) — and a tie is what the paired test cannot separate at p < 0.01. The reranker
 after the fusion is not measured yet.
 
 **Built too (2026-10-28): EUR-Lex-Sum and LEMUR, made BEIR at fetch** by

@@ -637,3 +637,53 @@ def test_a_green_set_asks_no_acknowledgement(tmp_path, monkeypatch, capsys) -> N
     said = capsys.readouterr().out
     assert "green, no acknowledgement needed" in said and "record an acknowledgement" not in said
     assert b.SUITES["bsard"].get("green") is None and b.SUITES["lemur-en"]["green"]
+
+
+# ---- the paired test (Smucker et al., CIKM 2007) --------------------------
+
+def test_paired_on_equal_rows_finds_nothing() -> None:
+    from tools.encoder_bakeoff import paired
+    delta, lo, hi, p = paired([0.5, 0.2, 1.0], [0.5, 0.2, 1.0])
+    assert (delta, lo, hi, p) == (0.0, 0.0, 0.0, 1.0)
+
+
+def test_paired_on_two_queries_by_hand() -> None:
+    """d = [1, 1]: of the four sign patterns, two give |mean| = 1 — p ≈ 1/2."""
+    from tools.encoder_bakeoff import paired
+    delta, lo, hi, p = paired([1.0, 1.0], [0.0, 0.0])
+    assert delta == 1.0 and lo == hi == 1.0
+    assert 0.47 < p < 0.53
+
+
+def test_paired_on_a_clear_win_is_significant_and_seeded() -> None:
+    from tools.encoder_bakeoff import paired
+    a, b = [1.0] * 50, [0.0] * 50
+    _, _, _, p = paired(a, b)
+    assert p == pytest.approx(1 / 10_001)
+    rng = np.random.default_rng(3)
+    x, y = list(rng.random(200)), list(rng.random(200))
+    assert paired(x, y) == paired(x, y), "the same scores give the same report"
+
+
+def test_per_query_is_the_metric_of_each_query() -> None:
+    from tools.encoder_bakeoff import Queries, per_query
+    got = per_query([[1, 2], [3, 1]], Queries(texts=["a", "b"], relevant=[[1], [1]]))
+    assert got["mrr@10"] == [1.0, 0.5]
+
+
+def test_the_report_tests_each_row_against_bm25(tmp_path, capsys) -> None:
+    from tools.encoder_bakeoff import report
+    out = _beir(tmp_path, "legalquad", corpus=[{"_id": "a", "title": "", "text": "x"}],
+                queries=[{"_id": "q", "text": "y"}],
+                qrels=[{"query-id": "q", "corpus-id": "a", "score": 1}], parquet=False)
+    rows = {"bm25": ("BM25 (Louise)", [1.0] * 40), "m": ("m", [0.0] * 40)}
+    for d, (name, per) in rows.items():
+        run = out / d
+        run.mkdir()
+        (run / "run-bare.json").write_text(json.dumps({"name": name, "slug": "bare"}))
+        (run / "scores-bare.json").write_text(json.dumps({"mrr@10": float(np.mean(per))}))
+        (run / "perquery-bare.json").write_text(json.dumps({"mrr@10": per, "ndcg@10": per}))
+    report(out)
+    shown = capsys.readouterr().out
+    assert "Paired, mrr@10, 40 queries" in shown
+    assert "m  vs  BM25 (Louise): -1.0000" in shown and "p = 0.0001" in shown
