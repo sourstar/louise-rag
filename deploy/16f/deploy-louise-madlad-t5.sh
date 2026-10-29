@@ -111,6 +111,7 @@ grep -q "^class OriginOutsideBase" "$ROOT/src.new/app/plugin_io.py"             
 test -s "$ROOT/src.new/app/hold/relocate.py"                                              # 3e9b198: `hold records relocate`
 grep -q "interrupted: bool = False" "$ROOT/src.new/app/hold/relocate.py"                  # 6893b8a: relocate's row before its file; a stop exits 130, a re-run continues
 grep -q "replaced version(s) of" "$ROOT/src.new/app/hold/snapshot.py"                      # c96add6 (0710ee4): a later snapshot's delta from the versions held
+grep -q 'add_argument("--api", choices=("openai", "vega")' "$ROOT/src.new/tools/encoder_bakeoff.py"   # 09e61a5: the bake-off tags vega- inputs
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
 ! grep -q 'cache_type_' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # d372ba5: the F16 cache (P5); b68820c had f32
 test ! -e "$ROOT/src.new/deploy/reference"
