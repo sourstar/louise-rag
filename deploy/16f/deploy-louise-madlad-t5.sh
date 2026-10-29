@@ -112,6 +112,7 @@ test -s "$ROOT/src.new/app/hold/relocate.py"                                    
 grep -q "interrupted: bool = False" "$ROOT/src.new/app/hold/relocate.py"                  # 6893b8a: relocate's row before its file; a stop exits 130, a re-run continues
 grep -q "replaced version(s) of" "$ROOT/src.new/app/hold/snapshot.py"                      # c96add6 (0710ee4): a later snapshot's delta from the versions held
 grep -q 'add_argument("--api", choices=("openai", "vega")' "$ROOT/src.new/tools/encoder_bakeoff.py"   # 09e61a5: the bake-off tags vega- inputs
+grep -q "^def paired(" "$ROOT/src.new/tools/encoder_bakeoff.py"                            # 05adb54: the paired randomization test
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
 ! grep -q 'cache_type_' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # d372ba5: the F16 cache (P5); b68820c had f32
 test ! -e "$ROOT/src.new/deploy/reference"
@@ -143,6 +144,7 @@ docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
     tests/test_parallel.py tests/test_parallel_exit.py tests/test_issues.py tests/ask/test_figures.py \
     tests/test_gpu_level.py tests/test_gpu_governor.py tests/test_node_start_stop.py tests/test_worker_hot_reload.py \
     tests/test_translate_t5.py tests/test_translate_model.py tests/test_query_translation.py tests/test_madlad_translate_server.py \
+    tests/test_encoder_bakeoff.py \
     $(cd "$ROOT/src.new" && ls tests/test_node_profile*.py tests/test_cpu_limit*.py 2>/dev/null)
 # test_rename.py in its own run: in one invocation with tests/ask/ its directory's
 # conftest `codex` fixture is not found (2026-10-27; alone and in the full suite it passes)
