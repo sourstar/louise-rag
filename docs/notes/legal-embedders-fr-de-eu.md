@@ -320,6 +320,31 @@ What it shows so far:
 - The set is case law, not statutes. It ranks encoders on German legal
   language; it does not choose NeuRIS's.
 
+**The paired test (MRR@10, 200 questions, Fisher randomization, 95%
+bootstrap):**
+
+| comparison | Δ | interval | p |
+|---|---|---|---|
+| qwen3-4b + BM25 vs BM25 | +0.020 | [−0.025, +0.067] | 0.40, **a tie** |
+| bge-m3 + BM25 vs BM25 | −0.105 | [−0.159, −0.050] | 0.0005, **worse** |
+| qwen3-4b + BM25 vs qwen3-4b alone | +0.093 | [+0.056, +0.131] | 0.0001, **fusion helps** |
+| qwen3-4b bare vs Instruct (both fused) | +0.011 | [−0.007, +0.030] | 0.25, a tie |
+| qwen3-4b alone vs BM25 | −0.073 | [−0.131, −0.015] | 0.014 |
+
+**On German court decisions the best hybrid ties word search, and a weak
+encoder makes it worse.** That is the reason the rule chooses on the
+hybrid, and why bge-m3 is out for German law.
+
+**GerDaLIRSmall: not run on the card.**
+
+| choice | effect | pros | cons |
+|---|---|---|---|
+| **skip it** (chosen) | the card goes to statute sets (LEMUR now; BSARD and EUR-Lex-Sum after their acknowledgement) | the sets that choose a STATUTE encoder | no own number for German case law with long documents |
+| run it | ~40 min for bge-m3, ~3.5–4 h for qwen3-4b (München's projection) | our own row beside MTEB's | case law with citation-derived questions, already answered by MTEB (BM25 59.4 against ≤ 54.7 dense); the card is shared with the corpus |
+
+`--limit` now cuts the questions as well as the documents. A GerDaLIRSmall
+smoke embedded all 12,234 of them.
+
 **The rule:** an encoder is chosen on its HYBRID MRR@10 — what it adds to
 the word leg — with ties broken by cost (size, dimensions) — and a tie is what the paired test cannot separate at p < 0.01. The reranker
 after the fusion is not measured yet.

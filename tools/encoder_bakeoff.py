@@ -480,6 +480,9 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
         # in two minutes rather than finding out 47 minutes into the real
         # one. It is NOT scoreable — see `score`.
         corpus = Corpus(ids=corpus.ids[:limit], texts=corpus.texts[:limit])
+        # and the questions too: GerDaLIRSmall's 12,234 made a "smoke" that
+        # embedded every one of them (München, 2026-10-29)
+        queries = Queries(texts=queries.texts[:limit], relevant=queries.relevant[:limit])
     api = api_for(model, api)
     if api == "vega" and not config.VEGA_URL:
         raise SystemExit(f"{model} is a VeGa model and VEGA_URL is unset: its receipts "

@@ -687,3 +687,15 @@ def test_the_report_tests_each_row_against_bm25(tmp_path, capsys) -> None:
     shown = capsys.readouterr().out
     assert "Paired, mrr@10, 40 queries" in shown
     assert "m  vs  BM25 (Louise): -1.0000" in shown and "p = 0.0001" in shown
+
+
+def test_a_smoke_run_cuts_the_questions_as_well(tmp_path, monkeypatch) -> None:
+    from tools import encoder_bakeoff as bake
+    sent: list[int] = []
+    corpus = bake.Corpus(ids=list(range(10)), texts=[f"d{i}" for i in range(10)])
+    queries = bake.Queries(texts=[f"q{i}" for i in range(10)], relevant=[[i] for i in range(10)])
+    monkeypatch.setattr(bake, "load", lambda out, max_chars: (corpus, queries))
+    monkeypatch.setattr("app.embeddings.embed_calibration",
+                        lambda recipe, texts, **kw: sent.append(len(texts)) or [[1.0, 0.0] for _ in texts])
+    bake.embed(tmp_path, "smoke", "http://x", "m", None, 8192, 1, 20_000, limit=3)
+    assert sent == [3, 3], "three documents and three questions"
