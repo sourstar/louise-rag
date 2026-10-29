@@ -372,6 +372,24 @@ main fd74d32). MRR@10, and the paired p against BM25:
   which a legal question is not. It is the green evidence, not the
   deciding one.
 
+**DAR-legal-it on `lemur-it`** (Normattiva's live encoder, `vega-dar-legal-it`,
+ctx 8192). MRR@10 against BM25 0.862:
+- served form (`query: `, Normattiva's instruction): 0.879 (p 0.40);
+  fused: 0.863 (p 0.92);
+- bare: 0.872; fused: 0.863.
+- Against the 4B: +0.0075 for the 4B (p 0.64), a tie.
+
+**EU-it in Normattiva's space costs nothing measurable here.** DAR-legal-it
+was chosen on JuriFindIT's expert questions, which include EU acts in
+Italian. So D3's "Italian = Normattiva's space + EU-it" stands.
+
+**München's finding:** the report said a bare row "is what this node
+serves". For a space with a query instruction it is not: Normattiva serves
+`query: ` + the question. `embed --from-collection <name>` now takes the
+collection's own recipe (`recipe_for`: url, model, api, ctx, instruction),
+and the app prefixes the instruction as a search does. The false sentence
+is gone from the report.
+
 **So far:** Qwen3-Embedding-4B is the compromise for the EU languages
 without a legal encoder. A legal encoder must beat the 4B's hybrid at
 p < 0.01 to replace it. Next rows:

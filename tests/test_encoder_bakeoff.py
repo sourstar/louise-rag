@@ -699,3 +699,46 @@ def test_a_smoke_run_cuts_the_questions_as_well(tmp_path, monkeypatch) -> None:
                         lambda recipe, texts, **kw: sent.append(len(texts)) or [[1.0, 0.0] for _ in texts])
     bake.embed(tmp_path, "smoke", "http://x", "m", None, 8192, 1, 20_000, limit=3)
     assert sent == [3, 3], "three documents and three questions"
+
+
+# ---- the served query side (Normattiva's "query: ", München 2026-10-29) ---
+
+def test_from_collection_embeds_queries_as_the_collection_serves_them(tmp_path, monkeypatch, capsys) -> None:
+    """The collection's own recipe goes to the app client, which prefixes the
+    space's instruction to every query as a search does; the tool adds
+    nothing, and the slug names the instruction."""
+    from app import collections as collections_mod
+    from tools import encoder_bakeoff as bake
+    served = collections_mod.EmbedRecipe(url="http://x", api="openai", model="dar", dtype="f16",
+                                         ctx=8192, dim=None, query_instruction="query: ")
+    monkeypatch.setattr(bake, "served_recipe", lambda name: served)
+    monkeypatch.setattr(bake, "load", lambda out, max_chars: (bake.Corpus([1], ["doc"]),
+                                                              bake.Queries(["frage"], [[1]])))
+    calls = []
+    monkeypatch.setattr("app.embeddings.embed_calibration",
+                        lambda recipe, texts, **kw: calls.append((recipe.query_instruction, list(texts),
+                                                                  kw.get("query", False)))
+                        or [[1.0, 0.0] for _ in texts])
+    assert bake.embed(tmp_path, "dar", None, None, None, 8192, 1, 20_000,
+                      from_collection="normattiva") == 0
+    assert calls[1] == ("query: ", ["frage"], True), "the app prefixes; the text goes bare"
+    meta = json.loads(next((tmp_path / "dar").glob("run-*.json")).read_text())
+    assert meta["slug"] == bake.slug_of("query: ") and meta["from_collection"] == "normattiva"
+    with pytest.raises(SystemExit, match="would add a second"):
+        bake.embed(tmp_path, "dar2", None, None, None, 8192, 1, 20_000,
+                   query_prefix="query: ", from_collection="normattiva")
+
+
+def test_the_report_no_longer_says_bare_is_what_the_node_serves(tmp_path, capsys) -> None:
+    from tools.encoder_bakeoff import report
+    out = _beir(tmp_path, "legalquad", corpus=[{"_id": "a", "title": "", "text": "x"}],
+                queries=[{"_id": "q", "text": "y"}],
+                qrels=[{"query-id": "q", "corpus-id": "a", "score": 1}], parquet=False)
+    run = out / "m"
+    run.mkdir()
+    (run / "run-bare.json").write_text(json.dumps({"name": "m", "slug": "bare"}))
+    (run / "scores-bare.json").write_text(json.dumps({"mrr@10": 0.5}))
+    report(out)
+    shown = capsys.readouterr().out
+    assert "which is what this node serves today" not in shown
+    assert "--from-collection" in shown
