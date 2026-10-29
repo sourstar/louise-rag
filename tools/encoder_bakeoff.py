@@ -417,6 +417,20 @@ def _recipe(url: str, model: str, dim: int | None, ctx: int, concurrency: int,
                                        concurrency=concurrency)
 
 
+def served_recipe(name: str):
+    """A held collection's encoder exactly as its searches use it —
+    `collections.recipe_for`, the worker's own resolution: url, model, api,
+    ctx, dim and the space's query `instruction`, which the app prefixes to
+    every query it embeds (app/embeddings.py). Normattiva's is "query: ";
+    measured bare, its row was not what the node serves (München,
+    2026-10-29)."""
+    from app import collections as collections_mod
+    for c in collections_mod.load_all():
+        if c.name == name:
+            return collections_mod.recipe_for(c)
+    raise SystemExit(f"no collection {name!r} is held here")
+
+
 def _same_settings(run: Path, settings: dict) -> None:
     """A run's shards are reusable only under the settings that made them —
     the corpus shards most of all, which every query variant shares. Under
@@ -465,7 +479,8 @@ def slug_of(query_prefix: str) -> str:
 
 def embed(out: Path, name: str, url: str, model: str, dim: int | None,
           ctx: int, concurrency: int, max_chars: int,
-          query_prefix: str = "", limit: int | None = None, api: str | None = None) -> int:
+          query_prefix: str = "", limit: int | None = None, api: str | None = None,
+          from_collection: str | None = None) -> int:
     from app import config
     if config.EMBED_BATCH != 1:
         raise SystemExit(
@@ -483,16 +498,26 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
         # and the questions too: GerDaLIRSmall's 12,234 made a "smoke" that
         # embedded every one of them (München, 2026-10-29)
         queries = Queries(texts=queries.texts[:limit], relevant=queries.relevant[:limit])
-    api = api_for(model, api)
+    if from_collection:
+        if query_prefix:
+            raise SystemExit("--from-collection serves the collection's own query instruction; "
+                             "a --query-prefix would add a second one")
+        recipe = served_recipe(from_collection)
+        url, model, api, ctx, dim = recipe.url, recipe.model, recipe.api, recipe.ctx, recipe.dim
+        # the app prefixes it, as a search does; it names the query side
+        query_side = recipe.query_instruction or ""
+    else:
+        api = api_for(model, api)
+        recipe = _recipe(url, model, dim, ctx, concurrency, api)
+        query_side = query_prefix
     if api == "vega" and not config.VEGA_URL:
         raise SystemExit(f"{model} is a VeGa model and VEGA_URL is unset: its receipts "
                          f"cannot be read (docs/notes/vega.md); run in the worker's env")
-    recipe = _recipe(url, model, dim, ctx, concurrency, api)
     run = out / name
     # a smoke run's shards are not the real run's (its first shard is short)
     _same_settings(run, {"url": url, "model": model, "api": api, "ctx": ctx, "dim": dim,
                          "max_chars": max_chars, "limit": limit})
-    slug = slug_of(query_prefix)
+    slug = slug_of(query_side)
     print(f"{name} [{slug}]: {len(corpus.texts)} documents, "
           f"{len(queries.texts)} queries" + (f"  (LIMIT {limit})" if limit else ""))
     # The corpus side never carries the prefix, so every variant of a model
@@ -504,7 +529,8 @@ def embed(out: Path, name: str, url: str, model: str, dim: int | None,
     np.save(run / f"queries-{slug}.npy", qry)
     (run / f"run-{slug}.json").write_text(json.dumps(
         {"name": name, "slug": slug, "url": url, "model": model, "api": api, "ctx": ctx,
-         "max_chars": max_chars, "query_prefix": query_prefix,
+         "max_chars": max_chars, "query_prefix": query_side,
+         "from_collection": from_collection,
          "limit": limit, "dim": int(doc.shape[1]),
          "documents": int(doc.shape[0]), "queries": int(qry.shape[0])},
         indent=2) + "\n", encoding="utf-8")
@@ -830,8 +856,9 @@ def report(out: Path) -> int:
     if suite_of(out) == "jurifindit":
         print("\nDAR-legal-it's row is its PUBLISHED table, not a run of this tool: "
               "its truncation and corpus handling are unrecorded.")
-    print("\nThe rows are comparable to each other exactly. A row with no [slug] "
-          "embedded queries bare, which is what this node serves today.")
+    print("\nThe rows are comparable to each other exactly. A row with no [slug] embedded "
+          "its queries bare; a space that declares a query instruction serves its "
+          "queries WITH it — `embed --from-collection <name>` measures that served form.")
     return 0
 
 
@@ -854,8 +881,11 @@ def main(argv=None) -> int:
             p.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
         if cmd == "embed":
             p.add_argument("--name", required=True)
-            p.add_argument("--url", required=True)
-            p.add_argument("--model", required=True)
+            p.add_argument("--url", default=None)
+            p.add_argument("--model", default=None)
+            p.add_argument("--from-collection", default=None,
+                           help="a held collection's encoder as its searches use it: url, "
+                                "model, api, ctx and its query instruction (`recipe_for`)")
             p.add_argument("--dim", type=int, default=None)
             p.add_argument("--ctx", type=int, default=8192)
             p.add_argument("--concurrency", type=int, default=1)
@@ -876,8 +906,11 @@ def main(argv=None) -> int:
     if a.cmd == "fetch":
         return fetch(a.out, a.suite)
     if a.cmd == "embed":
+        if not a.from_collection and not (a.url and a.model):
+            ap.error("embed needs --url and --model, or --from-collection")
         return embed(a.out, a.name, a.url, a.model, a.dim, a.ctx,
-                     a.concurrency, a.max_chars, a.query_prefix, a.limit, a.api)
+                     a.concurrency, a.max_chars, a.query_prefix, a.limit, a.api,
+                     a.from_collection)
     if a.cmd == "lexical":
         return lexical(a.out, a.lang, a.max_chars)
     if a.cmd == "score":
