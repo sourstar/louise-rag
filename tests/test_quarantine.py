@@ -502,6 +502,36 @@ def test_hold_check_notes_an_origin_check_that_could_not_run(node, endpoint):
     assert tried["time"] == NOW and len(tried["why"]) == 400
 
 
+def test_a_verdict_clears_the_note_of_an_attempt_that_could_not_run(node, endpoint, monkeypatch):
+    """wikipedia-v8 (2026-10-29): the pass that cleared its quarantine left the
+    evening's "none of the 52440 sampled records could be re-fetched" in
+    state/, the copy's last word to anyone reading it. A pass or a fail
+    removes it; an inconclusive run writes it, as before."""
+    from types import SimpleNamespace as NS
+    from app import louise
+    from app.hold import check as chk
+    root, collection, codex = node
+    copy_state.note_origin_attempt(root, "gutenberg", codex, why="none re-fetched", now=NOW)
+
+    def run(result):
+        report = NS(attestations=(), ok=True, outcome=lambda name: NS(result=result, why="away"),
+                    to_json=lambda: {}, outcomes=())
+        monkeypatch.setattr(louise, "run_check", lambda a: ("gutenberg", codex, NS(snapshot_id="s"),
+                                                            b"\0", report))
+        try:
+            louise.cmd_check(NS(root=root, json=True))
+        except Exception:   # noqa: BLE001 — the printing after the note is not this test's
+            pass
+    run(chk.INCONCLUSIVE)
+    assert copy_state.origin_attempt(root, "gutenberg")["why"] == "away"
+    run(chk.PASS)
+    assert copy_state.origin_attempt(root, "gutenberg") is None
+    copy_state.note_origin_attempt(root, "gutenberg", codex, why="again", now=NOW)
+    run(chk.FAIL)
+    assert copy_state.origin_attempt(root, "gutenberg") is None
+    assert copy_state.clear_origin_attempt(root, "gutenberg") is False, "nothing to clear"
+
+
 # ---- show -------------------------------------------------------------------------------------------------
 
 def test_hold_collection_show_prints_the_state_and_every_reason(node, endpoint, capsys):
