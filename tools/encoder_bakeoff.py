@@ -568,6 +568,47 @@ def metrics_of(rankings: list[list[int]], queries: Queries, ks=KS) -> dict[str, 
     return {key: value / len(rankings) for key, value in totals.items()}
 
 
+#: the per-query metrics kept beside each row, for the paired test
+PAIRED = ("mrr@10", "ndcg@10")
+
+
+def per_query(rankings: list[list[int]], queries: Queries,
+              keys=PAIRED) -> dict[str, list[float]]:
+    """Each query's metrics, in query order: what a paired test compares."""
+    ks = sorted({int(k.split("@")[1]) for k in keys})
+    rows = [metrics_for(r, set(rel), ks) for r, rel in zip(rankings, queries.relevant)]
+    return {k: [row[k] for row in rows] for k in keys}
+
+
+def paired(a: list[float], b: list[float], *, trials: int = 10_000,
+           seed: int = 0, chunk: int = 500) -> tuple[float, float, float, float]:
+    """(mean of a − b, its 95% bootstrap interval, the two-sided p of Fisher's
+    randomization test) over the same queries.
+
+    THE STANDARD, NOT OURS: Smucker, Allan & Carterette (CIKM 2007) compared
+    the significance tests used in IR and recommend the randomization test
+    (each query's pair of scores swapped at random = its difference's sign
+    flipped); the interval is the percentile bootstrap of the mean
+    difference. WHY IT IS NEEDED: LegalQuAD has 200 questions, and its first
+    rows differed by 1–2 points of MRR@10 — a size the per-query spread
+    (~0.4) puts within noise. A fixed seed: the same scores give the same
+    report. Trials in chunks, so 12k queries stay a few MB."""
+    d = np.asarray(a, dtype=np.float64) - np.asarray(b, dtype=np.float64)
+    n = len(d)
+    if n == 0:
+        return 0.0, 0.0, 0.0, 1.0
+    delta = float(d.mean())
+    rng = np.random.default_rng(seed)
+    boots, extreme = [], 0
+    for start in range(0, trials, chunk):
+        m = min(chunk, trials - start)
+        boots.append(d[rng.integers(0, n, size=(m, n))].mean(axis=1))
+        flips = (rng.integers(0, 2, size=(m, n)) * 2 - 1) * d
+        extreme += int((np.abs(flips.mean(axis=1)) >= abs(delta) - 1e-12).sum())
+    lo, hi = np.percentile(np.concatenate(boots), [2.5, 97.5])
+    return delta, float(lo), float(hi), (extreme + 1) / (trials + 1)
+
+
 def score_run(doc: np.ndarray, qry: np.ndarray, corpus: Corpus,
               queries: Queries, ks=KS) -> dict[str, float]:
     return metrics_of(rank_dense(doc, qry, corpus, max(ks)), queries, ks)
@@ -675,6 +716,8 @@ def score(out: Path, max_chars: int) -> int:
             result = metrics_of(lexical_rankings, queries)
             (run / f"scores-{slug}.json").write_text(
                 json.dumps(result, indent=2) + "\n", encoding="utf-8")
+            (run / f"perquery-{slug}.json").write_text(
+                json.dumps(per_query(lexical_rankings, queries)) + "\n", encoding="utf-8")
             print(f"{label_of(meta)}: mrr@10 {result['mrr@10']:.4f}  "
                   f"ndcg@10 {result['ndcg@10']:.4f}")
             continue
@@ -693,12 +736,17 @@ def score(out: Path, max_chars: int) -> int:
         result = metrics_of(dense, queries)
         (run / f"scores-{slug}.json").write_text(
             json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        (run / f"perquery-{slug}.json").write_text(
+            json.dumps(per_query(dense, queries)) + "\n", encoding="utf-8")
         print(f"{label_of(meta)}: mrr@100 {result['mrr@100']:.4f}  "
               f"recall@10 {result['recall@10']:.4f}")
         if lexical_rankings is not None:
-            fused = metrics_of([fuse(t, v) for t, v in zip(lexical_rankings, dense)], queries)
+            fused_rankings = [fuse(t, v) for t, v in zip(lexical_rankings, dense)]
+            fused = metrics_of(fused_rankings, queries)
             (run / f"fused-{slug}.json").write_text(
                 json.dumps(fused, indent=2) + "\n", encoding="utf-8")
+            (run / f"perquery-fused-{slug}.json").write_text(
+                json.dumps(per_query(fused_rankings, queries)) + "\n", encoding="utf-8")
             print(f"{label_of(meta)} + BM25 (RRF): mrr@10 {fused['mrr@10']:.4f}  "
                   f"ndcg@10 {fused['ndcg@10']:.4f}")
     return 0
@@ -712,18 +760,50 @@ PUBLISHED = {"DAR-legal-it (published)": {
     "map@5": 0.6985, "map@100": 0.7015}}
 
 
+def _print_paired(queried: dict[str, dict[str, list[float]]], metric: str = "mrr@10") -> None:
+    """Every row against BM25 (Louise), and the leader against every other
+    row: the difference in `metric`, its 95% interval, the randomization p.
+    Uncorrected per comparison: with several rows, read p < 0.01 as the bar."""
+    have = {k: v[metric] for k, v in queried.items() if metric in v}
+    if len(have) < 2:
+        return
+    n = {len(v) for v in have.values()}
+    if len(n) != 1:
+        print(f"\n(paired test skipped: the rows were scored on different query counts {sorted(n)})")
+        return
+    leader = max(have, key=lambda k: float(np.mean(have[k])))
+    print(f"\nPaired, {metric}, {n.pop()} queries (Fisher's randomization test, 10,000 trials; "
+          f"95% bootstrap interval; uncorrected):")
+    pairs = ([(k, LEXICAL_LABEL) for k in have if k != LEXICAL_LABEL] if LEXICAL_LABEL in have else []) \
+        + [(leader, k) for k in have if k != leader]
+    seen = set()
+    for a, b in pairs:
+        if (a, b) in seen or (b, a) in seen:
+            continue
+        seen.add((a, b))
+        delta, lo, hi, p = paired(have[a], have[b])
+        print(f"  {a}  vs  {b}: {delta:+.4f} [{lo:+.4f}, {hi:+.4f}]  p = {p:.4f}")
+
+
 def report(out: Path) -> int:
     # the published row is DAR-legal-it's on JuriFindIT, and on no other set
     rows = dict(PUBLISHED) if suite_of(out) == "jurifindit" else {}
+    queried: dict[str, dict[str, list[float]]] = {}      # label -> per-query metrics
     prefixes: dict[str, str] = {}
+
+    def keep(label: str, path: Path) -> None:
+        if path.exists():
+            queried[label] = json.loads(path.read_text(encoding="utf-8"))
     for run, meta in runs_in(out):
         scores = run / f"scores-{meta['slug']}.json"
         if not scores.exists():
             continue
         rows[label_of(meta)] = json.loads(scores.read_text(encoding="utf-8"))
+        keep(label_of(meta), run / f"perquery-{meta['slug']}.json")
         fused = run / f"fused-{meta['slug']}.json"
         if fused.exists():
             rows[f"{label_of(meta)} + BM25 (RRF)"] = json.loads(fused.read_text(encoding="utf-8"))
+            keep(f"{label_of(meta)} + BM25 (RRF)", run / f"perquery-fused-{meta['slug']}.json")
         if meta.get("query_prefix"):
             prefixes[meta["slug"]] = meta["query_prefix"]
     if not rows:
@@ -743,6 +823,7 @@ def report(out: Path) -> int:
         print("| " + name.ljust(width) + " | " + " | ".join(cells) + " |")
     for slug, text in sorted(prefixes.items()):
         print(f"\n[{slug}] query prefix: {text!r}")
+    _print_paired(queried)
     if suite_of(out) == "jurifindit":
         print("\nDAR-legal-it's row is its PUBLISHED table, not a run of this tool: "
               "its truncation and corpus handling are unrecorded.")
