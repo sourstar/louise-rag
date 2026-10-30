@@ -197,7 +197,9 @@ def test_the_cache_dir_holds_named_derived_data_only():
     """`derived.place` is called for the derived data named above and by
     nothing that holds the archive or the authoritative state."""
     callers = {p.relative_to(ROOT).as_posix() for p in APP.rglob("*.py")
-               if p.name != "derived.py" and re.search(r"\bderived\.place\(", p.read_text(encoding="utf-8"))}
+               # `place_kept` is `place`, kept per process: a caller all the same
+               if p.name != "derived.py" and re.search(r"\bderived\.place(_kept)?\(",
+                                                       p.read_text(encoding="utf-8"))}
     assert callers, "the guard is wrong: nothing calls derived.place"
     assert callers - set(_DERIVED_WRITERS) == set(), (
         "invariant 6: LOUISE_CACHE_DIR is for derived, re-creatable data; a new writer is "

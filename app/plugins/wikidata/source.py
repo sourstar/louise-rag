@@ -227,6 +227,21 @@ class WikidataSource:
 
     # ---- fetch / parse ----------------------------------------------------------------------
 
+    def work_span(self, row) -> tuple[str, int] | None:
+        """The pack ROW GROUP an entity's line lives in — `plugin_io.work_span`
+        for the parse pool, as wikipedia's multistream chunk: whoever reads
+        one line of a group decompresses the group (1,000 lines), and each
+        process caches a few. Keeping a group's entities in one part reads it
+        once per page instead of once per child (München's py-spy of the
+        records build, 2026-10-30: ~29 % of a child in row-group reads).
+        Equal cost per group; None when the locator does not parse."""
+        try:
+            dump, index = split_locator(str(row.get("path") or ""))
+        except (ValueError, AttributeError):
+            return None
+        from .pack import ROW_GROUP
+        return f"{dump}|{index // ROW_GROUP}", ROW_GROUP
+
     def fetch(self, ref: DocRef) -> RawDoc:
         dump, index = split_locator(ref.locator)
         try:
