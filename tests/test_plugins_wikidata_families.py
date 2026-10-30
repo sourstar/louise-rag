@@ -715,3 +715,23 @@ def test_the_dev_tool_explains_the_probes_and_previews_a_candidate(tmp_path, cap
     printed = capsys.readouterr().out
     assert "Q515 'city': place → organization" in printed and "local government (Q100)" in printed
     assert pack.read_meta(dump)["families_map"], "read-only: the pack's own record is as it was"
+
+
+def test_a_line_resolves_the_pack_s_place_and_reads_its_meta_once(tmp_path, monkeypatch):
+    """A COST test. Each entity's line asked `derived.place` (a realpath
+    through the /data links) and parsed meta.json: ~7 % of a records-build
+    child on wikidata (München's py-spy, 2026-10-30)."""
+    from app import derived
+    dump = _dump(tmp_path)
+    pack.build(dump, languages=("en",), chunk=4, workers=1)
+    pack.reset_caches()
+    derived._places.clear()
+    placed, read = [], []
+    real_place, real_read = derived.place, Path.read_text
+    monkeypatch.setattr(derived, "place", lambda kind, origin: placed.append(1) or real_place(kind, origin))
+    monkeypatch.setattr(Path, "read_text",
+                        lambda self, *a, **k: (read.append(1) if self.name == "meta.json" else None)
+                        or real_read(self, *a, **k))
+    n = len(entity_lines()) + len(CLASSES)
+    lines = [pack.line(dump, i % n) for i in range(2000)]
+    assert all(lines) and len(placed) <= 1 and len(read) == 1

@@ -150,9 +150,12 @@ def _target(dump: Path) -> Path:
     """Where the dump's pack belongs: on the node's fast drive when one is
     named (`derived.place`, operator 2026-10-20 — the label table is read at
     random, ~15 lookups a document, and from tank's spinning disks that was
-    the whole cost of a parse), else beside the dump as before."""
+    the whole cost of a parse), else beside the dump as before. The place is
+    kept per process (`derived.place_kept`: its realpath was ~7 % of a
+    records-build child); WHICH of the two holds the pack is still asked
+    every time (`pack_dir`, two stats)."""
     from app import derived
-    place = derived.place("wikidata-pack", dump)
+    place = derived.place_kept("wikidata-pack", dump)
     return _beside(dump) if place is None else place / Path(dump).name
 
 
@@ -200,11 +203,24 @@ def _meta_path(d: Path) -> Path:
     return d / "meta.json"
 
 
+#: meta.json parsed, by its path, its mtime and its size: read once while it
+#: stands, not once per document's line (a records build asks it ~75.9 M times)
+_metas: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
+
+
 def read_meta(dump: Path) -> dict[str, Any] | None:
+    path = _meta_path(pack_dir(dump))
     try:
-        return json.loads(_meta_path(pack_dir(dump)).read_text(encoding="utf-8"))
+        st = path.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+        got = _metas.get(str(path))
+        if got is not None and got[0] == stamp:
+            return dict(got[1])
+        meta = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    _metas[str(path)] = (stamp, meta)
+    return dict(meta)
 
 
 def _meta_matches(meta: dict[str, Any] | None, dump: Path, languages: tuple[str, ...]) -> bool:
@@ -1440,6 +1456,7 @@ def labels(dump: Path) -> LabelTable:
 
 
 def reset_caches() -> None:
+    _metas.clear()
     with _files_lock:
         _groups.clear()
         _tables.clear()

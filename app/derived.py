@@ -50,6 +50,22 @@ def place(kind: str, origin: Path) -> Path | None:
     return Path(config.CACHE_DIR) / kind / tag(origin)
 
 
+#: (kind, origin as named, the fast drive) -> `place`'s answer
+_places: dict[tuple[str, str, str], Path | None] = {}
+
+
+def place_kept(kind: str, origin: Path) -> Path | None:
+    """`place`, kept per process: its `tag` resolves the origin through
+    every link (a realpath), and a caller that asks once per document —
+    wikidata's pack, ~75.9 M times in a records build, ~7 % of a child
+    (München's py-spy, 2026-10-30) — pays it each time. An origin's place
+    does not move under a running process; keyed on the fast drive too."""
+    key = (kind, str(origin), str(config.CACHE_DIR))
+    if key not in _places:
+        _places[key] = place(kind, origin)
+    return _places[key]
+
+
 def adopt(src: Path, dst: Path) -> bool:
     """An existing cache beside its origin, carried into the fast drive once:
     `src` (a file or a directory) copied to `dst` when `dst` does not exist
