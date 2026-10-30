@@ -2038,6 +2038,17 @@ def delete_book(book_id: int, collection=None, lock_con=None):
         with _write_lock(lock_con, collection):
             db.open_table(TABLE).delete(_book_filter(book_id))
 
+
+def delete_books(book_ids, collection=None, lock_con=None) -> None:
+    """`delete_book` for many documents, under one hold of the write lock;
+    a Lance delete's filter costs memory per value per fragment, so they go
+    500 to a filter (`_purge_books`)."""
+    books = sorted({int(b) for b in book_ids})
+    db = _conn(collection)
+    if books and TABLE in db.table_names():
+        with _write_lock(lock_con, collection):
+            _purge_books(db.open_table(TABLE), books)
+
 def search(query: str, k: int = 20, langs: list[str] | None = None, collection=None,
            book_ids: list[int] | None = None, validity: dict | None = None) -> list[dict]:
     """book_ids, when given, is a hard prefilter — see fts.search()'s

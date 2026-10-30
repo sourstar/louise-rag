@@ -550,6 +550,40 @@ def delete_book(lang: str, book_id: int, collection=None):
             writer.delete_documents("book_id", book_id)
             writer.commit()
 
+def books_held(group: str, book_ids, collection=None) -> int:
+    """How many entries this group's index holds for these documents — a
+    READ: whether removing them needs the writer at all, which a running
+    worker keeps (one writer per directory; tools/wikipedia_drop_twins.py).
+    0 for a group with no index on disk, and none is created by asking."""
+    if collection is None:
+        collection = collections_mod.default_collection()
+    ids = sorted({int(b) for b in book_ids})
+    if not ids or not (collection.fts_dir / group / "meta.json").is_file():
+        return 0
+    idx = get_index(group, collection)
+    idx.reload()
+    query = tantivy.Query.term_set_query(idx.schema, "book_id", ids)
+    return int(idx.searcher().search(query, limit=1, count=True).count)
+
+
+def delete_books(group: str, book_ids, collection=None) -> int:
+    """`delete_book` for many documents of ONE group, in ONE commit — the
+    commit is what costs (`_writer`'s docstring), never the deletes. A `mul`
+    record's sections may sit in several groups: those go through
+    `delete_book`. Returns how many documents were named."""
+    if collection is None:
+        collection = collections_mod.default_collection()
+    ids = sorted({int(b) for b in book_ids})
+    if not ids:
+        return 0
+    idx = get_index(group, collection)
+    writer, lock = _writer((str(collection.fts_dir), group), idx)
+    with lock:
+        for book_id in ids:
+            writer.delete_documents("book_id", book_id)
+        writer.commit()
+    return len(ids)
+
 def rewrite_without(group: str, collection=None) -> int:
     """Rewrite this group's index from its own live documents, so that what
     was deleted from it is gone from the DISK and not only from search.
