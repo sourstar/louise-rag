@@ -1354,3 +1354,43 @@ indicative only. The children's time is now their own work:
 `canonical_doc` 53.9 % (`read_row_group` 16 %), the tokenizer 16.8 %, and
 the files asked per record ~3 %. That last cost is fixed next, by
 `backend.rechecked`.
+
+### 2026-10-30 — the backfill sweep restarts on a change of coverage, not of the epoch — PREPARED
+
+**BEFORE (München, 18:22–18:32 CET, 6081ca8).** wikipedia's dump layer
+(native ≥ 10^12):
+
+| in_scope | rdf | fts | embed | documents |
+|---|---|---|---|---|
+| 1 | 1 | 1 | 0 | 18,812,062 |
+| 1 | 1 | 1 | 1 | 12,127,944 |
+| 1 | 0 | – | – | 19 |
+
+So 18.8 M documents were ready for the encoder. In 10 minutes the dump
+layer committed 0 of them. Three thread dumps 30 s apart found the
+embed-wikipedia producer asleep in `time.sleep(WORKER_IDLE_SLEEP)` each
+time, with no work() threads. The encoder gate showed ~13 % busy.
+
+**Cause.** `_cursor_page` restarted the sweep at rowid 0 whenever the
+process-wide `genesis.coverage_epoch` moved. That epoch moves when any
+archive's shard goes final or applied, about once a minute while
+wikipedia's layer 1 imports. Each sweep therefore began again among the
+22 M rows of layer 1. Its local archive covers those rows, so they are
+filtered out, and at 1 s of walk per call and 5 s of sleep between empty
+calls, the sweep never reached the dump layer behind them.
+
+**SCENARIO.** wikipedia running: genesis importing de/03x, rdf and fts
+caught up. The wikidata build ran beside it in its own container.
+
+**The change.** The cursor is keyed on the coverage it walks against (the
+archive's covered ranges), not on the epoch. A shard going final changes
+the ranges and still resets the sweep, since its released documents sit
+below the cursor. A local archive's declared spans never change, so its
+imports no longer reset the sweep. Cost test:
+`test_a_local_archive_s_epoch_never_restarts_the_sweep` fails on the old
+code and passes now.
+
+**To verify AFTER:** over 10 minutes,
+- wikipedia's dump-layer commits (`embed_done=1`, native ≥ 10^12) and their chunks;
+- the encoder gate's busy share against ~13 %;
+- the producer thread no longer asleep in the dumps.

@@ -304,11 +304,21 @@ def test_backfill_cursor_never_rewalks_the_covered_prefix(tmp_path, monkeypatch)
     assert not nxt or nxt[0]["uid"] != first["uid"]
     again = [r["uid"] for _ in range(50) for r in worker._backfill_rows(con, c, 1)]
     assert first["uid"] in again, "a deferred row is selected again by the next sweep"
-    # a shard going final resets the cursor (its released documents sit below)
+    # the epoch alone moving (another shard, another archive, applied) keeps
+    # the cursor: the coverage it walks against has not changed
     from app.bundles import genesis
+    worker._backfill_rows(con, c, 1)
+    pos = worker._backfill_cursor[key][1]
     genesis._bump_coverage_epoch()
     worker._backfill_rows(con, c, 1)
-    assert worker._backfill_cursor[key][0] == genesis.coverage_epoch()
+    assert worker._backfill_cursor[key][1] >= pos, "not restarted at rowid 0"
+    assert worker._backfill_cursor[key][0] == tuple(tuple(r) for r in worker._covered_ranges(con, c))
+    # a shard going final changes the coverage: its released documents,
+    # below the cursor, are the encoder's at once
+    con.execute("INSERT INTO genesis_imports(archive,shard,state,updated_at) VALUES('test-arc','0','final',0)")
+    con.commit()
+    released = {int(r["native_id"]) for r in worker._backfill_rows(con, c, 100)}
+    assert any(i <= 10001 for i in released)
 
 
 def test_backfill_selections_use_the_scope_index_and_never_sort(tmp_path, monkeypatch):
@@ -889,3 +899,22 @@ def test_a_residual_no_longer_eligible_is_asked_for_no_more(tmp_path, monkeypatc
     got = worker._residual_rows(con, c, 10, set())
     assert sorted(r["uid"] for r in got) == sorted(uids[half:])
     assert sorted(genesis.residual_uids(c)) == sorted(uids[half:]), "the embedded ones are forgotten"
+
+
+def test_a_local_archive_s_epoch_never_restarts_the_sweep(tmp_path, monkeypatch):
+    """München, 2026-10-30: wikipedia's local archive (layer 1, 22 M rows)
+    never changes its declared spans, but every shard it imported moved the
+    process-wide coverage epoch, about once a minute — and the sweep began
+    again at rowid 0, among the covered rows, never reaching the 18.8 M
+    dump-layer documents behind them. With the coverage unchanged, any
+    number of epochs leave the cursor moving forward."""
+    from dataclasses import replace
+    from app.bundles import genesis
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    monkeypatch.setitem(genesis.ARCHIVES, "test-arc", replace(archive, local=True))
+    key = (str(c.manifest_path), "new")
+    first = worker._backfill_rows(con, c, 1)[0]
+    genesis._bump_coverage_epoch()
+    nxt = worker._backfill_rows(con, c, 1)
+    assert nxt and int(nxt[0]["rid"]) > int(first["rid"]), "the sweep goes on; it did not start over at rowid 0"
+    assert worker._backfill_cursor[key][1] == int(nxt[0]["rid"])
