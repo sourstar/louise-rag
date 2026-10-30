@@ -297,6 +297,27 @@ def _record_from_line(collection, line: dict) -> tuple[dict, int, bytes, dict[st
     return {**line, "layer": layer, "chunks": chunks}, layer, bytes(chunk_blob), {}
 
 
+#: a record's line, written by the pool's child (`with_line`) and taken by
+#: the part's writer: encoding every line in the build's own process was its
+#: largest serial cost (München's stack samples, 2026-10-30: json.dumps in
+#: `canonical_line` under `write_shard`, in the main thread)
+LINE_KEY = "_line"
+
+
+def with_line(collection, got: tuple[dict, int, bytes, dict[str, str]]):
+    """The child's answer with the record's line already encoded — the same
+    `canonical_line` the writer would call, on the same dict, which the
+    parent changes in nothing the line holds (it removes only ISSUES_KEY,
+    no key of the line's shape). A Parquet part encodes its own cells."""
+    from app.hold.codex import container_of
+    record = got[0]
+    codex = getattr(collection, "codex", None)
+    if container_of(codex) != "parquet":
+        record[LINE_KEY] = records.canonical_line(
+            record, record_line=int(getattr(codex, "record_line", 1) or 1))
+    return got
+
+
 def _record_of(collection, plugin, row) -> tuple[dict, int, bytes, dict[str, str]]:
     doc = plugin_io.canonical_doc(plugin, row)
     native_id = int(row["native_id"])
@@ -558,7 +579,9 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                 return
             # the part's container (09 §9.5 "The file"): the Codex's, version 9
             rel = f"{RECORDS_DIR}/{slice_name}/{slicing.shard_name(next_n)}{part_suffix}"
-            info = records.write_shard(pack_dir / rel, buf, record_line=record_line)
+            lines = [r.pop(LINE_KEY, None) for r in buf]
+            info = records.write_shard(pack_dir / rel, buf, record_line=record_line,
+                                       lines=None if None in lines else lines)
             # 09 §9.5's figures container, `figures/<slice>/<NNNNN>.fig.zst`,
             # BEFORE the shard is recorded: the two are re-issued together
             # because a plate arriving rewrites a record line and so moves
@@ -621,6 +644,11 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
         # at a time — parse + chunk + hash per document is the whole cost
         # of a pack pass, and it is pure Python (amendment 47)
         page_size = max(50, min(records_per_shard, 500))
+        if held is not None:
+            # a held line costs a decode and a re-cut, not a parse: pages of
+            # 500 cut ~31-record tasks whose round trip cost more than their
+            # work (München, 2026-10-30), so a part's worth goes at once
+            page_size = max(page_size, min(records_per_shard, 4000))
         # THE PAGES STREAM (parallel.compute_pages): the pool computes the
         # next pages while this thread writes the current one, instead of a
         # barrier per page — München's profile, 2026-10-24: one page at a
@@ -631,12 +659,15 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
         def pages_of():
             for page_start in range(0, len(rows), page_size):
                 page = rows[page_start:page_start + page_size]
-                srcs = []
-                for prow in page:
-                    src = con_src.execute(
-                        "SELECT uid, native_id, path, lang FROM documents WHERE uid=?",
-                        (prow["uid"],)).fetchone()
-                    srcs.append(dict(src) if src is not None else None)
+                found: dict[str, dict] = {}
+                uids = [prow["uid"] for prow in page]
+                for i in range(0, len(uids), 900):
+                    part = uids[i:i + 900]
+                    for src in con_src.execute(
+                            "SELECT uid, native_id, path, lang FROM documents WHERE uid IN "
+                            f"({','.join('?' * len(part))})", part):
+                        found[src["uid"]] = dict(src)
+                srcs = [found.get(u) for u in uids]
                 pending.append((page, srcs))
                 yield [s for s in srcs if s is not None]
         # THE NODE PROFILE'S CORES (app/cpu_limit.py, operator 2026-10-27):
