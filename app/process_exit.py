@@ -35,6 +35,21 @@ def _code(value: object) -> int:
     return 1
 
 
+def _stdout_widowed() -> bool:
+    """Whether stdout is a pipe nobody reads any more (`louise ... | head`):
+    poll reports POLLERR on its write end. Python's "Note on SIGPIPE" is the
+    standard: SIGPIPE stays ignored, and the closed stdout is a quiet exit —
+    never SIG_DFL, which also kills the process on a pipe of its own, such
+    as a process pool's to a child the kernel killed."""
+    import select
+    try:
+        p = select.poll()
+        p.register(sys.stdout.fileno(), select.POLLOUT)
+        return any(ev & select.POLLERR for _, ev in p.poll(0))
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
 def finish(code: int) -> NoReturn:
     """Exit with `code` after the observable half of a normal exit.
     Called from the main thread, once, as the last thing the process
@@ -61,6 +76,12 @@ def run(main: Callable[[], object]) -> NoReturn:
     except KeyboardInterrupt:
         traceback.print_exc()
         code = 130                     # what the shell reports for an unhandled Ctrl-C
+    except BrokenPipeError:
+        if not _stdout_widowed():      # a pipe of the command's own: an error like any other
+            traceback.print_exc()
+        else:                          # `| head` read what it wanted: nothing left to say
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        code = 1
     except BaseException:  # noqa: BLE001 — reported exactly as the interpreter would
         traceback.print_exc()
         code = 1

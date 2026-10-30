@@ -4,6 +4,30 @@ One entry per case that cost time, newest first. Each entry gives what happened,
 
 ## 2026-10-30 — the multi-core day
 
+### A cache capped in units whose size the data decides
+
+- **What happened.** #88 shrank the wikidata pack's row groups from 1,000 lines to 64 and raised the per-process line cache from 8 groups to 128. The cap kept the same number of lines only once the pack was regrouped. The build ran first, on the pack as written. Its children grew from ~0.65 GB to 5.7 GB, and the cgroup killed them at 32 g with 12 children, then with 6 (München). The regroup read each 3.6+ GB file whole, so a 12 g cap held two children.
+- **Cost.** The build stopped for the length of the regroup. The regroup fell back to one process.
+- **Lessons.**
+  - Budget a cache in bytes, never in items whose size the data decides.
+  - A rewrite streams its input. The output order allows it: carry the rows a group leaves over into the next group.
+  - A change whose gain depends on a later migration has to be correct before that migration too.
+- **Fix.** `_MAX_GROUP_BYTES` (256 MiB) and a streamed `_regroup_file`.
+
+### A convenience that disabled the recovery
+
+- **What happened.** That morning, `louise.py` set SIGPIPE back to its default so that `| head` would exit quietly. In the afternoon the kernel killed one of the records build's pool children for memory. The parent was still writing that child's task into the pipe, now with no reader. SIGPIPE killed the parent (exit 141) before the pool could hand the child's parts to the remaining processes, the recovery #89 had added. The supervisor halved the pool only on 137, so its next run started with the same 6 children.
+- **Cost.** One build run, and a supervisor that did not back off.
+- **Lessons.**
+  - Python's "Note on SIGPIPE" is the standard: SIGPIPE stays ignored, and a closed stdout is handled where stdout is written.
+  - A recovery path is tested by killing a real child, with every signal handler the real process sets.
+  - A supervisor's back-off covers every way a kill can surface: 137 for the process it ran, 141 for a parent taken down with its child.
+- **Fixes.**
+  - `process_exit.run` exits quietly when its stdout is a pipe nobody reads.
+  - `supervise-pass.sh` halves the pool on 141 as well as 137.
+  - Every pass is first in line for the OOM killer (`--oom-score-adj 500`).
+  - `deploy/docker-memory-ceiling.sh` caps all containers together at 90 % of the host, so when caps add up past it, the OOM happens inside Docker and never globally.
+
 ### A cursor that returned at the first window holding a candidate
 
 - **What happened.** After its resume, wikipedia embedded one document per batch, about three batches in 10 minutes. Behind them, 18.8 M documents of the encoder's own work were waiting, outside the archive's span. The backfill walk stopped at the first rowid window holding any candidate. In the archive layer, where 21.5 M of 22 M documents were already embedded, that meant one document per call. Each short call then re-queried every archive residual as well.
