@@ -1414,6 +1414,28 @@ def cmd_dev_drop_rows(a) -> int:
     return 0
 
 
+def cmd_dev_wikidata_regroup(a) -> int:
+    """`louise dev wikidata-regroup <collection> [--row-group N] [--workers N]`:
+    the collection's wikidata pack rewritten file by file with small row
+    groups, the lines byte for byte (app/plugins/wikidata/pack.py `regroup`).
+    Resumable, safe beside a running records build; read-only for the
+    collection itself. A sparse family read 1,000 lines for each it kept."""
+    from app import collections as collections_mod
+    from app.plugins.wikidata import pack, source as wd
+    name, _codex = col.resolve(a.root, a.collection)
+    collection = collections_mod.by_name(name)
+    dumps = wd.find_dumps(Path(collection.corpus_dir), getattr(collection, "snapshot", None))
+    if not dumps:
+        print(f"[regroup] {name}: no wikidata dump under {collection.corpus_dir}", file=sys.stderr)
+        return 2
+    _whole_quota()
+    from app import config
+    out = pack.regroup(dumps[0], row_group=a.row_group, workers=a.workers or config.PARSE_PROCESSES,
+                       log=lambda m: print(m, file=sys.stderr, flush=True))
+    _print({"collection": name, "dump": dumps[0].name, **out})
+    return 0
+
+
 def cmd_dev_reindex(a) -> int:
     """`louise dev reindex <collection> --ids FILE [--yes]`: the documents
     FILE lists (one uid a line) queued for the text-index stage again —
@@ -5095,6 +5117,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ids", required=True, metavar="FILE", help="one chunk id a line")
     p.add_argument("--yes", action="store_true")
     p.set_defaults(fn=cmd_dev_drop_rows)
+    p = dverbs.add_parser("wikidata-regroup", help="a wikidata collection's pack rewritten with small row "
+                                                   "groups, file by file, lines unchanged (resumable)")
+    root_arg(p)
+    p.add_argument("collection")
+    p.add_argument("--row-group", type=int, default=64)
+    p.add_argument("--workers", type=int, default=0, help="processes; default the whole quota")
+    p.set_defaults(fn=cmd_dev_wikidata_regroup)
     p = dverbs.add_parser("reindex", help="the documents a file lists queued for the text-index stage "
                                           "again (fts_done = 0), embedding untouched; writes only with "
                                           "--yes (the collection's lock)")

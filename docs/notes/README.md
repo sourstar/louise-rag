@@ -18,6 +18,8 @@ What is here, and why it is kept:
 | `p2p-review-open-issues.md` | the P2P gaps found on 2026-10-19 when the second GPU peer joined (held vectors invisible to the network — 91 % of gutenberg —, missed attestations, self-declared addresses, DHT flood, slice stalls, bundles announced from a peer that serves nothing), and the review that fixed five of them the same day: what was decided, built and amended, what stays open, the deploy order |
 | `vector-convergence.md` | proposal (2026-10-19): equivalent versions of the same vectors converge on one, by 04 §4.6's adoption rule and a total order — amends 02 §2.4–2.5, 04 §4.5 once reviewed |
 | `measuring.md` | how to measure without producing a number that gets quoted wrong: the existing harnesses, the deployed configuration, the disk, the labels — read before measuring anything |
+| `lessons-learned.md` | the cases that cost time, newest first: what happened, what it cost, the general lesson, and where the rule now lives |
+| `multicore-audit.md` | every pass that walks a corpus or a collection, ranked by what running it on one core costs, and what was fixed |
 | `phase1-integration-notes.md`, `upstream-rust-stemmers-greek.md` | postmortems: what went wrong, what it cost, what was changed |
 | `lockss-p2p-evaluation.md` | why the peer layer is not LOCKSS |
 | `archive-signing-keys.md` | who signs a pre-embedded archive's bundles, and therefore what `credits[].key` can hold — open, and it blocks crediting a public archive |

@@ -735,3 +735,30 @@ def test_a_line_resolves_the_pack_s_place_and_reads_its_meta_once(tmp_path, monk
     n = len(entity_lines()) + len(CLASSES)
     lines = [pack.line(dump, i % n) for i in range(2000)]
     assert all(lines) and len(placed) <= 1 and len(read) == 1
+
+
+def test_regrouping_the_pack_keeps_every_line_and_reads_either_layout(tmp_path, monkeypatch):
+    """A sparse family read a 1,000-line row group for each line it kept
+    (~29 % of a records-build child, München 2026-10-30). The pack's chunk
+    files are rewritten with small groups, file by file, while a reader
+    reads: every line is the same bytes, before, between and after."""
+    monkeypatch.setattr(pack, "ROW_GROUP", 1000)
+    dump = _dump(tmp_path)
+    pack.build(dump, languages=("en",), chunk=4, workers=1)
+    pack.reset_caches()
+    n = len(entity_lines()) + len(CLASSES)
+    before = [pack.line(dump, i) for i in range(n)]
+    files = pack.chunk_files(dump)
+    assert len(files) > 2
+    # half the files regrouped — a reader in the middle of the regrouping
+    for f in files[: len(files) // 2]:
+        assert pack._regroup_file(str(f), 2) is True
+    assert [pack.line(dump, i) for i in range(n)] == before
+    got = pack.regroup(dump, row_group=2, log=lambda *_: None)
+    # the regrouped half is skipped, and so is a file that already fits
+    assert got["skipped"] >= len(files) // 2 and got["rewritten"] >= 1
+    assert got["skipped"] + got["rewritten"] == len(files)
+    assert [pack.line(dump, i) for i in range(n)] == before, "the cache follows the file it read"
+    import pyarrow.parquet as pq
+    assert all(pq.ParquetFile(f).metadata.row_group(0).num_rows <= 2 for f in files)
+    assert pack.regroup(dump, row_group=2, log=lambda *_: None)["rewritten"] == 0, "resumable"
