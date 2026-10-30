@@ -845,12 +845,15 @@ def test_a_line_asks_the_files_once_a_second_not_once_a_record(tmp_path, monkeyp
     pack.reset_caches()
     n = len(entity_lines()) + len(CLASSES)
     before = [pack.line(dump, i) for i in range(n)]
-    stats = []
-    real = Path.stat
+    stats, targets = [], []
+    real, real_target = Path.stat, pack._target
     monkeypatch.setattr(Path, "stat", lambda self, *a, **k: stats.append(1) or real(self, *a, **k))
+    monkeypatch.setattr(pack, "_target", lambda d: targets.append(1) or real_target(d))
     for _ in range(200):
         assert [pack.line(dump, i) for i in range(n)] == before
     assert len(stats) < 50, f"{len(stats)} stats for {200 * n} lines"
+    # and the place's Paths are not built per line either (4.6 % after #98)
+    assert len(targets) < 10, f"{len(targets)} _target calls for {200 * n} lines"
     # a writer reads what it wrote at once
     d = pack.pack_dir(dump)
     meta = pack.read_meta(dump)

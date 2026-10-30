@@ -4,6 +4,15 @@ One entry per case that cost time, newest first. Each entry gives what happened,
 
 ## 2026-10-30 — the multi-core day
 
+### A path rewrite that handled the first path of a compound value, and a node condition written as errors
+
+- **What happened.** After wikipedia-v8 was renamed to wikipedia, the rename re-rooted only the leading path of each locator. Wikipedia's dump locators name two files, `<dump>::s::e|<page_props>::s::e`, so the page_props half still pointed under the old name. The embed recorded `FileNotFoundError` on 85,943 documents, each one out of every selection. Nobody saw it until the embedding looked slow (München; fixed in 954ed47, the manifest repaired in place).
+- **Cost.** Hours of the largest collection's embedding, and an investigation that started from "slow".
+- **Lessons.**
+  - A rewrite of a stored value rewrites every occurrence; its test holds the compound case and a sibling name.
+  - A file that is not where the manifest says is far more often the node's condition (a rename, a mount gone, a corpus moved) than the document's. As a silent error it removes documents en masse, and only a human brings them back.
+- **Fix (operator's choice: the self-healing error).** The error names its file (`<stage>: origin missing: <path>`) and is said once per path, loudly. The maintainer clears it by itself once the file is back, checked every 10 minutes (`app/origin_missing.py`).
+
 ### A thread lock guarding work that moved to processes
 
 - **What happened.** The pubmed pack is built on first use, under a per-container `threading.Lock`, into a fixed `<pack>.tmp`. #80 moved the records build's plan into the pool's processes. Two children built the same pack into the same file, and a third read it truncated ("Parquet file size is 0 bytes"). The plan recorded the third child's documents as skipped, "never fatal". The deploy gate's test caught it on a loaded node; the test had passed alone 3/3.

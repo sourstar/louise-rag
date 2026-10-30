@@ -38,6 +38,7 @@ import httpx
 from . import (catalog, chunking, collections as collections_mod, config, cpu_limit, db, discovery,
                 layers as layers_mod, parallel,
                 dispatch, embeddings, encoder_timeouts, entities, fts, issues as issues_mod, model_load, model_pins,
+                origin_missing,
                 node_state, plugin_io, refs, sched, sizing, spaces, stats)
 from .dispatch import Level
 from .acquire import engine as acquire_engine
@@ -1687,9 +1688,13 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
         embed_marks.mark_embedded(con, collection, uids, synced=versioned)
 
     def record_error(uid, err) -> None:
+        missing = origin_missing.path_of(err)
         con.execute(
             "UPDATE documents SET retries=retries+1, error=?, updated_at=? "
-            "WHERE uid=?", (f"embed: {err}"[:500], int(time.time()), uid))
+            "WHERE uid=?", (f"embed: {origin_missing.message(missing) if missing else err}"[:500],
+                            int(time.time()), uid))
+        if missing:
+            _say_origin_missing(con, collection, "embed", missing)
         db.log_event(con, "error", "embed", err, uid)
 
     def commit(row, n, err, buffered) -> None:
@@ -2509,6 +2514,7 @@ def _index_maintainer() -> None:
                 did = _maintain_ask_indexes(cons[key], c) or did
                 did = _verify_cited(cons[key], c) or did
                 did = _refresh_anchor(cons[key], c) or did
+                did = _heal_origin_missing(cons[key], c) or did
                 turn.spent(time.monotonic() - t0, units=1 if did else 0)
                 # not due, or nothing to fold in: give the slot back rather
                 # than sit on it, and rejoin at the tail when there is work
@@ -3284,6 +3290,31 @@ def platform_missing(exc: BaseException) -> bool:
     return False
 
 
+def _say_origin_missing(con, collection, stage: str, path: str) -> None:
+    """Once per missing file per collection (app/origin_missing.py): the
+    documents that read it are set aside with an error naming it, and the
+    maintainer clears them by itself once the file is back."""
+    if origin_missing.note(collection, path):
+        db.log_event(con, "warn", stage,
+                     f"origin missing: {path} — the documents that read it are set aside (an error "
+                     f"naming this file) and cleared by themselves once it is back, checked every "
+                     f"{origin_missing.HEAL_EVERY_S / 60:.0f} min; a rename or a mount that is gone?")
+
+
+def _heal_origin_missing(con, collection) -> bool:
+    """The maintainer's turn: the errors of files that are back, cleared."""
+    if not origin_missing.due(collection):
+        return False
+    try:
+        healed = origin_missing.heal(con, collection)
+    except Exception as e:   # noqa: BLE001 — a manifest busy: the next turn
+        db.log_event(con, "warn", "worker", f"origin-missing heal deferred: {type(e).__name__}: {e}"[:300])
+        return False
+    for path, n in healed.items():
+        db.log_event(con, "info", "worker", f"origin back: {path} — {n:,} document(s) cleared of its error")
+    return bool(healed)
+
+
 def _say_platform_missing(con, collection, stage: str, exc: BaseException) -> None:
     """Once per PLATFORM_SAY_EVERY_S per collection and stage: every document
     of the stage defers for the same reason, and one line says it."""
@@ -3478,9 +3509,13 @@ def _execute_step(con, collection, stage, row) -> bool:
             db.log_event(con, "info", stage,
                          f"not indexable: {e}", row["uid"])
             return True
+        missing = origin_missing.path_of(e)
         con.execute(
             "UPDATE documents SET retries=retries+1, error=?, updated_at=? WHERE uid=?",
-            (f"{stage}: {e}"[:500], int(time.time()), row["uid"]))
+            (f"{stage}: {origin_missing.message(missing) if missing else e}"[:500],
+             int(time.time()), row["uid"]))
+        if missing:
+            _say_origin_missing(con, collection, stage, missing)
         db.log_event(con, "error", stage, f"{type(e).__name__}: {e}", row["uid"])
         return True
     if stage == "embed":
