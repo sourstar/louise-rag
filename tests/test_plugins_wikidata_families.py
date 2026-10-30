@@ -833,3 +833,27 @@ def test_the_pack_has_one_writer_and_a_second_defers(tmp_path):
         assert len(refs) == 1 and refs[0].scope == "container"
         assert "deferred" in refs[0].error and "resumes next scan" in refs[0].error, refs[0].error
     assert pack.regroup(dump, row_group=2, log=lambda *_: None)["rewritten"] >= 1
+
+
+def test_a_line_asks_the_files_once_a_second_not_once_a_record(tmp_path, monkeypatch):
+    """A COST test. After #95 a records-build child spent ~3 % in stats:
+    which place holds the pack, meta.json's stamp, the chunk file's — ~6 a
+    line (München's py-spy, 2026-10-30). They are asked once a second per
+    process now (`backend.rechecked`); a writer forgets what it wrote."""
+    dump = _dump(tmp_path)
+    pack.build(dump, languages=("en",), chunk=4, workers=1)
+    pack.reset_caches()
+    n = len(entity_lines()) + len(CLASSES)
+    before = [pack.line(dump, i) for i in range(n)]
+    stats = []
+    real = Path.stat
+    monkeypatch.setattr(Path, "stat", lambda self, *a, **k: stats.append(1) or real(self, *a, **k))
+    for _ in range(200):
+        assert [pack.line(dump, i) for i in range(n)] == before
+    assert len(stats) < 50, f"{len(stats)} stats for {200 * n} lines"
+    # a writer reads what it wrote at once
+    d = pack.pack_dir(dump)
+    meta = pack.read_meta(dump)
+    meta["probe"] = 1
+    pack._write_meta(d, meta)
+    assert pack.read_meta(dump)["probe"] == 1

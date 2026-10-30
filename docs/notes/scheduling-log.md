@@ -1307,7 +1307,7 @@ line; the first parse after a release starts its children (a spawn and its
 plugin caches, seconds) and the batch's ms/doc against the same stage's
 before it.
 
-### 2026-10-30 — the page stream's look-ahead in rows, not pages — PREPARED
+### 2026-10-30 — the page stream's look-ahead in rows, not pages — DEPLOYED 17:44 CET, MEASURED
 
 **BEFORE (München, 17:21–17:30 CET; wikidata's records build on 11959e78,
 the regrouped pack, 12 children, `--cpus 12`).**
@@ -1337,3 +1337,20 @@ its last part):**
 - cgroup cpu % over 360 s, and a child's py-spy share in the pool's `get`, against 630 % and 46.8 %;
 - records/s on a family stretch comparable to the BEFORE's;
 - the parent's RSS: up to 64,000 waiting records more, a few KB each.
+
+**AFTER (München, 17:44–17:52 CET, b53c4164, the same build restarted on it).**
+
+| | BEFORE | AFTER |
+|---|---|---|
+| a child idle in the pool's `get` | 46.8 % | 16.9 % |
+| cgroup cpu over 360 s | 630 % | 740 % |
+| records/s | ~2,340 (`event`) | ~3,500 (`heritage`) |
+| memory.peak | 13,326 MiB | 12,732 MiB |
+| parent RSS | — | 804 MB |
+| children RSS | — | 870–900 MB, flat |
+
+The two records/s windows cover different families, so that row is
+indicative only. The children's time is now their own work:
+`canonical_doc` 53.9 % (`read_row_group` 16 %), the tokenizer 16.8 %, and
+the files asked per record ~3 %. That last cost is fixed next, by
+`backend.rechecked`.

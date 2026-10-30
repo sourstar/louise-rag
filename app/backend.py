@@ -35,6 +35,7 @@ implementation — never a plugin's private variant of an existing one.
 from __future__ import annotations
 
 import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
@@ -131,3 +132,37 @@ class GroupCache:
 
     def __len__(self) -> int:
         return len(self._units)
+
+
+#: how long a per-process answer about the FILES — which directory holds a
+#: pack, a meta file's stamp, a chunk file's stat — is taken as standing
+RECHECK_S = 1.0
+_rechecked: dict = {}
+_rechecked_lock = threading.Lock()
+
+
+def rechecked(key, compute: Callable[[], Any], ttl: float = RECHECK_S) -> Any:
+    """`compute()`, asked again at most every `ttl` seconds per process. For
+    a check that is cheap once and dear per record: wikidata's reader paid
+    ~6 stats a line (which place holds the pack, meta.json's stamp, the
+    chunk file's) — 3 % of a records-build child after #95 (München,
+    2026-10-30). A file replaced meanwhile is still read whole through the
+    handle already open (a rename never changes an open file), and the
+    writer of a structure forgets its keys when it writes (`forget_rechecked`).
+    `cachetools.TTLCache` is the standard; not a dependency of ours."""
+    now = time.monotonic()
+    with _rechecked_lock:
+        hit = _rechecked.get(key)
+    if hit is not None and now - hit[0] < ttl:
+        return hit[1]
+    value = compute()
+    with _rechecked_lock:
+        _rechecked[key] = (now, value)
+    return value
+
+
+def forget_rechecked(match: Callable[[Any], bool] | None = None) -> None:
+    """Every answer whose key `match`es — all with None."""
+    with _rechecked_lock:
+        for k in [k for k in _rechecked if match is None or match(k)]:
+            _rechecked.pop(k, None)

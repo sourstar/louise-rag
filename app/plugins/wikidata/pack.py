@@ -89,7 +89,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from app import config, cpu_limit, derived, parallel
-from app.backend import GroupCache
+from app.backend import GroupCache, forget_rechecked, rechecked
 from app.plugins.wikidata import dump as dump_mod, families, ids, names
 
 #: 2 (2026-10-24): the `name` table; 3 (2026-10-24): the class tree and the
@@ -171,12 +171,17 @@ def pack_dir(dump: Path) -> Path:
     (`adopt_beside`: ~100 GB, many minutes, renamed whole at the end) —
     beside the dump. A reader never meets a place still being filled: on
     2026-10-20 the fts stage read the fast drive while the copy ran, and
-    two documents were marked "not in its pack" ("Failed to open local
-    file") before wikidata was paused. Two stats a call."""
-    target, old = _target(dump), _beside(dump)
-    if target != old and not _meta_path(target).is_file() and _meta_path(old).is_file():
-        return old
-    return target
+    file") before wikidata was paused. Asked of the files once a second
+    per process (`backend.rechecked`): the adoption renames the place whole,
+    and the copy left beside the dump stays readable meanwhile."""
+    target = _target(dump)                  # kept per process and per fast drive (`place_kept`)
+
+    def where() -> Path:
+        old = _beside(dump)
+        if target != old and not _meta_path(target).is_file() and _meta_path(old).is_file():
+            return old
+        return target
+    return rechecked(("wikidata pack dir", str(dump), str(target)), where)
 
 
 def adopt_beside(dump: Path, *, log: Callable[[str], None] | None = None) -> bool:
@@ -194,6 +199,7 @@ def adopt_beside(dump: Path, *, log: Callable[[str], None] | None = None) -> boo
         shutil.rmtree(target)
     t0 = time.monotonic()
     done = derived.adopt(old, target)
+    forget_rechecked(lambda k: k[0] == "wikidata pack dir")     # landed: read there from now on
     if done and log is not None:
         log(f"[wikidata] pack: {Path(dump).name}: adopted into the fast drive {target} from {old} "
             f"in {time.monotonic() - t0:.0f} s (left in place there)")
@@ -214,10 +220,20 @@ def _meta_path(d: Path) -> Path:
 _metas: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
 
 
+def _write_meta(d: Path, meta: dict[str, Any]) -> None:
+    """meta.json written whole (tmp + replace), and this process's answers
+    about it forgotten: the writer reads what it wrote. One place for the
+    four writes the inventory found (2026-10-30)."""
+    tmp = _meta_path(d).with_name(f"meta.json.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, _meta_path(d))
+    forget_rechecked(lambda k: k[0] in ("wikidata meta stamp", "wikidata pack dir"))
+
+
 def read_meta(dump: Path) -> dict[str, Any] | None:
     path = _meta_path(pack_dir(dump))
     try:
-        st = path.stat()
+        st = rechecked(("wikidata meta stamp", str(path)), path.stat)
         stamp = (st.st_mtime_ns, st.st_size)
         got = _metas.get(str(path))
         if got is not None and got[0] == stamp:
@@ -462,7 +478,7 @@ def _build(dump: Path, d: Path, *, languages: tuple[str, ...], say: Callable[[st
             p.unlink(missing_ok=True)
         meta = {"pack_version": PACK_VERSION, "size": size, "mtime_ns": mtime, "languages": list(languages),
                 "chunk": chunk, "chunks": 0, "entities": 0, "pruned": 0, "complete": False, "dump": dump.name}
-        _meta_path(d).write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
+        _write_meta(d, meta)
     if meta.get("complete"):
         return meta if meta.get("families_done") else _finish(dump, d, meta, say=say, stop=stop, workers=n_workers)
     if meta.get("chunk") != chunk:
@@ -494,9 +510,7 @@ def _build(dump: Path, d: Path, *, languages: tuple[str, ...], say: Callable[[st
             done_chunks = chunk_no + 1
             meta.update(chunks=done_chunks, entities=done_chunks * chunk if not complete else meta["entities"])
         meta.update(pruned=pruned_n, complete=complete)
-        tmp_meta = _meta_path(d).with_name("meta.json.tmp")
-        tmp_meta.write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
-        os.replace(tmp_meta, _meta_path(d))
+        _write_meta(d, meta)
         rows, labels, codes = [], [], []
 
     say(f"[wikidata] pack: {dump.name}: {'resuming after' if skip else 'starting;'} {skip} entities"
@@ -913,12 +927,6 @@ def _lines_pass(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Connecti
             ex.shutdown(wait=True, cancel_futures=True)
 
 
-def _write_meta(d: Path, meta: dict[str, Any]) -> None:
-    tmp_meta = _meta_path(d).with_name("meta.json.tmp")
-    tmp_meta.write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
-    os.replace(tmp_meta, _meta_path(d))
-
-
 def _finish(dump: Path, d: Path, meta: dict[str, Any], *, say: Callable[[str], None],
             stop: Callable[[], bool] | None, workers: int, upgrade: bool = False) -> dict[str, Any]:
     """After the chunks, each from the pack's own lines and resumable at a
@@ -1250,9 +1258,7 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
                 raise TimeoutError(f"no slice answered for {CHUNK_TIMEOUT_S:.0f} s")
 
     def write_meta() -> None:
-        tmp_meta = _meta_path(d).with_name("meta.json.tmp")
-        tmp_meta.write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
-        os.replace(tmp_meta, _meta_path(d))
+        _write_meta(d, meta)
 
     def commit_written() -> None:
         """The chunk the writer finished: labels, rename, meta — in order."""
@@ -1412,7 +1418,7 @@ _MAX_LAYOUTS = 8
 def _layout(path: Path) -> tuple[tuple, Any, list[int], Any]:
     """`(key, the open file, its groups' first rows, the lock its reads take)`
     — one reader object is not read by two threads at once."""
-    st = path.stat()
+    st = rechecked(("wikidata chunk stat", str(path)), path.stat)
     key = (str(path), st.st_mtime_ns, st.st_size)
     with _files_lock:
         got = _layouts.get(key)
@@ -1584,6 +1590,7 @@ def labels(dump: Path) -> LabelTable:
 
 def reset_caches() -> None:
     _metas.clear()
+    forget_rechecked(lambda k: str(k[0]).startswith("wikidata "))
     with _files_lock:
         _groups.clear()
         _layouts.clear()
