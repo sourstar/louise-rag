@@ -1769,6 +1769,42 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                 else:
                     record_error(uid, f"{type(e).__name__}: {e}"[:400])
 
+    def settle_empty(group_rows, held) -> list:
+        """The candidates the CURRENT chunker cut to nothing (`chunks` = 0,
+        `tokens` = 0, written by this `FTS_VERSION`) and that hold no vector:
+        marked done here, in one transaction, without a slot, a cut or an
+        encoder call — what their trip through a stream ended in anyway
+        (`upsert_book` writes nothing, `mark_done`). wikipedia's dump layer:
+        15.76 M of the 18.8 M remaining are redirects, ~85 % of every
+        stream from rowid 35 M on, 12 ms of cutting each (München,
+        2026-10-30). A document that still holds vectors takes the normal
+        path, whose delete removes them. Returns the rest."""
+        nonlocal done
+        if held is None:
+            return list(group_rows)
+        empty = [r for r in group_rows
+                 if not (r["chunks"] or 0) and not (r["tokens"] or 0)
+                 and r["fts_version"] == config.FTS_VERSION and not held.of(r["native_id"])]
+        if not empty:
+            return list(group_rows)
+        uids = [r["uid"] for r in empty]
+        own = not con.in_transaction
+        try:
+            if own:
+                con.execute("BEGIN IMMEDIATE")
+            mark_done(uids)
+            if own:
+                con.execute("COMMIT")
+        except Exception as e:  # noqa: BLE001 — the manifest held: they take the normal path
+            if own and con.in_transaction:
+                con.execute("ROLLBACK")
+            if not transient_failure(e):
+                raise
+            return list(group_rows)
+        done += len(uids)
+        gone = set(uids)
+        return [r for r in group_rows if r["uid"] not in gone]
+
     def refill(pool) -> None:
         nonlocal queue
         while len(in_flight) < window and not _stop.is_set() \
@@ -1783,12 +1819,16 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                     return
                 seen.update(r["uid"] for r in fresh)
                 held = read_held(fresh)
+                fresh = settle_empty(fresh, held)
                 cut = prepared(fresh)
                 queue = [(r, held, cut.get(r["uid"])) for r in fresh]
             row, held, cut = queue.pop(0)
             in_flight[pool.submit(work, row, held, cut)] = row["uid"]
         stats.recorder().set_in_flight(collection.name, len(in_flight))
 
+    # the first group's empty documents, as every refill's (`settle_empty`)
+    left = {r["uid"] for r in settle_empty([q[0] for q in queue], first_held)}
+    queue = [q for q in queue if q[0]["uid"] in left]
     pin = _pin_begin(collection, recipe)
     try:
         with ThreadPoolExecutor(max_workers=window) as pool:

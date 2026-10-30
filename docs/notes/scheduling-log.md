@@ -1506,3 +1506,36 @@ deploy/104-before-103, with #103's three files kept at dad4338).**
 So the dump layer was reached 12 s after the start, against ~17 min
 BEFORE. py-spy --locals every ~3 s through the first 75 s never caught
 `_cursor_page`: the walk finishes between samples.
+
+### 2026-10-30 — a document cut to nothing is marked with its group, never sent — PREPARED
+
+**BEFORE (München, read-only, ~20:00 CET).** Remaining in wikipedia's dump
+layer (native ≥ 10^12, in_scope=1, fts_done=1, embed_done=0):
+
+| documents | with chunks | chunks |
+|---|---|---|
+| 18,809,470 | 3,052,055 | 11,406,075 |
+
+15,757,415 of them have `chunks` = 0 (redirects). From rowid 35 M on they
+are ~85 % of every 5 M bucket. Through the stream, each takes a slot and
+`_load_chunks` (12 ms; 60 of 60 sampled cut to 0 chunks, 0 tokens) to end
+in `mark_done`: ~53 CPU-hours, plus the stream slots and held reads. The
+11.66 M already marked were marked by a one-off pass on 2026-10-23.
+
+**The change (a rule in code, not a one-off).** `_embed_parallel`'s
+`settle_empty` marks done, in one transaction per group, the candidates
+that meet all four conditions:
+- `chunks` = 0;
+- `tokens` = 0;
+- written by the current `FTS_VERSION` (a count from an older chunker is not trusted: the stale counts of task #35);
+- holding no vector (the group's held read, already made).
+
+A document that still holds vectors takes the normal path, whose delete
+removes them. The backlog and every future dump are covered by the same
+code. Test: `test_a_document_cut_to_nothing_is_marked_without_a_slot`, which
+fails on the old code.
+
+**To verify AFTER:**
+- over 10 minutes, dump-layer documents marked with 0 chunks against those embedded;
+- chunks embedded per minute (the encoder should stay the bound, now on documents with text only);
+- the producer's streams: documents per stream with chunks.
