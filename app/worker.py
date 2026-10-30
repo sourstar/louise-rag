@@ -961,9 +961,17 @@ _REEMBED_SQL = (
 # `+` keeps the planner on the rowid range instead of the scope index: the
 # window is what bounds the call, and a scope-index walk from the cursor has
 # no end short of the table's (the `_FTS_REINDEX_WINDOWED` rule).
+#: THE NEW WALK'S WINDOW READS THE CANDIDATES, not the rows (2026-10-30). All
+#: four scope columns are equalities here, so SQLite seeks the scope index on
+#: (1,1,1,0) AND the rowid range (its implicit tail): a window costs what it
+#: holds of candidates. Forced onto the primary key like the version walk
+#: below (whose prefix is every embedded document), each window read all its
+#: rows: wikipedia's first sweep after a restart crossed 34 M rowids of its
+#: covered, embedded layer 1 at ~33 k rowids/s — ~17 minutes before the
+#: encoder saw one of the 18.8 M dump-layer documents behind them (München).
 _BACKFILL_WINDOWED = (
     "SELECT rowid AS rid, * FROM documents WHERE rowid>? AND rowid<=? "
-    "AND +in_scope=1 AND +rdf_done=1 AND +fts_done=1 AND +embed_done=0 "
+    "AND in_scope=1 AND rdf_done=1 AND fts_done=1 AND embed_done=0 "
     "AND error IS NULL AND retries<? {covered} ORDER BY rowid LIMIT ?")
 _REEMBED_WINDOWED = (
     "SELECT rowid AS rid, * FROM documents WHERE rowid>? AND rowid<=? "
