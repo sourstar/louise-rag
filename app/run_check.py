@@ -154,6 +154,16 @@ def batched(recipe) -> bool:
             or int(getattr(recipe, "concurrency", 1) or 1) > 1)
 
 
+def contributing(recipe) -> dict[str, int] | None:
+    """How this peer contributes, as the gate's `contribute` pass measures it
+    and `runs.check` compares it (`runs.record_batching`); None for strictly
+    one text at a time, which every gate measures."""
+    if not batched(recipe):
+        return None
+    return {"embed_batch": int(config.EMBED_BATCH), "embed_concurrency": int(config.EMBED_CONCURRENCY),
+            "lanes": int(getattr(recipe, "concurrency", 1) or 1)}
+
+
 def _endpoint(recipe, query: bool) -> str:
     return recipe.query_url if query and recipe.query_url else recipe.url
 
@@ -286,6 +296,9 @@ def _validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "docum
             contribute=answers(recipe, how="contribute", **kw),
             stated=stated, key=key, now=now or _now(), items=items, on_run=on_run)
         _mark(codex, role, body["run"], body)      # measured now: nothing to re-check
+        measured = contributing(recipe)
+        if measured is not None:
+            runs_mod.record_batching(root, name, role, body["run"], measured)
         return body
     except (runs_mod.RunRefused, emb.GateError):
         raise
@@ -513,7 +526,7 @@ def guard(root: Path, name: str, codex: Codex, recipe, answered: set, *,
     who = signer(key)
     try:
         runs_mod.check(root, name, codex, answered, signer=who, role=role,
-                       batched=together)
+                       batched=together, contributes=contributing(recipe) if together else None)
         _foreign(root, name, role, log)
         stale = [r for r in sorted(r for r in answered if r)
                  if not recheck(root, name, codex, recipe, r, role=role, key=key,
@@ -529,7 +542,7 @@ def guard(root: Path, name: str, codex: Codex, recipe, answered: set, *,
     body = validate(root, name, codex, recipe, role=role, key=key, stop=stop)
     if log is not None:
         log(f"{name}: {_told(body)}")
-    runs_mod.check(root, name, codex, answered, signer=who, role=role, batched=together)
+    runs_mod.check(root, name, codex, answered, signer=who, role=role, batched=together, contributes=contributing(recipe) if together else None)
 
 
 def checking(root: Path, name: str, codex: Codex, recipe, *, role: str = "document",
@@ -672,7 +685,7 @@ def check_write(collection, recipe, answered: set) -> None:
     codex = collection.codex
     try:
         runs_mod.check(_root(), collection.name, codex, answered, signer=signer(),
-                       role="document", batched=batched(recipe))
+                       role="document", batched=batched(recipe), contributes=contributing(recipe))
         # A KEPT STATEMENT NOT YET RE-CHECKED IN THIS PROCESS is not relied
         # on: a deferral, and the stage's next `embed_allowed` re-checks it
         kept = runs_mod.statements_for_space(_root(), collection.name, codex, "document",
@@ -751,12 +764,12 @@ def _look(collection, stop: Callable[[], bool] | None,
         who = signer()
         try:
             runs_mod.check(_root(), name, codex, {run_id}, signer=who,
-                           batched=batched(recipe))
+                           batched=batched(recipe), contributes=contributing(recipe))
             _foreign(_root(), name, "document", log)
             if not recheck(_root(), name, codex, recipe, run_id, stop=stop, log=log):
                 log(_told(validate(_root(), name, codex, recipe, stop=stop)))
                 runs_mod.check(_root(), name, codex, {run_id}, signer=who,
-                               batched=batched(recipe))
+                               batched=batched(recipe), contributes=contributing(recipe))
         except runs_mod.RunUnvalidated as e:
             if e.failed:
                 raise
@@ -764,7 +777,7 @@ def _look(collection, stop: Callable[[], bool] | None,
             log(f"run {run_id[:23]}… is new to this peer; running the gate against it")
             log(_told(validate(_root(), name, codex, recipe, stop=stop)))
             runs_mod.check(_root(), name, codex, {run_id}, signer=who,
-                           batched=batched(recipe))
+                           batched=batched(recipe), contributes=contributing(recipe))
         return True, f"run {run_id[:23]}… is validated for this space", run_id
     except (runs_mod.RunRefused, runs_mod.RunUnvalidated, emb.GateError) as e:
         return False, str(e), run_id
