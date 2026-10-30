@@ -941,7 +941,7 @@ def _archive_yields(con, collection) -> bool:
 # per-collection CURSOR kept in memory, keyed on the manifest PATH, so a
 # round never re-walks the covered prefix (8M rows on pubmed). The cursor
 # expires after a short TTL (one index pass) and resets when a shard goes
-# final (genesis.coverage_epoch): the documents in that range the archive
+# final (the covered ranges change): the documents in that range the archive
 # did not cover sit BELOW the cursor and are now the encoder's. Without an
 # archive the NEW walk has no cursor — a document that clears fts must be
 # embeddable in the same round, and its index prefix ends on the candidates
@@ -1158,11 +1158,12 @@ def _backfill_rows(con, collection, limit: int, mode: str | None = None) -> list
     # ONE budget for the whole call, both walks: a call that finds nothing
     # must cost a bounded slice of the encoder's turn, never a sweep
     deadline = time.monotonic() + config.BACKFILL_WALK_BUDGET_S
+    coverage = tuple(tuple(r) for r in ranges)
     rows = _cursor_page(
         con, key, "new",
         lambda start, end, n: _window_page(con, new_sql, start, end,
                                            (config.MAX_RETRIES, *params), n, keep),
-        limit, deadline)
+        limit, deadline, coverage)
     if len(rows) < limit:
         archive = bundle_genesis.ARCHIVES.get(collection.genesis_archive or "")
         if archive is not None and archive.local:
@@ -1174,7 +1175,7 @@ def _backfill_rows(con, collection, limit: int, mode: str | None = None) -> list
             con, key, "ver",
             lambda start, end, n: _window_page(
                 con, ver_sql, start, end, (config.EMBED_VERSION, config.MAX_RETRIES), n, keep),
-            limit - len(rows), deadline)
+            limit - len(rows), deadline, coverage)
     if not rows and keep is not None:
         leading.widen(collection)             # as above, the archive-bounded walk
     return rows
@@ -1216,7 +1217,8 @@ def _residual_rows(con, collection, limit: int, seen: set) -> list:
     return out[:limit]
 
 
-def _cursor_page(con, key: str, kind: str, query, limit: int, deadline: float) -> list:
+def _cursor_page(con, key: str, kind: str, query, limit: int, deadline: float,
+                 coverage: tuple = ()) -> list:
     """One bounded step of the backfill walk: rowid windows from the
     cursor, until a window holds candidates, the sweep reaches the rowid it
     started at the top of, or `deadline` passes — whichever is first.
@@ -1235,10 +1237,20 @@ def _cursor_page(con, key: str, kind: str, query, limit: int, deadline: float) -
     before the next one starts, since nothing below it can have become
     eligible faster than that matters. A sweep that found rows restarts at
     once, because documents below the cursor may have become eligible while
-    it walked. Resetting on a new coverage epoch is unchanged: a shard going
-    final releases documents below the cursor.
+    it walked.
+
+    THE SWEEP RESTARTS WHEN THE COVERAGE CHANGES, not when the process-wide
+    coverage epoch moves (`coverage`: the archive's covered ranges the walk
+    filters by). A shard going final releases documents below the cursor,
+    and only that is a reason to start over. The epoch moved at every
+    shard of every archive going final or applied, about once a minute while
+    wikipedia's layer 1 imported, and each time the sweep began again at
+    rowid 0, among 22 M rows its own local archive covers (whose declared
+    spans never change) — so it never reached the dump layer behind them:
+    18.8 M documents ready for the encoder, the producer asleep (München,
+    2026-10-30).
     """
-    epoch = bundle_genesis.coverage_epoch()
+    epoch = coverage
     with _backfill_cursor_lock:
         cur = _backfill_cursor.get((key, kind))
 
