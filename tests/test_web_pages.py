@@ -114,7 +114,8 @@ def test_help_page_is_open_and_documents_the_platform(client):
 
 def test_ui_is_rebranded_no_legacy_name_or_link(client):
     r = client.get("/ask")
-    assert "louise-rag" in r.text
+    # the header names the project, not the container (operator, 2026-10-30)
+    assert '<div class="brand">Project Louise</div>' in r.text and "<title>Ask — Project Louise</title>" in r.text
     assert "gutenberg-rag" not in r.text
     assert "legacy dashboard" not in r.text
 
@@ -154,7 +155,7 @@ def test_the_name_is_centred_above_the_menu_and_no_search_button_is_lit(client):
     rest (a lit one read as already pressed)."""
     html = client.get("/ask").text
     nav = html[html.index("<nav>"):html.index("</nav>")]
-    assert nav.index('<div class="brand">louise-rag</div>') < nav.index('<div class="menu">') \
+    assert nav.index('<div class="brand">Project Louise</div>') < nav.index('<div class="menu">') \
         < nav.index('href="/ask"')
     assert 'onclick="search()"' in html and 'class="primary" onclick="search()"' not in html
     css = (Path(web.__file__).parent / "static" / "admin.css").read_text()
