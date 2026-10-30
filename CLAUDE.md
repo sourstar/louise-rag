@@ -326,6 +326,19 @@ are the ones that have drifted; prefer to add a test when you touch them.
   digest's existing messages, BitTorrent v2 and the mainline DHT
   (docs/notes/p2p-review-open-issues.md); a vector index refresh as
   Lance's own delta index, not a rebuild of ours.
+- **Multi-threading is a must, not an option** (operator, 2026-10-30,
+  the second time a records build ran on one core of the eight allowed).
+  Every pass over a corpus or a collection uses the cores the node profile
+  allows — the parse pool for per-document work, threads for I/O. A pass
+  that runs in one process is a defect, found by measuring (`docker top`,
+  one process at ~100 % of a core) and fixed like any other.
+- **A fix that makes a running job faster is deployed NOW, and the job
+  resumed** (operator, 2026-10-30: "what's the point of waiting 68 minutes
+  when by stopping and updating you would likely end in 10 minutes?").
+  Every stage is resumable (invariant 2) and the node can be stopped any
+  time (RULE 1), so letting a slow run finish "because its bytes are the
+  same anyway" is never the reason to wait: compare the finish times and
+  take the shorter, without asking.
 - A per-round cost scales with the work available, never with the size of
   a list or the corpus. If a per-item cost depends on how much has been
   processed so far, it is a bug however fast it looks at fixture scale.
