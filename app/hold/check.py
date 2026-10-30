@@ -248,6 +248,119 @@ def _shard_ids(codex, shards: Sequence[snap.Shard], space: str | None = None
 # --------------------------------------------------------------------------
 # the checks
 
+# --------------------------------------------------------------------------
+# PER PART, IN PROCESSES: every part's check is independent of every other's,
+# and in one process the check of wikipedia-v8 took 46 min (2026-10-28) —
+# the pieces root of 89 GB, every sampled record decoded and re-cut. The
+# parts go to spawned processes, the outcomes come back in the parts' order
+# (operator, 2026-10-30: "multi threading is a must"). Serial where the node
+# allows one process (PARSE_PROCESSES; the tests pin it to 1).
+
+def _workers() -> int:
+    from app import parallel
+    return parallel.processes()
+
+
+def _map_parts(fn, tasks: list[tuple]) -> list:
+    if _workers() <= 1 or len(tasks) <= 1:
+        return [fn(*t) for t in tasks]
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+    n = _workers()
+    with ProcessPoolExecutor(max_workers=n, mp_context=multiprocessing.get_context("spawn")) as ex:
+        return list(ex.map(fn, *zip(*tasks), chunksize=max(1, len(tasks) // (n * 8))))
+
+
+def _root_part(path: str, root: str) -> bool | None:
+    """None where the part is not held; else whether its bytes have `root`."""
+    p = Path(path)
+    if not p.is_file():
+        return None
+    return shard_mod.pieces_root_of(p) == root
+
+
+#: this process's parsed family maps, by their sha256: the member is read
+#: and hashed on every call, only the parse is kept
+_maps: dict[str, Any] = {}
+
+
+def _family_map_at(tree: Path, codex):
+    """`_family_map` for a SHARD tree and a Codex: `(map or None, failure or None)`."""
+    from app.pack import slicing as sl
+    named = sl.family_map_of(getattr(codex, "slicing", None))
+    if named is None:
+        return None, None
+    p = Path(tree) / sl.map_member(named)
+    if not p.is_file():
+        return None, f"{sl.map_member(named)}:missing"
+    raw = p.read_bytes()
+    if "sha256:" + hashlib.sha256(raw).hexdigest() != named:
+        return None, f"{sl.map_member(named)}:hash"
+    if named not in _maps:
+        from app.plugins.wikidata import families
+        _maps[named] = families.load_map(raw)
+    return _maps[named], None
+
+
+def _records_part(tree: str, codex, path: str, name: str, records_root: str,
+                  last_of_slice: bool) -> tuple[int | None, list[str]]:
+    """One sampled part's records check: `(records seen, failures)`, or
+    `(None, [])` where the part is not held."""
+    from app.pack import records as pack_records, slicing as sl
+    p = Path(tree) / path
+    if not p.is_file():
+        return None, []
+    fmap, _broken = _family_map_at(Path(tree), codex)     # the parent reports a broken map
+    rule = sl.parts_rule_of(getattr(codex, "slicing", None))
+    slice_ = name.rsplit("/", 1)[0]
+    seen, failed = 0, []
+    hashes: list[str] = []
+    uids: list[str] = []
+    for r in pack_records.iter_records(p):
+        seen += 1
+        hashes.append(r["content_hash"])
+        uids.append(r["uid"])
+        sections = [tuple(x) for x in r.get("sections") or []]
+        if rec.content_hash(r.get("title") or "", sections) != r["content_hash"]:
+            failed.append(r["uid"])
+        elif not r.get("origin_hash"):
+            # invariant 11: a record with no `origin_hash` is
+            # permanently unverifiable against its source, which is the
+            # worst artefact we could ship.
+            failed.append(r["uid"])
+        elif fmap is not None and _slice_unless_walked(fmap, r) not in (None, slice_):
+            failed.append(f"{r['uid']}:slice")
+    if rec.records_root(hashes) != records_root:
+        failed.append(f"{name}:records_root")
+    if rule is not None and not _cut_by_content(rule, uids, last_of_slice):
+        failed.append(f"{name}:cut")
+    return seen, failed
+
+
+def _chunks_part(tree: str, codex, path: str, name: str, chunks: int,
+                 chunks_root: str) -> tuple[int | None, list[str]]:
+    """One sampled part's chunks check: `(records seen, failures)`, or
+    `(None, [])` where the part is not held."""
+    from .. import layers as layers_mod
+    from app.pack import records as pack_records
+    p = Path(tree) / path
+    if not p.is_file():
+        return None, []
+    seen, failed = 0, []
+    pairs: list[tuple[str, str]] = []
+    for r in pack_records.iter_records(p):
+        seen += 1
+        row = {"uid": r["uid"], "native_id": r.get("native_id", 0)}
+        sections = [tuple(x) for x in r.get("sections") or []]
+        pairs.extend((c["id"], c["text"]) for c in
+                     layers_mod.chunks_for_document(codex, row, sections))
+    if len(pairs) != chunks:
+        failed.append(f"{name}:chunks={len(pairs)} not {chunks}")
+    if rec.chunks_root(pairs) != chunks_root:
+        failed.append(f"{name}:chunks_root")
+    return seen, failed
+
+
 def check_roots(ctx: Ctx) -> Outcome:
     """"every shard's bytes have the `root` the snapshot lists" (03 §3.2).
 
@@ -257,12 +370,13 @@ def check_roots(ctx: Ctx) -> Outcome:
     and the check stays honest about what it covered.
     """
     failed, held = [], []
-    for s in _shards(ctx, "roots", every=True):
-        p = ctx.shard_tree / s.path
-        if not p.is_file():
+    shards = _shards(ctx, "roots", every=True)
+    for s, ok in zip(shards, _map_parts(_root_part, [(str(ctx.shard_tree / s.path), s.root)
+                                                     for s in shards])):
+        if ok is None:
             continue
         held.append(s)
-        if shard_mod.pieces_root_of(p) != s.root:
+        if not ok:
             failed.append(f"{s.slice}/{s.n:05d}")
     if not held:
         return Outcome("roots", INCONCLUSIVE,
@@ -279,19 +393,7 @@ def _family_map(ctx: Ctx):
     2026-10-24): `(map or None, the failure or None)`. The map's reader is
     pure (app/plugins/wikidata/families.py: JSON and hashlib), so a peer that
     is only checking still needs no plugin machinery."""
-    import hashlib
-    from app.pack import slicing as sl
-    named = sl.family_map_of(getattr(ctx.codex, "slicing", None))
-    if named is None:
-        return None, None
-    p = ctx.shard_tree / sl.map_member(named)
-    if not p.is_file():
-        return None, f"{sl.map_member(named)}:missing"
-    raw = p.read_bytes()
-    if "sha256:" + hashlib.sha256(raw).hexdigest() != named:
-        return None, f"{sl.map_member(named)}:hash"
-    from app.plugins.wikidata import families
-    return families.load_map(raw), None
+    return _family_map_at(ctx.shard_tree, ctx.codex)
 
 
 def _slice_unless_walked(fmap, record: dict) -> str | None:
@@ -336,33 +438,14 @@ def check_records(ctx: Ctx) -> Outcome:
     last_n: dict[str, int] = {}
     for s in ctx.snapshot.shards if rule is not None else ():
         last_n[s.slice] = max(last_n.get(s.slice, 0), s.n)
-    for s in shards:
-        try:
-            records = ctx.records_of(s)
-        except FileNotFoundError:
+    tasks = [(str(ctx.shard_tree), ctx.codex, s.path, f"{s.slice}/{s.n:05d}", s.records_root,
+              s.n == last_n.get(s.slice)) for s in shards]
+    for s, (n_seen, part_failed) in zip(shards, _map_parts(_records_part, tasks)):
+        if n_seen is None:
             continue
         ran.append(s)
-        hashes: list[str] = []            # the root's input, kept; the records are not
-        uids: list[str] = []
-        for r in records:
-            seen += 1
-            hashes.append(r["content_hash"])
-            uids.append(r["uid"])
-            sections = [tuple(x) for x in r.get("sections") or []]
-            if rec.content_hash(r.get("title") or "", sections) != r["content_hash"]:
-                failed.append(r["uid"])
-            elif not r.get("origin_hash"):
-                # invariant 11: a record with no `origin_hash` is
-                # permanently unverifiable against its source, which is the
-                # worst artefact we could ship.
-                failed.append(r["uid"])
-            elif fmap is not None and _slice_unless_walked(fmap, r) not in (None, s.slice):
-                failed.append(f"{r['uid']}:slice")
-        root = rec.records_root(hashes)
-        if root != s.records_root:
-            failed.append(f"{s.slice}/{s.n:05d}:records_root")
-        if rule is not None and not _cut_by_content(rule, uids, s.n == last_n.get(s.slice)):
-            failed.append(f"{s.slice}/{s.n:05d}:cut")
+        seen += n_seen
+        failed.extend(part_failed)
     if not ran:
         return Outcome("records", INCONCLUSIVE,
                        why="this peer holds none of the sampled shards")
@@ -383,27 +466,16 @@ def check_chunks(ctx: Ctx) -> Outcome:
     it cut — the vectors would then be of different text under the same
     ids, which is exactly the drift nothing else notices.
     """
-    from .. import layers as layers_mod
     shards = _shards(ctx, "chunks")
     seen, failed, ran = 0, [], []
-    for s in shards:
-        try:
-            records = ctx.records_of(s)
-        except FileNotFoundError:
+    tasks = [(str(ctx.shard_tree), ctx.codex, s.path, f"{s.slice}/{s.n:05d}", s.chunks, s.chunks_root)
+             for s in shards]
+    for s, (n_seen, part_failed) in zip(shards, _map_parts(_chunks_part, tasks)):
+        if n_seen is None:
             continue
         ran.append(s)
-        pairs: list[tuple[str, str]] = []
-        for r in records:
-            seen += 1
-            row = {"uid": r["uid"], "native_id": r.get("native_id", 0)}
-            sections = [tuple(x) for x in r.get("sections") or []]
-            pairs.extend((c["id"], c["text"]) for c in
-                         layers_mod.chunks_for_document(ctx.codex, row, sections))
-        name = f"{s.slice}/{s.n:05d}"
-        if len(pairs) != s.chunks:
-            failed.append(f"{name}:chunks={len(pairs)} not {s.chunks}")
-        if rec.chunks_root(pairs) != s.chunks_root:
-            failed.append(f"{name}:chunks_root")
+        seen += n_seen
+        failed.extend(part_failed)
     if not ran:
         return Outcome("chunks", INCONCLUSIVE,
                        why="this peer holds none of the sampled shards")
