@@ -148,6 +148,33 @@ def test_pack_records_are_computed_by_the_pool(isolated_config, tmp_path, corpus
         assert (pack_dir / s["path"]).read_bytes() == (serial_dir / s["path"]).read_bytes()
 
 
+def test_held_record_lines_are_taken_and_cut_by_the_pool(isolated_config, tmp_path, corpus_dir,
+                                                       two_processes, monkeypatch):
+    """A build that takes its records' lines from held parts (a re-slicing
+    daughter, a discarded snapshot's rebuild) runs them through the pool:
+    in one process, wikipedia-v8's rebuild of 52.9 M records used one core
+    of eight (München, 2026-10-30; operator: "multi threading is a must,
+    not an option"). The bytes are the serial build's."""
+    from app.pack import build as pack_build, manifest as manifest_mod
+    c, _rows = _gutenberg(tmp_path, corpus_dir)
+    parallel.shutdown()
+    config.PARSE_PROCESSES = 1
+    mother = tmp_path / "packs" / "mother"
+    pack_build.build(c, mother, records_per_shard=2, sign=False, log=lambda *_: None)
+    parts = tuple(s["path"] for s in manifest_mod.load(mother)["shards"])
+    config.PARSE_PROCESSES = 2
+    kinds: list[str] = []
+    real = parallel._submit
+    monkeypatch.setattr(parallel, "_submit", lambda ex, kind, col, part: kinds.append(kind) or real(ex, kind, col, part))
+    held_dir = tmp_path / "packs" / "held"
+    r = pack_build.build(c, held_dir, records_per_shard=2, sign=False, log=lambda *_: None,
+                         held=pack_build.HeldRecords(mother, parts))
+    assert r.records == 3 and r.skipped == 0
+    assert kinds and set(kinds) == {"held-record"}, "every held record went to a child"
+    for rel in parts:
+        assert (held_dir / rel).read_bytes() == (mother / rel).read_bytes()
+
+
 def test_a_build_under_a_changing_profile_writes_the_serial_bytes(isolated_config, tmp_path, monkeypatch):
     """The node profile (app/cpu_limit.py) changes how many parts run, never
     what they produce: a build whose limit goes 12 -> 0 (paused) -> 8 -> 1
