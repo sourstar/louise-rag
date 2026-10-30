@@ -32,7 +32,10 @@ def node(tmp_path, codex, monkeypatch):
     con.execute("CREATE TABLE fetch_files (rel_path TEXT, local_path TEXT)")
     origin = f"{root}/old/origin/akn/M/codici.zip"
     con.executemany("INSERT INTO documents VALUES (?, ?)",
-                    [("a:1", origin + "::x.xml"), ("a:2", "/elsewhere/old/y.xml")])
+                    [("a:1", origin + "::x.xml"), ("a:2", "/elsewhere/old/y.xml"),
+                     # a locator naming two files, wikipedia's dump + page_props
+                     ("a:3", f"{root}/old/origin/d.xml.bz2::1::9|{root}/old/origin/p.sql.gz::4::5"),
+                     ("a:4", f"{root}/older/origin/z.xml")])
     con.execute("INSERT INTO fetch_files VALUES ('akn/M/codici.zip', ?)", (origin,))
     con.commit(); con.close()
     (tmp_path / "corpora" / "old" / "akn").mkdir(parents=True)
@@ -53,8 +56,11 @@ def test_a_rename_moves_everything_that_carries_the_name(node):
     paths = dict(con.execute("SELECT uid, path FROM documents"))
     assert paths["a:1"] == f"{root}/new/origin/akn/M/codici.zip::x.xml"
     assert paths["a:2"] == "/elsewhere/old/y.xml", "only paths under the collection's own directory"
+    assert paths["a:3"] == f"{root}/new/origin/d.xml.bz2::1::9|{root}/new/origin/p.sql.gz::4::5", \
+        "every file a locator names, not only the first (wikipedia's page_props, 2026-10-30)"
+    assert paths["a:4"] == f"{root}/older/origin/z.xml", "a sibling whose name starts with the old one"
     assert con.execute("SELECT local_path FROM fetch_files").fetchone()[0] == f"{root}/new/origin/akn/M/codici.zip"
-    assert out["done"]["paths"] == {"documents.path": 1, "fetch_files.local_path": 1}
+    assert out["done"]["paths"] == {"documents.path": 2, "fetch_files.local_path": 1}
     assert node_state.paused_collections() >= {"new"} and "old" not in node_state.paused_collections()
     assert col.resolve(root, "new")[1].collection_id == codex.collection_id, "the same Codex"
     assert not (root / "new" / "state" / rn.MARKER).exists()

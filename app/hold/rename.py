@@ -109,7 +109,14 @@ def plan(root: Path, old: str, new: str) -> dict[str, Any]:
 def _rewrite_paths(manifest: Path, old_prefix: str, new_prefix: str) -> dict[str, int]:
     """Every stored absolute path under `old_prefix` re-rooted under
     `new_prefix`, one transaction, BEGIN IMMEDIATE (the reader-then-writer
-    rule). No rowid moves (invariant 6: an UPDATE renumbers nothing)."""
+    rule). No rowid moves (invariant 6: an UPDATE renumbers nothing).
+
+    EVERY occurrence, not only the leading one: a locator may name several
+    files — wikipedia's `<dump>::s::e|<page_props>::s::e` (parser 5) — and
+    re-rooting the first alone left the page_props path under the old name:
+    4,989 wikipedia documents errored in an hour after wikipedia-v8 became
+    wikipedia (2026-10-30). `old_prefix` ends in "/", so a sibling whose
+    name merely starts with the old one is never touched."""
     counts: dict[str, int] = {}
     if not manifest.is_file():
         return counts
@@ -123,9 +130,9 @@ def _rewrite_paths(manifest: Path, old_prefix: str, new_prefix: str) -> dict[str
             if table not in tables:
                 continue
             cur = con.execute(
-                f"UPDATE {table} SET {column} = ? || substr({column}, ?) "
-                f"WHERE substr({column}, 1, ?) = ?",
-                (new_prefix, len(old_prefix) + 1, len(old_prefix), old_prefix))
+                f"UPDATE {table} SET {column} = replace({column}, ?, ?) "
+                f"WHERE instr({column}, ?) > 0",
+                (old_prefix, new_prefix, old_prefix))
             counts[f"{table}.{column}"] = cur.rowcount
         con.execute("COMMIT")
     except BaseException:
