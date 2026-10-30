@@ -1431,3 +1431,35 @@ defer for its seconds. The full compaction is unchanged. Cost test:
 - one `held_chunks` of 128 against 2.4–3.4 s;
 - genesis's delete share of the pipeline thread against 32 %;
 - genesis documents per 10 minutes.
+
+### 2026-10-30 — the new walk's window reads the candidates, not the rows — PREPARED
+
+**BEFORE (München, 19:03–19:20 CET, dad4338 = #102).** #102 works, but the
+first sweep after the restart needed ~17 minutes:
+- 19:03–19:13: 0 dump-layer commits; the producer asleep in all three dumps.
+- py-spy --locals at 19:20: the "new" cursor at pos 33,868,000 of top 80,760,101, window width 17,632, found False — ~34 M rowids in ~17 min, ~33 k rowids/s over the 1 s budgets and 5 s sleeps.
+- A cold window cost 0.18 s per 20 k rowids at rowid 0, 0.013–0.04 s higher up.
+- Candidates (1,1,1,0) by rowid: 88,831 in 0–5 M (all covered); 826 k in 30–35 M; ~3.4 M per 5 M bucket from 35 to 60 M.
+
+`_BACKFILL_WINDOWED` was forced onto the primary key (`+in_scope …`), so
+each window read every row it spanned. That was right for the re-index and
+version walks, whose prefix is not all-equality (architecture-v2 §49). It
+is not right for the new walk: all four scope columns are equalities, so
+SQLite seeks the scope index on (1,1,1,0) and on the rowid range (the
+index's implicit tail).
+
+**Bench (synthetic 5 M rows, 3.4 M covered and embedded, warm cache).** The
+covered region was walked in 0.56 s on the primary key and in 0.11 s on the
+index. Cold and with the node's wide rows the gap is the 34 M row reads
+against ~88 k candidate reads. Cost test: a 20,000-row embedded window took
+220,000 SQLite steps before and fewer than 2,000 now.
+
+**The change.** The `+` goes from the new walk's window only; the version
+walk keeps the primary key. Plan-checked: `SEARCH documents USING INDEX
+idx_documents_scope (in_scope=? AND rdf_done=? AND fts_done=? AND
+embed_done=? AND rowid>? AND rowid<?)`, no TEMP B-TREE.
+
+**To verify AFTER (deploy, worker restart):**
+- the time from the worker's start to the first dump-layer commit (BEFORE ~17 min);
+- one py-spy --locals of the producer: the new cursor's pos and width within the first minute;
+- then #102's 10-minute AFTER.

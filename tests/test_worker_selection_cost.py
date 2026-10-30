@@ -335,16 +335,18 @@ def test_backfill_selections_use_the_scope_index_and_never_sort(tmp_path, monkey
         assert "TEMP B-TREE" not in plan.upper(), f"backfill sorts the candidate set: {plan}"
         assert "idx_documents_scope" in plan, plan
     # the cursor walk's windows: bounded by the rowid RANGE, never by an
-    # index walk that only the table's end can stop
-    for sql, params in (
-            (worker._BACKFILL_WINDOWED.format(covered=covered),
-             (-1, 1000, config.MAX_RETRIES, 0, 19, 1)),
-            (worker._REEMBED_WINDOWED,
-             (-1, 1000, config.EMBED_VERSION, config.MAX_RETRIES, 1))):
-        plan = _plan(con, sql, params)
-        assert "TEMP B-TREE" not in plan.upper(), f"window sorts: {plan}"
-        assert "INTEGER PRIMARY KEY" in plan.upper(), f"window is not a rowid range: {plan}"
-        assert "idx_documents_scope" not in plan, plan
+    # index walk that only the table's end can stop. The version walk on the
+    # primary key (its prefix is every embedded document); the new walk on
+    # the scope index's full prefix AND the rowid range, its implicit tail —
+    # a window reads its candidates, not its rows (2026-10-30)
+    plan = _plan(con, worker._REEMBED_WINDOWED, (-1, 1000, config.EMBED_VERSION, config.MAX_RETRIES, 1))
+    assert "TEMP B-TREE" not in plan.upper() and "INTEGER PRIMARY KEY" in plan.upper(), plan
+    assert "idx_documents_scope" not in plan, plan
+    plan = _plan(con, worker._BACKFILL_WINDOWED.format(covered=covered),
+                 (-1, 1000, config.MAX_RETRIES, 0, 19, 1))
+    assert "TEMP B-TREE" not in plan.upper(), f"window sorts: {plan}"
+    assert "idx_documents_scope" in plan and "rowid>?" in plan and "rowid<?" in plan, \
+        f"the new walk's window is not the index prefix bounded by the rowid range: {plan}"
 
 
 # --- the cursor walk is bounded per call (measured live, 2026-09-19) --------
@@ -918,3 +920,24 @@ def test_a_local_archive_s_epoch_never_restarts_the_sweep(tmp_path, monkeypatch)
     nxt = worker._backfill_rows(con, c, 1)
     assert nxt and int(nxt[0]["rid"]) > int(first["rid"]), "the sweep goes on; it did not start over at rowid 0"
     assert worker._backfill_cursor[key][1] == int(nxt[0]["rid"])
+
+
+def test_a_window_over_an_embedded_layer_reads_its_candidates_not_its_rows(tmp_path, monkeypatch):
+    """A COST test (München, 2026-10-30): after a restart, wikipedia's first
+    sweep crossed 34 M rowids of its embedded layer 1 at ~33 k rowids/s —
+    ~17 minutes before the encoder saw the dump layer. The new walk's window
+    seeks the scope index on (1,1,1,0) and the rowid range: over 20,000
+    embedded rows holding no candidate, it does a few hundred SQLite steps,
+    not tens of thousands."""
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    _embedded_bulk(con, 20_000)
+    con.commit()
+    covered = "AND NOT (CAST(native_id AS INTEGER) BETWEEN ? AND ?)"
+    lo = con.execute("SELECT MIN(rowid) FROM documents WHERE native_id='20000'").fetchone()[0] - 1
+    steps = []
+    con.set_progress_handler(lambda: steps.append(1) and 0, 100)
+    got = con.execute(worker._BACKFILL_WINDOWED.format(covered=covered),
+                      (lo, lo + 20_000, config.MAX_RETRIES, 0, 19, 128)).fetchall()
+    con.set_progress_handler(None, 0)
+    assert got == []
+    assert len(steps) * 100 < 2_000, f"{len(steps) * 100} steps for a window of 20,000 embedded rows"
