@@ -347,6 +347,16 @@ are the ones that have drifted; prefer to add a test when you touch them.
   short, one-off or rare — it is built, deployed and measured now, and
   whatever else was queued waits. The finish-time comparison above decides
   only WHEN a running job is restarted onto it, never WHETHER it is built.
+- **LOUISE SURVIVES A CRASH WITHOUT AN AGENT** (operator, 2026-10-30, after
+  the worker's OOM kill: "this must not happen without an automatic
+  recovery not involving this agent. This applies to any worker";
+  "Louise must survive without an agent surveying each crash"). Every
+  long-running process has a memory cap and a restart policy (the app's
+  containers: `mem_limit` + `restart: unless-stopped`); every operator
+  pass runs under `deploy/supervise-pass.sh` (rerun until it completes,
+  the pool halved after an OOM); a pool child the kernel kills never ends
+  its pass (`parallel.each_part`, `parallel.compute`). A process that
+  needs an agent to come back is a defect, fixed like any other.
 - A per-round cost scales with the work available, never with the size of
   a list or the corpus. If a per-item cost depends on how much has been
   processed so far, it is a bug however fast it looks at fixture scale.
