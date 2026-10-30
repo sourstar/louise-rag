@@ -119,6 +119,7 @@ grep -q "^def files(root" "$ROOT/src.new/app/plugins/walk.py"                   
 test -s "$ROOT/src.new/tools/wikipedia_drop_twins.py"                                      # e7c8732 (2f20c8e): the 21.9 M dump twins
 grep -q "^def discard(" "$ROOT/src.new/app/hold/discard.py"                                # e7c8732 (9b099ae): hold snapshot discard
 grep -q "token = body.token.strip()" "$ROOT/src.new/app/web.py"                             # e5abaa9 (c321771): /admin/login strips the pasted token
+grep -q '^DISCARDED = ".discarded"' "$ROOT/src.new/app/hold/discard.py"                    # f1492ad (15428cd): discarded parts stay inside the SHARD (EXDEV)
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
 ! grep -q 'cache_type_' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # d372ba5: the F16 cache (P5); b68820c had f32
 test ! -e "$ROOT/src.new/deploy/reference"
