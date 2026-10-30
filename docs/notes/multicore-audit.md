@@ -83,6 +83,13 @@ This audit covers every stage, maintainer and pass that walks a whole corpus or 
     - `dev mark-embedded` (louise.py 1215);
     - `share attest`: reached `run_check` without widening the pool to the whole quota (D5). **FIXED (#77):** attest, `snapshot create` and `hold vectors check` now take the whole quota, through one helper (`louise._whole_quota`).
 
+11. **The records build's plan.** `app/pack/build.py` 156–163 walks the manifest serially, one core.
+    - Measured on wikidata (München's py-spy, 2026-10-30):
+      - with the per-document `pack_dir` realpath: 350,000 documents per 30 s, i.e. 1 h 48 min for 75.9 M. **FIXED in #79**;
+      - after #79: 70–74 k documents/s, 17–19 min.
+    - Two of three samples are in SQLite's C code without the GIL, so the walk could be split into rowid windows on threads.
+    - Not done mid-build: a fix could not beat the remaining 15 minutes. Next.
+
 ### Not defects
 
 - **Relocate** is already pooled with slim results.
