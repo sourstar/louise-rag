@@ -42,6 +42,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ... import config
+from ...backend import GroupCache
 from . import medline
 
 PACK_VERSION = 1
@@ -67,8 +68,9 @@ SCHEMA = pa.schema([
 _build_locks: dict[str, threading.Lock] = {}
 _build_locks_guard = threading.Lock()
 _files_lock = threading.Lock()              # guards the dict caches below
-_groups: OrderedDict = OrderedDict()         # (pack path, row group) -> {index: xml}
-_MAX_GROUPS = 4                              # ~10 MB of XML each
+#: (pack path, row group) -> {index: xml}: 64 MiB of XML (app/backend.py);
+#: it held 4 groups, ~10 MB each
+_groups = GroupCache(64 << 20)
 
 
 def open_container(path: Path):
@@ -238,8 +240,7 @@ _fresh: dict[str, tuple[tuple[int, int], int, str]] = {}   # container -> (signa
 
 def _forget(path: Path) -> None:
     with _files_lock:
-        for key in [k for k in _groups if k[0] == str(path)]:
-            _groups.pop(key, None)
+        _groups.forget(lambda k: k[0] == str(path))
 
 
 def _open(path: Path) -> pq.ParquetFile:
@@ -277,21 +278,14 @@ def record_xml(container: Path, index: int) -> bytes:
     path = ensure(container)
     rg = index // ROW_GROUP
     key = (str(path), rg)
-    with _files_lock:
-        group = _groups.get(key)
-        if group is not None:
-            _groups.move_to_end(key)
+    group = _groups.get(key)
     if group is None:
         with _open(path) as pf:
             if rg >= pf.num_row_groups:
                 raise IndexError(f"{container.name}: record {index} beyond the pack")
             table = pf.read_row_group(rg, columns=["index", "xml"])
-        group = dict(zip(table.column("index").to_pylist(), table.column("xml").to_pylist()))
-        with _files_lock:
-            _groups[key] = group
-            _groups.move_to_end(key)
-            while len(_groups) > _MAX_GROUPS:
-                _groups.popitem(last=False)
+        group = _groups.put(key, dict(zip(table.column("index").to_pylist(), table.column("xml").to_pylist())),
+                            table.column("xml").nbytes)
     try:
         return group[index]
     except KeyError:

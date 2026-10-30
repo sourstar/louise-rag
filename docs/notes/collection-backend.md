@@ -63,9 +63,19 @@ inventory found, fixed.**
 - `covered_articles` wrote its `.npy` in place. It is now written to a temp file and replaced, and a truncated file is read again.
 - `walk.files` entered `.pack`, so a page-props pack beside its dump read as an archive shard.
 
-**S2 — one group cache, budgeted in bytes.**
-- Five copies of the same LRU: pubmed `_MAX_GROUPS = 4`, page_props 4, archive 8 with 64 layouts, `pack/records` 16 frames with 64 indexes, wikidata's bytes with 8 layouts.
-- wikidata's 8-layout cap re-opens a ParquetFile per line on a sparse family: 3.6 % of a build child (München, 2026-10-30).
+**S2, DONE (the cache): one group cache, budgeted in bytes.**
+- `backend.GroupCache` replaces five copies of the same LRU, four of them counted in items. The new budgets:
+
+  | reader | before | now |
+  |---|---|---|
+  | pubmed pack | 4 groups | 64 MiB |
+  | page_props | 4 groups | 64 MiB |
+  | archive | 8 groups | 256 MiB |
+  | `pack/records` | 16 frames | 64 MiB |
+  | wikidata | its own byte cap | 256 MiB in the shared cache |
+
+- A test refuses any `_MAX_GROUPS` or `_MAX_FRAMES` in `app/`.
+- **Left: the per-file layouts** (wikidata 8, archive 64, `pack/records` 64 indexes). wikidata's 8 re-opens a ParquetFile per line on a sparse family: 3.6 % of a build child (München, 2026-10-30). A chunk file's footer is ~3 MB in memory, so the fix is not a bigger count. It is the footer's own `metadata=` reuse under a byte budget, measured first. While the build is parent-bound (47 % of the children idle, #95), it does not bind.
 
 **S3 — the CONTAINER_PACK class.** pubmed's and page_props' `ensure`,
 `build`, `is_fresh` and `_signature` become one implementation. The plugin

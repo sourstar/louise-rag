@@ -152,3 +152,26 @@ def test_a_killed_adopter_s_copy_goes_with_the_next(tmp_path):
     (dst.parent / ".c.pack.parquet.4242.adopting").write_bytes(b"half")
     assert derived.adopt(src, dst) is True and dst.read_bytes() == b"pack"
     assert not (dst.parent / ".c.pack.parquet.4242.adopting").exists()
+
+
+def test_the_group_cache_is_budgeted_in_bytes_and_keeps_the_unit_just_read():
+    c = backend.GroupCache(100)
+    for i in range(5):
+        c.put(("f", i), f"group {i}", 40)
+    assert len(c) == 2 and c.nbytes == 80 and c.get(("f", 3)) == "group 3" and c.get(("f", 0)) is None
+    c.get(("f", 3))                                   # the most recent now
+    c.put(("f", 9), "big", 500)                       # over the budget alone: kept, the rest dropped
+    assert len(c) == 1 and c.get(("f", 9)) == "big" and c.nbytes == 500
+    c.put(("g", 1), "x", 10)
+    c.forget(lambda k: k[0] == "f")
+    assert c.sizes() == [10] and c.nbytes == 10
+    c.clear()
+    assert len(c) == 0 and c.nbytes == 0
+
+
+def test_no_reader_keeps_a_cache_counted_in_items():
+    """Five readers kept five LRUs, four counted in groups or frames whose
+    size the data decides; every read cache is a GroupCache now."""
+    hits = [str(p.relative_to(ROOT)) for p in (ROOT / "app").rglob("*.py")
+            if re.search(r"_MAX_(GROUPS|FRAMES)\b", p.read_text(encoding="utf-8"))]
+    assert hits == []

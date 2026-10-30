@@ -34,8 +34,11 @@ implementation — never a plugin's private variant of an existing one.
 """
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, Callable
 
 
 class Template(str, Enum):
@@ -65,3 +68,66 @@ def forms_of(plugin) -> tuple[OriginForm, ...]:
         if not isinstance(f, OriginForm) or not isinstance(f.template, Template):
             raise TypeError(f"{type(plugin).__name__}: {f!r} is not a backend OriginForm of a Template")
     return forms
+
+
+class GroupCache:
+    """THE READ CACHE of every template: the units a reader decoded (a row
+    group, a zstd frame), most recent kept, BUDGETED IN BYTES — never in
+    items, whose size the data decides: wikidata's cache counted 128 groups
+    and held 16 times more of a pack written by 1,000 lines a group than by
+    64, children of 5.7 GB (lessons-learned.md, 2026-10-30). Five readers
+    kept five copies of this LRU, four of them counted in items. The unit
+    just read is always kept, whatever the budget. Thread-safe; per process.
+
+    The standard: `cachetools.LRUCache(maxsize, getsizeof=...)`, the same
+    policy — not a dependency of ours, and this is its twenty lines."""
+
+    def __init__(self, budget: int = 256 << 20):
+        self.budget = int(budget)
+        self._units: OrderedDict = OrderedDict()   # key -> (value, bytes)
+        self._bytes = 0
+        self._lock = threading.Lock()
+
+    def get(self, key) -> Any:
+        """The unit under `key`, or None; a hit is the most recent now."""
+        with self._lock:
+            hit = self._units.get(key)
+            if hit is None:
+                return None
+            self._units.move_to_end(key)
+            return hit[0]
+
+    def put(self, key, value, nbytes: int) -> Any:
+        """`value` kept under `key`, `nbytes` counted against the budget, the
+        least recent units dropped while over it; returns `value`."""
+        with self._lock:
+            old = self._units.pop(key, None)
+            if old is not None:
+                self._bytes -= old[1]
+            self._units[key] = (value, int(nbytes))
+            self._bytes += int(nbytes)
+            while self._bytes > self.budget and len(self._units) > 1:
+                self._bytes -= self._units.popitem(last=False)[1][1]
+        return value
+
+    def forget(self, match: Callable[[Any], bool]) -> None:
+        """Every unit whose key `match`es — a file rebuilt or replaced."""
+        with self._lock:
+            for k in [k for k in self._units if match(k)]:
+                self._bytes -= self._units.pop(k)[1]
+
+    def clear(self) -> None:
+        with self._lock:
+            self._units.clear()
+            self._bytes = 0
+
+    @property
+    def nbytes(self) -> int:
+        return self._bytes
+
+    def sizes(self) -> list[int]:
+        with self._lock:
+            return [n for _v, n in self._units.values()]
+
+    def __len__(self) -> int:
+        return len(self._units)

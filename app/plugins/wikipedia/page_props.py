@@ -38,8 +38,9 @@ import tempfile
 import threading
 import time
 from bisect import bisect_right
-from collections import OrderedDict
 from pathlib import Path
+
+from app.backend import GroupCache
 
 PACK_VERSION = 1
 ROW_GROUP = 20_000
@@ -250,8 +251,8 @@ _lock = threading.Lock()
 _build_locks: dict[str, threading.Lock] = {}
 _fresh: dict[str, tuple] = {}                  # props path -> (signature, pack path)
 _bounds: dict[str, list[int]] = {}             # pack path -> first page of each row group
-_groups: OrderedDict = OrderedDict()           # (pack path, group) -> {page: (start, end, rows)}
-_MAX_GROUPS = 4
+#: (pack path, group) -> {page: (start, end, rows)}: 64 MiB (app/backend.py); it held 4 groups
+_groups = GroupCache(64 << 20)
 
 
 def ensure(props: Path) -> Path:
@@ -296,8 +297,7 @@ def _remember(key: str, sig, pack: Path) -> Path:
     with _lock:
         if _fresh.get(key) != (sig, pack):
             _bounds.pop(str(pack), None)
-            for k in [k for k in _groups if k[0] == str(pack)]:
-                _groups.pop(k, None)
+            _groups.forget(lambda k: k[0] == str(pack))
         _fresh[key] = (sig, pack)
     return pack
 
@@ -331,18 +331,11 @@ def _lookup(pack: Path, page: int) -> tuple[int, int, bytes] | None:
     g = bisect_right(bounds, page) - 1
     if g < 0:
         return None
-    with _lock:
-        group = _groups.get((pk, g))
-        if group is not None:
-            _groups.move_to_end((pk, g))
+    group = _groups.get((pk, g))
     if group is None:
         with pq.ParquetFile(pack) as pf:
             t = pf.read_row_group(g)
-        group = {p: (s, e, r) for p, s, e, r in zip(
+        group = _groups.put((pk, g), {p: (s, e, r) for p, s, e, r in zip(
             t.column("page").to_pylist(), t.column("start").to_pylist(),
-            t.column("end").to_pylist(), t.column("rows").to_pylist())}
-        with _lock:
-            _groups[(pk, g)] = group
-            while len(_groups) > _MAX_GROUPS:
-                _groups.popitem(last=False)
+            t.column("end").to_pylist(), t.column("rows").to_pylist())}, t.nbytes)
     return group.get(page)
