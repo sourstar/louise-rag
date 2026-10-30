@@ -16,8 +16,10 @@ the book. For example:
   daughters so far, rule 1") — carrying what is identical;
 - stop the node whenever that speeds up the work (operator, 2026-10-30:
   "this in not a production software, the node can be stopped any time it
-  speeds up the developments") — a tool that needs the worker's writers
-  asks for a stop, not for code that works around one.
+  speeds up the developments"), and the peers the same ("Same for the
+  peers, their only purpose is to test the architecture") — a tool that
+  needs the worker's writers asks for a stop, not for code that works
+  around one.
 
 Tell the operator about each such intervention, but it is the default
 choice, not an exception to ask about. A spec rule that forces a
