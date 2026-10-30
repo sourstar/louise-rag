@@ -5244,8 +5244,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
 
-    if hasattr(signal, "SIGPIPE"):
-        signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # `| head` is not an error
     if hasattr(signal, "SIGUSR1"):
         # a command that cannot say where it is: SIGUSR1 prints every
         # thread's stack to stderr and goes on (a SIGTERM'd contribute spent
@@ -5315,5 +5313,11 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    # `| head` is not an error. Set by the PROCESS, not by main(): the tests
+    # call main() in-process, and the default action it restored outlived
+    # them — a later test writing to a closed pipe killed pytest itself with
+    # SIGPIPE (exit 141, at 41 % of the suite, three times; 2026-10-30)
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     from app import process_exit
     process_exit.run(main)
