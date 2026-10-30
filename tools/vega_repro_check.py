@@ -21,14 +21,19 @@ model afresh; each repeat sends every text ALONE, tagged as Louise tags it
 over-long text at that many tokens, as a space that cuts by tokens does
 (through the token ids where the backend embeds them, P2). The texts are `n`
 spread over the file, so the lengths are the file's. Plain HTTP, no GPU
-import (invariant 7). Exits 1 when any text came back as more than one vector.
+import (invariant 7). Prints REPRODUCIBLE and exits 0; NOT REPRODUCIBLE (each
+differing text with its max |diff|) and exits 1; NOT MEASURED and exits 2 when
+a text was refused or the model never came back: read the exit code, never
+the absence of a word.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import random
+import re
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -73,24 +78,66 @@ def sweep(texts: list, count: int, window: int | None) -> list:
             for m in sizes]
 
 
+#: LocalAI's answers while a model it was told to stop is still loading again:
+#: it dials the stopped process ("connection refused") and says so as gRPC's
+#: Unavailable. Asked again, never taken for the model's answer.
+LOADING = re.compile(r"Unavailable|connection refused|is loading|not loaded", re.I)
+#: after each shutdown, before the first text (a model reloads in seconds)
+SETTLE_S = 5.0
+#: how long one text is asked again while the model loads, then the
+#: measurement fails: bounded, as every wait on something that can die
+LOAD_WAIT_S = 300.0
+
+
+def _embed(post, base: str, model: str, tagged: list[str], k: int, *,
+           sleep: Callable[[float], None], clock: Callable[[], float]):
+    deadline = clock() + LOAD_WAIT_S
+    while True:
+        r = post(f"{base}/v1/embeddings", json={
+            "model": model, "input": tagged, "encoding_format": "base64"}, timeout=600)
+        if r.status_code == 200:
+            return r
+        if r.status_code >= 500 and LOADING.search(r.text) and clock() < deadline:
+            sleep(1.0)
+            continue
+        raise RuntimeError(f"text {k}: HTTP {r.status_code}: {r.text[-240:]}")
+
+
+def _max_abs(vectors: set[bytes]) -> float:
+    """The largest element difference between the byte strings a text came
+    back as, read as float32."""
+    from array import array
+    rows = [array("f", v) for v in vectors]
+    return max(abs(a - b) for x in rows for y in rows for a, b in zip(x, y))
+
+
 def measure(texts: list[str], *, url: str, model: str, loads: int, repeats: int,
-            window: int | None, post: Callable[..., Any], seed: int = 0) -> dict[str, Any]:
-    """{texts, vectors, identical, differ: [index…]}: `differ` lists the texts
-    that came back as more than one byte string."""
+            window: int | None, post: Callable[..., Any], seed: int = 0,
+            sleep: Callable[[float], None] | None = None,
+            clock: Callable[[], float] | None = None) -> dict[str, Any]:
+    """{texts, vectors, identical, differ: [index…], max_abs: {index: float}}:
+    `differ` lists the texts that came back as more than one byte string.
+
+    THE LOAD IS WAITED FOR (2026-10-30). After `/backend/shutdown`, LocalAI
+    answered gutenberg's qwen3-4b "Unavailable … connection refused" for
+    seconds: the stopped process was dialled. Every text failed in ~5 s, and
+    a harness that took "no `differ` printed" for clean would have resumed
+    the collection on eight failed runs (München). The first text waits
+    SETTLE_S; a text answered "loading" is asked again for up to LOAD_WAIT_S;
+    any other refusal fails the measurement."""
+    sleep = sleep or time.sleep
+    clock = clock or time.monotonic
     base = url.rstrip("/")
     seen: list[set[bytes]] = [set() for _ in texts]
     for load in range(loads):
         post(f"{base}/backend/shutdown", json={"model": model}, timeout=120)
+        sleep(SETTLE_S)
         for repeat in range(repeats):
             order = list(range(len(texts)))
             random.Random(seed + load * repeats + repeat).shuffle(order)
             for k in order:
                 batch = client.tag_batch([texts[k]], window=window)
-                r = post(f"{base}/v1/embeddings", json={
-                    "model": model, "input": list(batch.inputs), "encoding_format": "base64"},
-                    timeout=600)
-                if r.status_code != 200:
-                    raise RuntimeError(f"text {k}: HTTP {r.status_code}: {r.text[-240:]}")
+                r = _embed(post, base, model, list(batch.inputs), k, sleep=sleep, clock=clock)
                 (vector,) = client.parse_response(r.content)
                 if not isinstance(vector, bytes):
                     raise RuntimeError(f"text {k}: the answer is numbers, not the float32 "
@@ -98,7 +145,8 @@ def measure(texts: list[str], *, url: str, model: str, loads: int, repeats: int,
                 seen[k].add(vector)
     differ = [k for k, s in enumerate(seen) if len(s) > 1]
     return {"texts": len(texts), "vectors": len(texts) * loads * repeats,
-            "identical": len(texts) - len(differ), "differ": differ}
+            "identical": len(texts) - len(differ), "differ": differ,
+            "max_abs": {k: _max_abs(seen[k]) for k in differ}}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -118,10 +166,16 @@ def main(argv: list[str] | None = None) -> int:
     every = [item(json.loads(line)) for line in
              args.texts.read_text(encoding="utf-8").splitlines() if line.strip()]
     texts = spread(every, args.n) + sweep(every, args.sweep, args.window)
-    out = measure(texts, url=args.url, model=args.model, loads=args.loads,
-                  repeats=args.repeats, window=args.window, post=httpx.post)
-    differ = f"; differ: {out['differ']}" if out["differ"] else ""
-    print(f"{args.model}: {out['identical']}/{out['texts']} texts ({args.n} spread, "
+    try:
+        out = measure(texts, url=args.url, model=args.model, loads=args.loads,
+                      repeats=args.repeats, window=args.window, post=httpx.post)
+    except Exception as e:                       # noqa: BLE001 — said, and not clean
+        print(f"{args.model}: NOT MEASURED: {type(e).__name__}: {e}")
+        return 2
+    differ = (f"; differ: {out['differ']}, max |diff| "
+              f"{max(out['max_abs'].values()):.3g}" if out["differ"] else "")
+    print(f"{args.model}: {'REPRODUCIBLE' if not out['differ'] else 'NOT REPRODUCIBLE'}: "
+          f"{out['identical']}/{out['texts']} texts ({args.n} spread, "
           f"{out['texts'] - min(args.n, len(every))} swept) bit-identical over "
           f"{out['vectors']} vectors ({args.loads} fresh loads x {args.repeats} shuffled "
           f"passes){differ}")
