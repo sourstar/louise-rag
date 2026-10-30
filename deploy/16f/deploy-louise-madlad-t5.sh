@@ -141,6 +141,7 @@ test -s "$ROOT/src.new/deploy/16f/set_mem_limits.py"
 grep -q "^ROW_GROUP = 64" "$ROOT/src.new/app/plugins/wikidata/pack.py"                      # 009eeaf (c3f7d62): the wikidata pack in row groups of 64
 grep -q "^def cmd_dev_wikidata_regroup" "$ROOT/src.new/app/louise.py"                       # 009eeaf: dev wikidata-regroup
 grep -q "bundle_genesis.forget_residuals(collection, stale)" "$ROOT/src.new/app/worker.py"  # ddfc36f (8734c2e): the embed backfill fills its limit across windows
+grep -q "^ROWS_AHEAD = 64_000" "$ROOT/src.new/app/parallel.py"                              # 4cafea4 (a840121): the page stream's look-ahead in rows
 grep -q "^_MAX_GROUP_BYTES = 256 << 20" "$ROOT/src.new/app/plugins/wikidata/pack.py"         # the line cache in bytes; the regroup streamed (München OOM report, 10-30)
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
 test -x "$ROOT/src.new/deploy/docker-memory-ceiling.sh"                                     # the ceiling on every container together
