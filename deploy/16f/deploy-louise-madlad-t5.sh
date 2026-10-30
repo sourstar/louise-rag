@@ -121,6 +121,7 @@ grep -q "^def discard(" "$ROOT/src.new/app/hold/discard.py"                     
 grep -q "token = body.token.strip()" "$ROOT/src.new/app/web.py"                             # e5abaa9 (c321771): /admin/login strips the pasted token
 grep -q '^DISCARDED = ".discarded"' "$ROOT/src.new/app/hold/discard.py"                    # f1492ad (15428cd): discarded parts stay inside the SHARD (EXDEV)
 grep -q '<div class="brand">louise-rag</div>' "$ROOT/src.new/app/templates/base.html"       # db3a5c1 (d3fdc91): the name centred above the menu
+grep -q "derived = root / name / INDEX / facets_mod.CACHE" "$ROOT/src.new/app/hold/discard.py"  # c1b6156 (0fc6451): discard removes only index/facets
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
 ! grep -q 'cache_type_' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # d372ba5: the F16 cache (P5); b68820c had f32
 test ! -e "$ROOT/src.new/deploy/reference"
