@@ -166,8 +166,9 @@ def _medcpt(tmp_path, seen=None):
     """A stand-in model whose logit is the text's length minus 5."""
     seen = {} if seen is None else seen
 
-    def encoder(tokenizer_json, max_tokens):
+    def encoder(tokenizer_json, max_tokens, fixed=False):
         seen["encoder"] = (tokenizer_json, max_tokens)
+        seen["fixed"] = fixed
         return lambda pairs: pairs
 
     def infer(xml, device, cache_dir):
@@ -197,6 +198,21 @@ def test_medcpt_loads_from_the_load_call_and_its_models_env(tmp_path, monkeypatc
 def test_medcpt_refuses_a_load_it_cannot_honour(tmp_path, call, why):
     r = _medcpt(tmp_path).LoadModel(call(_medcpt_dir(tmp_path)), None)
     assert not r.success and why in r.message
+
+
+def test_medcpt_reranks_in_one_static_shape_on_the_gpu_only(tmp_path):
+    """München, 2026-10-30: padded to its batch's longest pair, a document's
+    score depended on its batch-mates (56 of 256 moved in reverse order).
+    On the GPU the encoder pads to the context and every batch is full."""
+    seen: dict = {}
+    s = _medcpt(tmp_path, seen)
+    assert s.LoadModel(load_call(_medcpt_dir(tmp_path), options=["device:xpu"],
+                                 context_size=512, batch=16), None).success
+    assert seen["fixed"] is True and s.reranker.fixed is True
+    cpu = _medcpt(tmp_path, seen)
+    assert cpu.LoadModel(load_call(tmp_path / "medcpt-cross-ov", options=["device:cpu"],
+                                   context_size=512, batch=16), None).success
+    assert seen["fixed"] is False and cpu.reranker.fixed is False
 
 
 def test_medcpt_scores_every_document_at_its_own_index_as_teis_sigmoid(tmp_path):
