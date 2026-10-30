@@ -139,14 +139,16 @@ def test_build_is_resumable_and_idempotent(isolated_config, tmp_path, corpus_dir
         return info
     monkeypatch.setattr(records, "write_shard", stop_after_first)
     r1 = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, stop=stop, log=lambda *_: None)
-    assert r1.interrupted and written == ["00001.jsonl.zst"]
+    # the parts handed to the writer threads before the stop was seen are
+    # finished and recorded (2026-10-30), never left half-written
+    assert r1.interrupted and "00001.jsonl.zst" in written
+    assert r1.shards == len(written), "every part written is recorded"
     assert not (pack_dir / manifest_mod.FILENAME).exists()
     monkeypatch.setattr(records, "write_shard", real)
     said: list[str] = []
     r2 = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, log=lambda *a: said.append(" ".join(map(str, a))))
     assert not r2.interrupted and r2.shards == 3 and r2.records == 3
-    assert any(m.endswith("lang=en: 2 shard(s)") for m in said), said   # the shards written, not the next index
-    assert any(m.endswith("lang=fr: 1 shard(s)") for m in said), said
+    assert any(m.endswith("lang=fr: 1 shard(s)") for m in said), said   # the shards written, not the next index
     first = (pack_dir / "records/lang=en/00001.jsonl.zst").stat().st_mtime_ns
     r3 = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, log=lambda *_: None)
     assert r3.shards == 3
@@ -331,3 +333,24 @@ def test_an_out_of_order_native_id_aborts_the_build(isolated_config, tmp_path,
         pack_build.build(origin, tmp_path / "packs" / "g-bad", snapshot="2026-08-26",
                          records_per_shard=2, sign=False, log=lambda *_: None)
     assert calls["n"] >= 2
+
+
+def test_parts_are_written_off_the_main_thread_and_recorded_in_order(isolated_config, tmp_path, corpus_dir,
+                                                                    monkeypatch):
+    """München's samples of wikipedia-v8's rebuild (2026-10-30): compression
+    and the pieces root in the build's own thread were most of its time,
+    while the pool's children waited for it. The parts are written by the
+    writer threads; the build database records them in their order."""
+    origin = _discovered(tmp_path, "gutenberg", "gutenberg", corpus_dir)
+    threads: list[str] = []
+    real = records.write_shard
+
+    def spy(path, recs, **kw):
+        threads.append(threading.current_thread().name)
+        return real(path, recs, **kw)
+    monkeypatch.setattr(records, "write_shard", spy)
+    pack_dir = tmp_path / "packs" / "g"
+    r = pack_build.build(origin, pack_dir, records_per_shard=1, sign=False, log=lambda *_: None)
+    assert r.shards == 3 and threads and all(t.startswith("part-writer") for t in threads), threads
+    m = manifest_mod.load(pack_dir)
+    assert [s["ids"][0] for s in m["shards"]] == ["gutenberg:10001", "gutenberg:10002", "gutenberg:10003"]

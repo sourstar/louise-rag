@@ -24,6 +24,7 @@ import shutil
 import sqlite3
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -295,6 +296,25 @@ def _record_from_line(collection, line: dict) -> tuple[dict, int, bytes, dict[st
         chunks += 1
         chunk_blob += hold_records.chunk_contribution(c["id"], c["text"])
     return {**line, "layer": layer, "chunks": chunks}, layer, bytes(chunk_blob), {}
+
+
+#: THREADS writing the parts: compression (zstd 9, ~37 ms per MB) and the
+#: pieces root release the GIL, and in the build's own thread they were most
+#: of its time (München's samples, 2026-10-30: write_shard and json.dumps in
+#: the main thread, the pool's children idle at 17-24 %). The records' order,
+#: the parts' numbering and every database write stay in the main thread.
+def part_writers() -> int:
+    return max(2, parallel.processes() // 2)
+
+
+def _write_part(path: Path, buf: list[dict], lines: list[bytes] | None, record_line: int,
+                chunk_blobs: list[bytes]):
+    """One closed part's bytes and its three roots (09 §9.4), on a writer
+    thread: what `close_shard` did inline, in the same order."""
+    info = records.write_shard(path, buf, record_line=record_line, lines=lines)
+    return (info, shard_mod.pieces_root_of(path),
+            hold_records.records_root(r["content_hash"] for r in buf),
+            hold_records.chunks_root_of(b"".join(chunk_blobs)))
 
 
 #: a record's line, written by the pool's child (`with_line`) and taken by
@@ -572,71 +592,92 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
         shard_plates: dict[str, tuple[dict, str]] = {}
         t0 = time.monotonic()
 
+        # parts written by the writer threads, committed HERE in their order:
+        # a part is recorded in the build database only once its file is
+        # whole, as before, so a stop or a crash resumes after the last one
+        # recorded and a file not yet recorded is written again
+        writing: deque = deque()
+        part_pool = ThreadPoolExecutor(max_workers=part_writers(), thread_name_prefix="part-writer")
+
+        def commit_written(*, every: bool = False) -> None:
+            nonlocal written, n_records, n_chunks
+            while writing and (every or writing[0][0].done() or len(writing) > 2 * part_writers()):
+                fut, part = writing.popleft()
+                info, root, records_root, chunks_root = fut.result()
+                # 09 §9.5's figures container, `figures/<slice>/<NNNNN>.fig.zst`,
+                # BEFORE the shard is recorded: the two are re-issued together
+                # because a plate arriving rewrites a record line and so moves
+                # the shard's own root, and a shard recorded without its
+                # container would be served naming plates nothing holds.
+                if record_line == 2 and part["plates"]:
+                    _write_figures(plugin, pack_dir, slice_name, part["n"], part["plates"], log)
+                # 09 §9.4's shard entry. Three roots, and each answers a
+                # different question: `root` is what the transport and the
+                # `roots` check compare (it depends on the compressor, which the
+                # platform image pins); `records_root` is what equivalence
+                # (03 §3.4), inheritance (02 §2.7) and `records-vs-origin`
+                # compare, and does not; `chunks_root` is what the `chunks`
+                # check reproduces, and without it that check could compare only
+                # a count (09 §9.5).
+                pbuf = part["buf"]
+                con_build.execute("BEGIN IMMEDIATE")
+                con_build.execute(
+                    "INSERT OR REPLACE INTO shards(slice,n,path,records,chunks,bytes,sha256,first_uid,"
+                    "last_uid,last_ord,id_min,id_max,layers,written_at,"
+                    "root,records_root,chunks_root,first_native_id,last_native_id) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (slice_name, part["n"], part["rel"], info.records, info.chunks, info.bytes, info.sha256,
+                     info.first_uid, info.last_uid, part["last_ord"], info.id_min, info.id_max,
+                     json.dumps(part["layers"], sort_keys=True), int(time.time()),
+                     root, records_root, chunks_root,
+                     pbuf[0]["native_id"], pbuf[-1]["native_id"]))
+                con_build.execute("COMMIT")
+
+                # 09 §9.5's `content_hash`, onto the manifest, for the shard
+                # that just closed. It is computed above either way; storing it
+                # is what lets an arriving bundle's `possession.json` (§9.7) be
+                # checked with ONE indexed lookup over its uids instead of
+                # re-reading and re-hashing shards per bundle — a per-bundle
+                # cost that would scale with the corpus.
+                #
+                # A separate database, so not the shard's transaction: the
+                # shards live in the staging build db and `documents` in the
+                # manifest, and SQLite has no transaction across the two. It is
+                # safe because it is idempotent and re-runnable (invariant 2) —
+                # a crash between the two leaves NULLs, and the next build over
+                # that shard writes them again.
+                con_src.execute("BEGIN IMMEDIATE")
+                con_src.executemany(
+                    "UPDATE documents SET content_hash=? WHERE uid=?",
+                    [(r["content_hash"], r["uid"]) for r in pbuf])
+                con_src.execute("COMMIT")
+
+                written += 1
+                n_records += info.records
+                n_chunks += info.chunks
+
+        def settle() -> None:
+            """Every part in flight written and recorded, the writers gone:
+            before any return, so what the build says it wrote is recorded."""
+            try:
+                commit_written(every=True)
+            finally:
+                part_pool.shutdown(wait=True)
+
         def close_shard(last_row) -> None:
-            nonlocal buf, layer_counts, chunk_blobs, shard_plates
-            nonlocal written, n_records, n_chunks, next_n
+            nonlocal buf, layer_counts, chunk_blobs, shard_plates, next_n
             if not buf:
                 return
             # the part's container (09 §9.5 "The file"): the Codex's, version 9
             rel = f"{RECORDS_DIR}/{slice_name}/{slicing.shard_name(next_n)}{part_suffix}"
             lines = [r.pop(LINE_KEY, None) for r in buf]
-            info = records.write_shard(pack_dir / rel, buf, record_line=record_line,
-                                       lines=None if None in lines else lines)
-            # 09 §9.5's figures container, `figures/<slice>/<NNNNN>.fig.zst`,
-            # BEFORE the shard is recorded: the two are re-issued together
-            # because a plate arriving rewrites a record line and so moves
-            # the shard's own root, and a shard recorded without its
-            # container would be served naming plates nothing holds.
-            if record_line == 2 and shard_plates:
-                _write_figures(plugin, pack_dir, slice_name, next_n, shard_plates, log)
-            # 09 §9.4's shard entry. Three roots, and each answers a
-            # different question: `root` is what the transport and the
-            # `roots` check compare (it depends on the compressor, which the
-            # platform image pins); `records_root` is what equivalence
-            # (03 §3.4), inheritance (02 §2.7) and `records-vs-origin`
-            # compare, and does not; `chunks_root` is what the `chunks`
-            # check reproduces, and without it that check could compare only
-            # a count (09 §9.5).
-            root = shard_mod.pieces_root_of(pack_dir / rel)
-            records_root = hold_records.records_root(r["content_hash"] for r in buf)
-            chunks_root = hold_records.chunks_root_of(b"".join(chunk_blobs))
-            con_build.execute("BEGIN IMMEDIATE")
-            con_build.execute(
-                "INSERT OR REPLACE INTO shards(slice,n,path,records,chunks,bytes,sha256,first_uid,"
-                "last_uid,last_ord,id_min,id_max,layers,written_at,"
-                "root,records_root,chunks_root,first_native_id,last_native_id) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (slice_name, next_n, rel, info.records, info.chunks, info.bytes, info.sha256,
-                 info.first_uid, info.last_uid, int(last_row["ord"]), info.id_min, info.id_max,
-                 json.dumps(layer_counts, sort_keys=True), int(time.time()),
-                 root, records_root, chunks_root,
-                 buf[0]["native_id"], buf[-1]["native_id"]))
-            con_build.execute("COMMIT")
-
-            # 09 §9.5's `content_hash`, onto the manifest, for the shard
-            # that just closed. It is computed above either way; storing it
-            # is what lets an arriving bundle's `possession.json` (§9.7) be
-            # checked with ONE indexed lookup over its uids instead of
-            # re-reading and re-hashing shards per bundle — a per-bundle
-            # cost that would scale with the corpus.
-            #
-            # A separate database, so not the shard's transaction: the
-            # shards live in the staging build db and `documents` in the
-            # manifest, and SQLite has no transaction across the two. It is
-            # safe because it is idempotent and re-runnable (invariant 2) —
-            # a crash between the two leaves NULLs, and the next build over
-            # that shard writes them again.
-            con_src.execute("BEGIN IMMEDIATE")
-            con_src.executemany(
-                "UPDATE documents SET content_hash=? WHERE uid=?",
-                [(r["content_hash"], r["uid"]) for r in buf])
-            con_src.execute("COMMIT")
-
-            written += 1
-            n_records += info.records
-            n_chunks += info.chunks
+            fut = part_pool.submit(_write_part, pack_dir / rel, buf, None if None in lines else lines,
+                                   record_line, chunk_blobs)
+            writing.append((fut, {"n": next_n, "rel": rel, "buf": buf, "last_ord": int(last_row["ord"]),
+                                  "layers": layer_counts, "plates": shard_plates}))
             next_n += 1
             buf, layer_counts, chunk_blobs, shard_plates = [], {}, [], {}
+            commit_written()
 
         last_row = None
         done_rows = 0
@@ -697,6 +738,7 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
             page, srcs = pending.popleft()
             if stop is not None and stop.is_set():
                 stream.close()                 # what the pool still holds is cancelled
+                settle()
                 say_issues()
                 log(f"[pack build] stop requested — {slice_name}: {len(buf)} buffered records "
                     f"discarded, resumes at shard {next_n}")
@@ -805,17 +847,20 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                         # the unit is a shard: what the page still holds is
                         # recomputed on resume
                         stream.close()
+                        settle()
                         flush_issues()
                         say_issues()
                         log(f"[pack build] stop requested — {slice_name}: resumes at shard {next_n}")
                         return written, n_records, n_chunks, n_skipped, True
             flush_issues()
         if halted:
+            settle()
             say_issues()
             log(f"[pack build] stop requested while the node profile paused the build — "
                 f"{slice_name}: {len(buf)} buffered records discarded, resumes at shard {next_n}")
             return written, n_records, n_chunks, n_skipped, True
         close_shard(last_row)
+        settle()
         log(f"[pack build] {slice_name}: {next_n - 1} shard(s)")   # next_n is the NEXT index: one past the last written
     say_issues()
     return written, n_records, n_chunks, n_skipped, False
