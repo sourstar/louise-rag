@@ -163,7 +163,11 @@ _batch_since: dict[tuple[str, str], list] = {}
 
 
 def _batch_log(con, stage: str, collection, msg: str, *, docs: int = 0, chunks: int = 0,
-               secs: float = 0.0) -> None:
+               secs: float = 0.0, emit: bool = True) -> None:
+    """`emit=False`: counted into the next line, never a line of its own — a
+    one-document batch, which wrote nothing before the counts were carried
+    (and a line it wrote went to the stdout of a command whose answer is JSON:
+    `hold source list --json` after an in-process round, 2026-10-30)."""
     key = (collection.name, stage)
     now = time.time()
     if docs:
@@ -172,7 +176,7 @@ def _batch_log(con, stage: str, collection, msg: str, *, docs: int = 0, chunks: 
         acc[1] += docs
         acc[2] += chunks
         acc[3] += secs
-    if now - _batch_log_ts.get(key, 0.0) >= 30:
+    if emit and now - _batch_log_ts.get(key, 0.0) >= 30:
         _batch_log_ts[key] = now
         acc = _batch_since.pop(key, None)
         if acc is not None and acc[0] > 1:
@@ -321,7 +325,7 @@ def stage_rdf(con, row, collection) -> None:
     sizing.sizer().record(_batch_key(collection, "rdf"), n, took)
     _batch_log(con, "rdf", collection,
                f"extracted {n} documents in one transaction ({took:.1f}s)",
-               docs=n, secs=took)
+               docs=n, secs=took, emit=n > 1)
 
 _FTS_BATCH_PEERS = (
     "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND error IS NULL "
@@ -549,7 +553,7 @@ def stage_fts(con, row, collection) -> None:
     sizing.sizer().record(_batch_key(collection, "fts"), len(batch), took)
     _batch_log(con, "fts", collection,
                f"indexed {len(batch)} documents / {n_chunks} chunks in one commit ({took:.1f}s)",
-               docs=len(batch), chunks=n_chunks, secs=took)
+               docs=len(batch), chunks=n_chunks, secs=took, emit=len(batch) > 1)
 
 #: how long a collection's embed stage stays idle before its encoder's pin
 #: is restored (app/model_pins.py): the idle boundary of the stage, as long
@@ -636,6 +640,17 @@ def _possessed_vectors(con, collection, row, chunks) -> dict:
                                        [c["id"] for c in chunks])
     except Exception:   # noqa: BLE001 — any doubt embeds
         return {}
+
+
+def _holds_all(held, book_id: int, chunks) -> bool:
+    """The vector table already holds every one of these chunks, text for
+    text (`held`: the group's one read, `embeddings.held_chunks`): a reused
+    document asks no bundle for anything — and so builds no possession index
+    (pubmed's re-embedding by reuse, 2026-10-30)."""
+    if held is None or not chunks:
+        return False
+    have = held.of(book_id)
+    return all((have.get(c["id"]) or {}).get("text") == c["text"] for c in chunks)
 
 
 def _given(con, collection, row, chunks) -> dict:
@@ -1541,12 +1556,14 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                         # `stop` bounds SIGTERM to one slice of a long
                         # document (stage_embed's reason: gutenberg 4656 is
                         # 5,335 chunks); the rest resumes from what is written
+                        reuse = embeddings.may_reuse(row)
                         n = embeddings.upsert_book(nid, row["lang"],
                                                     chunks, collection, lock_con=tcon,
                                                     stop=_embed_stop, held=held, sink=sink,
-                                                    reuse=embeddings.may_reuse(row),
+                                                    reuse=reuse,
                                                     counts=counts, columns=cols,
-                                                    **_given(tcon, collection, row, chunks))
+                                                    **({} if reuse and _holds_all(held, nid, chunks)
+                                                       else _given(tcon, collection, row, chunks)))
                         if cols and not counts.embedded and counts.reused:
                             # every vector kept, no row rewritten: the columns
                             # follow the version table in place (app/validity.py)
