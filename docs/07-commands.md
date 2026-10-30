@@ -130,7 +130,8 @@ louise hold
                                                                        the slices fetched recorded in the file (built 2026-10-25, below)
               build <collection> [--snapshot ID]                       parse, slice, cut into parts, hash
                                                                        [--corpus DIR]: another origin directory than the collection's own; [--records-from C]: the record lines
-                                                                       of a held collection's latest snapshot taken instead of parsing — a re-creation changing only the slicing (RULE 1)
+                                                                       of a held collection's latest snapshot taken instead of parsing — a re-creation changing only the slicing (RULE 1);
+                                                                       [--records-from-discarded S]: those of its own discarded snapshot S, a document S does not list parsed
               validation <collection>                                  validation.json written from the Codex's plan (03 §3.2)
               relocate <collection> --corpus DIR [--workers N] [--dry-run]
                                                                        every record's `origin` written again from the manifest by the build's own function, the parts
@@ -157,6 +158,12 @@ louise hold
                                                                        the source snapshot's period unless --snapshot names one (added 2026-10-09)
               delta <collection> <from> <to>                           what changed between two snapshots
               list <collection>
+              discard <collection> <snapshot> [--yes]                  the LATEST snapshot, which this node never served and attested nothing of, moved
+                                                                       with its parts under state/discarded/<snapshot>/; its derived indexes (index/, its
+                                                                       edges) go. Refused otherwise: a snapshot a peer may hold is superseded, never recalled
+                                                                       (01 promise 8). Then `records build --records-from-discarded <snapshot>` takes its
+                                                                       record lines, cut afresh, and parses only what it did not list (added 2026-10-30,
+                                                                       RULE 1: wikipedia-v8's 2026-09 listed 21.9 M twins of archive pages)
   embedder    check <collection>                                       the calibration gate (§3.3) against the run the endpoint states; a pass validates it and keeps its signed statement in `state/`
   embedder    tree-diff <before> <after>                               what differs between two backend trees, path by path: digests read from VEGA_URL or JSON files (vega.md §12); exit 1 when they differ
               benchmark <collection>                                   tokens per second on the calibration set
@@ -1278,6 +1285,7 @@ signal does not shorten that. The unit per stage:
 | `records fetch`, `share fetch` | the current file, at byte granularity — a checkpoint mid-file, the byte offset committed |
 | `records build` | the document; a part cut short is re-cut on resume |
 | `snapshot create` | atomic: the file is written last and is there entire or not at all |
+| `snapshot discard` | the member: the parts move first and the snapshot file last, so an interrupted discard still names its snapshot and a re-run moves the rest |
 | `vectors build` | the batch: the chunks in flight to the encoder, each written only from an answer naming a validated run (03 §3.3) |
 | `vectors import`, `share contribute` | the bundle, marked applied in the same transaction as its last row |
 | `index build` | the part |
