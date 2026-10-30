@@ -114,7 +114,30 @@ def test_errored_documents_are_counted_only_when_asked(con, monkeypatch):
     got = health.inspect(con, Collection(), errors=True)
     assert got.errors == 2
     embed = next(s for s in got.stages if s.name == "embed")
-    assert embed.waiting == 5, "the five include the two errored: exact exclusion costs 23x"
+    # below ERRORED_EXACT_BELOW the errored are read apart (a lookup each
+    # over a few rows); above it they stay inside the count — exact exclusion
+    # over millions cost 23x
+    assert (embed.waiting, embed.errored) == (3, 2)
+
+
+def test_a_stage_whose_only_documents_are_errored_is_idle_not_stuck(con, monkeypatch):
+    """gutenberg's 33 rdf documents, errored since September, read as 33
+    waiting on a running stage — stuck work (München, 2026-10-30). They are
+    out of every selection until retried: counted apart, the stage idle."""
+    _docs(con, 33, rdf=0, fts=0, error="no epub, txt or rdf")
+    _scope(monkeypatch, "all")
+    rdf = next(s for s in health.inspect(con, Collection()).stages if s.name == "rdf")
+    assert (rdf.waiting, rdf.errored, rdf.state) == (0, 33, health.IDLE)
+    assert "33 errored, not waiting" in rdf.line()
+
+
+def test_above_the_exact_bound_the_errored_stay_inside_the_count(con, monkeypatch):
+    monkeypatch.setattr(health, "ERRORED_EXACT_BELOW", 4)
+    _docs(con, 3)
+    _docs(con, 2, error="boom", start=100)
+    _scope(monkeypatch, "all")
+    embed = next(s for s in health.inspect(con, Collection()).stages if s.name == "embed")
+    assert (embed.waiting, embed.errored) == (5, 0)
 
 
 def test_a_stage_count_stops_at_the_cap_and_says_over(con, monkeypatch):
