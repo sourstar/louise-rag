@@ -1306,3 +1306,34 @@ released; the beat carries the call.
 line; the first parse after a release starts its children (a spawn and its
 plugin caches, seconds) and the batch's ms/doc against the same stage's
 before it.
+
+### 2026-10-30 — the page stream's look-ahead in rows, not pages — PREPARED
+
+**BEFORE (München, 17:21–17:30 CET; wikidata's records build on 11959e78,
+the regrouped pack, 12 children, `--cpus 12`).**
+- 2,000–2,400 records/s on the `event` family: slices of 5–17 parts, parts of ~14–18 k records.
+- cgroup cpu 630 % of 1,200 %.
+- A child (py-spy, 60 s): 46.8 % in the pool's `get`, waiting for work.
+- The parent's main thread (py-spy `--threads --idle`, 60 s): 51.3 % waiting in `compute_pages`; the rest serial (pages 9.2 %, commits 5.6 %, `close_shard` 6.1 %).
+- The pool's manager thread: 66 % in select. The part writers: idle.
+
+Both sides waiting at once is the stall: the reading had stopped at
+`PAGES_AHEAD` = 16 pages of 500 rows (8,000 rows, ~4 s of this family's
+work) behind one large entity in the oldest page.
+
+**SCENARIO.** The build alone in its container. The regroup was done
+(17:18). The worker was running beside it (wikipedia embedding and
+compaction), in its own cgroup.
+
+**The change.** The look-ahead is bounded in rows, `ROWS_AHEAD` = 64,000:
+the 16 pages of 4,000 the held build already had, and ~30 s of wikidata's
+parsing. It is the same lesson as the line cache (lessons-learned.md): a
+cap in units whose size the data decides. The cost test
+`test_one_slow_part_does_not_stall_the_look_ahead_past_sixteen_pages` fails
+on the old code (the watchdog gave the slow part up) and passes now.
+
+**To verify AFTER (deploy alone, the build restarted on it; it resumes from
+its last part):**
+- cgroup cpu % over 360 s, and a child's py-spy share in the pool's `get`, against 630 % and 46.8 %;
+- records/s on a family stretch comparable to the BEFORE's;
+- the parent's RSS: up to 64,000 waiting records more, a few KB each.

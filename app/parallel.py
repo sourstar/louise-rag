@@ -808,12 +808,17 @@ def _finished(f):
         return None
 
 
-#: pages `compute_pages` may read ahead of the one its caller takes next: the
-#: memory bound of the stream (a wikipedia page is ≤500 records). 2026-10-25,
-#: München's profile at 12 children: at two pages ahead, one long article in
-#: the oldest page held back every later page, and the cpu sat at one core
-#: for stretches between 800 % readings.
-PAGES_AHEAD = 16
+#: ROWS `compute_pages` may hold read ahead of the page its caller takes
+#: next — the memory bound of the stream, counted in rows because pages are
+#: not one size (≤500 records parsed, ≤4,000 held). 2026-10-25, München's
+#: profile at 12 children: at two pages ahead, one long article in the
+#: oldest page held back every later page. 2026-10-30, wikidata's build at
+#: 16 pages of 500 (8,000 rows, ~4 s of work): the children waited 47 % of
+#: their samples in the pool's get while the parent waited 51 % for the next
+#: part — one large entity in the oldest page stalled the look-ahead. 64,000
+#: rows is the 16 pages of 4,000 the held build already had, and ~30 s of
+#: wikidata's parsing; a record waiting in it is a few KB.
+ROWS_AHEAD = 64_000
 
 
 def _running(inflight) -> int:
@@ -876,6 +881,8 @@ def compute_pages(kind: str, collection, pages, *, stop=None, say=None):
     queued: deque = deque()              # (page_no, part_no, part_rows): cut, waiting for a slot
     owner: dict = {}                      # future -> the executor it was submitted to
     results: dict[int, list] = {}         # page_no -> list of per-part results, in part order
+    page_rows: dict[int, int] = {}        # page_no -> its rows, until it is yielded
+    ahead = 0                             # rows read and not yielded yet (ROWS_AHEAD)
     next_page = 0                         # pages read so far
     emit = 0                              # the next page to yield
     exhausted = False
@@ -906,12 +913,14 @@ def compute_pages(kind: str, collection, pages, *, stop=None, say=None):
                 submit_queued(ex, cap)
             # read pages ahead, once what was read is all submitted
             while not exhausted and not queued and lim.cores != 0 \
-                    and (ex is None or _running(inflight) < cap) and next_page - emit <= PAGES_AHEAD:
+                    and (ex is None or _running(inflight) < cap) and (ahead == 0 or ahead < ROWS_AHEAD):
                 page = next(pages, None)
                 if page is None:
                     exhausted = True
                     break
                 rows = [dict(r) if not isinstance(r, dict) else r for r in page]
+                page_rows[next_page] = len(rows)
+                ahead += len(rows)
                 parts = ([rows] if ex is None or len(rows) <= 1
                          else _partition(collection, rows, n * PARTS_PER_CHILD)) if rows else []
                 results[next_page] = [None] * len(parts)
@@ -928,6 +937,7 @@ def compute_pages(kind: str, collection, pages, *, stop=None, say=None):
                 out: list = []
                 for r in results.pop(emit):
                     out.extend(r)
+                ahead -= page_rows.pop(emit)
                 emit += 1
                 yield out
                 # a page boundary: the profile's cores, again (cached, TTL)
