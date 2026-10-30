@@ -3433,6 +3433,11 @@ def cmd_check(a) -> int:
     attestation, is reported with its reason, and is retried.
     """
     from app.hold import check as chk
+    # the per-part checks take the whole quota, as the records build does
+    # (config.build_parse_processes; app/hold/check.py `_map_parts`)
+    from app import config
+    if config.BUILD_WHOLE_QUOTA:
+        config.PARSE_PROCESSES = config.build_parse_processes()
     name, codex, snapshot, seed, report = run_check(a)
     written = report.attestations
 

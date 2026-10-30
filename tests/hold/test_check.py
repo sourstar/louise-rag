@@ -165,6 +165,55 @@ def test_a_chunker_that_moves_boundaries_without_changing_the_count_is_CAUGHT(
         "the count was unchanged, which is the point"
 
 
+# ---- per part, in processes ----------------------------------------------
+
+def test_the_per_part_checks_run_in_processes_and_say_what_the_serial_run_says(
+        checkable, monkeypatch):
+    """wikipedia-v8's records check took 46 min on one core (2026-10-28):
+    roots, records and chunks go part by part to spawned processes, and the
+    outcomes — a failing part included — are the serial run's, in order."""
+    import concurrent.futures as cf
+    from app import config, parallel
+    root, snapshot, codex = checkable
+    *rest, last = snapshot.shards                    # each check fails on the last part
+    snapshot = replace(snapshot, shards=(*rest, replace(
+        last, root="sha256:" + "0" * 64, records_root="sha256:" + "0" * 64, chunks=last.chunks + 1)))
+    checks = ["roots", "records", "chunks"]
+
+    def outcomes():
+        r = _run(root, codex, snapshot, checks, sample="1")
+        return [(o.result, o.detail, o.shards, o.why) for o in (r.outcome(c) for c in checks)]
+
+    serial = outcomes()
+    assert [o[0] for o in serial] == [chk.FAIL] * 3 and len(snapshot.shards) > 1
+    pools = []
+
+    class Spy(cf.ProcessPoolExecutor):
+        def __init__(self, *a, **k):
+            pools.append(k.get("max_workers"))
+            super().__init__(*a, **k)
+    monkeypatch.setattr(cf, "ProcessPoolExecutor", Spy)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 2)
+    parallel.shutdown()
+    assert outcomes() == serial
+    assert pools == [2, 2, 2], "one pool per check, the node's process count"
+
+
+def test_the_command_gives_the_per_part_checks_the_whole_quota(checkable, monkeypatch, capsys):
+    from app import config, louise
+    root, snapshot, codex = checkable
+    monkeypatch.setattr(config, "BUILD_WHOLE_QUOTA", True)
+    monkeypatch.setattr(config, "build_parse_processes", lambda: 1)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 7)
+    seen = []
+    real = chk._map_parts
+    monkeypatch.setattr(chk, "_map_parts", lambda fn, tasks: (seen.append(config.PARSE_PROCESSES),
+                                                               real(fn, tasks))[1])
+    monkeypatch.setattr("app.bundles.keys.load_signing_key", lambda *a, **k: KEY)
+    assert louise.main(["hold", "check", "gutenberg", "--root", str(root), "--seed", SEED.hex()]) == 0
+    assert seen and set(seen) == {1}
+
+
 # ---- license and signature ----------------------------------------------
 
 def test_license_passes_for_a_green_collection_with_no_terms(checkable):

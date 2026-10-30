@@ -37,7 +37,16 @@ resumed (München, same metric, slices differ):
 
 Open: ~6 of 8 cores. At +3 min the children wait again on the build's
 thread (ordering, the database rows) and the writer threads share its GIL;
-the next step is writing parts in processes, not threads.
+the next step is writing parts in processes, not threads (#71, not yet
+measured on a live build).
+
+**The records check, the same defect.** `hold check`'s roots, records and
+chunks walked their parts one after another in one process: wikipedia-v8's
+took 46 min on 2026-10-28. Each part's check now runs in a spawned process
+(`app/hold/check.py` `_map_parts`, the whole quota as the records build
+takes it); the outcomes are the serial run's, a failing part included
+(tests/hold/test_check.py). records-vs-origin stays serial: its re-parse is
+a closure over the plugin, not picklable.
 
 ### 2026-10-30: wikipedia-v8 held 21.9 M pages twice — rglob does not enter a link; the repair
 
