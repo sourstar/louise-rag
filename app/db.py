@@ -344,14 +344,18 @@ def wal(con, *, tries: int = 50, pause_s: float = 0.1) -> str:
     raise last
 
 
-def connect(collection=None) -> sqlite3.Connection:
+def connect(collection=None, *, shared: bool = False) -> sqlite3.Connection:
+    """The collection's manifest. `shared`: the connection may be handed from
+    one thread to another (never used by two at once) — the embed stage's
+    pool lends one to each document in turn instead of opening a new one,
+    schema script included, per document."""
     if collection is None:
         collection = collections_mod.default_collection()
     collection.manifest_path.parent.mkdir(parents=True, exist_ok=True)
     collection.fts_dir.mkdir(parents=True, exist_ok=True)
     collection.lance_dir.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(collection.manifest_path, timeout=30, isolation_level=None,
-                          factory=ManifestConnection)
+                          factory=ManifestConnection, check_same_thread=not shared)
     con.collection_name = collection.name
     con.row_factory = sqlite3.Row
     wal(con)

@@ -1417,6 +1417,11 @@ def _embed_candidates(con, scope, limit: int, collection=None):
     return rows[:limit]
 
 
+#: the embed stage cuts a candidate in the parse pool when the manifest says
+#: it has at most this many chunks (`_embed_parallel`'s `prepared`)
+EMBED_PREPARE_MAX_CHUNKS = 64
+
+
 def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                     keep_going=None) -> bool:
     """CPU-encoder collections (recipe.concurrency > 1) embed several WHOLE
@@ -1466,7 +1471,40 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     tally = embeddings.EmbedCounts()
     tally_lock = threading.Lock()
 
-    def work(row, held):
+    # connections LENT to the documents in turn, one per document in flight,
+    # opened once per call: `db.connect` runs the manifest's ALTERs and its
+    # schema script, and per document that was paid ~75.9 M times on wikidata
+    lent: list = []
+    lent_lock = threading.Lock()
+
+    def borrow():
+        with lent_lock:
+            if lent:
+                return lent.pop()
+        return db.connect(collection, shared=True)
+
+    def give_back(c) -> None:
+        with lent_lock:
+            lent.append(c)
+
+    def prepared(group_rows) -> dict:
+        """Each SHORT candidate's chunks, cut by the parse pool's children for
+        the whole group at once — the threads below cut them one by one under
+        the GIL, which bound short documents: pubmed ran 31 documents/s while
+        the encoder answered in 5–36 ms (STATUS.md). A long document is cut
+        by its own thread as before (the encoder is its cost, and a group of
+        books would sit in memory), and so is one the pool could not cut,
+        whose failure stays the document's own."""
+        short = [r for r in group_rows if 0 < (r["chunks"] or 0) <= EMBED_PREPARE_MAX_CHUNKS]
+        if not short:
+            return {}
+        try:
+            got = parallel.chunks_for_rows(collection, short)
+        except Exception:   # noqa: BLE001 — each thread cuts its own, as before
+            return {}
+        return {r["uid"]: v for r, (ok, v) in zip(short, got) if ok}
+
+    def work(row, held, cut=None):
         if _stop.is_set():
             return (row, None, "stopped", False)
         counts = None
@@ -1475,8 +1513,8 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
             # declare themselves here, or they would reach the gate at the
             # process default
             with dispatch.working_as(Level.CORPUS, collection.name):
-                chunks = _load_chunks(row, collection)      # PREPARED
-                tcon = db.connect(collection)
+                chunks = cut if cut is not None else _load_chunks(row, collection)   # PREPARED
+                tcon = borrow()
                 try:
                     if submitted is not None:
                         # SUBMITTED: wait for one of the plugin's slots
@@ -1510,7 +1548,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                         if submitted is not None:
                             submitted.release()
                 finally:
-                    tcon.close()
+                    give_back(tcon)
             # Measured HERE as well as in stage_embed, because every CPU
             # encoder in the deployment takes this path and only the GPU one
             # takes the other. Recording in stage_embed alone left the Stats
@@ -1588,7 +1626,8 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     in_flight: dict = {}          # future -> uid
     seen: set[str] = {r["uid"] for r in rows}
     first_held = read_held(rows)
-    queue: list = [(r, first_held) for r in rows]
+    first_cut = prepared(rows)
+    queue: list = [(r, first_held, first_cut.get(r["uid"])) for r in rows]
     awaiting: dict[int, str] = {}   # book_id -> uid: embedded, its batch not yet committed
     waiting_since = 0.0
     done = deferred = 0
@@ -1679,9 +1718,10 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                     return
                 seen.update(r["uid"] for r in fresh)
                 held = read_held(fresh)
-                queue = [(r, held) for r in fresh]
-            row, held = queue.pop(0)
-            in_flight[pool.submit(work, row, held)] = row["uid"]
+                cut = prepared(fresh)
+                queue = [(r, held, cut.get(r["uid"])) for r in fresh]
+            row, held, cut = queue.pop(0)
+            in_flight[pool.submit(work, row, held, cut)] = row["uid"]
         stats.recorder().set_in_flight(collection.name, len(in_flight))
 
     pin = _pin_begin(collection, recipe)
@@ -1705,6 +1745,10 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     finally:
         stats.recorder().set_in_flight(collection.name, 0)
         _pin_end(pin)
+        with lent_lock:
+            for c in lent:
+                c.close()
+            lent.clear()
     if wrong_endpoint:
         _pause_embedding(con, collection, wrong_endpoint[-1])
     elif done:
