@@ -152,6 +152,7 @@ grep -q "confirmLogout" "$ROOT/src.new/app/templates/base.html"                 
 grep -q '^PREFIX = "origin missing: "' "$ROOT/src.new/app/origin_missing.py"                 # #101 (9afeed9): a missing file, the self-healing error
 grep -q "THE FAST PATH, a str and a dict lookup" "$ROOT/src.new/app/plugins/wikidata/pack.py" # #101: wikidata's pack_dir fast path
 grep -q "THE SWEEP RESTARTS WHEN THE COVERAGE CHANGES" "$ROOT/src.new/app/worker.py"         # #102 (3960c64): the backfill cursor keyed on coverage, not the epoch
+grep -q "^def light_compact_due(" "$ROOT/src.new/app/vector_index.py"                        # #103 (270ff0c): the light compaction (small fragments, book_id index delta)
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
 test -x "$ROOT/src.new/deploy/docker-memory-ceiling.sh"                                     # the ceiling on every container together
 grep -q "^def building(dest: Path)" "$ROOT/src.new/app/derived.py"                          # one pack builder across processes (the plan's pool children)
@@ -195,7 +196,7 @@ docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
     tests/test_gpu_level.py tests/test_gpu_governor.py tests/test_node_start_stop.py tests/test_worker_hot_reload.py \
     tests/test_translate_t5.py tests/test_translate_model.py tests/test_query_translation.py tests/test_madlad_translate_server.py \
     tests/test_encoder_bakeoff.py tests/test_web_pages.py tests/test_gpu_models.py \
-    tests/test_batch_log.py tests/test_plugins_wikidata_families.py tests/pack/test_build.py tests/test_stage_locking.py tests/test_embed_window.py tests/test_possessed_vectors.py tests/test_refs_normattiva.py tests/test_health.py tests/test_invariant_6_storage.py tests/test_deploy_set_mem_limits.py tests/test_deploy_set_platform_image.py tests/test_worker_selection_cost.py tests/test_process_exit.py tests/test_deploy_supervise_pass.py tests/test_derived_cache.py tests/test_plugins_pubmed_pack.py tests/test_backend_templates.py tests/test_wikipedia_page_props.py tests/test_plugins_wikipedia_source.py tests/test_origin_missing.py \
+    tests/test_batch_log.py tests/test_plugins_wikidata_families.py tests/pack/test_build.py tests/test_stage_locking.py tests/test_embed_window.py tests/test_possessed_vectors.py tests/test_refs_normattiva.py tests/test_health.py tests/test_invariant_6_storage.py tests/test_deploy_set_mem_limits.py tests/test_deploy_set_platform_image.py tests/test_worker_selection_cost.py tests/test_process_exit.py tests/test_deploy_supervise_pass.py tests/test_derived_cache.py tests/test_plugins_pubmed_pack.py tests/test_backend_templates.py tests/test_wikipedia_page_props.py tests/test_plugins_wikipedia_source.py tests/test_origin_missing.py tests/test_vector_index.py \
     tests/hold/test_discard.py tests/hold/test_check.py tests/hold/test_vectors_check.py tests/hold/test_later_delta.py tests/test_discovery_moved_corpus.py tests/test_plugin_walk.py tests/test_wikipedia_drop_twins.py tests/test_wikipedia_two_sources.py \
     $(cd "$ROOT/src.new" && ls tests/test_node_profile*.py tests/test_cpu_limit*.py 2>/dev/null)
 # test_rename.py in its own run: in one invocation with tests/ask/ its directory's
