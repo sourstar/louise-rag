@@ -92,3 +92,84 @@ def test_pubmeds_pack_and_wikipedias_page_props_follow_the_fast_drive(tmp_path, 
     assert second.name.startswith(derived.tag(props) + "-")
     # the parse pool's children see the same drive
     assert "CACHE_DIR" in parallel.KNOBS
+
+
+_RACE = """
+import sys, time
+from pathlib import Path
+from multiprocessing import get_context
+
+def one(args):
+    kind, origin, at = args
+    while time.time() < at:                 # every process starts together
+        time.sleep(0.001)
+    if kind == "pubmed":
+        from app.plugins.pubmed import pack
+        p = pack.ensure(Path(origin))
+        return len(pack.record_dates(Path(origin)))
+    from app.plugins.wikipedia import page_props
+    p = page_props.ensure(Path(origin))
+    return sum(1 for page in range(1, 100) if page_props.unit_of(Path(origin), page))
+
+if __name__ == "__main__":
+    kind, origin = sys.argv[1], sys.argv[2]
+    at = time.time() + 3
+    with get_context("spawn").Pool(4) as pool:
+        print(pool.map(one, [(kind, origin, at)] * 4))
+"""
+
+
+def _race(tmp_path, kind, origin):
+    import subprocess
+    import sys
+    script = tmp_path / "race.py"
+    script.write_text(_RACE)
+    root = Path(__file__).resolve().parents[1]
+    env = {k: v for k, v in os.environ.items() if k not in ("LOUISE_CACHE_DIR", "PUBMED_PACK_DIR")}
+    env["PYTHONPATH"] = str(root)
+    return subprocess.run([sys.executable, str(script), kind, str(origin)], cwd=root, env=env,
+                          capture_output=True, text=True, timeout=120)
+
+
+def test_four_processes_build_one_pubmed_pack_once_and_read_it_whole(tmp_path):
+    """München, 2026-10-30: the plan's pool children each built the same pack
+    into ONE temporary file (a thread lock serialises one process only); a
+    third read it truncated, and the plan skipped two documents. Four
+    processes started together: one builds, three wait and read it."""
+    import shutil
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    src = Path(__file__).parent / "fixtures" / "pubmed-mini" / "pubmed25n0001.xml"
+    container = shutil.copy(src, corpus / src.name)
+    p = _race(tmp_path, "pubmed", container)
+    assert p.returncode == 0, p.stderr[-3000:]
+    counts = eval(p.stdout.strip().splitlines()[-1])
+    assert len(set(counts)) == 1 and counts[0] > 0, counts
+    assert p.stderr.count("[pubmed pack] built") == 1, p.stderr
+    assert not list((corpus / ".pack").glob("*.tmp")), "no writer's file left behind"
+
+
+def test_four_processes_build_one_page_props_pack_once(tmp_path):
+    import gzip
+    corpus = tmp_path / "enwiki"
+    corpus.mkdir()
+    props = corpus / "enwiki-20260801-page_props.sql.gz"
+    rows = ",".join(f"({p},'wikibase_item','Q{p}',NULL)" for p in range(1, 60))
+    with gzip.open(props, "wb") as f:
+        f.write(f"INSERT INTO `page_props` VALUES {rows};\n".encode())
+    p = _race(tmp_path, "page_props", props)
+    assert p.returncode == 0, p.stderr[-3000:]
+    counts = eval(p.stdout.strip().splitlines()[-1])
+    assert counts == [59] * 4, counts
+    assert p.stderr.count("[wikipedia page_props] built") == 1, p.stderr
+
+
+def test_a_killed_writers_temporary_file_goes_with_the_next_lock(tmp_path):
+    dest = tmp_path / "x.pack.parquet"
+    orphan = tmp_path / "x.pack.parquet.4242.tmp"
+    old_name = tmp_path / "x.pack.parquet.tmp"
+    other = tmp_path / "y.pack.parquet.4242.tmp"
+    for f in (orphan, old_name, other):
+        f.write_bytes(b"half")
+    with derived.building(dest):
+        assert not orphan.exists() and not old_name.exists() and other.exists()

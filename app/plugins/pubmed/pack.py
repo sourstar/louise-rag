@@ -116,7 +116,7 @@ def build(container: Path, dest: Path) -> int:
     — the caller records ONE container error, exactly as before."""
     size, mtime = _signature(container)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + ".tmp")
+    tmp = dest.with_name(dest.name + f".{os.getpid()}.tmp")    # a writer's own (derived.building)
     rows: list[dict] = []
     n = 0
     # file-level key/value metadata rides on the schema (pyarrow 25)
@@ -216,7 +216,8 @@ def ensure(container: Path) -> Path:
         return path
     with _build_locks_guard:
         lock = _build_locks.setdefault(str(container), threading.Lock())
-    with lock:
+    from app import derived
+    with lock, derived.building(path):          # threads here, then every process
         if is_fresh(container, path):
             with _files_lock:
                 _fresh[str(container)] = (sig, PACK_VERSION, str(path))

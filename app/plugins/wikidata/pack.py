@@ -69,6 +69,7 @@ same bytes), else the standard library's bz2.
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import multiprocessing
@@ -1483,6 +1484,20 @@ def regroup(dump: Path, *, row_group: int = ROW_GROUP, workers: int = 1, log=pri
     rows, file by file — resumable (a regrouped file is skipped), safe beside
     a running build (`line` reads each file's own layout). The pack's lines
     are byte for byte what they were; only their grouping changes."""
+    # one regroup at a time: two would write the same `.regroup` file
+    held = open(pack_dir(dump) / "regroup.lock", "a+b")
+    try:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        held.close()
+        raise PackError(f"another regroup runs on the pack of {Path(dump).name}") from None
+    try:
+        return _regroup(dump, row_group=row_group, workers=workers, log=log, stop=stop)
+    finally:
+        held.close()
+
+
+def _regroup(dump: Path, *, row_group: int, workers: int, log, stop) -> dict[str, int]:
     files = [str(f) for f in chunk_files(dump) if Path(f).is_file()]
     done = skipped = 0
     t0 = time.monotonic()
