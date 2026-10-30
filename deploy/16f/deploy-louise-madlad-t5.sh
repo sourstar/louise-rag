@@ -157,6 +157,7 @@ grep -q "THE NEW WALK'S WINDOW READS THE CANDIDATES" "$ROOT/src.new/app/worker.p
 grep -q "def settle_empty(group_rows, held)" "$ROOT/src.new/app/worker.py"                   # #105 (122da4e): a document cut to nothing is marked with its group, never sent
 grep -q "^REWRITE_WAIT_S = 60.0" "$ROOT/src.new/app/vector_index.py"                         # #106 (528b2af): writes wait out a short rewrite; the light compaction first
 grep -q "with embeddings._write_lock(con, collection):" "$ROOT/src.new/app/bundles/genesis.py"  # #106: genesis's flush through the writer registration
+grep -q "# THE LIGHT COMPACTION BEFORE EVERYTHING" "$ROOT/src.new/app/vector_index.py"        # #107 (e9f345b): the light compaction first in the maintainer's pass
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
 test -x "$ROOT/src.new/deploy/docker-memory-ceiling.sh"                                     # the ceiling on every container together
 grep -q "^def building(dest: Path)" "$ROOT/src.new/app/derived.py"                          # one pack builder across processes (the plan's pool children)
