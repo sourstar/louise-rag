@@ -104,3 +104,85 @@ def test_processes_that_used_lancedb_exit_with_their_own_status(tmp_path):
     for p in procs:
         p.communicate()
     assert codes == [0] * 12, codes
+
+
+_POOL_CHILD_KILLED = """
+    import os, signal, sys, time, multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures.process import BrokenProcessPool
+    from app import process_exit
+    def work(payload):
+        time.sleep(0.05)
+        return len(payload)
+    def main():
+        {setup}
+        ex = ProcessPoolExecutor(4, mp_context=multiprocessing.get_context("spawn"))
+        payload = b"x" * 4_000_000
+        futs = [ex.submit(work, payload) for _ in range(400)]
+        time.sleep(1.5)
+        os.kill(next(iter(ex._processes)), signal.SIGKILL)      # the kernel's OOM kill
+        try:
+            for f in futs:
+                f.result()
+        except BrokenProcessPool:
+            print("the pool's parent recovers")
+        return 0
+    if __name__ == "__main__":
+        process_exit.run(main)
+"""
+
+
+@pytest.mark.parametrize("setup, code", [("pass", 0),
+                                         # killed by signal 13: the shell's 141
+                                         ("signal.signal(signal.SIGPIPE, signal.SIG_DFL)", -13)])
+def test_a_pool_child_the_kernel_kills_does_not_take_its_parent_with_it(tmp_path, setup, code):
+    """München, 2026-10-30: the records build died 141 four seconds after a
+    child's OOM kill — SIGPIPE, set to its default for `| head`, killed the
+    parent feeding the widowed pipe before the pool could take its parts
+    again. The control run (SIG_DFL) proves the probe sees it."""
+    proc = _child(tmp_path, _POOL_CHILD_KILLED.format(setup=setup))
+    out, err = proc.communicate(timeout=120)
+    assert proc.returncode == code, err[-2000:]
+    # under SIG_DFL the parent may see the broken pool first: the feeder
+    # thread's next write kills it all the same
+    assert code != 0 or "the pool's parent recovers" in out
+
+
+def test_no_entry_point_sets_sigpipe_back_to_its_default():
+    """Python's "Note on SIGPIPE": a closed stdout is handled where it is
+    written (`process_exit.run`), never by SIG_DFL for the whole process."""
+    import re
+    hits = [str(p.relative_to(ROOT)) for p in (ROOT / "app").rglob("*.py")
+            if re.search(r"SIGPIPE\s*,\s*signal\.SIG_DFL", p.read_text(encoding="utf-8"))]
+    assert hits == []
+
+
+def test_a_closed_stdout_is_a_quiet_exit_and_a_pipe_of_its_own_is_an_error(tmp_path):
+    script = tmp_path / "head.py"
+    script.write_text(textwrap.dedent("""
+        import os, sys
+        from app import process_exit
+        def main():
+            if sys.argv[1] == "own":
+                r, w = os.pipe()
+                os.close(r)
+                os.write(w, b"x")                    # a pipe of its own, widowed
+            for i in range(1_000_000):
+                print(i)
+        process_exit.run(main)
+    """))
+    env = dict(os.environ, PYTHONPATH=str(ROOT))
+    for kind in ("stdout", "own"):
+        p = subprocess.Popen([sys.executable, str(script), kind], cwd=ROOT, env=env, text=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if kind == "stdout":
+            assert p.stdout.readline() == "0\n"
+            p.stdout.close()                         # `| head -1`
+            err = p.stderr.read()
+        else:
+            out, err = p.communicate(timeout=60)
+        assert p.wait(timeout=60) == 1
+        if kind == "stdout":
+            assert err == "", "nothing to say: the reader had what it wanted"
+        else:
+            assert "BrokenPipeError" in err

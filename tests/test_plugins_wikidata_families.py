@@ -762,3 +762,52 @@ def test_regrouping_the_pack_keeps_every_line_and_reads_either_layout(tmp_path, 
     import pyarrow.parquet as pq
     assert all(pq.ParquetFile(f).metadata.row_group(0).num_rows <= 2 for f in files)
     assert pack.regroup(dump, row_group=2, log=lambda *_: None)["rewritten"] == 0, "resumable"
+
+
+def test_the_line_cache_is_bounded_in_bytes_whatever_the_files_grouping(tmp_path, monkeypatch):
+    """A MEMORY test. #88 counted the cache in groups (128): on a pack still
+    written by 1,000 lines a group, records-build children grew from ~0.65
+    to 5.7 GB and the build was OOM-killed at 32 g with 12 and with 6 of
+    them (München, 2026-10-30). The same byte budget holds for either
+    layout, and every line still reads right."""
+    n_lines = len(entity_lines()) + len(CLASSES)
+    for group in (1000, 1):
+        monkeypatch.setattr(pack, "ROW_GROUP", group)
+        dump = _dump(tmp_path / str(group))
+        pack.build(dump, languages=("en",), chunk=4, workers=1)
+        pack.reset_caches()
+        before = [pack.line(dump, i) for i in range(n_lines)]
+        one = max(held[1] for held in pack._groups.values())
+        monkeypatch.setattr(pack, "_MAX_GROUP_BYTES", 2 * one)
+        pack.reset_caches()
+        for _ in range(3):
+            assert [pack.line(dump, i) for i in range(n_lines)] == before
+            assert pack._group_bytes == sum(h[1] for h in pack._groups.values()) <= 2 * one
+        monkeypatch.setattr(pack, "_MAX_GROUP_BYTES", 0)
+        pack.reset_caches()
+        assert pack.line(dump, 0) == before[0] and pack.line(dump, n_lines - 1) == before[-1]
+        assert len(pack._groups) == 1, "the group just read is kept, whatever the budget"
+
+
+def test_a_regrouped_file_is_streamed_and_its_groups_align_on_the_row_group(tmp_path, monkeypatch):
+    """A MEMORY test: the file read whole held 3.6+ GB in a regroup child, and
+    a 12 g cap fitted two (München, 2026-10-30). Source groups of 3 rows
+    regrouped by 2: group g holds rows 2g and 2g+1, as `work_span` assumes,
+    and the rows are the same bytes in the same order."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    rows = 11
+    t = pa.table({"index": list(range(rows)), "line": [b"x" * (i + 1) for i in range(rows)]},
+                 metadata={b"k": b"v"})
+    f = tmp_path / "chunk.parquet"
+    pq.write_table(t, f, row_group_size=3)
+    monkeypatch.setattr(pq, "read_table", lambda *a, **k: pytest.fail("the whole file was read"))
+    assert pack._regroup_file(str(f), 2) is True
+    md = pq.ParquetFile(f).metadata
+    assert [md.row_group(g).num_rows for g in range(md.num_row_groups)] == [2, 2, 2, 2, 2, 1]
+    pf = pq.ParquetFile(f)
+    for g in range(pf.num_row_groups):
+        assert pf.read_row_group(g).column("index").to_pylist() == list(range(2 * g, min(2 * g + 2, rows)))
+    got = pa.concat_tables([pf.read_row_group(g) for g in range(pf.num_row_groups)])
+    assert got.equals(t) and got.schema.metadata == t.schema.metadata
+    assert pack._regroup_file(str(f), 2) is False

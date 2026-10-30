@@ -5378,11 +5378,11 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    # `| head` is not an error. Set by the PROCESS, not by main(): the tests
-    # call main() in-process, and the default action it restored outlived
-    # them — a later test writing to a closed pipe killed pytest itself with
-    # SIGPIPE (exit 141, at 41 % of the suite, three times; 2026-10-30)
-    if hasattr(signal, "SIGPIPE"):
-        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    # `| head` is not an error, and `process_exit.run` says so. SIGPIPE is
+    # NOT set back to its default for it (Python's own "Note on SIGPIPE"):
+    # a pool child the kernel killed widowed the pipe the parent was feeding
+    # it, and the records build died of SIGPIPE (exit 141) four seconds
+    # later, before the pool could take its parts again (München,
+    # 2026-10-30; tests/test_process_exit.py)
     from app import process_exit
     process_exit.run(main)
