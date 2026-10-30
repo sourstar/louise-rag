@@ -1416,7 +1416,7 @@ The encoder is now the bound: the gate served the whole window, and
 requests queue at admit. At that rate the dump layer's ~90 M chunks are an
 encoder-throughput question, not a scheduling one.
 
-### 2026-10-30 — the light compaction: small fragments merged, the book_id index caught up — PREPARED
+### 2026-10-30 — the light compaction: small fragments merged, the book_id index caught up — VERIFIED with #106 (below)
 
 **BEFORE (München, wikipedia's table, read-only, b53c4164 / 6081ca8).**
 - Table: 145,615,272 rows in 2,523 fragments, 2,368 of them small (~500 rows each: one per flush).
@@ -1540,7 +1540,7 @@ fails on the old code.
 - chunks embedded per minute (the encoder should stay the bound, now on documents with text only);
 - the producer's streams: documents per stream with chunks.
 
-### 2026-10-30 — every vector write through the registration; the light compaction first — PREPARED
+### 2026-10-30 — every vector write through the registration; the light compaction first — VERIFIED
 
 **BEFORE (München, #103's first run, ee13d64).**
 - The light compaction ran where it could: gutenberg merged 1,944 small fragments of 1,958 into 19 in 3 s; pubmed merged 1,500 of 1,542 into 48 in 6 s.
@@ -1569,3 +1569,24 @@ Tests:
 - held_chunks and the clash read of 128 against 0.83–1.28 s and 0.17–0.29 s;
 - genesis's delete share against 32 %;
 - no "compaction skipped … preempted" line.
+
+**AFTER (München, dea059e: #106 deployed ALONE from branch
+deploy/106-before-105, with #105's files kept at ee13d64; worker up 20:19:53
+CET).**
+- 20:25:17 "light compaction started: 9232 small fragment(s) of 9384, 145649566 rows".
+- 20:25:58 "light-compacted 9232 small fragment(s) of 9384 into 203 (33s); the book_id index's new rows indexed".
+
+| wikipedia's table | BEFORE (19:5x, ee13d64) | AFTER (20:26, dea059e) |
+|---|---|---|
+| fragments / small | 7,751 / 7,599 | 245 / 88 |
+| book_id_idx unindexed rows | 1,374,799 | 21,130 (4 deltas) |
+| held_chunks, 128 dump-layer docs (213 rows) | 0.95 / 0.83 / 1.28 s | 0.250 / 0.098 / 0.083 s |
+| `_drop_clashing_many`-shaped read, same 128 | 0.29 / 0.17 / 0.24 s | 0.019 / 0.011 / 0.047 s |
+| pipeline-wikipedia: genesis flush delete / add | ~32 % / 4.4 % | 15.7 % / 8.1 % |
+| genesis documents per 10 min | 33,200 (18:22), 47,335 (19:23) | 71,018 (20:26–20:36) |
+| "preempted" lines | 1 (20:02:57) | 0 |
+
+vector_idx still leaves 2,189,958 rows unindexed: its own refresh, which
+this change does not touch. The embed in the same 10 minutes made
+1,004–1,622 chunks per stream (about 11 chunks/s), so the encoder is still
+the bound.
