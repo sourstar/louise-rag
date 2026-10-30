@@ -159,6 +159,8 @@ grep -q "^REWRITE_WAIT_S = 60.0" "$ROOT/src.new/app/vector_index.py"            
 grep -q "with embeddings._write_lock(con, collection):" "$ROOT/src.new/app/bundles/genesis.py"  # #106: genesis's flush through the writer registration
 grep -q "# THE LIGHT COMPACTION BEFORE EVERYTHING" "$ROOT/src.new/app/vector_index.py"        # #107 (e9f345b): the light compaction first in the maintainer's pass
 grep -q '"gate-batching.json"' "$ROOT/src.new/app/hold/runs.py"                              # #108 (ede18a2): a run's batch verdict counts only at the batching it was measured at
+grep -q "^def small_fragments(collection)" "$ROOT/src.new/app/vector_index.py"               # #109 (5e0d5fa): the light compaction on its own one-minute cadence
+grep -q "^VECTOR_INDEX_LIGHT_CHECK_S = " "$ROOT/src.new/app/config.py"                       # #109
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
 test -x "$ROOT/src.new/deploy/docker-memory-ceiling.sh"                                     # the ceiling on every container together
 grep -q "^def building(dest: Path)" "$ROOT/src.new/app/derived.py"                          # one pack builder across processes (the plan's pool children)
