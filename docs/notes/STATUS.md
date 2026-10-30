@@ -83,6 +83,17 @@ pytest (exit 141); the process sets it now (f0d293a).
 4. `records validation`, `snapshot create`, the hand check, then the
    operator's resume.
 
+**Done, 2026-10-30.**
+- The rebuild gave 52,923,144 records in 26,551 parts.
+- Snapshot 2026-09 was created in 2 m 42 s, hash `e5540cc2…`.
+- The hand check passed all eight checks:
+  - records/chunks over 2,644,198 records in 1,328 parts;
+  - records-vs-origin 2,000 re-parsed, 0 differing;
+  - vectors-sample 13,496 chunks at 0.998.
+  It took 30.5 min, against 46 min on 10-28, and ran before #76/#77.
+- The ZFS snapshot `before-drop-twins-20261030` was destroyed as agreed.
+- wikipedia-v8 stays paused until the operator resumes it.
+
 ### 2026-10-30: BSARD, EUR-Lex-Sum and GDPR Holdings acknowledged — the operator, for measurement
 
 The operator acknowledged the licensing on 2026-10-29 at about 07:35 CET
