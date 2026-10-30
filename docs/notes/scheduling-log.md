@@ -1590,3 +1590,21 @@ vector_idx still leaves 2,189,958 rows unindexed: its own refresh, which
 this change does not touch. The embed in the same 10 minutes made
 1,004–1,622 chunks per stream (about 11 chunks/s), so the encoder is still
 the bound.
+
+### 2026-10-30 — the light compaction before the prune and the refresh — PREPARED
+
+**BEFORE (München, #105's window, a6b6b71).**
+- Fragments: 20:25:58 light-compacted 9,232 → 203. By 20:55:04 there were 2,029 small ones again (→ 195 in 23 s), and 339 by 20:59. They come back at ~70–80 a minute from genesis and embed commits.
+- Timing: the maintainer reached the light pass only after a 253 s prune and a 305 s vector refresh (20:49:55 → 20:55:04).
+- held_chunks of 128: 0.08–0.25 s just after a light pass, 0.40–0.71 s at 339 small fragments.
+- The clash read: 0.01–0.05 s just after a light pass, 0.08–0.11 s at 339 small fragments.
+
+**The change.** In `vector_index.ensure` the light compaction runs
+first, before the prune and the index work. It runs once a pass, and the
+full compaction is skipped in a pass that ran the light one. Test:
+`test_the_light_compaction_is_not_queued_behind_the_long_passes`.
+
+**To verify AFTER:**
+- small fragments sampled every 5 minutes over 30 minutes;
+- the light lines' seconds;
+- held_chunks of 128, three times, mid-interval.

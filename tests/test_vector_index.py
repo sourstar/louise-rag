@@ -470,16 +470,16 @@ def test_the_index_refresh_is_not_starved_by_a_compaction(isolated_config, tmp_p
     monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None, light=False:
                         steps.append("light" if light else "compact") or {"compacted": True})
     vector_index.ensure(c)
-    assert steps == ["refresh", "light"], \
+    assert steps == ["light", "refresh"], \
         "the index first, and the fragments in the same pass: a refresh due every pass " \
         "starved the compaction (normattiva, 2026-10-14: 33,701 fragments)"
 
     steps.clear()
     monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None, light=False:
                         steps.append("light" if light else "compact") or {"compacted": True})
-    told = iter([True, False])                  # asked before the prune/index, then between
+    told = iter([True, False])                  # asked before anything, then after the light pass
     vector_index.ensure(c, may_continue=lambda: next(told))
-    assert steps == ["refresh"], "a pause between the two is honoured"
+    assert steps == ["light"], "a pause after the light pass is honoured"
 
     steps.clear()
     monkeypatch.setattr(vector_index, "stats", lambda coll: {
@@ -698,3 +698,27 @@ def test_the_bundle_importer_writes_through_the_registration_and_defers_on_a_rew
     from app.bundles import importer
     assert "embeddings._write_lock(con, collection)" in inspect.getsource(importer)
     assert "vector_write_lock(con)" not in inspect.getsource(importer)
+
+
+def test_the_light_compaction_is_not_queued_behind_the_long_passes(isolated_config, tmp_path, monkeypatch):
+    """München, 2026-10-30: fragments come back at 70–80 a minute, and the
+    light pass waited behind a 253 s prune and a 305 s refresh, the table at
+    ~2,000 small fragments meanwhile. It runs before both now, once a pass."""
+    from app import collections as collections_mod, vector_index
+    c = collections_mod.Collection(
+        name="c", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance", embed=None)
+    steps = []
+    monkeypatch.setattr(vector_index, "stats", lambda coll: {
+        "rows": 145_000_000, "indexed": True, "book_id_indexed": True,
+        "unindexed_rows": 4_000_000, "small_fragments": 2_029})
+    monkeypatch.setattr(vector_index, "prune_due", lambda coll: True)
+    monkeypatch.setattr(vector_index, "prune", lambda coll, con=None, log=None:
+                        steps.append("prune") or {})
+    monkeypatch.setattr(vector_index, "refresh", lambda coll, con=None, log=None:
+                        steps.append("refresh") or {"refreshed": True})
+    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None, light=False:
+                        steps.append("light" if light else "full") or {"compacted": True})
+    vector_index.ensure(c)
+    assert steps == ["light", "prune", "refresh"], steps
