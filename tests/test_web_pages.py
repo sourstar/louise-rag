@@ -148,6 +148,19 @@ def test_admin_login_cookie_authorizes_subsequent_navigation(client):
     assert r.status_code == 200
 
 
+def test_the_name_is_centred_above_the_menu_and_no_search_button_is_lit(client):
+    """The operator (2026-10-30): the application's name at the centre on
+    top, the menu entries below it; on Ask neither search button lit at
+    rest (a lit one read as already pressed)."""
+    html = client.get("/ask").text
+    nav = html[html.index("<nav>"):html.index("</nav>")]
+    assert nav.index('<div class="brand">louise-rag</div>') < nav.index('<div class="menu">') \
+        < nav.index('href="/ask"')
+    assert 'onclick="search()"' in html and 'class="primary" onclick="search()"' not in html
+    css = (Path(web.__file__).parent / "static" / "admin.css").read_text()
+    assert "nav{display:flex;flex-direction:column;align-items:center" in css
+
+
 def test_admin_login_takes_the_token_as_copied_with_its_spaces(client):
     """/login stripped the pasted token and /admin/login did not: a newline
     or space a copy picked up refused the right token (2026-10-30)."""

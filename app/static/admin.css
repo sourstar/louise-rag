@@ -18,8 +18,10 @@ body{font-family:var(--mono);font-size:13px;color:var(--ivory);background:var(--
 a{color:var(--lapis)}
 h1{font-size:20px;letter-spacing:.4px}
 h2{font-size:14px;color:var(--brass);margin-bottom:10px;letter-spacing:.4px}
-nav{display:flex;gap:2px;border-bottom:2px solid var(--line);padding:14px 22px;align-items:baseline;flex-wrap:wrap}
-nav .brand{font-size:18px;font-weight:600;margin-right:18px}
+/* The name centred, the menu below it, centred too (operator, 2026-10-30) */
+nav{display:flex;flex-direction:column;align-items:center;gap:8px;border-bottom:2px solid var(--line);padding:14px 22px}
+nav .brand{font-size:18px;font-weight:600;text-align:center}
+nav .menu{display:flex;gap:2px;flex-wrap:wrap;justify-content:center;align-items:baseline}
 nav a{color:var(--muted);text-decoration:none;padding:6px 12px;border-radius:3px}
 nav a.active{color:var(--brass);background:var(--panel2)}
 nav a:hover{color:var(--ivory)}
@@ -151,7 +153,6 @@ pre.cli{background:var(--ink);border:1px solid var(--line);border-radius:3px;pad
 @media (max-width:760px){
   body{overflow-wrap:anywhere}
   nav{padding:10px 12px}
-  nav .brand{margin-right:8px}
   nav a{padding:6px 8px}
   main{padding:14px 12px}
   .panel{padding:12px}

@@ -71,3 +71,26 @@ def test_two_addresses_of_one_localai_count_its_models_once():
                                  "process": {"pid": 91, "started_at": "2026-10-11T09:25:28Z"}}]}
     p = gm.panel(COLLECTIONS, extra_urls=("http://192.168.178.10:30286",), get_json=lambda u: system)
     assert len(p["asked"]) == 2 and len(p["rows"]) == 1 and p["louise"] == GIB
+
+
+def test_the_card_its_readings_and_the_governor_come_before_its_models():
+    """The operator (2026-10-30): on the System tab the GPU's own figures
+    come first, the list of the models it holds after them."""
+    from dataclasses import replace
+    from app import gpu, web
+    p = gm.panel(COLLECTIONS, get_json=lambda url: SYSTEM)
+    dev = gpu.GpuDevice(card="card0", pdev="0000:03:00.0", driver="xe", vendor_id="8086",
+                        device_id="e223", vendor="Intel", name="Arc Pro B70",
+                        vram_total=32 * GIB, vram_used=18 * GIB,
+                        sensors=gpu.GpuSensors(fans=(1910,), temps=(("pkg", 73.0),), power_w=181.4))
+    body = web.TEMPLATES.get_template("_fragments/gpu.html").render(
+        state="ok", url="x", devices=(dev,), notes=(), models=p, model_bar=gm.bar,
+        governor={"state": "running", "pinned": True, "rest_mhz": 400, "max_mhz": 2800})
+    card, vram, fan = body.index("Arc Pro B70"), body.index("VRAM 32"), body.index("fan 1910 RPM")
+    clock, models = body.index("clock held at 2800 MHz"), body.index("<th>model</th><th>used by</th>")
+    assert card < vram < fan < clock < models, "the card's figures, then its models"
+    assert body.count("GPU governor") == 1, "the governor once, in the card"
+    alone = web.TEMPLATES.get_template("_fragments/gpu.html").render(
+        state="ok", url="x", devices=(replace(dev, vram_total=None, vram_used=None),), notes=(),
+        governor={"state": "absent"})
+    assert alone.count("GPU governor not running") == 1, "a card that reads no VRAM still shows it"
