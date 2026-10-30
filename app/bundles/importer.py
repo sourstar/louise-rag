@@ -42,7 +42,6 @@ from .export import (HEADER_NAME, POSSESSION_NAME, SIGNATURE_NAME, VECTORS_NAME)
 from .format import (BundleError, BundleFormatError, bundle_id_of, content_digest,
                      parse_header, parse_possession, seq_of, signed_payload,
                      sort_rows, uid_of, verify_signature)
-from .writer_lock import vector_write_lock
 
 
 class BundleSpaceMismatch(BundleError):
@@ -364,6 +363,14 @@ def import_bundle(con, collection, bundle_dir, *, embed_fn=None,
             pass
         return {"ok": False, "retryable": False, "error": str(e),
                 "error_class": type(e).__name__}
+    except RuntimeError as e:   # after BundleError, its subclass
+        # a compaction holding the table, or another writer committing
+        # first: the store's moment, never the bundle's (worker.vector_store_contended)
+        from ..worker import vector_store_contended
+        if not vector_store_contended(e):
+            raise
+        return {"ok": False, "retryable": True, "error": f"vector store busy: {e}",
+                "error_class": type(e).__name__}
 
 
 def _import_checked(con, collection, bundle_dir: Path, *, embed_fn, strict,
@@ -510,7 +517,9 @@ def _import_checked(con, collection, bundle_dir: Path, *, embed_fn, strict,
                                   else np.float32),
         } for cid in ids]
 
-        with vector_write_lock(con):
+        # through the writer registration, as every vector write: a
+        # compaction waits for it and holds the next off (genesis, 2026-10-30)
+        with embeddings._write_lock(con, collection):
             _write_rows(collection, native_id, lance_rows, header)
 
         con.execute(

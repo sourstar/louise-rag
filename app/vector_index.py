@@ -102,19 +102,33 @@ class RewriteInProgress(RuntimeError):
     what the worker already takes for a deferral, never a document error."""
 
 
+#: how long a write waits for a compaction to end before it defers: a
+#: light compaction takes seconds (gutenberg 3 s, pubmed 6 s, 2026-10-30),
+#: and a write refused at once cost wikipedia's embed "40 document(s)
+#: deferred" and a genesis pass its 10-minute backoff for it
+REWRITE_WAIT_S = 60.0
+
+
 class writing:
     """`with writing(collection):` around one commit to the vector table:
-    refused while a compaction rewrites it, counted while in flight so the
-    compaction can wait for it (embeddings._write_lock)."""
+    held off while a compaction rewrites it — waited for up to
+    REWRITE_WAIT_S, then refused as a retryable commit conflict — and
+    counted while in flight so the compaction can wait for it
+    (embeddings._write_lock)."""
 
-    def __init__(self, collection):
+    def __init__(self, collection, *, wait_s: float | None = None):
         self.key = str(collection.lance_dir)
+        self.wait_s = REWRITE_WAIT_S if wait_s is None else wait_s
 
     def __enter__(self):
+        deadline = time.monotonic() + self.wait_s
         with _state_lock:
-            if self.key in _rewriting:
-                raise RewriteInProgress(f"retryable commit conflict: {self.key} is being compacted; "
-                                        f"this write waits for the next turn")
+            while self.key in _rewriting:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise RewriteInProgress(f"retryable commit conflict: {self.key} is being compacted; "
+                                            f"this write waits for the next turn")
+                _writers_changed.wait(left)
             _writers[self.key] = _writers.get(self.key, 0) + 1
         return self
 
@@ -613,13 +627,13 @@ def compact_due(st: dict | None) -> bool:
 
 
 def light_compact_due(st: dict | None) -> bool:
-    """Small fragments enough for the LIGHT compaction (`compact(light=True)`),
-    and not yet so many that the full one is due."""
+    """Small fragments enough for the LIGHT compaction (`compact(light=True)`)
+    — the full one due or not: it runs first (`ensure`), and the full pass
+    is then due only if small fragments remain."""
     if not st:
         return False
     small = st.get("small_fragments")
-    return (small is not None and small >= config.VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS
-            and not compact_due(st))
+    return small is not None and small >= config.VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS
 
 
 def compact(collection, con=None, *, log=None, light: bool = False) -> dict:
@@ -809,18 +823,21 @@ def ensure(collection, con=None, *, log=None, may_continue=None) -> dict | None:
         if not go():
             return did
         st = stats(collection) or st
-    if compact_due(st):
-        out = compact(collection, con, log=log)
-        return {"refresh": did, "compact": out} if did is not None else out
-    # THE LIGHT COMPACTION (2026-10-30): the small fragments merged and the
-    # book_id index caught up long before the full pass is due — every
-    # delete-then-insert and held-chunks read scans each one it does not
-    # cover (wikipedia: 2,368 small fragments, a third of its pipeline
-    # thread in genesis's delete)
+    # THE LIGHT COMPACTION FIRST (2026-10-30): the small fragments merged
+    # and the book_id index caught up in seconds — every delete-then-insert
+    # and held-chunks read scans each small fragment it does not cover
+    # (wikipedia: 2,368 of them, a third of its pipeline thread in genesis's
+    # delete). It runs even where the full pass is due: wikipedia's 8,246
+    # small fragments sent it to the full one, 4.5 minutes of ~10 cores lost
+    # to a writer, while the light one would have merged them in seconds.
+    # The full pass is then due only if small fragments remain.
     if light_compact_due(st):
         if not go():
             return did
         out = compact(collection, con, log=log, light=True)
+        return {"refresh": did, "compact": out} if did is not None else out
+    if compact_due(st):
+        out = compact(collection, con, log=log)
         return {"refresh": did, "compact": out} if did is not None else out
     return did
 
