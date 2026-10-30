@@ -55,7 +55,14 @@ def test_a_document_removed_after_the_snapshot_leaves_no_trace_in_the_one_made_a
     con.close()
     _build(root, corpus_dir, records_per_shard=1)
     first = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
-    (root / "gutenberg" / "index" / "facets").mkdir(parents=True)
+    index = root / "gutenberg" / "index"
+    (index / "facets").mkdir(parents=True)
+    (index / "facets" / "snapshot.json").write_text("{}")
+    # the collection's text index and catalogue live in index/ too (its
+    # fts_dir): they are the documents', not the snapshot's, and stay
+    for kept in ("en/meta.json", "_catalog/meta.json"):
+        (index / kept).parent.mkdir(parents=True, exist_ok=True)
+        (index / kept).write_text("kept")
     con = _manifest(root, corpus_dir)
     gone = con.execute("SELECT uid FROM documents ORDER BY uid LIMIT 1").fetchone()[0]
     con.execute("DELETE FROM documents WHERE uid=?", (gone,))     # a twin, removed
@@ -67,7 +74,9 @@ def test_a_document_removed_after_the_snapshot_leaves_no_trace_in_the_one_made_a
     assert (out["hash"], out["parts"]) == (first.hash, len(first.shards))
     assert seeder.current_snapshot(col.shard_dir_of(root, "gutenberg")) is None
     assert _parts(root) == {}, "its parts moved aside with it"
-    assert not (root / "gutenberg" / "index").exists(), "what was derived from it goes"
+    assert not (index / "facets").exists(), "what was derived from it goes"
+    assert (index / "en" / "meta.json").read_text() == "kept" == (index / "_catalog" / "meta.json").read_text(), \
+        "the text index and the catalogue are not the snapshot's"
 
     def never(*a, **k):
         raise AssertionError("a record the discarded snapshot lists was parsed")
