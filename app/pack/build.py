@@ -102,7 +102,6 @@ def _build_db(pack_dir: Path) -> sqlite3.Connection:
     con.executescript("""
     CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS plan(uid TEXT PRIMARY KEY, slice TEXT NOT NULL, ord INTEGER NOT NULL);
-    CREATE INDEX IF NOT EXISTS idx_plan_slice ON plan(slice, ord, uid);
     CREATE TABLE IF NOT EXISTS shards(
       slice TEXT NOT NULL, n INTEGER NOT NULL, path TEXT NOT NULL,
       records INTEGER, chunks INTEGER, bytes INTEGER, sha256 TEXT,
@@ -134,6 +133,16 @@ def _set_meta(con, key, value) -> None:
 def _origin_plugin(collection) -> str:
     """The plugin whose scheme applies."""
     return collection.plugin
+
+
+#: the plan's read order (slice, ord, uid). BUILT ONCE THE PLAN IS DONE, not
+#: kept up row by row: the plan's commit is the build DB's single writer, and
+#: a second growing B-tree per row was half its cost — bulk load, then index,
+#: SQLite's own advice. Bench, 5 M synthetic rows in windows of 50,000:
+#: 197 k rows/s with the index kept, 274 k without (+5.6 s to build it); on
+#: wikidata's 75.9 M rows the kept index ran ~75–78 k rows/s (München,
+#: 2026-10-30, multicore-audit.md item 11).
+PLAN_INDEX = "CREATE INDEX IF NOT EXISTS idx_plan_slice ON plan(slice, ord, uid)"
 
 
 def _plan_rows(page, plugin, origin: str, scheme, context) -> tuple[list, list]:
@@ -202,6 +211,9 @@ def plan(collection, con_src, con_build, *, log=print, stop=None) -> int:
     last = int(_meta(con_build, "plan_rowid", -1))
     planned = 0
     t0 = time.monotonic()
+    # a build DB made before the index was deferred has it: dropped while the
+    # plan is walked, made again with `plan_done`
+    con_build.execute("DROP INDEX IF EXISTS idx_plan_slice")
 
     def commit(rows, skipped, upto) -> None:
         nonlocal last, planned, t0
@@ -243,7 +255,14 @@ def plan(collection, con_src, con_build, *, log=print, stop=None) -> int:
             break
         rows, skipped = _plan_rows(page, plugin, origin, scheme, context)
         commit(rows, skipped, page[-1]["rowid"])
+    # the index and the mark in one transaction: a plan marked done always
+    # has its read order
+    t1 = time.monotonic()
+    con_build.execute("BEGIN IMMEDIATE")
+    con_build.execute(PLAN_INDEX)
     _set_meta(con_build, "plan_done", "1")
+    con_build.execute("COMMIT")
+    log(f"[pack build] plan indexed in {time.monotonic() - t1:.1f}s")
     return planned
 
 
@@ -1098,7 +1117,9 @@ def build(collection, pack_dir: Path, *, snapshot: str | None = None, name: str 
         _set_meta(con_build, "until", until or "")
         _set_meta(con_build, "plugin", origin)
         _set_meta(con_build, "records_per_shard", rps)
-        if _meta(con_build, "plan_done") != "1":
+        if _meta(con_build, "plan_done") == "1":
+            con_build.execute(PLAN_INDEX)   # a no-op on every plan this code marked done
+        else:
             n = plan(collection, con_src, con_build, log=log, stop=stop)
             if stop is not None and stop.is_set() and _meta(con_build, "plan_done") != "1":
                 log(f"[pack build] stop requested during planning ({n} planned this run); resumes")
