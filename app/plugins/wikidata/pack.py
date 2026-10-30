@@ -89,7 +89,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from app import config, cpu_limit, derived, parallel
-from app.backend import GroupCache, forget_rechecked, rechecked
+from app.backend import RECHECK_S, GroupCache, forget_rechecked, rechecked
 from app.plugins.wikidata import dump as dump_mod, families, ids, names
 
 #: 2 (2026-10-24): the `name` table; 3 (2026-10-24): the class tree and the
@@ -174,14 +174,24 @@ def pack_dir(dump: Path) -> Path:
     file") before wikidata was paused. Asked of the files once a second
     per process (`backend.rechecked`): the adoption renames the place whole,
     and the copy left beside the dump stays readable meanwhile."""
+    # THE FAST PATH, a str and a dict lookup: building `_target`'s Paths on
+    # every line was still 4.6 % of a build child after #98 (München,
+    # 2026-10-30). The answer stands for RECHECK_S, keyed on the fast drive
+    # too (`derived.place_kept`'s own key), and the adoption forgets it.
+    key = str(dump)
+    now = time.monotonic()
+    hit = _dirs.get(key)
+    if hit is not None and now - hit[0] < RECHECK_S and hit[1] == derived.places_key():
+        return hit[2]
     target = _target(dump)                  # kept per process and per fast drive (`place_kept`)
+    old = _beside(dump)
+    got = old if (target != old and not _meta_path(target).is_file() and _meta_path(old).is_file()) else target
+    _dirs[key] = (now, derived.places_key(), got)
+    return got
 
-    def where() -> Path:
-        old = _beside(dump)
-        if target != old and not _meta_path(target).is_file() and _meta_path(old).is_file():
-            return old
-        return target
-    return rechecked(("wikidata pack dir", str(dump), str(target)), where)
+
+#: str(dump) -> (when asked, the fast drive's key, the directory holding its pack)
+_dirs: dict[str, tuple[float, str, Path]] = {}
 
 
 def adopt_beside(dump: Path, *, log: Callable[[str], None] | None = None) -> bool:
@@ -199,7 +209,7 @@ def adopt_beside(dump: Path, *, log: Callable[[str], None] | None = None) -> boo
         shutil.rmtree(target)
     t0 = time.monotonic()
     done = derived.adopt(old, target)
-    forget_rechecked(lambda k: k[0] == "wikidata pack dir")     # landed: read there from now on
+    _dirs.clear()                                                # landed: read there from now on
     if done and log is not None:
         log(f"[wikidata] pack: {Path(dump).name}: adopted into the fast drive {target} from {old} "
             f"in {time.monotonic() - t0:.0f} s (left in place there)")
@@ -227,7 +237,8 @@ def _write_meta(d: Path, meta: dict[str, Any]) -> None:
     tmp = _meta_path(d).with_name(f"meta.json.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
     os.replace(tmp, _meta_path(d))
-    forget_rechecked(lambda k: k[0] in ("wikidata meta stamp", "wikidata pack dir"))
+    forget_rechecked(lambda k: k[0] == "wikidata meta stamp")
+    _dirs.clear()
 
 
 def read_meta(dump: Path) -> dict[str, Any] | None:
@@ -1590,6 +1601,7 @@ def labels(dump: Path) -> LabelTable:
 
 def reset_caches() -> None:
     _metas.clear()
+    _dirs.clear()
     forget_rechecked(lambda k: str(k[0]).startswith("wikidata "))
     with _files_lock:
         _groups.clear()

@@ -66,6 +66,13 @@ def place(kind: str, origin: Path) -> Path | None:
 _places: dict[tuple[str, str, str], Path | None] = {}
 
 
+def places_key() -> str:
+    """What `place_kept`'s answers are keyed on besides the origin — the
+    fast drive — for a caller that keeps its own answers per process
+    (wikidata's `pack_dir`)."""
+    return str(config.CACHE_DIR)
+
+
 def place_kept(kind: str, origin: Path) -> Path | None:
     """`place`, kept per process: its `tag` resolves the origin through
     every link (a realpath), and a caller that asks once per document —
