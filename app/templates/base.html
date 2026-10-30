@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}louise-rag{% endblock %}</title>
 <link rel="stylesheet" href="/static/admin.css?v={{ asset_v }}">
+<script>/* the reader's theme, before the page draws (admin.css, THE THEMES) */
+try{var t=localStorage.getItem('louise-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <script src="/static/vendor/htmx.min.js?v={{ asset_v }}"></script>
 </head>
 <body>
@@ -20,6 +22,11 @@
   {% endif %}
   <a href="/connect" class="{{ 'active' if active=='connect' else '' }}">Connect</a>
   <a href="/help" class="{{ 'active' if active=='help' else '' }}">Help</a>
+  <select class="theme" id="theme" aria-label="colour theme" title="colour theme"
+          onchange="setTheme(this.value)">
+    <option value="">Slate</option><option value="kelsch">Kelsch</option>
+    <option value="gres">Grès des Vosges</option><option value="colmar">Colmar</option>
+  </select>
   {% if viewer and viewer.role != 'guest' %}
   <a href="#" class="who" onclick="fetch('/logout',{method:'POST'}).then(()=>location.href='/login');return false"
      title="log out">{{ viewer.name }} · log out</a>
@@ -35,6 +42,12 @@
   <div class="inner" id="modal-inner"></div>
 </div>
 <script>
+function setTheme(t){
+  if(t)document.documentElement.dataset.theme=t; else delete document.documentElement.dataset.theme;
+  try{t?localStorage.setItem('louise-theme',t):localStorage.removeItem('louise-theme')}catch(e){}
+  const s=document.getElementById('theme'); if(s) s.value=t||'';
+}
+(function(){const s=document.getElementById('theme'); if(s) s.value=document.documentElement.dataset.theme||''})();
 function showModal(html){document.getElementById('modal-inner').innerHTML=html;document.getElementById('modal-backdrop').style.display='flex'}
 function hideModal(){document.getElementById('modal-backdrop').style.display='none'}
 async function postJSON(url,body){
