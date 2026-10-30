@@ -1950,6 +1950,17 @@ def _whole_quota() -> None:
     from app import config
     if config.BUILD_WHOLE_QUOTA:
         config.PARSE_PROCESSES = config.build_parse_processes()
+        # a child retires after PARSE_TASKS_PER_CHILD tasks (its caches grow
+        # with what it parsed): 500 replaced every child of wikidata's build
+        # every few seconds, each paying the spawn import; 20,000 kept the
+        # same children for the run at +10–30 MB each per 5 min, records/s
+        # +10 % (München, 2026-10-30). The worker's env sets its own.
+        if not os.getenv("PARSE_TASKS_PER_CHILD"):
+            config.PARSE_TASKS_PER_CHILD = max(int(config.PARSE_TASKS_PER_CHILD), CLI_TASKS_PER_CHILD)
+
+
+#: an operator pass's children live this many tasks unless the env says otherwise
+CLI_TASKS_PER_CHILD = 20_000
 
 
 def cmd_share_attest(a) -> int:
