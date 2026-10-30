@@ -116,7 +116,10 @@ def index(root: Path, name: str, codex, con) -> "Possession":
     if got and got[0] == fp:
         return got[1]
     with _build_locks_lock:
-        lock = _build_locks.setdefault(key, __import__("threading").Lock())
+        # re-entrant: a build that asks the index again on its own thread
+        # (a hook, a nested caller) builds again, as before, rather than wait
+        # on itself; other threads still wait for the one build
+        lock = _build_locks.setdefault(key, __import__("threading").RLock())
     with lock:
         got = _memo.get(key)            # built by the thread this one waited for
         if got and got[0] == fp:

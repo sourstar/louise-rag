@@ -650,7 +650,9 @@ def _holds_all(held, book_id: int, chunks) -> bool:
     if held is None or not chunks:
         return False
     have = held.of(book_id)
-    return all((have.get(c["id"]) or {}).get("text") == c["text"] for c in chunks)
+    if len(have) < len(chunks):
+        return False                    # never written, or written in part
+    return all((have.get(c.get("id")) or {}).get("text") == c.get("text") for c in chunks)
 
 
 def _given(con, collection, row, chunks) -> dict:
