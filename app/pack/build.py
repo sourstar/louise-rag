@@ -303,19 +303,33 @@ def _record_from_line(collection, line: dict) -> tuple[dict, int, bytes, dict[st
     return {**line, "layer": layer, "chunks": chunks}, layer, bytes(chunk_blob), {}
 
 
-#: THREADS writing the parts: compression (zstd 9, ~37 ms per MB) and the
-#: pieces root release the GIL, and in the build's own thread they were most
-#: of its time (München's samples, 2026-10-30: write_shard and json.dumps in
-#: the main thread, the pool's children idle at 17-24 %). The records' order,
-#: the parts' numbering and every database write stay in the main thread.
+#: PROCESSES writing the parts. In the build's own thread, compression
+#: (zstd 9, ~37 ms per MB) and the pieces root were most of its time
+#: (München's samples, 2026-10-30); on writer THREADS (#68) they still
+#: shared its GIL — write_shard's index and the pieces root's per-block
+#: loop are Python — and the build reached ~6 of 8 cores. A writer process
+#: gets the part's encoded lines and returns its file's ShardInfo and three
+#: roots. The records' order, the parts' numbering and every database write
+#: stay in the build's thread. Serial (one parse process: the tests, a
+#: one-core node), the writers are threads.
 def part_writers() -> int:
     return max(2, parallel.processes() // 2)
 
 
+def part_writer_pool():
+    """The build's writers, made ONCE per build (a spawned process imports
+    the app: ~1-2 s, measured per slice when the parse pool respawned)."""
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+    if parallel.processes() <= 1:
+        return ThreadPoolExecutor(max_workers=part_writers(), thread_name_prefix="part-writer")
+    return ProcessPoolExecutor(max_workers=part_writers(), mp_context=multiprocessing.get_context("spawn"))
+
+
 def _write_part(path: Path, buf: list[dict], lines: list[bytes] | None, record_line: int,
                 chunk_blobs: list[bytes]):
-    """One closed part's bytes and its three roots (09 §9.4), on a writer
-    thread: what `close_shard` did inline, in the same order."""
+    """One closed part's bytes and its three roots (09 §9.4), in a writer
+    process (or thread): what `close_shard` did inline, in the same order."""
     info = records.write_shard(path, buf, record_line=record_line, lines=lines)
     return (info, shard_mod.pieces_root_of(path),
             hold_records.records_root(r["content_hash"] for r in buf),
@@ -520,6 +534,19 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                 closed: dict[str, dict[int, tuple[str, str]]] | None = None,
                 held: HeldRecords | None = None
                 ) -> tuple[int, int, int, int, bool]:
+    """Pass 2 (`_pack_slices`), with the part writers made once for every
+    slice and stopped after the last, whatever ends it."""
+    with part_writer_pool() as part_pool:
+        return _pack_slices(collection, con_src, con_build, pack_dir, records_per_shard=records_per_shard,
+                            until=until, log=log, stop=stop, closed=closed, held=held,
+                            part_pool=part_pool)
+
+
+def _pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_shard: int,
+                 until: str | None = None, log=print, stop=None,
+                 closed: dict[str, dict[int, tuple[str, str]]] | None = None,
+                 held: HeldRecords | None = None, part_pool
+                 ) -> tuple[int, int, int, int, bool]:
     """Pass 2. Returns (shards written, records, chunks, skipped, interrupted).
     `until`: the snapshot cutoff (cutoff.py) — records outside it are
     skipped here, where the document is parsed anyway, so shards stay
@@ -629,7 +656,6 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
         # whole, as before, so a stop or a crash resumes after the last one
         # recorded and a file not yet recorded is written again
         writing: deque = deque()
-        part_pool = ThreadPoolExecutor(max_workers=part_writers(), thread_name_prefix="part-writer")
 
         def commit_written(*, every: bool = False) -> None:
             nonlocal written, n_records, n_chunks
@@ -689,12 +715,10 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
                 n_chunks += info.chunks
 
         def settle() -> None:
-            """Every part in flight written and recorded, the writers gone:
-            before any return, so what the build says it wrote is recorded."""
-            try:
-                commit_written(every=True)
-            finally:
-                part_pool.shutdown(wait=True)
+            """Every part in flight written and recorded: before any return,
+            and at each slice's end, so what the build says it wrote is
+            recorded."""
+            commit_written(every=True)
 
         def close_shard(last_row) -> None:
             nonlocal buf, layer_counts, chunk_blobs, shard_plates, next_n
