@@ -97,7 +97,12 @@ PACK_VERSION = 3
 #: entities per chunk file: the resume granularity and the index listing's unit
 CHUNK = 100_000
 #: rows per Parquet row group: one record is one row-group read
-ROW_GROUP = 1_000
+#: rows per Parquet row group in a chunk file: what one entity's line costs
+#: to read, since a group is decompressed whole. 1,000 until 2026-10-30: a
+#: records build reading a sparse family read 1,000 lines for each one it
+#: kept — ~29 % of a child (München's py-spy). A pack written before is
+#: regrouped in place (`regroup`); `line` reads either layout.
+ROW_GROUP = 64
 #: `P31` values that make an entity a scholarly article: not a record (the
 #: design's corpus left them out; invariant 11 allows pruning whole entities)
 PRUNED_CLASSES = frozenset({"Q13442814"})
@@ -1356,7 +1361,9 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
 
 _files_lock = threading.Lock()
 _groups: OrderedDict = OrderedDict()                 # (chunk path, row group) -> {index: line}
-_MAX_GROUPS = 8
+#: groups of ROW_GROUP lines kept per process — 128 x 64 lines, the lines
+#: the 8 groups of 1,000 kept before the regrouping
+_MAX_GROUPS = 128
 
 
 def chunk_files(dump: Path) -> list[Path]:
@@ -1370,22 +1377,55 @@ def index_columns(path: Path) -> pa.Table:
     return pq.read_table(path, columns=["index", "id", "kind", "native_id", "modified", "lastrevid", "pruned"])
 
 
+#: (path, mtime_ns, size) -> (the open file, its row groups' first rows):
+#: a chunk file's own layout, so a pack regrouped file by file reads right
+#: while the regrouping runs; the open file is kept (opening it per line was
+#: ~1 % of a records-build child)
+_layouts: "OrderedDict[tuple, tuple[Any, list[int], Any]]" = OrderedDict()
+_MAX_LAYOUTS = 8
+
+
+def _layout(path: Path) -> tuple[tuple, Any, list[int], Any]:
+    """`(key, the open file, its groups' first rows, the lock its reads take)`
+    — one reader object is not read by two threads at once."""
+    st = path.stat()
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    with _files_lock:
+        got = _layouts.get(key)
+        if got is not None:
+            _layouts.move_to_end(key)
+            return (key, *got)
+    pf = pq.ParquetFile(path)
+    starts, at = [], 0
+    for i in range(pf.metadata.num_row_groups):
+        starts.append(at)
+        at += pf.metadata.row_group(i).num_rows
+    entry = (pf, starts, threading.Lock())
+    with _files_lock:
+        _layouts[key] = entry
+        while len(_layouts) > _MAX_LAYOUTS:
+            _layouts.popitem(last=False)
+    return (key, *entry)
+
+
 def line(dump: Path, index: int) -> bytes:
     """Entity `index`'s own line bytes, from its row group (cached)."""
+    import bisect
     meta = read_meta(dump) or {}
     chunk = int(meta.get("chunk") or CHUNK)
     path = chunk_path(pack_dir(dump), index // chunk)
-    group = (index % chunk) // ROW_GROUP
-    key = (str(path), group)
+    fkey, pf, starts, reading = _layout(path)
+    group = bisect.bisect_right(starts, index % chunk) - 1
+    key = (fkey, group)
     with _files_lock:
         got = _groups.get(key)
         if got is not None:
             _groups.move_to_end(key)
     if got is None:
-        pf = pq.ParquetFile(path)
-        if group >= pf.num_row_groups:
-            raise PackError(f"{path.name}: no row group {group} for entity {index}")
-        t = pf.read_row_group(group, columns=["index", "line"])
+        if not 0 <= group < len(starts):
+            raise PackError(f"{path.name}: no row group for entity {index}")
+        with reading:
+            t = pf.read_row_group(group, columns=["index", "line"])
         got = dict(zip(t.column("index").to_pylist(), t.column("line").to_pylist()))
         with _files_lock:
             _groups[key] = got
@@ -1395,6 +1435,50 @@ def line(dump: Path, index: int) -> bytes:
         return got[index]
     except KeyError:
         raise PackError(f"{path.name}: entity {index} not in row group {group}") from None
+
+
+def _regroup_file(path: str, row_group: int) -> bool:
+    """One chunk file rewritten with row groups of `row_group` rows — the same
+    rows in the same order, replaced atomically (a reader holding the old
+    file keeps reading it). False when it already is."""
+    p = Path(path)
+    md = pq.ParquetFile(p).metadata
+    if all(md.row_group(i).num_rows <= row_group for i in range(md.num_row_groups)):
+        return False
+    table = pq.read_table(p)
+    tmp = p.with_name(p.name + ".regroup")
+    pq.write_table(table, tmp, compression="zstd", compression_level=3, row_group_size=row_group)
+    os.replace(tmp, p)
+    return True
+
+
+def regroup(dump: Path, *, row_group: int = ROW_GROUP, workers: int = 1, log=print,
+            stop: Callable[[], bool] | None = None) -> dict[str, int]:
+    """Every chunk file of the dump's pack with row groups of `row_group`
+    rows, file by file — resumable (a regrouped file is skipped), safe beside
+    a running build (`line` reads each file's own layout). The pack's lines
+    are byte for byte what they were; only their grouping changes."""
+    files = [str(f) for f in chunk_files(dump) if Path(f).is_file()]
+    done = skipped = 0
+    t0 = time.monotonic()
+    tasks = [(f, row_group) for f in files]
+    from app import parallel
+    keep = parallel.processes()
+    try:
+        config.PARSE_PROCESSES = max(1, int(workers))
+        for (f, _), changed in zip(tasks, parallel.each_part(_regroup_file, tasks)):
+            done += bool(changed)
+            skipped += not changed
+            if (done + skipped) % 20 == 0:
+                log(f"[wikidata] regroup: {done + skipped}/{len(files)} file(s), {done} rewritten, "
+                    f"{time.monotonic() - t0:.0f} s")
+            if stop is not None and stop():
+                break
+    finally:
+        config.PARSE_PROCESSES = keep
+    log(f"[wikidata] regroup: {done} file(s) rewritten, {skipped} already grouped by {row_group}, "
+        f"{time.monotonic() - t0:.0f} s")
+    return {"files": len(files), "rewritten": done, "skipped": skipped}
 
 
 class LabelTable:
@@ -1459,6 +1543,7 @@ def reset_caches() -> None:
     _metas.clear()
     with _files_lock:
         _groups.clear()
+        _layouts.clear()
         _tables.clear()
         _codes_cache.clear()
         _ready.clear()
