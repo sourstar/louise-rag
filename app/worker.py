@@ -2139,6 +2139,7 @@ def _remote_archive(collection) -> bool:
 
 
 _vindex_last: dict[str, float] = {}     # lance dir -> last maintenance attempt
+_vlight_last: dict[str, float] = {}     # lance dir -> last light-compaction check
 
 
 def _maintain_vector_index(con, collection) -> bool:
@@ -2156,10 +2157,11 @@ def _maintain_vector_index(con, collection) -> bool:
     key = str(collection.lance_dir)
     now = time.time()
     if now - _vindex_last.get(key, 0.0) < config.VECTOR_INDEX_REFRESH_S:
-        return False
+        return _light_compact(con, collection, now)
     if not _maintenance_allowed():
         return False        # not stamped: due again as soon as the pause lifts
     _vindex_last[key] = now
+    _vlight_last[key] = now  # the pass runs the light compaction first
     try:
         out = vector_index.ensure(collection, con, may_continue=_maintenance_allowed)
     except Exception as e:   # noqa: BLE001 — an index is an optimisation, never a crash
@@ -2167,6 +2169,27 @@ def _maintain_vector_index(con, collection) -> bool:
                      f"vector index maintenance deferred: {type(e).__name__}: {e}"[:300])
         return False
     return bool(out)
+
+
+def _light_compact(con, collection, now: float) -> bool:
+    """Between the index's passes, the light compaction on its own cadence
+    (`vector_index.light`, every VECTOR_INDEX_LIGHT_CHECK_S): the small
+    fragments come back at ~65 a minute on wikipedia and every read and
+    write pays for each. True when it compacted."""
+    from . import vector_index
+    key = str(collection.lance_dir)
+    if now - _vlight_last.get(key, 0.0) < config.VECTOR_INDEX_LIGHT_CHECK_S:
+        return False
+    if not _maintenance_allowed():
+        return False
+    _vlight_last[key] = now
+    try:
+        out = vector_index.light(collection, con)
+    except Exception as e:   # noqa: BLE001 — an optimisation, never a crash
+        db.log_event(con, "warn", "index",
+                     f"light compaction deferred: {type(e).__name__}: {e}"[:300])
+        return False
+    return bool(out and out.get("compacted"))
 
 
 def _maintain_catalog(con, collection) -> bool:

@@ -1591,7 +1591,7 @@ this change does not touch. The embed in the same 10 minutes made
 1,004–1,622 chunks per stream (about 11 chunks/s), so the encoder is still
 the bound.
 
-### 2026-10-30 — the light compaction before the prune and the refresh — PREPARED
+### 2026-10-30 — the light compaction before the prune and the refresh — MEASURED (#107)
 
 **BEFORE (München, #105's window, a6b6b71).**
 - Fragments: 20:25:58 light-compacted 9,232 → 203. By 20:55:04 there were 2,029 small ones again (→ 195 in 23 s), and 339 by 20:59. They come back at ~70–80 a minute from genesis and embed commits.
@@ -1608,3 +1608,48 @@ full compaction is skipped in a pass that ran the light one. Test:
 - small fragments sampled every 5 minutes over 30 minutes;
 - the light lines' seconds;
 - held_chunks of 128, three times, mid-interval.
+
+**AFTER (München, 27408bf, worker up 21:10:51, watched until 21:42:39).**
+The light pass runs first: at 21:12:07 it merged 1,038 small fragments into
+206 in 4 s, and the prune followed (21:15:39, 213 s, 2.9 GiB). Then no
+index pass for the rest of the watch, because `ensure` runs once every
+VECTOR_INDEX_REFRESH_S (1,800 s). Every 5 minutes, one held_chunks read and
+one clash read of 128 dump-layer documents:
+
+| time | fragments / small | held_chunks / clash read |
+|---|---|---|
+| 21:11:53 | 1,189 / 1,032 | 1.234 / 0.284 s |
+| 21:16:59 | 712 / 554 | 0.425 / 0.041 s |
+| 21:22:02 | 1,156 / 998 | 1.053 / 0.275 s |
+| 21:27:07 | 1,362 / 1,204 | 1.077 / 0.331 s |
+| 21:32:13 | 1,676 / 1,519 | 1.172 / 0.255 s |
+| 21:37:18 | 2,029 / 1,872 | 1.752 / 0.452 s |
+| 21:42:27 | 2,257 / 2,101 | 2.445 / 0.877 s |
+
+Small fragments come back at ~60–70 a minute, and held_chunks follows them
+almost linearly. The pass order is right; the cadence is wrong.
+
+### 2026-10-30 — the light compaction on its own cadence — PREPARED
+
+**BEFORE:** the table above (#107's AFTER). Over its 30 minutes the table
+went from 554 to 2,101 small fragments, and held_chunks of 128 from 0.43 s
+to 2.45 s (mean ~1.3 s).
+
+**The change.** Between the index's passes, the maintainer asks each table
+for its small fragments every VECTOR_INDEX_LIGHT_CHECK_S (60 s;
+`worker._light_compact` → `vector_index.light`). It light-compacts at 256 or
+more, unless a build, refresh or rewrite holds the table. The check reads
+`tbl.stats()`' fragment statistics alone, with no row count and no index
+statistics. The pass itself is unchanged and still runs the light pass first.
+
+**Expected:** at ~65 a minute the threshold is crossed every ~4 minutes,
+merged in 4–6 s. Writers wait those seconds (REWRITE_WAIT_S), about 2 % of
+the time. Small fragments stay under ~300, and held_chunks of 128 stays near
+0.1–0.4 s.
+
+**To verify AFTER (30 minutes, after #108's deploy):**
+- small fragments every 5 minutes;
+- every "light-compacted" line, with its seconds;
+- held_chunks and the clash read of 128 every 5 minutes;
+- genesis documents per 10 minutes, and "deferred" lines from embed or genesis (the cost: writers waiting out the merge);
+- the time of one `vector_index.small_fragments` call on wikipedia.

@@ -37,6 +37,7 @@ def fresh_worker_state():
     worker.reset_phase_memo()
     worker._prefetch_last.clear()
     worker._vindex_last.clear()
+    worker._vlight_last.clear()
     genesis.reset_revisit_state()
     parallel.forget_prefetched()
     parallel.forget_users()
