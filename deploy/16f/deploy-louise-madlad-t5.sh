@@ -138,6 +138,8 @@ grep -q "^def place_kept(kind: str, origin: Path)" "$ROOT/src.new/app/derived.py
 test -s "$ROOT/src.new/deploy/supervise-pass.sh"                                           # 772abed (55d37eb): the pass supervisor
 grep -q "mem_limit: 24g" "$ROOT/src.new/deploy/truenas-app.yaml"                           # 772abed: the caps set_mem_limits.py applies live
 test -s "$ROOT/src.new/deploy/16f/set_mem_limits.py"
+grep -q "^ROW_GROUP = 64" "$ROOT/src.new/app/plugins/wikidata/pack.py"                      # 009eeaf (c3f7d62): the wikidata pack in row groups of 64
+grep -q "^def cmd_dev_wikidata_regroup" "$ROOT/src.new/app/louise.py"                       # 009eeaf: dev wikidata-regroup
 grep -q "derived = root / name / INDEX / facets_mod.CACHE" "$ROOT/src.new/app/hold/discard.py"  # c1b6156 (0fc6451): discard removes only index/facets
 grep -q '"held-record"' "$ROOT/src.new/app/parallel.py"                                     # 7faa83b (39d0086): held record lines through the parse pool (the kind's test reshaped in 5cec41d)
 grep -q "^def with_line(collection" "$ROOT/src.new/app/pack/build.py"                       # 5cec41d (060b4c7): the pool's children encode each record line
