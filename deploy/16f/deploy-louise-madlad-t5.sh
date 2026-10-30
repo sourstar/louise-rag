@@ -155,6 +155,8 @@ grep -q "THE SWEEP RESTARTS WHEN THE COVERAGE CHANGES" "$ROOT/src.new/app/worker
 grep -q "^def light_compact_due(" "$ROOT/src.new/app/vector_index.py"                        # #103 (270ff0c): the light compaction (small fragments, book_id index delta)
 grep -q "THE NEW WALK'S WINDOW READS THE CANDIDATES" "$ROOT/src.new/app/worker.py"           # #104 (086ef34): the new walk seeks the scope index plus the rowid range
 grep -q "def settle_empty(group_rows, held)" "$ROOT/src.new/app/worker.py"                   # #105 (122da4e): a document cut to nothing is marked with its group, never sent
+grep -q "^REWRITE_WAIT_S = 60.0" "$ROOT/src.new/app/vector_index.py"                         # #106 (528b2af): writes wait out a short rewrite; the light compaction first
+grep -q "with embeddings._write_lock(con, collection):" "$ROOT/src.new/app/bundles/genesis.py"  # #106: genesis's flush through the writer registration
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
 test -x "$ROOT/src.new/deploy/docker-memory-ceiling.sh"                                     # the ceiling on every container together
 grep -q "^def building(dest: Path)" "$ROOT/src.new/app/derived.py"                          # one pack builder across processes (the plan's pool children)
