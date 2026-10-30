@@ -36,6 +36,7 @@ import zlib
 from pathlib import Path
 
 from .. import cursor
+from app.backend import OriginForm, Template
 from ..base import (CanonicalDoc, CorpusSource, DiscoverState, DocRef, Erasure,
                     Figure, Issue,
                     LicenseClass, Modality, Mutability, PROTOCOL_VERSION,
@@ -239,6 +240,8 @@ class GutenbergSource:
     # Books are published finished. The catalogue grows; a text
     # already in it does not get edited.
     mutability = Mutability.IMMUTABLE
+    #: app/backend.py: a record is a book's directory, its files read where they lie
+    backend = (OriginForm("a book directory (epub, txt, rdf)", Template.MEMBER),)
     protocol_version = PROTOCOL_VERSION
     #: 4 since 2026-09-11: the reading rule became EPUB, then TXT, then RDF
     #: (metadata only). Every record this parser produces for a book with an

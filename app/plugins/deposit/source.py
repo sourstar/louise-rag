@@ -44,6 +44,7 @@ from pathlib import Path
 
 from app import chunking
 
+from app.backend import OriginForm, Template
 from ..base import (PROTOCOL_VERSION, CanonicalDoc, DiscoverState, DocRef,
                     Erasure, LicenseClass, Modality, Mutability, PrivacyClass,
                     RawDoc, UnindexableDocument)
@@ -229,6 +230,8 @@ class DepositSource:
     modality = Modality.TEXT
     chunking_profile = chunking.FIXED
     mutability = Mutability.IMMUTABLE      # replaced whole, never edited
+    #: app/backend.py: each deposited file is a record, read where it lies
+    backend = (OriginForm("a deposited file", Template.MEMBER),)
     native_id_order = "numeric"            # the node-wide deposit number
     # The window depends on the encoder's context, so `create` writes the
     # layer (`fixed_layer`); this is the shape with the default's context.

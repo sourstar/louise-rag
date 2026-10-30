@@ -49,6 +49,7 @@ from xml.etree import ElementTree as ET
 
 from ... import chunking
 from .. import cursor
+from app.backend import OriginForm, Template
 from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass,
                     Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc)
 from . import archive, page_props, wikitext
@@ -324,6 +325,11 @@ class WikipediaSource:
     # The one source here that revises in place, indefinitely, and
     # the reason content-defined chunking exists in this codebase.
     mutability = Mutability.MUTABLE
+    #: app/backend.py: a page is a bz2 stream of the multistream dump or a row
+    #: range of the archive's shards; page_props is a SQL dump read from its pack
+    backend = (OriginForm("the pages-articles multistream dump", Template.MEMBER),
+               OriginForm("the page_props SQL dump", Template.CONTAINER_PACK, ("wikipedia-page-props",)),
+               OriginForm("the pre-embedded archive's Parquet shards", Template.MEMBER))
     protocol_version = PROTOCOL_VERSION
     #: 2 since 2026-09-12: promise 9. Version 1 published the prose and
     #: nothing else, so an article's categories, citations, infobox,

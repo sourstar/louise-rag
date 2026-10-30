@@ -84,7 +84,7 @@ def pack_path(container: Path) -> Path:
     if config.PUBMED_PACK_DIR is not None:
         return Path(config.PUBMED_PACK_DIR) / name
     from app import derived
-    beside = container.parent / ".pack"
+    beside = container.parent / derived.BESIDE
     cached = derived.place("pubmed-pack", container.parent)
     if cached is None:
         return beside / name

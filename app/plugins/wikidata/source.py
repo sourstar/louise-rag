@@ -35,7 +35,9 @@ import re
 from pathlib import Path
 from typing import Iterator
 
+from app import derived
 from app.plugins import cursor
+from app.backend import OriginForm, Template
 from app.plugins.base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass, Modality, Mutability,
                               PROTOCOL_VERSION, PrivacyClass, RawDoc, UnindexableDocument)
 from app.plugins.wikidata import ids, names, pack, textify
@@ -91,6 +93,8 @@ class WikidataSource:
     chunking_profile = "wikidata"
     #: entities change between dumps; a dated dump is immutable (D1)
     mutability = Mutability.MUTABLE
+    #: app/backend.py: a record is a line of the JSON dump, read from the pack's chunk files
+    backend = (OriginForm("the JSON entity dump", Template.DUMP_PACK, ("wikidata-pack",)),)
     protocol_version = PROTOCOL_VERSION
     #: 1: the first parser (2026-10-19) — the dump's entity kept whole in
     #: `extra`, one text section per language of `languages` (textify.py,
@@ -206,6 +210,12 @@ class WikidataSource:
                         yield DocRef(source_id=self.source_id, native_id=dump.name, locator=str(dump),
                                      scope="container", error="pack build stopped before the end; resumes next scan")
                         continue
+            except derived.Busy as e:
+                # another process writes the pack (a records build's codes, a
+                # regroup, another collection's scan of the same dump): deferred
+                yield DocRef(source_id=self.source_id, native_id=dump.name, locator=str(dump),
+                             scope="container", error=f"pack build deferred: {e}; resumes next scan"[:300])
+                continue
             except Exception as e:   # noqa: BLE001 — a truncated download, a corrupt stream
                 yield DocRef(source_id=self.source_id, native_id=dump.name, locator=str(dump), scope="container",
                              error=f"wikidata dump not usable: {type(e).__name__}: {e}"[:300])

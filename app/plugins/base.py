@@ -339,6 +339,10 @@ class CorpusSource(Protocol):
     erasure: Erasure
     chunking_profile: str
     mutability: Mutability
+    #: 06 §6.1 (amended 2026-10-30): each origin form read and its template
+    #: (app/backend.py — tuple[backend.OriginForm, ...]); refused when missing
+    #: (tests/test_backend_templates.py)
+    backend: tuple
     native_id_order: NativeIdOrder
     #: 06 §6.2 (amended 2026-10-25, operator: "what really matters in the
     #: end is the verifiability"): does the origin keep earlier versions a

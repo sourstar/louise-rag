@@ -14,6 +14,7 @@ import pytest
 
 from app.pack import slicing
 from app.plugins.wikidata import families, pack
+from app.plugins.wikidata import source as wd_source
 from tests.test_plugins_wikidata_source import a_dump, entity_lines
 
 
@@ -813,14 +814,22 @@ def test_a_regrouped_file_is_streamed_and_its_groups_align_on_the_row_group(tmp_
     assert pack._regroup_file(str(f), 2) is False
 
 
-def test_a_second_regroup_of_the_same_pack_is_refused(tmp_path):
-    """Two regroups would write the same `<file>.regroup` and replace the
-    chunk file with whichever half they had."""
-    import fcntl
+def test_the_pack_has_one_writer_and_a_second_defers(tmp_path):
+    """The build, the codes pass and the regroup each write files the others
+    read or replace, and nothing but a thread lock stood between them (the
+    2026-10-30 inventory). One writer at a time across processes; a second
+    is told who holds it and defers — a scan says "resumes next scan"."""
+    from app import derived
+    from app.plugins.base import DiscoverState
     dump = _dump(tmp_path)
     pack.build(dump, languages=("en",), chunk=4, workers=1)
-    with open(pack.pack_dir(dump) / "regroup.lock", "a+b") as other:
-        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        with pytest.raises(pack.PackError, match="another regroup"):
+    with derived.writing(pack.pack_dir(dump) / pack.WRITER, "another process's pass"):
+        with pytest.raises(pack.PackError, match="another process's pass"):
             pack.regroup(dump, row_group=2, log=lambda *_: None)
+        with pytest.raises(derived.Busy):
+            pack.build(dump, languages=("en", "fr"), chunk=4, workers=1)
+        src = wd_source.WikidataSource(languages=("en", "fr"))
+        refs = list(src.discover(DiscoverState(corpus_root=tmp_path)))
+        assert len(refs) == 1 and refs[0].scope == "container"
+        assert "deferred" in refs[0].error and "resumes next scan" in refs[0].error, refs[0].error
     assert pack.regroup(dump, row_group=2, log=lambda *_: None)["rewritten"] >= 1
