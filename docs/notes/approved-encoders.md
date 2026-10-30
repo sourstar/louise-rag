@@ -147,6 +147,8 @@ reversed orders, every score or token compared as bytes.
 | vega-jina-v3 and vega-jina-v3-query, louise-python-20261021a (2026-10-27, before wikidata's re-creation; `tools/vega_repro_check.py --n 64 --loads 3 --repeats 2 --window 1024`) | `LOUISE_TORCH_DETERMINISTIC=1` | **BIT-EXACT**: 64 of the platform's calibration texts × 3 fresh loads × 2 shuffled passes, 384 vectors, each side |
 | vega-medcpt-article-ov, louise-python-20261021b (OpenVINO) | `LOUISE_BITEXACT_MEASURED=louise-python-20261021b` | **BIT-EXACT**: 32 PubMed (title, abstract) pairs × 3 fresh loads × 2 shuffled passes, 192 vectors |
 | louise-rerank-medcpt, the same tree | the same | **BIT-EXACT**, 20 × 3 × 2 |
+| **vega-medcpt-query, `vega-llama-cpp` (2026-10-30/31, München)** | DNN=0, `parallel:1`, ctx 513, batch/ubatch 512, **flash attention ON** | **NOT bit-exact across fresh loads, intermittently, on long inputs**. The gate's sixteen query texts, 3 fresh loads × 2 shuffled passes: a flip in 3 of 8 runs (1 vector of 6 each time, max abs 6.5e-6–3.5e-5, cosine ≥ 0.99999988, always among the texts cut at 512 tokens), none within one load or in one order. Window 511: 2 of 4 runs; ctx 1,024 with batch/ubatch 1,024: 4 of 4; ctx 1,024 with batch/ubatch 512: 0 of 4, then a flip in the next run. Lanes 1 against 4 (the gate's `contribute`): identical, not the cause. The gate's batch verdict on this run was therefore chance (False at 23:38, True at 23:45, different fingerprints) |
+| the same | **flash attention OFF** | **BIT-EXACT**: 0 of 12 runs (72 fresh-load passes), and the sweep (16 + 512 prefixes, window 512, 2 × 2) 528/528 over 2,112 vectors; faster (~26.5 s against ~33 s a run). Stated 2026-10-31 as run 71d129c3 (gate PASS; 3 of 512 below the tolerance 0.999914, worst 0.999649, never enough to fail the quorum of 12 of 16 and the median). Live |
 
 Generative llama.cpp models (chat, translate) and rerankers need the
 `vega-llama-cpp-gen` package (`cuts: context_size`): the tokenizer probe of
@@ -367,6 +369,7 @@ filed as a bug.*
 | torch's defaults differ on short inputs | atomics and reduction order | `LOUISE_TORCH_DETERMINISTIC=1` |
 | a question's languages in different waves give a last-bit flip (1 in 626) | batch shape changes the summation order; any backend, CUDA included | one wave per question: `LLAMA_ENC_DEC_WAVE_MS` long enough, or accept per-wave reproducibility |
 | the chat model's first answer after a load; the reranker at an oversized context | the same class | `parallel:1`, the window as context |
+| an encoder's vector of a LONG input differs across fresh loads, now and then, with flash attention on (llama.cpp SYCL; vega-medcpt-query, 2026-10-30) | the flash-attention kernel's summation order is not fixed across loads; nothing within a load or an order moves it | `flash_attention: "off"` in the model YAML, measured over a length sweep and many fresh loads (`tools/vega_repro_check.py --sweep`, 3 × 2 eight times): one clean run proves little at a ~40 % flip rate per run |
 | the f32 cache's 29 against 16 ms per token | the fallback path's cost | a price, not a fault; the F16 kernels return with the upstream fix |
 
 ## Adding a device class
