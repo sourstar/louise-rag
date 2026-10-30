@@ -157,7 +157,7 @@ def test_the_name_is_centred_above_the_menu_and_no_search_button_is_lit(client):
     nav = html[html.index("<nav>"):html.index("</nav>")]
     assert nav.index('<div class="brand">Project Louise</div>') < nav.index('<div class="menu">') \
         < nav.index('href="/ask"')
-    assert 'onclick="search()"' in html and 'class="primary" onclick="search()"' not in html
+    assert 'class="primary"' not in html[html.index('id="q"'):html.index('id="results"')]
     css = (Path(web.__file__).parent / "static" / "admin.css").read_text()
     assert "nav{display:flex;flex-direction:column;align-items:center" in css
 
@@ -182,6 +182,22 @@ def test_four_themes_each_reader_chooses_and_each_defines_every_colour(client):
     pages = [css] + [p.read_text() for p in (Path(web.__file__).parent / "templates").rglob("*.html")]
     for literal in ("#233240", "#b9c8d2", "#9fb0bc"):
         assert sum(t.count(literal) for t in pages) == (1 if literal != "#9fb0bc" else 0), literal
+
+
+def test_one_ask_button_a_switch_and_the_settings_out_of_the_way(client):
+    """The operator (2026-10-30): "ask and search are confusing" — one Ask
+    button, a switch "Search only" / "AI summary", and the settings a
+    reader need not touch behind one closed line."""
+    html = client.get("/ask").text
+    form = html[html.index('id="q"'):html.index('id="results"')]
+    assert form.count("<button") == 1 and 'onclick="go()">Ask</button>' in form
+    assert "> Search only</label>" in form and "> AI summary</label>" in form
+    assert "Ask (RAG)" not in html and 'onclick="search()"' not in form
+    settings = form[form.index('<details class="settings">'):form.index("</details>")]
+    for control in ('id="mode"', 'id="limit"', 'id="rerank-depth"', 'id="all-langs"'):
+        assert control in settings, control
+    assert 'id="lang"' in form and 'id="lang"' not in settings, "the results' language stays in sight"
+    assert "function go(){return howAsk()==='search'?search():ask()}" in html
 
 
 def test_admin_login_takes_the_token_as_copied_with_its_spaces(client):
