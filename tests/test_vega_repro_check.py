@@ -75,3 +75,21 @@ def test_a_line_is_a_text_or_a_pair():
     """MedCPT's article encoder is fed (title, abstract) pairs: measured as pairs."""
     assert vega_repro_check.item({"text": "a"}) == "a"
     assert vega_repro_check.item({"pair": ["title", "abstract"]}) == ("title", "abstract")
+
+
+def test_the_sweep_passes_through_every_length_band_up_to_the_window():
+    """A kernel not reproducible at some shapes is found only by an input of
+    that shape: MedCPT's 32 measured pairs had none of 65–73 tokens, the band
+    where the GPU plugin moved (2026-10-30)."""
+    long = " ".join(f"w{i}" for i in range(1000))
+    texts = ["short", long, "mid " * 20]
+    got = vega_repro_check.sweep(texts, 512, 512)
+    assert len(got) == 512 and [len(t.split()) for t in got] == list(range(1, 513))
+    coarse = vega_repro_check.sweep(texts, 100, None)
+    sizes = [len(t.split()) for t in coarse]
+    assert sizes[0] == 1 and sizes[-1] == 1000 and len(sizes) == 100
+    pairs = [("T", long), ("U", "a b")]
+    got = vega_repro_check.sweep(pairs, 3, 10)
+    assert got == [("T", "w0"), ("T", " ".join(f"w{i}" for i in range(5))),
+                   ("T", " ".join(f"w{i}" for i in range(10)))]
+    assert vega_repro_check.sweep(texts, 0, 512) == []

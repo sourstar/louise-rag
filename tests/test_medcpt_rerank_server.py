@@ -159,3 +159,21 @@ def test_one_forward_pass_on_the_card_at_a_time(monkeypatch, make):
     for t in threads:
         t.join()
     assert most[0] == 1
+
+
+def test_a_fixed_encoder_gives_one_static_shape_and_the_same_real_tokens(tmp_path):
+    """`fixed`: every input padded to max_tokens (OpenVINO's GPU plugin was
+    not bit-reproducible at some dynamic shapes, 2026-10-30); the attention
+    mask still counts the real tokens alone."""
+    pytest.importorskip("tokenizers")
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    tok = Tokenizer(models.WordLevel({"[PAD]": 0, "[UNK]": 1, "a": 2, "b": 3}, unk_token="[UNK]"))
+    tok.pre_tokenizer = pre_tokenizers.Whitespace()
+    path = tmp_path / "tokenizer.json"
+    tok.save(str(path))
+    dynamic = server.make_encoder(str(path), 8)([("a b", "a")])
+    fixed = server.make_encoder(str(path), 8, fixed=True)([("a b", "a"), ("a", "b b a")])
+    assert dynamic["input_ids"].shape == (1, 3)
+    assert fixed["input_ids"].shape == (2, 8)
+    assert [int(sum(m)) for m in fixed["attention_mask"]] == [3, 4]
+    assert list(fixed["input_ids"][0][:3]) == list(dynamic["input_ids"][0])
