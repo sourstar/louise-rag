@@ -153,14 +153,31 @@ _RDF_BATCH_PEERS = (
 # One event line per batch would be ~86k rows/day at full speed — log spam
 # that buries real events. At most one line per collection+stage per 30s;
 # the counters on the Library/Stats pages are the real progress signal.
+# The line carries the batches it stood for: without that, the log read as a
+# time series (CLAUDE.md: the first benchmark) dropped most batches — on
+# 2026-10-30 its lines summed to 604 of the 2,000 books a measured fts run
+# indexed, and read as a 30 s pacing that was only the log's.
 _batch_log_ts: dict[tuple[str, str], float] = {}
+#: per collection+stage, since its last line: [batches, documents, chunks, stage seconds]
+_batch_since: dict[tuple[str, str], list] = {}
 
 
-def _batch_log(con, stage: str, collection, msg: str) -> None:
+def _batch_log(con, stage: str, collection, msg: str, *, docs: int = 0, chunks: int = 0,
+               secs: float = 0.0) -> None:
     key = (collection.name, stage)
     now = time.time()
+    if docs:
+        acc = _batch_since.setdefault(key, [0, 0, 0, 0.0])
+        acc[0] += 1
+        acc[1] += docs
+        acc[2] += chunks
+        acc[3] += secs
     if now - _batch_log_ts.get(key, 0.0) >= 30:
         _batch_log_ts[key] = now
+        acc = _batch_since.pop(key, None)
+        if acc is not None and acc[0] > 1:
+            msg += (f"; since the last line: {acc[0]} batches, {acc[1]} documents"
+                    + (f", {acc[2]} chunks" if acc[2] else "") + f" in {acc[3]:.1f}s of stage time")
         db.log_event(con, "info", stage, msg)
 
 
@@ -302,10 +319,9 @@ def stage_rdf(con, row, collection) -> None:
     catalog.write(collection, entries)
     took = time.monotonic() - t0
     sizing.sizer().record(_batch_key(collection, "rdf"), n, took)
-    if n > 1:
-        _batch_log(con, "rdf", collection,
-                   f"extracted {n} documents in one transaction "
-                   f"({took:.1f}s)")
+    _batch_log(con, "rdf", collection,
+               f"extracted {n} documents in one transaction ({took:.1f}s)",
+               docs=n, secs=took)
 
 _FTS_BATCH_PEERS = (
     "SELECT * FROM documents WHERE in_scope=1 AND rdf_done=1 AND error IS NULL "
@@ -532,10 +548,9 @@ def stage_fts(con, row, collection) -> None:
                      f"their published vectors are imported rather than recomputed")
     took = time.monotonic() - t0
     sizing.sizer().record(_batch_key(collection, "fts"), len(batch), took)
-    if len(batch) > 1:
-        _batch_log(con, "fts", collection,
-                   f"indexed {len(batch)} documents / {n_chunks} chunks "
-                   f"in one commit ({took:.1f}s)")
+    _batch_log(con, "fts", collection,
+               f"indexed {len(batch)} documents / {n_chunks} chunks in one commit ({took:.1f}s)",
+               docs=len(batch), chunks=n_chunks, secs=took)
 
 #: how long a collection's embed stage stays idle before its encoder's pin
 #: is restored (app/model_pins.py): the idle boundary of the stage, as long
