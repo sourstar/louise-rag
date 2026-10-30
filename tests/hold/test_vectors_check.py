@@ -119,6 +119,42 @@ def test_this_peers_own_vectors_reproduce(stocked):
     assert sum(s.checked for s in r.shards) >= 1
 
 
+def test_the_sampled_parts_are_cut_in_processes_and_draw_what_the_serial_run_draws(
+        stocked, monkeypatch):
+    """vectors-sample took 17 min in ONE process (2026-10-28): every
+    sampled part decoded and re-cut by the parent to draw sixteen ids. The
+    parts are cut and drawn in the pool's processes while this one embeds;
+    the report is the one cut here."""
+    from app import config, parallel
+    from app.hold import records as rec
+    root, snapshot, codex, _ = stocked
+    local = rec.local_collection(root, "gutenberg", codex)
+    cut: dict = {}
+
+    def ids_for(entry):
+        cut.clear()
+        cut.update(land.cut(codex, land.records_for(
+            root, "gutenberg", snapshot, f"{entry.slice}/{entry.n:05d}", None)))
+        return sorted(cut)
+
+    kw = dict(seed=SEED, fraction="1", embed=lambda t: space_embed(t, dim=codex.space.dim),
+              vectors_for=lambda i: embeddings.vectors_by_chunk_id(i, collection=local))
+    here = vck.check(codex, snapshot, chunk_ids_for=ids_for,
+                     text_of=lambda cid: land.input_of(cut, cid), **kw)
+    assert here.verdict == vck.PASS and len(here.shards) > 1
+    pools = []
+
+    class Spy(parallel.ProcessPoolExecutor):
+        def __init__(self, *a, **k):
+            pools.append(k.get("max_workers"))
+            super().__init__(*a, **k)
+    monkeypatch.setattr(parallel, "ProcessPoolExecutor", Spy)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 2)
+    pooled = vck.check(codex, snapshot, shard_tree=col.shard_dir_of(root, "gutenberg"), **kw)
+    # repr: a shard with nothing to check has a NaN median, never equal to itself
+    assert repr(pooled) == repr(here) and pools == [2]
+
+
 def test_no_encoder_is_INCONCLUSIVE_and_never_a_pass(stocked):
     """03 §3.1's third outcome. This is the one that matters: a check
     that passed for want of an encoder would certify a table nobody

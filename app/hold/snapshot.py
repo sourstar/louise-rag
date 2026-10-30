@@ -778,22 +778,32 @@ def _later_delta(shard_dir, previous: "Snapshot", shards, *, name: str,
         if not p.is_file():
             raise CodexError(f"{name}: {c.path}, listed by the build, is not in the SHARD")
 
+    # every part decoded in the pool's processes, old and new versions alike:
+    # in one thread a re-issued wikipedia-v8 would be ~2 × 89 GB decoded
+    # serially (docs/notes/multicore-audit.md)
+    from app import parallel
     old = []
-    for s, cands in where:
-        got = next((t for t in map(lambda p: _pairs(p, s.records_root), cands) if t is not None), None)
+    for (s, _cands), got in zip(where, parallel.each_part(
+            _first_pairs, [([str(p) for p in cands], s.records_root) for s, cands in where])):
         if got is None:
             raise CodexError(
                 f"{name}: {s.path}: no held copy has the records_root snapshot "
                 f"{previous.snapshot_id} lists ({s.records_root[:16]}…)")
         old.append(got)
     new = []
-    for c in new_or_reissued:
-        got = _pairs(shard_dir / c.path, c.records_root)
+    for c, got in zip(new_or_reissued, parallel.each_part(
+            _first_pairs, [([str(shard_dir / c.path)], c.records_root) for c in new_or_reissued])):
         if got is None:
             raise CodexError(f"{name}: {c.path}: its records_root is not the build's "
                              f"({c.records_root[:16]}…)")
         new.append(got)
     return _join_delta(old, new, name=name)
+
+
+def _first_pairs(paths: list[str], records_root: str):
+    """`_pairs` of the first of `paths` that is that version, or None."""
+    from pathlib import Path
+    return next((t for t in (_pairs(Path(p), records_root) for p in paths) if t is not None), None)
 
 
 def _pairs(path, records_root: str):

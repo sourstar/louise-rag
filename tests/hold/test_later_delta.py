@@ -65,6 +65,32 @@ def test_an_origin_that_replaces_in_place_keeps_the_old_version_until_the_snapsh
     assert sn.create(root, "gutenberg", snapshot_id="2026-09", log=lambda *_: None).hash == snap2.hash
 
 
+def test_the_re_issued_parts_are_decoded_in_processes(isolated_config, tmp_path, corpus_dir,
+                                                     monkeypatch):
+    """Both versions of every re-issued part are decoded in the pool's
+    processes (wikipedia-v8 re-issues nearly every part in a month: ~2 × 89 GB
+    in one thread, docs/notes/multicore-audit.md); the delta is the serial one."""
+    from app import config, parallel
+    monkeypatch.setattr(shard_mod, "_origin_versions", {})
+    root = _collection(tmp_path)
+    _build(root, corpus_dir, records_per_shard=1)
+    snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    shard_dir = col.shard_dir_of(root, "gutenberg")
+    uids = sorted(_revise(root, corpus_dir, shard_dir, part) for part in snap.shards[:2])
+    _build(root, corpus_dir, records_per_shard=1)
+    pools = []
+
+    class Spy(parallel.ProcessPoolExecutor):
+        def __init__(self, *a, **k):
+            pools.append(k.get("max_workers"))
+            super().__init__(*a, **k)
+    monkeypatch.setattr(parallel, "ProcessPoolExecutor", Spy)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 2)
+    snap2 = sn.create(root, "gutenberg", snapshot_id="2026-09", log=lambda *_: None)
+    assert snap2.delta.to_dict() == {"added": [], "changed": uids, "tombstoned": []}
+    assert pools == [2, 2], "the previous versions, then the new ones"
+
+
 def test_a_previous_version_not_held_is_refused_before_anything_is_read(
         isolated_config, tmp_path, corpus_dir, monkeypatch):
     """A delta that guessed passes every check while naming the wrong
