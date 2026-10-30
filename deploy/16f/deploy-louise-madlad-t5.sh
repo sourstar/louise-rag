@@ -135,6 +135,9 @@ grep -q "^def record_hash_of(root: Path, name: str" "$ROOT/src.new/app/share/pos
 grep -q "_build_locks.setdefault(key" "$ROOT/src.new/app/share/possession.py"               # 6554842 (fa21777): the possession index built by one thread at a time
 grep -q "errored, not waiting" "$ROOT/src.new/app/health.py"                                 # ca907a8 (1728a75): node show counts errored documents apart
 grep -q "^def place_kept(kind: str, origin: Path)" "$ROOT/src.new/app/derived.py"            # d915a4d (7f47a68): the pack's place once per process; a row group per task
+test -s "$ROOT/src.new/deploy/supervise-pass.sh"                                           # 772abed (55d37eb): the pass supervisor
+grep -q "mem_limit: 24g" "$ROOT/src.new/deploy/truenas-app.yaml"                           # 772abed: the caps set_mem_limits.py applies live
+test -s "$ROOT/src.new/deploy/16f/set_mem_limits.py"
 grep -q "derived = root / name / INDEX / facets_mod.CACHE" "$ROOT/src.new/app/hold/discard.py"  # c1b6156 (0fc6451): discard removes only index/facets
 grep -q '"held-record"' "$ROOT/src.new/app/parallel.py"                                     # 7faa83b (39d0086): held record lines through the parse pool (the kind's test reshaped in 5cec41d)
 grep -q "^def with_line(collection" "$ROOT/src.new/app/pack/build.py"                       # 5cec41d (060b4c7): the pool's children encode each record line
@@ -175,7 +178,7 @@ docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
     tests/test_gpu_level.py tests/test_gpu_governor.py tests/test_node_start_stop.py tests/test_worker_hot_reload.py \
     tests/test_translate_t5.py tests/test_translate_model.py tests/test_query_translation.py tests/test_madlad_translate_server.py \
     tests/test_encoder_bakeoff.py tests/test_web_pages.py tests/test_gpu_models.py \
-    tests/test_batch_log.py tests/test_plugins_wikidata_families.py tests/pack/test_build.py tests/test_stage_locking.py tests/test_embed_window.py tests/test_possessed_vectors.py tests/test_refs_normattiva.py tests/test_health.py tests/test_invariant_6_storage.py \
+    tests/test_batch_log.py tests/test_plugins_wikidata_families.py tests/pack/test_build.py tests/test_stage_locking.py tests/test_embed_window.py tests/test_possessed_vectors.py tests/test_refs_normattiva.py tests/test_health.py tests/test_invariant_6_storage.py tests/test_deploy_set_mem_limits.py tests/test_deploy_set_platform_image.py \
     tests/hold/test_discard.py tests/hold/test_check.py tests/hold/test_vectors_check.py tests/hold/test_later_delta.py tests/test_discovery_moved_corpus.py tests/test_plugin_walk.py tests/test_wikipedia_drop_twins.py tests/test_wikipedia_two_sources.py \
     $(cd "$ROOT/src.new" && ls tests/test_node_profile*.py tests/test_cpu_limit*.py 2>/dev/null)
 # test_rename.py in its own run: in one invocation with tests/ask/ its directory's
@@ -244,6 +247,8 @@ with Client() as c:
         c.call("app.update", fm.APP, {"custom_compose_config": cfg}, job=True)
 PY
 test ! -e "$ROOT/config/node.key"
+# #89's memory caps on the live app (operator 2026-10-30: a kernel kill recovers by itself): idempotent
+python3 "$ROOT/src/deploy/16f/set_mem_limits.py"
 python3 "$ROOT/src/deploy/16f/set_platform_image.py" "$NEW_ID"
 s=$(midclt call app.query '[["name","=","louise-rag"]]' | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['state'])")
 [ "$s" = "RUNNING" ] || midclt call app.start louise-rag >/dev/null
@@ -260,6 +265,8 @@ echo "web $WEB"; echo "worker $WRK"
 [ "$WEB" = "$WRK" ] && [ "$WEB" = "$NEW_ID" ]
 for c in ix-louise-rag-web-1 ix-louise-rag-worker-1; do
   v=$(docker exec "$c" printenv LOUISE_PLATFORM_IMAGE || true); echo "$c LOUISE_PLATFORM_IMAGE $v"; [ "$v" = "$NEW_ID" ]
+  m=$(docker inspect "$c" --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}'); echo "$c memory cap (bytes, with swap) $m"
+  case "$c" in *web*) [ "$m" = "12884901888 12884901888" ];; *worker*) [ "$m" = "25769803776 25769803776" ];; esac
   v=$(docker exec "$c" printenv LOUISE_CACHE_DIR || true); echo "$c LOUISE_CACHE_DIR $v"; [ "$v" = "/data/cache" ]
 done
 say "6b. the secrets by path, the same identity"
