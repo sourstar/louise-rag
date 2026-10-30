@@ -231,6 +231,30 @@ def test_the_build_thread_names_uids_and_gets_back_lines(isolated_config, tmp_pa
         assert (held_dir / rel).read_bytes() == (mother / rel).read_bytes()
 
 
+def test_parts_are_written_by_processes_made_once_per_build(isolated_config, tmp_path, corpus_dir,
+                                                           two_processes, monkeypatch):
+    """Writer THREADS shared the build thread's GIL and the build reached ~6
+    of 8 cores (München, 2026-10-30); the parts are written by processes,
+    made once for every slice, and their bytes are the serial build's."""
+    from concurrent.futures import ProcessPoolExecutor
+    from app.pack import build as pack_build, manifest as manifest_mod
+    c, _rows = _gutenberg(tmp_path, corpus_dir)
+    made: list = []
+    real = pack_build.part_writer_pool
+    monkeypatch.setattr(pack_build, "part_writer_pool", lambda: made.append(real()) or made[-1])
+    by_processes = tmp_path / "packs" / "processes"
+    r = pack_build.build(c, by_processes, records_per_shard=1, sign=False, log=lambda *_: None)
+    assert r.records == 3
+    assert len(made) == 1 and isinstance(made[0], ProcessPoolExecutor), "one writer pool, of processes"
+    monkeypatch.undo()
+    parallel.shutdown()
+    config.PARSE_PROCESSES = 1
+    serial = tmp_path / "packs" / "serial"
+    pack_build.build(c, serial, records_per_shard=1, sign=False, log=lambda *_: None)
+    for s in manifest_mod.load(serial)["shards"]:
+        assert (by_processes / s["path"]).read_bytes() == (serial / s["path"]).read_bytes()
+
+
 def test_a_slimmed_record_keeps_what_every_cutoff_rule_reads():
     from app.pack import build as pack_build, cutoff
     full = {"uid": "x:1", "native_id": "1", "content_hash": "h", "origin_hash": "o", "chunks": 3,
