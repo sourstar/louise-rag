@@ -15,10 +15,14 @@ on the ORIGIN'S PHYSICAL IDENTITY — its resolved path — never a name
 """
 from __future__ import annotations
 
+import fcntl
+import glob
 import hashlib
 import os
 import shutil
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from app import config
 
@@ -92,6 +96,30 @@ def adopt(src: Path, dst: Path) -> bool:
         shutil.copy2(src, tmp)
     os.replace(tmp, dst)
     return True
+
+
+@contextmanager
+def building(dest: Path) -> Iterator[None]:
+    """One builder of `dest` at a time, ACROSS PROCESSES: an exclusive
+    `flock` on `<dest>.lock` beside it, held while the caller re-checks
+    freshness and builds. A thread lock serialised one process only, and
+    the records build's plan runs in the pool's children (#80): two of them
+    built the same pubmed pack into the same temporary file, and a third
+    read it truncated — two documents skipped by the plan, "recorded, never
+    fatal" (München, 2026-10-30). The standard: an advisory lock on the
+    file, then a temporary name of the writer's own (`<dest>.<pid>.tmp`);
+    what a killed writer left there goes when the next one takes the lock.
+    The kernel drops the lock with its holder; the empty lock file stays."""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with open(dest.with_name(dest.name + ".lock"), "a+b") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            for stale in dest.parent.glob(glob.escape(dest.name) + ".*tmp"):
+                stale.unlink(missing_ok=True)
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def held() -> list[Path]:

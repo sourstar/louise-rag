@@ -4,6 +4,16 @@ One entry per case that cost time, newest first. Each entry gives what happened,
 
 ## 2026-10-30 — the multi-core day
 
+### A thread lock guarding work that moved to processes
+
+- **What happened.** The pubmed pack is built on first use, under a per-container `threading.Lock`, into a fixed `<pack>.tmp`. #80 moved the records build's plan into the pool's processes. Two children built the same pack into the same file, and a third read it truncated ("Parquet file size is 0 bytes"). The plan recorded the third child's documents as skipped, "never fatal". The deploy gate's test caught it on a loaded node; the test had passed alone 3/3.
+- **Cost.** One refused deploy. Unseen, it would have been a build silently missing documents wherever a pack is fresh or stale under a pool.
+- **Lessons.**
+  - When work moves from threads to processes, every lock it takes moves too. A `threading.Lock` around a file is a defect as soon as a second process can reach the file.
+  - The standard is an advisory `flock` on the file, then a temporary name of the writer's own.
+  - A "recorded, never fatal" skip in a test's data is a failure of the test.
+- **Fix.** `derived.building(dest)` guards the pubmed and wikipedia page-props packs. The wikidata regroup refuses a second run on the same pack.
+
 ### A cache capped in units whose size the data decides
 
 - **What happened.** #88 shrank the wikidata pack's row groups from 1,000 lines to 64 and raised the per-process line cache from 8 groups to 128. The cap kept the same number of lines only once the pack was regrouped. The build ran first, on the pack as written. Its children grew from ~0.65 GB to 5.7 GB, and the cgroup killed them at 32 g with 12 children, then with 6 (München). The regroup read each 3.6+ GB file whole, so a 12 g cap held two children.

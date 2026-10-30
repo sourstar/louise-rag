@@ -811,3 +811,16 @@ def test_a_regrouped_file_is_streamed_and_its_groups_align_on_the_row_group(tmp_
     got = pa.concat_tables([pf.read_row_group(g) for g in range(pf.num_row_groups)])
     assert got.equals(t) and got.schema.metadata == t.schema.metadata
     assert pack._regroup_file(str(f), 2) is False
+
+
+def test_a_second_regroup_of_the_same_pack_is_refused(tmp_path):
+    """Two regroups would write the same `<file>.regroup` and replace the
+    chunk file with whichever half they had."""
+    import fcntl
+    dump = _dump(tmp_path)
+    pack.build(dump, languages=("en",), chunk=4, workers=1)
+    with open(pack.pack_dir(dump) / "regroup.lock", "a+b") as other:
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(pack.PackError, match="another regroup"):
+            pack.regroup(dump, row_group=2, log=lambda *_: None)
+    assert pack.regroup(dump, row_group=2, log=lambda *_: None)["rewritten"] >= 1

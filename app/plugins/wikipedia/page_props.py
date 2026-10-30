@@ -265,6 +265,7 @@ def ensure(props: Path) -> Path:
     for pack in _candidates(props):
         if _is_fresh(props, pack):
             return _remember(key, sig, pack)
+    from app import derived
     with _lock:
         lock = _build_locks.setdefault(key, threading.Lock())
     with lock:
@@ -275,7 +276,10 @@ def ensure(props: Path) -> Path:
         for pack in _candidates(props):
             t0 = time.monotonic()
             try:
-                n = build(props, pack)
+                with derived.building(pack):    # one builder across processes
+                    if _is_fresh(props, pack):
+                        return _remember(key, sig, pack)
+                    n = build(props, pack)
             except OSError as e:          # the origin cannot be written: the next place
                 err = e
                 continue

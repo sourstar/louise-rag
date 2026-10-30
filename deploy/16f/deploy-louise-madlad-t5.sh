@@ -144,6 +144,7 @@ grep -q "bundle_genesis.forget_residuals(collection, stale)" "$ROOT/src.new/app/
 grep -q "^_MAX_GROUP_BYTES = 256 << 20" "$ROOT/src.new/app/plugins/wikidata/pack.py"         # the line cache in bytes; the regroup streamed (München OOM report, 10-30)
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
 test -x "$ROOT/src.new/deploy/docker-memory-ceiling.sh"                                     # the ceiling on every container together
+grep -q "^def building(dest: Path)" "$ROOT/src.new/app/derived.py"                          # one pack builder across processes (the plan's pool children)
 grep -q "derived = root / name / INDEX / facets_mod.CACHE" "$ROOT/src.new/app/hold/discard.py"  # c1b6156 (0fc6451): discard removes only index/facets
 grep -q '"held-record"' "$ROOT/src.new/app/parallel.py"                                     # 7faa83b (39d0086): held record lines through the parse pool (the kind's test reshaped in 5cec41d)
 grep -q "^def with_line(collection" "$ROOT/src.new/app/pack/build.py"                       # 5cec41d (060b4c7): the pool's children encode each record line
@@ -184,7 +185,7 @@ docker run --rm -v "$ROOT/src.new:/srv" -w /srv -e PYTHONPATH=/srv \
     tests/test_gpu_level.py tests/test_gpu_governor.py tests/test_node_start_stop.py tests/test_worker_hot_reload.py \
     tests/test_translate_t5.py tests/test_translate_model.py tests/test_query_translation.py tests/test_madlad_translate_server.py \
     tests/test_encoder_bakeoff.py tests/test_web_pages.py tests/test_gpu_models.py \
-    tests/test_batch_log.py tests/test_plugins_wikidata_families.py tests/pack/test_build.py tests/test_stage_locking.py tests/test_embed_window.py tests/test_possessed_vectors.py tests/test_refs_normattiva.py tests/test_health.py tests/test_invariant_6_storage.py tests/test_deploy_set_mem_limits.py tests/test_deploy_set_platform_image.py tests/test_worker_selection_cost.py tests/test_process_exit.py tests/test_deploy_supervise_pass.py \
+    tests/test_batch_log.py tests/test_plugins_wikidata_families.py tests/pack/test_build.py tests/test_stage_locking.py tests/test_embed_window.py tests/test_possessed_vectors.py tests/test_refs_normattiva.py tests/test_health.py tests/test_invariant_6_storage.py tests/test_deploy_set_mem_limits.py tests/test_deploy_set_platform_image.py tests/test_worker_selection_cost.py tests/test_process_exit.py tests/test_deploy_supervise_pass.py tests/test_derived_cache.py tests/test_plugins_pubmed_pack.py \
     tests/hold/test_discard.py tests/hold/test_check.py tests/hold/test_vectors_check.py tests/hold/test_later_delta.py tests/test_discovery_moved_corpus.py tests/test_plugin_walk.py tests/test_wikipedia_drop_twins.py tests/test_wikipedia_two_sources.py \
     $(cd "$ROOT/src.new" && ls tests/test_node_profile*.py tests/test_cpu_limit*.py 2>/dev/null)
 # test_rename.py in its own run: in one invocation with tests/ask/ its directory's
