@@ -64,12 +64,22 @@ class Reranker:
         return out
 
 
-def make_encoder(tokenizer_json: str, max_tokens: int = MAX_TOKENS):
+def make_encoder(tokenizer_json: str, max_tokens: int = MAX_TOKENS, *, fixed: bool = False):
+    """`encode(items)`: the model's three int64 inputs. `fixed`: every input
+    padded to `max_tokens`, so the model sees ONE static shape.
+
+    OpenVINO's GPU plugin is not bit-reproducible at every dynamic shape
+    (CLAUDE.md invariant 12). München, 2026-10-30, run 39578bfb (Arc B70):
+    7 of 160 pubmed pairs, all of 65–73 tokens, came back different in each
+    of four passes (max |diff| 1.4–3.0e-4), the other 153 bit-identical. On
+    the CPU, 0 of 160. On the GPU with every input padded to 512, 0 of 160,
+    and 640 inferences in 4.0 s against 11.9 s. The attention mask keeps the
+    padding out of the [CLS] row; its count of real tokens is unchanged."""
     import numpy as np
     from tokenizers import Tokenizer
     tok = Tokenizer.from_file(tokenizer_json)
     tok.enable_truncation(max_tokens)       # longest_first, as the model card
-    tok.enable_padding()                    # [PAD] = 0
+    tok.enable_padding(length=max_tokens if fixed else None)    # [PAD] = 0
 
     def encode(pairs):
         encs = tok.encode_batch(pairs)

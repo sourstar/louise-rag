@@ -411,8 +411,9 @@ def _article(seen=None):
     model whose [CLS] vector is (len(first), len(second), segment-1 tokens)."""
     seen = {"encoded": []} if seen is None else seen
 
-    def encoder(tokenizer_json, max_tokens):
+    def encoder(tokenizer_json, max_tokens, fixed=False):
         seen["encoder"] = (tokenizer_json, max_tokens)
+        seen["fixed"] = fixed
 
         def encode(items):
             seen["encoded"].append(list(items))
@@ -453,6 +454,20 @@ def test_article_encoder_loads_from_the_load_call_and_its_models_env(tmp_path, m
     cpu = _article(seen)
     assert cpu.LoadModel(load_call(d, options=["device:cpu"], context_size=512), None).success
     assert seen["infer"][1] == "CPU" and cpu.pairs is False
+
+
+def test_article_encoder_pads_to_one_static_shape_on_the_gpu_only(tmp_path):
+    """München, 2026-10-30 (run 39578bfb, Arc B70): at dynamic shapes of
+    65–73 tokens OpenVINO's GPU plugin gave 7 of 160 pairs different bytes in
+    each of four passes; padded to 512, 0 of 160 (and 3x faster). On the CPU,
+    dynamic shapes reproduced (0 of 160), and padding would cost it 25x."""
+    seen: dict = {"encoded": []}
+    _loaded_article(tmp_path, seen)
+    assert seen["fixed"] is True, "device:xpu -> GPU: every input padded to the context"
+    cpu = _article(seen)
+    assert cpu.LoadModel(load_call(tmp_path / "medcpt-cross-ov", options=["device:cpu"],
+                                   context_size=512), None).success
+    assert seen["fixed"] is False
 
 
 @pytest.mark.parametrize("call,why", [

@@ -5,7 +5,15 @@ time — not within a tolerance.
 
     python -m tools.vega_repro_check --url http://<localai>:30286 \\
         --model vega-bge-m3 [--n 16] [--loads 2] [--repeats 2] [--window 1024] \\
-        [--texts calibration/text.jsonl]
+        [--texts calibration/text.jsonl] [--sweep 512]
+
+THE SWEEP (2026-10-30). `--sweep` adds that many prefixes of the file's
+longest text (a pair's second segment), word by word from one word up to the
+window: every input length band, not only the file's. A kernel that is not
+reproducible at some shapes is found only by an input of that shape. MedCPT's
+32 pairs measured bit-exact on a tree whose GPU plugin then gave 7 of 160
+pubmed pairs different bytes, all of 65–73 tokens, a band none of the 32 had
+(München, run 39578bfb).
 
 Each load begins with `POST /backend/shutdown`, so the next request loads the
 model afresh; each repeat sends every text ALONE, tagged as Louise tags it
@@ -43,6 +51,26 @@ def spread(texts: list[str], n: int) -> list[str]:
     if n >= len(texts):
         return list(texts)
     return [texts[i * len(texts) // n] for i in range(n)]
+
+
+def sweep(texts: list, count: int, window: int | None) -> list:
+    """`count` prefixes of the longest text (of a pair's second segment, its
+    first kept whole), from one word up to `window` words — or all of them,
+    for no window — spread evenly. A word is at least one token for every
+    tokenizer in use, so they reach the window and pass through every band
+    below it."""
+    if count <= 0 or not texts:
+        return []
+    longest = max(texts, key=lambda t: len(t[1]) if isinstance(t, tuple) else len(t))
+    first, body = longest if isinstance(longest, tuple) else (None, longest)
+    words = body.split()
+    top = min(len(words), window) if window else len(words)
+    if top <= 0:
+        return []
+    n = min(count, top)
+    sizes = sorted({1 + (k * (top - 1)) // max(1, n - 1) for k in range(n)})
+    return [(first, " ".join(words[:m])) if first is not None else " ".join(words[:m])
+            for m in sizes]
 
 
 def measure(texts: list[str], *, url: str, model: str, loads: int, repeats: int,
@@ -83,14 +111,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--window", type=int, default=None, help="tokens, the space's ctx")
     p.add_argument("--texts", type=Path, default=Path("calibration/text.jsonl"),
                    help="JSON lines with `text`, or `pair`: [first, second]")
+    p.add_argument("--sweep", type=int, default=512,
+                   help="prefixes of the longest text, one word up to the window (0: none)")
     args = p.parse_args(argv)
     import httpx
-    texts = spread([item(json.loads(line)) for line in
-                    args.texts.read_text(encoding="utf-8").splitlines() if line.strip()], args.n)
+    every = [item(json.loads(line)) for line in
+             args.texts.read_text(encoding="utf-8").splitlines() if line.strip()]
+    texts = spread(every, args.n) + sweep(every, args.sweep, args.window)
     out = measure(texts, url=args.url, model=args.model, loads=args.loads,
                   repeats=args.repeats, window=args.window, post=httpx.post)
     differ = f"; differ: {out['differ']}" if out["differ"] else ""
-    print(f"{args.model}: {out['identical']}/{out['texts']} texts bit-identical over "
+    print(f"{args.model}: {out['identical']}/{out['texts']} texts ({args.n} spread, "
+          f"{out['texts'] - min(args.n, len(every))} swept) bit-identical over "
           f"{out['vectors']} vectors ({args.loads} fresh loads x {args.repeats} shuffled "
           f"passes){differ}")
     return 1 if out["differ"] else 0
