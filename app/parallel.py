@@ -331,6 +331,9 @@ def _one(kind: str, collection, row: dict):
     if kind == "record":
         from .pack.build import _record_of
         return _record_of(collection, plugin, row)
+    if kind == "held-record":
+        from .pack.build import held_or_parsed
+        return held_or_parsed(collection, plugin, row)
     if kind == "prepare":
         return plugin_io.prepare(plugin, row)
     raise ValueError(f"unknown work kind {kind!r}")

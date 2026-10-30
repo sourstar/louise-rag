@@ -27,7 +27,7 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
-from .. import config, cpu_limit, db, layers as layers_mod, parallel, plugin_io
+from .. import config, db, layers as layers_mod, parallel, plugin_io
 from ..hold import shard as shard_mod, records as hold_records
 from ..plugins.base import UnindexableDocument
 from . import cutoff as cutoff_mod, manifest as manifest_mod, records, slicing
@@ -205,47 +205,81 @@ def held_records_of(root: Path, name: str) -> HeldRecords:
     return HeldRecords(col.shard_dir_of(Path(root), name), tuple(s.path for s in snap.shards))
 
 
+#: THREADS reading the held parts' indexes: the read is a seek, a small zstd
+#: frame and a JSON decode per part, mostly waiting on the disk (37,501 parts
+#: of wikipedia-v8 on tank), so several in flight; the inserts stay in order,
+#: one transaction per part, which is what makes the pass resumable
+HELD_INDEX_READERS = 8
+
+
 def _held_index(con_build, held: HeldRecords, log) -> None:
     """uid → (part, frame, line) over every part `held` lists, from each
-    part's own trailing index (no record decoded); resumable at a part."""
+    part's own trailing index (no record decoded); resumable at a part.
+    The indexes are read by HELD_INDEX_READERS threads, a bounded window
+    ahead of the inserts (operator, 2026-10-30: "multi threading is a must,
+    not an option")."""
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor
     con_build.execute("CREATE TABLE IF NOT EXISTS held(uid TEXT PRIMARY KEY, path TEXT NOT NULL, "
                       "frame INTEGER NOT NULL, line INTEGER NOT NULL) WITHOUT ROWID")
     done = int(_meta(con_build, "held_parts", 0))
-    for k in range(done, len(held.paths)):
-        rel = held.paths[k]
-        index = records.read_index(held.shard_dir / rel)
-        con_build.execute("BEGIN IMMEDIATE")
-        con_build.executemany("INSERT OR REPLACE INTO held(uid,path,frame,line) VALUES(?,?,?,?)",
-                              [(uid, rel, fl[0], fl[1]) for uid, fl in index.uids.items()])
-        _set_meta(con_build, "held_parts", k + 1)
-        con_build.execute("COMMIT")
+    todo = range(done, len(held.paths))
+    with ThreadPoolExecutor(max_workers=HELD_INDEX_READERS, thread_name_prefix="held-index") as ex:
+        window: deque = deque()
+        ahead = iter(todo)
+        for k in ahead:
+            window.append((k, ex.submit(records.read_index, held.shard_dir / held.paths[k])))
+            if len(window) >= 2 * HELD_INDEX_READERS:
+                break
+        while window:
+            k, fut = window.popleft()
+            nxt = next(ahead, None)
+            if nxt is not None:
+                window.append((nxt, ex.submit(records.read_index, held.shard_dir / held.paths[nxt])))
+            index, rel = fut.result(), held.paths[k]
+            con_build.execute("BEGIN IMMEDIATE")
+            con_build.executemany("INSERT OR REPLACE INTO held(uid,path,frame,line) VALUES(?,?,?,?)",
+                                  [(uid, rel, fl[0], fl[1]) for uid, fl in index.uids.items()])
+            _set_meta(con_build, "held_parts", k + 1)
+            con_build.execute("COMMIT")
     if done < len(held.paths):
         log(f"[pack build] the records of {len(held.paths)} held part(s) indexed for reuse")
 
 
-def _held_values(collection, con_build, held: HeldRecords, srcs: list[dict]) -> list[tuple[bool, object]]:
-    """`parallel.compute("record")`'s answer, from held record lines. A
-    document none of them is for is PARSED, as a build by the book would:
-    skipped, it left the SHARD quietly short of a record the manifest lists
-    (invariant 11) — a document admitted after the snapshot the lines come
-    from (2026-10-30, the discarded wikipedia-v8 snapshot's rebuild)."""
-    out: list[tuple[bool, object] | None] = []
-    parse: list[int] = []
-    for src in srcs:
-        at = con_build.execute("SELECT path, frame, line FROM held WHERE uid=?", (src["uid"],)).fetchone()
-        if at is None:
-            parse.append(len(out))
-            out.append(None)
-            continue
-        try:
-            out.append((True, _record_from_line(collection, records.read_record_at(
-                held.shard_dir / at["path"], int(at["frame"]), int(at["line"])))))
-        except Exception as e:   # noqa: BLE001 — recorded per document by the caller
-            out.append((False, {"type": type(e).__name__, "msg": str(e)[:500]}))
-    if parse:
-        for k, got in zip(parse, parallel.compute("record", collection, [srcs[k] for k in parse])):
-            out[k] = got
-    return out  # type: ignore[return-value]
+#: where a document's held record line is — (part path, frame, line) —
+#: carried in its row to the parse pool (`parallel` kind "held-record")
+HELD_AT = "_held_at"
+
+
+def _with_held_at(con_build, held: HeldRecords, srcs: list[dict]) -> list[dict]:
+    """The page's documents, each with where its held line is: one indexed
+    lookup per 900 uids, in the parent; the reading and the re-cut are the
+    pool's."""
+    at: dict[str, tuple[str, int, int]] = {}
+    uids = [s["uid"] for s in srcs]
+    for i in range(0, len(uids), 900):
+        part = uids[i:i + 900]
+        for r in con_build.execute(f"SELECT uid, path, frame, line FROM held WHERE uid IN "
+                                   f"({','.join('?' * len(part))})", part):
+            at[r["uid"]] = (str(held.shard_dir / r["path"]), int(r["frame"]), int(r["line"]))
+    return [dict(s, **{HELD_AT: at[s["uid"]]}) if s["uid"] in at else s for s in srcs]
+
+
+def held_or_parsed(collection, plugin, row: dict) -> tuple[dict, int, bytes, dict[str, str]]:
+    """The parse pool's "held-record" work, one document: its held line,
+    its chunks cut again (`_record_from_line`) — or, where no held line is
+    for it, PARSED, as a build by the book would: skipped, it left the SHARD
+    quietly short of a record the manifest lists (invariant 11; 2026-10-30).
+
+    IN THE POOL, not in the build's own process: taken in one process,
+    wikipedia-v8's rebuild of 52.9 M records ran on one core of the eight
+    the profile allowed (München, 2026-10-30: 75–97 % of one core, ~9 k
+    records/s), the second time a records build ran single-threaded."""
+    at = row.get(HELD_AT)
+    if at is None:
+        return _record_of(collection, plugin, row)
+    path, frame, line = at
+    return _record_from_line(collection, records.read_record_at(Path(path), int(frame), int(line)))
 
 
 def _record_from_line(collection, line: dict) -> tuple[dict, int, bytes, dict[str, str]]:
@@ -615,18 +649,18 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
         halted: list[bool] = []
 
         def held_pages():
-            watch = cpu_limit.Watch(say)
+            # held lines go through the SAME pool as parsing, each row
+            # carrying where its line is (`held_or_parsed`)
             for wanted in pages_of():
-                if watch.limit().cores == 0 and not cpu_limit.wait_while_paused(stop, watch):
-                    raise parallel.Interrupted("stopped while the node profile paused the build")
-                yield _held_values(collection, con_build, held, wanted)
+                yield _with_held_at(con_build, held, wanted)
 
         def guarded(raw):
             try:
                 yield from raw
             except parallel.Interrupted:
                 halted.append(True)
-        stream = guarded(held_pages() if held is not None else
+        stream = guarded(parallel.compute_pages("held-record", collection, held_pages(), stop=stop, say=say)
+                         if held is not None else
                          parallel.compute_pages("record", collection, pages_of(), stop=stop, say=say))
         for results in stream:
             page, srcs = pending.popleft()
