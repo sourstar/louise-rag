@@ -57,6 +57,7 @@ button,.btn{font-family:var(--mono);font-size:12px;background:var(--panel2);colo
   border:1px solid var(--line);padding:6px 14px;cursor:pointer;border-radius:3px;text-decoration:none;display:inline-block}
 button:hover,.btn:hover{border-color:var(--brass)}
 button.primary{border-color:var(--brass);color:var(--brass)}
+button.danger{border-color:var(--err);color:var(--err)}
 /* Non-clickable = grey and inert, never a dimmed copy of an active control:
    opacity:.4 kept the accent colours and merely faded them, so a disabled
    button still read as "primary, somehow". */

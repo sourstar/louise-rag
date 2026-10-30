@@ -94,6 +94,10 @@
 <div id="relay-note" class="note" role="status" aria-live="polite"
      style="display:none;border:1px solid var(--brass);padding:8px 12px;margin:8px 0"></div>
 
+{# the search's report — what was left out, what it took — ABOVE the answer
+   (operator, 2026-10-30); `placeReport` moves it here from the results #}
+<div id="report"></div>
+
 <div id="answer-pane" style="display:none" class="panel">
   <h2>Answer</h2>
   <div id="answer" style="white-space:pre-wrap;line-height:1.6"></div>
@@ -287,10 +291,16 @@ function relayListen(kind,id,on){
     };
   });
 }
+function placeReport(){
+  // the report rendered with the hits goes above the answer box
+  const slot=document.getElementById('report'), r=document.querySelector('#results #search-report');
+  if(r)slot.replaceChildren(r);
+}
 function showResults(d){
   // the answer is written from THIS search (one question, one search)
   lastSearch=d.search_id;
   document.getElementById('results').innerHTML=d.html;
+  placeReport();
   wireHits();
   applyLanguage();
 }
@@ -306,6 +316,7 @@ async function search(){
   answerRaw=''; answerLang=null; answerShown=null; answerNote='';
   document.getElementById('answer-pane').style.display='none';
   document.getElementById('answer').textContent='';
+  document.getElementById('report').replaceChildren();
   document.getElementById('results').innerHTML='<div class="note">searching…</div>';
   relayNote('');
   // a new question replaces this page's questions still running
@@ -979,6 +990,7 @@ function linkCitations(){
   a.querySelectorAll('a.cite').forEach(el=>{el.onclick=()=>{const h=hits[parseInt(el.dataset.n,10)-1];
     if(h)openReader(h.dataset.collection,h.dataset.book,h.dataset.cid,h.dataset.title)}});
 }
+placeReport();
 wireHits();
 relayRestore();
 </script>

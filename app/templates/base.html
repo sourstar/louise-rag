@@ -28,8 +28,11 @@ try{var t=localStorage.getItem('louise-theme');if(t)document.documentElement.dat
     <option value="gres">Grès des Vosges</option><option value="colmar">Colmar</option>
   </select>
   {% if viewer and viewer.role != 'guest' %}
-  <a href="#" class="who" onclick="fetch('/logout',{method:'POST'}).then(()=>location.href='/login');return false"
-     title="log out">{{ viewer.name }} · log out</a>
+  {# "Log out", not "admin · log out", which read as a page called admin;
+     and confirmed, because an accidental touch logs out a reader who may
+     not have the key at hand (operator, 2026-10-30) #}
+  <a href="#" class="who" data-name="{{ viewer.name }}" title="logged in as {{ viewer.name }}"
+     onclick="confirmLogout(this.dataset.name);return false">Log out</a>
   {% elif not viewer %}
   <a href="/login" class="who">Log in</a>
   {% endif %}
@@ -48,6 +51,23 @@ function setTheme(t){
   const s=document.getElementById('theme'); if(s) s.value=t||'';
 }
 (function(){const s=document.getElementById('theme'); if(s) s.value=document.documentElement.dataset.theme||''})();
+function confirmLogout(name){
+  const box=document.createElement('div');
+  const h=document.createElement('h2'); h.textContent='Log out?';
+  const p=document.createElement('p');
+  p.append('You are logged in as ');
+  const b=document.createElement('b'); b.textContent=name; p.append(b, '.');
+  const w=document.createElement('p'); w.className='note';
+  w.textContent='To log in again you need your key — the token you were given. '
+    +'Without it you cannot get back in.';
+  const row=document.createElement('div'); row.className='actions';
+  const stay=document.createElement('button'); stay.textContent='Stay logged in'; stay.className='primary'; stay.onclick=hideModal;
+  const out=document.createElement('button'); out.textContent='Log out'; out.className='danger';
+  out.onclick=()=>fetch('/logout',{method:'POST'}).then(()=>location.href='/login');
+  row.append(stay, out); box.append(h, p, w, row);
+  const inner=document.getElementById('modal-inner'); inner.replaceChildren(box);
+  document.getElementById('modal-backdrop').style.display='flex'; stay.focus();
+}
 function showModal(html){document.getElementById('modal-inner').innerHTML=html;document.getElementById('modal-backdrop').style.display='flex'}
 function hideModal(){document.getElementById('modal-backdrop').style.display='none'}
 async function postJSON(url,body){
