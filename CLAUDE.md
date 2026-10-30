@@ -339,6 +339,14 @@ are the ones that have drifted; prefer to add a test when you touch them.
   time (RULE 1), so letting a slow run finish "because its bytes are the
   same anyway" is never the reason to wait: compare the finish times and
   take the shorter, without asking.
+- **PERFORMANCE IS SECOND ONLY TO CONSISTENCY** (operator, 2026-10-30:
+  "the consistency of the results is fundamental, but the performance is
+  almost equally important to make this platform usable. ANYTHING can be
+  postponed to deploy and test a performance improvement"). A known
+  speed-up is never "written down for later" because the pass it speeds is
+  short, one-off or rare — it is built, deployed and measured now, and
+  whatever else was queued waits. The finish-time comparison above decides
+  only WHEN a running job is restarted onto it, never WHETHER it is built.
 - A per-round cost scales with the work available, never with the size of
   a list or the corpus. If a per-item cost depends on how much has been
   processed so far, it is a bug however fast it looks at fixture scale.
