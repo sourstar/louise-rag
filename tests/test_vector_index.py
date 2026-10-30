@@ -722,3 +722,74 @@ def test_the_light_compaction_is_not_queued_behind_the_long_passes(isolated_conf
                         steps.append("light" if light else "full") or {"compacted": True})
     vector_index.ensure(c)
     assert steps == ["light", "prune", "refresh"], steps
+
+
+def _small_fragments_appended(collection, n: int, start: int) -> None:
+    for i in range(n):
+        _fill(collection, 5, seed=start + i + 1, start=start + 5 * i)   # one commit, one fragment
+
+
+def test_the_light_compaction_has_its_own_cadence_between_the_index_passes(collection, monkeypatch):
+    """#107's AFTER (München, 2026-10-30): run once per index pass (every
+    VECTOR_INDEX_REFRESH_S, 30 minutes), the light compaction let
+    wikipedia's table drift from 206 small fragments to 2,101 in half an
+    hour, and held_chunks of 128 from 0.43 s to 2.45 s. Between the passes
+    the maintainer now asks every VECTOR_INDEX_LIGHT_CHECK_S, and the check
+    reads the fragment statistics alone (no row count, no index statistics)."""
+    import time
+    from app import db, node_state, worker
+    _fill(collection, 2000)
+    embeddings._conn(collection).open_table(embeddings.TABLE).create_scalar_index(
+        "book_id", index_type="BTREE")
+    _small_fragments_appended(collection, 40, 2000)
+    monkeypatch.setattr(config, "VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", 30)
+    monkeypatch.setattr(config, "VECTOR_INDEX_COMPACT_FRAGMENTS", 4000)
+    con = db.connect(collection)
+    node_state.set_worker_state("running")
+    key = str(collection.lance_dir)
+    worker._vindex_last[key] = time.time()             # the index's pass ran just now
+    assert vector_index.small_fragments(collection) >= 30
+    assert worker._maintain_vector_index(con, collection) is True
+    assert vector_index.small_fragments(collection) < 30
+    events = [r["message"] for r in con.execute("SELECT message FROM events WHERE stage='index'")]
+    assert any(m.startswith("light-compacted") for m in events), events
+    # within the light cadence nothing is asked, however many fragments arrived
+    _small_fragments_appended(collection, 40, 3000)
+    assert worker._maintain_vector_index(con, collection) is False
+    assert vector_index.small_fragments(collection) >= 30
+    # paused: nothing runs, nothing is stamped
+    worker._vlight_last.clear()
+    node_state.set_worker_state("paused")
+    assert worker._maintain_vector_index(con, collection) is False
+    assert key not in worker._vlight_last
+    node_state.set_worker_state("running")
+    assert worker._maintain_vector_index(con, collection) is True
+    # a check with nothing due reads the fragment statistics only
+    asked = []
+    real_stats = vector_index.stats
+    monkeypatch.setattr(vector_index, "stats", lambda c: asked.append(1) or real_stats(c))
+    worker._vlight_last.clear()
+    assert worker._maintain_vector_index(con, collection) is False
+    assert asked == [], "the light check asks no row count and no index statistics"
+
+
+def test_the_light_check_stands_down_while_the_table_is_held(collection, monkeypatch):
+    _fill(collection, 50)
+    _small_fragments_appended(collection, 10, 50)
+    monkeypatch.setattr(config, "VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", 5)
+    ran = []
+    monkeypatch.setattr(vector_index, "compact", lambda c, con=None, log=None, light=False:
+                        ran.append(light) or {"compacted": True})
+    with vector_index.maintenance(collection):         # a build or a refresh
+        assert vector_index.light(collection) is None
+    rw = vector_index.rewrite(collection, drain_s=1)
+    rw.__enter__()
+    try:
+        assert vector_index.light(collection) is None
+    finally:
+        rw.__exit__(None, None, None)
+    assert ran == []
+    assert vector_index.light(collection) == {"compacted": True}
+    assert ran == [True]
+    monkeypatch.setattr(config, "VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", 1000)
+    assert vector_index.light(collection) is None, "not due below the threshold"

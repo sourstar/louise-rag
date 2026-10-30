@@ -555,6 +555,14 @@ VECTOR_INDEX_COMPACT_FRAGMENTS = int(os.getenv("VECTOR_INDEX_COMPACT_FRAGMENTS",
 #: (München, 2026-10-30). Measured on a bench: 2,000 small fragments, a
 #: 128-id delete 0.36–0.66 s; merged (1.3 s for 100k rows), 0.011–0.022 s.
 VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS = int(os.getenv("VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", "256"))
+#: How often the index maintainer asks each table for its small fragments,
+#: apart from the index's own pass (VECTOR_INDEX_REFRESH_S, 30 minutes). Run
+#: only inside that pass, the light compaction left wikipedia's table to drift
+#: from 206 small fragments to 2,101 in half an hour — ~65 a minute from
+#: genesis and embed commits — and held_chunks of 128 documents from 0.43 s
+#: to 2.45 s, almost linearly (München, 2026-10-30, #107's AFTER). Asked every
+#: minute, the 256 threshold is crossed every ~4 minutes and merged in 4–6 s.
+VECTOR_INDEX_LIGHT_CHECK_S = float(os.getenv("VECTOR_INDEX_LIGHT_CHECK_S", "60"))
 #: Rows a compaction aims to put in each fragment it writes (lance's own
 #: default). Bounding the output is what keeps one pass from rewriting the
 #: table into a shape the next pass has to undo.

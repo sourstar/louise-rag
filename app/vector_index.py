@@ -636,6 +636,36 @@ def light_compact_due(st: dict | None) -> bool:
     return small is not None and small >= config.VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS
 
 
+def small_fragments(collection) -> int | None:
+    """The table's small fragments, and nothing else `stats` asks (the row
+    count, the index statistics): the light compaction's one question, put
+    every VECTOR_INDEX_LIGHT_CHECK_S. None when there is no table or it does
+    not say."""
+    tbl = _table(collection)
+    if tbl is None:
+        return None
+    try:
+        return dict(tbl.stats())["fragment_stats"].get("num_small_fragments")
+    except Exception:   # noqa: BLE001 — an older table simply does not say
+        return None
+
+
+def light(collection, con=None, *, log=None) -> dict | None:
+    """THE LIGHT COMPACTION ON ITS OWN CADENCE (2026-10-30): when the small
+    fragments reach VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS and nothing else
+    holds the table, `compact(light=True)`; None when not due. The index
+    maintainer asks it every VECTOR_INDEX_LIGHT_CHECK_S, between the index's
+    own passes (`ensure`, every VECTOR_INDEX_REFRESH_S), which run it first
+    too. Once a pass, it let wikipedia's table drift from 206 small fragments
+    to 2,101 in half an hour and held_chunks of 128 from 0.43 s to 2.45 s
+    (München, #107's AFTER)."""
+    if busy(collection) or rewriting(collection):
+        return None
+    if not light_compact_due({"small_fragments": small_fragments(collection)}):
+        return None
+    return compact(collection, con, log=log, light=True)
+
+
 def compact(collection, con=None, *, log=None, light: bool = False) -> dict:
     """Merge the small fragments a stream of small writes leaves behind.
 
