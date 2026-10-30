@@ -1200,12 +1200,18 @@ def _residual_rows(con, collection, limit: int, seen: set) -> list:
     local encoder may embed (amendment 11)."""
     uids = [u for u in bundle_genesis.residual_uids(collection) if u not in seen]
     out: list = []
+    stale: list[str] = []
     for i in range(0, len(uids), 500):
         part = uids[i:i + 500]
-        out += con.execute(_RESIDUAL_SQL.format(marks=",".join("?" * len(part))),
-                           (*part, config.MAX_RETRIES)).fetchall()
+        got = con.execute(_RESIDUAL_SQL.format(marks=",".join("?" * len(part))),
+                          (*part, config.MAX_RETRIES)).fetchall()
+        eligible = {r["uid"] for r in got}
+        stale += [u for u in part if u not in eligible]
+        out += got
         if len(out) >= limit:
             break
+    # a residual no longer eligible is asked for no more
+    bundle_genesis.forget_residuals(collection, stale)
     return out[:limit]
 
 
@@ -1254,6 +1260,9 @@ def _cursor_page(con, key: str, kind: str, query, limit: int, deadline: float) -
     restarted = False
     while True:
         if pos >= top:
+            if rows:
+                cur = (epoch, int(rows[-1]["rid"]), top, True, None)
+                break
             if found and not restarted:
                 # this sweep found work: start the next one now, from the
                 # beginning, for what became eligible below the cursor
@@ -1266,20 +1275,25 @@ def _cursor_page(con, key: str, kind: str, query, limit: int, deadline: float) -
                                       lo=_REINDEX_WINDOW_MIN, hi=_REINDEX_WINDOW_MAX)
         end = min(pos + width, top)
         probe = time.monotonic()
-        rows = query(pos, end, limit)
+        got = query(pos, end, limit - len(rows))
         sizing.sizer().note_window(
             wkey, seconds=time.monotonic() - probe,
             target_s=config.REINDEX_PROBE_TARGET_S, default=_BACKFILL_WINDOW,
             lo=_REINDEX_WINDOW_MIN, hi=_REINDEX_WINDOW_MAX)
-        if rows:
-            # resume FROM the first returned row: if it is deferred rather
-            # than embedded it is selected again; everything before it was
-            # covered
-            cur = (epoch, int(rows[0]["rid"]) - 1, top, True, None)
+        # THE CALL FILLS ITS LIMIT ACROSS WINDOWS, within its budget. It
+        # stopped at the first window holding a candidate: where candidates
+        # are sparse (wikipedia's archive layer) each call brought ONE
+        # document, and the 18.8 M of the dump layer behind them waited —
+        # one embed batch of one document every few minutes (München,
+        # 2026-10-30). The next call resumes AFTER the last row returned; a
+        # document deferred meanwhile comes back with the next sweep.
+        rows += got
+        if got and len(rows) >= limit:
+            cur = (epoch, int(rows[-1]["rid"]), top, True, None)
             break
-        pos = end
+        pos = end                       # the window gave all it had: fewer than asked
         if time.monotonic() >= deadline and pos < top:
-            cur = (epoch, pos, top, found, None)
+            cur = (epoch, int(rows[-1]["rid"]), top, True, None) if rows else (epoch, pos, top, found, None)
             break
     with _backfill_cursor_lock:
         _backfill_cursor[(key, kind)] = cur

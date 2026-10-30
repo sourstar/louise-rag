@@ -451,6 +451,23 @@ def _add_residual(collection, shard: str, uids) -> None:
     _forget_demand(collection)
 
 
+def forget_residuals(collection, uids) -> None:
+    """Residuals no longer eligible (embedded, errored, out of scope) leave
+    every set of this collection: the embed stage re-queried each of them on
+    every call that found fewer candidates than it wanted (the producer's
+    time on wikipedia, München's py-spy, 2026-10-30). A residual is only ever
+    a candidate; an ineligible one is nothing to wait for."""
+    gone = frozenset(uids)
+    if not gone:
+        return
+    key = str(collection.manifest_path)
+    with _residual_lock:
+        for k in [k for k in _residual if k[0] == key]:
+            left = _residual[k] - gone
+            if len(left) != len(_residual[k]):
+                _residual[k] = left
+
+
 def residual_uids(collection) -> list[str]:
     """Every document this process found a LOCAL archive cannot cover for
     this collection — straddlers, text that would not load, stale samples.
