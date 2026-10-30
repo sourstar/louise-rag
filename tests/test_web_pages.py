@@ -161,6 +161,28 @@ def test_the_name_is_centred_above_the_menu_and_no_search_button_is_lit(client):
     assert "nav{display:flex;flex-direction:column;align-items:center" in css
 
 
+def test_four_themes_each_reader_chooses_and_each_defines_every_colour(client):
+    """The operator (2026-10-30): "Themes, make them selectable by the user,
+    I like them all" — Slate, Kelsch, Grès des Vosges and Colmar, chosen in
+    the menu, kept in the reader's browser and applied before the page
+    draws; every theme sets every colour the pages use."""
+    import re
+    html = client.get("/ask").text
+    assert html.index("localStorage.getItem('louise-theme')") < html.index("<body>"), "set before drawing"
+    themes = re.findall(r'<option value="([a-z]*)">', html[html.index('id="theme"'):html.index("</select>")])
+    assert themes == ["", "kelsch", "gres", "colmar"]
+    css = (Path(web.__file__).parent / "static" / "admin.css").read_text()
+    base = set(re.findall(r"--([a-z0-9]+):", css[css.index(":root{"):css.index("}", css.index(":root{"))])) - {"mono"}
+    for t in themes[1:]:
+        block = css[css.index(f':root[data-theme="{t}"]{{'):]
+        block = block[:block.index("}")]
+        assert set(re.findall(r"--([a-z0-9]+):", block)) == base, t
+        assert "color-scheme:" in block
+    pages = [css] + [p.read_text() for p in (Path(web.__file__).parent / "templates").rglob("*.html")]
+    for literal in ("#233240", "#b9c8d2", "#9fb0bc"):
+        assert sum(t.count(literal) for t in pages) == (1 if literal != "#9fb0bc" else 0), literal
+
+
 def test_admin_login_takes_the_token_as_copied_with_its_spaces(client):
     """/login stripped the pasted token and /admin/login did not: a newline
     or space a copy picked up refused the right token (2026-10-30)."""
