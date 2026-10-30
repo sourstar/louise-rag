@@ -612,24 +612,8 @@ def compact_due(st: dict | None) -> bool:
     return small is not None and small >= config.VECTOR_INDEX_COMPACT_FRAGMENTS
 
 
-def light_compact_due(st: dict | None) -> bool:
-    """Small fragments enough for the LIGHT compaction (`compact(light=True)`),
-    and not yet so many that the full one is due."""
-    if not st:
-        return False
-    small = st.get("small_fragments")
-    return (small is not None and small >= config.VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS
-            and not compact_due(st))
-
-
-def compact(collection, con=None, *, log=None, light: bool = False) -> dict:
+def compact(collection, con=None, *, log=None) -> dict:
     """Merge the small fragments a stream of small writes leaves behind.
-
-    LIGHT (2026-10-30): the small fragments alone, `materialize_deletions`
-    off, so no large fragment is rewritten — seconds, not the full pass's
-    40–51 minutes — and then the book_id index's new rows folded in as a
-    delta (`_refresh_scalar`). Lance's own two calls; the full compaction is
-    unchanged.
 
     IT TAKES THE TABLE EXCLUSIVELY (`rewrite`), which `prune` never did
     and a refresh deliberately does not. A compaction rewrites fragments,
@@ -656,31 +640,23 @@ def compact(collection, con=None, *, log=None, light: bool = False) -> dict:
             log(msg)
         return {"compacted": False, "reason": "low disk"}
     before = stats(collection) or {}
-    what = "light compaction" if light else "compaction"
-    _started(con, log, f"{what} started: {before.get('small_fragments')} small fragment(s) "
+    _started(con, log, f"compaction started: {before.get('small_fragments')} small fragment(s) "
                        f"of {before.get('fragments')}, {before.get('rows')} rows; this "
                        f"collection's vector writes wait until it ends")
     ds = _dataset(tbl)
     t0 = time.monotonic()
     try:
         with rewrite(collection):
-            if ds is not None and light:
-                ds.optimize.compact_files(
-                    target_rows_per_fragment=config.VECTOR_INDEX_FRAGMENT_ROWS,
-                    materialize_deletions=False)
-                _refresh_scalar(_dataset(_table(collection)))
-            elif ds is not None:
+            if ds is not None:
                 ds.optimize.compact_files(
                     target_rows_per_fragment=config.VECTOR_INDEX_FRAGMENT_ROWS)
-            elif light:
-                return {"compacted": False, "reason": "no lance dataset"}
             else:
                 tbl.optimize(cleanup_older_than=timedelta(
                     hours=max(0.0, config.VECTOR_INDEX_KEEP_VERSIONS_H)))
     except Exception as e:                              # noqa: BLE001
         # A compaction that loses its commit is not the caller's failure:
         # the table is intact and merely more fragmented than it could be.
-        msg = f"{what} skipped: {type(e).__name__}: {e}"
+        msg = f"compaction skipped: {type(e).__name__}: {e}"
         if con is not None:
             db.log_event(con, "warn", "index", msg)
         elif log:
@@ -689,35 +665,13 @@ def compact(collection, con=None, *, log=None, light: bool = False) -> dict:
     forget(collection)
     dt = time.monotonic() - t0
     after = stats(collection) or {}
-    msg = (f"{'light-' if light else ''}compacted {before.get('small_fragments')} small fragment(s) of "
-           f"{before.get('fragments')} into {after.get('fragments')} ({dt:.0f}s)"
-           + ("; the book_id index's new rows indexed" if light else ""))
+    msg = (f"compacted {before.get('small_fragments')} small fragment(s) of "
+           f"{before.get('fragments')} into {after.get('fragments')} ({dt:.0f}s)")
     if con is not None:
         db.log_event(con, "info", "index", msg)
     elif log:
         log(msg)
     return {"compacted": True, "seconds": round(dt, 1), "before": before, "after": after}
-
-
-def _refresh_scalar(ds) -> None:
-    """The book_id index's new rows folded in as a DELTA (Lance's
-    `optimize_indices` for that index alone), its deltas merged into one
-    past VECTOR_INDEX_MAX_INDICES. Cheap (0.2 s for 100k rows on the bench),
-    and what keeps every `book_id IN (...)` an index probe."""
-    if ds is None:
-        return
-    # one entry per delta segment: the names, once each
-    names = sorted({ix.get("name") for ix in ds.list_indices()
-                    if BOOK_COLUMN in (ix.get("fields") or []) and ix.get("name")})
-    if not names:
-        return
-    ds.optimize.optimize_indices(index_names=names, num_indices_to_merge=0)
-    try:
-        n = ds.stats.index_stats(names[0]).get("num_indices")
-    except Exception:   # noqa: BLE001 — an older dataset simply does not say
-        n = None
-    if n is not None and n > config.VECTOR_INDEX_MAX_INDICES:
-        ds.optimize.optimize_indices(index_names=names, num_indices_to_merge=n - 1)
 
 
 def prune_due(collection) -> bool:
@@ -811,16 +765,6 @@ def ensure(collection, con=None, *, log=None, may_continue=None) -> dict | None:
         st = stats(collection) or st
     if compact_due(st):
         out = compact(collection, con, log=log)
-        return {"refresh": did, "compact": out} if did is not None else out
-    # THE LIGHT COMPACTION (2026-10-30): the small fragments merged and the
-    # book_id index caught up long before the full pass is due — every
-    # delete-then-insert and held-chunks read scans each one it does not
-    # cover (wikipedia: 2,368 small fragments, a third of its pipeline
-    # thread in genesis's delete)
-    if light_compact_due(st):
-        if not go():
-            return did
-        out = compact(collection, con, log=log, light=True)
         return {"refresh": did, "compact": out} if did is not None else out
     return did
 

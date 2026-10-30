@@ -152,7 +152,6 @@ grep -q "confirmLogout" "$ROOT/src.new/app/templates/base.html"                 
 grep -q '^PREFIX = "origin missing: "' "$ROOT/src.new/app/origin_missing.py"                 # #101 (9afeed9): a missing file, the self-healing error
 grep -q "THE FAST PATH, a str and a dict lookup" "$ROOT/src.new/app/plugins/wikidata/pack.py" # #101: wikidata's pack_dir fast path
 grep -q "THE SWEEP RESTARTS WHEN THE COVERAGE CHANGES" "$ROOT/src.new/app/worker.py"         # #102 (3960c64): the backfill cursor keyed on coverage, not the epoch
-grep -q "^def light_compact_due(" "$ROOT/src.new/app/vector_index.py"                        # #103 (270ff0c): the light compaction (small fragments, book_id index delta)
 grep -q "THE NEW WALK'S WINDOW READS THE CANDIDATES" "$ROOT/src.new/app/worker.py"           # #104 (086ef34): the new walk seeks the scope index plus the rowid range
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
 test -x "$ROOT/src.new/deploy/docker-memory-ceiling.sh"                                     # the ceiling on every container together
