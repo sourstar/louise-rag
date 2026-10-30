@@ -190,11 +190,26 @@ def each_part(fn, tasks: list[tuple]):
         for t in tasks:
             yield fn(*t)
         return
+    from collections import deque
     ex = ProcessPoolExecutor(max_workers=n, mp_context=multiprocessing.get_context("spawn"))
+    # BOUNDED: at most 2n tasks in flight or done and not yet taken. Results
+    # the caller has not reached do not pile up when it is the slower side —
+    # the records build's plan commits every window it gets (75.9 M rows).
+    window: deque = deque()
+    ahead = iter(tasks)
     try:
-        yield from ex.map(fn, *zip(*tasks), chunksize=max(1, len(tasks) // (n * 8)))
+        for t in ahead:
+            window.append(ex.submit(fn, *t))
+            if len(window) >= 2 * n:
+                break
+        while window:
+            done = window.popleft()
+            nxt = next(ahead, None)
+            if nxt is not None:
+                window.append(ex.submit(fn, *nxt))
+            yield done.result()
     finally:
-        # a caller that stopped early (an error) leaves no part queued
+        # a caller that stopped early (an error, a stop) leaves no part queued
         ex.shutdown(wait=True, cancel_futures=True)
 
 

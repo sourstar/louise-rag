@@ -203,6 +203,55 @@ def test_the_plan_walk_is_a_rowid_scan_and_pubmed_hints_read_no_abstracts(isolat
     con.close()
 
 
+def _planned(c, pack_dir, *, stop=None):
+    con_src, con_build = db.connect(c), pack_build._build_db(pack_dir)
+    try:
+        pack_build.plan(c, con_src, con_build, log=lambda *_: None, stop=stop)
+        return (sorted(tuple(r) for r in con_build.execute("SELECT uid, slice, ord FROM plan")),
+                sorted(tuple(r) for r in con_build.execute("SELECT uid, reason FROM skipped")),
+                pack_build._meta(con_build, "plan_done"))
+    finally:
+        con_src.close()
+        con_build.close()
+
+
+def test_the_plan_is_walked_in_rowid_windows_by_the_children(isolated_config, tmp_path, monkeypatch):
+    """wikidata's plan walked 75.9 M rows on one core, 17–19 min (München,
+    2026-10-30; multicore-audit.md item 11). The walk is cut into rowid
+    windows the parse pool's children read and slice, committed in rowid
+    order: the plan is the serial one, a stop between windows resumes."""
+    import threading
+    from app import config, parallel
+    c = _discovered(tmp_path, "pubmed", "pubmed", FIXTURES / "pubmed-mini")
+    serial = _planned(c, tmp_path / "serial")
+    assert serial[0] and serial[2] == "1"
+    plan = " ".join(r[3] for r in db.connect(c).execute("EXPLAIN QUERY PLAN " + pack_build.PLAN_WINDOW_SQL, (-1, 9)))
+    assert "TEMP B-TREE" not in plan and "USING INTEGER PRIMARY KEY" in plan, plan
+    pools = []
+
+    class Spy(parallel.ProcessPoolExecutor):
+        def __init__(self, *a, **k):
+            pools.append(k.get("max_workers"))
+            super().__init__(*a, **k)
+    monkeypatch.setattr(parallel, "ProcessPoolExecutor", Spy)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 2)
+    monkeypatch.setattr(pack_build, "PLAN_WINDOW", max(1, len(serial[0]) // 5))
+    assert _planned(c, tmp_path / "pooled") == serial and pools == [2]
+    # stopped after its first window, then resumed: the same plan
+    stop = threading.Event()
+    real = pack_build._set_meta
+
+    def stop_after_first(con, key, value):
+        real(con, key, value)
+        if key == "plan_rowid":
+            stop.set()
+    monkeypatch.setattr(pack_build, "_set_meta", stop_after_first)
+    first = _planned(c, tmp_path / "resumed", stop=stop)
+    assert first[2] is None and 0 < len(first[0]) < len(serial[0])
+    monkeypatch.setattr(pack_build, "_set_meta", real)
+    assert _planned(c, tmp_path / "resumed") == serial
+
+
 def test_slicing_rules():
     from app.plugins.base import CanonicalDoc
     def doc(**kw):
