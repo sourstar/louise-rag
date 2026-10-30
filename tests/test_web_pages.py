@@ -148,6 +148,16 @@ def test_admin_login_cookie_authorizes_subsequent_navigation(client):
     assert r.status_code == 200
 
 
+def test_admin_login_takes_the_token_as_copied_with_its_spaces(client):
+    """/login stripped the pasted token and /admin/login did not: a newline
+    or space a copy picked up refused the right token (2026-10-30)."""
+    r = client.post("/admin/login", json={"token": " sekrit\n"})
+    assert r.status_code == 200
+    client.cookies.clear()
+    client.cookies.set("admin_token", r.cookies["admin_token"])
+    assert client.get("/admin/library").status_code == 200, "the cookie holds the token, not its spaces"
+
+
 def test_reader_routes_stay_open_with_no_token(client):
     _seed_one_book()
     checks = [

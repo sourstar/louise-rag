@@ -1100,9 +1100,12 @@ def login_page(request: Request):
 
 @ask_router.post("/admin/login")
 def login(body: LoginBody, response: Response):
-    if not config.ADMIN_TOKEN or not secrets.compare_digest(body.token, config.ADMIN_TOKEN):
+    # stripped, as /login strips and as the token FILE is read (config): a
+    # space or newline a copy picked up refused the right token (2026-10-30)
+    token = body.token.strip()
+    if not config.ADMIN_TOKEN or not secrets.compare_digest(token, config.ADMIN_TOKEN):
         raise HTTPException(401, "invalid token")
-    response.set_cookie("admin_token", body.token, httponly=True, samesite="lax",
+    response.set_cookie("admin_token", token, httponly=True, samesite="lax",
                          max_age=60 * 60 * 24 * 30)
     return {"ok": True}
 
