@@ -38,6 +38,7 @@ import hashlib
 import json
 
 from .. import cursor
+from app.backend import OriginForm, Template
 from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, LicenseClass,
                     Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc)
 from ..wikipedia import archive as _archive
@@ -85,6 +86,8 @@ class EmbeddedSource:
     # PRODUCER'S, which is the whole basis for reusing their vectors.
     # Re-cutting them for any reason would orphan every one.
     mutability = Mutability.IMMUTABLE
+    #: app/backend.py: a record is a row range of a published Parquet shard
+    backend = (OriginForm("the producer's Parquet shards", Template.MEMBER),)
     protocol_version = PROTOCOL_VERSION
     PARSER_VERSION = 1
     modality = Modality.TEXT

@@ -246,7 +246,12 @@ def context_for(collection, *, log=print, stop=None) -> FamilyContext | None:
     if not dumps:
         raise ContextUnavailable(f"{collection.name}: no wikidata dump under {collection.corpus_dir}")
     dump = dumps[0]
-    if not pack.ensure_codes(dump, raw, log=log, stop=(stop.is_set if stop is not None else None)):
+    from app import derived
+    try:
+        done = pack.ensure_codes(dump, raw, log=log, stop=(stop.is_set if stop is not None else None))
+    except derived.Busy as e:              # the pack's other writer: this build waits for its next run
+        raise ContextUnavailable(f"{collection.name}: {e}") from None
+    if not done:
         raise ContextUnavailable(f"{collection.name}: the family codes of {dump.name} under {sha[:23]}… "
                                  f"stopped before the end; the next build resumes them")
     import sqlite3

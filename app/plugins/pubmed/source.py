@@ -30,6 +30,7 @@ from xml.etree import ElementTree as ET
 from ...acquire.checksum import verify_sidecar
 from ...acquire.spec import ChecksumSource
 from .. import cursor
+from app.backend import OriginForm, Template
 from ..base import (CanonicalDoc, DiscoverState, DocRef, Erasure, Issue, LicenseClass,
                     Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc)
 from . import medline, pack
@@ -131,6 +132,8 @@ class PubmedSource:
     # is a single chunk — there are no downstream boundaries for an
     # edit to shift, so content-defined chunking would buy nothing.
     mutability = Mutability.IMMUTABLE
+    #: app/backend.py: a record is a member of a gzip XML container, read from its pack
+    backend = (OriginForm("the baseline and update XML containers", Template.CONTAINER_PACK, ("pubmed-pack",)),)
     protocol_version = PROTOCOL_VERSION
     #: 6 since 2026-09-12. 5 corrected `creators`, `lang` and `date`
     #: against 09 §9.5; 6 satisfies PROMISE 9 — parser 5 still published

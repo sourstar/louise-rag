@@ -23,6 +23,7 @@ class CorpusSource(Protocol):
     modality: Modality             # text | dna — what the bytes are        (§2.4)
     erasure: Erasure               # append-only | retractable | erasable   (§4.4)
     mutability: Mutability         # immutable | mutable                    (§6.3)
+    backend: tuple[OriginForm, ...] # each origin form read, and its template (below)
     native_id_order: str           # "bytes" | "numeric" — how this source's ids sort (§2.2)
     default_layers: list[Layer]    # what `hold collection create` writes unless the recipe says otherwise (§6.3)
     default_slicing: dict          # likewise (§2.2)
@@ -50,6 +51,21 @@ class CorpusSource(Protocol):
     # (docs/notes/normattiva-multivigenza-review.md §3.2, case 2).
     def closures(self, doc: CanonicalDoc) -> Iterator[tuple[str, str]]: ...
 ```
+
+**The backend template** (*amended 2026-10-30*, operator: "All collections
+must share the same kind of backend … any collection must fall in a
+'template'. Depending on the future needs we can add cases to the
+backend"). For each origin form it reads, a source names the template the
+form falls in (`app/backend.py`):
+- **member**: each record is addressed in the origin itself and read where it lies;
+- **container-pack**: one Parquet pack per container, built in one pass by one builder;
+- **dump-pack**: a pack directory built by resumable passes under one writer.
+
+Each template's machinery is one implementation shared by every source in
+it, and the derived data it builds lives where 07 §7.8 puts it. A source
+whose origin fits no template is not given a private variant: a template
+is added. docs/notes/collection-backend.md has the contracts and which
+collection falls in which.
 
 `Edge` is `{to: str, type: str}` — the uid the edge points at and the
 plugin's own name for the kind of edge. The platform supplies the other

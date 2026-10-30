@@ -174,7 +174,7 @@ def _pack_dirs(props: Path) -> list[Path]:
     when the node names one (LOUISE_CACHE_DIR, app/derived.py), else
     `.pack/` beside the props; then the temporary directory."""
     from app import derived
-    first = derived.place("wikipedia-page-props", props.parent) or props.parent / ".pack"
+    first = derived.place("wikipedia-page-props", props.parent) or props.parent / derived.BESIDE
     return [first, Path(tempfile.gettempdir()) / "louise-page-props"]
 
 
@@ -184,7 +184,7 @@ def _candidates(props: Path) -> list[Path]:
     from app import derived
     tag = derived.tag(props) + "-"
     first, second = _pack_dirs(props)
-    beside = props.parent / ".pack" / (props.name + PACK_SUFFIX)
+    beside = props.parent / derived.BESIDE / (props.name + PACK_SUFFIX)
     if first != beside.parent:
         derived.adopt(beside, first / (props.name + PACK_SUFFIX))   # a pack built beside the props, carried once
     return [first / (props.name + PACK_SUFFIX), second / (tag + props.name + PACK_SUFFIX)]

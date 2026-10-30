@@ -76,6 +76,7 @@ import zipfile
 from pathlib import Path
 
 from .. import eli
+from app.backend import OriginForm, Template
 from ..base import (CanonicalDoc, DiscoverState, DocRef, Edge, Erasure, Issue, LicenseClass,
                     Modality, Mutability, PROTOCOL_VERSION, PrivacyClass, RawDoc,
                     UnindexableDocument)
@@ -265,6 +266,8 @@ class NormattivaSource:
     chunking_profile = "akn_article"
     # The origin revises a published version in place when it corrects it.
     mutability = Mutability.MUTABLE
+    #: app/backend.py: a record is a member of an AKN zip, read from its directory
+    backend = (OriginForm("the AKN zips", Template.MEMBER),)
     protocol_version = PROTOCOL_VERSION
     #: 1 since 2026-09-14. 2 the same evening: `keys` empty — 1 wrote
     #: unregistered `eli:`/`urn:` ids, which 05 §5.2 forbids. 3 on

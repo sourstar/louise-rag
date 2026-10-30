@@ -69,7 +69,6 @@ same bytes), else the standard library's bz2.
 """
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import multiprocessing
@@ -89,7 +88,7 @@ from typing import Any, Callable, Iterable, Iterator, Optional
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from app import config, cpu_limit, parallel
+from app import config, cpu_limit, derived, parallel
 from app.plugins.wikidata import dump as dump_mod, families, ids, names
 
 #: 2 (2026-10-24): the `name` table; 3 (2026-10-24): the class tree and the
@@ -107,7 +106,7 @@ ROW_GROUP = 64
 #: `P31` values that make an entity a scholarly article: not a record (the
 #: design's corpus left them out; invariant 11 allows pruning whole entities)
 PRUNED_CLASSES = frozenset({"Q13442814"})
-PACK_DIRNAME = ".pack"
+PACK_DIRNAME = derived.BESIDE                       # app/derived.py: one name for every template
 #: how long the pass waits for one child's chunk before it stops (resumable)
 CHUNK_TIMEOUT_S = 1800.0
 #: a failed pool turns the rest of this process's passes serial
@@ -420,12 +419,27 @@ def build(dump: Path, *, languages: tuple[str, ...] = ("en",), log: Callable[[st
     """One streaming pass, or its continuation. Returns the meta written:
     `{complete, chunks, entities, pruned, ...}`; `complete` False when `stop`
     ended the pass at a chunk boundary (resumable, nothing lost). `workers`:
-    the pass's processes (default `processes()`); 1 is the serial pass."""
+    the pass's processes (default `processes()`); 1 is the serial pass.
+    ONE WRITER of the pack at a time, across processes: a second one gets
+    `derived.Busy` at once and defers (`WRITER`)."""
     dump = Path(dump)
     say = log or (lambda m: None)
     adopt_beside(dump, log=say)
     d = pack_dir(dump)
     d.mkdir(parents=True, exist_ok=True)
+    with derived.writing(d / WRITER, f"the pack build of {dump.name}"):
+        return _build(dump, d, languages=languages, say=say, stop=stop, chunk=chunk, workers=workers)
+
+
+#: the pack's writer lock (`derived.writing`): the build, the codes pass and
+#: the regroup each write files the others read or replace — two of them at
+#: once, from a scan and a records build, or two scans of collections on one
+#: dump, had nothing between them but a thread lock (2026-10-30 inventory)
+WRITER = "writer.lock"
+
+
+def _build(dump: Path, d: Path, *, languages: tuple[str, ...], say: Callable[[str], None],
+           stop: Callable[[], bool] | None, chunk: int, workers: int | None) -> dict[str, Any]:
     size, mtime = _signature(dump)
     meta = read_meta(dump)
     n_workers = processes() if workers is None else max(1, int(workers))
@@ -1144,13 +1158,17 @@ def ensure_codes(dump: Path, raw_map: bytes, *, log: Callable[[str], None] | Non
         raise PackError(f"the family codes of {Path(dump).name} under its own map are being computed by the "
                         f"pack's pass (the worker's scan of the collection): the build runs once it is done")
     n = processes() if workers is None else max(1, int(workers))
-    con = sqlite3.connect(d / "labels.sqlite", isolation_level=None)
-    try:
-        con.execute("PRAGMA journal_mode=WAL")
-        con.execute(_FAMILY_CHUNK_SCHEMA)
-        return _codes_pass(dump, d, meta, con, fmap, say=say, stop=stop, workers=n)
-    finally:
-        con.close()
+    with derived.writing(d / WRITER, f"the family codes of {Path(dump).name}"):
+        meta = read_meta(dump) or {}          # again, under the lock: a writer may have just finished
+        if (meta.get("families_codes") or {}).get(fmap.sha256):
+            return True
+        con = sqlite3.connect(d / "labels.sqlite", isolation_level=None)
+        try:
+            con.execute("PRAGMA journal_mode=WAL")
+            con.execute(_FAMILY_CHUNK_SCHEMA)
+            return _codes_pass(dump, d, meta, con, fmap, say=say, stop=stop, workers=n)
+        finally:
+            con.close()
 
 
 def _tmp_path(d: Path, chunk_no: int, token: str) -> Path:
@@ -1484,17 +1502,13 @@ def regroup(dump: Path, *, row_group: int = ROW_GROUP, workers: int = 1, log=pri
     rows, file by file — resumable (a regrouped file is skipped), safe beside
     a running build (`line` reads each file's own layout). The pack's lines
     are byte for byte what they were; only their grouping changes."""
-    # one regroup at a time: two would write the same `.regroup` file
-    held = open(pack_dir(dump) / "regroup.lock", "a+b")
+    # the pack's one writer: two regroups would write the same `.regroup`
+    # file, and a build beside one would write the files it replaces
     try:
-        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        held.close()
-        raise PackError(f"another regroup runs on the pack of {Path(dump).name}") from None
-    try:
-        return _regroup(dump, row_group=row_group, workers=workers, log=log, stop=stop)
-    finally:
-        held.close()
+        with derived.writing(pack_dir(dump) / WRITER, f"the regroup of {Path(dump).name}"):
+            return _regroup(dump, row_group=row_group, workers=workers, log=log, stop=stop)
+    except derived.Busy as e:
+        raise PackError(str(e)) from None
 
 
 def _regroup(dump: Path, *, row_group: int, workers: int, log, stop) -> dict[str, int]:

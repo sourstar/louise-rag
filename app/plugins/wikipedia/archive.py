@@ -16,6 +16,7 @@ by "|" — end exclusive; a second segment covers an article whose rows
 straddle a shard boundary.
 """
 import hashlib
+import os
 import threading
 from collections import OrderedDict
 from pathlib import Path
@@ -183,7 +184,10 @@ def covered_articles(root: Path, state_dir: Path | None):
         path = cache / f"{tag}.npy" if cache is not None else None
         got = None
         if path is not None and path.is_file():
-            got = np.load(path)
+            try:
+                got = np.load(path)
+            except (OSError, ValueError):   # a file another writer left half-written: read again
+                got = None
         if got is None:
             try:
                 col = pq.read_table(shard, columns=["id"]).column(0).to_pylist()
@@ -197,8 +201,12 @@ def covered_articles(root: Path, state_dir: Path | None):
                     continue
             got = np.unique(np.asarray(pages, dtype=np.int64))
             if path is not None:
+                # whole or absent: discover may run in two processes at once
                 cache.mkdir(parents=True, exist_ok=True)
-                np.save(path, got)
+                tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+                with open(tmp, "wb") as fh:
+                    np.save(fh, got)
+                os.replace(tmp, path)
         parts.setdefault(lang, []).append(got)
     return {lang: np.unique(np.concatenate(p)) for lang, p in parts.items()}
 

@@ -22,6 +22,8 @@ import fnmatch
 import os
 from pathlib import Path
 
+from app import derived
+
 
 def files(root: Path | str, pattern: str) -> list[Path]:
     """The files under `root` whose NAME matches `pattern` (case-sensitive,
@@ -37,7 +39,10 @@ def files(root: Path | str, pattern: str) -> list[Path]:
             dirnames[:] = []           # a loop, or a second link to one directory
             continue
         walked.add(real)
-        dirnames.sort()
+        # what is DERIVED from an origin is not origin (app/derived.py): a
+        # page-props pack beside its dump read as an archive shard, "unrecognized
+        # shard path" at every scan (the 2026-10-30 inventory)
+        dirnames[:] = sorted(d for d in dirnames if d != derived.BESIDE)
         for name in filenames:
             if fnmatch.fnmatchcase(name, pattern):
                 p = Path(dirpath) / name
