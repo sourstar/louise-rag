@@ -165,3 +165,25 @@ def test_a_uid_in_two_parts_is_refused():
     t = pa.table({"uid": pa.array(["c:1"], pa.string()), "h": pa.array([h], pa.binary(16))})
     with pytest.raises(CodexError, match="two parts"):
         sn._join_delta([], [t, t], name="c")
+
+
+def test_a_first_delta_is_read_from_the_parts_indexes(isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """A first snapshot's delta from each part's own index, by threads: the
+    same uids as decoding every record, which was the whole 43-57 min of
+    wikipedia-v8's first snapshot (2026-10-30), and no record decoded."""
+    from app.pack import records as pack_records
+    for container in ("jsonl", "parquet"):
+        from app.hold import template
+        sl = dict(template.default_slicing(template.source_for("gutenberg")))
+        root = _collection(tmp_path / container, slicing={**sl, "container": container})
+        _build(root, corpus_dir, records_per_shard=2)
+        shard_dir = col.shard_dir_of(root, "gutenberg")
+        snap = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+        by_records = sorted({r["uid"] for s in snap.shards
+                             for r in pack_records.iter_records(shard_dir / s.path)})
+        read: list = []
+        real = pack_records.iter_records
+        monkeypatch.setattr(pack_records, "iter_records", lambda p, *a, **k: read.append(p) or real(p, *a, **k))
+        assert list(sn._first_delta(shard_dir, snap.shards).added) == by_records
+        assert read == [], "no record decoded"
+        monkeypatch.undo()
