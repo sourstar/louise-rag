@@ -89,6 +89,20 @@ This audit covers every stage, maintainer and pass that walks a whole corpus or 
       - after #79: 70–74 k documents/s, 17–19 min.
     - Two of three samples are in SQLite's C code without the GIL, so the walk could be split into rowid windows on threads.
     - Not done mid-build: a fix could not beat the remaining 15 minutes. Next.
+    - **#80, on the operator's order ("Do it now, it is also an additional test"):** the walk now runs in rowid windows of 50,000, each read and sliced by a child and committed in order.
+      - Measured on the resumed wikidata plan: ~13.2 M rows in 169 s, ~78 k rows/s. The plan resumed from `plan_rowid` past 62.7 M rows; it did not start over.
+      - The bound moved to the parent's commit. py-spy: three of three samples in `commit`; 11 of 12 children waiting.
+      - It is the build DB's single writer: a PRIMARY KEY on uid plus `idx_plan_slice`, both growing B-trees.
+    - **Local bench (synthetic 5 M-row plan, inserts in windows of 50,000):**
+
+      | variant | inserts | total, index included |
+      |---|---|---|
+      | as now | 197 k rows/s | 197 k rows/s |
+      | `idx_plan_slice` created after the plan | 274 k rows/s | 210 k rows/s (+5.6 s for the index) |
+      | windows sorted / cache_size 1 GB | no gain | — |
+
+      At 75.9 M rows the as-is rate falls to ~75 k rows/s, so deferring the index should win more there.
+    - **Not changed:** the plan is a one-off of ~17 min in a build of hours. The standard technique is bulk load, then index. Adopt it if a plan's minutes ever matter.
 
 ### Not defects
 
