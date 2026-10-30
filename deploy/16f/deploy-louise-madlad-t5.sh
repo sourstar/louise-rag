@@ -127,6 +127,7 @@ grep -q "^def with_line(collection" "$ROOT/src.new/app/pack/build.py"           
 grep -q "^def part_writers() -> int:" "$ROOT/src.new/app/pack/build.py"                     # 6a36ff7 (f616b6c): parts written by writer threads
 grep -q "^def _slim(record: dict) -> dict:" "$ROOT/src.new/app/pack/build.py"               # 8cfc602 (055d6eb): children find their documents, return slim records
 grep -q "^def part_writer_pool():" "$ROOT/src.new/app/pack/build.py"                        # 9797782 (325aa08): parts written by processes
+grep -q "^FIRST_DELTA_READERS = " "$ROOT/src.new/app/hold/snapshot.py"                      # 6f7232b (478e160): a first snapshot's delta from the parts' indexes, by threads
 test -s "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad-torch.yaml"        # 931887e
 ! grep -q 'cache_type_' "$ROOT/src.new/deploy/vega/stage/models/louise-translate-madlad.yaml"   # d372ba5: the F16 cache (P5); b68820c had f32
 test ! -e "$ROOT/src.new/deploy/reference"
