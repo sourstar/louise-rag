@@ -31,16 +31,14 @@ from __future__ import annotations
 
 import base64
 import gzip
-import os
 import re
-import sys
 import tempfile
 import threading
-import time
 from bisect import bisect_right
 from pathlib import Path
 
 from app.backend import GroupCache
+from app.container_pack import ContainerPack, signature
 
 PACK_VERSION = 1
 ROW_GROUP = 20_000
@@ -165,9 +163,13 @@ def _close(cur) -> tuple[int, int, int, bytes]:
 
 # ---- the pack ---------------------------------------------------------------
 
+#: the CONTAINER_PACK template's machinery (app/container_pack.py): freshness,
+#: one builder across processes, the pack written whole
+_PACK = ContainerPack("wikipedia page_props", "pages", _META_VERSION)
+
+
 def _signature(path: Path) -> tuple[int, int]:
-    st = path.stat()
-    return st.st_size, st.st_mtime_ns
+    return signature(path)
 
 
 def _pack_dirs(props: Path) -> list[Path]:
@@ -192,114 +194,66 @@ def _candidates(props: Path) -> list[Path]:
 
 
 def _is_fresh(props: Path, pack: Path) -> bool:
-    import pyarrow.parquet as pq
-    if not pack.is_file():
-        return False
-    try:
-        meta = pq.read_metadata(pack).metadata or {}
-    except Exception:   # noqa: BLE001 — a truncated pack is simply stale
-        return False
-    size, mtime = _signature(props)
-    return (meta.get(_META_VERSION) == str(PACK_VERSION).encode()
-            and meta.get(_META_SIZE) == str(size).encode()
-            and meta.get(_META_MTIME) == str(mtime).encode())
+    return _PACK.is_fresh(props, pack, PACK_VERSION)
+
+
+_SCHEMA = None
+
+
+def _schema():
+    import pyarrow as pa
+    global _SCHEMA
+    if _SCHEMA is None:
+        _SCHEMA = pa.schema([pa.field("page", pa.int64()), pa.field("start", pa.int64()),
+                             pa.field("end", pa.int64()), pa.field("rows", pa.binary())])
+    return _SCHEMA
 
 
 def build(props: Path, dest: Path) -> int:
-    """One streaming pass over `props` into `dest` (tmp + rename)."""
+    """One streaming pass over `props` into `dest`, written whole
+    (app/container_pack.py)."""
+    return _PACK.write(props, dest, _schema(), _tables(props), PACK_VERSION)
+
+
+def _tables(props: Path):
+    """The props' units as tables of ROW_GROUP rows."""
     import pyarrow as pa
-    import pyarrow.parquet as pq
-    size, mtime = _signature(props)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + f".{os.getpid()}.tmp")
-    schema = pa.schema([pa.field("page", pa.int64()), pa.field("start", pa.int64()),
-                        pa.field("end", pa.int64()), pa.field("rows", pa.binary())]
-                       ).with_metadata({_META_VERSION: str(PACK_VERSION),
-                                        _META_SIZE: str(size), _META_MTIME: str(mtime)})
-    writer = pq.ParquetWriter(tmp, schema, compression="zstd", compression_level=3)
-    n = 0
     cols: dict[str, list] = {"page": [], "start": [], "end": [], "rows": []}
-    try:
-        def flush():
-            if cols["page"]:
-                writer.write_table(pa.table(cols, schema=schema))
-                for v in cols.values():
-                    v.clear()
-        with gzip.open(props, "rb") as f:
-            for page, start, end, unit in iter_units(f):
-                cols["page"].append(page)
-                cols["start"].append(start)
-                cols["end"].append(end)
-                cols["rows"].append(unit)
-                n += 1
-                if len(cols["page"]) >= ROW_GROUP:
-                    flush()
-        flush()
-        writer.close()
-        os.replace(tmp, dest)
-    except BaseException:
-        try:
-            writer.close()
-        except Exception:   # noqa: BLE001
-            pass
-        tmp.unlink(missing_ok=True)
-        raise
-    return n
+    with gzip.open(props, "rb") as f:
+        for page, start, end, unit in iter_units(f):
+            cols["page"].append(page)
+            cols["start"].append(start)
+            cols["end"].append(end)
+            cols["rows"].append(unit)
+            if len(cols["page"]) >= ROW_GROUP:
+                yield pa.table(cols, schema=_schema())
+                cols = {k: [] for k in cols}
+    if cols["page"]:
+        yield pa.table(cols, schema=_schema())
 
 
 _lock = threading.Lock()
-_build_locks: dict[str, threading.Lock] = {}
-_fresh: dict[str, tuple] = {}                  # props path -> (signature, pack path)
+#: (props, where) -> (signature, version, pack path) of the pack found fresh
+_fresh = _PACK.fresh
 _bounds: dict[str, list[int]] = {}             # pack path -> first page of each row group
 #: (pack path, group) -> {page: (start, end, rows)}: 64 MiB (app/backend.py); it held 4 groups
 _groups = GroupCache(64 << 20)
 
 
 def ensure(props: Path) -> Path:
-    """The pack of `props`, built if missing or stale; one builder per file."""
-    key = str(props)
-    sig = _signature(props)
-    with _lock:
-        hit = _fresh.get(key)
-        if hit is not None and hit[0] == sig:
-            return hit[1]
-    for pack in _candidates(props):
-        if _is_fresh(props, pack):
-            return _remember(key, sig, pack)
+    """The pack of `props`, built if missing or stale; one builder across
+    threads and processes (app/container_pack.py)."""
     from app import derived
-    with _lock:
-        lock = _build_locks.setdefault(key, threading.Lock())
-    with lock:
-        for pack in _candidates(props):
-            if _is_fresh(props, pack):
-                return _remember(key, sig, pack)
-        err: OSError | None = None
-        for pack in _candidates(props):
-            t0 = time.monotonic()
-            try:
-                with derived.building(pack):    # one builder across processes
-                    if _is_fresh(props, pack):
-                        return _remember(key, sig, pack)
-                    n = build(props, pack)
-            except OSError as e:          # the origin cannot be written: the next place
-                err = e
-                continue
-            print(f"[wikipedia page_props] built {pack.name} ({n} pages, "
-                  f"{pack.stat().st_size >> 20} MiB) in {time.monotonic() - t0:.1f}s",
-                  file=sys.stderr, flush=True)
-            return _remember(key, sig, pack)
-        raise err if err is not None else OSError(f"no place to build the pack of {props}")
+    return _PACK.ensure(props, lambda: _candidates(props), version=PACK_VERSION,
+                        build=lambda o, d: build(o, d), ready=_ready,
+                        where=derived.place_kept("wikipedia-page-props", props.parent))
 
 
-def _remember(key: str, sig, pack: Path) -> Path:
-    """A pack (re)confirmed for `key`: what was cached from it before
-    describes an older build and goes."""
+def _ready(pack: Path) -> None:
+    """A pack newly confirmed or built: what was cached from an older one goes."""
     with _lock:
-        if _fresh.get(key) != (sig, pack):
-            _bounds.pop(str(pack), None)
-            _groups.forget(lambda k: k[0] == str(pack))
-        _fresh[key] = (sig, pack)
-    return pack
+        _bounds.pop(str(pack), None)
+    _groups.forget(lambda k: k[0] == str(pack))
 
 
 def unit_of(props: Path, page: int) -> tuple[int, int, bytes] | None:

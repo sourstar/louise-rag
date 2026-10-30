@@ -48,9 +48,9 @@ def test_a_plugin_without_a_declaration_is_refused():
 def test_the_declared_derived_data_is_what_the_code_places_and_builds():
     """The declaration is checked against the code, not trusted: each kind a
     plugin's package places under the fast drive is declared and each
-    declared kind is placed; a CONTAINER_PACK builds under
-    `derived.building`, a DUMP_PACK under `derived.writing`; a MEMBER form
-    derives nothing."""
+    declared kind is placed; a CONTAINER_PACK builds through the template's
+    one implementation (`ContainerPack`), a DUMP_PACK under
+    `derived.writing`; a MEMBER form derives nothing."""
     for name, plugin in sorted(collections_mod.PLUGIN_REGISTRY.items()):
         forms = backend.forms_of(plugin)
         src = _package_source(plugin)
@@ -60,7 +60,9 @@ def test_the_declared_derived_data_is_what_the_code_places_and_builds():
             if f.template is Template.MEMBER:
                 assert not f.derived, f"{name}: a MEMBER form ({f.name}) derives nothing"
             elif f.template is Template.CONTAINER_PACK:
-                assert "derived.building(" in src, f"{name}: a CONTAINER_PACK builds under derived.building"
+                # the template's ONE implementation (app/container_pack.py:
+                # freshness, derived.building, the pack written whole)
+                assert "ContainerPack(" in src, f"{name}: a CONTAINER_PACK builds through container_pack.ContainerPack"
             elif f.template is Template.DUMP_PACK:
                 assert "derived.writing(" in src, f"{name}: a DUMP_PACK writes under derived.writing"
 
@@ -175,3 +177,27 @@ def test_no_reader_keeps_a_cache_counted_in_items():
     hits = [str(p.relative_to(ROOT)) for p in (ROOT / "app").rglob("*.py")
             if re.search(r"_MAX_(GROUPS|FRAMES)\b", p.read_text(encoding="utf-8"))]
     assert hits == []
+
+
+@pytest.mark.parametrize("module, version_key", [
+    ("app.plugins.pubmed.pack", b"louise.pack_version"),
+    ("app.plugins.wikipedia.page_props", b"louise.page_props_pack_version"),
+])
+def test_a_pack_built_before_the_template_stays_fresh(tmp_path, module, version_key):
+    """RULE 1: pubmed's packs cost hours to build. The template keeps each
+    pack's metadata keys as they were spelled, so a pack already on the node
+    is fresh under the shared code and nothing is rebuilt."""
+    import importlib
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    mod = importlib.import_module(module)
+    origin = tmp_path / "origin.gz"
+    origin.write_bytes(b"x")
+    st = origin.stat()
+    pack = tmp_path / "origin.pack.parquet"
+    pq.write_table(pa.table({"a": [1]}).replace_schema_metadata({
+        version_key: str(mod.PACK_VERSION).encode(),
+        b"louise.source_size": str(st.st_size).encode(),
+        b"louise.source_mtime_ns": str(st.st_mtime_ns).encode()}), pack)
+    fresh = mod.is_fresh if hasattr(mod, "is_fresh") else mod._is_fresh
+    assert fresh(origin, pack)

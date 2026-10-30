@@ -30,12 +30,10 @@ seeded. The pack is a cache and is never exchanged.
 """
 import gzip
 import json
-import os
-import sys
 import threading
-import time
 from collections import OrderedDict
 from pathlib import Path
+from typing import Iterator
 from xml.etree import ElementTree as ET
 
 import pyarrow as pa
@@ -43,6 +41,7 @@ import pyarrow.parquet as pq
 
 from ... import config
 from ...backend import GroupCache
+from ...container_pack import ContainerPack, signature
 from . import medline
 
 PACK_VERSION = 1
@@ -65,8 +64,6 @@ SCHEMA = pa.schema([
     pa.field("authors", pa.string()),
 ])
 
-_build_locks: dict[str, threading.Lock] = {}
-_build_locks_guard = threading.Lock()
 _files_lock = threading.Lock()              # guards the dict caches below
 #: (pack path, row group) -> {index: xml}: 64 MiB of XML (app/backend.py);
 #: it held 4 groups, ~10 MB each
@@ -87,104 +84,84 @@ def pack_path(container: Path) -> Path:
         return Path(config.PUBMED_PACK_DIR) / name
     from app import derived
     beside = container.parent / derived.BESIDE
-    cached = derived.place("pubmed-pack", container.parent)
+    cached = derived.place_kept("pubmed-pack", container.parent)
     if cached is None:
         return beside / name
     derived.adopt(beside / name, cached / name)
     return cached / name
 
 
+#: the CONTAINER_PACK template's machinery (app/container_pack.py): freshness,
+#: one builder across processes, the pack written whole
+_PACK = ContainerPack("pubmed pack", "records", _META_VERSION)
+
+
 def _signature(container: Path) -> tuple[int, int]:
-    st = container.stat()
-    return st.st_size, st.st_mtime_ns
+    return signature(container)
 
 
 def is_fresh(container: Path, path: Path) -> bool:
-    if not path.is_file():
-        return False
-    try:
-        meta = pq.read_metadata(path).metadata or {}
-    except Exception:   # noqa: BLE001 — a truncated pack is simply stale
-        return False
-    size, mtime = _signature(container)
-    return (meta.get(_META_VERSION) == str(PACK_VERSION).encode()
-            and meta.get(_META_SIZE) == str(size).encode()
-            and meta.get(_META_MTIME) == str(mtime).encode())
+    return _PACK.is_fresh(container, path, PACK_VERSION)
 
 
 def build(container: Path, dest: Path) -> int:
-    """One streaming pass over the container into `dest` (atomic: tmp +
-    rename). Raises what the XML/gzip layer raises on a corrupt container
-    — the caller records ONE container error, exactly as before."""
-    size, mtime = _signature(container)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + f".{os.getpid()}.tmp")    # a writer's own (derived.building)
+    """One streaming pass over the container into `dest`, written whole
+    (app/container_pack.py). Raises what the XML/gzip layer raises on a
+    corrupt container — the caller records ONE container error, exactly as
+    before."""
+    return _PACK.write(container, dest, SCHEMA, _tables(container), PACK_VERSION)
+
+
+def _tables(container: Path) -> Iterator[pa.Table]:
+    """The container's children as `SCHEMA` tables of ROW_GROUP rows."""
     rows: list[dict] = []
     n = 0
-    # file-level key/value metadata rides on the schema (pyarrow 25)
-    schema = SCHEMA.with_metadata({_META_VERSION: str(PACK_VERSION),
-                                   _META_SIZE: str(size), _META_MTIME: str(mtime)})
-    writer = pq.ParquetWriter(tmp, schema, compression="zstd", compression_level=3)
-    try:
-        def flush():
-            nonlocal rows
-            if rows:
-                writer.write_table(pa.Table.from_pylist(rows, schema=schema))
-                rows = []
 
-        def emit(elem: ET.Element, index: int) -> None:
-            # serialised WITH its tail — identical to ET.tostring(root[i])
-            xml = ET.tostring(elem, encoding="unicode").encode("utf-8")
-            row = {"index": index, "tag": elem.tag, "pmid": None, "delete_pmids": None,
-                   "xml": xml, "title": None, "abstract": None, "journal": None,
-                   "date": None, "authors": None}
-            if elem.tag == "PubmedArticle":
-                meta = medline.parse_article(elem)
-                row.update(pmid=meta["pmid"] or None, title=meta["title"],
-                           abstract=meta["abstract"], journal=meta["journal"],
-                           date=meta["date"], authors=authors_of(elem))
-            elif elem.tag == "DeleteCitation":
-                row["delete_pmids"] = json.dumps(medline.parse_delete_pmids(elem))
-            rows.append(row)
+    def emit(elem: ET.Element, index: int) -> None:
+        # serialised WITH its tail — identical to ET.tostring(root[i])
+        xml = ET.tostring(elem, encoding="unicode").encode("utf-8")
+        row = {"index": index, "tag": elem.tag, "pmid": None, "delete_pmids": None,
+               "xml": xml, "title": None, "abstract": None, "journal": None,
+               "date": None, "authors": None}
+        if elem.tag == "PubmedArticle":
+            meta = medline.parse_article(elem)
+            row.update(pmid=meta["pmid"] or None, title=meta["title"],
+                       abstract=meta["abstract"], journal=meta["journal"],
+                       date=meta["date"], authors=authors_of(elem))
+        elif elem.tag == "DeleteCitation":
+            row["delete_pmids"] = json.dumps(medline.parse_delete_pmids(elem))
+        rows.append(row)
+
+    depth = 0
+    root: ET.Element | None = None
+    pending: ET.Element | None = None
+    with open_container(container) as f:
+        for event, elem in ET.iterparse(f, events=("start", "end")):
+            if event == "start":
+                depth += 1
+                if depth == 1:
+                    root = elem
+                elif depth == 2 and pending is not None:
+                    # the previous child's tail is complete now
+                    emit(pending, n)
+                    n += 1
+                    pending.clear()
+                    if root is not None:
+                        root.remove(pending)
+                    pending = None
+            else:
+                depth -= 1
+                if depth == 1:
+                    pending = elem
+                elif depth == 0 and pending is not None:
+                    emit(pending, n)
+                    n += 1
+                    pending = None
             if len(rows) >= ROW_GROUP:
-                flush()
-
-        depth = 0
-        root: ET.Element | None = None
-        pending: ET.Element | None = None
-        with open_container(container) as f:
-            for event, elem in ET.iterparse(f, events=("start", "end")):
-                if event == "start":
-                    depth += 1
-                    if depth == 1:
-                        root = elem
-                    elif depth == 2 and pending is not None:
-                        # the previous child's tail is complete now
-                        emit(pending, n)
-                        n += 1
-                        pending.clear()
-                        if root is not None:
-                            root.remove(pending)
-                        pending = None
-                else:
-                    depth -= 1
-                    if depth == 1:
-                        pending = elem
-                    elif depth == 0 and pending is not None:
-                        emit(pending, n)
-                        n += 1
-                        pending = None
-        flush()
-        writer.close()
-        os.replace(tmp, dest)
-    except BaseException:
-        try:
-            writer.close()
-        except Exception:   # noqa: BLE001
-            pass
-        tmp.unlink(missing_ok=True)
-        raise
-    return n
+                yield pa.Table.from_pylist(rows, schema=SCHEMA)
+                rows = []
+    if rows:
+        yield pa.Table.from_pylist(rows, schema=SCHEMA)
 
 
 def authors_of(elem: ET.Element) -> str:
@@ -203,39 +180,17 @@ def authors_of(elem: ET.Element) -> str:
 
 
 def ensure(container: Path) -> Path:
-    """The pack for `container`, built or rebuilt if missing or stale.
-    One builder per container at a time; the others wait and reuse.
-    Freshness is memoised per (container, size, mtime): reading the
-    Parquet footer per record cost ~3 ms, a stat costs microseconds."""
-    path = pack_path(container)
-    sig = _signature(container)
-    with _files_lock:
-        if _fresh.get(str(container)) == (sig, PACK_VERSION, str(path)):
-            return path
-    if is_fresh(container, path):
-        with _files_lock:
-            _fresh[str(container)] = (sig, PACK_VERSION, str(path))
-        return path
-    with _build_locks_guard:
-        lock = _build_locks.setdefault(str(container), threading.Lock())
+    """The pack for `container`, built or rebuilt if missing or stale —
+    one builder across threads and processes, the others wait and reuse
+    (app/container_pack.py)."""
     from app import derived
-    with lock, derived.building(path):          # threads here, then every process
-        if is_fresh(container, path):
-            with _files_lock:
-                _fresh[str(container)] = (sig, PACK_VERSION, str(path))
-            return path
-        t0 = time.monotonic()
-        n = build(container, path)
-        print(f"[pubmed pack] built {path.name} ({n} records, "
-              f"{path.stat().st_size >> 20} MiB) in {time.monotonic() - t0:.1f}s",
-              file=sys.stderr, flush=True)
-        _forget(path)
-        with _files_lock:
-            _fresh[str(container)] = (_signature(container), PACK_VERSION, str(path))
-        return path
+    return _PACK.ensure(container, lambda: [pack_path(container)], version=PACK_VERSION,
+                        build=lambda c, d: build(c, d), ready=_forget,
+                        where=(config.PUBMED_PACK_DIR, derived.place_kept("pubmed-pack", container.parent)))
 
 
-_fresh: dict[str, tuple[tuple[int, int], int, str]] = {}   # container -> (signature, version, pack path)
+#: (container, where) -> (signature, version, pack path) of the pack found fresh
+_fresh = _PACK.fresh
 
 
 def _forget(path: Path) -> None:

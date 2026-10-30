@@ -29,7 +29,7 @@ every plugin in it uses.
 | template | when | contract | the one implementation | forms |
 |---|---|---|---|---|
 | **MEMBER** | the origin addresses each record itself | read where it lies; nothing derived but small indexes; a reader's cache is budgeted in bytes | the shared group cache (§3 S2); the handle cache (S4) | gutenberg (a book directory), deposit (a file), normattiva (a zip member), wikipedia (a bz2 stream of the multistream dump; a row range of the archive's shards), embedded (a row range) |
-| **CONTAINER_PACK** | records are members of a container that cannot be read at a record (gzip XML, SQL dump) | one Parquet pack per container, built in one pass; one builder across processes (`derived.building`); a writer's own temp file, then an atomic replace; fresh by its Parquet metadata (version, the container's size and mtime); placed by `derived.place`; a record read from its row group | `derived.building` (#94); the pack class (S3) | pubmed (the XML containers), wikipedia (page_props) |
+| **CONTAINER_PACK** | records are members of a container that cannot be read at a record (gzip XML, SQL dump) | one Parquet pack per container, built in one pass; one builder across processes (`derived.building`); a writer's own temp file, then an atomic replace; fresh by its Parquet metadata (version, the container's size and mtime); placed by `derived.place`; a record read from its row group | `app/container_pack.py`: `ContainerPack` (S3), over `derived.building` (#94) | pubmed (the XML containers), wikipedia (page_props) |
 | **DUMP_PACK** | one origin too large for one pass | a pack directory of chunk files and side tables; resumable passes with `meta.json` as the checkpoint; ONE writer (`derived.writing`, never waited for: a second one defers); a record read from a row group of its chunk file | `derived.writing` (this change) | wikidata (the JSON dump) |
 
 Every form keeps derived data in one directory name beside its origin,
@@ -77,9 +77,16 @@ inventory found, fixed.**
 - A test refuses any `_MAX_GROUPS` or `_MAX_FRAMES` in `app/`.
 - **Left: the per-file layouts** (wikidata 8, archive 64, `pack/records` 64 indexes). wikidata's 8 re-opens a ParquetFile per line on a sparse family: 3.6 % of a build child (München, 2026-10-30). A chunk file's footer is ~3 MB in memory, so the fix is not a bigger count. It is the footer's own `metadata=` reuse under a byte budget, measured first. While the build is parent-bound (47 % of the children idle, #95), it does not bind.
 
-**S3 — the CONTAINER_PACK class.** pubmed's and page_props' `ensure`,
-`build`, `is_fresh` and `_signature` become one implementation. The plugin
-gives only its rows and its schema.
+**S3, DONE: the CONTAINER_PACK class.**
+- `app/container_pack.py` (`ContainerPack`) holds the template's machinery once. A plugin gives only its schema, its rows as Arrow tables, its version and the metadata key of that version. The machinery:
+  - fresh by the pack's Parquet metadata, memoised per container while its size and mtime stand;
+  - one builder across threads and processes (`derived.building`);
+  - written whole (the writer's own temporary file, then an atomic replace);
+  - places tried in order.
+- pubmed's pack and page_props are both on it.
+- Each pack keeps its metadata keys as spelled before, so the node's packs stay fresh (RULE 1; a test spells the keys out).
+- pubmed's place is kept per process (`place_kept`), so there is no longer a realpath per record.
+- The template test now requires `ContainerPack` in a CONTAINER_PACK plugin.
 
 **S4, BEGUN: the per-record costs.** wikidata asked the files once a
 second per process (`backend.rechecked`, a TTL memo; `cachetools.TTLCache`
