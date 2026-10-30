@@ -50,7 +50,7 @@ grep -q "embeddings.scan_columns(coll" "$ROOT/src.new/app/hold/carry.py"     # b
 grep -q "^def mentions" "$ROOT/src.new/app/ask/figures.py"                   # de64164
 grep -q "PARSER_VERSION = 11" "$ROOT/src.new/app/plugins/gutenberg/source.py"   # 693ffcc (10: f9bdf66)
 grep -q "gh-115634" "$ROOT/src.new/app/parallel.py"                              # c3dcb4c
-grep -q "^PAGES_AHEAD = 16" "$ROOT/src.new/app/parallel.py"                      # 21da0e3
+grep -qE "^(PAGES|ROWS)_AHEAD = " "$ROOT/src.new/app/parallel.py"                 # 21da0e3 (PAGES_AHEAD = 16; in rows since 4cafea4)
 grep -q "CREATE TABLE IF NOT EXISTS issues" "$ROOT/src.new/app/db.py"            # 787ebad
 grep -q 'env.get("ADMIN_TOKEN_FILE")' "$ROOT/src.new/app/config.py"              # invariant 8
 test -s "$ROOT/src.new/deploy/16f/move_secrets.py"                               # 23bde8c
