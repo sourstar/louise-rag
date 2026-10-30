@@ -129,6 +129,7 @@ grep -q "since the last line" "$ROOT/src.new/app/worker.py"                     
 grep -q "^_codes_by_dump: dict" "$ROOT/src.new/app/plugins/wikidata/pack.py"                # 3785520 (dc2df1c): the pack's place asked once a build
 grep -q "^PLAN_WINDOW = 50_000" "$ROOT/src.new/app/pack/build.py"                            # a599f65 (235d13b): the plan walked in rowid windows by the pool
 grep -q "^def write_tags(con, uid" "$ROOT/src.new/app/entities.py"                          # a599f65: fts tags computed in the children, the worker writes them
+grep -q '^PLAN_INDEX = "CREATE INDEX IF NOT EXISTS idx_plan_slice' "$ROOT/src.new/app/pack/build.py"   # 5a399c6 (5fc83ff): the plan's index built once the plan is done
 grep -q "derived = root / name / INDEX / facets_mod.CACHE" "$ROOT/src.new/app/hold/discard.py"  # c1b6156 (0fc6451): discard removes only index/facets
 grep -q '"held-record"' "$ROOT/src.new/app/parallel.py"                                     # 7faa83b (39d0086): held record lines through the parse pool (the kind's test reshaped in 5cec41d)
 grep -q "^def with_line(collection" "$ROOT/src.new/app/pack/build.py"                       # 5cec41d (060b4c7): the pool's children encode each record line
