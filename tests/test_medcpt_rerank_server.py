@@ -29,6 +29,23 @@ def test_every_text_is_scored_at_its_own_index_in_length_sorted_batches():
     assert all(q == "q" for b in seen for q, _t in b), "the query rides in every pair"
 
 
+def test_a_fixed_reranker_infers_full_batches_and_drops_the_fillers():
+    """Every inference `batch` pairs (one static shape): a short batch is
+    filled with copies of its first pair, whose scores are dropped, so a
+    document's score depends on (query, document) alone."""
+    seen = []
+
+    def infer(pairs):
+        seen.append(len(pairs))
+        return [float(len(t)) for _q, t in pairs]
+    r = server.Reranker(lambda pairs: pairs, infer, batch=4, fixed=True)
+    texts = ["abc", "abcdefgh", "a", "abcde", "ab"]
+    assert r.logits("q", texts) == [3.0, 8.0, 1.0, 5.0, 2.0]
+    assert seen == [4, 4], "the second batch, of one pair, filled to four"
+    alone = server.Reranker(lambda pairs: pairs, infer, batch=4, fixed=True)
+    assert alone.logits("q", ["abcde"]) == [5.0]
+
+
 def test_the_sigmoid_is_teis_and_extreme_logits_do_not_overflow():
     assert [server.sigmoid(x) for x in (-1000.0, 0.0, 1000.0)] == [0.0, 0.5, 1.0]
 

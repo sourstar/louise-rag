@@ -45,21 +45,34 @@ def sigmoid(x: float) -> float:
 
 class Reranker:
     """`encode(pairs)` gives the model's three int64 inputs for a list of
-    (query, text) pairs; `infer(inputs)` gives one logit per pair."""
+    (query, text) pairs; `infer(inputs)` gives one logit per pair.
 
-    def __init__(self, encode, infer, batch: int = 16):
+    `fixed`: ONE STATIC SHAPE, every inference `batch` pairs of the encoder's
+    fixed length, a short batch filled with copies of its first pair whose
+    scores are dropped. Padded to its own longest pair, a batch's shape, and
+    with it the GPU kernel's summation order, depended on the batch-mates: a
+    document's score was not a function of (query, document). München,
+    2026-10-30, louise-rerank-medcpt on the Arc B70: 56 of 256 scores moved
+    when the same documents were cut into requests in reverse order, the same
+    56 on every fresh load (max |diff| 6.6e-8). The encoder must be fixed too
+    (`make_encoder(fixed=True)`)."""
+
+    def __init__(self, encode, infer, batch: int = 16, *, fixed: bool = False):
         self.encode, self.infer, self.batch = encode, infer, max(1, batch)
+        self.fixed = fixed
 
     def logits(self, query: str, texts: list[str]) -> list[float]:
-        # similar lengths share a batch, so little of it is padding
+        # similar lengths share a batch, so little of it is padding (unfixed)
         order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
         out = [0.0] * len(texts)
         for s in range(0, len(order), self.batch):
             idx = order[s:s + self.batch]
-            vals = self.infer(self.encode([(query, texts[i]) for i in idx]))
-            if len(vals) != len(idx):
-                raise RuntimeError(f"model gave {len(vals)} scores for {len(idx)} pairs")
-            for i, v in zip(idx, vals):
+            pairs = [(query, texts[i]) for i in idx]
+            pairs += [pairs[0]] * (self.batch - len(pairs)) if self.fixed else []
+            vals = list(self.infer(self.encode(pairs)))
+            if len(vals) != len(pairs):
+                raise RuntimeError(f"model gave {len(vals)} scores for {len(pairs)} pairs")
+            for i, v in zip(idx, vals):                # a filler's score is dropped
                 out[i] = float(v)
         return out
 
