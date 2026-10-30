@@ -83,6 +83,12 @@ _INDEXED = "documents INDEXED BY idx_documents_scope"
 #: count (a LIMIT under the COUNT); the stage's state does not depend on
 #: the size, only on whether there is any.
 WAITING_CAP = 1_000_000
+#: Below this many rows the count is made exact: the errored rows among them
+#: are read through the table (one lookup each, which is what the cheap count
+#: avoids) and counted apart. gutenberg's 33 "waiting" rdf documents were all
+#: errored since September — out of every selection — and read as stuck work
+#: (München, 2026-10-30). Above it the errored few stay inside the count.
+ERRORED_EXACT_BELOW = 100_000
 
 IDLE, RUNNING, HELD, BLOCKED = "idle", "running", "held", "blocked"
 
@@ -160,11 +166,17 @@ class Stage:
     reason: str = ""
     #: True when `waiting` is the cap (WAITING_CAP): there are more
     over: bool = False
+    #: documents at this stage with an error recorded: out of every selection
+    #: until a person retries them, so NOT waiting — counted apart where the
+    #: count is small enough to read exactly (ERRORED_EXACT_BELOW)
+    errored: int = 0
 
     def line(self) -> str:
         mark = {IDLE: "  ", RUNNING: "->", HELD: "..", BLOCKED: "!!"}[self.state]
         n = f"over {self.waiting:,}" if self.over else f"{self.waiting:,}"
         got = f"{mark} {self.name:<7} {n:>17}  {self.state}"
+        if self.errored:
+            got += f"  ({self.errored:,} errored, not waiting)"
         return f"{got}  — {self.reason}" if self.reason else got
 
 
@@ -243,6 +255,14 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -
             report.stages.append(
                 Stage(name, 0, BLOCKED, f"cannot be counted: {type(e).__name__}: {e}"))
             continue
+        errored = 0
+        if 0 < waiting <= ERRORED_EXACT_BELOW:
+            try:
+                errored = con.execute(f"SELECT COUNT(*) FROM {_INDEXED} WHERE {where} "
+                                      f"AND error IS NOT NULL").fetchone()[0]
+            except Exception:   # noqa: BLE001 — the cheap count stands
+                errored = 0
+            waiting -= errored
         # a copy in quarantine is not embedded for; its records and its text
         # index are what its tests read, and go on (03 §3.6)
         reason = withheld or (
@@ -261,7 +281,7 @@ def inspect(con, collection, *, errors: bool = False, mode: str | None = None) -
         else:
             state = RUNNING
         over = waiting > WAITING_CAP
-        report.stages.append(Stage(name, min(waiting, WAITING_CAP), state, reason, over))
+        report.stages.append(Stage(name, min(waiting, WAITING_CAP), state, reason, over, errored))
     return report
 
 
