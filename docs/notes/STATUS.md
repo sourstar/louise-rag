@@ -18,6 +18,27 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+### 2026-10-30: the records build from held lines, made multi-core — the series
+
+wikipedia-v8's rebuild from its discarded snapshot's lines (52.9 M records,
+~26.5 k parts) ran in ONE process: 75–97 % of one core of the eight the
+profile allowed (operator: "multi threading is a must, not an option";
+CLAUDE.md). Staged parts per minute, each fix deployed and the build
+resumed (München, same metric, slices differ):
+
+| step | parts/min | children each | total |
+|---|---|---|---|
+| one process | 271 | — | ~1 core |
+| #65 held lines in the pool | 301 | ~24 % (respawned per ~500 tasks) | ~2 cores |
+| PARSE_TASKS_PER_CHILD=1e6 | 206 | ~17 % | ~2 cores |
+| #67 children encode lines; one lookup per page | 255 | 23–28 % | ~3.5 cores |
+| #68 parts written by writer threads | 428 | 36–38 % | ~4.6 cores |
+| #69 slim results; children find their documents | 731 | 56–58 % | 5–6 cores |
+
+Open: ~6 of 8 cores. At +3 min the children wait again on the build's
+thread (ordering, the database rows) and the writer threads share its GIL;
+the next step is writing parts in processes, not threads.
+
 ### 2026-10-30: wikipedia-v8 held 21.9 M pages twice — rglob does not enter a link; the repair
 
 **The defect.** v8's `origin/data` is a link to the archive under
