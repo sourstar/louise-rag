@@ -4,6 +4,15 @@ One entry per case that cost time, newest first. Each entry gives what happened,
 
 ## 2026-10-30 — the multi-core day
 
+### A copy that changed every file's mode and nothing else
+
+- **What happened.** The louise-python-20261030 tree was made by `cp -a` of 20261021b into LocalAI's `backends/`. That dataset is nfsv4 with aclmode passthrough, and its directories carry an inheritable `user:apps:…x…:fd` entry. Every entry the copy created inherited it, so 39,548 files read owner-execute (664 → 764, 644 → 744). `chmod` alone could not clear it. Contents were byte-identical and everything would have imported and run. But a tree digest counts each file's exec bit (vega_wrapper `tree_manifest`), so the "same" tree would have been another engine. The same trap was in a rollout's forward path (`install` of three files into an existing package: a file created there reads 744) and in its backout (`cp -a` back from the saved copy) (München; found by checking modes against the source after the build).
+- **Cost.** None paid: caught before any model loaded the tree. The backend-tree-drift case of 2026-10-12/13 was the same mechanism read across a reboot.
+- **Lessons.**
+  - A copy into an ACL'd dataset is not a copy of the modes. Compare modes, and ACL triviality, against the source after every write into `backends/`.
+  - The change that passes every functional check and fails only the digest is the one a functional test never catches.
+- **Fix.** deploy/vega/switch/backend_files.sh: `bf_record` the modes before writing, then `bf_restore` (strip to a trivial ACL with `nfs4xdr_setfacl -b`, chmod back, check). `bf_copy` copies with `tar --no-acls --no-xattrs`. rollout-110-20261030.sh uses it on its forward path and its backout. The 20261030 tree was stripped and re-moded entry by entry: 0 mode differences and 0 non-trivial ACLs against its source.
+
 ### A verdict measured at the setting it was meant to test against
 
 - **What happened.** Every statement on the node read `batch_invariant: true`, and wikipedia's encoder worked at 2–4 % of its gate benchmark, one text a request. The obvious fix was to raise `EMBED_BATCH`. But the gate's `contribute` pass sends texts the way the node contributes, which on a node at `EMBED_BATCH=1` is one text a request. So "batch-invariant" had been measured without a batch, and raising the env would have admitted batched answers no gate had seen. A batching fault once silently corrupted 714 books.

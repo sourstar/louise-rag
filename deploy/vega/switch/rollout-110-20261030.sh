@@ -34,6 +34,11 @@ LOCALAI=http://localhost:30286
 MODELS="vega-bge-m3 vega-granite vega-medcpt-article vega-medcpt-query vega-qwen3-embedding-4b vega-bge-m3-cpu"
 GATED="gutenberg wikipedia pubmed"        # the collections whose document or query encoder runs here
 
+PYC="__pycache__/vega_wrapper.cpython-312.pyc app/hold/__pycache__/codex.cpython-312.pyc"
+# writes into backends/ inherit an owner-execute ACE: every written path is
+# stripped and given back its recorded mode (backend_files.sh)
+. "$(dirname "$0")/backend_files.sh"
+
 say() { printf '\n=== %s %s\n' "$(date +%T)" "$*"; }
 mode() { $L node show | python3 -c "import sys,json; print(json.load(sys.stdin)['mode'])"; }
 paused_collections() { $L node show | python3 -c "import sys,json; print(' '.join(json.load(sys.stdin)['overrides'].get('paused_collections') or []))"; }
@@ -50,7 +55,9 @@ for p in $PKGS; do
     for f in $FILES; do cp -a "$BK/$p/$f" "$SAVED/$p/$f"; done
     cp -a "$BK/$p"/__pycache__/vega_wrapper.*.pyc "$SAVED/$p/__pycache__/" 2>/dev/null || true
     cp -a "$BK/$p"/app/hold/__pycache__/codex.*.pyc "$SAVED/$p/app/hold/__pycache__/" 2>/dev/null || true
+    bf_record "$BK/$p" $FILES $PYC > "$SAVED/$p.modes"
   }
+  echo "$p: modes $(cut -f1 "$SAVED/$p.modes" | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
   echo "$p: was $(cat "$SAVED/$p/REVISION" | cut -c1-10), wrapper $(sha256sum "$SAVED/$p/vega_wrapper.py" | cut -c1-12); saved"
 done
 MODE=$(mode); BEFORE_PAUSED=$(paused_collections)
@@ -72,6 +79,7 @@ for p in $PKGS; do
   for f in $FILES; do install -m 0644 -o 568 -g 0 "$STAGE/$f" "$BK/$p/$f"; done
   (cd "$BK/$p" && ./venv/bin/python -m compileall -q vega_wrapper.py app/hold/codex.py >/dev/null)
   chown -R 568:0 "$BK/$p/__pycache__" "$BK/$p/app/hold/__pycache__"
+  bf_restore "$BK/$p" "$SAVED/$p.modes" || { echo "$p: modes or ACLs not as before; BACKOUT below"; exit 1; }
   (cd "$BK/$p" && ./venv/bin/python -c "import vega_wrapper; print('$p: imports ok')")
   echo "$p: now $(cut -c1-10 "$BK/$p/REVISION"), wrapper $(sha256sum "$BK/$p/vega_wrapper.py" | cut -c1-12)"
 done
@@ -109,7 +117,12 @@ done
 echo "mode $(mode); paused collections: $(paused_collections) (before: ${BEFORE_PAUSED:-none})"
 echo "rolled out: #110's wrapper in $PKGS"
 
-# BACKOUT (the runs before this rollout come back, gated already):
-#   node pause; shutdown the models above; for p in vega-llama-cpp vega-llama-cpp-cpu:
-#     cp -a /mnt/ssd5/apps/localai/backends-bak-20261030-110/$p/. /mnt/ssd5/apps/localai/backends/$p/
+# BACKOUT (the runs before this rollout come back, gated already — ONLY if
+# the restored files read the modes they had: not cp -a, which brings the
+# inherited ACE back with them):
+#   node pause; shutdown the models above; then, in bash:
+#   . /root/backend_files.sh; S=/mnt/ssd5/apps/localai/backends-bak-20261030-110
+#   for p in vega-llama-cpp vega-llama-cpp-cpu; do
+#     bf_copy $S/$p /mnt/ssd5/apps/localai/backends/$p && bf_restore /mnt/ssd5/apps/localai/backends/$p $S/$p.modes
+#   done
 #   node resume
