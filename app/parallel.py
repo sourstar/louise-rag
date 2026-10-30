@@ -191,26 +191,47 @@ def each_part(fn, tasks: list[tuple]):
             yield fn(*t)
         return
     from collections import deque
-    ex = ProcessPoolExecutor(max_workers=n, mp_context=multiprocessing.get_context("spawn"))
     # BOUNDED: at most 2n tasks in flight or done and not yet taken. Results
     # the caller has not reached do not pile up when it is the slower side —
     # the records build's plan commits every window it gets (75.9 M rows).
+    # A CHILD THE KERNEL KILLED (BrokenProcessPool: an OOM, a SIGKILL) does
+    # not end the pass: a pool of half the size takes the parts not yet
+    # answered, in order, and at one process they are computed here
+    # (operator, 2026-10-30: a kill recovers by itself, "not involving this
+    # agent. This applies to any worker").
+    nxt = 0                                 # the next task to submit
+    taken = 0                               # the next result to yield
+    ex = ProcessPoolExecutor(max_workers=n, mp_context=multiprocessing.get_context("spawn"))
     window: deque = deque()
-    ahead = iter(tasks)
     try:
-        for t in ahead:
-            window.append(ex.submit(fn, *t))
-            if len(window) >= 2 * n:
-                break
-        while window:
-            done = window.popleft()
-            nxt = next(ahead, None)
-            if nxt is not None:
-                window.append(ex.submit(fn, *nxt))
-            yield done.result()
+        while taken < len(tasks):
+            if ex is None:                  # down to this process
+                yield fn(*tasks[taken])
+                taken += 1
+                continue
+            while nxt < len(tasks) and len(window) < 2 * n:
+                window.append(ex.submit(fn, *tasks[nxt]))
+                nxt += 1
+            try:
+                got = window[0].result()
+            except BrokenProcessPool:
+                ex.shutdown(wait=False, cancel_futures=True)
+                window.clear()
+                nxt = taken                 # the unanswered go again
+                n //= 2
+                print(f"[parse pool] a child was killed: {len(tasks) - taken} part(s) go again "
+                      + (f"on {n} process(es)" if n > 1 else "in this process"),
+                      file=sys.stderr, flush=True)
+                ex = (ProcessPoolExecutor(max_workers=n, mp_context=multiprocessing.get_context("spawn"))
+                      if n > 1 else None)
+                continue
+            window.popleft()
+            taken += 1
+            yield got
     finally:
         # a caller that stopped early (an error, a stop) leaves no part queued
-        ex.shutdown(wait=True, cancel_futures=True)
+        if ex is not None:
+            ex.shutdown(wait=True, cancel_futures=True)
 
 
 def pool() -> ProcessPoolExecutor | None:

@@ -120,6 +120,17 @@ services:
     image: louise-rag:local
     pull_policy: never
     restart: unless-stopped
+    # MEMORY CAPS (operator, 2026-10-30: "The worker's main process was
+    # killed by the kernel — this must not happen without an automatic
+    # recovery not involving this agent. This applies to any worker"). The
+    # 14:14 kill was a GLOBAL OOM: no container had a cap, so the kernel
+    # chose the largest process on the host, and could as well have chosen
+    # LocalAI or middlewared. With a cap the OOM stays inside the container
+    # that ran away, and `restart: unless-stopped` brings it back (invariant 2:
+    # every stage resumes). Swap equal to the cap: no swap thrash first.
+    # The worker runs 5-15 GB (München); the web serves searches.
+    mem_limit: 12g
+    memswap_limit: 12g
     # init: without it the app's Python is the container's PID 1, and PID 1
     # must reap orphans. rsync forks a receiver; when rsync exits first (a
     # SIGKILL, some error exits) the receiver is re-parented to PID 1 and
@@ -176,6 +187,9 @@ services:
     image: louise-rag:local
     pull_policy: never
     restart: unless-stopped
+    # see web: contained and restarted, never a global OOM
+    mem_limit: 24g
+    memswap_limit: 24g
     command: ['python', '-m', 'app.worker']
     init: true                  # reaps rsync's orphaned children — see web
     environment:
