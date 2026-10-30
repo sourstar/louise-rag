@@ -376,6 +376,65 @@ def record_hashes(root: Path, name: str) -> dict[str, str]:
     _hash_memo[key] = out
     return out
 
+#: the latest snapshot, by its file and mtime: `record_hash_of` runs per
+#: document and a snapshot of wikipedia-v8 lists 26,551 parts
+_snap_memo: dict[str, tuple] = {}
+#: (uid, hash) lists of the last parts read, by part root (documents come in
+#: part order, so a part is read once for its documents)
+_part_memo: dict[str, dict[str, str]] = {}
+_PART_KEEP = 4
+
+
+def current_snapshot(root: Path, name: str):
+    from app.hold import collection as col
+    d = col.shard_dir_of(Path(root), name) / "snapshots"
+    try:
+        newest = max((p for p in d.glob("*.json") if not p.name.endswith(".sig.json")),
+                     key=lambda p: p.stem)
+        stamp = newest.stat().st_mtime_ns
+    except (OSError, ValueError):
+        return None
+    got = _snap_memo.get(str(d))
+    if got is not None and got[0] == (str(newest), stamp):
+        return got[1]
+    from app.hold import seed
+    try:
+        snap = seed.latest_snapshot(Path(root), name)
+    except Exception:   # noqa: BLE001 — no SHARD here: nothing is known
+        return None
+    _snap_memo[str(d)] = ((str(newest), stamp), snap)
+    return snap
+
+
+def record_hash_of(root: Path, name: str, held: "Possession", uid: str) -> str | None:
+    """The record's content hash in the current snapshot, read from the
+    parts the bundles holding it name — one part's (uid, hash) list, never
+    the whole collection's (`record_hashes`: 40 M entries on pubmed, built
+    by each of the embed stage's threads at once; the worker grew to 46 GB
+    and was OOM-killed, München 2026-10-30). None where none of those parts
+    still holds it: the record is then embedded, as on any doubt."""
+    wanted = {held.shards.get(b) for bs in (held.bundles.get(uid) or {}).values() for b in bs}
+    wanted.discard(None)
+    if not wanted:
+        return None
+    snap = current_snapshot(root, name)
+    if snap is None:
+        return None
+    for s in snap.shards:
+        if f"{s.slice}/{s.n:05d}" not in wanted:
+            continue
+        key = str(s.root)
+        got = _part_memo.get(key)
+        if got is None:
+            got = {u: h for u, h in part_records(root, name, snap, s) if h}
+            while len(_part_memo) >= _PART_KEEP:
+                _part_memo.pop(next(iter(_part_memo)))
+            _part_memo[key] = got
+        if uid in got:
+            return got[uid]
+    return None
+
+
 #: the vectors of the last bundles read, by bundle id (documents come part by
 #: part, so a part's bundle is read once for its documents, not once each)
 _vectors_cache: dict[str, dict[str, Any]] = {}

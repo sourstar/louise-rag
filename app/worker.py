@@ -617,12 +617,19 @@ def _possessed_vectors(con, collection, row, chunks) -> dict:
     try:
         from app.share import possession
         root = collections_mod.louise_root() / "collections"
+        # FIRST whether any accepted bundle holds the record: most records of
+        # most collections are held by none, and then nothing is looked up
+        held = possession.index(root, collection.name, codex, con)
+        if row["uid"] not in held:
+            return {}
         keys = row.keys() if hasattr(row, "keys") else ()
         # the record's hash in the current snapshot, as possession judges it:
         # the manifest's column is NULL on a peer that never filled it
-        # (Perugia: all 79,659 rows)
+        # (Perugia: all 79,659 rows) — then read from the part the holding
+        # bundle names, never from the whole collection (pubmed: 40 M hashes
+        # per embed thread, the worker OOM-killed at 46 GB, 2026-10-30)
         content_hash = (row["content_hash"] if "content_hash" in keys else None) \
-            or possession.record_hashes(root, collection.name).get(row["uid"])
+            or possession.record_hash_of(root, collection.name, held, row["uid"])
         if not content_hash:
             return {}
         return possession.held_vectors(root, collection.name, codex, con, row["uid"], content_hash,
@@ -2204,28 +2211,37 @@ def _fill_content_hashes(con, collection) -> int:
     snapshot that will carry them."""
     from app.share import possession
     root = collections_mod.louise_root() / "collections"
-    # the rows first, the hashes second: `record_hashes` reads every record
-    # hash of the snapshot into memory (pubmed: 40M), which is worth doing
-    # only when a row lacks one (2026-10-28)
-    missing = [u for (u,) in con.execute("SELECT uid FROM documents WHERE content_hash IS NULL")]
-    if not missing:
+    # the rows first: a manifest with no row missing its hash reads nothing
+    if con.execute("SELECT 1 FROM documents WHERE content_hash IS NULL LIMIT 1").fetchone() is None:
         return 0
-    hashes = possession.record_hashes(root, collection.name)
-    if not hashes:
+    snap = possession.current_snapshot(root, collection.name)
+    if snap is None:
         return 0
-    rows = [(hashes[u], u) for u in missing if u in hashes]
-    if not rows:
+    # PART BY PART: one part's (uid, hash) list at a time, one transaction
+    # each. The whole snapshot's hashes in one dict, with a list of every
+    # NULL uid beside it, is 40 M entries on pubmed and 75.9 M on wikidata
+    # (the same dict four embed threads built at once took the worker to
+    # 46 GB and the OOM killer, 2026-10-30)
+    filled = 0
+    for s_ in snap.shards:
+        pairs = [(h, u) for u, h in possession.part_records(root, collection.name, snap, s_) if h]
+        if not pairs:
+            continue
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            before = con.total_changes
+            con.executemany("UPDATE documents SET content_hash=? WHERE uid=? AND content_hash IS NULL", pairs)
+            filled += con.total_changes - before
+            con.execute("COMMIT")
+        except Exception:
+            con.execute("ROLLBACK")
+            raise
+    if not filled:
         return 0
-    con.execute("BEGIN IMMEDIATE")
-    try:
-        con.executemany("UPDATE documents SET content_hash=? WHERE uid=? AND content_hash IS NULL", rows)
-        con.execute("COMMIT")
-    except Exception:
-        con.execute("ROLLBACK")
-        raise
-    db.log_event(con, "info", "ask", f"content_hash filled on {len(rows)} document(s) from the "
-                                     f"current snapshot's records ({len(missing) - len(rows)} not in it)")
-    return len(rows)
+    left = con.execute("SELECT COUNT(*) FROM documents WHERE content_hash IS NULL").fetchone()[0]
+    db.log_event(con, "info", "ask", f"content_hash filled on {filled} document(s) from the "
+                                     f"current snapshot's records ({left} not in it)")
+    return filled
 
 
 def _maintain_ask_indexes(con, collection) -> bool:

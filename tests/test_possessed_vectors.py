@@ -111,18 +111,57 @@ def test_the_worker_asks_possession_with_the_row_s_content_hash(collection, monk
     con = db.connect(collection)
     con.execute("UPDATE documents SET content_hash='h1'")
     row = con.execute("SELECT * FROM documents ORDER BY rowid LIMIT 1").fetchone()
+    held = possession.Possession({row["uid"]: ["h-snap"]}, {row["uid"]: {"h-snap": ["b1"]}},
+                                 {"b1": "k"}, {}, {"b1": "lang=en/00001"})
+    monkeypatch.setattr(possession, "index", lambda root, name, codex, con: held)
     c = collection
     monkeypatch.setattr(type(c), "codex", property(lambda self: object()), raising=False)
     got = worker._possessed_vectors(con, c, row, [{"id": "a"}, {"id": "b"}])
     assert got == {"x": [1.0]} and seen == {"uid": row["uid"], "h": "h1", "n": 2}
     # Perugia, 2026-10-23: the manifest's column NULL on every row — the
-    # record's hash comes from the current snapshot's records instead
+    # record's hash comes from the part its holding bundle names
     con.execute("UPDATE documents SET content_hash=NULL")
     row = con.execute("SELECT * FROM documents ORDER BY rowid LIMIT 1").fetchone()
-    monkeypatch.setattr(possession, "record_hashes", lambda root, name: {row["uid"]: "h-snap"})
+    asked = []
+    monkeypatch.setattr(possession, "record_hash_of",
+                        lambda root, name, held_, uid: asked.append(uid) or "h-snap")
     assert worker._possessed_vectors(con, c, row, [{"id": "a"}]) == {"x": [1.0]} and seen["h"] == "h-snap"
-    monkeypatch.setattr(possession, "record_hashes", lambda root, name: {})
+    monkeypatch.setattr(possession, "record_hash_of", lambda root, name, held_, uid: None)
     assert worker._possessed_vectors(con, c, row, [{"id": "a"}]) == {}, "no hash anywhere, no claim: embedded"
+
+
+def test_a_record_no_bundle_holds_looks_up_no_hash(collection, monkeypatch):
+    """pubmed, 2026-10-30: re-embedding 20,000 one-chunk documents built, in
+    each of the embed stage's threads, a dict of every record hash of the
+    collection (40 M) to look up one — the worker grew to 46 GB and was
+    OOM-killed. A record no accepted bundle holds needs no hash at all."""
+    def never(*a, **k):
+        raise AssertionError("a hash looked up for a record no bundle holds")
+    monkeypatch.setattr(possession, "record_hashes", never)
+    monkeypatch.setattr(possession, "record_hash_of", never)
+    monkeypatch.setattr(possession, "held_vectors", never)
+    monkeypatch.setattr(possession, "index", lambda root, name, codex, con: possession.Possession({"other": ["h"]}))
+    con = db.connect(collection)
+    con.execute("UPDATE documents SET content_hash=NULL")
+    row = con.execute("SELECT * FROM documents ORDER BY rowid LIMIT 1").fetchone()
+    monkeypatch.setattr(type(collection), "codex", property(lambda self: object()), raising=False)
+    assert worker._possessed_vectors(con, collection, row, [{"id": "a"}]) == {}
+
+
+def test_a_held_record_s_hash_is_read_from_its_bundle_s_part_only(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    possession._part_memo.clear()
+    parts = [SimpleNamespace(slice="lang=en", n=n, root=f"sha256:{n}") for n in (1, 2, 3)]
+    monkeypatch.setattr(possession, "current_snapshot", lambda root, name: SimpleNamespace(shards=parts))
+    reads = []
+    monkeypatch.setattr(possession, "part_records",
+                        lambda root, name, snap, s: reads.append(s.n) or [("u1", "h-now"), ("u2", "h2")])
+    held = possession.Possession({"u1": ["h-now"]}, {"u1": {"h-now": ["b1"]}}, {"b1": "k"}, {},
+                                 {"b1": "lang=en/00002"})
+    assert possession.record_hash_of(tmp_path, "books", held, "u1") == "h-now"
+    assert possession.record_hash_of(tmp_path, "books", held, "u1") == "h-now"
+    assert reads == [2], "the bundle's part, read once"
+    assert possession.record_hash_of(tmp_path, "books", held, "u9") is None, "held by no bundle"
 
 
 def test_record_hashes_read_the_current_snapshot_once(tmp_path, monkeypatch):
@@ -148,8 +187,17 @@ def test_a_fetched_shard_s_hashes_fill_the_manifest_s_empty_column(collection, m
     uids = [u for (u,) in con.execute("SELECT uid FROM documents ORDER BY uid")]
     con.execute("UPDATE documents SET content_hash=NULL")
     con.execute("UPDATE documents SET content_hash='built-newer' WHERE uid=?", (uids[0],))
-    monkeypatch.setattr(possession, "record_hashes",
-                        lambda root, name: {u: f"snap-{u}" for u in uids[:-1]})
+    from types import SimpleNamespace
+
+    def never(*a, **k):
+        raise AssertionError("the whole snapshot's hashes in one dict (pubmed: 40 M)")
+    monkeypatch.setattr(possession, "record_hashes", never)
+    parts = [SimpleNamespace(slice="lang=en", n=n, root=f"r{n}") for n in (1, 2)]
+    monkeypatch.setattr(possession, "current_snapshot", lambda root, name: SimpleNamespace(shards=parts))
+    half = len(uids) // 2
+    monkeypatch.setattr(possession, "part_records",
+                        lambda root, name, snap, s: [(u, f"snap-{u}") for u in
+                                                     (uids[:half] if s.n == 1 else uids[half:-1])])
     n = worker._fill_content_hashes(con, collection)
     got = dict(con.execute("SELECT uid, content_hash FROM documents"))
     assert got[uids[0]] == "built-newer", "never overwritten"
