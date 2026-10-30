@@ -13,7 +13,11 @@ the book. For example:
 - resume a build instead of redoing it;
 - re-create a collection nothing official was published from, instead of
   continuing it with a daughter (operator, 2026-10-24: "No official
-  daughters so far, rule 1") — carrying what is identical.
+  daughters so far, rule 1") — carrying what is identical;
+- stop the node whenever that speeds up the work (operator, 2026-10-30:
+  "this in not a production software, the node can be stopped any time it
+  speeds up the developments") — a tool that needs the worker's writers
+  asks for a stop, not for code that works around one.
 
 Tell the operator about each such intervention, but it is the default
 choice, not an exception to ask about. A spec rule that forces a
