@@ -121,18 +121,39 @@ def shards_for(codex, snapshot: snap.Snapshot, *, seed: bytes,
     return [names[k] for k in cx.sample(seed, n, iter(sorted(names)))]
 
 
+def picked_inputs(shard_tree: str, codex, path: str, seed: bytes, n: int
+                  ) -> tuple[list[str], dict[str, Any]]:
+    """One sampled part, cut and sampled: `(the picked chunk ids, what is
+    re-embedded for each)`. Module-level, so the pool's children run it
+    (app/parallel.py `each_part`): cutting a part is the expensive half of
+    this check, and only sixteen ids and their inputs come back."""
+    from pathlib import Path
+    from app.pack import records as pack_records
+    from . import land
+    cut = land.cut(codex, list(pack_records.iter_records(Path(shard_tree) / path)))
+    ids = sorted(cut)
+    picked = cx.sample(seed, min(n, len(ids)), iter(ids)) if ids else []
+    # a pair layer's chunk with its `fields`, re-cut from the record; a text
+    # layer's text, as ever
+    return picked, {cid: land.input_of(cut, cid) for cid in picked}
+
+
 def check(codex, snapshot: snap.Snapshot, *, seed: bytes,
-          chunk_ids_for: Callable[[snap.Shard], Sequence[str]],
-          text_of: Callable[[str], str | None],
           vectors_for: Callable[[list[str]], dict[str, list]],
           embed: Callable[[list[str]], list[list[float]]] | None,
+          shard_tree=None,
+          chunk_ids_for: Callable[[snap.Shard], Sequence[str]] | None = None,
+          text_of: Callable[[str], str | None] | None = None,
           fraction: str | None = None,
           drop: Callable[[list[str]], Any] | None = None) -> Report:
     """Run `vectors-sample` over this peer's own vectors.
 
     Everything about this peer arrives as a callable, as everywhere else
     under `app/hold/`: the module is a pure function of the Codex, the
-    snapshot and what the caller can look up.
+    snapshot and what the caller can look up. The sampled parts are read
+    from `shard_tree`, each cut in the parse pool's processes while this
+    one embeds (`picked_inputs`); or, given `chunk_ids_for` and `text_of`,
+    here.
     """
     import numpy as np
 
@@ -146,15 +167,31 @@ def check(codex, snapshot: snap.Snapshot, *, seed: bytes,
                       why="no compliant encoder on this peer: 03 §3.1's third "
                           "outcome, neither a failure nor a pass")
 
+    if shard_tree is not None:
+        from app import parallel
+        prepared = parallel.each_part(picked_inputs, [(str(shard_tree), codex, e.path, seed, n)
+                                                      for e in sampled])
+    else:
+        def here(entry):
+            ids = list(chunk_ids_for(entry))
+            picked = cx.sample(seed, min(n, len(ids)), iter(ids)) if ids else []
+            return picked, {cid: text_of(cid) for cid in picked}
+        prepared = (here(e) for e in sampled)
+    try:
+        return _check(codex, seed, tol, quorum, n, sampled, prepared, vectors_for, embed, drop)
+    finally:
+        prepared.close()
+
+
+def _check(codex, seed, tol, quorum, n, sampled, prepared, vectors_for, embed, drop) -> Report:
+    import numpy as np
     results: list[ShardResult] = []
     failing_all: list[str] = []
     checked_total = 0
-    for entry in sampled:
+    for entry, (picked, inputs) in zip(sampled, prepared):
         name = f"{entry.slice}/{entry.n:05d}"
-        ids = list(chunk_ids_for(entry))
-        picked = cx.sample(seed, min(n, len(ids)), iter(ids)) if ids else []
         held = vectors_for(picked) if picked else {}
-        pairs = [(cid, text_of(cid)) for cid in picked if cid in held]
+        pairs = [(cid, inputs.get(cid)) for cid in picked if cid in held]
         pairs = [(cid, t) for cid, t in pairs if t]
         if not pairs:
             results.append(ShardResult(

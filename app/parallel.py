@@ -174,6 +174,30 @@ def processes() -> int:
     return max(1, int(config.PARSE_PROCESSES))
 
 
+def each_part(fn, tasks: list[tuple]):
+    """`fn(*task)` for every task, in the tasks' order: in spawned processes
+    when the node allows more than one (`processes()`), here otherwise.
+
+    For a pass an operator runs over a collection's parts (`hold check`, a
+    snapshot's delta), not for the worker's rounds: its pool is made for
+    the pass and gone after it. LAZY: the caller works on part k while the
+    children compute the parts after it — vectors-sample embeds one part's
+    sixteen texts while the next parts are cut (docs/notes/multicore-audit.md).
+    `fn` is a module-level function, and its tasks and results pickle.
+    """
+    n = processes()
+    if n <= 1 or len(tasks) <= 1:
+        for t in tasks:
+            yield fn(*t)
+        return
+    ex = ProcessPoolExecutor(max_workers=n, mp_context=multiprocessing.get_context("spawn"))
+    try:
+        yield from ex.map(fn, *zip(*tasks), chunksize=max(1, len(tasks) // (n * 8)))
+    finally:
+        # a caller that stopped early (an error) leaves no part queued
+        ex.shutdown(wait=True, cancel_futures=True)
+
+
 def pool() -> ProcessPoolExecutor | None:
     """The executor, created on first use; None when serial or DISABLED."""
     global _pool, _pool_size

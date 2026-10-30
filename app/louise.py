@@ -1942,6 +1942,16 @@ def peers_connection():
     return closing(peers.connect())
 
 
+def _whole_quota() -> None:
+    """An operator's pass over a collection's parts takes the whole CPU
+    quota, as `hold records build` does (config.build_parse_processes): the
+    worker keeps quota − 1 because its main thread runs the rounds and the
+    API, a command has nothing else to run (docs/notes/multicore-audit.md)."""
+    from app import config
+    if config.BUILD_WHOLE_QUOTA:
+        config.PARSE_PROCESSES = config.build_parse_processes()
+
+
 def cmd_share_attest(a) -> int:
     """`share attest <collection> [--checks …]` (07 §7.3; 04 §4.2): `hold
     check` with the named checks and a fresh seed, then every attestation
@@ -1970,6 +1980,7 @@ def cmd_share_attest(a) -> int:
         _print({"republish": True, "held_by_this_key_unpublished": len(ids), **out,
                 "note": "the worker forwards the events to every neighbour at its next beat"})
         return 0
+    _whole_quota()
     name, codex, snapshot, seed, report = run_check(a)
     with _closing(peers.connect()) as con:
         out = attest_mod.publish(a.root, name, codex, list(report.attestations.values()),
@@ -2414,10 +2425,7 @@ def cmd_records_build(a) -> int:
     # collection's own, `<root>/<name>/origin` (07 §7.8); --corpus names
     # another, for a node whose origins are not there yet
     corpus = a.corpus or (Path(a.root) / name / "origin")
-    # the parse pool takes the whole quota here (config.build_parse_processes)
-    from app import config
-    if config.BUILD_WHOLE_QUOTA:
-        config.PARSE_PROCESSES = config.build_parse_processes()
+    _whole_quota()
     # Invariant 2: SIGTERM or SIGINT finishes the current unit and exits 130.
     # Without this a stop KILLED the build: its parse pool's children were
     # re-parented to init and kept running (2026-09-21).
@@ -2514,6 +2522,7 @@ def cmd_snapshot_create(a) -> int:
         seeded = seed.seed_shards(a.root, ref_name, source, from_snapshot=source_snapshot,
                                   log=lambda m: print(m, file=sys.stderr))
         snapshot_id = snapshot_id or seeded["snapshot_id"]
+    _whole_quota()
     snap = sn.create(a.root, a.collection, snapshot_id=snapshot_id)
     if seeding:
         bad = seed.same_parts_or_withdraw(a.root, ref_name, snap, source, source_snapshot)
@@ -3249,7 +3258,7 @@ def cmd_vectors_check(a) -> int:
     import os
 
     from app import embeddings
-    from app.hold import collection as col, embedder as emb, land as landing, \
+    from app.hold import collection as col, embedder as emb, \
         records as rec, vectors_check as vck
 
     name, codex = col.resolve(a.root, a.collection)
@@ -3269,25 +3278,10 @@ def cmd_vectors_check(a) -> int:
     except emb.GateDeferred:
         pass
 
-    # `check` asks for a shard's chunk ids before it asks for any of its
-    # text, so the cut is done once per sampled shard and the text is read
-    # out of it. Cutting a shard is the expensive part — a re-cut per
-    # sampled chunk would be sixteen passes over the same records.
-    cut: dict[str, dict] = {}
-
-    def chunk_ids_for(entry):
-        cut.clear()
-        cut.update(landing.cut(codex, landing.records_for(
-            a.root, name, snapshot, f"{entry.slice}/{entry.n:05d}", None)))
-        return sorted(cut)
-
-    def text_of(cid):
-        # the text, or a pair layer's chunk with its `fields` (09 §9.3)
-        return landing.input_of(cut, cid)
-
+    _whole_quota()
     report = vck.check(
         codex, snapshot, seed=bytes.fromhex(a.seed) if a.seed else os.urandom(32),
-        chunk_ids_for=chunk_ids_for, text_of=text_of,
+        shard_tree=col.shard_dir_of(Path(a.root), name),
         vectors_for=lambda ids: embeddings.vectors_by_chunk_id(ids, collection=local),
         embed=embed, fraction=a.sample,
         drop=(lambda ids: embeddings.delete_chunks(ids, collection=local))
@@ -3433,11 +3427,7 @@ def cmd_check(a) -> int:
     attestation, is reported with its reason, and is retried.
     """
     from app.hold import check as chk
-    # the per-part checks take the whole quota, as the records build does
-    # (config.build_parse_processes; app/hold/check.py `_map_parts`)
-    from app import config
-    if config.BUILD_WHOLE_QUOTA:
-        config.PARSE_PROCESSES = config.build_parse_processes()
+    _whole_quota()
     name, codex, snapshot, seed, report = run_check(a)
     written = report.attestations
 

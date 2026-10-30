@@ -64,12 +64,12 @@ This audit covers every stage, maintainer and pass that walks a whole corpus or 
 
 ### Operator passes (one-shot; no scheduling change)
 
-8. **The next snapshot's delta** — `app/hold/snapshot.py` 781–814 (`_later_delta` → `_pairs`). **D1.**
+8. **FIXED (#77): The next snapshot's delta** — `app/hold/snapshot.py` 781–814 (`_later_delta` → `_pairs`). **D1.**
    - Every re-issued part is decoded whole, old and new versions, in one thread.
    - *Est.* 1.5–2 h for wikipedia-v8's next snapshot; one side measured 43–57 min (snapshot.py 995).
    - The parts are independent; only the Arrow join is a single step.
 
-9. **`hold check` vectors-sample** — `app/hold/vectors_check.py` 152–182. **D1.**
+9. **FIXED (#77): `hold check` vectors-sample** — `app/hold/vectors_check.py` 152–182. **D1.**
    - Measured: 17 min on 2026-10-28, ONE python process at 138 % CPU (München, 2026-10-30).
    - Every sampled part is decoded and re-cut in the parent (`land.records_for`, `land.cut`) only to draw 16 chunk ids. These are the parts the pooled chunks check has just cut.
    - On 10-28 only 8,805 chunks were checked, so most sampled parts paid that work for nothing (*est.*).
@@ -81,7 +81,7 @@ This audit covers every stage, maintainer and pass that walks a whole corpus or 
     - `possession.record_hashes` (possession.py 371): only for a collection with predecessors;
     - `hold vectors build`'s `pending` (vectors_build.py 135): reads every vector only to test which ids exist;
     - `dev mark-embedded` (louise.py 1215);
-    - `share attest`: reaches `run_check` without widening the pool to the whole quota (D5).
+    - `share attest`: reached `run_check` without widening the pool to the whole quota (D5). **FIXED (#77):** attest, `snapshot create` and `hold vectors check` now take the whole quota, through one helper (`louise._whole_quota`).
 
 ### Not defects
 
@@ -94,3 +94,14 @@ This audit covers every stage, maintainer and pass that walks a whole corpus or 
 ## The order of work
 
 These are defects (CLAUDE.md: "Multi-threading is a must"), so they are fixed, not offered. The order: the operator passes first (8, 9), because they are self-contained, testable here and need no scheduling measurement. Then the worker stages (1, 4, 3, 2, 5), one change per deploy, each with BEFORE and AFTER numbers in `scheduling-log.md`.
+
+## Done
+
+- **#76:** roots, records and chunks are checked in processes. Measured: the six checks took ~7 min, against 28.7 min on 2026-10-28.
+- **#77:** what changed:
+  - `parallel.each_part`: a lazy process pool for an operator's pass over parts;
+  - the later delta decodes both versions of every re-issued part in processes;
+  - vectors-sample cuts and draws each part in processes while the parent embeds (the encoder side stays serial: invariant 12);
+  - every operator pass takes the whole quota.
+
+  Measured: not yet. The next `hold check` and the next snapshot of wikipedia-v8 will show it.

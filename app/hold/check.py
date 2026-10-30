@@ -256,19 +256,9 @@ def _shard_ids(codex, shards: Sequence[snap.Shard], space: str | None = None
 # (operator, 2026-10-30: "multi threading is a must"). Serial where the node
 # allows one process (PARSE_PROCESSES; the tests pin it to 1).
 
-def _workers() -> int:
-    from app import parallel
-    return parallel.processes()
-
-
 def _map_parts(fn, tasks: list[tuple]) -> list:
-    if _workers() <= 1 or len(tasks) <= 1:
-        return [fn(*t) for t in tasks]
-    import multiprocessing
-    from concurrent.futures import ProcessPoolExecutor
-    n = _workers()
-    with ProcessPoolExecutor(max_workers=n, mp_context=multiprocessing.get_context("spawn")) as ex:
-        return list(ex.map(fn, *zip(*tasks), chunksize=max(1, len(tasks) // (n * 8))))
+    from app import parallel
+    return list(parallel.each_part(fn, tasks))
 
 
 def _root_part(path: str, root: str) -> bool | None:
@@ -696,25 +686,12 @@ def check_calibration(ctx: Ctx) -> Outcome:
 
 def check_vectors_sample(ctx: Ctx) -> Outcome:
     """Step 4h's check, under the plan (03 §3.2)."""
-    from . import land as landing
     from . import vectors_check as vck
     if ctx.vectors_for is None:
         return Outcome("vectors-sample", INCONCLUSIVE,
                        why="no vector store on this peer")
-    cut: dict[str, dict] = {}
-
-    def ids_for(entry):
-        cut.clear()
-        cut.update(landing.cut(ctx.codex, landing.records_for(
-            ctx.root, ctx.name, ctx.snapshot,
-            f"{entry.slice}/{entry.n:05d}", None)))
-        return sorted(cut)
-
-    r = vck.check(ctx.codex, ctx.snapshot, seed=ctx.seed,
-                  chunk_ids_for=ids_for,
-                  # a pair layer's chunk with its `fields`, re-cut from the
-                  # record; a text layer's text, as ever
-                  text_of=lambda cid: landing.input_of(cut, cid),
+    # each sampled part cut and sampled in the pool, while the parent embeds
+    r = vck.check(ctx.codex, ctx.snapshot, seed=ctx.seed, shard_tree=ctx.shard_tree,
                   vectors_for=ctx.vectors_for, embed=ctx.embed,
                   fraction=ctx.override)
     checked = sum(s.checked for s in r.shards)

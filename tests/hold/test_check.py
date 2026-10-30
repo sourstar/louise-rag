@@ -172,7 +172,6 @@ def test_the_per_part_checks_run_in_processes_and_say_what_the_serial_run_says(
     """wikipedia-v8's records check took 46 min on one core (2026-10-28):
     roots, records and chunks go part by part to spawned processes, and the
     outcomes — a failing part included — are the serial run's, in order."""
-    import concurrent.futures as cf
     from app import config, parallel
     root, snapshot, codex = checkable
     *rest, last = snapshot.shards                    # each check fails on the last part
@@ -188,11 +187,11 @@ def test_the_per_part_checks_run_in_processes_and_say_what_the_serial_run_says(
     assert [o[0] for o in serial] == [chk.FAIL] * 3 and len(snapshot.shards) > 1
     pools = []
 
-    class Spy(cf.ProcessPoolExecutor):
+    class Spy(parallel.ProcessPoolExecutor):
         def __init__(self, *a, **k):
             pools.append(k.get("max_workers"))
             super().__init__(*a, **k)
-    monkeypatch.setattr(cf, "ProcessPoolExecutor", Spy)
+    monkeypatch.setattr(parallel, "ProcessPoolExecutor", Spy)
     monkeypatch.setattr(config, "PARSE_PROCESSES", 2)
     parallel.shutdown()
     assert outcomes() == serial
