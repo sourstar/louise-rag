@@ -979,18 +979,30 @@ def _load_lazy(path, raw, container: str = "jsonl") -> Snapshot | None:
     return snap
 
 
+#: threads reading the parts' indexes for a first snapshot's delta
+FIRST_DELTA_READERS = 8
+
+
 def _first_delta(shard_dir, shards) -> Delta:
     """A first snapshot's delta — every record added, nothing changed or
     tombstoned — from the uids alone: what `compute_delta(None,
     _content_hashes(...))` gives, without holding a content hash per record.
-    A uid read twice counts once, as the map's key did."""
+    A uid read twice counts once, as the map's key did.
+
+    FROM EACH PART'S OWN INDEX, by threads (operator, 2026-10-30:
+    "multi threading is a must"): the trailing index lists every uid the
+    part holds (a part with a uid twice is refused when written), so no
+    record is decoded. Decoding every record in one thread was the whole
+    cost of wikipedia-v8's first snapshot: 52.9 M records, 43-57 min."""
+    from concurrent.futures import ThreadPoolExecutor
     from pathlib import Path
     from app.pack import records as pack_records
+    paths = [Path(shard_dir) / s.path for s in shards]
+    paths = [p for p in paths if p.is_file()]
     uids: list[str] = []
-    for s in shards:
-        p = Path(shard_dir) / s.path
-        if p.is_file():
-            uids.extend(r["uid"] for r in pack_records.iter_records(p))
+    with ThreadPoolExecutor(max_workers=FIRST_DELTA_READERS, thread_name_prefix="first-delta") as ex:
+        for got in ex.map(lambda p: list(pack_records.read_index(p).uids), paths):
+            uids.extend(got)
     uids.sort()
     added = tuple(u for k, u in enumerate(uids) if k == 0 or uids[k - 1] != u)
     del uids
