@@ -2439,7 +2439,7 @@ def cmd_snapshot_discard(a) -> int:
     """`hold snapshot discard <collection> <snapshot> [--yes]`
     (app/hold/discard.py): the latest snapshot, which this node never served
     and attested nothing of, moved aside with its parts under
-    `state/discarded/<snapshot>/`; its derived indexes go. A dry run without
+    `<SHARD>/.discarded/<snapshot>/`; its derived indexes go. A dry run without
     --yes. Takes the collection's lock."""
     from app import db as _db
     from app.hold import discard as discard_mod, records as rec

@@ -43,7 +43,9 @@ pytest (exit 141); the process sets it now (f0d293a).
    worker must be stopped (it keeps the writers); the dry run says.
 2. `louise hold snapshot discard wikipedia-v8 2026-09 --yes`: never served,
    so DISCARDED rather than superseded — a successor would have tombstoned
-   21.9 M records no peer ever saw. Parts kept under `state/discarded/`.
+   21.9 M records no peer ever saw. Parts kept under `<SHARD>/.discarded/`, on the
+   parts' own filesystem (a first version moved them to `state/`, another
+   filesystem on the node: EXDEV, found by München's dry run before any apply).
 3. `louise hold records build wikipedia-v8 --records-from-discarded 2026-09`:
    each remaining record's line taken from those parts, cut afresh — the
    bytes a build by the book makes (tests/hold/test_discard.py); a document
