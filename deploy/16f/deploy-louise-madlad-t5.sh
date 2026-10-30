@@ -133,6 +133,8 @@ grep -q '^PLAN_INDEX = "CREATE INDEX IF NOT EXISTS idx_plan_slice' "$ROOT/src.ne
 grep -q "cpu.stat" "$ROOT/src.new/tools/sched_measure.sh"                                    # 1a031e3 (#83): the harness reads the container's cgroup
 grep -q "^def record_hash_of(root: Path, name: str" "$ROOT/src.new/app/share/possession.py" # b844137 (09e747b): a held record's hash from its bundle's part
 grep -q "_build_locks.setdefault(key" "$ROOT/src.new/app/share/possession.py"               # 6554842 (fa21777): the possession index built by one thread at a time
+grep -q "errored, not waiting" "$ROOT/src.new/app/health.py"                                 # ca907a8 (1728a75): node show counts errored documents apart
+grep -q "^def place_kept(kind: str, origin: Path)" "$ROOT/src.new/app/derived.py"            # d915a4d (7f47a68): the pack's place once per process; a row group per task
 grep -q "derived = root / name / INDEX / facets_mod.CACHE" "$ROOT/src.new/app/hold/discard.py"  # c1b6156 (0fc6451): discard removes only index/facets
 grep -q '"held-record"' "$ROOT/src.new/app/parallel.py"                                     # 7faa83b (39d0086): held record lines through the parse pool (the kind's test reshaped in 5cec41d)
 grep -q "^def with_line(collection" "$ROOT/src.new/app/pack/build.py"                       # 5cec41d (060b4c7): the pool's children encode each record line
