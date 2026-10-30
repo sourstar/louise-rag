@@ -4,6 +4,15 @@ One entry per case that cost time, newest first. Each entry gives what happened,
 
 ## 2026-10-30 — the multi-core day
 
+### A verdict measured at the setting it was meant to test against
+
+- **What happened.** Every statement on the node read `batch_invariant: true`, and wikipedia's encoder worked at 2–4 % of its gate benchmark, one text a request. The obvious fix was to raise `EMBED_BATCH`. But the gate's `contribute` pass sends texts the way the node contributes, which on a node at `EMBED_BATCH=1` is one text a request. So "batch-invariant" had been measured without a batch, and raising the env would have admitted batched answers no gate had seen. A batching fault once silently corrupted 714 books.
+- **Cost.** None paid: caught before the env changed (München's read; this architecture's review).
+- **Lessons.**
+  - A verdict names the setting it was measured at. A check against it compares that setting with the current one, never the verdict alone.
+  - A benchmark names its request shape. The 56,293 tokens/s benchmark was also one text a request, so the live gap is per-request overhead on short texts, not batching. Batching's gain is measured, not inferred.
+- **Fix.** The gate keeps the batching it measured each run at, locally (`runs.record_batching`). A run gated at less than the node's current batching is gated again at it before anything batched is written.
+
 ### A path rewrite that handled the first path of a compound value, and a node condition written as errors
 
 - **What happened.** After wikipedia-v8 was renamed to wikipedia, the rename re-rooted only the leading path of each locator. Wikipedia's dump locators name two files, `<dump>::s::e|<page_props>::s::e`, so the page_props half still pointed under the old name. The embed recorded `FileNotFoundError` on 85,943 documents, each one out of every selection. Nobody saw it until the embedding looked slow (München; fixed in 954ed47, the manifest repaired in place).

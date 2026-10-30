@@ -99,6 +99,36 @@ def path_for(root: Path, name: str, run_id: str, role: str = "document") -> Path
     return directory(root, name) / f"{role}-{run_id.split(':', 1)[-1][:16]}.json"
 
 
+def _batching_file(root: Path, name: str) -> Path:
+    return directory(root, name).parent / "gate-batching.json"
+
+
+def record_batching(root: Path, name: str, role: str, run_id: str, measured: dict[str, int]) -> None:
+    """The batching the gate's `contribute` pass measured `run_id` at — the
+    node's EMBED_BATCH, EMBED_CONCURRENCY and the recipe's lanes. LOCAL, not
+    in the statement (no wire change): a statement's `batch_invariant` says
+    only "as this peer contributed then", and on a node at EMBED_BATCH=1 that
+    was one text a request — no evidence for a batch (2026-10-30)."""
+    p = _batching_file(root, name)
+    try:
+        got = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        got = {}
+    got[f"{role}:{run_id}"] = {k: int(v) for k, v in measured.items()}
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(got, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def batching_measured(root: Path, name: str, role: str, run_id: str) -> dict[str, int] | None:
+    try:
+        got = json.loads(_batching_file(root, name).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return got.get(f"{role}:{run_id}")
+
+
 def keep(root: Path, name: str, statement: dict[str, Any]) -> Path:
     """Write a statement, pass or fail, where its run and role put it."""
     body = statement["body"]
@@ -344,7 +374,8 @@ def describe(encoder_url: str, run_id: str, *, get: Callable[..., Any],
 # ---- the check before a write ------------------------------------------------------
 
 def check(root: Path, name: str, codex: Codex, answered: set, *,
-          signer: str | None, role: str = "document", batched: bool = True) -> None:
+          signer: str | None, role: str = "document", batched: bool = True,
+          contributes: dict[str, int] | None = None) -> None:
     """May vectors from answers naming `answered` be written? Silent when
     they may. `answered` is the set of `Louise-Run` values seen on the
     answers that carried them — or, for an `api = "vega"` encoder, the runs
@@ -391,6 +422,19 @@ def check(root: Path, name: str, codex: Codex, answered: set, *,
                 f"does. Embed one text a request (EMBED_BATCH=1, concurrency 1), or "
                 f"fix the engine's batching and let the gate run again", run_id,
                 failed=True)
+        if batched and contributes is not None:
+            # INVARIANT AT THE BATCHING THIS PEER USES NOW: a verdict measured
+            # one text a request (EMBED_BATCH=1, as the node ran until
+            # 2026-10-30) is no evidence for a batch. Not a failure: the gate
+            # runs again at this setting (`run_check._look`), and only then
+            # is a batched answer written
+            measured = batching_measured(root, name, role, run_id)
+            if measured is None or any(int(measured.get(k, 0)) < int(v) for k, v in contributes.items()):
+                raise RunUnvalidated(
+                    f"{name}: run {run_id[:23]}… was gated at "
+                    f"{measured or 'an unrecorded batching (one text a request)'}; this peer now "
+                    f"contributes at {contributes}: nothing batched is written from it until the "
+                    f"gate has run at this setting (03 §3.3)", run_id)
 
 
 class Answers:

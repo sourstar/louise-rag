@@ -786,3 +786,32 @@ def test_a_statement_borrowed_from_a_sister_collection_is_kept_as_its_own(node, 
     shutil.rmtree(root / "gutenberg-retired")
     hold_runs._read.clear()
     assert [s["run"] for s in statements_kept(root)] == [body["run"]], "kept as its own"
+
+
+def test_a_verdict_measured_one_text_a_request_does_not_admit_a_batch(node, endpoint, monkeypatch):
+    """2026-10-30 (München): every statement on the node read batch_invariant
+    True — measured with EMBED_BATCH=1, the gate's `contribute` pass sending
+    one text a request, which is no evidence for a batch. Raising EMBED_BATCH
+    would have admitted batched answers no gate had measured. Now the
+    batching a run was gated at is kept beside the statements, and a run
+    gated at less than the node's current batching is gated again at it —
+    automatically, before anything batched is written."""
+    root, collection, codex = node
+    con = db.connect(collection)
+    monkeypatch.setattr(config, "EMBED_BATCH", 1)
+    assert backend_gate.embed_allowed(con, collection) is True
+    assert hold_runs.batching_measured(root, collection.name, "document", R1) is None, \
+        "one text a request: nothing to record"
+    cost = endpoint.texts
+
+    monkeypatch.setattr(config, "EMBED_BATCH", 4)
+    with pytest.raises(hold_runs.RunUnvalidated) as e:
+        hold_runs.check(root, collection.name, codex, {R1}, signer=run_check.signer(),
+                        batched=True, contributes=run_check.contributing(
+                            collections_mod.recipe_for(collection)))
+    assert e.value.failed is False and "gated at" in str(e.value)
+    run_check.reset_cache()
+    assert backend_gate.embed_allowed(con, collection) is True
+    assert endpoint.texts > cost, "the gate ran again, at the batching the node uses now"
+    assert hold_runs.batching_measured(root, collection.name, "document", R1)["embed_batch"] == 4
+    assert embeddings.upsert_book(7, "en", chunks(2), collection) == 2
