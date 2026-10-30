@@ -248,8 +248,49 @@ def test_the_plan_is_walked_in_rowid_windows_by_the_children(isolated_config, tm
     monkeypatch.setattr(pack_build, "_set_meta", stop_after_first)
     first = _planned(c, tmp_path / "resumed", stop=stop)
     assert first[2] is None and 0 < len(first[0]) < len(serial[0])
+    assert not _has_plan_index(tmp_path / "resumed"), "the read order is built once the plan is done"
     monkeypatch.setattr(pack_build, "_set_meta", real)
     assert _planned(c, tmp_path / "resumed") == serial
+    assert _has_plan_index(tmp_path / "resumed")
+
+
+def _has_plan_index(pack_dir) -> bool:
+    con = pack_build._build_db(pack_dir)
+    try:
+        return con.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_plan_slice'"
+                           ).fetchone() is not None
+    finally:
+        con.close()
+
+
+def test_the_plan_s_read_order_is_indexed_once_the_plan_is_done(isolated_config, tmp_path, monkeypatch):
+    """Bulk load, then index: the plan's commit is the build DB's single
+    writer, and a second growing B-tree per row was half its cost
+    (multicore-audit.md item 11). A build DB made before — the index there
+    from its creation, the plan not done — has it dropped and made again at
+    the end; the build's read of a slice is indexed, never sorted."""
+    c = _discovered(tmp_path, "pubmed", "pubmed", FIXTURES / "pubmed-mini")
+    pack_dir = tmp_path / "old"
+    con = pack_build._build_db(pack_dir)
+    con.execute("CREATE INDEX idx_plan_slice ON plan(slice, ord, uid)")     # the layout before
+    con.close()
+    calls = []
+    real = pack_build._set_meta
+
+    def watched(con, key, value):
+        if key == "plan_rowid":
+            calls.append(con.execute("SELECT 1 FROM sqlite_master WHERE name='idx_plan_slice'").fetchone())
+        real(con, key, value)
+    monkeypatch.setattr(pack_build, "_set_meta", watched)
+    planned = _planned(c, pack_dir)
+    assert planned[2] == "1" and calls and all(x is None for x in calls), "no index while the rows went in"
+    con = pack_build._build_db(pack_dir)
+    try:
+        q = " ".join(r[3] for r in con.execute(
+            "EXPLAIN QUERY PLAN SELECT uid, ord FROM plan WHERE slice=? ORDER BY ord, uid", ("x",)))
+    finally:
+        con.close()
+    assert "idx_plan_slice" in q and "TEMP B-TREE" not in q, q
 
 
 def test_slicing_rules():
