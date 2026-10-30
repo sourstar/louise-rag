@@ -644,6 +644,19 @@ papers, we already have something"):
   the template's "expert questions in the domain and language" for these
   three collections.
 
+**LICENCES ACKNOWLEDGED, operator, 2026-10-30** (asked for the scope:
+"both"):
+- The three evaluation sets, BSARD, EUR-Lex-Sum and GDPR Holdings
+  (CC BY-NC-SA 4.0), for MEASUREMENT ONLY. They are held in
+  `/data/bakeoff`, never in a collection or a share. The ack is recorded
+  on the node against the digests fetched 2026-10-29 06:27Z
+  (`/root/bakeoff-gated-fetch.log`).
+- The new legal collections' origins (DILA, NeuRIS, EUR-Lex). Each
+  collection's terms text is still recorded byte-exact at its creation
+  (invariant 9), so this covers the decision to take them, not the
+  per-collection ack.
+- Syntec, whose card states no licence, is NOT covered.
+
 The questions as they were put follow.
 
 **D1 — Germany's origin.** Where German federal law comes from, given

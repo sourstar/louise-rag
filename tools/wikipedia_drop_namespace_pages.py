@@ -37,6 +37,7 @@ from collections import Counter
 from pathlib import Path
 
 from app import collections as collections_mod, db
+from app.plugins import walk
 from app.plugins.wikipedia import source as wsrc
 from app.plugins.wikipedia.ids import LANG_ORDINAL, native_id_of
 
@@ -53,7 +54,7 @@ _DELETE = ("DELETE FROM documents WHERE source=? AND native_id=? AND rdf_done=0 
 def dumps_of(col) -> list[tuple[Path, Path, str]]:
     """(dump, index, language) for every dump discovery reads — the pinned
     snapshot's, of the collection's languages."""
-    dumps = sorted(Path(col.corpus_dir).rglob(f"*{wsrc._DUMP_SUFFIX}"))
+    dumps = walk.files(col.corpus_dir, f"*{wsrc._DUMP_SUFFIX}")      # through its links
     if getattr(col, "snapshot", None):
         dumps = [d for d in dumps if d.parent.name == col.snapshot]
     out = []

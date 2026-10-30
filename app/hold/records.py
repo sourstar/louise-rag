@@ -256,7 +256,8 @@ def _say(line: str) -> None:
 
 
 def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
-          records_per_shard: int | None = None, log=_say, stop=None, records_from: str | None = None):
+          records_per_shard: int | None = None, log=_say, stop=None, records_from: str | None = None,
+          records_from_discarded: str | None = None):
     """`louise hold records build <collection>` — parse, slice, shard, hash.
 
     The build runs into a STAGING directory under the collection's state,
@@ -272,6 +273,9 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
     are taken instead of parsing (RULE 1; a daughter or a re-creation that
     changes only the slicing, 02 §2.7 amended 2026-10-24) — refused unless
     the two Codexes differ in nothing that decides a record but the slicing.
+    `records_from_discarded`: this collection's own snapshot of that id,
+    discarded (app/hold/discard.py) — its record lines taken, cut afresh; a
+    document it does not list is parsed.
 
     Returns the underlying `BuildResult`. The shard entries 09 §9.4 needs
     are in the staging build database, where `hold snapshot create` reads
@@ -346,6 +350,14 @@ def build(root, ref: str, *, corpus_dir=None, snapshot_id: str | None = None,
         reused = pack_build.held_records_of(Path(root), from_name)
         log(f"[records build] {name}: record lines taken from {from_name}'s latest snapshot "
             f"({len(reused.paths)} parts), cut by this collection's slicing — none parsed (RULE 1)")
+    if records_from_discarded is not None:
+        if reused is not None:
+            raise RecordsError(f"{name}: --records-from and --records-from-discarded name two sources")
+        from . import discard as discard_mod
+        reused = discard_mod.held_records(Path(root), name, records_from_discarded)
+        log(f"[records build] {name}: record lines taken from its discarded snapshot "
+            f"{records_from_discarded} ({len(reused.paths)} parts), cut afresh — none parsed "
+            f"that it lists (RULE 1)")
     result = pack_build.build(
         src, staging, snapshot=snapshot_id, name=name, sign=False,
         records_per_shard=records_per_shard, log=log, stop=stop, closed=closed, held=reused)

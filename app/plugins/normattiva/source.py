@@ -306,7 +306,8 @@ class NormattivaSource:
             return
         guard = eli.CollisionGuard()
         held: dict[int, tuple] = {}            # nid -> (rank, zpath, member, mtime, size)
-        for zpath in sorted(root.rglob("*.zip")):
+        from .. import walk
+        for zpath in walk.files(root, "*.zip"):        # through links (walk.py)
             try:
                 with zipfile.ZipFile(zpath) as zf:
                     infos = zf.infolist()

@@ -2430,8 +2430,29 @@ def cmd_records_build(a) -> int:
     result = rec.build(a.root, a.collection, corpus_dir=corpus,
                        snapshot_id=a.snapshot_id,
                        records_per_shard=a.records_per_shard, stop=stop,
-                       records_from=getattr(a, "records_from", None))
+                       records_from=getattr(a, "records_from", None),
+                       records_from_discarded=getattr(a, "records_from_discarded", None))
     return 130 if result.interrupted else 0
+
+
+def cmd_snapshot_discard(a) -> int:
+    """`hold snapshot discard <collection> <snapshot> [--yes]`
+    (app/hold/discard.py): the latest snapshot, which this node never served
+    and attested nothing of, moved aside with its parts under
+    `state/discarded/<snapshot>/`; its derived indexes go. A dry run without
+    --yes. Takes the collection's lock."""
+    from app import db as _db
+    from app.hold import discard as discard_mod, records as rec
+    from app.share import peers
+    name, codex = col.resolve(a.root, a.collection)
+    root = Path(a.root)
+    if a.yes:
+        _take_write_lock(root, name, "hold snapshot discard")
+    local = rec.local_collection(root, name, codex)
+    with _closing(_db.connect(local)) as con, _closing(peers.connect()) as node_con:
+        _print(discard_mod.discard(root, name, a.snapshot_id, con=con, node_con=node_con,
+                                   dry_run=not a.yes))
+    return 0
 
 
 def cmd_records_relocate(a) -> int:
@@ -4602,6 +4623,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="take the record lines of this held collection's latest snapshot "
                             "instead of parsing — a daughter or re-creation that changes only "
                             "the slicing (RULE 1)")
+        p.add_argument("--records-from-discarded", dest="records_from_discarded", metavar="SNAPSHOT",
+                       help="take the record lines of this collection's own discarded snapshot "
+                            "(`hold snapshot discard`) instead of parsing them; cut afresh (RULE 1)")
 
     p = rverbs.add_parser("build", help="parse, slice, shard, hash")
     args_records_build(p); p.set_defaults(fn=cmd_records_build)
@@ -4732,6 +4756,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sverbs.add_parser("list", help="the chain this peer holds")
     args_collection(p); p.set_defaults(fn=cmd_snapshot_list)
+
+    p = sverbs.add_parser("discard", help="move aside the latest snapshot, which nothing published "
+                                          "names, with its parts; its derived indexes go (RULE 1)")
+    args_collection(p); p.add_argument("snapshot_id", metavar="snapshot")
+    p.add_argument("--yes", action="store_true", help="discard; without it, say what would move")
+    p.set_defaults(fn=cmd_snapshot_discard)
 
     p = sverbs.add_parser("delta", help="what changed between two held snapshots of the chain")
     args_collection(p)
@@ -5244,8 +5274,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
 
-    if hasattr(signal, "SIGPIPE"):
-        signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # `| head` is not an error
     if hasattr(signal, "SIGUSR1"):
         # a command that cannot say where it is: SIGUSR1 prints every
         # thread's stack to stderr and goes on (a SIGTERM'd contribute spent
@@ -5315,5 +5343,11 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    # `| head` is not an error. Set by the PROCESS, not by main(): the tests
+    # call main() in-process, and the default action it restored outlived
+    # them — a later test writing to a closed pipe killed pytest itself with
+    # SIGPIPE (exit 141, at 41 % of the suite, three times; 2026-10-30)
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     from app import process_exit
     process_exit.run(main)

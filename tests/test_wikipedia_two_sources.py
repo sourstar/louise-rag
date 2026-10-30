@@ -160,3 +160,25 @@ def test_coverage_is_cached_per_shard(corpus, tmp_path, monkeypatch):
     again = archive.covered_articles(corpus, state)
     assert calls == [], "an unchanged shard is not read again"
     assert list(first["en"]) == list(again["en"]) == [10, 11]
+
+
+def test_an_archive_reached_through_a_link_is_walked_and_no_page_is_minted_twice(corpus, tmp_path):
+    """wikipedia-v8 (2026-10-30): its origin reaches the archive through a
+    link (`origin/data` -> /corpora/...), and rglob enters no symlinked
+    directory (Python 3.11-3.13). The archive was never walked, its coverage
+    read empty, and the dump pass minted 21.9 M pages a second time. Walked
+    through the link, each page is read from one source, and the archive's
+    locators stay under the origin they name."""
+    real = tmp_path / "corpora" / "data"
+    real.parent.mkdir()
+    (corpus / "data").rename(real)
+    (corpus / "data").symlink_to(real, target_is_directory=True)
+    archive._groups.clear()
+    archive._layouts.clear()
+    (tmp_path / "state-linked").mkdir()
+    refs = _refs(corpus, tmp_path / "state-linked")
+    assert set(refs) == {str(native_id_of("en", 10, archive=True)),
+                         str(native_id_of("en", 11, archive=True)),
+                         str(native_id_of("en", 20))}, "no dump twin of 10 or 11"
+    moon = refs[str(native_id_of("en", 10, archive=True))]
+    assert moon.locator.startswith(str(corpus / "data")), "the path as reached, not resolved"

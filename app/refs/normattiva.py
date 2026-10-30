@@ -180,7 +180,8 @@ class NormattivaRefSource:
             return
         acts: dict[str, dict] = {}
         versions: list[dict] = []
-        for zpath in sorted(root.rglob("*.zip")):
+        from app.plugins import walk
+        for zpath in walk.files(root, "*.zip"):        # through links (walk.py)
             try:
                 zf = zipfile.ZipFile(zpath)
             except (zipfile.BadZipFile, OSError):

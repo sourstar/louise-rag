@@ -224,19 +224,28 @@ def _held_index(con_build, held: HeldRecords, log) -> None:
 
 
 def _held_values(collection, con_build, held: HeldRecords, srcs: list[dict]) -> list[tuple[bool, object]]:
-    """`parallel.compute("record")`'s answer, from held record lines."""
-    out: list[tuple[bool, object]] = []
+    """`parallel.compute("record")`'s answer, from held record lines. A
+    document none of them is for is PARSED, as a build by the book would:
+    skipped, it left the SHARD quietly short of a record the manifest lists
+    (invariant 11) — a document admitted after the snapshot the lines come
+    from (2026-10-30, the discarded wikipedia-v8 snapshot's rebuild)."""
+    out: list[tuple[bool, object] | None] = []
+    parse: list[int] = []
     for src in srcs:
         at = con_build.execute("SELECT path, frame, line FROM held WHERE uid=?", (src["uid"],)).fetchone()
         if at is None:
-            out.append((False, {"type": "NotHeld", "msg": "not among the held records reused"}))
+            parse.append(len(out))
+            out.append(None)
             continue
         try:
             out.append((True, _record_from_line(collection, records.read_record_at(
                 held.shard_dir / at["path"], int(at["frame"]), int(at["line"])))))
         except Exception as e:   # noqa: BLE001 — recorded per document by the caller
             out.append((False, {"type": type(e).__name__, "msg": str(e)[:500]}))
-    return out
+    if parse:
+        for k, got in zip(parse, parallel.compute("record", collection, [srcs[k] for k in parse])):
+            out[k] = got
+    return out  # type: ignore[return-value]
 
 
 def _record_from_line(collection, line: dict) -> tuple[dict, int, bytes, dict[str, str]]:

@@ -1,6 +1,6 @@
 # Project status
 
-**Last updated: 2026-10-25.** What exists, what is designed but unbuilt,
+**Last updated: 2026-10-30.** What exists, what is designed but unbuilt,
 and what is deliberately not being built. Read this before planning work.
 
 **2026-10-26: the node was powered off 02:33–21:22 CET** by the operator,
@@ -17,6 +17,39 @@ gutenberg embedding fully (queries keep priority); NIGHT 22:30–06:00 — the
 build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
+
+### 2026-10-30: wikipedia-v8 held 21.9 M pages twice — rglob does not enter a link; the repair
+
+**The defect.** v8's `origin/data` is a link to the archive under
+/corpora, and `Path.rglob` enters no symlinked directory (3.11–3.13; the
+image is 3.12). The archive's parts were never walked: its coverage read
+EMPTY, so the dump pass minted a second document for every page the archive
+holds — 21,888,609 of 74,811,753 manifest rows (21,983,119 archive +
+52,828,634 dump), none embedded — and every scan re-enumerated the corpus
+(1,486–3,041 s at each start and every 6 h). Snapshot 2026-09 (c6e71a2b)
+lists them; it was never served.
+
+**Fixed.** Every corpus walk goes through `app/plugins/walk.files`
+(`os.walk(followlinks=True)`, a realpath loop guard, paths as reached;
+3051ad1); a moved corpus relocates in one scan (f59cc7e). The full suite
+had been dying at 41 %: `louise.main()` reset SIGPIPE to its default inside
+pytest (exit 141); the process sets it now (f0d293a).
+
+**The repair, in order (RULE 1 — told to the operator):**
+1. `python -m tools.wikipedia_drop_twins` (dry run), then `--apply`: the
+   twins' text-index, catalogue and vector entries, then their manifest and
+   per-document rows, in batches re-checked under BEGIN IMMEDIATE; an
+   embedded twin is kept and counted. Where a twin has index entries the
+   worker must be stopped (it keeps the writers); the dry run says.
+2. `louise hold snapshot discard wikipedia-v8 2026-09 --yes`: never served,
+   so DISCARDED rather than superseded — a successor would have tombstoned
+   21.9 M records no peer ever saw. Parts kept under `state/discarded/`.
+3. `louise hold records build wikipedia-v8 --records-from-discarded 2026-09`:
+   each remaining record's line taken from those parts, cut afresh — the
+   bytes a build by the book makes (tests/hold/test_discard.py); a document
+   they do not list is parsed (the held path used to SKIP it — fixed).
+4. `records validation`, `snapshot create`, the hand check, then the
+   operator's resume.
 
 ### 2026-10-30: BSARD, EUR-Lex-Sum and GDPR Holdings acknowledged — the operator, for measurement
 
