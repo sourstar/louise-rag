@@ -81,6 +81,11 @@ inventory found, fixed.**
 `build`, `is_fresh` and `_signature` become one implementation. The plugin
 gives only its rows and its schema.
 
+**S4, BEGUN: the per-record costs.** wikidata asked the files once a
+second per process (`backend.rechecked`, a TTL memo; `cachetools.TTLCache`
+is the standard), not ~6 stats a line. One `_write_meta` replaces the four
+writes of `meta.json`, and the writer forgets its own answers.
+
 **S4 — MEMBER readers and the per-record costs.**
 - One handle cache for normattiva's zips, pubmed's md5 sidecars and deposit's Codex.
 - gutenberg runs `pick_form` twice per record and opens the epub three more times.
