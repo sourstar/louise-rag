@@ -55,6 +55,8 @@ from typing import Iterable, Iterator, Sequence
 
 import pyarrow as pa
 
+from app.backend import GroupCache
+
 FRAME_RECORDS = 1000
 ZSTD_LEVEL = 9
 SKIPPABLE_MAGIC = 0x184D2A5E
@@ -525,9 +527,9 @@ def iter_records(path: Path) -> Iterator[dict]:
 
 _lock = threading.Lock()
 _indexes: OrderedDict = OrderedDict()      # path -> ShardIndex
-_frames: OrderedDict = OrderedDict()       # (path, k) -> list[bytes]
+#: (path, k) -> list[bytes]: 64 MiB of lines (app/backend.py); it held 16 frames
+_frames = GroupCache(64 << 20)
 _MAX_INDEXES = 64
-_MAX_FRAMES = 16
 
 
 def cached_index(path: Path) -> ShardIndex:
@@ -544,25 +546,17 @@ def cached_index(path: Path) -> ShardIndex:
         _indexes.move_to_end(key)
         while len(_indexes) > _MAX_INDEXES:
             _indexes.popitem(last=False)
-        for k in [k for k in _frames if k[0] == key]:
-            _frames.pop(k, None)
+        _frames.forget(lambda k: k[0] == key)
     return index
 
 
 def cached_frame(path: Path, k: int) -> list[bytes]:
     key = (str(path), k)
-    with _lock:
-        hit = _frames.get(key)
-        if hit is not None:
-            _frames.move_to_end(key)
-            return hit
+    hit = _frames.get(key)
+    if hit is not None:
+        return hit
     lines = read_frame(path, cached_index(path), k)
-    with _lock:
-        _frames[key] = lines
-        _frames.move_to_end(key)
-        while len(_frames) > _MAX_FRAMES:
-            _frames.popitem(last=False)
-    return lines
+    return _frames.put(key, lines, sum(len(x) for x in lines))
 
 
 def read_record(path: Path, uid: str) -> dict:

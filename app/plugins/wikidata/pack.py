@@ -89,6 +89,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from app import config, cpu_limit, derived, parallel
+from app.backend import GroupCache
 from app.plugins.wikidata import dump as dump_mod, families, ids, names
 
 #: 2 (2026-10-24): the `name` table; 3 (2026-10-24): the class tree and the
@@ -1379,15 +1380,14 @@ def _build_parallel(dump: Path, d: Path, meta: dict[str, Any], con: sqlite3.Conn
 # ---- reading ---------------------------------------------------------------------------------
 
 _files_lock = threading.Lock()
-_groups: OrderedDict = OrderedDict()                 # (file key, row group) -> ({index: line}, bytes)
-_group_bytes = 0                                     # the lines `_groups` holds, in bytes
+#: (file key, row group) -> {index: line}, budgeted in bytes (app/backend.py)
 #: the line bytes kept per process, WHATEVER THE FILES' GROUPING. Counted in
 #: groups (128, #88) the cache held 16 times more of a pack still written by
 #: 1,000 than of one regrouped by 64: records-build children of 5.7 GB
 #: against ~0.65 GB before, and an OOM at 32 g with 12 and with 6 of them
 #: (München, 2026-10-30). 256 MiB is about the 8 groups of 1,000 kept
 #: before #88; the most recent group is always kept.
-_MAX_GROUP_BYTES = 256 << 20
+_groups = GroupCache(256 << 20)
 
 
 def chunk_files(dump: Path) -> list[Path]:
@@ -1434,7 +1434,6 @@ def _layout(path: Path) -> tuple[tuple, Any, list[int], Any]:
 
 def line(dump: Path, index: int) -> bytes:
     """Entity `index`'s own line bytes, from its row group (cached)."""
-    global _group_bytes
     import bisect
     meta = read_meta(dump) or {}
     chunk = int(meta.get("chunk") or CHUNK)
@@ -1442,24 +1441,14 @@ def line(dump: Path, index: int) -> bytes:
     fkey, pf, starts, reading = _layout(path)
     group = bisect.bisect_right(starts, index % chunk) - 1
     key = (fkey, group)
-    with _files_lock:
-        held = _groups.get(key)
-        if held is not None:
-            _groups.move_to_end(key)
-    if held is None:
+    got = _groups.get(key)
+    if got is None:
         if not 0 <= group < len(starts):
             raise PackError(f"{path.name}: no row group for entity {index}")
         with reading:
             t = pf.read_row_group(group, columns=["index", "line"])
-        held = (dict(zip(t.column("index").to_pylist(), t.column("line").to_pylist())),
-                t.column("line").nbytes)
-        with _files_lock:
-            old = _groups.pop(key, None)
-            _group_bytes += held[1] - (old[1] if old else 0)
-            _groups[key] = held
-            while _group_bytes > _MAX_GROUP_BYTES and len(_groups) > 1:
-                _group_bytes -= _groups.popitem(last=False)[1][1]
-    got = held[0]
+        got = _groups.put(key, dict(zip(t.column("index").to_pylist(), t.column("line").to_pylist())),
+                          t.column("line").nbytes)
     try:
         return got[index]
     except KeyError:
@@ -1594,11 +1583,9 @@ def labels(dump: Path) -> LabelTable:
 
 
 def reset_caches() -> None:
-    global _group_bytes
     _metas.clear()
     with _files_lock:
         _groups.clear()
-        _group_bytes = 0
         _layouts.clear()
         _tables.clear()
         _codes_cache.clear()

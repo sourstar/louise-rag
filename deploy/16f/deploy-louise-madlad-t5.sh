@@ -144,7 +144,7 @@ grep -q "bundle_genesis.forget_residuals(collection, stale)" "$ROOT/src.new/app/
 grep -q "^ROWS_AHEAD = 64_000" "$ROOT/src.new/app/parallel.py"                              # 4cafea4 (a840121): the page stream's look-ahead in rows
 grep -q '^WRITER = "writer.lock"' "$ROOT/src.new/app/plugins/wikidata/pack.py"               # a4acc13 (7476af6): one wikidata pack writer across processes
 test -s "$ROOT/src.new/app/backend.py"                                                       # a4acc13: every collection declares its backend template
-grep -q "^_MAX_GROUP_BYTES = 256 << 20" "$ROOT/src.new/app/plugins/wikidata/pack.py"         # the line cache in bytes; the regroup streamed (München OOM report, 10-30)
+grep -q "^_groups = GroupCache(256 << 20)" "$ROOT/src.new/app/plugins/wikidata/pack.py"      # #97: the line cache in bytes, one GroupCache (app/backend.py); was _MAX_GROUP_BYTES
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
 test -x "$ROOT/src.new/deploy/docker-memory-ceiling.sh"                                     # the ceiling on every container together
 grep -q "^def building(dest: Path)" "$ROOT/src.new/app/derived.py"                          # one pack builder across processes (the plan's pool children)

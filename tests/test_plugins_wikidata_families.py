@@ -778,13 +778,13 @@ def test_the_line_cache_is_bounded_in_bytes_whatever_the_files_grouping(tmp_path
         pack.build(dump, languages=("en",), chunk=4, workers=1)
         pack.reset_caches()
         before = [pack.line(dump, i) for i in range(n_lines)]
-        one = max(held[1] for held in pack._groups.values())
-        monkeypatch.setattr(pack, "_MAX_GROUP_BYTES", 2 * one)
+        one = max(pack._groups.sizes())
+        monkeypatch.setattr(pack._groups, "budget", 2 * one)
         pack.reset_caches()
         for _ in range(3):
             assert [pack.line(dump, i) for i in range(n_lines)] == before
-            assert pack._group_bytes == sum(h[1] for h in pack._groups.values()) <= 2 * one
-        monkeypatch.setattr(pack, "_MAX_GROUP_BYTES", 0)
+            assert pack._groups.nbytes == sum(pack._groups.sizes()) <= 2 * one
+        monkeypatch.setattr(pack._groups, "budget", 0)
         pack.reset_caches()
         assert pack.line(dump, 0) == before[0] and pack.line(dump, n_lines - 1) == before[-1]
         assert len(pack._groups) == 1, "the group just read is kept, whatever the budget"

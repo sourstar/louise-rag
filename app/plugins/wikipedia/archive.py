@@ -21,6 +21,8 @@ import threading
 from collections import OrderedDict
 from pathlib import Path
 
+from app.backend import GroupCache
+
 from . import ids
 
 SEG_SEP = "|"
@@ -36,9 +38,9 @@ _LOCATOR_SEP = "::"
 # the parallel embed stage fetches from threads.
 _cache_lock = threading.Lock()
 _layouts: OrderedDict = OrderedDict()     # path -> (mtime, [row group start offsets], total)
-_groups: OrderedDict = OrderedDict()      # (path, group) -> (mtime, table)
+#: (path, group) -> (mtime, table): 256 MiB of rows (app/backend.py); it held 8 groups
+_groups = GroupCache(256 << 20)
 _MAX_LAYOUTS = 64
-_MAX_GROUPS = 8
 
 
 def _layout(path: str) -> tuple[list[int], int]:
@@ -66,17 +68,11 @@ def _group_table(path: str, g: int):
     import pyarrow.parquet as pq
     mtime = Path(path).stat().st_mtime_ns
     key = (path, g)
-    with _cache_lock:
-        hit = _groups.get(key)
-        if hit is not None and hit[0] == mtime:
-            _groups.move_to_end(key)
-            return hit[1]
+    hit = _groups.get(key)
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
     table = pq.ParquetFile(path).read_row_group(g, columns=["id", "url", "title", "text"])
-    with _cache_lock:
-        _groups[key] = (mtime, table)
-        _groups.move_to_end(key)
-        while len(_groups) > _MAX_GROUPS:
-            _groups.popitem(last=False)
+    _groups.put(key, (mtime, table), table.nbytes)
     return table
 
 
