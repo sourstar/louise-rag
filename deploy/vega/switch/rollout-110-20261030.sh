@@ -31,6 +31,7 @@ SAVED=/mnt/ssd5/apps/localai/backends-bak-20261030-110     # outside the backend
 W=ix-louise-rag-worker-1
 L="docker exec $W python -m app.louise"
 LOCALAI=http://localhost:30286
+LA=ix-localai-localai-1
 MODELS="vega-bge-m3 vega-granite vega-medcpt-article vega-medcpt-query vega-qwen3-embedding-4b vega-bge-m3-cpu"
 GATED="gutenberg wikipedia pubmed"        # the collections whose document or query encoder runs here
 
@@ -60,7 +61,9 @@ for p in $PKGS; do
   echo "$p: modes $(cut -f1 "$SAVED/$p.modes" | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
   echo "$p: was $(cat "$SAVED/$p/REVISION" | cut -c1-10), wrapper $(sha256sum "$SAVED/$p/vega_wrapper.py" | cut -c1-12); saved"
 done
-MODE=$(mode); BEFORE_PAUSED=$(paused_collections)
+# a rerun after a stop inside the window passes the mode the FIRST run found
+# (the window paused the node): MODE_BEFORE=running bash rollout-110-….sh
+MODE=${MODE_BEFORE:-$(mode)}; BEFORE_PAUSED=$(paused_collections)
 echo "mode $MODE; paused collections: ${BEFORE_PAUSED:-none}"
 case $MODE in running|paused) ;; *) echo "mode $MODE: run this from running or paused"; exit 1 ;; esac
 
@@ -77,10 +80,15 @@ done
 say "3. the three files replaced, compiled with each package's own python"
 for p in $PKGS; do
   for f in $FILES; do install -m 0644 -o 568 -g 0 "$STAGE/$f" "$BK/$p/$f"; done
-  (cd "$BK/$p" && ./venv/bin/python -m compileall -q vega_wrapper.py app/hold/codex.py >/dev/null)
+  # compiled INSIDE LocalAI's container, as the build compiles: the portable
+  # python finds its stdlib only at /backends/<pkg> (on the host it fails
+  # "No module named 'encodings'", 2026-10-30 23:17), and a .pyc embeds the
+  # source path (/backends/<pkg>/…, as the build's do)
+  docker exec $LA /backends/$p/venv/bin/python -m compileall -q \
+    /backends/$p/vega_wrapper.py /backends/$p/app/hold/codex.py >/dev/null
   chown -R 568:0 "$BK/$p/__pycache__" "$BK/$p/app/hold/__pycache__"
   bf_restore "$BK/$p" "$SAVED/$p.modes" || { echo "$p: modes or ACLs not as before; BACKOUT below"; exit 1; }
-  (cd "$BK/$p" && ./venv/bin/python -c "import vega_wrapper; print('$p: imports ok')")
+  docker exec -w /backends/$p $LA /backends/$p/venv/bin/python -B -c "import vega_wrapper; print('$p: imports ok')"
   echo "$p: now $(cut -c1-10 "$BK/$p/REVISION"), wrapper $(sha256sum "$BK/$p/vega_wrapper.py" | cut -c1-12)"
 done
 rm -rf "$STAGE"

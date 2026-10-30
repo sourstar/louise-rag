@@ -1629,7 +1629,7 @@ one clash read of 128 dump-layer documents:
 Small fragments come back at ~60–70 a minute, and held_chunks follows them
 almost linearly. The pass order is right; the cadence is wrong.
 
-### 2026-10-30 — the light compaction on its own cadence — PREPARED
+### 2026-10-30 — the light compaction on its own cadence — VERIFIED
 
 **BEFORE:** the table above (#107's AFTER). Over its 30 minutes the table
 went from 554 to 2,101 small fragments, and held_chunks of 128 from 0.43 s
@@ -1653,3 +1653,27 @@ the time. Small fragments stay under ~300, and held_chunks of 128 stays near
 - held_chunks and the clash read of 128 every 5 minutes;
 - genesis documents per 10 minutes, and "deferred" lines from embed or genesis (the cost: writers waiting out the merge);
 - the time of one `vector_index.small_fragments` call on wikipedia.
+
+**AFTER (München, e5e0cc2 = #109 deployed alone, worker up 21:44:42Z;
+22:46:57–23:17:18 CET).**
+
+| time | fragments / small | book_id_idx unindexed | held_chunks 128 | clash read 128 |
+|---|---|---|---|---|
+| 22:46:57 | 345 / 187 | 74,673 | 0.396 s | 0.034 s |
+| 22:52:00 | 615 / 457 | 54,928 | 0.195 | 0.030 |
+| 22:57:04 | 368 / 211 | 85,570 | 0.331 | 0.030 |
+| 23:02:06 | 491 / 334 | 144,822 | 0.376 | 0.100 |
+| 23:07:11 | 393 / 233 | 95,564 | 0.332 | 0.037 |
+| 23:12:14 | 407 / 247 | 102,792 | 0.424 | 0.061 |
+| 23:17:18 | 379 / 221 | 90,157 | 0.177 | 0.021 |
+
+- **Light merges in the 30 minutes:** 10.
+  - The first ran at the pass's start: 785 → 196 in 23 s.
+  - One ran right after a 292 s vector refresh: 501 → 198 in 79 s.
+  - The rest came every 2–3 minutes at 267–359 small fragments, in 1–7 s each.
+- **Writers held off:** one deferral, "upstash…de/114.parquet: pass deferred — vector store busy (RewriteInProgress)" at 22:53:47. That was during the 79 s merge, past the 60 s wait.
+- **Genesis documents per 10 minutes:** 36,903, then 59,267, then 88,222.
+- **One `small_fragments(wikipedia)` call:** 51 ms cold, 11 ms warm.
+
+So against #107's 554 → 2,101 small fragments and held_chunks 0.43 → 2.45 s,
+the table stays at 187–457 small fragments and held_chunks at 0.18–0.42 s.
