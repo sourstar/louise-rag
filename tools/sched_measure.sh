@@ -15,28 +15,25 @@
 # between windows whose chunks/doc agree. On 2026-09-23 this distinction
 # turned one apparent regression into a real one and a second into a 5.7x
 # win — see the log's preamble.
-python3 - <<'PY'
-import os, time, subprocess
-HZ = os.sysconf('SC_CLK_TCK')
-init = int(subprocess.run(['docker','inspect','-f','{{.State.Pid}}','ix-louise-rag-worker-1'],
-                          capture_output=True, text=True).stdout.strip())
-kids = set()
-def tree_cpu():
-    tot = 0
-    for p in os.listdir('/proc'):
-        if not p.isdigit(): continue
-        try:
-            s = open(f'/proc/{p}/stat').read()
-            r = s[s.rindex(')')+2:].split()
-            if int(r[1]) == init or int(r[1]) in kids:
-                kids.add(int(p)); tot += int(r[11]) + int(r[12])
-        except OSError: pass
-    return tot
-tree_cpu()
-a = tree_cpu(); t0 = time.time()
+python3 - "${CONTAINER:-ix-louise-rag-worker-1}" <<'PY'
+# THE CONTAINER'S OWN CPU COUNTER (cgroup v2 cpu.stat usage_usec), not a sum
+# of /proc/<pid>/stat over the process tree: a child that exits inside the
+# window takes its CPU out of the second sum, so a pool that replaces its
+# children read 135 % — or −1866 % — while the cgroup said 982 % (München,
+# 2026-10-30, the wikidata build). CONTAINER=<name> measures another one.
+import sys, time, subprocess
+name = sys.argv[1]
+init = subprocess.run(['docker', 'inspect', '-f', '{{.State.Pid}}', name],
+                      capture_output=True, text=True).stdout.strip()
+rel = next(l.split(':', 2)[2] for l in open(f'/proc/{init}/cgroup').read().splitlines()
+           if l.startswith('0::'))
+stat = f'/sys/fs/cgroup{rel}/cpu.stat'
+def usage():
+    return next(int(l.split()[1]) for l in open(stat) if l.startswith('usage_usec'))
+a = usage(); t0 = time.time()
 time.sleep(60)
-b = tree_cpu(); dt = time.time() - t0
-print(f"worker tree {100*(b-a)/HZ/dt:.0f}% of 1200% over {dt:.0f}s")
+b = usage(); dt = time.time() - t0
+print(f"{name} {100*(b-a)/1e6/dt:.0f}% of 1200% over {dt:.0f}s (cgroup cpu.stat)")
 PY
 WIN=${1:-30}
 # THE WORKLOAD NORMALISER. wikipedia's documents differ by two orders of

@@ -126,3 +126,17 @@ report the interval, not just the point; measure at the depth the system uses
   through the engine that will run.
 - **A monitor's default view can lie.** Task Manager's GPU graphs show 3D;
   WSL compute lands on "Compute 0".
+
+## 8. Added 2026-10-30 (the wikidata build)
+
+- **Read a container's CPU from its cgroup (`cpu.stat` `usage_usec`), not
+  from a sum over its processes.** A process that exits inside the window
+  takes its CPU out of the second sample. With a pool replacing its
+  children every few seconds, `/proc` deltas read 135 % and then −1866 %,
+  while the cgroup read 982 %. `tools/sched_measure.sh` now reads the cgroup.
+- **`ps`/`docker top` %CPU is a lifetime average.** The worker's "37 %"
+  was its average since boot, not the window's. Use deltas: the cgroup
+  for the whole container, `/proc/<pid>/stat` for one long-lived process.
+- **The worker log's batch lines were throttled samples until #78.** A
+  run's lines summed to 604 of its 2,000 books. Each line now carries
+  the totals of the batches it stands for.
