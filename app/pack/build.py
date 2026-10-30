@@ -41,6 +41,11 @@ VALIDATION_FILE = "validation.json"
 PLAN_PAGE = 5000
 PLAN_PAGE_SQL = ("SELECT rowid, uid, native_id, path, lang, in_scope, error FROM documents "
                  "WHERE rowid>? ORDER BY rowid LIMIT ?")
+#: the plan's walk in the parse pool's children: rowids per window, each
+#: window read and sliced by one child, committed by the build in rowid order
+PLAN_WINDOW = 50_000
+PLAN_WINDOW_SQL = ("SELECT rowid, uid, native_id, path, lang, in_scope, error FROM documents "
+                   "WHERE rowid>? AND rowid<=? ORDER BY rowid")
 #: the in-memory record's key for its parse's issues (app/issues.py) — not a
 #: 09 §9.5 key, so no line could carry it even if it were left on
 ISSUES_KEY = "_issues"
@@ -131,8 +136,60 @@ def _origin_plugin(collection) -> str:
     return collection.plugin
 
 
+def _plan_rows(page, plugin, origin: str, scheme, context) -> tuple[list, list]:
+    """A page of manifest rows planned: `(uid, slice, ord)` for each, and
+    `(uid, reason)` for each that could not be (recorded, never fatal)."""
+    rows, skipped = [], []
+    for row in page:
+        if not row["in_scope"] or row["error"] is not None:
+            continue
+        slice_name = slicing.slice_hint(origin, row, context)
+        if slice_name is None:
+            try:
+                doc = plugin_io.canonical_doc(plugin, row)
+                slice_name = slicing.slice_of(scheme, doc, int(row["native_id"]), context)
+            except (UnindexableDocument, Exception) as e:   # noqa: BLE001 — recorded, never fatal
+                skipped.append((row["uid"], f"plan: {type(e).__name__}: {e}"[:200]))
+                continue
+        try:
+            ord_ = int(row["native_id"])
+        except (TypeError, ValueError):
+            ord_ = 0
+        rows.append((row["uid"], slicing.check_slice_name(slice_name), ord_))
+    return rows, skipped
+
+
+#: this process's slicing context, by the manifest's path (a child computes
+#: its own once: the family map and the pack's codes, read-only)
+_plan_contexts: dict[str, object] = {}
+
+
+def _plan_window(collection, origin: str, lo: int, hi: int) -> tuple[list, list]:
+    """`_plan_rows` of the manifest rows with lo < rowid <= hi, read by this
+    process through its own read-only connection — a child of the parse
+    pool (`parallel.each_part`)."""
+    key = str(collection.manifest_path)
+    if key not in _plan_contexts:
+        _plan_contexts[key] = slicing.context_for(collection, log=lambda *_: None)
+    con = sqlite3.connect(Path(collection.manifest_path).resolve().as_uri() + "?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        page = con.execute(PLAN_WINDOW_SQL, (lo, hi)).fetchall()
+    finally:
+        con.close()
+    return _plan_rows(page, collection.plugin_instance(), origin, slicing.scheme_for(origin),
+                      _plan_contexts[key])
+
+
 def plan(collection, con_src, con_build, *, log=print, stop=None) -> int:
-    """Pass 1. Resumable by rowid cursor. Returns rows planned this run."""
+    """Pass 1. Resumable by rowid cursor. Returns rows planned this run.
+
+    The walk is cut into rowid windows that the parse pool's children read
+    and slice (`_plan_window`); this process commits them in rowid order,
+    so the cursor means what it meant. Serial where the node allows one
+    process. On wikidata's 75.9 M rows the serial walk ran on one core at
+    70–74 k rows/s, 17–19 min (München, 2026-10-30; multicore-audit.md
+    item 11)."""
     plugin = collection.plugin_instance()
     origin = _origin_plugin(collection)
     scheme = slicing.scheme_for(origin)
@@ -145,6 +202,34 @@ def plan(collection, con_src, con_build, *, log=print, stop=None) -> int:
     last = int(_meta(con_build, "plan_rowid", -1))
     planned = 0
     t0 = time.monotonic()
+
+    def commit(rows, skipped, upto) -> None:
+        nonlocal last, planned, t0
+        con_build.execute("BEGIN IMMEDIATE")
+        con_build.executemany("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)", skipped)
+        con_build.executemany("INSERT OR REPLACE INTO plan(uid,slice,ord) VALUES(?,?,?)", rows)
+        last = upto
+        _set_meta(con_build, "plan_rowid", last)
+        con_build.execute("COMMIT")
+        planned += len(rows)
+        if time.monotonic() - t0 > 30:
+            log(f"[pack build] planned {planned} documents so far")
+            t0 = time.monotonic()
+
+    top = con_src.execute("SELECT MAX(rowid) FROM documents").fetchone()[0] or 0
+    if parallel.processes() > 1 and top - last > PLAN_WINDOW:
+        windows = [(collection, origin, lo, min(lo + PLAN_WINDOW, top))
+                   for lo in range(last, top, PLAN_WINDOW)]
+        results = parallel.each_part(_plan_window, windows)
+        try:
+            for (_c, _o, _lo, hi), (rows, skipped) in zip(windows, results):
+                commit(rows, skipped, hi)
+                if stop is not None and stop.is_set():
+                    return planned
+        finally:
+            results.close()
+    # serially: the whole walk on a one-process node, and on every node
+    # what was admitted after the windows were cut
     while True:
         if stop is not None and stop.is_set():
             return planned
@@ -156,33 +241,8 @@ def plan(collection, con_src, con_build, *, log=print, stop=None) -> int:
         page = con_src.execute(PLAN_PAGE_SQL, (last, PLAN_PAGE)).fetchall()
         if not page:
             break
-        rows = []
-        for row in page:
-            if not row["in_scope"] or row["error"] is not None:
-                continue
-            slice_name = slicing.slice_hint(origin, row, context)
-            if slice_name is None:
-                try:
-                    doc = plugin_io.canonical_doc(plugin, row)
-                    slice_name = slicing.slice_of(scheme, doc, int(row["native_id"]), context)
-                except (UnindexableDocument, Exception) as e:   # noqa: BLE001 — recorded, never fatal
-                    con_build.execute("INSERT OR REPLACE INTO skipped(uid,reason) VALUES(?,?)",
-                                      (row["uid"], f"plan: {type(e).__name__}: {e}"[:200]))
-                    continue
-            try:
-                ord_ = int(row["native_id"])
-            except (TypeError, ValueError):
-                ord_ = 0
-            rows.append((row["uid"], slicing.check_slice_name(slice_name), ord_))
-        con_build.execute("BEGIN IMMEDIATE")
-        con_build.executemany("INSERT OR REPLACE INTO plan(uid,slice,ord) VALUES(?,?,?)", rows)
-        last = page[-1]["rowid"]
-        _set_meta(con_build, "plan_rowid", last)
-        con_build.execute("COMMIT")
-        planned += len(rows)
-        if time.monotonic() - t0 > 30:
-            log(f"[pack build] planned {planned} documents so far")
-            t0 = time.monotonic()
+        rows, skipped = _plan_rows(page, plugin, origin, scheme, context)
+        commit(rows, skipped, page[-1]["rowid"])
     _set_meta(con_build, "plan_done", "1")
     return planned
 

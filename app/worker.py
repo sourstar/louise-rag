@@ -478,15 +478,17 @@ def stage_fts(con, row, collection) -> None:
     # a collection whose records are also found by NAME (wikidata, operator
     # 2026-10-24): the same parse gives each record's names (fts.search_names)
     with_names = fts.names_capable(collection)
-    results = (parallel.chunks_names_for_rows if with_names else parallel.chunks_for_rows)(
-        collection, [row, *peers])
+    # the children read refs.db to tag each document (refs.read_store): its
+    # schema is made here, by the worker, before they open it
+    refs.get_store()
+    results = parallel.fts_for_rows(collection, [row, *peers], names=with_names)
     names_of: dict[str, tuple | None] = {}
+    entities_of: dict[str, list[str]] = {}
 
     def _unpack(r, value):
-        if with_names:
-            names_of[r["uid"]] = value.get("names")
-            return value["chunks"]
-        return value
+        names_of[r["uid"]] = value.get("names")
+        entities_of[r["uid"]] = value["entities"]
+        return value["chunks"]
     ok, first = results[0]
     if not ok:
         parallel.raise_for(first)
@@ -516,17 +518,14 @@ def stage_fts(con, row, collection) -> None:
     # legacy paths wrap the whole stage; their commit covers these writes).
     if not con.in_transaction:
         con.execute("BEGIN IMMEDIATE")
-    ref_store = refs.get_store()
     now = int(time.time())
-    # the selected document first and unguarded: its failure IS the round's
-    entities.tag_document(con, row["uid"], row["title"], [c["text"] for c in chunks],
-                           refs.RESOLVER, ref_store)
+    # the selected document first and unguarded: its failure IS the round's.
+    # Its tags were computed by the child that cut it (parallel kind `fts`).
+    entities.write_tags(con, row["uid"], entities_of[row["uid"]])
     _mark_indexed(con, row, chunks, now)
     for peer, peer_chunks in batch[1:]:
         try:
-            entities.tag_document(con, peer["uid"], peer["title"],
-                                   [c["text"] for c in peer_chunks],
-                                   refs.RESOLVER, ref_store)
+            entities.write_tags(con, peer["uid"], entities_of[peer["uid"]])
             _mark_indexed(con, peer, peer_chunks, now)
         except Exception:   # noqa: BLE001 — indexed but left unmarked, so it
             continue        # simply re-runs; never poisons the selected row

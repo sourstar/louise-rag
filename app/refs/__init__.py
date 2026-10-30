@@ -61,3 +61,28 @@ def get_store() -> RefStore:
     store = RefStore(con, schemas)
     _local.store = (str(path), store)
     return store
+
+
+_read_local = threading.local()
+
+
+def read_store() -> RefStore:
+    """refs.db READ-ONLY, for the parse pool's children: tagging a document
+    only reads it, and eleven children each running `ensure_schema` would
+    queue writes on a read-mostly database. The worker ensures the schema
+    (`get_store`) before it sends a batch. Kept per thread, keyed on the
+    path, as `get_store` is; a refs.db not there yet is `get_store`'s to make."""
+    import sqlite3
+    path = config.refs_db_path()
+    got = getattr(_read_local, "store", None)
+    if got is not None and got[0] == str(path):
+        return got[1]
+    if not path.is_file():
+        return get_store()
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30, isolation_level=None,
+                          check_same_thread=True)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA busy_timeout=15000")
+    store = RefStore(con, [source.schema() for source in REFS_REGISTRY.values()])
+    _read_local.store = (str(path), store)
+    return store
