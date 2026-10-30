@@ -148,6 +148,7 @@ grep -q "^_groups = GroupCache(256 << 20)" "$ROOT/src.new/app/plugins/wikidata/p
 grep -q "^def rechecked(" "$ROOT/src.new/app/backend.py"                                     # #98 (d75cde9): the files asked once a second per process
 test -s "$ROOT/src.new/app/container_pack.py"                                                # #99 (97b2833): one CONTAINER_PACK for pubmed's pack and page_props
 grep -q 'replace({column}, ?, ?)' "$ROOT/src.new/app/hold/rename.py"                         # 954ed47: a rename re-roots every path a locator names
+grep -q "confirmLogout" "$ROOT/src.new/app/templates/base.html"                              # #100 (3fecd20): "Log out" with a confirmation; Ask's report above the answer
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
 test -x "$ROOT/src.new/deploy/docker-memory-ceiling.sh"                                     # the ceiling on every container together
 grep -q "^def building(dest: Path)" "$ROOT/src.new/app/derived.py"                          # one pack builder across processes (the plan's pool children)
