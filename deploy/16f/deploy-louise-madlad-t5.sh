@@ -120,7 +120,8 @@ test -s "$ROOT/src.new/tools/wikipedia_drop_twins.py"                           
 grep -q "^def discard(" "$ROOT/src.new/app/hold/discard.py"                                # e7c8732 (9b099ae): hold snapshot discard
 grep -q "token = body.token.strip()" "$ROOT/src.new/app/web.py"                             # e5abaa9 (c321771): /admin/login strips the pasted token
 grep -q '^DISCARDED = ".discarded"' "$ROOT/src.new/app/hold/discard.py"                    # f1492ad (15428cd): discarded parts stay inside the SHARD (EXDEV)
-grep -q '<div class="brand">louise-rag</div>' "$ROOT/src.new/app/templates/base.html"       # db3a5c1 (d3fdc91): the name centred above the menu
+grep -q '<div class="brand">' "$ROOT/src.new/app/templates/base.html"                      # db3a5c1 (d3fdc91): the name centred above the menu
+grep -q '<div class="brand">Project Louise</div>' "$ROOT/src.new/app/templates/base.html"  # bc066c4 (f4095ac): the header says Project Louise
 grep -q "derived = root / name / INDEX / facets_mod.CACHE" "$ROOT/src.new/app/hold/discard.py"  # c1b6156 (0fc6451): discard removes only index/facets
 grep -q '"held-record"' "$ROOT/src.new/app/parallel.py"                                     # 7faa83b (39d0086): held record lines through the parse pool (the kind's test reshaped in 5cec41d)
 grep -q "^def with_line(collection" "$ROOT/src.new/app/pack/build.py"                       # 5cec41d (060b4c7): the pool's children encode each record line
