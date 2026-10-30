@@ -39,7 +39,6 @@ from .. import (chunking, config, db, embeddings, licensing, parallel,
 from ..collections import recipe_for
 from . import ledger
 from .checks import check_degenerate, check_structural
-from .writer_lock import vector_write_lock
 
 RE_ENCODE_TAU = 0.95      # same-function gate; calibrated tau supersedes later
 # The proof is a QUORUM, not a worst-of: an archive is a snapshot of a
@@ -1268,7 +1267,15 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
         nonlocal batch_rows, batch_native, batch_uids, batch_chunk_ids
         if not batch_rows:
             return
-        with vector_write_lock(con):
+        # THROUGH THE WRITER REGISTRATION, as every other vector write
+        # (`embeddings._write_lock`): a compaction waits for this commit and
+        # holds the next one off. Under the manifest lock alone it committed
+        # underneath wikipedia's compaction, which lost its commit after 4.5
+        # minutes of ~10 cores ("Rewrite transaction was preempted by
+        # concurrent transaction Delete", München 2026-10-30) — normattiva's
+        # lesson of 10-23 on the genesis path. Refused, it is a retryable
+        # commit conflict: the pass defers (`vector_store_contended`, below)
+        with embeddings._write_lock(con, collection):
             conn = embeddings._conn(collection)
             import pyarrow as pa
             if embeddings.TABLE in conn.table_names():

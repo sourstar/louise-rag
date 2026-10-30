@@ -1539,3 +1539,33 @@ fails on the old code.
 - over 10 minutes, dump-layer documents marked with 0 chunks against those embedded;
 - chunks embedded per minute (the encoder should stay the bound, now on documents with text only);
 - the producer's streams: documents per stream with chunks.
+
+### 2026-10-30 — every vector write through the registration; the light compaction first — PREPARED
+
+**BEFORE (München, #103's first run, ee13d64).**
+- The light compaction ran where it could: gutenberg merged 1,944 small fragments of 1,958 into 19 in 3 s; pubmed merged 1,500 of 1,542 into 48 in 6 s.
+- wikipedia, at 8,246 small fragments of 8,398, was past the full threshold (4,000), so the light pass was not due. The FULL compaction ran from 19:58:27 and at 20:02:57 was "skipped: Retryable commit conflict … Rewrite transaction was preempted by concurrent transaction Delete".
+- The embed stood down for it as designed: 40 documents deferred, no stream from 19:58:46 to 20:03:03.
+
+**Causes.**
+1. genesis's flush and the bundle importer committed under the manifest lock alone (`vector_write_lock`), never through `vector_index.writing`. So `rewrite` neither waited for them nor held them off. This is normattiva's lesson of 10-23, on two more paths.
+2. `light_compact_due` excluded the case where the full one was due.
+
+**The changes.**
+- genesis's flush and the importer's write go through `embeddings._write_lock(con, collection)`, which takes both locks. A refusal is a retryable commit conflict: genesis's pass defers (`vector store busy`) and the importer returns retryable.
+- A write held off by a rewrite now WAITS up to `REWRITE_WAIT_S` (60 s) before it is refused, so a light compaction of seconds costs no deferrals.
+- The light compaction runs first whenever its threshold is met; the full one is then due only if small fragments remain.
+
+Tests:
+- the light compaction runs first even where the full one is due;
+- a write waits out a short rewrite and defers past a long one, as a contention;
+- genesis and the importer write through the registration.
+
+**Left open (not a defect).** Deletions are materialized only by the full pass, which now seldom runs. A trigger on the deleted fraction would make it run on wikipedia (~40–51 minutes of ~10 cores, writers held off). That is to be weighed with the operator, in a quiet window.
+
+**To verify AFTER:**
+- wikipedia's first "light-compacted" line and its seconds;
+- fragments and unindexed book_id rows after it;
+- held_chunks and the clash read of 128 against 0.83–1.28 s and 0.17–0.29 s;
+- genesis's delete share against 32 %;
+- no "compaction skipped … preempted" line.

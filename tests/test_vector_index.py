@@ -467,16 +467,16 @@ def test_the_index_refresh_is_not_starved_by_a_compaction(isolated_config, tmp_p
     monkeypatch.setattr(vector_index, "prune_due", lambda coll: False)
     monkeypatch.setattr(vector_index, "refresh", lambda coll, con=None, log=None:
                         steps.append("refresh") or {"refreshed": True})
-    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None:
-                        steps.append("compact") or {"compacted": True})
+    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None, light=False:
+                        steps.append("light" if light else "compact") or {"compacted": True})
     vector_index.ensure(c)
-    assert steps == ["refresh", "compact"], \
+    assert steps == ["refresh", "light"], \
         "the index first, and the fragments in the same pass: a refresh due every pass " \
         "starved the compaction (normattiva, 2026-10-14: 33,701 fragments)"
 
     steps.clear()
-    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None:
-                        steps.append("compact") or {"compacted": True})
+    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None, light=False:
+                        steps.append("light" if light else "compact") or {"compacted": True})
     told = iter([True, False])                  # asked before the prune/index, then between
     vector_index.ensure(c, may_continue=lambda: next(told))
     assert steps == ["refresh"], "a pause between the two is honoured"
@@ -486,7 +486,32 @@ def test_the_index_refresh_is_not_starved_by_a_compaction(isolated_config, tmp_p
         "rows": 10_000_000, "indexed": True, "book_id_indexed": True,
         "unindexed_rows": 0, "small_fragments": 9_000})
     vector_index.ensure(c)
-    assert steps == ["compact"], "with the index current, the fragments get their turn"
+    assert steps == ["light"], "with the index current, the fragments get their turn"
+
+
+
+
+def test_the_light_compaction_goes_first_even_where_the_full_one_is_due(isolated_config, tmp_path, monkeypatch):
+    """München, 2026-10-30: wikipedia's 8,246 small fragments were past the
+    full threshold, so the light pass was not due and the full one ran — and
+    lost its commit to a writer after 4.5 minutes of ~10 cores. The light
+    one merges them in seconds; the full one is due only if small ones remain."""
+    from app import collections as collections_mod, vector_index
+    c = collections_mod.Collection(
+        name="c", plugin="gutenberg", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance", embed=None)
+    steps = []
+    monkeypatch.setattr(config, "VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", 256)
+    monkeypatch.setattr(config, "VECTOR_INDEX_COMPACT_FRAGMENTS", 4000)
+    monkeypatch.setattr(vector_index, "stats", lambda coll: {
+        "rows": 145_640_538, "indexed": True, "book_id_indexed": True,
+        "unindexed_rows": 0, "small_fragments": 8_246})
+    monkeypatch.setattr(vector_index, "prune_due", lambda coll: False)
+    monkeypatch.setattr(vector_index, "compact", lambda coll, con=None, log=None, light=False:
+                        steps.append("light" if light else "full") or {"compacted": True})
+    vector_index.ensure(c)
+    assert steps == ["light"]
 
 
 def test_a_prune_counts_what_it_removed_while_writers_keep_committing(
@@ -629,3 +654,47 @@ def test_the_light_compaction_merges_the_small_fragments_and_catches_the_book_id
     assert ds.stats.index_stats("book_id_idx")["num_unindexed_rows"] == 0
     assert tbl.count_rows() == 2000 + 200 - 1
     assert not vector_index.light_compact_due(vector_index.stats(collection))
+
+
+def test_a_write_waits_out_a_short_compaction_and_defers_past_a_long_one(collection):
+    """A write refused at once during a light compaction (seconds) cost the
+    embed deferred documents and a genesis pass its 10-minute backoff; it
+    waits now, up to REWRITE_WAIT_S, and only then is a retryable conflict."""
+    import threading
+    import time
+    from app import worker
+    rw = vector_index.rewrite(collection, drain_s=1)
+    rw.__enter__()
+    released = threading.Timer(0.3, lambda: rw.__exit__(None, None, None))
+    released.start()
+    t0 = time.monotonic()
+    with vector_index.writing(collection, wait_s=5):
+        waited = time.monotonic() - t0
+    assert 0.2 < waited < 3, waited
+    rw = vector_index.rewrite(collection, drain_s=1)
+    rw.__enter__()
+    try:
+        with pytest.raises(vector_index.RewriteInProgress) as e:
+            with vector_index.writing(collection, wait_s=0.2):
+                pass
+        assert worker.vector_store_contended(e.value), "a deferral, never a document error"
+    finally:
+        rw.__exit__(None, None, None)
+
+
+def test_genesis_writes_through_the_writer_registration():
+    """genesis's flush committed under the manifest lock alone, so a
+    compaction neither waited for it nor held it off: wikipedia's full pass
+    lost its commit to a genesis Delete (München, 2026-10-30)."""
+    import inspect
+    from app.bundles import genesis
+    src = inspect.getsource(genesis.import_shard)
+    assert "embeddings._write_lock(con, collection)" in src
+    assert "vector_write_lock(con)" not in src
+
+
+def test_the_bundle_importer_writes_through_the_registration_and_defers_on_a_rewrite():
+    import inspect
+    from app.bundles import importer
+    assert "embeddings._write_lock(con, collection)" in inspect.getsource(importer)
+    assert "vector_write_lock(con)" not in inspect.getsource(importer)
