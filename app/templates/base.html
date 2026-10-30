@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}louise-rag{% endblock %}</title>
+<title>{% block title %}Project Louise{% endblock %}</title>
 <link rel="stylesheet" href="/static/admin.css?v={{ asset_v }}">
 <script>/* the reader's theme, before the page draws (admin.css, THE THEMES) */
 try{var t=localStorage.getItem('louise-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
@@ -12,7 +12,7 @@ try{var t=localStorage.getItem('louise-theme');if(t)document.documentElement.dat
 <body>
 {% set viewer = request.state.viewer if request and request.state and request.state.viewer is defined else none %}
 <nav>
-  <div class="brand">louise-rag</div>
+  <div class="brand">Project Louise</div>
   <div class="menu">
   <a href="/ask" class="{{ 'active' if active=='ask' else '' }}">Ask</a>
   {% if not (viewer and viewer.role == 'user') %}
