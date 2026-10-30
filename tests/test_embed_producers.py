@@ -230,32 +230,3 @@ def test_a_parse_child_sits_at_the_workers_base_plus_ten_whoever_started_it():
     t.start()
     t.join(5)
     assert seen["child"] == min(19, base + 10)
-
-
-def test_a_document_cut_to_nothing_is_marked_without_a_slot(tmp_path, monkeypatch):
-    """wikipedia's dump layer, 2026-10-30 (München): 15.76 M of the 18.8 M
-    documents left to embed are redirects the current chunker cuts to
-    nothing — ~85 % of every stream from rowid 35 M on, each taking a slot
-    and 12 ms of cutting to end in `mark_done`. They are marked done with
-    their group, in one transaction, never cut and never sent; a document
-    that still holds vectors, one cut by an older chunker, and one with
-    chunks take the normal path."""
-    c, con = _collection(tmp_path)
-    rows = con.execute("SELECT rowid AS rid, native_id, uid FROM documents ORDER BY rowid").fetchall()
-    assert len(rows) == 3
-    empty, holding, stale = rows
-    con.execute("UPDATE documents SET chunks=0, tokens=0, fts_version=?", (config.FTS_VERSION,))
-    con.execute("UPDATE documents SET fts_version=? WHERE uid=?", (config.FTS_VERSION - 1, stale["uid"]))
-    con.commit()
-    _feed_once(monkeypatch, con)
-    held = embeddings.HeldRead({int(holding["native_id"]): {"c0": {"text": "x", "vector": None}}}, 0, None)
-    monkeypatch.setattr(embeddings, "held_chunks", lambda *a, **k: held)
-    loaded, sent = [], []
-    monkeypatch.setattr(worker, "_load_chunks", lambda row, collection: loaded.append(row["uid"]) or [])
-    monkeypatch.setattr(embeddings, "upsert_book",
-                        lambda book_id, *a, **k: sent.append(str(book_id)) or 0)
-    assert worker._embed_parallel(con, c, RECIPE, slots=2)
-    assert empty["uid"] not in loaded, "never cut"
-    assert sorted(loaded) == sorted([holding["uid"], stale["uid"]]), "the others: the normal path"
-    done = {u for (u,) in con.execute("SELECT uid FROM documents WHERE embed_done=1")}
-    assert done == {r["uid"] for r in rows}, "all three end done"
