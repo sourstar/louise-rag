@@ -987,3 +987,21 @@ def test_the_worker_beat_releases_the_pool_and_says_so(monkeypatch):
     assert "parallel.release_idle(config.PARSE_IDLE_RELEASE_S)" in beat
     assert "parse pool released:" in beat
     assert config.PARSE_IDLE_RELEASE_S == 600.0
+
+
+def test_an_operator_pass_keeps_its_children_unless_the_env_says_otherwise(monkeypatch):
+    """500 tasks a child replaced every child of wikidata's build every few
+    seconds (München, 2026-10-30); an operator pass keeps them for 20,000
+    unless PARSE_TASKS_PER_CHILD is set, as the worker's env sets it."""
+    from app import louise
+    monkeypatch.setattr(config, "BUILD_WHOLE_QUOTA", True)
+    monkeypatch.setattr(config, "build_parse_processes", lambda: 3)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 1)
+    monkeypatch.setattr(config, "PARSE_TASKS_PER_CHILD", 500)
+    monkeypatch.delenv("PARSE_TASKS_PER_CHILD", raising=False)
+    louise._whole_quota()
+    assert (config.PARSE_PROCESSES, config.PARSE_TASKS_PER_CHILD) == (3, louise.CLI_TASKS_PER_CHILD)
+    monkeypatch.setattr(config, "PARSE_TASKS_PER_CHILD", 500)
+    monkeypatch.setenv("PARSE_TASKS_PER_CHILD", "500")
+    louise._whole_quota()
+    assert config.PARSE_TASKS_PER_CHILD == 500
