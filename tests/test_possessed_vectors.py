@@ -204,3 +204,51 @@ def test_a_fetched_shard_s_hashes_fill_the_manifest_s_empty_column(collection, m
     assert all(got[u] == f"snap-{u}" for u in uids[1:-1]) and got[uids[-1]] is None
     assert n == len(uids) - 2
     assert worker._fill_content_hashes(con, collection) == 0, "once filled, nothing to do"
+
+
+def test_the_index_is_built_once_however_many_threads_ask(tmp_path, monkeypatch):
+    """After a restart each of the embed stage's four threads missed the
+    memo and built the whole held-bundle index at once: four copies of
+    pubmed's, the worker at 46 GB and OOM-killed (München's py-spy,
+    2026-10-30). One thread builds; the others wait for its memo."""
+    import threading
+    import time
+    from types import SimpleNamespace
+    possession._memo.clear()
+    built = []
+
+    def cold(root, name, codex, con, pre, own, fp, key):
+        built.append(threading.get_ident())
+        time.sleep(0.2)
+        result = possession.Possession({"u": ["h"]})
+        possession._memo[key] = (fp, result)
+        return result
+    monkeypatch.setattr(possession, "_index_cold", cold)
+    monkeypatch.setattr(possession, "prefixes", lambda root, name, codex: ["c/s/"])
+    monkeypatch.setattr(possession, "_fingerprint", lambda con, pre, segs=(): "fp1")
+    codex = SimpleNamespace(admitted_segments=(), space_segment="s")
+    got = []
+    threads = [threading.Thread(target=lambda: got.append(possession.index(tmp_path, "pubmed", codex, None)))
+               for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(built) == 1 and len(got) == 4 and all(g is got[0] for g in got)
+
+
+def test_a_document_its_table_already_holds_asks_no_bundle(collection, monkeypatch):
+    """Re-embedding by reuse (every chunk held, text for text) asks no held
+    bundle — and so builds no possession index."""
+    def never(*a, **k):
+        raise AssertionError("possession asked for a document its own table holds whole")
+    monkeypatch.setattr(worker, "_given", never)
+    con = db.connect(collection)
+    row, chunks = _multi_chunk(con, collection)
+    nid = int(row["native_id"])
+    held = embeddings.HeldRead({nid: {c["id"]: {"text": c["text"], "vector": [0.0]} for c in chunks}}, 1)
+    assert worker._holds_all(held, nid, chunks)
+    assert not worker._holds_all(held, nid, chunks + [{"id": "x:9", "text": "new"}])
+    assert not worker._holds_all(None, nid, chunks)
+    changed = embeddings.HeldRead({nid: {c["id"]: {"text": "older", "vector": [0.0]} for c in chunks}}, 1)
+    assert not worker._holds_all(changed, nid, chunks), "a changed text is embedded, and may be given"

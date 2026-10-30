@@ -29,3 +29,20 @@ def test_a_notice_without_counts_is_throttled_and_counts_nothing(monkeypatch):
     monkeypatch.setattr(worker, "_batch_since", {})
     worker._batch_log(None, "embed", SimpleNamespace(name="g"), "one read failed")
     assert lines == ["one read failed"] and worker._batch_since == {}
+
+
+def test_a_one_document_batch_is_counted_and_writes_no_line_of_its_own(monkeypatch):
+    """It wrote nothing before #78, and a line it wrote went to the stdout
+    of a command whose answer is JSON (`hold source list --json` after an
+    in-process round: the deposit test, 2026-10-30)."""
+    lines: list[str] = []
+    monkeypatch.setattr(db, "log_event", lambda con, level, stage, msg: lines.append(msg))
+    monkeypatch.setattr(worker, "_batch_log_ts", {})
+    monkeypatch.setattr(worker, "_batch_since", {})
+    clock = iter([100.0, 140.0])
+    monkeypatch.setattr(worker.time, "time", lambda: next(clock))
+    c = SimpleNamespace(name="g")
+    worker._batch_log(None, "rdf", c, "extracted 1", docs=1, secs=0.1, emit=False)
+    assert lines == []
+    worker._batch_log(None, "rdf", c, "extracted 5", docs=5, secs=0.5)
+    assert lines == ["extracted 5; since the last line: 2 batches, 6 documents in 0.6s of stage time"]

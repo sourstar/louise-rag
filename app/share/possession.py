@@ -37,6 +37,13 @@ PARTS = "part-uids"
 
 #: (collection dir) -> (fingerprint, Possession) for this process
 _memo: dict[str, tuple[str, "Possession"]] = {}
+#: (collection dir) -> the lock its cold build is made under: ONE thread
+#: builds, the others wait for its memo. Without it each of the embed
+#: stage's threads built the whole index at once after a restart — four
+#: copies of pubmed's, the worker at 46 GB and OOM-killed (München's py-spy,
+#: 2026-10-30: all four threads in `index`)
+_build_locks: dict[str, Any] = {}
+_build_locks_lock = __import__("threading").Lock()
 #: (collection dir, fingerprint, snapshot) -> covered chunks per part, the last one
 _covered_memo: dict[tuple[str, str, str], dict[str, int]] = {}
 #: (collection dir) -> index rebuilds in this process
@@ -108,6 +115,22 @@ def index(root: Path, name: str, codex, con) -> "Possession":
     got = _memo.get(key)
     if got and got[0] == fp:
         return got[1]
+    with _build_locks_lock:
+        # re-entrant: a build that asks the index again on its own thread
+        # (a hook, a nested caller) builds again, as before, rather than wait
+        # on itself; other threads still wait for the one build
+        lock = _build_locks.setdefault(key, __import__("threading").RLock())
+    with lock:
+        got = _memo.get(key)            # built by the thread this one waited for
+        if got and got[0] == fp:
+            return got[1]
+        return _index_cold(root, name, codex, con, pre, own, fp, key)
+
+
+def _index_cold(root: Path, name: str, codex, con, pre, own, fp: str, key: str) -> "Possession":
+    """`index`'s build, under its collection's lock: from the on-disk cache
+    when it matches the fingerprint, else from the bundles' files."""
+    from app.share import contribute
     path = _share_dir(root, name) / INDEX
     try:
         cached = json.loads(path.read_bytes())
