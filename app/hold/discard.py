@@ -10,13 +10,18 @@ a record of a defect no peer ever saw. It is DISCARDED instead, and the
 snapshot made again is the one a build by the book makes.
 
 What moves: the snapshot file, its signatures, and every part it lists
-(records, relations, figures) — under `state/discarded/<snapshot id>/`,
-at their paths inside the SHARD. Moved, not deleted: their record lines
-are what the rebuild takes (`hold records build --records-from-discarded`),
-none parsed. What is derived from it goes: `index/` (the facets, the
-postings, their marker) beside the parts, and the edges its relation parts
-put into the manifest; the index maintainer derives them again from the
-snapshot that replaces it.
+(records, relations, figures) — under `<SHARD>/.discarded/<snapshot id>/`,
+at their paths inside the SHARD. INSIDE the SHARD, on its own filesystem:
+a SHARD is usually a link to another mount (/shards/<name> on the node,
+tank, while state/ is on the SSD), and a rename cannot cross a filesystem
+(EXDEV — München, 2026-10-30, before the first apply; a copy would have
+put 96 GB of parts on the SSD). Nothing reads a SHARD but its `snapshots/`
+and `records/` and what a snapshot names, and the torrent leaves out what
+is hidden. Moved, not deleted: their record lines are what the rebuild
+takes (`hold records build --records-from-discarded`), none parsed. What is
+derived from it goes: `index/` (the facets, the postings, their marker),
+and the edges its relation parts put into the manifest; the index
+maintainer derives them again from the snapshot that replaces it.
 
 Refused when it is not the latest snapshot (a later one's `previous` and
 delta name it), when this node served it (the seeding control names it),
@@ -34,13 +39,18 @@ from typing import Any
 from . import collection as col, shard as shard_mod, snapshot as sn
 from .codex import CodexError
 
-DISCARDED = "discarded"
+DISCARDED = ".discarded"
 #: the snapshot's derived indexes beside its SHARD (app/worker.py's maintainer)
 INDEX = "index"
 
 
 def discarded_dir(root: Path, name: str, snapshot_id: str) -> Path:
-    return Path(root) / name / "state" / DISCARDED / snapshot_id
+    """Inside the SHARD, through its link: the parts' own filesystem."""
+    return col.shard_dir_of(Path(root), name) / DISCARDED / snapshot_id
+
+
+def _device(path: Path) -> int:
+    return os.stat(path).st_dev
 
 
 def held_records(root: Path, name: str, snapshot_id: str):
@@ -111,6 +121,14 @@ def discard(root: Path, name: str, snapshot_id: str, *, con, node_con=None,
            "to": str(dest), "discarded": not dry_run}
     if dry_run:
         return out
+    dest.mkdir(parents=True, exist_ok=True)
+    if _device(path.parent) != _device(dest):
+        try:
+            dest.rmdir()
+        except OSError:
+            pass
+        raise CodexError(f"{name}: {dest} is not on the SHARD's filesystem ({path.parent}); a rename "
+                         f"cannot cross one (EXDEV) and nothing was moved")
     # the parts first, the snapshot file last: an interrupted discard still
     # names its snapshot in the SHARD, and a re-run moves what is left
     for rel in members:
@@ -135,10 +153,7 @@ def discard(root: Path, name: str, snapshot_id: str, *, con, node_con=None,
                 raise
     index = root / name / INDEX
     if index.is_dir():
-        if (dest / INDEX).exists():
-            shutil.rmtree(index)        # derived again since an interrupted run moved it
-        else:
-            os.replace(index, dest / INDEX)
+        shutil.rmtree(index)            # derived: the maintainer builds it for the next snapshot
     if sig.is_file():
         (dest / shard_mod.snapshot_sig_path(snapshot_id)).parent.mkdir(parents=True, exist_ok=True)
         os.replace(sig, dest / shard_mod.snapshot_sig_path(snapshot_id))

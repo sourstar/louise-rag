@@ -127,3 +127,39 @@ def test_a_rebuild_from_a_snapshot_never_discarded_is_refused(isolated_config, t
     with pytest.raises(CodexError, match="no discarded snapshot"):
         rec.build(root, "gutenberg", corpus_dir=corpus_dir, log=lambda *_: None,
                   records_from_discarded="2026-08")
+
+
+def test_the_parts_stay_on_the_shard_s_own_filesystem_through_its_link(
+        isolated_config, tmp_path, corpus_dir):
+    """On the node a SHARD is a link to another mount (/shards/<name>, while
+    state/ is on the SSD): a rename into state/ failed with EXDEV (München,
+    2026-10-30). The discarded parts stay inside the SHARD, through its link."""
+    import os
+    root = _collection(tmp_path / "a")
+    shard = col.shard_dir_of(root, "gutenberg")
+    elsewhere = tmp_path / "shards" / "gutenberg"
+    elsewhere.parent.mkdir()
+    os.replace(shard, elsewhere)
+    shard.symlink_to(elsewhere, target_is_directory=True)
+    _build(root, corpus_dir, records_per_shard=1)
+    first = sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    _discard(root)
+    held = elsewhere / discard_mod.DISCARDED / "2026-08"
+    assert sorted(p.relative_to(held).as_posix() for p in held.rglob("*.jsonl.zst")) == \
+        sorted(s.path for s in first.shards)
+    assert (held / "snapshots" / "2026-08.json").is_file()
+    assert not (root / "gutenberg" / "state" / "discarded").exists()
+    assert discard_mod.held_records(root, "gutenberg", "2026-08").shard_dir == shard / ".discarded" / "2026-08"
+
+
+def test_a_destination_on_another_filesystem_is_refused_before_anything_moves(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    root = _collection(tmp_path / "a")
+    _build(root, corpus_dir, records_per_shard=1)
+    sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    before = _parts(root)
+    real = discard_mod._device
+    monkeypatch.setattr(discard_mod, "_device", lambda p: real(p) + (".discarded" in str(p)))
+    with pytest.raises(CodexError, match="EXDEV"):
+        _discard(root)
+    assert _parts(root) == before and seeder.current_snapshot(col.shard_dir_of(root, "gutenberg"))
