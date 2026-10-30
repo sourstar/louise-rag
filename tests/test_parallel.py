@@ -199,6 +199,49 @@ def test_the_children_encode_each_line_as_the_writer_would(isolated_config, tmp_
         assert [records.canonical_line(json.loads(line)) for line in lines] == [line + b"\n" for line in lines]
 
 
+def test_the_build_thread_names_uids_and_gets_back_lines(isolated_config, tmp_path, corpus_dir,
+                                                        monkeypatch):
+    """A held build's thread sends each child a uid and the two paths, and
+    gets back the line and the few fields it reads, never the article: the
+    children look up their documents themselves, and the text no longer
+    crosses back to be unpickled under the GIL (operator, 2026-10-30:
+    "Do A and B together, now")."""
+    from app.pack import build as pack_build, manifest as manifest_mod, records
+    c, _rows = _gutenberg(tmp_path, corpus_dir)
+    mother = tmp_path / "packs" / "mother"
+    pack_build.build(c, mother, records_per_shard=2, sign=False, log=lambda *_: None)
+    parts = tuple(s["path"] for s in manifest_mod.load(mother)["shards"])
+    sent: list[dict] = []
+    real_compute = parallel._compute
+    monkeypatch.setattr(parallel, "_compute",
+                        lambda kind, col, rows: sent.extend(rows) or real_compute(kind, col, rows))
+    written: list[tuple[list, object]] = []
+    real_write = records.write_shard
+    monkeypatch.setattr(records, "write_shard",
+                        lambda path, recs, **kw: written.append((list(recs), kw.get("lines"))) or
+                        real_write(path, recs, **kw))
+    held_dir = tmp_path / "packs" / "held"
+    r = pack_build.build(c, held_dir, records_per_shard=2, sign=False, log=lambda *_: None,
+                         held=pack_build.HeldRecords(mother, parts))
+    assert r.records == 3
+    assert sent and all(set(row) == {"uid", pack_build.HELD_DB, pack_build.HELD_DIR} for row in sent)
+    assert written and all(lines is not None for _recs, lines in written)
+    assert all(set(rec) <= set(pack_build.PARENT_KEYS) | {"extra"} for recs, _ in written for rec in recs)
+    for rel in parts:
+        assert (held_dir / rel).read_bytes() == (mother / rel).read_bytes()
+
+
+def test_a_slimmed_record_keeps_what_every_cutoff_rule_reads():
+    from app.pack import build as pack_build, cutoff
+    full = {"uid": "x:1", "native_id": "1", "content_hash": "h", "origin_hash": "o", "chunks": 3,
+            "origin": "a", "date": "1901", "title": "t", "sections": [["", "long text"]],
+            "extra": {"issued": "2001-02-03", "revised": "2020-01-01", "other": "kept in the line only"}}
+    slim = pack_build._slim(full)
+    assert "sections" not in slim and slim["extra"] == {"issued": "2001-02-03", "revised": "2020-01-01"}
+    for plugin in cutoff.KEY_OF:
+        assert cutoff.record_key(plugin, slim) == cutoff.record_key(plugin, full)
+
+
 def test_a_build_under_a_changing_profile_writes_the_serial_bytes(isolated_config, tmp_path, monkeypatch):
     """The node profile (app/cpu_limit.py) changes how many parts run, never
     what they produce: a build whose limit goes 12 -> 0 (paused) -> 8 -> 1
