@@ -78,6 +78,11 @@ def record_key(plugin: str, record: dict) -> str | None:
     return None
 
 
+#: every `extra` key `record_key` reads, for any plugin: what a record
+#: slimmed for the build's own thread keeps of `extra` (pack.build._slim)
+RECORD_EXTRA_KEYS = ("issued", "revised")
+
+
 #: what each per-record rule reads, in words, for the issue's detail
 KEY_OF = {
     "gutenberg": "extra.issued (PG's release date, dcterms:issued in pg<N>.rdf)",

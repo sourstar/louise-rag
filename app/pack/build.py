@@ -247,40 +247,45 @@ def _held_index(con_build, held: HeldRecords, log) -> None:
         log(f"[pack build] the records of {len(held.paths)} held part(s) indexed for reuse")
 
 
-#: where a document's held record line is — (part path, frame, line) —
-#: carried in its row to the parse pool (`parallel` kind "held-record")
-HELD_AT = "_held_at"
+#: a held build's task row names its document and where the children look
+#: it up themselves: the build database's `held` table and the parts' root.
+#: The build's thread sends a uid, nothing it had to read (2026-10-30)
+HELD_DB, HELD_DIR = "_held_db", "_held_dir"
+
+#: this process's read-only handles, by path (a child keeps them across tasks)
+_ro_cons: dict[str, sqlite3.Connection] = {}
 
 
-def _with_held_at(con_build, held: HeldRecords, srcs: list[dict]) -> list[dict]:
-    """The page's documents, each with where its held line is: one indexed
-    lookup per 900 uids, in the parent; the reading and the re-cut are the
-    pool's."""
-    at: dict[str, tuple[str, int, int]] = {}
-    uids = [s["uid"] for s in srcs]
-    for i in range(0, len(uids), 900):
-        part = uids[i:i + 900]
-        for r in con_build.execute(f"SELECT uid, path, frame, line FROM held WHERE uid IN "
-                                   f"({','.join('?' * len(part))})", part):
-            at[r["uid"]] = (str(held.shard_dir / r["path"]), int(r["frame"]), int(r["line"]))
-    return [dict(s, **{HELD_AT: at[s["uid"]]}) if s["uid"] in at else s for s in srcs]
+def _ro(path: str) -> sqlite3.Connection:
+    con = _ro_cons.get(path)
+    if con is None:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=60, check_same_thread=False)
+        con.row_factory = sqlite3.Row
+        _ro_cons[path] = con
+    return con
 
 
 def held_or_parsed(collection, plugin, row: dict) -> tuple[dict, int, bytes, dict[str, str]]:
-    """The parse pool's "held-record" work, one document: its held line,
-    its chunks cut again (`_record_from_line`) — or, where no held line is
-    for it, PARSED, as a build by the book would: skipped, it left the SHARD
+    """The parse pool's "held-record" work, one document, found BY THE
+    CHILD: its held line from the build database, its chunks cut again
+    (`_record_from_line`) — or, where no held line is for it, its manifest
+    row, PARSED, as a build by the book would: skipped, it left the SHARD
     quietly short of a record the manifest lists (invariant 11; 2026-10-30).
 
     IN THE POOL, not in the build's own process: taken in one process,
     wikipedia-v8's rebuild of 52.9 M records ran on one core of the eight
-    the profile allowed (München, 2026-10-30: 75–97 % of one core, ~9 k
+    the profile allowed (München, 2026-10-30: 75-97 % of one core, ~9 k
     records/s), the second time a records build ran single-threaded."""
-    at = row.get(HELD_AT)
+    at = _ro(row[HELD_DB]).execute("SELECT path, frame, line FROM held WHERE uid=?",
+                                   (row["uid"],)).fetchone()
     if at is None:
-        return _record_of(collection, plugin, row)
-    path, frame, line = at
-    return _record_from_line(collection, records.read_record_at(Path(path), int(frame), int(line)))
+        src = _ro(str(collection.manifest_path)).execute(
+            "SELECT uid, native_id, path, lang FROM documents WHERE uid=?", (row["uid"],)).fetchone()
+        if src is None:
+            raise LookupError(f"{row['uid']}: neither held nor in the manifest")
+        return _record_of(collection, plugin, dict(src))
+    return _record_from_line(collection, records.read_record_at(
+        Path(row[HELD_DIR]) / at["path"], int(at["frame"]), int(at["line"])))
 
 
 def _record_from_line(collection, line: dict) -> tuple[dict, int, bytes, dict[str, str]]:
@@ -324,18 +329,45 @@ def _write_part(path: Path, buf: list[dict], lines: list[bytes] | None, record_l
 LINE_KEY = "_line"
 
 
+#: what the build's own thread reads of a record once its line is encoded:
+#: the ordering and the part (uid, native_id), the roots and the manifest
+#: (content_hash), the refusals (origin_hash, origin), the index (chunks),
+#: the cutoff (date, and `extra`'s RECORD_EXTRA_KEYS) and the issues
+PARENT_KEYS = ("uid", "native_id", "content_hash", "origin_hash", "chunks", "origin", "date",
+               ISSUES_KEY, LINE_KEY)
+
+
+def _slim(record: dict) -> dict:
+    """The record as the build's thread needs it, its line encoded: the
+    article's text crossed back from the child twice (in the dict and in
+    the line) and was unpickled under the GIL only to be dropped
+    (2026-10-30)."""
+    out = {k: record[k] for k in PARENT_KEYS if k in record}
+    extra = record.get("extra") or {}
+    kept = {k: extra[k] for k in cutoff_mod.RECORD_EXTRA_KEYS if k in extra}
+    if kept:
+        out["extra"] = kept
+    return out
+
+
 def with_line(collection, got: tuple[dict, int, bytes, dict[str, str]]):
     """The child's answer with the record's line already encoded — the same
     `canonical_line` the writer would call, on the same dict, which the
     parent changes in nothing the line holds (it removes only ISSUES_KEY,
-    no key of the line's shape). A Parquet part encodes its own cells."""
+    no key of the line's shape) — and the record SLIMMED to what the
+    parent reads (`_slim`). A Parquet part encodes its own cells from the
+    whole record, and a figures line (`record_line` 2) has its plates
+    written by the parent: both keep the record whole."""
     from app.hold.codex import container_of
-    record = got[0]
+    record, layer, blob, plates = got
     codex = getattr(collection, "codex", None)
-    if container_of(codex) != "parquet":
-        record[LINE_KEY] = records.canonical_line(
-            record, record_line=int(getattr(codex, "record_line", 1) or 1))
-    return got
+    record_line = int(getattr(codex, "record_line", 1) or 1)
+    if container_of(codex) == "parquet":
+        return got
+    record[LINE_KEY] = records.canonical_line(record, record_line=record_line)
+    if record_line != 1:
+        return got
+    return _slim(record), layer, blob, plates
 
 
 def _record_of(collection, plugin, row) -> tuple[dict, int, bytes, dict[str, str]]:
@@ -721,10 +753,15 @@ def pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_s
         halted: list[bool] = []
 
         def held_pages():
-            # held lines go through the SAME pool as parsing, each row
-            # carrying where its line is (`held_or_parsed`)
-            for wanted in pages_of():
-                yield _with_held_at(con_build, held, wanted)
+            # held lines go through the SAME pool as parsing, and the
+            # children find each document themselves (`held_or_parsed`):
+            # this thread reads nothing for them, it names the uids
+            db_path, held_dir = str(pack_dir / BUILD_DIR / BUILD_DB), str(held.shard_dir)
+            for page_start in range(0, len(rows), page_size):
+                page = rows[page_start:page_start + page_size]
+                srcs = [{"uid": prow["uid"], HELD_DB: db_path, HELD_DIR: held_dir} for prow in page]
+                pending.append((page, srcs))
+                yield srcs
 
         def guarded(raw):
             try:
