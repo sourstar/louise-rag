@@ -43,8 +43,8 @@ TEXTS = ["Cold ash in the grate", "Refer', inquis, ad senatum", "Fra den Tid"]
 def test_every_text_alone_over_fresh_loads_and_orders_is_one_byte_string():
     post, log = backend()
     out = vega_repro_check.measure(TEXTS, url="http://localai:30286/", model="vega-bge-m3",
-                                   loads=2, repeats=2, window=1024, post=post)
-    assert out == {"texts": 3, "vectors": 12, "identical": 3, "differ": []}
+                                   loads=2, repeats=2, window=1024, post=post, sleep=lambda s: None)
+    assert out == {"texts": 3, "vectors": 12, "identical": 3, "differ": [], "max_abs": {}}
     assert log["shutdowns"] == 2, "each load begins afresh"
     assert sorted(log["sent"]) == sorted([(t, 1024) for t in TEXTS] * 4), "alone, with the window"
     orders = [tuple(c for c, _ in log["sent"][i:i + 3]) for i in range(0, 12, 3)]
@@ -54,8 +54,9 @@ def test_every_text_alone_over_fresh_loads_and_orders_is_one_byte_string():
 def test_a_text_that_changes_on_a_fresh_load_is_named():
     post, _log = backend(drift_on_load=("Fra den Tid", 2))
     out = vega_repro_check.measure(TEXTS, url="http://localai:30286", model="vega-bge-m3",
-                                   loads=2, repeats=1, window=None, post=post)
+                                   loads=2, repeats=1, window=None, post=post, sleep=lambda s: None)
     assert out["differ"] == [2] and out["identical"] == 2
+    assert out["max_abs"][2] > 0
 
 
 def test_a_refused_text_stops_the_measurement():
@@ -63,7 +64,7 @@ def test_a_refused_text_stops_the_measurement():
         return Answer(200, {}) if url.endswith("/shutdown") else Answer(500, {"error": "no"})
     with pytest.raises(RuntimeError, match="HTTP 500"):
         vega_repro_check.measure(TEXTS, url="http://localai:30286", model="m", loads=1,
-                                 repeats=1, window=None, post=post)
+                                 repeats=1, window=None, post=post, sleep=lambda s: None)
 
 
 def test_the_texts_are_spread_over_the_file():
@@ -93,3 +94,54 @@ def test_the_sweep_passes_through_every_length_band_up_to_the_window():
     assert got == [("T", "w0"), ("T", " ".join(f"w{i}" for i in range(5))),
                    ("T", " ".join(f"w{i}" for i in range(10)))]
     assert vega_repro_check.sweep(texts, 0, 512) == []
+
+
+def test_a_model_still_loading_is_waited_for_and_one_that_never_loads_is_not_measured():
+    """München, 2026-10-30: after /backend/shutdown LocalAI answered qwen3-4b
+    "Unavailable … connection refused" for seconds, every text failed, and a
+    harness reading "no differ printed" as clean would have resumed gutenberg
+    on eight failed runs."""
+    good, _log = backend()
+    refusals = {"left": 3}
+
+    def post(url, json, timeout):
+        if url.endswith("/v1/embeddings") and refusals["left"]:
+            refusals["left"] -= 1
+            return Answer(500, {"error": "rpc error: code = Unavailable desc = connection refused"})
+        return good(url, json, timeout)
+    slept = []
+    out = vega_repro_check.measure(TEXTS, url="http://localai:30286", model="m", loads=1,
+                                   repeats=1, window=None, post=post, sleep=slept.append)
+    assert out["identical"] == 3 and refusals["left"] == 0
+    assert slept[0] == vega_repro_check.SETTLE_S and slept.count(1.0) == 3
+    now = [0.0]
+
+    def never(url, json, timeout):
+        return Answer(200, {}) if url.endswith("/shutdown") else Answer(
+            500, {"error": "rpc error: code = Unavailable"})
+
+    def tick(s):
+        now[0] += s
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        vega_repro_check.measure(TEXTS, url="http://localai:30286", model="m", loads=1,
+                                 repeats=1, window=None, post=never, sleep=tick,
+                                 clock=lambda: now[0])
+    assert now[0] >= vega_repro_check.LOAD_WAIT_S, "bounded, and only then failed"
+
+
+def test_the_exit_code_says_reproducible_differ_or_not_measured(tmp_path, monkeypatch, capsys):
+    import sys
+    import types
+    f = tmp_path / "t.jsonl"
+    f.write_text("\n".join(json.dumps({"text": t}) for t in TEXTS), encoding="utf-8")
+    monkeypatch.setattr(vega_repro_check.time, "sleep", lambda s: None)
+    args = ["--url", "http://localai:30286", "--model", "m", "--texts", str(f), "--sweep", "0",
+            "--loads", "1", "--repeats", "1"]
+    post, _ = backend()
+    monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(post=post))
+    assert vega_repro_check.main(args) == 0 and "REPRODUCIBLE" in capsys.readouterr().out
+
+    def refused(url, json, timeout):
+        return Answer(200, {}) if url.endswith("/shutdown") else Answer(400, {"error": "bad"})
+    monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(post=refused))
+    assert vega_repro_check.main(args) == 2 and "NOT MEASURED" in capsys.readouterr().out
