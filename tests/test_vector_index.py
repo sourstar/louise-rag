@@ -595,3 +595,37 @@ def test_a_refresh_writes_a_delta_and_merges_the_deltas_past_the_cap(collection,
     assert asked[0] == 0, "a delta over the new rows, never the newest index rewritten"
     assert counts == [2, 3, 2, 3], "past the cap the deltas merge into one beside the base"
     assert 3 in asked, "the merge takes the deltas (indices - 1), never the base"
+
+
+def test_the_light_compaction_merges_the_small_fragments_and_catches_the_book_id_index_up(collection, monkeypatch):
+    """A COST test (München, 2026-10-30): wikipedia's table held 2,368 small
+    fragments, 1.96 M rows outside the book_id index, and each 128-document
+    delete or held-chunks read took 2.4–3.4 s — a third of its pipeline
+    thread in genesis's delete. Bench: 2,000 small fragments, a 128-id
+    delete 0.36–0.66 s; merged, 0.011–0.022 s. The light compaction merges
+    the small ones only (no deletion is materialized, so no large fragment
+    is rewritten) and folds the book_id index's new rows in as a delta; it
+    is due long before the full one."""
+    _fill(collection, 2000)
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    tbl.create_scalar_index("book_id", index_type="BTREE")
+    for i in range(40):
+        _fill(collection, 5, seed=i + 1, start=2000 + 5 * i)       # the per-flush appends
+    tbl.delete("book_id = 3")                                       # a deletion in the big fragment
+    monkeypatch.setattr(config, "VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", 30)
+    monkeypatch.setattr(config, "VECTOR_INDEX_COMPACT_FRAGMENTS", 4000)
+    st = vector_index.stats(collection)
+    assert vector_index.light_compact_due(st) and not vector_index.compact_due(st), st
+    ds = vector_index._dataset(embeddings._conn(collection).open_table(embeddings.TABLE))
+    big_before = {f.fragment_id for f in ds.get_fragments() if f.count_rows() > 1000}
+    out = vector_index.compact(collection, log=lambda m: None, light=True)
+    assert out["compacted"] is True, out
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    ds = vector_index._dataset(tbl)
+    frags = ds.get_fragments()
+    assert len(frags) <= 2, f"{len(frags)} fragments"
+    assert {f.fragment_id for f in frags if f.count_rows() > 1000} == big_before, \
+        "the large fragment is not rewritten (its deletion stays a deletion file)"
+    assert ds.stats.index_stats("book_id_idx")["num_unindexed_rows"] == 0
+    assert tbl.count_rows() == 2000 + 200 - 1
+    assert not vector_index.light_compact_due(vector_index.stats(collection))

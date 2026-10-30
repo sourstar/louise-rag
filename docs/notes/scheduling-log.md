@@ -1394,3 +1394,40 @@ code and passes now.
 - wikipedia's dump-layer commits (`embed_done=1`, native ≥ 10^12) and their chunks;
 - the encoder gate's busy share against ~13 %;
 - the producer thread no longer asleep in the dumps.
+
+### 2026-10-30 — the light compaction: small fragments merged, the book_id index caught up — PREPARED
+
+**BEFORE (München, wikipedia's table, read-only, b53c4164 / 6081ca8).**
+- Table: 145,615,272 rows in 2,523 fragments, 2,368 of them small (~500 rows each: one per flush).
+- The book_id BTREE leaves 1,959,307 rows unindexed.
+- One `held_chunks` for 128 documents: 2.4–3.4 s.
+- The pipeline-wikipedia thread (py-spy, 60 s): genesis 81 %; its flush's Lance `delete` ≈ 32 % of the thread; `add` 4.4 %.
+
+A full compaction was due only at 4,000 small fragments, because it
+rewrites large fragments with deletions: 40–51 minutes of ~10 cores. The
+book_id index followed the VECTOR refresh's 2 % threshold (2.9 M rows on
+this table).
+
+**Bench (this container).**
+
+| table: 1 M rows indexed + 2,000 fragments of 50 rows | delete of 128 ids |
+|---|---|
+| before | 0.36–0.66 s |
+| after the light compaction (1.3 s for 100 k rows) | 0.011–0.022 s |
+| after the BTREE delta (0.2 s) | 0.009–0.031 s |
+
+**The change.** `light_compact_due` (≥ `VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS`,
+256, and the full one not due) triggers `compact(light=True)`:
+- Lance's `compact_files(materialize_deletions=False)` merges the small fragments only, so no large fragment is rewritten;
+- `optimize_indices(index_names=[book_id], num_indices_to_merge=0)` folds the new rows into the book_id index as a delta, merged past `VECTOR_INDEX_MAX_INDICES`.
+
+It runs under the same `rewrite` lock as the full compaction, so writers
+defer for its seconds. The full compaction is unchanged. Cost test:
+`test_the_light_compaction_merges_the_small_fragments_and_catches_the_book_id_index_up`.
+
+**To verify AFTER:**
+- the first "light-compacted N small fragment(s)" line and its seconds;
+- fragments and book_id unindexed rows after it;
+- one `held_chunks` of 128 against 2.4–3.4 s;
+- genesis's delete share of the pipeline thread against 32 %;
+- genesis documents per 10 minutes.

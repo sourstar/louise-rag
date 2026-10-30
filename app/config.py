@@ -546,6 +546,15 @@ VECTOR_INDEX_PRUNE_S = int(os.getenv("VECTOR_INDEX_PRUNE_S", "3600"))
 #: for a handful. Separate from the version cleanup since the same day:
 #: `Table.optimize()` welds the two together, `pylance` reaches them apart.
 VECTOR_INDEX_COMPACT_FRAGMENTS = int(os.getenv("VECTOR_INDEX_COMPACT_FRAGMENTS", "4000"))
+#: Small fragments that make a LIGHT compaction due: the small fragments
+#: alone merged (no deletions materialized, so no large fragment is
+#: rewritten) and the book_id index's new rows indexed. Every delete-then-
+#: insert and every held-chunks read scans each small fragment the book_id
+#: index does not cover: wikipedia at 2,368 of them, 2.4–3.4 s per
+#: 128-document read and a third of its pipeline thread in genesis's delete
+#: (München, 2026-10-30). Measured on a bench: 2,000 small fragments, a
+#: 128-id delete 0.36–0.66 s; merged (1.3 s for 100k rows), 0.011–0.022 s.
+VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS = int(os.getenv("VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", "256"))
 #: Rows a compaction aims to put in each fragment it writes (lance's own
 #: default). Bounding the output is what keeps one pass from rewriting the
 #: table into a shape the next pass has to undo.
