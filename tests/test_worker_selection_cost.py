@@ -19,6 +19,7 @@ The plan assertions below are the regression guard for 2 and 3 — behaviour
 alone cannot catch a query that is merely slow.
 """
 import shutil
+import time
 from pathlib import Path
 
 from app import collections as collections_mod, config, db, discovery, worker
@@ -277,29 +278,32 @@ def test_backfill_under_all_skips_what_the_archive_can_still_cover(tmp_path, mon
 
 def test_backfill_cursor_never_rewalks_the_covered_prefix(tmp_path, monkeypatch):
     """pubmed: 8M covered documents sit BEFORE the first uncovered one in
-    rowid order. The cursor resumes from the first row returned, so the
-    next round starts past the covered prefix; a shard going final (epoch)
-    or the TTL resets it; a deferred (still pending) row is re-selected."""
+    rowid order. The cursor resumes AFTER the last row returned, so the next
+    round starts past the covered prefix and past what it was just given; a
+    shard going final (epoch) or the TTL resets it. A deferred (still
+    pending) row comes back with the next sweep. (It resumed FROM the first
+    row returned, which re-selected a deferred row at once — and, with a
+    call that fills its limit across windows, re-walked a whole budget of
+    sparse windows to reach the same rows every call: wikipedia's archive
+    layer, one document per round, 2026-10-30.)"""
     c, con, archive = _archive_collection(tmp_path, monkeypatch)
     key = (str(c.manifest_path), "new")
     rows = worker._backfill_rows(con, c, 1)
     assert rows, "an uncovered candidate exists"
     first = rows[0]
     epoch, rid, top, found, idle_since = worker._backfill_cursor[key]
-    assert rid == int(first["rid"]) - 1, "resume FROM the first returned row"
+    assert rid == int(first["rid"]), "resume AFTER the last returned row"
     assert found and idle_since is None
     # the covered prefix lies below the cursor
     below = con.execute("SELECT COUNT(*) FROM documents WHERE rowid<=? AND CAST(native_id AS INTEGER)<=10001",
                         (rid,)).fetchone()[0]
     assert below == con.execute("SELECT COUNT(*) FROM documents WHERE rowid<? AND CAST(native_id AS INTEGER)<=10001",
                                 (int(first["rid"]),)).fetchone()[0]
-    # deferred (not embedded): selected again
-    assert worker._backfill_rows(con, c, 1)[0]["uid"] == first["uid"]
-    # embedded: the cursor moves on without revisiting anything before it
-    con.execute("UPDATE documents SET embed_done=1 WHERE uid=?", (first["uid"],))
-    con.commit()
+    # the next call moves on; a deferred row comes back with the next sweep
     nxt = worker._backfill_rows(con, c, 1)
     assert not nxt or nxt[0]["uid"] != first["uid"]
+    again = [r["uid"] for _ in range(50) for r in worker._backfill_rows(con, c, 1)]
+    assert first["uid"] in again, "a deferred row is selected again by the next sweep"
     # a shard going final resets the cursor (its released documents sit below)
     from app.bundles import genesis
     genesis._bump_coverage_epoch()
@@ -837,3 +841,51 @@ def test_no_peer_leading_elsewhere_leaves_the_backfill_as_it_was(tmp_path, monke
     rows = worker._backfill_rows(con, c, 100)
     assert rows and not [s for s in seen if "embed_done=0" in s], \
         "no filter: the plain scope-index walk, no cursor windows for the new walk"
+
+
+def test_one_call_fills_its_limit_across_sparse_windows(monkeypatch):
+    """wikipedia, 2026-10-30: the walk stopped at the first window holding a
+    candidate, so where candidates are sparse a call brought ONE document —
+    one embed batch of one every few minutes while 18.8 M waited behind.
+    A call now fills its limit across windows within its budget, and the
+    next resumes after the last row it returned."""
+    import sqlite3
+    from types import SimpleNamespace
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE documents (x)")
+    con.executemany("INSERT INTO documents VALUES (?)", [(i,) for i in range(1000)])
+    stub = SimpleNamespace(window=lambda *a, **k: 100, note_window=lambda *a, **k: None)
+    monkeypatch.setattr(worker.sizing, "sizer", lambda: stub)
+    monkeypatch.setattr(worker, "_backfill_cursor", {})
+    asked = []
+
+    def one_per_window(start, end, n):
+        asked.append((start, end))
+        return [{"rid": start + 50, "uid": f"u{start + 50}"}][:n]
+    got = worker._cursor_page(con, "k", "new", one_per_window, 5, time.monotonic() + 30)
+    assert [r["rid"] for r in got] == [49, 149, 249, 349, 449] and len(asked) == 5
+    assert worker._backfill_cursor[("k", "new")][1] == 449, "resumes after the last row returned"
+    nxt = worker._cursor_page(con, "k", "new", one_per_window, 2, time.monotonic() + 30)
+    assert [r["rid"] for r in nxt] == [499, 599]
+
+
+def test_a_residual_no_longer_eligible_is_asked_for_no_more(tmp_path, monkeypatch):
+    """The embed stage re-queried every residual on every call that found
+    fewer candidates than it wanted — the producer's time on wikipedia
+    (München's py-spy, 2026-10-30). An ineligible one leaves the set."""
+    from app.bundles import genesis
+    c, con, archive = _archive_collection(tmp_path, monkeypatch)
+    uids = [r["uid"] for r in con.execute("SELECT uid FROM documents ORDER BY rowid LIMIT 4")]
+    assert len(uids) >= 2, "the fixture holds at least two documents"
+    half = len(uids) // 2
+    for u in uids[:half]:
+        con.execute("UPDATE documents SET embed_done=1 WHERE uid=?", (u,))
+    for u in uids[half:]:
+        con.execute("UPDATE documents SET in_scope=1, rdf_done=1, fts_done=1, embed_done=0, "
+                    "error=NULL, retries=0 WHERE uid=?", (u,))
+    con.commit()
+    genesis.reset_revisit_state()
+    genesis._add_residual(c, genesis._RELEASED, uids)
+    got = worker._residual_rows(con, c, 10, set())
+    assert sorted(r["uid"] for r in got) == sorted(uids[half:])
+    assert sorted(genesis.residual_uids(c)) == sorted(uids[half:]), "the embedded ones are forgotten"
