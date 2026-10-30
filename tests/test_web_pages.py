@@ -1336,3 +1336,27 @@ def test_a_whole_answer_is_logged_and_the_stream_kept_alive_while_silent(client,
     assert ": keepalive\n\n" in r.text
     assert _answer_text(r.text) == "Il diritto" and "[answer cut" not in r.text
     assert "answer: 10 chars in" in capsys.readouterr().out
+
+
+def test_the_search_report_has_its_place_above_the_answer_box(client):
+    """Operator, 2026-10-30: "the report of the time spent shall be before
+    the answer box, otherwise it is buried among many other information"."""
+    page = client.get("/ask").text
+    assert page.index('id="report"') < page.index('id="answer-pane"') < page.index('id="results"')
+    assert "placeReport()" in page
+    _seed_one_book()
+    r = client.post("/ask/query", json={"query": "lighthouse keeper", "mode": "fts"})
+    html = r.json()["html"] if r.headers.get("content-type", "").startswith("application/json") else r.text
+    assert 'id="search-report"' in html and " ms</span>" in html, "the timings are the report's"
+    assert html.index('id="search-report"') < html.index('class="hit"')
+
+
+def test_log_out_is_named_plainly_and_asks_first(client):
+    """Operator, 2026-10-30: "admin log out" read as a page called admin, and
+    an accidental touch logged the reader out without the key at hand."""
+    page = client.get("/admin/library", headers={"X-Admin-Token": "sekrit"}).text
+    assert ">Log out</a>" in page and "· log out" not in page
+    assert 'onclick="confirmLogout(this.dataset.name);return false"' in page
+    assert "fetch('/logout'" not in page.split("function confirmLogout", 1)[0], \
+        "the link itself logs nobody out: the confirmation does"
+    assert "you need your key" in page and "Stay logged in" in page
