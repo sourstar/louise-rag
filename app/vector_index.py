@@ -765,6 +765,18 @@ def ensure(collection, con=None, *, log=None, may_continue=None) -> dict | None:
     st = stats(collection)
     if st is None:
         return None
+    # THE LIGHT COMPACTION BEFORE EVERYTHING (2026-10-30): seconds, and every
+    # read and write pays for each small fragment it leaves. Queued behind a
+    # 253 s prune and a 305 s refresh, it let wikipedia's table sit at ~2,000
+    # small fragments for part of half an hour (München: they come back at
+    # 70–80 a minute; held_chunks of 128 0.08–0.25 s just after a pass,
+    # 0.40–0.71 s at 339 small ones)
+    lighted = None
+    if light_compact_due(st):
+        lighted = compact(collection, con, log=log, light=True)
+        if not go():
+            return lighted
+        st = stats(collection) or st
     # BEFORE any of the index work, and independent of all of it: drop
     # superseded versions. This is what keeps the table from growing
     # without bound, it costs no disk headroom, and it must not be
@@ -823,19 +835,13 @@ def ensure(collection, con=None, *, log=None, may_continue=None) -> dict | None:
         if not go():
             return did
         st = stats(collection) or st
-    # THE LIGHT COMPACTION FIRST (2026-10-30): the small fragments merged
-    # and the book_id index caught up in seconds — every delete-then-insert
-    # and held-chunks read scans each small fragment it does not cover
-    # (wikipedia: 2,368 of them, a third of its pipeline thread in genesis's
-    # delete). It runs even where the full pass is due: wikipedia's 8,246
-    # small fragments sent it to the full one, 4.5 minutes of ~10 cores lost
-    # to a writer, while the light one would have merged them in seconds.
-    # The full pass is then due only if small fragments remain.
-    if light_compact_due(st):
-        if not go():
-            return did
-        out = compact(collection, con, log=log, light=True)
-        return {"refresh": did, "compact": out} if did is not None else out
+    # (the light compaction ran first, above — even where the full pass is
+    # due: wikipedia's 8,246 small fragments sent it to the full one, 4.5
+    # minutes of ~10 cores lost to a writer, while the light one merged 9,232
+    # in 33 s. The full pass is due only if small fragments remain.)
+    if lighted is not None:
+        # one compaction a pass: the next pass reads the fragments again
+        return {"refresh": did, "compact": lighted} if did is not None else lighted
     if compact_due(st):
         out = compact(collection, con, log=log)
         return {"refresh": did, "compact": out} if did is not None else out
