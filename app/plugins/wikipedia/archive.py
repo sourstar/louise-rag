@@ -123,7 +123,9 @@ def lang_of_shard(rel: Path) -> str | None:
 
 
 def shards(root: Path) -> list[Path]:
-    return sorted(p for p in root.rglob("*.parquet") if p.is_file())
+    # through the origin's links: rglob enters none (app/plugins/walk.py)
+    from .. import walk
+    return walk.files(root, "*.parquet")
 
 
 def is_archive_locator(locator: str) -> bool:

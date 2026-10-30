@@ -877,9 +877,9 @@ def _local_shards(collection) -> tuple[str, ...]:
     root = collection.corpus_dir
     if not root.is_dir():
         return ()
-    return tuple(sorted(
-        p.relative_to(root).as_posix()
-        for p in root.rglob("*.parquet") if p.is_file()))
+    from app.plugins import walk
+    return tuple(p.relative_to(root).as_posix()
+                 for p in walk.files(root, "*.parquet"))      # through links (walk.py)
 
 
 # -------- adapters: shard -> iterator of (uid, [vector, ...] by seq) --------

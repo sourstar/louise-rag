@@ -65,7 +65,8 @@ def find_dumps(corpus_root: Path, snapshot: str | None = None) -> list[Path]:
     `snapshot` (a dump date, `YYYYMMDD`) alone when given."""
     root = Path(corpus_root)
     found = []
-    for p in root.rglob("wikidata-*-all.json.*"):
+    from .. import walk
+    for p in walk.files(root, "wikidata-*-all.json.*"):   # through links (walk.py)
         # A DUMP IS A FILE, and never one inside a pack (2026-10-21): the pack
         # beside a dump is a directory named after it (`.pack/<dump name>`),
         # and taken for the newest dump it was opened as a bz2 stream, read

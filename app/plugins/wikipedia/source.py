@@ -389,7 +389,8 @@ class WikipediaSource:
         root = state.corpus_root
         if not root.is_dir():
             return
-        dumps = sorted(root.rglob(f"*{_DUMP_SUFFIX}"))
+        from .. import walk
+        dumps = walk.files(root, f"*{_DUMP_SUFFIX}")   # through links (walk.py)
         # THE PINNED SNAPSHOT ONLY. Dated dumps coexist in one corpus by
         # design (acquire/specs.py `_wiki_files`), and the node keeps the
         # legacy `latest/` beside them: two dumps of one wiki mint the same
