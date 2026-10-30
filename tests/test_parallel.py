@@ -1005,3 +1005,24 @@ def test_an_operator_pass_keeps_its_children_unless_the_env_says_otherwise(monke
     monkeypatch.setenv("PARSE_TASKS_PER_CHILD", "500")
     louise._whole_quota()
     assert config.PARSE_TASKS_PER_CHILD == 500
+
+
+def _dies_once(marker: str, i: int) -> int:
+    """Killed by "the kernel" the first time it meets task 2."""
+    import os
+    import signal
+    m = Path(marker)
+    if i == 2 and not m.exists():
+        m.write_text("killed")
+        os.kill(os.getpid(), signal.SIGKILL)
+    return i * i
+
+
+def test_a_pass_survives_a_child_the_kernel_killed(tmp_path, monkeypatch):
+    """A child killed by the OOM killer broke the pool and ended the pass
+    (operator, 2026-10-30: a kill recovers by itself, "not involving this
+    agent"). The unanswered parts go again on a smaller pool, in order."""
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 4)
+    marker = str(tmp_path / "killed")
+    got = list(parallel.each_part(_dies_once, [(marker, i) for i in range(12)]))
+    assert got == [i * i for i in range(12)] and Path(marker).exists()
