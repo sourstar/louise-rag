@@ -4,6 +4,16 @@ One entry per case that cost time, newest first. Each entry gives what happened,
 
 ## 2026-10-30 — the multi-core day
 
+### A cursor that returned at the first window holding a candidate
+
+- **What happened.** After its resume, wikipedia embedded one document per batch, about three batches in 10 minutes. Behind them, 18.8 M documents of the encoder's own work were waiting, outside the archive's span. The backfill walk stopped at the first rowid window holding any candidate. In the archive layer, where 21.5 M of 22 M documents were already embedded, that meant one document per call. Each short call then re-queried every archive residual as well.
+- **Cost.** The whole encoder backlog of the largest collection, at a few documents an hour.
+- **Lessons.**
+  - A walk bounded by a time budget fills its batch within that budget. Returning at the first hit is right only where candidates are dense.
+  - A cursor resumes after what it returned. Resuming before it re-walks the same sparse ground on every call.
+  - A set re-queried on every call must forget what no longer qualifies.
+- **Fix.** #91.
+
 ### A storage layout sized for the writer's order, read in another
 
 - **What happened.** The wikidata pack stores entity lines in Parquet row groups of 1,000, in dump order. The records build reads them in slice order, family by family. For a sparse family, each record read decompressed a whole group of 1,000 lines to keep one.
