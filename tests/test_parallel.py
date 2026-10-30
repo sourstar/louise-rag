@@ -71,6 +71,55 @@ def test_the_fts_and_rdf_stages_index_through_the_pool(isolated_config, tmp_path
     con.close()
 
 
+def _tags_after_fts(tmp_path, corpus_dir, name: str) -> dict[str, list[str]]:
+    d = tmp_path / name
+    c = collections_mod.Collection(
+        name="g", plugin="gutenberg", profile=None, embed_mode_default=None, corpus_dir=corpus_dir,
+        manifest_path=d / "manifest.db", fts_dir=d / "fts", lance_dir=d / "lancedb")
+    con = db.connect(c)
+    discovery.sync_collection(con, c)
+    for stage in ("rdf", "fts"):
+        first = con.execute("SELECT * FROM documents WHERE error IS NULL ORDER BY uid LIMIT 1").fetchone()
+        assert worker._execute_step(con, c, stage, first) is True
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE fts_done=0").fetchone()[0] == 0
+    tags: dict[str, list[str]] = {}
+    for r in con.execute("SELECT uid, entity_id FROM doc_keys ORDER BY uid, entity_id"):
+        tags.setdefault(r["uid"], []).append(r["entity_id"])
+    con.close()
+    return tags
+
+
+def test_the_fts_stage_tags_each_document_in_the_child_that_cut_it(isolated_config, tmp_path,
+                                                                     corpus_dir, monkeypatch):
+    """The worker's pipeline thread tagged every document under the GIL —
+    three of three py-spy samples in the citation resolver, the pool's
+    children running 0 of 90 s for 79 (2026-10-30). The children tag now,
+    with the chunks; the worker only writes, and the tags are the serial ones."""
+    from app import entities, refs
+    from app.refs import store as refs_store
+    rcon = refs.connect(config.refs_db_path())
+    refs_store.sync_all(rcon, FIXTURES / "refs-mini")
+    rcon.close()
+    book = sorted(p for p in Path(corpus_dir).iterdir() if p.is_dir())[0]
+    txt = next(book.glob("*.txt*"))
+    data = txt.read_bytes()
+    i = data.index(b"*** END OF")
+    txt.write_bytes(data[:i] + b"A chapter on the BRCA2 and TP53 genes.\n\n" + data[i:])
+    serial = _tags_after_fts(tmp_path, corpus_dir, "serial")
+    assert sorted(e for v in serial.values() for e in v) == ["hgnc:1101", "hgnc:11998"], \
+        "the book names two genes: the test proves something only if they are found"
+
+    def never(*a, **k):
+        raise AssertionError("the worker tagged a document itself")
+    monkeypatch.setattr(entities, "entity_ids_of", never)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 2)
+    parallel.shutdown()
+    try:
+        assert _tags_after_fts(tmp_path, corpus_dir, "pooled") == serial
+    finally:
+        parallel.shutdown()
+
+
 def test_prefetch_prepares_the_next_container_once_in_the_background(isolated_config, tmp_path,
                                                                       two_processes, monkeypatch):
     """Regression (2026-08-28, measured): pubmed's pipeline spent 17 s of

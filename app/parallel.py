@@ -40,7 +40,7 @@ from . import config, cpu_limit
 # config knobs a child must share with the parent: everything that shapes
 # a chunk, a record or a plugin's file access
 KNOBS = ("CHUNK_TOKENS", "CHUNK_OVERLAP", "CHUNK_VERSION", "CLEANING_VERSION",
-         "PUBMED_PACK_DIR", "CACHE_DIR", "CORPUS_DIR", "DATA_DIR")
+         "PUBMED_PACK_DIR", "CACHE_DIR", "CORPUS_DIR", "DATA_DIR", "REFS_DB_PATH")
 
 _lock = threading.Lock()
 _pool: ProcessPoolExecutor | None = None
@@ -350,6 +350,23 @@ def _one(kind: str, collection, row: dict):
         doc = plugin_io.canonical_doc(plugin, row)
         return {"chunks": layers.chunks_for_document(collection, row, doc.sections),
                 "names": fts.index_names_of(collection, doc.extra)}
+    if kind in ("fts", "fts+names"):
+        # the text-index stage's whole per-document work: its chunks, its
+        # names where the plugin gives them (wikidata), and the entities its
+        # text mentions — the tagging the worker's pipeline thread did under
+        # the GIL while this pool sat idle (app/entities.py `entity_ids_of`)
+        from . import entities, refs
+        if kind == "fts+names":
+            from . import fts
+            doc = plugin_io.canonical_doc(plugin, row)
+            chunks = layers.chunks_for_document(collection, row, doc.sections)
+            names = fts.index_names_of(collection, doc.extra)
+        else:
+            chunks = layers.chunks_for_document(collection, row, plugin_io.sections(plugin, row))
+            names = None
+        return {"chunks": chunks, "names": names,
+                "entities": entities.entity_ids_of(row.get("title"), [c["text"] for c in chunks],
+                                                   refs.RESOLVER, refs.read_store())}
     if kind == "metadata":
         return plugin_io.metadata(plugin, row)
     if kind in ("record", "held-record"):
@@ -959,6 +976,11 @@ def chunks_names_for_rows(collection, rows) -> list[tuple[bool, object]]:
     """`chunks_for_rows` plus each record's names: one `{chunks, names}` per
     row, for a collection whose plugin gives names (fts.names_capable)."""
     return compute("chunks+names", collection, rows)
+
+
+def fts_for_rows(collection, rows, *, names: bool) -> list[tuple[bool, object]]:
+    """The text-index stage's work per row: `{chunks, names, entities}`."""
+    return compute("fts+names" if names else "fts", collection, rows)
 
 
 def metadata_for_rows(collection, rows) -> list[tuple[bool, object]]:
