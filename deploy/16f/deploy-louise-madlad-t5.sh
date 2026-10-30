@@ -262,10 +262,12 @@ n=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:30042/api/node/show)
 rm -f "$H"
 echo "GET /api/node/show with the file's token -> $a, without -> $n"; [ "$a" = 200 ] && [ "$n" = 401 ]
 
-say "7. Ask still open (no user exists yet: a0edc9c)"
-for i in $(seq 1 30); do c=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:30042/ask); [ "$c" = 200 ] && break; sleep 2; done
-echo "GET /ask -> $c"; [ "$c" = 200 ]
-test ! -e "$ROOT/config/users.toml" && echo "no users.toml: Ask open, as before" || echo "users.toml present"
+# open while no user exists (a0edc9c); closed once users.toml holds one —
+# the operator added users on 2026-10-29 19:49, and e7c8732's run stopped here
+if test -e "$ROOT/config/users.toml"; then want=401; else want=200; fi
+say "7. Ask answers $want (users.toml $(test -e "$ROOT/config/users.toml" && echo present || echo absent))"
+for i in $(seq 1 30); do c=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:30042/ask); [ "$c" = "$want" ] && break; sleep 2; done
+echo "GET /ask -> $c"; [ "$c" = "$want" ]
 
 say "8. the GPU governor app from deploy/truenas-gpu-governor.yaml (hwmon writable, /config ro, TZ)"
 python3 - "$ROOT/src/deploy/truenas-gpu-governor.yaml" <<'PY'
