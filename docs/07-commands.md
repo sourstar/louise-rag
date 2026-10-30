@@ -159,8 +159,8 @@ louise hold
               delta <collection> <from> <to>                           what changed between two snapshots
               list <collection>
               discard <collection> <snapshot> [--yes]                  the LATEST snapshot, which this node never served and attested nothing of, moved
-                                                                       with its parts under <SHARD>/.discarded/<snapshot>/ (the parts' own filesystem); its
-                                                                       derived indexes (index/, its edges) go. Refused otherwise: a snapshot a peer may hold is superseded, never recalled
+                                                                       with its parts under <SHARD>/.discarded/<snapshot>/ (the parts' own filesystem); what was
+                                                                       derived from it (index/facets/, its edges) goes, never the text index or the catalogue. Refused otherwise: a snapshot a peer may hold is superseded, never recalled
                                                                        (01 promise 8). Then `records build --records-from-discarded <snapshot>` takes its
                                                                        record lines, cut afresh, and parses only what it did not list (added 2026-10-30,
                                                                        RULE 1: wikipedia-v8's 2026-09 listed 21.9 M twins of archive pages)

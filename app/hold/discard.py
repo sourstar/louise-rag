@@ -19,9 +19,10 @@ put 96 GB of parts on the SSD). Nothing reads a SHARD but its `snapshots/`
 and `records/` and what a snapshot names, and the torrent leaves out what
 is hidden. Moved, not deleted: their record lines are what the rebuild
 takes (`hold records build --records-from-discarded`), none parsed. What is
-derived from it goes: `index/` (the facets, the postings, their marker),
-and the edges its relation parts put into the manifest; the index
-maintainer derives them again from the snapshot that replaces it.
+derived from it goes: `index/facets/` (the facets, their postings, the
+marker) — never the rest of `index/`, which is the collection's text index
+and catalogue — and the edges its relation parts put into the manifest; the
+index maintainer derives them again from the snapshot that replaces it.
 
 Refused when it is not the latest snapshot (a later one's `previous` and
 delta name it), when this node served it (the seeding control names it),
@@ -40,7 +41,8 @@ from . import collection as col, shard as shard_mod, snapshot as sn
 from .codex import CodexError
 
 DISCARDED = ".discarded"
-#: the snapshot's derived indexes beside its SHARD (app/worker.py's maintainer)
+#: the collection's index directory: its fts_dir (text index, `_catalog`)
+#: and, under it, the facets derived from a snapshot (app/ask/facets.py)
 INDEX = "index"
 
 
@@ -151,9 +153,14 @@ def discard(root: Path, name: str, snapshot_id: str, *, con, node_con=None,
             except BaseException:
                 con.execute("ROLLBACK")
                 raise
-    index = root / name / INDEX
-    if index.is_dir():
-        shutil.rmtree(index)            # derived: the maintainer builds it for the next snapshot
+    # ONLY the facets: `index/` is the collection's fts_dir — its text index
+    # and catalogue, kept whole (82 GB on wikipedia-v8; München, 2026-10-30,
+    # before the first --yes). The facets, their postings and their marker
+    # are what the maintainer derives from a snapshot (app/ask/facets.py).
+    from app.ask import facets as facets_mod
+    derived = root / name / INDEX / facets_mod.CACHE
+    if derived.is_dir():
+        shutil.rmtree(derived)
     if sig.is_file():
         (dest / shard_mod.snapshot_sig_path(snapshot_id)).parent.mkdir(parents=True, exist_ok=True)
         os.replace(sig, dest / shard_mod.snapshot_sig_path(snapshot_id))
