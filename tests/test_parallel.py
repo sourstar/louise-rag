@@ -884,6 +884,56 @@ def test_one_slow_part_does_not_hold_back_the_pages_after_it(isolated_config, tm
     assert parallel.held() == {} and parallel.wanting() == {}, "every slot given back"
 
 
+def test_one_slow_part_does_not_stall_the_look_ahead_past_sixteen_pages(isolated_config, tmp_path,
+                                                                        corpus_dir, monkeypatch):
+    """A COST test (München, 2026-10-30, wikidata's build at 12 children: the
+    children waited 47 % of their samples for work while the parent waited
+    51 % for the next part). The look-ahead was 16 PAGES: one large entity in
+    the oldest page stopped the reading after 8,000 rows, and every child ran
+    dry behind it. The bound is in rows (`ROWS_AHEAD`): here the slow part
+    answers only once page 30 is submitted — past sixteen pages — and the
+    stream gets there without the watchdog giving the part up."""
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    rows = [dict(r) for r in (rows * 40)[:80]]
+    pages = [rows[i:i + 2] for i in range(0, 80, 2)]
+    truth = [parallel.compute("chunks", c, p) for p in pages]
+    real = parallel._compute
+    first: dict = {}
+    submitted: list[int] = []
+
+    class Pool:
+        def submit(self, _fn, kind, collection, part):
+            page = next(i for i, p in enumerate(pages) if any(part[0] is r for r in p))
+            submitted.append(page)
+            if not first:
+                first["f"], first["args"] = Future(), (kind, collection, part)
+                return first["f"]
+            if page >= 30 and not first["f"].done():
+                first["f"].set_result(real(*first["args"]))   # the large entity ends
+            return _done(real(kind, collection, part))
+
+    from concurrent.futures import Future
+    inprocess: list[int] = []
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 3)
+    monkeypatch.setattr(config, "PARSE_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(parallel, "pool", lambda: Pool())
+    monkeypatch.setattr(parallel, "_compute", lambda *a: inprocess.append(1) or real(*a))
+    parallel.reset_failures()
+    parallel.forget_users()
+    assert list(parallel.compute_pages("chunks", c, iter(pages))) == truth
+    assert inprocess == [], "the look-ahead stalled and the slow part was given up on"
+    assert max(submitted) == len(pages) - 1
+    # and the bound holds: rows read ahead never pass it (one page at least)
+    monkeypatch.setattr(parallel, "ROWS_AHEAD", 6)
+    first.clear()
+    submitted.clear()
+    got = parallel.compute_pages("chunks", c, iter(pages))
+    assert next(got) == truth[0] and max(submitted) <= 3 + 1
+    got.close()
+    parallel.reset_failures()
+    assert parallel.held() == {} and parallel.wanting() == {}, "every slot given back"
+
+
 def test_the_page_stream_through_real_children_gives_the_serial_results(isolated_config, tmp_path,
                                                                        corpus_dir, two_processes):
     c, rows = _gutenberg(tmp_path, corpus_dir)
