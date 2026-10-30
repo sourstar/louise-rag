@@ -262,6 +262,16 @@ _CITE_SHORT = re.compile(
     rf"(?P<year>\d{{4}})", re.I)
 
 
+#: a dated citation names its month: the month group of `_CITE_DATED` IS this
+#: search, with the same flags, so a text where it finds nothing has no dated
+#: citation — and it costs a third of the dated pattern's scan (2 M characters
+#: of gutenberg text: 0.22 s against 0.67 s; the whole `citations` 1.12 s).
+#: The text-index stage runs this over every chunk of every book (the parse
+#: pool's children, app/entities.py `entity_ids_of`; München 2026-10-30: the
+#: children of an fts batch of big books all in `citations`).
+_MONTH_ANY = re.compile(_MONTH_RE, re.I)
+
+
 def _type_token(text: str) -> str | None:
     for pattern, token in _TYPES:
         if re.fullmatch(pattern, text.strip(), re.I):
@@ -275,7 +285,7 @@ def citations(query: str) -> list[dict]:
     same act, since it carries the date."""
     found: list[tuple[int, dict]] = []
     seen: set[tuple] = set()
-    for pattern in (_CITE_DATED, _CITE_SHORT):
+    for pattern in ((_CITE_DATED, _CITE_SHORT) if _MONTH_ANY.search(query) else (_CITE_SHORT,)):
         for m in pattern.finditer(query):
             tipo = _type_token(m.group("type"))
             if tipo is None:

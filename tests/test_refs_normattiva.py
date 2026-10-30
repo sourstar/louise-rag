@@ -149,3 +149,47 @@ def test_the_record_writes_its_registered_ids_into_keys(tmp_path):
     doc = plugin_io.canonical_doc(SOURCE, {"native_id": ref.native_id, "path": ref.locator})
     assert doc.keys == ["akn:it/act/legge/stato/2003-10-31/306", "eli:it:id/2003/11/15/003G0333", URN_306]
     assert doc.keys == sorted(doc.keys) and SOURCE.PARSER_VERSION == 8
+
+
+def _citations_unfiltered(query: str) -> list[dict]:
+    """`citations` as it was before the month pre-check: both patterns always."""
+    found, seen = [], set()
+    for pattern in (nref._CITE_DATED, nref._CITE_SHORT):
+        for m in pattern.finditer(query):
+            tipo = nref._type_token(m.group("type"))
+            if tipo is None:
+                continue
+            data = None
+            if pattern is nref._CITE_DATED:
+                month = nref._MONTHS[m.group("month").lower()]
+                data = f"{int(m.group('year')):04d}-{month:02d}-{int(m.group('day')):02d}"
+            num = nref._WS.sub("", m.group("num").replace(" ", "")).lower()
+            key = (tipo, num, int(m.group("year")))
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append((m.start(), {
+                "tipo": tipo, "numero": num, "anno": int(m.group("year")), "data": data,
+                "art": nref._text(m.group("art")).rstrip(" ,") if m.group("art") else None}))
+    return [c for _, c in sorted(found, key=lambda t: t[0])]
+
+
+def test_the_month_pre_check_finds_exactly_what_both_patterns_find():
+    """A dated citation names its month, so a text without one skips the
+    dated pattern — a third of `citations`' cost over every chunk of every
+    book in the text-index stage (2026-10-30). The answer is the same on
+    every text: the fixtures' acts, citations in each form, an English book,
+    and a month named with no citation."""
+    fixtures = Path(__file__).parent / "fixtures"
+    texts = [p.read_text(encoding="utf-8", errors="replace")
+             for p in sorted((fixtures / "normattiva").glob("*.xml"))]
+    texts += [p.read_text(encoding="utf-8", errors="replace")[:400_000]
+              for p in sorted((fixtures / "gutenberg-mini").rglob("*.txt"))][:3]
+    texts += ["legge 31 ottobre 2003, n. 306", "l. 306/2003 e d.lgs. n. 82 del 2005",
+              "art. 5, comma 3, della legge sull'emigrazione testo unico 13 novembre 1919, n. 2205",
+              "d.lgs. 82 del 7 marzo 2005", "Nel marzo del 2005 nessuna legge fu citata",
+              "the Roman calendar named maggio and giugno", "D.P.R. 445/2000", "R.D. 16 marzo 1942, n. 262",
+              "L. 241/1990 ; LEGGE 7 AGOSTO 1990, N. 241"]
+    assert any(_citations_unfiltered(t) for t in texts), "the texts cite something"
+    for t in texts:
+        assert nref.citations(t) == _citations_unfiltered(t), t[:80]
