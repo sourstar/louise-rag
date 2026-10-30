@@ -1355,7 +1355,7 @@ indicative only. The children's time is now their own work:
 the files asked per record ~3 %. That last cost is fixed next, by
 `backend.rechecked`.
 
-### 2026-10-30 — the backfill sweep restarts on a change of coverage, not of the epoch — PREPARED
+### 2026-10-30 — the backfill sweep restarts on a change of coverage, not of the epoch — VERIFIED
 
 **BEFORE (München, 18:22–18:32 CET, 6081ca8).** wikipedia's dump layer
 (native ≥ 10^12):
@@ -1394,6 +1394,27 @@ code and passes now.
 - wikipedia's dump-layer commits (`embed_done=1`, native ≥ 10^12) and their chunks;
 - the encoder gate's busy share against ~13 %;
 - the producer thread no longer asleep in the dumps.
+
+**AFTER (München, 19:23:07–19:33:07 CET, dad4338, deployed 19:02:39).**
+
+The first sweep after the restart still needed ~17 minutes to cross layer 1
+(the next row, #104, takes that away). The dump layer was reached at
+19:20:19. In the 10-minute window:
+
+| | BEFORE (18:22–18:32) | AFTER (19:23–19:33) |
+|---|---|---|
+| dump-layer commits (native ≥ 10^12) | 0 | 1,590 docs / 7,616 chunks |
+| layer 1 (genesis) | 38,223 / 339,862 | 47,335 / 354,950 |
+| encoder gate, corpus | 478 admitted, served 83 s | 10,028 admitted, waited 466 s, served 610 s |
+| producer, three dumps | asleep (`WORKER_IDLE_SLEEP`) | `_embed_parallel`'s wait with work() threads in the encoder POST and at admit; `write_pending` → `_drop_clashing_many`; refill → `held_chunks` |
+
+- Streams: 382 / 388 / 362 / 399 / 91 documents, 1,747 / 1,597 / 1,499 / 1,602 / 1,317 chunks, 0 reused.
+- Throughput: about 13 chunks/s at concurrency 2.
+- One "8 document(s) deferred" warning.
+
+The encoder is now the bound: the gate served the whole window, and
+requests queue at admit. At that rate the dump layer's ~90 M chunks are an
+encoder-throughput question, not a scheduling one.
 
 ### 2026-10-30 — the light compaction: small fragments merged, the book_id index caught up — PREPARED
 
