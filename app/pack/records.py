@@ -206,7 +206,7 @@ def content_hash(title: str, sections: list) -> str:
 
 def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
                 frame_records: int = FRAME_RECORDS,
-                record_line: int = 1) -> ShardInfo:
+                record_line: int = 1, lines: Sequence[bytes] | None = None) -> ShardInfo:
     """Write `records` (dicts with RECORD_KEYS) as one shard, atomically
     (tmp + rename). Records are written in the order given. A path ending
     in `.parquet` is written in the other container (09 §9.5 "The file (B)").
@@ -214,6 +214,10 @@ def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
     `record_line` comes from the collection's Codex and is 1 or 2 (09
     §9.5); it is the SHARD's, not the record's, so every line in a file is
     the same shape.
+
+    `lines`: each record's `canonical_line`, already encoded (by the build's
+    pool, `pack.build.with_line`), in the records' order; None encodes them
+    here. A Parquet part encodes its own cells and ignores them.
     """
     keys_for_line(record_line)          # refuse a bad line before any bytes
     path = Path(path)
@@ -245,6 +249,7 @@ def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
         with open(tmp, "wb") as f:
             buf: list[bytes] = []
             first_in_frame = [None]
+            given = iter(lines) if lines is not None else None
             for record in records:
                 uid = record["uid"]
                 if uid in uids:
@@ -252,7 +257,7 @@ def write_shard(path: Path, records: Iterable[dict], *, level: int = ZSTD_LEVEL,
                 if not buf:
                     first_in_frame[0] = uid
                 uids[uid] = [len(frames), len(buf)]
-                buf.append(canonical_line(record, record_line=record_line))
+                buf.append(next(given) if given is not None else canonical_line(record, record_line=record_line))
                 n_records += 1
                 n_chunks += int(record.get("chunks") or 0)
                 first_uid = first_uid or uid

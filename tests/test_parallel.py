@@ -175,6 +175,30 @@ def test_held_record_lines_are_taken_and_cut_by_the_pool(isolated_config, tmp_pa
         assert (held_dir / rel).read_bytes() == (mother / rel).read_bytes()
 
 
+def test_the_children_encode_each_line_as_the_writer_would(isolated_config, tmp_path, corpus_dir,
+                                                         monkeypatch):
+    """The line is encoded in the child (München's samples, 2026-10-30: the
+    build's own thread spent its time in json.dumps). The parts are the
+    bytes of a build whose writer encodes every line itself."""
+    import json
+    from app.pack import build as pack_build, manifest as manifest_mod, records
+    c, _rows = _gutenberg(tmp_path, corpus_dir)
+    by_child = tmp_path / "packs" / "child"
+    pack_build.build(c, by_child, records_per_shard=2, sign=False, log=lambda *_: None)
+    monkeypatch.setattr(pack_build, "with_line", lambda collection, got: got)
+    by_writer = tmp_path / "packs" / "writer"
+    pack_build.build(c, by_writer, records_per_shard=2, sign=False, log=lambda *_: None)
+    shards = manifest_mod.load(by_child)["shards"]
+    assert shards
+    for s in shards:
+        assert (by_child / s["path"]).read_bytes() == (by_writer / s["path"]).read_bytes()
+        part = by_child / s["path"]
+        index = records.read_index(part)
+        lines = [line for k in range(len(index.frames)) for line in records.read_frame(part, index, k)]
+        assert all(pack_build.LINE_KEY.encode() not in line for line in lines), "the carrier is never written"
+        assert [records.canonical_line(json.loads(line)) for line in lines] == [line + b"\n" for line in lines]
+
+
 def test_a_build_under_a_changing_profile_writes_the_serial_bytes(isolated_config, tmp_path, monkeypatch):
     """The node profile (app/cpu_limit.py) changes how many parts run, never
     what they produce: a build whose limit goes 12 -> 0 (paused) -> 8 -> 1

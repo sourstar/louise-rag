@@ -328,12 +328,11 @@ def _one(kind: str, collection, row: dict):
                 "names": fts.index_names_of(collection, doc.extra)}
     if kind == "metadata":
         return plugin_io.metadata(plugin, row)
-    if kind == "record":
-        from .pack.build import _record_of
-        return _record_of(collection, plugin, row)
-    if kind == "held-record":
-        from .pack.build import held_or_parsed
-        return held_or_parsed(collection, plugin, row)
+    if kind in ("record", "held-record"):
+        # the line encoded here too, in the child (`with_line`)
+        from .pack.build import _record_of, held_or_parsed, with_line
+        return with_line(collection, (held_or_parsed if kind == "held-record" else _record_of)(
+            collection, plugin, row))
     if kind == "prepare":
         return plugin_io.prepare(plugin, row)
     raise ValueError(f"unknown work kind {kind!r}")
