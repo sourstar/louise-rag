@@ -63,6 +63,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 from array import array
 from concurrent import futures
 from dataclasses import dataclass, field
@@ -1431,12 +1432,14 @@ class Gate:
         return list(self.pb.TokenizationResponse.FromString(
             call(TOKENIZE, q.SerializeToString())).tokens)
 
-    def _cut(self, state: Loaded, call, req, form: str, content, window: int
-             ) -> tuple[str | list[int] | None, int | None]:
+    def _cut(self, state: Loaded, call, req, form: str, content, window: int, *,
+             bounded: bool = True) -> tuple[str | list[int] | None, int | None]:
         """`(what to forward, the tokens it must be embedded as)` for an input
         whose tag names `window`: a text, or — from a backend that embeds token
         ids — the first tokens themselves. None for a pair or a backend that
-        cuts itself: the content goes as it is, and the count is not known."""
+        cuts itself: the content goes as it is, and the count is not known.
+        `(the text, None)` for a text `token_bound` keeps under the window:
+        whole, its count not asked."""
         if self.cfg.cuts == CONTEXT_SIZE:
             if state.context_size and window != state.context_size:
                 raise Refusal("FAILED_PRECONDITION",
@@ -1460,6 +1463,14 @@ class Gate:
                           f"VeGa: a window of {window} tokens needs a context_size above it — "
                           f"llama.cpp embeds at most context_size − 1 tokens, and this model's "
                           f"is {state.context_size}")
+        # A TEXT ITS BYTES KEEP UNDER THE WINDOW is sent whole without being
+        # counted (2026-10-30): the TokenizeString round trip was 10.7 % of
+        # bge-m3's embedding() for wikipedia's chunks (median 364 characters),
+        # ~4.5 ms of ~42 (München, py-spy). The text sent is the same, and so
+        # are its bytes; only the exact count check gives way to the window's
+        # (`embedding`). `bounded=False` is the by-the-book cut, always counted.
+        if bounded and token_bound(content) + state.specials <= window:
+            return content, None
         tokens = self._tokens(call, req, content)
         if len(tokens) + state.specials <= window:
             return content, len(tokens) + state.specials
@@ -1517,6 +1528,16 @@ class Gate:
         raise Refusal("INVALID_ARGUMENT", f"{vtag.INPUT_MARK} cannot be cut at {window} tokens "
                                           f"exactly: no text reads back as its first {keep}")
 
+    @staticmethod
+    def _shape(req, content: str, cut) -> None:
+        """A text's request as its cut says: the first tokens and no text, the
+        text cut, or the text whole (`cut` None)."""
+        if isinstance(cut, list):                    # the first tokens, and no text beside them
+            req.Embeddings = ""
+            req.EmbeddingTokens.extend(cut)
+        else:
+            req.Embeddings = content if cut is None else cut
+
     def embedding(self, raw: bytes, forward: Callable[[bytes], bytes],
                   call: Callable[[str, bytes], bytes] | None = None) -> bytes:
         state = self.loaded
@@ -1542,17 +1563,26 @@ class Gate:
                               f"VeGa: a text pair, to {self.backend.name} loaded without "
                               f"{PAIRS_OPTION}; a pair is never flattened into one string")
             req.Embeddings = vtag.backend_pair(*content)
-        else:
-            if vtag.PAIR_MARK in content:
-                raise Refusal("INVALID_ARGUMENT", f"VeGa: a text carries the pair marker "
-                                                  f"{vtag.PAIR_MARK!r}, which only VeGa writes")
-            if isinstance(cut, list):                # the first tokens, and no text beside them
-                req.Embeddings = ""
-                req.EmbeddingTokens.extend(cut)
-            else:
-                req.Embeddings = content if cut is None else cut
+        elif vtag.PAIR_MARK in content:
+            raise Refusal("INVALID_ARGUMENT", f"VeGa: a text carries the pair marker "
+                                              f"{vtag.PAIR_MARK!r}, which only VeGa writes")
+        asked = req.SerializeToString()              # before the cut: the redo starts here
+        if form != vtag.PAIR:
+            self._shape(req, content, cut)
         answer = forward(req.SerializeToString())
         result = self.pb.EmbeddingResult.FromString(answer)
+        # sent whole uncounted (`token_bound`), yet over the window: the bound
+        # was beaten, so the input is cut by the book and asked again
+        if (window is not None and form != vtag.PAIR and expect is None and cut is not None
+                and result.prompt_tokens > window):
+            log(f"{self.backend.name}: an input of {len(content)} character(s) bound under "
+                f"its window of {window} was embedded as {result.prompt_tokens} tokens; "
+                f"cut by its tokens and asked again")
+            req = self.pb.PredictOptions.FromString(asked)
+            cut, expect = self._cut(state, call, req, form, content, window, bounded=False)
+            self._shape(req, content, cut)
+            answer = forward(req.SerializeToString())
+            result = self.pb.EmbeddingResult.FromString(answer)
         if result.layout == self.pb.EMBEDDING_LAYOUT_PER_TOKEN:
             raise Refusal("FAILED_PRECONDITION",
                           "VeGa: the backend answered per-token vectors, which LocalAI would "
@@ -1579,6 +1609,23 @@ class Gate:
             raise Refusal("INTERNAL", f"VeGa: the receipts service refused the receipt: "
                                       f"{e}") from None
         return answer                                # only now: the receipt is held
+
+
+def token_bound(text: str) -> int:
+    """At most how many tokens a tokenizer makes of `text`, before its
+    special tokens: the UTF-8 bytes of the text in the longest of its
+    normalised forms, plus one for SentencePiece's dummy prefix. Each token
+    covers at least one byte of the text as its tokenizer normalises it:
+    byte-level BPE, SentencePiece with or without byte fallback, WordPiece.
+    A text whose bound is under its window is not tokenized to be counted
+    (`Gate._cut`). And if a tokenizer ever beats the bound, the answer says
+    so (`prompt_tokens` over the window) and the input is cut by the book
+    and asked again (`Gate.embedding`), so a wrong bound costs a request,
+    never a vector."""
+    if text.isascii():
+        return len(text) + 1
+    return max(len(unicodedata.normalize(f, text).encode())
+               for f in ("NFC", "NFD", "NFKC", "NFKD")) + 1
 
 
 # ---- gRPC: the two methods, and everything else as bytes --------------------------------

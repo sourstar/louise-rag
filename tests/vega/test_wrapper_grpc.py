@@ -449,6 +449,58 @@ def test_a_text_within_its_window_goes_whole(make_node):
     assert len(node.calls("TokenizeString")) == 2, "the probe at load, then the input once"
 
 
+def test_a_text_its_bytes_keep_under_the_window_is_sent_whole_uncounted(make_node):
+    """München, 2026-10-30 (py-spy on bge-m3's wrapper, wikipedia's chunks):
+    TokenizeString was 10.7 % of embedding(), ~4.5 ms of ~42, for texts that
+    could never reach the window. A text whose UTF-8 bytes bound its tokens
+    under the window goes whole without being counted, the same text and so
+    the same vector as the counted path."""
+    node = make_node(tokenizer=True)
+    counted, r1 = node.embed(["w1 w2 w3"], window=10)    # 9 + 2 specials > 10: counted
+    assert r1.status_code == 200, r1.text
+    probes = len(node.calls("TokenizeString")) - 1       # the probe at load, then this one
+    whole, r2 = node.embed(["w1 w2 w3"], window=500)     # bound 9 + 2 <= 500: not asked
+    assert r2.status_code == 200, r2.text
+    node.verify(whole, r2)
+    assert len(node.calls("TokenizeString")) == probes + 1, "no count asked"
+    sent = node.calls("Embedding")
+    assert sent[-1]["text"] == sent[-2]["text"] == "w1 w2 w3"
+    assert r2.json()["data"][0]["embedding"] == r1.json()["data"][0]["embedding"]
+    assert whole.input_digests[0] == vtag.input_digest("text", "w1 w2 w3", 500)
+
+
+def test_a_beaten_bound_costs_a_request_never_a_vector(make_node, monkeypatch):
+    """If a tokenizer ever made more tokens of a text than `token_bound`
+    allows, the answer says so (its tokens over the window): the input is cut
+    by its tokens and asked again, as the counted path would have sent it."""
+    node = make_node(tokenizer=True)
+    monkeypatch.setattr(vw, "token_bound", lambda text: 0)
+    batch, r = node.embed([WORDS], window=10)
+    assert r.status_code == 200, r.text
+    node.verify(batch, r)
+    sent = [c["text"] for c in node.calls("Embedding")]
+    assert sent[-2] == WORDS, "sent whole first, on the beaten bound"
+    assert sent[-1].split() == [f"w{i}" for i in range(8)], "then cut by the book"
+    monkeypatch.undo()                               # the real bound: WORDS is counted
+    _b, by_the_book = node.embed([WORDS], window=10)
+    assert node.calls("Embedding")[-1]["text"] == sent[-1]
+    assert by_the_book.json()["data"][0]["embedding"] == r.json()["data"][0]["embedding"]
+
+
+@pytest.mark.parametrize("text", ["plain ascii, 1 2 3", "ﬁne", "ﷺ", "㍿", "naïve café",
+                                  "日本語のテキスト", "😀 emoji", "क़", "Å"])
+def test_the_token_bound_covers_every_normalised_form(text):
+    """Each token covers at least one byte of the text as its tokenizer
+    normalises it, so the bound is the longest normalised form's bytes,
+    plus SentencePiece's dummy prefix: NFKC expands ﷺ to 18 characters
+    (33 bytes from 3)."""
+    import unicodedata
+    b = vw.token_bound(text)
+    for f in ("NFC", "NFD", "NFKC", "NFKD"):
+        assert b >= len(unicodedata.normalize(f, text).encode()) + 1, f
+    assert b >= len(text.encode()) + 1
+
+
 def test_a_backend_whose_tokens_cannot_be_counted_cuts_nothing(make_node):
     """Without a tokenizer it can reach, the wrapper refuses an input with a
     window rather than guess a cut; one without a window is embedded whole,

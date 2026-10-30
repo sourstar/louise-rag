@@ -74,6 +74,15 @@ VeGa's wrapper cuts as its package declares:
   of 622 over-long inputs cut exactly at windows of 128, 512 and 1,024. The
   answer is refused if the backend reports another count. llama.cpp embeds
   whatever it is given and cuts nothing.
+  *Amended 2026-10-30:* a text whose UTF-8 bytes keep it under the window is
+  sent whole without being counted (`token_bound`). Its bound is the longest
+  of its NFC/NFD/NFKC/NFKD forms in bytes, plus one, because every token covers
+  at least a byte of the normalised text. The count cost 10.7 % of bge-m3's
+  `embedding()` on wikipedia's chunks (München's py-spy). The text sent is the
+  same, so its vector is too. The check on the answer becomes "not over the
+  window". An answer over the window means the bound was beaten: the input is
+  then cut by its tokens and asked again, so a wrong bound costs a request,
+  never a vector.
 - `context_size` (`louise-python`: MedCPT's article side, DAR), the task cuts
   at its load-time context size — a pair longest-first, as NCBI's
   `max_length=512` — and the window must equal it. Measured on the node: every
