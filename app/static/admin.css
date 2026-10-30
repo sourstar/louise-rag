@@ -195,3 +195,17 @@ pre.cli{background:var(--ink);border:1px solid var(--line);border-radius:3px;pad
     font-size:10px;text-transform:uppercase;letter-spacing:.8px}
   table.stack.pairs td+td{padding-left:12px}
 }
+
+/* The Ask row (operator, 2026-10-30): the switch, the results' language and
+   one button; the settings behind a closed line */
+.ask-row{align-items:center}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.seg label{display:flex;align-items:center;gap:6px;padding:5px 12px;cursor:pointer;color:var(--muted);
+  text-transform:none;letter-spacing:0;font-size:12px;margin:0}
+.seg label+label{border-left:1px solid var(--line)}
+.seg input{width:auto;margin:0}
+.seg label:has(input:checked){color:var(--brass);background:var(--panel2)}
+button.ask{padding:6px 22px}
+details.settings{margin-top:10px}
+details.settings>summary{cursor:pointer;color:var(--muted);font-size:12px}
+details.settings[open]>summary{margin-bottom:8px}

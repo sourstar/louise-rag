@@ -25,12 +25,17 @@
   {% endif %}
   <label>Question</label>
   <textarea id="q" rows="3" placeholder="Ask across every collection in scope… Ctrl/Cmd+Enter to ask"
-    onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();ask()}"></textarea>
-  <div class="actions">
-    <select id="mode" style="width:auto">
-      <option value="hybrid">hybrid</option><option value="fts">lexical only</option>
-      <option value="dense">dense only</option><option value="catalog">catalog only</option>
-    </select>
+    onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();go()}"></textarea>
+  {# ONE QUESTION, ONE BUTTON (operator, 2026-10-30: "ask and search are
+     confusing" — "Search only", "AI summary"). The switch says what Ask
+     gives: the passages alone, or the passages at once and an answer
+     written from them above them. Remembered in the reader's browser. The
+     settings a reader need not touch wait behind one closed line (RULE 2). #}
+  <div class="actions ask-row">
+    <span class="seg" role="radiogroup" aria-label="what Ask gives">
+      <label><input type="radio" name="how" value="search" onchange="rememberHow()"> Search only</label>
+      <label><input type="radio" name="how" value="summary" onchange="rememberHow()" checked> AI summary</label>
+    </span>
     {# "show results in": CONTENT only — the answer and every entry IN
        FULL, its title and headings included, are translated into this
        language (operator, 2026-09-18); authors, ids and the page itself
@@ -54,6 +59,15 @@
       <option value="{{ lang[0] }}" dir="auto">{{ lang[2] if lang|length > 2 else lang[1] }}</option>
       {% endfor %}
     </select>
+    <button class="ask" onclick="go()">Ask</button>
+  </div>
+  <details class="settings">
+  <summary>Settings</summary>
+  <div class="actions">
+    <select id="mode" style="width:auto">
+      <option value="hybrid">hybrid</option><option value="fts">lexical only</option>
+      <option value="dense">dense only</option><option value="catalog">catalog only</option>
+    </select>
     {# HOW MANY, before and after the reranker (operator, 2026-09-18),
        defaulting to the documents' own numbers: 05 §5.4's limit of 10
        and §5.6's top 50. The same two go to the answer's search, so its
@@ -70,11 +84,8 @@
        request, made each time. #}
     <label class="inline" title="translate the question into every language the collections hold, not only the main ones">
       <input id="all-langs" type="checkbox"> all languages</label>
-    {# neither is lit at rest: a lit button read as one already pressed
-       (operator, 2026-10-30); both light on hover, as every control does #}
-    <button onclick="search()">Search</button>
-    <button onclick="ask()">Ask (RAG)</button>
   </div>
+  </details>
 </div>
 
 {# THE RELAY'S NOTICES (operator, 2026-10-28): a connection the browser
@@ -329,6 +340,12 @@ function finishAnswer(a,want){
   answerRaw=a.textContent; answerLang=want; answerShown=want;
   linkCitations();
 }
+// THE SWITCH: what Ask gives, remembered in the reader's browser
+function howAsk(){const r=document.querySelector('input[name="how"]:checked'); return r?r.value:'summary'}
+function rememberHow(){try{localStorage.setItem('louise-how',howAsk())}catch(e){}}
+(function(){let v=null; try{v=localStorage.getItem('louise-how')}catch(e){}
+  const r=v&&document.querySelector('input[name="how"][value="'+v+'"]'); if(r)r.checked=true})();
+function go(){return howAsk()==='search'?search():ask()}
 async function ask(){
   const want=selectedLang();
   // THE ANSWER BEFORE THE ENTRIES (operator, 2026-10-21: the answer box
