@@ -151,6 +151,7 @@ grep -q 'replace({column}, ?, ?)' "$ROOT/src.new/app/hold/rename.py"            
 grep -q "confirmLogout" "$ROOT/src.new/app/templates/base.html"                              # #100 (3fecd20): "Log out" with a confirmation; Ask's report above the answer
 grep -q '^PREFIX = "origin missing: "' "$ROOT/src.new/app/origin_missing.py"                 # #101 (9afeed9): a missing file, the self-healing error
 grep -q "THE FAST PATH, a str and a dict lookup" "$ROOT/src.new/app/plugins/wikidata/pack.py" # #101: wikidata's pack_dir fast path
+grep -q "THE SWEEP RESTARTS WHEN THE COVERAGE CHANGES" "$ROOT/src.new/app/worker.py"         # #102 (3960c64): the backfill cursor keyed on coverage, not the epoch
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
 test -x "$ROOT/src.new/deploy/docker-memory-ceiling.sh"                                     # the ceiling on every container together
 grep -q "^def building(dest: Path)" "$ROOT/src.new/app/derived.py"                          # one pack builder across processes (the plan's pool children)
