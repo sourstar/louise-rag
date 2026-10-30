@@ -319,6 +319,26 @@ def test_the_plugin_gives_create_the_block_and_the_map_of_the_pinned_dump(tmp_pa
         WikidataSource().creation_slicing("wikidata")
 
 
+def test_where_the_pack_is_is_asked_once_not_once_a_document(tmp_path, monkeypatch):
+    """A COST test. The plan asks every document's family code: `pack_dir`
+    (a realpath through the /data links and two stats) once a document was
+    the whole cost of wikidata's plan — one core, ~11,700 documents/s,
+    1 h 48 min for 75.9 M (München, 2026-10-30)."""
+    dump = _dump(tmp_path)
+    pack.build(dump, languages=("en",), chunk=4, workers=1)
+    sha = pack.read_meta(dump)["families_map"]
+    monkeypatch.setattr(pack, "_codes_by_dump", {})
+    monkeypatch.setattr(pack, "_codes_views", {})
+    asked = []
+    real = pack.pack_dir
+    monkeypatch.setattr(pack, "pack_dir", lambda d: asked.append(d) or real(d))
+    n = len(entity_lines()) + len(CLASSES)
+    assert pack.family_code_at(dump, sha, 0)
+    first = len(asked)                      # where the pack is, and its meta
+    codes = [pack.family_code_at(dump, sha, i % n) for i in range(5000)]
+    assert all(codes) and len(asked) == first, "nothing more asked, however many documents"
+
+
 def test_the_records_check_reads_the_map_member_and_each_record_s_slice(tmp_path):
     from app.hold import check
     raw = families.build_map([515], [486972], max_item=1000, dump="d")

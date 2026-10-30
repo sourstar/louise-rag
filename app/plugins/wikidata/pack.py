@@ -1074,10 +1074,26 @@ def family_codes(dump: Path, sha: str):
     return view
 
 
+#: (the dump as the locator names it, the map) -> its codes, once found. The
+#: bytes are a pure function of the dump and the map wherever the pack sits,
+#: and a memory map stays readable when a carried pack's old copy goes; so
+#: where the pack is (`pack_dir`: a realpath through the /data links and two
+#: stats) is asked once, not once a document. Asked once a document, it was
+#: the whole cost of the records build's plan: one core, ~11,700
+#: documents/s, 1 h 48 min for 75.9 M (München's py-spy, 2026-10-30).
+_codes_by_dump: dict[tuple[str, str], Any] = {}
+
+
 def family_code_at(dump: Path, sha: str, index: int) -> int | None:
     """Entity `index`'s family code under the map `sha`; None while not computed."""
-    view = family_codes(dump, sha)
-    if view is None or not 0 <= index < len(view):
+    key = (str(dump), sha)
+    view = _codes_by_dump.get(key)
+    if view is None:
+        view = family_codes(dump, sha)
+        if view is None:                # not computed yet: asked again next time
+            return None
+        _codes_by_dump[key] = view
+    if not 0 <= index < len(view):
         return None
     code = view[index]
     return code or None
