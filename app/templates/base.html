@@ -10,7 +10,8 @@
 <body>
 {% set viewer = request.state.viewer if request and request.state and request.state.viewer is defined else none %}
 <nav>
-  <span class="brand">louise-rag</span>
+  <div class="brand">louise-rag</div>
+  <div class="menu">
   <a href="/ask" class="{{ 'active' if active=='ask' else '' }}">Ask</a>
   {% if not (viewer and viewer.role == 'user') %}
   <a href="/admin/library" class="{{ 'active' if active=='library' else '' }}">Library</a>
@@ -25,6 +26,7 @@
   {% elif not viewer %}
   <a href="/login" class="who">Log in</a>
   {% endif %}
+  </div>
 </nav>
 <main>
 {% block content %}{% endblock %}

@@ -70,7 +70,9 @@
        request, made each time. #}
     <label class="inline" title="translate the question into every language the collections hold, not only the main ones">
       <input id="all-langs" type="checkbox"> all languages</label>
-    <button class="primary" onclick="search()">Search</button>
+    {# neither is lit at rest: a lit button read as one already pressed
+       (operator, 2026-10-30); both light on hover, as every control does #}
+    <button onclick="search()">Search</button>
     <button onclick="ask()">Ask (RAG)</button>
   </div>
 </div>

@@ -1,8 +1,35 @@
+{# THE CARD FIRST, ITS MODELS AFTER (operator, 2026-10-30): name, VRAM, its
+   readings and the governor's clock, then the models and processes. #}
+{% set ns = namespace(gov_shown=false) %}
+{% macro governor_block() %}
+<div class="gpu-governor" style="margin-top:8px">
+{% if governor.state == "absent" %}
+  <span class="badge brass">GPU governor not running</span>
+  <span class="note">the card's clock is not held up while someone waits on a model, so chat, search and translation run slower when nothing else is using the GPU — one chat call measured 87 s against 64 s (docs/notes/scheduling.md §12). The <code>gpu-governor</code> app, deploy/truenas-gpu-governor.yaml.</span>
+{% elif governor.state == "error" %}
+  <span class="badge err">GPU governor cannot set the clock</span> <span class="note">{{ governor.error }}</span>
+{% else %}
+  <span class="badge ok">GPU governor</span>
+  {% set held = governor.hold_mhz or governor.max_mhz %}
+  <span class="note">{% if governor.pinned %}clock held at {{ held }} MHz — interactive work is running{% else %}clock free (minimum {{ governor.rest_mhz }} MHz); held at {{ held }} MHz while interactive work runs{% endif %}</span>
+  {% set lv = governor.level %}
+  {% if lv and (lv.name or lv.error) %}
+  <div class="note gpu-level">GPU level <b>{{ lv.name or "none" }}</b>{% if lv.profile %} (profile {{ lv.profile }}){% endif %}:
+    {% if lv.via == "power1_max" %}power limit {{ lv.power_w }} W ({{ lv.power_limit }}; the card's own {{ lv.power_own_w }} W){% elif lv.via == "max_freq" %}clock ceiling {{ lv.max_freq_mhz }} MHz ({{ lv.max_clock }}; {{ lv.power_note }}){% else %}no writable limit{% endif %}
+    · fan {{ lv.fan }}{% if lv.pending %} · {{ lv.pending }}{% endif %}
+    {% if lv.error %}<span class="badge err">level not applied</span> {{ lv.error }}{% endif %}
+    — a limit changes how fast a vector comes, never its bytes</div>
+  {% endif %}
+{% endif %}
+</div>
+{% endmacro %}
 {% if state == "unset" %}
 <div class="note">GPU_PROBE_URL is unset — there is no probe to ask (the <code>gpu-probe</code> service: deploy/truenas-app.yaml, or <code>--profile gpu</code> in deploy/docker/compose.yaml).</div>
 {% elif state == "unreachable" %}
 <div><span class="badge err">unreachable</span> <span class="note">{{ url }} — {{ error }}</span></div>
 {% else %}
+{% set vram_cards = devices|selectattr('vram_total')|list|sort(attribute='vram_total') %}
+{% set gov_card = vram_cards|last if vram_cards else (devices|first if devices else none) %}
 {% for d in devices %}
 <div class="gpu-card">
   <div><b>{{ d.name or (d.vendor_id ~ ':' ~ d.device_id) }}</b>
@@ -13,15 +40,6 @@
   <div class="gpu-bar whose" title="{{ '%.0f'|format(d.used_pct) }}% used"><span class="louise" style="width:{{ '%.1f'|format(mb.louise) }}%" title="Louise's models: {{ models.louise|size }}"></span><span class="others" style="width:{{ '%.1f'|format(mb.other) }}%" title="other models: {{ models.other|size }}"></span><span class="unattributed" style="width:{{ '%.1f'|format(mb.outside) }}%" title="outside LocalAI's models: {{ mb.outside_bytes|size }}"></span></div>
   <div class="legend note"><span class="swatch louise"></span>Louise {{ models.louise|size }}<span class="swatch others"></span>other models {{ models.other|size }}<span class="swatch unattributed"></span>outside LocalAI {{ mb.outside_bytes|size }}<span class="swatch free"></span>free {{ d.free|size }}</div>
   <div>VRAM {{ d.vram_total|size }} · used {{ d.used|size }} · free {{ d.free|size }}</div>
-  <table style="margin-top:8px"><tr><th>model</th><th>used by</th><th>backend</th><th>VRAM</th><th>of card</th></tr>
-    {% for r in models.rows %}
-    <tr><td>{{ r.model }}</td>
-      <td>{% if r.louise %}<span class="swatch louise"></span>Louise · {{ r.uses|join(', ') }}{% else %}<span class="swatch others"></span>other{% endif %}</td>
-      <td class="note">{{ r.backend }}</td><td>{{ r.vram|size }}</td><td>{{ '%.1f'|format(d.share(r.vram)) }}%</td></tr>
-    {% endfor %}
-    <tr class="note"><td>outside LocalAI's models</td><td>the driver, or another program</td><td></td><td>{{ mb.outside_bytes|size }}</td><td>{{ '%.1f'|format(d.share(mb.outside_bytes)) }}%</td></tr>
-  </table>
-  <div class="note">From LocalAI's own count per model ({{ models.asked|join(', ') }}), which reads the driver's per-process counters.{% if models.failed %} Not answering: {{ models.failed|join('; ') }}.{% endif %}</div>
   {% elif d.vram_total %}
   {% set sh = d.shares() %}
   <div class="gpu-bar whose" title="{{ '%.0f'|format(d.used_pct) }}% used"><span class="others" style="width:{{ '%.1f'|format(sh.processes) }}%" title="processes: {{ d.attributed|size }}"></span><span class="unattributed" style="width:{{ '%.1f'|format(sh.unattributed) }}%" title="held by no process shown: {{ d.unattributed|size }}"></span></div>
@@ -35,6 +53,18 @@
     {% for label, t in s.temps %} · {{ label }} {{ '%.0f'|format(t) }} °C{% endfor %}
     {% if s.power_w is not none %} · {{ '%.0f'|format(s.power_w) }} W{% if s.power_cap_w %} of {{ '%.0f'|format(s.power_cap_w) }} W cap{% endif %}{% endif %}
     {% if s.clock_mhz is not none %} · clock {% if s.clock_mhz %}{{ s.clock_mhz }}{% if s.clock_max_mhz %} of {{ s.clock_max_mhz }}{% endif %} MHz{% else %}idle{% endif %}{% endif %}</div>
+  {% endif %}
+  {% if governor and d is sameas gov_card %}{{ governor_block() }}{% set ns.gov_shown = true %}{% endif %}
+  {% if d.vram_total and mb %}
+  <table style="margin-top:8px"><tr><th>model</th><th>used by</th><th>backend</th><th>VRAM</th><th>of card</th></tr>
+    {% for r in models.rows %}
+    <tr><td>{{ r.model }}</td>
+      <td>{% if r.louise %}<span class="swatch louise"></span>Louise · {{ r.uses|join(', ') }}{% else %}<span class="swatch others"></span>other{% endif %}</td>
+      <td class="note">{{ r.backend }}</td><td>{{ r.vram|size }}</td><td>{{ '%.1f'|format(d.share(r.vram)) }}%</td></tr>
+    {% endfor %}
+    <tr class="note"><td>outside LocalAI's models</td><td>the driver, or another program</td><td></td><td>{{ mb.outside_bytes|size }}</td><td>{{ '%.1f'|format(d.share(mb.outside_bytes)) }}%</td></tr>
+  </table>
+  <div class="note">From LocalAI's own count per model ({{ models.asked|join(', ') }}), which reads the driver's per-process counters.{% if models.failed %} Not answering: {{ models.failed|join('; ') }}.{% endif %}</div>
   {% endif %}
   {% if d.processes %}
   <table style="margin-top:8px"><tr><th>model</th><th>container</th><th>pid</th><th>VRAM</th><th>of card</th>
@@ -63,25 +93,4 @@
 {% endfor %}
 {% for n in notes %}<div class="note">{{ n }}</div>{% endfor %}
 {% endif %}
-{% if governor %}
-<div class="gpu-governor" style="margin-top:8px">
-{% if governor.state == "absent" %}
-  <span class="badge brass">GPU governor not running</span>
-  <span class="note">the card's clock is not held up while someone waits on a model, so chat, search and translation run slower when nothing else is using the GPU — one chat call measured 87 s against 64 s (docs/notes/scheduling.md §12). The <code>gpu-governor</code> app, deploy/truenas-gpu-governor.yaml.</span>
-{% elif governor.state == "error" %}
-  <span class="badge err">GPU governor cannot set the clock</span> <span class="note">{{ governor.error }}</span>
-{% else %}
-  <span class="badge ok">GPU governor</span>
-  {% set held = governor.hold_mhz or governor.max_mhz %}
-  <span class="note">{% if governor.pinned %}clock held at {{ held }} MHz — interactive work is running{% else %}clock free (minimum {{ governor.rest_mhz }} MHz); held at {{ held }} MHz while interactive work runs{% endif %}</span>
-  {% set lv = governor.level %}
-  {% if lv and (lv.name or lv.error) %}
-  <div class="note gpu-level">GPU level <b>{{ lv.name or "none" }}</b>{% if lv.profile %} (profile {{ lv.profile }}){% endif %}:
-    {% if lv.via == "power1_max" %}power limit {{ lv.power_w }} W ({{ lv.power_limit }}; the card's own {{ lv.power_own_w }} W){% elif lv.via == "max_freq" %}clock ceiling {{ lv.max_freq_mhz }} MHz ({{ lv.max_clock }}; {{ lv.power_note }}){% else %}no writable limit{% endif %}
-    · fan {{ lv.fan }}{% if lv.pending %} · {{ lv.pending }}{% endif %}
-    {% if lv.error %}<span class="badge err">level not applied</span> {{ lv.error }}{% endif %}
-    — a limit changes how fast a vector comes, never its bytes</div>
-  {% endif %}
-{% endif %}
-</div>
-{% endif %}
+{% if governor and not ns.gov_shown %}{{ governor_block() }}{% endif %}
