@@ -1453,7 +1453,7 @@ defer for its seconds. The full compaction is unchanged. Cost test:
 - genesis's delete share of the pipeline thread against 32 %;
 - genesis documents per 10 minutes.
 
-### 2026-10-30 — the new walk's window reads the candidates, not the rows — PREPARED
+### 2026-10-30 — the new walk's window reads the candidates, not the rows — VERIFIED
 
 **BEFORE (München, 19:03–19:20 CET, dad4338 = #102).** #102 works, but the
 first sweep after the restart needed ~17 minutes:
@@ -1484,3 +1484,25 @@ embed_done=? AND rowid>? AND rowid<?)`, no TEMP B-TREE.
 - the time from the worker's start to the first dump-layer commit (BEFORE ~17 min);
 - one py-spy --locals of the producer: the new cursor's pos and width within the first minute;
 - then #102's 10-minute AFTER.
+
+**Plan check on the node's manifest** (sqlite 3.46.1, wikipedia's covered
+predicate): `SEARCH documents USING INDEX idx_documents_scope (in_scope=?
+AND rdf_done=? AND fts_done=? AND embed_done=? AND rowid>? AND rowid<?)`.
+
+| window | rows | seconds |
+|---|---|---|
+| (0, 200 k] | 0 | 0.000 |
+| (0, 2 M] | 0 | 0.001 |
+| (0, 34 M] | 128 | 0.002 |
+| (33 M, 35 M] | 128 | 0.000 |
+| (40 M, 40.2 M] | 128 | 0.021 |
+
+**AFTER (München, 47886d3: #104 deployed ALONE from branch
+deploy/104-before-103, with #103's three files kept at dad4338).**
+- The worker started at 19:42:41 CET.
+- Its first wikipedia stream started at 19:42:53: 128 documents / 686 chunks.
+- That stream committed at 19:44:58: "129 document(s) … 694 chunks embedded, 0 reused".
+
+So the dump layer was reached 12 s after the start, against ~17 min
+BEFORE. py-spy --locals every ~3 s through the first 75 s never caught
+`_cursor_page`: the walk finishes between samples.
