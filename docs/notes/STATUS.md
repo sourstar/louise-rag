@@ -18,6 +18,46 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+### 2026-10-30: BSARD, EUR-Lex-Sum and GDPR Holdings acknowledged — the operator, for measurement
+
+The operator acknowledged the licensing on 2026-10-29 at about 07:35 CET
+("I acknowledge the licensing of the new collections"). The scope was
+confirmed to the architecture session as "both": the three evaluation
+sets and the new legal collections' origins. The sets are CC-BY-NC-SA-4.0;
+EUR-Lex-Sum's card says CC BY 4.0, but its loader says NC-SA and the
+stricter is taken. The ack is for measurement only (`tools/encoder_bakeoff.py`,
+read-only, under `/data/bakeoff/<suite>` on the node). Syntec's card states
+no licence, and Syntec is not covered.
+
+The acknowledgement is of these bytes, as `fetch` printed them at
+2026-10-29 06:27Z. `ACK.json` beside each set repeats them, with the sha256
+of its LICENCE.txt and its SOURCE.json; the log is
+`/root/bakeoff-gated-fetch.log`.
+- `bsard`:
+  - `corpus.parquet` 8,659,230 B sha256:9728e7ce26676a2ab0f5ae7b915bc64db9b4d28ebb76374cf1a2744a541e08aa
+  - `queries.parquet` 16,774 B sha256:b68e48c867453be34ded95d6770fc64ca5c024003c1095e799081ef55a40ff7d
+  - `qrels.parquet` 7,346 B sha256:e3afc706e6d8277190e95d34d73c5bc7ac1c390afe427ce9c71804c373fa632e
+- `gdpr-holdings`:
+  - `corpus.jsonl` 915,207 B sha256:cf777816b14f9ce483266c328bf1ea6f48482b032f912806e5ee6fa0bbe01af4
+  - `queries.jsonl` 690,416 B sha256:49152a77ff685bc8bb91369885b9b16be2084d99c331817f40c467473c5f7feb
+  - `qrels.jsonl` 61,578 B sha256:69b2acc4dd9f77d8eccc45802ddd91ea660566372e3c569bad113499718c6cf6
+- `eurlex-sum-en`:
+  - `raw/train.json` 93,870,083 B sha256:0912813ba1bdb99f7ea2265abbe558a2ed04da30c57bf7a3e7660d03b92cf1d1
+  - `raw/validation.json` 24,128,810 B sha256:28a35ad2ea68a835649be57ebfe7f487fce63bdd4e07ce8e6051e8265403aaf2
+  - `raw/test.json` 24,354,321 B sha256:4eda506a07280338268e482cc787759e2c8e1bb2d44a4bf2c9ad6b5eab92e0f1
+- `eurlex-sum-fr`:
+  - `raw/train.json` 107,728,616 B sha256:e49f9ab92753060a7220021865b58b10469df8b03fb7c5e5ef100bc02304143d
+  - `raw/validation.json` 28,137,474 B sha256:326386166a2051779f8b5baaafa92af328846c6ab57fb22227a5eebea9d8d97b
+  - `raw/test.json` 28,341,489 B sha256:dc2f24f78f4ff427d48681bbee2a1804f262b8a64eea004bfda1c69108068091
+- `eurlex-sum-de`:
+  - `raw/train.json` 102,280,535 B sha256:13bb0912c61846cffc01d08ba5bba8f753206f625f943911fdc458d9c4580d35
+  - `raw/validation.json` 27,104,481 B sha256:74f0ebfbad03f304bf98a306b5370ea57033945da052219dd4e2974e173d1622
+  - `raw/test.json` 27,365,476 B sha256:05e50c1197a7193e3c4f16d9e6031b38b7c19f2c0e66bd18fc2a3b601a3dea93
+- `eurlex-sum-it`:
+  - `raw/train.json` 97,379,801 B sha256:f5df911e1f61e9a08f00cdf62e397623f23ebd7e408c1de6953414cf97f31dd0
+  - `raw/validation.json` 26,497,383 B sha256:f474f310228de9cfe57793ff32270075920d92aed44ed673ec79e168e54ea89d
+  - `raw/test.json` 26,593,030 B sha256:63317951f54f0059f0b5cf5fb254466fbccde7abcfe6831cebb538496f16e145
+
 **2026-10-29 02:45 (architecture). WIKIPEDIA-V8 REPAIRED AND CHECKED; THE FIRST
 ENCODER NUMBERS FOR THE LEGAL COLLECTIONS.**
 
