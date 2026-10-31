@@ -167,6 +167,9 @@ louise hold
   embedder    check <collection>                                       the calibration gate (§3.3) against the run the endpoint states; a pass validates it and keeps its signed statement in `state/`
   embedder    tree-diff <before> <after>                               what differs between two backend trees, path by path: digests read from VEGA_URL or JSON files (vega.md §12); exit 1 when they differ
               benchmark <collection>                                   tokens per second on the calibration set
+              cpu-reference <collection> --model M [--query-model Q]   the calibration set as the encoder's CPU twin embeds it, kept for every later gate to compare
+                                                                       its run with (near-exact-runs.md §2); refused unless the twin states a CPU run and gives
+                                                                       back its own bytes; writes (added 2026-10-31)
               calibrate --encoder-weights D --engine FILE --against FILE … --ctx N [--set SHA256 | --pairs FILE]
                                                                        the tolerance a space can bear, measured between the reference engine and each --against
                                                                        encoder (a file of `weights` and `[engine]`, 09 §9.3's form)
@@ -248,6 +251,7 @@ louise dev                                                             operator 
   migrate schema [<collection>] [--no-backup]                          apply pending schema changes to a state database; a .bak copy first unless --no-backup; writes; never runs on its own
   refs-sync            reference tables from their origins; writes
   wikidata-classes <dump> [--candidate roots.json]                     why the family map gives a class its family (its shortest P279 path to each family's root), and what candidate roots would move, estimated from the codes pass (added 2026-10-24)
+  wikidata-regroup <collection> [--row-group N] [--workers N]         the collection's wikidata pack rewritten file by file with small row groups (default 64), the lines byte for byte; resumable, safe beside a records build; writes the pack only
   genesis recheck <collection>                                         reopen final archive shards that still have documents the archive could serve; writes
   genesis recount <collection> [--yes]                                 an archive ledger's docs and chunks recounted from chunk_verification; writes only with --yes (added 2026-10-08)
   drop-rows <collection> --ids FILE [--yes]                            02 §2.4's remedy: the rows FILE lists (a chunk id a line) dropped and their documents marked to embed
@@ -1470,6 +1474,11 @@ rerank_model = "bge-reranker-v2-m3"            # required with the block: the re
                                                # a `…/upstream/<model>` URL names (amended 2026-10-08)
 window = 2048                                  # optional: the longest candidate read, in the model's tokens; a longer one
                                                # is cut before it is sent (05 §5.6, amended 2026-10-21). 0: uncut
+calibration = { a = 0.83, b = -2.1, rerank_model = "bge-reranker-v2-m3", judged = 2140, set = "fusion-1" }
+                                               # optional: this reranker's score as a probability of relevance on THIS
+                                               # collection, P = 1/(1+e^-(a·score+b)); a > 0. Written from the output of
+                                               # tools/measure/fusion_calibration.py score. Used only under the model it
+                                               # names (05 §5.6, amended 2026-10-31)
 
 [[sources]]                                    # a deposit collection only (06 §6.7): one per subscribed URL
 url = "https://example.org/sitemap.xml"

@@ -618,7 +618,8 @@ depth is the caller's, like `limit`: the reranker is the asking peer's
 own and so is the time it spends, and the latency budget below still
 bounds it. It never runs over facts, and never across lists — each list of
 §5.1 is reranked on its own, so two spaces or two questions are never
-put on one score scale. A candidate is the RECORD (*amended
+put on one score scale (their calibrated probabilities, below, are not a
+score scale of either). A candidate is the RECORD (*amended
 2026-10-10*): its two best matched chunks — its best chunk (§5.1), then
 the one placed highest in any list — each sent whole, never truncated,
 under one line naming the record, its title and authors (at most 300
@@ -667,6 +668,27 @@ labelled titles:
 - the reranker's order alone: 0.578, 0.425, 0.925.
 A query whose catalogue leg ranks nothing, every descriptive query
 measured, keeps the reranker's order.
+
+**Several collections: merged on relevance where every list is calibrated**
+(*amended 2026-10-31*, operator: B; docs/notes/federated-merge.md). Each
+collection's list is reranked on its own, as above, and the lists of a
+search over several collections are then merged. By rank (reciprocal rank,
+as §5.1), every collection's first record weighed the same however weak it
+was: a medical question placed normattiva's best record second. A
+collection file's `[reranker] calibration` (07 §7.8) turns its reranker's
+score into a probability of relevance, fitted by Platt scaling on judged
+candidates of that collection (`tools/measure/fusion_calibration.py`).
+Where EVERY list of the search has one, for the reranker that scored it,
+and was reranked this time, the lists are merged on that probability. A
+probability is the one scale two collections share: it is not the raw
+score of either. Each list keeps its own order in the merge (a record
+weighs at least what the best record below it in its own list weighs), so
+the catalogue's first record and the tail the reranker did not read stay
+where their collection put them. Otherwise the merge is by rank, as before;
+the result says `merged_by: "relevance"` or `"rank"`, and under
+`merge_withheld` which list stopped a configured calibration being used,
+and why. A collection without a reranker has no calibration, so a search
+that includes one is merged by rank.
 
 **Each candidate is cut to the reranker's window** (*amended 2026-10-21*).
 The collection file's `[reranker] window` (07 §7.8; 2,048 tokens unless it

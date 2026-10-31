@@ -7,6 +7,7 @@ is synthesized whose paths equal today's top-level DATA_DIR/CORPUS_DIR layout
 exactly — an existing deployment upgrades with zero data movement and no new
 required config or volume mount.
 """
+import math
 import os
 import tomllib
 from dataclasses import dataclass, replace
@@ -232,6 +233,59 @@ class RerankRecipe:
     # Measured on live searches: gutenberg p99 1,170 tokens (max 3,335),
     # wikipedia p99 584 — 2,048 reads 99 % of candidates whole. 0: uncut.
     window: int = 2048
+    # 05 §5.6 (amended 2026-10-31, operator's B): this reranker's score as
+    # a probability of relevance, fitted on judged candidates of THIS
+    # collection; what lets its list be merged with other collections' on
+    # relevance instead of rank. None: merged by rank.
+    calibration: "Calibration | None" = None
+
+
+@dataclass(frozen=True)
+class Calibration:
+    """PLATT SCALING (Platt 1999): P(relevant | score) = 1 / (1 + e^-(a·score + b)),
+    fitted on a collection's own judged candidates by
+    tools/measure/fusion_calibration.py (docs/notes/federated-merge.md).
+    It names the reranker it was fitted for: under another model it is
+    not used, and the search says so (`merge_withheld`). Isotonic regression
+    (Zadrozny & Elkan 2002) is the non-parametric alternative, kept for
+    when the judged set is large enough to beat two parameters."""
+    a: float
+    b: float
+    rerank_model: str
+    judged: int = 0          # candidates it was fitted on
+    set: str = ""            # the judged set's name
+
+    def probability(self, score: float) -> float:
+        z = self.a * float(score) + self.b
+        # the two branches keep exp() from overflowing at either end
+        if z >= 0:
+            return 1.0 / (1.0 + math.exp(-z))
+        e = math.exp(z)
+        return e / (1.0 + e)
+
+
+def parse_calibration(raw: Any, *, where: str) -> Calibration | None:
+    """`[reranker] calibration = {a, b, rerank_model, judged?, set?}` ->
+    Calibration; None when the table names none."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where}: [reranker] calibration is a table {{a, b, rerank_model}}")
+    try:
+        a, b = float(raw["a"]), float(raw["b"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(f"{where}: [reranker] calibration needs numbers a and b") from None
+    if not (math.isfinite(a) and math.isfinite(b)) or a <= 0:
+        # a ≤ 0 would rank a higher score as LESS relevant: not a calibration
+        raise ValueError(f"{where}: [reranker] calibration needs a finite a > 0 and a finite b, "
+                         f"got a={raw['a']!r}, b={raw['b']!r}")
+    model = raw.get("rerank_model")
+    if not isinstance(model, str) or not model:
+        raise ValueError(f"{where}: [reranker] calibration names the rerank_model it was fitted for")
+    judged = raw.get("judged", 0)
+    if not isinstance(judged, int) or isinstance(judged, bool) or judged < 0:
+        raise ValueError(f"{where}: [reranker] calibration judged is a count, got {judged!r}")
+    return Calibration(a=a, b=b, rerank_model=model, judged=judged, set=str(raw.get("set", "")))
 
 
 RERANK_APIS = ("tei", "jina")
@@ -256,7 +310,8 @@ def parse_reranker(raw: Any, *, where: str) -> RerankRecipe | None:
     window = raw.get("window", RerankRecipe.window)
     if not isinstance(window, int) or isinstance(window, bool) or window < 0:
         raise ValueError(f"{where}: [reranker] window is a number of tokens (0: uncut), got {window!r}")
-    return RerankRecipe(url=str(raw["url"]), api=api, model=model, window=window)
+    return RerankRecipe(url=str(raw["url"]), api=api, model=model, window=window,
+                        calibration=parse_calibration(raw.get("calibration"), where=where))
 
 
 def reranker_for(collection) -> RerankRecipe | None:
