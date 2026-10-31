@@ -173,3 +173,26 @@ def test_is_held_reads_a_slice_under_a_held_one():
     assert slice_scope.is_held("family=person/range=3", ("family=person",))
     assert not slice_scope.is_held("family=personal/range=3", ("family=person",))
     assert not slice_scope.is_held(None, ("family=person",))
+
+
+def test_the_hints_are_computed_in_the_parse_pool_when_there_is_one(isolated_config, tmp_path,
+                                                                   monkeypatch):
+    """The multi-core rule: the first pass ran on one core (954 s for 75.9 M
+    rows); with a pool the children place the rows, the parent writes."""
+    from app import parallel
+    c = _col(tmp_path, ["family=person"])
+    con = db.connect(c)
+    _rows(con, FAMILY)
+    asked = []
+    monkeypatch.setattr(parallel, "pool", lambda: object())
+
+    def compute(kind, collection, rows):
+        asked.append((kind, len(rows)))
+        return [(True, _hint(None, r, None)) if r["native_id"] != "5" else (False, {"type": "X"})
+                for r in rows]
+    monkeypatch.setattr(parallel, "compute", compute)
+    out = slice_scope.apply(con, c, context_for=lambda collection, log=None, stop=None: _context())
+    assert asked == [("slice-hint", len(FAMILY))]
+    assert _scope(con) == {1: 1, 2: 0, 3: 1, 4: 0, 5: 0, 6: 0}
+    assert out["rows"] == len(FAMILY) and out["unknown"] == 1, \
+        "row 5 failed in the child and was placed in this process instead"
