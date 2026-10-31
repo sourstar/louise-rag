@@ -42,6 +42,12 @@ from . import config, db, embeddings
 
 VECTOR_COLUMN = "vector"
 BOOK_COLUMN = "book_id"
+#: the column a reader's language filter prefilters on (`lang IN (…)`).
+#: Without an index Lance evaluates it over every row before the search:
+#: wikipedia, 146 M rows, 2,107 ms median against 86 ms unfiltered (München,
+#: 2026-10-31). A BITMAP — Lance's own index for a column of few values —
+#: answers it from the index (3 M rows here: 178 ms → 15 ms, built in 0.6 s)
+LANG_COLUMN = "lang"
 
 _state_lock = threading.Lock()
 _has_index: dict[str, tuple[float, bool]] = {}     # lance dir -> (checked_at, has index)
@@ -308,6 +314,43 @@ def _scalar_indices(tbl) -> list:
         return []
 
 
+def _lang_indices(tbl) -> list:
+    try:
+        return [ix for ix in tbl.list_indices()
+                if LANG_COLUMN in (getattr(ix, "columns", None) or [])]
+    except Exception:   # noqa: BLE001
+        return []
+
+
+def lang_indexed(tbl) -> bool | None:
+    """Whether the `lang` column has its BITMAP; None for a table without
+    the column (nothing to index)."""
+    schema = getattr(tbl, "schema", None)
+    if schema is None or LANG_COLUMN not in schema.names:
+        return None
+    return bool(_lang_indices(tbl))
+
+
+def build_lang_table(tbl, *, log=None) -> dict:
+    """A BITMAP index on `lang` (LANG_COLUMN explains the cost it removes)."""
+    from lancedb.index import Bitmap
+    rows = tbl.count_rows()
+    t0 = time.monotonic()
+    tbl.create_index(LANG_COLUMN, config=Bitmap(), replace=True)
+    dt = time.monotonic() - t0
+    if log:
+        log(f"lang index built over {rows} rows in {dt:.0f}s")
+    return {"built": True, "kind": "bitmap", "column": LANG_COLUMN, "rows": rows,
+            "seconds": round(dt, 1)}
+
+
+def build_lang(collection, *, log=None) -> dict:
+    tbl = _table(collection)
+    if tbl is None:
+        return {"built": False, "reason": "no vector table"}
+    return build_lang_table(tbl, log=log)
+
+
 def build_scalar(collection, *, log=None) -> dict:
     """A BTREE index on `book_id` — the column EVERY write filters on.
 
@@ -411,6 +454,7 @@ def stats(collection) -> dict | None:
     rows = tbl.count_rows()
     indices = _vector_indices(tbl)
     book_id_indexed = bool(_scalar_indices(tbl))
+    lang = lang_indexed(tbl)
     # fragments decide whether a COMPACTION is worth its cost (compact_due)
     fragments = small_fragments = None
     try:
@@ -420,6 +464,7 @@ def stats(collection) -> dict | None:
         pass
     if not indices:
         return {"rows": rows, "indexed": False, "book_id_indexed": book_id_indexed,
+                "lang_indexed": lang,
                 "fragments": fragments, "small_fragments": small_fragments}
     name = getattr(indices[0], "name", None)
     unindexed = n_indices = None
@@ -433,7 +478,7 @@ def stats(collection) -> dict | None:
     return {"rows": rows, "indexed": True, "name": name,
             "type": str(getattr(indices[0], "index_type", "")),
             "unindexed_rows": unindexed, "indices": n_indices,
-            "book_id_indexed": book_id_indexed,
+            "book_id_indexed": book_id_indexed, "lang_indexed": lang,
             "fragments": fragments, "small_fragments": small_fragments}
 
 
@@ -838,10 +883,23 @@ def ensure(collection, con=None, *, log=None, may_continue=None) -> dict | None:
     if st["rows"] >= config.VECTOR_INDEX_MIN_ROWS and not st.get("book_id_indexed", False):
         with maintenance(collection):
             out = build_scalar(collection, log=log)
+            # the lang BITMAP in the same step: as cheap (LANG_COLUMN)
+            if out.get("built") and st.get("lang_indexed") is False:
+                out["lang"] = build_lang(collection, log=log)
         if con is not None and out.get("built"):
             db.log_event(con, "info", "index",
                          f"book_id index built ({out['rows']} rows, {out['seconds']}s) — "
                          f"delete-then-insert writes probe instead of scanning")
+        return out
+    # a table indexed on book_id before the lang BITMAP existed gets it
+    # here (LANG_COLUMN). `is False`: a table without the column has none
+    if st["rows"] >= config.VECTOR_INDEX_MIN_ROWS and st.get("lang_indexed") is False:
+        with maintenance(collection):
+            out = build_lang(collection, log=log)
+        if con is not None and out.get("built"):
+            db.log_event(con, "info", "index",
+                         f"lang index built ({out['rows']} rows, {out['seconds']}s) — "
+                         f"a language filter reads the index instead of every row")
         return out
     if not st["indexed"]:
         if st["rows"] < config.VECTOR_INDEX_MIN_ROWS:

@@ -793,3 +793,36 @@ def test_the_light_check_stands_down_while_the_table_is_held(collection, monkeyp
     assert ran == [True]
     monkeypatch.setattr(config, "VECTOR_INDEX_LIGHT_COMPACT_FRAGMENTS", 1000)
     assert vector_index.light(collection) is None, "not due below the threshold"
+
+
+def test_the_lang_bitmap_comes_with_the_book_id_index_and_filters_agree(collection, monkeypatch):
+    """München, 2026-10-31: on wikipedia's 146 M rows a `lang IN ('en')`
+    prefilter took 2,107 ms against 86 ms unfiltered — Lance read every
+    row's lang. A BITMAP (Lance's index for a column of few values) is built
+    in the same cheap step as book_id's, and the filtered answer is the same."""
+    _fill(collection, 300)
+    rows = [{"id": f"d{i}", "book_id": 1000 + i, "lang": "it", "seq": 0, "chapter": "",
+             "text": f"it{i}", "vector": np.ones(DIM, np.float16)} for i in range(20)]
+    embeddings._conn(collection).open_table(embeddings.TABLE).add(rows)
+    monkeypatch.setattr(config, "VECTOR_INDEX_MIN_ROWS", 200)
+    assert vector_index.stats(collection)["lang_indexed"] is False
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    before = sorted(r["id"] for r in tbl.search().where("lang IN ('it')").limit(100).to_list())
+    first = vector_index.ensure(collection)
+    assert first["kind"] == "btree" and first["lang"]["kind"] == "bitmap"
+    assert vector_index.stats(collection)["lang_indexed"] is True
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    assert sorted(r["id"] for r in tbl.search().where("lang IN ('it')").limit(100).to_list()) \
+        == before == sorted(f"d{i}" for i in range(20))
+
+
+def test_a_table_indexed_on_book_id_before_gets_its_lang_bitmap_in_its_own_step(collection,
+                                                                                  monkeypatch):
+    _fill(collection, 300)
+    monkeypatch.setattr(config, "VECTOR_INDEX_MIN_ROWS", 200)
+    vector_index.build_scalar(collection)                      # as before 2026-10-31
+    st = vector_index.stats(collection)
+    assert st["book_id_indexed"] and st["lang_indexed"] is False
+    out = vector_index.ensure(collection)
+    assert out["kind"] == "bitmap" and out["column"] == "lang"
+    assert vector_index.stats(collection)["lang_indexed"] is True
