@@ -86,7 +86,8 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
 
     `how`: "normalised" — what a write stores; "one" — each text alone, as
     the endpoint returned it (the fingerprint); "contribute" — the same raw
-    vectors, sent the way THIS peer contributes: its EMBED_BATCH, its
+    vectors, sent the way THIS peer contributes: its batch (the collection's
+    `[encoder] batch`, else EMBED_BATCH), its
     EMBED_CONCURRENCY, and as many requests at once as its worker keeps
     documents in flight (`recipe.concurrency`). That last one is the setting
     the batching fault of 2026-07 lived in, so it is reproduced, not assumed.
@@ -150,7 +151,7 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
 
 def batched(recipe) -> bool:
     """Does this peer contribute otherwise than strictly one text at a time?"""
-    return (config.EMBED_BATCH > 1 or config.EMBED_CONCURRENCY > 1
+    return (embeddings.batch_size(recipe) > 1 or config.EMBED_CONCURRENCY > 1
             or int(getattr(recipe, "concurrency", 1) or 1) > 1)
 
 
@@ -160,7 +161,7 @@ def contributing(recipe) -> dict[str, int] | None:
     one text at a time, which every gate measures."""
     if not batched(recipe):
         return None
-    return {"embed_batch": int(config.EMBED_BATCH), "embed_concurrency": int(config.EMBED_CONCURRENCY),
+    return {"embed_batch": embeddings.batch_size(recipe), "embed_concurrency": int(config.EMBED_CONCURRENCY),
             "lanes": int(getattr(recipe, "concurrency", 1) or 1)}
 
 

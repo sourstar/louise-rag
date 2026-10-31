@@ -88,6 +88,14 @@ class EmbedRecipe:
     # (TEI/MedCPT); GPU llama-server stays serial — its multi-sequence
     # handling is the defect the batch gate exists for.
     concurrency: int = 1
+    # Chunks a request carries (2026-10-31, München's production profile:
+    # wikipedia's embedding was bound by one chunk a request, the card ~10 %
+    # busy). 0: the node's EMBED_BATCH. Per collection because whether a
+    # batch answers as one text at a time does is the ENGINE's property: the
+    # gate measures it at this batching before a batched answer is written
+    # (`hold.runs`, `run_check.contributing`). Not part of the space, like
+    # `concurrency`.
+    batch: int = 0
     # HOW EXACT A RUN OF THIS ENCODER MUST BE (operator, 2026-10-31, choice C;
     # docs/notes/near-exact-runs.md): "exact" by default; "near" admits a run
     # whose answers vary across fresh loads by no more than the gate's bound,
@@ -161,6 +169,14 @@ def _exactness(raw: dict, where: str) -> str:
     return value
 
 
+def _batch(raw: dict, where: str) -> int:
+    value = raw.get("batch", 0)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{where}: `batch` is the chunks a request carries, a whole "
+                         f"number (0 or absent: the node's EMBED_BATCH), got {value!r}")
+    return value
+
+
 def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
     """An [embed]-shaped TOML table -> EmbedRecipe. None for absent/not-a-
     table, so callers can say "declared or not".
@@ -207,6 +223,7 @@ def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
         query_url=query_url,
         query_model=query_model,
         concurrency=max(1, int(raw.get("concurrency", 1))),
+        batch=_batch(raw, where),
         exactness=_exactness(raw, where),
         device=(str(raw["device"]).lower()
                 if raw.get("device") in ("gpu", "cpu", "GPU", "CPU")

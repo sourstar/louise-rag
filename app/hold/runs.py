@@ -440,7 +440,7 @@ def check(root: Path, name: str, codex: Codex, answered: set, *,
             raise RunUnvalidated(
                 f"{name}: run {run_id[:23]}… is validated for single-text work only — "
                 f"its gate found that a batch does not answer as one text at a time "
-                f"does. Embed one text a request (EMBED_BATCH=1, concurrency 1), or "
+                f"does. Embed one text a request (batch 1, concurrency 1), or "
                 f"fix the engine's batching and let the gate run again", run_id,
                 failed=True)
         if batched and contributes is not None:
