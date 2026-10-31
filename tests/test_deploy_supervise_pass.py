@@ -56,12 +56,28 @@ def test_a_pass_without_a_memory_cap_is_refused(tmp_path):
 
 
 def test_a_held_pass_is_not_restarted(tmp_path):
-    env = _fake_docker(tmp_path, [130, 0])
+    env = _fake_docker(tmp_path, [1, 0])
     (tmp_path / "bin" / "docker").write_text(f"""#!/bin/bash
-echo "$*" >> {tmp_path}/calls; touch {tmp_path}/hold; exit 130
+echo "$*" >> {tmp_path}/calls; touch {tmp_path}/hold; exit 1
 """)
     p, calls = _run(tmp_path, env, "--memory=8g", "img")
-    assert p.returncode == 130 and len(calls) == 1 and "held" in p.stdout
+    assert p.returncode == 1 and len(calls) == 1 and "held" in p.stdout
+
+
+@pytest.mark.parametrize("code", [130, 143])
+def test_a_pass_stopped_on_purpose_is_not_restarted(tmp_path, code):
+    """Operator, 2026-10-31: "if I stop it from freenas, likely because I want
+    to fix something that might actually lead to the crash, it shouldn't
+    restart by itself". A `docker stop` is SIGTERM: the pass exits 130 (07
+    §7.7), or 143 if it did not catch it. The OOM killer's SIGKILL (137)
+    still brings it back."""
+    env = _fake_docker(tmp_path, [code, 0])
+    p, calls = _run(tmp_path, env, "--memory=8g", "img")
+    assert p.returncode == code and len(calls) == 1 and "stopped on purpose" in p.stdout
+    oom = tmp_path / "oom"
+    oom.mkdir()
+    p, calls = _run(oom, _fake_docker(oom, [137, 0]), "--memory=8g", "img")
+    assert p.returncode == 0 and len(calls) == 2, "an OOM kill comes back by itself"
 
 
 def _cgroup(tmp_path, *, max_="max", current=20 << 30, total_kb=61_900_000):
