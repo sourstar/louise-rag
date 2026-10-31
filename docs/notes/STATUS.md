@@ -18,6 +18,45 @@ build at 12 cores, the GPU uncapped. The card's noise (operator): 0.2 sone
 idle, 3.1 sone at full load, coil whine ~0.9 sone; its fan range is being
 measured (published figures disagree).
 
+### 2026-10-31 (evening): wikidata on bge-m3; vector tables with stable row ids; two speed fixes
+
+- **wikidata's encoder is bge-m3** (#141, #142): 0.650 MRR@10 against
+  jina-v3's 0.510 on torch and 0.509 on llama.cpp, p = 0.0001. Created
+  again as `wikidata-bge`: the space is wikipedia's model (dim 1,024, ctx
+  8,191), the chunker unchanged. Its manifest and text index were carried
+  by A1h `dev carry --unembedded` (only the encoder side differs; layers
+  compared whole), saving ~23 h. The records are rebuilt from the jina
+  collection's held lines; `forget wikidata-jina` follows its check
+  (operator's yes). jina is unstaged. The llama.cpp parity design is a
+  gate before production (#143, jina-llamacpp-parity.md).
+- **A compaction after deletes re-mapped the whole vector index into new
+  files** (München's read: eight 17.8 GiB IVF_PQ generations on 10-30, the
+  twins repair). Every new vector table now has Lance's stable row ids
+  (#145): measured, the index stays. Existing tables are rewritten by
+  `dev rewrite-vectors` (#146: copy, verify, index, swap; resumable).
+  wikipedia's rewrite (operator) began 22:30 and is paused at 104/325
+  fragments: it starved wikidata-bge's build (ssd4 read latency 11 ms
+  against 0.8). It resumes after that build.
+- **Freed with the operator's yes:** 165 GB of stale index generations, a
+  278 G ZFS snapshot from 10-30 (ssd4 169 → 446 G available), and
+  simplewiki/latest. enwiki/latest was hard links to the 20260801 dump: 0
+  freed, nothing lost.
+- **A language filter scanned every row:** wikipedia 2,107 ms against 86
+  ms unfiltered. A BITMAP on `lang` (#147) is built by the maintainer with
+  book_id's; measured on 3 M rows, 178 → 15 ms. It deploys with the
+  rewrite's swap.
+- **The held records build was bound by its own process moving lines**
+  (py-spy: `_recv` 35 %, `_send` 16 %, ~6,700 rec/s on 6.4 of 12 cores).
+  The child now ships each line zstd-compressed (#148): byte-identical
+  parts, 22 → 6–7 µs per record measured here.
+- **Also:** `records fetch --profile` records its slices in the file
+  (#144; wikipedia's `slices = []` read "hand-populated"; the file is set
+  to `slices = "all"`, `acquire_enabled = false` after the repair's check).
+  A LoRA or other second file is statable, hashed into the weights (#140,
+  09 §9.3). The slice pass's UPDATE scanned the in_scope index (fixed by
+  München, 0798cf3, ~49 h → 21 min). The Library's KeyError on an older
+  counts row was fixed (aecdccd).
+
 ### 2026-10-30: the records build from held lines, made multi-core — the series
 
 wikipedia-v8's rebuild from its discarded snapshot's lines (52.9 M records,

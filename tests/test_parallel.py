@@ -1097,3 +1097,36 @@ def test_a_pass_survives_a_child_the_kernel_killed(tmp_path, monkeypatch):
     marker = str(tmp_path / "killed")
     got = list(parallel.each_part(_dies_once, [(marker, i) for i in range(12)]))
     assert got == [i * i for i in range(12)] and Path(marker).exists()
+
+
+def test_a_held_part_is_looked_up_in_two_queries_not_two_a_record(isolated_config, tmp_path,
+                                                                   corpus_dir, monkeypatch):
+    """München's py-spy of wikidata-bge's build (2026-10-31): a busy child
+    spent 34 % in `held_or_parsed`'s two point lookups per record. A part's
+    rows are fetched in two IN queries; the parts are the same bytes."""
+    import sqlite3
+    from app.pack import build as pack_build, manifest as manifest_mod
+    c, _rows = _gutenberg(tmp_path, corpus_dir)
+    mother = tmp_path / "packs" / "mother"
+    pack_build.build(c, mother, records_per_shard=2, sign=False, log=lambda *_: None)
+    parts = tuple(s["path"] for s in manifest_mod.load(mother)["shards"])
+    point: list[str] = []
+    real_ro = pack_build._ro
+
+    class Counting:
+        def __init__(self, con):
+            self.con = con
+
+        def execute(self, sql, *a):
+            if "WHERE uid=?" in sql:
+                point.append(sql)
+            return self.con.execute(sql, *a)
+    monkeypatch.setattr(pack_build, "_ro", lambda path: Counting(real_ro(path)))
+    held_dir = tmp_path / "packs" / "held"
+    r = pack_build.build(c, held_dir, records_per_shard=2, sign=False, log=lambda *_: None,
+                         held=pack_build.HeldRecords(mother, parts))
+    assert r.records == 3
+    assert point == [], "no point lookup a record"
+    for rel in parts:
+        assert (held_dir / rel).read_bytes() == (mother / rel).read_bytes()
+    assert isinstance(real_ro(str(c.manifest_path)), sqlite3.Connection)

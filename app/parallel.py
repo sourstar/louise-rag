@@ -443,6 +443,14 @@ def _compute(kind: str, collection, rows: list[dict]) -> list[tuple[bool, object
     A failure is (False, {"type", "msg"}) — never an exception out of the
     task, so one bad document never poisons its sub-batch."""
     out: list[tuple[bool, object]] = []
+    if kind == "held-record":
+        # the part's lookups in two queries, not two per record (prefetch_held)
+        from .pack.build import prefetch_held
+        rows = [dict(r) for r in rows]    # the caller's rows unchanged (inline, they are its own)
+        try:
+            prefetch_held(collection, rows)
+        except Exception:   # noqa: BLE001 — each row then looks itself up, as before
+            pass
     for row in rows:
         try:
             out.append((True, _one(kind, collection, row)))
@@ -931,7 +939,17 @@ def compute_pages(kind: str, collection, pages, *, stop=None, say=None):
         while True:
             ex = pool()
             n = processes()
-            cap = cpu_limit.cap(slots(name, n * IN_FLIGHT_PER_CHILD), lim)
+            # THE PROFILE BOUNDS THE PARTS COMPUTING, and a part queued behind
+            # a busy child computes nothing. Clamped to the cores, a window of
+            # exactly one part per child left every child that finished idle
+            # until this generator ran again — and it is suspended while the
+            # build works on a page: wikidata-bge's held build, 12 children,
+            # cap 12, children ~32 % busy, the parent 76 % idle (München,
+            # 2026-10-31). Where the profile allows every child, the window
+            # keeps IN_FLIGHT_PER_CHILD (a task queued behind each); below
+            # that, the cores cap it, as before.
+            window = slots(name, n * IN_FLIGHT_PER_CHILD)
+            cap = window if lim.cores is None or lim.cores >= n else cpu_limit.cap(window, lim)
             if lim.cores != 0:
                 submit_queued(ex, cap)
             # read pages ahead, once what was read is all submitted
