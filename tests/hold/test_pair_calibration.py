@@ -132,7 +132,12 @@ def test_a_text_space_gate_states_the_same_statement_and_fingerprint(role):
                        stated=a_stated_run(codex), embed_one=fake_embed,
                        contribute=fake_embed, role=role)
     body = dict(emb.statement(run, codex, te.a_key(), now=te.NOW)["body"])
-    assert body["version"] == 3, "the peer's statement kept its version"
+    assert body["version"] == 5
+    # version 5 is version 3's body and how exact the run is (near-exact-runs.md
+    # §4): everything else is pinned as it was
+    assert {k: body.pop(k) for k in emb.NEAR_EXACT_KEYS} == {
+        "exactness": "exact", "loads": 1, "load_variation": "1", "cpu_reference": None}
+    body["version"] = 3
     body.pop("tokens_per_s")                    # a wall-clock rate, never the same twice
     assert hashlib.sha256(cx.canonical_json(body)).hexdigest() == TEXT_STATEMENT[role]
     assert run.fingerprint == TEXT_FINGERPRINT

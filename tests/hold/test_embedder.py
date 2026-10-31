@@ -211,10 +211,12 @@ def test_the_statement_is_09_9_12s_body_signed_under_its_domain():
         "kind", "version", "space_id", "collection_id", "set", "role",
         "run", "engine", "encoder_weights", "driver", "fingerprint",
         "batch_invariant", "seed", "sampled", "passed",
-        "worst", "median", "max_input_tokens", "tokens_per_s", "key", "time"}
-    # "this RUN, on this peer, is compliant with this space"; version 3 since
-    # the options amendment, whose engine may carry `options` (09 §9.12)
-    assert body["kind"] == "louise-calibration-run" and body["version"] == 3
+        "worst", "median", "max_input_tokens", "tokens_per_s", "key", "time",
+        "exactness", "loads", "load_variation", "cpu_reference"}
+    # "this RUN, on this peer, is compliant with this space"; version 5 since
+    # the operator's choice C (2026-10-31): how exact the run is, and how it
+    # stands against the stored CPU reference (near-exact-runs.md §4)
+    assert body["kind"] == "louise-calibration-run" and body["version"] == 5
     stated = a_stated_run(codex)
     assert body["run"] == stated.run_id and body["engine"] == stated.engine
     assert body["driver"] == stated.driver and body["role"] == "document"

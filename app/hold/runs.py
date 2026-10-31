@@ -145,12 +145,39 @@ def keep(root: Path, name: str, statement: dict[str, Any]) -> Path:
 
 def passing(body: dict[str, Any], codex: Codex) -> bool:
     """03 §3.3, both conjuncts, from the numbers the statement carries — so
-    anyone holding it can recheck the verdict."""
+    anyone holding it can recheck the verdict.
+
+    FROM VERSION 5, HOW EXACT THE RUN IS AND HOW IT STANDS AGAINST THE STORED
+    CPU REFERENCE ARE PART OF THE VERDICT (docs/notes/near-exact-runs.md):
+    an exact run's two single-text passes are byte-equal (`load_variation`
+    "1"); a near-exact one measured several loads, varies by no more than
+    NEAR_VARIATION, and reaches CPU_NEAR_LINE against a stored CPU reference;
+    any run falls below CPU_REVIEW_LINE against one and fails. Before version
+    5 the gate's own-bytes verdict was never in the statement, so a run that
+    did not give back its own bytes was admitted to write anyway (found
+    2026-10-31 building this)."""
     try:
-        return (int(body["passed"]) >= codex.space.calibration.min_pass
-                and Decimal(body["median"]) >= Decimal(codex.space.tolerance))
-    except (KeyError, ValueError, InvalidOperation):
+        ok = (int(body["passed"]) >= codex.space.calibration.min_pass
+              and Decimal(body["median"]) >= Decimal(codex.space.tolerance))
+        if not ok or int(body.get("version", 1)) < 5:
+            return ok
+        cpu = body["cpu_reference"]
+        if cpu is not None and Decimal(cpu["worst"]) < Decimal(str(emb.CPU_REVIEW_LINE)):
+            return False
+        variation = Decimal(body["load_variation"])
+        if body["exactness"] == emb.EXACT:
+            return variation == 1
+        return (body["exactness"] == emb.NEAR and int(body["loads"]) >= NEAR_LOADS
+                and variation >= Decimal(str(NEAR_VARIATION)) and cpu is not None
+                and Decimal(cpu["worst"]) >= Decimal(str(emb.CPU_NEAR_LINE)))
+    except (KeyError, TypeError, ValueError, InvalidOperation):
         return False
+
+
+#: a near-exact run (operator, 2026-10-31): measured over at least this many
+#: fresh loads, its answers to one text no further apart than this cosine
+NEAR_LOADS = 3
+NEAR_VARIATION = 0.99999
 
 
 #: (directory, role, space) -> (what the directory held, the statements read
@@ -457,7 +484,8 @@ class Answers:
 def validate(root: Path, name: str, codex: Codex, *, role: str, reference,
              embed, embed_one, contribute, stated: emb.StatedRun, key,
              now: str, items=None,
-             on_run: Callable[[emb.Run], None] | None = None) -> dict[str, Any]:
+             on_run: Callable[[emb.Run], None] | None = None,
+             cpu_reference=None) -> dict[str, Any]:
     """Run the gate against one stated run and KEEP the statement — pass or
     fail: "a failure is kept too, so the run is not retried against the same
     set" (07 §7.3). Returns the statement's body. Embedding is the caller's:
@@ -469,7 +497,7 @@ def validate(root: Path, name: str, codex: Codex, *, role: str, reference,
     operator's cross-vendor reference reads them, approved-encoders.md)."""
     run = emb.run_gate(codex, reference=reference, embed=embed, role=role,
                        stated=stated, embed_one=embed_one, contribute=contribute,
-                       items=items)
+                       items=items, cpu_reference=cpu_reference)
     # THE PASS IS ABOUT ONE RUN. If the model was relaunched while the 512
     # texts were going through — another flag, another image — some answers
     # came from another run, and the numbers describe neither. 03 §3.3: "An

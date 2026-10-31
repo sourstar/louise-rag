@@ -59,6 +59,15 @@ class StatedRun:
     driver: str
 
 
+#: THE CROSS-DEVICE BAR (approved-encoders.md, operator 2026-10-18): a run
+#: whose answer to any calibration item is below this cosine to the stored
+#: CPU reference fails — "sends that engine to further review"
+CPU_REVIEW_LINE = 0.995
+#: what a NEAR-EXACT run must reach against it (operator, 2026-10-31)
+CPU_NEAR_LINE = 0.999
+EXACT, NEAR = "exact", "near"
+
+
 @dataclass(frozen=True)
 class Run:
     """What one pass of the gate found. `passed`, `worst` and `median` are
@@ -91,6 +100,23 @@ class Run:
     # reproduce cannot be checked by anyone. None where no single-text pass
     # was asked for.
     reproducible: bool | None = None
+    # THE STORED CPU REFERENCE (operator, 2026-10-31; docs/notes/near-exact-
+    # runs.md §2): the CPU twin's run that made it, and every one of the 512
+    # answers' cosine to it. None where none is stored for the run's weights.
+    cpu_run: str | None = None
+    cpu_cosines: tuple[float, ...] | None = None
+    # how exact the run is (§3): "exact", one load, until the multi-load gate
+    exactness: str = EXACT
+    loads: int = 1
+    load_variation: float = 1.0
+
+    @property
+    def cpu_worst(self) -> float | None:
+        return min(self.cpu_cosines) if self.cpu_cosines else None
+
+    @property
+    def cpu_median(self) -> float | None:
+        return statistics.median(self.cpu_cosines) if self.cpu_cosines else None
 
     @property
     def passed(self) -> int:
@@ -110,7 +136,8 @@ class Run:
         `min_pass` reach cosine >= `tolerance` … and the median of those n
         does too"."""
         return (self.passed >= self.min_pass and self.median >= self.tolerance
-                and self.reproducible is not False)
+                and self.reproducible is not False
+                and not (self.cpu_worst is not None and self.cpu_worst < CPU_REVIEW_LINE))
 
     def why(self) -> str:
         if self.ok:
@@ -127,6 +154,11 @@ class Run:
                          "embedded one at a time again in reverse order, came back different "
                          "(CLAUDE.md invariant 12; set the vendor's reproducibility mode and "
                          "one request at a time, docs/notes/approved-encoders.md)")
+        if self.cpu_worst is not None and self.cpu_worst < CPU_REVIEW_LINE:
+            parts.append(f"against the stored CPU reference the worst of the 512 is "
+                         f"{self.cpu_worst:.6f}, below the review line {CPU_REVIEW_LINE} "
+                         f"(operator, 2026-10-18): nothing is written from this run until a "
+                         f"person has reviewed it (docs/notes/near-exact-runs.md)")
         return "; ".join(parts)
 
 
@@ -167,14 +199,43 @@ def reproduces(single: Sequence[Sequence[float]], again: Sequence[Sequence[float
     return len(again) == len(single) and fingerprint.of(again) == fingerprint.of(single)
 
 
+def gate_texts(codex: Codex, role: str, items: Sequence | None = None) -> list:
+    """The 512 items as the gate sends them for `role`: the space's set (a
+    pair space's from its member, `items`); on the query side each as one
+    text, with the space's instruction before it. One definition, so the
+    stored CPU reference is made of exactly what the gate compares."""
+    if role not in ("document", "query"):
+        raise GateError(f"role is document or query, got {role!r}")
+    if items is None:
+        if cal.form(codex) != "text":
+            raise GateError("a pair space's calibration set travels in its member "
+                            "(09 §9.12); the gate is given it, and was not")
+        items = cal.verify(codex.modality, codex.space.calibration.set)
+    texts = list(items)
+    if role == "query":
+        if codex.space.query.encoder is None:
+            raise GateError("this space is symmetric: it has no query run to gate — "
+                            "queries and documents come from one run (03 §3.3)")
+        texts = [cal.query_text(t) for t in texts]
+        instruction = codex.space.query.instruction
+        if instruction:
+            texts = [f"{instruction}{t}" for t in texts]
+    return texts
+
+
 def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
              embed, seed: bytes | None = None,
              collection_id: str | None = None,
              role: str = "document",
              stated: StatedRun | None = None,
              embed_one=None, contribute=None,
-             items: Sequence[cal.Item] | None = None) -> Run:
+             items: Sequence[cal.Item] | None = None,
+             cpu_reference: tuple[str, Sequence[Sequence[float]]] | None = None) -> Run:
     """One pass: embed all 512, draw the quorum, compare.
+
+    `cpu_reference`: (the CPU twin's run, its 512 vectors) — the stored CPU
+    reference (docs/notes/near-exact-runs.md §2): every answer's cosine to it
+    is kept, and a worst below CPU_REVIEW_LINE fails the run.
 
     `embed(texts) -> list[list[float]]` is injected rather than imported so
     the gate stays a pure function of what the endpoint returned — the
@@ -205,22 +266,7 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
     pass, the fingerprint and the batches alike — and the query side gets
     each item as one text (`calibration.query_text`).
     """
-    if role not in ("document", "query"):
-        raise GateError(f"role is document or query, got {role!r}")
-    if items is None:
-        if cal.form(codex) != "text":
-            raise GateError("a pair space's calibration set travels in its member "
-                            "(09 §9.12); the gate is given it, and was not")
-        items = cal.verify(codex.modality, codex.space.calibration.set)
-    texts = list(items)
-    if role == "query":
-        if codex.space.query.encoder is None:
-            raise GateError("this space is symmetric: it has no query run to gate — "
-                            "queries and documents come from one run (03 §3.3)")
-        texts = [cal.query_text(t) for t in texts]
-        instruction = codex.space.query.instruction
-        if instruction:
-            texts = [f"{instruction}{t}" for t in texts]
+    texts = gate_texts(codex, role, items)
     if len(reference) != cal.SIZE:
         raise GateError(f"the calibration member carries {len(reference)} "
                         f"reference vectors, the set has {cal.SIZE}")
@@ -238,6 +284,13 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
                             f"dimensions, the space is {codex.space.dim}")
 
     all_cos = tuple(cosine(got[i], reference[i]) for i in range(cal.SIZE))
+    cpu_run = cpu_cos = None
+    if cpu_reference is not None:
+        cpu_run, cpu_vectors = cpu_reference
+        if len(cpu_vectors) != cal.SIZE:
+            raise GateError(f"the stored CPU reference holds {len(cpu_vectors)} vectors, "
+                            f"the set has {cal.SIZE}")
+        cpu_cos = tuple(cosine(got[i], cpu_vectors[i]) for i in range(cal.SIZE))
 
     seed = seed if seed is not None else os.urandom(32)
     universe = [str(i) for i in range(cal.SIZE)]
@@ -251,6 +304,7 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
     tokens = sum(max(1, cal.item_chars(t) // 4) for t in texts)
 
     taken = invariant = reproducible = None
+    variation = 1.0
     if embed_one is not None:
         from . import fingerprint
         sixteen = [texts[i] for i in fingerprint.indices(texts)]
@@ -258,7 +312,12 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
         taken = fingerprint.of(single)
         # invariant 12, in another order (the fresh-load half stays the
         # measurement harness's: llama-intel-arc-b70 capture.py)
-        reproducible = reproduces(single, list(reversed(embed_one(list(reversed(sixteen))))))
+        again = list(reversed(embed_one(list(reversed(sixteen)))))
+        reproducible = reproduces(single, again)
+        # how far apart the two passes are: 1 when byte-equal; carried in the
+        # statement, which is what a write is admitted by (`runs.passing`)
+        variation = 1.0 if reproducible else min(
+            (cosine(a, b) for a, b in zip(single, again)), default=0.0)
         if contribute is not None:
             invariant = batch_invariant(single, contribute(sixteen))
 
@@ -274,7 +333,8 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
         max_input_tokens=codex.space.ctx,
         tokens_per_s=int(tokens / elapsed),
         stated=stated, fingerprint=taken, batch_invariant=invariant, role=role,
-        reproducible=reproducible,
+        reproducible=reproducible, cpu_run=cpu_run, cpu_cosines=cpu_cos,
+        load_variation=variation,
     )
 
 
@@ -317,15 +377,22 @@ STATEMENT_VERSION = 3
 #: a backend engine is told by `${BACKEND}/` in its program (09 §9.3), and
 #: a reader of version 3 would take its tree digest for an image.
 BACKEND_STATEMENT_VERSION = 4
-STATEMENT_VERSIONS = (1, 2, 3, 4)
+#: Version 5 (2026-10-31, operator's choice C; docs/notes/near-exact-runs.md
+#: §4): every run's statement — a backend engine's or not, told as before by
+#: `${BACKEND}/` in its program — with `exactness`, `loads`, `load_variation`
+#: and `cpu_reference`. Versions 3 and 4 stay read: "exact, one load, no CPU
+#: reference".
+NEAR_EXACT_VERSION = 5
+NEAR_EXACT_KEYS = ("exactness", "loads", "load_variation", "cpu_reference")
+STATEMENT_VERSIONS = (1, 2, 3, 4, 5)
 
 
 def statement_version(engine: Any) -> int:
-    """The version a statement of a run with this engine is written at: 4
-    for a backend engine's run and only for it, 3 for every other — so no
-    statement, `engine_id` or run already stated moves (09 §9.12)."""
-    args = engine.get("args") if isinstance(engine, dict) else None
-    return BACKEND_STATEMENT_VERSION if is_backend_args(args) else STATEMENT_VERSION
+    """The version a statement is written at: 5 for every run since
+    2026-10-31 (NEAR_EXACT_VERSION: how exact it is and how it stands against
+    the stored CPU reference are part of every verdict). Before it, 4 for a
+    backend engine's run and 3 for every other; those stay read as written."""
+    return NEAR_EXACT_VERSION
 
 
 def _statement_run(run: Run, key, *, now: str) -> dict[str, Any]:
@@ -387,7 +454,21 @@ def _statement_run(run: Run, key, *, now: str) -> dict[str, Any]:
         "key": env.key_text(key.verify_key),
         "time": now,
     }
+    if body["version"] >= 5:
+        # how exact the run is, and how it stands against the stored CPU
+        # reference (docs/notes/near-exact-runs.md §4)
+        body["exactness"] = run.exactness
+        body["loads"] = run.loads
+        body["load_variation"] = _decimal(run.load_variation)
+        body["cpu_reference"] = (None if run.cpu_run is None else
+                                 {"run": run.cpu_run, "worst": f"{run.cpu_worst:.6f}",
+                                  "median": f"{run.cpu_median:.6f}"})
     return env.sign(env.CALIBRATION, body, key)
+
+
+def _decimal(x: float) -> str:
+    """A cosine as 09 §9.1's decimal string: "1" when exact."""
+    return "1" if x >= 1.0 else f"{x:.6f}"
 
 
 def _validate_stated_engine(engine: Any) -> None:
@@ -423,12 +504,18 @@ def read_statement(envelope_: dict[str, Any]) -> dict[str, Any]:
             raise GateError(
                 f"a version-{version} calibration statement names an engine carrying "
                 f"{BACKEND_PLACEHOLDER}; a backend engine's run is stated at version "
-                f"{BACKEND_STATEMENT_VERSION} (09 §9.3, §9.12)")
+                f"{BACKEND_STATEMENT_VERSION} or later (09 §9.3, §9.12)")
         if version == BACKEND_STATEMENT_VERSION and not backend:
             raise GateError(
                 f"a version {version} calibration statement is written for a backend "
                 f"engine's run alone ({BACKEND_PLACEHOLDER}/ in its program); every "
                 f"other run is stated at {STATEMENT_VERSION} (09 §9.12, §9.18)")
+        missing = [k for k in NEAR_EXACT_KEYS if k not in body]
+        if version >= 5 and missing:
+            raise GateError(f"a version-5 calibration statement carries "
+                            f"{', '.join(NEAR_EXACT_KEYS)}; this one lacks {', '.join(missing)}")
+        if version >= 5 and body.get("exactness") not in (EXACT, NEAR):
+            raise GateError(f"exactness is {EXACT!r} or {NEAR!r}, got {body.get('exactness')!r}")
     return body
 
 
