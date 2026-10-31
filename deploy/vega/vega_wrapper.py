@@ -29,8 +29,8 @@ options the ones it received — no `/proc` matching, no LocalAI patch (vega.md
 §3). Only the card is read, from the child's DRM clients, as app/gpu_probe does,
 and the environment run.sh gave the program it started (the driver it loads).
 
-THE ENGINE'S `image` IS THE BACKEND'S INSTALLED FILES, hashed at every load
-(`tree_digest`) — never the digest LocalAI's gallery wrote into
+THE ENGINE'S `image` IS THE BACKEND'S INSTALLED FILES AND THIS WRAPPER'S CODE,
+hashed at every load (`engine_manifest`; the wrapper since 2026-10-31) — never the digest LocalAI's gallery wrote into
 `metadata.json`, which is the registry's word for a tag, not the bytes'
 (vega.md §4, operator 2026-10-08: no pinning; §10 finding 3). An upgrade is
 therefore a new run. The engine's driver is the one the backend loads: the
@@ -463,6 +463,67 @@ def tree_digest(root: Path, files: FileDigests | None = None) -> str:
     H is sha256, written `sha256:<hex>`, as the weights digest of a directory
     is (app/vega/runs.py) — the form 09 §9.3's validator reads for an image."""
     return manifest_digest(tree_manifest(root, files), root)
+
+
+#: THE WRAPPER IS PART OF THE ENGINE (operator, 2026-10-31, choice A). This
+#: wrapper decides what the backend is given — the cut to a window, the pair's
+#: form — so a change to it can change a vector, and the run named only the
+#: backend's tree: #110 changed the wrapper and every run kept its identity,
+#: and its validation (München). A backend engine's `image` is now the digest
+#: of the backend's tree AND of this package's code, under WRAPPER_PREFIX —
+#: a relative path never begins with `/`, so the two cannot collide — and of
+#: the one setting of vega.json that changes what is embedded, `cuts`.
+WRAPPER_PREFIX = "/vega/"
+#: what is in the package and is NOT the wrapper's function: the host's
+#: settings (vega.json: the socket, the cards), the install record, the kept
+#: digests, and what Python compiles or pip installs beside the code
+WRAPPER_EXCLUDED_TOP = ("vega.json", INSTALL_RECORD, DIGEST_STORE, "venv")
+#: the kept digests' temporary file, written beside them while a load hashes
+WRAPPER_EXCLUDED_TMP = f".{DIGEST_STORE}."
+WRAPPER_EXCLUDED_DIRS = ("__pycache__",)
+
+
+def wrapper_manifest(package: Path, cuts: str,
+                     files: FileDigests | None = None) -> dict[str, dict[str, Any]]:
+    """The wrapper's half of a backend engine's tree: every regular file of the
+    package (`tree_manifest`'s entries), its paths under WRAPPER_PREFIX, but
+    for WRAPPER_EXCLUDED_TOP and any WRAPPER_EXCLUDED_DIRS; and `cuts` as a
+    `setting` entry."""
+    files = files if files is not None else FileDigests()
+    package = Path(package)
+    out: dict[str, dict[str, Any]] = {}
+
+    def walk(directory: Path, prefix: str) -> None:
+        with os.scandir(directory) as it:
+            entries = sorted(it, key=lambda e: e.name)
+        for e in entries:
+            if (not prefix and (e.name in WRAPPER_EXCLUDED_TOP
+                                or e.name.startswith(WRAPPER_EXCLUDED_TMP))) \
+                    or e.name in WRAPPER_EXCLUDED_DIRS:
+                continue
+            rel = prefix + e.name
+            st = e.stat(follow_symlinks=False)
+            if stat.S_ISDIR(st.st_mode):
+                walk(Path(e.path), rel + "/")
+            elif stat.S_ISREG(st.st_mode):
+                size, sha = files.read(e.path)
+                out[WRAPPER_PREFIX + rel] = {"type": "file", "size": size, "sha256": sha}
+            elif stat.S_ISLNK(st.st_mode):
+                out[WRAPPER_PREFIX + rel] = {"type": "link", "target": os.readlink(e.path)}
+
+    walk(package, "")
+    out[WRAPPER_PREFIX + "vega.json#cuts"] = {"type": "setting", "value": cuts}
+    return out
+
+
+def engine_manifest(backend: Path, package: Path | None, cuts: str,
+                    files: FileDigests | None = None) -> dict[str, dict[str, Any]]:
+    """The per-file list a backend engine's `image` is the digest of: the
+    backend's `tree_manifest` and, with a package, the `wrapper_manifest`."""
+    manifest = tree_manifest(backend, files)
+    if package is not None:
+        manifest.update(wrapper_manifest(package, cuts, files))
+    return manifest
 
 
 def short_build(tree: str) -> str:
@@ -1218,8 +1279,10 @@ class Gate:
 
             def tree() -> str:
                 # the list is kept beside the digest: told to the receipts
-                # service once the run is, so a digest that moved can be diffed
-                manifest = tree_manifest(self.backend.directory, self.files)
+                # service once the run is, so a digest that moved can be diffed.
+                # The backend's tree and this wrapper's code (`engine_manifest`)
+                manifest = engine_manifest(self.backend.directory, self.cfg.package,
+                                           self.cfg.cuts, self.files)
                 hashed["manifest"] = manifest
                 return manifest_digest(manifest, self.backend.directory)
 

@@ -421,7 +421,7 @@ parent, writes them from what it launched, at every load:
 | `name` | `"localai/<name>"`, `<name>` being the `name` the runner's install record (`metadata.json` in the backend's directory) gives, or the directory's name where there is no record |
 | `build` | the `version` the install record declares; where it declares none — the case on the reference node — the first 12 hexadecimal digits of `image`'s tree digest, without its `sha256:` prefix. Never the record's `uri`, whose tag moves |
 | `variant` | `null` |
-| `image` | the **tree digest** of the backend's directory, below — never the digest the runner's gallery wrote into the install record, which is the registry's word for a tag at install time and not a digest of the bytes on disk |
+| `image` | the **tree digest** of the backend's directory and of VeGa's wrapper (*amended 2026-10-31*), below — never the digest the runner's gallery wrote into the install record, which is the registry's word for a tag at install time and not a digest of the bytes on disk |
 | `args` | `["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"]`: the argument vector the wrapper started the backend with, from the backend's directory, as the runner starts one; `${BACKEND}` is the backend's directory, whose bytes `image` names, so the vector is relative to it as the options are to `${MODELS}` |
 | `env` | the variables the runner set for the load — LocalAI's `EnvVars` — as for any engine the runner loads by a call; what the backend's own `run.sh` exports is inside `image` |
 | `options` | the `ModelOptions` of the `LoadModel` call exactly as the wrapper received them, read as protobuf JSON with the protocol's field names and unset fields omitted, then written as the `options` row states. A field the wrapper's copy of the runner's protocol definition cannot name refuses the load: an option missing from the engine would be a declaration where 02 §2.4 asks for what ran |
@@ -457,6 +457,26 @@ It is written `sha256:<hex>` like every `H`. It is not the weights digest
 of a directory: that one refuses links and maps a path to a digest, this
 one keeps links, because a backend is a program and its links are part
 of it.
+
+**The wrapper is part of the engine** (*amended 2026-10-31*, operator,
+choice A). VeGa's wrapper decides what the backend is given: the cut to a
+window, a pair's form. A change to it can change a vector, and the run
+named only the backend's tree: a wrapper change (#110) left every run its
+identity and its validation. So the same object also holds the wrapper's
+package, the directory the runner launches the wrapper from:
+- every regular file and link of the package, as above, its path prefixed
+  `/vega/` (a relative path never begins with `/`, so the two halves cannot
+  collide), except at its top level the wrapper's settings (`vega.json`),
+  the install record (`metadata.json`), the digests the wrapper keeps
+  across loads (`file-digests.json` and its temporary file) and the
+  third-party environment (`venv/`), and except every `__pycache__`
+  directory, which Python compiles beside the code;
+- one setting of `vega.json`, the one that changes what is embedded: `cuts`
+  as `"/vega/vega.json#cuts": {"type": "setting", "value": "<tokenizer or
+  context_size>"}`.
+The host's settings (the receipts socket, the cards) are not in it. A
+wrapper change is therefore a new run of every backend behind it, gated
+before a vector is written (03 §3.3).
 
 A backend engine is told by its bytes: its program, `args[0]`, begins
 with `${BACKEND}/`, which no other engine may carry, and its `image` is

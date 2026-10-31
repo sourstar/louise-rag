@@ -237,7 +237,10 @@ weights hash 1,800 s; a stop's grace 30 s.
 **The run** is RAGE's identity computed by the backend's parent: `name`
 `localai/<metadata name>` (else the directory's), `variant` null. **`image`
 is the backend's installed files, hashed at every load (`tree_digest`; §4,
-no pinning) — PENDING the 09 §9.3 amendment.** It is `H` of the canonical
+no pinning) — PENDING the 09 §9.3 amendment.** *Since 2026-10-31 (operator,
+choice A) it is also the wrapper's package, under `/vega/`, and its `cuts`
+setting (`engine_manifest`, 09 §9.3 "The wrapper is part of the engine"): a
+wrapper change is a new run of every backend behind it.* It is `H` of the canonical
 JSON (09 §9.1) of `{<path>: <entry>}` over every entry below the backend's
 directory, walked without following links, except the top-level
 `metadata.json` (LocalAI's install record: a reinstall of the same bytes is

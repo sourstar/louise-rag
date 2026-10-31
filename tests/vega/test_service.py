@@ -189,6 +189,15 @@ def test_a_tree_is_kept_under_its_own_digest_and_read_back(tmp_path):
     assert again.get_tree(IMAGE) == TREE, "kept across a restart, like a run"
     runs.put_tree(IMAGE, TREE)
     assert again.get_tree(IMAGE) == TREE, "the same bytes again are the same row"
+    # the wrapper's half (operator, 2026-10-31): its files and its `cuts` setting
+    with_wrapper = {**TREE, "/vega/vega_wrapper.py": {"type": "file", "size": 3, "sha256": "cd" * 32},
+                    "/vega/vega.json#cuts": {"type": "setting", "value": "tokenizer"}}
+    image = "sha256:" + __import__("hashlib").sha256(canonical_json(with_wrapper)).hexdigest()
+    runs.put_tree(image, with_wrapper)
+    assert runs.get_tree(image) == with_wrapper
+    from app.vega import trees
+    d = trees.diff(TREE, with_wrapper)
+    assert "+ /vega/vega.json#cuts  setting 'tokenizer'" in trees.lines(d)
 
 
 def test_the_intake_takes_a_tree_message_and_the_http_api_serves_it(tmp_path):

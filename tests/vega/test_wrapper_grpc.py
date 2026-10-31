@@ -143,8 +143,10 @@ def test_tagged_texts_come_back_with_receipts_and_the_run_is_what_was_launched(m
     assert run["weights"] == "sha256:" + hashlib.sha256(node.weights.read_bytes()).hexdigest()
     assert run["driver"] == "cpu"
     engine = run["engine"]
-    assert engine["image"] == vw.tree_digest(node.real_run_sh.parent) != DIGEST, \
+    assert engine["image"] == _image(node) != DIGEST, \
         "the files installed, never the registry's digest"
+    assert engine["image"] != vw.tree_digest(node.real_run_sh.parent), \
+        "the wrapper's code is part of the engine (operator, 2026-10-31)"
     assert engine["name"] == "localai/fake-llama-cpp" and engine["build"] == "v4.11.0"
     assert engine["args"] == ["${BACKEND}/run.sh", "--addr", "127.0.0.1:${PORT}"], \
         "relative to the backend, whose bytes image names (09 §9.3)"
@@ -321,7 +323,7 @@ def test_an_upgraded_backend_is_a_new_run_from_its_next_load(make_node):
     _vectors, (second,) = node.verify(batch, r)
     assert second != first
     assert node.vega_http.get(f"/vega/runs/{second}").json()["engine"]["image"] == \
-        vw.tree_digest(node.real_run_sh.parent)
+        _image(node)
     assert files.reads == [os.path.realpath(node.real_run_sh.parent / "lib" / "libnew.so.1")]
     # the per-file lists behind both runs are kept by VeGa, and their diff names the byte
     from app.vega import trees
@@ -418,6 +420,12 @@ def test_a_directory_that_is_no_backend_refuses_to_start(tmp_path, stubs):
     proc, _port = _start(tmp_path, stubs, pkg)
     assert proc.wait(timeout=20) == 2
     assert "no run.sh" in proc.stderr.read()
+
+
+def _image(node) -> str:
+    """The engine's `image`: the backend's tree and the wrapper's package."""
+    cfg = node.running.gate.cfg
+    return vw.manifest_digest(vw.engine_manifest(node.real_run_sh.parent, cfg.package, cfg.cuts))
 
 
 # ---- the cut to a tag's window (docs/notes/char-cut-truncation.md) ----------------
