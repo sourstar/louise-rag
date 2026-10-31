@@ -142,7 +142,9 @@ def _ends_stop_watch(fn):
 
 def _load_chunks(row, collection):
     plugin = collection.plugin_instance()
-    chapters = plugin_io.sections(plugin, row)
+    # ONE PARSE (docs/notes/one-parse.md): the fresh record where there is one
+    from . import record_source
+    chapters = record_source.sections(collection, row, lambda: plugin_io.sections(plugin, row))
     # the document's LAYER decides the chunker (amendment 41); one layer =
     # the plugin's chunker, exactly as before
     return layers_mod.chunks_for_document(collection, row, chapters)

@@ -377,7 +377,10 @@ def _one(kind: str, collection, row: dict):
     from . import layers, plugin_io
     plugin = collection.plugin_instance()
     if kind == "chunks":
-        sections = plugin_io.sections(plugin, row)
+        # ONE PARSE (docs/notes/one-parse.md): the fresh record's sections
+        # where there is one, the plugin's parse otherwise
+        from . import record_source
+        sections = record_source.sections(collection, row, lambda: plugin_io.sections(plugin, row))
         return layers.chunks_for_document(collection, row, sections)
     if kind == "chunks+names":
         # one parse for both: the chunks the text index cuts, and the names a
@@ -398,7 +401,9 @@ def _one(kind: str, collection, row: dict):
             chunks = layers.chunks_for_document(collection, row, doc.sections)
             names = fts.index_names_of(collection, doc.extra)
         else:
-            chunks = layers.chunks_for_document(collection, row, plugin_io.sections(plugin, row))
+            from . import record_source
+            chunks = layers.chunks_for_document(collection, row, record_source.sections(
+                collection, row, lambda: plugin_io.sections(plugin, row)))
             names = None
         return {"chunks": chunks, "names": names,
                 "entities": entities.entity_ids_of(row.get("title"), [c["text"] for c in chunks],
