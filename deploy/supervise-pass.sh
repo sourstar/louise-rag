@@ -8,6 +8,14 @@
 #   deploy/supervise-pass.sh <name> <docker run arguments...>
 #
 #   exit 0                     done
+#   exit 130 or 143            STOPPED ON PURPOSE: a `docker stop` (TrueNAS's
+#                              stop included) sends SIGTERM, and a pass ends
+#                              its unit and exits 130 (07 §7.7), or 143 if it
+#                              did not catch it. Not restarted: the operator
+#                              stops a pass to fix something, and a pass that
+#                              came back by itself would undo the stop
+#                              (operator, 2026-10-31). The kernel's OOM kill
+#                              is SIGKILL, 137, and still comes back
 #   a hold file present        stopped on purpose: `touch $HOLD` before a
 #                              deliberate stop (deploy, measurement)
 #   exit 137 or 141            again in 60 s with PARSE_PROCESSES halved
@@ -53,6 +61,10 @@ while :; do
     echo "== $(date -u +%FT%TZ) $NAME: exit $code"
     [ "$code" -eq 0 ] && exit 0
     [ -e "$HOLD" ] && { echo "== $NAME: held ($HOLD), not restarted"; exit "$code"; }
+    if [ "$code" -eq 130 ] || [ "$code" -eq 143 ]; then
+        echo "== $NAME: stopped on purpose (SIGTERM, exit $code), not restarted; run it again to resume"
+        exit "$code"
+    fi
     n=$((n + 1))
     [ "$n" -ge "$MAX_RESTARTS" ] && { echo "== $NAME: $n restarts, giving up"; exit "$code"; }
     if [ "$code" -eq 137 ] || [ "$code" -eq 141 ]; then
