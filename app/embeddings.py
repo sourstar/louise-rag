@@ -30,6 +30,19 @@ from .hold import runs as hold_runs
 from .vega import client as vclient
 
 TABLE = "chunks"
+#: How every vector table is CREATED (Lance's own feature, lancedb's storage
+#: option; "do not reinvent the wheel"): STABLE ROW IDS. Without them a
+#: compaction that moves indexed rows — after any delete, and every write is
+#: delete-then-insert (invariant 2) — re-maps the whole vector index and the
+#: book_id index into NEW files: wikipedia's twins repair (2026-10-30) left
+#: eight full IVF_PQ generations, 142 GiB, written in four hours (München,
+#: docs/notes/scheduling-log.md). With them the index stays where it is and a
+#: deleted row is masked (measured 2026-10-31, pylance 9.0.1: one index
+#: directory before and after a compaction of deleted rows, the search
+#: excluding them; tests/test_lance_stable_row_ids.py). A table created
+#: before keeps re-mapping until it is rewritten (the validity-columns
+#: rebuild below creates its new table with this option).
+NEW_TABLE_STORAGE = {"new_table_enable_stable_row_ids": "true"}
 _SAFE_LANG = re.compile(r"[A-Za-z0-9_-]{1,16}")
 _dbs: dict[str, "lancedb.DBConnection"] = {}
 
@@ -987,7 +1000,8 @@ def _create_table(db, rows):
     ]
     if all(c in rows[0] for c in VALIDITY_COLUMNS):
         fields += [pa.field(c, pa.int64()) for c in VALIDITY_COLUMNS]
-    return db.create_table(TABLE, data=rows, schema=pa.schema(fields))
+    return db.create_table(TABLE, data=rows, schema=pa.schema(fields),
+                           storage_options=NEW_TABLE_STORAGE)
 
 
 def _conform(tbl, rows: list[dict]) -> list[dict]:
@@ -1081,14 +1095,15 @@ def add_validity_columns(collection, con, *, lock_con=None, batch_rows: int = 50
                 list(part.columns) + [arrays[c] for c in VALIDITY_COLUMNS],
                 schema=schema)
             if new is None:
-                new = db.create_table(tmp, data=pa.Table.from_batches([full]), schema=schema)
+                new = db.create_table(tmp, data=pa.Table.from_batches([full]), schema=schema,
+                                      storage_options=NEW_TABLE_STORAGE)
             else:
                 new.add(pa.Table.from_batches([full]))
             rows += part.num_rows
             seen.update(int(b) for b in books)
             say(f"validity columns: {rows} rows rewritten")
         if new is None:                              # an empty table: recreated with the columns
-            new = db.create_table(tmp, schema=schema)
+            new = db.create_table(tmp, schema=schema, storage_options=NEW_TABLE_STORAGE)
         versions = tbl.version
         db.drop_table(TABLE)
         src, dst = Path(collection.lance_dir) / f"{tmp}.lance", Path(collection.lance_dir) / f"{TABLE}.lance"

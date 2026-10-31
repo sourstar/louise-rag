@@ -1298,7 +1298,8 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                     pa.field("chapter", pa.string()), pa.field("text", pa.string()),
                     pa.field("vector", pa.list_(value_type, header_dim)),
                 ])
-                conn.create_table(embeddings.TABLE, data=batch_rows, schema=schema)
+                conn.create_table(embeddings.TABLE, data=batch_rows, schema=schema,
+                                  storage_options=embeddings.NEW_TABLE_STORAGE)
         now = int(time.time())
         # ONE transaction per flush (invariant 2: marks land after the
         # durable Lance write, together): on the autocommit connection
