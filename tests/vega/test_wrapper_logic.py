@@ -830,3 +830,43 @@ def test_an_openvino_task_is_stated_only_measured_on_this_very_tree(tmp_path, ta
     env = {vw.MEASURED_ENV: "louise-python-20261021a"}
     _rid, run = vw.state_run(canon=_load_with(env, opts), environ=env, **kw)
     assert run["engine"]["env"] == env, "the run says what it was measured on"
+
+
+def test_the_wrapper_is_part_of_the_engine(tmp_path):
+    """Operator, 2026-10-31 (choice A): the wrapper decides what the backend is
+    given (the cut, the pair's form), and #110 changed it with every run's
+    identity unchanged. A backend engine's `image` is the digest of the
+    backend's tree AND of the package's code, under `/vega/`, and of `cuts`;
+    not of the host's settings, the install record, the kept digests or
+    what Python compiles beside the code."""
+    backend, pkg = tmp_path / "real", tmp_path / "vega-real"
+    (backend / "lib").mkdir(parents=True)
+    (backend / "run.sh").write_text("#!/bin/sh\n")
+    (pkg / "app" / "vega").mkdir(parents=True)
+    (pkg / "vega_wrapper.py").write_text("# the wrapper\n")
+    (pkg / "app" / "vega" / "tag.py").write_text("# the tag\n")
+    (pkg / "vega.json").write_text('{"receipts_socket": "/run/a.sock"}')
+    (pkg / "metadata.json").write_text("{}")
+    (pkg / vw.DIGEST_STORE).write_text("{}")
+    (pkg / f".{vw.DIGEST_STORE}.123.tmp").write_text("{}")
+    (pkg / "venv" / "lib").mkdir(parents=True)
+    (pkg / "venv" / "lib" / "grpc.py").write_text("#")
+    (pkg / "app" / "__pycache__").mkdir()
+    (pkg / "app" / "__pycache__" / "x.pyc").write_bytes(b"\0")
+    m = vw.engine_manifest(backend, pkg, vw.TOKENIZER)
+    wrapper = sorted(k for k in m if k.startswith(vw.WRAPPER_PREFIX))
+    assert wrapper == ["/vega/app/vega/tag.py", "/vega/vega.json#cuts", "/vega/vega_wrapper.py"]
+    assert m["/vega/vega.json#cuts"] == {"type": "setting", "value": vw.TOKENIZER}
+    assert {k for k in m if not k.startswith("/")} == set(vw.tree_manifest(backend))
+    image = vw.manifest_digest(m)
+    assert image != vw.tree_digest(backend)
+    # the host's settings are not the engine
+    (pkg / "vega.json").write_text('{"receipts_socket": "/run/b.sock"}')
+    (pkg / "venv" / "lib" / "grpc.py").write_text("# upgraded")
+    assert vw.manifest_digest(vw.engine_manifest(backend, pkg, vw.TOKENIZER)) == image
+    # the wrapper's code and its cut are
+    assert vw.manifest_digest(vw.engine_manifest(backend, pkg, vw.CONTEXT_SIZE)) != image
+    (pkg / "app" / "vega" / "tag.py").write_text("# the tag, changed\n")
+    assert vw.manifest_digest(vw.engine_manifest(backend, pkg, vw.TOKENIZER)) != image
+    # without a package (a test's Config), the backend's tree alone
+    assert vw.engine_manifest(backend, None, vw.TOKENIZER) == vw.tree_manifest(backend)
