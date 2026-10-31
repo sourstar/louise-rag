@@ -45,7 +45,7 @@ def test_a_fresh_record_is_read_and_the_origin_is_not_parsed(source):
 @pytest.mark.parametrize("row, why", [
     (_row("g:2", origin="another"), "origin-differs"),
     (_row("g:9"), "not-in-snapshot"),
-    ({"uid": "g:1", "native_id": "1", "txt_hash": None}, "no-origin-hash"),
+    ({"uid": "g:1", "native_id": "1", "txt_hash": None, "path": "elsewhere"}, "no-origin-hash"),
 ])
 def test_a_row_without_a_fresh_record_is_parsed(source, row, why):
     assert rs.lookup(source, row) == (None, why)
@@ -93,3 +93,18 @@ def test_neighbouring_rows_share_one_index_read_and_one_frame(source, monkeypatc
     for uid in SECTIONS:
         rs.sections(source, _row(uid), lambda: [])
     assert reads == {"index": 1, "frame": 1}
+
+
+def test_a_row_without_its_hash_is_fresh_when_the_record_locates_its_own_unit(source, monkeypatch):
+    """wikipedia's dump layer, 2026-10-31: every row's txt_hash is NULL (re-
+    discovered). The record whose `origin` is the row's own locator is the
+    same unit: fresh. Another locator: parsed."""
+    monkeypatch.setattr(rs, "_locator", lambda c, row: row["path"])
+    part = rs._context_now(source)[0] / "records" / "lang=en" / "00000.jsonl.zst"
+    pack_records.write_shard(part, [
+        {"uid": "g:1", "native_id": 1, "lang": "en", "title": "g:1", "sections": SECTIONS["g:1"],
+         "origin_hash": "o1", "origin": "dumps/enwiki.xml.bz2::10::20"}])
+    pack_records.reset_caches()
+    row = {"uid": "g:1", "native_id": "1", "txt_hash": None, "path": "dumps/enwiki.xml.bz2::10::20"}
+    assert rs.lookup(source, row)[1] == "fresh"
+    assert rs.lookup(source, {**row, "path": "dumps/enwiki.xml.bz2::30::40"})[1] == "no-origin-hash"

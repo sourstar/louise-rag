@@ -172,3 +172,33 @@ def test_a_destination_on_another_filesystem_is_refused_before_anything_moves(
     with pytest.raises(CodexError, match="EXDEV"):
         _discard(root)
     assert _parts(root) == before and seeder.current_snapshot(col.shard_dir_of(root, "gutenberg"))
+
+
+def test_a_held_line_whose_unit_the_manifest_proves_changed_is_parsed_again(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """2026-10-31: wikipedia's archive-layer lines were cut from locators
+    without the page_props segment; the rows now name the whole unit, whose
+    hash (txt_hash) is not the line's origin_hash. Such a line is parsed
+    again (invariant 11); a row with no txt_hash is no evidence and its line
+    is taken (RULE 1)."""
+    root = _collection(tmp_path / "a")
+    con = _manifest(root, corpus_dir)
+    con.close()
+    _build(root, corpus_dir, records_per_shard=1)
+    sn.create(root, "gutenberg", snapshot_id="2026-08", log=lambda *_: None)
+    con = _manifest(root, corpus_dir)
+    uids = [r["uid"] for r in con.execute("SELECT uid FROM documents ORDER BY uid")]
+    changed, unknown = uids[0], uids[1]
+    con.execute("UPDATE documents SET txt_hash='another-unit' WHERE uid=?", (changed,))
+    con.execute("UPDATE documents SET txt_hash=NULL WHERE uid=?", (unknown,))
+    con.commit()
+    con.close()
+    _discard(root)
+    parsed: list[str] = []
+    real = pack_build._record_of
+    monkeypatch.setattr(pack_build, "_record_of",
+                        lambda c, p, row: parsed.append(row["uid"]) or real(c, p, row))
+    rec.build(root, "gutenberg", corpus_dir=corpus_dir, log=lambda *_: None, records_per_shard=1,
+              records_from_discarded="2026-08")
+    assert changed in parsed, "its unit changed: parsed again"
+    assert unknown not in parsed, "no txt_hash is no evidence: its held line is taken"

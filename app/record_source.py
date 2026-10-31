@@ -123,8 +123,6 @@ def lookup(collection, row) -> tuple[dict | None, str]:
     tree, snap, codex = ctx
     uid = row["uid"]
     want = row["txt_hash"] if "txt_hash" in row.keys() else None
-    if not want:
-        return None, "no-origin-hash"
     from .pack import records as pack_records
     order = (getattr(codex, "slicing", None) or {}).get("order", "bytes")
     for shard in snap.shards_of(str(row["native_id"]), order):
@@ -135,10 +133,32 @@ def lookup(collection, row) -> tuple[dict | None, str]:
             continue                         # not in this slice's part
         except (OSError, ValueError, IndexError):
             continue
-        if rec.get("uid") != uid or rec.get("origin_hash") != want:
-            return None, "origin-differs"   # not the same origin bytes: parse
-        return rec, "fresh"
+        if rec.get("uid") != uid:
+            continue
+        if want:
+            if rec.get("origin_hash") != want:
+                return None, "origin-differs"   # not the same origin bytes: parse
+            return rec, "fresh"
+        # NO txt_hash (a re-discovered row, 2026-10-31: all 30.9 M of
+        # wikipedia's dump layer): the same unit when the record's `origin`
+        # locates exactly the row's own — a dated dump's byte range, the
+        # same bytes, so the same hash. The sampled byte check stands behind it
+        loc = _locator(collection, row)
+        if loc is not None and rec.get("origin") == loc:
+            return rec, "fresh"
+        return None, "no-origin-hash"
     return None, "not-in-snapshot"
+
+
+def _locator(collection, row) -> str | None:
+    """09 §9.5's `origin` for the row's own locator, as the records build
+    writes it (`plugin_io.origin_locator`), or None."""
+    from . import plugin_io
+    try:
+        return plugin_io.origin_locator(collection.plugin_instance(), str(row["path"]),
+                                        collection.corpus_dir)
+    except Exception:   # noqa: BLE001 — no locator, no proof: parse
+        return None
 
 
 def _sampled(uid: str) -> bool:

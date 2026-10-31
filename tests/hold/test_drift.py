@@ -288,3 +288,19 @@ def test_a_walk_is_windows_of_bounded_work(tmp_path, isolated_config, monkeypatc
     assert seen["cut"] == 0
     print(f"index-drift: {n} records in {took:.2f}s, {took / n * 1e6:.0f} µs a record")
     assert took / n < 2e-3, "a generous bound: measured 42-58 µs a record unsampled, 20k-300k records (STATUS, 2026-10-25)"
+
+
+def test_the_ids_are_streamed_part_by_part_and_never_held_whole(held, tmp_path):
+    """2026-10-31: on wikipedia the walk named 8,555,932 documents, held them
+    to the end and was OOM-killed assembling the report. With --ids-out the
+    uids go to the file as each part is settled; the report keeps counts and
+    the first PRINT_LIMIT, and returns no `ids`."""
+    root, codex, local = held
+    _sql(local, "UPDATE documents SET chunks=chunks+1")
+    snap = sn.load(root / "g" / "shard" / "snapshots" / "2026-08.json")
+    in_memory = drift.run(root, "g", codex, snap, local, sample="0")
+    out = tmp_path / "ids.txt"
+    streamed = drift.run(root, "g", codex, snap, local, sample="0", ids_out=out)
+    assert "ids" not in streamed and not (tmp_path / "ids.txt.part").exists()
+    assert out.read_text().splitlines() == in_memory["ids"] and in_memory["ids"]
+    assert streamed["named"] == in_memory["named"] and streamed["reindexable"] == len(in_memory["ids"])
