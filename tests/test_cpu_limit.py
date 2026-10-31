@@ -177,21 +177,25 @@ def test_in_flight_never_exceeds_the_profile_s_cores(isolated_config, tmp_path, 
     pages = [rows[i:i + 24] for i in range(0, 120, 24)]
     truth = [parallel.compute("chunks", c, p) for p in pages]             # serial, unlimited
     s = _script(monkeypatch, _active(2))
-    pool = TimedPool(s)
+    # a LOWER bound on the parts in flight is measured with the answers held
+    # until it is reached (`hold_until_peak`, the node 2026-11-01): otherwise
+    # it measures whether the loop outruns a 3 ms answer on a loaded machine
+    current = {"pool": TimedPool(s, hold_until_peak=1)}
     monkeypatch.setattr(config, "PARSE_PROCESSES", 6)
-    monkeypatch.setattr(parallel, "pool", lambda: pool)
+    monkeypatch.setattr(parallel, "pool", lambda: current["pool"])
     assert list(parallel.compute_pages("chunks", c, iter(pages))) == truth
-    assert 1 < pool.peak <= 2, f"{pool.peak} parts in flight under a profile of 2 cores"
-    pool.peak = 0
+    peak = current["pool"].peak
+    assert 1 < peak <= 2, f"{peak} parts in flight under a profile of 2 cores"
+    current["pool"] = TimedPool(s, hold_until_peak=1)
     assert parallel.compute("chunks", c, rows) == [r for p in truth for r in p]
-    assert 1 < pool.peak <= 2
+    assert 1 < current["pool"].peak <= 2
     assert parallel.held() == {} and parallel.wanting() == {}, "every slot given back"
     # and without a limit the window is the pool's own, as before
     monkeypatch.setattr(node_profile, "active", Script(None))
     cpu_limit.reset()
-    pool.peak = 0
+    current["pool"] = TimedPool(s, hold_until_peak=2)
     assert list(parallel.compute_pages("chunks", c, iter(pages))) == truth
-    assert pool.peak > 2
+    assert current["pool"].peak > 2
 
 
 def test_a_profile_allowing_every_child_keeps_a_part_queued_behind_each(
