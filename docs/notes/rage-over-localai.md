@@ -112,6 +112,11 @@ flash attention, threads, seed.
   The weights path is written `${WEIGHTS}`. Any other path is refused, so a
   run that loads a second file (a projector, a LoRA, a draft model) cannot
   be stated yet. The runner's models directory is written `${MODELS}`.
+  *Amended 2026-10-31 (operator: "Extend for future use in any case … a
+  lora is a smart way to decouple the embedder from a tuning"): a second
+  file is written `${WEIGHTS:<field>}` and hashed into the weights with the
+  LoRA scales (09 §9.3, `runs.load_weights_digest`); it must reach the
+  backend as an absolute path.*
   - **Absent, not null, for an engine started by `args` alone.** This was
     proposed as "`null`, required". Applied as "absent" under CLAUDE.md
     RULE 1, and named here as that amendment: with `null`, every engine

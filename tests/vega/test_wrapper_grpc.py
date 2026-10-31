@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.vega import runs as runs_mod  # noqa: E402
 from app.vega import client, service  # noqa: E402
 from app.vega import tag as vtag  # noqa: E402
+from app.hold.codex import canonical_json, digest  # noqa: E402
 
 from . import localai_fake  # noqa: E402
 from .conftest import load_wrapper  # noqa: E402
@@ -87,7 +88,7 @@ def make_node(tmp_path, stubs, vega):
     made = []
 
     def make(*, pairs=False, receipt_timeout_s=2.0, socket=None, tokenizer=False,
-             cuts=None, token_ids=False) -> Node:
+             cuts=None, token_ids=False, extra: dict[str, Any] | None = None) -> Node:
         backends = tmp_path / "backends"
         real = backends / "fake-llama-cpp"
         real.mkdir(parents=True)
@@ -117,7 +118,7 @@ def make_node(tmp_path, stubs, vega):
                    "ModelPath": str(weights.parent), "ContextSize": 512, "Embeddings": True,
                    "RopeFreqBase": 10000.5,
                    "Options": ["device:cpu", "pairs:true", "parallel:1"] if pairs else ["device:cpu", "parallel:1"],
-                   "EnvVars": {"VEGA_TEST_ENV": "on"}}
+                   "EnvVars": {"VEGA_TEST_ENV": "on"}, **(extra or {})}
         models = {"vega-fake": localai_fake.Model(f"127.0.0.1:{running.port}", options)}
         api = FastAPI()
         api.include_router(service.router(vega.receipts, vega.runs))
@@ -158,6 +159,33 @@ def test_tagged_texts_come_back_with_receipts_and_the_run_is_what_was_launched(m
     v = vectors[0]
     assert v[5] == 0.0 and math.copysign(1.0, v[5]) == -1.0, "negative zero kept"
     assert struct.pack("<f", v[6]) == bytes.fromhex("fd43ae15"), "the halfway float kept"
+
+
+def test_a_lora_load_is_stated_with_every_file_in_its_weights(make_node, tmp_path):
+    """09 §9.3, amended 2026-10-31 (operator: a LoRA "decouples the embedder
+    from a tuning"): a load naming an adapter is stated, the adapter's path a
+    placeholder in the options, its bytes and its scale in the weights."""
+    adapter = tmp_path / "adapters" / "retrieval.gguf"
+    adapter.parent.mkdir()
+    adapter.write_bytes(b"lora " * 100)
+    node = make_node(extra={"LoraAdapters": [str(adapter)], "LoraScales": [0.5]})
+    batch, r = node.embed(["hello"])
+    assert r.status_code == 200, r.text
+    _vectors, (run_id,) = node.verify(batch, r)
+    run = node.vega_http.get(f"/vega/runs/{run_id}").json()
+    assert run["engine"]["options"]["LoraAdapters"] == ["${WEIGHTS:LoraAdapters[0]}"]
+    assert run["engine"]["options"]["LoraScales"] == ["0.5"]
+    sha = lambda b: "sha256:" + hashlib.sha256(b).hexdigest()
+    assert run["weights"] == digest(canonical_json({
+        "${WEIGHTS}": sha(node.weights.read_bytes()),
+        "${WEIGHTS:LoraAdapters[0]}": sha(adapter.read_bytes()),
+        "LoraScales": ["0.5"]}))
+
+
+def test_a_lora_named_by_a_relative_name_states_no_run(make_node):
+    node = make_node(extra={"LoraAdapter": "adapters/retrieval.gguf"})
+    _batch, r = node.embed(["hello"])
+    assert r.status_code != 200 and "absolute path" in r.text
 
 
 def test_base64_vectors_verify_as_the_bytes_they_are(make_node):

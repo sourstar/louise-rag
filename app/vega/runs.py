@@ -79,6 +79,36 @@ def weights_digest(path: Path, file_digest: Callable[[Path], str] | None = None)
     return digest(canonical_json(manifest))
 
 
+def load_weights_digest(main: str, files: Mapping[str, str] | None = None,
+                        shaping: Mapping[str, Any] | None = None,
+                        file_digest: Callable[[Path], str] | None = None) -> str:
+    """The weights of a LOAD (09 §9.3, amended 2026-10-31), given `main`, the
+    `weights_digest` of its weights file or directory. A load that names no
+    second file has `main` itself: every run already stated keeps its digest.
+    One that does — a LoRA adapter, a projector, a draft model — has `H` of
+    the canonical JSON object mapping `${WEIGHTS}` to `main`, each second
+    file's placeholder as the options write it (`${WEIGHTS:LoraAdapters[0]}`)
+    to that file's digest, and each option that says how much of an adapter
+    is applied (`LoraScale`, `LoraScales`, `shaping`) to its value as the
+    options write it: W + s·BA is one set of weights, and a tuning applied
+    at another strength is another encoder. A LoRA is then another encoder
+    and another space, as the model it merges into would be."""
+    if not files:
+        return main
+    one = file_digest or _file_digest
+    manifest: dict[str, Any] = {"${WEIGHTS}": main}
+    for key, p in files.items():
+        q = Path(p)
+        if q.is_symlink():
+            raise WeightsError(f"{q} ({key}) is a symbolic link; the weights are named by "
+                               f"the bytes they are (09 §9.3)")
+        if not q.is_file():
+            raise WeightsError(f"{q} ({key}) is not a file")
+        manifest[key] = one(q)
+    manifest.update(shaping or {})
+    return digest(canonical_json(manifest))
+
+
 # ---- the engine, the driver, the run ----------------------------------------
 
 def engine_id(engine: Mapping[str, Any]) -> str:

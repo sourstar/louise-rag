@@ -59,6 +59,51 @@ def test_an_empty_directory_names_no_model(tmp_path):
         runs.weights_digest(tmp_path / "m")
 
 
+# ---- a load that names second files (09 §9.3, amended 2026-10-31) -----------------
+
+def _sha(b: bytes) -> str:
+    return "sha256:" + hashlib.sha256(b).hexdigest()
+
+
+def test_a_load_with_no_second_file_keeps_the_weights_own_digest(tmp_path):
+    """Every run stated before the amendment keeps its weights, so its space."""
+    f = tmp_path / "w.gguf"
+    f.write_bytes(b"GGUF bytes")
+    main = runs.weights_digest(f)
+    assert runs.load_weights_digest(main) == main
+    assert runs.load_weights_digest(main, {}, {"LoraScale": "0.5"}) == main, \
+        "a scale with no adapter applies nothing"
+
+
+def test_the_weights_of_a_lora_load_are_every_file_and_its_scale(tmp_path):
+    f, a = tmp_path / "w.gguf", tmp_path / "lora.gguf"
+    f.write_bytes(b"GGUF bytes")
+    a.write_bytes(b"adapter")
+    files = {"${WEIGHTS:LoraAdapters[0]}": str(a)}
+    got = runs.load_weights_digest(runs.weights_digest(f), files, {"LoraScales": ["1.0"]})
+    assert got == digest(canonical_json({"${WEIGHTS}": _sha(b"GGUF bytes"),
+                                         "${WEIGHTS:LoraAdapters[0]}": _sha(b"adapter"),
+                                         "LoraScales": ["1.0"]}))
+    assert got != runs.load_weights_digest(runs.weights_digest(f), files, {"LoraScales": ["0.5"]}), \
+        "the same tuning at another strength is another encoder"
+    a.write_bytes(b"another tuning")
+    assert got != runs.load_weights_digest(runs.weights_digest(f), files, {"LoraScales": ["1.0"]})
+
+
+def test_a_second_file_that_is_a_link_or_missing_is_refused(tmp_path):
+    f, a = tmp_path / "w.gguf", tmp_path / "lora.gguf"
+    f.write_bytes(b"GGUF bytes")
+    main = runs.weights_digest(f)
+    with pytest.raises(runs.WeightsError, match="not a file"):
+        runs.load_weights_digest(main, {"${WEIGHTS:LoraAdapter}": str(a)})
+    try:
+        a.symlink_to(f)
+    except OSError:
+        pytest.skip("no symlinks here")
+    with pytest.raises(runs.WeightsError, match="symbolic link"):
+        runs.load_weights_digest(main, {"${WEIGHTS:LoraAdapter}": str(a)})
+
+
 # ---- the run -----------------------------------------------------------------------
 
 def _run(*, image=IMAGE, weights="sha256:" + "11" * 32, driver="kernel 6.18; xe 9F",

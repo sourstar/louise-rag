@@ -12,11 +12,15 @@ that record the engine's `options`, byte for byte as 09 §9.3 fixes them:
 - every number LocalAI wrote with a point or an exponent is its decimal
   string, without exponent — read with `parse_float=Decimal`, so the digits
   are LocalAI's and never a float's re-rendering;
-- an option naming any other file states no run: the weights digest covers
-  `${WEIGHTS}` and nothing else, so a second file — a projector, a LoRA, a
-  draft model — would be a file no digest names. Absolute paths are refused
-  by the Codex's own rule (`validate_options`); the fields LocalAI fills with
-  a file NAME, relative to its models directory, are refused here by name.
+- a SECOND file — a LoRA adapter, a projector, a draft model, each field
+  of `SECOND_FILE_FIELDS` — is written `${WEIGHTS:<field>}` (`[i]` for a
+  list) and hashed into the weights with the main file and the LoRA scales
+  (`runs.load_weights_digest`; 09 §9.3 amended 2026-10-31, operator: a LoRA
+  "decouples the embedder from a tuning"). It must reach the backend as an
+  absolute path, so that the file hashed is the file opened: a relative
+  name is resolved by each backend its own way and is refused here. Any
+  other absolute path is still refused, by the Codex's own rule
+  (`validate_options`).
 - the model's `env:`, which LocalAI copies into the load call as `EnvVars`
   (`core/backend/options.go` L579), is the engine's `env` and is written
   there once, not again among the options (09 §9.3, operator 2026-10-03):
@@ -30,7 +34,7 @@ for a measurement (rage-over-localai §10, point 3).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Mapping
 
@@ -46,6 +50,12 @@ SECOND_FILE_FIELDS = ("MMProj", "LoraAdapter", "LoraAdapters", "LoraBase", "Draf
                       "CLIPModel", "ControlNet", "AudioPath", "Tokenizer")
 
 
+#: the options that say how much of a second file the load applies: part
+#: of the weights (`runs.load_weights_digest`), so of the space, not only
+#: of the engine
+SHAPING_FIELDS = ("LoraScale", "LoraScales")
+
+
 class Unstatable(ValueError):
     """The load cannot be written as 09 §9.3's options, so no run is stated:
     search with it, write nothing through it (03 §3.3)."""
@@ -56,6 +66,30 @@ class Canon:
     options: dict[str, Any]       # 09 §9.3's `options`, ready to hash
     weights_path: str             # the file the backend loaded, to hash (09 §9.12)
     env: dict[str, str]           # the model's `env:` (`EnvVars`): the engine's `env`, not an option
+    #: every SECOND file the load names (a LoRA, a projector, a draft model),
+    #: by the placeholder that stands for it in `options` — `${WEIGHTS:LoraAdapters[0]}`
+    #: — to its path: all hashed into the run's weights (09 §9.3, amended
+    #: 2026-10-31, operator: "Extend for future use in any case … a lora is a
+    #: smart way to decouple the embedder from a tuning")
+    files: dict[str, str] = field(default_factory=dict)
+    #: the options that say how much of a second file is applied (the LoRA
+    #: scales), as `options` writes them: in the weights digest beside the
+    #: files, since they change what the weights compute
+    shaping: dict[str, Any] = field(default_factory=dict)
+
+
+def second_file_placeholder(name: str, index: int | None = None) -> str:
+    """`${WEIGHTS:LoraAdapter}`, `${WEIGHTS:LoraAdapters[0]}`: the option's
+    value in 09 §9.3's `options`, and its key in the weights digest's map."""
+    return "${WEIGHTS:" + name + ("" if index is None else f"[{index}]") + "}"
+
+
+def _second_file(name: str, value: Any, index: int | None) -> str:
+    if not isinstance(value, str) or not value.startswith("/"):
+        raise Unstatable(f"its {name}{'' if index is None else f'[{index}]'} is {value!r}: a second "
+                         f"file is named by its absolute path in the model's YAML, so that the "
+                         f"file hashed is the file the backend opens (09 §9.3)")
+    return value
 
 
 def parse(text: str | bytes) -> Any:
@@ -91,17 +125,32 @@ def canonical(raw: Any) -> Canon:
     if not isinstance(weights, str) or not weights.startswith("/"):
         raise Unstatable(f"its load options name no weights file (ModelFile={weights!r}), "
                          f"so there is nothing to hash")
+    # A SECOND FILE IS PART OF THE WEIGHTS (09 §9.3, amended 2026-10-31): its
+    # path becomes a placeholder in the options and the file goes into the
+    # weights digest under that placeholder — it was a refusal, "cannot be
+    # stated yet", because no digest covered it
+    files: dict[str, str] = {}
+    replaced: dict[str, Any] = {}
     for name in SECOND_FILE_FIELDS:
-        if raw.get(name) not in (None, "", [], {}):
-            raise Unstatable(f"it loads a second file beside its weights ({name}="
-                             f"{raw[name]!r}), which no weights digest covers; such a run "
-                             f"cannot be stated yet (09 §9.3)")
+        value = raw.get(name)
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, list):
+            out = []
+            for i, v in enumerate(value):
+                files[second_file_placeholder(name, i)] = _second_file(name, v, i)
+                out.append(second_file_placeholder(name, i))
+            replaced[name] = out
+        else:
+            files[second_file_placeholder(name)] = _second_file(name, value, None)
+            replaced[name] = second_file_placeholder(name)
     env = raw.get("EnvVars") or {}
     if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str)
                                             for k, v in env.items()):
         raise Unstatable(f"its EnvVars are not a map of names to strings: {env!r}")
     # 09 §9.3: the variables set for the engine are its `env`, stated once
     options = _canon({k: v for k, v in raw.items() if k != "EnvVars"}, "load_options")
+    options.update(replaced)
     options["ModelFile"] = WEIGHTS_PLACEHOLDER
     if isinstance(raw.get("ModelPath"), str) and raw["ModelPath"]:
         options["ModelPath"] = MODELS_PLACEHOLDER
@@ -109,7 +158,9 @@ def canonical(raw: Any) -> Canon:
         validate_options(options, "load_options")
     except CodexError as e:
         raise Unstatable(str(e)) from None
-    return Canon(options=options, weights_path=weights, env=dict(env))
+    shaping = {k: options[k] for k in SHAPING_FIELDS if files and k in options}
+    return Canon(options=options, weights_path=weights, env=dict(env), files=files,
+                 shaping=shaping)
 
 
 def changed(old: Mapping[str, Any] | None, new: Mapping[str, Any] | None) -> list[str]:

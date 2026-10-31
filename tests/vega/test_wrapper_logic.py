@@ -509,6 +509,41 @@ def test_the_options_are_canonical_as_rage_writes_them():
     assert canon.weights_path == "/models/bge-m3.gguf"
 
 
+def test_a_second_file_is_a_placeholder_and_part_of_the_weights():
+    """09 §9.3, amended 2026-10-31: a LoRA, a projector, a draft model is
+    stated — its path a placeholder, its file in `files` for the digest."""
+    canon = vw.canon_from_protojson(json.dumps(json.loads(LOAD) | {
+        "LoraAdapters": ["/models/a/retrieval.gguf", "/models/a/style.gguf"],
+        "LoraScales": [1.0, 0.25], "MMProj": "/models/proj.gguf"}))
+    assert canon.options["LoraAdapters"] == ["${WEIGHTS:LoraAdapters[0]}",
+                                             "${WEIGHTS:LoraAdapters[1]}"]
+    assert canon.options["MMProj"] == "${WEIGHTS:MMProj}"
+    assert canon.files == {"${WEIGHTS:LoraAdapters[0]}": "/models/a/retrieval.gguf",
+                           "${WEIGHTS:LoraAdapters[1]}": "/models/a/style.gguf",
+                           "${WEIGHTS:MMProj}": "/models/proj.gguf"}
+    assert canon.shaping == {"LoraScales": ["1", "0.25"]}, "as `options` writes them"
+    plain = vw.canon_from_protojson(json.dumps(json.loads(LOAD) | {"LoraScale": 0.5}))
+    assert plain.files == {} and plain.shaping == {}, "no adapter: the weights are the file"
+
+
+@pytest.mark.parametrize("field, value", [
+    ("LoraAdapter", "adapters/retrieval.gguf"),       # each backend resolves a name its own way
+    ("LoraAdapters", ["/models/a.gguf", "b.gguf"]),
+    ("DraftModel", "draft.gguf"),
+])
+def test_a_second_file_named_by_a_relative_name_states_no_run(field, value):
+    with pytest.raises(loadopts.Unstatable, match="absolute path"):
+        vw.canon_from_protojson(json.dumps(json.loads(LOAD) | {field: value}))
+
+
+def test_what_a_load_reads_counts_its_second_files(tmp_path):
+    w, a = tmp_path / "w.gguf", tmp_path / "a.gguf"
+    w.write_bytes(b"x" * 2**20)
+    a.write_bytes(b"y" * 2**19)
+    assert vw.weights_mib(str(w)) == 1.0
+    assert vw.weights_mib(str(w), {"${WEIGHTS:LoraAdapter}": str(a)}) == 1.5
+
+
 def test_the_run_is_what_the_wrapper_launched(tmp_path):
     backend = vw.real_backend(_backend_dir(tmp_path, name="fake-llama-cpp"))
     canon = vw.canon_from_protojson(LOAD_RUN)
