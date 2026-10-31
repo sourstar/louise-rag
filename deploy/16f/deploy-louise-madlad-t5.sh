@@ -5,6 +5,15 @@
 # calibration deploy requirements.txt Dockerfile platform.toml.example;
 # /tmp/louise-commit = <sha>.
 #   ssh root@<node> bash -s < deploy-louise-tip.sh
+# Run each deploy from a PRIVATE COPY (cp … /root/deploy-run-<sha>.sh; bash that copy):
+# bash reads a script as it runs, and a copy over the running one broke a deploy between
+# its stop and its start (lessons-learned.md, 2026-10-31).
+# A deploy that dies between app.stop and a verified start STARTS THE APP ITSELF (the
+# trap after the stop job) — UNLESS LOUISE IS HELD: an operator who wants Louise to stay
+# down does `touch /root/supervise/louise.hold` (the convention of supervise-pass.sh's
+# passes). While that file exists no deploy begins, and the trap does not start the app
+# (operator, 2026-10-31: "if I stop it from freenas, likely because I want to fix
+# something ... it shouldn't restart by itself"). `rm` it to deploy again.
 # deploy-louise-madlad-t5.sh — main 931887e (2026-10-28): MADLAD on llama.cpp, the t5 shape of
 # app/translate.py (3c376ca: one raw "<2xx> segment" completion per segment, the shape read off
 # the server), the Library recount wording (7c969a6). Run with UNTIL=3 first; the backend
@@ -30,7 +39,9 @@ TREE="app tests tools docs calibration"
 FILES="requirements.txt requirements-dev.txt constraints.txt Dockerfile platform.toml.example"
 TGZ=/tmp/louise-src.tgz
 COMMIT=$(cat /tmp/louise-commit)
+HOLD=/root/supervise/louise.hold
 say() { printf '\n=== %s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
+[ ! -e "$HOLD" ] || { echo "$HOLD exists: Louise is held by the operator; no deploy begins (rm it to deploy)"; exit 1; }
 
 say "1. stage $COMMIT beside the live tree (live: $(cat $ROOT/src/.deployed-commit))"
 test -s "$TGZ" || { echo "no $TGZ"; exit 1; }
@@ -136,6 +147,7 @@ grep -q "_build_locks.setdefault(key" "$ROOT/src.new/app/share/possession.py"   
 grep -q "errored, not waiting" "$ROOT/src.new/app/health.py"                                 # ca907a8 (1728a75): node show counts errored documents apart
 grep -q "^def place_kept(kind: str, origin: Path)" "$ROOT/src.new/app/derived.py"            # d915a4d (7f47a68): the pack's place once per process; a row group per task
 test -s "$ROOT/src.new/deploy/supervise-pass.sh"                                           # 772abed (55d37eb): the pass supervisor
+grep -q 'if \[ "$code" -eq 130 \] || \[ "$code" -eq 143 \]; then' "$ROOT/src.new/deploy/supervise-pass.sh"   # #125 (4dcdd0b): a pass stopped on purpose is not restarted
 grep -q "mem_limit: 24g" "$ROOT/src.new/deploy/truenas-app.yaml"                           # 772abed: the caps set_mem_limits.py applies live
 test -s "$ROOT/src.new/deploy/16f/set_mem_limits.py"
 grep -q "^ROW_GROUP = 64" "$ROOT/src.new/app/plugins/wikidata/pack.py"                      # 009eeaf (c3f7d62): the wikidata pack in row groups of 64
@@ -288,6 +300,10 @@ heal() {
   [ -n "$STARTED" ] && return 0
   trap - EXIT INT TERM
   set +e
+  if [ -e "$HOLD" ]; then
+    echo "!!!!!! the deploy of $COMMIT ended (exit $rc) between app.stop and a verified start; $HOLD exists: held, NOT started" >&2
+    exit $(( rc == 0 ? 1 : rc ))
+  fi
   echo "!!!!!! the deploy of $COMMIT ended (exit $rc) between app.stop and a verified start: STARTING louise-rag" >&2
   want=$(configured_image)
   if [[ "$want" =~ ^sha256:[0-9a-f]{64}$ ]] && docker image inspect "$want" >/dev/null 2>&1; then
