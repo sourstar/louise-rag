@@ -118,14 +118,16 @@
      the scheduling pool whenever the worker runs (import ignores the
      mode) -> turquoise; otherwise the mode speaks: off -> grey,
      on-demand -> orange, all -> turquoise while the worker runs #}
+  {# the dense target leaves out what this node does not embed, by choice (07 §7.8 embed_slices) #}
+  {% set dense_target = c.stage_targets.embed if c.stage_targets is defined and c.stage_targets.embed is not none else indexable %}
   {% if c.counts_pending %}{% set dense_color = 'inherit' %}
-  {% elif indexable and c.embed_done >= indexable %}{% set dense_color = 'var(--ok)' %}
+  {% elif dense_target and c.embed_done >= dense_target %}{% set dense_color = 'var(--ok)' %}
   {% elif c.genesis %}{% set dense_color = 'var(--brass)' if worker_state == 'running' else 'var(--muted)' %}
   {% elif c.embed_mode == 'off' %}{% set dense_color = 'var(--muted)' %}
   {% elif c.embed_mode == 'lazy' %}{% set dense_color = 'var(--amber)' %}
   {% else %}{% set dense_color = 'var(--brass)' if worker_state == 'running' else 'var(--muted)' %}{% endif %}
-  <div class="stage"><div class="lbl"><span title="{{ stage_title }}" style="color:{{ dense_color }}">{{ dense_label }}</span><span>{{ c.embed_done|num }} / {{ indexable|num }}{% if c.counts_age is defined and c.counts_age > 120 %} <span class="muted" title="the figures are a count of the manifest, recounted every {{ ((c.counts_every or 120) / 60)|round|int }} min while the page is viewed: the work moves between counts">(counted {{ (c.counts_age / 60)|round|int }} min ago, every {{ ((c.counts_every or 120) / 60)|round|int }} min)</span>{% endif %}{% if c.stage_etas.embed %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.embed }}">({{ c.stage_etas.embed }})</span>{% endif %}</span></div>
-    <div class="spine"><span style="width:{{ (100*c.embed_done/indexable)|round(1) if indexable else 0 }}%;background:var(--lapis)"></span></div></div>
+  <div class="stage"><div class="lbl"><span title="{{ stage_title }}" style="color:{{ dense_color }}">{{ dense_label }}</span><span>{{ c.embed_done|num }} / {{ dense_target|num }}{% if c.counts_age is defined and c.counts_age > 120 %} <span class="muted" title="the figures are a count of the manifest, recounted every {{ ((c.counts_every or 120) / 60)|round|int }} min while the page is viewed: the work moves between counts">(counted {{ (c.counts_age / 60)|round|int }} min ago, every {{ ((c.counts_every or 120) / 60)|round|int }} min)</span>{% endif %}{% if c.stage_etas.embed %} <span style="color:var(--brass)" title="{{ c.stage_eta_why.embed }}">({{ c.stage_etas.embed }})</span>{% endif %}</span></div>
+    <div class="spine"><span style="width:{{ (100*c.embed_done/dense_target)|round(1) if dense_target else 0 }}%;background:var(--lapis)"></span></div></div>
   <div class="note">
     delta freshness: {{ c.last_discover_text }} ·
     {% if c.embed_mode in ('all', 'p2p') %}

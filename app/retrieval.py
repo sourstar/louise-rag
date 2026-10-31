@@ -776,7 +776,9 @@ def _enqueue_lazy_embed(con, book_ids: list[int], collection):
         uid = f"{collection.plugin}:{bid}"
         row = con.execute(
             "SELECT embed_done FROM documents WHERE uid=? AND in_scope=1", (uid,)).fetchone()
-        if row and not row["embed_done"]:
+        # 0 only: 1 is embedded, and -1 is not embedded here by choice
+        # (07 §7.8 `embed_slices`), a search included
+        if row and row["embed_done"] == 0:
             con.execute(
                 "INSERT INTO embed_queue(uid,priority,ts) VALUES(?,?,?) "
                 "ON CONFLICT(uid) DO UPDATE SET priority=100, ts=excluded.ts",

@@ -69,8 +69,13 @@ def _ensure_embedded(con, collection, uids: list[str], *, stop=None) -> list[str
             (uid,)).fetchone()
         if row is None:
             continue
-        if row["embed_done"]:
+        if row["embed_done"] == 1:
             ready.append(uid)
+            continue
+        if row["embed_done"] != 0:
+            # not embedded here by choice (07 §7.8 `embed_slices`,
+            # app/slice_scope.py DECLINED): this node's encoder does not
+            # spend on it, a lease included
             continue
         try:
             from . import layers as layers_mod

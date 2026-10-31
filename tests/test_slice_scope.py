@@ -196,3 +196,86 @@ def test_the_hints_are_computed_in_the_parse_pool_when_there_is_one(isolated_con
     assert _scope(con) == {1: 1, 2: 0, 3: 1, 4: 0, 5: 0, 6: 0}
     assert out["rows"] == len(FAMILY) and out["unknown"] == 1, \
         "row 5 failed in the child and was placed in this process instead"
+
+
+# ---------------- hold all, embed some (operator, 2026-10-31) ----------------
+
+def _col2(tmp_path, slices, embed):
+    c = _col(tmp_path, slices)
+    import dataclasses
+    return dataclasses.replace(c, embed_slices=embed)
+
+
+def _embed(con):
+    return {int(r["native_id"]): r["embed_done"]
+            for r in con.execute("SELECT native_id, embed_done FROM documents")}
+
+
+def test_hold_all_embed_some_marks_the_rest_not_embedded_here(isolated_config, tmp_path):
+    c = _col2(tmp_path, "all", ("family=person", "family=work"))
+    con = db.connect(c)
+    _rows(con, FAMILY)
+    con.execute("UPDATE documents SET embed_done=1 WHERE native_id='2'")   # already embedded
+    assert slice_scope.ready(con, c) is False
+    out = _apply(con, c)
+    assert (out["embedded"], out["not_embedded"]) == (3, 3)
+    assert _scope(con) == {i: 1 for i in FAMILY}, "every family held: nothing out of scope"
+    assert _embed(con) == {1: 0, 2: 1, 3: 0, 4: 0, 5: slice_scope.DECLINED, 6: slice_scope.DECLINED}, \
+        "an embedded document keeps its vectors; the rest of the five are declined"
+    assert slice_scope.ready(con, c) is True
+
+
+def test_a_growing_embed_list_gives_the_declined_back(isolated_config, tmp_path):
+    c = _col2(tmp_path, "all", ("family=person",))
+    con = db.connect(c)
+    _rows(con, FAMILY)
+    _apply(con, c)
+    assert _embed(con)[4] == slice_scope.DECLINED
+    grown = _col2(tmp_path, "all", ("family=person", "family=work"))
+    assert slice_scope.ready(con, grown) is False
+    _apply(con, grown)
+    assert _embed(con)[4] == 0 and _embed(con)[5] == slice_scope.DECLINED
+
+
+def test_from_hold_nine_to_hold_all_embed_nine(isolated_config, tmp_path):
+    """wikidata's own move: in_scope narrowed to the nine is widened back,
+    and the five not embedded are declined instead."""
+    con = db.connect(_col(tmp_path, ["family=person"]))
+    _rows(con, FAMILY)
+    _apply(con, _col(tmp_path, ["family=person"]))
+    assert _scope(con)[2] == 0
+    c = _col2(tmp_path, "all", ("family=person",))
+    _apply(con, c)
+    assert _scope(con) == {i: 1 for i in FAMILY}
+    assert _embed(con) == {1: 0, 2: -1, 3: 0, 4: -1, 5: -1, 6: -1}
+
+
+def test_nothing_narrowed_any_more_unwinds_and_forgets(isolated_config, tmp_path):
+    c = _col2(tmp_path, ["family=person"], ("family=person",))
+    con = db.connect(c)
+    _rows(con, FAMILY)
+    _apply(con, c)
+    plain = _col2(tmp_path, "all", None)
+    assert slice_scope.ready(con, plain) is False, "a narrowing is left to unwind"
+    calls = []
+    out = slice_scope.apply(con, plain, context_for=lambda *a, **k: calls.append(1),
+                            slice_hint=_hint)
+    assert calls == [], "unwinding needs no slice of any row"
+    assert out["rows"] == len(FAMILY)
+    assert _scope(con) == {i: 1 for i in FAMILY} and set(_embed(con).values()) == {0}
+    assert db.get_control(con, slice_scope.KEY) is None and slice_scope.ready(con, plain) is True
+
+
+def test_a_declined_document_is_no_embed_candidate_nor_queued_on_demand(isolated_config, tmp_path):
+    from app import config, worker
+    c = _col2(tmp_path, "all", ("family=person",))
+    con = db.connect(c)
+    _rows(con, FAMILY)
+    con.execute("UPDATE documents SET rdf_done=1, fts_done=1")
+    _apply(con, c)
+    for nid in FAMILY:
+        con.execute("INSERT OR REPLACE INTO embed_queue(uid, priority, ts) VALUES (?,?,?)",
+                    (f"wd:{nid}", 100, 0))
+    eligible = {r["uid"] for r in con.execute(worker._QUEUE_ELIGIBLE,
+                                               (config.MAX_RETRIES, config.EMBED_VERSION, 100))}
+    assert eligible == {"wd:1", "wd:3"}, "the queue offers only what this node embeds"

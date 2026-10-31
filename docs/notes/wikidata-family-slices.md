@@ -437,5 +437,5 @@ The collection file holds `slices = "all"` and names the nine in a new key,
 - **Its alternative:** a new column (`embed_held`) in the scope index, which
   means rebuilding that index on 75.9 M rows.
 
-Until it is built, the file keeps the nine (§9) and wikidata stays paused.
+Built 2026-10-31: `embed_slices` (07 §7.8), `slice_scope.DECLINED`, the counts read `= 1`, the Library's dense target leaves the declined out. On the node: the file to `slices = "all"` plus `embed_slices` = the nine, then the pass once more (it widens in_scope back and declines the five).
 

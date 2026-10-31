@@ -1489,7 +1489,7 @@ def _document_counts_sql(spans: list[tuple[int, int]]) -> tuple[str, dict]:
     stage_error = ("(" + " OR ".join(
         f"error LIKE '{st}: %'" for st in ("rdf", "fts", "embed")) + ")")
     pending = (f"in_scope=1 AND fts_done=1 AND error IS NULL AND retries<:max "
-               f"AND (embed_done=0 OR embed_version<:ver)")
+               f"AND (embed_done=0 OR (embed_done=1 AND embed_version<:ver))")
     params: dict = {"max": config.MAX_RETRIES, "ver": config.EMBED_VERSION}
     archive_sums = ""
     if spans:
@@ -1546,6 +1546,9 @@ def _document_counts_sql(spans: list[tuple[int, int]]) -> tuple[str, dict]:
           SUM(CASE WHEN in_scope=1 AND rdf_done=1 THEN 1 ELSE 0 END) rdf_done,
           SUM(CASE WHEN in_scope=1 AND fts_done=1 THEN 1 ELSE 0 END) fts_done,
           SUM(CASE WHEN in_scope=1 AND embed_done=1 THEN 1 ELSE 0 END) embed_done,
+          -- not embedded here by choice (07 §7.8 `embed_slices`): out of the
+          -- dense stage's target, never counted as embedded
+          SUM(CASE WHEN in_scope=1 AND embed_done=-1 THEN 1 ELSE 0 END) declined,
           SUM(CASE WHEN in_scope=1 AND ({stage_error} OR retries>=:max)
                    THEN 1 ELSE 0 END) blocked,
           -- PER STAGE, because "blocked" is collection-wide and says
@@ -1848,7 +1851,7 @@ def _collection_shelf(collection: collections_mod.Collection,
     counts_pending = counts is None
     if counts_pending:
         counts = {k: 0 for k in ("total", "in_scope", "rdf_done", "fts_done",
-                                 "embed_done", "blocked", "unindexable",
+                                 "embed_done", "declined", "blocked", "unindexable",
                                  "embed_ready", "chunks_pending", "docs_unindexed")}
     # How many of the "awaiting" documents are in fact inside the encoder
     # right now. A document commits only when all of its chunks are done, so
@@ -2010,7 +2013,8 @@ def _collection_shelf(collection: collections_mod.Collection,
         }
         indexable = max(0, (counts["in_scope"] or 0) - unindexable)
         stage_targets = {
-            "rdf": indexable, "fts": indexable, "embed": indexable,
+            "rdf": indexable, "fts": indexable,
+            "embed": max(0, indexable - (counts["declined"] or 0)),
             # `remote_total` is the file count `complete` compares against:
             # max(the origin's recorded listing, the ledger). Same unit as
             # `cur["fetch"]` above, by construction.
