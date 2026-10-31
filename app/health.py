@@ -110,12 +110,29 @@ def _held_by_mode(mode: str) -> tuple[str, ...]:
                  if not node_state.runs(mode, needs))
 
 
+#: the stages the node PROFILE's cpu_cores = 0 pauses (worker._cpu_paused):
+#: the parse pool's work; embedding runs in every profile
+_PROFILE_PAUSED = ("rdf", "fts", "archive")
+
+
 def _held_reason(mode: str | None, stage: str) -> str:
     if mode and stage in _held_by_mode(mode):
         # no "held" here: a HELD row prints its state word first, and the
         # live report read "held — held — the node is…" (staged check)
         return (f"the node is {mode}; this runs when the Library's "
                 f"mode is set to running")
+    if stage in _PROFILE_PAUSED:
+        # THE NODE PROFILE (app/cpu_limit.py, the operator's schedule): a
+        # quiet band pauses rdf, fts and the archive pass, and the stage read
+        # "waiting" with no reason while the worker's log alone said "profile
+        # quiet: paused until 13:30" (operator, 2026-10-31)
+        try:
+            from . import cpu_limit
+            lim = cpu_limit.current()
+            if lim.cores == 0:
+                return f"{lim.says()} (the node's schedule, platform.toml); embedding goes on"
+        except Exception:   # noqa: BLE001 — a health check never raises
+            pass
     return ""
 
 

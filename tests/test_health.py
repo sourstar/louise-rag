@@ -64,6 +64,10 @@ def _judged_against_a_running_node(request, monkeypatch):
     every other one is judged against a running node, which holds nothing."""
     if "isolated_config" not in request.fixturenames:
         monkeypatch.setattr(health, "_node_mode", lambda: "running")
+    # and against no node profile: the host's own schedule must not hold a
+    # stage in a test (a test that wants one sets cpu_limit.current itself)
+    from app import cpu_limit
+    monkeypatch.setattr(cpu_limit, "current", lambda: cpu_limit.NO_PROFILE)
 
 
 def test_work_waiting_on_a_switched_off_stage_is_BLOCKED(con, monkeypatch):
@@ -530,3 +534,23 @@ def test_every_command_a_status_line_names_exists():
                 parser.parse_args(argv)
             except SystemExit as e:
                 raise AssertionError(f"`louise {cmd}` does not parse") from e
+
+
+def test_a_stage_the_node_profile_pauses_says_so(con, monkeypatch):
+    """Operator, 2026-10-31: wikipedia's rdf and fts read "waiting" in a quiet
+    band, and only the worker's log said "profile quiet: paused until 13:30".
+    The stage is HELD with that reason; embedding is not paused by a profile."""
+    from datetime import datetime
+    from app import cpu_limit
+    monkeypatch.setattr(cpu_limit, "current", lambda: cpu_limit.Limit(
+        0, "quiet", datetime.now().replace(hour=13, minute=30, second=0, microsecond=0)))
+    _docs(con, 3, rdf=0, fts=0)
+    _docs(con, 2, rdf=1, fts=1, embed=0, start=10)
+    _scope(monkeypatch, "all")
+    got = health.inspect(con, Collection(), mode="running")
+    by = {s.name: s for s in got.stages}
+    assert by["rdf"].state == health.HELD and "profile quiet: paused until 13:30" in by["rdf"].reason
+    assert by["embed"].state == health.RUNNING, "a profile never pauses embedding"
+    monkeypatch.setattr(cpu_limit, "current", lambda: cpu_limit.Limit(8, "day"))
+    assert next(s for s in health.inspect(con, Collection(), mode="running").stages
+                if s.name == "rdf").state == health.RUNNING
