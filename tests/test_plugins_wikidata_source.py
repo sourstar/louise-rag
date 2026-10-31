@@ -168,6 +168,11 @@ class _CountingPool:
     once in-process, except the children's nice."""
     import threading as _t
     peak = 0
+    #: a job waits (≤ 0.25 s) until this many run at once: a LOWER bound on
+    #: the jobs in flight then measures the pool, not whether the next
+    #: submission outran a 10 ms sleep on a loaded machine (the node,
+    #: 2026-11-01, the same pattern in the parse pool's test)
+    hold_until: int | None = None
 
     def __init__(self, max_workers, mp_context=None, initializer=None, initargs=()):
         from concurrent.futures import ThreadPoolExecutor
@@ -178,11 +183,15 @@ class _CountingPool:
 
     def submit(self, fn, *args):
         def run():
+            import time
             with self._lock:
                 self._now += 1
                 type(self).peak = max(type(self).peak, self._now)
             try:
-                import time
+                if type(self).hold_until is not None:
+                    deadline = time.monotonic() + 0.25
+                    while type(self).peak < type(self).hold_until and time.monotonic() < deadline:
+                        time.sleep(0.001)
                 time.sleep(0.01)
                 return fn(*args)
             finally:
@@ -212,6 +221,7 @@ def test_the_pack_pass_runs_no_more_than_the_profile_s_cores(tmp_path, monkeypat
     again = a_dump(tmp_path / "again")
     _CountingPool.peak = 0
     _profile(monkeypatch, None)
+    monkeypatch.setattr(_CountingPool, "hold_until", 2)
     pack.build(again, languages=("en", "fr"), chunk=2, workers=4)
     assert _CountingPool.peak > 1
 
