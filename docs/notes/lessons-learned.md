@@ -144,3 +144,16 @@ One entry per case that cost time, newest first. Each entry gives what happened,
 - **What happened.** After #78 a one-document batch printed its line. The deposit test's `hold source list --json`, run after an in-process round, read that line ahead of its JSON. The test failed in three full runs and passed alone, depending on the throttle's state.
 - **Lesson.** A command whose answer is machine-read must own its stdout. When a test passes alone and fails in the full suite, look for state shared through a module, such as a throttle or a cache.
 - **Fix.** #86: a one-document batch is counted and prints nothing.
+
+### A deploy that dies between stop and start
+
+- **What happened (2026-10-31, München).** A deploy was running the runbook, /root/deploy-louise-madlad-t5.sh, and the next deploy's version was copied over it. Bash reads a script as it runs, so the running deploy read on into the new text and stopped at "syntax error near unexpected token". That came after the promote and `app.stop`, and before `app.start`. Louise was down until an agent noticed, ~3 minutes; `restart: unless-stopped` does not apply to a deliberate stop.
+- **Lesson.** Between `app.stop` and a verified start, any exit is an outage that waits for a person. CLAUDE.md's "Louise survives a crash without an agent" covers the deploy too. Never copy over a script while it runs.
+- **Fix.** 433dd2b. From the stop job's success, an EXIT trap (INT and TERM made exits) does four things:
+  - retags `louise-rag:local` to the image the app's config names (`LOUISE_PLATFORM_IMAGE`), the new one or the one before;
+  - starts the app and waits for RUNNING and web `/healthz` 200;
+  - says so loudly;
+  - exits non-zero.
+
+  The trap is cleared only once step 6 has verified the start. Each deploy runs from a private copy (`/root/deploy-run-<sha>.sh`).
+- **Tested.** `DEPLOY_TEST_DIE_AFTER_STOP=1` kills the run right after the stop. Dry run, 2026-10-31 10:23: exit 130, the app back RUNNING on the configured image, `/healthz` 200, about a minute down.
