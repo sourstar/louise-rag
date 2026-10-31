@@ -1,6 +1,6 @@
 # Project status
 
-**Last updated: 2026-10-30.** What exists, what is designed but unbuilt,
+**Last updated: 2026-10-31.** What exists, what is designed but unbuilt,
 and what is deliberately not being built. Read this before planning work.
 
 **2026-10-26: the node was powered off 02:33–21:22 CET** by the operator,
@@ -775,6 +775,14 @@ plan is deleted (`git show 7f84d44:docs/notes/migration-plan.md`), and what
 it left open is below.
 
 ## Open after the migration
+
+- **Flash attention on SYCL is not reproducible across fresh loads; turned off, it costs speed** (2026-10-31, München; approved-encoders.md).
+  - **Measured:** vega-medcpt-query and gutenberg's vega-qwen3-embedding-4b flip a vector now and then after a reload with FA on (medcpt-query in 3 of 8 runs; qwen3-4b in 4 of 8, a short text included). bge-m3 with FA on: 0 flips in 8 runs.
+  - **Control so far:** FA off. medcpt-query is live FA off (run 71d129c3).
+  - **qwen3-4b with FA off was bit-exact but WRONG.** The gate measured a median cosine of 0.126, so it was backed out. The cause is almost certainly P5, the ggml-sycl batched F16×F32 matmul on a non-contiguous operand, reached by Qwen3's GQA KQ without FA. Candidates under measurement: FA off on the P1–P5 engine, or FA off with an f32 KV cache. gutenberg is paused meanwhile.
+  - **The cost:** FA off ran gutenberg's chunks ~2× slower (2.0–2.3 chunks/s against 4.0–5.4).
+  - **The lever:** find why the SYCL FA kernel is not reproducible across loads (consistent within a load, intermittent across loads, on long inputs). A fix gives FA back to every encoder, with its speed. To be started once gutenberg runs again on a correct run.
+  - **Open for the operator:** keep gutenberg's 10,476,253 chunks written with FA on (valid at tolerance), or re-embed them (~7.82 B tokens, ~35 card-days). Recommended: keep. Silence keeps them.
 
 - **"Every plate" — gutenberg parser 11** (operator, 2026-10-25; 08 §8.7,
   09 §9.5, 05 §5.3, 07 §7.4 amended). Invariant 11 wins over 08's
