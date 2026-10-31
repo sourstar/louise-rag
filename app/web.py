@@ -1398,6 +1398,9 @@ _COUNTS_TTL_S = 120.0
 #: control key holding the last counts, so a restarted process can show
 #: what was true instead of zeros while it re-scans (see _stored_counts)
 _COUNTS_CONTROL_KEY = "document_counts"
+#: every count a Library card reads (`_document_counts_query` writes them)
+_COUNT_KEYS = ("total", "in_scope", "rdf_done", "fts_done", "embed_done", "declined", "blocked",
+               "unindexable", "embed_ready", "chunks_pending", "docs_unindexed")
 #: A refresh may not cost more than this share of the time between
 #: refreshes. THE INSTRUMENT MUST NOT COST WHAT IT MEASURES: the scan is a
 #: full pass over `documents`, so its cost grows with the corpus while a
@@ -1677,7 +1680,11 @@ def _stored_counts(collection) -> tuple[dict, float] | None:
         return None        # simply no answer, never a broken page
     if not isinstance(counts, dict) or not at:
         return None
-    return {k: int(v or 0) for k, v in counts.items()}, at
+    # A ROW WRITTEN BY AN OLDER RELEASE lacks the counts added since: 0 for
+    # those until the next refresh writes them. Read as it was, the
+    # `declined` count #137 added broke every Library card whose stored row
+    # predated the deploy (KeyError, the page down; 2026-10-31)
+    return {**{k: 0 for k in _COUNT_KEYS}, **{k: int(v or 0) for k, v in counts.items()}}, at
 
 
 def _persist_counts(collection, counts: dict) -> bool:
@@ -1850,9 +1857,7 @@ def _collection_shelf(collection: collections_mod.Collection,
     counts, counts_age = _document_counts(collection)
     counts_pending = counts is None
     if counts_pending:
-        counts = {k: 0 for k in ("total", "in_scope", "rdf_done", "fts_done",
-                                 "embed_done", "declined", "blocked", "unindexable",
-                                 "embed_ready", "chunks_pending", "docs_unindexed")}
+        counts = {k: 0 for k in _COUNT_KEYS}
     # How many of the "awaiting" documents are in fact inside the encoder
     # right now. A document commits only when all of its chunks are done, so
     # on a slow CPU encoder several sit in flight for many minutes — and

@@ -156,3 +156,20 @@ def test_a_restart_serves_the_stored_counts_at_once_but_not_after_an_action(monk
     t0 = time.perf_counter()
     web._document_counts(c)
     assert time.perf_counter() - t0 >= 0.3, "after an action the stored counts are not taken first"
+
+
+def test_a_row_stored_by_an_older_release_still_renders_the_card(isolated_config, monkeypatch):
+    """The counts a release adds (#137's `declined`) are missing from a row an
+    older release stored: read as 0 until the next refresh, never a KeyError —
+    the Library was down on the node after the 2026-10-31 deploy."""
+    collection = collections_mod.default_collection()
+    old_shape = {"total": 7, "in_scope": 7, "rdf_done": 7, "fts_done": 7, "embed_done": 3,
+                 "blocked": 0, "unindexable": 0, "embed_ready": 4, "chunks_pending": 0,
+                 "docs_unindexed": 0}
+    db.set_control(db.connect(collection), web._COUNTS_CONTROL_KEY,
+                   json.dumps({"at": time.time() - 60, "counts": old_shape}))
+    _slow_scan(monkeypatch, dict(old_shape, declined=0))
+    counts, _age = web._document_counts(collection)
+    assert counts["declined"] == 0 and counts["total"] == 7
+    shelf = web._collection_shelf(collection)
+    assert shelf
