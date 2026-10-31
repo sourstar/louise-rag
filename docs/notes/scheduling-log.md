@@ -1715,3 +1715,34 @@ Measured on gutenberg's real candidates (rerank_capture.py), warm unless said:
 
 The 40/56/72 medians include each load's first request, and the 50-document medians are warm.
 FA on with oneDNN's SDPA gave 1.8–2.2 s for 50 on 2026-10-21, and NaN with it.
+
+### 2026-10-31 — wikipedia's encoder requests batched by 16 (#129) — MEASURED, no gain: the bound moved
+
+**What changed.** `batch = 16` in wikipedia's `[encoder]` (16:07:32). The node's EMBED_BATCH stays 1.
+run_check refused batched writes until its gate ran at 16. The gate ran at 16:11:19 and passed
+16 of 16 at 16:12:35, batch-invariant True, statement version 5, exact over 3 loads
+(gate-batching.json: `embed_batch 16`). The same 10-minute production profile was run before and
+after, both in the day profile with rdf/fts running and gutenberg idle (/root/measure/prod-profile*.log,
+prod_profile.sh, spy_split.py):
+
+| | BEFORE 14:34 (1 a request) | AFTER 16:15 (16 a request) |
+|---|---|---|
+| chunks/min, two 5-min halves | 1,149 / 777 | 739 / 1,241 |
+| card busy (bge-m3's process, per minute) | 7–14 % | 1–20 % |
+| embed pool threads idle | ~40 % | ~77 % |
+| pool: HTTP / admission / slot wait | 15–24 / 14–24 / 13–25 % | 9–12 / 6–7 / 2–5 % |
+| producer: waiting on the parse pool's results (chunks to prepare) | 24 % | 52 % |
+| producer: `vector_write_lock` | — | 16 % |
+| producer: `mark_done` / `settle_empty` / `clear_verification` | ~27 % | ~16 % |
+| pipeline thread: the archive import (`drain_held` > `_append_document` > `flush`) | ~38 % | ~41 % |
+
+**Reading.** Batching took the encoder off the path: the pool threads now wait for work three
+quarters of the time. Throughput did not move (~960 → ~990 chunks/min, within the halves' spread).
+The bound is the producer side:
+- preparing the next documents' chunks, which is wikitext parsed in the shared parse pool and
+  waited on half the time;
+- the vector write lock, contended by the pipeline thread's archive import writing the same table;
+- the per-document bookkeeping (B, being built).
+
+The next lever is the chunk preparation. The batch stays: it is gated, exact and costs nothing,
+and it is what the encoder will need once preparation keeps up.
