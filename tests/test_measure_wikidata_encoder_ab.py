@@ -100,6 +100,7 @@ def test_the_score_finds_the_better_encoder_and_says_the_verdict(tmp_path):
     assert got["bge_minus_jina"]["p"] < 0.05
     assert got["verdict"].startswith("switch to bge-m3")
     assert set(got["by_language"]) == {"en", "it"} and set(got["by_family"]) == {"person", "work"}
+    assert json.loads(json.dumps(got)) == got, "what main() prints: Python numbers only"
     # and the other way round, the verdict keeps jina-v3
     np.save(tmp_path / "qvec-bge.npy", targets + 1.5 * rng.normal(size=targets.shape))
     np.save(tmp_path / "qvec-jina.npy", targets + 0.05 * rng.normal(size=targets.shape))
@@ -158,3 +159,4 @@ def test_bge_as_good_keeps_jina_and_the_two_jinas_are_compared(tmp_path):
     assert got["chunks_per_s"]["jina-gguf"] == 10.0
     assert got["bge_minus_jina"]["against"] == "jina-gguf"
     assert got["verdict"].startswith("keep jina-v3")
+    json.dumps(got)

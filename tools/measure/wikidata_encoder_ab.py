@@ -277,6 +277,10 @@ def score(out: Path) -> dict:
         best = best_by_entity(doc, owner, np.load(out / f"qvec-{enc}.npy"), len(corpus))
         tscore = best[np.arange(len(qs)), target]
         rank = 1 + (best > tscore[:, None]).sum(axis=1)
+        # Python numbers, not numpy's: the result is printed as JSON, and a
+        # sum of numpy bools is an int64 json cannot write (the node's first
+        # score, 2026-10-31)
+        rank = [int(r) for r in rank]
         rr[enc] = [1.0 / r if r <= TOP else 0.0 for r in rank]
         hit1[enc] = [int(r == 1) for r in rank]
         hit10[enc] = [int(r <= TOP) for r in rank]
