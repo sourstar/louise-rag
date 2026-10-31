@@ -74,9 +74,9 @@ def test_embedding_is_resumable_by_block(tmp_path, monkeypatch):
     def fake(texts, query):
         calls.append((len(texts), query))
         return [[1.0, 0.0]] * len(texts)
-    assert ab.embed(out, "bge", embed_texts=fake)["blocks_written"] == 3
+    assert ab.embed(out, "bge", encode=fake)["blocks_written"] == 3
     calls.clear()
-    assert ab.embed(out, "bge", embed_texts=fake)["blocks_written"] == 0
+    assert ab.embed(out, "bge", encode=fake)["blocks_written"] == 0
     assert calls == [], "every block and the queries are there already"
 
 

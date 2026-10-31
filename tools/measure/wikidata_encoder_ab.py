@@ -19,7 +19,7 @@ Italian against English text: the reader's language).
            chunks through `hold.land.cut` — the chunks the space embeds.
   queries  OUT_DIR [--n 400]  questions by the chat model (stored: the set)
   embed    OUT_DIR --encoder jina|bge  each side through the PRODUCTION
-           client (`embeddings._embed_texts`) with the collection's recipe —
+           client (`embeddings.embed_calibration`, `_embed_texts` underneath) with the collection's recipe —
            wikidata's for jina-v3, wikipedia's for bge-m3; resumable by block
   score    OUT_DIR  the table, and the verdict: bge-m3 unless jina-v3 is
            better on MRR@10 with p < 0.05.
@@ -165,13 +165,17 @@ def _recipe(encoder: str):
     return dataclasses.replace(recipe, ctx=max(int(recipe.ctx or 0), 8192))
 
 
-def embed(out: Path, encoder: str, *, embed_texts: Callable | None = None) -> dict:
+def embed(out: Path, encoder: str, *, encode: Callable | None = None) -> dict:
     import numpy as np
-    if embed_texts is None:
+    if encode is None:
         from app import embeddings
         recipe = _recipe(encoder)
-        embed_texts = lambda texts, query: embeddings._embed_texts(   # noqa: E731
-            texts, recipe=recipe, query=query, asked=False)
+        # embed_calibration: the client's door for inputs that are not a
+        # collection's chunks ("a tool's sample"), the same `_embed_texts`
+        # underneath, the model pinned while it works (invariant 7's guard,
+        # tests/test_invariant_guards.py: nothing outside embeddings calls the client)
+        encode = lambda texts, query: embeddings.embed_calibration(   # noqa: E731
+            recipe, texts, query=query, asked=False)
     corpus = _jsonl(out / "corpus.jsonl")
     texts = [t for e in corpus for t in e["chunks"]]
     written = 0
@@ -179,13 +183,13 @@ def embed(out: Path, encoder: str, *, embed_texts: Callable | None = None) -> di
         path = out / f"vec-{encoder}-{b // BLOCK:05d}.npy"
         if path.exists():
             continue
-        np.save(path, np.asarray(embed_texts(texts[b:b + BLOCK], False), dtype="float32"))
+        np.save(path, np.asarray(encode(texts[b:b + BLOCK], False), dtype="float32"))
         written += 1
         print(f"{encoder}: block {b // BLOCK + 1} of {(len(texts) + BLOCK - 1) // BLOCK}", file=sys.stderr)
     qpath = out / f"qvec-{encoder}.npy"
     qs = _jsonl(out / "queries.jsonl")
     if not qpath.exists() or len(np.load(qpath)) != len(qs):
-        np.save(qpath, np.asarray(embed_texts([q["query"] for q in qs], True), dtype="float32"))
+        np.save(qpath, np.asarray(encode([q["query"] for q in qs], True), dtype="float32"))
     return {"chunks": len(texts), "blocks_written": written, "queries": len(qs)}
 
 
