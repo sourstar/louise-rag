@@ -1778,3 +1778,26 @@ file younger than 7 days as unverified. They go by themselves after ~11-06.
 train once at its end. (2) Whether to free the 142 GiB now: `cleanup_old_versions(older_than=0,
 delete_unverified=True)` under the vector write lock, as `purge` does after an erase, while
 wikipedia is paused and nothing writes its table — or let the 7 days pass.
+
+### 2026-10-31 — wikidata-bge's held-line records build: the parent, then the feeding (#148) — MEASURED
+
+**Scenario.** `hold records build wikidata-bge --records-from wikidata` (75,896,183 records, 4,009
+parts cut by content), under supervise-pass, `--cpus 12`, night profile (12 cores), nice 19.
+wikipedia's Lance rewrite paused after the first 15 min (ssd4 at 11 ms reads starved the build's
+`commit_written` manifest UPDATEs: 2,800 rec/s beside the copy against 6,700 alone, range=8).
+Rates compared on ONE slice, astronomy/range=9: wikidata's records differ in size by family and
+range, so records/s across slices is not a comparison.
+
+| | BEFORE #148 (23:00) | AFTER #148 (23:14–23:17) |
+|---|---|---|
+| astronomy/range=9 records/s | 4,507 | 4,297 |
+| container CPU | 6.4 cores (range=8) | 8.25 cores |
+| parent, py-spy 20 s at 50 Hz | busy ~100 %: `_recv` 34.8 %, `_send` 15.6 %, `dumps` 6.7 %, `commit_written` 5.3 % | busy 24 % (242 samples): `_recv` 31 %, `commit_written` 15 % of those |
+| a pool child (15 s, idle included) | — | one 100 % waiting on the call queue; another busy: `held_or_parsed` 34 %, `_encode` (tokenizer, the chunk re-cut) 32.6 %, frame reads ~12 % |
+| a part writer | — | 100 % idle |
+
+**Reading.** #148 took the parent off the path (busy 100 % → 24 %) and the throughput did not
+move: the pool is now under-fed. Children wait on the queue while the parent is idle, so the
+bound is the task window or its ordering (`compute_pages` for held pages), not the CPU. Owed to
+the architecture session: which of the window cap, the page size of held work, or the in-order
+consumption leaves children idle.
