@@ -11,25 +11,35 @@
 #   cp rollout-rerank-fa-20261031.sh /root/rollout-rerank-fa-run.sh; bash /root/rollout-rerank-fa-run.sh 2>&1 | tee /root/rollout-rerank-fa-20261031.log
 set -euo pipefail
 
+# MODEL (default louise-rerank-bge) and its study's log (STUDY_LOG; bge's is the reranker section of
+# variants34.log): louise-rerank-lamar the same way (operator's pre-approval, 2026-10-31; no collection uses it)
+MODEL=${MODEL:-louise-rerank-bge}
 M=/mnt/ssd5/apps/localai/models
-Y=$M/louise-rerank-bge.yaml
-CAND=$M/louise-rerank-bge-fa1.yaml
+Y=$M/$MODEL.yaml
+CAND=$M/$MODEL-fa1.yaml
 BAK=$Y.bak-20261031-fa
-KEPT=/root/rerank-bge-fa1-scores.json
+KEPT=/root/$MODEL-fa1-scores.json
 CANDS=/root/measure/rerank-cands.json
 LOCALAI=http://localhost:30286
 say() { printf '\n=== %s %s\n' "$(date +%T)" "$*"; }
 
 say "0. preconditions: the live YAML strict, the candidate FA on + FA_ONEDNN=0, the study clean"
-grep -q '^flash_attention: "off"$' $Y && grep -q '^    GGML_SYCL_ENABLE_OPT: "0"$' $Y || { echo "$Y is not the strict YAML"; exit 1; }
-grep -q '^flash_attention: "on"$' $CAND && grep -q '^    GGML_SYCL_FA_ONEDNN: "0"$' $CAND || { echo "$CAND is not the candidate"; exit 1; }
-S=$(sed -n '/^=== .* reranker fa1$/,/^=== .* reranker live/p' /root/measure/variants34.log)
-echo "$S" | grep -q "^=== louise-rerank-bge-fa1: 0 request(s) with NaN or an error" || { echo "the study is not clean (NaN or an error)"; exit 1; }
+python3 - $Y $CAND <<'PY'
+import sys, yaml
+y, c = (yaml.safe_load(open(p)) for p in sys.argv[1:3])
+if not (y.get("flash_attention") == "off" and (y.get("env") or {}).get("GGML_SYCL_ENABLE_OPT") == "0"):
+    sys.exit(f"{sys.argv[1]} is not the strict YAML")
+if not (c.get("flash_attention") == "on" and (c.get("env") or {}).get("GGML_SYCL_FA_ONEDNN") == "0"):
+    sys.exit(f"{sys.argv[2]} is not the candidate")
+PY
+if [ -n "${STUDY_LOG:-}" ]; then S=$(cat "$STUDY_LOG")
+else S=$(sed -n '/^=== .* reranker fa1$/,/^=== .* reranker live/p' /root/measure/variants34.log); fi
+echo "$S" | grep -q "^=== $MODEL-fa1: 0 request(s) with NaN or an error" || { echo "the study is not clean (NaN or an error)"; exit 1; }
 echo "$S" | grep "positions differing across answers" | grep -vq "answers 0 of" && { echo "the study's scores varied across loads or orders"; exit 1; } || true
 echo "$S" | grep "latency n=" ; echo "study: 0 NaN, scores identical across loads and orders"
 
 say "1. the candidate against the live reranker on gutenberg's real candidates; its scores kept; the latency"
-python3 /root/measure/rerank_cmp.py louise-rerank-bge louise-rerank-bge-fa1 $CANDS --save $KEPT
+python3 /root/measure/rerank_cmp.py $MODEL $MODEL-fa1 $CANDS --save $KEPT
 
 say "2. the live YAML onto the candidate's settings (a backup beside it): equal to it but for the name, the live pin kept"
 cp -a $Y $BAK
@@ -51,15 +61,15 @@ chown 568:0 $Y.new; chmod 644 $Y.new; mv $Y.new $Y
 grep -E '^(flash_attention|pinned)|FA_ONEDNN|ENABLE_OPT' $Y || true
 
 say "3. both names unloaded, the candidate removed, LocalAI's configs reloaded"
-for m in louise-rerank-bge louise-rerank-bge-fa1; do
+for m in $MODEL $MODEL-fa1; do
   curl -s -X POST "$LOCALAI/backend/shutdown" -H "Content-Type: application/json" -d "{\"model\":\"$m\"}"; echo
 done
 rm -f $CAND
 curl -s -X POST "$LOCALAI/models/reload"; echo
 
 say "4. the live reranker gives the candidate's scores, bit for bit"
-python3 /root/measure/rerank_cmp.py louise-rerank-bge louise-rerank-bge $CANDS --expect $KEPT \
+python3 /root/measure/rerank_cmp.py $MODEL $MODEL $CANDS --expect $KEPT \
   || { echo "THE LIVE RERANKER DOES NOT GIVE THE MEASURED SCORES: BACKOUT below"; exit 1; }
-echo "louise-rerank-bge: flash attention on + GGML_SYCL_FA_ONEDNN=0; rolled out"
+echo "$MODEL: flash attention on + GGML_SYCL_FA_ONEDNN=0; rolled out"
 
-# BACKOUT: cp -a $BAK $Y; POST /backend/shutdown {"model":"louise-rerank-bge"}; POST /models/reload.
+# BACKOUT: cp -a $BAK $Y; POST /backend/shutdown {"model":"$MODEL"}; POST /models/reload.
