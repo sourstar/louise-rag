@@ -162,6 +162,7 @@ grep -q '"gate-batching.json"' "$ROOT/src.new/app/hold/runs.py"                 
 grep -q "^def small_fragments(collection)" "$ROOT/src.new/app/vector_index.py"               # #109 (5e0d5fa): the light compaction on its own one-minute cadence
 grep -q "^VECTOR_INDEX_LIGHT_CHECK_S = " "$ROOT/src.new/app/config.py"                       # #109
 grep -q "^def _as_candidate(recipe, a):" "$ROOT/src.new/app/louise.py"                         # 5388ade: `hold embedder check --model` gates a candidate model name
+grep -q '^TREE_TYPES = ("file", "dir", "link", "setting")$' "$ROOT/src.new/app/vega/service.py"   # #116 (f1fd164): the receipts service takes the wrapper's `setting` entry, BEFORE the wrappers move
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
 test -x "$ROOT/src.new/deploy/docker-memory-ceiling.sh"                                     # the ceiling on every container together
 grep -q "^def building(dest: Path)" "$ROOT/src.new/app/derived.py"                          # one pack builder across processes (the plan's pool children)
