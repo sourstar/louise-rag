@@ -301,8 +301,8 @@ louise dev                                                             operator 
                                                                        dropped and its document embedded again, in one read of the table; a dense-script row
                                                                        refuses it, nothing written — dropped too where every input was embedded alone (a pair layer)
                                                                        --resliced (A1g): into a collection differing only by its slicing, every vector carried, then `records build <to>
-                                                                       --records-from <from>`; --unembedded (A1h): from a collection holding NO vector into one with the same records and ANY
-                                                                       space, the manifest and text index carried, no vector table, then `records build <to> --records-from <from>`; --scan: with --keep, one pass over the vector table instead of a walk by document
+                                                                       --records-from <from>`; --unembedded (A1h): from a collection holding NO vector into one with the same records, layers and
+                                                                       cleaning (the encoder side of the space alone differing), the manifest and text index carried, no vector table, then `records build <to> --records-from <from>`; --scan: with --keep, one pass over the vector table instead of a walk by document
 ```
 
 `--dry-run`, `--json` and `--yes` are not shown per line; §7.7 says which

@@ -366,6 +366,10 @@ def _checkpoint(manifest: Path) -> None:
 #: tolerance before use (03 §3.5), as for any carry. Query vectors are never
 #: stored, so the query side's weights do not reach the table either.
 WEIGHTS_WITH_KEEP = frozenset({"encoder.weights", "query.encoder.weights"})
+#: A1h: what a carry from a collection holding no vector may change — the
+#: encoder's side of the space (the engine is outside `space_differences`)
+ENCODER_SIDE = frozenset({"encoder.weights", "dim", "dtype", "ctx", "cut", "pooling", "normalise",
+                          "query.encoder.weights", "query.instruction", "epoch"})
 
 
 #: what may differ under `--rebuilt` (A1c): the parser and the image that runs
@@ -420,8 +424,11 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
 
     `unembedded` (A1h, 2026-10-31; wikidata from jina-v3 to bge-m3, nothing
     embedded or published): the source holds NO vector, so the target's space
-    may differ in anything — weights, dim, the query side, the cut: nothing
-    carried depends on it. The records must be the same records; the manifest
+    may differ on the ENCODER'S side (`ENCODER_SIDE`: weights, dim, dtype,
+    ctx, cut, pooling, normalisation, the query side, the epoch) — no vector
+    depends on it. What cuts the chunks the text index and the manifest hold —
+    the layers whole, their input forms, the cleaning — may not differ, and the
+    records must be the same records; the manifest
     (its marks, the declined ones included) and the text index are functions
     of the records alone and move; the vector table does not (the target
     makes its own, of its own width). Its parts come from `hold records build
@@ -484,6 +491,18 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         refuse_unless_same_records(src, to, "carry --unembedded" if unembedded else "carry")
     diff = space_differences(src, to)
     if unembedded:
+        # the text index is keyed on chunk ids and the manifest counts chunks:
+        # what cuts them — the layers whole, their input forms, the cleaning —
+        # must be the same; only the ENCODER's side may differ
+        layer_side = [d for d in diff if d not in ENCODER_SIDE]
+        if [(l.chunker.to_dict(), l.rule, l.form) for l in src.layers] != \
+                [(l.chunker.to_dict(), l.rule, l.form) for l in to.layers]:
+            layer_side.append("layers")
+        if layer_side:
+            raise CodexError(
+                f"carry --unembedded: {to.collection_id} and {src.collection_id} differ in "
+                f"{', '.join(layer_side)}, which cut the chunks the text index and the manifest "
+                f"hold (A1h admits the encoder's side only: {', '.join(sorted(ENCODER_SIDE))})")
         if diff:
             log(f"[carry] {from_name} → {to_name}: the spaces differ in {', '.join(diff)}; "
                 f"{from_name} holds no vector, so nothing carried depends on them (A1h)")

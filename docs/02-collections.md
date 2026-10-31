@@ -886,8 +886,9 @@ other parts). Her parts are cut by content (§2.2), so they are byte for
 byte the parts a collection created from scratch with her slicing has;
 `hold collection continue --reslice` refuses a daughter that changes the
 slicing and cuts by count. Until a collection is published, the same
-steps serve a re-creation (RULE 1). A re-creation in ANOTHER SPACE whose source
-holds no vector at all (*amended 2026-10-31*, wikidata from jina-v3 to bge-m3:
+steps serve a re-creation (RULE 1). A re-creation whose space differs on the ENCODER'S side alone
+(weights, width, window, cut, pooling, the query side; never the layers or
+the cleaning) and whose source holds no vector at all (*amended 2026-10-31*, wikidata from jina-v3 to bge-m3:
 nothing embedded, nothing published) carries its manifest and text index,
 which are functions of the records alone, and no vector table: `dev carry
 --unembedded`, amendment A1h; its parts come from `--records-from` as above.

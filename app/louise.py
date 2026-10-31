@@ -5293,8 +5293,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "content (A1g: a family map added): every vector carried; then "
                         "`hold records build <to> --records-from <from>`")
     p.add_argument("--unembedded", action="store_true",
-                   help="from a collection that holds NO vector into one with the same records "
-                        "and ANY space (A1h): the manifest and text index move, no vector table; "
+                   help="from a collection that holds NO vector into one with the same records, "
+                        "layers and cleaning, the encoder side of its space alone differing (A1h): the manifest and text index move, no vector table; "
                         "then `hold records build <to> --records-from <from>`")
     p.add_argument("--predecessor-rows", action="store_true", dest="predecessor_rows",
                    help="after a same-space carry made before provenance was kept: the "

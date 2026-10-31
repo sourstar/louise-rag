@@ -1227,3 +1227,53 @@ def test_the_command_carries_unembedded(pair, capsys):
     assert louise.main(["dev", "carry", "old", "bge", "--root", str(root), "--unembedded", "--yes"]) == 0
     printed = json.loads(capsys.readouterr().out)
     assert printed["carry"]["space_id"] == bge.space_id and printed["carry"]["unembedded"] is True
+
+
+def test_unembedded_refuses_what_cuts_the_chunks(pair, monkeypatch):
+    """The text index is keyed on chunk ids and the manifest counts chunks: the
+    layers (chunker, rule, input form) and the cleaning may not differ (A1h)."""
+    from app.hold.codex import INPUT_PAIR
+    root, _old, _new = pair
+    bge = _bge_space(root)
+    chunker = replace(bge.layers[0].chunker, version=bge.layers[0].chunker.version + 1)
+    col.create(root, replace(bge, layers=(replace(bge.layers[0], chunker=chunker),)), name="rechunked")
+    col.create(root, replace(bge, cleaning_version=bge.cleaning_version + 1), name="recleaned")
+    for name, what in (("rechunked", "layers"), ("recleaned", "cleaning_version")):
+        with pytest.raises(CodexError, match=what):
+            carry.carry(root, "old", name, unembedded=True, apply=True, log=quiet)
+    # the input form alone (no record decides it): a pair layer is refused on
+    # this chunker at create, so the twin is read as one in memory
+    real = col.resolve
+
+    def resolve(r, ref):
+        name, c = real(r, ref)
+        if ref != "bge":
+            return name, c
+        return name, replace(c, layers=(replace(c.layers[0], input=INPUT_PAIR),))
+    monkeypatch.setattr(col, "resolve", resolve)
+    with pytest.raises(CodexError, match="differ in layers"):
+        carry.carry(root, "old", "bge", unembedded=True, apply=True, log=quiet)
+    assert (root / "old" / "state" / "manifest.sqlite").is_file()
+
+
+def test_unembedded_resumes_a_move_stopped_between_the_index_and_the_manifest(pair, monkeypatch):
+    """invariant 2: index/ first, the manifest last — its arrival is the commit;
+    a run that finds the index moved and no manifest finishes, never restarts."""
+    root, _old, _new = pair
+    _bge_space(root)
+    (root / "old" / "index").mkdir(parents=True, exist_ok=True)
+    (root / "old" / "index" / "words").write_text("the text index")
+    real = carry._transfer
+
+    def stopped_at_the_manifest(src, dst, *, copy):
+        if src.name == "manifest.sqlite":
+            raise Stopped
+        return real(src, dst, copy=copy)
+    monkeypatch.setattr(carry, "_transfer", stopped_at_the_manifest)
+    with pytest.raises(Stopped):
+        carry.carry(root, "old", "bge", unembedded=True, apply=True, log=quiet)
+    monkeypatch.undo()
+    assert (root / "bge" / "index" / "words").is_file() and not (root / "bge" / "state" / "manifest.sqlite").exists()
+    out = carry.carry(root, "old", "bge", unembedded=True, apply=True, log=quiet)
+    assert out["done"] == {"index": "present", "manifest": "moved"}
+    assert not (root / "old" / "state" / "manifest.sqlite").exists()
