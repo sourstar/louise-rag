@@ -1434,6 +1434,9 @@ is the collection being held:
 codex  = "sha256:…"                            # the collection_id this name holds; shard/codex.json's inner hash must equal it (09 §9.3)
 title  = "PubMed"                              # optional: overrides descriptive.title for this peer's own listing; never published
 slices = ["year=1975-1979", "year=1980-1984"]  # or "all"; a list is PART of the collection, held by `share fetch --slice` (§7.3)
+                                               # (2026-10-31) where one origin holds every slice (wikidata: one dump, every
+                                               # family), the node PROCESSES only the slices listed: in_scope is narrowed to
+                                               # them after each scan, and the stages wait for it (app/slice_scope.py)
 kinds  = ["records", "vectors"]
 embed  = "on-demand"                           # off | on-demand | all | p2p: what the node's encoder spends, never what search uses;
                                                # all = every part itself ("all local"), p2p = the parts rendezvous gives this node,

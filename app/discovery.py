@@ -422,3 +422,7 @@ def apply_scope(con):
               SELECT uid FROM documents WHERE in_scope=1
               ORDER BY CAST(native_id AS INTEGER) LIMIT ?)""",
             (int(scope["limit"]),))
+    # the widening above undid the slices' narrowing (app/slice_scope.py): its
+    # pass starts again, and the collection's stages wait for it
+    from . import slice_scope
+    slice_scope.invalidate(con)

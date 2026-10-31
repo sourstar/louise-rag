@@ -359,3 +359,33 @@ them whole.
 - `other` growing large over the years (new classes the walk cannot place).
 - The family list itself (a family a person wants that is not here: add it
   in the next map, never by editing this one).
+
+## 9. What a node holds is what it processes (operator, 2026-10-31)
+
+*"As for other collections the grow profile should drive what's fetched and
+processed."* This replaces Phase 2's `embed_slices` (§5: hold every record,
+embed some).
+
+- **Each family is a profile** in the acquisition spec, additive as
+  Wikipedia's languages. The Library grows a collection by a family, and
+  the collection file lists the families it holds (`slices =
+  ["family=person", …]`). Every family fetches the one dump.
+- **Processing follows the holding** (app/slice_scope.py). After each scan,
+  `documents.in_scope` is narrowed to the documents of the families held.
+  The family is read from the pack's code for each entity, without parsing,
+  in windows from a cursor. The collection's stages wait until that pass
+  has caught up.
+  - A family not held is not FTS-indexed and not embedded on this node, so
+    it is not searchable here, not even by name.
+  - Its records are untouched: invariant 11 holds, and growing by a family
+    puts its documents back in scope on the next pass.
+- **Proposed first holding** (München, from the 10-30 records; chunks,
+  tokens sampled): person, work, place, organization, event, heritage,
+  built, scholarly and property, 43.3 M of 77.3 M chunks. Left out: taxon,
+  astronomy, molecular, internal and other.
+
+| Choice | Pros | Cons |
+|---|---|---|
+| The nine families above | ~56 % of the chunks; the families the queries name | Taxa, stars and molecules are not searchable here until grown |
+| All fourteen | Everything searchable | ~138 card-days of embedding at today's 6–7 chunks/s, against ~77 for the nine |
+

@@ -302,8 +302,10 @@ def slices_for_profile(spec: AcquisitionSpec, profile: str | None):
             want = resolve_profile(spec, part)
         except ValueError:
             return None
-        hits = [k for k, p in spec.slice_profiles.items()
-                if p == part or spec.profiles.get(p) == want]
+        # by NAME first: wikidata's families all fetch the one dump, so their
+        # filters are equal and a filter match would name every family
+        hits = ([k for k, p in spec.slice_profiles.items() if p == part]
+                or [k for k, p in spec.slice_profiles.items() if spec.profiles.get(p) == want])
         if not hits:
             return None
         out += [k for k in hits if k not in out]
