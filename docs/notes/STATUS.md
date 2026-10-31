@@ -776,6 +776,12 @@ it left open is below.
 
 ## Open after the migration
 
+- **DEFECT (invariant 11), wikipedia's archive-layer records lack their QIDs** (München, 2026-10-31). The 10-28 records build cut archive-layer rows from locators discovered before parser 5. Those locators had no page_props segment, so the records hold no `extra.wikidata` and no `extra.page_props`, which today's origin unit gives.
+  - The SHARD is consistent: records-vs-origin reproduces each record from its own locator, 5 of 5, and the sections are equal. But it holds less than the origin.
+  - Found because one parse's freshness test (#133) saw 1,310 of 2,000 embed candidates as origin-differs.
+  - **Root cause guarded:** a records build now stops on a row whose locator names only part of its unit (`plugin_io.StaleUnit`, wikipedia's `stale_unit`). A scan re-locates the row.
+  - **Repair:** count the affected parts (`louise dev index-drift wikipedia`, origin hashes); re-cut them with the page_props segment into a new snapshot (re-issued parts only, #48); carry each record's vectors where its content_hash is unchanged (sections are equal, so the chunks are identical, RULE 1). Then one parse deploys, and its freshness test (origin_hash = txt_hash) holds.
+
 - **Invariant 4 rewritten (operator, 2026-10-31): "nothing boosts" replaced by five rules for a weight** (attributed source; every moved result shows it; reader's choice or a measured, approved default; reorders, never removes; reproducible by versions). Point of view: reader's choice only. The catalogue-first default now marks the record it moved (`moved_by`, a badge on the Ask page). Weights come through annotations (reliability first; point of view later). The literary-form facet uses the library standard (MARC 21 008/33 + LCGFT; task: form facet).
 
 - **Several collections merged on calibrated relevance (operator, 2026-10-31: B; A kept to evaluate)** (docs/notes/federated-merge.md).

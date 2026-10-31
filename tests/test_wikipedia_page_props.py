@@ -279,3 +279,24 @@ def test_genesis_still_reads_an_archive_article_as_one_piece(corpus):
     assert "|" in ref.locator
     assert archive.split_locator(ref.locator) == [
         (str(corpus / "data" / "en" / "000.parquet"), 0, 2)]
+
+
+def test_a_locator_without_its_page_props_segment_is_a_stale_unit(corpus):
+    """München, 2026-10-31: archive-layer records cut on 10-28 from locators
+    from before parser 5 hold no QID. Such a locator is a stale unit."""
+    refs = _refs(corpus)
+    collection = SimpleNamespace(snapshot="20260801", corpus_dir=corpus)
+
+    def row(ref, *, strip):
+        path = wsrc.props_segment(ref.locator)[0] if strip else ref.locator
+        return {"native_id": ref.native_id, "path": path}
+
+    for nid in (MOON, CHEESE, WINE):
+        assert SOURCE.stale_unit(row(refs[nid], strip=False), collection) is None, "as discovered"
+    assert "before parser 5" in SOURCE.stale_unit(row(refs[CHEESE], strip=True), collection)
+    assert "before parser 5" in SOURCE.stale_unit(row(refs[MOON], strip=True), collection), \
+        "the archive layer: its run's page_props under the pinned snapshot"
+    assert SOURCE.stale_unit(row(refs[WINE], strip=True), collection) is None, \
+        "a page with no rows names no segment, rightly"
+    assert SOURCE.stale_unit(row(refs[MOON], strip=True), None) is None, \
+        "no pinned snapshot: nothing to compare with"
