@@ -389,3 +389,33 @@ embed some).
 | The nine families above | ~56 % of the chunks; the families the queries name | Taxa, stars and molecules are not searchable here until grown |
 | All fourteen | Everything searchable | ~138 card-days of embedding at today's 6–7 chunks/s, against ~77 for the nine |
 
+## 10. Which encoder (operator, 2026-10-31: "I follow your recommendation")
+
+jina-v3 was chosen to carry the Wikidata Embedding Project's vectors. That
+reason is gone: 14 % of them were made from older texts (D2), and our texts
+are our own, from the current dump (D1, D4), so none can be carried. Wikidata
+embeds everything itself, and its space has no vectors yet, so changing the
+encoder costs nothing now.
+
+**Decision:** measure, then switch to bge-m3 (wikipedia's encoder) unless
+jina-v3 finds entities better.
+- **bge-m3's advantages:** about 4× faster here (~19 card-days for the nine
+  families against ~77); exact with flash attention, and batching allowed;
+  MIT licence; one model shared with wikipedia.
+- **Its cost:** vectors twice as large (1,024 dims).
+
+**The test** (`tools/measure/wikidata_encoder_ab.py`) is a known-item test:
+- ~20,000 entities from the nine families, read from the 10-30 record
+  parts and cut as the space would embed them;
+- 400 questions written by the chat model without the entity's name, half
+  in English and half in Italian;
+- each encoder ranks the whole sample through the production client, the
+  query side included;
+- measured: MRR@10, recall@1 and recall@10, a paired randomization test, and
+  each by family and by language.
+
+**The rule:** keep jina-v3 only if it is better on MRR@10 with p < 0.05.
+Otherwise wikidata's space is created again on bge-m3 before any vector is
+written (RULE 1: nothing was published from it), and the records stay as
+they are.
+
