@@ -181,6 +181,28 @@ def test_in_flight_never_exceeds_the_profile_s_cores(isolated_config, tmp_path, 
     assert pool.peak > 2
 
 
+def test_a_profile_allowing_every_child_keeps_a_part_queued_behind_each(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """The profile bounds the parts COMPUTING. Clamped to the cores, a
+    window of one part per child left each child that finished idle until
+    the stream ran again — suspended while the build works on a page:
+    wikidata-bge's held build, 12 children under a 12-core night profile,
+    children ~32 % busy, the build's process 76 % idle (München,
+    2026-10-31). With cores ≥ children the window keeps a part queued
+    behind each child; the results are the same."""
+    c, rows = _gutenberg(tmp_path, corpus_dir)
+    rows = [dict(r) for r in (rows * 40)[:120]]
+    pages = [rows[i:i + 24] for i in range(0, 120, 24)]
+    truth = [parallel.compute("chunks", c, p) for p in pages]
+    s = _script(monkeypatch, _active(6))
+    pool = TimedPool(s)
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 6)
+    monkeypatch.setattr(parallel, "pool", lambda: pool)
+    assert list(parallel.compute_pages("chunks", c, iter(pages))) == truth
+    assert pool.peak > 6, f"{pool.peak} parts in flight for 6 children under 6 cores"
+    assert parallel.held() == {} and parallel.wanting() == {}
+
+
 def test_a_pause_submits_nothing_finishes_what_is_in_flight_and_resumes(
         isolated_config, tmp_path, corpus_dir, monkeypatch, fast):
     c, rows = _gutenberg(tmp_path, corpus_dir)

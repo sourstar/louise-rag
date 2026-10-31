@@ -344,6 +344,36 @@ def _ro(path: str) -> sqlite3.Connection:
     return con
 
 
+#: what `prefetch_held` attaches to a row: its `held` row (or None) and its
+#: manifest row (or None), looked up for a whole part at once
+HELD_AT, HELD_SRC = "_held_at", "_held_src"
+
+
+def prefetch_held(collection, rows: list[dict]) -> None:
+    """A part's held rows and manifest rows in two `IN` queries, attached to
+    each row (HELD_AT, HELD_SRC) — `held_or_parsed` looked each up alone:
+    two point queries a record, 34 % of a busy child in wikidata-bge's
+    build (München's py-spy, 2026-10-31). In the child, on its own copies."""
+    if not rows:
+        return
+    db = rows[0][HELD_DB]
+    uids = sorted({r["uid"] for r in rows})
+    held: dict[str, dict] = {}
+    src: dict[str, dict] = {}
+    man = _ro(str(collection.manifest_path))
+    for i in range(0, len(uids), 900):
+        part = uids[i:i + 900]
+        marks = ",".join("?" * len(part))
+        for r in _ro(db).execute(f"SELECT uid, path, frame, line FROM held WHERE uid IN ({marks})", part):
+            held[r["uid"]] = dict(r)
+        for r in man.execute("SELECT uid, native_id, path, lang, txt_hash FROM documents "
+                             f"WHERE uid IN ({marks})", part):
+            src[r["uid"]] = dict(r)
+    for r in rows:
+        r[HELD_AT] = held.get(r["uid"])
+        r[HELD_SRC] = src.get(r["uid"])
+
+
 def held_or_parsed(collection, plugin, row: dict) -> tuple[dict, int, bytes, dict[str, str]]:
     """The parse pool's "held-record" work, one document, found BY THE
     CHILD: its held line from the build database, its chunks cut again
@@ -355,8 +385,8 @@ def held_or_parsed(collection, plugin, row: dict) -> tuple[dict, int, bytes, dic
     wikipedia-v8's rebuild of 52.9 M records ran on one core of the eight
     the profile allowed (München, 2026-10-30: 75-97 % of one core, ~9 k
     records/s), the second time a records build ran single-threaded."""
-    at = _ro(row[HELD_DB]).execute("SELECT path, frame, line FROM held WHERE uid=?",
-                                   (row["uid"],)).fetchone()
+    at = row[HELD_AT] if HELD_AT in row else _ro(row[HELD_DB]).execute(
+        "SELECT path, frame, line FROM held WHERE uid=?", (row["uid"],)).fetchone()
     src = None
     if at is not None:
         line = records.read_record_at(Path(row[HELD_DIR]) / at["path"], int(at["frame"]), int(at["line"]))
@@ -367,13 +397,13 @@ def held_or_parsed(collection, plugin, row: dict) -> tuple[dict, int, bytes, dic
         # Such a line is parsed again, so the record holds what the origin
         # gives (invariant 11). No txt_hash (a re-discovered row) is no
         # evidence: the line is taken, as RULE 1 has it.
-        src = _ro(str(collection.manifest_path)).execute(
+        src = row[HELD_SRC] if HELD_SRC in row else _ro(str(collection.manifest_path)).execute(
             "SELECT uid, native_id, path, lang, txt_hash FROM documents WHERE uid=?",
             (row["uid"],)).fetchone()
         if src is None or not src["txt_hash"] or src["txt_hash"] == line.get("origin_hash"):
             return _record_from_line(collection, line)
     if src is None:
-        src = _ro(str(collection.manifest_path)).execute(
+        src = row[HELD_SRC] if HELD_SRC in row else _ro(str(collection.manifest_path)).execute(
             "SELECT uid, native_id, path, lang FROM documents WHERE uid=?", (row["uid"],)).fetchone()
     if src is None:
         raise LookupError(f"{row['uid']}: neither held nor in the manifest")
