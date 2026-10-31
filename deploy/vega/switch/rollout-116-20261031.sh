@@ -105,7 +105,7 @@ for p in $PKGS; do
 done
 MODELS=$(models | tr '\n' ' ')
 echo "models: $MODELS"
-MODE=${MODE_BEFORE:-$(mode)}; BEFORE_PAUSED=$(paused_collections)
+MODE=${MODE_BEFORE:-$(mode)}; BEFORE_PAUSED=${PAUSED_BEFORE:-$(paused_collections)}
 echo "mode $MODE; paused collections: ${BEFORE_PAUSED:-none}"
 case $MODE in running|paused) ;; *) echo "mode $MODE: run this from running or paused"; exit 1 ;; esac
 test -s /root/rollout-116-before.txt || fp $GATED > /root/rollout-116-before.txt
@@ -113,6 +113,17 @@ cat /root/rollout-116-before.txt
 for c in $GATED; do grep -q "^$c document " /root/rollout-116-before.txt || { echo "$c: its run not read"; exit 1; }; done
 grep -q " none$" /root/rollout-116-before.txt && { echo "a side's current run has no kept statement to compare with"; exit 1; } || true
 
+# RESUME_GATES=1 (with PAUSED_BEFORE = the list step 0 printed the first time): steps 1-3 ran already. Every
+# model on these packages is unloaded AGAIN first: on 2026-10-31 a search loaded bge-m3 between step 2 and
+# step 3 (the node's pause stops the worker, not a search), its process kept the OLD wrapper's run, and
+# wikipedia's gate met two runs and deferred
+if [ -n "${RESUME_GATES:-}" ]; then
+say "1-3 done in the run before (RESUME_GATES): every model on these packages unloaded again"
+for m in $MODELS; do
+  r=$(curl -s -X POST "$LOCALAI/backend/shutdown" -H "Content-Type: application/json" -d "{\"model\":\"$m\"}" || true)
+  case "$r" in *stopped*) echo "$m: stopped";; esac
+done
+else
 say "1. the node paused while the wrappers change"
 $L node pause
 
@@ -192,21 +203,25 @@ for p in $PKGS; do
   docker exec -w /backends/$p $LA /backends/$p/venv/bin/python -B -c "import vega_wrapper; vega_wrapper.engine_manifest; print('$p: imports ok')"
   echo "$p: now $(cut -c1-10 "$BK/$p/REVISION"), wrapper $(sha256sum "$BK/$p/vega_wrapper.py" | cut -c1-12)"
 done
+fi
 rm -rf "$STAGE"
 
 say "4. the node back to its mode; each collection gated, its fingerprints equal to the run before"
 [ "$MODE" = running ] && $L node resume
-check() {   # retried while the worker still holds the collection
-  local out="" rc=0
+check() {   # retried while the worker still holds the collection; a deferral (exit 3) asked again, 3 times
+  local out="" rc=0 n=0
   for _ in $(seq 1 40); do
     out=$($L hold embedder check "$1" 2>&1) && rc=0 || rc=$?
-    echo "$out" | grep -q "held by the node" || break
-    sleep 15
+    if echo "$out" | grep -q "held by the node"; then sleep 15; continue; fi
+    if [ $rc -eq 3 ] && [ $n -lt 3 ]; then
+      n=$((n + 1)); echo "$out" | grep "deferred" | head -2 | cut -c1-200; echo "$1: deferred, asked again ($n of 3)"; sleep 20; continue
+    fi
+    break
   done
   echo "$out" | grep -v "^\[warn:config\]"
   return $rc
 }
-for c in $GATED; do
+for c in ${GATED_ONLY:-$GATED}; do
   echo "--- $c"
   was_paused=; case " $BEFORE_PAUSED " in *" $c "*) was_paused=1 ;; esac
   [ -n "$was_paused" ] || $L node pause "$c" >/dev/null
