@@ -25,7 +25,7 @@ import os
 import statistics
 import time
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from . import calibration as cal, envelope as env
 from .codex import (BACKEND_PLACEHOLDER, ENGINE_VERSION, Codex, CodexError,
@@ -66,6 +66,15 @@ CPU_REVIEW_LINE = 0.995
 #: what a NEAR-EXACT run must reach against it (operator, 2026-10-31)
 CPU_NEAR_LINE = 0.999
 EXACT, NEAR = "exact", "near"
+#: THE MULTI-LOAD GATE (operator, 2026-10-31: "the gate may include multiple
+#: runs to ensure that the tolerance is not just a lucky run"): fresh loads
+#: measured, and the prefixes of the set's longest item added to the sixteen
+#: so every length band is asked (a shape-dependent kernel is found only by an
+#: input of that shape, 2026-10-30)
+NEAR_LOADS = 3
+SWEEP = 32
+#: how far apart a near-exact run's answers to one text may be
+NEAR_VARIATION = 0.99999
 
 
 @dataclass(frozen=True)
@@ -134,10 +143,16 @@ class Run:
     def ok(self) -> bool:
         """03 §3.3, both conjuncts, both over the drawn n: "at least
         `min_pass` reach cosine >= `tolerance` … and the median of those n
-        does too"."""
-        return (self.passed >= self.min_pass and self.median >= self.tolerance
-                and self.reproducible is not False
-                and not (self.cpu_worst is not None and self.cpu_worst < CPU_REVIEW_LINE))
+        does too"; and how exact the run is (`runs.passing` reads the same
+        from the statement)."""
+        if not (self.passed >= self.min_pass and self.median >= self.tolerance):
+            return False
+        if self.cpu_worst is not None and self.cpu_worst < CPU_REVIEW_LINE:
+            return False
+        if self.exactness == EXACT:
+            return self.reproducible is not False and self.load_variation >= 1.0
+        return (self.loads >= NEAR_LOADS and self.load_variation >= NEAR_VARIATION
+                and self.cpu_worst is not None and self.cpu_worst >= CPU_NEAR_LINE)
 
     def why(self) -> str:
         if self.ok:
@@ -149,7 +164,22 @@ class Run:
                          f"{self.tolerance} (needs {self.min_pass})")
         if self.median < self.tolerance:
             parts.append(f"median {self.median:.4f} is below {self.tolerance}")
-        if self.reproducible is False:
+        if self.exactness == NEAR:
+            if self.loads < NEAR_LOADS or self.load_variation < NEAR_VARIATION:
+                parts.append(f"near-exact: over {self.loads} fresh load(s) its answers to one "
+                             f"text came within {self.load_variation:.7f}, and a near-exact run "
+                             f"needs {NEAR_LOADS} loads within {NEAR_VARIATION}")
+            if self.cpu_worst is None or self.cpu_worst < CPU_NEAR_LINE:
+                parts.append(f"near-exact: needs a stored CPU reference reached at "
+                             f"{CPU_NEAR_LINE} ({'none is stored' if self.cpu_worst is None else f'worst {self.cpu_worst:.6f}'}; "
+                             f"`louise hold embedder cpu-reference`)")
+        elif self.load_variation < 1.0 and self.reproducible is not False:
+            parts.append(f"the run did not give back its own bytes across {self.loads} fresh "
+                         f"loads (closest {self.load_variation:.7f}; CLAUDE.md invariant 12). "
+                         f"An encoder measured FASTER that way may be admitted as near-exact: "
+                         f"`exactness = \"near\"` in its collection's [encoder] "
+                         f"(docs/notes/near-exact-runs.md)")
+        if self.reproducible is False and self.exactness == EXACT:
             parts.append("the run did not give back its own bytes: the sixteen fingerprint texts, "
                          "embedded one at a time again in reverse order, came back different "
                          "(CLAUDE.md invariant 12; set the vendor's reproducibility mode and "
@@ -199,6 +229,49 @@ def reproduces(single: Sequence[Sequence[float]], again: Sequence[Sequence[float
     return len(again) == len(single) and fingerprint.of(again) == fingerprint.of(single)
 
 
+def sweep(texts: Sequence, count: int, window: int | None) -> list:
+    """`count` prefixes of the longest item (a pair's second segment, its
+    first kept whole), from one word up to `window` words, spread evenly:
+    every length band, as tools/vega_repro_check's `--sweep` asks."""
+    if count <= 0 or not texts:
+        return []
+    longest = max(texts, key=lambda t: len(t[1]) if isinstance(t, tuple) else len(t))
+    first, body = longest if isinstance(longest, tuple) else (None, longest)
+    words = body.split()
+    top = min(len(words), window) if window else len(words)
+    if top <= 0:
+        return []
+    n = min(count, top)
+    sizes = sorted({1 + (k * (top - 1)) // max(1, n - 1) for k in range(n)})
+    return [(first, " ".join(words[:m])) if first is not None else " ".join(words[:m])
+            for m in sizes]
+
+
+def fresh_loads(texts: Sequence, embed_one, reload: Callable[[], None],
+                seed: bytes, loads: int = NEAR_LOADS) -> tuple[int, float]:
+    """(loads, the closest two answers of any one text — 1.0 when every text
+    came back as one byte string). Each load is fresh (`reload`) and asks the
+    texts one at a time in its own order."""
+    import random
+    import numpy as np
+    answers: list[dict[bytes, list[float]]] = [{} for _ in texts]
+    rng = random.Random(seed)
+    for _ in range(loads):
+        reload()
+        order = list(range(len(texts)))
+        rng.shuffle(order)
+        got = embed_one([texts[k] for k in order])
+        for k, v in zip(order, got):
+            answers[k].setdefault(np.asarray(v, dtype="<f4").tobytes(), list(v))
+    closest = 1.0
+    for seen in answers:
+        vs = list(seen.values())
+        for i in range(len(vs)):
+            for j in range(i + 1, len(vs)):
+                closest = min(closest, min(cosine(vs[i], vs[j]), 1.0 - 1e-12))
+    return loads, closest
+
+
 def gate_texts(codex: Codex, role: str, items: Sequence | None = None) -> list:
     """The 512 items as the gate sends them for `role`: the space's set (a
     pair space's from its member, `items`); on the query side each as one
@@ -230,12 +303,21 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
              stated: StatedRun | None = None,
              embed_one=None, contribute=None,
              items: Sequence[cal.Item] | None = None,
-             cpu_reference: tuple[str, Sequence[Sequence[float]]] | None = None) -> Run:
+             cpu_reference: tuple[str, Sequence[Sequence[float]]] | None = None,
+             reload: Callable[[], None] | None = None,
+             exactness: str = EXACT) -> Run:
     """One pass: embed all 512, draw the quorum, compare.
 
     `cpu_reference`: (the CPU twin's run, its 512 vectors) — the stored CPU
     reference (docs/notes/near-exact-runs.md §2): every answer's cosine to it
     is kept, and a worst below CPU_REVIEW_LINE fails the run.
+
+    `reload`: loads the model afresh. Given it, the fresh-load half of
+    invariant 12 is measured here (§3): NEAR_LOADS loads, each asking the
+    sixteen and SWEEP prefixes of the longest item one at a time in its own
+    order. Every text one byte string: exact. Otherwise the closest two
+    answers of a text are `load_variation`, and the run is near-exact only
+    where `exactness` is NEAR — never downgraded unasked.
 
     `embed(texts) -> list[list[float]]` is injected rather than imported so
     the gate stays a pure function of what the endpoint returned — the
@@ -305,6 +387,7 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
 
     taken = invariant = reproducible = None
     variation = 1.0
+    loads = 1
     if embed_one is not None:
         from . import fingerprint
         sixteen = [texts[i] for i in fingerprint.indices(texts)]
@@ -320,6 +403,10 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
             (cosine(a, b) for a, b in zip(single, again)), default=0.0)
         if contribute is not None:
             invariant = batch_invariant(single, contribute(sixteen))
+        if reload is not None:
+            loads, across = fresh_loads(sixteen + sweep(texts, SWEEP, codex.space.ctx),
+                                        embed_one, reload, seed or b"")
+            variation = min(variation, across)
 
     return Run(
         space_id=codex.space_id,
@@ -334,7 +421,8 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
         tokens_per_s=int(tokens / elapsed),
         stated=stated, fingerprint=taken, batch_invariant=invariant, role=role,
         reproducible=reproducible, cpu_run=cpu_run, cpu_cosines=cpu_cos,
-        load_variation=variation,
+        load_variation=variation, loads=loads,
+        exactness=NEAR if (exactness == NEAR and variation < 1.0) else EXACT,
     )
 
 
@@ -467,8 +555,13 @@ def _statement_run(run: Run, key, *, now: str) -> dict[str, Any]:
 
 
 def _decimal(x: float) -> str:
-    """A cosine as 09 §9.1's decimal string: "1" when exact."""
-    return "1" if x >= 1.0 else f"{x:.6f}"
+    """A load variation as 09 §9.1's decimal string: "1" when the answers
+    were byte-equal, and never a string that reads as 1 when they were not
+    (0.99999999 is not exact, and rounded to six places it would say so)."""
+    if x >= 1.0:
+        return "1"
+    out = f"{x:.9f}"
+    return "0.999999999" if out.startswith("1") else out
 
 
 def _validate_stated_engine(engine: Any) -> None:

@@ -1,5 +1,7 @@
 # Near-exact runs, the stored CPU reference, the multi-load gate (2026-10-31)
 
+*Built: S1 in #119, S2 in the change after it.*
+
 *Operator, 2026-10-31, choice C:*
 - Exact stays the default.
 - A run may be admitted as **near-exact**, but only on a gate of several fresh loads, so that its tolerance is "not just a lucky run".
@@ -66,7 +68,14 @@ A version-4 statement keeps meaning "exact, one load". `read_statement` reads 4 
 
 1. S1: the CPU reference store, its verb, and the gate's comparison with `cpu_reference` in the statement. The statement goes to version 5 here, with `exactness: "exact"` and `loads: 1` until S2.
 2. S2: the multi-load gate, the opt-in, and the near-exact verdict in `runs.check`.
-3. On the node:
-   - gutenberg's CPU reference, made once;
-   - then `exactness = "near"` and FA on for gutenberg's qwen3-4b on the P5 engine, its 8-run measurement (2026-10-31) as the evidence;
-   - then the gate.
+3. On the node: the CPU references, made once (gutenberg, wikipedia, pubmed's two sides), then each collection gated again.
+
+**gutenberg's FA on is OUT for now (München, 2026-10-31, P5 engine).** In
+the 8-run measurement, run 3 flipped one text (6.3e-5), and run 5 gave a
+NaN in a vector of a long sweep prefix. A NaN is a wrong answer, not a
+variation within a bound, so no near-exact setting admits it. The lead is
+the reranker's NaN: the SYCL flash-attention kernel on fully masked tiles,
+which a causal model's long sequence has (Qwen3; bge-m3, which is
+bidirectional, was 8 of 8 clean). It is investigated with the reranker NaN
+(task: reranker NaN). FA on comes back for gutenberg only once that is
+fixed and the 8 runs come back within the near-exact bound.

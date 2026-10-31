@@ -87,6 +87,13 @@ class EmbedRecipe:
     # (TEI/MedCPT); GPU llama-server stays serial — its multi-sequence
     # handling is the defect the batch gate exists for.
     concurrency: int = 1
+    # HOW EXACT A RUN OF THIS ENCODER MUST BE (operator, 2026-10-31, choice C;
+    # docs/notes/near-exact-runs.md): "exact" by default; "near" admits a run
+    # whose answers vary across fresh loads by no more than the gate's bound,
+    # measured over several loads and against the stored CPU reference — set
+    # only where such a setting is measured FASTER (flash attention). Never
+    # in the space: the vectors are the same function within tolerance.
+    exactness: str = "exact"
     # Which processor this endpoint spends: "gpu" | "cpu". DESCRIPTIVE
     # ONLY — it never enters the space id, because the same model on a
     # different device computes the same function (that is precisely what
@@ -145,6 +152,14 @@ def _agrees(url: str, key: str, value: str, url_key: str, where: str) -> None:
                         f"the key must agree with it (07 §7.8, amended 2026-10-08)")
 
 
+def _exactness(raw: dict, where: str) -> str:
+    value = str(raw.get("exactness", "exact"))
+    if value not in ("exact", "near"):
+        raise ValueError(f"{where}: `exactness` is \"exact\" or \"near\" "
+                         f"(docs/notes/near-exact-runs.md), got {value!r}")
+    return value
+
+
 def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
     """An [embed]-shaped TOML table -> EmbedRecipe. None for absent/not-a-
     table, so callers can say "declared or not".
@@ -191,6 +206,7 @@ def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
         query_url=query_url,
         query_model=query_model,
         concurrency=max(1, int(raw.get("concurrency", 1))),
+        exactness=_exactness(raw, where),
         device=(str(raw["device"]).lower()
                 if raw.get("device") in ("gpu", "cpu", "GPU", "CPU")
                 else None),
