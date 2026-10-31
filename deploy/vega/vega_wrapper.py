@@ -474,21 +474,25 @@ def tree_digest(root: Path, files: FileDigests | None = None) -> str:
 #: a relative path never begins with `/`, so the two cannot collide — and of
 #: the one setting of vega.json that changes what is embedded, `cuts`.
 WRAPPER_PREFIX = "/vega/"
-#: what is in the package and is NOT the wrapper's function: the host's
-#: settings (vega.json: the socket, the cards), the install record, the kept
-#: digests, and what Python compiles or pip installs beside the code
-WRAPPER_EXCLUDED_TOP = ("vega.json", INSTALL_RECORD, DIGEST_STORE, "venv")
-#: the kept digests' temporary file, written beside them while a load hashes
-WRAPPER_EXCLUDED_TMP = f".{DIGEST_STORE}."
-WRAPPER_EXCLUDED_DIRS = ("__pycache__",)
+#: WHAT OF THE PACKAGE IS THE WRAPPER: its code alone, by an allow-list — the
+#: Python files (below the package, outside WRAPPER_SKIPPED_DIRS) and the
+#: top-level run.sh LocalAI starts. Not by an exclusion list: the package also
+#: holds what the host puts there (vega.json's socket and cards, the install
+#: record, the kept digests and their temporary file, the receipts socket's
+#: `run/`, Intel's kernel cache `neo-cache/` where a model's env names no
+#: other), and each of those, hashed, would move the run under load
+#: (München, 2026-10-31, before #116's rollout).
+WRAPPER_ENTRY = "run.sh"
+WRAPPER_SKIPPED_DIRS = ("venv", "__pycache__")
 
 
 def wrapper_manifest(package: Path, cuts: str,
                      files: FileDigests | None = None) -> dict[str, dict[str, Any]]:
-    """The wrapper's half of a backend engine's tree: every regular file of the
-    package (`tree_manifest`'s entries), its paths under WRAPPER_PREFIX, but
-    for WRAPPER_EXCLUDED_TOP and any WRAPPER_EXCLUDED_DIRS; and `cuts` as a
-    `setting` entry."""
+    """The wrapper's half of a backend engine's tree: its code (the package's
+    `*.py` files, outside WRAPPER_SKIPPED_DIRS, and the top-level
+    WRAPPER_ENTRY) as `tree_manifest` writes a file, its paths under
+    WRAPPER_PREFIX; and `cuts`, the one setting of vega.json that changes
+    what is embedded, as a `setting` entry."""
     files = files if files is not None else FileDigests()
     package = Path(package)
     out: dict[str, dict[str, Any]] = {}
@@ -497,19 +501,16 @@ def wrapper_manifest(package: Path, cuts: str,
         with os.scandir(directory) as it:
             entries = sorted(it, key=lambda e: e.name)
         for e in entries:
-            if (not prefix and (e.name in WRAPPER_EXCLUDED_TOP
-                                or e.name.startswith(WRAPPER_EXCLUDED_TMP))) \
-                    or e.name in WRAPPER_EXCLUDED_DIRS:
-                continue
             rel = prefix + e.name
-            st = e.stat(follow_symlinks=False)
-            if stat.S_ISDIR(st.st_mode):
-                walk(Path(e.path), rel + "/")
-            elif stat.S_ISREG(st.st_mode):
+            # the name first: nothing else is stat'ed (the kept digests' temporary
+            # file comes and goes while a load hashes)
+            if e.is_dir(follow_symlinks=False):
+                if e.name not in WRAPPER_SKIPPED_DIRS:
+                    walk(Path(e.path), rel + "/")
+            elif (e.name.endswith(".py") or rel == WRAPPER_ENTRY) \
+                    and e.is_file(follow_symlinks=False):
                 size, sha = files.read(e.path)
                 out[WRAPPER_PREFIX + rel] = {"type": "file", "size": size, "sha256": sha}
-            elif stat.S_ISLNK(st.st_mode):
-                out[WRAPPER_PREFIX + rel] = {"type": "link", "target": os.readlink(e.path)}
 
     walk(package, "")
     out[WRAPPER_PREFIX + "vega.json#cuts"] = {"type": "setting", "value": cuts}
