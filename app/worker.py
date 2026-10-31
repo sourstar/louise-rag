@@ -735,7 +735,7 @@ def _record_embedded(collection, started: float, counts) -> None:
 _QUEUE_ELIGIBLE = """
     SELECT d.* FROM embed_queue q CROSS JOIN documents d ON d.uid=q.uid
     WHERE d.in_scope=1 AND d.rdf_done=1 AND d.error IS NULL AND d.retries<?
-      AND (d.embed_done=0 OR d.embed_version < ?)
+      AND (d.embed_done=0 OR (d.embed_done=1 AND d.embed_version < ?))
     ORDER BY q.priority DESC, q.ts LIMIT ?"""
 
 # NOT EXISTS, never `uid NOT IN (SELECT ...)`: the IN form materialises EVERY

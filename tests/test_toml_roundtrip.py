@@ -38,7 +38,8 @@ def write(path, c):
         snapshot=c.snapshot, extras=c.extras, peer_source=c.peer_source,
         title=c.title, slices=c.slices, kinds=c.kinds, share=c.share,
         reranker=c.reranker, source=c.source,
-        share_slices=c.share_slices, share_kinds=c.share_kinds)
+        share_slices=c.share_slices, share_kinds=c.share_kinds,
+        embed_slices=c.embed_slices)
 
 
 # ---- the Codex half -------------------------------------------------------
@@ -85,6 +86,8 @@ def codex_loaded(tmp_path, isolated_config, monkeypatch):
         # 07 §7.8 share_slices / share_kinds (2026-10-07): away from None too
         'share_slices = ["lang=en"]\n'
         'share_kinds = ["records"]\n'
+        # 07 §7.8 embed_slices (2026-10-31): away from None too
+        'embed_slices = ["lang=en"]\n'
         '\n[encoder]\n'
         # the space's own values (tests/hold/test_template.py's recipe):
         # still accepted where they agree with the Codex, never written back

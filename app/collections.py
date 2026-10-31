@@ -446,6 +446,11 @@ class Collection:
     # `share_kinds`; 04 §4.3): what serving is narrowed to; None = all held
     share_slices: tuple[str, ...] | None = None
     share_kinds: tuple[str, ...] | None = None
+    # 07 §7.8 `embed_slices` (operator, 2026-10-31: wikidata "hold all 14 and
+    # embed 9"): the slices the node's encoder spends on, out of those held;
+    # None = every slice held. A document outside them is marked "not
+    # embedded here" by app/slice_scope.py and never offered to the encoder
+    embed_slices: tuple[str, ...] | None = None
     #: why `embed_mode_default` is not what the file says: `embed = "p2p"`
     #: with `share = false` runs as `all` — p2p publishes what it embeds, and
     #: a node that does not share can publish nothing (07 §7.8, 2026-10-19)
@@ -562,6 +567,7 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
         raise ValueError(f"{where}: share is true or false (07 §7.8), got {share!r}")
     share_slices = _parse_share_list(raw.get("share_slices"), "share_slices", where)
     share_kinds = _parse_share_list(raw.get("share_kinds"), "share_kinds", where)
+    embed_slices = _parse_share_list(raw.get("embed_slices"), "embed_slices", where)
     if share_kinds is not None:
         bad = [k for k in share_kinds if k not in SHARE_KINDS]
         if bad:
@@ -661,6 +667,7 @@ def _codex_collection(path: Path, raw: dict[str, Any], name: str) -> Collection:
         share=share,
         share_slices=share_slices,
         share_kinds=share_kinds,
+        embed_slices=embed_slices,
         source=source,
     )
 

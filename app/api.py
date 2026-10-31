@@ -235,7 +235,7 @@ def stats():
     collection = _collection()
     langs = [dict(r) for r in con.execute("""
         SELECT COALESCE(lang,'?') lang, COUNT(*) books,
-          SUM(fts_done) fts_done, SUM(embed_done) embed_done,
+          SUM(fts_done) fts_done, SUM(embed_done=1) embed_done,
           SUM(tokens) tokens
         FROM documents WHERE in_scope=1 GROUP BY lang ORDER BY books DESC LIMIT 30""")]
     usage = con.execute("""

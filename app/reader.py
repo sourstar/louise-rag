@@ -86,7 +86,7 @@ def document(collection, book_id: int) -> dict | None:
         "subjects": row.get("subjects") or "",
         "origin_url": origin(row) if origin else None,
         "reference": _reference_line(collection, row),
-        "indexed": bool(row.get("fts_done")), "embedded": bool(row.get("embed_done")),
+        "indexed": bool(row.get("fts_done")), "embedded": row.get("embed_done") == 1,
         "text_from": source_store,
     }
     return {"header": header, "chunks": chunks}

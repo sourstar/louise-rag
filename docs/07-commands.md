@@ -1437,6 +1437,10 @@ slices = ["year=1975-1979", "year=1980-1984"]  # or "all"; a list is PART of the
                                                # (2026-10-31) where one origin holds every slice (wikidata: one dump, every
                                                # family), the node PROCESSES only the slices listed: in_scope is narrowed to
                                                # them after each scan, and the stages wait for it (app/slice_scope.py)
+embed_slices = ["family=person", "family=work"]  # optional (2026-10-31): the slices the encoder spends on, out of those held;
+                                               # absent = every slice held. A document outside them is marked "not embedded
+                                               # here" (embed_done = -1): never an embed candidate, never counted embedded,
+                                               # back to 0 when the list grows; one already embedded keeps its vectors
 kinds  = ["records", "vectors"]
 embed  = "on-demand"                           # off | on-demand | all | p2p: what the node's encoder spends, never what search uses;
                                                # all = every part itself ("all local"), p2p = the parts rendezvous gives this node,
