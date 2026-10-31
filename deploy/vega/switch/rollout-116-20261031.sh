@@ -68,8 +68,9 @@ PY
 }
 
 say "0. preconditions, the new files, the ones they replace saved, the runs and fingerprints now"
-test ! -e $M/vega-qwen3-embedding-4b-p5fa.yaml || { echo "the FA-on measurement's temporary model is still there"; exit 1; }
-pgrep -f "^bash /root/measure/" >/dev/null && { echo "a measurement is running"; exit 1; } || true
+# a candidate model left for its gate (vega-qwen3-embedding-4b-p5fa) is unloaded with the rest and gated
+# after this, on its new run; a measurement still loading models fresh is not run across
+pgrep -f "^bash /root/measure/(qwen|age-probe|after-)" >/dev/null && { echo "a measurement is running"; exit 1; } || true
 test -s "$SRC" && test -s /root/fp_runs.py || { echo "no $SRC or /root/fp_runs.py"; exit 1; }
 STAGE=$(mktemp -d)
 tar -xf "$SRC" -C "$STAGE"
