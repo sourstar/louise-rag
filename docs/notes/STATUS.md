@@ -782,6 +782,18 @@ it left open is below.
   - **qwen3-4b with FA off was bit-exact but WRONG.** The gate measured a median cosine of 0.126, so it was backed out. The cause is almost certainly P5, the ggml-sycl batched F16×F32 matmul on a non-contiguous operand, reached by Qwen3's GQA KQ without FA. **Fixed by the engine:** since 2026-10-31 08:42, qwen3-4b runs FA off on the P1–P5 engine (`vega-llama-cpp-p5`, MADLAD's). That is bit-exact (8 of 8 runs plus the 2,048 sweep) and correct (gate PASS, run ac7d01ea, worst 0.999737). gutenberg is resumed. Still open: the same engine with FA on, measured next.
   - **The cost:** FA off ran gutenberg's chunks ~2× slower (2.0–2.3 chunks/s against 4.0–5.4).
   - **The lever:** find why the SYCL FA kernel is not reproducible across loads (consistent within a load, intermittent across loads, on long inputs). A fix gives FA back to every encoder, with its speed. To be started once gutenberg runs again on a correct run.
+  - **FOUND (2026-10-31): oneDNN's fused SDPA.** `GGML_SYCL_ENABLE_DNN=0` never covered flash attention; `GGML_SYCL_FA_ONEDNN=0` does.
+    - qwen3-4b on P5 with FA on, oneDNN's SDPA: 4 of 8 runs varied, with a NaN and a 0.0865 wrong vector.
+    - The same + FA_ONEDNN=0: 8 of 8 bit-exact, no NaN, 23–45 % faster than FA off (approved-encoders.md).
+    - #124 makes FA_ONEDNN=0 the wrapper's Intel contract.
+  - **Rolled out 12:38 (rollout-116, #116/#117/#124):** the wrapper is part of the engine, and FA_ONEDNN=0 is in every SYCL model.
+    - Every collection was gated anew by the multi-load gate (#120): exact over 3 fresh loads, version-5 statements.
+    - gutenberg b36c5912; wikipedia 92775442 (its fingerprint moved: bge-m3 runs FA on, now without oneDNN's SDPA; worst 0.999939); pubmed 90105522 / 0df07afc; normattiva 7c990c09; wikidata dfcae2d9 / 7174aea8.
+    - Every other fingerprint stayed bit-identical.
+  - **Next:**
+    - gutenberg onto FA on + FA_ONEDNN=0, pre-approved after the 2,048 sweep and the gate on a candidate name (rollout-qwen-fa-20261031.sh);
+    - medcpt-query and the bge reranker the same way, if FA on is exact and faster;
+    - the CPU references tonight.
   - **Decided (operator, 2026-10-31): KEEP** gutenberg's 10,476,253 chunks written with FA on (runs 94f8b022, 203479bf). They are valid at tolerance, and only their bit-for-bit reproduction is lost. A re-embed (~7.82 B tokens, ~35 card-days) stays possible at any later re-creation.
 
 - **"Every plate" — gutenberg parser 11** (operator, 2026-10-25; 08 §8.7,
