@@ -321,6 +321,11 @@ def build_scalar(collection, *, log=None) -> dict:
     tbl = _table(collection)
     if tbl is None:
         return {"built": False, "reason": "no vector table"}
+    return build_scalar_table(tbl, log=log)
+
+
+def build_scalar_table(tbl, *, log=None) -> dict:
+    """`build_scalar` on a table by handle (`build_table`'s twin)."""
     rows = tbl.count_rows()
     t0 = time.monotonic()
     tbl.create_scalar_index(BOOK_COLUMN, index_type="BTREE", replace=True)
@@ -361,10 +366,20 @@ def build(collection, *, index_type: str | None = None, partitions: int | None =
           log=None) -> dict:
     """Train and build the index now (CLI, or ensure()). Replaces an
     existing one. Returns what was built."""
-    from lancedb.index import IvfFlat, IvfPq
     tbl = _table(collection)
     if tbl is None:
         return {"built": False, "reason": "no vector table"}
+    out = build_table(tbl, index_type=index_type, partitions=partitions, log=log)
+    forget(collection)
+    return out
+
+
+def build_table(tbl, *, index_type: str | None = None, partitions: int | None = None,
+                log=None) -> dict:
+    """`build` on a table by handle: the same index, by the same rule, on a
+    table that is not (yet) the collection's — `vector_rewrite` builds the
+    rewritten copy's before it swaps it in, so searches never scan."""
+    from lancedb.index import IvfFlat, IvfPq
     rows = tbl.count_rows()
     if rows == 0:
         return {"built": False, "reason": "empty table"}
@@ -382,7 +397,6 @@ def build(collection, *, index_type: str | None = None, partitions: int | None =
             sub -= 1
         cfg = IvfPq(distance_type="l2", num_partitions=k, num_sub_vectors=sub)
     tbl.create_index(VECTOR_COLUMN, config=cfg, replace=True)
-    forget(collection)
     dt = time.monotonic() - t0
     out = {"built": True, "type": kind, "partitions": k, "rows": rows, "seconds": round(dt, 1)}
     if log:

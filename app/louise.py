@@ -1571,6 +1571,41 @@ def cmd_dev_unindexable(a) -> int:
     return 0
 
 
+def cmd_dev_rewrite_vectors(a) -> int:
+    """`louise dev rewrite-vectors <collection> [--yes] [--restart] [--drop-old]`
+    (operator, 2026-10-31: "Rewrite wikipedia now"): the vector table copied
+    into one with Lance's stable row ids, indexed, verified and swapped in
+    (app/vector_rewrite.py). Without --yes, the plan. Only on a PAUSED
+    collection; SIGTERM finishes the group in flight and exits 130."""
+    import signal
+    import threading
+    from app import db, node_state, vector_rewrite
+    collection = _node_collections(a.collection)[0]
+    say = lambda m: print(f"[rewrite-vectors] {collection.name}: {m}", file=sys.stderr)  # noqa: E731
+    if a.drop_old:
+        _print(vector_rewrite.drop_old(collection, log=say))
+        return 0
+    if not a.yes:
+        _print(vector_rewrite.plan(collection))
+        return 0
+    if collection.name not in node_state.paused_collections():
+        print(f"louise: {collection.name} is not paused: `louise node pause {collection.name}` "
+              f"first — nothing may write its vector table while it is copied", file=sys.stderr)
+        return 2
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stop.set())
+    with _closing(db.connect(collection)) as con:
+        try:
+            out = vector_rewrite.run(collection, con, stop=stop, log=say, group=a.group,
+                                     restart=a.restart)
+        except vector_rewrite.RewriteError as e:
+            print(f"louise: {collection.name}: {e}", file=sys.stderr)
+            return 2
+    _print(out)
+    return 130 if out.get("interrupted") else 0
+
+
 def cmd_dev_carry(a) -> int:
     """`louise dev carry <from> <to> [--copy] [--keep producer:<archive>] --yes`
     (07 §7.3; docs/notes/v5-migration.md G1, G2; amendment A1): the source's
@@ -5277,6 +5312,16 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(p); p.add_argument("collection"); p.add_argument("uid")
     p.add_argument("--yes", action="store_true")
     p.set_defaults(fn=cmd_dev_unindexable)
+    p = dverbs.add_parser("rewrite-vectors", help="the vector table copied into one with Lance's stable "
+                                                  "row ids, indexed, verified and swapped in; the plan "
+                                                  "without --yes (a paused collection)")
+    p.add_argument("collection")
+    p.add_argument("--yes", action="store_true", help="do it")
+    p.add_argument("--restart", action="store_true", help="drop a copy in progress and start again")
+    p.add_argument("--drop-old", action="store_true", dest="drop_old",
+                   help="remove the table the swap set aside, once every process reads the new one")
+    p.add_argument("--group", type=int, default=8, help="source fragments per append (default 8)")
+    p.set_defaults(fn=cmd_dev_rewrite_vectors)
     p = dverbs.add_parser("carry", help="a collection's manifest, text index and vector table into a new "
                                         "collection with the same records (amendment A1); writes "
                                         "only with --yes (both collections' locks)")
