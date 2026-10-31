@@ -1698,3 +1698,20 @@ model and the candidate in alternating passes on the same card in the same minut
 The speed oneDNN's SDPA gave (2–2.4×) does not come back without its non-reproducibility.
 gutenberg has nothing pending beyond book 673 today, so the card's share is unchanged until new
 books arrive.
+
+### 2026-10-31 — every query's reranker with flash attention on, oneDNN's SDPA off — MEASURED
+
+**What changed.** louise-rerank-bge moved at 14:06 from the strict settings (FA off,
+GGML_SYCL_ENABLE_OPT/GRAPH/FUSION=0) to FA on + `GGML_SYCL_FA_ONEDNN=0` (approved-encoders.md).
+A search reranks its top 50 (05 §5.6), so a query's wait for the reranker is the row that counts.
+Measured on gutenberg's real candidates (rerank_capture.py), warm unless said:
+
+| request | strict (BEFORE) | FA on + FA_ONEDNN=0 (AFTER) |
+|---|---|---|
+| 40 documents, median of 9 / 45 | 3.87 s | 2.80 s |
+| 56 documents | 5.32 s | 3.55 s |
+| 72 documents | 7.00 s | 4.46 s |
+| 50 documents, median of 10 | 5.22 s | 4.39 s (4.24–4.47 live after the move) |
+
+The 40/56/72 medians include each load's first request, and the 50-document medians are warm.
+FA on with oneDNN's SDPA gave 1.8–2.2 s for 50 on 2026-10-21, and NaN with it.
