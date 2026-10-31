@@ -1131,7 +1131,8 @@ def cmd_node_pause(a) -> int:
     at the end of its current unit and runs nothing for until `resume`."""
     from app import node_state
     if a.collection:
-        names = node_state.set_paused(a.collection, True)
+        names = node_state.set_paused(a.collection, True,
+                                      by=f"louise node pause {a.collection} ({node_state.invoker()})")
         _print({"paused": sorted(names)})
         return 0
     state = "acquire-only" if a.acquire_only else "seed-only" if a.seed_only else "paused"
@@ -1746,7 +1747,8 @@ def cmd_node_stop(a) -> int:
 def cmd_node_resume(a) -> int:
     from app import node_state
     if a.collection:
-        names = node_state.set_paused(a.collection, False)
+        names = node_state.set_paused(a.collection, False,
+                                      by=f"louise node resume {a.collection} ({node_state.invoker()})")
         _print({"paused": sorted(names)})
         return 0
     node_state.set_worker_state("running", by="louise node resume")

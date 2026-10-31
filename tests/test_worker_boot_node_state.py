@@ -176,3 +176,19 @@ def test_node_show_lists_the_last_mode_writes(isolated_config):
     node_state.set_worker_state("seed-only", by="louise node pause --seed-only")
     got = node_show.overrides()["mode_writes"]
     assert got[-1]["state"] == "seed-only" and got[-1]["by"] == "louise node pause --seed-only"
+
+
+def test_every_collection_pause_is_recorded_with_who_made_it(isolated_config):
+    """2026-10-31: normattiva was found paused, and neither the operator nor
+    the node session had paused it; nothing recorded who had."""
+    from app import node_show
+    node_state.set_paused("normattiva", True, by="louise node pause normattiva (from bash probe.sh)")
+    node_state.set_paused("pubmed", True)
+    node_state.set_paused("pubmed", False, by="louise node resume pubmed")
+    got = node_state.pause_history()
+    assert [(h["collection"], h["paused"], h["by"]) for h in got] == [
+        ("normattiva", True, "louise node pause normattiva (from bash probe.sh)"),
+        ("pubmed", True, "unnamed"), ("pubmed", False, "louise node resume pubmed")]
+    shown = node_show.overrides()["paused_by"]
+    assert set(shown) == {"normattiva"} and "probe.sh" in shown["normattiva"]["by"]
+    assert "user" in node_state.invoker() or node_state.invoker() == ""

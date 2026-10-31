@@ -52,7 +52,23 @@ def overrides() -> dict[str, Any]:
     return {"mode": mode, "paused_collections": node_state.peek(_paused, []),
             "bandwidth_bps": bw,
             # the last mode writes and who made them (node_state.set_worker_state)
-            "mode_writes": node_state.peek(_mode_writes, [])}
+            "mode_writes": node_state.peek(_mode_writes, []),
+            # who paused each collection paused now, and when (node_state.set_paused)
+            "paused_by": node_state.peek(_paused_by, {})}
+
+
+def _paused_by(con) -> dict[str, Any]:
+    from app import db, node_state
+    try:
+        hist = json.loads(db.get_control(con, node_state.PAUSED_HISTORY_KEY) or "[]")
+    except ValueError:
+        return {}
+    now = set(_paused(con))
+    out: dict[str, Any] = {}
+    for h in hist:
+        if isinstance(h, dict) and h.get("collection") in now and h.get("paused"):
+            out[h["collection"]] = {"at": h.get("at"), "by": h.get("by")}
+    return out
 
 
 def _mode_writes(con) -> list[dict[str, Any]]:
