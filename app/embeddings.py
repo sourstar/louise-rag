@@ -602,6 +602,12 @@ def _body(recipe: "collections_mod.EmbedRecipe", batch: list[Item]) -> dict:
     return {"input": batch, **model}
 
 
+def batch_size(recipe) -> int:
+    """Chunks a request carries: the collection's `[encoder] batch`, else the
+    node's EMBED_BATCH (2026-10-31)."""
+    return max(1, int(getattr(recipe, "batch", 0) or 0) or int(config.EMBED_BATCH))
+
+
 def _side(recipe: "collections_mod.EmbedRecipe", query: bool) -> "collections_mod.EmbedRecipe":
     """The recipe of the side that is asked: the query encoder's when the
     collection declares one and a query is being embedded, else the recipe.
@@ -704,8 +710,8 @@ def _embed_texts(texts: list[Item], timeout: float = 300, *,
             return _embed_batch(b, timeout, recipe, raw=raw, runs=runs)
         return _embed_batch(b, timeout, recipe)
 
-    batches = [texts[i:i + config.EMBED_BATCH]
-               for i in range(0, len(texts), config.EMBED_BATCH)]
+    size = batch_size(recipe)
+    batches = [texts[i:i + size] for i in range(0, len(texts), size)]
     workers = min(config.EMBED_CONCURRENCY, len(batches))
     if workers > 1:
         # a pool thread starts with an EMPTY context: without handing over

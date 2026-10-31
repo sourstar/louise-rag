@@ -1465,6 +1465,10 @@ query_model = "medcpt-query"                   # required: the model questions a
 api = "openai"                                 # openai (default) · ollama · vega: LocalAI's /v1/embeddings with a `vega-` model
                                                # named by `embed_model`/`query_model`; every vector, a query's too, taken only with its VeGa
                                                # receipt, whose run is the answer's (amended 2026-10-08, docs/notes/vega.md)
+batch = 16                                     # optional: chunks a request carries; absent or 0, the node's EMBED_BATCH. A run
+                                               # writes batched answers only once the gate measured it at this batching
+                                               # (it runs again by itself when the batching changes). Not in the space
+                                               # (added 2026-10-31: wikipedia's embedding was bound by one chunk a request)
 
 [reranker]                                     # optional (05 §5.6): this node's reranker for this collection
 url = "http://nas:30447/v1/rerank"             # the full endpoint, path included — unlike [encoder]'s url
