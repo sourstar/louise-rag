@@ -7,7 +7,7 @@
 # JSON, which is YAML.
 {
   "name": "louise-rerank-medcpt",
-  "backend": "vega-louise-python-20261021b",
+  "backend": "vega-louise-python-20261030",
   "reranking": true,
   "context_size": 512,
   "threads": 6,
@@ -22,7 +22,7 @@
     "device:xpu"
   ],
   "env": {
-    "LOUISE_BITEXACT_MEASURED": "louise-python-20261021b",
+    "LOUISE_BITEXACT_MEASURED": "louise-python-20261030",
     "NEO_CACHE_DIR": "/data/louise-cache/neo-cache",
     "OV_CACHE_DIR": "/data/louise-cache/ov-cache"
   },

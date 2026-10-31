@@ -8,11 +8,12 @@
 # `cuts` — so neo-cache/, run/, REVISION and vega.json are out by construction.
 #
 # The packages that back a model (2026-10-31): vega-llama-cpp, -cpu, -p5
-# (REVISION 0ec2239, #110) and vega-llama-cpp-gen, vega-louise-python-20261021a,
-# -20261030 (8cbb8ad). Not touched: vega-llama-cpp-t5 (MADLAD's llama-cpp, no
-# wrapper) and the packages no model uses (vega-louise-python, -20261020,
-# -20261020b at a2c89e8; -20261020c, -20261021b) — a model put on one later
-# is a new run whatever it carries.
+# (REVISION 0ec2239, #110) and vega-llama-cpp-gen, vega-louise-python-20261020c
+# (pubmed's article CPU twin, a JSON model file), -20261021a, -20261030
+# (8cbb8ad). Not touched: vega-llama-cpp-t5 (MADLAD's llama-cpp, no wrapper)
+# and the packages no model uses (vega-louise-python, -20261020, -20261020b at
+# a2c89e8; -20261021b) — a model put on one later is a new run whatever it
+# carries.
 #
 # RULE 1, the shortcuts, named:
 #   - a rebuild by build_vega_package.sh would reinstall every file; the files
@@ -35,7 +36,7 @@ set -euo pipefail
 
 BK=/mnt/ssd5/apps/localai/backends
 M=/mnt/ssd5/apps/localai/models
-PKGS="vega-llama-cpp vega-llama-cpp-cpu vega-llama-cpp-p5 vega-llama-cpp-gen vega-louise-python-20261021a vega-louise-python-20261030"
+PKGS="vega-llama-cpp vega-llama-cpp-cpu vega-llama-cpp-p5 vega-llama-cpp-gen vega-louise-python-20261020c vega-louise-python-20261021a vega-louise-python-20261030"
 FILES="vega_wrapper.py app/hold/codex.py REVISION"
 PYC="__pycache__/vega_wrapper.cpython-312.pyc app/hold/__pycache__/codex.cpython-312.pyc"
 SRC=/root/vega-116.tar

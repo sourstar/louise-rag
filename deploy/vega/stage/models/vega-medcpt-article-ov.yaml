@@ -1,9 +1,9 @@
 {
-  "backend": "vega-louise-python-20261021b",
+  "backend": "vega-louise-python-20261030",
   "context_size": 512,
   "embeddings": true,
   "env": {
-    "LOUISE_BITEXACT_MEASURED": "louise-python-20261021b",
+    "LOUISE_BITEXACT_MEASURED": "louise-python-20261030",
     "NEO_CACHE_DIR": "/data/louise-cache/neo-cache",
     "OV_CACHE_DIR": "/data/louise-cache/ov-cache"
   },
