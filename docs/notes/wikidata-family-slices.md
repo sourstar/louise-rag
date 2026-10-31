@@ -414,7 +414,32 @@ jina-v3 finds entities better.
 - measured: MRR@10, recall@1 and recall@10, a paired randomization test, and
   each by family and by language.
 
-**The rule:** keep jina-v3 only if it is better on MRR@10 with p < 0.05.
+**The rule, reversed by the operator the same evening** ("If bge is as good
+we switch to jina because it's less disk space. Use jina gguf for the
+comparison so we can evaluate both speed and reliability"): bge-m3 only if
+it is BETTER on MRR@10 with p < 0.05; otherwise jina-v3, whose vectors are
+half the size.
+
+**jina-v3 on llama.cpp joins the comparison** (`--encoder jina-gguf`). llama.cpp
+has the `jina-bert-v3` architecture since build b6311 (late August 2025),
+and the node's tree has it too (c0fd786).
+- **The weights:** our own f16 conversion from ab036b0 with that tree's
+  `convert_hf_to_gguf.py`, which writes the base model and one LoRA a task.
+  The bytes are compared with second-state's f16 for provenance. Each side's
+  LoRA is merged in (`llama-export-lora`), because VeGa states no run that
+  loads a second file.
+- **Two models:** `vega-jina-v3-gguf` and `vega-jina-v3-gguf-query`.
+- **What llama.cpp does not do:** it does not apply the adapter's prompt
+  prefix, so the tool puts the task instruction first. The tool also makes
+  the 512 cut.
+- **What the score adds:**
+  - chunks per second for each encoder (speed);
+  - the llama.cpp vectors' cosine to the torch reference's, chunk by chunk
+    (reliability);
+  - bit-exactness over fresh loads, by `tools/vega_repro_check.py --sweep`
+    on the two models, measured apart.
+
+(The rule before:) keep jina-v3 only if it is better on MRR@10 with p < 0.05.
 Otherwise wikidata's space is created again on bge-m3 before any vector is
 written (RULE 1: nothing was published from it), and the records stay as
 they are.

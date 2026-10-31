@@ -21,8 +21,10 @@ Italian against English text: the reader's language).
   embed    OUT_DIR --encoder jina|bge  each side through the PRODUCTION
            client (`embeddings.embed_calibration`, `_embed_texts` underneath) with the collection's recipe —
            wikidata's for jina-v3, wikipedia's for bge-m3; resumable by block
-  score    OUT_DIR  the table, and the verdict: bge-m3 unless jina-v3 is
-           better on MRR@10 with p < 0.05.
+  score    OUT_DIR  the table — quality, speed (chunks/s), jina-v3 on llama.cpp
+           against its torch reference — and the verdict (operator, 2026-10-31):
+           bge-m3 only if it is BETTER on MRR@10 with p < 0.05, else jina-v3,
+           whose vectors are half the size.
 """
 from __future__ import annotations
 
@@ -37,7 +39,19 @@ from typing import Callable
 
 TOP = 10
 BLOCK = 1000
-ENCODERS = {"jina": "wikidata", "bge": "wikipedia"}   # the collection whose recipe embeds
+ENCODERS = {"jina": "wikidata", "bge": "wikipedia",     # the collection whose recipe embeds
+            "jina-gguf": "wikidata"}
+#: jina-v3 on llama.cpp (operator, 2026-10-31: "Use jina gguf for the
+#: comparison so we can evaluate both speed and reliability"): the f16 GGUF
+#: with each task's LoRA MERGED in (llama-export-lora), one model a side —
+#: VeGa states no run that loads a second file (app/vega/loadopts.py
+#: SECOND_FILE_FIELDS). llama.cpp reports an adapter's prompt prefix but does
+#: not apply it, so the task instruction is put before the text here, as the
+#: torch task does in the backend; the Matryoshka cut to 512 is made here too
+GGUF_MODELS = {False: "vega-jina-v3-gguf", True: "vega-jina-v3-gguf-query"}
+JINA_INSTRUCTIONS = {False: "Represent the document for retrieval: ",
+                     True: "Represent the query for retrieving evidence documents: "}
+JINA_DIM = 512
 NINE = ("person", "work", "place", "organization", "event", "heritage", "built", "scholarly", "property")
 PROMPT = {
     "en": ("Here is what Wikidata says about one entity. Write ONE short search query, in English, that "
@@ -169,7 +183,19 @@ def _recipe(encoder: str):
     #   8,191 for its 8,192
     if encoder == "jina":
         return recipe
+    if encoder == "jina-gguf":
+        # its own two models; a window above the chunk's 1,024 tokens plus
+        # the instruction and the specials (its context_size is 2,048)
+        return dataclasses.replace(recipe, model=GGUF_MODELS[False], query_model=GGUF_MODELS[True],
+                                   ctx=2047)
     return dataclasses.replace(recipe, ctx=max(int(recipe.ctx or 0), 8191))
+
+
+def matryoshka(vectors, dim: int = JINA_DIM):
+    """The first `dim` components, renormalised: jina-v3's `truncate_dim`."""
+    import numpy as np
+    v = np.asarray(vectors, dtype="float32")[:, :dim]
+    return v / np.linalg.norm(v, axis=1, keepdims=True)
 
 
 def embed(out: Path, encoder: str, *, encode: Callable | None = None) -> dict:
@@ -183,21 +209,33 @@ def embed(out: Path, encoder: str, *, encode: Callable | None = None) -> dict:
         # tests/test_invariant_guards.py: nothing outside embeddings calls the client)
         encode = lambda texts, query: embeddings.embed_calibration(   # noqa: E731
             recipe, texts, query=query, asked=False)
+    if encoder == "jina-gguf":
+        inner = encode
+        encode = lambda texts, query: matryoshka(   # noqa: E731
+            inner([JINA_INSTRUCTIONS[query] + t for t in texts], query))
+    import time
     corpus = _jsonl(out / "corpus.jsonl")
     texts = [t for e in corpus for t in e["chunks"]]
     written = 0
+    timing = out / f"time-{encoder}.json"
+    spent = json.loads(timing.read_text()) if timing.exists() else {"seconds": 0.0, "chunks": 0}
     for b in range(0, len(texts), BLOCK):
         path = out / f"vec-{encoder}-{b // BLOCK:05d}.npy"
         if path.exists():
             continue
+        t0 = time.monotonic()
         np.save(path, np.asarray(encode(texts[b:b + BLOCK], False), dtype="float32"))
+        spent = {"seconds": spent["seconds"] + time.monotonic() - t0,
+                 "chunks": spent["chunks"] + len(texts[b:b + BLOCK])}
+        timing.write_text(json.dumps(spent))
         written += 1
         print(f"{encoder}: block {b // BLOCK + 1} of {(len(texts) + BLOCK - 1) // BLOCK}", file=sys.stderr)
     qpath = out / f"qvec-{encoder}.npy"
     qs = _jsonl(out / "queries.jsonl")
     if not qpath.exists() or len(np.load(qpath)) != len(qs):
         np.save(qpath, np.asarray(encode([q["query"] for q in qs], True), dtype="float32"))
-    return {"chunks": len(texts), "blocks_written": written, "queries": len(qs)}
+    return {"chunks": len(texts), "blocks_written": written, "queries": len(qs),
+            "chunks_per_s": round(spent["chunks"] / spent["seconds"], 2) if spent["seconds"] else None}
 
 
 # ---------------------------------------------------------------- score
@@ -229,7 +267,8 @@ def score(out: Path) -> dict:
     hit1: dict[str, list[int]] = {}
     hit10: dict[str, list[int]] = {}
     for enc in ENCODERS:
-        blocks = sorted(out.glob(f"vec-{enc}-*.npy"))
+        # `[0-9]`: "vec-jina-*" would take jina-gguf's blocks as well
+        blocks = sorted(out.glob(f"vec-{enc}-[0-9]*.npy"))
         if not blocks or not (out / f"qvec-{enc}.npy").exists():
             continue
         doc = np.concatenate([np.load(p) for p in blocks])
@@ -257,14 +296,36 @@ def score(out: Path) -> dict:
            "recall1": {e: mean(v) for e, v in hit1.items()},
            "recall10": {e: mean(v) for e, v in hit10.items()},
            "by_family": by("family"), "by_language": by("lang")}
-    if "jina" in rr and "bge" in rr:
-        d = [b - j for b, j in zip(rr["bge"], rr["jina"])]
+    # SPEED: chunks per second each encoder embedded the sample at
+    res["chunks_per_s"] = {}
+    for enc in rr:
+        t = out / f"time-{enc}.json"
+        if t.exists():
+            got = json.loads(t.read_text())
+            res["chunks_per_s"][enc] = round(got["chunks"] / got["seconds"], 2) if got["seconds"] else None
+    # RELIABILITY of jina-v3 on llama.cpp: its vectors against the torch
+    # reference's, chunk by chunk (03 §3.1's cross-engine agreement)
+    if "jina" in rr and "jina-gguf" in rr:
+        a = np.concatenate([np.load(p) for p in sorted(out.glob("vec-jina-[0-9]*.npy"))])
+        g = np.concatenate([np.load(p) for p in sorted(out.glob("vec-jina-gguf-[0-9]*.npy"))])
+        a = a / np.linalg.norm(a, axis=1, keepdims=True)
+        g = g / np.linalg.norm(g, axis=1, keepdims=True)
+        cos = np.sort((a * g).sum(axis=1))
+        res["jina_gguf_vs_torch"] = {"worst": round(float(cos[0]), 6),
+                                     "p01": round(float(cos[int(0.01 * len(cos))]), 6),
+                                     "median": round(float(cos[len(cos) // 2]), 6)}
+    # THE RULE (operator, 2026-10-31: "If bge is as good we switch to jina
+    # because it's less disk space"): bge-m3 only if it finds entities BETTER
+    # than jina-v3, on MRR@10 with p < 0.05; otherwise jina-v3 (512 dims)
+    jina = "jina-gguf" if "jina-gguf" in rr else ("jina" if "jina" in rr else None)
+    if jina and "bge" in rr:
+        d = [b - j for b, j in zip(rr["bge"], rr[jina])]
         p = randomization(d)
-        res["bge_minus_jina"] = {"mrr10": round(sum(d) / len(d), 4), "p": round(p, 4),
+        res["bge_minus_jina"] = {"against": jina, "mrr10": round(sum(d) / len(d), 4), "p": round(p, 4),
                                  "better": sum(x > 0 for x in d), "worse": sum(x < 0 for x in d)}
-        jina_better = res["mrr10"]["jina"] > res["mrr10"]["bge"] and p < 0.05
-        res["verdict"] = "keep jina-v3: it finds entities better (p < 0.05)" if jina_better else \
-            "switch to bge-m3: it finds entities at least as well"
+        bge_better = res["mrr10"]["bge"] > res["mrr10"][jina] and p < 0.05
+        res["verdict"] = ("switch to bge-m3: it finds entities better (p < 0.05)" if bge_better else
+                          "keep jina-v3: bge-m3 is not better, and jina-v3's vectors are half the size")
     return res
 
 

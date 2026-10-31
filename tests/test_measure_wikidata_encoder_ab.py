@@ -115,3 +115,46 @@ def test_a_mismatched_vector_count_is_refused(tmp_path):
     np.save(tmp_path / "qvec-bge.npy", np.ones((1, 4), dtype="float32"))
     with pytest.raises(SystemExit, match="embed again"):
         ab.score(tmp_path)
+
+
+# ---- jina-v3 on llama.cpp (operator, 2026-10-31) ----------------------------
+
+def test_the_gguf_side_puts_the_task_instruction_first_and_cuts_to_512(tmp_path):
+    (tmp_path / "corpus.jsonl").write_text(json.dumps({"uid": "u0", "family": "person", "label": "",
+                                                       "chunks": ["Rome"]}) + "\n")
+    (tmp_path / "queries.jsonl").write_text(json.dumps({"uid": "u0", "family": "person", "lang": "en",
+                                                        "query": "a city"}) + "\n")
+    seen = []
+
+    def fake(texts, query):
+        seen.append((query, texts))
+        return [[1.0] * 1024 for _ in texts]
+    got = ab.embed(tmp_path, "jina-gguf", encode=fake)
+    assert seen[0] == (False, ["Represent the document for retrieval: Rome"])
+    assert seen[1] == (True, ["Represent the query for retrieving evidence documents: a city"])
+    v = np.load(tmp_path / "vec-jina-gguf-00000.npy")
+    assert v.shape == (1, 512) and abs(float(np.linalg.norm(v[0])) - 1.0) < 1e-6
+    assert got["chunks_per_s"] is not None and (tmp_path / "time-jina-gguf.json").exists()
+
+
+def test_bge_as_good_keeps_jina_and_the_two_jinas_are_compared(tmp_path):
+    """The operator's rule: bge-m3 only if BETTER; jina-v3's vectors are half
+    the size. And jina-v3 on llama.cpp against its torch reference."""
+    rng = np.random.default_rng(1)
+    n, dim = 120, 16
+    corpus = [{"uid": f"u{i}", "family": "person", "label": "", "chunks": ["c"]} for i in range(n)]
+    (tmp_path / "corpus.jsonl").write_text("".join(json.dumps(e) + "\n" for e in corpus))
+    qs = [{"uid": f"u{i}", "family": "person", "lang": "en", "query": "q"} for i in range(n // 2)]
+    (tmp_path / "queries.jsonl").write_text("".join(json.dumps(q) + "\n" for q in qs))
+    docs = rng.normal(size=(n, dim)).astype("float32")
+    targets = docs[: n // 2]
+    for enc in ("jina", "jina-gguf", "bge"):
+        np.save(tmp_path / f"vec-{enc}-00000.npy", docs)
+        np.save(tmp_path / f"qvec-{enc}.npy", targets + 0.3 * rng.normal(size=targets.shape))
+        (tmp_path / f"time-{enc}.json").write_text(json.dumps({"seconds": 10.0, "chunks": 100}))
+    got = ab.score(tmp_path)
+    assert set(got["mrr10"]) == {"jina", "jina-gguf", "bge"}
+    assert got["jina_gguf_vs_torch"]["worst"] > 0.9999
+    assert got["chunks_per_s"]["jina-gguf"] == 10.0
+    assert got["bge_minus_jina"]["against"] == "jina-gguf"
+    assert got["verdict"].startswith("keep jina-v3")
