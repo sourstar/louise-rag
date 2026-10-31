@@ -320,7 +320,8 @@ def _write_rows(collection, native_id: int, lance_rows: list[dict], header) -> N
         pa.field("chapter", pa.string()), pa.field("text", pa.string()),
         pa.field("vector", pa.list_(value_type, header.dim)),
     ])
-    conn.create_table(embeddings.TABLE, data=lance_rows, schema=schema)
+    conn.create_table(embeddings.TABLE, data=lance_rows, schema=schema,
+                      storage_options=embeddings.NEW_TABLE_STORAGE)
 
 
 def import_bundle(con, collection, bundle_dir, *, embed_fn=None,
