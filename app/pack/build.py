@@ -418,10 +418,40 @@ def part_writer_pool():
     return ProcessPoolExecutor(max_workers=part_writers(), mp_context=multiprocessing.get_context("spawn"))
 
 
-def _write_part(path: Path, buf: list[dict], lines: list[bytes] | None, record_line: int,
+#: THE LINE TRAVELS COMPRESSED (München's profile of wikidata's held build,
+#: 2026-10-31: the build's own process at `_recv` 34.8 %, `_send` 15.6 %,
+#: `dumps` 6.7 % — every line crossed child → build → part writer, two pipes
+#: on one Python thread, ~6,700 records/s on 6.4 of 12 cores). Encoded in
+#: the child, a line is compressed there too (zstd level 1, the codec the
+#: part itself uses), and only the part's writer expands it: measured with
+#: ~5 KB wikidata-like lines, 4.8× fewer bytes and 22 → 6-7 µs of the
+#: receiving process per record. Lossless, so every part's bytes are the
+#: same. The standard alternative — shared memory, no copy at all — needs
+#: /dev/shm sized in every container and a lifecycle per block; it pays
+#: only if this is not enough.
+SHIP_LEVEL = 1
+
+
+def _ship(line: bytes) -> tuple[bytes, int]:
+    import pyarrow as pa
+    return bytes(pa.Codec("zstd", compression_level=SHIP_LEVEL).compress(line)), len(line)
+
+
+def _unship(shipped) -> bytes:
+    if isinstance(shipped, (bytes, bytearray)):
+        return bytes(shipped)                 # a line encoded before shipping existed
+    import pyarrow as pa
+    comp, size = shipped
+    return bytes(pa.Codec("zstd").decompress(comp, decompressed_size=size))
+
+
+def _write_part(path: Path, buf: list[dict], lines: list | None, record_line: int,
                 chunk_blobs: list[bytes]):
     """One closed part's bytes and its three roots (09 §9.4), in a writer
-    process (or thread): what `close_shard` did inline, in the same order."""
+    process (or thread): what `close_shard` did inline, in the same order.
+    `lines` arrive as the child shipped them (`_ship`)."""
+    if lines is not None:
+        lines = [_unship(x) for x in lines]
     info = records.write_shard(path, buf, record_line=record_line, lines=lines)
     return (info, shard_mod.pieces_root_of(path),
             hold_records.records_root(r["content_hash"] for r in buf),
@@ -470,7 +500,7 @@ def with_line(collection, got: tuple[dict, int, bytes, dict[str, str]]):
     record_line = int(getattr(codex, "record_line", 1) or 1)
     if container_of(codex) == "parquet":
         return got
-    record[LINE_KEY] = records.canonical_line(record, record_line=record_line)
+    record[LINE_KEY] = _ship(records.canonical_line(record, record_line=record_line))
     if record_line != 1:
         return got
     return _slim(record), layer, blob, plates
