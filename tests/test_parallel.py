@@ -1130,3 +1130,43 @@ def test_a_held_part_is_looked_up_in_two_queries_not_two_a_record(isolated_confi
     for rel in parts:
         assert (held_dir / rel).read_bytes() == (mother / rel).read_bytes()
     assert isinstance(real_ro(str(c.manifest_path)), sqlite3.Connection)
+
+
+def test_a_part_goes_to_its_writer_as_columns_and_writes_the_same_bytes(isolated_config, tmp_path,
+                                                                        corpus_dir, monkeypatch):
+    """After #149 the build's threads spent `_send` 35 % pickling each part's
+    records (a dict each) and lines (a tuple each) for the writer (München,
+    2026-10-31). A part whose lines the children shipped goes as columns and
+    one bytes object; its file is the bytes the per-record hand-over wrote."""
+    from app.pack import build as pack_build, manifest as manifest_mod
+    c, _rows = _gutenberg(tmp_path, corpus_dir)
+    used: list[int] = []
+    real = pack_build._write_part_columns
+    monkeypatch.setattr(pack_build, "_write_part_columns",
+                        lambda path, cols, *a: used.append(len(cols[0])) or real(path, cols, *a))
+    columns = tmp_path / "packs" / "columns"
+    pack_build.build(c, columns, records_per_shard=2, sign=False, log=lambda *_: None)
+    assert used and sum(used) == 3, "every part handed over as columns"
+    monkeypatch.setattr(pack_build, "_columns_of", lambda buf, lines: None)
+    records_ = tmp_path / "packs" / "records"
+    pack_build.build(c, records_, records_per_shard=2, sign=False, log=lambda *_: None)
+    a, b = manifest_mod.load(columns)["shards"], manifest_mod.load(records_)["shards"]
+    assert [s["path"] for s in a] == [s["path"] for s in b]
+    for s in a:
+        assert (columns / s["path"]).read_bytes() == (records_ / s["path"]).read_bytes()
+    import sqlite3
+
+    def roots(pack):
+        con = sqlite3.connect(pack / pack_build.BUILD_DIR / pack_build.BUILD_DB)
+        try:
+            return con.execute("SELECT slice, n, root, records_root, chunks_root FROM shards "
+                               "ORDER BY slice, n").fetchall()
+        finally:
+            con.close()
+    assert roots(columns) == roots(records_) and roots(columns)
+
+
+def test_an_unshipped_line_keeps_the_per_record_hand_over():
+    from app.pack import build as pack_build
+    assert pack_build._columns_of([{"uid": "u", "content_hash": "h"}], [b"raw line\n"]) is None
+    assert pack_build._columns_of([], []) is None
