@@ -1389,10 +1389,11 @@ def validate_options(options: Any, where: str = "options") -> None:
     string. ABSENT when there are none — so an empty object, a third way of
     saying "none" that would hash differently from the absence, is refused.
 
-    AN OPTION NAMING ANY OTHER ABSOLUTE PATH IS REFUSED: the weights digest
-    covers `${WEIGHTS}` and nothing else, so a run that loads a second file —
-    a projector, a LoRA, a draft model — would carry a file no digest names
-    (09 §9.3: such a run "cannot be stated yet")."""
+    AN OPTION NAMING ANY OTHER ABSOLUTE PATH IS REFUSED: a second file the
+    load opens — a LoRA, a projector, a draft model — is written by its
+    placeholder `${WEIGHTS:<field>}` and covered by the weights digest
+    (09 §9.3, amended 2026-10-31); a path written out is a file no digest
+    names."""
     if not isinstance(options, dict) or not options:
         raise CodexError(
             f"{where} is a non-empty object of the options the engine was loaded with, "
@@ -1410,8 +1411,8 @@ def validate_options(options: Any, where: str = "options") -> None:
                 raise CodexError(
                     f"{path} names an absolute path ({value!r}). The weights file is "
                     f"written {OPTION_PLACEHOLDERS[0]} and the runner's models directory "
-                    f"{OPTION_PLACEHOLDERS[1]}; any other file is one no weights digest "
-                    f"covers, so a run that loads it cannot be stated yet (09 §9.3)")
+                    f"{OPTION_PLACEHOLDERS[1]}, a second file ${{WEIGHTS:<field>}}; a "
+                    f"path written out is a file no weights digest covers (09 §9.3)")
             return
         if isinstance(value, dict):
             for k, v in value.items():

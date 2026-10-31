@@ -426,8 +426,14 @@ and the node's tree has it too (c0fd786).
 - **The weights:** our own f16 conversion from ab036b0 with that tree's
   `convert_hf_to_gguf.py`, which writes the base model and one LoRA a task.
   The bytes are compared with second-state's f16 for provenance. Each side's
-  LoRA is merged in (`llama-export-lora`), because VeGa states no run that
-  loads a second file.
+  LoRA is merged in (`llama-export-lora`), because VeGa stated no run that
+  loaded a second file. Since 2026-10-31 it does (09 §9.3 amended: the
+  adapter and its scale are in the weights digest), so base + adapter is
+  the other route: one base on disk instead of two merged copies, at the
+  cost of the adapter's matmuls per call, and only once the node shows that
+  LocalAI's llama.cpp backend opens an absolute `lora_adapters` path as
+  given. The two routes are two weights digests, so two spaces: one is
+  chosen before the collection embeds.
 - **Two models:** `vega-jina-v3-gguf` and `vega-jina-v3-gguf-query`.
 - **What llama.cpp does not do:** it does not apply the adapter's prompt
   prefix, so the tool puts the task instruction first. The tool also makes

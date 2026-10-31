@@ -859,12 +859,15 @@ def cuda_libraries(pids: Iterable[int], procfs: ProcFS) -> list[Path]:
     return [Path(p) for p in sorted(found)]
 
 
-def weights_mib(path: str) -> float:
-    """The size of what a load reads: a file, or a directory model's files."""
+def weights_mib(path: str, files: Mapping[str, str] | None = None) -> float:
+    """The size of what a load reads: a file, or a directory model's files,
+    and the second files it names (a LoRA)."""
     p = Path(path)
     if p.is_dir():
-        return sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) / 2**20
-    return p.stat().st_size / 2**20
+        size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+    else:
+        size = p.stat().st_size
+    return (size + sum(Path(f).stat().st_size for f in (files or {}).values())) / 2**20
 
 
 def declares_pairs(options: Any) -> bool:
@@ -1295,7 +1298,11 @@ class Gate:
 
             # both while the backend loads: the weights it reads, the tree it runs
             hashers = {
-                "weights": hashing("weights", lambda: self.hash_weights(Path(canon.weights_path))),
+                # the weights file and every second file the load names
+                # (a LoRA: 09 §9.3, amended 2026-10-31)
+                "weights": hashing("weights", lambda: runs.load_weights_digest(
+                    self.hash_weights(Path(canon.weights_path)), canon.files, canon.shaping,
+                    file_digest=self.files.sha256)),
                 "tree": hashing("tree", tree),
             }
             # on WSL's /dev/dxg, what the load does to each card's used VRAM is
@@ -1341,7 +1348,7 @@ class Gate:
                         family_pids, self.cfg.cards, dxg.clients(amd_smi, self.proc_root),
                         vram_delta_mib={k: after[k] - vram_before[k]
                                         for k in after if k in vram_before},
-                        weights_mib=weights_mib(canon.weights_path),
+                        weights_mib=weights_mib(canon.weights_path, canon.files),
                         declared=declared_placement(canon))
 
                 smi = self.nvidia_smi
@@ -1376,7 +1383,7 @@ class Gate:
                     return device_on_nvidia(
                         candidates, self.cfg.cards,
                         vram_delta_mib={k: after[k] - nv_before[k] for k in after if k in nv_before},
-                        weights_mib=weights_mib(canon.weights_path),
+                        weights_mib=weights_mib(canon.weights_path, canon.files),
                         declared=declared_placement(canon))
 
                 wsl_reader = (on_dxg if amd_smi is not None else

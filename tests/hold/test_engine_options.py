@@ -102,7 +102,7 @@ def test_options_are_refused_in_a_version_3_codex():
 
 @pytest.mark.parametrize("value", [
     "/models/bge-m3.gguf",                  # the weights, not as ${WEIGHTS}
-    "mmproj:/models/projector.gguf",        # a second file no digest covers
+    "mmproj:/models/projector.gguf",        # a second file written out, not ${WEIGHTS:MMProj}
     "--lora=/srv/adapter.safetensors",
     "https://api.example.invalid/v1",       # a service a stranger cannot run
 ])

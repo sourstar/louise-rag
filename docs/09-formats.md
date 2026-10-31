@@ -396,7 +396,7 @@ whole so that anyone can compute them again (02 §2.4):
 | `image` | id | yes | the digest of the OCI image holding that build, the one that was run; for a backend engine, the digest of the backend's installed files (below). It must be obtainable (02 §2.4), and it travels like weights (04 §4.3) |
 | `args` | list of strings | yes | the argument vector the engine was started with inside `image`, program first, in order. The weights file is written `${WEIGHTS}`, the listening port `${PORT}` and, in a backend engine alone, the backend's directory `${BACKEND}` (below), and nothing else in it names the host |
 | `env` | object | yes | the environment variables set for the engine beyond the image's own, name → string; `{}` when none. On a card it carries the vendor's bitwise-reproducibility mode (`GGML_SYCL_ENABLE_DNN=0` on Intel SYCL, `ROCBLAS_DEFAULT_ATOMICS_MODE=0` on AMD ROCm; CLAUDE.md invariant 12, docs/notes/approved-encoders.md): a card engine without it states no run. Never a credential: the Codex is public |
-| `options` | object | no | the options the engine received when it loaded the weights, for an engine a model runner loads by a call rather than by its argument vector — a LocalAI backend's `LoadModel`. They are the runner's record of that call as the runner sent it (for LocalAI, `load_options` in `GET /system`, `deploy/localai/patches/`), with the weights file written `${WEIGHTS}`, the runner's models directory `${MODELS}`, and every number that is not an integer as its decimal string (§9.1). The variables the runner sets in the engine's environment — LocalAI's `EnvVars` — are the engine's `env` and are written there only, never again among the options (operator, 2026-10-03). An option naming any other absolute path makes the run unstatable: a run that loads a second file — a projector, a LoRA, a draft model — cannot be stated yet. ABSENT, never null, for an engine started by `args` alone, which therefore keeps the bytes and the `engine_id` it had in version 3 (operator, 2026-10-03). Never a credential |
+| `options` | object | no | the options the engine received when it loaded the weights, for an engine a model runner loads by a call rather than by its argument vector — a LocalAI backend's `LoadModel`. They are the runner's record of that call as the runner sent it (for LocalAI, `load_options` in `GET /system`, `deploy/localai/patches/`), with the weights file written `${WEIGHTS}`, the runner's models directory `${MODELS}`, and every number that is not an integer as its decimal string (§9.1). The variables the runner sets in the engine's environment — LocalAI's `EnvVars` — are the engine's `env` and are written there only, never again among the options (operator, 2026-10-03). A second file the load opens — a LoRA adapter, a projector, a draft model — is written `${WEIGHTS:<field>}`, `${WEIGHTS:<field>[i]}` for a list (`${WEIGHTS:LoraAdapters[0]}`), and is part of the weights digest below; it must reach the engine as an absolute path, so that the file hashed is the file opened, and a relative name makes the run unstatable (amended 2026-10-31, operator: a LoRA "decouples the embedder from a tuning"). An option naming any other absolute path makes the run unstatable. ABSENT, never null, for an engine started by `args` alone, which therefore keeps the bytes and the `engine_id` it had in version 3 (operator, 2026-10-03). Never a credential |
 | `device` | string | yes | the device the reference vectors were computed on, as its driver names it — `"Intel(R) Arc(TM) Pro B70 Graphics"`, `"cpu"` |
 
 `name`, `build`, `variant` and `device` are readable; they are bound by
@@ -506,6 +506,17 @@ digest, `sha256:…`. A symbolic link is refused. Code the model loads
 from its directory is a file like any other, because it is part of the
 function: two copies that differ in it are two encoders. The same rule
 gives the `weights` of a query encoder and of the run identity (§9.12).
+
+A model loaded from SEVERAL files — weights and a LoRA adapter, a
+projector, a draft model, each written `${WEIGHTS:<field>}` among the
+`options` — has as its weights digest `H` of the canonical JSON object
+that maps `${WEIGHTS}` to the digest above, each second file's
+placeholder to that file's digest, and each option that says how much of
+an adapter is applied (`LoraScale`, `LoraScales`) to its value as the
+`options` write it. `W + s·BA` is one set of weights: a tuning applied
+at another strength, or another tuning on the same base, is another
+encoder and so another space. A load that names no second file keeps
+the digest of its one file or directory (amended 2026-10-31).
 
 **space_id.**
 
