@@ -1,0 +1,153 @@
+{
+ "archives": [],
+ "certifier": null,
+ "cleaning_version": 1,
+ "content": null,
+ "descriptive": {
+  "summary": "Every item and property of Wikidata's JSON entity dump as one record: its labels, descriptions, aliases, statements with qualifiers, and sitelinks kept whole; a text rendering per language for search, built from the dump alone. CC0.",
+  "title": "Wikidata — items and properties, as text"
+ },
+ "embedding": "open",
+ "erasure": "retractable",
+ "facets": [],
+ "layers": [
+  {
+   "chunker": {
+    "id": "wikidata-text",
+    "params": {
+     "max_tokens": 1024,
+     "tokenizer": "sha256:f59925fcb90c92b894cb93e51bb9b4a6105c5c249fe54ce1c704420ac39b81af"
+    },
+    "version": 1
+   },
+   "input": {
+    "form": "text"
+   },
+   "rule": "default"
+  }
+ ],
+ "license": {
+  "class": "green",
+  "terms_sha256": null
+ },
+ "modality": "text",
+ "origin": {
+  "clock": "UTC",
+  "cutoff_rule": "dated-dumps",
+  "form": "the official Wikidata JSON entity dump, the dated run named by the snapshot (dumps.wikimedia.org/wikidatawiki/entities/<date>/wikidata-<date>-all.json.bz2, items and properties; the lexeme dump is separate and not taken), decompressed and read entity by entity — not the Hugging Face corpus built from it, whose cleaner drops snaktype, statement ids, datatype, badges, modified and lastrevid (invariant 11: we may not hold less than the origin gives), and not the live API, which has no dated form a verifier can re-fetch (wikidata-build-plan.md D1)",
+  "jurisdiction": null,
+  "spec": {
+   "files": null
+  },
+  "unit": "file"
+ },
+ "parser": {
+  "id": "wikidata",
+  "version": 2
+ },
+ "privacy": "public",
+ "profile": null,
+ "protocol_version": 1,
+ "publication": "open",
+ "record_line": 1,
+ "space": {
+  "calibration": {
+   "quorum": {
+    "min_pass": 12,
+    "n": 16
+   },
+   "set": "sha256:7d06a2f6a4a773da01a517cb30571cac421753df3e30b20fca4716e5441fbf0f"
+  },
+  "ctx": 8191,
+  "cut": "tokens",
+  "dim": 1024,
+  "dtype": "f16",
+  "encoder": {
+   "engine": {
+    "args": [
+     "${BACKEND}/run.sh",
+     "--addr",
+     "127.0.0.1:${PORT}"
+    ],
+    "build": "77d5780dd77b",
+    "device": "Intel(R) Arc(TM) Pro B70 Graphics",
+    "env": {
+     "GGML_SYCL_ENABLE_DNN": "0",
+     "GGML_SYCL_FA_ONEDNN": "0",
+     "NEO_CACHE_DIR": "/data/louise-cache/neo-cache"
+    },
+    "image": "sha256:77d5780dd77bf5b21f63e51e7e0c03c9722b5542a2a9f2fe12f3b50bf38b64d4",
+    "name": "localai/louise-sycl-f16-llama-cpp",
+    "options": {
+     "ContextSize": 8192,
+     "Embeddings": true,
+     "FlashAttention": "on",
+     "MMap": true,
+     "Model": "weights/bge-m3/bge-m3-FP16.gguf",
+     "ModelFile": "${WEIGHTS}",
+     "ModelPath": "${MODELS}",
+     "NBatch": 8192,
+     "NGPULayers": 999,
+     "Options": [
+      "parallel:1",
+      "pooling:cls",
+      "ubatch:8192"
+     ],
+     "Threads": 6
+    },
+    "variant": null
+   },
+   "label": "BAAI/bge-m3 (gpustack/bge-m3-GGUF bge-m3-FP16.gguf)",
+   "weights": "sha256:daec91ffb5dd0c27411bd71f29932917c49cf529a641d0168496c3a501e3062c"
+  },
+  "epoch": "0",
+  "evaluation": "",
+  "normalise": true,
+  "pooling": "cls",
+  "query": {
+   "encoder": null,
+   "instruction": null
+  },
+  "tolerance": "0.998"
+ },
+ "succession": "frozen",
+ "toolchain": {
+  "platform_image": "sha256:2f1ecfd9c383a6ff27644cc07fa1330d5e7da318c611eaecf5ec7d635c0bf9e3"
+ },
+ "update": {
+  "cadence": "monthly",
+  "day": 1,
+  "grace_days": 7
+ },
+ "validation": {
+  "checks": [
+   "roots",
+   "records",
+   "chunks",
+   "records-vs-origin",
+   "license",
+   "signature",
+   "calibration",
+   "vectors-sample"
+  ],
+  "required": [],
+  "sample": {
+   "chunks": {
+    "shards": "0.05"
+   },
+   "records": {
+    "shards": "0.05"
+   },
+   "records-vs-origin": {
+    "shards": "0.05"
+   },
+   "vectors-sample": {
+    "shards": "0.05"
+   }
+  }
+ },
+ "work": {
+  "per": "P1M",
+  "tokens": 1900000000
+ }
+}

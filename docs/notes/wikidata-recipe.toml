@@ -1,3 +1,24 @@
+# SUPERSEDED (2026-10-31): wikidata is created again on bge-m3 (the encoder
+# A/B: MRR@10 0.650 against jina-v3's 0.510, p = 0.0001;
+# wikidata-family-slices.md) from wikidata-recipe.json beside this file —
+# the 10-27 recipe that made the jina Codex (/config/recipes/wikidata-p2.json:
+# parser 2, the family map, parts cut by content) with ONLY its space and
+# work changed:
+#   space   wikipedia's bge-m3 (weights daec91ff…, f16, cls, normalised,
+#           tolerance 0.998, no query encoder, no instruction, the same
+#           calibration set), ctx 8,191 and cut by tokens (a chunk is cut at
+#           1,024 of jina-v3's tokens already; the chunker layer is unchanged,
+#           f59925fc… stays its parameter); the engine is vega-bge-m3's stated
+#           run at the create (92775442…), which create holds the endpoint to
+#   work    1.9 B tokens a month: 8,963 tokens/s measured as below (512
+#           calibration texts, one per call, warm, window 1,024: 24.8 s a pass;
+#           222,345 tokens) × 3,600 × 2 h × 30 days = 1.94 B
+# JSON, not TOML: the query side is null, which TOML cannot write. The
+# manifest and text index are carried from the jina collection (`dev carry
+# --unembedded`, A1h), its parts built from its record lines
+# (`records build --records-from`). What follows is the jina recipe of
+# 2026-10-20, kept as the record of what was measured then.
+#
 # Wikidata — every item and property of the official JSON entity dump, one
 # record each, its text per language by the vendored textifier
 # (docs/notes/wikidata-build-plan.md; app/plugins/wikidata). Written as a
