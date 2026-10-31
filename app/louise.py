@@ -3824,12 +3824,80 @@ def _embedder_check_runs(a, name, codex) -> int:
             print(f"  whole set   worst {min(run.all_cosines):.6f}, "      # cross-vendor table's row
                   f"median {__import__('statistics').median(run.all_cosines):.6f}, "
                   f"below 0.995: {sum(c < 0.995 for c in run.all_cosines)} of {len(run.all_cosines)}")
+        cpu = body.get("cpu_reference")
+        print(f"  cpu         " + (f"worst {cpu['worst']}, median {cpu['median']} against the "
+                                   f"stored CPU reference (run {cpu['run'][:23]}…)" if cpu else
+                                   "no stored CPU reference for these weights "
+                                   "(`hold embedder cpu-reference`)"))
         print(f"  fingerprint {body['fingerprint']}")
         print(f"  batches     {'as one text at a time' if body['batch_invariant'] else 'DIFFER from one text at a time: validated for single-text work only'}")
         print(f"  benchmark   {body['tokens_per_s']} tokens/s")
         print(f"  statement   {hold_runs.path_for(a.root, name, body['run'], role)}")
         worst = max(worst, 0 if ok else 1)
     return worst
+
+
+def cmd_embedder_cpu_reference(a) -> int:
+    """`hold embedder cpu-reference <collection> --model M [--query-model Q]`
+    (operator, 2026-10-31; docs/notes/near-exact-runs.md §2): the 512
+    calibration items as the encoder's CPU TWIN embeds them, kept so that
+    every gate compares its run with them without the CPU's hours. The twin
+    must state a CPU run and give back its own bytes (the sixteen fingerprint
+    texts, one at a time, again in reverse order). Exit 0 when kept, 1 when
+    the twin is not reproducible, 2 when it is not a CPU run, 3 when it could
+    not be asked."""
+    from app import run_check
+    from app.hold import collection as col, cpu_reference as cpu_ref, embedder as emb
+    from app.hold import fingerprint
+    name, codex = col.resolve(a.root, a.collection)
+    if not a.model:
+        print("louise: --model names the encoder's CPU twin (gpu_layers 0, the device "
+              "hidden): a CPU reference is the CPU's answers", file=sys.stderr)
+        return 2
+    roles = ["document"] + (["query"] if a.query_model else [])
+    if a.query_model and codex.space.query.encoder is None:
+        print(f"louise: {name}: --query-model names a query side, and this space has none",
+              file=sys.stderr)
+        return 2
+    try:
+        recipe = _as_candidate(_recipe_for(codex, name), a)
+    except emb.GateDeferred as e:
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
+    items = run_check.calibration_items(a.root, name, codex)
+    for role in roles:
+        query = role == "query"
+        try:
+            stated = run_check.stated_run(recipe, query=query,
+                                          probe_item=run_check.probe_for(codex, role))
+            if stated.driver != "cpu":
+                print(f"louise: {role}: the model states a run on {stated.driver!r}, not the "
+                      f"CPU: a CPU reference is made by the CPU twin", file=sys.stderr)
+                return 2
+            texts = emb.gate_texts(codex, role, items)
+            embed = run_check.answers(recipe, query=query, name=name)
+            one = run_check.answers(recipe, how="one", query=query, name=name)
+            vectors = embed(texts)
+            sixteen = [texts[i] for i in fingerprint.indices(texts)]
+            first = one(sixteen)
+            again = list(reversed(one(list(reversed(sixteen)))))
+        except emb.GateDeferred as e:
+            print(f"louise: deferred: {role}: {e}", file=sys.stderr)
+            return 3
+        if any(fn.runs != {stated.run_id} for fn in (embed, one)):
+            print(f"louise: deferred: {role}: answers came from another run than "
+                  f"{stated.run_id[:23]}…; nothing is kept", file=sys.stderr)
+            return 3
+        if not emb.reproduces(first, again):
+            print(f"louise: {role}: the CPU twin did not give back its own bytes (invariant "
+                  f"12): nothing is kept", file=sys.stderr)
+            return 1
+        path = cpu_ref.write(a.root, name, role, run_id=stated.run_id,
+                             run={"driver": stated.driver, "engine": stated.engine,
+                                  "weights": stated.weights},
+                             set_id=codex.space.calibration.set, vectors=vectors)
+        print(f"kept  {role}  run {stated.run_id[:23]}…  {len(vectors)} vectors  {path}")
+    return 0
 
 
 def cmd_embedder_benchmark(a) -> int:
@@ -4858,6 +4926,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--query-model", metavar="NAME",
                    help="the same for the query side (`query_model`)")
     p.set_defaults(fn=cmd_embedder_check)
+
+    p = everbs.add_parser("cpu-reference",
+                          help="keep the calibration set as the encoder's CPU twin embeds it "
+                               "(every gate compares its run with it)")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--model", metavar="NAME", help="the CPU twin's model name")
+    p.add_argument("--query-model", metavar="NAME", help="the query side's CPU twin")
+    p.set_defaults(fn=cmd_embedder_cpu_reference)
 
     p = everbs.add_parser("benchmark", help="tokens per second on the calibration set")
     root_arg(p); p.add_argument("collection"); p.set_defaults(fn=cmd_embedder_benchmark)

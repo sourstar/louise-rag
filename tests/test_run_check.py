@@ -229,7 +229,7 @@ def test_the_gate_runs_at_once_and_work_resumes_under_the_run(node, endpoint):
     kept = statements_kept(root)
     assert [b["run"] for b in kept] == [R1]
     body = kept[0]
-    assert body["version"] == 3 and body["role"] == "document"
+    assert body["version"] == 5 and body["role"] == "document"
     assert body["space_id"] == codex.space_id
     assert body["engine"] == R1_OBJ["engine"] and body["driver"] == R1_OBJ["driver"]
     assert body["batch_invariant"] is True and body["fingerprint"].startswith("sha256:")
@@ -815,3 +815,44 @@ def test_a_verdict_measured_one_text_a_request_does_not_admit_a_batch(node, endp
     assert endpoint.texts > cost, "the gate ran again, at the batching the node uses now"
     assert hold_runs.batching_measured(root, collection.name, "document", R1)["embed_batch"] == 4
     assert embeddings.upsert_book(7, "en", chunks(2), collection) == 2
+
+
+# ---- the stored CPU reference (operator, 2026-10-31; near-exact-runs.md §2) ------
+
+def _cpu_reference(root, codex, *, worst_row_to=None):
+    from app.hold import cpu_reference as cpu_ref
+    from tests.hold.test_embedder import perturbed
+    items = run_check.calibration_items(root, "gutenberg", codex)
+    vectors = opening(emb.gate_texts(codex, "document", items))
+    import numpy as np
+    vectors = [list(np.asarray(v, dtype="float32") / np.linalg.norm(v)) for v in vectors]
+    if worst_row_to is not None:
+        import tests.hold.test_embedder as te
+        dim = len(vectors[0])
+        old, te.DIM = te.DIM, dim
+        try:
+            vectors = perturbed(vectors, indices=(17,), to=worst_row_to)
+        finally:
+            te.DIM = old
+    cpu_ref.write(root, "gutenberg", "document", run_id="sha256:" + "c0" * 32,
+                  run={"driver": "cpu", "engine": {}, "weights": R1_OBJ["weights"]},
+                  set_id=codex.space.calibration.set, vectors=vectors)
+
+
+def test_the_gate_holds_the_run_to_the_stored_cpu_reference(node, endpoint):
+    """Every gate compares its run's 512 answers with the stored CPU twin's,
+    found by the run's weights: below the review line (0.995) on any one, the
+    run fails and nothing is written from it."""
+    root, collection, codex = node
+    _cpu_reference(root, codex, worst_row_to=0.98)
+    con = db.connect(collection)
+    assert backend_gate.embed_allowed(con, collection) is False
+    (body,) = statements_kept(root)
+    assert not hold_runs.passing(body, codex)
+
+
+def test_a_run_at_the_cpu_reference_passes(node, endpoint):
+    root, collection, codex = node
+    _cpu_reference(root, codex)
+    con = db.connect(collection)
+    assert backend_gate.embed_allowed(con, collection) is True

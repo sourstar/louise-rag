@@ -288,13 +288,19 @@ def _validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "docum
         # member (09 §9.12, amended 2026-10-08) — read where the gate always
         # read it, so a text space fails here exactly as it did
         items = calibration_items(root, name, codex)
+        # the stored CPU reference for these weights, when one was made
+        # (docs/notes/near-exact-runs.md §2): every answer is held to it
+        from .hold import cpu_reference as cpu_ref
+        cpu = cpu_ref.find(root, name, role, weights=stated.weights,
+                           set_id=codex.space.calibration.set, count=len(reference_vectors))
         body = runs_mod.validate(
             root, name, codex, role=role,
             reference=reference_vectors,
             embed=answers(recipe, **kw),
             embed_one=answers(recipe, how="one", **kw),
             contribute=answers(recipe, how="contribute", **kw),
-            stated=stated, key=key, now=now or _now(), items=items, on_run=on_run)
+            stated=stated, key=key, now=now or _now(), items=items, on_run=on_run,
+            cpu_reference=None if cpu is None else (cpu.run_id, cpu.vectors))
         _mark(codex, role, body["run"], body)      # measured now: nothing to re-check
         measured = contributing(recipe)
         if measured is not None:

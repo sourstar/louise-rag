@@ -1937,6 +1937,27 @@ documents (against `vectors`) or queries (against `query_vectors`).
 (03 §3.3); a run that is not batch-invariant is validated for
 single-text, one-at-a-time work only.
 
+**Version 5** (*amended 2026-10-31*, operator's choice C;
+docs/notes/near-exact-runs.md) is every run's statement from then on:
+the body above with four keys more:
+- `exactness`: `"exact"` or `"near"`;
+- `loads`: the fresh loads the gate measured;
+- `load_variation`: the worst cosine between two answers of one text, as
+  a decimal; `"1"` when they were byte-equal;
+- `cpu_reference`: `{run, worst, median}` against the stored CPU reference
+  (the CPU twin's run, and its 512 answers' worst and median cosine), or
+  `null` where none is stored.
+
+They are part of the verdict a write is admitted by:
+- an exact run's `load_variation` is `"1"`;
+- a near-exact run measured at least 3 loads, varies by no more than
+  `0.99999`, and reaches `0.999` against a stored CPU reference;
+- any run below the review line `0.995` against one fails.
+
+Before version 5 the gate's own-bytes verdict was not in the statement, so
+it did not reach the write. Versions 3 and 4 stay read, meaning "exact,
+one load, no CPU reference".
+
 A peer keeps one statement per run it has validated, and a vector is
 written only from an answer naming a run with a passing statement for
 the space (03 §3.3). Version 4 is this body whose `engine` is a backend
