@@ -44,7 +44,8 @@ def test_every_text_alone_over_fresh_loads_and_orders_is_one_byte_string():
     post, log = backend()
     out = vega_repro_check.measure(TEXTS, url="http://localai:30286/", model="vega-bge-m3",
                                    loads=2, repeats=2, window=1024, post=post, sleep=lambda s: None)
-    assert out == {"texts": 3, "vectors": 12, "identical": 3, "differ": [], "max_abs": {}}
+    assert out == {"texts": 3, "vectors": 12, "identical": 3, "differ": [], "max_abs": {},
+                   "non_finite": []}
     assert log["shutdowns"] == 2, "each load begins afresh"
     assert sorted(log["sent"]) == sorted([(t, 1024) for t in TEXTS] * 4), "alone, with the window"
     orders = [tuple(c for c, _ in log["sent"][i:i + 3]) for i in range(0, 12, 3)]
@@ -145,3 +146,32 @@ def test_the_exit_code_says_reproducible_differ_or_not_measured(tmp_path, monkey
         return Answer(200, {}) if url.endswith("/shutdown") else Answer(400, {"error": "bad"})
     monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(post=refused))
     assert vega_repro_check.main(args) == 2 and "NOT MEASURED" in capsys.readouterr().out
+
+
+def test_a_nan_that_comes_back_the_same_on_every_load_is_not_reproducible(tmp_path, monkeypatch, capsys):
+    """München, 2026-10-31: a NaN identical on every load is one byte string,
+    and read as "identical" — a wrong answer passing as clean."""
+    import struct
+    import sys
+    import types
+    good, _ = backend()
+
+    def nan_for_one(url, json, timeout):
+        r = good(url, json, timeout)
+        if url.endswith("/v1/embeddings"):
+            (tagged,) = json["input"]
+            if vtag.parse_window(tagged)[2] == "Fra den Tid":
+                nan = struct.pack("<2f", float("nan"), 0.0)
+                return Answer(200, {"data": [{"index": 0, "embedding": base64.b64encode(nan).decode()}]})
+        return r
+    out = vega_repro_check.measure(TEXTS, url="http://localai:30286", model="m", loads=2,
+                                   repeats=1, window=None, post=nan_for_one, sleep=lambda s: None)
+    assert out["differ"] == [] and out["non_finite"] == [2]
+    f = tmp_path / "t.jsonl"
+    f.write_text("\n".join(json.dumps({"text": t}) for t in TEXTS), encoding="utf-8")
+    monkeypatch.setattr(vega_repro_check.time, "sleep", lambda s: None)
+    monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(post=nan_for_one))
+    args = ["--url", "http://localai:30286", "--model", "m", "--texts", str(f), "--sweep", "0",
+            "--loads", "1", "--repeats", "1"]
+    assert vega_repro_check.main(args) == 1
+    assert "NON-FINITE" in capsys.readouterr().out

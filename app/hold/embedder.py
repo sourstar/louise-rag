@@ -262,7 +262,13 @@ def fresh_loads(texts: Sequence, embed_one, reload: Callable[[], None],
         rng.shuffle(order)
         got = embed_one([texts[k] for k in order])
         for k, v in zip(order, got):
-            answers[k].setdefault(np.asarray(v, dtype="<f4").tobytes(), list(v))
+            arr = np.asarray(v, dtype="<f4")
+            if not np.all(np.isfinite(arr)):
+                # A NaN is a wrong answer, not a variation: the run cannot be
+                # exact or near, however often it comes back the same (P5 with
+                # FA on gave one, 2026-10-31)
+                return loads, 0.0
+            answers[k].setdefault(arr.tobytes(), list(v))
     closest = 1.0
     for seen in answers:
         vs = list(seen.values())

@@ -144,9 +144,18 @@ def measure(texts: list[str], *, url: str, model: str, loads: int, repeats: int,
                                        f"bytes (base64) a byte compare needs")
                 seen[k].add(vector)
     differ = [k for k, s in enumerate(seen) if len(s) > 1]
+    # A NaN that comes back the same on every load is one byte string and so
+    # "identical": it is a wrong answer all the same (P5 with FA on, 2026-10-31)
+    non_finite = [k for k, s in enumerate(seen) if any(_non_finite(v) for v in s)]
     return {"texts": len(texts), "vectors": len(texts) * loads * repeats,
             "identical": len(texts) - len(differ), "differ": differ,
-            "max_abs": {k: _max_abs(seen[k]) for k in differ}}
+            "max_abs": {k: _max_abs(seen[k]) for k in differ}, "non_finite": non_finite}
+
+
+def _non_finite(vector: bytes) -> bool:
+    import math
+    from array import array
+    return any(not math.isfinite(x) for x in array("f", vector))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -174,12 +183,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     differ = (f"; differ: {out['differ']}, max |diff| "
               f"{max(out['max_abs'].values()):.3g}" if out["differ"] else "")
-    print(f"{args.model}: {'REPRODUCIBLE' if not out['differ'] else 'NOT REPRODUCIBLE'}: "
+    if out["non_finite"]:
+        differ += f"; NON-FINITE (NaN or inf) in texts {out['non_finite']}"
+    bad = out["differ"] or out["non_finite"]
+    print(f"{args.model}: {'REPRODUCIBLE' if not bad else 'NOT REPRODUCIBLE'}: "
           f"{out['identical']}/{out['texts']} texts ({args.n} spread, "
           f"{out['texts'] - min(args.n, len(every))} swept) bit-identical over "
           f"{out['vectors']} vectors ({args.loads} fresh loads x {args.repeats} shuffled "
           f"passes){differ}")
-    return 1 if out["differ"] else 0
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
