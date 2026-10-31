@@ -6,6 +6,13 @@
 # The wrapper is #117's (3d723bd): its half of the engine by an ALLOW-list —
 # the package's *.py outside venv/ and __pycache__, the top-level run.sh, and
 # `cuts` — so neo-cache/, run/, REVISION and vega.json are out by construction.
+# And #124's (49001b7): the Intel contract is GGML_SYCL_FA_ONEDNN=0 beside
+# GGML_SYCL_ENABLE_DNN=0 — DNN=0 never covered flash attention, whose first
+# choice is oneDNN's fused SDPA (the FA flips and NaNs, approved-encoders.md) —
+# so step 2b puts it in every SYCL model's env first. A model with FA on (bge-m3
+# for wikipedia) then runs another kernel: its bytes may move, and its gate,
+# multi-load since #120, decides (NEW_BYTES); every other run's fingerprint must
+# equal the run before's.
 #
 # The packages that back a model (2026-10-31): vega-llama-cpp, -cpu, -p5
 # (REVISION 0ec2239, #110) and vega-llama-cpp-gen, vega-louise-python-20261020c
@@ -46,6 +53,11 @@ L="docker exec $W python -m app.louise"
 LOCALAI=http://localhost:30286
 LA=ix-localai-localai-1
 GATED="gutenberg wikipedia pubmed normattiva wikidata"     # every collection whose encoder is behind these packages
+# the SYCL llama.cpp models (GGML_SYCL_ENABLE_DNN=0 in their env), 2026-10-31; not Louise's models on
+# intel-sycl-f16-llama-cpp (gemma-3-27b-it, qwen3-30b-a3b: no VeGa, no run stated)
+SYCL_MODELS="index-translate-9b louise-chat-qwen3-8b louise-rerank-bge-strict louise-rerank-bge louise-rerank-lamar
+  louise-translate-madlad vega-bge-m3 vega-granite vega-medcpt-article vega-medcpt-query vega-qwen3-embedding-4b"
+NEW_BYTES="wikipedia"        # its encoder runs FA on: FA_ONEDNN=0 changes its kernel, so its fingerprint may move
 . "$(dirname "$0")/backend_files.sh"
 
 say() { printf '\n=== %s %s\n' "$(date +%T)" "$*"; }
@@ -71,13 +83,16 @@ PY
 say "0. preconditions, the new files, the ones they replace saved, the runs and fingerprints now"
 # a candidate model left for its gate (vega-qwen3-embedding-4b-p5fa) is unloaded with the rest and gated
 # after this, on its new run; a measurement still loading models fresh is not run across
-pgrep -f "^bash /root/measure/(qwen|age-probe|after-)" >/dev/null && { echo "a measurement is running"; exit 1; } || true
+pgrep -f "^bash /root/measure/(qwen|age-probe|after-|variant-runs)" >/dev/null && { echo "a measurement is running"; exit 1; } || true
 test -s "$SRC" && test -s /root/fp_runs.py || { echo "no $SRC or /root/fp_runs.py"; exit 1; }
+ls /root/stage-models/*.yaml >/dev/null || { echo "no /root/stage-models (deploy/vega/stage/models at this commit)"; exit 1; }
 STAGE=$(mktemp -d)
 tar -xf "$SRC" -C "$STAGE"
 for f in $FILES; do test -s "$STAGE/$f" || { echo "the tar lacks $f"; exit 1; }; done
 grep -q "^def engine_manifest(" "$STAGE/vega_wrapper.py" || { echo "the tar's wrapper is not #116's"; exit 1; }
 grep -q '^WRAPPER_ENTRY = "run.sh"$' "$STAGE/vega_wrapper.py" || { echo "the tar's wrapper is not #117's (the allow-list)"; exit 1; }
+grep -q '"sycl": {"GGML_SYCL_ENABLE_DNN": "0", "GGML_SYCL_FA_ONEDNN": "0"}' "$STAGE/vega_wrapper.py" \
+  || { echo "the tar's wrapper is not #124's (FA_ONEDNN in the Intel contract)"; exit 1; }
 echo "revision $(cat "$STAGE/REVISION")"
 for p in $PKGS; do
   for f in $PYC; do test -f "$BK/$p/$f" || { echo "$p lacks $f"; exit 1; }; done
@@ -107,6 +122,65 @@ for m in $MODELS; do
   curl -s -X POST "$LOCALAI/backend/shutdown" -H "Content-Type: application/json" -d "{\"model\":\"$m\"}" || true
   echo
 done
+
+say "2b. GGML_SYCL_FA_ONEDNN=0 beside GGML_SYCL_ENABLE_DNN=0 in every SYCL model (#124), each saved first"
+mkdir -p "$SAVED/models"
+python3 - "$M" "$SAVED/models" $SYCL_MODELS <<'PY'
+import re, shutil, sys
+from pathlib import Path
+import yaml
+models, saved, names = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3:]
+for n in names:
+    p = models / f"{n}.yaml"
+    text = p.read_text()
+    before = yaml.safe_load(text)
+    env = before.get("env") or {}
+    if env.get("GGML_SYCL_FA_ONEDNN") == "0":
+        print(f"{n}: has it already"); continue
+    if env.get("GGML_SYCL_ENABLE_DNN") != "0":
+        sys.exit(f"{n}: no GGML_SYCL_ENABLE_DNN=0 to put it beside")
+    if not (saved / p.name).exists():
+        shutil.copy2(p, saved / p.name)
+    out, done = [], False
+    for line in text.splitlines(keepends=True):
+        y = re.match(r'^(\s+)GGML_SYCL_ENABLE_DNN: "0"\s*$', line)
+        j = re.match(r'^(\s+)"GGML_SYCL_ENABLE_DNN": "0"(,?)\s*$', line)
+        if y and not done:          # YAML: the line below
+            out += [line, f'{y.group(1)}GGML_SYCL_FA_ONEDNN: "0"\n']; done = True
+        elif j and not done:        # JSON: with the comma the object needs
+            out += [f'{j.group(1)}"GGML_SYCL_ENABLE_DNN": "0",\n', f'{j.group(1)}"GGML_SYCL_FA_ONEDNN": "0"{j.group(2)}\n']
+            done = True
+        else:
+            out.append(line)
+    new = "".join(out)
+    want = dict(before); want["env"] = {**env, "GGML_SYCL_FA_ONEDNN": "0"}
+    if not done or yaml.safe_load(new) != want:
+        sys.exit(f"{n}: the edit would change more than the one key; nothing written")
+    p.write_text(new)                # in place: the file keeps its owner, mode and ACL
+    print(f"{n}: + GGML_SYCL_FA_ONEDNN=0")
+PY
+# the staged files (deploy/vega/stage/models at this commit) are what the node holds, `pinned` aside;
+# one staged and not yet here (a CPU twin) is put here
+python3 - "$M" /root/stage-models <<'PY'
+import shutil, sys
+from pathlib import Path
+import yaml
+models, staged = Path(sys.argv[1]), Path(sys.argv[2])
+bad = 0
+for s in sorted(staged.glob("*.yaml")):
+    p = models / s.name
+    if not p.exists():
+        shutil.copy2(s, p); shutil.chown(p, 568, 0); p.chmod(0o644)
+        print(f"{s.name}: new here, from the staged file"); continue
+    a, b = yaml.safe_load(p.read_text()), yaml.safe_load(s.read_text())
+    a.pop("pinned", None); b.pop("pinned", None)
+    if a != b:
+        bad += 1
+        print(f"{s.name}: DIFFERS from the staged file: "
+              f"{sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k))}")
+sys.exit(1 if bad else 0)
+PY
+curl -s -X POST "$LOCALAI/models/reload"; echo
 
 say "3. the three files replaced, compiled with each package's own python"
 for p in $PKGS; do
@@ -143,8 +217,13 @@ for c in $GATED; do
   fp "$c" | tee -a /root/rollout-116-after.txt | while read -r col role run f; do
     read -r _ _ oldrun oldf < <(grep "^$col $role " /root/rollout-116-before.txt)
     [ "$run" != "$oldrun" ] || { echo "$col $role: still the run before ($run)"; exit 1; }
-    [ "$f" = "$oldf" ] || { echo "$col $role: FINGERPRINT DIFFERS from the run before ($oldf -> $f): $col stays paused; tell the architecture session"; exit 1; }
-    echo "$col $role: ${oldrun:7:8} -> ${run:7:8}, fingerprint ${f:7:12} unchanged"
+    if [ "$f" = "$oldf" ]; then
+      echo "$col $role: ${oldrun:7:8} -> ${run:7:8}, fingerprint ${f:7:12} unchanged"
+    elif case " $NEW_BYTES " in *" $col "*) true ;; *) false ;; esac; then
+      echo "$col $role: ${oldrun:7:8} -> ${run:7:8}, fingerprint ${oldf:7:12} -> ${f:7:12}: MOVED, as FA_ONEDNN=0 may move an FA-on run; its multi-load gate passed (above)"
+    else
+      echo "$col $role: FINGERPRINT DIFFERS from the run before ($oldf -> $f): $col stays paused; tell the architecture session"; exit 1
+    fi
   done || exit 1
   [ -n "$was_paused" ] || $L node resume "$c" >/dev/null
 done
