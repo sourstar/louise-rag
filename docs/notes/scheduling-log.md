@@ -1801,3 +1801,12 @@ move: the pool is now under-fed. Children wait on the queue while the parent is 
 bound is the task window or its ordering (`compute_pages` for held pages), not the CPU. Owed to
 the architecture session: which of the window cap, the page size of held work, or the in-order
 consumption leaves children idle.
+
+**AFTER #149** (a part queued behind each child; held lookups by part; deployed 23:47, the build
+resumed from its staged parts). Mid-slice, internal/range=0, 23:53:40–23:56:29: **~4,100
+records/s** (692.7 k in 169 s), the container at 3.6 cores in that window. Each child at 42–56 %
+over 5 s (BEFORE #149: 45–57 %). The parent's threads together busy 175 % of 20 s: `_send` 35 %,
+`_recv` 26 %, `commit_written` 9 %, `dumps` 3 %. Three threads of one interpreter, so one GIL:
+the parent's pipes are the shared bound again, now from both sides (feeding parts, taking
+results). A slice boundary shows the parent alone (55 %) and every child at 0 % for seconds.
+Not changed tonight. 946 of 4,009 parts staged at 23:57 (24 %); at this pace the build ends ~04:15.
