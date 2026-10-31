@@ -18,7 +18,7 @@ the next begins (invariant 2: resumable, and safe to run again):
    stop (SIGTERM) finishes the group in flight and exits 130.
 2. **verify** — the same rows, the same schema, and a sample of rows whose
    id, text and vector bytes are compared with the source's.
-3. **index** — the vector index and the `book_id` index built on the copy
+3. **index** — the vector index, the `book_id` and `lang` indexes built on the copy
    by the collection's own rule (`vector_index.build_table`), BEFORE the
    swap: searches never fall back to a scan of 146 M rows.
 4. **swap** — under the vector write lock: refused when the source moved
@@ -171,6 +171,8 @@ def run(collection, lock_con=None, *, stop=None, log: Callable[[str], None] | No
         import lancedb
         tbl = lancedb.connect(str(src.parent)).open_table(TMP)
         state["btree"] = vector_index.build_scalar_table(tbl, log=say)
+        if vector_index.lang_indexed(tbl) is False:
+            state["bitmap"] = vector_index.build_lang_table(tbl, log=say)
         state["index"] = vector_index.build_table(tbl, log=say)
         state["stage"] = "swap"
         _save(state_path, state)

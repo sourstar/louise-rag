@@ -65,7 +65,7 @@ def test_the_table_is_copied_indexed_verified_and_swapped(legacy):
     assert out["stage"] == "swapped" and new.has_stable_row_ids
     assert _rows(new) == before, "every row, its text and its vector bytes kept"
     names = {i["name"] for i in new.list_indices()}
-    assert {"vector_idx", "book_id_idx"} <= names, "indexed BEFORE the swap"
+    assert {"vector_idx", "book_id_idx", "lang_idx"} <= names, "indexed BEFORE the swap"
     assert (legacy.lance_dir / f"{vector_rewrite.OLD}.lance").exists(), "the old table kept"
     tbl = lancedb.connect(str(legacy.lance_dir)).open_table(embeddings.TABLE)
     hit = tbl.search(np.asarray(before["0:0:1"][1], np.float32)).limit(3).nprobes(4).to_list()
