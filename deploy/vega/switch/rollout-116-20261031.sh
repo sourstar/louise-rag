@@ -3,6 +3,9 @@
 # backend engine's `image` hashes VeGa's package (`engine_manifest`) beside the
 # backend's tree, so every model behind a VeGa package gets a new run once.
 # Louise went first (f70dbf9: the receipts service takes the `setting` entry).
+# The wrapper is #117's (3d723bd): its half of the engine by an ALLOW-list —
+# the package's *.py outside venv/ and __pycache__, the top-level run.sh, and
+# `cuts` — so neo-cache/, run/, REVISION and vega.json are out by construction.
 #
 # The packages that back a model (2026-10-31): vega-llama-cpp, -cpu, -p5
 # (REVISION 0ec2239, #110) and vega-llama-cpp-gen, vega-louise-python-20261021a,
@@ -72,6 +75,7 @@ STAGE=$(mktemp -d)
 tar -xf "$SRC" -C "$STAGE"
 for f in $FILES; do test -s "$STAGE/$f" || { echo "the tar lacks $f"; exit 1; }; done
 grep -q "^def engine_manifest(" "$STAGE/vega_wrapper.py" || { echo "the tar's wrapper is not #116's"; exit 1; }
+grep -q '^WRAPPER_ENTRY = "run.sh"$' "$STAGE/vega_wrapper.py" || { echo "the tar's wrapper is not #117's (the allow-list)"; exit 1; }
 echo "revision $(cat "$STAGE/REVISION")"
 for p in $PKGS; do
   for f in $PYC; do test -f "$BK/$p/$f" || { echo "$p lacks $f"; exit 1; }; done
