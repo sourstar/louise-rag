@@ -62,7 +62,9 @@ say "4. the live model answers with the gated run, both sides"
 LIVE=$(docker exec $W python -c "
 from app import collections as c, run_check
 r = c.recipe_for(c.by_name('gutenberg'))
-print(run_check.answering_run(r)); print(run_check.answering_run(r, query=True))" | sort -u)
+print(run_check.answering_run(r)); print(run_check.answering_run(r, query=True))" | grep '^sha256:' | sort -u)
+# the grep: the worker's log lines (model pin, cold start) go to stdout too — at 08:42 they made
+# $LIVE differ from $GATED with the same run in it (ac7d01ea), and the script stopped before step 5
 echo "live run(s): $LIVE"
 [ "$LIVE" = "$GATED" ] || { echo "the live run is not the gated one: gutenberg stays paused (BACKOUT below)"; exit 1; }
 
