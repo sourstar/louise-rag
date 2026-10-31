@@ -776,6 +776,11 @@ it left open is below.
 
 ## Open after the migration
 
+- **Several collections merged on calibrated relevance (operator, 2026-10-31: B; A kept to evaluate)** (docs/notes/federated-merge.md).
+  - **Built:** `[reranker] calibration` (Platt), `retrieval._merge_by_relevance`, `merged_by`/`merge_withheld` in the result; the measuring tool `tools/measure/fusion_calibration.py` (collect, judge with UMBRELA, agree, score). Off until a collection file carries a calibration.
+  - **Gap:** only gutenberg and pubmed rerank; wikipedia, normattiva, wikidata have no reranker (RERANK_URL empty), so a search including one stays merged by rank. The measurement lends them gutenberg's reranker and reports each list's own MRR before/after.
+  - **Next:** München runs collect/judge/agree/score on the 243 logged queries; B goes on if it beats today on MRR@10 and nDCG@10 (p < 0.05) with the judge checked; a reranker for the three goes to the operator with its numbers and latency. A (query-class prior) measured on the same set after.
+
 - **Flash attention on SYCL is not reproducible across fresh loads; turned off, it costs speed** (2026-10-31, München; approved-encoders.md).
   - **Measured:** vega-medcpt-query and gutenberg's vega-qwen3-embedding-4b flip a vector now and then after a reload with FA on (medcpt-query in 3 of 8 runs; qwen3-4b in 4 of 8, a short text included). bge-m3 with FA on: 0 flips in 8 runs.
   - **Control so far:** FA off. medcpt-query is live FA off (run 71d129c3).

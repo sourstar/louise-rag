@@ -1470,6 +1470,11 @@ rerank_model = "bge-reranker-v2-m3"            # required with the block: the re
                                                # a `…/upstream/<model>` URL names (amended 2026-10-08)
 window = 2048                                  # optional: the longest candidate read, in the model's tokens; a longer one
                                                # is cut before it is sent (05 §5.6, amended 2026-10-21). 0: uncut
+calibration = { a = 0.83, b = -2.1, rerank_model = "bge-reranker-v2-m3", judged = 2140, set = "fusion-1" }
+                                               # optional: this reranker's score as a probability of relevance on THIS
+                                               # collection, P = 1/(1+e^-(a·score+b)); a > 0. Written from the output of
+                                               # tools/measure/fusion_calibration.py score. Used only under the model it
+                                               # names (05 §5.6, amended 2026-10-31)
 
 [[sources]]                                    # a deposit collection only (06 §6.7): one per subscribed URL
 url = "https://example.org/sitemap.xml"

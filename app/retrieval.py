@@ -31,6 +31,7 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
+from typing import Any
 
 import httpx
 from . import (cancel, catalog, collections as collections_mod, config, copy_state, db,
@@ -1295,11 +1296,65 @@ def _merge_rrf_federated(lists: list[list[dict]]) -> list[dict]:
     return scored
 
 
+def _merge_by_relevance(lists: list[tuple[list[dict], Any]]) -> list[dict]:
+    """05 §5.6 (amended 2026-10-31, operator's B): the collections' lists
+    merged on each record's PROBABILITY OF RELEVANCE — its reranker's score
+    through that collection's own calibration (`collections.Calibration`,
+    Platt scaling) — where rank fusion gave every collection's first record
+    the same weight, however weak (docs/notes/federated-merge.md).
+
+    EACH LIST KEEPS ITS OWN ORDER. A record's merge value is the best
+    probability at or below it in its own list (a running maximum from the
+    bottom), so what its collection put above another record stays above it:
+    the catalogue's first record (§5.6), a language's slots, the tail the
+    reranker did not read (probability 0 — it follows every judged record).
+    Ties: the higher place in its own list, then the list's order (the
+    collections by name, as the caller sorted them). Each hit keeps `rrf`, its
+    rank-fusion value, beside `relevance`."""
+    scored: list[tuple[float, int, int, dict]] = []
+    for li, (hits, calibration) in enumerate(lists):
+        envelope = [0.0] * len(hits)
+        best = 0.0
+        for i in range(len(hits) - 1, -1, -1):
+            score = hits[i].get("rerank_score")
+            if score is not None:
+                best = max(best, calibration.probability(score))
+            envelope[i] = best
+        for i, h in enumerate(hits):
+            entry = dict(h)
+            entry["rrf"] = 1.0 / (RRF_K + i + 1)
+            entry["relevance"] = round(envelope[i], 6)
+            scored.append((-envelope[i], i, li, entry))
+    scored.sort(key=lambda t: t[:3])
+    return [t[3] for t in scored]
+
+
+def _relevance_merge_withheld(lists: list[tuple], reranked: dict[str, bool]) -> list[dict]:
+    """Why these lists cannot be merged on relevance — one entry per list
+    that has no usable calibration this time; [] when every one has. `lists`
+    is (collection, hits, recipe) per collection."""
+    why: list[dict] = []
+    for collection, _hits, recipe in lists:
+        cal = getattr(recipe, "calibration", None) if recipe is not None else None
+        if recipe is None:
+            reason = "no reranker"
+        elif cal is None:
+            reason = "its reranker has no calibration"
+        elif cal.rerank_model != recipe.model:
+            reason = f"calibrated for {cal.rerank_model}, its reranker is {recipe.model}"
+        elif not reranked.get(collection.name):
+            reason = "its list was not reranked this time"
+        else:
+            continue
+        why.append({"collection": collection.name, "reason": reason})
+    return why
+
+
 def federated_search(collections: list, query: str, k: int = 12, mode: str = "hybrid",
                       translate: bool = True, rerank_depth: int = RERANK_TOP_N,
                       all_languages: bool = False, book_ids_for=None,
                       show_in: str | None = None, as_of: int | None = None,
-                      annotations=None) -> dict:
+                      annotations=None, keep_lists: bool = False) -> dict:
     """Query-time federation across N collections (architecture-v2.md §3/§4).
     Entity resolution/PinnedFacts happen ONCE, collection-agnostic — never
     multiplied per collection (CLAUDE.md invariant 4). Each collection's
@@ -1412,7 +1467,17 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
     reranked = {c.name: ok for (c, _), (_, ok, _) in zip(per_collection, ranked)}
     rerank_withheld = [_rerank_withheld(c, why)
                        for (c, _), (_, _, why) in zip(per_collection, ranked) if why]
-    final = _merge_rrf_federated([hits for hits, _, _ in ranked])[:k]
+    # 05 §5.6 (amended 2026-10-31): on relevance when every list's reranker
+    # is calibrated and answered; by rank otherwise, and the result says why
+    recipes = [(c, hits, collections_mod.reranker_for(c))
+               for (c, _), (hits, _, _) in zip(per_collection, ranked)]
+    merge_withheld = _relevance_merge_withheld(recipes, reranked) if len(recipes) > 1 else []
+    if len(recipes) > 1 and not merge_withheld:
+        final = _merge_by_relevance([(hits, r.calibration) for _, hits, r in recipes])[:k]
+        merged_by = "relevance"
+    else:
+        final = _merge_rrf_federated([hits for hits, _, _ in ranked])[:k]
+        merged_by = "rank"
     rerank_ms = round((time.time() - t0) * 1000, 1)
 
     # metadata attach + lazy-embed enqueue, grouped by source_collection
@@ -1445,13 +1510,22 @@ def federated_search(collections: list, query: str, k: int = 12, mode: str = "hy
               "catalog": catalog, "hits": final,
               "facts": [asdict(f) for f in facts] + _article_facts(query, collections, facts, as_of),
               "facts_withheld": facts_withheld,
-              "timings": timings, "reranked": reranked}
+              "timings": timings, "reranked": reranked, "merged_by": merged_by}
     if legs_withheld:
         result["legs_withheld"] = legs_withheld
     if rerank_withheld:
         result["rerank_withheld"] = rerank_withheld
+    if merge_withheld and any(getattr(r, "calibration", None) for _, _, r in recipes):
+        # a calibration is configured and was not used this time: say why
+        result["merge_withheld"] = merge_withheld
     if filtered:
         result["filtered"] = filtered
+    if keep_lists:
+        # MEASUREMENT (tools/measure/fusion_calibration.py): each collection's
+        # list as the merge saw it
+        result["lists"] = {c.name: {"reranked": reranked.get(c.name, False),
+                                    "rerank_model": getattr(r, "model", None), "hits": hits}
+                           for c, hits, r in recipes}
     return result
 
 ANSWER_SYSTEM = (
