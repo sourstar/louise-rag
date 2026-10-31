@@ -494,8 +494,15 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
     else:
         order = _rerank_order([best[i][0] for i in range(len(head))], fuse=RERANK_FUSE) \
             if set(best) == set(range(len(head))) else sorted(best, key=lambda i: (-best[i][0], i))
+    moved: dict[int, dict] = {}
     if CATALOG_FIRST:
+        before = order
         order = _catalog_first(order, head)
+        if order and before and order[0] != before[0]:
+            # CLAUDE.md invariant 4, rule 2: a weight's result says what moved
+            # it and how far — here from the reranker's place to the first
+            moved[order[0]] = {"weight": "catalog_first", "from": before.index(order[0]) + 1,
+                               "to": 1}
     for i in order:
         score, c = best[i]
         h = dict(head[i])
@@ -503,6 +510,8 @@ def _rerank_list(query: str, hits: list[dict], recipe, budget_s: float,
             # the chunk that scored the record is the one the result shows
             h.update({f: c[f] for f in ("chunk_id", "text", "chapter") if f in c})
         h["rerank_score"] = score
+        if i in moved:
+            h["moved_by"] = [moved[i]]
         ranked.append(h)
     return ranked + tail, True
 

@@ -86,6 +86,8 @@
     {% if h.authors %}<span class="badge">{{ h.authors }}</span>{% endif %}
     <span class="badge brass">{{ h.lang or '?' }}</span>
     {% if h.source_collection %}<span class="badge lapis">{{ h.source_collection }}</span>{% endif %}
+    {# CLAUDE.md invariant 4, rule 2: a result a weight moved says so #}
+    {% for m in h.moved_by or [] %}<span class="badge" title="moved by a weight: {{ m.weight }}, from place {{ m['from'] }} to {{ m.to }}">{{ 'catalogue match' if m.weight == 'catalog_first' else m.weight }}: moved up from #{{ m['from'] }}</span>{% endfor %}
     {% for s in h.sources or [] %}<span class="badge {{ 'lapis' if s=='dense' else '' }}">{{ s }}</span>{% endfor %}
     {# the chapter or section heading is the document's own words, so it
        is translated with the entry (operator, 2026-09-18: "in full") #}
