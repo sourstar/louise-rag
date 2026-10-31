@@ -1677,3 +1677,24 @@ the time. Small fragments stay under ~300, and held_chunks of 128 stays near
 
 So against #107's 554 → 2,101 small fragments and held_chunks 0.43 → 2.45 s,
 the table stays at 187–457 small fragments and held_chunks at 0.18–0.42 s.
+
+### 2026-10-31 — gutenberg's encoder with flash attention on, oneDNN's SDPA off — MEASURED
+
+**What changed.** vega-qwen3-embedding-4b moved at 13:41 from flash attention off to on with
+`GGML_SYCL_FA_ONEDNN=0` (P5 engine, run 0a80405f; approved-encoders.md). The measurement is
+`fa_speed2.py`: 150 real gutenberg chunks (~3,240 characters each), one request each, the live
+model and the candidate in alternating passes on the same card in the same minutes.
+
+| pass | FA off (run b36c5912) | FA on + FA_ONEDNN=0 (run 0a80405f) |
+|---|---|---|
+| 1 | 2.33 chunks/s (64.4 s) | 2.23 chunks/s (67.3 s) |
+| 2 | 2.32 chunks/s (64.8 s) | 2.48 chunks/s (60.5 s) |
+
+- **BEFORE, the same harness 2026-10-31 morning:** FA off 2.0–2.3 chunks/s; FA on with oneDNN's SDPA 3.9–5.4, which was fast and not reproducible.
+- **The gate's benchmark (512 calibration texts):** 1,294 → 1,500 tokens/s (+16 %).
+- **The repro harness (prefixes up to 8,191 words):** −23 to −45 % a run.
+
+**Reading.** At gutenberg's chunk length the switch is about neutral. Its gain is on long inputs.
+The speed oneDNN's SDPA gave (2–2.4×) does not come back without its non-reproducibility.
+gutenberg has nothing pending beyond book 673 today, so the card's share is unchanged until new
+books arrive.
