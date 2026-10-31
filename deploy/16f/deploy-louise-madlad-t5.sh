@@ -195,6 +195,7 @@ grep -q '^STATE = "rewrite-stable.json"' "$ROOT/src.new/app/vector_rewrite.py"  
 grep -q "^def build_lang_table(tbl, \*, log=None) -> dict:" "$ROOT/src.new/app/vector_index.py"           # #147 (d5f6c11): a BITMAP on lang
 grep -q "^def _ship(line: bytes) -> tuple\[bytes, int\]:" "$ROOT/src.new/app/pack/build.py"              # #148 (65b6261): a line crosses compressed from child to part writer
 grep -q "^def prefetch_held(collection, rows: list\[dict\]) -> None:" "$ROOT/src.new/app/pack/build.py"   # #149 (e8e4025): a part queued behind each child; held lookups per part
+grep -q "^def _columns_of(buf: list\[dict\], lines: list) -> tuple | None:" "$ROOT/src.new/app/pack/build.py"   # #150 (5487524): a part to its writer as columns and one bytes object
 grep -q '^def set_paused(name: str, paused: bool, \*, by: str = "") -> set\[str\]:' "$ROOT/src.new/app/node_state.py"   # #122 (4ef5c49): a pause records who and when
 grep -q "^def _non_finite(vector: bytes) -> bool:" "$ROOT/src.new/tools/vega_repro_check.py"   # #123 (e9ca1da): a NaN fails the repro check and the gate
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
