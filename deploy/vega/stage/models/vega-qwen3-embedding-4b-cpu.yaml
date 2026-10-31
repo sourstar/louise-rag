@@ -1,0 +1,25 @@
+# vega-qwen3-embedding-4b-cpu — gutenberg's encoder's CPU TWIN: vega-qwen3-embedding-4b's
+# weights and load options on the CPU llama.cpp build, behind VeGa, for the stored CPU
+# reference (`hold embedder cpu-reference`, docs/notes/near-exact-runs.md; operator
+# 2026-10-31). ~95 tokens/s at 8 threads on the node (München, 2026-10-31). Not pinned;
+# takes no card memory. JSON, which is YAML.
+{
+  "name": "vega-qwen3-embedding-4b-cpu",
+  "backend": "vega-llama-cpp-cpu",
+  "embeddings": true,
+  "pinned": false,
+  "context_size": 8192,
+  "threads": 8,
+  "gpu_layers": 0,
+  "mmap": true,
+  "parameters": {
+    "model": "weights/llama-embed/Qwen3-Embedding-4B-Q4_K_M.gguf",
+    "batch": 8192,
+    "seed": 0
+  },
+  "options": [
+    "parallel:1",
+    "pooling:last",
+    "ubatch:8192"
+  ]
+}

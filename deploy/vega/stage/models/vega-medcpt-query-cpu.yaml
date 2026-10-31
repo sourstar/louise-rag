@@ -1,0 +1,24 @@
+# vega-medcpt-query-cpu — pubmed's query encoder's CPU TWIN: vega-medcpt-query's weights
+# and load options on the CPU llama.cpp build, behind VeGa, for the stored CPU reference
+# (`hold embedder cpu-reference`, docs/notes/near-exact-runs.md; operator 2026-10-31).
+# Not pinned; takes no card memory. JSON, which is YAML.
+{
+  "name": "vega-medcpt-query-cpu",
+  "backend": "vega-llama-cpp-cpu",
+  "embeddings": true,
+  "pinned": false,
+  "context_size": 513,
+  "threads": 8,
+  "gpu_layers": 0,
+  "mmap": true,
+  "parameters": {
+    "model": "weights/medcpt/MedCPT-Query-Encoder-f16.gguf",
+    "batch": 512,
+    "seed": 0
+  },
+  "options": [
+    "parallel:1",
+    "pooling:cls",
+    "ubatch:512"
+  ]
+}
