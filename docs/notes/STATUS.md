@@ -790,10 +790,11 @@ it left open is below.
     - Every collection was gated anew by the multi-load gate (#120): exact over 3 fresh loads, version-5 statements.
     - gutenberg b36c5912; wikipedia 92775442 (its fingerprint moved: bge-m3 runs FA on, now without oneDNN's SDPA; worst 0.999939); pubmed 90105522 / 0df07afc; normattiva 7c990c09; wikidata dfcae2d9 / 7174aea8.
     - Every other fingerprint stayed bit-identical.
-  - **Next:**
-    - gutenberg onto FA on + FA_ONEDNN=0, pre-approved after the 2,048 sweep and the gate on a candidate name (rollout-qwen-fa-20261031.sh);
-    - medcpt-query and the bge reranker the same way, if FA on is exact and faster;
-    - the CPU references tonight.
+  - **Done (2026-10-31, München):**
+    - gutenberg on FA on + FA_ONEDNN=0 (run 0a80405f): exact multi-load gate, sweep clean; speed on real chunks about equal to FA off.
+    - louise-rerank-bge on FA on + FA_ONEDNN=0 since 14:06: 0 NaN, bit-exact across loads, 16–36 % faster (near-exact-runs.md).
+    - medcpt-query stays FA off: exact either way, not faster.
+  - **Next:** the CPU references tonight.
   - **Decided (operator, 2026-10-31): KEEP** gutenberg's 10,476,253 chunks written with FA on (runs 94f8b022, 203479bf). They are valid at tolerance, and only their bit-for-bit reproduction is lost. A re-embed (~7.82 B tokens, ~35 card-days) stays possible at any later re-creation.
 
 - **"Every plate" — gutenberg parser 11** (operator, 2026-10-25; 08 §8.7,

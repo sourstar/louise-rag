@@ -70,12 +70,25 @@ A version-4 statement keeps meaning "exact, one load". `read_statement` reads 4 
 2. S2: the multi-load gate, the opt-in, and the near-exact verdict in `runs.check`.
 3. On the node: the CPU references, made once (gutenberg, wikipedia, pubmed's two sides), then each collection gated again.
 
-**gutenberg's FA on is OUT for now (München, 2026-10-31, P5 engine).** In
-the 8-run measurement, run 3 flipped one text (6.3e-5), and run 5 gave a
-NaN in a vector of a long sweep prefix. A NaN is a wrong answer, not a
-variation within a bound, so no near-exact setting admits it. The lead is
-the reranker's NaN: the SYCL flash-attention kernel on fully masked tiles,
-which a causal model's long sequence has (Qwen3; bge-m3, which is
-bidirectional, was 8 of 8 clean). It is investigated with the reranker NaN
-(task: reranker NaN). FA on comes back for gutenberg only once that is
-fixed and the 8 runs come back within the near-exact bound.
+**Flash attention's NaN: the cause, by measurement (2026-10-31, München).**
+oneDNN's fused SDPA, which llama.cpp SYCL takes for flash attention unless
+`GGML_SYCL_FA_ONEDNN=0` (`GGML_SYCL_ENABLE_DNN=0` never covered it):
+- qwen3-4b on the P5 engine, FA on with oneDNN's SDPA: 4 of 8 runs varied,
+  with a NaN and a 0.0865 wrong vector. With `FA_ONEDNN=0`: 8 of 8
+  bit-exact, no NaN, 23–45 % faster than FA off.
+- louise-rerank-bge, FA on + `FA_ONEDNN=0`, on gutenberg's real candidates
+  at the batch sizes that NaN'd on 10-21: 0 NaN in 135 requests over 5
+  fresh loads × 3 passes, every score identical across loads and orders,
+  16–36 % faster than the strict copy.
+
+`FA_ONEDNN=0` is the wrapper's Intel contract (#124). FA on is live where it
+is EXACT and faster, so no near-exact opt-in is in use:
+- gutenberg, run 0a80405f (exact over the multi-load gate, the 2,048 sweep
+  clean);
+- louise-rerank-bge, since 14:06 (scores within 0.031 logits of the strict
+  copy, the same top 10 on 3 queries);
+- wikipedia's bge-m3 (already FA on).
+
+medcpt-query stays FA off: exact either way, not faster (43.3 ms against
+47.6 ms a query, median). Why oneDNN's SDPA gives a NaN is not studied
+further: it is switched off.
