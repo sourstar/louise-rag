@@ -254,11 +254,20 @@ def check_part(con, local, codex, records: Callable[[], Iterable[dict]], *, part
 def run(root, name: str, codex, snapshot, local, *, shards: list[str] | None = None, cut_all: bool = False,
         sample: str | None = "0.05", seed: bytes | None = None, window: int = WINDOW,
         log: Callable[[str], None] = lambda _m: None, every_s: float = 30.0,
-        stop: Callable[[], bool] = lambda: False) -> dict:
+        stop: Callable[[], bool] = lambda: False, ids_out: Path | None = None) -> dict:
     """Walk `snapshot`'s parts (or `shards`) part by part, window by window;
     the report, with `ids` — the uids `dev reindex` repairs — and `took_s`.
     `stop()` true ends the walk at the next part (07 §7.7): the report then
-    covers the parts walked and says `interrupted`."""
+    covers the parts walked and says `interrupted`.
+
+    BOUNDED IN MEMORY BY A PART (2026-10-31: on wikipedia the walk named
+    8,555,932 documents, held them all to the end, and the report's assembly
+    took it past its 8 GB cap — OOM-killed at part 26,367 of 26,551, nothing
+    written). Each part's named documents are settled against the manifest
+    as soon as the part is walked, counted, and dropped: the report keeps
+    the counts and the first PRINT_LIMIT; with `ids_out` the uids for `dev
+    reindex` are streamed to that file (written beside and renamed into
+    place at the end) and `ids` is not returned."""
     from app.pack import records as pack_records
     from . import codex as codex_mod, collection as col
     t0 = time.monotonic()
@@ -275,54 +284,78 @@ def run(root, name: str, codex, snapshot, local, *, shards: list[str] | None = N
     if sample and sample != "0" and walk:
         sampled = set(codex_mod.sample(seed, codex_mod.sample_size(sample, len(walk)), walk))
     tree = col.shard_dir_of(Path(root), name)
-    found: dict[str, dict] = {}
     totals: Counter = Counter()
     pending: Counter = Counter()
+    kinds: Counter = Counter()
+    fts_versions: Counter = Counter()
+    first: list[dict] = []
+    ids: list[str] = []
+    named = reindexable = moved = 0
     not_held: list[str] = []
     last = t0
     interrupted = False
-    with closing(open_manifest(Path(local.manifest_path))) as con:
-        for k, part in enumerate(walk, 1):
-            if stop():
-                interrupted = True
-                break
-            s = by_id[part]
-            path = tree / s.path
-            if not path.is_file():
-                not_held.append(part)
-                continue
-            got = check_part(con, local, codex, lambda p=path: pack_records.iter_records(p), part=part,
-                             part_chunks=s.chunks, cut_all=cut_all, text=part in sampled, window=window)
-            found.update(got.pop("found"))
-            pending.update(got["pending"])
-            totals.update(parts=1, records=got["records"], served=got["served"], missing=got["missing"],
-                          indexed=got["indexed"], changed=got["changed"],
-                          parts_cut=int(got["cut"]), parts_text=int(got["text"]),
-                          parts_whose_total_differs=int(got["served"] == got["records"]
-                                                        and got["manifest_chunks"] != s.chunks))
-            now = time.monotonic()
-            if now - last >= every_s:
-                last = now
-                log(f"[index-drift] {name}: {k}/{len(walk)} parts, {totals['records']:,} records, "
-                    f"{len(found):,} named, {now - t0:.0f}s")
-        served_rows = None
-        if not shards and not not_held and not interrupted:
-            served_rows = int(con.execute(SERVED_COUNT_SQL).fetchone()[0])
-        # The worker may have re-indexed a named document between this walk's
-        # manifest read and its index read: such a row is set aside, counted,
-        # never named — a second run sees it settled. One read per named
-        # document, so it costs what was found, not what was walked.
-        moved = totals["changed"]
-        now = manifest_rows(con, list(found)) if found else {}
-        for uid, e in list(found.items()):
-            row = now.get(uid)
-            if row is None or (row["updated_at"], row["fts_done"]) != (e["updated_at"], e["fts_done"]):
-                del found[uid]
-                moved += 1
+    sink = None
+    if ids_out is not None:
+        ids_out = Path(ids_out)
+        sink = open(ids_out.with_name(ids_out.name + ".part"), "w", encoding="utf-8")
+    try:
+        with closing(open_manifest(Path(local.manifest_path))) as con:
+            for k, part in enumerate(walk, 1):
+                if stop():
+                    interrupted = True
+                    break
+                s = by_id[part]
+                path = tree / s.path
+                if not path.is_file():
+                    not_held.append(part)
+                    continue
+                got = check_part(con, local, codex, lambda p=path: pack_records.iter_records(p), part=part,
+                                 part_chunks=s.chunks, cut_all=cut_all, text=part in sampled, window=window)
+                found = got.pop("found")
+                pending.update(got["pending"])
+                totals.update(parts=1, records=got["records"], served=got["served"], missing=got["missing"],
+                              indexed=got["indexed"], changed=got["changed"],
+                              parts_cut=int(got["cut"]), parts_text=int(got["text"]),
+                              parts_whose_total_differs=int(got["served"] == got["records"]
+                                                            and got["manifest_chunks"] != s.chunks))
+                if found:
+                    # The worker may have re-indexed a named document between
+                    # this walk's manifest read and its index read: such a row
+                    # is set aside, counted, never named — a second run sees it
+                    # settled. One read per named document, at its part's end.
+                    now = manifest_rows(con, list(found))
+                    for uid in sorted(found):
+                        e = found[uid]
+                        row = now.get(uid)
+                        if row is None or (row["updated_at"], row["fts_done"]) != (e["updated_at"], e["fts_done"]):
+                            moved += 1
+                            continue
+                        named += 1
+                        kinds.update(e["kinds"])
+                        fts_versions[str(e["fts_version"])] += 1
+                        if len(first) < PRINT_LIMIT:
+                            first.append(e)
+                        if set(e["kinds"]) & set(REINDEXABLE) and "origin" not in e["kinds"]:
+                            reindexable += 1
+                            if sink is not None:
+                                sink.write(f"{uid}\n")
+                            else:
+                                ids.append(uid)
+                now = time.monotonic()
+                if now - last >= every_s:
+                    last = now
+                    log(f"[index-drift] {name}: {k}/{len(walk)} parts, {totals['records']:,} records, "
+                        f"{named:,} named, {now - t0:.0f}s")
+            served_rows = None
+            if not shards and not not_held and not interrupted:
+                served_rows = int(con.execute(SERVED_COUNT_SQL).fetchone()[0])
+    finally:
+        if sink is not None:
+            sink.close()
+    if sink is not None:
+        os.replace(ids_out.with_name(ids_out.name + ".part"), ids_out)
+    moved += totals["changed"]
     took = time.monotonic() - t0
-    named = sorted(found.values(), key=lambda e: e["uid"])
-    kinds = Counter(k for e in named for k in e["kinds"])
-    ids = [e["uid"] for e in named if set(e["kinds"]) & set(REINDEXABLE) and "origin" not in e["kinds"]]
     report = {
         "collection": name, "snapshot": snapshot.snapshot_id, "seed": seed.hex(), "sample": sample or "0",
         "cut_all": cut_all, "interrupted": interrupted, **{k: totals[k] for k in ("parts", "records", "served", "missing", "parts_cut",
@@ -333,13 +366,13 @@ def run(root, name: str, codex, snapshot, local, *, shards: list[str] | None = N
         # of a wholly held snapshot; counted, not named (no window answers it)
         "served_rows": served_rows,
         "served_without_record": None if served_rows is None else served_rows - totals["indexed"],
-        "named": len(named), "kinds": dict(kinds), "reindexable": len(ids), "changed_during_walk": moved,
-        "named_fts_versions": dict(Counter(str(e["fts_version"]) for e in named)),
-        "documents": named[:PRINT_LIMIT], "documents_truncated": len(named) > PRINT_LIMIT,
+        "named": named, "kinds": dict(kinds), "reindexable": reindexable, "changed_during_walk": moved,
+        "named_fts_versions": dict(fts_versions),
+        "documents": first, "documents_truncated": named > PRINT_LIMIT,
         "took_s": round(took, 3),
         "us_per_record": round(took / totals["records"] * 1e6, 1) if totals["records"] else None,
     }
-    return {**report, "ids": ids}
+    return report if sink is not None else {**report, "ids": ids}
 
 
 def write_ids(path: Path, ids: list[str]) -> None:

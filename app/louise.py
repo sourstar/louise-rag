@@ -1509,15 +1509,16 @@ def cmd_dev_index_drift(a) -> int:
         except (ValueError, OSError):    # not the main thread
             pass
     try:
+        # the uids are streamed to --ids-out part by part, never held whole
+        # (2026-10-31: wikipedia's 8.6 M named took the walk past 8 GB)
         report = drift.run(a.root, name, codex, snapshot, local, shards=shards, cut_all=a.cut_all,
                            sample=a.sample, seed=seed, log=lambda m: print(m, file=sys.stderr),
-                           stop=stop.is_set)
+                           stop=stop.is_set, ids_out=Path(a.ids_out) if a.ids_out else None)
     finally:
         for sig, handler in before.items():
             signal.signal(sig, handler)
-    ids = report.pop("ids")
+    report.pop("ids", None)
     if a.ids_out:
-        drift.write_ids(Path(a.ids_out), ids)
         report["ids_out"] = str(a.ids_out)
     print(drift.summary_line(report), file=sys.stderr)
     _print(report)
