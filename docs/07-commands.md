@@ -271,6 +271,13 @@ louise dev                                                             operator 
                                                                        derived state, not the copy, and proves nothing to another peer (03 §3.2)
   unindexable <collection> <uid> [--yes]                               a document the plugin now refuses: out of every index, its error written at once; writes
   mark-embedded <collection>                                           documents whose every chunk has a vector here and whose row says embed_done = 0, marked; writes
+  rewrite-vectors <collection> [--yes] [--restart] [--drop-old] [--group N]
+                                                                       the vector table copied row for row into one with Lance's stable row ids, so a compaction
+                                                                       never re-maps the index (operator, 2026-10-31): copy (resumable by fragment group), verify
+                                                                       (rows, schema, a sample byte for byte), index, swap under the vector write lock — refused
+                                                                       when the table moved since the copy began; a PAUSED collection; the plan without --yes;
+                                                                       --restart drops a copy in progress; --drop-old removes the old table once every process
+                                                                       reads the new one; writes
   deprecate-duplicates <collection> [--yes]                            this peer's bundles duplicating another of its own for a part, deprecated (03 §3.6; 09 §9.8):
                                                                        served one more day, never offered for a new fetch; writes
   withdraw-covered <collection> [--yes]                                this peer's bundles whose every record another bundle held here covers, withdrawn (09 §9.8); writes

@@ -43,7 +43,9 @@ def test_app_never_imports_a_gpu_stack():
 # embeddings, maintained (prune, compact, refresh) by vector_index, and
 # checked against the Codex by spaces. A plugin or stage that opened Lance
 # itself would be a second maintenance regime nobody schedules.
-_LANCE_LAYER = {"app/embeddings.py", "app/spaces.py", "app/vector_index.py"}
+_LANCE_LAYER = {"app/embeddings.py", "app/spaces.py", "app/vector_index.py",
+                # the table rewritten with stable row ids (2026-10-31): the same layer
+                "app/vector_rewrite.py"}
 _LANCE_TOUCH = re.compile(
     r"^\s*(?:import|from)\s+(?:lancedb|lance)\b|lancedb\.connect\(|\.to_lance\(",
     re.MULTILINE)
