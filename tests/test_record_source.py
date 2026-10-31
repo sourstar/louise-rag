@@ -26,8 +26,7 @@ def source(tmp_path, monkeypatch):
     (tmp_path / "state").mkdir()
     monkeypatch.setattr(rs, "_context_now", lambda c: (tmp_path / "shard", snap, codex))
     rs._contexts.clear()
-    rs._indexes.clear()
-    rs._frames.clear()
+    pack_records.reset_caches()
     monkeypatch.setattr(rs, "SAMPLE_EVERY", 10**9)          # no sampling unless a test asks
     return collection
 

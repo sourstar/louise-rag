@@ -19,29 +19,26 @@ writes MARK under the collection's state directory and every process stops
 using records for that collection until a person removes it; the parse is
 what the stage gets meanwhile (`sections` returns None).
 
-Per process, cached: the snapshot (by the newest snapshot file's mtime),
-each part's index and the last frames read — the pool's children keep
-their own, and the rows a child gets are contiguous (`parallel._partition`),
-so neighbouring rows share a frame.
+Per process, cached: the context (CONTEXT_TTL_S), and each part's index
+and frames through THE records reader's own caches (`pack.records.
+cached_index` / `read_record`, byte-budgeted in `backend.GroupCache`; the
+collection backend's S2, docs/notes/collection-backend.md) — the rows a
+child gets are contiguous (`parallel._partition`), so neighbouring rows
+share a frame.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import threading
-from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
 #: one row in this many (by uid) is parsed anyway and compared
 SAMPLE_EVERY = 1000
 MARK = "record-source-mismatch.json"
-_INDEXES = 64
-_FRAMES = 16
 
 _lock = threading.Lock()
-_indexes: OrderedDict = OrderedDict()      # part path -> (mtime_ns, ShardIndex)
-_frames: OrderedDict = OrderedDict()       # (part path, mtime_ns, k) -> lines
 _stats = {"record": 0, "parsed": 0, "sampled": 0, "mismatch": 0}
 
 
@@ -109,39 +106,6 @@ def _context_now(collection) -> tuple[Path, Any, Any] | None:
     return col.shard_dir_of(root, collection.name), snap, codex
 
 
-def _index(path: Path):
-    from .pack import records as pack_records
-    st = path.stat()
-    key = str(path)
-    with _lock:
-        got = _indexes.get(key)
-        if got is not None and got[0] == st.st_mtime_ns:
-            _indexes.move_to_end(key)
-            return st.st_mtime_ns, got[1]
-    index = pack_records.read_index(path)
-    with _lock:
-        _indexes[key] = (st.st_mtime_ns, index)
-        while len(_indexes) > _INDEXES:
-            _indexes.popitem(last=False)
-    return st.st_mtime_ns, index
-
-
-def _line(path: Path, mtime_ns: int, index, k: int, i: int) -> bytes:
-    from .pack import records as pack_records
-    key = (str(path), mtime_ns, k)
-    with _lock:
-        lines = _frames.get(key)
-        if lines is not None:
-            _frames.move_to_end(key)
-    if lines is None:
-        lines = pack_records.read_frame(path, index, k)
-        with _lock:
-            _frames[key] = lines
-            while len(_frames) > _FRAMES:
-                _frames.popitem(last=False)
-    return lines[i]
-
-
 def record_for(collection, row) -> dict | None:
     """The row's FRESH record, or None."""
     return lookup(collection, row)[0]
@@ -161,16 +125,15 @@ def lookup(collection, row) -> tuple[dict | None, str]:
     want = row["txt_hash"] if "txt_hash" in row.keys() else None
     if not want:
         return None, "no-origin-hash"
+    from .pack import records as pack_records
     order = (getattr(codex, "slicing", None) or {}).get("order", "bytes")
     for shard in snap.shards_of(str(row["native_id"]), order):
         path = Path(tree) / shard.path
         try:
-            mtime_ns, index = _index(path)
-            where = index.uids.get(uid)
-            if where is None:
-                continue
-            rec = json.loads(_line(path, mtime_ns, index, int(where[0]), int(where[1])))
-        except (OSError, ValueError, KeyError, IndexError):
+            rec = pack_records.read_record(path, uid)
+        except KeyError:
+            continue                         # not in this slice's part
+        except (OSError, ValueError, IndexError):
             continue
         if rec.get("uid") != uid or rec.get("origin_hash") != want:
             return None, "origin-differs"   # not the same origin bytes: parse
