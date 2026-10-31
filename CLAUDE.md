@@ -126,18 +126,38 @@ are the ones that have drifted; prefer to add a test when you touch them.
    of the thing that changed, explicitly — never silently, and never via a
    global knob that re-pins collections whose chunker never changed.
    *Enforced: test (golden) + boot (space pin).*
-4. FUSION TYPES. ReferenceSource lookups are facts-by-key: they go into the
-   LLM context as pinned blocks and NEVER enter RRF. Ranked lists from corpus
-   legs ALWAYS go through RRF — when they answer the same question. Two
-   ranked lists that answer different questions (docs/05 §5.1) are presented separately,
-   never fused. Do not blend the types. Nothing boosts: an identifier the
-   query names pins its facts and restricts nothing unless the reader asks
-   for it as the `keys` filter (docs/05 §5.2, operator 2026-10-25). ONE
-   EXCEPTION, by operator decision (2026-10-25: "The final goal is the
-   quality of the information retrieval"): after the reranker, the record
-   the catalogue leg ranks first takes position 1 and nothing else moves
-   (docs/05 §5.6; titles MRR 0.782 against 0.720 fused by RRF and 0.578
-   reranked alone). *Enforced: test + review.*
+4. FUSION TYPES AND WEIGHTS. ReferenceSource lookups are facts-by-key:
+   they go into the LLM context as pinned blocks and NEVER enter a ranking.
+   Within a collection, the ranked lists of its legs that answer the same
+   question ALWAYS go through RRF (their scores share no scale). Two ranked
+   lists that answer different questions (docs/05 §5.1) are presented
+   separately, never fused. Do not blend the types. Across collections, the
+   reranked lists merge on calibrated relevance where every list has a
+   calibration, by RRF otherwise (docs/05 §5.6; operator 2026-10-31, B). An
+   identifier the query names pins its facts and restricts nothing unless
+   the reader asks for it as the `keys` filter (docs/05 §5.2, operator
+   2026-10-25).
+   WEIGHTS (operator, 2026-10-31, replacing "nothing boosts": the fault of
+   ENTITY_BOOST, removed 2026-10-25, was a weight nobody could see or
+   measure, not weighting). A weight may reorder results only if:
+     (1) it comes from a named, attributed source — an annotations
+         collection, a calibration;
+     (2) every result it moved shows what moved it and by how much;
+     (3) it is the reader's choice, or a default measured on the judged
+         query set (tools/measure/fusion_calibration.py) and approved by
+         the operator;
+     (4) it reorders and never removes — removing is a filter the reader
+         asks for;
+     (5) the same query, data and annotation versions give the same order.
+   A point of view (a political lens, say) is the reader's choice only,
+   never a default, and the page says it is applied: biased rankings shift
+   undecided readers without their noticing (Epstein & Robertson, PNAS
+   2015). Approved defaults in force: after the reranker, the record the
+   catalogue leg ranks first takes position 1 and nothing else moves
+   (operator 2026-10-25: "The final goal is the quality of the information
+   retrieval"; docs/05 §5.6; titles MRR 0.782 against 0.720 fused by RRF
+   and 0.578 reranked alone); the hit says so (`moved_by`).
+   *Enforced: test + review.*
 5. BANDWIDTH. No code path moves bytes without drawing from the central
    token-bucket budget (transfer manager). No per-tool rate limits as a
    substitute. *Enforced: test (tests/test_invariant_5_bandwidth.py: every

@@ -754,6 +754,19 @@ def test_an_empty_badge_is_not_drawn(client):
     assert "Curie M" in html and "Chapter I" in html
 
 
+def test_a_hit_a_weight_moved_says_so(client):
+    """CLAUDE.md invariant 4, rule 2 (operator, 2026-10-31): every result a
+    weight moved shows what moved it and how far."""
+    tpl = web.TEMPLATES.env.get_template("_ask_results.html")
+    hit = {"chunk_id": "gutenberg:2701:0:1", "book_id": 2701, "title": "Moby Dick",
+           "lang": "en", "text": "x", "source_collection": "gutenberg",
+           "moved_by": [{"weight": "catalog_first", "from": 3, "to": 1}]}
+    html = tpl.render(result={"hits": [hit], "timings": {"fts": 1}})
+    assert "catalogue match: moved up from #3" in html
+    plain = {k: v for k, v in hit.items() if k != "moved_by"}
+    assert "moved up" not in tpl.render(result={"hits": [plain], "timings": {"fts": 1}})
+
+
 def test_a_hit_links_to_the_origin_not_to_this_node(client):
     """`reader.html` has offered "open at the source" all along, but the Ask
     page's reader panel loads the FRAGMENT, which has no header — so the

@@ -776,6 +776,8 @@ it left open is below.
 
 ## Open after the migration
 
+- **Invariant 4 rewritten (operator, 2026-10-31): "nothing boosts" replaced by five rules for a weight** (attributed source; every moved result shows it; reader's choice or a measured, approved default; reorders, never removes; reproducible by versions). Point of view: reader's choice only. The catalogue-first default now marks the record it moved (`moved_by`, a badge on the Ask page). Weights come through annotations (reliability first; point of view later). The literary-form facet uses the library standard (MARC 21 008/33 + LCGFT; task: form facet).
+
 - **Several collections merged on calibrated relevance (operator, 2026-10-31: B; A kept to evaluate)** (docs/notes/federated-merge.md).
   - **Built:** `[reranker] calibration` (Platt), `retrieval._merge_by_relevance`, `merged_by`/`merge_withheld` in the result; the measuring tool `tools/measure/fusion_calibration.py` (collect, judge with UMBRELA, agree, score). Off until a collection file carries a calibration.
   - **Gap:** only gutenberg and pubmed rerank; wikipedia, normattiva, wikidata have no reranker (RERANK_URL empty), so a search including one stays merged by rank. The measurement lends them gutenberg's reranker and reports each list's own MRR before/after.

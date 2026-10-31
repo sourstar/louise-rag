@@ -199,19 +199,29 @@ writes only registered ids into a record's `keys` (§6.1), and a
 namespace is registered before any record uses it, because `keys` are
 bytes of the record and therefore of its `content_hash`.
 
-**A filter restricts; nothing boosts** (one exception, measured: the
-catalogue's first record keeps the first place after the reranker, §5.6). Two things restrict the legs,
+**A filter restricts; a weight reorders, under five rules** (*amended
+2026-10-31*, operator, replacing "nothing boosts"; CLAUDE.md invariant 4).
+A weight may reorder results only if it comes from a named, attributed
+source (an annotations collection, a calibration); every result it moved
+shows what moved it and by how much (`moved_by`, or `relevance` under
+§5.6's merge); it is the reader's choice, or a default measured on the
+judged query set and approved by the operator; it reorders and never
+removes; and the same query, data and annotation versions give the same
+order, so two peers holding the same versions rank alike. A point of view
+is the reader's choice only, never a default, and the page says it is
+applied. The defaults in force: the catalogue's first record keeps the
+first place after the reranker (§5.6), and several collections merge on
+calibrated relevance (§5.6). Two things restrict the legs,
 and only when the reader gives them: an identifier (a filter on `keys`),
 and a value for one of the collection's declared facets (§5.7) — `subjects` is `Neoplasms/genetics`, `creators`
 is `Austen, Jane`, `date` is within a range. Both narrow which records
 the legs may return, and the free-text query then ranks within that
 narrowing; neither adds a list of its own, and neither moves a score.
 A filter that matches nothing returns nothing, which is an answer: the
-value is not in what this peer holds, and §5.7 says what is. A boost
-would hide that, and would make two peers rank one query differently
-unless its weight were pinned in the Codex, so there is none (the
-catalogue's first place, §5.6, is a fixed position, not a weight, and is
-the same on every peer).
+value is not in what this peer holds, and §5.7 says what is. A weight
+never stands in for a filter: it would hide that answer. A weight no peer
+can reproduce would make two peers rank one query differently, which is
+why rule five ties it to versions every peer can hold.
 
 **An identifier the query names pins its facts and restricts nothing**
 (*amended 2026-10-25*, operator). It is resolved and its facts are pinned
@@ -653,10 +663,10 @@ the language plan made.
 **The catalogue's first record keeps the first place** (*amended
 2026-10-21*, docs/notes/query-campaign.md run 4). After the reranker's
 order, the record the catalogue leg (§5.1) ranks first moves to position
-1, and nothing else moves. It is the one exception to §5.2's "nothing
-boosts" and to fusion by reciprocal rank alone, kept because it measures
-best (operator, 2026-10-25: "The final goal is the quality of the
-information retrieval"; CLAUDE.md invariant 4). The reranker judges passages: a biography's
+1, and nothing else moves; the record says so (`moved_by`, *amended
+2026-10-31*). It is a weight under §5.2's rules, a default the operator
+approved because it measures best (2026-10-25: "The final goal is the
+quality of the information retrieval"; CLAUDE.md invariant 4). The reranker judges passages: a biography's
 passage that names "Moby Dick" beat the novel's own pages, and once the
 instructed vector leg brought books about a work among the candidates,
 titles fell from MRR 0.738 before the reranker to 0.578 after it.
