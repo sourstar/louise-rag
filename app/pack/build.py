@@ -488,6 +488,41 @@ def _write_part(path: Path, buf: list[dict], lines: list | None, record_line: in
             hold_records.chunks_root_of(b"".join(chunk_blobs)))
 
 
+def _write_part_columns(path: Path, cols: tuple, blob: bytes, comp_lens, raw_lens,
+                        record_line: int, chunk_blob: bytes):
+    """`_write_part` for a part whose every line was shipped by the child,
+    handed over as COLUMNS: what `write_shard` reads of a record when its
+    line is given (uid, native_id, chunks), the content hashes for the
+    records root, and the lines as ONE bytes object of their compressed
+    forms with two arrays of lengths. A list of dicts and a tuple a line
+    were pickled object by object on the build's GIL — `_send` 35 % of its
+    threads after #149 (München, 2026-10-31); this is a few objects a part.
+    The bytes written are the same: the same lines, in the same order."""
+    import pyarrow as pa
+    uids, native_ids, chunks, hashes = cols
+    codec = pa.Codec("zstd")
+    lines, pos = [], 0
+    for clen, rlen in zip(comp_lens, raw_lens):
+        lines.append(bytes(codec.decompress(blob[pos:pos + clen], decompressed_size=rlen)))
+        pos += clen
+    recs = [{"uid": u, "native_id": n, "chunks": c} for u, n, c in zip(uids, native_ids, chunks)]
+    info = records.write_shard(path, recs, record_line=record_line, lines=lines)
+    return (info, shard_mod.pieces_root_of(path), hold_records.records_root(hashes),
+            hold_records.chunks_root_of(chunk_blob))
+
+
+def _columns_of(buf: list[dict], lines: list) -> tuple | None:
+    """The columnar hand-over of a part (`_write_part_columns`), or None
+    when a line was not shipped by the child (the part goes as before)."""
+    from array import array
+    if not lines or not all(isinstance(x, tuple) and len(x) == 2 for x in lines):
+        return None
+    cols = ([r["uid"] for r in buf], [r.get("native_id") for r in buf],
+            [r.get("chunks") for r in buf], [r["content_hash"] for r in buf])
+    return (cols, b"".join(c for c, _ in lines), array("q", (len(c) for c, _ in lines)),
+            array("q", (n for _, n in lines)))
+
+
 #: a record's line, written by the pool's child (`with_line`) and taken by
 #: the part's writer: encoding every line in the build's own process was its
 #: largest serial cost (München's stack samples, 2026-10-30: json.dumps in
@@ -884,8 +919,14 @@ def _pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_
             # the part's container (09 §9.5 "The file"): the Codex's, version 9
             rel = f"{RECORDS_DIR}/{slice_name}/{slicing.shard_name(next_n)}{part_suffix}"
             lines = [r.pop(LINE_KEY, None) for r in buf]
-            fut = part_pool.submit(_write_part, pack_dir / rel, buf, None if None in lines else lines,
-                                   record_line, chunk_blobs)
+            columns = _columns_of(buf, lines)
+            if columns is not None:
+                cols, blob, comp_lens, raw_lens = columns
+                fut = part_pool.submit(_write_part_columns, pack_dir / rel, cols, blob, comp_lens,
+                                       raw_lens, record_line, b"".join(chunk_blobs))
+            else:
+                fut = part_pool.submit(_write_part, pack_dir / rel, buf, None if None in lines else lines,
+                                       record_line, chunk_blobs)
             writing.append((fut, {"n": next_n, "rel": rel, "buf": buf, "last_ord": int(last_row["ord"]),
                                   "layers": layer_counts, "plates": shard_plates}))
             next_n += 1
