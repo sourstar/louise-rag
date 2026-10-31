@@ -200,9 +200,14 @@ def apply(con, collection, *, stop=None, log: Callable[[str], None] | None = Non
                 for i in range(0, len(ids), 900):
                     part = ids[i:i + 900]
                     # the column's value is tested again under the write lock:
-                    # a stage that moved it since the read keeps its move
-                    con.execute(f"UPDATE documents SET {column}=? WHERE {column}=? AND rowid IN "
-                                f"({','.join('?' * len(part))})", (value, was, *part))
+                    # a stage that moved it since the read keeps its move.
+                    # `+column`: the test is no index term (SQLite's unary +),
+                    # so the rowids lead. Without it and without ANALYZE stats,
+                    # `in_scope=?` took idx_documents_scope and every window
+                    # walked every row of that value: wikidata's pass widening
+                    # 33.9 M rows ran at ~430 rows/s, 49 h (München, 2026-10-31)
+                    con.execute(f"UPDATE documents SET {column}=? WHERE rowid IN "
+                                f"({','.join('?' * len(part))}) AND +{column}=?", (value, *part, was))
             state = {**state, "cursor": last, "done": False}
             db.set_control(con, KEY, json.dumps(state))
             con.execute("COMMIT")

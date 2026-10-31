@@ -279,3 +279,29 @@ def test_a_declined_document_is_no_embed_candidate_nor_queued_on_demand(isolated
     eligible = {r["uid"] for r in con.execute(worker._QUEUE_ELIGIBLE,
                                                (config.MAX_RETRIES, config.EMBED_VERSION, 100))}
     assert eligible == {"wd:1", "wd:3"}, "the queue offers only what this node embeds"
+
+
+def test_a_window_s_updates_look_up_their_rowids_never_scan_a_column_s_index(isolated_config, tmp_path):
+    """A per-window cost never scales with the corpus. `in_scope=? AND rowid IN
+    (…)` took idx_documents_scope with no ANALYZE stats (a manifest has none),
+    and every window walked every row of that value: wikidata's pass widening
+    33.9 M rows ran at ~430 rows/s (München, 2026-10-31). Every UPDATE the pass
+    sends is planned by its rowids."""
+    con = db.connect(_col(tmp_path, ["family=person"]))
+    _rows(con, FAMILY)
+    _apply(con, _col(tmp_path, ["family=person"]))
+    sent: list[tuple[str, tuple]] = []
+    real = con.execute
+
+    def recording(sql, *args, **kw):
+        if sql.startswith("UPDATE documents"):
+            sent.append((sql, args[0] if args else ()))
+        return real(sql, *args, **kw)
+    con.execute = recording
+    _apply(con, _col2(tmp_path, "all", ("family=person",)))       # widen in_scope, decline embed_done
+    con.execute = real
+    columns = {sql.split(" SET ")[1].split("=")[0] for sql, _ in sent}
+    assert columns == {"in_scope", "embed_done"}
+    for sql, params in sent:
+        plan = " ".join(r[3] for r in con.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall())
+        assert "INTEGER PRIMARY KEY" in plan and "USING INDEX" not in plan, (sql, plan)
