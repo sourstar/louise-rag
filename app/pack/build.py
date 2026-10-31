@@ -464,6 +464,11 @@ def with_line(collection, got: tuple[dict, int, bytes, dict[str, str]]):
 
 
 def _record_of(collection, plugin, row) -> tuple[dict, int, bytes, dict[str, str]]:
+    # a unit the row's locator names only in part is never cut (invariant 11):
+    # the build stops, below, as for an origin it cannot locate
+    why = plugin_io.stale_unit(plugin, row, collection)
+    if why:
+        raise plugin_io.StaleUnit(f"{row['uid']}: {why}")
     doc = plugin_io.canonical_doc(plugin, row)
     native_id = int(row["native_id"])
     sections = [[name or "", body or ""] for name, body in doc.sections]
@@ -890,7 +895,7 @@ def _pack_slices(collection, con_src, con_build, pack_dir: Path, *, records_per_
                     n_skipped += 1
                     continue
                 ok, value = next(computed)
-                if not ok and value.get("type") == "OriginOutsideBase":
+                if not ok and value.get("type") in ("OriginOutsideBase", "StaleUnit"):
                     # A record that cannot locate its origin bytes is not made,
                     # and the build stops, as for a missing `origin_hash`: a
                     # skipped record is a quietly incomplete SHARD (invariant 11)

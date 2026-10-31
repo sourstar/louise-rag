@@ -653,6 +653,31 @@ class WikipediaSource:
         except (ValueError, IndexError):
             return None
 
+    def stale_unit(self, row, collection=None) -> str | None:
+        """A locator with no page_props segment for a page its run's
+        page_props HAS rows for: a locator from before parser 5, whose
+        record would lack the page's QID (München, 2026-10-31: the 10-28
+        archive-layer records). None when the segment is there, the page
+        has no rows, or the run's table is not on disk (discovery then
+        defers the language itself)."""
+        body, seg = props_segment(str(row["path"]))
+        if seg is not None:
+            return None
+        lang, page_id, _ = decode_native_id(int(row["native_id"]))
+        if archive.is_archive_locator(body):
+            pin = getattr(collection, "snapshot", None)
+            root = getattr(collection, "corpus_dir", None)
+            if not pin or root is None:
+                return None
+            w = f"{lang}wiki"
+            props = Path(root) / w / pin / f"{w}-{pin}{page_props.SUFFIX}"
+        else:
+            props = page_props.props_path_of(Path(split_locator(body)[0]))
+        if not props.is_file() or page_props.unit_of(props, page_id) is None:
+            return None
+        return (f"page {page_id} ({lang}) has rows in {props.name} that its locator does not "
+                f"name — a locator from before parser 5; a scan re-locates it")
+
     def fetch(self, ref: DocRef) -> RawDoc:
         """The page's bytes AS ELEMENTTREE RE-WRITES THEM, and `origin_hash`
         is their hash — not the dump's bytes, which differ on every page

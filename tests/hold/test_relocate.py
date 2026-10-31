@@ -173,3 +173,16 @@ def test_a_crash_between_the_row_and_the_file_is_repaired_by_a_rerun(isolated_co
     again = rl.relocate(root, "gutenberg", corpus_dir=corpus_dir, workers=1, log=lambda *_: None)
     assert again.rewritten == len(good_parts)
     assert _parts(root) == good_parts and _rows(root) == good_rows
+
+
+def test_the_build_stops_on_a_record_whose_locator_names_part_of_its_unit(
+        isolated_config, tmp_path, corpus_dir, monkeypatch):
+    """München, 2026-10-31: wikipedia's 10-28 archive-layer records were cut
+    from locators from before parser 5, without the page_props segment, and
+    hold no QID. A stale unit stops the build (invariant 11), as an origin
+    it cannot locate does; a scan re-locates the row."""
+    root = _collection(tmp_path)
+    monkeypatch.setattr(plugin_io, "stale_unit",
+                        lambda plugin, row, collection=None: "a locator from before parser 5")
+    with pytest.raises(pack_build.BuildError, match="before parser 5"):
+        rec.build(root, "gutenberg", corpus_dir=corpus_dir, log=lambda *_: None, records_per_shard=2)

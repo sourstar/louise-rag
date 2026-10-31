@@ -103,6 +103,22 @@ class OriginOutsideBase(ValueError):
     by any path that reaches it: no 09 §9.5 `origin` can be written for it."""
 
 
+class StaleUnit(ValueError):
+    """The row's locator names less than its origin unit now holds — a
+    locator from before the plugin's parser took more of the origin in
+    (wikipedia parser 5's page_props, 2026-10-31: archive-layer records cut
+    on 10-28 without their QIDs). A record cut from it would hold less than
+    the origin gives (invariant 11): the records build stops, and a scan
+    re-locates the row."""
+
+
+def stale_unit(plugin, row, collection=None) -> str | None:
+    """Why the row's locator names an incomplete unit, or None. A plugin
+    says so through its optional `stale_unit(row, collection)`."""
+    check = getattr(plugin, "stale_unit", None)
+    return check(row, collection) if check is not None else None
+
+
 #: base -> [(name, resolved target)] of the base's symbolic links, read once
 _base_links: dict[str, list[tuple[str, Path]]] = {}
 
