@@ -776,6 +776,8 @@ it left open is below.
 
 ## Open after the migration
 
+- **BEFORE PRODUCTION (operator, 2026-10-31): jina-style encoders on llama.cpp, implemented and tested at f16.** The design is kept for the future (docs/notes/jina-llamacpp-parity.md §3). It is built and passes §4's tests on the node before production. Measured so far, by the f16 merged GGUF against torch: median cosine 0.999987, the same MRR@10, 5× faster, bit-exact to itself.
+
 - **DEFECT (invariant 11), wikipedia's archive-layer records lack their QIDs** (München, 2026-10-31). The 10-28 records build cut archive-layer rows from locators discovered before parser 5. Those locators had no page_props segment, so the records hold no `extra.wikidata` and no `extra.page_props`, which today's origin unit gives.
   - The SHARD is consistent: records-vs-origin reproduces each record from its own locator, 5 of 5, and the sections are equal. But it holds less than the origin.
   - Found because one parse's freshness test (#133) saw 1,310 of 2,000 embed candidates as origin-differs.
