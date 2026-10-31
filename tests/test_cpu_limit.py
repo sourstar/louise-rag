@@ -72,11 +72,21 @@ class TimedPool:
     """Parts answered by a thread a few ms after submission. Counts the parts
     in flight at each submission, and what the profile said then."""
 
-    def __init__(self, script: Script | None = None, delay: float = 0.003):
+    def __init__(self, script: Script | None = None, delay: float = 0.003,
+                 hold_until_peak: int | None = None, hold_s: float = 0.25):
         self.script, self.delay = script, delay
         self.live = self.peak = 0
         self.lock = threading.Lock()
         self.submitted_under: list = []
+        # `hold_until_peak`: no part answers until more than that many are in
+        # flight (or `hold_s` passes) — so a window's size is measured by what
+        # the stream SUBMITS, not by whether its loop outruns a 3 ms answer on
+        # a loaded machine (the node, 2026-11-01: peak 5 under a records build)
+        self.hold_until_peak = hold_until_peak
+        self.hold_s = hold_s
+        self.opened = threading.Event()
+        if hold_until_peak is None:
+            self.opened.set()
 
     def submit(self, _fn, kind, collection, part):
         f = Future()
@@ -84,8 +94,11 @@ class TimedPool:
             self.live += 1
             self.peak = max(self.peak, self.live)
             self.submitted_under.append(self.script.now if self.script else None)
+            if self.hold_until_peak is not None and self.peak > self.hold_until_peak:
+                self.opened.set()
 
         def answer():
+            self.opened.wait(self.hold_s)
             time.sleep(self.delay)
             got = parallel._compute(kind, collection, part)
             with self.lock:
@@ -195,7 +208,7 @@ def test_a_profile_allowing_every_child_keeps_a_part_queued_behind_each(
     pages = [rows[i:i + 24] for i in range(0, 120, 24)]
     truth = [parallel.compute("chunks", c, p) for p in pages]
     s = _script(monkeypatch, _active(6))
-    pool = TimedPool(s)
+    pool = TimedPool(s, hold_until_peak=6)
     monkeypatch.setattr(config, "PARSE_PROCESSES", 6)
     monkeypatch.setattr(parallel, "pool", lambda: pool)
     assert list(parallel.compute_pages("chunks", c, iter(pages))) == truth
