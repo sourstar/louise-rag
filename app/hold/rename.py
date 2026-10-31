@@ -226,8 +226,8 @@ def rename(root: Path, old: str, new: str, *, dry_run: bool = False) -> dict[str
     # 4. the pause, if any
     paused = old in node_state.paused_collections()
     if paused:
-        node_state.set_paused(new, True)
-        node_state.set_paused(old, False)
+        node_state.set_paused(new, True, by=f"rename {old} -> {new}")
+        node_state.set_paused(old, False, by=f"rename {old} -> {new}")
     done["paused"] = paused
     # 4b. the derived caches keyed on what moved
     # (a cache already at both keys is left: nothing moved over another, and

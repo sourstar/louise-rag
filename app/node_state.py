@@ -472,11 +472,60 @@ def paused_collections(con: sqlite3.Connection | None = None) -> set[str]:
         return read(c)
 
 
-def set_paused(name: str, paused: bool) -> set[str]:
-    """Pause or resume one collection; the set as it is after."""
+#: every collection pause and resume, newest last: when, which, and who
+#: (2026-10-31: normattiva was found paused, and neither the operator nor
+#: the node session had paused it; nothing recorded who had)
+PAUSED_HISTORY_KEY = "paused_collections_history"
+PAUSED_HISTORY_KEEP = 200
+
+
+def invoker() -> str:
+    """Who is running this command, for a history entry: the parent
+    process's program and script, by their names only (never their
+    arguments, which could carry anything), and the user."""
+    import getpass
+    import os
+    parts = []
+    try:
+        with open(f"/proc/{os.getppid()}/cmdline", "rb") as f:
+            argv = [a.decode("utf-8", "replace") for a in f.read().split(b"\0") if a]
+        names = [os.path.basename(argv[0])] if argv else []
+        names += [os.path.basename(a) for a in argv[1:3] if a.endswith((".sh", ".py"))]
+        if names:
+            parts.append("from " + " ".join(names))
+    except OSError:
+        pass
+    try:
+        parts.append(f"user {getpass.getuser()}")
+    except Exception:   # noqa: BLE001 — no user name to give
+        pass
+    return ", ".join(parts)
+
+
+def set_paused(name: str, paused: bool, *, by: str = "") -> set[str]:
+    """Pause or resume one collection; the set as it is after. The write is
+    recorded with `by` — the command or the route and its caller."""
     import json
+    import time
     with closing(connect()) as c:
         names = paused_collections(c)
         (names.add if paused else names.discard)(name)
         db.set_control(c, PAUSED_KEY, json.dumps(sorted(names)))
+        try:
+            hist = json.loads(db.get_control(c, PAUSED_HISTORY_KEY) or "[]")
+        except ValueError:
+            hist = []
+        hist = (hist + [{"at": time.time(), "collection": name, "paused": bool(paused),
+                         "by": by or "unnamed"}])[-PAUSED_HISTORY_KEEP:]
+        db.set_control(c, PAUSED_HISTORY_KEY, json.dumps(hist))
         return names
+
+
+def pause_history() -> list[dict]:
+    """The recorded collection pauses and resumes, oldest first; [] when none."""
+    import json
+    try:
+        with closing(connect()) as c:
+            return json.loads(db.get_control(c, PAUSED_HISTORY_KEY) or "[]")
+    except (ValueError, sqlite3.Error):
+        return []
