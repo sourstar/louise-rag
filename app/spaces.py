@@ -253,6 +253,22 @@ def known_lance_dim(lance_dir: Path) -> int | None:
         return None
 
 
+def known_lance_rows(lance_dir: Path) -> int | None:
+    """Rows in the collection's Lance table: 0 when there is none, None when
+    one exists and cannot be read (not proven empty). Metadata-only, as
+    `known_lance_dim`."""
+    if not lance_dir.is_dir():
+        return 0
+    try:
+        import lancedb
+        conn = lancedb.connect(str(lance_dir))
+        if "chunks" not in conn.table_names():
+            return 0
+        return int(conn.open_table("chunks").count_rows())
+    except Exception:
+        return None
+
+
 def validate_chunking_config() -> None:
     """Refuse a chunking configuration that cannot do useful work.
 

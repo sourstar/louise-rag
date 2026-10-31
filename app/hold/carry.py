@@ -392,11 +392,42 @@ def origin_only_adds(a: Codex, b: Codex) -> bool:
             and len(fb) > len(fa))
 
 
+def unembedded_why_not(lance: Path, manifest: Path) -> str | None:
+    """Why the collection at `lance`/`manifest` holds vectors, or None when it
+    holds none (A1h): no row in its vector table, no document marked
+    embedded. Read-only; the table is opened only when it exists."""
+    from app import spaces
+    rows = spaces.known_lance_rows(lance)
+    if rows is None:
+        return "its vector table cannot be read: not proven empty"
+    if rows:
+        return f"its vector table holds {rows} row(s)"
+    con = sqlite3.connect(f"file:{manifest.as_posix()}?mode=ro", uri=True)
+    try:
+        if con.execute("SELECT 1 FROM documents WHERE embed_done > 0 LIMIT 1").fetchone():
+            return "a document is marked embedded"
+    finally:
+        con.close()
+    return None
+
+
 def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool = False,
           keep: str | None = None, rebuilt: bool = False, recut: bool = False,
-          resliced: bool = False, log: Callable[[str], None] = print) -> dict[str, Any]:
+          resliced: bool = False, unembedded: bool = False,
+          log: Callable[[str], None] = print) -> dict[str, Any]:
     """Carry `from_ref`'s manifest, text index and vector table into `to_ref`
     (G1). `apply=False` checks everything and writes nothing.
+
+    `unembedded` (A1h, 2026-10-31; wikidata from jina-v3 to bge-m3, nothing
+    embedded or published): the source holds NO vector, so the target's space
+    may differ in anything — weights, dim, the query side, the cut: nothing
+    carried depends on it. The records must be the same records; the manifest
+    (its marks, the declined ones included) and the text index are functions
+    of the records alone and move; the vector table does not (the target
+    makes its own, of its own width). Its parts come from `hold records build
+    <to> --records-from <from>`, so no snapshot is compared here. By the
+    book, the target would discover, rdf and index 75.9 M documents again
+    (~23 h on the node) to the same bytes.
 
     `resliced` (A1g, 2026-10-24; operator: a daughter with a new family map
     reuses "all the vectors and corpus of the mother"): the target differs
@@ -419,6 +450,9 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
     root = Path(root)
     from_name, src = col.resolve(root, from_ref)
     to_name, to = col.resolve(root, to_ref)
+    if unembedded and (resliced or rebuilt or keep or recut):
+        raise CodexError("carry --unembedded carries no vector: no --resliced, --rebuilt, --keep "
+                         "or --recut with it")
     if resliced and (rebuilt or keep or recut):
         raise CodexError("carry --resliced moves the same records' vectors whole: no --rebuilt, "
                          "--keep or --recut with it")
@@ -447,8 +481,13 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
                 f"the origin only by files added beside the ones read (A1d); anything else "
                 f"moves chunks, and nothing is carried")
     else:
-        refuse_unless_same_records(src, to, "carry")
+        refuse_unless_same_records(src, to, "carry --unembedded" if unembedded else "carry")
     diff = space_differences(src, to)
+    if unembedded:
+        if diff:
+            log(f"[carry] {from_name} → {to_name}: the spaces differ in {', '.join(diff)}; "
+                f"{from_name} holds no vector, so nothing carried depends on them (A1h)")
+        diff = []
     if keep:
         diff = [d for d in diff if d not in WEIGHTS_WITH_KEEP]
     if "query.instruction" in diff:
@@ -481,7 +520,7 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
             f"table cross into a space that differs only by ENGINE or by a declared input "
             f"form (02 §2.4, 03 §3.5); any other difference is another function, and its "
             f"vectors are embedded again, never carried")
-    if not rebuilt and not resliced:
+    if not rebuilt and not resliced and not unembedded:
         a, b = latest_snapshot(root, from_name), latest_snapshot(root, to_name)
         if _part_entries(a) != _part_entries(b):
             raise CodexError(
@@ -503,6 +542,8 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         claim["rebuilt"] = True
     if resliced:
         claim["resliced"] = True
+    if unembedded:
+        claim["unembedded"] = True
     held = json.loads(marker.read_text(encoding="utf-8")) if marker.is_file() else None
     if held is not None and {k: held.get(k) for k in claim} != claim:
         raise CodexError(f"{marker} records another carry ({held}); this one is {claim}")
@@ -521,6 +562,13 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         if lance_dim not in (None, src.space.dim):
             raise CodexError(f"carry: {from_name}'s vector table is {lance_dim}-dimensional "
                              f"and its space is {src.space.dim}")
+        if unembedded:
+            why = unembedded_why_not(sp["lance"], sp["manifest"])
+            if why:
+                raise CodexError(
+                    f"carry --unembedded: {from_name} holds vectors ({why}); they are its "
+                    f"space's, and a carry across spaces never moves one (A1h). Without "
+                    f"vectors, nothing carried depends on the space")
         docs = _documents(tp["manifest"])
         busy = [k for k in ("index", "lance") if not _empty_dir(tp[k])]
         if docs or busy:
@@ -530,7 +578,8 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         plan["documents"] = _documents(sp["manifest"])
         if not apply:
             log(f"[carry] {from_name} → {to_name}: would {claim['mode']} the manifest "
-                f"({plan['documents']} documents), index/ and lance/"
+                f"({plan['documents']} documents), index/"
+                + (" (no vector: the target makes its own table, A1h)" if unembedded else " and lance/")
                 + (", state/bundles and state/share — the bundles, coverage rows and torrents "
                    "too (A1f: the same document vectors)" if shares and not copy else "")
                 + f", and re-pin to {to.space_id[:23]}…; nothing written (--yes)")
@@ -545,7 +594,8 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         return {**plan, "begun": True}
 
     done: dict[str, str] = {}
-    for k in ("lance", "index"):
+    # A1h: no vector crosses spaces; the target's table is its own, of its width
+    for k in (("index",) if unembedded else ("lance", "index")):
         done[k] = _transfer(sp[k], tp[k], copy=copy)
     # Moving: the companions before the main file — the main file in place is
     # what says the manifest arrived — so none is left beside a source that no
@@ -605,7 +655,7 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
         final.update(same_space=True, predecessors=_predecessors_of(sp["state"], src.collection_id))
     marker.write_text(json.dumps(final, sort_keys=True), encoding="utf-8")
     log(f"[carry] {from_name} → {to_name}: manifest {done['manifest']}, index/ "
-        f"{done['index']}, lance/ {done['lance']}"
+        f"{done['index']}, lance/ {done.get('lance', 'not carried (A1h)')}"
         + (f", state/bundles {done.get('bundles')}, state/share {done.get('share')}" if shares and not copy else "")
         + f"; space re-pinned to {to.space_id[:23]}…; {cleared} coverage row(s) of {from_name} "
         + ("re-keyed to it (A1f)" if shares else "kept unkeyed (provenance, never its coverage)"
@@ -615,6 +665,8 @@ def carry(root, from_ref: str, to_ref: str, *, copy: bool = False, apply: bool =
            f"holds no records, `dev carry {from_name} {to_name} --resign` (A1d)" if rebuilt else
            f"use: `hold records build {to_name} --records-from {from_name}` (its parts, from "
            f"{from_name}'s record lines), `hold snapshot create {to_name}` (A1g)" if resliced else
+           f"use: `hold records build {to_name} --records-from {from_name}`, `hold snapshot "
+           f"create {to_name}`; its documents are embedded in its own space (A1h)" if unembedded else
            f"use: `hold check {to_name} --checks vectors-sample` (amendment A1)"))
     return plan
 

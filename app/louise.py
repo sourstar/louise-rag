@@ -1616,7 +1616,8 @@ def cmd_dev_carry(a) -> int:
     out = {"carry": carry_mod.carry(a.root, from_name, to_name, copy=a.copy,
                                     apply=a.yes, keep=producer,
                                     rebuilt=getattr(a, "rebuilt", False), recut=recut,
-                                    resliced=getattr(a, "resliced", False), log=say)}
+                                    resliced=getattr(a, "resliced", False),
+                                    unembedded=getattr(a, "unembedded", False), log=say)}
     if recut and producer:
         say(f"[carry] the cut is crossed with --keep {a.keep}: only that archive's rows stay, "
             f"so no row the character cut shortened is left to recut (A1e)")
@@ -5291,6 +5292,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="into a collection that differs only by its slicing, its parts cut by "
                         "content (A1g: a family map added): every vector carried; then "
                         "`hold records build <to> --records-from <from>`")
+    p.add_argument("--unembedded", action="store_true",
+                   help="from a collection that holds NO vector into one with the same records "
+                        "and ANY space (A1h): the manifest and text index move, no vector table; "
+                        "then `hold records build <to> --records-from <from>`")
     p.add_argument("--predecessor-rows", action="store_true", dest="predecessor_rows",
                    help="after a same-space carry made before provenance was kept: the "
                         "source's coverage rows copied unkeyed and its bundle tree linked "

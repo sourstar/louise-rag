@@ -886,7 +886,11 @@ other parts). Her parts are cut by content (§2.2), so they are byte for
 byte the parts a collection created from scratch with her slicing has;
 `hold collection continue --reslice` refuses a daughter that changes the
 slicing and cuts by count. Until a collection is published, the same
-steps serve a re-creation (RULE 1).
+steps serve a re-creation (RULE 1). A re-creation in ANOTHER SPACE whose source
+holds no vector at all (*amended 2026-10-31*, wikidata from jina-v3 to bge-m3:
+nothing embedded, nothing published) carries its manifest and text index,
+which are functions of the records alone, and no vector table: `dev carry
+--unembedded`, amendment A1h; its parts come from `--records-from` as above.
 
 A daughter whose parser adds to every record a section the mother's did
 not have — a Wikidata entity's text in one more language
