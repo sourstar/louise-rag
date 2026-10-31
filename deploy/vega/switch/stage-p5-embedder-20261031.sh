@@ -57,7 +57,9 @@ done
 echo "the same binaries as MADLAD's"
 
 say "2. $PKG: the vega-llama-cpp package copied, modes and ACLs as the source's"
-(cd $BK/vega-llama-cpp && find . -mindepth 1 \( -type f -o -type d \) ! -path './run/*' | sed 's|^\./||' | sort) > $SAVED/paths
+# files only: a directory keeps its inheriting ACE (setfacl -b refuses to
+# strip one), and a tree's digest counts files' modes, not directories'
+(cd $BK/vega-llama-cpp && find . -type f ! -path './run/*' | sed 's|^\./||' | sort) > $SAVED/paths
 (cd $BK/vega-llama-cpp && bf_record . $(cat $SAVED/paths)) > $SAVED/$PKG.modes
 mkdir $BK/$PKG
 bf_copy $BK/vega-llama-cpp $BK/$PKG
@@ -71,7 +73,6 @@ for name, change in (("vega.json", {"backend": real}), ("metadata.json", {"name"
     open(p, "w").write(json.dumps(doc, indent=2) + "\n")
 PY
 chown -R 568:0 $BK/$PKG
-printf '%s\t%s\n' 755 . >> $SAVED/$PKG.modes
 bf_restore $BK/$PKG $SAVED/$PKG.modes
 cat $BK/$PKG/vega.json $BK/$PKG/metadata.json
 
