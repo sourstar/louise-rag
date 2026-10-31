@@ -167,17 +167,11 @@ def passing(body: dict[str, Any], codex: Codex) -> bool:
         variation = Decimal(body["load_variation"])
         if body["exactness"] == emb.EXACT:
             return variation == 1
-        return (body["exactness"] == emb.NEAR and int(body["loads"]) >= NEAR_LOADS
-                and variation >= Decimal(str(NEAR_VARIATION)) and cpu is not None
+        return (body["exactness"] == emb.NEAR and int(body["loads"]) >= emb.NEAR_LOADS
+                and variation >= Decimal(str(emb.NEAR_VARIATION)) and cpu is not None
                 and Decimal(cpu["worst"]) >= Decimal(str(emb.CPU_NEAR_LINE)))
     except (KeyError, TypeError, ValueError, InvalidOperation):
         return False
-
-
-#: a near-exact run (operator, 2026-10-31): measured over at least this many
-#: fresh loads, its answers to one text no further apart than this cosine
-NEAR_LOADS = 3
-NEAR_VARIATION = 0.99999
 
 
 #: (directory, role, space) -> (what the directory held, the statements read
@@ -485,7 +479,7 @@ def validate(root: Path, name: str, codex: Codex, *, role: str, reference,
              embed, embed_one, contribute, stated: emb.StatedRun, key,
              now: str, items=None,
              on_run: Callable[[emb.Run], None] | None = None,
-             cpu_reference=None) -> dict[str, Any]:
+             cpu_reference=None, reload=None, exactness: str = emb.EXACT) -> dict[str, Any]:
     """Run the gate against one stated run and KEEP the statement — pass or
     fail: "a failure is kept too, so the run is not retried against the same
     set" (07 §7.3). Returns the statement's body. Embedding is the caller's:
@@ -497,7 +491,8 @@ def validate(root: Path, name: str, codex: Codex, *, role: str, reference,
     operator's cross-vendor reference reads them, approved-encoders.md)."""
     run = emb.run_gate(codex, reference=reference, embed=embed, role=role,
                        stated=stated, embed_one=embed_one, contribute=contribute,
-                       items=items, cpu_reference=cpu_reference)
+                       items=items, cpu_reference=cpu_reference, reload=reload,
+                       exactness=exactness)
     # THE PASS IS ABOUT ONE RUN. If the model was relaunched while the 512
     # texts were going through — another flag, another image — some answers
     # came from another run, and the numbers describe neither. 03 §3.3: "An

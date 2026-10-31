@@ -3824,6 +3824,9 @@ def _embedder_check_runs(a, name, codex) -> int:
             print(f"  whole set   worst {min(run.all_cosines):.6f}, "      # cross-vendor table's row
                   f"median {__import__('statistics').median(run.all_cosines):.6f}, "
                   f"below 0.995: {sum(c < 0.995 for c in run.all_cosines)} of {len(run.all_cosines)}")
+        if "exactness" in body:
+            print(f"  exactness   {body['exactness']}, {body['loads']} fresh load(s), "
+                  f"closest answers {body['load_variation']}")
         cpu = body.get("cpu_reference")
         print(f"  cpu         " + (f"worst {cpu['worst']}, median {cpu['median']} against the "
                                    f"stored CPU reference (run {cpu['run'][:23]}…)" if cpu else

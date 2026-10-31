@@ -174,6 +174,20 @@ def _touch(recipe: "collections_mod.EmbedRecipe") -> None:
         pass
 
 
+def reload_model(recipe: "collections_mod.EmbedRecipe", *, query: bool = False,
+                 timeout: float = 120.0) -> None:
+    """Asks the model runner to stop the model, so its next request loads it
+    afresh: LocalAI's `POST /backend/shutdown` (the multi-load gate,
+    docs/notes/near-exact-runs.md §3). The caller waits for the load."""
+    base = (recipe.query_url or recipe.url) if query else recipe.url
+    model = (recipe.query_model or recipe.model) if query else recipe.model
+    r = httpc.post(f"{base.rstrip('/')}/backend/shutdown", json={"model": model},
+                   timeout=timeout)
+    if r.status_code >= 400:
+        raise RuntimeError(f"{base}: the model runner refused to stop {model}: "
+                           f"HTTP {r.status_code}")
+
+
 def _post(recipe: "collections_mod.EmbedRecipe", url: str, *, timeout: float, **kw):
     """One request to the encoder; a timeout reading or sending it is
     `EndpointTimedOut`, never a bare httpx error a caller could put on a

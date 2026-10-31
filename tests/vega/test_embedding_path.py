@@ -135,6 +135,9 @@ class LocalAI:
         self.texts = 0
 
     def post(self, url, *, json=None, timeout=None, headers=None):    # noqa: A002
+        if url == f"{LOCALAI}/backend/shutdown":       # the multi-load gate's reload
+            self.reloads = getattr(self, "reloads", 0) + 1
+            return httpx.Response(200, request=httpx.Request("POST", url), json={})
         assert url == f"{LOCALAI}/v1/embeddings", url
         self.bodies.append(json)
         request = httpx.Request("POST", url)

@@ -254,6 +254,37 @@ def _pinned(recipe, role: str, kind: str, name: str):
                               collection=name)
 
 
+#: how long the multi-load gate waits for a model it stopped to answer again
+RELOAD_WAIT_S = 600.0
+
+
+def _reloader(recipe, *, query: bool, stop=None, name: str = ""):
+    """THE MULTI-LOAD GATE'S RELOAD (docs/notes/near-exact-runs.md §3): stop the
+    model at its runner, then wait — bounded — until it answers again, so the
+    gate's next text is the first of a fresh load. Only a VeGa encoder, whose
+    runner is LocalAI, is reloaded; for any other the gate measures one load."""
+    if getattr(recipe, "api", None) != "vega":
+        return None
+    import time
+
+    def reload() -> None:
+        embeddings.reload_model(recipe, query=query)
+        deadline = time.monotonic() + RELOAD_WAIT_S
+        while True:
+            _stopping(stop, name)
+            try:
+                embeddings.embed_calibration(recipe, ["load"], query=query, runs=set(),
+                                             one_at_a_time=True)
+                return
+            except Exception as e:                  # noqa: BLE001 — loading, or gone
+                if time.monotonic() > deadline:
+                    raise emb.GateDeferred(f"{name}: the model did not come back within "
+                                           f"{RELOAD_WAIT_S:.0f} s of its reload: "
+                                           f"{type(e).__name__}: {e}") from e
+                time.sleep(2.0)
+    return reload
+
+
 def validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "document",
              key=None, now: str | None = None,
              stop: Callable[[], bool] | None = None,
@@ -300,7 +331,9 @@ def _validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "docum
             embed_one=answers(recipe, how="one", **kw),
             contribute=answers(recipe, how="contribute", **kw),
             stated=stated, key=key, now=now or _now(), items=items, on_run=on_run,
-            cpu_reference=None if cpu is None else (cpu.run_id, cpu.vectors))
+            cpu_reference=None if cpu is None else (cpu.run_id, cpu.vectors),
+            reload=_reloader(recipe, query=query, stop=stop, name=name),
+            exactness=getattr(recipe, "exactness", emb.EXACT))
         _mark(codex, role, body["run"], body)      # measured now: nothing to re-check
         measured = contributing(recipe)
         if measured is not None:
