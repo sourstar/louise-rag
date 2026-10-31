@@ -109,6 +109,9 @@ def apply(con, collection, *, stop=None, log: Callable[[str], None] | None = Non
     `context_for`/`slice_hint`: `slicing`'s, replaceable in tests."""
     from .pack import slicing
     context_for = context_for or slicing.context_for
+    # the parse pool computes the hints (multi-core rule, 2026-10-30): the
+    # first pass ran on one core, 75.9 M rows in 954 s (München, 10-31)
+    pooled = slice_hint is None
     slice_hint = slice_hint or slicing.slice_hint
     say = log or (lambda m: None)
     slices = held(collection)
@@ -137,8 +140,8 @@ def apply(con, collection, *, stop=None, log: Callable[[str], None] | None = Non
         if not rows:
             break
         out, back = [], []
-        for r in rows:
-            name = slice_hint(collection.plugin, r, context)
+        names = _hints(collection, rows, context, slice_hint, pooled)
+        for r, name in zip(rows, names):
             if name is None:
                 counts["unknown"] += 1
             if is_held(name, slices):
@@ -170,6 +173,19 @@ def apply(con, collection, *, stop=None, log: Callable[[str], None] | None = Non
         say(f"slice scope: {counts['held']} documents in the slices held, {counts['not_held']} "
             f"out of them ({counts['unknown']} whose slice is not known yet)")
     return counts
+
+
+def _hints(collection, rows, context, slice_hint, pooled: bool) -> list[str | None]:
+    """Each row's slice: in the parse pool's children where there is a pool
+    (each child builds the family context once, `parallel._one`), in this
+    process otherwise and for any row a child could not place."""
+    from . import parallel
+    if pooled and parallel.pool() is not None:
+        got = parallel.compute("slice-hint", collection,
+                               [{"native_id": r["native_id"], "path": r["path"]} for r in rows])
+        return [v if ok else slice_hint(collection.plugin, r, context)
+                for (ok, v), r in zip(got, rows)]
+    return [slice_hint(collection.plugin, r, context) for r in rows]
 
 
 def _default_narrowing(con) -> bool:

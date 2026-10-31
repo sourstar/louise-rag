@@ -373,6 +373,19 @@ def health() -> dict:
 
 # ---- the work ---------------------------------------------------------------
 
+_family_contexts: dict[str, object] = {}
+
+
+def _family_context(collection):
+    """`slicing.context_for`, once per child per collection (it reads the
+    map member and the pack's codes; a row asks it 50,000 times a window)."""
+    key = str(getattr(collection, "manifest_path", ""))
+    if key not in _family_contexts:
+        from .pack import slicing
+        _family_contexts[key] = slicing.context_for(collection, log=lambda m: None)
+    return _family_contexts[key]
+
+
 def _one(kind: str, collection, row: dict):
     from . import layers, plugin_io
     plugin = collection.plugin_instance()
@@ -408,6 +421,11 @@ def _one(kind: str, collection, row: dict):
         return {"chunks": chunks, "names": names,
                 "entities": entities.entity_ids_of(row.get("title"), [c["text"] for c in chunks],
                                                    refs.RESOLVER, refs.read_store())}
+    if kind == "slice-hint":
+        # the slice a row is in, without parsing it (app/slice_scope.py): the
+        # family context is built once per child and kept
+        from .pack import slicing
+        return slicing.slice_hint(collection.plugin, row, _family_context(collection))
     if kind == "metadata":
         return plugin_io.metadata(plugin, row)
     if kind in ("record", "held-record"):
