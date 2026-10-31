@@ -39,7 +39,7 @@ from . import (catalog, chunking, collections as collections_mod, config, cpu_li
                 layers as layers_mod, parallel,
                 dispatch, embeddings, encoder_timeouts, entities, fts, issues as issues_mod, model_load, model_pins,
                 origin_missing,
-                node_state, plugin_io, refs, sched, sizing, spaces, stats)
+                node_state, plugin_io, refs, sched, sizing, slice_scope, spaces, stats)
 from .dispatch import Level
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
@@ -2872,6 +2872,14 @@ def _scan_only(con, collection, reason: str, stop=None) -> None:
     db.log_event(con, "info", "discover", f"corpus scan ({reason})")
     held = _AnyStop(stop, _parse_held) if stop is not None else _AnyStop(_parse_held)
     stats = discovery.sync_collection(con, collection, stop=held)
+    if not held.is_set():
+        # WHAT THE NODE HOLDS IS WHAT IT PROCESSES (app/slice_scope.py): a
+        # collection whose one origin holds every slice is narrowed to the
+        # slices its file names, before its stages select anything
+        out = slice_scope.apply(con, collection, stop=held,
+                                log=lambda m, _con=con: db.log_event(_con, "info", "discover", m))
+        if out.get("deferred"):
+            db.log_event(con, "info", "discover", f"slice scope waits: {out['deferred'][:400]}")
     if held.fired is _parse_held:
         # the mode changed under a running scan: it ended at its next ref,
         # its progress committed and its cursor that far — and the rest is owed
@@ -2892,6 +2900,17 @@ _bad_toml_nagged: dict[str, str] = {}
 
 #: last "no profile declared" warning per collection — see _acquire
 _profile_nagged: dict[str, float] = {}
+
+#: (collection, what) -> when it was last said: a waiting thread says why
+#: once an hour, not every idle beat
+_said: dict[tuple[str, str], float] = {}
+
+
+def _say_once(con, name: str, what: str, message: str, every_s: float = 3600.0) -> None:
+    now = time.time()
+    if now - _said.get((name, what), 0.0) > every_s:
+        _said[(name, what)] = now
+        db.log_event(con, "info", "worker", message)
 
 
 #: the collection's manifest PATH -> (when it was last said, what was said).
@@ -4070,6 +4089,14 @@ def _pipeline_worker(collection, gone: threading.Event) -> None:
                         reason, acquire = request
                         _start_scan(collection, reason, acquire, gone)
                 if _acquire_only.is_set():
+                    time.sleep(config.WORKER_IDLE_SLEEP)
+                    continue
+                if not slice_scope.ready(con, collection):
+                    # the slices held are not applied to in_scope yet (the
+                    # scan thread does it): nothing outside them is processed
+                    _say_once(con, collection.name, "slice-scope",
+                              "waiting for the slice scope: only the slices the "
+                              "collection file holds are processed (app/slice_scope.py)")
                     time.sleep(config.WORKER_IDLE_SLEEP)
                     continue
                 if not producers and owns_own_embed(collection):

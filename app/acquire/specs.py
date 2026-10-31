@@ -415,6 +415,21 @@ NORMATTIVA_SPEC = AcquisitionSpec(
 _WIKIDATA_DUMP_BYTES = 103_409_622_204
 _WIKIDATA_CHECKSUM_BYTES = 401 + 449
 _WIKIDATA_DIR = "wikidatawiki/entities"
+#: the families of the map a collection is created on (app/plugins/wikidata/
+#: families.py FAMILIES, lexemes excepted: they join later, option 3); the
+#: glosses are what the Library shows beside each
+_WIKIDATA_FAMILIES = ("person", "work", "place", "organization", "event", "heritage", "built",
+                      "scholarly", "property", "taxon", "astronomy", "molecular", "internal",
+                      "other")
+_WIKIDATA_FAMILY_LABELS = {
+    "person": "people", "work": "creative and scholarly works", "place": "places",
+    "organization": "organizations", "event": "events", "heritage": "heritage sites",
+    "built": "buildings and structures", "scholarly": "scholarly articles",
+    "property": "Wikidata's properties", "taxon": "living things (taxa)",
+    "astronomy": "astronomical objects", "molecular": "genes, proteins, chemicals",
+    "internal": "Wikimedia pages (categories, templates, lists)",
+    "other": "everything no family claims",
+}
 
 
 def _wikidata_files(snapshot: str) -> tuple[RemoteFile, ...]:
@@ -474,8 +489,18 @@ WIKIDATA_SPEC = AcquisitionSpec(
     delta=DeltaSpec(mode="dated-dumps"),
     snapshot_files=_wikidata_files,
     snapshot_index=wikidata_snapshots,
-    profiles={"all": Filter()},
+    # A FAMILY IS A PROFILE (operator, 2026-10-31: "As for other collections
+    # the grow profile should drive what's fetched and processed"). Each
+    # fetches the one dump — every family is in it — and what differs is
+    # what the node PROCESSES: the collection file's slices narrow in_scope
+    # (app/slice_scope.py). Additive, as Wikipedia's languages: the Library
+    # grows a collection by a family. `all` first: it is the everything
+    # profile (`everything_profile` takes the first unfiltered one).
+    profiles={"all": Filter(), **{f: Filter() for f in _WIKIDATA_FAMILIES}},
     all_profile="all",
+    profile_mode="additive",
+    slice_profiles={f"family={f}": f for f in _WIKIDATA_FAMILIES},
+    profile_labels=_WIKIDATA_FAMILY_LABELS,
     estimated_bytes={"all": _WIKIDATA_DUMP_BYTES + _WIKIDATA_CHECKSUM_BYTES},
     license_class=LicenseClass.GREEN,            # CC0: no terms to acknowledge
 )
