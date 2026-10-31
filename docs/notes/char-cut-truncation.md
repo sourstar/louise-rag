@@ -83,6 +83,24 @@ VeGa's wrapper cuts as its package declares:
   window". An answer over the window means the bound was beaten: the input is
   then cut by its tokens and asked again, so a wrong bound costs a request,
   never a vector.
+  *Measured after it (München, 2026-10-31 08:53–08:59 CET).* The setup:
+  - the BEFORE's exact 400 chunks: the documents of rowids
+    33,960,000..33,965,971 that were pending then, i.e. `updated_at` ≥
+    1793396000; median 364, p10 101, p90 1,466, mean 600 characters, as before;
+  - uncontended as before: wikipedia, gutenberg and pubmed paused;
+  - one request each;
+  - py-spy at 100 Hz on the bge-m3 wrapper over the pass.
+
+  Inside `embedding()`: `_cut`/`_tokens` fell from 10.7 % to 1.4 % (the
+  chunks whose bound exceeds the window are still counted, as designed).
+  `with_call` is 96.8 %. `_post` (median / p10 / p90 ms) fell from 40.3 /
+  24.5 / 76.7 to 15.1 / 12.2 / 24.8 (14.6 / 11.9 / 23.6 in a second pass), and
+  the rate rose from 19.0 to 51–53 chunks/s. Most of that gain is not #110.
+  llama.cpp's own Embedding call (`with_call`) went from ~36 ms to ~9 ms a
+  request, and #110 does not touch it. The clock ran at 2,800 MHz in both
+  windows. Since the BEFORE, LocalAI restarted (05:24, stage-p5) with
+  fresh children; not attributed further.
+  Scripts: /root/measure/after-110d.sh and single_timing_set.py on the node.
 - `context_size` (`louise-python`: MedCPT's article side, DAR), the task cuts
   at its load-time context size — a pair longest-first, as NCBI's
   `max_length=512` — and the window must equal it. Measured on the node: every
