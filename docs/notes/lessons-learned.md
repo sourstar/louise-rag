@@ -4,6 +4,15 @@ One entry per case that cost time, newest first. Each entry gives what happened,
 
 ## 2026-10-30 — the multi-core day
 
+### A bit-exact encoder that was wrong
+
+- **What happened.** gutenberg's encoder (qwen3-embedding-4b, llama.cpp SYCL) was not bit-exact across fresh loads with flash attention on. With it off, measured on a temporary model name, 8 of 8 runs and a 512-prefix sweep came back bit-identical, 4,416 vectors. The live YAML was moved to it, then gated: FAIL on both sides, cosine to the reference median 0.13 and 0.09, 512 of 512 below 0.995. Flash attention off produced the wrong vectors, and reproduced them perfectly (München, 2026-10-31).
+- **Cost.** 25 minutes without gutenberg's vector leg in search (an untested run answers no query, 03 §3.3, so nothing wrong was served), and nothing written: gutenberg was paused, and the gate refused the run.
+- **Lessons.**
+  - Reproducibility compares an engine with itself. A broken kernel reproduces its errors exactly, so invariant 12's measurement says nothing about correctness: only the gate, which compares with the reference, does.
+  - A candidate is gated BEFORE the live model moves to it, not after.
+- **Fix.** `hold embedder check <collection> --model N [--query-model N]` gates a candidate model name (app/louise.py `_as_candidate`, 07 `embedder check`). A run is its engine and not its name, so the statement already holds when the live YAML takes the candidate's settings. The gate and the repro check both run on the candidate before any YAML moves.
+
 ### A copy that changed every file's mode and nothing else
 
 - **What happened.** The louise-python-20261030 tree was made by `cp -a` of 20261021b into LocalAI's `backends/`. That dataset is nfsv4 with aclmode passthrough, and its directories carry an inheritable `user:apps:…x…:fd` entry. Every entry the copy created inherited it, so 39,548 files read owner-execute (664 → 764, 644 → 744). `chmod` alone could not clear it. Contents were byte-identical and everything would have imported and run. But a tree digest counts each file's exec bit (vega_wrapper `tree_manifest`), so the "same" tree would have been another engine. The same trap was in a rollout's forward path (`install` of three files into an existing package: a file created there reads 744) and in its backout (`cp -a` back from the saved copy) (München; found by checking modes against the source after the build).

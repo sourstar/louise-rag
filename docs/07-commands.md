@@ -450,7 +450,14 @@ reader needs at the command line:
   itself the first time an answer names a run it has not validated (03
   §3.3). `vectors build` and `share contribute` write a vector only from
   an answer naming a validated run; an endpoint that states no run
-  identity is refused for them (exit 2).
+  identity is refused for them (exit 2). `--model NAME` and
+  `--query-model NAME` ask the same endpoint for a CANDIDATE model instead
+  of the collection file's `embed_model` / `query_model`: a new engine is
+  gated before the collection's model moves to it, so its searches never
+  wait on a run being gated. The statement is the run's, and a run does
+  not include the model's name: once the collection's model equals the
+  candidate but for the name, it answers with a run already validated
+  (*2026-10-31*).
 - **`vectors build`.** `--delta ID` embeds exactly `delta.added ∪
   delta.changed` of snapshot `ID` — a snapshot id, never a file. About every
   fifteen thousand chunks a bundle (09 §9.7) is signed and its rows written

@@ -17,7 +17,7 @@
     louise hold records validation <collection>
     louise hold snapshot create <collection> [--snapshot ID] [--shards-from FROM[:SNAPSHOT]]
     louise hold snapshot list <collection>
-    louise hold embedder check|benchmark <collection> [--accept]
+    louise hold embedder check|benchmark <collection> [--accept] [--model N] [--query-model N]
     louise hold embedder run --encoder URL [--api A] [--model M] [--query] [--pair]
     louise hold embedder rebaseline <collection> [--yes]
     louise hold vectors build <collection> [--snapshot ID | --delta ID] [--shard S | --slice V...]
@@ -3742,6 +3742,11 @@ def cmd_embedder_check(a) -> int:
     _take_write_lock(a.root, name, "hold embedder check")     # it writes a statement (07 §7.7)
     if hold_runs.applies(codex):
         return _embedder_check_runs(a, name, codex)
+    if a.model or a.query_model:
+        print(f"louise: {name} is a Codex version {codex.version} collection: a candidate "
+              f"model is gated as a RUN, and only a version-3 collection states runs",
+              file=sys.stderr)
+        return 2
     try:
         run, codex = _gate(a)
     except emb.GateDeferred as e:
@@ -3788,8 +3793,12 @@ def _embedder_check_runs(a, name, codex) -> int:
     # no collection file beside it (2026-09-19).
     for role in roles:
         run_check.reference(a.root, name, codex, role)
+    if a.query_model and "query" not in roles:
+        print(f"louise: {name}: --query-model names a query side, and this space has none "
+              f"(its questions are embedded by the document encoder)", file=sys.stderr)
+        return 2
     try:
-        recipe = _recipe_for(codex, name)
+        recipe = _as_candidate(_recipe_for(codex, name), a)
     except emb.GateDeferred as e:
         print(f"louise: deferred: {e}", file=sys.stderr)
         return 3
@@ -3901,6 +3910,27 @@ def _gate(a):
                 f"the encoder for {name} was unreachable or failed: {e}") from e
 
     return emb.run_gate(codex, reference=reference, embed=embed, items=items), codex
+
+
+def _as_candidate(recipe, a):
+    """`--model` / `--query-model`: the gate asks a CANDIDATE model name
+    instead of the one the collection's file names — a model YAML gated
+    before the live one moves to it, so the collection's searches never wait
+    on a run that is still being gated, or that fails. On 2026-10-31
+    gutenberg's YAML moved first and was gated after: for 25 minutes its
+    searches had no vector leg (an untested run answers no query, 03 §3.3),
+    and the run failed — its vectors had cosine 0.12 to the reference.
+
+    The statement is the RUN's, and a run is its engine, not its name (the
+    wrapper's `run_object`: backend, tree, env, options, weights, driver):
+    once the live YAML equals the candidate's but for the name, the run it
+    answers with is the one already stated. A candidate that differs in
+    anything else is another run, and the live one is gated anew."""
+    from dataclasses import replace
+    if not (a.model or a.query_model):
+        return recipe
+    return replace(recipe, model=a.model or recipe.model,
+                   query_model=a.query_model or recipe.query_model)
 
 
 def _read_reference(member, codex):
@@ -4822,6 +4852,11 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(p); p.add_argument("collection")
     p.add_argument("--accept", action="store_true",
                    help="record a passing run as this peer's statement (09 §9.12)")
+    p.add_argument("--model", metavar="NAME",
+                   help="gate this model name instead of the file's `embed_model`: a "
+                        "candidate YAML, before the live one moves to it")
+    p.add_argument("--query-model", metavar="NAME",
+                   help="the same for the query side (`query_model`)")
     p.set_defaults(fn=cmd_embedder_check)
 
     p = everbs.add_parser("benchmark", help="tokens per second on the calibration set")
