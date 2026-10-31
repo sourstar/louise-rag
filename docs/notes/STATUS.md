@@ -782,7 +782,7 @@ it left open is below.
   - **qwen3-4b with FA off was bit-exact but WRONG.** The gate measured a median cosine of 0.126, so it was backed out. The cause is almost certainly P5, the ggml-sycl batched F16×F32 matmul on a non-contiguous operand, reached by Qwen3's GQA KQ without FA. Candidates under measurement: FA off on the P1–P5 engine, or FA off with an f32 KV cache. gutenberg is paused meanwhile.
   - **The cost:** FA off ran gutenberg's chunks ~2× slower (2.0–2.3 chunks/s against 4.0–5.4).
   - **The lever:** find why the SYCL FA kernel is not reproducible across loads (consistent within a load, intermittent across loads, on long inputs). A fix gives FA back to every encoder, with its speed. To be started once gutenberg runs again on a correct run.
-  - **Open for the operator:** keep gutenberg's 10,476,253 chunks written with FA on (valid at tolerance), or re-embed them (~7.82 B tokens, ~35 card-days). Recommended: keep. Silence keeps them.
+  - **Decided (operator, 2026-10-31): KEEP** gutenberg's 10,476,253 chunks written with FA on (runs 94f8b022, 203479bf). They are valid at tolerance, and only their bit-for-bit reproduction is lost. A re-embed (~7.82 B tokens, ~35 card-days) stays possible at any later re-creation.
 
 - **"Every plate" — gutenberg parser 11** (operator, 2026-10-25; 08 §8.7,
   09 §9.5, 05 §5.3, 07 §7.4 amended). Invariant 11 wins over 08's
