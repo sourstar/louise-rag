@@ -450,6 +450,47 @@ Otherwise wikidata's space is created again on bge-m3 before any vector is
 written (RULE 1: nothing was published from it), and the records stay as
 they are.
 
+**The result (München, 2026-10-31, /root/measure/wd-ab-score-2way.json):**
+400 queries over 21,348 chunks, bge-m3 against jina-v3 on torch.
+
+| | bge-m3 | jina-v3 |
+|---|---|---|
+| MRR@10 | **0.650** | 0.510 |
+| recall@1 | 0.575 | 0.420 |
+| recall@10 | 0.795 | 0.693 |
+
+- bge − jina = +0.140, p = 0.0001; bge is better on 135 queries and worse
+  on 30.
+- Both languages agree: en 0.636 against 0.479, it 0.663 against 0.541.
+- Every family with more than one query favours bge except `property`
+  (0.844 against 0.927, on 16 queries).
+- Speed, from the log, both contended by wikipedia's embedding: bge ~47
+  chunks/s, jina on torch ~5.3.
+
+**Verdict by the rule: bge-m3.** The jina-gguf arm is scored with the
+other two as the operator asked (speed, and closeness to torch); the same
+model run by another engine cannot plausibly gain 0.14. Then wikidata is
+created again on bge-m3:
+- the encoder is wikipedia's model (its weights, its stated run): one model
+  on the card for both collections;
+- dim 1,024, ctx 8,191, `cut = "tokens"`;
+- the chunker layer is UNCHANGED: its tokenizer parameter stays jina-v3's,
+  so the chunks are byte for byte the ones scored. bge-m3's tokenizer
+  differs from it by one normaliser step (runs of spaces collapsed), which
+  never matters, because no ~1,024-token chunk reaches a window of 8,191.
+
+**The cost** is vectors twice as large; München counts the nine families'
+chunks before the re-creation.
+
+**Left open by retiring jina on torch:** in the louise-python task, the
+adapter (`adapter:retrieval.passage` / `retrieval.query`) is an engine
+option, outside `space_id`. The weights digest is the folder's, which holds
+all five adapters, so two spaces on different adapters would share a
+`space_id`; only the calibration gate tells them apart. No collection uses
+that route after the switch. A collection that brings it back first puts
+the adapter into the weights digest, as 09 §9.3 (amended 2026-10-31) does
+for an adapter FILE.
+
 ## 11. Hold all fourteen, embed nine (operator, 2026-10-31)
 
 *"hold all 14 and embed 9".* §9 is amended. The node holds and serves
