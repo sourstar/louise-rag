@@ -1746,3 +1746,35 @@ The bound is the producer side:
 
 The next lever is the chunk preparation. The batch stays: it is gated, exact and costs nothing,
 and it is what the encoder will need once preparation keeps up.
+
+### 2026-10-31 — wikipedia's vector table held ~142 GiB of old IVF_PQ generations — MEASURED, cause found, nothing changed
+
+**Measured (München, read-only, 21:00 CET).** wikipedia's Lance table, 146,398,044 rows, 544.5 GB on
+disk: `data/` 338,191 MiB, `_indices/` 181,084 MiB in 630 directories, 675 versions (16:56–18:59).
+The LIVE indexes are 29.25 GB: `vector_idx` IVF_PQ (L2, 128 sub-vectors × 8 bits, 3 segments,
+27.96 GB = 191 B/row) and `book_id_idx` BTree (4 segments, 1.29 GB). The index directories by
+mtime and size:
+
+| built | GiB | |
+|---|---|---|
+| 10-30 15:52, 16:06, 16:13, 16:50, 19:14, 19:38, 19:49, 20:02 | 17.7–17.9 each, 142.4 together | full IVF_PQ generations, unreferenced |
+| 10-31 01:27 | 17.8 | live (8bb3fc62) |
+| 10-31 14:29 | 7.4 | live delta |
+| 610 smaller | 9.1 | |
+
+**Cause.** Eight FULL index trainings in 4 h 10 min on 10-30, the day of the twins repair
+(STATUS 2026-10-30: 21.9 M twin rows dropped): ~143 GiB written in that window, ~34 GiB/h.
+The worker's log of that day is gone with its container (four deploys since), so which
+call trained them is read from the table, not the log. The maintainer's prune leaves them:
+`vector_index.prune` calls `cleanup_old_versions(older_than=2 h)` with `delete_unverified`
+FALSE on purpose (a concurrent writer's uncommitted files), and Lance treats an unreferenced
+file younger than 7 days as unverified. They go by themselves after ~11-06.
+
+**The maintainer's own call, run by hand on wikipedia (paused):** 621 versions removed, 4.2 s,
+13.0 GiB freed (data/ 338,191 → 326,115 MiB; _indices/ 181,084 → 180,269 MiB; _versions/
+29 → 6 MiB).
+
+**Open.** (1) Which path trained eight full indexes in four hours on a repair; a bulk drop should
+train once at its end. (2) Whether to free the 142 GiB now: `cleanup_old_versions(older_than=0,
+delete_unverified=True)` under the vector write lock, as `purge` does after an erase, while
+wikipedia is paused and nothing writes its table — or let the 7 days pass.
