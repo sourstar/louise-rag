@@ -161,8 +161,15 @@ def _recipe(encoder: str):
         raise SystemExit(f"no {ENCODERS[encoder]} collection here: its recipe embeds the {encoder} side")
     recipe = collections_mod.recipe_for(c)
     # the wikidata chunk is cut at 1,024 tokens already: no second cut by a
-    # window another corpus was sized for
-    return dataclasses.replace(recipe, ctx=max(int(recipe.ctx or 0), 8192))
+    # window another corpus was sized for — within what each backend takes
+    # (the node, 2026-10-31: a window of 8,192 was refused by both):
+    # - jina-v3 (louise-python, `cuts: context_size`): the window must EQUAL
+    #   its context_size, wikidata's ctx 1,024 — the recipe as it is;
+    # - bge-m3 (llama.cpp, `cuts: tokenizer`): at most context_size − 1,
+    #   8,191 for its 8,192
+    if encoder == "jina":
+        return recipe
+    return dataclasses.replace(recipe, ctx=max(int(recipe.ctx or 0), 8191))
 
 
 def embed(out: Path, encoder: str, *, encode: Callable | None = None) -> dict:
