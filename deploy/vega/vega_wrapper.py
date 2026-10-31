@@ -914,8 +914,14 @@ DETERMINISM: dict[str, dict[str, str]] = {
     "rocm": {"ROCBLAS_DEFAULT_ATOMICS_MODE": "0"},
     "hip": {"ROCBLAS_DEFAULT_ATOMICS_MODE": "0"},
     # oneDNN picks kernels by heuristic and is not reproducible run to run;
-    # llama.cpp's own SYCL kernels are (llama-intel-arc-b70 KNOWN-ISSUES)
-    "sycl": {"GGML_SYCL_ENABLE_DNN": "0"},
+    # llama.cpp's own SYCL kernels are (llama-intel-arc-b70 KNOWN-ISSUES).
+    # GGML_SYCL_ENABLE_DNN gates oneDNN's MATMULS only: flash attention's
+    # first choice is oneDNN's fused SDPA, gated by its own
+    # GGML_SYCL_FA_ONEDNN (default 1) — llama.cpp c0fd786, the node's base,
+    # fattn.cpp `ggml_sycl_get_best_fattn_kernel`. With FA on, every input of
+    # 32+ tokens went through it: flips across loads, a NaN and a vector
+    # 0.0865 off (gutenberg's qwen3-4b, 2026-10-31). Inert with FA off.
+    "sycl": {"GGML_SYCL_ENABLE_DNN": "0", "GGML_SYCL_FA_ONEDNN": "0"},
 }
 
 

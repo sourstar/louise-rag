@@ -570,8 +570,10 @@ def test_the_driver_lines_are_the_runs_runtime(tmp_path):
     (proc_root / "sys" / "kernel" / "osrelease").write_text("6.18.0\n")
     _rid, run = vw.state_run(backend=backend, canon=vw.canon_from_protojson(json.dumps(
                                  json.loads(LOAD_RUN) | {"EnvVars": {"NEO_CACHE_DIR": "/state/neo-cache",
-                                                                     "GGML_SYCL_ENABLE_DNN": "0"}})),
-                             environ={"NEO_CACHE_DIR": "/state/neo-cache", "GGML_SYCL_ENABLE_DNN": "0"},
+                                                                     "GGML_SYCL_ENABLE_DNN": "0",
+                                                                     "GGML_SYCL_FA_ONEDNN": "0"}})),
+                             environ={"NEO_CACHE_DIR": "/state/neo-cache", "GGML_SYCL_ENABLE_DNN": "0",
+                                      "GGML_SYCL_FA_ONEDNN": "0"},
                              device="Arc",
                              pci=None, weights="sha256:" + "11" * 32,
                              tree=vw.tree_digest(backend.directory),
@@ -582,7 +584,7 @@ def test_the_driver_lines_are_the_runs_runtime(tmp_path):
 
 @pytest.mark.parametrize("name, env", [
     ("rocm-llama-cpp", {"ROCBLAS_DEFAULT_ATOMICS_MODE": "0"}),
-    ("intel-sycl-f16-llama-cpp", {"GGML_SYCL_ENABLE_DNN": "0"}),
+    ("intel-sycl-f16-llama-cpp", {"GGML_SYCL_ENABLE_DNN": "0", "GGML_SYCL_FA_ONEDNN": "0"}),
     ("cuda12-llama-cpp", {}),              # cuBLAS disallows atomics by default
     ("vulkan-llama-cpp", {}),              # no mode offered
     ("llama-cpp", {}),
@@ -598,6 +600,7 @@ def _load_with(env, options=("pairs:true", "parallel:1")):
 @pytest.mark.parametrize("name, env", [
     ("rocm-llama-cpp", {"ROCBLAS_DEFAULT_ATOMICS_MODE": "0"}),
     ("intel-sycl-f16-llama-cpp", {"GGML_SYCL_ENABLE_DNN": "0"}),
+    ("intel-sycl-f16-llama-cpp", {"GGML_SYCL_FA_ONEDNN": "0"}),
 ])
 def test_a_card_run_without_its_vendors_deterministic_mode_is_never_stated(tmp_path, name, env):
     """CLAUDE.md invariant 12: in the MODEL's env, so the run states it."""
@@ -606,12 +609,14 @@ def test_a_card_run_without_its_vendors_deterministic_mode_is_never_stated(tmp_p
               tree=vw.tree_digest(backend.directory), runtime=[],
               card_driver_line="dxg 1")
     (key, value), = env.items()
+    rest = {k: v for k, v in vw.determinism_env(name).items() if k != key}
     with pytest.raises(loadopts.Unstatable, match=f"invariant 12.*{key}={value}"):
-        vw.state_run(canon=_load_with({}), environ=env, **kw)
+        vw.state_run(canon=_load_with(rest), environ=rest, **kw)
     with pytest.raises(loadopts.Unstatable, match="invariant 12"):
         vw.state_run(canon=_load_with({key: "1"}), environ={key: "1"}, **kw)
-    _rid, run = vw.state_run(canon=_load_with(env), environ=env, **kw)
-    assert run["engine"]["env"] == env, "the run says it ran deterministic"
+    full = vw.determinism_env(name)
+    _rid, run = vw.state_run(canon=_load_with(full), environ=full, **kw)
+    assert run["engine"]["env"] == full, "the run says it ran deterministic"
     # the same backend on the CPU uses no card library: nothing is required
     vw.state_run(canon=_load_with({}), environ={}, **(kw | {"device": "cpu"}))
 
@@ -778,7 +783,7 @@ def _run_kw(tmp_path, name, device="the card"):
 def test_llama_cpp_runs_one_sequence_at_a_time_on_any_device(tmp_path, device):
     """Measured: louise-rerank-bge at parallel:4 moved 16 of 20 scores with
     the documents' order; at parallel:1 none moved."""
-    env = {"GGML_SYCL_ENABLE_DNN": "0"} if device != "cpu" else {}
+    env = {"GGML_SYCL_ENABLE_DNN": "0", "GGML_SYCL_FA_ONEDNN": "0"} if device != "cpu" else {}
     kw = _run_kw(tmp_path, "intel-sycl-f16-llama-cpp", device)
     for options in (("parallel:4",), ()):
         with pytest.raises(loadopts.Unstatable, match="invariant 12.*parallel:1"):
