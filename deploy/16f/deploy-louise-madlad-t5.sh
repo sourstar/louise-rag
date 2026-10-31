@@ -265,6 +265,49 @@ for i in $(seq 1 180); do
 done
 echo "stop job: $js"
 case "$js" in SUCCESS*) ;; *) echo "the stop did not succeed; NOT starting on top of it"; exit 1;; esac
+# A DEPLOY THAT DIES BETWEEN app.stop AND A VERIFIED START STARTS THE APP ITSELF
+# (2026-10-31: the runbook was copied over itself mid-run, bash read on into the new
+# text and stopped at "syntax error" after the stop — Louise down until an agent
+# noticed; restart: unless-stopped does not apply to a deliberate stop. CLAUDE.md:
+# Louise survives a crash without an agent). Any exit from here on — an error, a
+# signal, a check that fails — starts louise-rag on the image its config names
+# (LOUISE_PLATFORM_IMAGE: the new one once set_platform_image.py ran, the one
+# before otherwise; louise-rag:local is retagged to it so the two agree), says so
+# loudly and exits non-zero. Cleared only once the start is verified (step 6).
+STARTED=""
+configured_image() {
+  python3 - <<'PY'
+from truenas_api_client import Client
+with Client() as c:
+    cfg = c.call("app.config", "louise-rag")
+    print(((cfg.get("services") or {}).get("worker") or {}).get("environment", {}).get("LOUISE_PLATFORM_IMAGE") or "")
+PY
+}
+heal() {
+  local rc=$? want s i w
+  [ -n "$STARTED" ] && return 0
+  trap - EXIT INT TERM
+  set +e
+  echo "!!!!!! the deploy of $COMMIT ended (exit $rc) between app.stop and a verified start: STARTING louise-rag" >&2
+  want=$(configured_image)
+  if [[ "$want" =~ ^sha256:[0-9a-f]{64}$ ]] && docker image inspect "$want" >/dev/null 2>&1; then
+    docker tag "$want" louise-rag:local && echo "!!!!!! louise-rag:local -> $want (LOUISE_PLATFORM_IMAGE)" >&2
+  else
+    echo "!!!!!! LOUISE_PLATFORM_IMAGE '$want' is no image here: starting on louise-rag:local as it is" >&2
+  fi
+  s=$(midclt call app.query '[["name","=","louise-rag"]]' | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['state'])")
+  [ "$s" = "RUNNING" ] || midclt call app.start louise-rag >/dev/null
+  for i in $(seq 1 120); do
+    s=$(midclt call app.query '[["name","=","louise-rag"]]' | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['state'])")
+    w=$(curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:30042/healthz)
+    [ "$s" = "RUNNING" ] && [ "$w" = 200 ] && break; sleep 3
+  done
+  echo "!!!!!! louise-rag $s, web /healthz $w, worker $(docker inspect -f '{{.State.Status}} {{.Image}}' ix-louise-rag-worker-1 2>&1 | cut -c1-90); the deploy of $COMMIT did NOT complete" >&2
+  exit $(( rc == 0 ? 1 : rc ))
+}
+trap heal EXIT
+trap 'exit 130' INT TERM
+if [ "${DEPLOY_TEST_DIE_AFTER_STOP:-}" = 1 ]; then echo "TEST: the deploy dies here, after the stop"; kill -TERM $$; sleep 10; fi
 # the fast drive for derived data (07 §7.8; operator 2026-10-20): /data is on NVMe (ssd4)
 python3 - "$ROOT/src/deploy/16f" <<'PY'
 import sys
@@ -303,6 +346,10 @@ for c in ix-louise-rag-web-1 ix-louise-rag-worker-1; do
   case "$c" in *web*) [ "$m" = "12884901888 12884901888" ];; *worker*) [ "$m" = "25769803776 25769803776" ];; esac
   v=$(docker exec "$c" printenv LOUISE_CACHE_DIR || true); echo "$c LOUISE_CACHE_DIR $v"; [ "$v" = "/data/cache" ]
 done
+for i in $(seq 1 60); do w=$(curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:30042/healthz); [ "$w" = 200 ] && break; sleep 2; done
+echo "web /healthz $w, worker $(docker inspect -f '{{.State.Status}}' ix-louise-rag-worker-1)"; [ "$w" = 200 ]
+[ "$(docker inspect -f '{{.State.Status}}' ix-louise-rag-worker-1)" = running ]
+STARTED=1; trap - EXIT INT TERM          # the start is verified: no self-healing past here
 say "6b. the secrets by path, the same identity"
 for c in ix-louise-rag-web-1 ix-louise-rag-worker-1; do
   docker exec "$c" sh -c 'test -z "${ADMIN_TOKEN+x}"' && echo "$c: no ADMIN_TOKEN value in the env" || { echo "$c: ADMIN_TOKEN still in the env"; exit 1; }
