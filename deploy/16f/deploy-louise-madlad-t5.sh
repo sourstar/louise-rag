@@ -192,6 +192,7 @@ grep -q "A HELD LINE IS TAKEN UNLESS THE MANIFEST PROVES ITS UNIT CHANGED" "$ROO
 grep -q "^def unembedded_why_not" "$ROOT/src.new/app/hold/carry.py"                                      # A1h: dev carry --unembedded (wikidata into bge-m3, nothing embedded)
 grep -q '^NEW_TABLE_STORAGE = {"new_table_enable_stable_row_ids": "true"}' "$ROOT/src.new/app/embeddings.py"        # #145 (388fff5): vector tables created with stable row ids
 grep -q '^STATE = "rewrite-stable.json"' "$ROOT/src.new/app/vector_rewrite.py"                       # #146 (40c2127): dev rewrite-vectors, an existing table onto stable row ids
+grep -q "^def build_lang_table(tbl, \*, log=None) -> dict:" "$ROOT/src.new/app/vector_index.py"           # #147 (d5f6c11): a BITMAP on lang
 grep -q '^def set_paused(name: str, paused: bool, \*, by: str = "") -> set\[str\]:' "$ROOT/src.new/app/node_state.py"   # #122 (4ef5c49): a pause records who and when
 grep -q "^def _non_finite(vector: bytes) -> bool:" "$ROOT/src.new/tools/vega_repro_check.py"   # #123 (e9ca1da): a NaN fails the repro check and the gate
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
