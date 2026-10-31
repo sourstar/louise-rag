@@ -119,3 +119,18 @@ def test_only_a_vega_encoder_is_reloaded_by_the_gate():
     from app import run_check
     assert run_check._reloader(SimpleNamespace(api="openai"), query=False) is None
     assert callable(run_check._reloader(SimpleNamespace(api="vega"), query=False))
+
+
+def test_a_nan_on_any_load_fails_the_run_however_often_it_repeats():
+    """A NaN is a wrong answer, not a variation (P5 with FA on, 2026-10-31)."""
+    class NanCard(Card):
+        def one(self, texts):
+            out = fake_embed(texts)
+            k = max(range(len(texts)), key=lambda i: len(texts[i]))
+            out[k] = [float("nan")] + list(out[k][1:])
+            return out
+    card = NanCard()
+    loads, closest = emb.fresh_loads(["a", "bb", "ccc"], card.one, card.reload, b"s")
+    assert closest == 0.0
+    _codex, run = _gate(NanCard(), exactness="near")
+    assert not run.ok
