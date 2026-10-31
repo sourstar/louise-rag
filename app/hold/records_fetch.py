@@ -149,12 +149,38 @@ def select(collection, spec, *, slices=None, profile: str | None = None,
         except collection_file.SetRefused as e:
             raise CodexError(str(e)) from None
     else:
+        named = profile
         profile = profile or collection.profile or "demo"
+        record, said = record_for_profile(collection, spec, named)
+        notes += said
 
     until = None
     if snapshot_id is not None:
         until = _cutoff(collection, spec, snapshot_id, notes)
     return Selection(profile=profile, record=record, until=until, notes=tuple(notes))
+
+
+def record_for_profile(collection, spec, named: str | None) -> tuple[Any, list[str]]:
+    """A NAMED PROFILE IS RECORDED AS THE SLICES IT SPELLS, as `--slice` is
+    (RULE 2: what the node fetched, its file says). wikipedia's 11 dumps were
+    fetched with `--profile all` on 2026-09-14 and its file kept `slices =
+    []`, so the Library called the collection hand-populated and offered no
+    grow (2026-10-31). A profile no list of slices spells is fetched as
+    asked and the file left as it is — said, never refused. Returns the
+    selection to record (None: nothing) and what to say."""
+    from app import collection_file
+    from app.acquire import spec as acquire_spec
+    if not named or not isinstance(spec, acquire_spec.AcquisitionSpec):
+        return None, []
+    spelt = acquire_spec.slices_for_profile(spec, named)
+    if spelt is None:
+        return None, [f"profile {named} names no slice of {collection.plugin}'s origin, "
+                      f"so the file is not changed by this fetch"]
+    try:
+        c, raw, _ = collection_file.load(collection.name)
+        return collection_file.selection_after_fetch(c, raw, spec, spelt), []
+    except collection_file.SetRefused as e:
+        return None, [f"fetched as asked, the file left as it is: {e}"]
 
 
 def _cutoff(collection, spec, snapshot_id: str, notes: list[str]) -> datetime | None:

@@ -4318,8 +4318,14 @@ def cmd_records_fetch(a) -> int:
                          f"takes more of it, not the origin")
     if a.slice is None and a.snapshot is None:
         profile = a.profile or collection.profile or "demo"
+        # a NAMED profile is recorded in the file as the slices it spells
+        record, said = records_fetch.record_for_profile(
+            collection, ACQUIRE_REGISTRY.get(collection.plugin), a.profile)
+        for note in said:
+            print(f"louise: {collection.name}: {note}", file=sys.stderr)
+        kw = {"record": record} if record is not None else {}
         with _closing(db.connect(collection)) as con:
-            return records_fetch.fetch(collection, con, profile, dry_run=a.dry_run)
+            return records_fetch.fetch(collection, con, profile, dry_run=a.dry_run, **kw)
     spec = ACQUIRE_REGISTRY.get(collection.plugin)
     if spec is None:
         raise CodexError(f"{collection.name}: no acquisition spec is registered for "

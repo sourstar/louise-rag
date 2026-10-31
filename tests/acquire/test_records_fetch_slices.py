@@ -200,6 +200,34 @@ def test_a_file_naming_a_profile_is_joined_by_what_it_spells(origin, capsys):
     assert path.read_bytes() == before
 
 
+def test_a_named_profile_is_recorded_as_the_slices_it_spells(origin, capsys):
+    """RULE 2 (2026-10-31): wikipedia's dumps were fetched with `--profile all`
+    and its file kept `slices = []` — the Library called it hand-populated. A
+    profile is recorded as `--slice` is: what the node fetched, its file says."""
+    assert louise.main(["hold", "records", "fetch", "gutenberg", "--profile", "it",
+                        "--dry-run"]) == 0
+    assert 'records: slices = ["lang=it"] in the file once the fetch completes' in \
+        capsys.readouterr().out
+    assert "slices" not in _toml(), "a dry run writes nothing"
+    assert louise.main(["hold", "records", "fetch", "gutenberg", "--profile", "it"]) == 0
+    capsys.readouterr()
+    c = collections_mod.by_name("gutenberg")
+    assert _toml()["slices"] == ["lang=it"]
+    assert (c.slices, c.profile, c.acquire_enabled) == (("lang=it",), "it", True)
+    assert louise.main(["hold", "records", "fetch", "gutenberg", "--profile", "all"]) == 0
+    capsys.readouterr()
+    c = collections_mod.by_name("gutenberg")
+    assert _toml()["slices"] == "all" and (c.slices, c.profile) == ("all", "all")
+
+
+def test_a_profile_no_slices_spell_is_fetched_and_the_file_left_as_it_is(origin, capsys):
+    before = _file().read_bytes()
+    assert louise.main(["hold", "records", "fetch", "gutenberg", "--profile", "first"]) == 0
+    captured = capsys.readouterr()
+    assert "names no slice" in captured.err and "recorded:" not in captured.out
+    assert _corpus() and _file().read_bytes() == before, "fetched as asked, never refused"
+
+
 # ---- --snapshot ID ----------------------------------------------------------
 
 def _cut(snapshot_id: str) -> datetime:
