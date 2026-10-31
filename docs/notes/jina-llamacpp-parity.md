@@ -6,6 +6,12 @@ chosen per call). wikidata no longer needs it: it moved to bge-m3
 (wikidata-family-slices.md §10). This note keeps the measurement and the
 plan, so that the next such case starts from them.
 
+**Status (operator, 2026-10-31): the design is KEPT for the future, and it
+is a GATE before production.** "Keep the design for the future. Before
+switching to production I want it implemented and tested with the 16bit
+precision." Nothing is built now. The build is §3 at f16, and "tested"
+means §4, all on the node.
+
 **What "100 %" can mean.** Every choice can match torch: the tokens, the
 weights with the task's adapter and its scale, the instruction, the pooling
 and the Matryoshka cut. The last bits of rounding cannot match, because two
@@ -61,7 +67,7 @@ is the same, and the run is five times faster.
 | tokens | llama.cpp's copy of jina's Unigram tokenizer (vocabulary, scores and charsmap converted from `tokenizer.json`) | first COUNT: the A/B and calibration texts tokenized both ways. 0 differences: keep it. Otherwise jina's ids through P2's token-ids path, or an upstream fix | `tokenizer.json` as a second file if the wrapper tokenizes |
 | Matryoshka cut | done by the measuring tool | the wrapper keeps the first `dim` and renormalises, BEFORE the receipt | `dim` in the space |
 | activation | to check: llama.cpp's graph may use tanh-GELU where torch uses exact (erf) GELU | patch to `ggml_gelu_erf` if so, and upstream | engine |
-| precision | f16 | f16 is enough by §2. f32 (weights equal torch's W', expected 1 − cos < 1e-7) costs twice the memory (~2.3 GB a side) | weights digest |
+| precision | f16 | **f16 (operator, 2026-10-31)**, enough by §2. f32 (weights equal torch's W', expected 1 − cos < 1e-7, twice the memory) is not built | weights digest |
 
 Still to explain: the worst chunk at 0.99944. The first suspects are the
 tokenizer count (whitespace runs: jina's `tokenizer.json` splits at any
@@ -70,3 +76,27 @@ whitespace) and a chunk long enough for the rounding to accumulate.
 Build cost when a case arrives: about one day for the wrapper (instruction,
 cut, tests), plus the token count and the worst-chunk check (minutes), plus
 the GELU check (half a day if a patch is needed).
+
+## 4. The tests that make it production-ready (f16)
+
+In the repository, with the full suite:
+- the wrapper prepends the instruction read from the merged GGUF, to the
+  TEXT, before tokenization, and states no run when the key is missing;
+- the wrapper cuts to `dim` and renormalises BEFORE the receipt; the
+  receipt's vector digest is the cut vector's;
+- identity: a different instruction or a different adapter gives a
+  different weights digest, so a different `space_id`.
+
+On the node, on the 21,860 texts (the A/B's chunks and the calibration
+set), against the torch reference:
+1. tokens: 0 differences between llama.cpp's tokenizer and jina's
+   `tokenizer.json`, or jina's ids sent through P2's token-ids path;
+2. the activation checked (exact GELU), patched if not;
+3. vectors no worse than the A/B's arm: median cosine ≥ 0.99998, p01 ≥
+   0.99995, the worst chunk explained and ≥ 0.9994;
+4. search: MRR@10 not lower than torch's on the 400 questions (paired
+   test);
+5. invariant 12: bit-exact over 3 fresh loads × 2 orders, both sides,
+   with the deployed flags;
+6. the calibration gate PASSes on a space created from the recipe.
+
