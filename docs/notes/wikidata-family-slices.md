@@ -419,3 +419,23 @@ Otherwise wikidata's space is created again on bge-m3 before any vector is
 written (RULE 1: nothing was published from it), and the records stay as
 they are.
 
+## 11. Hold all fourteen, embed nine (operator, 2026-10-31)
+
+*"hold all 14 and embed 9".* §9 is amended. The node holds and serves
+every family's records and keeps its text index whole, so a peer can fetch
+any family by slice (`share fetch --slice family=…`). The encoder spends
+only on the nine.
+
+The collection file holds `slices = "all"` and names the nine in a new key,
+`embed_slices`.
+- **The mechanism:** the slice-scope pass marks a document outside them
+  "not embedded here" (`embed_done = -1`), and moves it back to 0 when the
+  list grows. That keeps it out of the embed stage's candidates without a
+  per-round skip. Every count of `embed_done` reads `= 1` (the code that
+  summed the column is changed with it). No new column and no index
+  rebuild.
+- **Its alternative:** a new column (`embed_held`) in the scope index, which
+  means rebuilding that index on 75.9 M rows.
+
+Until it is built, the file keeps the nine (§9) and wikidata stays paused.
+
