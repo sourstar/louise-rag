@@ -464,13 +464,15 @@ window, a pair's form. A change to it can change a vector, and the run
 named only the backend's tree: a wrapper change (#110) left every run its
 identity and its validation. So the same object also holds the wrapper's
 package, the directory the runner launches the wrapper from:
-- every regular file and link of the package, as above, its path prefixed
-  `/vega/` (a relative path never begins with `/`, so the two halves cannot
-  collide), except at its top level the wrapper's settings (`vega.json`),
-  the install record (`metadata.json`), the digests the wrapper keeps
-  across loads (`file-digests.json` and its temporary file) and the
-  third-party environment (`venv/`), and except every `__pycache__`
-  directory, which Python compiles beside the code;
+- the wrapper's CODE, by an allow-list: every `*.py` file below the
+  package, outside `venv/` (the third-party environment) and every
+  `__pycache__`, and the top-level `run.sh` the runner starts, each as a
+  regular file above, its path prefixed `/vega/` (a relative path never
+  begins with `/`, so the two halves cannot collide). Nothing else the
+  package holds: the wrapper's settings (`vega.json`), the install record,
+  the digests it keeps, the receipts socket's directory, a kernel cache a
+  model's environment may let the driver write there, a revision note.
+  Each of those, hashed, would move the run under load;
 - one setting of `vega.json`, the one that changes what is embedded: `cuts`
   as `"/vega/vega.json#cuts": {"type": "setting", "value": "<tokenizer or
   context_size>"}`.

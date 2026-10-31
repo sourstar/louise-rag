@@ -853,9 +853,16 @@ def test_the_wrapper_is_part_of_the_engine(tmp_path):
     (pkg / "venv" / "lib" / "grpc.py").write_text("#")
     (pkg / "app" / "__pycache__").mkdir()
     (pkg / "app" / "__pycache__" / "x.pyc").write_bytes(b"\0")
+    (pkg / "run.sh").write_text("#!/bin/sh\n")
+    (pkg / "REVISION").write_text("0ec2239\n")
+    (pkg / "neo-cache").mkdir()                  # Intel's kernel cache, where an env names none
+    (pkg / "neo-cache" / "kernel.bin").write_bytes(b"\1")
+    (pkg / "run").mkdir()                        # the receipts socket's directory
+    (pkg / "run" / "stray.log").write_text("x")
     m = vw.engine_manifest(backend, pkg, vw.TOKENIZER)
     wrapper = sorted(k for k in m if k.startswith(vw.WRAPPER_PREFIX))
-    assert wrapper == ["/vega/app/vega/tag.py", "/vega/vega.json#cuts", "/vega/vega_wrapper.py"]
+    assert wrapper == ["/vega/app/vega/tag.py", "/vega/run.sh", "/vega/vega.json#cuts",
+                       "/vega/vega_wrapper.py"], "the code alone, by an allow-list"
     assert m["/vega/vega.json#cuts"] == {"type": "setting", "value": vw.TOKENIZER}
     assert {k for k in m if not k.startswith("/")} == set(vw.tree_manifest(backend))
     image = vw.manifest_digest(m)
@@ -863,7 +870,11 @@ def test_the_wrapper_is_part_of_the_engine(tmp_path):
     # the host's settings are not the engine
     (pkg / "vega.json").write_text('{"receipts_socket": "/run/b.sock"}')
     (pkg / "venv" / "lib" / "grpc.py").write_text("# upgraded")
-    assert vw.manifest_digest(vw.engine_manifest(backend, pkg, vw.TOKENIZER)) == image
+    (pkg / "neo-cache" / "kernel2.bin").write_bytes(b"\2")     # compiled under load
+    (pkg / "run" / "other.txt").write_text("y")
+    (pkg / "REVISION").write_text("f70dbf9\n")
+    assert vw.manifest_digest(vw.engine_manifest(backend, pkg, vw.TOKENIZER)) == image, \
+        "a derived cache, a stray file or a revision note never moves the run"
     # the wrapper's code and its cut are
     assert vw.manifest_digest(vw.engine_manifest(backend, pkg, vw.CONTEXT_SIZE)) != image
     (pkg / "app" / "vega" / "tag.py").write_text("# the tag, changed\n")
