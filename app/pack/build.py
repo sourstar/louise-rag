@@ -357,14 +357,27 @@ def held_or_parsed(collection, plugin, row: dict) -> tuple[dict, int, bytes, dic
     records/s), the second time a records build ran single-threaded."""
     at = _ro(row[HELD_DB]).execute("SELECT path, frame, line FROM held WHERE uid=?",
                                    (row["uid"],)).fetchone()
-    if at is None:
+    src = None
+    if at is not None:
+        line = records.read_record_at(Path(row[HELD_DIR]) / at["path"], int(at["frame"]), int(at["line"]))
+        # A HELD LINE IS TAKEN UNLESS THE MANIFEST PROVES ITS UNIT CHANGED
+        # (2026-10-31): wikipedia's archive-layer lines were cut from
+        # locators without the page_props segment; their rows now name the
+        # whole unit, and its hash (txt_hash) is not the line's origin_hash.
+        # Such a line is parsed again, so the record holds what the origin
+        # gives (invariant 11). No txt_hash (a re-discovered row) is no
+        # evidence: the line is taken, as RULE 1 has it.
+        src = _ro(str(collection.manifest_path)).execute(
+            "SELECT uid, native_id, path, lang, txt_hash FROM documents WHERE uid=?",
+            (row["uid"],)).fetchone()
+        if src is None or not src["txt_hash"] or src["txt_hash"] == line.get("origin_hash"):
+            return _record_from_line(collection, line)
+    if src is None:
         src = _ro(str(collection.manifest_path)).execute(
             "SELECT uid, native_id, path, lang FROM documents WHERE uid=?", (row["uid"],)).fetchone()
-        if src is None:
-            raise LookupError(f"{row['uid']}: neither held nor in the manifest")
-        return _record_of(collection, plugin, dict(src))
-    return _record_from_line(collection, records.read_record_at(
-        Path(row[HELD_DIR]) / at["path"], int(at["frame"]), int(at["line"])))
+    if src is None:
+        raise LookupError(f"{row['uid']}: neither held nor in the manifest")
+    return _record_of(collection, plugin, {k: src[k] for k in ("uid", "native_id", "path", "lang")})
 
 
 def _record_from_line(collection, line: dict) -> tuple[dict, int, bytes, dict[str, str]]:
