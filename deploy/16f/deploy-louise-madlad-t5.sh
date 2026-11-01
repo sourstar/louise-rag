@@ -197,6 +197,8 @@ grep -q "^def _ship(line: bytes) -> tuple\[bytes, int\]:" "$ROOT/src.new/app/pac
 grep -q "^def prefetch_held(collection, rows: list\[dict\]) -> None:" "$ROOT/src.new/app/pack/build.py"   # #149 (e8e4025): a part queued behind each child; held lookups per part
 grep -q "^def _columns_of(buf: list\[dict\], lines: list) -> tuple | None:" "$ROOT/src.new/app/pack/build.py"   # #150 (5487524): a part to its writer as columns and one bytes object
 grep -q "^def _reparse_many_from(codex, name: str, origin_dir):" "$ROOT/src.new/app/louise.py"   # #152 (a2100c5): records-vs-origin re-parses in the parse pool
+grep -q "^def _compared_in_part(ctx: Ctx, ran, keep, size_of: dict, per_unit: dict," "$ROOT/src.new/app/hold/check.py"   # #153 (698dcfd): a heavy origin unit is compared in part, by the seed
+grep -q '^WHOLE_KINDS = ("terms", "validation", "slicing", "calibration", "seals")' "$ROOT/src.new/app/share/holdings.py"   # a8fa256: the family map is a whole-collection member
 grep -q '^def set_paused(name: str, paused: bool, \*, by: str = "") -> set\[str\]:' "$ROOT/src.new/app/node_state.py"   # #122 (4ef5c49): a pause records who and when
 grep -q "^def _non_finite(vector: bytes) -> bool:" "$ROOT/src.new/tools/vega_repro_check.py"   # #123 (e9ca1da): a NaN fails the repro check and the gate
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
