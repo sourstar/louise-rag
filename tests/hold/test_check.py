@@ -1238,3 +1238,43 @@ def test_the_pooled_origin_check_crosses_real_processes(checkable, corpus_dir, m
         assert (pooled.result, pooled.detail, pooled.why) == (serial.result, serial.detail, serial.why)
     finally:
         parallel.shutdown()
+
+
+def test_a_unit_heavier_than_the_bound_is_compared_in_part_by_the_seed(checkable, corpus_dir):
+    """03 §3.2, amended 2026-11-01 (operator, RULE 1): wikidata's every record
+    points into its one dump file, so its check re-parsed all 3.7 M sampled
+    records (~27 h). A unit heavier than the bound is compared in part: of its
+    n sampled records, the ⌈n × bound / weight⌉ (at least one) the seeded
+    rule ranks first over their uids — and the report names the share."""
+    from app import louise
+    from app.hold import codex as cx
+    root, snapshot, codex = checkable
+    reparse = louise._reparse_from(codex, "gutenberg", corpus_dir)
+    asked: list[str] = []
+
+    def counted(uid, locator):
+        asked.append(uid)
+        return reparse(uid, locator)
+
+    uids = [r["uid"] for r in _all_records(root, snapshot) if r.get("origin")]
+    n = len(uids)
+    assert n >= 3, "the fixture has records enough for a share below n"
+    weight = (chk.ORIGIN_BYTES * n) // 2               # a share of exactly two
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1", reparse=counted,
+             origin_unit=lambda locator: ("the-one-dump", weight)).outcome("records-vs-origin")
+    assert o.result == chk.PASS, o.why
+    assert sorted(asked) == sorted(cx.sample(SEED, 2, iter(uids))), "the two the seed ranks first"
+    assert o.detail["compared"] == 2 and o.detail["records"] == n
+    assert o.detail["origin_units_in_part"] == [
+        {"unit": "the-one-dump", "weight": weight, "sampled": n, "compared": 2}]
+    assert "compared in part: 2 of its" in o.why
+    # at least one, however heavy
+    asked.clear()
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1", reparse=counted,
+             origin_unit=lambda locator: ("the-one-dump", 1 << 50)).outcome("records-vs-origin")
+    assert o.detail["compared"] == 1 == len(asked)
+    # and a unit within the bound is compared whole, as before
+    asked.clear()
+    o = _run(root, codex, snapshot, ["records-vs-origin"], sample="1", reparse=counted,
+             origin_unit=lambda locator: ("the-one-dump", 1 << 20)).outcome("records-vs-origin")
+    assert o.detail["compared"] == n and "origin_units_in_part" not in o.detail

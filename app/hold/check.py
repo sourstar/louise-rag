@@ -27,6 +27,8 @@ would publish nothing whenever one check was inconclusive.
 """
 from __future__ import annotations
 
+import math
+
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -789,6 +791,7 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
     # and lets it go. The one-pass form held every sampled line until the
     # bound had run — pubmed's 2 million, 13 GB, to compare a few thousand.
     size_of: dict[str, int | None] = {}
+    per_unit: dict[str, int] = {}
     sampled_records = 0
     for s in shards:
         try:
@@ -805,6 +808,7 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
             if ctx.origin_unit is not None:
                 unit, size = ctx.origin_unit(r["origin"])
                 size_of.setdefault(unit, size)
+                per_unit[unit] = per_unit.get(unit, 0) + 1
     if not ran:
         return Outcome("records-vs-origin", INCONCLUSIVE,
                        why="this peer holds none of the sampled shards")
@@ -829,6 +833,7 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                            "against itself")
 
     keep, bound = _origin_units_taken(ctx, size_of)
+    in_part = _compared_in_part(ctx, ran, keep, size_of, per_unit, bound)
 
     def chosen():
         """The sampled records of the taken units, as (uid, origin, line),
@@ -839,8 +844,12 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
             for r in ctx.records_of(s):
                 if not r.get("origin"):
                     continue
-                if keep is not None and ctx.origin_unit(r["origin"])[0] not in keep:
-                    continue
+                if keep is not None:
+                    unit = ctx.origin_unit(r["origin"])[0]
+                    if unit not in keep:
+                        continue
+                    if unit in in_part and r["uid"] not in in_part[unit]:
+                        continue
                 # THE CODEX'S SHAPE, on both sides. `canonical_line` defaults
                 # to `record_line` 1, which drops the `figures` key — so on a
                 # plates collection this re-canonicalised a shape-2 record as
@@ -915,6 +924,10 @@ def check_records_vs_origin(ctx: Ctx) -> Outcome:
                 f"origin file(s) the sampled shards reach into, {bound['origin_bytes'] >> 20} "
                 f"MiB of the {bound['origin_bytes_bound'] >> 20} MiB one check may read of "
                 f"the origin ({compared} of {sampled_records} sampled records)")
+        for u in bound.get("origin_units_in_part", ()):
+            said += (f"; {u['unit']} ({u['weight'] >> 20} MiB) heavier than the bound, compared "
+                     f"in part: {u['compared']} of its {u['sampled']} sampled records, drawn by "
+                     f"the seed (03 §3.2, amended 2026-11-01)")
     return Outcome("records-vs-origin", FAIL if failed else PASS,
                    {"records": seen, "compared": compared,
                     "failed": sorted(failed)[:64], "moved": sorted(moved)[:64],
@@ -1066,11 +1079,45 @@ def _moved_only(line: bytes, got: bytes) -> bool:
     return a == b
 
 
+def _compared_in_part(ctx: Ctx, ran, keep, size_of: dict, per_unit: dict,
+                      bound: dict) -> dict[str, set[str]]:
+    """A UNIT HEAVIER THAN THE BOUND IS COMPARED IN PART (03 §3.2, amended
+    2026-11-01, operator, RULE 1): of its `n` sampled records, the
+    ⌈n × bound / weight⌉ — at least one — that `sample(seed, …)` ranks first
+    over their uids. Only the first unit taken can be one (the rest are
+    taken within the bound). wikidata's every record points into its one
+    dump file, so its check re-parsed all 3.7 M sampled records, ~27 h at
+    38/s; the share is ~6,800. The seed still decides which records, and
+    the report names, for each such unit, its weight, `n` and the share.
+    Returns {unit: the uids compared}; `bound` gets the record."""
+    if keep is None:
+        return {}
+    heavy = [u for u in sorted(keep) if (size_of.get(u) or 0) > ctx.origin_bytes]
+    if not heavy:
+        return {}
+    shares = {u: min(per_unit[u], max(1, math.ceil(per_unit[u] * ctx.origin_bytes / size_of[u])))
+              for u in heavy}
+
+    def uids_of(unit):
+        for s in ran:
+            for r in ctx.records_of(s):
+                if r.get("origin") and ctx.origin_unit(r["origin"])[0] == unit:
+                    yield r["uid"]
+    out = {u: set(cx.sample(ctx.seed, shares[u], uids_of(u))) for u in heavy}
+    bound["origin_units_in_part"] = [
+        {"unit": u, "weight": size_of[u], "sampled": per_unit[u], "compared": shares[u]}
+        for u in heavy]
+    return out
+
+
 def _origin_units_taken(ctx: Ctx, size_of: dict) -> tuple[set | None, dict]:
     """The origin units this run reads — `size_of` is unit -> bytes for every
     unit the sampled records point into — and the bound's record. None when
     nothing bounds the run (no `origin_unit`): every sampled record is
-    compared. The ranking and the cut are `_within_the_origin_bound`'s."""
+    compared. The units are ranked by the ONE sampling rule (09 §9.1) under
+    the shards' seed and taken up to the last that keeps their sizes within
+    `ctx.origin_bytes`, the first whatever it weighs (`_compared_in_part`
+    then compares a share of a unit heavier than the bound)."""
     if ctx.origin_unit is None or not size_of:
         return None, {}
     taken: list[str] = []
@@ -1097,42 +1144,6 @@ def _origin_units_taken(ctx: Ctx, size_of: dict) -> tuple[set | None, dict]:
     return set(taken), {"origin_units": len(taken), "origin_units_sampled": len(size_of),
                         "origin_bytes": used, "origin_bytes_bound": ctx.origin_bytes,
                         **({"origin_units_unlisted": unweighed} if unweighed else {})}
-
-
-def _within_the_origin_bound(ctx: Ctx, lines: list) -> tuple[list, dict]:
-    """The sampled records this run will answer for, and what it reads to do so.
-
-    The sampled shards' records are grouped by ORIGIN UNIT — the file of the
-    origin a record's locator points into. The units are ranked by the ONE
-    sampling rule (09 §9.1), under the same seed the shards were drawn with,
-    and taken in that order up to the last one that keeps their sizes within
-    `ctx.origin_bytes`; the first is always taken, whatever its size. EVERY
-    sampled record of a taken unit is compared, byte for byte, as before.
-
-    So the seed still decides everything — a verifier cannot be steered toward
-    files a producer prepared, and anyone can recompute from the attestation
-    which files it read — and what a check costs is bounded by bytes, not by
-    how the collection happens to be sliced against its origin."""
-    if ctx.origin_unit is None or not lines:
-        return lines, {}
-    size_of: dict[str, int | None] = {}
-    unit_of: list[str] = []
-    for _uid, locator, _line in lines:
-        unit, size = ctx.origin_unit(locator)
-        size_of.setdefault(unit, size)
-        unit_of.append(unit)
-    taken: list[str] = []
-    used = 0
-    for unit in cx.sample(ctx.seed, len(size_of), iter(sorted(size_of))):
-        size = size_of[unit] or 0
-        if taken and used + size > ctx.origin_bytes:
-            break
-        taken.append(unit)
-        used += size
-    keep = set(taken)
-    return ([item for item, unit in zip(lines, unit_of) if unit in keep],
-            {"origin_units": len(taken), "origin_units_sampled": len(size_of),
-             "origin_bytes": used, "origin_bytes_bound": ctx.origin_bytes})
 
 
 def check_figures(ctx: Ctx) -> Outcome:
