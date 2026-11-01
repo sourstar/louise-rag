@@ -1807,7 +1807,7 @@ def cmd_share(a) -> int:
     opens a port (07 §7.4), and neither does this one. `--slices` and
     `--kinds` narrow what is served: `share_slices` and `share_kinds` in the
     same file (07 §7.8), comma-separated; `all` lifts a narrowing. A
-    whole-collection member — terms, validation, calibration, seals — is
+    whole-collection member — terms, validation, the slicing map, calibration, seals — is
     always served (app/share/seeder.py `serves`)."""
     import re
     from app.hold import deposit

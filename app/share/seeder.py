@@ -161,7 +161,7 @@ def selection(collection) -> dict[str, Any]:
 
 def serves(collection, member_name: str) -> bool:
     """Whether the narrowing lets this member be served. A whole-collection
-    member — terms, validation, calibration, seals — is always served: it is
+    member — terms, validation, the slicing map, calibration, seals — is always served: it is
     what any fetcher needs before a slice is of use to it."""
     from app.share import holdings
     kind = holdings.kind_of(member_name)
