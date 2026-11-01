@@ -3950,7 +3950,7 @@ def cmd_embedder_cpu_reference(a) -> int:
     texts, one at a time, again in reverse order). Exit 0 when kept, 1 when
     the twin is not reproducible, 2 when it is not a CPU run, 3 when it could
     not be asked."""
-    from app import encoder_use, run_check
+    from app import config, encoder_use, run_check
     from app.hold import collection as col, cpu_reference as cpu_ref, embedder as emb
     from app.hold import fingerprint
     name, codex = col.resolve(a.root, a.collection)
@@ -3983,8 +3983,16 @@ def cmd_embedder_cpu_reference(a) -> int:
                           f"CPU: a CPU reference is made by the CPU twin", file=sys.stderr)
                     return 2
                 texts = emb.gate_texts(codex, role, items)
-                embed = run_check.answers(recipe, query=query, name=name)
-                one = run_check.answers(recipe, how="one", query=query, name=name)
+                # ONE TEXT A REQUEST, each bounded by the space's window: the
+                # collection's `[encoder] batch` is the card's (wikidata's 16
+                # texts of up to 8,191 tokens outlived the card's 300 s on the
+                # CPU, three times, München 2026-11-01), and one text a
+                # request is the CPU's own answer, no batch composition in it
+                cpu = dataclasses.replace(recipe, batch=1)
+                timeout = cpu_ref.request_timeout(recipe.ctx, config.EMBED_CONCURRENCY)
+                embed = run_check.answers(cpu, query=query, name=name, timeout=timeout)
+                one = run_check.answers(cpu, how="one", query=query, name=name,
+                                        timeout=timeout)
                 vectors = embed(texts)
                 sixteen = [texts[i] for i in fingerprint.indices(texts)]
                 first = one(sixteen)
