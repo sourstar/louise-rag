@@ -24,7 +24,8 @@ import numpy as np
 import pyarrow as pa
 
 from . import collections as collections_mod
-from . import config, dispatch, httpc, model_load, vector_parts
+from . import config, httpc, model_load, vector_parts
+from .rage import dispatch
 from . import layers as layers_mod
 from .hold import runs as hold_runs
 from .vega import client as vclient
@@ -317,7 +318,7 @@ def _parsed(response, recipe: "collections_mod.EmbedRecipe", read):
 def _request_vectors(batch: list[Item], timeout: float,
                      recipe: "collections_mod.EmbedRecipe",
                      runs: set | None = None) -> list[list[float]]:
-    # Every request passes its server's gate (app/dispatch.py): at most the
+    # Every request passes its server's gate (app/rage/dispatch.py): at most the
     # server's concurrency at a time, the highest level first. The wait is
     # bounded by this request's own timeout.
     g = dispatch.gate(recipe.url, recipe.concurrency)
@@ -325,7 +326,7 @@ def _request_vectors(batch: list[Item], timeout: float,
     # from the worker, QUERY from a search — whatever this thread works as
     level = dispatch.level_headers()
     # corpus work stands aside on the whole card while a person's query runs
-    # (app/dispatch.py, operator 2026-10-25) — its warm, which may LOAD a
+    # (app/rage/dispatch.py, operator 2026-10-25) — its warm, which may LOAD a
     # model beside the query's, included; the gate checks again at admission
     dispatch.stand_aside(recipe.url, timeout)
     # the model's LOAD is not this request's: warmed first, under its own

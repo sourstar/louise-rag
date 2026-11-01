@@ -499,7 +499,7 @@ LOAD = json.dumps({"Model": "bge-m3.gguf", "ModelFile": "/models/bge-m3.gguf",
 LOAD_RUN = json.dumps(json.loads(LOAD) | {"Options": ["pairs:true", "parallel:1"]})
 
 
-def test_the_options_are_canonical_as_rage_writes_them():
+def test_the_options_are_canonical_as_the_model_pool_wrote_them():
     canon = vw.canon_from_protojson(LOAD)
     assert canon.options == {"Model": "bge-m3.gguf", "ModelFile": "${WEIGHTS}",
                              "ModelPath": "${MODELS}", "ContextSize": 8192,

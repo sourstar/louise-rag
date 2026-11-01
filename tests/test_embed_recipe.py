@@ -103,7 +103,7 @@ def test_a_reranker_without_its_model_key_is_refused_for_that_collection(
     assert why in {r.name: r.reason for r in collections_mod.refusals()}["rr"]
 
 
-def test_the_model_keys_agree_with_a_rage_url_and_load(isolated_config, data_dir, config_dir):
+def test_the_model_keys_agree_with_a_model_pool_url_and_load(isolated_config, data_dir, config_dir):
     codex_collection("upstream", louise_root=data_dir, config_dir=config_dir,
                      toml_extra='[encoder]\nurl = "http://models:1/upstream/medcpt-article"\n'
                                 'query_url = "http://models:1/upstream/medcpt-query"\n'

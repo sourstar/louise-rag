@@ -25,7 +25,7 @@
 # No sshbox, no docker-in-docker: the agents' shell tools are off.
 #
 # The UI: http://192.168.178.10:30050 (3000 inside). Host ports in use on the
-# node when this was chosen: 6881, 30042 (Louise), 30286 (localai), 30437 (RAGE).
+# node when this was chosen: 6881, 30042 (Louise), 30286 (localai), 30437 (the model pool).
 services:
   localagi:
     image: quay.io/mudler/localagi@sha256:<digest>
@@ -38,7 +38,7 @@ services:
     environment:
       LOCALAGI_STATE_DIR: /pool
       LOCALAGI_LLM_API_URL: http://192.168.178.10:30286     # the `localai` app
-      LOCALAGI_MODEL: qwen3.8-2b-q4                          # light; the card is RAGE's
+      LOCALAGI_MODEL: qwen3.8-2b-q4                          # light; the card is the model pool's
       LOCALAGI_LOCALRAG_URL: http://192.168.178.10:30042     # Louise's web: /api/collections/…
       LOCALAGI_LLM_API_KEY: <token>                          # = the deposit token (see above)
       LOCALAGI_TIMEOUT: 5m

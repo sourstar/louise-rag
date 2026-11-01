@@ -35,12 +35,12 @@ from typing import Callable
 
 import httpx
 
-from . import (card_record, catalog, chunking, collections as collections_mod, config, cpu_limit, db, discovery,
-                layers as layers_mod, parallel,
-                dispatch, embeddings, encoder_timeouts, entities, fts, issues as issues_mod, model_load, model_pins,
-                origin_missing,
-                node_state, plugin_io, refs, sched, sizing, slice_scope, spaces, stats)
-from .dispatch import Level
+from . import (catalog, chunking, collections as collections_mod, config, cpu_limit, db,
+               discovery, layers as layers_mod, parallel, embeddings, encoder_timeouts, entities,
+               fts, issues as issues_mod, model_load, model_pins, origin_missing, node_state,
+               plugin_io, refs, sched, sizing, slice_scope, spaces, stats)
+from .rage import card_record, dispatch
+from .rage.dispatch import Level
 from .acquire import engine as acquire_engine
 from .acquire.spec import DiskPreflightError, LicenseAckRequiredError
 from .acquire.specs import ACQUIRE_REGISTRY
@@ -1540,7 +1540,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     group = max(window * 2, config.EMBED_BATCH_DOCS)
     rows = _embed_candidates(con, scope, group, collection)
     # whether this collection has work it could send now (the card
-    # recorder's gaps, app/card_record.py): yes while candidates remain, no
+    # recorder's gaps, app/rage/card_record.py): yes while candidates remain, no
     # once the selection runs dry or the encoder defers
     stats.recorder().set_backlog(collection.name, bool(rows))
     if not rows:
@@ -3803,7 +3803,7 @@ _parse_held = _ParseHeld()
 #: EMBEDDING STOPS WITH THE MODE TOO, at the same unit SIGTERM already has: a
 #: slice (invariant 2; EMBED_SLICE_CHUNKS). Seen live the evening this landed
 #: (2026-09-19): in "download/seeding only" the producers took no new document,
-#: and the two in flight went on — RAGE served 470 embedding requests in the
+#: and the two in flight went on — the model pool served 470 embedding requests in the
 #: next 100 s, and a large book is thousands of chunks (5.3 h for the largest).
 #: "Pause: nothing is running" cannot wait hours. `upsert_book` raises
 #: EmbedInterrupted between slices; what is written stays, the document is
@@ -3975,7 +3975,7 @@ def embed_resource(collection) -> str:
 
 def query_waiting(con) -> bool:
     """Is a person waiting on a model right now (A5)? The node's
-    interactive claim (app/dispatch.py), memoised there. The rollback
+    interactive claim (app/rage/dispatch.py), memoised there. The rollback
     rotation (`_serve_turn`) reads it between documents; the producers do
     not need to, because their requests stand aside at the gate, per
     chunk. `con` is kept for the rollback's call shape."""
@@ -5462,7 +5462,7 @@ def run_forever():
     dispatch.set_default_level(Level.CORPUS)
     threading.Thread(target=_stats_publisher, name="stats-publisher",
                      daemon=True).start()
-    # the card's record, second by second (app/card_record.py): its busy
+    # the card's record, second by second (app/rage/card_record.py): its busy
     # time from the GPU probe, the gates' served time, the gaps. Telemetry
     # on its own thread; nothing to record without a probe
     if config.GPU_PROBE_URL:

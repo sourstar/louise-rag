@@ -21,7 +21,7 @@ What it does:
   failure, by kind;
 - prints p50 / p95 / max per step, and against `--baseline` (an idle run's
   file) the difference per step;
-- with `--card-record` (the worker's per-second record, app/card_record.py),
+- with `--card-record` (the worker's per-second record, app/rage/card_record.py),
   the corpus side over the same window: the card's busy, the seconds a query
   held the claim, and each collection's request-seconds held in query seconds
   against the others — the corpus throughput a query costs.
@@ -204,7 +204,7 @@ def corpus_side(card_dir: Path, since: float, until: float) -> dict[str, Any]:
     """The worker's record over the window: the card's busy, query seconds,
     and each collection's request-seconds held a second with a query and
     without one (what a query costs the corpus)."""
-    from app import card_record
+    from app.rage import card_record
     rows = list(card_record.read(since, until, card_dir))
     with_q = [r for r in rows if r.get("q")]
     without = [r for r in rows if not r.get("q")]

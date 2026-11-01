@@ -1,6 +1,12 @@
-# RAGE — design review before implementation
+# The model pool — design review before implementation
 
-*2026-09-19. A review of [`rage.md`](rage.md) at b0f5dad against 02 §2.4,
+> **Name (2026-11-01).** This note is about **the model pool**, named RAGE from 2026-09-20 until
+> it became VeGa and retired on 2026-10-18. RAGE now names only the RAG Engine, Louise's own
+> engine ([rage.md](rage.md)). Paths here — `app/rage/`, `tests/rage/`, `deploy/rage/`,
+> `rage.toml`, `rage.d/`, the image `ghcr.io/sourstar/rage` — are the model pool's, deleted
+> with it (read them with `git show <commit>:<path>`); none of them is the RAG Engine's.
+
+*2026-09-19. A review of [`model-pool.md`](model-pool.md) at b0f5dad against 02 §2.4,
 03 §3.3, 07 §7.8 and 09 §9.3/§9.12 on `main` (27a1332), the code on
 `louise`, and llama-swap's current documentation (README and
 `docs/config.example.yaml`, read the same day). Nothing here is built.
@@ -8,8 +14,8 @@
 §4 are corrections to its text. Part II proposes a solution for each.*
 
 *Outcome, the same day: the operator accepted every recommendation.
-[`rage.md`](rage.md) was rewritten to the accepted design and wins where
-the two differ; the amendments are on `main` (8bbc66a for RAGE, 98ee4dc
+[`model-pool.md`](model-pool.md) was rewritten to the accepted design and wins where
+the two differ; the amendments are on `main` (8bbc66a for the model pool, 98ee4dc
 for quarantine); the work is `migration-plan.md` (deleted 2026-10-08)
 steps 13 and 14. This note stays as the record of why. Two things in it
 were wrong when first written and are corrected in place, marked: the
@@ -46,16 +52,16 @@ Wrong or missing in the note:
 
 ## 2. Blocking before any code
 
-**B1. The RAGE image must be obtainable, or every Codex created under it
+**B1. The model pool image must be obtainable, or every Codex created under it
 is unverifiable by construction.** 02 §2.4: "an engine whose image is
 named by digest and obtainable the same way"; engine images get a DHT
 key like weights (0d85f7f). Today the frozen engine is
-`ghcr.io/ggml-org/llama.cpp:server-intel-b10630`, public. Under RAGE
-the reference vectors of every new collection come from RAGE, so
-`space.encoder.engine.image` becomes RAGE's image — a locally built,
+`ghcr.io/ggml-org/llama.cpp:server-intel-b10630`, public. Under the model pool
+the reference vectors of every new collection come from the model pool, so
+`space.encoder.engine.image` becomes the model pool's image — a locally built,
 `pull_policy: never`, multi-gigabyte image nobody else can pull. That
 is the artefact CLAUDE.md warns of: internally consistent, honestly
-computed, permanently unreproducible. The note must fix where RAGE
+computed, permanently unreproducible. The note must fix where the model pool
 images are published (a public registry by digest at every build, or an
 OCI tarball shared over 04 §4.3's path) and its size budget, before a
 single Codex is written against it.
@@ -64,7 +70,7 @@ single Codex is written against it.
 - *`image`.* A process cannot observe its own image digest; only the
   container runtime knows it. The honest rule: the deploy pins
   `image: rage@sha256:…` and passes the same digest in an env variable;
-  RAGE refuses to start when it is absent or a tag. A digest-pinned
+  the model pool refuses to start when it is absent or a tag. A digest-pinned
   compose reference IS the observation — the runtime runs nothing else.
   As observed evidence beside it, record the digest of each child's
   `/proc/<pid>/exe`.
@@ -74,7 +80,7 @@ single Codex is written against it.
   container id, new on every restart. Hashed raw, every restart is a new
   run and re-gates every space. 09 §9.3 already fixes the shape: hash
   `args` with `${WEIGHTS}` and `${PORT}` as placeholders and `env` as the
-  entry's declared variables only. RAGE reads `/proc/<pid>/cmdline` to
+  entry's declared variables only. The model pool reads `/proc/<pid>/cmdline` to
   check the child matches its template, and hashes the template.
 - *`weights` of a directory model.* 09 §9.3 says "the digest of the
   weights file", singular. DNABERT-2 is an HF revision with remote code,
@@ -91,7 +97,7 @@ single Codex is written against it.
 **B3. Who admits a load.** With `/upstream/<id>` loading on first use, a
 query for a dormant collection loads an 8 GB model with no admission
 check, and a `swap: true` group evicts its sibling to do it. Either
-RAGE's front admits (it can read the `xe` device query and its own
+the model pool's front admits (it can read the `xe` device query and its own
 children's DRM fdinfo — they are its children, no host PID namespace
 needed), or a request for an unloaded model gets 503 until an explicit
 load. Recommendation: the front owns admission and a load API of its
@@ -101,12 +107,12 @@ also where `gpu_probe`'s memory figures stop being Louise's problem.
 **B4. The order of work, and a step in the migration plan.** Codex v3 is
 not on `louise`: `app/hold/codex.py` still reads `space.encoder` as
 `{image, weights, label}`, and `hold/embedder.py` writes a version-1
-statement with no run. RAGE's run identity embeds 09 §9.3's engine
+statement with no run. The model pool's run identity embeds 09 §9.3's engine
 object; `embedder check` must accept `Louise-Run`; `vectors build` must
 check it per answer before the write. `migration-plan.md` names no step
 for any of this, and on `louise` the plan is binding. Proposed order:
 (1) Codex v3 — engine object, `engine_id`, `space_id` without the image,
-version bumps; (2) the RAGE front with the run identity, proved by §7;
+version bumps; (2) the model pool front with the run identity, proved by §7;
 (3) the client — read the header, check it before every write, run the
 gate automatically on an unknown run, statement version 2; (4) retire
 `app/verify/backend_gate.py`. Each with its tests.
@@ -118,14 +124,14 @@ gate automatically on an unknown run, statement version 2; (4) retire
 the device is chosen at load. Load `@cpu` by hand and the next embedding
 request to `…@xpu` reloads it and evicts `@cpu`: a flip-flop, each flip a
 launch (MADLAD's is 300 s). Recommendation: the URL names the model
-(`/upstream/bge-m3`), the device is RAGE's placement — desired state in
-RAGE's config, a runtime override through the load API — and the front
+(`/upstream/bge-m3`), the device is the model pool's placement — desired state in
+the model pool's config, a runtime override through the load API — and the front
 routes to whichever variant is up. The run identity carries the device,
 so a device change is a new run and the gate re-validates it by itself:
 that is exactly what dd9bef4 designed. Also check with the probe that a
 `-ngl 0` SYCL build holds no DRM fd; if it does, "cpu" is not cpu.
 
-**D2. RAGE's own config, generating llama-swap's.** A `rage.toml` per
+**D2. The model pool's own config, generating llama-swap's.** A `rage.toml` per
 model — weights path, engine `{name, build, variant}`, the cmd template
 with `${WEIGHTS}` and `${PORT}`, declared env, device, group, memory
 need — from which the llama-swap yaml is written, solves B2's
@@ -161,20 +167,20 @@ satisfies llama.cpp b10630, torch 2.13+xpu and OpenVINO 2026.3.1 at
 once", and it should include the MedCPT cross-encoder and MADLAD, not
 only bge-m3 and DNABERT-2.
 
-**D5. RAGE fetches nothing (invariant 5).** LocalAI's gallery is listed
+**D5. The model pool fetches nothing (invariant 5).** LocalAI's gallery is listed
 as an attraction, and two of today's servers download into `HF_HOME` on
-first start. Under RAGE no child may move a byte: weights are placed by
-Louise's transfer manager or by hand, RAGE launches offline and refuses a
+first start. Under the model pool no child may move a byte: weights are placed by
+Louise's transfer manager or by hand, the model pool launches offline and refuses a
 model whose weights are absent. This also makes B2's weights digest
 well-defined at launch.
 
-**D6. What RAGE inherits, unmentioned.** The GPU governor moves into
-RAGE (`deploy/truenas-gpu-governor.yaml`, scheduling.md §12): RAGE sees
+**D6. What the model pool inherits, unmentioned.** The GPU governor moves into
+the model pool (`deploy/truenas-gpu-governor.yaml`, scheduling.md §12): the model pool sees
 every interactive request itself, so the claim can be local to it; the
 sysfs frequency bind and `gpu_samples` follow. The fan workaround —
-restarting an engine — was assigned to RAGE and to RAGE only (operator,
+restarting an engine — was assigned to the model pool and to the model pool only (operator,
 2026-09-20). `gpu_probe` attributes memory per container by cgroup;
-under RAGE every model falls in one container, so the panel's per-app
+under the model pool every model falls in one container, so the panel's per-app
 rows need the probe to label by model (it already reads `-m` and the
 server directory from cmdlines, so per-process rows survive). One
 section in the note, before the panel silently loses its rows.
@@ -255,7 +261,7 @@ the container; nothing reaches it but the front. So it never loads,
 evicts or swaps anything by itself; the front is the only scheduler.
 
 The **front** (`app/rage/`, FastAPI + httpx, both already dependencies;
-run as `python -m app.rage` from the RAGE image) owns:
+run as `python -m app.rage` from the model pool image) owns:
 - the published port, and `/upstream/<id>/…` proxied to llama-swap's
   `/upstream/<id>@<device>/…` with `Louise-Run` added, streamed answers
   included;
@@ -322,7 +328,7 @@ measurement is visible on the System page.
 
 **Fits** = declared needs of the models loaded on that device, plus this
 one, plus the configured reserve, ≤ the device's capacity. Capacity of
-the card from the `xe` device query (the probe's ioctl, reused; RAGE has
+the card from the `xe` device query (the probe's ioctl, reused; the model pool has
 `/dev/dri`); of the CPU from the container's `memory.max` and
 `memory.current` in `/sys/fs/cgroup`. **Does not fit** → `503` with
 `Retry-After` and a JSON body naming what is loaded; never an eviction.
@@ -400,7 +406,7 @@ cmd.cpu = ["/opt/venv-dnabert2/bin/python", "-m", "servers.dnabert2", "--weights
   API, and the gate re-validates a device change on its own (dd9bef4).
 - The three Python servers gain `--weights`, `--device`, `--host`,
   `--port` argv and a `build` string, and bind `127.0.0.1`. Small
-  changes, and what 09 §9.3's `args` needs regardless of RAGE.
+  changes, and what 09 §9.3's `args` needs regardless of the model pool.
 - `name`, `build`, `variant` are readable and declared, as the spec
   says; `image`, `args`, `env` and `weights` are what binds.
 - The System page's form calls `PUT /louise/models/<id>`; the front
@@ -408,9 +414,9 @@ cmd.cpu = ["/opt/venv-dnabert2/bin/python", "-m", "servers.dnabert2", "--weights
 
 ## 10. One domain, bounded (D3, D4)
 
-- **Container limit.** `mem_limit` on the RAGE app, so an out-of-memory
+- **Container limit.** `mem_limit` on the model pool app, so an out-of-memory
   is the container's cgroup and never the host's: the kill stays inside
-  RAGE.
+  the model pool.
 - **Who dies.** Docker's default capabilities exclude
   `CAP_SYS_RESOURCE`, so nothing can go below 0 in `oom_score_adj`;
   raising is free. After finding a child's pid (§7) the front writes
@@ -438,7 +444,7 @@ path in the reason. Placing a file is Louise's transfer manager's job or
 the operator's, as today — a `louise model fetch` that draws from the
 token bucket is a later step and not this one.
 
-## 12. What RAGE inherits (D6)
+## 12. What the model pool inherits (D6)
 
 - **The clock.** Every Louise model request carries a `Louise-Level`
   request header — `dispatch` already knows the level of every call
@@ -447,13 +453,13 @@ token bucket is a later step and not this one.
   `rp0_freq` while any request at `translate` or above is in flight, and
   releases it when the last one ends: the claim in `state/node.sqlite`
   and the separate governor app retire together. The frequency bind and
-  the sampler (`gpu_samples`, a week at 10 s) move into RAGE's own state
+  the sampler (`gpu_samples`, a week at 10 s) move into the model pool's own state
   directory; the System tab reads `GET /louise/gpu`.
 - **The fan.** `POST /louise/models/<id>/restart`, by the operator from
   the System page, restarts one child and nothing else. Never automatic.
 - **The panel.** `gpu_probe` keeps its per-process rows (it already
   reads `-m` and the server directory from cmdlines). To label them by
-  model, the web joins the probe's host pids with RAGE's container pids
+  model, the web joins the probe's host pids with the model pool's container pids
   through `NSpid` in `/proc/<pid>/status`, which the probe can read from
   the host namespace. One field added to the probe's snapshot.
 
@@ -461,19 +467,19 @@ token bucket is a later step and not this one.
 
 Load, unload, restart, `PUT` and `DELETE` require
 `Authorization: Bearer` with the token read from `ADMIN_TOKEN_FILE`,
-mounted into RAGE by path (invariant 8); `/upstream/…`, `/louise/models`
+mounted into the model pool by path (invariant 8); `/upstream/…`, `/louise/models`
 (read) and `/louise/runs/…` are open on the LAN as the model ports are
 today. One published port.
 
 ## 14. Decided by the operator (2026-09-19: "I accept your suggestions")
 
-1. **RAGE images are published to a public registry by digest at every
+1. **The model pool images are published to a public registry by digest at every
    build** (B1). Size to expect: llama.cpp's SYCL layers plus one torch
    XPU plus OpenVINO, roughly 5–6 GB compressed. An OCI tarball over
    04 §4.3 is the fallback when a registry forgets. The registry and
    image name are still to be given (§17).
 2. **The `Louise-Level` request header** (§12) is accepted: the governor
-   moves into RAGE and its app retires.
+   moves into the model pool and its app retires.
 3. **Chat's context size is fixed at launch**, `-c 16384` for the chat
    entry, in place of Ollama's per-request `num_ctx`.
 
@@ -486,7 +492,7 @@ Everything else in Part II is accepted as recommended.
    of the canonical JSON object mapping each regular file's path
    relative to the directory to its `sha256:…` digest, paths sorted,
    symlinks refused". Needed at once for the run identity of MADLAD and
-   the MedCPT IR, which RAGE states like every engine; needed in a Codex
+   the MedCPT IR, which the model pool states like every engine; needed in a Codex
    only when a DNA collection becomes binding (§17.1).
 2. **09 §9.12, the run identity**, one sentence: "The platform learns
    its `image` from a deployment pinned by digest and refuses to start
@@ -511,7 +517,7 @@ Everything else in Part II is accepted as recommended.
 
 ## 17. Still open after acceptance (2026-09-19)
 
-Checked and closed the same day: a `503` from RAGE is already a deferral
+Checked and closed the same day: a `503` from the model pool is already a deferral
 in the worker (`_ENDPOINT_BUSY_STATUS` holds 429, 502, 503, 504); and
 the resume hole of `fingerprint-implications.md` §3 closes by
 construction under per-answer checking, since every stored slice came
@@ -523,7 +529,7 @@ Open:
    "DNA collections are a non-binding work in progress").** `calibration/`
    holds `text.jsonl` only, while the Codex admits `modality = "dna"`, so
    no run can be validated for a genome space and no genome root can be
-   created compliant. Nothing about RAGE or v1.0 waits on it. In the first
+   created compliant. Nothing about the model pool or v1.0 waits on it. In the first
    proof DNABERT-2 stays as a runtime check only — torch on the Arc and
    the CPU from the same image, vectors matched against today's endpoint
    — and is not gated. The set itself (512 sequences up to the largest
@@ -534,7 +540,7 @@ Open:
    by §18: under quarantine the web never handles a pending run, the
    worker discovers runs by itself, and no table is needed.
 3. **Concrete values** before `rage.toml` is real: the registry and image
-   name; RAGE's published port (30450 in the examples is a placeholder;
+   name; the model pool's published port (30450 in the examples is a placeholder;
    30437–30448 are taken); its state directory; each model's `memory`
    figures, measured, not guessed; the chat model's GGUF (which qwen3,
    and its path in Ollama's blob store).
@@ -545,13 +551,13 @@ Open:
 5. **DONE 2026-09-19 (8bbc66a, 98ee4dc; plan steps 13 and 14).** The amendments of §15 land on `main` before step a, and the
    migration-plan step is written before the code. Specs on `main`, code
    on `louise`: nothing is staged with `git add -A`.
-6. **The front persists its run table** in RAGE's own sqlite, so
+6. **The front persists its run table** in the model pool's own sqlite, so
    `GET /louise/runs/<id>` survives a front restart. Decided here: it is
    cheap and nothing argues against it.
-7. **Stop semantics.** SIGTERM to RAGE forwards to every child; answers
+7. **Stop semantics.** SIGTERM to the model pool forwards to every child; answers
    in flight finish within `stop_grace_period` (60 s proposed). A request
    cut short is a deferral for Louise; the unit of work is Louise's,
-   never RAGE's (07 §7.7).
+   never the model pool's (07 §7.7).
 
 ## 18. Quarantine: a collection is not used until it is tested (operator, 2026-09-19)
 
@@ -614,7 +620,7 @@ beside the state, never a condition of leaving quarantine — that would
 make an offline node's every download unusable.
 
 A collection RE-ENTERS quarantine when the run its encoder states is
-not the validated one: RAGE relaunched a model with another flag, a new
+not the validated one: the model pool relaunched a model with another flag, a new
 image, a new driver. Every collection of that space on this node goes
 with it, and the worker runs the gate at once (dd9bef4: automatic, no
 `--accept`). A `roots` or `chunks` failure on one shard stays per shard,
@@ -632,8 +638,8 @@ does for it. `hold collection show` prints the state, every reason, and
 the command or check that clears each; `node show` lists quarantined
 collections.
 
-**What it changes for RAGE.** The open question of §17.2 disappears.
-The worker, each round, asks RAGE `GET /louise/models` once — one call
+**What it changes for the model pool.** The open question of §17.2 disappears.
+The worker, each round, asks the model pool `GET /louise/models` once — one call
 per round, a dictionary lookup per collection, no walk — and for every
 (space, run) pair without a statement runs the gate, bounded and
 deferrable, at CORPUS level. The web never meets a pending run: a

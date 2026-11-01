@@ -1,4 +1,4 @@
-"""Recommended engine settings, the signed file (app/hold/engine_settings.py,
+"""Recommended RAGE settings, the signed file (app/hold/rage_settings.py,
 09 §9.19; operator 2026-11-01: "A recommended, non binding, setting shall be
 part of a collection", choice B)."""
 from __future__ import annotations
@@ -8,7 +8,7 @@ import json
 import pytest
 from nacl import signing
 
-from app.hold import engine_settings as es, envelope as env
+from app.hold import rage_settings as es, envelope as env
 from app.hold.codex import CodexError
 
 CID = "sha256:" + "c" * 64
@@ -32,7 +32,7 @@ def _record(shard, key=ME, entry=None, *, cid=CID, sid=SID, time="2026-11-01T20:
 
 def test_a_signers_file_is_named_for_its_key_and_reads_back_verified(tmp_path):
     p = _record(tmp_path)
-    assert p == tmp_path / "engine-settings" / (bytes(ME.verify_key).hex() + ".json")
+    assert p == tmp_path / "rage-settings" / (bytes(ME.verify_key).hex() + ".json")
     body = es.read(p)
     assert body["key"] == env.key_text(ME.verify_key)
     assert body["entries"] == [_entry()]

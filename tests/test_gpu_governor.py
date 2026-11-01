@@ -10,7 +10,8 @@ import time
 
 import pytest
 
-from app import config, dispatch, gpu, gpu_clock, gpu_governor, node_state
+from app import config, gpu, gpu_clock, gpu_governor, node_state
+from app.rage import dispatch
 
 
 def _card(tmp_path, *, min_mhz=400, max_mhz=2800, floor=400):
@@ -137,7 +138,7 @@ def test_the_system_tab_says_when_the_governor_is_absent(tmp_path, isolated_conf
 
 
 def test_the_hold_is_a_fraction_of_the_card_not_a_frequency(tmp_path, store):
-    """VENDOR INDEPENDENCE (memory: rage-vendor-independent). The hold is
+    """VENDOR INDEPENDENCE (operator, 2026-09-20). The hold is
     computed from what the card itself reports, so the same rule carries to
     any GPU and no vendor's clock range is written down anywhere."""
     for top, floor in ((2800, 400), (1550, 200), (900, 300)):

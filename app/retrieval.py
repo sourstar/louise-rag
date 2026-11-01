@@ -35,8 +35,8 @@ from typing import Any
 
 import httpx
 from . import (cancel, catalog, collections as collections_mod, config, copy_state, db,
-               dispatch, embeddings, model_load,
-               fts, httpc, language_plan, refs, work_dedup)
+               embeddings, model_load, fts, httpc, language_plan, refs, work_dedup)
+from .rage import dispatch
 from .language_plan import LanguagePlan
 from .refs.resolver import row_of
 from .bundles import verify_on_use

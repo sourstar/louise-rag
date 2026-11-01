@@ -21,7 +21,8 @@ import sys
 import time
 from pathlib import Path
 
-from app import card_record, collections as c_mod, config, db, parallel, worker
+from app import collections as c_mod, config, db, parallel, worker
+from app.rage import card_record
 from app.bundles import genesis
 
 BAD_PLAN = ("SCAN documents", "TEMP B-TREE", "LIST SUBQUERY", "CORRELATED")
@@ -252,7 +253,7 @@ def shares(names, limit: int = 12) -> None:
 
 def gpu(minutes: int, card: str | None = None) -> None:
     """The card, minute by minute, from the worker's record
-    (app/card_record.py): its mean busy, the seconds a query held the claim,
+    (app/rage/card_record.py): its mean busy, the seconds a query held the claim,
     the seconds with work waiting and of those the GAPS (card idle) and the
     LOST card time (Σ 1 − busy), and each collection's request-seconds held
     on the encoder gates. The targets are docs/notes/gpu-saturation-plan.md's:

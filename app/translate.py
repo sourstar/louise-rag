@@ -37,7 +37,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-from . import config, dispatch, model_load
+from . import config, model_load
+from .rage import dispatch
 
 #: one request's bound. Twelve whole entries in one call measured 33.6 s
 #: on the node's GPU (batch 32), a query into 51 languages 1.5 s.

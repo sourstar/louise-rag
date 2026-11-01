@@ -1,6 +1,6 @@
 """tools/endpoint_vectors.py and app/hold/fingerprint.py.
 
-RAGE replaces the per-model apps in one cut-over, and they are shut off
+The model pool replaces the per-model apps in one cut-over, and they are shut off
 BEFORE it loads (operator, 2026-09-19). Its first proof is that its vectors
 match today's endpoints — so today's are recorded first, while they still
 answer, and compared after.
@@ -165,8 +165,8 @@ def test_an_endpoint_that_does_not_answer_is_a_deferral(monkeypatch, isolated_co
 
 def test_compare_can_be_pointed_at_the_new_endpoint_before_the_files_are_switched(
         monkeypatch, isolated_config, tmp_path):
-    """The proof runs with RAGE up and the collection files still naming the
-    old ports: `--url` names the model on RAGE."""
+    """The proof runs with the model pool up and the collection files still naming the
+    old ports: `--url` names the model on the model pool."""
     calls = _fake_encoder(monkeypatch)
     out = tmp_path / "rec"
     tool.main(["record", "--out", str(out), "--texts", "8"])

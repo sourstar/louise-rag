@@ -309,7 +309,7 @@ write a version-2 space.
 
 | route | what runs | measured cost |
 |---|---|---|
-| A. re-embed everything | RAGE MedCPT on the Arc | 38 chunks/s: 40M chunks, **~12 days** |
+| A. re-embed everything | the model pool MedCPT on the Arc | 38 chunks/s: 40M chunks, **~12 days** |
 | A'. archive + re-embed the rest | `hold vectors import --archive medcpt-pubmed` over the **22 shards still on disk** (20.7M documents, re-proved against this node's encoder), then the encoder for the ~19M left | the import is hours; the rest **~6 days** |
 | C. amend the spec | admit a version-2 space's vectors into its version-3 successor once the producing engine passes the new space's gate | TEI's image may still be on the node; NCBI's archive engine cannot be run, so its 14.7M vectors could only enter through the archive route anyway |
 
@@ -392,7 +392,7 @@ itself:
 
 So route A' is route A. The root's ~40M chunks are this node's encoder's
 work: **~12 days at the 38 chunks/s measured**, which was measured under
-three concurrent builds and with RAGE's MedCPT on one slot and 512-token
+three concurrent builds and with the model pool's MedCPT on one slot and 512-token
 batches. Proposed to the operator:
 - measure a tuned run (more slots, bigger batches). It is another engine
   run for the same space and joins it by passing the gate (02 §2.4);

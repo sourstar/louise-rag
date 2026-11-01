@@ -1,8 +1,8 @@
-"""`hold engine-settings show|record` (07 §7.3, 09 §9.19)."""
+"""`hold rage-settings show|record` (07 §7.3, 09 §9.19)."""
 from __future__ import annotations
 
 from app import louise, run_check
-from app.hold import collection as col, engine_settings as es, envelope as env
+from app.hold import collection as col, rage_settings as es, envelope as env
 from tests.hold.conftest import KEY
 from tests.hold.test_embedder_cli import _collection
 
@@ -11,9 +11,9 @@ ENGINE = "sha256:" + "e" * 64
 
 def test_the_verbs_are_in_the_tree():
     p = louise.build_parser()
-    for argv in (["hold", "engine-settings", "show", "g"],
-                 ["hold", "engine-settings", "show", "g", "--card", "xe:8086:e223"],
-                 ["hold", "engine-settings", "record", "g", "--batch", "16",
+    for argv in (["hold", "rage-settings", "show", "g"],
+                 ["hold", "rage-settings", "show", "g", "--card", "xe:8086:e223"],
+                 ["hold", "rage-settings", "record", "g", "--batch", "16",
                   "--concurrency", "4", "--busy", "0.82", "--chunks-per-s", "42.0",
                   "--window-s", "600"]):
         assert p.parse_args(argv).fn is not None
@@ -28,7 +28,7 @@ def test_show_lists_every_signer_and_what_this_card_takes(tmp_path, monkeypatch,
               space_id=codex.space_id, time="2026-11-01T20:00:00Z",
               new=es.entry(es.Card("xe", "8086", "e223"), engine_id=ENGINE, batch=16,
                            concurrency=4, busy="0.82", time="2026-11-01T20:00:00Z"))
-    assert louise.main(["hold", "engine-settings", "show", "gutenberg", "--root", str(root),
+    assert louise.main(["hold", "rage-settings", "show", "gutenberg", "--root", str(root),
                         "--card", "xe:0x8086:E223"]) == 0
     out = capsys.readouterr().out
     assert env.key_text(KEY.verify_key) in out
@@ -42,7 +42,7 @@ def test_show_says_so_when_a_file_is_set_aside(tmp_path, monkeypatch, capsys):
     d = col.shard_dir_of(root, "gutenberg") / es.DIR
     d.mkdir()
     (d / ("0" * 64 + ".json")).write_text("{}")
-    assert louise.main(["hold", "engine-settings", "show", "gutenberg", "--root", str(root),
+    assert louise.main(["hold", "rage-settings", "show", "gutenberg", "--root", str(root),
                         "--card", "xe:8086:e223"]) == 1
     assert "set aside" in capsys.readouterr().out
 
@@ -50,18 +50,19 @@ def test_show_says_so_when_a_file_is_set_aside(tmp_path, monkeypatch, capsys):
 def test_record_names_what_it_recommends(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "no-config-here"))
     root = _collection(tmp_path)
-    assert louise.main(["hold", "engine-settings", "record", "gutenberg", "--root", str(root),
+    assert louise.main(["hold", "rage-settings", "record", "gutenberg", "--root", str(root),
                         "--card", "xe:8086:e223"]) == 2
     assert "--batch, --concurrency" in capsys.readouterr().err
 
 
 def test_record_needs_a_card_type(tmp_path, monkeypatch, capsys):
-    from app import config, recommended_settings as rs
+    from app import config
+    from app.rage import settings as rs
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "no-config-here"))
     monkeypatch.setattr(config, "GPU_PROBE_URL", "")
     rs.reset()
     root = _collection(tmp_path)
-    assert louise.main(["hold", "engine-settings", "record", "gutenberg", "--root", str(root),
+    assert louise.main(["hold", "rage-settings", "record", "gutenberg", "--root", str(root),
                         "--batch", "16"]) == 3
     assert "card type is not known" in capsys.readouterr().err
 
@@ -76,7 +77,7 @@ def test_record_refuses_a_run_this_node_has_not_validated(tmp_path, monkeypatch,
         driver="xe"))
     monkeypatch.setattr(run_check, "probe_for", lambda codex, role="document": "probe")
     monkeypatch.setattr(run_check, "signer", lambda key=None: env.key_text(KEY.verify_key))
-    assert louise.main(["hold", "engine-settings", "record", "gutenberg", "--root", str(root),
+    assert louise.main(["hold", "rage-settings", "record", "gutenberg", "--root", str(root),
                         "--batch", "16", "--card", "xe:8086:e223"]) == 2
     assert "not validated on this node" in capsys.readouterr().err
     assert not (col.shard_dir_of(root, "gutenberg") / es.DIR).exists()
@@ -95,7 +96,7 @@ def test_record_signs_under_a_validated_run(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(run_check, "signer", lambda key=None: env.key_text(KEY.verify_key))
     monkeypatch.setattr(runs_mod, "statements", lambda *a, **k: {run: {}})
     monkeypatch.setattr(node_keys, "load_signing_key", lambda path=None: KEY)
-    assert louise.main(["hold", "engine-settings", "record", "gutenberg", "--root", str(root),
+    assert louise.main(["hold", "rage-settings", "record", "gutenberg", "--root", str(root),
                         "--batch", "16", "--concurrency", "4", "--busy", "0.82",
                         "--card", "xe:8086:e223"]) == 0
     name, codex = col.resolve(root, "gutenberg")

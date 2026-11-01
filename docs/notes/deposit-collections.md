@@ -168,7 +168,7 @@ present as usual. What differs:
 - **`space`** — the default encoder is **LocalAGI's own default,
   `granite-embedding-107m-multilingual`** (D6): IBM, 107M parameters,
   384 dimensions, 512-token context, Apache-2.0, Italian among its
-  languages; RAGE serves it through llama.cpp from a GGUF build
+  languages; the model pool serves it through llama.cpp from a GGUF build
   (`bartowski/granite-embedding-107m-multilingual-GGUF`) — or, as
   LocalAGI itself gets it, from LocalAI's model gallery at creation
   ([`weights-fetch.md`](weights-fetch.md) §3), the gallery's `sha256`
@@ -376,12 +376,12 @@ LocalAGI stores a memory and may search for it on the next turn. The
 upload request therefore does, in one `BEGIN IMMEDIATE` transaction
 after the bytes are fsynced: record, chunks, FTS postings, done-mark —
 all cheap, all local. **Vectors are the worker's**, in its next round,
-through the ordinary vectors stage and RAGE. Until then the deposit is
+through the ordinary vectors stage and the model pool. Until then the deposit is
 found by the FTS leg and not by the vector leg; the answer says nothing
 false, only less.
 
 The encoder call stays out of the request: an HTTP handler that waits
-on RAGE without a bound is the hang of amendment 51, and one with a
+on the model pool without a bound is the hang of amendment 51, and one with a
 bound turns an agent's memory write into a timeout whenever the GPU is
 busy. This touches what runs when, so **`scheduling.md` §6's checklist
 applies before it is built**, with `dev schedule-report` numbers: a
@@ -456,8 +456,8 @@ own default encoder, overridable (A3).
   384 dimensions, 512-token context, Apache-2.0, Italian among its
   languages, served by LocalAI. In HTTP mode LocalAGI sends no model —
   the server decides — so Louise's choice is free. Granite costs one new
-  model in RAGE and one calibration, once; it is small enough to stay
-  resident beside the others. `qwen3-embedding-4b`, already in RAGE and
+  model in the model pool and one calibration, once; it is small enough to stay
+  resident beside the others. `qwen3-embedding-4b`, already in the model pool and
   calibrated, remains the obvious override where retrieval quality
   matters more than footprint.
 

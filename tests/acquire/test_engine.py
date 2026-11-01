@@ -191,7 +191,7 @@ def test_https_fetch_sends_descriptive_user_agent(tmp_path, mock_server):
     assert result["fetched"] == 1
     ua = mock_server.last_user_agent["a.txt"]
     assert ua.startswith("louise-rag/")
-    assert "https://github.com/sourstar/louise-rag" in ua
+    assert "https://github.com/sourstar/project-louise" in ua
     assert "httpx/" in ua                 # underlying library, per the policy
 
 

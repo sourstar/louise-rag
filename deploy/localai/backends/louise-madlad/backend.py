@@ -22,8 +22,8 @@ untouched while the model's YAML sets no template and none of `echo`,
 (`core/backend/llm.go`, Finetune); tests/rage/test_localai_deploy.py holds the
 YAML to that.
 
-Parking (rage.md §21) is not here: it was the llama-swap placement's, retired at
-15g with it (LocalAI unloads instead; rage-over-localai §7).
+Parking (model-pool.md §21) is not here: it was the llama-swap placement's, retired at
+15g with it (LocalAI unloads instead; model-pool-over-localai §7).
 
 The load call:
     ModelFile     the snapshot directory

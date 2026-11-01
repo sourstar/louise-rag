@@ -51,7 +51,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
-from . import config, dispatch, gpu, stats
+from .. import config, gpu, stats
+from . import dispatch
 
 TICK_S = 1.0
 #: how often the probe is asked for its samples, and the file appended

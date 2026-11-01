@@ -629,7 +629,7 @@ retrieval, that is a finding, and a cheap collection.
 
 `tools/encoder_bakeoff.py`, JuriFindIT `validation` (179 expert questions,
 803 relevant ids) over the 23,617-node corpus, truncated at 20,000 chars,
-`EMBED_BATCH=1`, `EMBED_CONCURRENCY=2`, through RAGE on the B70.
+`EMBED_BATCH=1`, `EMBED_CONCURRENCY=2`, through the model pool on the B70.
 
 | model | recall@10 | ndcg@100 | mrr@100 | map@100 |
 |---|---|---|---|---|
@@ -762,23 +762,23 @@ per model on the card.
 **`Qwen3-Embedding-0.6B` could not be measured — and the first account of
 why, written here the same afternoon, was wrong.** It said the two
 `UR_RESULT_ERROR_DEVICE_LOST` failures were "this model on the torch-XPU
-path", that "the card stays up, RAGE is untouched", and read a kernel event
+path", that "the card stays up, RAGE [the model pool] is untouched", and read a kernel event
 at 14:51:44 as an oops and the 15:03:15 engine reset as a hang. An audit
 against the kernel journal (2026-09-20, evening) says otherwise:
 
 | time | journal |
 |---|---|
 | 14:49:51 | the Qwen3-0.6B side-car starts |
-| 14:51:44 | **global OOM** — the kernel kills one of RAGE's python servers, then a `llama-server` |
+| 14:51:44 | **global OOM** — the kernel kills one of the model pool's python servers, then a `llama-server` |
 | 15:03:15 | OOM kills another `llama-server`; `xe … Engine reset` **in the same second** |
 | 15:18:32 | engine reset — the moment the side-car itself was `docker kill`ed |
 
 Process death first and the reset after is, by the postmortem's own rule
 in `llama-intel-arc-b70`, the driver RECLAIMING, not a hang. This is the
-incident `rage.md` §19 records from the other side: a container outside
-RAGE took 21.4 GiB of the card and 22.8 GiB more of GPU buffers in host
+incident `model-pool.md` §19 records from the other side: a container outside
+the model pool took 21.4 GiB of the card and 22.8 GiB more of GPU buffers in host
 RAM, `xe` spilled every resident model to host memory without an error to
-anyone, the host ran out, and three of RAGE's children died. **The side-car
+anyone, the host ran out, and three of the model pool's children died. **The side-car
 was the cause, not a bystander.** The same attention fallback that asked
 for 48 GiB at a fixed batch (§ above) is still quadratic under the budget,
 and with this model's 32k default context, 28 layers and 16 heads it grew
@@ -788,8 +788,8 @@ produced no OOM event, which is why the budget looked safe.
 What follows from the corrected reading: "the torch route is broken for
 Qwen3" is unsupported — nothing here tested the route, only an unbounded
 allocator on a shared card. And a process that reaches the card outside
-RAGE is now something RAGE sees and defends against (§19), but the rule
-for this bake-off tooling is simpler: **a side-car runs only when RAGE's
+the model pool is now something the model pool sees and defends against (§19), but the rule
+for this bake-off tooling is simpler: **a side-car runs only when the model pool's
 models are unloaded or the operator has said the card is free**, and the
 DAR-legal-it server's declared memory (below) must be its measured PEAK
 under a corpus-shaped run, not a figure taken after a light check.
@@ -1397,7 +1397,7 @@ unresolved problems, both of which is why §2 puts it second:
    **0.7780**, ndcg@100 0.7459, map@100 0.7015. Note what is circulating
    elsewhere as "77.80 for DAR+GIR" is this plain dense model's own
    mrr@100 — the graph pipeline is not what the released weights are.
-   `tools/encoder_bakeoff.py` runs the §7.2 procedure against RAGE.
+   `tools/encoder_bakeoff.py` runs the §7.2 procedure against the model pool.
    Its metric code reimplements sentence-transformers'
    `InformationRetrievalEvaluator` (invariant 7 keeps torch out of the
    image) and is pinned by hand-computed tests. **Still open:

@@ -8,7 +8,8 @@ partial answer each say which they were."""
 import httpx
 import pytest
 
-from app import collections as collections_mod, dispatch, retrieval
+from app import collections as collections_mod, retrieval
+from app.rage import dispatch
 
 RECIPE = collections_mod.RerankRecipe(url="http://reranker/v1/rerank", api="jina", model="")
 HITS = [{"chunk_id": f"g:{i}:0:1", "book_id": i, "text": f"t{i}"} for i in range(3)]

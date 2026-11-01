@@ -114,7 +114,7 @@ No code change; the measurement the next row is compared against.
 parse work (rdf + fts on its one pipeline thread). gutenberg: embedding
 only, its pipeline thread logging "rdf/fts caught up"; its chunking is
 in-process (`worker._load_chunks`) and never enters the pool. pubmed:
-caught up, idle. RAGE serving bge-m3 and qwen3-embedding-4b; a 7 GiB
+caught up, idle. The model pool serving bge-m3 and qwen3-embedding-4b; a 7 GiB
 stranger had been on the card earlier in the day. `PARSE_PROCESSES=11`.
 
 | metric | value |
@@ -382,7 +382,7 @@ loop, a stage's selection or the pools changes.
 
 **Before (measured on the node the same day, `hold check` by hand inside the
 running worker; node `running`, gutenberg scanning its new snapshot,
-pubmed and wikipedia embed off, RAGE serving).** Per collection, the whole
+pubmed and wikipedia embed off, the model pool serving).** Per collection, the whole
 plan with its origin:
 
 | collection | wall | peak RSS | result |
@@ -1109,7 +1109,7 @@ for the byte check.
 the highest; the subsequent steps of a query in process shall be processed
 first to avoid wasting the effort spent for the previous steps."
 
-**Change (app/dispatch.py, app/embeddings.py):**
+**Change (app/rage/dispatch.py, app/embeddings.py):**
 - The levels are a query's steps in order: CORPUS < TRANSLATE < QUERY
   (embedding) < RERANK < CHAT (the answer). The 2026-09-19 order put query
   embedding on top and chat below the rerank. Where a query's steps meet at

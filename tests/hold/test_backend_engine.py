@@ -60,7 +60,7 @@ PINNED = {
            "sha256:03ae64488c899305491dcc1fe8c9aad369cc79d219829d5ff31a9d5fcc663e0c",
            "sha256:a5070b29cb79b78d7eedc183d5c3d184e5385e8c19cc5b14068ab7ae0fc50e96"),
 }
-#: The digest of the body of a statement of an argv (RAGE) run, as written
+#: The digest of the body of a statement of an argv (the model pool) run, as written
 #: before the amendment, `tokens_per_s` zeroed: it is a timing, measured anew
 #: by every pass, and the only field not a function of the inputs.
 PINNED_STATEMENT = "sha256:31824734ce189f20207adecb2811fb877325932aca72f6ab119e894d2b09352e"

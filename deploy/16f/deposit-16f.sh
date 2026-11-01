@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deposit-16f.sh — deposit collections on the node, step 16f (docs/02 §2.9,
-# 07 §7.4/§7.8): granite-embedding-107m-multilingual on RAGE, the first deposit
+# 07 §7.4/§7.8): granite-embedding-107m-multilingual on the model pool, the first deposit
 # collection, the token for LocalAGI's routes. Operator's decision 2026-10-06.
 #
 # RUN AFTER deploy-cb419e7.sh (Louise at 3edbabb). The node has no internet
@@ -11,20 +11,20 @@
 #        curl -L -o granite-embedding-107m-multilingual-f16.gguf https://huggingface.co/bartowski/granite-embedding-107m-multilingual-GGUF/resolve/main/granite-embedding-107m-multilingual-f16.gguf
 #        certutil -hashfile granite-embedding-107m-multilingual-f16.gguf SHA256
 #      Expected: 220,974,080 bytes, sha256 3fc99928632fcecad589c401ec33bbba86b51c457e9813e3a1cb801ff4106e21
-#      (phase 1 checks both; phase 3 checks that RAGE hashed exactly this file).
+#      (phase 1 checks both; phase 3 checks that the model pool hashed exactly this file).
 #   2. scp -i C:\Users\alana\.ssh\truenas_root granite-embedding-107m-multilingual-f16.gguf root@192.168.178.10:/tmp/
 #   3. ssh -i C:\Users\alana\.ssh\truenas_root root@192.168.178.10 bash -s < deploy\16f\deposit-16f.sh
 #
-# Phases 1–2 touch RAGE (one app.update: a new read-only volume, LocalAI
+# Phases 1–2 touch the model pool (one app.update: a new read-only volume, LocalAI
 # restarts and loads every model again — the running collections pause for
-# the restart, as at any RAGE update). Phases 3–5 touch Louise (platform.toml,
+# the restart, as at any the model pool update). Phases 3–5 touch Louise (platform.toml,
 # a token file, one app.update for the env, one new collection). It stops at
 # the first failure; every phase is safe to run again.
 set -euo pipefail
 
 LOUISE=/mnt/ssd4/apps/louise-rag
-RAGE=/mnt/ssd5/apps/louise-rage
-RAGE_URL=http://127.0.0.1:30437
+POOL=/mnt/ssd5/apps/louise-rage
+POOL_URL=http://127.0.0.1:30437
 MODEL=granite-embedding-107m-multilingual
 GGUF=granite-embedding-107m-multilingual-f16.gguf
 WEIGHTS_DIR=/mnt/ssd5/apps/granite-models
@@ -34,7 +34,7 @@ FIRST=deposit-granite            # the first deposit collection: holds the space
 say() { printf '\n=== %s\n' "$*"; }
 
 # ------------------------------------------------------------ 1. the weights, placed
-say "1. the weights, placed (rage.md §10: never fetched)"
+say "1. the weights, placed (model-pool.md §10: never fetched)"
 mkdir -p "$WEIGHTS_DIR"
 if [ ! -s "$WEIGHTS_DIR/$GGUF" ]; then
   test -s "/tmp/$GGUF" || { echo "no /tmp/$GGUF: scp it first (see the header)"; exit 1; }
@@ -48,27 +48,27 @@ EXPECTED_SHA=3fc99928632fcecad589c401ec33bbba86b51c457e9813e3a1cb801ff4106e21   
 [ "$FILE_SHA" = "$EXPECTED_SHA" ] || { echo "$GGUF: sha256 $FILE_SHA, expected $EXPECTED_SHA"; exit 1; }
 echo "weights: $WEIGHTS_DIR/$GGUF sha256:$FILE_SHA"
 
-# ------------------------------------------------------------ 2. RAGE serves it
-say "2. RAGE: the model YAML, the weights mount, LocalAI reloaded"
-mkdir -p "$RAGE/state/localai-models"
+# ------------------------------------------------------------ 2. The model pool serves it
+say "2. The model pool: the model YAML, the weights mount, LocalAI reloaded"
+mkdir -p "$POOL/state/localai-models"
 # the operator's YAML, byte for byte deploy/rage/localai-models/$MODEL.yaml at 3edbabb
-# (no first-line marker: RAGE's API never rewrites it)
-cat > "$RAGE/state/localai-models/$MODEL.yaml" <<'YAML'
+# (no first-line marker: the model pool's API never rewrites it)
+cat > "$POOL/state/localai-models/$MODEL.yaml" <<'YAML'
 # granite-embedding-107m-multilingual — LocalAI's model YAML, the operator's
 # (migration step 16f; docs/02 §2.9: the encoder every deposit collection is
 # created with unless platform.toml names another — LocalAGI's own default,
 # chosen by the operator on 2026-10-06 over bge-m3 and qwen3-embedding-4b).
 # Copied once into LocalAI's models directory
 # (/mnt/ssd5/apps/louise-rage/state/localai-models/) by the deposit runbook; no
-# first-line marker, so RAGE's API never rewrites it (409): edit it by hand.
+# first-line marker, so the model pool's API never rewrites it (409): edit it by hand.
 # JSON, which is YAML: one parser for LocalAI and for tests/rage/test_localai_deploy.py.
-# EVERY OPTION LocalAI WOULD FILL IN BY ITSELF IS PINNED (rage-over-localai
+# EVERY OPTION LocalAI WOULD FILL IN BY ITSELF IS PINNED (model-pool-over-localai
 # §10): context_size, threads, gpu_layers, parameters.batch and seed, and
 # options parallel — as bge-m3.yaml pins them, which is the same architecture
 # (XLM-RoBERTa, CLS pooling). The model: ibm-granite/granite-embedding-107m-
 # multilingual, Apache-2.0, 384 dimensions, CLS pooling, 512-token window
 # (max_position_embeddings 514), as bartowski's f16 GGUF (220,974,080 bytes).
-# The weights are placed, never fetched (rage.md §10): the operator puts the
+# The weights are placed, never fetched (model-pool.md §10): the operator puts the
 # file at /mnt/ssd5/apps/granite-models/, mounted read-only at weights/granite.
 {
   "name": "granite-embedding-107m-multilingual",
@@ -94,7 +94,7 @@ cat > "$RAGE/state/localai-models/$MODEL.yaml" <<'YAML'
   }
 }
 YAML
-ls -la "$RAGE/state/localai-models/$MODEL.yaml"
+ls -la "$POOL/state/localai-models/$MODEL.yaml"
 
 # the volume, added once (TrueNAS keeps the app definition; env is in it — never printed)
 python3 - "$WEIGHTS_DIR" <<'P'
@@ -116,24 +116,24 @@ for i in $(seq 1 60); do
   [ "$(docker inspect ix-louise-rage-rage-1 --format '{{.State.Health.Status}}' 2>/dev/null)" = healthy ] && break; sleep 5
 done
 docker inspect ix-louise-rage-rage-1 --format '{{.Config.Image}} {{.State.Health.Status}}'
-curl -sf "$RAGE_URL/louise/models" | python3 -c "
+curl -sf "$POOL_URL/louise/models" | python3 -c "
 import sys, json
 rows = json.load(sys.stdin)
 names = [r.get('model') or r.get('id') or r.get('name') for r in rows]
 print('models:', names)
-assert any('$MODEL' in str(r) for r in rows), 'granite is not listed by RAGE'
+assert any('$MODEL' in str(r) for r in rows), 'granite is not listed by the model pool'
 "
 
-# ------------------------------------------------------------ 3. the space file, from the run RAGE states
-say "3. one embedding through RAGE; its run becomes the space file's encoder block"
+# ------------------------------------------------------------ 3. the space file, from the run the model pool states
+say "3. one embedding through the model pool; its run becomes the space file's encoder block"
 HDR=$(mktemp)
-# --compressed: RAGE hands LocalAI's gzip body through (found 2026-10-06)
+# --compressed: the model pool hands LocalAI's gzip body through (found 2026-10-06)
 curl -sS --compressed -D "$HDR" -o /tmp/granite-first.json --max-time 300 \
   -H 'Content-Type: application/json' \
   -d "{\"model\":\"$MODEL\",\"input\":[\"Il deposito è la memoria di un agente.\"]}" \
-  "$RAGE_URL/upstream/$MODEL/v1/embeddings"
+  "$POOL_URL/upstream/$MODEL/v1/embeddings"
 RUN=$(grep -i '^Louise-Run:' "$HDR" | tr -d '\r' | awk '{print $2}')
-[ -n "$RUN" ] || { echo "no Louise-Run header: RAGE stated no run"; cat "$HDR"; head -c 600 /tmp/granite-first.json; exit 1; }
+[ -n "$RUN" ] || { echo "no Louise-Run header: the model pool stated no run"; cat "$HDR"; head -c 600 /tmp/granite-first.json; exit 1; }
 echo "run: $RUN"
 python3 -c "
 import json, gzip
@@ -142,13 +142,13 @@ if raw[:2] == b'\x1f\x8b': raw = gzip.decompress(raw)
 d = json.loads(raw)
 v = d['data'][0]['embedding']; print('vector dim:', len(v)); assert len(v) == 384
 "
-curl -sf --compressed "$RAGE_URL/louise/runs/$RUN" > /tmp/granite-run.json
+curl -sf --compressed "$POOL_URL/louise/runs/$RUN" > /tmp/granite-run.json
 python3 - "$FILE_SHA" "$LOUISE/config/deposit-space.json" <<'P'
 import json, sys
 file_sha, out = sys.argv[1], sys.argv[2]
 run = json.load(open("/tmp/granite-run.json"))
 engine, weights = run["engine"], run["weights"]
-assert weights == "sha256:" + file_sha, f"RAGE hashed {weights}, the file is sha256:{file_sha}"
+assert weights == "sha256:" + file_sha, f"the model pool hashed {weights}, the file is sha256:{file_sha}"
 # the calibration set's id, from the image this node runs (app/hold/calibration.py)
 import subprocess
 set_id = subprocess.check_output(

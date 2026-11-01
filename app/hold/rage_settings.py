@@ -1,18 +1,20 @@
-"""RECOMMENDED ENGINE SETTINGS, part of a collection (operator, 2026-11-01:
+"""RECOMMENDED RAGE SETTINGS, part of a collection (operator, 2026-11-01:
 "A recommended, non binding, setting shall be part of a collection"; choice
 B: a separate signed file in the collection's SHARD, one entry per card type,
 updatable without touching the collection's identity; docs/09-formats.md
-§9.19).
+§9.19). RAGE is the RAG Engine, Louise's own (docs/notes/rage.md); its
+settings are how it drives an encoder, never the encoder's ENGINE (09 §9.3),
+which is the Codex's.
 
 What an entry says: on THIS card type (its driver and PCI vendor:device), for
-this collection's space (the file names it, so the weights are fixed), the
-engine's settings — texts a request (`batch`), requests in flight
+this collection's space (the file names it, so the weights are fixed),
+RAGE's settings — texts a request (`batch`), requests in flight
 (`concurrency`) — what they were measured at (the card's busy share on its
 compute engine, chunks a second, the window) and on which engine (the
 `engine_id` of the validated run that answered, 09 §9.3: what it was
 measured on, for a reader; it selects nothing, since any engine whose run
 passes the gate may contribute). Who measured is who signed: each signer
-keeps ITS entries in its own file, `engine-settings/<key hex>.json` at the
+keeps ITS entries in its own file, `rage-settings/<key hex>.json` at the
 SHARD's root, so two peers never overwrite each other and a re-measurement
 replaces only the signer's own entry for that card type.
 
@@ -24,7 +26,7 @@ NON-BINDING, by construction:
   card type is one of this node's — another card's numbers are not this
   card's;
 - whatever is taken goes through `collections.recipe_for`
-  (app/recommended_settings.py chooses it for this node), so the gate
+  (app/rage/settings.py chooses it for this node), so the gate
   validates it the way this peer contributes (`run_check.contributing`)
   before one vector is written: a setting a node cannot reproduce is never
   used unchecked.
@@ -50,11 +52,11 @@ from typing import Any, Iterable
 from . import envelope as env
 from .codex import CodexError, canonical_json, digest
 
-KIND = "louise-engine-settings"
+KIND = "louise-rage-settings"
 VERSION = 1
-DOMAIN = env.ENGINE_SETTINGS
-#: the member's directory at the SHARD's root (09 §9.16, `engine-settings`)
-DIR = "engine-settings"
+DOMAIN = env.RAGE_SETTINGS
+#: the member's directory at the SHARD's root (09 §9.16, `rage-settings`)
+DIR = "rage-settings"
 _HEX4 = re.compile(r"^[0-9a-f]{4}$")
 _SHA = re.compile(r"^sha256:[0-9a-f]{64}$")
 _DECIMAL = re.compile(r"^(0|[1-9][0-9]*)(\.[0-9]+)?$")

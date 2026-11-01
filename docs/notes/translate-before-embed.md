@@ -17,12 +17,12 @@ written in. A passage costs ~7.6 s of shared GPU time to translate.
   read with `app.plugins.drag.shard_files` and `app.pack.records`, mounted
   read-only. The collection file was mounted read-only as well.
 - **Encoder.** gutenberg's own recipe through `embeddings.embed_chunks`
-  (passages) and `embeddings.embed_query` (queries): qwen3-embedding-4b on RAGE,
+  (passages) and `embeddings.embed_query` (queries): qwen3-embedding-4b on the model pool,
   f16, dim 2560, no query instruction. Every answer named one run,
   `sha256:e31ca925b843…c516b5`.
 - **Translator.** `translate.translate(…, "en")` against Louise's
   `TRANSLATE_URL`, read with the code's own resolution:
-  `…:30437/upstream/madlad`, MADLAD-400 on RAGE. Source language is not given,
+  `…:30437/upstream/madlad`, MADLAD-400 on the model pool. Source language is not given,
   as in Louise.
 - **Container.** A throwaway `xlate-measure` container (`--rm`, `nice -n 10`)
   from `louise-rag:local` (sha256:af87ba0c…). That image was built at 15:16,

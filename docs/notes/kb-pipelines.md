@@ -95,7 +95,7 @@ more pass. On the node, the strict reranker measured 6.6 s for 50
 candidates (München, 2026-10-22). A two-leg pipeline with a final rerank is
 three passes, so depths are per leg and small, and the final rerank is off
 by default. The models a pipeline names are declared, which is exactly what
-the RAGE lookahead needs to load them ahead (rage-prior-art §8).
+the model pool lookahead needs to load them ahead (model-pool-prior-art §8).
 
 **Where a pipeline shows up** (RULE 2: the person picks a name, nothing else):
 
@@ -153,8 +153,8 @@ What we do not ask upstream:
 - LocalRecall hosting pipelines itself: its stores have no spaces, no
   snapshots and no claims, and adding them would be rebuilding Louise
   inside it;
-- the RAGE run identity: that stays the patch already planned
-  (rage-over-localai §4).
+- the model pool run identity: that stays the patch already planned
+  (model-pool-over-localai §4).
 
 ## 4. Order of work
 

@@ -1,7 +1,7 @@
 """Before tools/migrate_model_keys.py, on a node whose collection files
 predate the explicit model keys (operator, 2026-10-08).
 
-Under RAGE the URL picks the model (`…/upstream/<model>`, operator
+Under the model pool the URL picks the model (`…/upstream/<model>`, operator
 2026-10-03); a `model = …` line beside it was a label nothing read — on the
 node 2026-10-09 gutenberg's and wikipedia's reranker said
 `bge-reranker-v2-m3` beside `/upstream/bge-reranker`, pubmed's encoder

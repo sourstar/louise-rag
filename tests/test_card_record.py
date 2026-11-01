@@ -1,5 +1,5 @@
-"""The worker's record of the card (app/card_record.py) and what feeds it:
-the gates' held time (I2, app/dispatch.py), the feeders' backlog (I3,
+"""The worker's record of the card (app/rage/card_record.py) and what feeds it:
+the gates' held time (I2, app/rage/dispatch.py), the feeders' backlog (I3,
 app/stats.py, app/worker.py), the probe's busy samples (I1).
 
 docs/notes/gpu-saturation-plan.md: a second is a GAP when the card was idle
@@ -14,9 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from app import card_record as cr
-from app import dispatch, stats, worker
-from app.dispatch import Level
+from app.rage import card_record as cr
+from app import stats, worker
+from app.rage import dispatch
+from app.rage.dispatch import Level
 
 PDEV = "0000:03:00.0"
 URL = "http://localai:8080"

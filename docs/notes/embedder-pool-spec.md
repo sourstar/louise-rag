@@ -1,6 +1,6 @@
 # Runtime serving: the embedder pool (llama-swap)
 
-> **Superseded** (2026-10-25, handover) by LocalAI with the VeGa wrapper ([vega.md](vega.md), [approved-encoders.md](approved-encoders.md)); llama-swap was replaced by RAGE, then RAGE by LocalAI.
+> **Superseded** (2026-10-25, handover) by LocalAI with the VeGa wrapper ([vega.md](vega.md), [approved-encoders.md](approved-encoders.md)); llama-swap was replaced by the model pool, then the model pool by LocalAI.
 
 
 Status: specification. Scope: the external container that serves embeddings
@@ -8,7 +8,7 @@ to Louise for both query and creation, on one machine. This document fixes
 the design decisions; it is not yet an implementation.
 
 *2026-09-19: the node now runs PyTorch, OpenVINO and Ollama models beside
-llama.cpp. [`rage.md`](rage.md) extends this design to every
+llama.cpp. [`model-pool.md`](model-pool.md) extends this design to every
 runtime and every model kind, in one image.*
 
 ## 1. Purpose
@@ -130,7 +130,7 @@ the Codex. The pool config must enable the deterministic mode in each
   per-model persist for creation, `${PORT}`, ctx sizes, `--embedding`.
 - How Louise maps a collection's encoder hash → a llama-swap model alias.
 - ~~Headroom check that triggers explicit eviction (§3)~~ — **built
-  2026-09-21, in RAGE rather than Louise** (rage.md §7, amended): a load that
+  2026-09-21, in the model pool rather than Louise** (model-pool.md §7, amended): a load that
   does not fit gives up idle models ranked strictly below it, lowest
   `priority` first, and only if that is enough. "Idle" — nothing in flight,
   nothing asked for `idle_s` — stands in for "whose batch is in flight".

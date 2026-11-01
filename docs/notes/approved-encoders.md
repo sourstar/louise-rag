@@ -331,7 +331,7 @@ Sources: [cuBLAS](https://docs.nvidia.com/cuda/cublas/) ·
 ## Known limits of the Arc Pro B70 (2026-10-28)
 
 What the card, its driver (`libze-intel-gpu1 26.05.37020.3` in the LocalAI
-image, 26.18.38308.1 in RAGE's) and our stacks are known NOT to do right:
+image, 26.18.38308.1 in the model pool's) and our stacks are known NOT to do right:
 our own measurements first, then upstream's reports (checked 2026-10-28;
 the curated list is github.com/riceharvest/awesome-b70). Each row: what
 fails, what it touches here, the workaround, where it is recorded.

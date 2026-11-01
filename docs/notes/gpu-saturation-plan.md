@@ -14,25 +14,25 @@ The steps run in the operator's order: precondition, then 1, then 3, then 4. Ste
 > "The model is not going to be changed, it is a matter of understanding what can be optimized in the collections engine. This is a testbench for all the collections and models to come."
 
 What follows from it:
-- **No model or model-server change is a lever.** Where the server is the bound (its per-request cost, its one sequence at a time), that is MEASURED and recorded as that model's ceiling. The engine's job is to reach the ceiling, never to move it.
+- **No model or model-server change is a lever.** Where the server is the bound (its per-request cost, its one sequence at a time), that is MEASURED and recorded as that model's ceiling. RAGE's job is to reach the ceiling, never to move it.
 - **The levers are general.** None is written for wikidata or wikipedia. Requests filled across documents, the number in flight, a request's size, the stream's continuity and the producer's preparation are each one mechanism that every collection and model goes through.
-- **The engine chooses each one by measurement**, among settings the gate has validated, and records what it chose (RULE 2). A collection or model added later is tuned the same way, with nobody editing its file.
+- **RAGE chooses each one by measurement**, among settings the gate has validated, and records what it chose (RULE 2). A collection or model added later is tuned the same way, with nobody editing its file.
 - **The bench is a procedure the node runs for any collection**: its standalone window (the others paused, 15 min, the PMU busy, gaps and lost per minute, chunks/s, the worker's CPU, the model's ceiling), then each lever alone with its AFTER row, then several collections, then queries under load. What München runs by hand tonight becomes one command, so that a new collection or model is measured the same way and its rows compare.
 
 ## The base rule (step 2): where the optimizations live
 
-**Louise's engine** is the model-work layer that every collection uses:
-- the encoder gates and request levels (`app/dispatch.py`: the gates, the levels CORPUS < TRANSLATE < QUERY < RERANK < CHAT, the interactive claim);
+**RAGE, the RAG Engine** ([rage.md](rage.md); operator, 2026-11-01: its name), is the model-work layer that every collection uses:
+- the encoder gates and request levels (`app/rage/dispatch.py`: the gates, the levels CORPUS < TRANSLATE < QUERY < RERANK < CHAT, the interactive claim);
 - the embedding client (`app/embeddings.py`);
 - the worker's feeders (`_embed_producer`, `_embed_parallel`);
 - the query steps (`app/retrieval.py`, `app/llm.py`, `app/translate.py`).
 
 The rule has three parts:
-- **One mechanism for every collection.** No collection gets its own code path. A collection's numbers (batch, requests in flight) are chosen by the engine from measurement (RULE 2), never hand-set per collection as the way to tune.
-- **LocalAI stays a plain model server.** Its backends and model YAMLs are not where tuning happens. A model-server setting changes only when Louise's engine needs a capability it lacks, and then as a run setting that the gate validates (invariant 12).
-- **The VeGa wrapper is ours.** It may publish what the engine needs to see, such as the card's busy time.
+- **One mechanism for every collection.** No collection gets its own code path. A collection's numbers (batch, requests in flight) are chosen by RAGE from measurement (RULE 2), never hand-set per collection as the way to tune.
+- **LocalAI stays a plain model server.** Its backends and model YAMLs are not where tuning happens. A model-server setting changes only when RAGE needs a capability it lacks, and then as a run setting that the gate validates (invariant 12).
+- **The VeGa wrapper is ours.** It may publish what RAGE needs to see, such as the card's busy time.
 
-Today's per-collection `[encoder] batch` and `concurrency` keys become what the engine chose, recorded, rather than what a person typed. Every setting the engine moves to is gated first: a new batching is a new run to the gate, which takes about 8 minutes.
+Today's per-collection `[encoder] batch` and `concurrency` keys become what RAGE chose, recorded, rather than what a person typed. Every setting RAGE moves to is gated first: a new batching is a new run to the gate, which takes about 8 minutes.
 
 ## What exists, and what does not (survey of 2026-11-01)
 
@@ -69,7 +69,7 @@ For each collection with an encoder, all three must hold:
 
 | collection | encoder | known blocker |
 |---|---|---|
-| wikidata, wikipedia | bge-m3 | the CPU twin must run on our engine (patch 0002, token ids); München is on it |
+| wikidata, wikipedia | bge-m3 | the CPU twin must run on our llama.cpp build (patch 0002, token ids); München is on it |
 | gutenberg | qwen3-embedding-4b | **closed (operator, 2026-11-01):** a CPU review line per quantization level, measured. Q4_K_M's, computed from gutenberg's own 0.989292, is 0.983 (near-exact-runs.md §2). The reference is made on our CPU engine, then the gate runs again |
 | pubmed | MedCPT article + query | the CPU twins' 503s; rerun on the #157 image |
 | normattiva | DAR-legal-it | to check |
@@ -87,7 +87,7 @@ München produces the table for every collection on the node, and step 1 starts 
   - **SETTLED (München, 2026-11-01 18:2x): the PMU is the truth; fdinfo's client cycles are HALVED on this card and kernel** (B70, 6.18.52). The test: ccs0 kept full by 4 loops of one ~8 k-token text on bge-m3, everything else paused. perf ccs0 read 91.8 % and 92.1 %, the probe's /busy averaged 90.4 % over 131 samples, and fdinfo (`gpu_busy.py`) read 45 % and 46 %. Idle: 0 on both. So every fdinfo figure on this card is ×2, the afternoon's included: wikidata alone at batch 16 was ~75–90 % busy, not 37–45 %, and both collections together ~50–70 %. Step 1's target (≥ 80 %, operator 2026-11-01) is measured on the PMU, and with chunks/s beside it, because busy that does not raise throughput is not counted.
   - **The card's figure is its busiest COMPUTE engine** (`gpu_busy.COMPUTE_ENGINES`: ccs, rcs, gfx, compute). perf confirmed the copy engine reads as busy as ccs under load: 78.4 against 78.3, 92.7 against 91.9, and 0 at idle (München, 18:29–18:47). The Level Zero runtime keeps a copy context resident while compute runs, and the driver counts it as active.
 - **I2 — who used the card. BUILT.** Each gate's snapshot gives, per collection, its requests running and waiting and the seconds it really held the server (`held_s`, running requests included). The existing `_served` could not serve: it is the fair-share account, raised when a collection joins.
-- **I3 — idle gaps. BUILT.** The embed feeders say whether their collection has work it could send now (`stats.Recorder.set_backlog`): yes while candidates remain, including between two streams at the 120 s boundary; no when the selection runs dry, the encoder defers or the node pauses. The worker's card recorder (`app/card_record.py`) joins I1–I3 one line a second into `<root>/state/card/<date>.jsonl` (3 days kept). A GAP is a second the card was idle (under 5 %) while work waited and no query held the claim; LOST is Σ (1 − busy) over the seconds work waited. `louise dev schedule-report --gpu --minutes 15` prints them per minute with each collection's request-seconds held.
+- **I3 — idle gaps. BUILT.** The embed feeders say whether their collection has work it could send now (`stats.Recorder.set_backlog`): yes while candidates remain, including between two streams at the 120 s boundary; no when the selection runs dry, the encoder defers or the node pauses. The worker's card recorder (`app/rage/card_record.py`) joins I1–I3 one line a second into `<root>/state/card/<date>.jsonl` (3 days kept). A GAP is a second the card was idle (under 5 %) while work waited and no query held the claim; LOST is Σ (1 − busy) over the seconds work waited. `louise dev schedule-report --gpu --minutes 15` prints them per minute with each collection's request-seconds held.
   - The standard not used: Prometheus (a scrape a second, PromQL windows). The node runs none; adopting it is a server and its storage for one instrument. Exposing these figures at `/metrics` would let one scrape them unchanged.
 - **I4 — query timing under load. BUILT (2026-11-01): `tools/measure/query_under_load.py`.** It sends the web's own `POST /api/search` on a fixed beat and in bursts, optionally a streamed answer too. It reads each search's own `timings` (languages, catalog, fts, dense with the query embedding, rerank, total), counts failures by kind, and compares p50/p95 per step with an idle run (`--baseline`). Over the same window it reads the corpus side from the card record: busy, query seconds, and each collection's request-seconds in query seconds against the others. The token comes from a file. The original plan for it: A harness in `tools/measure/`: real web-process queries (embed → search → rerank → answer) against a worker embedding at full rate. It records each step's wait and service time, its errors, and the corpus throughput lost.
 
@@ -95,13 +95,13 @@ München produces the table for every collection on the node, and step 1 starts 
 
 **Target (operator, 2026-11-01: "A GPU at 80+% is acceptable, a GPU at 20% is not"):** sustained card busy ≥ 80 % on the PMU's compute engine (I1), with the collection alone. Throughput must rise with it: busy that does not raise chunks/s is not counted. The work goes first to the collections far below the target. A collection already at ≥ 80 % keeps a lever only when it raises chunks/s.
 
-**The engine's levers, in order of cost** (each measured BEFORE/AFTER, one deploy each):
+**RAGE's levers, in order of cost** (each measured BEFORE/AFTER, one deploy each):
 0. **wikidata's BEFORE row (2026-11-01 18:28–18:43, alone, batch 16 / concurrency 4, the PMU):** ccs 77–84 % a minute (82.1 % over 15 min); **gaps 1 s in 885 s** (0.1 s/min); lost 10.8 s/min; **78.8 chunks/s** (71,316 chunks / 68,322 documents); worker 0.76 cores. Two consequences:
    - **Lever 1 has nothing to take here:** not one idle second, even across the 120 s stream boundaries. It is reverted on main (#169), and it comes back only for a collection whose BEFORE row shows boundary gaps (wikipedia's is next).
    - **The loss is inside the seconds, between requests, and the requests are too small.** wikidata averages 1.04 chunks a document, and a request carries one DOCUMENT's chunks (`embed_chunks` per `upsert_book`). So the gated batch of 16 almost never fills: about 76 requests a second, ~1 text each, each paying the server's whole per-request turnaround. The lever is CROSS-DOCUMENT BATCHING (below, lever 2).
 1. **No drain at stream boundaries.** A feeder hands over to the next stream with its requests still in flight, instead of draining to zero every 120 s. Engine code, no run change.
 2. **Requests filled across documents (dynamic batching).** The texts of many documents in flight join one request of up to the gated `[encoder] batch` texts, with the collection's concurrency of requests in flight. This is the standard of inference servers: Triton's dynamic batcher, TEI's token-budget batching. Each document still writes only when all its chunks are back (invariant 2). A request that fails is sent again per document, so an input's error stays its own document's. It is inert for a batch of 1. It needs no new gate: the gate's "contribute" pass already sends batches of `batch` texts at the collection's concurrency, which is exactly what is validated. **WRITTEN (2026-11-01):** `embeddings.Coalescer` holds the stream's requests: `slots` lanes, each sending what waits, up to `batch` texts, the moment it is free (no linger). The feeder submits up to EMBED_COALESCE_DOCS = 64 documents when `batch` > 1. A request refused for an input is sent again per document. One that fails for the endpoint is every document's deferral, never one request each. A shared TIMEOUT is settled by a one-word probe: if the endpoint answers, each document is asked again alone, so the slow text is blamed alone (encoder_timeouts' rule); if it does not answer, the timeout is everyone's. wikidata's numbers (München): 1.03 chunks a document (p99 2), ~97 tokens a chunk at p50, so ~1.6 k tokens a full request. scheduling.md §12's "a batch is one document's requests" is amended to "one request". Deployed after the operator's Q4 decision closes step 0, and measured against the BEFORE row above. **Then, by tokens rather than texts:** A request carries up to a token budget, filling the encoder's window (bge-m3: ubatch 8192). A request of wikidata's ~120-token chunks then holds ~64 texts, and wikipedia's longer ones fewer. One run setting per budget, gated (the near-exact rule holds batches to the bound).
-3. **Requests in flight chosen by measurement.** AIMD on throughput (the wheel already used for the re-index window): add one while chunks/s rises, back off on a fall or a deferral. It moves only between settings already gated: a ladder such as {2, 4, 6, 8}, each gated once and recorded. Persisted as the engine's last good value, re-confirmed after a restart (invariant 10: runtime, not desired state).
+3. **Requests in flight chosen by measurement.** AIMD on throughput (the wheel already used for the re-index window): add one while chunks/s rises, back off on a fall or a deferral. It moves only between settings already gated: a ladder such as {2, 4, 6, 8}, each gated once and recorded. Persisted as RAGE's last good value, re-confirmed after a restart (invariant 10: runtime, not desired state).
 4. **The producer, where it becomes the bound** (wikipedia's chunk preparation, the write path #162 eased). Prepared batches ahead in the parse pool, and commits per batch.
 
 **Order:** wikidata, wikipedia, gutenberg, pubmed, normattiva, deposit. Each gets its standalone row in scheduling-log.md:
@@ -128,10 +128,10 @@ München produces the table for every collection on the node, and step 1 starts 
 ## Step 4 — queries first, nothing broken in the middle
 
 **The rules to hold:**
-- **A query step waits behind at most the corpus requests already sent.** None is pre-empted (dispatch.py:27). So the engine bounds a corpus request's duration while queries are possible: a token budget whose service time is ≤ ~200 ms, measured. With requests in flight ≤ N, a query step waits at most N × 200 ms.
+- **A query step waits behind at most the corpus requests already sent.** None is pre-empted (dispatch.py:27). So RAGE bounds a corpus request's duration while queries are possible: a token budget whose service time is ≤ ~200 ms, measured. With requests in flight ≤ N, a query step waits at most N × 200 ms.
 
   Steps 1 and 4 pull against each other here: large batches fill the card and lengthen that wait. The token budget and N are chosen together, and recorded with the measurement.
-- **The model server's own queue.** Corpus requests queued at a one-sequence server sit ahead of a query. The engine keeps at most the in-flight depth step 1 needs queued there, never more.
+- **The model server's own queue.** Corpus requests queued at a one-sequence server sit ahead of a query. RAGE keeps at most the in-flight depth step 1 needs queued there, never more.
 - **No embedding broken in the middle.** A stand-aside is a WAIT, bounded and never an error:
   - the document is neither deferred nor errored, and never half-written (invariant 2: marked only after its commit);
   - its batch is finished, not abandoned;

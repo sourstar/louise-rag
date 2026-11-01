@@ -3,14 +3,14 @@
 ONE VERB, ONE READER PER KERNEL DRIVER. Whoever asks names a PCI device and
 gets two numbers or none; which driver answered is this module's business and
 nobody else's. The GPU probe asks through here and never learns a
-manufacturer's name (operator, 2026-09-20, docs/notes/rage.md §18: no
+manufacturer's name (operator, 2026-09-20, docs/notes/model-pool.md §18: no
 manufacturer in the platform — a second manufacturer is a second reader behind the same verb, as with the
 clock, `app/gpu_clock.py`). A driver with no reader here gives (None, None,
 why), and the asker goes on with what it declares, as it did before this
 existed.
 
-WHY IT EXISTS (node, 2026-09-20). RAGE admitted loads against what ITS OWN
-models declare. A container outside RAGE took 21.4 GiB of the 32 GiB card;
+WHY IT EXISTS (node, 2026-09-20). The model pool admitted loads against what ITS OWN
+models declare. A container outside the model pool took 21.4 GiB of the 32 GiB card;
 the driver moved every resident model into host RAM without an error to
 anyone; the host ran out of memory and the kernel killed three models.
 Admission cannot see a stranger on the card unless somebody reads the card.

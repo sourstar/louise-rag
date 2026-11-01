@@ -289,7 +289,7 @@ BACKFILL_WALK_BUDGET_S = float(os.getenv("BACKFILL_WALK_BUDGET_S", "1.0"))
 PUBLISH_BEAT_S = float(os.getenv("PUBLISH_BEAT_S", "300"))
 PUBLISH_BUDGET_S = float(os.getenv("PUBLISH_BUDGET_S", "600"))
 
-# ---- model work by priority (app/dispatch.py; docs/notes/scheduling.md §12)
+# ---- model work by priority (app/rage/dispatch.py; docs/notes/scheduling.md §12)
 # How long a reading of the node's interactive claim is reused in-process.
 GATE_POLL_S = float(os.getenv("GATE_POLL_S", "0.1"))
 # The claim's lifetime, refreshed at half of it while an interactive call

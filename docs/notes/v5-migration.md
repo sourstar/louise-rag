@@ -26,7 +26,7 @@ the new one). **Never `forget` an old collection.**
 same records whose space differs only by engine, or by a declared input form
 equal to the one its vectors were produced in, once `vectors-sample` under a
 validated run passes at the target's tolerance before use.* Evidence already
-measured: VeGa vs RAGE per model (vega.md §12: qwen3 ≥ 0.9999991, bge-m3 ≥
+measured: VeGa vs the model pool per model (vega.md §12: qwen3 ≥ 0.9999991, bge-m3 ≥
 0.9999971); wikipedia's archive layer 0.99994–0.99999; NCBI's pair vectors
 vs pair encoding on the OpenVINO GPU 1.00000. PubMed's ~4.58 M vectors made
 locally in TEXT form do not qualify and are dropped and re-embedded in pair

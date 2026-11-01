@@ -1,7 +1,13 @@
-# RAGE's load policy: prior art, and the way into LocalAI
+# The model pool's load policy: prior art, and the way into LocalAI
+
+> **Name (2026-11-01).** This note is about **the model pool**, named RAGE from 2026-09-20 until
+> it became VeGa and retired on 2026-10-18. RAGE now names only the RAG Engine, Louise's own
+> engine ([rage.md](rage.md)). Paths here — `app/rage/`, `tests/rage/`, `deploy/rage/`,
+> `rage.toml`, `rage.d/`, the image `ghcr.io/sourstar/rage` — are the model pool's, deleted
+> with it (read them with `git show <commit>:<path>`); none of them is the RAG Engine's.
 
 *2026-10-01. Research only; no code changed. Operator's ask: which systems
-already preload, load and unload models the way RAGE does, so that LocalAI's
+already preload, load and unload models the way the model pool does, so that LocalAI's
 scheduler can be extended from an existing template instead of from nothing.*
 
 Every line below was read in source at the commit named, unless marked
@@ -9,15 +15,15 @@ UNVERIFIED. The clones are not kept.
 
 ## 1. What is being looked for
 
-RAGE's policy is [`rage.md`](rage.md) §7 and §19 (`app/rage/admission.py`,
+The model pool's policy is [`model-pool.md`](model-pool.md) §7 and §19 (`app/rage/admission.py`,
 `app/rage/placement.py`). Split into the features the survey scored:
 
-| id | RAGE does |
+| id | the model pool does |
 |---|---|
 | F1 | per-model DECLARED MiB per device; `declared(loaded + loading) + need + reserve <= capacity`; unknown capacity refuses |
 | F2 | two budgets on every load: the card's and the host's (a card model holds host RAM too) |
 | F3 | observed memory recorded beside the declaration; observation never admits |
-| F4 | what processes outside RAGE hold of the card is read and subtracted |
+| F4 | what processes outside the model pool hold of the card is read and subtracted |
 | F5 | evict-on-load: idle only, strictly LOWER priority only, only if the simulated freed amount suffices; lowest tier first, then the least-MiB subset; idleness re-checked under the model's lock |
 | F6 | pressure loop (3 s): card squeezed by a stranger → give up idle models, spilled ones first |
 | F7 | `preload` through admission; preloaded models restored after a quiet period when there is room |
@@ -56,9 +62,9 @@ already holds about half of the plumbing (§3).
 | F10 | `POST /backend/load`, `/backend/shutdown`; device per model YAML | `core/http/routes/localai.go` :263–267 |
 | F11 | graceful shutdown under an exclusive per-model lock, then forced | `loader.go` :595–630, `operation_locks.go` |
 
-**One behaviour is the opposite of RAGE's.** When busy models cannot be
+**One behaviour is the opposite of the model pool's.** When busy models cannot be
 evicted, LocalAI retries 30 × 1 s and then **loads anyway**, over the limit
-(`initializers.go` `retryEnforce` :366). RAGE refuses.
+(`initializers.go` `retryEnforce` :366). The model pool refuses.
 
 **Distributed mode is closer** (`core/services/nodes/router.go`):
 `scheduleNewModel` :1067 estimates VRAM (`pkg/vram`: GGUF metadata, HF repo),
@@ -93,7 +99,7 @@ v2.6.0), triton core 3af839d, kubernetes 6d805eb, ray fd778d5.
 | Kubernetes | Apache, Go | **y** | **y** | — | p | **y**⁵ | **y** | — | — | p | — | — |
 | Ray Serve multiplex | Apache, Py | n | n | n | n | p³ | n | n | y | p | p | — |
 
-¹ the observation admits, which RAGE forbids. ² groups or a "matrix" solved
+¹ the observation admits, which the model pool forbids. ² groups or a "matrix" solved
 for the least `evict_costs`; no memory. ³ counts models, not MiB. ⁴ the rate
 limiter, which gates execution, not loading. ⁵ priority preemption; it
 maximises what it keeps, not the fewest MiB given up.
@@ -112,13 +118,13 @@ runtime eviction to borrow).
 | F | copy from | where |
 |---|---|---|
 | F1 | GPUStack's ledger: claims per device and RAM, `total − Σ claims − system_reserved`, what-if views | `gpustack/policies/resource_view.py` :99–151 |
-| F1 | Kubernetes `fitsRequest`: every resource checked, ALL shortfalls returned, `Unresolvable` when the need exceeds capacity — the shape of RAGE's refusal body | `pkg/scheduler/framework/plugins/noderesources/fit.go` :713, :753 |
-| F1 | ModelMesh: an UNLOADING model stays charged until the unload is confirmed (`UNLOAD_BUFF`); a failed unload is lost capacity. **Check RAGE against this** | `ModelCacheUnloadBufManager.java` :130, :312 |
+| F1 | Kubernetes `fitsRequest`: every resource checked, ALL shortfalls returned, `Unresolvable` when the need exceeds capacity — the shape of the model pool's refusal body | `pkg/scheduler/framework/plugins/noderesources/fit.go` :713, :753 |
+| F1 | ModelMesh: an UNLOADING model stays charged until the unload is confirmed (`UNLOAD_BUFF`); a failed unload is lost capacity. **Check the model pool against this** | `ModelCacheUnloadBufManager.java` :130, :312 |
 | F2 | Triton `AllocateResources`: two passes over every (device × resource), then commit | `rate_limiter.cc` :1085 |
 | F3 | GPUStack: `allocated` (claims) beside `used` (driver), only claims schedule | `gpustack/schemas/workers.py` :47–60 |
 | F4 | nobody; Ollama's `min(driver free, total − own)` and `waitForVRAMRecovery` (the driver reports freed memory late) are the nearest pieces | `server/sched.go` :1304, :1450 |
 | F5 | Kubernetes `SelectVictimsOnNode`: strictly lower priority, remove all, check fit, put the most important back while it still fits; no new preemption while victims are still terminating | `plugins/defaultpreemption/default_preemption.go` :286–427, :451 |
-| F5 | ServerlessLLM's knapsack for the least-MiB subset (= RAGE's `least_given_up`) | `sllm/schedulers/storage_aware_scheduler.py` :279–434 |
+| F5 | ServerlessLLM's knapsack for the least-MiB subset (= the model pool's `least_given_up`) | `sllm/schedulers/storage_aware_scheduler.py` :279–434 |
 | F5 | idleness: llama.cpp `pick_victim` (no request in flight, not wanted by the queue); Lemonade's EVICTING mark and `evict_if_committed` re-check | `tools/server/server-models.cpp` :269; `src/cpp/server/eviction_engine.cpp` :184 |
 | F6 | the kubelet eviction manager: hard and soft thresholds with grace, a minimum reclaim, ONE victim per interval then wait for cleanup, hysteresis on the condition | `pkg/kubelet/eviction/eviction_manager.go` :256, `helpers.go` :943, :1031 |
 | F6 | Lemonade's `GlobalVramMonitor` + `EvictionEngine`, the same loop in a local server | `src/cpp/server/global_vram_monitor.cpp` :41, `eviction_engine.cpp` :59–186 |
@@ -166,7 +172,7 @@ Not covered: forks with no push in a year; commits reachable only from tags.
 
 ## 7. What extending LocalAI would mean (proposal, not decided)
 
-Single-node first: RAGE runs on one node, and single-node is where LocalAI
+Single-node first: the model pool runs on one node, and single-node is where LocalAI
 has least.
 1. **Ledger admission** in place of the count in `EnforceLRULimit`:
    per-model `memory: {<device>: MiB, cpu: MiB}` and `host: {<device>: MiB}`
@@ -176,7 +182,7 @@ has least.
    503 + Retry-After with the ledger, instead of loading after 30 retries.
    This changes LocalAI's default behaviour, so it would need to be opt-in.
 3. **Priority eviction**: `priority` in the model YAML; Kubernetes'
-   victim selection with RAGE's least-MiB subset inside the deciding tier;
+   victim selection with the model pool's least-MiB subset inside the deciding tier;
    idleness re-checked under LocalAI's existing per-model operation lock.
 4. **Stranger-aware pressure**: `checkMemory` from "usage % > threshold" to
    "free < reserve while foreign ≥ X", foreign = driver used − Σ
@@ -184,7 +190,7 @@ has least.
 5. **Restore**: `LOAD_TO_MEMORY` through admission, and restore after quiet.
 
 LocalAI is MIT, multi-vendor and actively maintained, which fits §18 of
-`rage.md`. Each of these is a change to LocalAI's model YAML and defaults;
+`model-pool.md`. Each of these is a change to LocalAI's model YAML and defaults;
 upstream would see it first as an issue (#5352 is the nearest open one).
 
 ## 8. Preloading the NEXT model, by the sequence of use
@@ -273,12 +279,12 @@ a fork of SGLang. Where its rule lives:
   the current step, never a pinned one; a victim still loading is dropped
   (`_drop_pending_load` :461); no victim → no prefetch.
 
-Carried over to RAGE: an agent becomes a model, a step becomes a stage of
+Carried over to the model pool: an agent becomes a model, a step becomes a stage of
 the declared pipeline, a LoRA slot becomes MiB in the ledger (§7: the
-victims must COVER the need, not free one slot), and RAGE's own conditions
+victims must COVER the need, not free one slot), and the model pool's own conditions
 stay on top — idle, strictly lower priority, `unload(only_if_idle=True)`.
 
-If it is built, RAGE's own rules already bound a wrong guess, and the
+If it is built, the model pool's own rules already bound a wrong guess, and the
 literature adds two:
 1. the pipeline declared in `rage.toml` (desired state, invariant 10), the
    current stage read from `Louise-Level`;
@@ -290,5 +296,5 @@ literature adds two:
    room.
 
 Not measured yet, and needed before any of it: each model's load time on
-the card ([`rage.md`](rage.md) §14). A lookahead pays only where load time
+the card ([`model-pool.md`](model-pool.md) §14). A lookahead pays only where load time
 is longer than the gap the request leaves.

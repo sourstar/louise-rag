@@ -75,7 +75,7 @@ through with the commit that closes them.
 
 - Node profiles (quiet / day / night) from one file, and collections switched to full embedding by their own `embed` — proposal [node-profiles-design.md](node-profiles-design.md), for review 2026-10-27.
 
-- Repository renamed to `project-louise` (operator, 2026-10-25; done by the operator on GitHub). Then: the 9 `github.com/sourstar/louise-rag` references updated (User-Agents, LocalAI gallery, one test); the image, app and data-path names `louise-rag` stay.
+- Repository renamed to `project-louise` (operator, 2026-10-25, again 2026-11-01; the rename itself is the operator's, on GitHub). The 9 `github.com/sourstar/louise-rag` references are updated (2026-11-01: User-Agents, LocalAI gallery, one test); the image, app and data-path names `louise-rag` and the signed wire constants `louise-rag/…/v1` stay.
 
 - ~~Gene references (HGNC, ClinVar, gnomAD, HomoloGene)~~ — kept (operator, 2026-10-25): not needed by PubMed's records, but they give gene fact cards and tag PubMed documents for the `keys` filter.
 
@@ -107,6 +107,6 @@ architecture-v2.md, p2p-rag-architecture-v2.md, p2p-discovery.md,
 lockss-p2p-evaluation.md, implementation-prompts.md, pack-format.md,
 no-central-node.md, certified-collections.md, lineage.md,
 embedding-redundancy.md, pack-live-edge.md, embedder-pool-spec.md,
-rage.md, figures-in-the-corpus.md, archive-signing-keys.md,
+model-pool.md, figures-in-the-corpus.md, archive-signing-keys.md,
 calibration.md, step4-vectors-study.md, step6-preflight.md — each gets a
 first line saying what superseded it.

@@ -1,5 +1,5 @@
 """MedCPT's article encoder as a LocalAI backend: `Embedding` of a TEXT PAIR, on
-OpenVINO (docs/notes/input-forms.md, RAGE). The model code is
+OpenVINO (docs/notes/input-forms.md, the model pool). The model code is
 deploy/medcpt-rerank/server.py, copied beside this file as `medcpt.py`, as for
 louise-medcpt-rerank: its `make_encoder` is the model's own pair tokenizer
 (tokenizer.json), which builds the segment ids llama.cpp's BERT graph zeroes.

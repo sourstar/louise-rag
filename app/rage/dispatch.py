@@ -59,7 +59,7 @@ from enum import IntEnum
 
 import httpx
 
-from . import config
+from .. import config
 
 
 class Level(IntEnum):
@@ -108,8 +108,8 @@ def level_headers() -> dict[str, str]:
     level, by name (`corpus`, `translate`, `chat`, `rerank`, `query`).
 
     ADVISORY, as the spec says: a model container may hold the card's clock
-    while a request at `translate` or above is in flight (RAGE's front did,
-    docs/notes/rage.md §11, until it retired on 2026-10-09), and no answer
+    while a request at `translate` or above is in flight (the model pool's front did,
+    docs/notes/model-pool.md §11, until it retired on 2026-10-09), and no answer
     depends on it — an endpoint that ignores the header, as LocalAI does,
     loses nothing but speed. The GPU governor follows the node store's
     claim instead."""
@@ -195,7 +195,7 @@ class Gate:
     # WHAT EACH PLUGIN REALLY HELD THE SERVER FOR, seconds, never adjusted:
     # `_served` is the fair-share account, which `_join` raises to the
     # least-served present plugin, so it is no measurement. The card
-    # recorder (app/card_record.py, I2 of gpu-saturation-plan.md) reads
+    # recorder (app/rage/card_record.py, I2 of gpu-saturation-plan.md) reads
     # this, the requests still running included, so a 30 s request shows
     # second by second, not all at its end.
     _held: dict = field(default_factory=dict)        # plugin -> seconds, finished requests
@@ -397,7 +397,7 @@ def _node_con() -> sqlite3.Connection | None:
     worker makes it at boot, so on a node it is always there, and a
     process with no store has no worker to stand aside (and a test that
     made one would have written a node's live state, conftest)."""
-    from . import node_state
+    from .. import node_state
     p = node_state.path()
     if not p.is_file():
         return None

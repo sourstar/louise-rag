@@ -489,8 +489,9 @@ def _create(args: dict[str, Any]) -> dict[str, Any]:
     encoder call is made at the level of a person waiting, as it was from
     the web (docs/notes/scheduling.md §12)."""
     import tomllib
-    from . import dispatch, louise
-    from .dispatch import Level
+    from . import louise
+    from .rage import dispatch
+    from .rage.dispatch import Level
     recipe = args["recipe"]
     recipe = tomllib.loads(recipe) if isinstance(recipe, str) else dict(recipe)
     root = louise._default_root()

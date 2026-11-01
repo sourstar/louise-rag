@@ -4,7 +4,7 @@
         --model jurifindit/DAR-legal-it --query-prefix "query: "
 
 WHY THIS EXISTS, AND WHY IT IS WORTH MORE THAN A FOURTH ROW.
-`encoder_bakeoff.py` measures what RAGE serves. `jurifindit/DAR-legal-it`
+`encoder_bakeoff.py` measures what the model pool serves. `jurifindit/DAR-legal-it`
 is not served there, so its row in the report has been its PUBLISHED table
 — produced by the authors, with their truncation and their handling of the
 corpus's placeholder nodes, neither of which is recorded anywhere we can
@@ -192,7 +192,7 @@ def main(argv=None) -> int:
         doc = np.load(doc_path)
         print(f"  corpus: reusing {doc.shape[0]} vectors already on disk")
     else:
-        # Sharded, like the RAGE side. On CPU this is hours, and the long
+        # Sharded, like the model pool side. On CPU this is hours, and the long
         # tail of the corpus can still OOM a batch however it is sized —
         # losing the whole run to the last document would be absurd. Shards
         # also let a killed run resume at a smaller --batch.

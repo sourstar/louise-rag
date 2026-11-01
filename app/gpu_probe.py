@@ -252,7 +252,7 @@ def label(argv: list[str], root: Path) -> str:
     exe, args = PurePosixPath(argv[0]).name, argv[1:]
     if _PYTHON.fullmatch(exe):
         # A PYTHON SERVER THAT NAMES ITS WEIGHTS IS LABELLED BY THEM, as
-        # llama-server is. RAGE started its torch and OpenVINO servers through
+        # llama-server is. The model pool started its torch and OpenVINO servers through
         # one launcher (`python -m servers.launch madlad --weights …`), so
         # after the cut-over the panel showed two rows called
         # "servers.launch" — 6.2 GB and 432 MB of the card, and nothing to say

@@ -180,7 +180,7 @@ def test_other_weights_are_another_space(codex):
 
 
 @pytest.mark.parametrize("change, rule", [
-    ({"image": "rage:latest"}, "a tag is not an image"),
+    ({"image": "pool:latest"}, "a tag is not an image"),
     ({"args": ()}, "argument vector"),
     ({"args": ("s", "${PORT}", "--alt", "${PORT}")}, "more than once"),
     ({"name": ""}, "non-empty"),

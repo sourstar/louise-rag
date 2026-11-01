@@ -7,7 +7,7 @@ with the card's minimum frequency pinned at its maximum. While corpus work
 runs the clock is already up, so pinning matters exactly when a person is
 waiting and nothing else is using the GPU.
 
-WHAT. While the node's interactive claim is live (app/dispatch.py: held
+WHAT. While the node's interactive claim is live (app/rage/dispatch.py: held
 from the first interactive call's start to the last one's end), the card's
 `min_freq` is set to its `rp0_freq`. When the claim clears it goes back to
 what it was. Polled every GOVERNOR_POLL_S; a chat call lasts a minute, so a
@@ -61,9 +61,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from . import config, db, dispatch, gpu, gpu_level, node_state
+from . import config, db, gpu, gpu_level, node_state
+from .rage import dispatch
 # The clock itself lives in app/gpu_clock.py, which imports nothing of the
-# platform (RAGE's front held it too, docs/notes/rage.md §11). It is
+# platform (the model pool's front held it too, docs/notes/model-pool.md §11). It is
 # named here because this app, and its tests, know it as the governor's.
 from .gpu_clock import Governor  # noqa: F401
 

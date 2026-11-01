@@ -55,7 +55,7 @@
 # for exactly this, but only helps once vectors are made under it.
 #
 # NODE KEY — kept out of reach of whatever can write state/ (docs/notes/
-# rage.md §13, "layer 2"). A validation counts only when this node's key
+# model-pool.md §13, "layer 2"). A validation counts only when this node's key
 # signed it, so a planted statement is harmless only while the key cannot be
 # read by what planted it. So the key lives in its own dataset, secrets/ —
 # never under data/ (where state/ lives), never in a folder shared over

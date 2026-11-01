@@ -53,7 +53,7 @@ docker run --rm louise-rag:staged python -c "import app.web, app.worker, app.dis
 
 # ------------------------------------------------------------ 3. prove it
 # The whole suite ran on the workstation (4692 passed at fb5b6b8; 405 VeGa,
-# RAGE and guard tests at a2c89e8, 2026-10-18); host RAM is tight here. On the node: the live config must
+# the model pool and guard tests at a2c89e8, 2026-10-18); host RAM is tight here. On the node: the live config must
 # load every collection under the staged code, and the directories this
 # deploy changes most run in the staged image, one per invocation.
 say "3a. the live config loads every collection"

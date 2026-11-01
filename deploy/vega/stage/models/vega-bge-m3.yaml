@@ -1,12 +1,12 @@
-# vega-bge-m3 — staged in the LocalAI app (docs/notes/vega.md §12), beside the live RAGE;
+# vega-bge-m3 — staged in the LocalAI app (docs/notes/vega.md §12), beside the live the model pool;
 # no Louise collection uses it yet. Behind VeGa (backend vega-llama-cpp: the wrapper in front of
 # intel-sycl-f16-llama-cpp), so every vector has a receipt.
 # NOT pinned: wikipedia, its only space, embeds nothing (embed = "off"); pinned
 # are the encoders Louise embeds with continuously (vega.md §11, §12).
-# Every load option is RAGE's bge-m3.yaml (/mnt/ssd5/apps/louise-rage/state/localai-models/,
+# Every load option is the model pool's bge-m3.yaml (/mnt/ssd5/apps/louise-rage/state/localai-models/,
 # read only), the weights the same host files, mounted read-only at
 # /models/weights/<name> (deploy/vega/stage/mounts.py), so the model path is
-# RAGE's too. Only the backend, the env (caches under /data/louise-cache) and
+# the model pool's too. Only the backend, the env (caches under /data/louise-cache) and
 # `pinned` differ. JSON, which is YAML.
 {
   "name": "vega-bge-m3",

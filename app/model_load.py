@@ -338,7 +338,7 @@ def ensure_loaded(url: str, model: str | None, warm: Callable[[float], object], 
     if not model:
         return None
     if max_age_s is None:
-        from . import dispatch
+        from .rage import dispatch
         max_age_s = INTERACTIVE_TTL_S if dispatch.current()[0] > dispatch.Level.CORPUS else SYSTEM_TTL_S
     server = server_of(url)
     ids = loaded_models(server, max_age_s)

@@ -1,4 +1,4 @@
-"""Model work by priority (app/dispatch.py, docs/notes/scheduling.md §12).
+"""Model work by priority (app/rage/dispatch.py, docs/notes/scheduling.md §12).
 
 The operator's ladder, lowest first: corpus embedding, translation, chat,
 reranking, query embedding. Every request passes its server's gate, which
@@ -12,8 +12,9 @@ import time
 import httpx
 import pytest
 
-from app import config, dispatch, worker
-from app.dispatch import Level
+from app import config, worker
+from app.rage import dispatch
+from app.rage.dispatch import Level
 
 
 @pytest.fixture(autouse=True)

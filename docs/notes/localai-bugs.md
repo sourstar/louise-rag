@@ -3,8 +3,8 @@
 *One place for everything this project owes or asks `mudler/LocalAI`: the
 defects found (B1–B14), the patches we carry (P1–P2), and the requests (R1–R5).
 The operator files them upstream. Started 2026-10-02 while mapping LocalAI
-against RAGE ([`rage-prior-art.md`](rage-prior-art.md)); the patches and
-requests come from [`rage-over-localai.md`](rage-over-localai.md), accepted
+against the model pool ([`model-pool-prior-art.md`](model-pool-prior-art.md)); the patches and
+requests come from [`model-pool-over-localai.md`](model-pool-over-localai.md), accepted
 2026-10-03.*
 
 *Checked against v4.12.1 (2026-10-27; 308 commits from v4.11.0, read in
@@ -31,7 +31,7 @@ the source):*
 | B5 | defect | startup: `LOAD_TO_MEMORY` is silently ignored with `max_active_backends = 1` | — | not filed |
 | B6 | defect | distributed scheduler: evicts one model and places the new one there whether or not it now fits; an estimate of 0 skips the VRAM check | — (one node) | not filed |
 | B7 | defect, may be intended | loader: when busy models cannot be evicted, the load goes ahead over `max_active_backends` | availability | not filed |
-| B8 | defect | `POST /models/reload` never forgets a model whose YAML was removed: it lists and serves it until LocalAI restarts | RAGE's `DELETE` answers 502 and says so | not filed; seen on a real LocalAI, 2026-10-03 |
+| B8 | defect | `POST /models/reload` never forgets a model whose YAML was removed: it lists and serves it until LocalAI restarts | the model pool's `DELETE` answers 502 and says so | not filed; seen on a real LocalAI, 2026-10-03 |
 | B9 | defect | `/v1/embeddings`: a vector holding a NaN fails the whole request with 500 ("json: unsupported value: NaN"), losing every other vector and the reason | Louise retries it as the null vector llama-server sends (`embeddings._numeric_failure`) | not filed; seen on the node, 2026-10-04 (15c) |
 | B11 | defect | memory reclaimer: a model being loaded has a zero `lastUsed` and is evicted first, as the "least recently used" — under memory pressure the model a request is waiting for is evicted every time, the request fails with 500 | availability: every Ask answer failed with 500 for minutes (2026-10-14) | not filed; seen on the node with v4.11.0, log and source in §B11 |
 | B12 | defect | `intel-transformers` (v4.11.0's, as the gallery installed it 2026-10-05): optimum-intel 1.15.0 imports `openvino.runtime`, which the openvino 2026.4.1 beside it no longer has, so EVERY `OVModel*` type fails to load (`ModuleNotFoundError`, checked on the node 2026-10-17). `intel-rerankers` has optimum-intel 2.2.0 and is not affected | none since louise-python (docs/notes/backend-consolidation.md, U4) | not filed |
@@ -39,18 +39,18 @@ the source):*
 | B14 | defect | llama.cpp backend, `Embedding`: ignores `EmbeddingTokens`, which `/v1/embeddings` fills when given token ids; it embeds the empty text beside them and refuses it ("Input content cannot be empty"), so no client can embed tokens | **blocking** for a space that cuts by tokens: without token ids an input cannot always be cut to exactly its first N tokens (3 of 512 at 1,024 on the AMD peer); P2 | not filed; found 2026-10-18, source in §B14 |
 | B15 | defect | `v4.12.1`: backend downloads are staged at `${basepath}/downloading` = `//downloading`, unwritable by LocalAI's user, so every backend install and auto-upgrade fails | backend updates (the operator wants them); set `LOCALAI_DOWNLOAD_STAGING_PATH` | not filed; §B15 |
 | B16 | defect | llama.cpp backend (llama-server's code): never runs the encoder of an encoder-decoder model; a T5-family GGUF is decoded as if decoder-only and answers garbage (`<2cs><2cs>…`) | MADLAD cannot run on llama.cpp, so it runs on torch (17–38 s cold); P3 | upstream llama.cpp #5763 / #26565, no fix; §P3 |
-| **P1** | **patch we carry** | `GET /system` lists the options each loaded model was given, with their hash | none since VeGa: the wrapper receives `LoadModel` itself (vega.md §1). It was blocking for RAGE; kept for upstream | not filed; [`deploy/localai/patches/0001-system-list-load-options.patch`](../../deploy/localai/patches/0001-system-list-load-options.patch) |
+| **P1** | **patch we carry** | `GET /system` lists the options each loaded model was given, with their hash | none since VeGa: the wrapper receives `LoadModel` itself (vega.md §1). It was blocking for the model pool; kept for upstream | not filed; [`deploy/localai/patches/0001-system-list-load-options.patch`](../../deploy/localai/patches/0001-system-list-load-options.patch) |
 | **P2** | **patch we carry** | llama.cpp backend: `Embedding` embeds `EmbeddingTokens`, with the special tokens a text gets (B14) | **blocking** for the token cut: VeGa's wrapper sends a cut as its first tokens to a backend that embeds them (`Gate._probe`) | not filed; [`deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch`](../../deploy/localai/patches/0002-llama-cpp-embed-token-ids.patch) |
 | **P3** | **patch we carry** | llama.cpp backend: the encoder of an encoder-decoder model runs (B16), as a llama.cpp patch in the backend's own `patches/` | MADLAD on llama.cpp (operator, 2026-10-27: "we need anyway a patched llama.cpp") | not filed; [`deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch`](../../deploy/localai/patches/0003-llama-cpp-encoder-decoder.patch) |
 | **P4** | **patch we carry** | llama.cpp backend: encoder-decoder slots are encoded together, in WAVES, and decode in one batch (on P3, which ran one slot) | MADLAD on llama.cpp at torch's speed: a question's 7 languages in one wave instead of 7 × 3 s | not filed; [`deploy/localai/patches/0004-llama-cpp-encoder-decoder-waves.patch`](../../deploy/localai/patches/0004-llama-cpp-encoder-decoder-waves.patch) |
 | **P5** | **patch we carry** | llama.cpp backend (ggml-sycl): the batched F16 matmul converts a non-contiguous src1 for the GEMM that RUNS — the oneDNN flat copy only when oneDNN's GEMM runs, the gather for oneMKL (`GGML_SYCL_ENABLE_DNN=0`); before, the KQ product of two or more decoder tokens over an F16 K cache read the wrong queries (the P4 card fault, upstream-bugs.md S1) | the root cause of the wrong text in waves, found by code reading 2026-10-28 and matched by the 32-case pattern of upstream's own suite; the F16 KV cache back for MADLAD (−44 % per token against the f32 workaround) once the rebuilt tar passes its gates | **to file at ggml-org/llama.cpp as a PR** ([upstream-reports/ggml-llama-cpp-sycl.md](upstream-reports/ggml-llama-cpp-sycl.md), second section); [`deploy/localai/patches/0005-llama-cpp-sycl-batched-mul-mat-src1.patch`](../../deploy/localai/patches/0005-llama-cpp-sycl-batched-mul-mat-src1.patch) |
 | **P6 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder output is kept PER SEQUENCE (`llama_memory_enc_dec`, stage 1 of llama-cpp-encoder-decoder.md), so a slot is encoded while others decode; on P3 and P4 | a late request joins the next decode step instead of waiting for the wave; the upstream shape (no public API) | not filed; [`deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-memory.patch`](../../deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-memory.patch); moves into the series after its card gates |
 | **P7 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder outputs live ON THE DEVICE (stage 2: a persistent store written by the encoder graph, read by the decoder's `ggml_get_rows`; no host copies), on P5 | the shape upstream asked for (a persistent buffer, no host copies); the per-step upload gone | not filed; [`deploy/localai/patches/staged/0007-llama-cpp-encoder-decoder-store.patch`](../../deploy/localai/patches/staged/0007-llama-cpp-encoder-decoder-store.patch); moves into the series with P5 after the card gates |
-| R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: RAGE checks before and after instead | not filed |
-| R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (rage-over-localai §8.2) | not filed |
+| R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: the model pool checks before and after instead | not filed |
+| R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (model-pool-over-localai §8.2) | not filed |
 | R3 | request | read API keys from a file, not only from `LOCALAI_API_KEY` | only if LocalAI's own UI is published (invariant 8) | not filed |
-| R4 | request | admission by declared memory, priority eviction, refusal instead of overcommit (opt-in), eviction aware of other processes' memory, restore after quiet | availability; what RAGE gives up at the cut-over | not filed; #5352 is the nearest open issue |
-| R5 | request | a strict mode: LocalAI fills in no load option the model's YAML leaves unset — no GGUF guess, no hardware tuning, no app-wide setting — or says, per option, where each value came from | settings changed in LocalAI's UI would otherwise give runs nobody asked for; we pin instead (rage-over-localai §10) | not filed |
+| R4 | request | admission by declared memory, priority eviction, refusal instead of overcommit (opt-in), eviction aware of other processes' memory, restore after quiet | availability; what the model pool gives up at the cut-over | not filed; #5352 is the nearest open issue |
+| R5 | request | a strict mode: LocalAI fills in no load option the model's YAML leaves unset — no GGUF guess, no hardware tuning, no app-wide setting — or says, per option, where each value came from | settings changed in LocalAI's UI would otherwise give runs nobody asked for; we pin instead (model-pool-over-localai §10) | not filed |
 
 A global compile-cache directory was considered and is **not to be filed**
 (operator, 2026-10-02): the per-model caches already exist (§ at the end).
@@ -241,8 +241,8 @@ keep the limit.
 
 ### B8. `/models/reload` never forgets a removed model
 
-*Seen on a real LocalAI at 58830f7 with P1 (RAGE's smoke test,
-docs/notes/rage-over-localai.md §11), and certain from the code.*
+*Seen on a real LocalAI at 58830f7 with P1 (the model pool's smoke test,
+docs/notes/model-pool-over-localai.md §11), and certain from the code.*
 
 [`ReloadModelsEndpoint`](https://github.com/mudler/LocalAI/blob/58830f7ac508845a6f4efa32cfca06af422d4d82/core/http/endpoints/localai/edit_model.go#L123-L140)
 calls `LoadModelConfigsFromPath`, whose non-strict path only sets
@@ -435,7 +435,7 @@ with the envs.
 
 Our llama.cpp backend images build LocalAI's backend from the base commit in
 [`deploy/localai/patches/series`](../../deploy/localai/patches/series) with
-these patches applied in order (the RAGE image built LocalAI itself that way
+these patches applied in order (the model pool image built LocalAI itself that way
 until 2026-10-09). A patch leaves the series when upstream merges it, or
 when a merged change makes it unnecessary. `tests/test_localai_patches.py`
 holds the series, the files and this section to each other.
@@ -453,7 +453,7 @@ L57–L95), applies the hardware auto-tuning, and fills in the application's
 runtime settings (`LoadOptionContextSize(appConfig.ContextSize)`,
 `model_config_loader.go` L252). What the backend received therefore
 appears in no file and on no endpoint, only in a DEBUG log line
-(`initializers.go` L194). RAGE must state, with every answer, the options
+(`initializers.go` L194). The model pool must state, with every answer, the options
 the answering run was loaded with (09 §9.3 `options`, §9.12). Without them
 it states no run, and Louise writes nothing. The distributed registry
 already hashes these options per replica (`EffectiveModelOptionsHash`,
@@ -1031,7 +1031,7 @@ the hardware-aware context clamp: the opposite wish.
 
 ### R1. Name the instance that answered
 
-On one node a model has one backend process, so RAGE can learn which
+On one node a model has one backend process, so the model pool can learn which
 process answered by checking its (pid, start time) from `/system` before
 and after the request. A response header naming the instance would make
 that a single read, and it would stay exact in distributed mode, where a
@@ -1043,20 +1043,20 @@ model has replicas.
 (`core/http/endpoints/openai/embeddings.go` L112). llama.cpp's own server
 embeds a batch in one pass. File this only if the node's benchmark (03
 §3.3, tokens per second) measures a loss against llama-server, which is
-rage-over-localai §8.2.
+model-pool-over-localai §8.2.
 
 ### R3. API keys from a file
 
 Keys come only from `LOCALAI_API_KEY` or `--api-keys`
 (`core/cli/run.go` L78). Our invariant 8 keeps tokens out of environment
 values. That matters only if LocalAI's own UI is published: inside the
-RAGE image LocalAI listens on loopback with no key, and RAGE's front
+the model pool image LocalAI listens on loopback with no key, and the model pool's front
 guards the admin routes.
 
-### R4. The scheduling RAGE gives up
+### R4. The scheduling the model pool gives up
 
-What RAGE did that LocalAI does not, proposed as opt-in changes to the
-model YAML and its defaults in [`rage-prior-art.md`](rage-prior-art.md)
+What the model pool did that LocalAI does not, proposed as opt-in changes to the
+model YAML and its defaults in [`model-pool-prior-art.md`](model-pool-prior-art.md)
 §7:
 - admission by declared memory per device, with a reserve;
 - priority eviction that checks the freed memory is enough;
@@ -1076,7 +1076,7 @@ from:
 - the app-wide runtime settings `threads`, `context_size` and
   `vram_budget` (`runtime_settings_registry.go` L222–L246);
 - a RANDOM seed at every load when `parameters.seed` is unset or -1
-  (`core/backend/options.go`, `getSeed`). RAGE's smoke test saw each
+  (`core/backend/options.go`, `getSeed`). The model pool's smoke test saw each
   reload become another run: "Seed 551695963 → 1045691491".
 
 A setting changed in the UI therefore changes how models already
@@ -1088,8 +1088,8 @@ the app-wide settings. Ask for either:
 - a per-option record of where each value in `load_options` came from
   (P1).
 
-Until then RAGE's models pin every such field
-([`rage-over-localai.md`](rage-over-localai.md) §10).
+Until then the model pool's models pin every such field
+([`model-pool-over-localai.md`](model-pool-over-localai.md) §10).
 
 ---
 
@@ -1104,9 +1104,9 @@ The per-model caches cover it, with two gaps a reader of this file should
 know, neither of which a global setting is needed to close:
 - **OpenVINO embedding models are never cached** — B2, which is to be filed:
   fixed, they get the same per-model cache as the rest.
-- **A read-only models directory** (as RAGE mounts `/models`) cannot hold
+- **A read-only models directory** (as the model pool mounts `/models`) cannot hold
   optimum-intel's `model_cache`; there the cache must be pointed elsewhere,
-  as RAGE does per model (`OV_CACHE_DIR`, rage.md §20).
+  as the model pool does per model (`OV_CACHE_DIR`, model-pool.md §20).
 
 Intel's driver cache (`NEO_CACHE_DIR`, default `$HOME/.cache`) lasts as long
 as the container, which is not a gap worth naming (operator, 2026-10-02):

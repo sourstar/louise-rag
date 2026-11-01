@@ -815,9 +815,15 @@ it left open is below.
 
 ## Open after the migration
 
-- **Recommended engine settings, part of a collection (operator, 2026-11-01: "A recommended, non binding, setting shall be part of a collection"; choice B)** (09 §9.19).
-  - **Built:** the signed file `engine-settings/<key hex>.json` in the SHARD, one entry per card type (`app/hold/engine_settings.py`); a node takes the entry for its own card type in the `[encoder]` keys its file leaves unset, through `collections.recipe_for`, so the gate measures it first (`app/recommended_settings.py`); `hold engine-settings show|record`. No file, no change.
-  - **Open:** the `engine-settings` member in the digest and its fetch from peers (09 §9.16, §9.9). Until then a node reads only the files in its own SHARD.
+- **BEFORE PRODUCTION — the operator's list** (to clear before switching to production):
+  1. jina-style encoders on llama.cpp, implemented and tested at f16 (operator, 2026-10-31; below).
+  2. **ON HOLD (operator, 2026-11-01): RAGE settings exchanged between peers** — the `rage-settings` member in the digest and its fetch (09 §9.16, §9.9, §9.19). Until then a node reads only the files in its own SHARD.
+
+- **RAGE, the RAG Engine (operator, 2026-11-01)** — the name of Louise's own engine, which every collection's embedding goes through ([rage.md](rage.md)). The name was the model pool's until then; every file now calls that "the model pool" ([model-pool.md](model-pool.md)). Code: `app/rage/` (`dispatch`, `card_record`, `settings`).
+
+- **Recommended RAGE settings, part of a collection (operator, 2026-11-01: "A recommended, non binding, setting shall be part of a collection"; choice B)** (09 §9.19).
+  - **Built:** the signed file `rage-settings/<key hex>.json` in the SHARD, one entry per card type (`app/hold/rage_settings.py`); a node takes the entry for its own card type in the `[encoder]` keys its file leaves unset, through `collections.recipe_for`, so the gate measures it first (`app/rage/settings.py`); `hold rage-settings show|record`. No file, no change.
+  - **Open, on hold (before production):** the exchange between peers, above.
 
 - **BEFORE PRODUCTION (operator, 2026-10-31): jina-style encoders on llama.cpp, implemented and tested at f16.** The design is kept for the future (docs/notes/jina-llamacpp-parity.md §3). It is built and passes §4's tests on the node before production. Measured so far, by the f16 merged GGUF against torch: median cosine 0.999987, the same MRR@10, 5× faster, bit-exact to itself.
 
@@ -1204,7 +1210,7 @@ München's day tests: 6 of the missed queries (32 calls) and 18 reranks of 69/45
 
 FIX, part 2: a 5xx is asked again ONCE, after 0.25 s, when at least a second of the budget is left (`retrieval._rerank_call`). The rerank is a pure function of its body, the same policy as urllib3's `Retry` on a status list and gRPC's retry on UNAVAILABLE. One refused call of a query's 4–6 no longer costs the whole list its rerank. The reason now carries the server's own message (`HTTP 500: <LocalAI's error.message>`) and says when the second try failed too, so a live search records the cause the logs lack. Tonight's harness (d6ddc85) logs every refused call with LocalAI's body. The per-call 500 rate measures the reranker; the per-query misses measure the fix. The cause of the 500s is still open until that body is read: the backend's allocation or decode failing under the card's load is the reading.
 
-Operator, the same day: the retry treats the symptom; "Embedding shall have the lower priority and query processing the highest; the subsequent steps of a query in process shall be processed first to avoid wasting the effort spent for the previous steps." **FIX, part 3, the root (app/dispatch.py):**
+Operator, the same day: the retry treats the symptom; "Embedding shall have the lower priority and query processing the highest; the subsequent steps of a query in process shall be processed first to avoid wasting the effort spent for the previous steps." **FIX, part 3, the root (app/rage/dispatch.py):**
 - The levels are a query's steps in order: CORPUS < TRANSLATE < QUERY < RERANK < CHAT. 09 §9.12 is amended: the same five header values, a new order.
 - Corpus work stands aside on the WHOLE CARD while any step of a person's query holds the node's claim. Its next request and its encoder's warm wait, bounded by the request's own timeout (then a deferral), and wake on stop.
 - The device-wide yield removed on 2026-09-20 (chat's clock) returns, with the GPU governor holding the clock.
@@ -2149,13 +2155,13 @@ decided the same question:
   `load` field, Codex 4 "exactly when" an engine carries it, statement 3
   likewise). Main decided it again on 2026-10-03 as `options` (09 §9.3,
   step 15a) and deployed it on 2026-10-05, so the branch's code, spec
-  rows and tests went; `rage.md` §13 records it as superseded.
-- **Kept as history**: `rage.md` §22–§23 (LocalAI's rerankers backend
-  checked; RAGE spawning LocalAI's backend binaries) — superseded by
-  [`rage-over-localai.md`](rage-over-localai.md), kept with a preface.
+  rows and tests went; `model-pool.md` §13 records it as superseded.
+- **Kept as history**: `model-pool.md` §22–§23 (LocalAI's rerankers backend
+  checked; the model pool spawning LocalAI's backend binaries) — superseded by
+  [`model-pool-over-localai.md`](model-pool-over-localai.md), kept with a preface.
 - **Carried**: a validation counts only when THIS node signed it and is
   re-checked once per process (`app/hold/runs.py`, `app/run_check.py`;
-  `rage.md` §13); the web process holds no private key — a public key
+  `model-pool.md` §13); the web process holds no private key — a public key
   file, signing work queued for the worker (`app/identity.py`,
   `app/jobs.py`; `deploy/truenas-app.yaml` mounts the node key read-only
   in its own dataset, NOT yet applied on the node);
@@ -2203,7 +2209,7 @@ the granite weights on the node (the agent's scp is refused), then
 `deploy/16f/deposit-16f.sh`.
 
 **2026-10-06, ~10:05Z: the deposit runbook ran** (the weights copy went
-through on the operator's order). Granite is served by RAGE beside the
+through on the operator's order). Granite is served by the model pool beside the
 eight; its run `5b6dea5d…` was stated on the first answer and the same
 run after a reload; the space file was written from `GET /louise/runs`
 (engine `localai/llama-cpp 58830f7+patches…` on the Arc, 384 wide, CLS,
@@ -2242,7 +2248,7 @@ TrueNAS custom app `localagi` from
 quay.io/mudler/localagi pinned by digest at sha-7e0947d — the commit the
 deposit routes were proven against (quay has no semver tags) — UI on
 :30050, LLM the node's own `localai` app (:30286, `qwen3.8-2b-q4`,
-light because the card is RAGE's), knowledge base Louise
+light because the card is the model pool's), knowledge base Louise
 (`LOCALAGI_LOCALRAG_URL` :30042) with the deposit token as
 `LOCALAGI_LLM_API_KEY` — LocalAGI's pool-level RAG client reuses the
 LLM key (`cmd/agent_run.go`), so the token also travels to the LLM
@@ -2453,7 +2459,7 @@ pubmed).
 **2026-10-07, ~14:55Z (UTC): the deposit collections re-made; the moved
 outcome live; 3d9036b DEPLOYED.** The node rebooted at 14:00Z on its own —
 a TrueNAS update (kernel 6.18.42 → 6.18.52) — and was down ~30 minutes;
-the new GPU driver gave RAGE new run ids, which the worker gated by itself
+the new GPU driver gave the model pool new run ids, which the worker gated by itself
 (16/16). LocalAGI's two test collections were re-made under their names on
 the operator's word: `deposit-granite` (`sha256:163321a3…`, empty) and
 `louise-stop` (`sha256:6e12e447…`). Their carry step failed silently — a
@@ -2705,7 +2711,7 @@ node. First minutes: the maintainer counted gutenberg's facets for
 2026-08 (lang, subjects) within a minute of the start, no error or
 warning line. Live, through `/api/ask/*` on the node: `ask chat` answered
 a question about Gutenberg in two rounds (one `louise_search` call, a
-cited answer) in 2 min 0 s — the chat model's time, through RAGE; a
+cited answer) in 2 min 0 s — the chat model's time, through the model pool; a
 `lang=en` filter on gutenberg was refused as 63 124 records against the
 20 000 bound, a `subjects=Whaling -- Fiction` filter admitted 13 and put
 Moby-Dick first; `as_of 2026-09-02` answered from 2026-08 and `as_of
@@ -2936,10 +2942,10 @@ The node's DEPLOYMENT.md got today's section appended (its copy had
 diverged from the local one before today: 686 vs 713 lines; neither was
 overwritten). The node runs 865ccbe; main is the same code plus notes.
 
-### 2026-10-03: LocalAI takes the lifecycle; RAGE keeps the run identity
+### 2026-10-03: LocalAI takes the lifecycle; the model pool keeps the run identity
 
-The operator accepted [`rage-over-localai.md`](rage-over-localai.md):
-LocalAI will launch, load, preload, cache and evict the models, and RAGE
+The operator accepted [`model-pool-over-localai.md`](model-pool-over-localai.md):
+LocalAI will launch, load, preload, cache and evict the models, and the model pool
 will state the run of every answer. That is migration step 15. Done the
 same day:
 - **The spec.** 03 §3.3 says who launches. 09 §9.3 gives an engine
@@ -2947,13 +2953,13 @@ same day:
   field is absent for an engine started by `args`, so no `engine_id`
   changes and nothing in use is re-gated. Codex 4 and calibration
   statement 3 in §9.18.
-- **15b.** The one LocalAI patch RAGE cannot work without: `GET /system`
+- **15b.** The one LocalAI patch the model pool cannot work without: `GET /system`
   lists each model's load options and their hash. It is in
   `deploy/localai/patches/` and tested in LocalAI's own suite.
   [`localai-bugs.md`](localai-bugs.md) is now the one list of LocalAI
   action items: 7 defects, 1 patch, 4 requests, none filed yet.
 
-Nothing changed on the node; RAGE as deployed keeps running until 15f.
+Nothing changed on the node; the model pool as deployed keeps running until 15f.
 
 **15a, the same day**: Codex 4 and calibration statement 3 in the code
 (`app/hold/codex.py`, `embedder.py`, `collection.py`;
@@ -2961,7 +2967,7 @@ Nothing changed on the node; RAGE as deployed keeps running until 15f.
 are written at version 4. Every existing Codex, engine id, run and
 statement stays as it is. Whole suite 3439 passed.
 
-**15d, the same day**: RAGE's front over LocalAI, beside today's
+**15d, the same day**: the model pool's front over LocalAI, beside today's
 (`RAGE_RUNNER=localai`). Runs are read from LocalAI's `/system` and the
 kernel: options, argv, environment, the card from the process's DRM
 clients, and weights hashed per process. Also built: the admin door, the
@@ -3002,7 +3008,7 @@ engine. The MedCPT reranker on the card matches today's to 3e-8. It found
 LocalAI bug B9: an intermittent NaN fails the whole request. Louise now
 retries it as she retries llama-server's null vectors. Not run: the spill
 test, DAR-legal-it and MADLAD on the card, because each needs room the live
-models hold. The go is the operator's (rage-over-localai §12).
+models hold. The go is the operator's (model-pool-over-localai §12).
 
 **15f ready, not run (2026-10-04)**: the operator gave the go ("suspend
 dar-legal for now, go on with the rest"; DAR-legal-it serves no
@@ -3012,7 +3018,7 @@ LocalAI beside the live one, which found and fixed chat's template. The
 swap itself was refused to the agent as a production deploy, so it is two
 scripts on the node for the operator, with a backout (migration-plan 15f).
 
-**15f DONE, 2026-10-05: RAGE runs over LocalAI on the node.** The operator
+**15f DONE, 2026-10-05: the model pool runs over LocalAI on the node.** The operator
 ran both phases. Every model states a run, and every collection's
 calibration answers match the old engine's (lowest cosine 0.999833).
 Louise runs the merged main with `TRANSLATE_API=completion`, and 1609aa9
@@ -3021,7 +3027,7 @@ the cut. The operator deployed it, and web and worker run one image. The
 old engine's backups stay in `/mnt/ssd5/apps/louise-rage-15c/cutover/backup`
 until 15g.
 
-**15g, the same day: the llama-swap RAGE retired from the repository**
+**15g, the same day: the llama-swap the model pool retired from the repository**
 (legacy-to-delete §8; suite 3378 on the node). It is commit 8390155, which
 went in under the previous commit's message by mistake. Its description is
 in the commit after it. The node keeps `rage:pre-15f`, `louise-rag:pre-15f`
@@ -3032,10 +3038,10 @@ and the backups until the operator removes them.
   node's `src/deploy` is overlaid, never replaced, so the Dockerfiles 15g
   deleted were still there; they were removed by hand, with copies in
   `src.old/deploy`.
-- **RAGE not redeployed on purpose.** 15g changed its code only by
+- **The model pool not redeployed on purpose.** 15g changed its code only by
   deletion, and a new image is a new run for every model and a re-gate of
   every space. `e64893cf…` stays, reproducible from 6246334, and the next
-  real RAGE change carries 15g.
+  real the model pool change carries 15g.
 - **Leftovers removed, the same day** (operator: "remove every leftover"),
   so there is NO WAY BACK to the llama-swap engine on the node any more:
   - its images (`b10630-1`…`-8`; they stay published on ghcr.io) and the
@@ -3044,13 +3050,13 @@ and the backups until the operator removes them.
     MADLAD app images;
   - `/mnt/ssd5/apps/louise-rage-15c/` (backups, `backout.sh`, the before and
     after vectors), `src.old`, and the scratch trees in `/tmp`;
-  - the llama-swap-era copies in RAGE's `config/` and `state/`;
+  - the llama-swap-era copies in the model pool's `config/` and `state/`;
   - dangling images and the build cache, about 85 GB;
   - `TRANSLATE_API` in Louise's app config.
 
   Kept: the running images, every `louise-rag:codex-*`, the llama.cpp base
   images, and other apps' images, including an `ix-localai` app that is not
-  RAGE's.
+  the model pool's.
 
 ### 2026-09-22: one branch
 
@@ -3302,7 +3308,7 @@ has nearly finished delivering: of the first 401,408 candidates only 1,192
 30.9M documents of GPU work, which is why it is not a thing to flip
 unasked.
 
-### 2026-09-22: a reboot renumbered the cards and RAGE would not start
+### 2026-09-22: a reboot renumbered the cards and the model pool would not start
 
 The operator, after a reboot: `louise-rage` start fails with
 
@@ -3317,7 +3323,7 @@ CREATE the missing source under `/sys` and the container never started.
 Not degraded — dead: a bind that cannot be made stops the app, and the
 clock is otherwise optional.
 
-[`rage.md`](rage.md) §18 had already said this of render nodes, when the
+[`model-pool.md`](model-pool.md) §18 had already said this of render nodes, when the
 driver in a run identity moved to the PCI address for the same reason:
 *a number is not a name, an address moves only with the hardware.* The
 clock bind was the last piece still holding a number.
@@ -3374,7 +3380,7 @@ single bit". Detail is in [`v1-rebuild.md`](v1-rebuild.md) and
   recomputes least, the artifact indistinguishable from one made by the
   book.
 
-### 2026-09-21: a PubMed search ran 75 minutes; search and RAGE fixes
+### 2026-09-21: a PubMed search ran 75 minutes; search and the model pool fixes
 
 Committed on `louise`, not deployed; the other session tests them together.
 
@@ -3405,10 +3411,10 @@ Committed on `louise`, not deployed; the other session tests them together.
     at 300 (9df8190; spec 336a5ee);
   - the answer's opening stays in view while it streams (576224b);
   - a fact reached through a link names that link (da098b4, 05 §5.4).
-- **RAGE b10630-8 is live.** When a model does not fit on the card, RAGE
+- **The model pool b10630-8 is live.** When a model does not fit on the card, the model pool
   frees space by evicting lower-priority models first (93ccefa), and it
   reads a request's body before waiting for its model to load (9f77a99).
-  See [`rage.md`](rage.md) (amended 2026-09-21).
+  See [`model-pool.md`](model-pool.md) (amended 2026-09-21).
 
 ### v1.0 roots — the development collections are not the product (2026-09-12)
 
@@ -6271,7 +6277,7 @@ was not slow, it was not fed.
   most 1 s per call. On live pubmed: worst call 1.46 s; the whole sweep
   is 158 s spread over 141 calls.
 - **Levels:** corpus < translation < chat < rerank < query.
-- **One gate per model server** (`app/dispatch.py`). It admits the
+- **One gate per model server** (`app/rage/dispatch.py`). It admits the
   server's capacity, by level, fair by service time.
 - **Corpus stands aside on the GPU per chunk** while anything
   interactive runs, through a claim in `state/node.sqlite`.
@@ -6321,15 +6327,15 @@ teardown (test-only; fixed in 1f25e6b, ten repeats clean).
   history. The governor samples them every 10 s into `gpu_samples`, kept
   7 days for a widget to come (operator, 2026-09-19). A week at 10 s is
   3.6 MB and stays flat, because pruning on write reuses the freed pages.
-  Any workaround belongs to RAGE only; other apps are never restarted for
+  Any workaround belongs to the model pool only; other apps are never restarted for
   it (operator). First samples: 1,873–1,934 RPM, pkg 72–78 °C, vram
   74–80 °C, 192–204 W.
 
-### RAGE: reviewed, redesigned, the front built — nothing on the node yet (2026-09-19)
+### The model pool: reviewed, redesigned, the front built — nothing on the node yet (2026-09-19)
 
 **What happened, in order.**
-1. The first proposal for RAGE (b0f5dad) was reviewed before any code
-   ([`rage-review.md`](rage-review.md)) and did not survive as written:
+1. The first proposal for the model pool (b0f5dad) was reviewed before any code
+   ([`model-pool-review.md`](model-pool-review.md)) and did not survive as written:
    llama-swap has no load endpoint and evicts by default; the run
    identity could not be computed as specified (a process cannot see its
    image's digest; the raw argv and environment would have made every
@@ -6342,14 +6348,14 @@ teardown (test-only; fixed in 1f25e6b, ten repeats clean).
 3. The amendments are on `main`: **8bbc66a** (the run identity made
    computable, a weights digest for directories, `Louise-Level`, the
    model's URL, `RAGE_URL`) and **98ee4dc** (quarantine).
-4. [`rage.md`](rage.md) rewritten to the accepted design;
-   `migration-plan.md` (deleted 2026-10-08) gained **step 13** (RAGE,
+4. [`model-pool.md`](model-pool.md) rewritten to the accepted design;
+   `migration-plan.md` (deleted 2026-10-08) gained **step 13** (the model pool,
    parts a–f) and **step 14** (quarantine). Step 12 stays last.
-5. The code as it stood before RAGE is tagged **v0.1.0** (`louise`
+5. The code as it stood before the model pool is tagged **v0.1.0** (`louise`
    01a4d00; the first tag of the repository).
-6. **Steps 13b and 13c are built**: `app/rage/`, the launcher of our
+6. **Steps 13b and 13c are built**: `app/rage/` (the model pool's, deleted 2026-10-18), the launcher of our
    three servers, and 13d's files (image, example config, TrueNAS app).
-   [`rage.md`](rage.md) §17 lists each piece and what proves it.
+   [`model-pool.md`](model-pool.md) §17 lists each piece and what proves it.
 
 **Numbers.** `tests/rage/`: 96 tests in 7 s, against a directory that
 stands in for `/proc` and a fake llama-swap. The whole suite: 3,050
@@ -6386,7 +6392,7 @@ host's budget too (`host.<card>` per entry, the peak). The app file's
 first `mem_limit` was 40g, which with Louise's worker at its 20.6 GiB
 peak is more than the machine's 61.9; it is **28g**, leaving ZFS at
 least 9 GiB of cache in the worst case. Also found: gutenberg's encoder
-runs llama.cpp b10603 and the others b10630, so under RAGE's one build
+runs llama.cpp b10603 and the others b10630, so under the model pool's one build
 gutenberg's space meets another engine; and Louise's admin token is an
 environment VALUE today (`ADMIN_TOKEN_FILE` unset).
 
@@ -6394,8 +6400,8 @@ environment VALUE today (`ADMIN_TOKEN_FILE` unset).
 `/mnt/ssd5/apps/louise-rage`; port 30437; the chat model is the file
 Ollama serves as `qwen3:8b`, whose blob name is its weights digest and
 which carries its own chat template; the per-model apps are shut off
-before RAGE loads, which makes 13f a cut-over and not a gradual switch
-([`rage.md`](rage.md) §16). Still to give: the registry.
+before the model pool loads, which makes 13f a cut-over and not a gradual switch
+([`model-pool.md`](model-pool.md) §16). Still to give: the registry.
 
 **The same day, after the front:**
 - **A live bug fixed (8bec7fc):** every streamed answer on the Ask page
@@ -6409,14 +6415,14 @@ before RAGE loads, which makes 13f a cut-over and not a gradual switch
 - **`tools/endpoint_vectors.py` (3275ccb):** records what each encoder
   answers today — the sixteen fingerprint texts and a spread of the
   calibration set, one text a request, unnormalised — and compares
-  RAGE's answers with it afterwards. The cut-over needs it FIRST: once
+  the model pool's answers with it afterwards. The cut-over needs it FIRST: once
   the per-model apps are off there is nothing left to compare with.
   `app/hold/fingerprint.py` is 09 §9.12's rule. A test caught
   `Path.with_suffix` replacing ".document": a bi-encoder's query side
   would have overwritten its document side's recording.
 - **13e, first part (3dd4194):** every model request carries
   `Louise-Level`; `CHAT_API = ollama | openai` so the chat model can
-  leave Ollama for RAGE by switching one variable, and come back;
+  leave Ollama for the model pool by switching one variable, and come back;
   `RAGE_URL`. Nothing changes on today's node: the header is ignored by
   today's servers and the protocol defaults to Ollama's.
 - **13a, Codex v3:** the engine in the Codex and out of the space, and
@@ -6486,7 +6492,7 @@ back is kept: `src.old/` and the image tag `louise-rag:v0.1.0-live`.
   (`state/calibration.json`): pubmed 16/16, whole set worst 0.9896,
   34,784 tokens/s; wikipedia 16/16, worst 0.9990, 14,662 tokens/s;
   gutenberg 16/16, worst 0.9998, 2,208 tokens/s.
-- **Today's encoder answers are recorded** for the RAGE cut-over, five
+- **Today's encoder answers are recorded** for the model pool cut-over, five
   sides, 79 texts each: `/data/state/endpoint-vectors-2026-09-19`.
 - **What the deploy found, each fixed before going on.** (1) The node's
   test run: version-3 `embedder check` looked for the encoder before the
@@ -6511,7 +6517,7 @@ back is kept: `src.old/` and the image tag `louise-rag:v0.1.0-live`.
   budget-drawing fetch of the plan's sample, which does not exist yet.
   That fetch and the scheduled run are one piece of work.
 
-**RAGE'S IMAGE IS BUILT ON THE NODE AND PUBLISHED (2026-09-19, 13d's
+**The model pool's IMAGE IS BUILT ON THE NODE AND PUBLISHED (2026-09-19, 13d's
 first half).** `ghcr.io/sourstar/rage@sha256:8ee29dfab3d7f8720cb48cb6b5367c1b17679475472cd615a69a77ce48e40489`
 (tag `b10630-1`, 18.2 GB; the base's layers were mounted from
 ggml-org/llama.cpp, not uploaded). The login is a Docker config kept by
@@ -6526,7 +6532,7 @@ may freeze it.
   (32656 MiB)`; torch 2.14.0+xpu, under the environment a torch model
   declares, reads `xpu available: True` and names the card; OpenVINO lists
   `['CPU', 'GPU']`. These were the unknowns the trial build left.
-- **RAGE's folder is ready for the cut-over**: `config/rage.toml` (eight
+- **The model pool's folder is ready for the cut-over**: `config/rage.toml` (eight
   models, five preloaded; every weights path checked present on the
   node), `config/truenas-rage.yaml` with the digest filled in,
   `secrets/admin.token` generated there and never shown, `state/` empty.
@@ -6540,14 +6546,14 @@ may freeze it.
   (found by comparing hashes on the node, printing neither). It was not
   sent anywhere; both token files are now mode 600.
 - **Left:** 13d's proof with real models and 13f are ONE evening — the
-  per-model apps go off before RAGE loads. Today's vectors are recorded.
+  per-model apps go off before the model pool loads. Today's vectors are recorded.
 
 **THE CUT-OVER IS DONE (2026-09-19 night; 13d's proof and 13f's first
 half, one evening as planned).** The operator paused the node, stopped
 the five apps (`embed-gpu-qwen3-4b`, `embed-gpu-bge-m3`,
 `embed-gpu-medcpt`, `translate-gpu-madlad`, `louise-gpu-governor`) and
 installed `louise-rage` from the app file, in that order; the rest was
-driven from here. RAGE serves every model Louise uses except chat, on
+driven from here. The model pool serves every model Louise uses except chat, on
 port 30437; chat followed later the same night (below).
 
 | model | device | ready in | host RSS | card |
@@ -6563,24 +6569,24 @@ port 30437; chat followed later the same night (below).
 Seven models at once: 8.0 GiB of host RSS by process, 5.6 GiB by the
 container's cgroup against its 28 GiB limit, 17.7 GiB of the card's
 32.6. MADLAD's 20 s is against the 300 s its own app took.
-- **RAGE's vectors against the recording of the old endpoints**, 79
+- **The model pool's vectors against the recording of the old endpoints**, 79
   texts a side, worst cosine: gutenberg 0.999999, pubmed documents
   1.000000, pubmed queries 0.999981, wikipedia 0.999998; median 1.000000
   everywhere. No fingerprint is bit-equal — expected for gutenberg
   (b10603 → b10630), and for the others the engine's settings differ —
   so the cosines judge, and the gate tests.
-- **The gate through RAGE passed for all three**, the same whole-set
+- **The gate through the model pool passed for all three**, the same whole-set
   figures as through the old apps (worst 0.9896 / 0.9990 / 0.9998).
   Throughput read 142,707 / 72,900 / 3,373 tokens/s against 34,784 /
   14,662 / 2,208 — but the node was PAUSED for these and running for
-  those, so this is not yet a comparison of RAGE with the apps.
+  those, so this is not yet a comparison of the model pool with the apps.
 - **The query path, live**: a search on each collection reranked by its
   own reranker; an Italian question over gutenberg translated by MADLAD
   into every held language; a streamed answer over pubmed ran to
   `[DONE]`, 74 chunks, no error chunk.
-- **The worker resumed and works through RAGE**, no error in its log: in
-  its first two minutes RAGE served 428 requests to qwen3, 125 to bge-m3
-  and 4 to medcpt-article. The GPU clock is RAGE's now (`/louise/gpu`:
+- **The worker resumed and works through the model pool**, no error in its log: in
+  its first two minutes the model pool served 428 requests to qwen3, 125 to bge-m3
+  and 4 to medcpt-article. The GPU clock is the model pool's now (`/louise/gpu`:
   running, rest 400 MHz, max 2,800, not pinned).
 - **What was switched**: the `[encoder]` and `[reranker]` URLs of the
   three collection files, to `…:30437/upstream/<model>`; `TRANSLATE_URL`
@@ -6589,10 +6595,10 @@ container's cgroup against its 28 GiB limit, 17.7 GiB of the card's
   never reached a command line. **The way back**:
   `config/backup-pre-rage-2026-09-19/` holds the three files and the
   app's configuration (mode 600); the five apps are stopped, not deleted.
-- **Differs from the app file's own note**: RAGE's `secrets/admin.token`
-  is a token generated on the node, not Louise's. RAGE reads it once at
-  start, and nothing in Louise calls RAGE's operator routes yet, so it
-  was left; making them the same is a file copy and a restart of RAGE.
+- **Differs from the app file's own note**: the model pool's `secrets/admin.token`
+  is a token generated on the node, not Louise's. The model pool reads it once at
+  start, and nothing in Louise calls the model pool's operator routes yet, so it
+  was left; making them the same is a file copy and a restart of the model pool.
 - **Not done**: the retirements, which are
   [`legacy-to-delete.md`](legacy-to-delete.md) §7, by its rule.
 
@@ -6612,7 +6618,7 @@ now ends at its next ref when the mode stops parsing, where a pause used
 to wait for it (1,083 s on wikivec).
 - **WORK IN FLIGHT STOPS TOO — found by watching the node (412a5c7).**
   After the first deploy, "download/seeding only" took no new document
-  and the two in flight went on: RAGE served 470 embedding requests in the
+  and the two in flight went on: the model pool served 470 embedding requests in the
   next 100 s, and the largest book is 5.3 h. Embedding now ends at its next
   slice and an archive pass at its next row — the units SIGTERM already
   had — deferred, never marked, resumed from what is written. Measured
@@ -6625,11 +6631,11 @@ to wait for it (1,083 s on wikivec).
   `louise-rag:v0.1.0-live`.
 - **The System tab's clock panel** read "GPU governor not running" after
   the cut-over, because it reads the retired app's heartbeat; with
-  `RAGE_URL` set it asks RAGE (f8a6266). `GPU_PROBE_URL` is still what
-  feeds the panel's per-process rows — it shows RAGE's seven processes —
+  `RAGE_URL` set it asks the model pool (f8a6266). `GPU_PROBE_URL` is still what
+  feeds the panel's per-process rows — it shows the model pool's seven processes —
   so it was left alone; the operator's remark that it "is not used
   anymore" is OPEN: if it means the probe should go, its rows need
-  another source first (rage.md §12 has RAGE's pids joined to the
+  another source first (model-pool.md §12 has the model pool's pids joined to the
   probe's).
 
 **2026-09-20, night — ONE ORIGIN CHECK READS AT MOST 256 MiB OF THE ORIGIN.**
@@ -6659,7 +6665,7 @@ Operator: "10.5 GiB are too much, limit the test to some hundred MB."
   DIR` is what a peer gives — so the bound is what that step will have to
   respect when it is built, and what `--origin` reads today.
 
-**2026-09-20, evening — QUARANTINE IS ENFORCED, AND RAGE READS THE CARD.**
+**2026-09-20, evening — QUARANTINE IS ENFORCED, AND the model pool READS THE CARD.**
 - **Quarantine: ENFORCED on the node** (`platform.toml`: `[node] quarantine
   = "enforce"`, the three live collections listed by collection id under
   `quarantine_in_use_before`). The list went in first, in report mode,
@@ -6668,19 +6674,19 @@ Operator: "10.5 GiB are too much, limit the test to some hundred MB."
   nothing withheld, search answered on gutenberg, pubmed and wikipedia,
   the node still paused as the operator left it. Way back:
   `config/platform.toml.pre-quarantine-enforce`.
-- **RAGE reads the card's real memory, gives up idle models when a
-  stranger squeezes it, and tells Louise** ([`rage.md`](rage.md) §19;
+- **The model pool reads the card's real memory, gives up idle models when a
+  stranger squeezes it, and tells Louise** ([`model-pool.md`](model-pool.md) §19;
   louise 789bd0e, 028897a). Fifth image,
   `ghcr.io/sourstar/rage@sha256:c6e8c32be177248e4827aa0c4c9dab934b47b4eb4d6c20f9080e0c3a4b7c3ab9`
   (tag `b10630-5`; `b10630-3` and `-4` were published on the way and are
   superseded — nothing published is deleted). The app gained `cap_add:
   PERFMON`: `xe` tells what is USED only to that capability. On the node:
-  32,656 MiB total, 24,691 used, 24,664 RAGE's own, 27 outside, nothing
+  32,656 MiB total, 24,691 used, 24,664 the model pool's own, 27 outside, nothing
   pushed out. Every run id is new again — a new image is a new run (09
   §9.12) — and no collection here is owed a gate (all Codex v2). Way
   back: `config/app-config.pre-memory-feature.json` (mode 600).
 - **Proved live, not only in tests**: a 7 GiB stranger of my own, twice
-  (rage.md §19). The first run showed the rule was not "wise" — 9,937 MiB
+  (model-pool.md §19). The first run showed the rule was not "wise" — 9,937 MiB
   given up for a 1,435 MiB deficit — and the second, after the fix, gave
   up 1,596.
 - **Correction**: a model pushed off the card DOES move back when it is
@@ -6691,20 +6697,20 @@ Operator: "10.5 GiB are too much, limit the test to some hundred MB."
   gone minutes later by other hands, and that session ran four more
   bake-offs on the card during the evening, all small.
 
-**2026-09-20, afternoon — THE CARD WAS OVERCOMMITTED FROM OUTSIDE RAGE, THE
+**2026-09-20, afternoon — THE CARD WAS OVERCOMMITTED FROM OUTSIDE the model pool, THE
 HOST RAN OUT OF MEMORY, AND THE EARLIER ANSWER ABOUT HOST RAM WAS THE
 SMALLER HALF.** Found while building what the operator asked for next:
 "separate real RAM occupancy from memory mapped RAM".
 - **What happened.** At 14:50 a bake-off container (`bakeoff-st:xpu`,
   another session's; Qwen3-Embedding-0.6B under sentence-transformers,
   `--attn sdpa --batch 32`) took 21.4 GiB of the 32 GiB card and 22.8 GiB
-  more of GPU buffers in host RAM. RAGE had 25 GiB resident. The `xe`
+  more of GPU buffers in host RAM. The model pool had 25 GiB resident. The `xe`
   driver moved EVERY resident model's buffers into host RAM with no error
   to anyone (DRM fdinfo, `drm-resident-vram0` against `drm-resident-gtt`):
   chat 476 KiB on the card and 7,403 MiB in host RAM, bge-reranker 9 MiB /
   6,129 MiB, bge-m3 0 / 1,290 MiB. GPU buffers in host RAM, all processes:
   32.3 GiB; host memory used 56 of 63 GiB with the ZFS ARC squeezed to 2.2
-  GiB. **The kernel's out-of-memory killer (global) took three of RAGE's
+  GiB. **The kernel's out-of-memory killer (global) took three of the model pool's
   children**: MADLAD and Qwen3-Embedding at 14:51:43–44, bge-reranker at
   15:03:15 — with an `xe` engine reset in the same second. They go first
   by design (`oom_score_adj` 800). The third kill came as the staged test
@@ -6715,15 +6721,15 @@ SMALLER HALF.** Found while building what the operator asked for next:
   died of the engine reset (`UR_RESULT_ERROR_DEVICE_LOST`, at 10,752 of
   23,617 documents) and its process has spun one core since, still holding
   the card and ~27 GiB of host RAM: stopping that container is the
-  operator's. RAGE restarts a dead model on
+  operator's. The model pool restarts a dead model on
   its next request, as another launch. The models pushed out do NOT move
   back by themselves (2026-09-18 showed the same): a reload does it, once
   the card has room.
-- **Why RAGE could not prevent it**: admission counts what RAGE's OWN
-  models declare. A process that reaches the card without RAGE is
-  invisible to it. Anything that needs the card beside RAGE has to go
-  through RAGE, or run with RAGE's models unloaded. OPEN, the operator's:
-  whether RAGE should read the card's real free memory before a load.
+- **Why the model pool could not prevent it**: admission counts what the model pool's OWN
+  models declare. A process that reaches the card without the model pool is
+  invisible to it. Anything that needs the card beside the model pool has to go
+  through the model pool, or run with the model pool's models unloaded. OPEN, the operator's:
+  whether the model pool should read the card's real free memory before a load.
 - **The correction.** The host-RAM answer of the night before (the mapped
   model file, plus 270–650 MiB of heap per process) was true and was the
   smaller half. The GPU panel's "in host RAM" column was never RSS: it is
@@ -6734,7 +6740,7 @@ SMALLER HALF.** Found while building what the operator asked for next:
   will, never occupancy). A row with most of its GPU buffers in host RAM
   reads "pushed off the card". Twenty minutes after a load the models read
   264–397 MiB owned and 0 mapped.
-- **A defect of RAGE's found by it, fixed in code (8de3a60), NOT yet on the
+- **A defect of the model pool's found by it, fixed in code (8de3a60), NOT yet on the
   node**: `/louise/models` read "ready" for the three dead models, with
   dead pids. The request path was right (`_verified` starts another
   launch, hashed and checked again), so no run was stated for a dead
@@ -6767,7 +6773,7 @@ stays `pending`, and the Library says "tests open — in use by decision".
 
 **2026-09-20, midday — THE DRIVER A RUN STATES IS THE CARD'S, AND THE NODE
 RUNS THE IMAGE THAT READS IT SO.** Operator: "driver fix: yes"
-([`rage.md`](rage.md) §18, item 1; louise bfe5377). Second image,
+([`model-pool.md`](model-pool.md) §18, item 1; louise bfe5377). Second image,
 `ghcr.io/sourstar/rage@sha256:d7686483861ae7dc5f9730b1efefc72f2d6d1e323654d560b4016702fcd37aa4`
 (tag `b10630-2`, same base and same llama-swap: only the front changed;
 public, anonymous pull checked, the manifest's bytes hash to the digest).
@@ -6780,28 +6786,28 @@ the AMD graphics' address, which reads `amdgpu`).
   6.18.23-production+truenas; xe; intel-opencl-icd 26.18.38308.1-0;
   libze-intel-gpu1 26.18.38308.1-0; libze1 1.27.0-1~24.04~ppa2`.
 - **All seven run ids are new, and that is the rule, not a side effect**:
-  the image is part of every run (09 §9.12), so a new RAGE build is a new
+  the image is part of every run (09 §9.12), so a new the model pool build is a new
   run and is re-gated. Before and after are kept in
-  `state/runs-before-driver-fix.json` beside RAGE's state. Nothing on the
+  `state/runs-before-driver-fix.json` beside the model pool's state. Nothing on the
   node is owed a gate today — every collection here is Codex v2, and the
   run check is v3's (step 13e) — but the first v3 collection would have
   been gated again at its next write, by itself.
 - Preload after the switch: 7 models, the slowest Qwen3 at 25.3 s. Search
   answered on gutenberg, pubmed and wikipedia (no leg withheld), a
   streamed Ask gave its first token in 6.8 s and finished in 12.9 s, the
-  clock reads. No error in RAGE's, the web's or the worker's log. The
+  clock reads. No error in the model pool's, the web's or the worker's log. The
   node was left PAUSED, as the operator set it.
 - The way back: `config/rage.toml.pre-driver-fix`,
   `config/truenas-rage.yaml.pre-driver-fix`,
   `config/app-config.pre-driver-fix.json` (mode 600). The first image
   stays in the registry — nothing published is deleted — and
-  `deploy/bakeoff-st/Dockerfile.xpu` (the bake-off's, not RAGE's) still
+  `deploy/bakeoff-st/Dockerfile.xpu` (the bake-off's, not the model pool's) still
   builds on it, which is right: it wants the runtime, not the front.
 
-**2026-09-20, morning — RAGE NO LONGER READS ANYTHING OF OLLAMA'S.**
-Operator: "If the chat model runs now in RAGE why do we need Ollama?" —
+**2026-09-20, morning — the model pool NO LONGER READS ANYTHING OF OLLAMA'S.**
+Operator: "If the chat model runs now in RAGE [the model pool] why do we need Ollama?" —
 we did not, except for ONE FILE: the chat model was read from Ollama's
-blob store. It now has a copy of RAGE's own,
+blob store. It now has a copy of the model pool's own,
 `/mnt/ssd5/apps/louise-rage/models/chat/qwen3-8b.gguf`, checked against
 the digest in the name it came from (`a3de86cd…686f`); the app's bind and
 `rage.toml` point at it, and a test forbids a bind or a weights path that
@@ -6821,26 +6827,26 @@ for the move: `config/rage.toml.pre-chat-move`,
   `louise-gpu-governor` is on the node any more). So the way back through
   them that [`legacy-to-delete.md`](legacy-to-delete.md) §7 describes is
   gone by the operator's own decision; their model folders stay, because
-  RAGE reads them. `ollama` still exists and runs, idle: stopping and
+  the model pool reads them. `ollama` still exists and runs, idle: stopping and
   deleting it, and the 89 GB of its store, is the operator's.
 - **The node was rebooted at 10:34** (kernel: a software reset), and came
   back by itself: `louise-rag`, `louise-rage`, the probe, the mode it was
-  in. RAGE preloaded on its own. The operator then PAUSED the node from
+  in. The model pool preloaded on its own. The operator then PAUSED the node from
   the Library (10:38, from 192.168.178.76) and it was left paused — the
   two documents in flight were deferred at their next slice, as the mode
   table now has it.
 
 **LATER THE SAME NIGHT (2026-09-19/20), unattended.**
-- **Chat runs in RAGE** (operator: "the same model in Ollama, just run in
-  RAGE"). `CHAT_API=openai`, `CHAT_URL=…:30437/upstream/chat`, the way
+- **Chat runs in the model pool** (operator: "the same model in Ollama, just run in
+  RAGE [the model pool]"). `CHAT_API=openai`, `CHAT_URL=…:30437/upstream/chat`, the way
   back in `config/backup-pre-rage-2026-09-19/app-config.pre-chat.json`
   (mode 600). Loaded in 15 s, 7,250 MiB of the card, no `<think>` in an
-  answer. Same prompt, the worker embedding beside both: RAGE 12.2–13.8
+  answer. Same prompt, the worker embedding beside both: the model pool 12.2–13.8
   tokens/s generated, Ollama 8.3–8.9. A streamed Ask over gutenberg took
-  25 s through RAGE against 47 s through Ollama. Ollama is idle now, its
+  25 s through the model pool against 47 s through Ollama. Ollama is idle now, its
   model unloaded through its own API; it goes by
   [`legacy-to-delete.md`](legacy-to-delete.md) §7. `chat` and `madlad`
-  joined RAGE's `preload`. **Declared card memory corrected**: Qwen3 was
+  joined the model pool's `preload`. **Declared card memory corrected**: Qwen3 was
   declared 5,200 MiB and holds 8,628 — admission counts what is declared,
   so that is how a card gets over-committed; now 9,000, and chat 7,600.
   Eight models resident: 25.0 GiB of the card's 32.6, and every model at
@@ -6868,7 +6874,7 @@ for the move: `config/rage.toml.pre-chat-move`,
   entries — it lowers the peak the 28 GiB limit is judged against — but
   it is a change to each engine's arguments, so it is the operator's.
 - **"servers.launch" on the GPU panel** were MADLAD (6.2 GB of the card)
-  and MedCPT's cross-encoder (432 MB): RAGE starts both through one
+  and MedCPT's cross-encoder (432 MB): the model pool starts both through one
   Python launcher, and the probe labelled a python process by its
   module. It now labels one that names `--weights` by them, as it does
   llama-server.
@@ -6876,12 +6882,12 @@ for the move: `config/rage.toml.pre-chat-move`,
   `madlad400-3b-mt-bf16` and `medcpt-cross-ov`. ONE ROW IS STILL
   CRYPTIC: `sha256-a3de86cd…` is the CHAT model — Qwen3 8B read from
   Ollama's blob store, whose file name is its digest. The probe names
-  such a blob from Ollama's `manifests` beside it, and RAGE binds only
+  such a blob from Ollama's `manifests` beside it, and the model pool binds only
   `blobs/`. Two ways, neither taken unattended: bind Ollama's whole
   `models/` read-only and point `weights` at `…/blobs/sha256-…` (the
   run identity does not move: the template keeps `${WEIGHTS}` and the
-  digest is of the bytes) — a restart of RAGE; or the design's own join of
-  the probe's pids with RAGE's (rage.md §12), which needs RAGE to say
+  digest is of the bytes) — a restart of the model pool; or the design's own join of
+  the probe's pids with the model pool's (model-pool.md §12), which needs the model pool to say
   which container it is, so a new image.
 - **What re-fetching the origin would cost, measured** (the open design
   question of step 14): pubmed's plan samples 0.05 of its shards — 68 of
@@ -6907,7 +6913,7 @@ measure on the node first; invariant 5), so it was not guessed at here.
 Until it exists quarantine stays on `report`. `node show` (07 §7.8) is
 not built; `louise health` carries the state meanwhile. What the local
 trial build of the image found and fixed before any of this reached the
-node is in [`rage.md`](rage.md) §17.
+node is in [`model-pool.md`](model-pool.md) §17.
 
 ### What is waiting on the operator
 
@@ -7864,7 +7870,7 @@ gutenberg pack plan needs those vectors before the hand-over.
    coat). Encoder: the 2026-08-26 shortlist below
    (KaLM-Embedding-Gemma3-12B, Qwen3-Embedding-8B) was reasoning, and
    **2026-09-20 replaced it with measurement** — `tools/encoder_bakeoff.py`
-   over JuriFindIT's 179 expert questions, through RAGE on the B70,
+   over JuriFindIT's 179 expert questions, through the model pool on the B70,
    `gazzetta-plugin.md` §7.1b. Neither shortlisted model is the answer. The
    two findings that outrank the ranking: running the published
    **DAR-legal-it** ourselves landed within 0.0014 of its authors' recalls,
@@ -8288,7 +8294,7 @@ that would decide it, actually exist to download? It does —
 `jurifindit/JuriFindIT`, parquet, CC-BY-NC-SA-4.0 (gated: invariant 9 wants
 an ack, and `fetch` writes the digests to record one against).
 
-`tools/encoder_bakeoff.py` runs §7.2's procedure against RAGE: the 179
+`tools/encoder_bakeoff.py` runs §7.2's procedure against the model pool: the 179
 expert validation questions over the 23,617-node corpus, through
 `app.embeddings` so the request shape is production's, sharded and
 resumable because it is ~47 minutes per model on the B70.
@@ -8332,7 +8338,7 @@ Corpus cost: bge-m3 18m16s, qwen3-embedding-4b 59m29s, DAR-legal-it ~4m.
 
 DAR-legal-it was run on the card through a **side-car** — `FROM` the
 deployed rage digest plus one venv, run once and discarded
-(`deploy/bakeoff-st/Dockerfile.xpu`). RAGE itself, its `rage.toml` and the
+(`deploy/bakeoff-st/Dockerfile.xpu`). The model pool itself, its `rage.toml` and the
 pushed image were not touched. **Its recalls land within 0.0014 of the
 authors' published figures**, which validates our metric code against the
 real `InformationRetrievalEvaluator` and makes every row here comparable

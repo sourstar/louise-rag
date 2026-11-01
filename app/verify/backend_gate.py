@@ -256,8 +256,8 @@ def check(collection, embed_fn=None) -> dict:
 
 # in-process verdict cache: collection name -> (allowed, reason, expires_at,
 # the endpoint the verdict is about). A verdict holds only for the endpoint it
-# was reached on: 2026-10-09, gutenberg's [encoder] moved from RAGE to LocalAI
-# and the pass RAGE had earned covered LocalAI's vectors for up to 30 min.
+# was reached on: 2026-10-09, gutenberg's [encoder] moved from the model pool to LocalAI
+# and the pass the model pool had earned covered LocalAI's vectors for up to 30 min.
 _cache: dict[str, tuple[bool, str, float, tuple]] = {}
 
 

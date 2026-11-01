@@ -217,7 +217,7 @@ byte-identical (`tools/measure/records_ab.py`).
 - **Pins**: nothing is pinned statically. Louise pins a model for the duration of its
   use and restores the prior state (`app/model_pins.py`); failed pin calls show in the
   System tab.
-- **Priority**: query steps outrank corpus embedding (`app/dispatch.py` levels).
+- **Priority**: query steps outrank corpus embedding (`app/rage/dispatch.py` levels).
   Corpus work stands aside on the whole card while a person's query step holds the
   claim.
 

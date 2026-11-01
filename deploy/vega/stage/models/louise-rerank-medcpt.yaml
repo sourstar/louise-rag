@@ -1,8 +1,8 @@
 # louise-rerank-medcpt — staged in the LocalAI app (docs/notes/vega.md §12), beside
-# the live RAGE; no Louise collection uses it yet. MedCPT's cross-encoder on
+# the live the model pool; no Louise collection uses it yet. MedCPT's cross-encoder on
 # OpenVINO, `Rerank` at /v1/rerank (Jina's shape), an ordinary model (no VeGa).
 # Backend louise-medcpt-rerank (deploy/localai/backends, built for this app by
-# deploy/vega/stage/build_louise_backend.sh). Every load option is RAGE's
+# deploy/vega/stage/build_louise_backend.sh). Every load option is the model pool's
 # medcpt-rerank.yaml; the weights the same host files, mounted read-only.
 # JSON, which is YAML.
 {
