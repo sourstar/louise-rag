@@ -1,9 +1,9 @@
 """What VeGa calls a device, a model id and a configuration error.
 
-Until migration step 15g this module was `rage.toml`'s whole desired state:
+Until migration step 15g this module was the model pool's configuration file's whole desired state:
 each model's command per device, its memory, priority, preload and park
-(docs/notes/model-pool.md §5). LocalAI's model YAML holds the lifecycle now
-(model-pool-over-localai §7). The model pool retired on 2026-10-09 and its code went on
+(model-pool.md@c572c3b §5). LocalAI's model YAML holds the lifecycle now
+(model-pool-over-localai.md@c572c3b §7). The model pool retired on 2026-10-09 and its code went on
 2026-10-18; VeGa's wrapper keeps this module for `CPU`. The retirement is
 recorded in docs/notes/legacy-to-delete.md §8.
 """

@@ -14,7 +14,7 @@ any GPU without naming one.
 WHO HOLDS IT. Two callers, one mechanism:
 - the GPU governor app (app/gpu_governor.py), which follows the node's
   interactive claim;
-- The model pool's front, which followed the requests it proxied (docs/notes/model-pool.md
+- The model pool's front, which followed the requests it proxied (model-pool.md@c572c3b
   §11) until it retired on 2026-10-09; its code went on 2026-10-18.
 
 This module and app/gpu_level.py (the profile's GPU level: power limit,

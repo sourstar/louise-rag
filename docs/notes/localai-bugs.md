@@ -3,8 +3,8 @@
 *One place for everything this project owes or asks `mudler/LocalAI`: the
 defects found (B1–B14), the patches we carry (P1–P2), and the requests (R1–R5).
 The operator files them upstream. Started 2026-10-02 while mapping LocalAI
-against the model pool ([`model-pool-prior-art.md`](model-pool-prior-art.md)); the patches and
-requests come from [`model-pool-over-localai.md`](model-pool-over-localai.md), accepted
+against the model pool (`model-pool-prior-art.md`@c572c3b); the patches and
+requests come from `model-pool-over-localai.md`@c572c3b, accepted
 2026-10-03.*
 
 *Checked against v4.12.1 (2026-10-27; 308 commits from v4.11.0, read in
@@ -47,10 +47,10 @@ the source):*
 | **P6 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder output is kept PER SEQUENCE (`llama_memory_enc_dec`, stage 1 of llama-cpp-encoder-decoder.md), so a slot is encoded while others decode; on P3 and P4 | a late request joins the next decode step instead of waiting for the wave; the upstream shape (no public API) | not filed; [`deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-memory.patch`](../../deploy/localai/patches/staged/0006-llama-cpp-encoder-decoder-memory.patch); moves into the series after its card gates |
 | **P7 (staged)** | **patch staged, not in the series yet** | llama.cpp backend: the encoder outputs live ON THE DEVICE (stage 2: a persistent store written by the encoder graph, read by the decoder's `ggml_get_rows`; no host copies), on P5 | the shape upstream asked for (a persistent buffer, no host copies); the per-step upload gone | not filed; [`deploy/localai/patches/staged/0007-llama-cpp-encoder-decoder-store.patch`](../../deploy/localai/patches/staged/0007-llama-cpp-encoder-decoder-store.patch); moves into the series with P5 after the card gates |
 | R1 | request | a response header naming the backend instance (pid and start time) that answered | optional: the model pool checks before and after instead | not filed |
-| R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (model-pool-over-localai §8.2) | not filed |
+| R2 | request | a batched `Embedding` call: one backend call for N texts, where `/v1/embeddings` now makes N in sequence | only if the node measures a loss (model-pool-over-localai.md@c572c3b §8.2) | not filed |
 | R3 | request | read API keys from a file, not only from `LOCALAI_API_KEY` | only if LocalAI's own UI is published (invariant 8) | not filed |
 | R4 | request | admission by declared memory, priority eviction, refusal instead of overcommit (opt-in), eviction aware of other processes' memory, restore after quiet | availability; what the model pool gives up at the cut-over | not filed; #5352 is the nearest open issue |
-| R5 | request | a strict mode: LocalAI fills in no load option the model's YAML leaves unset — no GGUF guess, no hardware tuning, no app-wide setting — or says, per option, where each value came from | settings changed in LocalAI's UI would otherwise give runs nobody asked for; we pin instead (model-pool-over-localai §10) | not filed |
+| R5 | request | a strict mode: LocalAI fills in no load option the model's YAML leaves unset — no GGUF guess, no hardware tuning, no app-wide setting — or says, per option, where each value came from | settings changed in LocalAI's UI would otherwise give runs nobody asked for; we pin instead (model-pool-over-localai.md@c572c3b §10) | not filed |
 
 A global compile-cache directory was considered and is **not to be filed**
 (operator, 2026-10-02): the per-model caches already exist (§ at the end).
@@ -242,7 +242,7 @@ keep the limit.
 ### B8. `/models/reload` never forgets a removed model
 
 *Seen on a real LocalAI at 58830f7 with P1 (the model pool's smoke test,
-docs/notes/model-pool-over-localai.md §11), and certain from the code.*
+model-pool-over-localai.md@c572c3b §11), and certain from the code.*
 
 [`ReloadModelsEndpoint`](https://github.com/mudler/LocalAI/blob/58830f7ac508845a6f4efa32cfca06af422d4d82/core/http/endpoints/localai/edit_model.go#L123-L140)
 calls `LoadModelConfigsFromPath`, whose non-strict path only sets
@@ -564,7 +564,7 @@ byte-identical, and the VeGa wrapper forwards any method it does not
 intercept as bytes.
 
 **LIVE on the node, 2026-10-27 13:00**
-(`deploy/vega/switch/rollout-p2-20261027.sh`, series digest
+(`deploy/vega/switch/rollout-p2-20261027.sh@c572c3b`, series digest
 `e79a808b4808`, replacing `louise-sycl-f16-llama-cpp` in place, with the old
 tree in `backends-bak-20261027`):
 - bge-m3, granite, medcpt-query and qwen3-embedding-4b: each 16/16
@@ -1043,7 +1043,7 @@ model has replicas.
 (`core/http/endpoints/openai/embeddings.go` L112). llama.cpp's own server
 embeds a batch in one pass. File this only if the node's benchmark (03
 §3.3, tokens per second) measures a loss against llama-server, which is
-model-pool-over-localai §8.2.
+model-pool-over-localai.md@c572c3b §8.2.
 
 ### R3. API keys from a file
 
@@ -1056,7 +1056,7 @@ guards the admin routes.
 ### R4. The scheduling the model pool gives up
 
 What the model pool did that LocalAI does not, proposed as opt-in changes to the
-model YAML and its defaults in [`model-pool-prior-art.md`](model-pool-prior-art.md)
+model YAML and its defaults in `model-pool-prior-art.md`@c572c3b
 §7:
 - admission by declared memory per device, with a reserve;
 - priority eviction that checks the freed memory is enough;
@@ -1089,7 +1089,7 @@ the app-wide settings. Ask for either:
   (P1).
 
 Until then the model pool's models pin every such field
-([`model-pool-over-localai.md`](model-pool-over-localai.md) §10).
+(`model-pool-over-localai.md`@c572c3b §10).
 
 ---
 
@@ -1106,7 +1106,7 @@ know, neither of which a global setting is needed to close:
   fixed, they get the same per-model cache as the rest.
 - **A read-only models directory** (as the model pool mounts `/models`) cannot hold
   optimum-intel's `model_cache`; there the cache must be pointed elsewhere,
-  as the model pool does per model (`OV_CACHE_DIR`, model-pool.md §20).
+  as the model pool does per model (`OV_CACHE_DIR`, model-pool.md@c572c3b §20).
 
 Intel's driver cache (`NEO_CACHE_DIR`, default `$HOME/.cache`) lasts as long
 as the container, which is not a gap worth naming (operator, 2026-10-02):

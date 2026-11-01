@@ -106,7 +106,7 @@ import pyarrow.parquet as pq
 
 # `app` is imported lazily, inside the functions that embed. Everything else
 # here — load, the metrics, score, report — depends only on pyarrow and
-# numpy, so a sibling embedder that needs torch (tools/bakeoff_local.py, in
+# numpy, so a sibling embedder that needs torch (tools/bakeoff_local.py@c572c3b, in
 # an image the app's stack is not in) can import this module for the corpus,
 # the truncation and the slug and be scored by exactly the same code.
 

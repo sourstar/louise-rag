@@ -3,7 +3,7 @@
 ONE VERB, ONE READER PER KERNEL DRIVER. Whoever asks names a PCI device and
 gets two numbers or none; which driver answered is this module's business and
 nobody else's. The GPU probe asks through here and never learns a
-manufacturer's name (operator, 2026-09-20, docs/notes/model-pool.md §18: no
+manufacturer's name (operator, 2026-09-20, model-pool.md@c572c3b §18: no
 manufacturer in the platform — a second manufacturer is a second reader behind the same verb, as with the
 clock, `app/gpu_clock.py`). A driver with no reader here gives (None, None,
 why), and the asker goes on with what it declares, as it did before this

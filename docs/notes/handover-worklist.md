@@ -107,6 +107,6 @@ architecture-v2.md, p2p-rag-architecture-v2.md, p2p-discovery.md,
 lockss-p2p-evaluation.md, implementation-prompts.md, pack-format.md,
 no-central-node.md, certified-collections.md, lineage.md,
 embedding-redundancy.md, pack-live-edge.md, embedder-pool-spec.md,
-model-pool.md, figures-in-the-corpus.md, archive-signing-keys.md,
+model-pool.md@c572c3b, figures-in-the-corpus.md, archive-signing-keys.md,
 calibration.md, step4-vectors-study.md, step6-preflight.md — each gets a
 first line saying what superseded it.

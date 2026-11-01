@@ -756,13 +756,13 @@ third-party training-data terms, which is the actual blocker (§7.1b). Its
 dim 2560 is the cost — 3.3x DAR's bytes per vector, which
 `embedder-choice-and-supersession.md` §2 prices as the supersession bill.
 
-Measured with `tools/bakeoff_local.py` through the side-car, ~4–5 minutes
+Measured with `tools/bakeoff_local.py@c572c3b` through the side-car, ~4–5 minutes
 per model on the card.
 
 **`Qwen3-Embedding-0.6B` could not be measured — and the first account of
 why, written here the same afternoon, was wrong.** It said the two
 `UR_RESULT_ERROR_DEVICE_LOST` failures were "this model on the torch-XPU
-path", that "the card stays up, RAGE [the model pool] is untouched", and read a kernel event
+path", that "the card stays up, [the model pool] is untouched", and read a kernel event
 at 14:51:44 as an oops and the 15:03:15 engine reset as a hang. An audit
 against the kernel journal (2026-09-20, evening) says otherwise:
 
@@ -775,7 +775,7 @@ against the kernel journal (2026-09-20, evening) says otherwise:
 
 Process death first and the reset after is, by the postmortem's own rule
 in `llama-intel-arc-b70`, the driver RECLAIMING, not a hang. This is the
-incident `model-pool.md` §19 records from the other side: a container outside
+incident `model-pool.md`@c572c3b §19 records from the other side: a container outside
 the model pool took 21.4 GiB of the card and 22.8 GiB more of GPU buffers in host
 RAM, `xe` spilled every resident model to host memory without an error to
 anyone, the host ran out, and three of the model pool's children died. **The side-car

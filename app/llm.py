@@ -4,7 +4,7 @@ TWO PROTOCOLS, ONE CLIENT (`config.CHAT_API`):
 - `ollama` — `/api/chat`, newline-delimited JSON, `think`, `keep_alive` and a
   per-request `num_ctx`. What the node has always run.
 - `openai` — `/v1/chat/completions`, server-sent events. What llama-server
-  serves, and so what the model pool serves (docs/notes/model-pool.md §4): the same Qwen3
+  serves, and so what the model pool serves (model-pool.md@c572c3b §4): the same Qwen3
   file Ollama holds, run by the node's model container. Thinking is turned
   off through the model's own chat template (`enable_thinking`, which the
   node's file knows — checked 2026-09-19); the context size is the

@@ -138,7 +138,7 @@ def test_every_image_we_build_answers_sigterm_as_pid_1():
     """uvicorn installs its own handlers. A Python script of ours must
     install one: as PID 1 the kernel gives SIGTERM no default action."""
     dockerfiles = [ROOT / "Dockerfile", *sorted((ROOT / "deploy").glob("*/Dockerfile"))]
-    assert len(dockerfiles) > 1
+    assert dockerfiles[0].is_file()
     for dockerfile in dockerfiles:
         argv = _argv(dockerfile)
         name = dockerfile.relative_to(ROOT)

@@ -5,12 +5,12 @@
 # Run on the node:  ssh root@node bash -s < deploy/16f/create-normattiva-archive.sh
 # after the code carrying app/acquire/export_job.py is live.
 #
-# Like create-normattiva.sh, inside the live WORKER container. The recipe is
+# Like create-normattiva.sh@c572c3b, inside the live WORKER container. The recipe is
 # docs/notes/normattiva-archive-recipe.toml: `normattiva`'s space byte for
 # byte (the same space_id: the vectors of every shared chunk are carried,
 # RULE 1), the origin extended by the yearly exports.
 #
-# What differs from create-normattiva.sh:
+# What differs from create-normattiva.sh@c572c3b:
 #   5. the collection file says `profile = "archive"` instead of
 #      `slices = "all"` — the profile that adds the export files to the 23
 #      zips (app/acquire/specs.py); `slices` and `profile` cannot both be

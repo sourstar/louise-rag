@@ -343,7 +343,7 @@ Goal: make the whole Phase 1 loop true, not just its parts. You own cross-module
 correctness; expect to open fixes in several modules.
 
 Deliverables:
-1. tests/integration/two_node/: docker-compose bringing up producer node, consumer
+1. tests/integration/two_node/ (removed 2026-11-01): docker-compose bringing up producer node, consumer
    node, coordinator, mocked embed endpoint with recorded vectors; scripted flow:
    producer leases+embeds+uploads → consumer demands+imports+verifies → consumer
    answers a query citing imported vectors with correct provenance badges.

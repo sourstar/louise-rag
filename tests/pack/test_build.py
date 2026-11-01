@@ -1,7 +1,7 @@
 """`pack build`: a collection's documents become sliced record shards + a
 manifest — resumably, for gutenberg, pubmed and a synthesized wikipedia
 dump. (Reading a pack back as a collection, the `packed` plugin, is boxed
-in attic/ with its round-trip checks, 2026-09-14.)"""
+in attic/ (removed 2026-11-01) with its round-trip checks, 2026-09-14.)"""
 import bz2
 import threading
 from pathlib import Path

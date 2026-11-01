@@ -280,7 +280,7 @@ cross-reference to the wikipedia collection.
   a Codex naming the old parser, silently. Not blocking the rebuild —
   parser 5 goes in with a fresh Codex — but it is a missing refusal.
 - The development pubmed's `documents.authors` was backfilled
-  (`tools/backfill_pubmed_authors.py`) so the GUI is honest until the
+  (`tools/backfill_pubmed_authors.py@c572c3b`) so the GUI is honest until the
   root replaces it. That run also built the 632 missing container packs,
   which the records rebuild needs, so it is not throwaway work.
 

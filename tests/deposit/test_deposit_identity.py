@@ -274,7 +274,7 @@ def test_create_leaves_the_manifest_in_wal_mode_before_the_held_file(node):
         con.close()
 
 
-# ---- the space file the deposit runbook writes (deploy/16f/deposit-16f.sh) --
+# ---- the space file the deposit runbook writes (deploy/16f/deposit-16f.sh@c572c3b) --
 
 def test_a_space_whose_engine_is_a_localai_run_makes_a_version_4_codex_the_others_copy(node):
     """deploy/16f: the first deposit collection's space file is written from

@@ -23,7 +23,7 @@ takes the [CLS] row of `make_cls_infer` — its IR built by convert_article.py.
 
 OpenVINO's model cache (its `CACHE_DIR`, `make_infer`'s `cache_dir`): compiling
 the model for the card is the slow part of a start, and with a cache the next
-start reads the compiled model back instead (docs/notes/model-pool.md §20). The
+start reads the compiled model back instead (model-pool.md@c572c3b §20). The
 backend passes OV_CACHE_DIR, set in the model's YAML and so part of its run
 (operator, 2026-10-01).
 """

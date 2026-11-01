@@ -3,7 +3,7 @@
 # intel-sycl-f16-llama-cpp), so every vector has a receipt.
 # PINNED (vega.md §11): deposit-granite embeds with it (embed = "all") and it is
 # the node's default encoder (platform.toml); 211 MiB of weights.
-# Every load option is the model pool's granite-embedding-107m-multilingual.yaml (/mnt/ssd5/apps/louise-rage/state/localai-models/,
+# Every load option is the model pool's granite-embedding-107m-multilingual.yaml (the model pool's state/localai-models/,
 # read only), the weights the same host files, mounted read-only at
 # /models/weights/<name> (deploy/vega/stage/mounts.py), so the model path is
 # the model pool's too. Only the backend, the env (caches under /data/louise-cache) and

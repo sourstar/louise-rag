@@ -71,7 +71,7 @@ from .tag import DIGEST
 RECEIPT_TTL_S = 600.0
 #: How many receipts at most, oldest dropped first. One is about 650 bytes in
 #: memory, so this is about 65 MB at worst. The node embeds tens of inputs a
-#: second (bge-m3 on the card, 10,700 tokens/s, model-pool-over-localai §12), about
+#: second (bge-m3 on the card, 10,700 tokens/s, model-pool-over-localai.md@c572c3b §12), about
 #: 21,000 in ten minutes: five times that headroom.
 MAX_RECEIPTS = 100_000
 #: Longest intake line: a run description is about 2 KB, a receipt 300 bytes,

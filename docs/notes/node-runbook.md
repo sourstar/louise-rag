@@ -100,7 +100,7 @@ attributable.
    `git archive --format=tar.gz <sha> app tests tools docs calibration deploy requirements.txt requirements-dev.txt constraints.txt Dockerfile platform.toml.example`
    → the node's `/tmp/louise-src.tgz`, and `<sha>` → `/tmp/louise-commit`.
 3. **Script**: derive `/root/deploy-louise-<sha>.sh` from the last one
-   (`deploy/16f/deploy-louise-888a9be.sh`). Add `grep -q` markers that prove the new
+   (`deploy/16f/deploy-louise-madlad-t5.sh`, the newest). Add `grep -q` markers that prove the new
    code is in the staged tree, and the new tests to its node test run.
 4. **Run** `bash /root/deploy-louise-<sha>.sh`. It:
    - stages the tree beside the live one;
@@ -151,7 +151,7 @@ byte-identical (`tools/measure/records_ab.py`).
   - The quiet limit is the B70's `power1_cap` (xe hwmon, PL1), the only lever on its
     noise: its blower has no pwm (firmware-controlled), and `fancontrol.py` reads its
     rpm but never sets it. A power limit changes how fast a vector comes, never its
-    bytes (invariant 12 untouched). `gpu-cap.sh` (the max-clock cap) is retired with
+    bytes (invariant 12 untouched). `gpu-cap.sh@c572c3b` (the max-clock cap) is retired with
     cron 5; max_freq stays at rp0.
   - **Measured 2026-10-26** 22:45–23:12, kernel 6.18.52-production+truenas,
     `power_steps.py` (scratch): steady qwen3-embedding-4b load (16 texts of 2.4k
@@ -241,10 +241,10 @@ byte-identical (`tools/measure/records_ab.py`).
   `/sys/class/drm/card0/device/tile0/gt0/freq0` and `/sys/class/drm/card0/device/hwmon`
   (writable), the config directory read-only, and sets `TZ` to the node's. Check
   `card0` is `0000:03:00.0` first.
-- **Switching over from gpu-cap.sh** (retired, kept for the crons): redeploy the app
+- **Switching over from gpu-cap.sh@c572c3b** (retired, kept for the crons): redeploy the app
   from the yaml, check its log names `power1_max` (or the `max_freq` fallback and
   why), then add `[schedule]`/`[profiles]`/`[gpu.levels]` to platform.toml and remove
-  the `gpu-cap.sh` crons in the same step — both running would limit the card on
+  the `gpu-cap.sh@c572c3b` crons in the same step — both running would limit the card on
   two timetables.
 - **Health**: its heartbeat is `control.gpu_governor` in `node.sqlite`, refreshed every
   few seconds, with the applied level under `level`; the System tab's GPU fragment

@@ -1179,7 +1179,7 @@ unknown command. The table says where each went.
 | `/admin/…`, `/api/search`, `/api/verify` | `/api/hold/…`, `/api/ask/search`; T4 runs on use (`/api/search` and `/api/verify` are kept for their clients, §7.4) |
 | `/v1/chat/completions` | kept as an alias of `/api/ask/chat` for clients that speak that protocol |
 | LocalAGI's `/api/collections/…` | kept as aliases of `hold deposit`, `hold source` and `ask search` for LocalAGI (§7.4) |
-| `tools/sched_report`, `profile_embed`, `migrate_manifest`, `sync_refs`, `wikidata_classes` | `dev schedule-report`, `dev embedder-profile`, `dev migrate schema`, `dev refs-sync`, `dev wikidata-classes` (`dev load-profile` retired with the model pool, 2026-10-18: it measured reloads through the model pool's admin API) |
+| `tools/sched_report`, `profile_embed`, `migrate_manifest`, `sync_refs`, `wikidata_classes` | `dev schedule-report`, `dev embedder-profile`, `dev migrate schema`, `dev refs-sync`, `dev wikidata-classes` (`dev load-profile` retired 2026-10-18) |
 
 ## 7.7 Contracts: exit codes, arguments, output, concurrency, interruption
 
@@ -1385,8 +1385,8 @@ unset means the chat model translates (05 §5.2); `CHAT_URL`
 unset refuses `ask chat` (exit 2); `RERANK_URL` unset returns
 `reranked: false` (05 §5.6) for every collection whose file names no
 `[reranker]` of its own; `GPU_PROBE_URL` unset leaves the node's GPU
-panel empty and says why, and nothing else changes (`RAGE_URL` was
-retired with the model pool, 2026-10-18: a run is learnt from VeGa's receipts).
+panel empty and says why, and nothing else changes (a run is learnt from
+VeGa's receipts).
 `VEGA_URL` is where the receipts of an `api = "vega"` encoder
 are read (`/vega/receipts`, `/vega/runs/<run_id>`); unset, every answer of
 such an encoder is a deferral and nothing is written or searched through

@@ -12,7 +12,7 @@ the regression test that failed before the fix and passes after — which is the
 durable artifact a PR link would point at anyway.
 
 Definition of done, verified: `docker compose -f
-tests/integration/two_node/docker-compose.yml run --rm driver` runs the
+tests/integration/two_node/docker-compose.yml (removed 2026-11-01) run --rm driver` runs the
 producer → coordinator → consumer → query flow green from a clean checkout,
 **twice in a row against the same volumes** (second pass: bundle delivery is a
 no-op, vector counts stable, badges stay `verified`).
@@ -39,7 +39,7 @@ traded against making those documents unsearchable immediately.
 (plus `..._restores_local_provenance`).
 
 ### F1-D2 — Every node reported demand as the same consumer
-**Seam:** `app/contribute.py` × `app/coordinator/store.py`.
+**Seam:** `app/contribute.py@c572c3b` (removed 2026-11-01) × `app/coordinator/store.py`.
 **Symptom:** the coordinator counts *distinct reporters* so one noisy consumer
 cannot dominate demand ordering — and `report_demand` defaulted the reporter
 id to the **collection name**, so every node in the network reported as
@@ -52,7 +52,7 @@ deployment topology onto a shared service).
 `test_node_id_is_generated_once_and_persisted`.
 
 ### F1-D3 — No fulfilled lease was ever completed
-**Seam:** `app/coordinator/service.py` × `app/contribute.py` × the wire format.
+**Seam:** `app/coordinator/service.py` (removed 2026-11-01) × `app/contribute.py@c572c3b` × the wire format.
 **Symptom:** every lease sat `open` until its 24 h TTL expired, however fast
 the work finished — lease listings lied for a day about minutes-long work.
 **Root cause:** the upload handler keyed completion on a `lease_id` field the
@@ -126,7 +126,7 @@ with its defined outcome encoded:
 
 ## Two-node flow
 
-`tests/integration/two_node/` — compose stack of producer, consumer,
+`tests/integration/two_node/` (removed 2026-11-01) — compose stack of producer, consumer,
 coordinator and a mock embed endpoint (the only fake: deterministic
 text→vector, serving `/api/embed` and `/api/show` so both nodes compute the
 same **confirmed** space id with no monkeypatching anywhere). Flow proven:

@@ -95,7 +95,7 @@ does not set it loads as today.
 | U4 | OpenVINO: optimum-intel 1.15.0 imports `openvino.runtime`, which openvino 2026.4.1 removed | every OV model | **the stock OV path is broken for every model** (checked: `ModuleNotFoundError`); the fix (optimum-intel ≥ 2.x, as `intel-rerankers` has) moves every OV model to a new optimum |
 | U5 | OpenVINO: `if "CPU" or "NPU" in device_map` is always true (localai-bugs B1), so the GPU-only settings never apply | every OV model on GPU | **yes**: fixed, every OV model on a GPU gets the GPU settings, and its numbers can move |
 | U6 | OpenVINO: `export=True` at every load (B2), so an IR on disk is re-exported and the compile cache never hits | every OV model | load time only; the result is the same graph |
-| U7 | OpenVINO feature extraction: a text pair (segment ids) and [CLS] pooling | medcpt-article | none if gated (`pooling:cls`); the pair needs a field LocalAI's API does not have, so our marker (`app/rage/pairs.py` (the model pool's, deleted 2026-10-18)), which upstream is unlikely to take |
+| U7 | OpenVINO feature extraction: a text pair (segment ids) and [CLS] pooling | medcpt-article | none if gated (`pooling:cls`); the pair needs a field LocalAI's API does not have, so our marker (VeGa's, `app/vega/tag.py`), which upstream is unlikely to take |
 | U8 | Seq2Seq `Predict`: a batch in one prompt | MADLAD | none if gated; but the format is Louise's (app/translate.py), not LocalAI's |
 | U9 | `rerankers`: pass the device (none is passed) | medcpt-rerank (on its HF weights, not our IR) | **yes**: every reranker moves to the GPU when one is present — memory and placement for all of them |
 
@@ -130,7 +130,7 @@ Built, not yet run on the card (it is not in the PC yet):
 - Devices: torch calls a ROCm card `cuda`, so a model says `device:cuda`;
   OpenVINO has no AMD plugin and refuses it naming `device:cpu` (MedCPT runs
   on the CPU there); MADLAD hands its cache back on `cuda` as on `xpu`.
-- `deploy/localai-wsl/compose.yaml`: LocalAI's ROCm image (v4.11.0-gpu-hipblas,
+- `deploy/localai-wsl/compose.yaml@c572c3b`: LocalAI's ROCm image (v4.11.0-gpu-hipblas,
   by digest) with `/dev/dxg`, `/usr/lib/wsl/lib`, the host's librocdxg and
   `HSA_ENABLE_DXG_DETECTION=1`, under Docker Engine inside Ubuntu (Docker
   Desktop's VM exposes neither the device nor the libraries).

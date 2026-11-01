@@ -175,7 +175,6 @@ def test_the_bar_says_what_the_processes_hold_and_what_no_process_shown_holds(cl
     shares = arc.shares()
     assert round(shares["processes"], 1) == 37.5 and round(shares["unattributed"], 1) == 12.5
     assert round(shares["free"], 1) == 50.0
-    assert client.get("/admin/system/rage-alerts").status_code == 404, "the model pool strip is gone"
 
 
 def test_the_card_is_broken_down_by_model_louise_or_other(client, monkeypatch):
@@ -191,5 +190,4 @@ def test_the_card_is_broken_down_by_model_louise_or_other(client, monkeypatch):
         {"id": "flux-dev", "backend": "stablediffusion-ggml", "size_vram": 6 << 30}]})
     html = client.get("/admin/system/gpu").text
     assert "Louise · chat" in html and "flux-dev" in html and "other models 6.00 GiB" in html
-    # the model pool's old strip text (it was named RAGE then), kept gone
-    assert "outside LocalAI" in html and "RAGE not identified" not in html
+    assert "outside LocalAI" in html

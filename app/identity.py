@@ -1,7 +1,7 @@
 """This node's identity: the public half of its key, and where it is read from.
 
 Two processes need the identity and only one needs the secret
-(docs/notes/model-pool.md §13, "layer 2"; operator, 2026-09-29). The worker signs
+(model-pool.md@c572c3b §13, "layer 2"; operator, 2026-09-29). The worker signs
 — validations, a new collection's calibration member, bundles — and holds
 the private key at NODE_KEY_PATH. The web process only has to RECOGNISE
 what this node signed (its validations, its attestations, its

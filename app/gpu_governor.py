@@ -64,7 +64,7 @@ from typing import Any, Callable
 from . import config, db, gpu, gpu_level, node_state
 from .rage import dispatch
 # The clock itself lives in app/gpu_clock.py, which imports nothing of the
-# platform (the model pool's front held it too, docs/notes/model-pool.md §11). It is
+# platform (the model pool's front held it too, model-pool.md@c572c3b §11). It is
 # named here because this app, and its tests, know it as the governor's.
 from .gpu_clock import Governor  # noqa: F401
 

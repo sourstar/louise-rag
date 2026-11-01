@@ -19,11 +19,11 @@ only Louise's client speaks (app/translate.py):
 handed back as if it were a translation. LocalAI passes both texts through
 untouched while the model's YAML sets no template and none of `echo`,
 `cutstrings`, `extract_regex`, `trimspace` or `trimsuffix`
-(`core/backend/llm.go`, Finetune); tests/rage/test_localai_deploy.py holds the
+(`core/backend/llm.go`, Finetune); the model pool's deploy test (in git before 6a4f517) held the
 YAML to that.
 
-Parking (model-pool.md §21) is not here: it was the llama-swap placement's, retired at
-15g with it (LocalAI unloads instead; model-pool-over-localai §7).
+Parking (model-pool.md@c572c3b §21) is not here: it was the llama-swap placement's, retired at
+15g with it (LocalAI unloads instead; model-pool-over-localai.md@c572c3b §7).
 
 The load call:
     ModelFile     the snapshot directory

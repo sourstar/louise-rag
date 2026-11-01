@@ -70,7 +70,7 @@ def test_the_profile_filter_still_applies_to_a_snapshot(isolated_config):
 
 def test_a_source_without_snapshots_ignores_the_pin(isolated_config):
     """A source whose files are immutable publishes no dated dumps (genome's
-    assemblies were the worked case; boxed in attic/); a pin on such a
+    assemblies were the worked case; retired, attic/ removed 2026-11-01); a pin on such a
     collection must be inert rather than an error."""
     from app.acquire.spec import (AcquisitionSpec, ChecksumSource, DeltaSpec,
                                    Endpoint, Filter, RemoteFile, Transport)

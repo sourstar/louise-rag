@@ -165,8 +165,7 @@ share     parts and signed vector bundles (never text) as BitTorrent v2;
           all-or-nothing apply, verify-on-use at first retrieval
 
 network   peers through the mainline DHT or a hand-given address; who
-          embeds what is a function every peer computes (docs/04). An
-          optional coordinator only keeps statistics and credit.
+          embeds what is a function every peer computes (docs/04).
 ```
 
 ## The web interface
@@ -196,15 +195,6 @@ docker run --rm -v "$PWD:/srv" -w /srv louise-rag:dev python -m pytest tests/ -q
 5,300+ tests, no live model needed anywhere in the suite. `louise node
 start` runs the worker and the web interface (`--only worker|web` for one
 container each); `louise node stop` finishes the current units and exits 0.
-
-The end-to-end two-node flow (producer → coordinator → consumer → verified
-answer, mocked embed endpoint as the only fake):
-
-```bash
-docker compose -f tests/integration/two_node/docker-compose.yml run --rm driver
-# run it twice: the second pass proves system-level idempotence
-docker compose -f tests/integration/two_node/docker-compose.yml down -v
-```
 
 ## Getting a corpus
 
@@ -283,10 +273,6 @@ calibration set (docs/02 §2.4); trust comes from re-checking (docs/03), and
 `hold key trust` filters whose attestations count. An encoder run on a card
 must reproduce its own output bit for bit (CLAUDE.md invariant 12;
 [`docs/notes/approved-encoders.md`](docs/notes/approved-encoders.md)).
-
-The coordinator is optional and standalone, and only keeps statistics and
-credit: `python -m app.coordinator.service` (its own SQLite, holds no bulk
-data).
 
 ## Run a node on any Docker host
 

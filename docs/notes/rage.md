@@ -47,7 +47,7 @@ settings (09 §9.19), which a node may take and its gate checks.
 | RAGE | the RAG Engine, Louise's own, this note | — |
 | engine | the encoder's engine (09 §9.3) | for RAGE |
 | RAGE settings | `[encoder] batch` and `concurrency` (07 §7.8), recommended per card type in `rage-settings/` (09 §9.19) | "engine settings" |
-| the model pool | the container that ran every model, 2026-09-20 → 2026-10-18 — named RAGE then — VeGa's predecessor ([model-pool.md](model-pool.md)) | RAGE |
+| the model pool | the container that ran every model, 2026-09-20 → 2026-10-18 — named RAGE then — VeGa's predecessor (`model-pool.md`@c572c3b) | RAGE |
 
 ## 4. Its parts and its API
 
@@ -71,33 +71,22 @@ PMU for the card's busy share (record), deficit round robin for the card's
 budget between collections (share, next step), the scheduling notes'
 DRR/AIMD/CFS ([scheduling.md](scheduling.md)).
 
-## 5. The name's history, and what still says "rage"
+## 5. The name's history
 
 - **2026-09-20 → 2026-10-18.** RAGE named the model pool (before 2026-09-20
-  "the model pool"). VeGa took its run identity, LocalAI its lifecycle; it
-  retired on 2026-10-18, when the operator asked for "no RAGE nomenclature
-  left" and the node's app `louise-rage` became `louise-vega`.
-- **2026-11-01.** The name is RAGE's, the RAG Engine's, alone. Every file was
-  rewritten that day: the old RAGE is "the model pool", its four notes are
-  `model-pool*.md`, and an operator's quotation keeps its words with
-  "[the model pool]" beside "RAGE".
-
-What still says `rage` and means the model pool — names of things outside
-this repository, or of its past, kept because renaming them changes nothing
-here:
-
-- the node's datasets `/mnt/ssd5/apps/louise-rage/` (VeGa's `state/vega`,
-  LocalAI's `state/localai-models`) and `/mnt/ssd5/apps/louise-rage-15c/`.
-  Renaming them is a node operation (stop VeGa and LocalAI, `zfs rename`,
-  both apps' host paths); written down, not scheduled;
-- the registry image `ghcr.io/sourstar/rage`, pinned by digest in
-  `deploy/bakeoff-st/Dockerfile.xpu`;
-- paths in commits before 2026-10-18 — `app/rage/{front,admission,placement,
-  store,model,clock,swapyaml,runs,pairs}.py`, `tests/rage/`, `deploy/rage/`,
-  `rage.toml`, `rage.d/`, `tools/rage_smoke_*.py`. Today's `app/rage/` shares
-  no file name with them;
-- commit messages before 2026-11-01, and the removed route
-  `/admin/system/rage-alerts` (a test keeps it removed).
+  "the model pool"), VeGa's predecessor: VeGa took its run identity and
+  LocalAI its lifecycle, and it retired on 2026-10-18.
+- **2026-11-01.** The name is the RAG Engine's alone. That day every file
+  stopped calling the pool RAGE (operator quotations keep their words, with
+  "[the model pool]" in place of the old name), and then (operator: "Rename
+  or remove any old rage naming; rename vega where it fits, remove any
+  retired code, it will survive only in the github past commits") the
+  pool's notes, its names and every other retired piece of code left the
+  tree. They are read in git: the pool's notes as `model-pool*.md@c572c3b`
+  (docs/notes/README.md), its code before 6a4f517. What it named and VeGa
+  now holds is named VeGa — the app `louise-vega`, its dataset
+  `/mnt/ssd5/apps/louise-vega/` (renamed on the node after 2026-11-01). `tests/test_rage_name.py` keeps every old
+  name out of the tree.
 
 `louise-rag` is not RAGE either: it is Louise's own old name — the image,
 the TrueNAS app, the dataset `/mnt/ssd4/apps/louise-rag`, and the signed wire
