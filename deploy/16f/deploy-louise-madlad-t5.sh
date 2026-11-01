@@ -212,6 +212,7 @@ grep -q '^CARRIED = ("GPU_PROBE_URL",)' "$ROOT/src.new/deploy/16f/set_platform_i
 grep -q "    def declare(self, plugin: str, capacity: int | None) -> None:" "$ROOT/src.new/app/dispatch.py"   # #166: a gate's capacity no longer flips to the last caller
 grep -q "^def request_timeout(ctx: int | None, in_flight: int) -> float:" "$ROOT/src.new/app/hold/cpu_reference.py"   # #168: the CPU twin's requests bounded by the window
 grep -q "^class XePmu:" "$ROOT/src.new/app/gpu_pmu.py"   # #169: the card's busy from xe's perf PMU (CAP_PERFMON), never 0 when blind
+grep -q "^def card_busy(engines: Mapping\[str, float\]) -> float:" "$ROOT/src.new/app/gpu_busy.py"   # #170: busy = the busiest compute engine (a resident copy context does not count)
 grep -q '^def set_paused(name: str, paused: bool, \*, by: str = "") -> set\[str\]:' "$ROOT/src.new/app/node_state.py"   # #122 (4ef5c49): a pause records who and when
 grep -q "^def _non_finite(vector: bytes) -> bool:" "$ROOT/src.new/tools/vega_repro_check.py"   # #123 (e9ca1da): a NaN fails the repro check and the gate
 grep -q "^def _stdout_widowed() -> bool:" "$ROOT/src.new/app/process_exit.py"               # SIGPIPE ignored: a killed pool child no longer kills its parent
