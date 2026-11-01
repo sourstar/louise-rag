@@ -856,3 +856,24 @@ def test_a_run_at_the_cpu_reference_passes(node, endpoint):
     _cpu_reference(root, codex)
     con = db.connect(collection)
     assert backend_gate.embed_allowed(con, collection) is True
+
+
+def test_a_write_reads_its_own_statements_and_not_every_collections(node, endpoint, monkeypatch):
+    """München, 2026-11-01 (py-spy of wikipedia's embed pool): the per-write
+    check listed every collection's state/calibration/ for every document —
+    87.6 % of upsert_book. A run this collection holds a statement for is
+    looked up in its own directory; the space's other collections are read
+    only for a run it holds none for."""
+    root, collection, codex = node
+    assert backend_gate.embed_allowed(db.connect(collection), collection) is True
+    recipe = collections_mod.recipe_for(collection)
+    wide = {"n": 0}
+    real = hold_runs.statements_for_space
+
+    def counting(*a, **k):
+        wide["n"] += 1
+        return real(*a, **k)
+    monkeypatch.setattr(run_check.runs_mod, "statements_for_space", counting)
+    for _ in range(20):
+        run_check.check_write(collection, recipe, {R1})
+    assert wide["n"] == 0, "its own statement answered every write"

@@ -731,8 +731,13 @@ def check_write(collection, recipe, answered: set) -> None:
                        role="document", batched=batched(recipe), contributes=contributing(recipe))
         # A KEPT STATEMENT NOT YET RE-CHECKED IN THIS PROCESS is not relied
         # on: a deferral, and the stage's next `embed_allowed` re-checks it
-        kept = runs_mod.statements_for_space(_root(), collection.name, codex, "document",
-                                             signer=signer())
+        # this collection's own statements first — one cached listing; the
+        # space's other collections only for a run it holds none for (a
+        # borrowed statement is copied in, so that happens once)
+        kept = runs_mod.statements(_root(), collection.name, codex, "document", signer=signer())
+        if any(r and r not in kept for r in answered):
+            kept = runs_mod.statements_for_space(_root(), collection.name, codex, "document",
+                                                 signer=signer())
         for run_id in sorted(r for r in answered if r):
             if run_id not in kept or not rechecked(codex, "document", run_id, kept[run_id]):
                 raise runs_mod.RunUnvalidated(

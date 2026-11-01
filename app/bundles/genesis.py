@@ -1155,6 +1155,45 @@ def _sample_re_encode(collection, sampled: list[tuple[str, "embeddings.ChunkLike
         f"are eligible")
 
 
+#: the columns a stored row is compared on before it is rewritten
+_SAME_COLUMNS = ("id", "book_id", "lang", "seq", "chapter", "text", "vector")
+
+
+def unchanged_books(table, rows, natives) -> set[int]:
+    """Of `natives`, the documents whose stored rows are exactly `rows`'
+    rows for them: the same chunk ids, each with the same lang, seq,
+    chapter, text and vector BYTES, and no other row stored. One read by the
+    indexed `book_id`, 500 documents a filter; a read cut at its limit
+    answers nothing, so nothing is skipped on a partial view."""
+    import numpy as np
+    want: dict[int, dict] = {}
+    for r in rows:
+        want.setdefault(int(r["book_id"]), {})[r["id"]] = (
+            r.get("lang"), int(r.get("seq") or 0), r.get("chapter") or "", r["text"],
+            np.asarray(r["vector"]).tobytes())
+    books = sorted({int(n) for n in natives} & set(want))
+    have: dict[int, dict] = {}
+    for i in range(0, len(books), 500):
+        part = ",".join(str(b) for b in books[i:i + 500])
+        try:
+            at = (table.search().where(f"book_id IN ({part})", prefilter=True)
+                  .select(list(_SAME_COLUMNS)).limit(embeddings._RESUME_SCAN_MAX).to_arrow())
+        except Exception:                       # noqa: BLE001 — unread: rewrite as before
+            return set()
+        if at.num_rows >= embeddings._RESUME_SCAN_MAX:
+            return set()
+        if not at.num_rows:
+            continue
+        col = at.column("vector").combine_chunks()
+        vecs = col.flatten().to_numpy(zero_copy_only=False).reshape(at.num_rows, col.type.list_size)
+        cols = {c: at.column(c).to_pylist() for c in _SAME_COLUMNS if c != "vector"}
+        for k in range(at.num_rows):
+            have.setdefault(int(cols["book_id"][k]), {})[cols["id"][k]] = (
+                cols["lang"][k], int(cols["seq"][k] or 0), cols["chapter"][k] or "",
+                cols["text"][k], vecs[k].tobytes())
+    return {b for b in books if have.get(b) == want[b]}
+
+
 def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
                  embed_fn=None, fetch=None, keep_cache: bool = False,
                  revisit: bool = False, stop=None, wanted=None) -> dict:
@@ -1268,6 +1307,16 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
         import pyarrow as pa
         if embeddings.TABLE in conn.table_names():
             table = conn.open_table(embeddings.TABLE)
+            # RULE 1: a document whose stored rows ARE these rows — the same
+            # ids, texts and vector bytes, nothing else stored — is left as
+            # it is: deleting and adding the same bytes changes nothing but
+            # the table's version, a small fragment and the vector index
+            # (München, 2026-11-01: wikipedia's re-import after the re-cut,
+            # 441 commits a minute, net ±0, competing with embedding)
+            same = unchanged_books(table, rows, natives)
+            if same:
+                rows = [r for r in rows if int(r["book_id"]) not in same]
+                natives = [n for n in natives if int(n) not in same]
             # ONE delete per batch, not one per document: a Lance delete
             # scans the table for its filter, so a million per-document
             # deletes over a table growing to a million rows was the
