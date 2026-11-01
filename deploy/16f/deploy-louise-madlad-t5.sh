@@ -213,7 +213,6 @@ grep -q "    def declare(self, plugin: str, capacity: int | None) -> None:" "$RO
 grep -q "^def request_timeout(ctx: int | None, in_flight: int) -> float:" "$ROOT/src.new/app/hold/cpu_reference.py"   # #168: the CPU twin's requests bounded by the window
 grep -q "^class XePmu:" "$ROOT/src.new/app/gpu_pmu.py"   # #169: the card's busy from xe's perf PMU (CAP_PERFMON), never 0 when blind
 grep -q "^def card_busy(engines: Mapping\[str, float\]) -> float:" "$ROOT/src.new/app/gpu_busy.py"   # #170: busy = the busiest compute engine (a resident copy context does not count)
-grep -q "^CPU_REVIEW_LINE_4BIT = 0.985" "$ROOT/src.new/app/hold/embedder.py"   # #173: 4-bit weights hold a CPU review line of 0.985 (operator 2026-11-01: A)
 grep -q "^class Coalescer:" "$ROOT/src.new/app/embeddings.py"   # #174: step 1 lever 2, requests filled across documents
 grep -q "^def cpu_line_from(worst: float) -> float:" "$ROOT/src.new/app/hold/embedder.py"   # #175: a CPU review line per quantization level, computed
 grep -q '^def set_paused(name: str, paused: bool, \*, by: str = "") -> set\[str\]:' "$ROOT/src.new/app/node_state.py"   # #122 (4ef5c49): a pause records who and when
