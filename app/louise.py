@@ -3900,11 +3900,15 @@ def _embedder_check_runs(a, name, codex) -> int:
         print(f"louise: deferred: {e}", file=sys.stderr)
         return 3
     worst = 0
+    from app import encoder_use
     for role in roles:
         passes: list = []
         try:
-            body = run_check.validate(a.root, name, codex, recipe, role=role,
-                                      on_run=passes.append)
+            # leased for the whole gate: the worker's idle sweep leaves it loaded
+            with encoder_use.held(recipe, query=role == "query", collection=name,
+                                  holder=_lease_holder("hold embedder check")):
+                body = run_check.validate(a.root, name, codex, recipe, role=role,
+                                          on_run=passes.append)
         except emb.GateDeferred as e:
             print(f"louise: deferred: {role}: {e}", file=sys.stderr)
             return 3
@@ -3946,7 +3950,7 @@ def cmd_embedder_cpu_reference(a) -> int:
     texts, one at a time, again in reverse order). Exit 0 when kept, 1 when
     the twin is not reproducible, 2 when it is not a CPU run, 3 when it could
     not be asked."""
-    from app import run_check
+    from app import encoder_use, run_check
     from app.hold import collection as col, cpu_reference as cpu_ref, embedder as emb
     from app.hold import fingerprint
     name, codex = col.resolve(a.root, a.collection)
@@ -3968,19 +3972,23 @@ def cmd_embedder_cpu_reference(a) -> int:
     for role in roles:
         query = role == "query"
         try:
-            stated = run_check.stated_run(recipe, query=query,
-                                          probe_item=run_check.probe_for(codex, role))
-            if stated.driver != "cpu":
-                print(f"louise: {role}: the model states a run on {stated.driver!r}, not the "
-                      f"CPU: a CPU reference is made by the CPU twin", file=sys.stderr)
-                return 2
-            texts = emb.gate_texts(codex, role, items)
-            embed = run_check.answers(recipe, query=query, name=name)
-            one = run_check.answers(recipe, how="one", query=query, name=name)
-            vectors = embed(texts)
-            sixteen = [texts[i] for i in fingerprint.indices(texts)]
-            first = one(sixteen)
-            again = list(reversed(one(list(reversed(sixteen)))))
+            # the twin leased for the role's whole pass: one call is the 512
+            # items on the CPU, hours, past any lease renewed per batch
+            with encoder_use.held(recipe, query=query, collection=name,
+                                  holder=_lease_holder("hold embedder cpu-reference")):
+                stated = run_check.stated_run(recipe, query=query,
+                                              probe_item=run_check.probe_for(codex, role))
+                if stated.driver != "cpu":
+                    print(f"louise: {role}: the model states a run on {stated.driver!r}, not the "
+                          f"CPU: a CPU reference is made by the CPU twin", file=sys.stderr)
+                    return 2
+                texts = emb.gate_texts(codex, role, items)
+                embed = run_check.answers(recipe, query=query, name=name)
+                one = run_check.answers(recipe, how="one", query=query, name=name)
+                vectors = embed(texts)
+                sixteen = [texts[i] for i in fingerprint.indices(texts)]
+                first = one(sixteen)
+                again = list(reversed(one(list(reversed(sixteen)))))
         except emb.GateDeferred as e:
             print(f"louise: deferred: {role}: {e}", file=sys.stderr)
             return 3
@@ -4077,7 +4085,9 @@ def _gate(a):
             raise emb.GateDeferred(
                 f"the encoder for {name} was unreachable or failed: {e}") from e
 
-    return emb.run_gate(codex, reference=reference, embed=embed, items=items), codex
+    from app import encoder_use
+    with encoder_use.held(recipe, collection=name, holder=_lease_holder("hold embedder")):
+        return emb.run_gate(codex, reference=reference, embed=embed, items=items), codex
 
 
 def _as_candidate(recipe, a):
