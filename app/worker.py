@@ -1481,10 +1481,6 @@ def _embed_candidates(con, scope, limit: int, collection=None):
 #: the embed stage cuts a candidate in the parse pool when the manifest says
 #: it has at most this many chunks (`_embed_parallel`'s `prepared`)
 EMBED_PREPARE_MAX_CHUNKS = 64
-#: documents a producer keeps submitted at once when its requests are filled
-#: across documents (`embeddings.Coalescer`): enough for `slots` requests of
-#: the gated batch at one chunk a document (wikidata: 4 × 16), no more
-EMBED_COALESCE_DOCS = 64
 
 
 def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
@@ -1508,13 +1504,6 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     gate guards. Without `slots` (the rollback), `recipe.concurrency`
     documents run at once, as before.
 
-    REQUESTS FILLED ACROSS DOCUMENTS (gpu-saturation-plan.md, step 1 lever
-    2): with `slots` and a gated batch above one, the documents' texts go
-    through one `embeddings.Coalescer` — requests of up to the batch, `slots`
-    of them at once — and up to EMBED_COALESCE_DOCS documents are submitted,
-    so that requests fill when documents are short (wikidata: 1.04 chunks a
-    document, ~1 text a request before). A batch of one changes nothing.
-
     `keep_going()` is asked before each refill: False stops taking new
     documents (a pause), and what is in flight finishes and is committed.
 
@@ -1532,11 +1521,8 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     ends, SIGTERM included. A longer document still writes its own slices.
     """
     scope = db.get_scope(con)
-    size = embeddings.batch_size(recipe)
-    coalesce = slots is not None and size > 1
-    docs = (min(slots * size, EMBED_COALESCE_DOCS) if coalesce else slots)
-    window = recipe.concurrency if slots is None else docs + 1
-    submitted = None if slots is None else threading.Semaphore(docs)
+    window = recipe.concurrency if slots is None else slots + 1
+    submitted = None if slots is None else threading.Semaphore(slots)
     group = max(window * 2, config.EMBED_BATCH_DOCS)
     rows = _embed_candidates(con, scope, group, collection)
     # whether this collection has work it could send now (the card
@@ -1546,7 +1532,6 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     if not rows:
         return False
     sink = embeddings.PendingWrites()
-    co = None                       # the stream's Coalescer, made with the pool below
     # chunks embedded vs kept, for the call's log line (RULE 1's numbers)
     tally = embeddings.EmbedCounts()
     tally_lock = threading.Lock()
@@ -1592,8 +1577,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
             # a pool thread starts with an empty context: its requests
             # declare themselves here, or they would reach the gate at the
             # process default
-            with dispatch.working_as(Level.CORPUS, collection.name), \
-                    embeddings.coalescing(co):
+            with dispatch.working_as(Level.CORPUS, collection.name):
                 chunks = cut if cut is not None else _load_chunks(row, collection)   # PREPARED
                 tcon = borrow()
                 try:
@@ -1859,8 +1843,6 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     queue = [q for q in queue if q[0]["uid"] in left]
     pin = _pin_begin(collection, recipe)
     try:
-        if coalesce:
-            co = embeddings.Coalescer(recipe, size=size, lanes=slots, name=collection.name)
         with ThreadPoolExecutor(max_workers=window) as pool:
             refill(pool)
             while in_flight:
@@ -1878,11 +1860,6 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                 stats.recorder().set_in_flight(collection.name, len(in_flight))
         flush()         # what was embedded is written, SIGTERM included
     finally:
-        if co is not None:
-            co.close()
-            db.log_event(con, "info", "embed",
-                         f"requests filled across documents: {co.texts} texts in "
-                         f"{co.requests} request(s) of up to {size}")
         stats.recorder().set_in_flight(collection.name, 0)
         if deferred or _stop.is_set() or (keep_going is not None and not keep_going()):
             stats.recorder().set_backlog(collection.name, False)   # held back, not waiting

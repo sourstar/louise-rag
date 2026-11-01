@@ -161,7 +161,8 @@ def passing(body: dict[str, Any], codex: Codex) -> bool:
     an exact run's two single-text passes are byte-equal (`load_variation`
     "1"); a near-exact one measured several loads, varies by no more than
     NEAR_VARIATION, and reaches CPU_NEAR_LINE against a stored CPU reference;
-    any run falls below CPU_REVIEW_LINE against one and fails. Before version
+    any run falls below its review line against one and fails
+    (`embedder.cpu_review_line`: 0.995, 0.985 for 4-bit weights). Before version
     5 the gate's own-bytes verdict was never in the statement, so a run that
     did not give back its own bytes was admitted to write anyway (found
     2026-10-31 building this)."""
@@ -171,7 +172,8 @@ def passing(body: dict[str, Any], codex: Codex) -> bool:
         if not ok or int(body.get("version", 1)) < 5:
             return ok
         cpu = body["cpu_reference"]
-        if cpu is not None and Decimal(cpu["worst"]) < Decimal(str(emb.CPU_REVIEW_LINE)):
+        line = emb.cpu_review_line(body.get("engine"))      # 4-bit weights: their own line
+        if cpu is not None and Decimal(cpu["worst"]) < Decimal(str(line)):
             return False
         variation = Decimal(body["load_variation"])
         if body["exactness"] == emb.EXACT:

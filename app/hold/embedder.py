@@ -22,6 +22,7 @@ disagreeing about what was measured.
 from __future__ import annotations
 
 import os
+import re
 import statistics
 import time
 from dataclasses import dataclass
@@ -63,8 +64,49 @@ class StatedRun:
 #: whose answer to any calibration item is below this cosine to the stored
 #: CPU reference fails — "sends that engine to further review"
 CPU_REVIEW_LINE = 0.995
+#: THE REVIEW LINE FOR 4-BIT WEIGHTS (operator, 2026-11-01, choice A). A 4-bit
+#: model's CPU and card kernels differ by path, not by fault — the CPU
+#: quantizes activations to 8 bits, SYCL does not — so its card stands at
+#: ~0.998 against its CPU twin everywhere and lower on the shortest inputs:
+#: gutenberg's Qwen3-Embedding-4B Q4_K_M, run 0a80405f, worst 0.989292 (39
+#: tokens), p1 0.996898, median 0.998358 over 512, exact over 3 fresh loads,
+#: and two CPU engines agreeing 1.000000 on 19 of 19 (München, m6); bge-m3 at
+#: F16 against its twin, worst 0.999930. Still far above what a broken
+#: engine gives (NaN, 0.0865, 0.126). Every other weights keeps 0.995.
+CPU_REVIEW_LINE_4BIT = 0.985
+#: llama.cpp's 4-bit types as a GGUF file is named after them
+#: (Q4_0, Q4_1, Q4_K_S, Q4_K_M, IQ4_NL, IQ4_XS, MXFP4)
+_FOUR_BIT = re.compile(r"(?i)(?:^|[-_.])(?:I?Q4(?:_[A-Z0-9]+)*|MXFP4)(?=[-_.]|$)")
 #: what a NEAR-EXACT run must reach against it (operator, 2026-10-31)
 CPU_NEAR_LINE = 0.999
+
+
+def four_bit(engine: Any) -> bool:
+    """Whether the run's weights are a 4-bit quantisation: the weights FILE
+    LocalAI loaded, as its load options name it (`options.Model`, kept by
+    app/vega/loadopts.py, in the stated run and so in its statement), read
+    for llama.cpp's type tag. A name, not the file's own header: VeGa states
+    the weights by digest, and the wrapper — whose code is part of every run
+    — would have to read GGUF's `general.file_type` and state it, a new run
+    for every model. That is the standard way and is written down here to
+    be taken at the wrapper's next change; a file renamed against its type
+    would get the wrong line until then, and either line still fails a
+    broken engine."""
+    options = (engine or {}).get("options") if isinstance(engine, dict) else None
+    model = (options or {}).get("Model") if isinstance(options, dict) else None
+    if not isinstance(model, str) or not model:
+        return False
+    stem = os.path.basename(model)
+    for ext in (".gguf", ".bin"):
+        if stem.lower().endswith(ext):
+            stem = stem[: -len(ext)]
+    return bool(_FOUR_BIT.search(stem))
+
+
+def cpu_review_line(engine: Any) -> float:
+    """The CPU review line a run is held to: CPU_REVIEW_LINE_4BIT for 4-bit
+    weights, CPU_REVIEW_LINE for every other."""
+    return CPU_REVIEW_LINE_4BIT if four_bit(engine) else CPU_REVIEW_LINE
 EXACT, NEAR = "exact", "near"
 #: THE MULTI-LOAD GATE (operator, 2026-10-31: "the gate may include multiple
 #: runs to ensure that the tolerance is not just a lucky run"): fresh loads
@@ -118,6 +160,8 @@ class Run:
     exactness: str = EXACT
     loads: int = 1
     load_variation: float = 1.0
+    #: the CPU review line this run is held to (`cpu_review_line`)
+    cpu_line: float = CPU_REVIEW_LINE
 
     @property
     def cpu_worst(self) -> float | None:
@@ -147,7 +191,7 @@ class Run:
         from the statement)."""
         if not (self.passed >= self.min_pass and self.median >= self.tolerance):
             return False
-        if self.cpu_worst is not None and self.cpu_worst < CPU_REVIEW_LINE:
+        if self.cpu_worst is not None and self.cpu_worst < self.cpu_line:
             return False
         if self.exactness == EXACT:
             return self.reproducible is not False and self.load_variation >= 1.0
@@ -185,10 +229,11 @@ class Run:
                          "and its collection asks `exactness = \"exact\"` (CLAUDE.md invariant "
                          "12; set the vendor's reproducibility mode and one request at a time, "
                          "docs/notes/approved-encoders.md)")
-        if self.cpu_worst is not None and self.cpu_worst < CPU_REVIEW_LINE:
+        if self.cpu_worst is not None and self.cpu_worst < self.cpu_line:
             parts.append(f"against the stored CPU reference the worst of the 512 is "
-                         f"{self.cpu_worst:.6f}, below the review line {CPU_REVIEW_LINE} "
-                         f"(operator, 2026-10-18): nothing is written from this run until a "
+                         f"{self.cpu_worst:.6f}, below the review line {self.cpu_line} "
+                         f"(operator, 2026-10-18; 4-bit weights {CPU_REVIEW_LINE_4BIT}, "
+                         f"2026-11-01): nothing is written from this run until a "
                          f"person has reviewed it (docs/notes/near-exact-runs.md)")
         return "; ".join(parts)
 
@@ -443,6 +488,7 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
         reproducible=reproducible, cpu_run=cpu_run, cpu_cosines=cpu_cos,
         load_variation=variation, loads=loads,
         exactness=NEAR if (exactness == NEAR and variation < 1.0) else EXACT,
+        cpu_line=cpu_review_line(stated.engine if stated is not None else None),
     )
 
 
