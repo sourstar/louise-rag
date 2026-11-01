@@ -30,14 +30,21 @@ A copy leaves quarantine when, on this peer (03 §3.6):
      encoder's in an asymmetric space. A run that FAILED has been tested: it
      withholds the VECTOR LEG and quarantines nothing (02 §2.4: "a peer that
      fails may still search with what it holds");
-  4. the licence acknowledgement exists where the class requires one;
-  5. this peer's own `records-vs-origin` passed — or could not run, and the
-     operator recorded the decision (`hold collection ack --origin-unchecked`).
+  4. the licence acknowledgement exists where the class requires one.
 
-It RETURNS when its encoder states a run not yet tested, and when this peer's
-own `records-vs-origin` FAILS — the latest of its own attestations decides,
-so a later pass clears it and nothing else does. A `roots` or `chunks`
-failure after a pass is one shard's local fault (03 §3.6), never this.
+THE ORIGIN CHECK IS SHOWN, NEVER WAITED FOR (03 §3.6 amended, operator
+2026-11-01: "The check against the source is optional, the gating of the
+vectore is not"). Test 5, this peer's own `records-vs-origin`, is computed
+and shown — passed, open, cannot run, failed — and its result stays in
+`origin_check` and `hold collection show`; it holds nothing in quarantine
+and returns nothing to it. CLAUDE.md asks the corpus to be VERIFIABLE
+(invariant 11: `origin_hash`, refused at build) and the vectors to be GATED
+(invariants 1, 12); a quarantine that withheld embedding behind the origin
+check made it a vector gate. An `--origin-unchecked` acknowledgement already
+recorded is still read and shown.
+
+It RETURNS when its encoder states a run not yet tested. A `roots` or
+`chunks` failure after a pass is one shard's local fault (03 §3.6), never this.
 
 CODEX COLLECTIONS ONLY. A legacy collection carries nothing the tests need,
 so it could never leave: it is always in use.
@@ -83,6 +90,8 @@ REFUSED, QUARANTINE, IN_USE = "refused", "quarantine", "in-use"
 PASSED, OPEN, FAILED = "passed", "open", "failed"
 CANNOT_RUN, ACKNOWLEDGED, NOT_REQUIRED = "cannot-run", "acknowledged", "not-required"
 IN_USE_BEFORE = "in-use-before"      # the operator's decision stands in (see the header)
+#: tests shown and never waited for: the origin check (03 §3.6, amended 2026-11-01)
+SHOWN_ONLY = ("origin",)
 
 # 09 §9.3's `origin_check`
 ORIGIN_PASSED, ORIGIN_PENDING = "passed", "pending"
@@ -499,9 +508,9 @@ def _origin(root: Path, name: str, codex: Codex, bodies, key: str | None) -> tup
         shards = ", ".join(latest.get("shards") or []) or "a shard"
         return (Test("origin", FAILED,
                      f"this peer's own records-vs-origin FAILED on {shards} "
-                     f"({latest.get('time')}): a copy that does not reproduce its origin "
-                     f"is not used here until a person decides (03 §3.6)",
-                     f"a later pass of {clears}, or `louise hold collection forget {name}`"),
+                     f"({latest.get('time')}): shown and published; it withholds nothing "
+                     f"(03 §3.6, amended 2026-11-01)",
+                     f"a later pass of {clears}"),
                 ORIGIN_FAILED)
     if latest is not None:
         return Test("origin", PASSED, f"this peer's own records-vs-origin passed "
@@ -514,7 +523,8 @@ def _origin(root: Path, name: str, codex: Codex, bodies, key: str | None) -> tup
                 ORIGIN_ACKED)
     # 03 §3.6: the fifth test CANNOT RUN when "this peer's platform image is
     # neither the Codex's nor equivalent (§3.4), so that its failure would
-    # say nothing about the collection" — and then the operator decides.
+    # say nothing about the collection" — shown, and waited for by nothing
+    # (amended 2026-11-01).
     from app.hold import equivalence
     ran = equivalence.running_image()
     if key is not None and ran is not None \
@@ -525,19 +535,16 @@ def _origin(root: Path, name: str, codex: Codex, bodies, key: str | None) -> tup
         return (Test("origin", CANNOT_RUN,
                      f"this peer runs {ran[:19]}…, neither the Codex's image nor one "
                      f"equivalent to it, so its records-vs-origin would say nothing "
-                     f"about the collection (03 §3.4){failed_here} — awaiting your "
-                     f"decision",
-                     f"{clears} run in the Codex's own image; or decide: `louise hold "
-                     f"collection ack {name} --origin-unchecked`, or `louise hold "
-                     f"collection forget {name}`"), ORIGIN_PENDING)
+                     f"about the collection (03 §3.4){failed_here}; nothing waits for "
+                     f"it (03 §3.6, amended 2026-11-01)",
+                     f"{clears} run in the Codex's own image"), ORIGIN_PENDING)
     tried = origin_attempt(root, name)
     if tried is not None:
         return (Test("origin", CANNOT_RUN,
                      f"records-vs-origin could not run (last tried {tried.get('time')}: "
-                     f"{tried.get('why')}) — awaiting your decision",
-                     f"{clears} when the origin answers; or decide: `louise hold "
-                     f"collection ack {name} --origin-unchecked`, or `louise hold "
-                     f"collection forget {name}`"), ORIGIN_PENDING)
+                     f"{tried.get('why')}); nothing waits for it (03 §3.6, amended "
+                     f"2026-11-01)",
+                     f"{clears} when the origin answers"), ORIGIN_PENDING)
     if elsewhere is not None:
         image = str(elsewhere.get("platform_image") or "?")
         return (Test("origin", OPEN,
@@ -632,13 +639,16 @@ def evaluate(root: Path, name: str, codex: Codex | None, *, licence: str,
     tests = (roots, _bundles(), gate, _licence(licence, name), origin)
     if before:
         tests = tuple(_decided(t) for t in tests)
-    waiting = [t for t in tests if t.status in (OPEN, FAILED, CANNOT_RUN)]
+    # the origin test is shown and never waited for (header; 03 §3.6 amended
+    # 2026-11-01): only the other four hold a copy in quarantine
+    gating = [t for t in tests if t.name not in SHOWN_ONLY]
+    waiting = [t for t in gating if t.status in (OPEN, FAILED, CANNOT_RUN)]
     reasons = tuple(f"{t.detail} — cleared by {t.clears}" if t.clears else t.detail
                     for t in waiting)
     if not waiting:
         # in use BY A DECISION is said, never passed over: the tests it stands in
         # for are still open, and `show` names them and what clears each
-        reasons = tuple(f"{t.detail} — cleared by {t.clears}" for t in tests
+        reasons = tuple(f"{t.detail} — cleared by {t.clears}" for t in gating
                         if t.status == IN_USE_BEFORE)
     return CopyState(QUARANTINE if waiting else IN_USE, reasons, origin_check,
                      leg, tests, why)

@@ -18,7 +18,10 @@ its acknowledgements — and written nowhere. Proved here:
   - `hold collection ack --origin-unchecked` is refused with a test open, with
     the origin never tried, and with the origin check run — and accepted with
     the origin away, recording its time and the peer's key;
-  - a later `records-vs-origin` failure re-quarantines, acknowledged or not;
+  - 03 §3.6 amended 2026-11-01 (operator): the origin check is shown, never
+    waited for — its status and `origin_check` are computed and shown, a later
+    `records-vs-origin` failure reads `failed`, acknowledged or not, and the
+    copy's state is decided by tests 1–4 alone;
   - IN THE REPORTING DEPLOY NOTHING IS WITHHELD.
 """
 import json
@@ -94,12 +97,17 @@ def fully_tested(root, collection, codex) -> None:
 # ---- each reason, and the test that clears it -----------------------------------------
 
 def test_a_new_copy_is_in_quarantine_and_each_test_clears_its_own_reason(node, endpoint):
+    """03 §3.6 amended 2026-11-01 (operator): the origin check is shown, never
+    waited for. A new copy's origin test is open and shown, but it is not one
+    of the reasons: tests 1–4 alone keep the copy in quarantine."""
     root, collection, codex = node
     s = state_of(collection)
     assert s.state == "quarantine" and s.origin_check == "pending"
     assert {t.name for t in s.tests if t.status == "open"} == \
         {"roots-and-chunks", "gate", "origin"}
-    assert len(s.reasons) == 3 and all("cleared by" in r for r in s.reasons)
+    assert len(s.reasons) == 2 and all("cleared by" in r for r in s.reasons)
+    assert not any(s.test("origin").detail in r for r in s.reasons), \
+        "the origin check is shown, never waited for"
 
     attest(root, codex, "roots")
     assert state_of(collection).test("roots-and-chunks").status == "open", "chunks too"
@@ -108,13 +116,17 @@ def test_a_new_copy_is_in_quarantine_and_each_test_clears_its_own_reason(node, e
 
     assert backend_gate.embed_allowed(db.connect(collection), collection) is True
     s = state_of(collection)
-    assert s.test("gate").status == "passed" and s.state == "quarantine"
+    assert s.test("gate").status == "passed"
     assert len(hold_runs.statements(root, "gutenberg", codex, "query", signer=ME)) == 1, \
         "an asymmetric space's query run is gated too, at once and by itself"
+    assert s.state == "in-use" and s.reasons == (), "tests 1–4 passed: nothing waits"
+    assert s.test("origin").status == "open" and s.origin_check == "pending", \
+        "the origin check is still shown, open"
 
     attest(root, codex, "records-vs-origin")
     s = state_of(collection)
     assert s.state == "in-use" and s.reasons == () and s.origin_check == "passed"
+    assert s.test("origin").status == "passed"
     assert s.test("bundles").status == "passed"
 
 
@@ -209,12 +221,18 @@ def test_an_evaluation_is_a_lookup_until_the_holdings_change(node, endpoint, mon
     monkeypatch.setattr(env, "verify", verify)
     monkeypatch.setattr(copy_state.os, "scandir", scandir)
     for _ in range(40):
-        assert state_of(collection).state == "in-use"
+        s = state_of(collection)
+        assert s.state == "in-use" and s.origin_check == "passed"
     assert (verified["n"], listed["n"]) == (0, 0), \
         "an evaluation re-read the attestations it had already read"
 
+    # 03 §3.6 amended 2026-11-01 (operator): the origin check is shown, never
+    # waited for — the new attestation is seen in what is shown, not the state
     attest(root, codex, "records-vs-origin", "fail", time="2026-10-01T00:00:00Z")
-    assert state_of(collection).state == "quarantine", "a new attestation was not read"
+    s = state_of(collection)
+    assert s.origin_check == "failed" and s.test("origin").status == "failed", \
+        "a new attestation was not read"
+    assert s.state == "in-use"
     assert verified["n"] > 0
 
 
@@ -441,15 +459,23 @@ def test_origin_unchecked_is_refused_when_the_check_was_never_tried(node, endpoi
     assert "has not been tried" in capsys.readouterr().err
 
 
-def test_origin_unchecked_is_accepted_with_the_origin_away(node, endpoint, capsys):
+def test_origin_unchecked_is_accepted_with_the_origin_away_and_changes_only_what_is_shown(
+        node, endpoint, capsys):
+    """03 §3.6 amended 2026-11-01 (operator): the origin check is shown, never
+    waited for. With tests 1–4 passed the copy is in use before any decision;
+    the origin that could not run is shown as such, and the acknowledgement,
+    still accepted and recorded, changes only what is shown."""
     root, collection, codex = node
     all_but_the_origin(root, collection, codex)
     copy_state.note_origin_attempt(root, "gutenberg", codex,
                                    why="https://www.gutenberg.org/ timed out", now=NOW)
-    waiting = state_of(collection)
-    assert waiting.state == "quarantine" and waiting.origin_check == "pending"
-    assert "awaiting your decision" in waiting.reasons[0]
-    assert "--origin-unchecked" in waiting.reasons[0] and "forget" in waiting.reasons[0]
+    away = state_of(collection)
+    assert away.state == "in-use" and away.reasons == (), "the origin is never waited for"
+    assert away.origin_check == "pending"
+    origin = away.test("origin")
+    assert origin.status == "cannot-run" and "nothing waits for it" in origin.detail
+    assert "--origin-unchecked" not in origin.clears and "forget" not in origin.clears, \
+        "no decision is asked for a test nothing waits for (03 §3.6, amended 2026-11-01)"
 
     assert ack(root) == 0
     out = capsys.readouterr().out
@@ -461,6 +487,7 @@ def test_origin_unchecked_is_accepted_with_the_origin_away(node, endpoint, capsy
     s = state_of(collection)
     assert s.state == "in-use" and s.reasons == (), "in use like any other, with no mark"
     assert s.origin_check == "acknowledged-unchecked"
+    assert s.test("origin").status == "acknowledged"
 
 
 def test_origin_unchecked_is_refused_when_the_check_has_in_fact_run(node, endpoint, capsys):
@@ -470,21 +497,36 @@ def test_origin_unchecked_is_refused_when_the_check_has_in_fact_run(node, endpoi
     assert "HAS run" in capsys.readouterr().err
 
 
-def test_a_later_origin_failure_requarantines_acknowledged_or_not(node, endpoint):
+def test_a_later_origin_failure_is_shown_and_quarantines_nothing_acknowledged_or_not(
+        node, endpoint):
+    """03 §3.6 amended 2026-11-01 (operator): the origin check is shown, never
+    waited for. A later `records-vs-origin` failure reads `failed` — over an
+    acknowledgement, or with none — and returns nothing to quarantine: the
+    copy's state is decided by tests 1–4 alone."""
     root, collection, codex = node
     all_but_the_origin(root, collection, codex)
     copy_state.note_origin_attempt(root, "gutenberg", codex, why="away", now=NOW)
     copy_state.record_origin_ack(root, "gutenberg", codex, now=NOW)
-    assert state_of(collection).state == "in-use"
+    s = state_of(collection)
+    assert s.state == "in-use" and s.origin_check == "acknowledged-unchecked"
 
     attest(root, codex, "records-vs-origin", "fail", time="2026-10-01T00:00:00Z",
            shards=("lang=en/00001",))
     s = state_of(collection)
-    assert s.state == "quarantine" and s.origin_check == "failed"
-    assert "lang=en/00001" in s.reasons[0] and "until a person decides" in s.reasons[0]
+    assert s.origin_check == "failed" and s.test("origin").status == "failed", \
+        "a verdict outranks the acknowledgement, and it is shown"
+    assert "lang=en/00001" in s.test("origin").detail
+    assert s.state == "in-use" and s.reasons == (), "the origin check is never waited for"
+
+    (root / "gutenberg" / "state" / copy_state.ORIGIN_ACK).unlink()     # not acknowledged
+    s = state_of(collection)
+    assert s.origin_check == "failed" and s.test("origin").status == "failed"
+    assert s.state == "in-use" and s.reasons == ()
 
     attest(root, codex, "records-vs-origin", "pass", time="2026-10-02T00:00:00Z")
-    assert state_of(collection).state == "in-use", "the latest of its own checks decides"
+    s = state_of(collection)
+    assert s.origin_check == "passed", "the latest of its own checks decides what is shown"
+    assert s.state == "in-use"
 
 
 def test_a_roots_failure_after_a_pass_is_one_shards_fault_not_quarantine(node, endpoint):
@@ -540,7 +582,9 @@ def test_hold_collection_show_prints_the_state_and_every_reason(node, endpoint, 
     shown = json.loads(capsys.readouterr().out)
     assert "refused" not in shown, "09 §9.3: replaced by state and reasons"
     assert shown["state"] == "quarantine" and shown["origin_check"] == "pending"
-    assert len(shown["reasons"]) == 3
+    # 03 §3.6 amended 2026-11-01 (operator): the origin check is shown, never
+    # waited for — `origin_check` shows it; roots-and-chunks and the gate wait
+    assert len(shown["reasons"]) == 2
 
     fully_tested(root, collection, codex)
     copy_state.reset_cache()
@@ -589,7 +633,10 @@ def test_a_copy_in_use_before_enforcement_stays_in_use_and_says_by_whose_decisio
     collection to be created will be our guinea pig." The copies a peer used
     before it enforced cannot run two of the tests yet; the decision is
     desired state, by collection id, and NOTHING IS PRETENDED: no test reads
-    passed, no attestation appears, the origin check stays pending."""
+    passed, no attestation appears, the origin check stays pending. 03 §3.6
+    amended 2026-11-01 (operator): the origin check is shown, never waited
+    for — its status still reads the decision, but the decision stands in,
+    among the reasons, for roots-and-chunks alone."""
     root, collection, codex = node
     assert backend_gate.embed_allowed(db.connect(collection), collection) is True
     before = _tree(root)
@@ -600,9 +647,11 @@ def test_a_copy_in_use_before_enforcement_stays_in_use_and_says_by_whose_decisio
     assert {t.name: t.status for t in s.tests} == {
         "roots-and-chunks": "in-use-before", "bundles": "passed", "gate": "passed",
         "licence": "not-required", "origin": "in-use-before"}
-    assert len(s.reasons) == 2 and all(
+    assert len(s.reasons) == 1 and all(
         "operator's decision" in r and "still open" in r and "cleared by" in r
         for r in s.reasons), "in use BY A DECISION is said, and what clears each test"
+    assert s.reasons[0].startswith(s.test("roots-and-chunks").detail), \
+        "the origin is shown, never waited for: the decision stands in for it nowhere"
     assert _tree(root) == before, "a decision wrote a file: it is desired state, in platform.toml"
 
     assert copy_state.withholds(collection) is None
@@ -619,12 +668,17 @@ def test_a_copy_in_use_before_enforcement_stays_in_use_and_says_by_whose_decisio
 
 
 def test_the_guinea_pig_is_tested_for_real(node, endpoint, tmp_path):
-    """Every copy NOT in the list — another collection's id is in it here."""
+    """Every copy NOT in the list — another collection's id is in it here.
+    03 §3.6 amended 2026-11-01 (operator): the origin check is shown, never
+    waited for, so roots-and-chunks is what keeps it in quarantine."""
     root, collection, codex = node
     assert backend_gate.embed_allowed(db.connect(collection), collection) is True
     enforce(tmp_path, before=["sha256:" + "ab" * 32])
     s = state_of(collection)
-    assert s.state == "quarantine" and len(s.reasons) == 2
+    assert s.state == "quarantine" and len(s.reasons) == 1
+    assert s.reasons[0].startswith(s.test("roots-and-chunks").detail)
+    assert s.test("roots-and-chunks").status == "open" and s.test("origin").status == "open", \
+        "tested for real: no decision stands in for either"
     assert copy_state.withholds(collection).startswith("quarantine: ")
     assert collection not in query_service.resolve_collections(None)
 
@@ -656,7 +710,11 @@ def test_the_decision_stands_in_for_no_failure_no_gate_and_no_licence(node, endp
     attest(root, codex, "records-vs-origin", "fail", time="2026-09-19T12:00:00Z",
            shards=["records-0001"])
     s = state_of(collection)
-    assert s.state == "quarantine" and s.origin_check == "failed"
+    # 03 §3.6 amended 2026-11-01 (operator): the origin check is shown, never
+    # waited for — the decision does not stand in for the failure (it reads
+    # failed), and the failure, shown only, withholds nothing
+    assert s.origin_check == "failed" and s.test("origin").status == "failed"
+    assert s.state == "in-use" and s.reasons == ()
 
     # and a refusal is a refusal
     assert copy_state.evaluate(root, "gutenberg", codex, licence="not_required", key=mine,
@@ -718,25 +776,33 @@ def test_an_origin_failure_under_another_image_flags_nothing(node, endpoint):
 
 
 def test_the_references_own_failure_still_flags(node, endpoint):
+    """03 §3.6 amended 2026-11-01 (operator): the origin check is shown, never
+    waited for — the reference's failure is shown as `failed`, and the copy's
+    state is decided by tests 1–4 alone."""
     root, collection, codex = node
     all_but_the_origin(root, collection, codex)
     attest(root, codex, "records-vs-origin", "fail", image=NEWER, time="2026-10-01T00:00:00Z")
     attest(root, codex, "records-vs-origin", "fail", time="2026-10-02T00:00:00Z")
     s = state_of(collection)
-    assert s.state == "quarantine" and s.origin_check == "failed"
+    assert s.origin_check == "failed" and s.test("origin").status == "failed"
+    assert s.state == "in-use"
 
 
 def test_an_image_that_proved_equivalence_can_flag(node, endpoint):
     """Its own records-vs-origin AND chunks passed under it: it is a
-    reference for this collection now, and its later failure counts."""
+    reference for this collection now, and its later failure counts — shown
+    as `failed`; 03 §3.6 amended 2026-11-01 (operator): the origin check is
+    shown, never waited for."""
     root, collection, codex = node
     all_but_the_origin(root, collection, codex)
     attest(root, codex, "records-vs-origin", image=NEWER, time="2026-10-01T00:00:00Z")
     attest(root, codex, "chunks", image=NEWER, time="2026-10-01T00:00:00Z")
-    assert state_of(collection).state == "in-use"
+    s = state_of(collection)
+    assert s.state == "in-use" and s.origin_check == "passed"
     attest(root, codex, "records-vs-origin", "fail", image=NEWER, time="2026-10-02T00:00:00Z")
     s = state_of(collection)
-    assert s.state == "quarantine" and s.origin_check == "failed"
+    assert s.origin_check == "failed" and s.test("origin").status == "failed"
+    assert s.state == "in-use"
 
 
 def test_half_an_equivalence_is_none(node, endpoint):
@@ -807,15 +873,18 @@ def test_under_an_image_that_is_not_the_reference_the_origin_check_cannot_run(
         node, endpoint, monkeypatch):
     """03 §3.6: the fifth test CANNOT RUN when "this peer's platform image is
     neither the Codex's nor equivalent (§3.4), so that its failure would say
-    nothing about the collection" — and the operator decides, with `hold
-    collection ack --origin-unchecked`."""
+    nothing about the collection" — and the operator may decide, with `hold
+    collection ack --origin-unchecked`. 03 §3.6 amended 2026-11-01
+    (operator): the origin check is shown, never waited for, so the copy is
+    in use meanwhile."""
     from app.hold import equivalence
     root, collection, codex = node
     monkeypatch.setattr(equivalence, "equivalent_by_versions", lambda c: False)  # versions differ
     all_but_the_origin(root, collection, codex)
     monkeypatch.setenv("LOUISE_PLATFORM_IMAGE", NEWER)
     s = state_of(collection)
-    assert s.state == "quarantine" and s.test("origin").status == "cannot-run"
+    assert s.test("origin").status == "cannot-run" and s.origin_check == "pending"
+    assert s.state == "in-use" and s.reasons == ()
     assert "neither the Codex's image" in s.test("origin").detail
     assert copy_state.origin_ack_refusal(s) is None, "the operator may decide"
 

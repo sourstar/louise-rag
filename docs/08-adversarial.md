@@ -64,9 +64,9 @@ It earns no place in catalogue rankings until independent parties
 reproduce a sample of its vectors on its own records (§3.5–3.6). It earns
 no stranger's GPU either, though the precondition there is on the
 records, not on the vectors: a peer contributes vectors to a collection
-only after its own `roots` and `chunks` pass on the parts it holds and
-at least one `records-vs-origin` attestation — its own or another key's —
-exists for the snapshot (§4.5). Records are checked before GPU is spent;
+only after its own `roots` and `chunks` pass on the parts it holds
+(§4.5; a `records-vs-origin` attestation is no longer one, 2026-11-01:
+the corpus is verifiable by its `origin_hash`, the vectors are gated). Records are checked before GPU is spent;
 a vector precondition would be circular, because the first vectors on any
 collection are someone's unreproduced vectors. Ignoring it costs one
 Codex read. Visibility is a function of independent reproduction, not of

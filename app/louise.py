@@ -2699,8 +2699,10 @@ def cmd_vectors_export(a) -> int:
 
 
 def _ack_origin_unchecked(a, name, codex) -> int:
-    """`hold collection ack <collection> --origin-unchecked` — the other thing
-    an operator may acknowledge (07 §7.7; 03 §3.6): that this peer's own
+    """`hold collection ack <collection> --origin-unchecked` — NO LONGER
+    NEEDED since 2026-11-01 (03 §3.6 amended, operator: the origin check is
+    shown and never waited for); kept so a decision already recorded reads
+    the same. The other thing an operator may acknowledge: that this peer's own
     `records-vs-origin` COULD NOT RUN while every other test of the copy
     passed. It prints what passed, what could not run and when it was last
     tried, waits for consent, and records the decision with its time and the
@@ -4777,7 +4779,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="accept the web-sources disclaimer, once for the node (04 §4.4)")
     p.add_argument("--origin-unchecked", action="store_true", dest="origin_unchecked",
                    help="record the decision to use a copy whose origin could not "
-                        "be checked, every other test having passed (03 §3.6)")
+                        "be checked — no longer needed since 2026-11-01: the origin "
+                        "check is shown and never waited for (03 §3.6)")
     p.set_defaults(fn=cmd_collection_ack)
 
     src_ = nouns.add_parser("source", help="a deposit collection's URL sources (06 §6.7)")

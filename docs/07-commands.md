@@ -361,8 +361,10 @@ reader needs at the command line:
   The acknowledgement is written to the collection's state directory
   (§7.8). A yellow or red collection is not fetched, built, embedded,
   indexed, shared or searched until it exists: every such command exits
-  2 and names this one. `--origin-unchecked` is the other thing an
-  operator may acknowledge (03 §3.6): that this peer's own
+  2 and names this one. `--origin-unchecked` (*no longer needed since 2026-11-01*: the
+  origin check waits for nothing, 03 §3.6; an acknowledgement already
+  recorded is still read and shown) is the other thing an
+  operator may acknowledge: that this peer's own
   `records-vs-origin` could not run — the origin unreachable, or this
   platform image neither the Codex's nor equivalent (03 §3.4) — while
   every other test of the copy passed. It prints what passed, what
@@ -641,8 +643,9 @@ reader needs at the command line:
   contribute (2026-10-19). *(Flags added 2026-10-06 with migration step
   9d; the worker's pull 2026-10-07; the attestation pull 2026-10-19.)*
 - **`share contribute`.** Chooses parts by 04 §4.5, on a collection
-  whose `roots` and `chunks` pass on the parts this peer holds and for
-  whose snapshot a `records-vs-origin` attestation exists; then `hold
+  whose `roots` and `chunks` pass on the parts this peer holds (a
+  `records-vs-origin` attestation is no longer required, 2026-11-01);
+  then `hold
   vectors build`, then `share` of the bundles. While either embeds it
   holds an ENCODER LEASE in `state/node.sqlite` (renewed per batch,
   expiring on its own; *amended 2026-10-19*), so the worker's sweep of
