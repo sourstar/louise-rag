@@ -175,15 +175,16 @@ class Run:
                              f"`louise hold embedder cpu-reference`)")
         elif self.load_variation < 1.0 and self.reproducible is not False:
             parts.append(f"the run did not give back its own bytes across {self.loads} fresh "
-                         f"loads (closest {self.load_variation:.7f}; CLAUDE.md invariant 12). "
-                         f"An encoder measured FASTER that way may be admitted as near-exact: "
-                         f"`exactness = \"near\"` in its collection's [encoder] "
-                         f"(docs/notes/near-exact-runs.md)")
+                         f"loads (closest {self.load_variation:.7f}), and its collection asks "
+                         f"`exactness = \"exact\"`: bytes or nothing. Without that key a run "
+                         f"is held to the near-exact bound (CLAUDE.md invariant 12, operator "
+                         f"2026-11-01; docs/notes/near-exact-runs.md)")
         if self.reproducible is False and self.exactness == EXACT:
             parts.append("the run did not give back its own bytes: the sixteen fingerprint texts, "
-                         "embedded one at a time again in reverse order, came back different "
-                         "(CLAUDE.md invariant 12; set the vendor's reproducibility mode and "
-                         "one request at a time, docs/notes/approved-encoders.md)")
+                         "embedded one at a time again in reverse order, came back different, "
+                         "and its collection asks `exactness = \"exact\"` (CLAUDE.md invariant "
+                         "12; set the vendor's reproducibility mode and one request at a time, "
+                         "docs/notes/approved-encoders.md)")
         if self.cpu_worst is not None and self.cpu_worst < CPU_REVIEW_LINE:
             parts.append(f"against the stored CPU reference the worst of the 512 is "
                          f"{self.cpu_worst:.6f}, below the review line {CPU_REVIEW_LINE} "
@@ -408,7 +409,20 @@ def run_gate(codex: Codex, *, reference: Sequence[Sequence[float]],
         variation = 1.0 if reproducible else min(
             (cosine(a, b) for a, b in zip(single, again)), default=0.0)
         if contribute is not None:
-            invariant = batch_invariant(single, contribute(sixteen))
+            batched = contribute(sixteen)
+            invariant = batch_invariant(single, batched)
+            if not invariant and exactness == NEAR and len(batched) == len(single):
+                # BATCHES HELD TO THE RUN'S OWN BOUND (operator, 2026-11-01,
+                # choice B): a near-exact run's batched answers may differ in
+                # their last bits from its single-text ones, as its loads may;
+                # within NEAR_VARIATION they are the same run's answers, and
+                # the difference counts toward the run's variation. Further
+                # apart, the batching is refused as before — and the run stays
+                # what its single-text answers make it, for one text a request
+                apart = min((cosine(a, b) for a, b in zip(single, batched)), default=0.0)
+                invariant = apart >= NEAR_VARIATION
+                if invariant:
+                    variation = min(variation, apart)
         if reload is not None:
             loads, across = fresh_loads(sixteen + sweep(texts, SWEEP, codex.space.ctx),
                                         embed_one, reload, seed or b"")

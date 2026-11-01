@@ -96,13 +96,16 @@ class EmbedRecipe:
     # (`hold.runs`, `run_check.contributing`). Not part of the space, like
     # `concurrency`.
     batch: int = 0
-    # HOW EXACT A RUN OF THIS ENCODER MUST BE (operator, 2026-10-31, choice C;
-    # docs/notes/near-exact-runs.md): "exact" by default; "near" admits a run
-    # whose answers vary across fresh loads by no more than the gate's bound,
-    # measured over several loads and against the stored CPU reference — set
-    # only where such a setting is measured FASTER (flash attention). Never
-    # in the space: the vectors are the same function within tolerance.
-    exactness: str = "exact"
+    # HOW EXACT A RUN OF THIS ENCODER MUST BE (docs/notes/near-exact-runs.md).
+    # "near", THE DEFAULT since the operator's choice B (2026-11-01: "it makes
+    # not much sense to enforce local bit exactness" — peers already accept
+    # each other at the space's tolerance): a run is admitted when it
+    # reproduces itself within NEAR_VARIATION across fresh loads, orders and
+    # batches, and reaches the stored CPU reference at CPU_NEAR_LINE; a run
+    # that gives back its own bytes is recorded exact either way. "exact"
+    # stays as a collection's stricter choice: bytes or nothing. Never in the
+    # space: the vectors are the same function within tolerance.
+    exactness: str = "near"
     # Which processor this endpoint spends: "gpu" | "cpu". DESCRIPTIVE
     # ONLY — it never enters the space id, because the same model on a
     # different device computes the same function (that is precisely what
@@ -162,7 +165,7 @@ def _agrees(url: str, key: str, value: str, url_key: str, where: str) -> None:
 
 
 def _exactness(raw: dict, where: str) -> str:
-    value = str(raw.get("exactness", "exact"))
+    value = str(raw.get("exactness", "near"))
     if value not in ("exact", "near"):
         raise ValueError(f"{where}: `exactness` is \"exact\" or \"near\" "
                          f"(docs/notes/near-exact-runs.md), got {value!r}")

@@ -10,6 +10,13 @@
 
 Invariant 12 is amended by this note. Until the operator's text replaces it in CLAUDE.md, this note is the record.
 
+**Amended 2026-11-01, operator's choice B.** The operator: "considering that collections embedding is ideally distributed, that different hw produce slightly different vectors, and the acceptance policy is anyway a tolerance threshold, it makes not much sense to enforce local bit exactness in this scenario" — then "B, go ahead". So:
+- **Near-exact is the rule for card runs.** `exactness` defaults to `"near"`: no opt-in, no "only where measured faster". A run that gives back its own bytes is still recorded **exact**; one that reproduces itself within NEAR_VARIATION (0.99999) across orders, three fresh loads AND batches, and reaches the stored CPU reference at 0.999, is admitted as **near-exact**. Anything further apart FAILS, as before: the NaN and the 0.0865 vector of oneDNN's SDPA (below) are what this catches, and a bound catches them as well as byte equality does.
+- **Batches are held to the same bound** (§3's "validated for one text a request only" is lifted): a near-exact run's batched answers within NEAR_VARIATION of its single-text ones are admitted, and their distance counts toward the run's `load_variation`.
+- **`exactness = "exact"`** stays as a collection's stricter choice: bytes or nothing, batches by bytes.
+- **Unchanged:** the CPU reference and its review line (0.995), the multi-load gate, NaN refusal, the space's tolerance between peers, the VeGa wrapper's vendor reproducibility modes (each a setting to measure, one at a time, before any is relaxed), and every vector already stored.
+- A run that moves from exact to near-exact (a driver or engine update) shows it in its statement's `exactness`; it is reported, not refused.
+
 ## 1. Why
 
 On the SYCL card, flash attention gives a vector of a long input that differs across fresh loads now and then (approved-encoders.md):
