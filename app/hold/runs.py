@@ -143,6 +143,15 @@ def keep(root: Path, name: str, statement: dict[str, Any]) -> Path:
     return out
 
 
+def requires_exact(codex) -> bool:
+    """Does the collection's Codex require bit-exact runs (09 §9.3
+    `space.exactness`, EXACTNESS_VERSION)? Absent: the near-exact rule
+    (CLAUDE.md invariant 12)."""
+    from .codex import EXACT_REQUIRED
+    space = getattr(codex, "space", None)
+    return getattr(space, "exactness", None) == EXACT_REQUIRED
+
+
 def passing(body: dict[str, Any], codex: Codex) -> bool:
     """03 §3.3, both conjuncts, from the numbers the statement carries — so
     anyone holding it can recheck the verdict.
@@ -167,6 +176,10 @@ def passing(body: dict[str, Any], codex: Codex) -> bool:
         variation = Decimal(body["load_variation"])
         if body["exactness"] == emb.EXACT:
             return variation == 1
+        if requires_exact(codex):
+            # the space requires bit-exact runs (09 §9.3, EXACTNESS_VERSION):
+            # a near-exact run, however close, contributes nothing to it
+            return False
         return (body["exactness"] == emb.NEAR and int(body["loads"]) >= emb.NEAR_LOADS
                 and variation >= Decimal(str(emb.NEAR_VARIATION)) and cpu is not None
                 and Decimal(cpu["worst"]) >= Decimal(str(emb.CPU_NEAR_LINE)))

@@ -334,7 +334,10 @@ def _validate(root: Path, name: str, codex: Codex, recipe, *, role: str = "docum
             stated=stated, key=key, now=now or _now(), items=items, on_run=on_run,
             cpu_reference=None if cpu is None else (cpu.run_id, cpu.vectors),
             reload=_reloader(recipe, query=query, stop=stop, name=name),
-            exactness=getattr(recipe, "exactness", emb.EXACT))
+            # the Codex's requirement wins over the node's setting: a node may
+            # be stricter than its collection, never looser (09 §9.3)
+            exactness=(emb.EXACT if runs_mod.requires_exact(codex)
+                       else getattr(recipe, "exactness", emb.EXACT)))
         _mark(codex, role, body["run"], body)      # measured now: nothing to re-check
         measured = contributing(recipe)
         if measured is not None:

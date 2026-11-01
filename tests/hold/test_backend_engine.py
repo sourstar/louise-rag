@@ -175,15 +175,17 @@ def test_an_unknown_codex_version_is_still_refused():
     # object relabelled 7 lacks `annotates` and is refused for that; 8 is the
     # token cut's since 2026-10-18 (tests/hold/test_cut.py); 9 the graph
     # amendment's since 2026-10-20: a version-6 object relabelled 9 declares no
-    # container and is refused for that (tests/hold/test_annotations.py); 10 is unknown
+    # container and is refused for that (tests/hold/test_annotations.py); 10 the
+    # exactness amendment's since 2026-11-01 (tests/hold/test_codex_exactness.py);
+    # 11 is unknown
     d["version"] = 7
     with pytest.raises(CodexError, match="missing field.*annotates"):
         cx.loads(canonical_json(d))
     d["version"] = 9
     with pytest.raises(CodexError, match="declares its record parts' container"):
         cx.validate(cx.loads(canonical_json(d)))
-    d["version"] = 10
-    with pytest.raises(CodexError, match="unsupported Codex version 10"):
+    d["version"] = 11
+    with pytest.raises(CodexError, match="unsupported Codex version 11"):
         cx.loads(canonical_json(d))
 
 

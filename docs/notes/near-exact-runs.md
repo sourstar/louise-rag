@@ -16,6 +16,7 @@ Invariant 12 is amended by this note. Until the operator's text replaces it in C
 - **`exactness = "exact"`** stays as a collection's stricter choice: bytes or nothing, batches by bytes.
 - **Unchanged:** the CPU reference and its review line (0.995), the multi-load gate, NaN refusal, the space's tolerance between peers, the VeGa wrapper's vendor reproducibility modes (each a setting to measure, one at a time, before any is relaxed), and every vector already stored.
 - A run that moves from exact to near-exact (a driver or engine update) shows it in its statement's `exactness`; it is reported, not refused.
+- **A collection may require bytes for every peer** (operator, 2026-11-01: "if it useful add a parameter in the codex … we don't know yet what the futures will bring"): `space.exactness = "exact"` in its Codex, version 10 (09 §9.3), outside `space_id`, inside `collection_id`. Absent, the rule above. Then every run contributing to it must be exact (`runs.passing` refuses a near-exact statement for it), and a node's own setting can only be stricter. A recipe states it as `[space] exactness = "exact"`.
 
 ## 1. Why
 
