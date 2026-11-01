@@ -80,6 +80,20 @@ def test_a_pass_stopped_on_purpose_is_not_restarted(tmp_path, code):
     assert p.returncode == 0 and len(calls) == 2, "an OOM kill comes back by itself"
 
 
+def test_a_refused_pass_is_not_restarted_and_a_deferred_one_is(tmp_path):
+    """07 §7.7: exit 2 is a refusal — a rule stood in the way, and nothing
+    changes by itself — exit 3 a deferral that may clear. München,
+    2026-11-02: pubmed's CPU reference was refused every minute (VeGa states
+    no run for an unmeasured tree) and held the night's chain."""
+    env = _fake_docker(tmp_path, [2, 0])
+    p, calls = _run(tmp_path, env, "--memory=8g", "img")
+    assert p.returncode == 2 and len(calls) == 1 and "refused" in p.stdout
+    later = tmp_path / "deferred"
+    later.mkdir()
+    p, calls = _run(later, _fake_docker(later, [3, 0]), "--memory=8g", "img")
+    assert p.returncode == 0 and len(calls) == 2, "a deferral is asked again"
+
+
 def _cgroup(tmp_path, *, max_="max", current=20 << 30, total_kb=61_900_000):
     cg = tmp_path / "docker"
     cg.mkdir()
