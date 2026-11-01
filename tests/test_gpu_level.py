@@ -274,8 +274,14 @@ def store(isolated_config):
 def _until(pred, what):
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        if pred():
-            return
+        try:
+            if pred():
+                return
+        except ValueError:
+            # read between the governor thread's truncate and its write (`write_text`
+            # on a plain file; sysfs writes are whole): not yet, look again (the node,
+            # 2026-11-01, refused the 0d3fa7c deploy on `int('')`)
+            pass
         time.sleep(0.02)
     raise AssertionError(what)
 
