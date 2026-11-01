@@ -1,0 +1,23 @@
+{
+  "backend": "vega-louise-python-20261030",
+  "context_size": 512,
+  "embeddings": true,
+  "env": {
+    "LOUISE_BITEXACT_MEASURED": "louise-python-20261030",
+    "NEO_CACHE_DIR": "/data/louise-cache/neo-cache",
+    "OV_CACHE_DIR": "/data/louise-cache/ov-cache"
+  },
+  "gpu_layers": 0,
+  "name": "vega-medcpt-article-ov-cpu",
+  "options": [
+    "task:medcpt-article",
+    "device:cpu",
+    "pairs:true"
+  ],
+  "parameters": {
+    "batch": 1,
+    "model": "weights/medcpt/medcpt-article-ov",
+    "seed": 0
+  },
+  "threads": 6
+}
