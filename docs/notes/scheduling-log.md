@@ -1848,3 +1848,76 @@ and it would change the results (overlap@20 with the prefilter answer 0.72–0.7
 is the prefilter's row mask, about 58 M rows for `en` on wikipedia, which is Lance's own design.
 The only lever is one vector table or index per language, a storage-layout change not worth it
 at 202 ms. No action.
+
+### 2026-11-01 — wikidata's bge-m3 embedding, one text a request: where the time goes (M1–M4) — MEASURED
+
+**Scenario.** `wikidata` (formerly wikidata-bge) embeds nine families, 43.3 M chunks of ~120
+tokens (~1.4 a document). Run sha256:92775442… on the SYCL F16 llama.cpp backend, `parallel:1`,
+`GGML_SYCL_ENABLE_DNN=0`. One text a request: the gate admitted no batching for this run. The
+worker keeps 2 documents submitted and the dispatch gate lets 1 request through
+(`concurrency = 1`). Requests are counted from LocalAI's log, one per chunk; they match the
+vector-count deltas (2,374 against 2,377). Also on the machine: the architecture's gutenberg
+CPU-reference job (Qwen3-4B on CPU).
+
+| window | chunks/s |
+|---|---|
+| first hour, beside the wikipedia re-cut (09:46–10:36, vector count) | 4.0 |
+| M2: re-cut running, 5 min | 5.1 |
+| M2: re-cut frozen (`docker pause`), 5 min | **7.9** |
+| quiet profile, re-cut ended (two 5-min windows) | 7.8 / 7.3 |
+
+**M1, py-spy of the VeGa wrapper, 60 s at 200 Hz (`--idle --threads`).** `embedding()` held
+21.8 s of thread time for 283 calls:
+
+| `embedding()` share | % | per call |
+|---|---|---|
+| the backend's gRPC forward | 98.8 | ~76 ms |
+| receipt delivery | 0.9 | ~0.7 ms |
+| digests | 0.1 | — |
+
+The backend was busy ~36 % of the window. The rest of each ~212 ms cycle is outside the
+wrapper: the worker, LocalAI's HTTP layer, the receipts GET. On 2026-10-30 wikipedia's shorter
+chunks took ~42 ms in the same call.
+
+**M4, soundness of wikipedia's `batch = 16` (since 2026-10-31 16:07:32).** 144.1 M of
+wikipedia's 146.4 M chunks are the upstash archive's (`chunk_verification`), so the batch-16
+writes were found as the table's tail. The archive imports stopped at 16:32 and wikipedia was
+paused at 18:58. Each sampled vector was re-embedded alone through `embed_chunks` and converted
+as the writer does (`np.asarray(v, dtype=np.float16)`):
+- the last 2,000 rows: **0 differ**;
+- 2,000 spread over the last 180,000 rows (119,626 of them this encoder's, written 16:32–18:59):
+  **0 differ**.
+
+The comparison is at the stored f16, which is what the artifact holds.
+
+**Reading.**
+- The bound is not the card. Frozen, the CPU contention of the re-cut cost a third of the
+  rate (5.1 → 7.9).
+- The quiet profile does not halve this embed, unlike wikipedia's. Wikidata's producer reads
+  held records and needs no parse pool.
+- With the re-cut finished, ~7.5/s puts the nine families at ~67 days.
+- A changed `[encoder] concurrency` is a run new to the peer: the worker re-ran the gate for
+  8 min before writing again, which is correct. The first M3 counted that gate as zero
+  throughput.
+
+**M3, the encoder's `concurrency` (the dispatch gate's admissions; the server stays `parallel:1`
+and runs one sequence at a time).** Quiet profile, re-cut ended. Each count is taken after the
+gate the change triggered had passed:
+
+| `concurrency` | requests (chunks) / s |
+|---|---|
+| 1 | 7.3 / 7.8 (5-min windows), 8.3 (clean, 11:41–11:46 UTC) |
+| 2 | 10.7 |
+| 4 | **15.9** (worker: "4 submitted"; its gate at 12:31:19, 16/16, median 1.000000, batch-invariant True) |
+
+**What changed.** At 12:46:45 wikidata's `[encoder]` was set to `concurrency = 4`, with
+`device = "gpu"` declared because concurrency > 1 would otherwise read as a CPU encoder. The
+nine families now take ~31 days instead of ~60. Queued requests hide the overhead outside the
+forward that one request at a time leaves bare. At 15.9/s the forward can take at most ~63 ms,
+under M1's 76 ms at one in flight, so part of that 76 ms was itself latency, not compute.
+
+**AFTER, measured.**
+- No gate ran: the statement at 4 was already held. The worker reads "4 submitted".
+- 4,967 requests in 11:51–11:56 UTC, **16.6 chunks/s**.
+- **Bytes:** the last 1,500 vectors written at 4 (documents updated 12:53:27–12:57:05) were
+  re-embedded one text at a time, as M4 did: **0 differ** at the stored f16.
