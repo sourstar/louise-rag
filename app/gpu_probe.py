@@ -386,10 +386,26 @@ def card_pdevs() -> list[str]:
     return out
 
 
+def card_drivers() -> list[tuple[str, str, Path]]:
+    """(pdev, driver, sysfs device dir) of every card: what the driver-level
+    busy sources are found from (app/gpu_pmu.py)."""
+    out = []
+    for card in cards():
+        dev = card / "device"
+        try:
+            out.append((dev.resolve().name, Path(os.readlink(dev / "driver")).name, dev))
+        except OSError:
+            continue
+    return out
+
+
 def busy_sampler() -> gpu_busy.BusySampler:
     """The probe's sampler over the host's /proc (PROC at call time, so the
-    tests' fake one is used)."""
-    return gpu_busy.BusySampler(lambda: gpu_busy.drm_files(PROC, holder), card_pdevs)
+    tests' fake one is used): each card's figure from its driver (xe's perf
+    PMU under the probe's CAP_PERFMON, amdgpu's sysfs), fdinfo for who."""
+    from . import gpu_pmu
+    return gpu_busy.BusySampler(lambda: gpu_busy.drm_files(PROC, holder), card_pdevs,
+                                devices=lambda: gpu_pmu.sources(card_drivers()))
 
 
 # --------------------------------------------------------------------------

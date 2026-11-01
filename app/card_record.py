@@ -140,9 +140,9 @@ class CardRecorder:
             for s in samples:
                 t = float(s.get("t", 0.0))
                 self._since = t if self._since is None else max(self._since, t)
-                if s.get("dt") is None:
-                    continue            # a baseline: it covers no interval
-                self._cards.setdefault(int(t), {})[pdev] = float(s.get("busy", 0.0))
+                if s.get("dt") is None or s.get("busy") is None:
+                    continue            # a baseline, or a card the probe cannot see: no figure
+                self._cards.setdefault(int(t), {})[pdev] = float(s["busy"])
 
     def flush(self, *, final: bool = False) -> int:
         """Join and append every second whose card figure is in (or late);
