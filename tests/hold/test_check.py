@@ -1170,3 +1170,71 @@ def test_every_check_03_names_answers():
     table = doc.split("## 3.2", 1)[1].split("\n\n**", 1)[0]
     named = set(re.findall(r"^\| `([a-z-]+)`", table, re.M))
     assert "model-agreement" in named and named <= set(chk.CHECKS), named - set(chk.CHECKS)
+
+
+# ---- records-vs-origin in the parse pool (2026-11-01) -------------------------
+
+def _both(root, codex, snapshot, origin):
+    from app import louise
+    serial = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+                  reparse=louise._reparse_from(codex, "gutenberg", origin)).outcome("records-vs-origin")
+    pooled = _run(root, codex, snapshot, ["records-vs-origin"], sample="1",
+                  reparse=louise._reparse_from(codex, "gutenberg", origin),
+                  reparse_many=louise._reparse_many_from(codex, "gutenberg", origin)
+                  ).outcome("records-vs-origin")
+    return serial, pooled
+
+
+def test_the_pooled_origin_check_gives_the_serial_outcome(checkable, corpus_dir, monkeypatch):
+    """CLAUDE.md, multi-core: one wikidata check re-parsed its 3.7 M sampled
+    records at 38/s on one core, ~27 h (München, 2026-11-01). The re-parse
+    runs in the parse pool (`origin-line`); the outcome — verdict, detail,
+    why — is the serial one, a revised origin text included."""
+    from app import parallel
+    root, snapshot, codex = checkable
+    kinds: list[str] = []
+    real = parallel.compute_pages
+    monkeypatch.setattr(parallel, "compute_pages",
+                        lambda kind, *a, **k: kinds.append(kind) or real(kind, *a, **k))
+    serial, pooled = _both(root, codex, snapshot, corpus_dir)
+    assert kinds and set(kinds) == {"origin-line"}, "the pooled path ran"
+    assert serial.result == chk.PASS
+    assert (pooled.result, pooled.detail, pooled.why) == (serial.result, serial.detail, serial.why)
+    victim = _all_records(root, snapshot)[0]
+    _change_the_text(next((corpus_dir / str(victim["native_id"])).glob("*.txt*")))
+    serial, pooled = _both(root, codex, snapshot, corpus_dir)
+    assert victim["uid"] in serial.detail["changed"]
+    assert (pooled.result, pooled.detail, pooled.why) == (serial.result, serial.detail, serial.why)
+
+
+def test_the_pooled_origin_check_says_unreachable_as_the_serial_one(checkable, tmp_path):
+    root, snapshot, codex = checkable
+    empty = tmp_path / "no-origin"
+    empty.mkdir()
+    serial, pooled = _both(root, codex, snapshot, empty)
+    assert serial.detail["origin"] == "unreachable"
+    assert (pooled.result, pooled.detail, pooled.why) == (serial.result, serial.detail, serial.why)
+
+
+def test_a_network_origin_stays_serial_under_this_process_s_budget():
+    """Invariant 5: a network origin's members are fetched under this
+    process's transfer budget; children fetching at once would each draw a
+    budget of their own."""
+    from app import louise
+    assert louise._reparse_many_from(object(), "gutenberg", None) is None
+
+
+def test_the_pooled_origin_check_crosses_real_processes(checkable, corpus_dir, monkeypatch):
+    """The collection, its Codex and the rows pickle into spawned children,
+    and the outcome is the serial one."""
+    from app import config, parallel
+    monkeypatch.setattr(config, "PARSE_PROCESSES", 2)
+    parallel.shutdown()
+    try:
+        root, snapshot, codex = checkable
+        serial, pooled = _both(root, codex, snapshot, corpus_dir)
+        assert parallel.pool() is not None, "a real pool"
+        assert serial.result == chk.PASS
+        assert (pooled.result, pooled.detail, pooled.why) == (serial.result, serial.detail, serial.why)
+    finally:
+        parallel.shutdown()

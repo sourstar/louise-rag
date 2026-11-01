@@ -435,6 +435,21 @@ def _one(kind: str, collection, row: dict):
             collection, plugin, row))
     if kind == "prepare":
         return plugin_io.prepare(plugin, row)
+    if kind == "origin-line":
+        # records-vs-origin's re-parse (app/hold/check.py `verdict`), in a
+        # child: the record's origin unit under the collection's base (a local
+        # origin), parsed by the Codex's toolchain, its line compared here —
+        # the line that travels back is a word, not the record
+        from .hold.check import verdict
+        from .pack import build as pack_build, records as pack_records
+        local, path = plugin_io.local_locator(plugin, row["locator"], collection.corpus_dir)
+        if not local.exists():
+            raise FileNotFoundError(str(local))
+        record, _layer, _blob, _plates = pack_build._record_of(
+            collection, plugin, {"uid": row["uid"], "native_id": row["uid"].rsplit(":", 1)[-1],
+                                 "path": path})
+        shape = int(getattr(collection.codex, "record_line", 1) or 1)
+        return verdict(row["line"], pack_records.canonical_line(record, record_line=shape))
     raise ValueError(f"unknown work kind {kind!r}")
 
 
