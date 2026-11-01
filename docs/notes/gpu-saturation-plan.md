@@ -47,7 +47,7 @@ Today's per-collection `[encoder] batch` and `concurrency` keys become what the 
 - (c) **No end-to-end test of query priority under load.** The tests patch the claim or run one process.
 
 **Two defects found by the survey:**
-- **One gate for every model on a URL.** All models behind one LocalAI address share one gate, and `gate()` resets that gate's capacity to whatever the latest caller passes (dispatch.py:281–284). Two collections with different concurrency flip it back and forth.
+- **One gate for every model on a URL.** All models behind one LocalAI address share one gate, and `gate()` resets that gate's capacity to whatever the latest caller passes (dispatch.py:281–284). Two collections with different concurrency flip it back and forth. **The flip is FIXED (2026-11-01):** each caller declares its collection's concurrency, and the gate admits the largest declared by the collections running or waiting there now. A query in the web has no collection name, so for it the gate keeps the largest ever given. An arrival that raises the limit, or an admission that leaves room, wakes those waiting. The fix is inert while one collection runs alone. One gate per (URL, model) and the card budget remain step 3's.
 - **Stale text in scheduling.md:** lines 1083 and 1099–1103, and line 873 naming `db.claim_query_priority`.
 
 ## Step 0 — the precondition: near-exact verified on every collection

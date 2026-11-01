@@ -344,3 +344,65 @@ def test_a_block_left_in_its_own_context_still_restores_the_level():
         with dispatch.working_as(Level.QUERY):
             assert dispatch.current() == (Level.QUERY, "")
         assert dispatch.current() == (Level.CORPUS, "gutenberg")
+
+
+# ---- the capacity, independent of who called last (2026-11-01) -------------
+# gpu-saturation-plan.md's survey: `gate()` set the capacity to whatever the
+# latest caller passed, so wikidata (4) and wikipedia (2) on one URL flipped
+# it by arrival order.
+
+def _running(gate, plugin, n, release):
+    started = []
+    threads = []
+    for _ in range(n):
+        ev = threading.Event()
+
+        def run(ev=ev):
+            with gate.admit(Level.CORPUS, plugin, timeout=10):
+                ev.set()
+                release.wait(10)
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        threads.append(t)
+        started.append(ev)
+    return started, threads
+
+
+def test_the_limit_is_the_largest_declared_by_the_collections_present_not_the_latest():
+    g = dispatch.gate("http://enc")
+    with dispatch.working_as(Level.CORPUS, "wikidata"):
+        dispatch.gate("http://enc", 4)
+    with dispatch.working_as(Level.CORPUS, "wikipedia"):
+        dispatch.gate("http://enc", 2)              # the latest caller
+    release = threading.Event()
+    started, threads = _running(g, "wikipedia", 4, release)
+    _waiting(g, 2)
+    assert g.snapshot()["busy"] == 2 and g.snapshot()["capacity"] == 2, \
+        "wikipedia alone: its own 2, whatever wikidata declared before"
+    more, more_threads = _running(g, "wikidata", 1, release)
+    deadline = time.monotonic() + 5
+    while g.snapshot()["busy"] < 4 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert g.snapshot()["busy"] == 4 and g.snapshot()["capacity"] == 4, \
+        "both present: the larger, 4, in any order of arrival"
+    release.set()
+    for t in threads + more_threads:
+        t.join(5)
+    assert g.snapshot()["capacity"] is None, "nobody present: the fallback, none given"
+
+
+def test_a_collection_that_changes_its_concurrency_is_taken_at_its_word():
+    g = dispatch.gate("http://enc", 1)
+    with dispatch.working_as(Level.CORPUS, "wikidata"):
+        dispatch.gate("http://enc", 4)
+        dispatch.gate("http://enc", 6)
+    assert g.snapshot()["declared"]["wikidata"] == 6
+
+
+def test_unnamed_callers_keep_the_largest_they_declared():
+    """A person's queries in the web carry no collection name: the latest
+    of theirs would flip it by which collection was asked last."""
+    g = dispatch.gate("http://q", 2)
+    dispatch.gate("http://q", 4)
+    dispatch.gate("http://q", 1)
+    assert g.snapshot()["declared"][""] == 4

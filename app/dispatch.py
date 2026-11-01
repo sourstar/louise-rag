@@ -200,6 +200,14 @@ class Gate:
     # second by second, not all at its end.
     _held: dict = field(default_factory=dict)        # plugin -> seconds, finished requests
     _running: dict = field(default_factory=dict)     # seq -> (plugin, began)
+    # THE CAPACITY EACH PLUGIN'S CALLER DECLARED (its recipe's concurrency).
+    # The gate admits the largest declared by the plugins using it NOW —
+    # running or waiting — and `capacity` only when none of them declared.
+    # Until 2026-11-01 `gate()` set `capacity` to whatever the latest caller
+    # passed, so two collections with different concurrency on one URL
+    # flipped it back and forth by arrival order (gpu-saturation-plan.md,
+    # the survey's defect).
+    _declared: dict = field(default_factory=dict)    # plugin -> capacity
 
     def _join(self, plugin: str) -> None:
         """A plugin with nothing waiting or running here starts level with
@@ -215,10 +223,40 @@ class Gate:
         return min(self._waiting,
                    key=lambda w: (-w.level, self._served.get(w.plugin, 0.0), w.seq))
 
+    def declare(self, plugin: str, capacity: int | None) -> None:
+        """What `plugin`'s caller says this server takes at once; None
+        withdraws it. A named plugin's latest declaration stands (its file
+        changed). The unnamed one ("" — a person's query in the web, which
+        works for no collection in particular) keeps the LARGEST it was ever
+        given: several collections declare through it, and taking the latest
+        would be the very flip by arrival order this replaces."""
+        capacity = None if capacity is None else max(1, int(capacity))
+        with self._cv:
+            was = self._declared.get(plugin)
+            if capacity is None:
+                if was is None:
+                    return
+                del self._declared[plugin]
+            else:
+                want = max(capacity, was or 0) if plugin == "" else capacity
+                if want == was:
+                    return
+                self._declared[plugin] = want
+            self._cv.notify_all()
+
+    def _limit(self) -> int | None:
+        """The largest capacity declared by a plugin running or waiting here;
+        `capacity` when none of them declared one. Independent of the order
+        the callers came in."""
+        present = {w.plugin for w in self._waiting} | {p for p, n in self._active.items() if n}
+        declared = [self._declared[p] for p in present if p in self._declared]
+        return max(declared) if declared else self.capacity
+
     def _may_go(self, w: _Waiter) -> bool:
-        if self.capacity is None:
+        limit = self._limit()
+        if limit is None:
             return True
-        return self._busy < self.capacity and self._head() is w
+        return self._busy < limit and self._head() is w
 
     @contextmanager
     def admit(self, level: Level | None = None, plugin: str | None = None, *,
@@ -233,7 +271,10 @@ class Gate:
             _stand_aside(self.name, deadline, timeout)
         with self._cv:
             self._join(plg)
+            before = self._limit()
             self._waiting.append(w)
+            if self._limit() != before:
+                self._cv.notify_all()     # a larger limit: those waiting may go now
             try:
                 while not self._may_go(w):
                     if _stopping.is_set():
@@ -250,6 +291,9 @@ class Gate:
             self._waiting.remove(w)
             self._busy += 1
             self._active[plg] += 1
+            limit = self._limit()
+            if self._waiting and (limit is None or self._busy < limit):
+                self._cv.notify_all()     # room left: the next head may go too
             s = self.stats.setdefault(lvl, _LevelStats())
             s.admitted += 1
             s.waited_s += time.monotonic() - started
@@ -292,8 +336,8 @@ class Gate:
                 of(plg)
             for plg, began in self._running.values():
                 of(plg)["held_s"] += now - began
-            return {"capacity": self.capacity, "busy": self._busy,
-                    "waiting": len(self._waiting),
+            return {"capacity": self._limit(), "declared": dict(self._declared),
+                    "busy": self._busy, "waiting": len(self._waiting),
                     "levels": {lvl.name.lower(): vars(s).copy()
                                for lvl, s in sorted(self.stats.items())},
                     "plugins": plugins}
@@ -305,18 +349,19 @@ _gates_lock = threading.Lock()
 
 def gate(url: str, capacity: int | None = None) -> Gate:
     """The gate of the server at `url` — one per server per process, keyed
-    on the URL (the physical endpoint, never a collection name). The
-    capacity given by the first caller stands until one gives another."""
+    on the URL (the physical endpoint, never a collection name). A caller
+    that gives a capacity declares it for the plugin it works for
+    (`Gate.declare`): the gate admits the largest declared by the plugins
+    using it at the time, never simply the latest caller's. The first
+    capacity given is the fallback for plugins that declare none."""
     key = url.rstrip("/")
     with _gates_lock:
         g = _gates.get(key)
         if g is None:
             g = _gates[key] = Gate(name=key, capacity=capacity)
-        elif capacity is not None and g.capacity != capacity:
-            with g._cv:
-                g.capacity = capacity
-                g._cv.notify_all()
-        return g
+    if capacity is not None:
+        g.declare(current()[1], capacity)
+    return g
 
 
 def configured_capacity(url: str) -> int | None:
