@@ -1300,9 +1300,19 @@ def _profile_order(plugin: str) -> list[dict]:
         # declare none and read exactly as before.
         gloss = spec.profile_labels.get(n)
         label = f"{n} — {gloss}" if gloss else n
-        out.append({"name": n,
-                    "label": f"{label} (~{_human_bytes(spec.estimated_bytes.get(n))})"})
+        out.append({"name": n, "label": _sized(label, spec.estimated_bytes.get(n))})
     return out
+
+
+def _sized(label: str, n: int | None, *, files: int | None = None) -> str:
+    """A grow option's label with its size where one is known; nothing
+    after the name where none applies (operator, 2026-11-01: wikidata's
+    families come from one dump and have no size of their own — a "?"
+    there reads as a fault)."""
+    bits = [f"~{_human_bytes(n)}"] if n else []
+    if files is not None:
+        bits.append(f"{files} files")
+    return f"{label} ({', '.join(bits)})" if bits else label
 
 
 def _offered_by_torrent_collection(collection: collections_mod.Collection) -> list[dict] | None:
@@ -1330,7 +1340,7 @@ def _offered_by_torrent_collection(collection: collections_mod.Collection) -> li
             gloss = spec.profile_labels.get(s["name"]) if spec else None
             label = f"{s['name']} — {gloss}" if gloss else s["name"]
             offered.append({"name": s["name"],
-                            "label": f"{label} (~{_human_bytes(s['bytes'])}, {s['files']} files)"})
+                            "label": _sized(label, s["bytes"], files=s["files"])})
     return offered if found else None
 
 
@@ -1366,8 +1376,20 @@ def _grow_options(collection: collections_mod.Collection) -> list[dict]:
     order = _profile_order(collection.plugin)
     current = collection.profile
     names = [o["name"] for o in order]
+    start = names.index(current) if current in names else 0
+    end = len(order)
+    # NOTHING BEYOND "ALL" (2026-11-01, operator: "the entries are weird").
+    # A spec that declares what `slices = "all"` fetches (`all_profile`)
+    # declares the collection's whole; a larger profile is another
+    # collection's — Normattiva's `archive` is `normattiva-archive`'s, and
+    # growing the live collection into it would start exporting every act
+    # against the operator's decision of 2026-10-13. A collection already
+    # beyond it (that daughter) keeps its own as the re-sync.
+    whole = spec.all_profile
+    if whole in names and names.index(whole) >= start:
+        end = names.index(whole) + 1
+    order = order[start:end]
     if current in names:
-        order = order[names.index(current):]
         order[0] = {**order[0], "label": order[0]["label"] + " — current, re-sync"}
     return order
 

@@ -130,7 +130,13 @@ def _chunks_from_fts(collection, row: dict, book_id: int) -> list[dict]:
 
 
 def _chunks_from_lance(collection, book_id: int) -> list[dict]:
+    from . import vector_parts
     try:
+        if vector_parts.is_split(collection):
+            routed = vector_parts.route(collection, [book_id], probe=embeddings._holds)
+            if not routed:
+                return []
+            collection = vector_parts.view(collection, next(iter(routed)))
         conn = embeddings._conn(collection)
         if embeddings.TABLE not in conn.table_names():
             return []

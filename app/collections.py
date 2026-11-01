@@ -455,6 +455,10 @@ class Collection:
     #: with `share = false` runs as `all` — p2p publishes what it embeds, and
     #: a node that does not share can publish nothing (07 §7.8, 2026-10-19)
     embed_mode_note: str | None = None
+    #: set on a PART of a split vector store only (app/vector_parts.py
+    #: `view`): the value of the table key whose table `lance_dir` holds.
+    #: Never read from a file.
+    vector_part: str | None = None
 
     def plugin_instance(self) -> CorpusSource:
         inner = PLUGIN_REGISTRY[self.plugin]

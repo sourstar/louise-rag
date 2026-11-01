@@ -243,6 +243,8 @@ _UNPOPULATED: dict[str, str] = {
                    "such key, and since 2026-10-08 every file is a Codex file",
     "embed_mode_note": "derived at load — `embed = \"p2p\"` with `share = false` runs as "
                        "`all` and this says so (07 §7.8, 2026-10-19); never a file key",
+    "vector_part": "set only on a PART of a split vector store (app/vector_parts.py `view`); "
+                   "never a file key",
 }
 
 

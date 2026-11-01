@@ -72,10 +72,8 @@ def _summary(sims: list[float], tau: float) -> dict:
 def check_stored(collection, *, books: int, chunks: int, tau: float) -> dict:
     """Compare stored vectors against fresh embeddings, newest books first."""
     con = db.connect(collection)
-    store = embeddings._conn(collection)
-    if embeddings.TABLE not in store.table_names():
+    if not embeddings.stats(collection)["vectors"]:
         return {"error": "no vector table for this collection"}
-    tbl = store.open_table(embeddings.TABLE)
     recipe = c_mod.recipe_for(collection)
 
     rows = con.execute(
@@ -89,6 +87,9 @@ def check_stored(collection, *, books: int, chunks: int, tau: float) -> dict:
         doc = con.execute("SELECT * FROM documents WHERE uid=?",
                           (r["uid"],)).fetchone()
         local = worker._load_chunks(doc, collection)
+        tbl = embeddings.table_of_book(collection, int(r["native_id"]))
+        if tbl is None:
+            continue
         stored = {x["id"]: x["vector"] for x in
                   tbl.search().where(embeddings._book_filter(int(r["native_id"])))
                      .select(["id", "vector"]).limit(200_000).to_list()}

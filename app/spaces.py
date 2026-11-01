@@ -235,12 +235,40 @@ def compute_space_id(c: SpaceComponents) -> str:
     return hashlib.blake2b(blob, digest_size=16).hexdigest()
 
 
+def _table_dirs(lance_dir: Path) -> list[Path]:
+    """The Lance directories holding a `chunks` table: the store itself, or
+    each part of a split one (app/vector_parts.py: `layout.json` and
+    `<key>=<value>/` directories)."""
+    if not (lance_dir / "layout.json").exists():
+        return [lance_dir]
+    return sorted(d for d in lance_dir.iterdir()
+                  if d.is_dir() and "=" in d.name and (d / "chunks.lance").exists())
+
+
+def known_lance_dims(lance_dir: Path) -> set[int]:
+    """Every vector width the collection's tables hold: one, or none — and
+    more than one only for a split store whose parts disagree, which is one
+    collection in two spaces (invariant 1)."""
+    if not lance_dir.is_dir():
+        return set()
+    out: set[int] = set()
+    for d in _table_dirs(lance_dir):
+        dim = _one_dim(d)
+        if dim is not None:
+            out.add(dim)
+    return out
+
+
 def known_lance_dim(lance_dir: Path) -> int | None:
     """Vector width of the collection's Lance table, if one exists. Metadata-
     only (schema inspection) — no embedding calls, no GPU/CUDA import
-    (invariant 7)."""
-    if not lance_dir.is_dir():
-        return None
+    (invariant 7). A split store's parts all have it, or `known_lance_dims`
+    says they do not (the smallest is returned; the boot check refuses)."""
+    dims = known_lance_dims(lance_dir)
+    return min(dims) if dims else None
+
+
+def _one_dim(lance_dir: Path) -> int | None:
     try:
         import lancedb
         conn = lancedb.connect(str(lance_dir))
@@ -254,19 +282,22 @@ def known_lance_dim(lance_dir: Path) -> int | None:
 
 
 def known_lance_rows(lance_dir: Path) -> int | None:
-    """Rows in the collection's Lance table: 0 when there is none, None when
-    one exists and cannot be read (not proven empty). Metadata-only, as
+    """Rows in the collection's Lance table(s): 0 when there is none, None
+    when one exists and cannot be read (not proven empty). Metadata-only, as
     `known_lance_dim`."""
     if not lance_dir.is_dir():
         return 0
-    try:
-        import lancedb
-        conn = lancedb.connect(str(lance_dir))
-        if "chunks" not in conn.table_names():
-            return 0
-        return int(conn.open_table("chunks").count_rows())
-    except Exception:
-        return None
+    total = 0
+    for d in _table_dirs(lance_dir):
+        try:
+            import lancedb
+            conn = lancedb.connect(str(d))
+            if "chunks" not in conn.table_names():
+                continue
+            total += int(conn.open_table("chunks").count_rows())
+        except Exception:
+            return None
+    return total
 
 
 def validate_chunking_config() -> None:
@@ -404,6 +435,7 @@ def _validate_codex(con, collection, *, pin_if_missing: bool = True) -> bool:
     """
     codex = collection.codex
     want, want_dim = codex.space_id, codex.space.dim
+    _refuse_split_dims(collection)
     observed_dim = known_lance_dim(collection.lance_dir)
 
     row = con.execute("SELECT space_id, dim FROM space WHERE id=1").fetchone()
@@ -436,12 +468,25 @@ def _validate_codex(con, collection, *, pin_if_missing: bool = True) -> bool:
     return True
 
 
+def _refuse_split_dims(collection) -> None:
+    """A split store whose parts hold two widths is one collection in two
+    spaces: refused like any other mismatch (invariant 1)."""
+    dims = known_lance_dims(collection.lance_dir)
+    if len(dims) > 1:
+        raise BootValidationError(
+            f"collection '{collection.name}': its vector tables hold vectors of "
+            f"{sorted(dims)} dimensions — one collection is one space (02 §2.4, "
+            f"invariant 1); this collection is not served, shared or searched "
+            f"until the odd part is emptied")
+
+
 def _validate_one(con, collection, *, pin_if_missing: bool = True) -> bool:
     if getattr(collection, "codex", None) is not None:
         return _validate_codex(con, collection, pin_if_missing=pin_if_missing)
     components = gather_components(collection)
     computed_id = compute_space_id(components)
     computed_config_id = _config_id(components)
+    _refuse_split_dims(collection)
     observed_dim = known_lance_dim(collection.lance_dir)
 
     row = con.execute("SELECT space_id, dim, components FROM space WHERE id=1").fetchone()

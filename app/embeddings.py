@@ -24,7 +24,7 @@ import numpy as np
 import pyarrow as pa
 
 from . import collections as collections_mod
-from . import config, dispatch, httpc, model_load
+from . import config, dispatch, httpc, model_load, vector_parts
 from . import layers as layers_mod
 from .hold import runs as hold_runs
 from .vega import client as vclient
@@ -58,8 +58,55 @@ def _conn(collection=None):
 
 def forget(collection) -> None:
     """Drop the LanceDB connection on this collection's vector store — for a
-    collection that left the node (fts.forget, 2026-10-13)."""
-    _dbs.pop(str(collection.lance_dir), None)
+    collection that left the node (fts.forget, 2026-10-13) — and on each of
+    its parts when it is split (app/vector_parts.py)."""
+    root = str(collection.lance_dir)
+    _dbs.pop(root, None)
+    for key in [k for k in _dbs if k.startswith(root + os.sep)]:
+        _dbs.pop(key, None)
+    vector_parts.forget(collection)
+
+
+def _coll(collection):
+    return collections_mod.default_collection() if collection is None else collection
+
+
+def _holds(part, books) -> set[int]:
+    """`vector_parts.route`'s probe: the books of `books` this part holds."""
+    return books_with_vectors(books, part)
+
+
+def table_of_book(collection, book_id: int):
+    """The LanceDB table holding (or that would hold) one document's rows:
+    the single table, or its part's; None while that table does not exist.
+    For tools that read a document's rows by hand."""
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        routed = vector_parts.route(collection, [book_id], probe=_holds)
+        if not routed:
+            return None
+        collection = vector_parts.view(collection, next(iter(routed)))
+    return _committed_table(_conn(collection))
+
+
+def _check_part_rows(collection, value: str, rows) -> None:
+    """Under a `lang` table key, the part IS the language: a search narrowed
+    by it reads the part without a row filter, so a row whose `lang` says
+    otherwise would answer for the wrong language. Refused, never moved."""
+    if vector_parts.key_of(collection) != "lang":
+        return
+    bad = sorted({str(r.get("lang")) for r in rows if r.get("lang") and r.get("lang") != value})
+    if bad:
+        raise vector_parts.Unrouted(f"{collection.name}: rows of language {bad} routed to the part "
+                                    f"lang={value} — the document's slice and its language disagree")
+
+
+def _part_for_write(collection, book_id: int, lang: str | None = None):
+    """The part one document's vectors are written to (Unrouted when the
+    router cannot name it: a write is never guessed)."""
+    (value,) = vector_parts.route(collection, [book_id])
+    _check_part_rows(collection, value, [{"lang": lang}])
+    return vector_parts.view(collection, value)
 
 #: docs/09-formats.md §9.12: the run an endpoint states with every answer (an
 #: `api = "vega"` encoder's receipts name it instead, `_request_vouched`)
@@ -1045,6 +1092,12 @@ def sync_columns(book_id: int, columns: dict, collection=None, lock_con=None, *,
     (the embed stage's way), ValidityColumnsMissing for the latter: a
     document whose rows cannot carry the columns is deferred, never marked
     done over a table no date can filter (2026-10-13)."""
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        for value in vector_parts.route(collection, [book_id], probe=_holds):
+            return sync_columns(book_id, columns, vector_parts.view(collection, value), lock_con,
+                                refuse=refuse)
+        return False
     db = _conn(collection)
     if TABLE not in db.table_names():
         return False
@@ -1072,6 +1125,15 @@ def add_validity_columns(collection, con, *, lock_con=None, batch_rows: int = 50
     columns is left alone (`{"rows": n, "unchanged": True}`)."""
     import pyarrow as pa
     from app import validity as validity_mod
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        # each part rebuilt on its own, as one table would be
+        outs = [add_validity_columns(v, con, lock_con=lock_con, batch_rows=batch_rows, log=log)
+                for v in vector_parts.views(collection)]
+        if all(o.get("unchanged") for o in outs):
+            return {"rows": sum(o["rows"] for o in outs), "unchanged": True}
+        return {"rows": sum(o["rows"] for o in outs), "documents": sum(o.get("documents", 0) for o in outs),
+                "versions": max((o.get("versions", 0) for o in outs), default=0), "parts": len(outs)}
     db = _conn(collection)
     if TABLE not in db.table_names():
         return {"rows": 0, "unchanged": True}
@@ -1277,6 +1339,18 @@ def _by_chunk_id(chunk_ids, collection=None, *, with_text: bool = False) -> dict
     ids = list(chunk_ids)
     if not ids:
         return {}
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        by_book: dict[int, list[str]] = {}
+        for cid in ids:
+            b = vector_parts.book_of_chunk(cid)
+            if b is not None:
+                by_book.setdefault(b, []).append(cid)
+        out: dict = {}
+        for value, books_ in vector_parts.route(collection, by_book, probe=_holds).items():
+            out.update(_by_chunk_id([c for b in books_ for c in by_book.get(b, ())],
+                                    vector_parts.view(collection, value), with_text=with_text))
+        return out
     books: set[int] = set()
     for cid in ids:
         parts = cid.rsplit(":", 2)
@@ -1327,6 +1401,21 @@ def books_with_vectors(native_ids, collection=None) -> set[int]:
     books = sorted({int(b) for b in native_ids})
     if not books:
         return set()
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        found: set[int] = set()
+        placed = vector_parts.values_of_books(collection, books)
+        lost = [b for b, v in placed.items() if v is None]
+        groups: dict[str, list[int]] = {}
+        for b, v in placed.items():
+            if v is not None:
+                groups.setdefault(v, []).append(b)
+        for value in vector_parts.values(collection):
+            part = vector_parts.view(collection, value)
+            ask = groups.get(value, []) + lost      # an unplaced book may be in any part
+            if ask:
+                found |= books_with_vectors(ask, part)
+        return found
     db = _conn(collection)
     if TABLE not in db.table_names():
         return set()
@@ -1490,6 +1579,11 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
     """
     if not chunks:
         return 0
+    collection = _coll(collection)
+    if vector_parts.ensure_split(collection):
+        part = _part_for_write(collection, book_id, lang)
+        return upsert_book(book_id, lang, chunks, part, lock_con, stop, held=held, sink=sink,
+                           reuse=reuse, counts=counts, columns=columns, given=given)
     recipe = collections_mod.recipe_for(collection)
     db = _conn(collection)
     if held is None:
@@ -1502,7 +1596,7 @@ def upsert_book(book_id: int, lang: str, chunks: list[dict], collection=None,
         have = _written_chunks(db, book_id)
     else:
         dtype = held.dtype if held.dtype is not None else _np_dtype_of_recipe(recipe)
-        seen = held.seen
+        seen = held.seen_of(book_id)
         have = held.of(book_id)
     wanted = ({c["id"]: c["text"] for c in chunks if _reusable(c)} if reuse else {})
     done = {i for i, r in have.items() if wanted.get(i) == r["text"]}
@@ -1698,9 +1792,17 @@ class HeldRead:
     by_book: dict
     seen: int
     dtype: object = None
+    #: a split collection's read: each document's PART version (its own
+    #: table's), which `seen` cannot be for documents in several parts
+    seen_by_book: dict | None = None
 
     def of(self, book_id) -> dict:
         return self.by_book.get(int(book_id), {})
+
+    def seen_of(self, book_id) -> int:
+        if self.seen_by_book is not None:
+            return self.seen_by_book.get(int(book_id), 0)
+        return self.seen
 
 
 def held_chunks(collection, book_ids) -> HeldRead:
@@ -1712,6 +1814,17 @@ def held_chunks(collection, book_ids) -> HeldRead:
     fragments, 918 ms at 3,972). Raises when the table cannot be read, or
     when the group holds more rows than one read returns: an incomplete
     answer would read as "not written yet" and store chunks twice."""
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        by_book: dict = {}
+        seen_by_book: dict[int, int] = {}
+        dtype = None
+        for value, books in vector_parts.route(collection, book_ids).items():
+            got = held_chunks(vector_parts.view(collection, value), books)
+            by_book.update(got.by_book)
+            seen_by_book.update({int(b): got.seen for b in books})
+            dtype = dtype if dtype is not None else got.dtype
+        return HeldRead(by_book, 0, dtype, seen_by_book)
     db = _conn(collection)
     tbl = _committed_table(db)
     if tbl is None:
@@ -1780,6 +1893,21 @@ def write_pending(docs: list[PendingDoc], collection=None, lock_con=None,
     next time, and marked without reaching the encoder again."""
     docs = [d for d in docs if d.rows]
     if not docs:
+        return
+    collection = _coll(collection)
+    if vector_parts.ensure_split(collection):
+        # one manifest lock over every part the batch touches, a commit set
+        # per part, and the documents marked after the last (invariant 2)
+        groups = vector_parts.route(collection, [d.book_id for d in docs])
+        by_book = {int(d.book_id): d for d in docs}
+        parts = {v: vector_parts.view(collection, v) for v in groups}
+        for v, books in groups.items():
+            _check_part_rows(collection, v, [r for b in books for r in by_book[int(b)].rows])
+        with _write_lock(lock_con, parts=list(parts.values())):
+            for v, books in groups.items():
+                write_pending([by_book[int(b)] for b in books], parts[v])
+            if on_written is not None:
+                on_written()
         return
     db = _conn(collection)
     rows = [r for d in docs for r in d.rows]
@@ -1950,6 +2078,20 @@ def upsert_chunks(rows: list[dict], collection=None, lock_con=None, *,
                 f"{r['id']!r} is not `<source>:<native_id>:<seq>:<version>` "
                 f"(09 §9.5); it is not written and no filter is built from it")
 
+    collection = _coll(collection)
+    if vector_parts.ensure_split(collection):
+        by_book: dict[int, list[dict]] = {}
+        for r in rows:
+            by_book.setdefault(int(r["book_id"]), []).append(r)
+        groups = vector_parts.route(collection, by_book)
+        parts = {v: vector_parts.view(collection, v) for v in groups}
+        for v, books in groups.items():
+            _check_part_rows(collection, v, [r for b in books for r in by_book[b]])
+        n = 0
+        with _write_lock(lock_con, parts=list(parts.values())):
+            for v, books in groups.items():
+                n += upsert_chunks([r for b in books for r in by_book[b]], parts[v], dtype=dtype)
+        return n
     db = _conn(collection)
     existing = _committed_table(db)
     if existing is not None:
@@ -2002,6 +2144,18 @@ def delete_chunks(chunk_ids, collection=None, lock_con=None) -> int:
             raise ValueError(
                 f"{cid!r} is not `<source>:<native_id>:<seq>:<version>` "
                 f"(09 §9.5); nothing is deleted and no filter is built from it")
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        by_book: dict[int, list[str]] = {}
+        for cid in ids:
+            by_book.setdefault(int(cid.rsplit(":", 3)[1]), []).append(cid)
+        groups = vector_parts.route(collection, by_book, probe=_holds)
+        parts = {v: vector_parts.view(collection, v) for v in groups}
+        gone = 0
+        with _write_lock(lock_con, parts=list(parts.values())):
+            for v, books in groups.items():
+                gone += delete_chunks([c for b in books for c in by_book[b]], parts[v])
+        return gone
     db = _conn(collection)
     if TABLE not in db.table_names():
         return 0
@@ -2030,6 +2184,10 @@ def chunk_ids_of_books(book_ids, collection=None) -> list[str]:
     column, as `delete_chunks` is; counted first, so a long document is never
     cut at a read limit. `hold.carry.keep_producer` walks a manifest with it."""
     books = sorted({int(b) for b in book_ids})
+    collection = _coll(collection)
+    if books and vector_parts.is_split(collection):
+        return [cid for v, part_books in vector_parts.route(collection, books, probe=_holds).items()
+                for cid in chunk_ids_of_books(part_books, vector_parts.view(collection, v))]
     db = _conn(collection)
     if not books or TABLE not in db.table_names():
         return []
@@ -2044,8 +2202,12 @@ def chunk_ids_of_books(book_ids, collection=None) -> list[str]:
     return out
 
 
+#: the Lance directories whose `vector_index.writing` this thread holds
+_registered = threading.local()
+
+
 @contextmanager
-def _write_lock(lock_con, collection=None):
+def _write_lock(lock_con, collection=None, *, parts=()):
     """Every commit to a vector table goes through here.
 
     The manifest's vector write lock, when a connection is supplied (callers
@@ -2056,18 +2218,38 @@ def _write_lock(lock_con, collection=None):
     compaction lost all 13 of its commits from 10-21 to 10-23 to embed
     batches committing underneath it (München, 2026-10-23). Refused, a write
     raises a "retryable commit conflict", which the worker already takes for
-    a deferral (`worker.vector_store_contended`)."""
+    a deferral (`worker.vector_store_contended`).
+
+    `parts`: a split collection's write registers for every part it touches
+    BEFORE the manifest lock, as a single table's does — a wait for a
+    compaction never happens with the manifest lock held. A registration
+    this thread already holds is not taken twice (the per-part calls under
+    a split write): nested, it would wait on a compaction that waits on it."""
     from contextlib import ExitStack
     with ExitStack() as stack:
-        if collection is not None:
+        mine = getattr(_registered, "keys", None)
+        if mine is None:
+            mine = _registered.keys = set()
+        targets = list(parts) if parts else ([collection] if collection is not None else [])
+        if targets:
             from . import vector_index
-            stack.enter_context(vector_index.writing(collection))
+        for c in targets:
+            key = str(c.lance_dir)
+            if key in mine:
+                continue
+            stack.enter_context(vector_index.writing(c))
+            mine.add(key)
+            stack.callback(mine.discard, key)
         if lock_con is not None:
             from .bundles.writer_lock import vector_write_lock
             stack.enter_context(vector_write_lock(lock_con))
         yield
 
 def delete_book(book_id: int, collection=None, lock_con=None):
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        delete_books([book_id], collection, lock_con)
+        return
     db = _conn(collection)
     if TABLE in db.table_names():
         with _write_lock(lock_con, collection):
@@ -2079,20 +2261,57 @@ def delete_books(book_ids, collection=None, lock_con=None) -> None:
     a Lance delete's filter costs memory per value per fragment, so they go
     500 to a filter (`_purge_books`)."""
     books = sorted({int(b) for b in book_ids})
+    collection = _coll(collection)
+    if books and vector_parts.is_split(collection):
+        groups = vector_parts.route(collection, books, probe=_holds)
+        parts = {v: vector_parts.view(collection, v) for v in groups}
+        with _write_lock(lock_con, parts=list(parts.values())):
+            for v, part_books in groups.items():
+                delete_books(part_books, parts[v])
+        return
     db = _conn(collection)
     if books and TABLE in db.table_names():
         with _write_lock(lock_con, collection):
             _purge_books(db.open_table(TABLE), books)
 
 def search(query: str, k: int = 20, langs: list[str] | None = None, collection=None,
-           book_ids: list[int] | None = None, validity: dict | None = None) -> list[dict]:
+           book_ids: list[int] | None = None, validity: dict | None = None,
+           parts: list[str] | None = None) -> list[dict]:
     """book_ids, when given, is a hard prefilter — see fts.search()'s
     docstring for the same note on why retrieval.search() doesn't use it by
-    default."""
-    db = _conn(collection)
-    if TABLE not in db.table_names():
+    default.
+
+    A SPLIT collection (app/vector_parts.py): the query is embedded once and
+    asked of every part the filter selects, in threads; the answers merge
+    on distance, then chunk id. Under a `lang` table key `langs` selects the
+    parts and is no row filter inside them (a part IS its language); `parts`
+    names values of the table key directly (`family:` for wikidata). The
+    merge is exact: one space, one metric, and the index's refine pass
+    returns exact distances, so the union's top k is one exact search's.
+    `book_ids` narrows the parts to theirs."""
+    collection = _coll(collection)
+    split = vector_parts.is_split(collection)
+    if split:
+        key = vector_parts.key_of(collection)
+        only: set[str] | None = None
+        if parts:
+            only = {str(p) for p in parts}
+        if key == "lang" and langs:
+            safe = {l for l in langs if l and _SAFE_LANG.fullmatch(l)}
+            if safe:
+                only = safe if only is None else only & safe
+            langs = None              # the parts are the filter
+        if book_ids:
+            placed = vector_parts.values_of_books(collection, book_ids).values()
+            if None not in placed:         # an unplaced book may be in any part
+                held = set(placed)
+                only = held if only is None else only & held
+        targets = vector_parts.views(collection, only)
+    else:
+        db = _conn(collection)
+        targets = [collection] if TABLE in db.table_names() else []
+    if not targets:
         return []
-    tbl = db.open_table(TABLE)
     recipe = collections_mod.recipe_for(collection)
     if _by_run(collection):
         # 03 §3.3, searching: "the same runs, validated the same way". The
@@ -2105,6 +2324,43 @@ def search(query: str, k: int = 20, langs: list[str] | None = None, collection=N
         run_check.check_query(collection, recipe, seen)
     else:
         vector = embed_query(collection, query, recipe=recipe)
+    ask = lambda part: _search_table(part, vector, k, langs, book_ids, validity)  # noqa: E731
+    if not split:
+        rows = ask(targets[0])
+    else:
+        if len(targets) == 1:
+            found = [ask(targets[0])]
+        else:
+            with ThreadPoolExecutor(max_workers=min(len(targets), SEARCH_THREADS),
+                                    thread_name_prefix="vsearch") as pool:
+                found = list(pool.map(ask, targets))
+        rows = sorted((r for rs in found for r in rs),
+                      key=lambda r: (float(r.get("_distance", 0.0)), r["id"]))[:k]
+    out = []
+    for row in rows:
+        out.append({
+            "score": 1.0 - float(row.get("_distance", 0.0)) / 2.0,
+            "book_id": int(row["book_id"]),
+            "chunk_id": row["id"],
+            "chapter": row["chapter"],
+            "lang": row["lang"],
+            "text": row["text"],
+            "source": "dense",
+        })
+    return out
+
+
+#: the parts of a split collection one search asks at once
+SEARCH_THREADS = 16
+
+
+def _search_table(collection, vector, k: int, langs, book_ids, validity) -> list[dict]:
+    """One table's top k for an embedded query, its rows as Lance returns
+    them (`_distance` included): the single table, or one part."""
+    db = _conn(collection)
+    if TABLE not in db.table_names():
+        return []
+    tbl = db.open_table(TABLE)
     qvec = np.asarray(vector, dtype=_np_dtype_of_table(tbl))
     from . import vector_index
     # probe the local IVF index when the collection has one (nprobes /
@@ -2133,18 +2389,7 @@ def search(query: str, k: int = 20, langs: list[str] | None = None, collection=N
                 "nothing re-embedded; until then no search as of a date")
         from app import validity as validity_mod
         q = q.where(validity_mod.lance_where(validity), prefilter=True)
-    out = []
-    for row in q.to_list():
-        out.append({
-            "score": 1.0 - float(row.get("_distance", 0.0)) / 2.0,
-            "book_id": int(row["book_id"]),
-            "chunk_id": row["id"],
-            "chapter": row["chapter"],
-            "lang": row["lang"],
-            "text": row["text"],
-            "source": "dense",
-        })
-    return out
+    return q.to_list()
 
 def search_records(query: str, depth: int, langs: list[str] | None = None, collection=None,
                    **restrict) -> list[dict]:
@@ -2163,6 +2408,11 @@ def scan_columns(collection, columns, batch_size: int = 65_536):
     """The vector table's `columns`, a record batch at a time: ONE read of
     the table, for a pass that must see every row (carry's recut, A1e) —
     where a lookup per window of documents cost pubmed ~16 h (carry.py)."""
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        for part in vector_parts.views(collection):
+            yield from scan_columns(part, columns, batch_size)
+        return
     db = _conn(collection)
     if TABLE not in db.table_names():
         return
@@ -2172,7 +2422,11 @@ def scan_columns(collection, columns, batch_size: int = 65_536):
 
 def fragment_count(collection) -> int:
     """The vector table's fragments (0 with no table): a Lance delete's filter
-    costs memory per value per fragment (carry._delete_batch)."""
+    costs memory per value per fragment (carry._delete_batch). A split
+    collection's: its largest part's, the most one routed delete meets."""
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        return max((fragment_count(p) for p in vector_parts.views(collection)), default=0)
     db = _conn(collection)
     if TABLE not in db.table_names():
         return 0
@@ -2180,6 +2434,9 @@ def fragment_count(collection) -> int:
 
 
 def stats(collection=None) -> dict:
+    collection = _coll(collection)
+    if vector_parts.is_split(collection):
+        return {"vectors": sum(stats(p)["vectors"] for p in vector_parts.views(collection))}
     db = _conn(collection)
     if TABLE not in db.table_names():
         return {"vectors": 0}

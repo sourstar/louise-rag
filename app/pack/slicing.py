@@ -263,6 +263,61 @@ def context_for(collection, *, log=print, stop=None) -> FamilyContext | None:
     return FamilyContext(fmap, dump, families.walk((r[0] for r in rows), (r[1] for r in rows), fmap))
 
 
+#: ONE VECTOR TABLE PER VALUE OF A SEARCH KEY (operator, 2026-11-01;
+#: docs/notes/vector-tables-split.md §2): plugin → the slice key a search
+#: narrows by, whose every value gets a vector table of its own
+#: (app/vector_parts.py). A plugin not listed keeps one table.
+TABLE_KEYS: dict[str, str] = {}
+
+
+def table_key_for(collection) -> str | None:
+    """The table key the collection's plugin declares for it. Wikidata's
+    `family` only where its Codex slices by a family map: without one its
+    slices have no family to route by."""
+    key = TABLE_KEYS.get(getattr(collection, "plugin", None) or "")
+    if key == "family" and router_context(collection) is None:
+        return None
+    return key
+
+
+_router_contexts: dict[str, tuple[int, "FamilyContext | None"]] = {}
+
+
+def router_context(collection) -> "FamilyContext | None":
+    """What `slice_hint` needs to name a document's slice for ROUTING its
+    vectors: for wikidata by family, the map the Codex pins and the dump —
+    read, never computed (no codes pass, no walk: `walked` is empty, which
+    `slice_hint` does not use). None for every other scheme, or while the
+    node lacks the map or the dump. Cached on the Codex file's identity
+    (its path and mtime), never on a name."""
+    if getattr(collection, "plugin", None) != "wikidata":
+        return None
+    from pathlib import Path
+    codex_path = Path(collection.manifest_path).parent.parent / "shard" / "codex.json"
+    try:
+        mtime = codex_path.stat().st_mtime_ns
+    except OSError:
+        return None
+    hit = _router_contexts.get(str(codex_path))
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
+    ctx = None
+    try:
+        from ..hold import codex as cx
+        from ..plugins.wikidata import families, source as wd
+        codex = cx.loads(codex_path.read_bytes())
+        sha = family_map_of(codex.slicing)
+        if sha is not None:
+            fmap = families.load_map((codex_path.parent / map_member(sha)).read_bytes())
+            dumps = wd.find_dumps(collection.corpus_dir, getattr(collection, "snapshot", None))
+            if dumps:
+                ctx = FamilyContext(fmap, dumps[0], {})
+    except (OSError, ValueError):
+        ctx = None
+    _router_contexts[str(codex_path)] = (mtime, ctx)
+    return ctx
+
+
 def describe_for(collection, scheme: "SliceScheme") -> dict:
     """What a pack manifest says of the slicing: the Codex's own family
     block where it names a map, the scheme's description otherwise."""
