@@ -1484,7 +1484,7 @@ EMBED_PREPARE_MAX_CHUNKS = 64
 
 
 def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
-                    keep_going=None) -> bool:
+                    keep_going=None, renew=None) -> bool:
     """CPU-encoder collections (recipe.concurrency > 1) embed several WHOLE
     DOCUMENTS concurrently. Per-doc request concurrency cannot help a corpus
     whose documents are single chunks (PubMed abstracts); the unit of
@@ -1506,6 +1506,14 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
 
     `keep_going()` is asked before each refill: False stops taking new
     documents (a pause), and what is in flight finishes and is committed.
+
+    `renew()` is asked when the stream reaches EMBED_STREAM_S: True goes on
+    WITHOUT DRAINING — the requests in flight stay in flight and the next
+    documents keep coming — for another EMBED_STREAM_S; False (or none
+    given) drains as before. The producer's says whether anything a new
+    stream would re-read has changed (gpu-saturation-plan.md, step 1 lever
+    1: every 120 s the card emptied to zero and waited for the next stream's
+    selection, held read and cut).
 
     ONE READ AND ONE COMMIT PER BATCH, not per document (2026-09-15).
     Measured per pubmed abstract: reading what it already held 503 ms, its
@@ -1628,7 +1636,8 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
             if counts.embedded:
                 # the endpoint answered: evidence for a timed-out neighbour
                 encoder_timeouts.answered(endpoint, place, row["uid"])
-                answered_here.append(True)
+                if not answered_here:          # a renewed stream lives for hours
+                    answered_here.append(True)
             else:
                 encoder_timeouts.forget(place, row["uid"])
             return (row, n, None, sink.holds(int(row["native_id"])))
@@ -1685,11 +1694,14 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     # rhythm the operator could see. Now a worker that finishes is handed
     # the next candidate immediately, results commit on THIS thread as they
     # land, and the call keeps refilling for EMBED_STREAM_S before draining
-    # — the round loop still gets control back, just less often. Nothing
+    # — the round loop still gets control back, just less often. A producer's
+    # stream is renewed at that point instead (`renew`): it drains only when
+    # something a new stream would re-read has changed. Nothing
     # about the requests changes: one document per worker, one text per
     # request (the batch gate's rule), document-serial inside a worker.
     from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-    deadline = time.time() + getattr(config, "EMBED_STREAM_S", 120.0)
+    stream_s = getattr(config, "EMBED_STREAM_S", 120.0)
+    deadline = time.time() + stream_s
     in_flight: dict = {}          # future -> uid
     seen: set[str] = {r["uid"] for r in rows}
     first_held = read_held(rows)
@@ -1700,7 +1712,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
     done = deferred = 0
     wrong_endpoint: list[BaseException] = []   # 404/401/…: the collection's embedding pauses
     timed_out: list[BaseException] = []        # read timeouts: the endpoint held as busy
-    answered_here: list[bool] = []             # a document the encoder answered
+    answered_here: list[bool] = []             # a document the encoder answered (one entry at most)
     endpoint = encoder_timeouts.endpoint_of(recipe)
     place = str(collection.manifest_path)
 
@@ -1733,6 +1745,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
             return
         if err is not None:
             record_error(row["uid"], err)
+            seen.discard(row["uid"])          # out of every selection now
         elif buffered:
             # embedded and not yet written: its batch's commit marks it
             if not awaiting:
@@ -1740,6 +1753,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
             awaiting[int(row["native_id"])] = row["uid"]
         else:
             mark_done([row["uid"]])
+            seen.discard(row["uid"])
             done += 1
 
     def flush() -> None:
@@ -1756,6 +1770,9 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
             embeddings.write_pending(docs, collection, lock_con=con,
                                      on_written=lambda: mark_done(uids))
             done += len(uids)
+            # done: out of the selection, so `seen` need not keep them (a
+            # renewed stream would otherwise hold every uid it ever took)
+            seen.difference_update(uids)
             return
         except Exception as e:  # noqa: BLE001
             if transient_failure(e):
@@ -1769,6 +1786,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
                 embeddings.write_pending([doc], collection, lock_con=con,
                                          on_written=lambda u=uid: mark_done([u]))
                 done += 1
+                seen.discard(uid)
             except Exception as e:  # noqa: BLE001
                 if transient_failure(e):
                     deferred += 1
@@ -1809,12 +1827,58 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
             return list(group_rows)
         done += len(uids)
         gone = set(uids)
+        seen.difference_update(gone)
         return [r for r in group_rows if r["uid"] not in gone]
+
+    period = {"done": 0, "embedded": 0, "reused": 0}     # at the period's start
+
+    def say_period(more: bool) -> None:
+        """The "embedded …" line for the documents done since the last one —
+        never a running total, so the worker log's batch lines still add up
+        (embed_rate.py sums them)."""
+        with tally_lock:
+            embedded, reused = tally.embedded, tally.reused
+        n = done - period["done"]
+        if n:
+            db.log_event(con, "info", "embed",
+                         f"embedded {n} document(s) at concurrency "
+                         f"{recipe.concurrency if slots is None else slots}: "
+                         f"{embedded - period['embedded']} chunks embedded, "
+                         f"{reused - period['reused']} reused"
+                         + ("; the stream goes on" if more else ""))
+        period.update(done=done, embedded=embedded, reused=reused)
+
+    ending: list[bool] = []         # renewal refused once: the stream drains
+
+    def renewed() -> bool:
+        """At the deadline: go on without draining, when `renew` says
+        nothing a new stream re-reads has changed and nothing has deferred.
+        The scope is read again, as a new stream would read it (a runtime
+        override, invariant 10); a refusal stands for the rest of the call,
+        so the drain does not ask again at every document it finishes."""
+        nonlocal deadline, scope
+        if ending or renew is None or deferred or wrong_endpoint or timed_out:
+            return False
+        try:
+            ok = bool(renew())
+            if ok:
+                scope = db.get_scope(con)
+        except Exception:   # noqa: BLE001 — unsure: drain, as a stream always did
+            ok = False
+        if not ok:
+            ending.append(True)
+            return False
+        say_period(True)
+        if done:
+            _endpoint_answered(con, collection)
+        deadline = time.time() + stream_s
+        return True
 
     def refill(pool) -> None:
         nonlocal queue
         while len(in_flight) < window and not _stop.is_set() \
-                and time.time() < deadline and (keep_going is None or keep_going()):
+                and (time.time() < deadline or renewed()) \
+                and (keep_going is None or keep_going()):
             if not queue:
                 # candidates committed by THIS thread are already out of the
                 # selection; the ones in flight or awaiting their batch's
@@ -1876,11 +1940,7 @@ def _embed_parallel(con, collection, recipe, *, slots: int | None = None,
         # timed out and answered nobody: a hung backend is sent nothing more
         # for a while (an answer to anyone else releases it)
         _hold_busy(con, collection, endpoint, timed_out[-1])
-    if done:
-        db.log_event(con, "info", "embed",
-                     f"embedded {done} document(s) at concurrency "
-                     f"{recipe.concurrency if slots is None else slots}: "
-                     f"{tally.embedded} chunks embedded, {tally.reused} reused")
+    say_period(False)
     if deferred:
         db.log_event(con, "warn", "embed",
                      f"{deferred} document(s) deferred — encoder unreachable, busy, "
@@ -4229,10 +4289,9 @@ def producers_enabled(pipeline: bool) -> bool:
     return bool(pipeline and config.WORKER_EMBED_PRODUCERS)
 
 
-def _producer_step(con, collection) -> bool:
-    """One stream of this collection's embedding, or False when it has
-    none to do now — switched off, unlicensed, its encoder failing its
-    baseline, or its vector table under maintenance: each a deferral."""
+def _may_embed(con, collection) -> bool:
+    """Whether this collection may embed now: switched on, licensed, its
+    vector table not under maintenance, its encoder passing its baseline."""
     scope = db.get_scope(con)
     if scope["embed_mode"] not in collections_mod.EMBEDDING_MODES:
         return False
@@ -4240,14 +4299,38 @@ def _producer_step(con, collection) -> bool:
         return False
     if not _vector_writes_allowed(collection, con):
         return False
-    if not _embedding_allowed(con, collection):
+    return bool(_embedding_allowed(con, collection))
+
+
+def _producer_step(con, collection) -> bool:
+    """One stream of this collection's embedding, or False when it has
+    none to do now — switched off, unlicensed, its encoder failing its
+    baseline, or its vector table under maintenance: each a deferral.
+
+    The stream is RENEWED at each EMBED_STREAM_S without draining while
+    every one of those still holds, the collection's file is unchanged
+    (so its recipe is), and this thread is still the collection's producer
+    — a stop, a removed collection or a changed [encoder] drains it as a
+    stream end always did, within one EMBED_STREAM_S."""
+    if not _may_embed(con, collection):
         return False
     recipe = collections_mod.recipe_for(collection)
     slots = max(config.EMBED_PLUGIN_SLOTS, recipe.concurrency)
+    me = threading.current_thread()
+
+    def renew() -> bool:
+        entry = _embed_producers.get(collection.name)
+        if entry is None or entry[0] is not me or entry[1].is_set():
+            return False                  # not (or no longer) this collection's producer
+        if _live_collection(collection) != collection:
+            return False                  # its file changed: the next stream reads it
+        return _may_embed(con, collection)
+
     with dispatch.working_as(Level.CORPUS, collection.name):
         return _embed_parallel(
             con, collection, recipe, slots=slots,
-            keep_going=lambda: not (_paused.is_set() or _acquire_only.is_set()))
+            keep_going=lambda: not (_paused.is_set() or _acquire_only.is_set()),
+            renew=renew)
 
 
 def _embed_producer(collection, gone: threading.Event) -> None:
