@@ -191,7 +191,7 @@ def test_one_ask_button_a_switch_and_the_settings_out_of_the_way(client):
     html = client.get("/ask").text
     form = html[html.index('id="q"'):html.index('id="results"')]
     assert form.count("<button") == 1 and 'onclick="go()">Ask</button>' in form
-    assert "> Search only</label>" in form and "> AI summary</label>" in form
+    assert "<span>Search only</span></label>" in form and "<span>Search + AI summary</span></label>" in form
     assert "Ask (RAG)" not in html and 'onclick="search()"' not in form
     settings = form[form.index('<details class="settings">'):form.index("</details>")]
     for control in ('id="mode"', 'id="limit"', 'id="rerank-depth"', 'id="all-langs"'):

@@ -74,6 +74,11 @@ def read_published(con) -> list[dict]:
     return [e for e in entries if isinstance(e, dict) and e.get("torrent_path")]
 
 
+#: the longest a graceful stop (`Seeder.drain`) waits for its peers'
+#: pending requests before the torrent goes all the same
+DRAIN_MAX_S = 600.0
+
+
 class Seeder:
     """One per worker process. Thread-safe; libtorrent handles are."""
 
@@ -84,6 +89,8 @@ class Seeder:
         self._uploaded: dict[str, int] = {}         # info_hash -> last total_upload seen
         self._paused = False
         self._upload_limit: int | None = None       # what the session was last told
+        # info_hash -> (handle, when the graceful stop began): `drain`
+        self._draining: dict[str, tuple[object, float]] = {}
 
     def limit_upload(self, session) -> int:
         """The session's upload ceiling set to the UP budget's (invariant 5):
@@ -114,6 +121,20 @@ class Seeder:
         with self._lock:
             if key in self._handles:
                 return True
+            stopping = self._draining.pop(key, None)
+            if stopping is not None:
+                # shared again while its graceful stop ran: the same handle
+                # resumes (libtorrent refuses the torrent added twice)
+                self._handles[key] = stopping[0]
+                self._meta[key] = {**entry, "collection": collection.name}
+        if stopping is not None:
+            try:
+                if not self._paused:
+                    stopping[0].resume()
+            except Exception:   # noqa: BLE001 — a dead handle is re-added next beat
+                with self._lock:
+                    self._handles.pop(key, None)
+            return True
         from .torrent_publish import seed
         root = Path(entry.get("root") or collection.corpus_dir)
         # a SHARD member (app/share/seeder.py's entries name one) is found
@@ -148,9 +169,15 @@ class Seeder:
         with self._lock:
             doomed = [k for k, m in self._meta.items()
                       if m.get("collection") not in live_names]
-            handles = [(k, self._handles.get(k)) for k in doomed]
+            handles = []
+            for k in doomed:
+                h = self._handles.get(k)
+                if h is None and k in self._draining:
+                    h = self._draining[k][0]
+                handles.append((k, h))
             for k in doomed:
                 self._handles.pop(k, None)
+                self._draining.pop(k, None)
                 self._meta.pop(k, None)
                 self._uploaded.pop(k, None)
         dropped = []
@@ -185,6 +212,70 @@ class Seeder:
                 n += 1
         return n
 
+    def drain(self, info_hashes, *, now: float | None = None) -> int:
+        """STOP SERVING GRACEFULLY (operator, 2026-11-01: "when unchecked the
+        sharing of that collection shall be halted (complete the transfers
+        ongoing, do not cut the data transfer abruptly)"). libtorrent's own
+        graceful pause (`torrent_handle.graceful_pause`): no new peer is
+        accepted, every piece request already made is answered, and only then
+        are the peers disconnected. The torrent is removed once no peer is
+        left (`finish_draining`, every beat), and at most DRAIN_MAX_S after
+        the stop began — a peer that never lets go does not hold it open
+        (invariant 2: bounded in time). How many began their stop."""
+        t = time.time() if now is None else now
+        started = []
+        with self._lock:
+            for key in list(info_hashes):
+                handle = self._handles.pop(key, None)
+                if handle is None:
+                    continue
+                self._draining[key] = (handle, t)
+                started.append(handle)
+        try:
+            import libtorrent as lt
+            flag = lt.torrent_handle.graceful_pause
+        except Exception:   # noqa: BLE001 — no libtorrent: nothing is serving anyway
+            flag = None
+        for handle in started:
+            try:
+                handle.pause(flag) if flag is not None else handle.pause()
+            except Exception:   # noqa: BLE001 — a dead handle ends at the next beat
+                continue
+        return len(started)
+
+    def finish_draining(self, *, now: float | None = None) -> list[str]:
+        """The graceful stops that are over — no peer left, or DRAIN_MAX_S
+        passed — removed from the session. The keys removed."""
+        from .transport_torrent import get_session
+        t = time.time() if now is None else now
+        with self._lock:
+            items = list(self._draining.items())
+        done = []
+        for key, (handle, since) in items:
+            try:
+                peers = int(handle.status().num_peers)
+            except Exception:   # noqa: BLE001 — a dead handle has no peer
+                peers = 0
+            if peers and t - since < DRAIN_MAX_S:
+                continue
+            with self._lock:
+                if self._draining.pop(key, None) is None:
+                    continue                     # resumed meanwhile
+                self._meta.pop(key, None)
+                self._uploaded.pop(key, None)
+            try:
+                get_session().remove_torrent(handle)
+            except Exception:   # noqa: BLE001
+                pass
+            done.append(key)
+        return done
+
+    def draining(self, collection_name: str | None = None) -> int:
+        """Graceful stops under way, for one collection or all."""
+        with self._lock:
+            return sum(1 for k in self._draining
+                       if collection_name is None or self._meta.get(k, {}).get("collection") == collection_name)
+
     def set_paused(self, paused: bool) -> None:
         with self._lock:
             if paused == self._paused:
@@ -203,7 +294,7 @@ class Seeder:
         """Bytes uploaded since the last call, credited to the UP bucket
         under SEEDING. Returns the delta (tests read it)."""
         with self._lock:
-            items = list(self._handles.items())
+            items = list(self._handles.items()) + [(k, h) for k, (h, _) in self._draining.items()]
         total_delta = 0
         for key, handle in items:
             try:
@@ -221,6 +312,8 @@ class Seeder:
     def table(self) -> list[dict]:
         with self._lock:
             items = list(self._handles.items())
+            stopping = set(self._draining)
+            items += [(k, h) for k, (h, _) in self._draining.items()]
         rows = []
         for key, handle in items:
             meta = self._meta.get(key, {})
@@ -236,7 +329,9 @@ class Seeder:
                     "peers": int(st.num_peers),
                     "seeding": bool(st.is_seeding),
                     "checking": bool(getattr(st, "state", None) in (1, 2)),
-                    "paused": self._paused,
+                    "paused": self._paused or key in stopping,
+                    # a graceful stop under way (`drain`): finishing its transfers
+                    "stopping": key in stopping,
                     # torrent COLLECTIONS (STATUS 5l): the page groups the
                     # members under their collection and offers its magnet
                     "kind": meta.get("kind") or "corpus",
@@ -294,6 +389,7 @@ def tick(collections, cons: dict, control_con, worker_state: str) -> None:
                     allowed.add(c.name)
             except Exception:   # noqa: BLE001 — a gate error withholds, never serves
                 continue
+        seeder.finish_draining()
         dropped = seeder.retain(allowed)
         if dropped:
             db.log_event(control_con, "info", "seeding",

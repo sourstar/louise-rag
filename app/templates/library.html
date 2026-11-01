@@ -201,16 +201,21 @@
         {% for m, label in [('off', 'off'), ('lazy', 'on-demand'), ('all', 'all local'), ('p2p', 'all p2p')] %}
         <option value="{{ m }}" {{ 'selected' if c.embed_mode == m }}>{{ label }}</option>
         {% endfor %}
-      </select>
-      {% if c.p2p is not none %}
-      {# the OTHER axis, independent of the encoder's: what this node makes
-         available — its records and every embedding it holds, as bundles
-         (04 §4.3). The two meet in one place only: all p2p needs sharing,
-         and the page asks before writing either pair (07 §7.8, 2026-10-19) #}
-      <label title="serve this collection's records and the embeddings held here as bundles (04 §4.3); all p2p needs it">
+      </select></div>
+    {% if c.shareable %}
+    {# the OTHER axis, independent of the encoder's: what this node makes
+       available — its records and every embedding it holds, as bundles
+       (04 §4.3). The two meet in one place only: all p2p needs sharing,
+       and the page asks before writing either pair (07 §7.8, 2026-10-19).
+       On every collection that can be served, beside the select and on its
+       line (operator, 2026-11-01); unchecked, the transfers under way
+       finish and nothing new starts (app/acquire/seeding.py `drain`) #}
+    <div style="flex:0 0 auto;min-width:0;align-self:flex-end;padding-bottom:6px">
+      <label class="check" title="serve this collection's records and the embeddings held here as bundles (04 §4.3); all p2p needs it. Unchecked: nothing new is served, the transfers under way finish first">
         <input type="checkbox" {{ 'checked' if c.share }}
-               onchange="setShare('{{ c.name }}', this.checked, '{{ c.embed_mode_file or '' }}')"> shared</label>
-      {% endif %}</div>
+               onchange="setShare('{{ c.name }}', this.checked, '{{ c.embed_mode_file or '' }}')">share</label>
+    </div>
+    {% endif %}
   </div>
   {% if c.embed_mode_note %}
   <div class="note"><span class="badge err">runs as all local</span> {{ c.embed_mode_note }}</div>
@@ -275,9 +280,9 @@
   </div>
   <div class="row">
     <div>
-      <label title="serve this collection's claims and their edges as members (04 §4.3)">
+      <label class="check" title="serve this collection's claims and their edges as members (04 §4.3). Unchecked: nothing new is served, the transfers under way finish first">
         <input type="checkbox" {{ 'checked' if a.share }}
-               onchange="setShare('{{ a.name }}', this.checked, '')"> shared</label>
+               onchange="setShare('{{ a.name }}', this.checked, '')">share</label>
     </div>
   </div>
   {# updated, not replaced (operator, 2026-10-23): the next snapshot of the
@@ -452,7 +457,7 @@ async function setEmbedMode(name,mode,shared){
 async function setShare(name,on,mode){
   if(!on&&mode==='p2p'&&!confirm(name+' embeds in all p2p mode, which publishes what it embeds; disabling sharing switches it to all local. Proceed?')){location.reload();return}
   try{const d=await postJSON('/admin/library/'+name+'/share',{share:on});
-    toast(name+': sharing '+(on?'on':'off')+(d.embed_mode_changed?' — embed mode → all local':'')+' — saved to collections/'+name+'.toml');
+    toast(name+': sharing '+(on?'on':'off — nothing new is served; the transfers under way finish first')+(d.embed_mode_changed?' — embed mode → all local':'')+' — saved to collections/'+name+'.toml');
     if(d.embed_mode_changed){location.reload()}}
   catch(e){toast('sharing failed: '+e);location.reload()}
 }
@@ -512,7 +517,7 @@ function openGrowAdditive(name,opts){
   showModal(`<h2>Grow ${esc(name)}</h2>
     <div style="max-height:260px;overflow-y:auto;margin:8px 0">${rows}</div>
     <label style="text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:8px">
-      <input type="checkbox" id="grow_all" style="width:auto"> everything (all slices)
+      <input type="checkbox" id="grow_all" style="width:auto" ${held.has('all')?'checked':''}> everything (all slices)
     </label>
     ${growExtrasBlock(name)}
     <div class="actions">

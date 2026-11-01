@@ -154,3 +154,19 @@ def test_a_profile_without_a_size_shows_none(isolated_config, tmp_path):
     assert labels["person"] == "person — people"
     assert labels["all"].startswith("all (~") and "?" not in "".join(labels.values())
     assert web._sized("x", None, files=3) == "x (3 files)"
+
+
+def test_the_additive_dialog_marks_what_the_collection_holds(isolated_config, tmp_path):
+    """Operator, 2026-11-01: wikipedia's grow showed no check on the languages
+    held. `slices = "all"` holds every language (and checks "everything");
+    a list holds the profiles of its delivered slices."""
+    from dataclasses import replace
+    c = collections_mod.Collection(
+        name="wikipedia", plugin="wikipedia", profile=None, embed_mode_default=None,
+        corpus_dir=tmp_path, manifest_path=tmp_path / "m.db",
+        fts_dir=tmp_path / "fts", lance_dir=tmp_path / "lance", slices="all")
+    held = web._profile_held(c)
+    assert {"en", "it", "fa", "all"} <= set(held)
+    some = replace(c, slices=("lang=it", "lang=en/pages=3M"))
+    assert web._profile_held(some) == ["it", "en"]
+    assert web._profile_held(replace(c, slices=None, profile="tr,it")) == ["tr", "it"]

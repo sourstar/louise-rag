@@ -1,8 +1,8 @@
 # One vector table per value of a search key (2026-11-01)
 
 *Operator, 2026-11-01: "Different tables, make it a standard practice when
-separated searches might be done." On Wikidata by family: recommended
-(below), the default if the operator says nothing.*
+separated searches might be done." Wikidata by family: "Wikidata I agree to
+one table per family" (operator, the same day).*
 
 ## 1. Why
 
@@ -168,7 +168,7 @@ would take the table opens through `connect_namespace`, nothing else.
 Then on the node: wikidata (small now), then wikipedia (§6), each measured
 before and after (`one_language_live_search`).
 
-## 10. Wikidata by family: the recommendation
+## 10. Wikidata by family: decided (operator, 2026-11-01), the table it was decided on
 
 | choice | pros | cons |
 |---|---|---|

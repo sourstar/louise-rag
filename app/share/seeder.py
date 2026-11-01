@@ -378,21 +378,47 @@ def publish_pointer(collection, session, *, now: float | None = None, key=None, 
     return True
 
 
-def unpublish(collection, state_dir: Path, con, log=None) -> int:
+def unpublish(collection, state_dir: Path, con, log=None, *, graceful: bool = False) -> int:
     """Nothing of this collection served: its torrents dropped from the
-    seeder, its entries and tree removed. How many torrents were dropped."""
+    seeder, its entries and tree removed. How many torrents were dropped.
+
+    `graceful` (sharing switched off, operator 2026-11-01: "complete the
+    transfers ongoing, do not cut the data transfer abruptly"): nothing new
+    is served or announced from now on, and the torrents finish what their
+    peers asked for (`seeding.Seeder.drain`). The tree they read stays until
+    the last of them is gone (`settle_stopped`)."""
     from app.acquire import seeding
     entries = seeding.read_published(con)
     mine = [e for e in entries if e.get("member")]
-    dropped = seeding.get_seeder().drop([e["info_hash"] for e in mine])
+    hashes = [e["info_hash"] for e in mine]
+    seeder_ = seeding.get_seeder()
+    n = seeder_.drain(hashes) if graceful else seeder_.drop(hashes)
     db.set_control(con, seeding.TORRENT_PUBLISHED_KEY,
                    json.dumps([e for e in entries if not e.get("member")]))
     db.set_control(con, CONTROL_KEY, json.dumps({"snapshot_id": None, "torrents": 0,
+                                                 "stopping": n if graceful else 0,
                                                  "at": time.time()}))
-    shutil.rmtree(Path(state_dir) / SHARE_DIR, ignore_errors=True)
+    if not graceful:
+        shutil.rmtree(Path(state_dir) / SHARE_DIR, ignore_errors=True)
     if log is not None and mine:
-        log(f"[{collection.name}] share: stopped; {dropped} torrent(s) dropped")
-    return dropped
+        log(f"[{collection.name}] share: stopped; " + (
+            f"{n} torrent(s) finish the transfers under way, nothing new is served" if graceful
+            else f"{n} torrent(s) dropped"))
+    return n
+
+
+def settle_stopped(collection, state_dir: Path, con, log=None) -> bool:
+    """A graceful stop whose transfers are all over: the served tree
+    removed and the stop recorded as done. True when it settled."""
+    from app.acquire import seeding
+    now_served = served(con) or {}
+    if not now_served.get("stopping") or seeding.get_seeder().draining(collection.name):
+        return False
+    shutil.rmtree(Path(state_dir) / SHARE_DIR, ignore_errors=True)
+    db.set_control(con, CONTROL_KEY, json.dumps({**now_served, "stopping": 0, "at": time.time()}))
+    if log is not None:
+        log(f"[{collection.name}] share: stopped; the transfers under way have finished")
+    return True
 
 
 def wants_serving(collection) -> bool:
@@ -472,8 +498,12 @@ def sync(collections, cons: dict, control_con, worker_state: str, *,
         state_dir = root / c.name / "state"
         if not wants_serving(c):
             if served(con) and served(con).get("snapshot_id"):
-                unpublish(c, state_dir, con, log)
+                # sharing switched off, or the copy left use: the transfers
+                # under way finish, nothing new starts (operator, 2026-11-01)
+                unpublish(c, state_dir, con, log, graceful=True)
                 out["unpublished"].append(c.name)
+            else:
+                settle_stopped(c, state_dir, con, log)
             continue
         shard_dir = col.shard_dir_of(root, c.name)
         snap = current_snapshot(shard_dir)
