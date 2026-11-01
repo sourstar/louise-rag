@@ -226,7 +226,7 @@ Notes:
   dropped it. Invariant 12 makes that a refused run. Fixed by the P2
   rollout the same evening (every llama.cpp `vega-` model sets it).
 
-**Cross-device bar: the CPU is the reference, 0.995 the review line**
+**Cross-device bar: the CPU is the reference, 0.995 the review line (0.985 for 4-bit weights, operator 2026-11-01; near-exact-runs.md §2)**
 *(operator, 2026-10-18).* An engine on a card is compared, text by text,
 with a CPU twin of the same build and options (`gpu_layers: 0`,
 `no_op_offload:true`, the device hidden — `gpu_layers: 0` alone still

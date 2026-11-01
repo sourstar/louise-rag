@@ -182,3 +182,58 @@ def test_the_reference_asks_one_text_a_request_under_that_bound(monkeypatch, tmp
                         query_model=None)
     assert louise.cmd_embedder_cpu_reference(a) == 0
     assert asked == [(1, 4800.0), (1, 4800.0)], "one text a request, the window's bound"
+
+
+# ---- 4-bit weights hold their own review line (operator, 2026-11-01: A) -------
+# gutenberg's Qwen3-Embedding-4B Q4_K_M against its CPU twin: worst 0.989292 on
+# a 39-token text, median 0.998358, exact over 3 loads; the CPU's activations
+# are quantised where SYCL's are not (München, m6). bge-m3 F16: worst 0.999930.
+
+@pytest.mark.parametrize("model,line", [
+    ("Qwen3-Embedding-4B-Q4_K_M.gguf", 0.985),
+    ("/models/x-IQ4_XS.gguf", 0.985),
+    ("model-q4_0.gguf", 0.985),
+    ("gpt-oss-MXFP4.gguf", 0.985),
+    ("bge-m3-FP16.gguf", 0.995),
+    ("MedCPT-Query-Encoder-f16.gguf", 0.995),
+    ("m-Q8_0.gguf", 0.995),
+    ("Q40.gguf", 0.995),
+    (None, 0.995),
+])
+def test_the_review_line_follows_the_weights_localai_loaded(model, line):
+    engine = {"options": {"Model": model}} if model is not None else {"name": "x"}
+    assert emb.cpu_review_line(engine) == line
+
+
+def _q4_engine(codex):
+    from tests.hold.test_backend_engine import BACKEND
+    from dataclasses import replace
+    return replace(BACKEND, options={"Model": "Qwen3-Embedding-4B-Q4_K_M.gguf",
+                                     "ModelFile": "${WEIGHTS}"})
+
+
+def test_a_4bit_run_at_gutenbergs_figures_passes_and_a_full_precision_one_does_not():
+    from tests.hold.test_backend_engine import BACKEND, _vega_run
+    codex = codex_768()
+    ref = reference()
+    cpu = perturbed(ref, indices=(235,), to=0.989292)
+    for engine, ok in ((_q4_engine(codex), True), (BACKEND, False)):
+        run = emb.run_gate(codex, reference=ref, embed=lambda texts: ref, seed=b"\x09" * 32,
+                           stated=_vega_run(codex, engine), embed_one=fake_embed,
+                           contribute=fake_embed, cpu_reference=("sha256:" + "44" * 32, cpu))
+        assert run.ok is ok, run.why()
+    assert "below the review line 0.995" in run.why()
+    broken = perturbed(ref, indices=(7,), to=0.126)
+    run = emb.run_gate(codex, reference=ref, embed=lambda texts: ref, seed=b"\x09" * 32,
+                       stated=_vega_run(codex, _q4_engine(codex)), embed_one=fake_embed,
+                       contribute=fake_embed, cpu_reference=("sha256:" + "44" * 32, broken))
+    assert not run.ok and "below the review line 0.985" in run.why(), \
+        "a broken engine still fails a 4-bit run"
+
+
+def test_a_4bit_statement_is_admitted_at_its_own_line():
+    q4 = {"options": {"Model": "Qwen3-Embedding-4B-Q4_K_M.gguf"}}
+    gutenberg = {"run": "r", "worst": "0.989292", "median": "0.998358"}
+    assert _v5(engine=q4, cpu_reference=gutenberg)
+    assert not _v5(cpu_reference=gutenberg), "full-precision weights keep 0.995"
+    assert not _v5(engine=q4, cpu_reference={"run": "r", "worst": "0.984", "median": "0.99"})
