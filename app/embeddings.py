@@ -762,7 +762,18 @@ def _embed_texts(texts: list[Item], timeout: float = 300, *,
             "there is no default")
     recipe = _side(recipe, query)
     texts = texts if asked else _asked(texts, recipe, query)
+    co = _coalescing.get()
+    if co is not None and not query and co.serves(recipe):
+        # the texts join other documents' in requests of the gated batch
+        # (`Coalescer`): one stream's documents, one encoder
+        return co.embed(texts, raw=raw, runs=runs, timeout=timeout)
+    return _send_texts(texts, timeout, recipe, runs=runs, raw=raw)
 
+
+def _send_texts(texts: list[Item], timeout: float, recipe: "collections_mod.EmbedRecipe", *,
+                runs: set | None = None, raw: bool = False) -> list[list[float]]:
+    """`texts` (already as their side receives them) in requests of the
+    gated batch, EMBED_CONCURRENCY of them at once; vectors in order."""
     def one(b: list[Item]) -> list[list[float]]:
         # the two keywords only where asked for: a test's stand-in for
         # `_embed_batch` takes the three arguments it always took
@@ -784,6 +795,230 @@ def _embed_texts(texts: list[Item], timeout: float = 300, *,
     else:
         results = [one(b) for b in batches]
     return [v for part in results for v in part]
+
+
+# ---- requests filled across documents (dynamic batching) -----------------------
+#
+# gpu-saturation-plan.md, step 1 lever 2. A request carried ONE document's
+# chunks, so wikidata (1.04 chunks a document) sent ~76 requests a second of
+# ~1 text each and the card computed 82 % of the time, the rest lost to each
+# request's turnaround, with the gated batch of 16 never filled (München,
+# 2026-11-01). A `Coalescer` lets the texts of every document in flight join
+# requests of up to the gated batch, `lanes` requests at once — the dynamic
+# batching of inference servers (Triton's dynamic batcher, TEI's batching),
+# here on the client's side because the model server is a plain one (base
+# rule: the engine is Louise's). Without a linger: a lane sends what waits
+# the moment it is free, so under load the requests fill and an idle stream
+# adds no latency.
+#
+# It is what the gate validates already: its "contribute" pass sends batches
+# of `[encoder] batch` texts with the collection's concurrency of requests
+# (run_check.answers), whichever texts share a request. A document writes
+# only when all of its vectors are back (invariant 2: unchanged, upsert_book
+# waits). A request that fails for its INPUT is sent again per document, so
+# a refused text stays its own document's error; one that fails for the
+# ENDPOINT (busy, misconfigured, a receipt late) is every document's
+# deferral, never multiplied into one request per document. A TIMEOUT of a
+# shared request is the endpoint's until one document proves it its own
+# (app/encoder_timeouts.py's rule): a one-word probe asks whether the
+# endpoint answers; if it does, each document is asked again alone — the
+# slow text times out on its own and the others are answered — and if it
+# does not, the timeout is everyone's, as a hung endpoint's always was.
+# Without this, one pathological text would put a timeout on each of its
+# batch-mates, and after BLAME_AFTER of them an error on innocent documents.
+
+#: the probe's text and bound
+ALIVE_PROBE = "louise"
+ALIVE_TIMEOUT_S = 30.0
+
+#: the coalescer this thread's embeddings go through (`coalescing`)
+_coalescing: contextvars.ContextVar["Coalescer | None"] = contextvars.ContextVar(
+    "embeddings_coalescing", default=None)
+
+
+@contextmanager
+def coalescing(co: "Coalescer | None"):
+    token = _coalescing.set(co)
+    try:
+        yield
+    finally:
+        _coalescing.reset(token)
+
+
+@dataclass
+class _Ask:
+    items: list
+    raw: bool
+    runs: set | None
+    vectors: list
+    left: int
+    done: threading.Event
+    error: BaseException | None = None
+
+
+def _endpoint_fault(exc: BaseException) -> bool:
+    """The endpoint's state, the same for every input it was asked: never
+    sent again per document."""
+    return isinstance(exc, (EndpointDeferred, ConnectionError, vclient.Deferral,
+                            httpx.TransportError, hold_runs.RunUnvalidated,
+                            hold_runs.RunRefused))
+
+
+class Coalescer:
+    """One stream's requests to one encoder, filled across its documents:
+    up to `size` texts a request, `lanes` requests at once, first come first
+    served. `embed` blocks its caller (a document's thread) until its texts
+    are back, bounded; `close` ends it, what waits deferred."""
+
+    def __init__(self, recipe: "collections_mod.EmbedRecipe", *, size: int, lanes: int,
+                 name: str = "", timeout: float = 300) -> None:
+        self.recipe = recipe
+        self.size = max(1, int(size))
+        self.lanes = max(1, int(lanes))
+        self.timeout = timeout
+        self._waiting: list[tuple[_Ask, int]] = []      # (ask, index of one of its items)
+        self._cv = threading.Condition()
+        self._closed = False
+        self.requests = 0                                 # sent, for the tests and the log
+        self.texts = 0
+        # each lane works in the creator's context: its level and collection
+        # reach the gate as the documents' would (dispatch.working_as)
+        self._threads = [threading.Thread(
+            target=contextvars.copy_context().run, args=(self._lane,),
+            name=f"coalesce-{name}-{i}", daemon=True) for i in range(self.lanes)]
+        for t in self._threads:
+            t.start()
+
+    def serves(self, recipe) -> bool:
+        return recipe == self.recipe
+
+    def embed(self, items: list, *, raw: bool = False, runs: set | None = None,
+              timeout: float = 300) -> list[list[float]]:
+        if not items:
+            return []
+        ask = _Ask(items=list(items), raw=raw, runs=runs, vectors=[None] * len(items),
+                   left=len(items), done=threading.Event())
+        with self._cv:
+            if self._closed:
+                raise EndpointBusy("the stream's requests are closed: deferred")
+            self._waiting.extend((ask, i) for i in range(len(items)))
+            self._cv.notify_all()
+        # bounded: every request this ask needs, one after another at worst,
+        # behind a full queue of others'; past it, a deferral
+        bound = timeout * (2 + -(-len(items) // self.size))
+        if not ask.done.wait(bound):
+            late = EndpointTimedOut(f"{self.recipe.url}: the stream's requests did not "
+                                    f"answer within {bound:.0f} s; deferred")
+            self._fail([ask], late)           # what of it still waits is not sent
+            raise late
+        if ask.error is not None:
+            raise ask.error
+        return ask.vectors
+
+    def _take(self) -> list[tuple[_Ask, int]] | None:
+        with self._cv:
+            while not self._waiting and not self._closed:
+                self._cv.wait(1.0)
+            if not self._waiting:
+                return None
+            head = self._waiting[0][0]
+            kind = (head.raw, isinstance(head.items[self._waiting[0][1]], str))
+            took, rest = [], []
+            for entry in self._waiting:
+                ask, i = entry
+                if len(took) < self.size and (ask.raw, isinstance(ask.items[i], str)) == kind:
+                    took.append(entry)
+                else:
+                    rest.append(entry)
+            self._waiting = rest
+            return took
+
+    def _lane(self) -> None:
+        while True:
+            took = self._take()
+            if took is None:
+                return
+            self._send(took)
+
+    def _send(self, took: list[tuple[_Ask, int]]) -> None:
+        raw = took[0][0].raw
+        seen: set = set()
+        try:
+            vectors = _send_texts([a.items[i] for a, i in took], self.timeout, self.recipe,
+                                  runs=seen, raw=raw)
+        except BaseException as e:   # noqa: BLE001 — handed to the documents it concerns
+            shared = len({id(a) for a, _ in took}) > 1
+            if isinstance(e, EndpointTimedOut) and shared and self._answers():
+                self._alone(took, raw)       # alive: the slow text proves itself alone
+            elif _endpoint_fault(e):
+                self._fail({id(a): a for a, _ in took}.values(), e)
+            else:
+                self._alone(took, raw)
+            return
+        with self._cv:
+            self.requests += 1
+            self.texts += len(took)
+        for (ask, i), v in zip(took, vectors):
+            self._deliver(ask, i, v, seen)
+
+    def _answers(self) -> bool:
+        """Does the endpoint answer at all, now? One word, a short bound."""
+        try:
+            _send_texts([ALIVE_PROBE], ALIVE_TIMEOUT_S, self.recipe, runs=set(), raw=True)
+            return True
+        except BaseException:   # noqa: BLE001 — not answering, whatever the way
+            return False
+
+    def _alone(self, took: list[tuple[_Ask, int]], raw: bool) -> None:
+        """The request failed for an input: each document's part again on
+        its own, so the error lands on the document whose text it was."""
+        parts: dict[int, tuple[_Ask, list[int]]] = {}
+        for ask, i in took:
+            parts.setdefault(id(ask), (ask, []))[1].append(i)
+        for ask, idx in parts.values():
+            seen: set = set()
+            try:
+                vectors = _send_texts([ask.items[i] for i in idx], self.timeout, self.recipe,
+                                      runs=seen, raw=raw)
+            except BaseException as e:   # noqa: BLE001
+                self._fail([ask], e)
+                continue
+            for i, v in zip(idx, vectors):
+                self._deliver(ask, i, v, seen)
+
+    def _deliver(self, ask: _Ask, i: int, vector, seen: set) -> None:
+        with self._cv:
+            if ask.done.is_set():
+                return
+            ask.vectors[i] = vector
+            if ask.runs is not None:
+                ask.runs |= seen
+            ask.left -= 1
+            if ask.left == 0:
+                ask.done.set()
+
+    def _fail(self, asks, exc: BaseException) -> None:
+        with self._cv:
+            for ask in asks:
+                if not ask.done.is_set():
+                    ask.error = exc
+                    ask.done.set()
+            # what else of a failed ask still waits is not sent
+            failed = {id(a) for a in asks}
+            self._waiting = [(a, i) for a, i in self._waiting if id(a) not in failed]
+
+    def close(self, wait_s: float = 60.0) -> None:
+        """No new texts; what waits is deferred; the requests in flight
+        finish (bounded by `wait_s`)."""
+        with self._cv:
+            self._closed = True
+            waiting = {id(a): a for a, _ in self._waiting}.values()
+            self._waiting = []
+            self._cv.notify_all()
+        self._fail(list(waiting), EndpointBusy("the stream ended before these were sent: deferred"))
+        deadline = time.monotonic() + wait_s
+        for t in self._threads:
+            t.join(max(0.0, deadline - time.monotonic()))
 
 
 # ---- the public entry points ------------------------------------------------
