@@ -1963,3 +1963,24 @@ from the worker log's batch totals (`embed_rate.py`), the worker's CPU from its 
   - cache the statements on their directory's mtime;
   - skip a genesis rewrite of identical bytes (RULE 1);
   - then concurrency or batch steps, gated.
+
+### 2026-11-01 — #162 (own statements first; genesis skips byte-identical re-imports) — MEASURED AFTER
+
+**Scenario.** 17:12–17:22, wikipedia and wikidata both embedding. Day-or-night: the full-speed override
+(night profile, 12 cores) was in force. gutenberg paused and held. No CPU reference or gate on the card.
+The same harness as window A (`prod_profile_tag.sh`, py-spy 60 s at minute 2, `lance_commits.py`).
+
+| | BEFORE (window A / B, 14:22–14:44) | AFTER #162 |
+|---|---|---|
+| wikipedia table commits | 441 / min (2,224 add ~503 rows, 2,165 remove ~503) | **5.5 / min**, all additions (median 188 rows) |
+| rows in 10 min | +1,106,191 / −1,091,552 | +10,650 / 0 |
+| genesis in 10 min | 22 parts, 1,089,033 vectors rewritten | 8 parts, 130,885 vectors read, none rewritten |
+| wikipedia chunks/s, beside wikidata | 11.9 / 7.0 | **17.4 / 16.7** |
+| wikidata chunks/s, beside wikipedia | 32.9 / 19.9 | 13.4 / 26.5 |
+| card busy (bge-m3 process) / min | 25–36 % | 15–34 % |
+| the pool's `upsert_book` share | 16.6 % (`statements_for_space` 87.6 % of it) | 3.8 % (`check_write > statements` 22.6 %, `> check` 71.2 %) |
+
+**Reading.** The rewrite churn is gone: 80 times fewer commits, and the table now grows only by
+what is embedded. wikipedia's rate beside wikidata rose 1.5–2.4×. The per-document statement re-read
+fell from ~14.5 % of the pool to ~0.9 %. wikidata's first half was low: it was 35 minutes after its
+own re-gate and still beside wikipedia's catch-up.
