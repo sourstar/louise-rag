@@ -2044,3 +2044,26 @@ paused and held. 76964d2 deployed. Full-speed override (night profile, 12 cores)
 the 120 s stream boundaries (gaps 0.1 s/min). The missing ~18 % is lost INSIDE the seconds, between requests.
 Lever 1, which removes the drain at the stream boundary, has little visible to recover here. The 18 % is the
 request turnaround at 4 in flight × 16 texts.
+
+### 2026-11-01 — step 1 BEFORE: wikipedia alone at batch 16 / 2 lanes, on the PMU — MEASURED
+
+**Scenario.** 22:32–22:47, wikipedia alone. wikidata, pubmed and normattiva paused for the window; gutenberg
+paused and held. a43f5d8's code was live (lever 2 not yet deployed). Night profile, 12 cores. wikipedia's
+`[encoder]` has batch 16 and concurrency 1, so it gets 2 requests in flight (`max(EMBED_PLUGIN_SLOTS = 2,
+concurrency)`). Disturbance: my own `find`/`grep` read the tank and the model weights from 22:39 to 22:43.
+Those minutes (21:39Z–21:43Z) read 40.8–48.3 %, against 43.9–51.0 % for the others.
+
+| minute (UTC) | ccs (busy) | bcs | gaps | lost |
+|---|---|---|---|---|
+| 21:32 | 54.5 % | 43.6 % | 0 s | 11.5 s (partial minute) |
+| 21:33–21:47 | 40.8–51.6 % | 49.2–61.0 % | 0–8 s | 29.7–35.5 s |
+| all (887 s recorded) | **46.5 %** | — | **37 s (2.5 s/min)** | **474.9 s (32.1 s/min)** |
+
+- **wikipedia:** **29.5 chunks/s** (26,565 chunks, 8,883 documents in 15 min); held 795 s of 887.
+- **Worker CPU:** 6.10 cores of 12 (cgroup).
+
+**Reading.** Work was waiting for the whole window (`waiting` 60 s every minute). The card was still idle more
+than half of each second: 32 s/min were lost between requests, against wikidata's 10.8 s/min at 4 lanes. The
+whole-second gaps are 2.5 s/min, so the loss is the request turnaround at 2 in flight, not stalled
+preparation. The worker used 6.1 cores to prepare it. Unlike wikidata, bcs reads ABOVE ccs here (by 5–13
+points).
