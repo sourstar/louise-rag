@@ -230,6 +230,12 @@ def test_a_pause_submits_nothing_finishes_what_is_in_flight_and_resumes(
     pool = TimedPool(s)
     monkeypatch.setattr(config, "PARSE_PROCESSES", 4)
     monkeypatch.setattr(parallel, "pool", lambda: pool)
+    # two pages ahead at most, so the pause (the third look, after page 2) always
+    # finds pages still unread: with ROWS_AHEAD's 64,000 a loaded machine let the
+    # 3 ms answers outrun the generator, all five pages were read before the first
+    # yield, and the stream ended paused without resuming (the node, 2026-11-01,
+    # refused the 4ae7216 deploy)
+    monkeypatch.setattr(parallel, "ROWS_AHEAD", 48)
     said: list[str] = []
     assert list(parallel.compute_pages("chunks", c, iter(pages), say=said.append)) == truth
     assert 0 not in pool.submitted_under, "a part was submitted while the profile paused the pool"
