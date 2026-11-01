@@ -24,9 +24,10 @@ them publishes a time series a program can poll, so the probe keeps one.
 WHAT A SAMPLE SAYS, per card (its PCI address, `drm-pdev`):
 - `engines`: each engine class's busy share over the interval, summed over
   the card's clients and capped at 1.0;
-- `busy`: the busiest class's share — the card is as busy as its busiest
-  engine (an embedding runs on one class: xe's `ccs`, amdgpu's `compute`
-  or `gfx`);
+- `busy`: the busiest COMPUTE engine's share (COMPUTE_ENGINES: xe's `ccs`
+  and `rcs`, amdgpu's `gfx` and `compute`). Not the busiest of all: on the
+  B70 the copy engine reads as busy as compute, a resident context counted
+  active (perf, 2026-11-01);
 - `processes`: who worked, with the label the System page's panel uses.
 An impossible reading — a counter that went backwards (a reset read
 −821,239 % once), a share above 1 beyond rounding — is DROPPED and counted
@@ -68,6 +69,20 @@ RESCAN_S = 10.0
 #: rounding the kernel's two counters can produce; above it a reading is
 #: impossible and dropped
 SLACK = 0.02
+#: THE ENGINES THAT COMPUTE: a card is as busy as the busiest of these.
+#: On the B70 the copy engine (bcs) reads as busy as ccs — 78.4 against 78.3,
+#: 92.7 against 91.9, 0 at idle (perf, München, 2026-11-01): the Level Zero
+#: runtime keeps a copy context resident while compute runs, and the driver
+#: counts it active. xe: ccs, and rcs (it can run compute); amdgpu: gfx,
+#: compute; a driver naming none of these is read by its busiest engine.
+COMPUTE_ENGINES = frozenset({"ccs", "rcs", "compute", "gfx", "render"})
+
+
+def card_busy(engines: Mapping[str, float]) -> float:
+    """The card's share: its busiest COMPUTE engine; the busiest engine of
+    any kind only when it names none of them."""
+    compute = [v for e, v in engines.items() if e in COMPUTE_ENGINES]
+    return max(compute if compute else engines.values(), default=0.0)
 
 _CYCLES = re.compile(r"^drm-cycles-([A-Za-z0-9_-]+):\s*(\d+)\s*$")
 _TOTAL = re.compile(r"^drm-total-cycles-([A-Za-z0-9_-]+):\s*(\d+)\s*$")
@@ -312,7 +327,7 @@ class BusySampler:
                 sample: dict = {"t": round(t, 3),
                                 "dt": None if dt is None else round(dt, 3),
                                 "busy": (None if per_engine is None
-                                         else max(per_engine.values(), default=0.0)),
+                                         else card_busy(per_engine)),
                                 "source": source,
                                 "engines": per_engine or {},
                                 "processes": sorted(
