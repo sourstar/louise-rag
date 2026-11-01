@@ -3,7 +3,7 @@
 LocalAI starts a backend with `--addr` alone and sends everything that shapes
 its numbers — context, batch, GPU layers, threads, pooling — in the gRPC
 `LoadModel` call, after completing the model's YAML with defaults of its own
-(docs/notes/model-pool-over-localai.md §10). What the backend received is listed by
+(model-pool-over-localai.md@c572c3b §10). What the backend received is listed by
 `GET /system` as `load_options` (deploy/localai/patches P1). This module makes
 that record the engine's `options`, byte for byte as 09 §9.3 fixes them:
 
@@ -29,7 +29,7 @@ that record the engine's `options`, byte for byte as 09 §9.3 fixes them:
 
 NOTHING HERE DECIDES WHAT MATTERS. Every option LocalAI sent is kept: an
 option believed inert and dropped would be a declaration where 02 §2.4 asks
-for a measurement (model-pool-over-localai §10, point 3).
+for a measurement (model-pool-over-localai.md@c572c3b §10, point 3).
 """
 from __future__ import annotations
 
@@ -165,7 +165,7 @@ def canonical(raw: Any) -> Canon:
 
 def changed(old: Mapping[str, Any] | None, new: Mapping[str, Any] | None) -> list[str]:
     """What differs between two runs' options, one line per option, for the
-    event a new run records (model-pool-over-localai §10: "bge-m3: new run —
+    event a new run records (model-pool-over-localai.md@c572c3b §10: "bge-m3: new run —
     NBatch 512 → 2048")."""
     old, new = dict(old or {}), dict(new or {})
     out = []

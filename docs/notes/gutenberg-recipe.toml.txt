@@ -11,7 +11,7 @@
 #   [space.encoder.engine]
 #   name = "llama.cpp"   build = "b10630"   variant = "sycl"
 #   image  = "sha256:<the published model-pool image that ran>"
-#   args   = [ … the model's cmd from rage.toml, ${WEIGHTS} and ${PORT} as written … ]
+#   args   = [ … the model's command line, ${WEIGHTS} and ${PORT} as written … ]
 #   device = "Intel(R) Arc(TM) Pro B70 Graphics"
 #
 # and a symmetric model (one encoder for documents and queries, as here) has

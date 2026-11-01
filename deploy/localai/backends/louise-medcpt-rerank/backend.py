@@ -17,7 +17,7 @@ The load call:
     NBatch        pairs per inference
     options       device:xpu|cpu  (OpenVINO's GPU or CPU; default xpu; no AMD or NVIDIA card)
     env           OV_CACHE_DIR, where OpenVINO keeps the model compiled for
-                  the card (docs/notes/model-pool.md §20) — in the run, as the
+                  the card (model-pool.md@c572c3b §20) — in the run, as the
                   engine's `env` (operator, 2026-10-01)
 """
 from __future__ import annotations

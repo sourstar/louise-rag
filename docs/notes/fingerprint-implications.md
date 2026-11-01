@@ -180,5 +180,5 @@ How that settles this note:
   query encoder can be validated at all.
 
 It depends on the model pool, the model container: only a front we run can state the run on
-each answer (model-pool.md §4). Until then the worker keeps
+each answer (model-pool.md@c572c3b §4). Until then the worker keeps
 `backend_gate`.

@@ -1,5 +1,5 @@
 # louise-medcpt-rerank's venv: OpenVINO and the pair tokenizer, and no torch at
-# all — deploy/rage/Dockerfile's venv-medcpt.
+# all — the model pool's image build (in git before 6a4f517)'s venv-medcpt.
 -r ../requirements-grpc.txt
 openvino==2026.3.1
 tokenizers==0.22.2

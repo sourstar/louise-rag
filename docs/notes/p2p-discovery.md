@@ -123,7 +123,7 @@ anything. An unpinned signature only proves *someone* signed it.
 
 ### Tier 2 — the coordinator as a rendezvous
 
-`app/coordinator/` already exists and nodes already talk to it for leases and
+`app/coordinator (removed 2026-11-01)/` already exists and nodes already talk to it for leases and
 demand-sets. Adding "return the catalogue URLs of nodes that reported recently"
 is a small endpoint on a service that is already deployed, already
 authenticated, and already knows who is participating. It removes the manual

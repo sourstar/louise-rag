@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from app import db, embeddings, spaces, worker
 from app.bundles import export as bundle_export
 from app.bundles import importer, ledger, verify_on_use
-from app.coordinator import leases, service, store
 from tests.bundles.helpers import make_collection
 from tests.integration.conftest import (PRODUCER_KEY, mirror_corpus, model_embed,
                                          seed_node)
@@ -92,49 +91,6 @@ def test_local_reembed_after_quarantine_restores_local_provenance(imported_pair)
 
 # ═══ F1-D2: every consumer must have a distinct node identity ═══
 
-def test_demand_reports_from_two_nodes_count_as_two_consumers(tmp_path, monkeypatch,
-                                                               confirmed_space):
-    """The coordinator counts DISTINCT reporters precisely so one noisy node
-    cannot dominate demand ordering. Before the fix, report_demand defaulted
-    the node id to the COLLECTION NAME — so every node in the network reported
-    as "gutenberg" and N consumers collapsed into one, silently defeating the
-    anti-gaming design it fed into.
-    """
-    from app import contribute
-    from app import config
-    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
-
-    app = service.create_app(db_path=str(tmp_path / "coord.db"),
-                             artifact_dir=str(tmp_path / "artifacts"),
-                             candidate_source=lambda s, c: [])
-    space_id = spaces.compute_space_id(spaces.gather_components())
-
-    class _Adapter:
-        def __init__(self, client):
-            self._client = client
-
-        def post(self, url, json=None, **kw):
-            return self._client.post("/" + url.split("/", 3)[-1], json=json)
-
-        def close(self):
-            pass
-
-    with TestClient(app) as client:
-        for name in ("node-a", "node-b"):
-            collection = make_collection(tmp_path / name, name="gutenberg")
-            con = db.connect(collection)
-            con.execute("INSERT OR REPLACE INTO space(id,space_id,dim,components,"
-                        "pinned_at) VALUES(1,?,8,'{}',0)", (space_id,))
-            con.execute("INSERT OR REPLACE INTO embed_queue(uid,priority,ts) "
-                        "VALUES('gutenberg:9',100,0)")
-            contribute.report_demand(con, collection, "http://coord",
-                                      client=_Adapter(client))
-        demand = client.get("/demand", params={"space": space_id}).json()["demand"]
-    assert demand and demand[0]["uid"] == "gutenberg:9"
-    assert demand[0]["consumers"] == 2, \
-        "two distinct nodes were counted as one consumer"
-
-
 def test_node_id_is_generated_once_and_persisted(tmp_path, monkeypatch):
     collection = make_collection(tmp_path / "n", name="gutenberg")
     con = db.connect(collection)
@@ -146,48 +102,6 @@ def test_node_id_is_generated_once_and_persisted(tmp_path, monkeypatch):
 
 
 # ═══ F1-D3: an accepted upload must close the producer's matching lease ═══
-
-def test_upload_completes_the_lease_it_fulfils(producer, tmp_path, monkeypatch):
-    """Before the fix, nothing ever completed a lease: /bundles had dead
-    completion code keyed on a lease_id the wire format (correctly) does not
-    carry, and contribute.run_round never called back. Every fulfilled lease
-    sat open until TTL expiry, so lease listings lied for 24h about work that
-    finished in minutes. Fix is server-side, with no wire change: an accepted
-    upload completes the uploader's open leases whose uids it covers.
-    """
-    import io
-    import tarfile
-    producer_con, producer_col = producer
-    seed_node(producer_con, producer_col, DOCS)
-    app = service.create_app(db_path=str(tmp_path / "coord.db"),
-                             artifact_dir=str(tmp_path / "artifacts"),
-                             candidate_source=lambda s, c: list(DOCS))
-    summary = bundle_export.export_bundle(producer_con, producer_col, list(DOCS),
-                                           tmp_path / "b", signing_key=PRODUCER_KEY)
-    space_id = summary and spaces.compute_space_id(spaces.gather_components())
-
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w") as archive:
-        for item in sorted((tmp_path / "b").iterdir()):
-            archive.add(item, arcname=item.name)
-
-    with TestClient(app) as client:
-        lease = client.get("/work", params={"space": space_id,
-                                             "producer": summary["producer"],
-                                             "n": 2}).json()
-        assert set(lease["uids"]) <= set(DOCS)
-        upload = client.post("/bundles", content=buffer.getvalue(),
-                             headers={"content-type": "application/x-tar"})
-        assert upload.status_code == 200
-
-    coord_db = store.connect(str(tmp_path / "coord.db"))
-    row = coord_db.execute("SELECT state FROM leases WHERE lease_id=?",
-                            (lease["lease_id"],)).fetchone()
-    assert row["state"] == "completed", \
-        "a fulfilled lease stayed open until TTL expiry"
-
-
-# ═══ F1-D6: a consumer-role node must be able to SEARCH what it imported ═══
 
 def test_imported_vectors_are_searchable_with_embed_mode_off(producer, consumer,
                                                               tmp_path, monkeypatch):
@@ -229,8 +143,7 @@ def test_import_clears_the_lazy_queue_entries_it_satisfies(producer, consumer,
     """Import is an alternative implementation of the embed stage, and the
     embed stage clears its document's lazy-queue row. Before the fix the
     import path didn't — so an imported document's demand entry lingered and
-    kept being re-published to the coordinator as need the network had
-    already met."""
+    kept being re-published as need the network had already met."""
     producer_con, producer_col = producer
     consumer_con, consumer_col = consumer
     seed_node(producer_con, producer_col, DOCS)

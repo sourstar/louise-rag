@@ -117,7 +117,7 @@ docker run --rm --network host -v "$STAGE/src:/srv:ro" -w /srv -e PYTHONPATH=/sr
 
 say "8. the node back to its mode, then the gate on every new run, one collection at a time"
 # `hold embedder check` is a writer, and the worker holds each collection's lock
-# while the NODE is paused (rollout-20261018-a2.sh): a collection's own pause
+# while the NODE is paused (rollout-20261018-a2.sh@c572c3b): a collection's own pause
 # lets go within a round. RULE 1: nothing re-embedded.
 $L node resume
 $L node show | python3 -c "import sys,json; print('mode', json.load(sys.stdin)['mode'])"

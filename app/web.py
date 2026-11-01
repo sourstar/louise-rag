@@ -2842,8 +2842,6 @@ def _corpus_mounts() -> list[dict]:
             if entry.is_dir():
                 mounts.append({"path": entry.as_posix(),
                                 "used_by": used.get(entry.as_posix()), "kind": "corpus"})
-    # packs under PACK_MOUNTS_DIR are no longer offered: the `packed` plugin
-    # that read them is boxed in attic/ (2026-09-14)
     return mounts
 
 

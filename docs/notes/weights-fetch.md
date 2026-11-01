@@ -6,7 +6,7 @@ operator, 2026-09-28.*
 
 **The gap.** A peer that takes up a new collection cannot run its encoder
 until someone copies the weights into `/models` by hand. The model pool fetches
-nothing, by design (`model-pool.md` §10). The spec already says who should
+nothing, by design (`model-pool.md`@c572c3b §10). The spec already says who should
 fetch them instead — the node, from other peers — but nothing implements
 it, and three formats it needs are not written down yet (§4).
 
@@ -77,7 +77,7 @@ read-only directory and never learns where a file came from.
 **Where the model pool sees them**
 - The store root is bind-mounted into the model pool read-only, once, at
   `/models/store`. That replaces today's one bind per model
-  (`deploy/truenas-rage.yaml`).
+  (the model pool's TrueNAS app file, in git before 6a4f517).
 - An entry names `/models/store/<digest hex>/…`.
 - A missing file is `absent`, exactly as today.
 

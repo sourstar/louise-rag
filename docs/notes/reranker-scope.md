@@ -32,7 +32,7 @@ Everything below is that test, applied.
 
 From `pack-format.md` §7 and §10, the bytes that travel are: record shards,
 the text index, vectors per space, bucket files (the vector index), and the
-manifest that names them. Plus, from §11 and `app/contribute.py`, what a
+manifest that names them. Plus, from §11 and `app/contribute.py@c572c3b` (removed 2026-11-01), what a
 peer *produces* for others: vectors for leased uids, exported as a signed
 bundle.
 

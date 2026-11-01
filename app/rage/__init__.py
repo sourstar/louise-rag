@@ -25,6 +25,6 @@ Nothing is imported here: each part is imported by name
 and no import cycle runs through the package.
 
 Until 2026-11-01 "RAGE" named the model pool, VeGa's predecessor
-(docs/notes/model-pool.md); `app/rage/` paths in commits before 2026-10-18
+(model-pool.md@c572c3b); `app/rage/` paths in commits before 2026-10-18
 are that pool's, deleted with it.
 """

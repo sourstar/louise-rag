@@ -13,7 +13,7 @@ side the Codex does not name. The server's `query`/`prefixed` fields were never
 sent by Louise.
 
 LocalAI serves it at `/v1/embeddings`, one text per `Embedding` call
-(model-pool-over-localai §3.2), so the server's length-budgeted batches are not used:
+(model-pool-over-localai.md@c572c3b §3.2), so the server's length-budgeted batches are not used:
 each text is its own forward pass.
 
 The load call:

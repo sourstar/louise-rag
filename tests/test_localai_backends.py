@@ -37,7 +37,7 @@ def _exec(name: str, path: Path):
 
 def _backend(directory: str, server_name: str, server: str):
     """backend.py as the image lays it out: louise_backend.py and the server,
-    under its own name, beside it (deploy/rage/Dockerfile.localai)."""
+    under its own name, beside it (the model pool's LocalAI image build, in git before 6a4f517)."""
     shared = {"louise_backend": BACKENDS / "louise_backend.py", server_name: ROOT / server}
     saved = {k: sys.modules.get(k) for k in shared}
     try:

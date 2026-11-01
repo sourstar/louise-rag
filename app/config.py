@@ -574,9 +574,6 @@ VECTOR_INDEX_FRAGMENT_ROWS = int(os.getenv("VECTOR_INDEX_FRAGMENT_ROWS", "104857
 #: pubmed's 40M take about ten turns.
 CATALOG_BACKFILL_WINDOW = int(os.getenv("CATALOG_BACKFILL_WINDOW", "200000"))
 CATALOG_BACKFILL_BUDGET_S = float(os.getenv("CATALOG_BACKFILL_BUDGET_S", "60"))
-# The well-known root where PACKS are mounted (pack-format.md). The create
-# dialog offered them to the `packed` plugin, boxed in attic/ (2026-09-14).
-PACK_MOUNTS_DIR = Path(os.getenv("PACK_MOUNTS_DIR", "/packs"))
 
 # ISO-639 code -> tantivy snowball stemmer language. Everything else uses the
 # generic lowercase analyzer (still perfectly searchable, just unstemmed).

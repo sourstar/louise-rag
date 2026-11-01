@@ -1,6 +1,6 @@
 """Every request to a model endpoint carries its level, and the chat client
 speaks either protocol (migration-plan step 13e; docs/09-formats.md §9.12,
-*the request's level*; docs/notes/model-pool.md §4, §11).
+*the request's level*; model-pool.md@c572c3b §4, §11).
 
 `Louise-Level` is what lets a model container hold the card's clock while a
 person waits without anything being written anywhere: it sees every model

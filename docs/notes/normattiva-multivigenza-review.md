@@ -452,7 +452,7 @@ type are measured before the number is fixed (§7).
 > is discovered now — 341,959 against 318,349, measured on the node from
 > the zips' directories. The collection is re-created as `normattiva-1861`
 > and carried (A1c, RULE 1: nothing re-fetched; the 318,349 versions keep
-> their rows, index and vectors; deploy/16f/recreate-normattiva-parser8.sh).
+> their rows, index and vectors; deploy/16f/recreate-normattiva-parser8.sh@c572c3b).
 > The text below is the decision as it stood.
 
 The reviewed note's rule stands and gains its mechanism: a version

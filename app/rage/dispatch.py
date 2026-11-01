@@ -109,7 +109,7 @@ def level_headers() -> dict[str, str]:
 
     ADVISORY, as the spec says: a model container may hold the card's clock
     while a request at `translate` or above is in flight (the model pool's front did,
-    docs/notes/model-pool.md §11, until it retired on 2026-10-09), and no answer
+    model-pool.md@c572c3b §11, until it retired on 2026-10-09), and no answer
     depends on it — an endpoint that ignores the header, as LocalAI does,
     loses nothing but speed. The GPU governor follows the node store's
     claim instead."""

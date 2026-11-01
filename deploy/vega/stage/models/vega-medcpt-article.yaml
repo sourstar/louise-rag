@@ -4,7 +4,7 @@
 # The GGUF article encoder of pubmed's CURRENT space (text input). The pair
 # encoder of input-forms.md is vega-medcpt-article-ov. NOT pinned: pubmed
 # embeds nothing (embed = "off").
-# Every load option is the model pool's medcpt-article.yaml (/mnt/ssd5/apps/louise-rage/state/localai-models/,
+# Every load option is the model pool's medcpt-article.yaml (the model pool's state/localai-models/,
 # read only), the weights the same host files, mounted read-only at
 # /models/weights/<name> (deploy/vega/stage/mounts.py), so the model path is
 # the model pool's too. Only the backend, the env (caches under /data/louise-cache) and

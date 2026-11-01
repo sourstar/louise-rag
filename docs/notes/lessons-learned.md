@@ -20,7 +20,7 @@ One entry per case that cost time, newest first. Each entry gives what happened,
 - **Lessons.**
   - A copy into an ACL'd dataset is not a copy of the modes. Compare modes, and ACL triviality, against the source after every write into `backends/`.
   - The change that passes every functional check and fails only the digest is the one a functional test never catches.
-- **Fix.** deploy/vega/switch/backend_files.sh: `bf_record` the modes before writing, then `bf_restore` (strip to a trivial ACL with `nfs4xdr_setfacl -b`, chmod back, check). `bf_copy` copies with `tar --no-acls --no-xattrs`. rollout-110-20261030.sh uses it on its forward path and its backout. The 20261030 tree was stripped and re-moded entry by entry: 0 mode differences and 0 non-trivial ACLs against its source.
+- **Fix.** deploy/vega/switch/backend_files.sh: `bf_record` the modes before writing, then `bf_restore` (strip to a trivial ACL with `nfs4xdr_setfacl -b`, chmod back, check). `bf_copy` copies with `tar --no-acls --no-xattrs`. rollout-110-20261030.sh@c572c3b uses it on its forward path and its backout. The 20261030 tree was stripped and re-moded entry by entry: 0 mode differences and 0 non-trivial ACLs against its source.
 
 ### A verdict measured at the setting it was meant to test against
 

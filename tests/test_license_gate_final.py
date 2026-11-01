@@ -81,9 +81,7 @@ def test_the_librarys_ack_button_does_not_pretend_for_a_codex_collection(isolate
 
 TOOLS = [
     ("vector_compliance", lambda m, name, tmp: m.main([name])),
-    ("vector_sweep", lambda m, name, tmp: m.main([name])),
     ("build_space_artifact", lambda m, name, tmp: m.main([name, str(tmp)])),
-    ("backfill_pubmed_authors", lambda m, name, tmp: m.main(["--collection", name])),
     ("calibrate_space", lambda m, name, tmp: m.record_live([], name, tmp)),
 ]
 

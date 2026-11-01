@@ -302,7 +302,7 @@ llamacpp". It costs a 17–38 s cold load and 7.2 GB on the card, against
   wrote `<2cs><2cs>…`, and Ollama hung. Only llama.cpp's completion tool
   translated correctly, one text per process with 18 s of load. So MADLAD
   went on PyTorch XPU. On 2026-10-03 that server's model code became a
-  LocalAI Python backend unchanged (model-pool-over-localai.md), and it now runs
+  LocalAI Python backend unchanged (model-pool-over-localai.md@c572c3b), and it now runs
   on louise-python. Its generation settings are greedy (`BEAMS` 1),
   96-token sentence segments, batches of 32, and
   `max_new = min(512, 2 × longest + 16)`.

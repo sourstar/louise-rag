@@ -33,7 +33,7 @@ UNDER THE HOLD. The driver refuses `min_freq > max_freq`. A `max_freq`
 below the query hold's `min_freq` is not written while the hold is on: it
 waits for the hold to end (`pending` in the status), and app/gpu_clock.py
 clamps every later hold to the cap. A cap below the rest value is raised to
-it (gpu-cap.sh did the same).
+it (gpu-cap.sh@c572c3b did the same).
 
 LEFT BEHIND. A governor killed while a reduced level was applied leaves it
 on the card, and the next one would read it as the card's own. As the

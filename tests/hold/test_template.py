@@ -133,7 +133,7 @@ def test_slicing_completes_the_schemes_description_to_9_3s_shape():
 
 def test_a_plugin_with_no_slice_key_gets_one_slice_called_all():
     """A plugin with no slicing scheme (genome was the worked case; boxed in
-    attic/) gets one slice called all, ordered as it declares."""
+    attic/ (removed 2026-11-01)) gets one slice called all, ordered as it declares."""
     from types import SimpleNamespace
     unsliced = SimpleNamespace(source_id="unsliced", native_id_order="bytes",
                                default_slicing=None)

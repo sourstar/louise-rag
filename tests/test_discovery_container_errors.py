@@ -97,7 +97,7 @@ def test_a_clean_rescan_heals_by_not_reporting(collection, monkeypatch):
 def test_every_plugin_marks_container_failures(tmp_path):
     """The container-based plugins must all use scope='container' — each
     was minting filename-keyed phantoms the same way. (genome, the fourth,
-    is boxed in attic/.)"""
+    was boxed in attic/, removed 2026-11-01.)"""
     from app.plugins.base import DiscoverState
     from app.plugins.embedded.source import EmbeddedSource
     from app.plugins.pubmed.source import PubmedSource

@@ -140,7 +140,7 @@ any reading.
 
 Data and origins deleted (about 3.3 GB: the table below plus the origins,
 860 MB + 40 MB + 3.4 MB under `/mnt/tank/apps/louise_collections_origin/`);
-their mounts left the app first (`deploy/16f/drop_mounts.py`). The three files
+their mounts left the app first (`deploy/16f/drop_mounts.py@c572c3b`). The three files
 are kept as the record in `config/collections-future/` with a README: a DNA
 calibration set, then a Codex, then a fresh fetch, to bring one back. What
 follows is the section as it stood.
@@ -254,7 +254,7 @@ operator, because the classifier refuses an `rm -rf` there). Deleted:
   live wikipedia has no `state/ack.json` of its own. Move its ack before
   those files go.
 - The space is held by the manual snapshot
-  `ssd4/apps/louise-rag@pre-rage-b10630-6-2026-09-20`, which no retention
+  the ZFS snapshot of `ssd4/apps/louise-rag` taken before the model pool (2026-09-20), which no retention
   removes (707 G in snapshots right after the deletion). The space comes
   back only when that snapshot is destroyed.
 
@@ -330,7 +330,7 @@ rule arrived afterwards and the deletion should not be invisible.
 the operator deleted them, ahead of the conditions below, which were
 written for whoever would otherwise have decided alone. Their model
 folders are untouched and the model pool reads them. What is left of this section's
-way back is `config/backup-pre-rage-2026-09-19/` (Louise's settings). The
+way back is the pre-pool backup folder (2026-09-19) (Louise's settings). The
 deleted apps' own definitions went with them: TrueNAS keeps none, and
 `/mnt/ssd4/apps/louise-rag/app-config-backups/` holds only an OLDER
 generation (`llama-embed`, `embed-bge-m3`, `embed-medcpt`). The servers'
@@ -343,10 +343,10 @@ store can go whenever the operator says.
 The section as written on 2026-09-19:
 
 
-The model pool (`louise-rage`, port 30437) replaced them in one cut-over
+The model pool (its own TrueNAS app, port 30437) replaced them in one cut-over
 ([`STATUS.md`](STATUS.md), "THE CUT-OVER IS DONE"). They are **stopped,
 not deleted**, and they are the way back: start them, restore
-`config/backup-pre-rage-2026-09-19/`, stop the model pool.
+the pre-pool backup folder (2026-09-19), stop the model pool.
 
 | app | what it served | its models stay, the model pool reads them |
 |---|---|---|
@@ -379,34 +379,32 @@ collection) and the raw container `dnabert2-xpu` — DNA is frozen
 ## 8. The model pool's lifecycle and the old model servers — RETIRED 2026-10-05 (15g)
 
 **The rest of the model pool went on 2026-10-18** (operator: "Why do we have still
-RAGE [the model pool] nomenclature around? … Do it"). In 6a4f517 the run identity moved to
+[the model pool] nomenclature around? … Do it"). In 6a4f517 the run identity moved to
 `app/vega/` (`runs`, `loadopts`, `model`, `procfs`, `dxg`, `store`) and the
-rest was deleted: the LocalAI front, `deploy/rage/`,
-`deploy/truenas-rage-localai.yaml`, `tools/rage_smoke_*`,
+rest was deleted: the LocalAI front, the model pool's deploy files,
+its TrueNAS app file, the pool's smoke tools,
 `tools/load_profile.py` with `dev load-profile` (it measured reloads through
-the model pool's admin API), `tests/rage/`. After it: `RAGE_URL`, the GPU panel's model pool
+the model pool's admin API), the model pool's tests. After it: the pool's address variable, the GPU panel's model pool
 share and the model pool alerts strip, the governor's model pool branch, the worker's
 the model pool refusal, `vega/runs.boot_image`, and the model-pool-against-VeGa scripts that
 cannot run without the model pool (`deploy/vega/proof/`,
 `deploy/vega/stage/{verify,mounts}.py`; in git at fe9124e). The tests' stand-in
-for a run-stating endpoint is `Endpoint`, no longer `Rage`. The app
-`louise-rage`, which runs VeGa's receipts service, is recreated as
-`louise-vega` with the same configuration
-(`deploy/vega/switch/rename-vega-app-20261018.sh`); the operator deletes the
+for a run-stating endpoint is `Endpoint`, no longer `Rage`. The app that ran VeGa's receipts service is recreated as `louise-vega` with the same configuration
+(`deploy/vega/switch/rename-vega-app-20261018.sh@c572c3b`); the operator deletes the
 old one. What still says the model pool is history (dated notes) and one host path,
-`/mnt/ssd5/apps/louise-rage/state/vega`: the receipts state and socket.
+`/mnt/ssd5/apps/louise-vega/state/vega`: the receipts state and socket.
 
 **Done in the repository, at the operator's word** ("go for 15g", the
 day of the cut-over, before the full day this section asked for). The way
 back does not depend on the repository: backout.sh uses the images and
-src.old kept on the node (`rage:pre-15f`, `louise-rag:pre-15f`), which stay
+src.old kept on the node (the model pool's pre-15f image, `louise-rag:pre-15f`), which stay
 until the operator removes them. What went:
-- `app/rage/admission.py` (the model pool's, deleted 2026-10-18), `placement.py`, `swap.py`, `swapyaml.py`, the
+- the model pool's `admission.py`, `placement.py`, `swap.py`, `swapyaml.py`, the
   llama-swap `front.py` (and with it the `park` route); `model.py` and
   `procfs.py` cut to what the LocalAI front reads; `runs.py` without the argv
-  matcher; `RAGE_RUNNER=llama-swap` refuses to start.
-- `deploy/rage/Dockerfile`, `deploy/rage/servers/`, `deploy/truenas-rage.yaml`;
-  `rage.example.toml` is the cards alone.
+  matcher; the llama-swap runner refuses to start.
+- the model pool's image build, its model servers, its TrueNAS app file;
+  the pool's example config is the cards alone.
 - `TRANSLATE_API` and the `/translate` shape: the completion shape is the only
   one.
 - The three servers' HTTP handlers, `main`s and MADLAD's parking. Their model
@@ -423,8 +421,8 @@ day of ordinary work, the gates pass through it, and the operator confirms.
 
 | what | why it stays until then |
 |---|---|
-| `app/rage/admission.py` (the model pool's, deleted 2026-10-18), `placement.py`, `swap.py`, `swapyaml.py`, `front.py`'s `park` route | the model pool on llama-swap, the way back |
-| `deploy/rage/Dockerfile`, `deploy/rage/servers/`, `deploy/truenas-rage.yaml` | the same |
+| the model pool's `admission.py`, `placement.py`, `swap.py`, `swapyaml.py`, `front.py`'s `park` route | the model pool on llama-swap, the way back |
+| the model pool's image build, its model servers, its TrueNAS app file | the same |
 | `TRANSLATE_API="translate"` and its branch in `app/translate.py` | the shape the deployed MADLAD server speaks until 15f |
 | the HTTP handlers and `main` of `deploy/madlad-translate/server.py` (`/translate`, `/languages`, `/park`), `deploy/medcpt-rerank/server.py` (TEI `/rerank`) and `deploy/dar-legal-it/server.py` | served by llama-swap's model pool. **Their model code stays**: the LocalAI backends import it |
-| `rage.toml`'s lifecycle keys (`memory`, `priority`, `preload`, `park`, `cmd`) | read by the llama-swap front only |
+| the pool config's lifecycle keys (`memory`, `priority`, `preload`, `park`, `cmd`) | read by the llama-swap front only |

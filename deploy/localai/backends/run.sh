@@ -10,13 +10,13 @@
 # downloads into it, which would be a backend no image holds (09 §9.12).
 set -eu
 # ABSOLUTE: LocalAI starts this as `./run.sh` from the backend's directory
-# (seen in the smoke test, model-pool-over-localai §11), and the argument vector is
+# (seen in the smoke test, model-pool-over-localai.md@c572c3b §11), and the argument vector is
 # the engine's `args` (09 §9.3) — a program named relative to a working
 # directory the run does not state.
 dir=$(cd "$(dirname "$0")" && pwd)
 # lib/: libraries that must come before the base's. torch's XPU wheels carry a
 # SYCL runtime newer than the base's oneAPI loader, and `import torch` dies on
-# "undefined symbol: urDeviceWaitExp" behind it (deploy/rage/Dockerfile).
+# "undefined symbol: urDeviceWaitExp" behind it (the model pool's image build (in git before 6a4f517)).
 # LocalAI's own backends do the same with their lib/.
 if [ -d "$dir/lib" ]; then
   export LD_LIBRARY_PATH="$dir/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

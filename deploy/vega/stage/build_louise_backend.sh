@@ -1,7 +1,7 @@
 #!/bin/sh
 # Switch-over step 3 (docs/notes/vega.md §12): builds one of the platform's
 # Python backends (deploy/localai/backends) IN PLACE for the LocalAI app —
-# deploy/rage/Dockerfile.localai's `louise-backends` stage and its venv step,
+# the model pool's LocalAI image build's `louise-backends` stage (in git before 6a4f517) and its venv step,
 # with one difference: the app's image is not the model pool's, so the backend carries
 # its own portable CPython (as LocalAI's own python backends do) and, for
 # MADLAD, its own torch (2.14.0+xpu, the version the model pool's image pins) in its venv

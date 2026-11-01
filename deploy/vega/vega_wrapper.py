@@ -102,8 +102,8 @@ RECEIPT_TIMEOUT_S = 2.0
 #: seconds, not the receipt's two.
 TREE_TIMEOUT_S = 30.0
 #: The weights are hashed while the backend loads them; the load waits at most
-#: this long for the hash. 8 GB hash in about 5 s from a warm SSD (rage-over-
-#: localai §8.3); half an hour is a disk that is failing.
+#: this long for the hash. 8 GB hash in about 5 s from a warm SSD (model-pool-over-
+#: localai.md@c572c3b §8.3); half an hour is a disk that is failing.
 WEIGHTS_TIMEOUT_S = 1800.0
 #: A stop lets the call in progress finish within this, as LocalAI's backends do.
 GRACE_S = 30.0

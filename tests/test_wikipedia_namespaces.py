@@ -12,12 +12,11 @@ from xml.sax.saxutils import escape
 
 import pytest
 
-from app import collections as collections_mod, db
+
 from app.plugins.base import DiscoverState
 from app.plugins.wikipedia import SOURCE, archive
 from app.plugins.wikipedia import source as wsrc
 from app.plugins.wikipedia.ids import native_id_of
-from tools import wikipedia_drop_namespace_pages as tool
 
 SITEINFO = ('<mediawiki xml:lang="de"><siteinfo><dbname>dewiki</dbname><namespaces>'
             '<namespace key="-2" case="first-letter">Medium</namespace>'
@@ -100,54 +99,5 @@ def test_a_dump_without_a_namespace_table_keeps_the_english_list(tmp_path):
     assert native_id_of("de", 2) in _articles(root)
 
 
-@pytest.fixture
-def admitted(tmp_path, isolated_config):
-    """A manifest as the English list left it: every page admitted, one
-    non-article row already worked on."""
-    root = tmp_path / "wikipedia"
-    _dump(root, SITEINFO)
-    c = collections_mod.Collection(
-        name="wikipedia", plugin="wikipedia", profile=None, embed_mode_default=None,
-        corpus_dir=root, manifest_path=tmp_path / "m" / "manifest.db",
-        fts_dir=tmp_path / "m" / "fts", lance_dir=tmp_path / "m" / "lancedb",
-        snapshot="20260801")
-    con = db.connect(c)
-    for pid, _ns, _title in PAGES:
-        nid = str(native_id_of("de", pid))
-        con.execute("INSERT INTO documents(uid,source,native_id,path,lang,in_scope,"
-                    "rdf_done,fts_done,embed_done) VALUES(?,?,?,?,?,1,?,0,0)",
-                    (f"wikipedia:{nid}", "wikipedia", nid, "/x", "de", int(pid == 4)))
-    con.execute("INSERT INTO embed_queue(uid,priority,ts) VALUES(?,1,1)",
-                (f"wikipedia:{native_id_of('de', 2)}",))
-    return c, con
-
-
 def _held(con):
     return sorted(int(r[0]) for r in con.execute("SELECT native_id FROM documents"))
-
-
-def test_the_cleanup_counts_first_and_writes_nothing(admitted):
-    c, con = admitted
-    assert tool.run(con, c) == {"found": 3, "removed": 2, "kept": 1}
-    assert len(_held(con)) == 5, "a dry run deletes nothing"
-
-
-def test_the_cleanup_removes_only_untouched_non_articles(admitted):
-    c, con = admitted
-    assert tool.run(con, c, apply=True) == {"found": 3, "removed": 2, "kept": 1}
-    assert _held(con) == [native_id_of("de", 1), native_id_of("de", 4), native_id_of("de", 5)], \
-        "the articles stay, and so does the file page something already worked on"
-    assert con.execute("SELECT COUNT(*) FROM embed_queue").fetchone()[0] == 0
-    assert tool.run(con, c, apply=True) == {"found": 1, "removed": 0, "kept": 1}, "idempotent"
-
-
-def test_the_cleanup_refuses_to_guess_without_a_namespace_table(tmp_path, isolated_config):
-    root = tmp_path / "wikipedia"
-    _dump(root, None)
-    c = collections_mod.Collection(
-        name="wikipedia", plugin="wikipedia", profile=None, embed_mode_default=None,
-        corpus_dir=root, manifest_path=tmp_path / "m" / "manifest.db",
-        fts_dir=tmp_path / "m" / "fts", lance_dir=tmp_path / "m" / "lancedb",
-        snapshot="20260801")
-    with pytest.raises(SystemExit, match="nothing is removed on a guess"):
-        tool.run(db.connect(c), c, apply=True)

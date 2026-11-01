@@ -595,9 +595,9 @@ louise hold vectors show &lt;collection&gt;     # coverage, producers</pre>
     This cuts both ways: a collection filled from a genesis archive (or
     embedded locally) can be exported as a signed bundle from its Library
     card — publishing embeddings other nodes (and other projects) can
-    verify and reuse is exactly how a platform earns visibility. The
-    per-collection encoder setup for MedCPT (two small CPU containers) is
-    documented in <code>deploy/truenas-medcpt-embed.yaml</code>.
+    verify and reuse is exactly how a platform earns visibility. MedCPT's
+    encoders run under LocalAI like every other model, behind VeGa
+    (<code>deploy/localai/backends/louise-medcpt-*</code>).
   </p>
 </div>
 
@@ -635,16 +635,11 @@ louise hold vectors show &lt;collection&gt;     # coverage, producers</pre>
   <p class="note">
     <b>Building one.</b> From an existing collection: <code>hold records build</code> above (two
     passes over the collection's manifest — plan the slices, then write shards — resumable,
-    state in <code>DIR/.build/</code>, logs one line per 30 s). From a raw corpus folder
-    without a collection: <code>python -m tools.pack_convert --plugin pubmed --corpus DIR
-    --out DIR [--until DATE]</code>. Only useful data enters a pack: parsed text and
-    metadata, never epubs, XML markup or dump indexes. On the reference node packs live on
-    their own datasets under <code>/packs</code> (<code>PACK_MOUNTS_DIR</code>).
+    state in <code>DIR/.build/</code>, logs one line per 30 s). Only useful data enters a pack: parsed text and
+    metadata, never epubs, XML markup or dump indexes.
   </p>
   <p class="note">
-    <b>Using one.</b> The <code>packed</code> plugin, which served a pack as a collection,
-    and <code>pack adopt</code> are boxed in <code>attic/</code> until they are converted
-    to the final format or dropped. <b>The license is the origin's:</b> a yellow-class
+    <b>The license is the origin's:</b> a yellow-class
     pack carries the origin's terms text byte-exact, so the same acknowledgement (same
     sha256) covers corpus, pre-embeddings and pack.
   </p>
@@ -658,10 +653,9 @@ louise hold vectors show &lt;collection&gt;     # coverage, producers</pre>
     <code>louise hold records show &lt;collection&gt; --shard &lt;slice&gt;/&lt;n&gt;</code> (plain JSONL) are the inspection tools.
   </p>
   <p class="note">
-    <b>Sharing one.</b> <code>louise share &lt;collection&gt;</code>, over a
-    collection whose folder is a pack (none while the packed plugin is boxed), hashes one torrent per slice plus a small manifest member, all rooted at the pack, and
-    publishes the torrent collection over them — a peer takes "PubMed before 1980" as the
-    members of those slices (see <a href="#acquire">Fetching from peers</a>).
+    <b>Sharing one.</b> <code>louise share &lt;collection&gt;</code> serves the SHARD's
+    members, one torrent per file — a peer takes “PubMed before 1980” as the members
+    of those slices (see <a href="#acquire">Fetching from peers</a>).
   </p>
   <p class="note">
     <b>Chunker layers.</b> A collection normally has one chunker. Where a pre-embedded archive

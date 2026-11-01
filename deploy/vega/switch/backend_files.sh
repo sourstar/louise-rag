@@ -1,5 +1,5 @@
 # backend_files.sh — sourced by the rollouts that write INTO LocalAI's backends/
-# (rollout-110-20261030.sh; the louise-python-20261030 build by hand).
+# (rollout-110-20261030.sh@c572c3b; the louise-python-20261030 build by hand).
 #
 # THE TRAP (2026-10-30): backends/ is an nfsv4 dataset (aclmode passthrough)
 # whose directories carry an inheritable `user:apps:…x…:fd` entry. A file

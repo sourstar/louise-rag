@@ -1,5 +1,5 @@
 """What the platform's LocalAI backends share (migration step 15e-2;
-docs/notes/model-pool-over-localai.md §7): the gRPC server LocalAI talks to, and the
+model-pool-over-localai.md@c572c3b §7): the gRPC server LocalAI talks to, and the
 reading of a model's load call.
 
     louise-dar-legal-it   Embedding   deploy/dar-legal-it/server.py

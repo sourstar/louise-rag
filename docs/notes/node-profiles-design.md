@@ -14,7 +14,7 @@ Today the node's schedule is six root crons calling scripts that edit state
 from outside:
 - `set-embed.sh` rewrites a collection file's `embed` line twice a day;
 - `wikipedia-build.sh` starts and stops the build container and sets its cores;
-- `gpu-cap.sh` writes the card's `max_freq`;
+- `gpu-cap.sh@c572c3b` writes the card's `max_freq`;
 - a hold file pauses the build by hand.
 
 Each script carries its own copy of the times, so changing the schedule means
@@ -45,7 +45,7 @@ are never limited by a profile.
 | setting | applied by | how |
 |---|---|---|
 | `cpu_cores` | the records build and the worker's parse pool, and wikidata's pack pass (`app/cpu_limit.py`, built 2026-10-27) | the pool keeps its size (`config.available_cpus`); the parts IN FLIGHT are kept at `min(cpu_cores, the pool's window)`, re-read at each page (build) or batch (worker), cached 30 s or until the profile's own end. `0` pauses at that boundary: the pages in flight are finished and handed over, the parts they complete committed by the build's own per-part commit, the open part's records kept in memory; the worker's rdf, fts and archive passes stand down (embedding, bundles and scans go on). It waits in a bounded sleep that honours SIGTERM (exit 130, nothing committed lost) and resumes when a profile allows cores. Each change is logged once per collection ("profile quiet: paused until 08:00"); an unreadable `platform.toml` is logged and the last good limit kept. No container is stopped or started |
-| `gpu` level | the GPU governor app (`app/gpu_level.py`, built 2026-10-27; it already wrote the card's `min_freq`) | reconciles every tick, writing only a difference: hwmon `power1_max` (the standard Linux power limit; "N%" of `power1_rated_max`, "NW", "max" = as read at its start) where writable, else `max_freq` ("N%" of `rp0_freq`, "NMHz"); a level a killed governor left on the card is not taken for the card's own. The query hold is clamped to the cap, and a cap below a live hold waits for it to end. `fan_max_rpm` only through a writable `fanN_max`, else the status says `fan: firmware-controlled` (xe). The card's own limits restored on a clean stop; no `[schedule]`, nothing written; a file that does not load keeps the last level. Shown in `control.gpu_governor` `level`, `node show` `profile.gpu_applied` and the System tab. Retires `gpu-cap.sh` |
+| `gpu` level | the GPU governor app (`app/gpu_level.py`, built 2026-10-27; it already wrote the card's `min_freq`) | reconciles every tick, writing only a difference: hwmon `power1_max` (the standard Linux power limit; "N%" of `power1_rated_max`, "NW", "max" = as read at its start) where writable, else `max_freq` ("N%" of `rp0_freq`, "NMHz"); a level a killed governor left on the card is not taken for the card's own. The query hold is clamped to the cap, and a cap below a live hold waits for it to end. `fan_max_rpm` only through a writable `fanN_max`, else the status says `fan: firmware-controlled` (xe). The card's own limits restored on a clean stop; no `[schedule]`, nothing written; a file that does not load keeps the last level. Shown in `control.gpu_governor` `level`, `node show` `profile.gpu_applied` and the System tab. Retires `gpu-cap.sh@c572c3b` |
 | fans | the operator's `fancontrol.py`, optionally | reads `louise node show` to cap case fans in `quiet` |
 
 The container's `cpu.max` stays as a fixed hard ceiling (the night's 12

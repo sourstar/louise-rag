@@ -733,7 +733,7 @@ def _embed_one_at_a_time(texts: list[Item], *, recipe: "collections_mod.EmbedRec
 
     This is how docs/09-formats.md §9.12 takes a run's fingerprint: "embedded
     one at a time … each as the endpoint returned it". It is also what
-    tools/endpoint_vectors.py records before a model changes hands, so that
+    tools/endpoint_vectors.py@c572c3b records before a model changes hands, so that
     what answers afterwards can be held to it bit for bit. No batching, no
     concurrency: neither EMBED_BATCH nor EMBED_CONCURRENCY applies here, on
     purpose — the gate sets this beside the way the peer really contributes

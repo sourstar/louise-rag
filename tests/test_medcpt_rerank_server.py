@@ -58,7 +58,7 @@ def test_a_model_that_drops_a_score_is_an_error_not_a_misaligned_ranking():
 
 def test_the_compiled_model_is_kept_where_the_models_yaml_says(monkeypatch):
     """OV_CACHE_DIR reaches OpenVINO as CACHE_DIR; unset, nothing is cached
-    (docs/notes/model-pool.md §20)."""
+    (model-pool.md@c572c3b §20)."""
     import sys
     import types
     calls = []

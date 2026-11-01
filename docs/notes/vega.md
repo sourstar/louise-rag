@@ -1,7 +1,7 @@
 # VeGa, the Vector Gate: receipts in place of a front
 
 *Operator's proposal and decisions, 2026-10-08. Supersedes the front of
-[`model-pool-over-localai.md`](model-pool-over-localai.md) once it is proved on the node
+`model-pool-over-localai.md`@c572c3b once it is proved on the node
 (§6); until then the model pool runs unchanged.*
 
 ## 1. The proposal
@@ -15,7 +15,7 @@
    Louise.
 4. So **LocalAI is the only one handling VRAM** on the card. Today two
    lifecycle managers share it — the model pool's (a patched LocalAI inside its own
-   image) and the LocalAI app's — which is the case model-pool.md §19 and
+   image) and the LocalAI app's — which is the case model-pool.md@c572c3b §19 and
    [`gpu-card-overcommit`] exist to survive.
 
 Operator, same day: Louise makes **two requests, the embedding and the
@@ -68,7 +68,7 @@ Louise ──POST /v1/embeddings (model vega-xyz, tagged inputs)──► LocalA
   learn the options a model was loaded with; the wrapper receives
   `LoadModel(ModelOptions)` itself. It is also the backend's parent, so it
   knows its exe, argv and environment without `/proc` matching, and it can
-  hash the weights DURING the load (model-pool-over-localai §8.3's cost goes).
+  hash the weights DURING the load (model-pool-over-localai.md@c572c3b §8.3's cost goes).
 - VeGa leaves the data path: vectors travel LocalAI → Louise once.
 
 ## 4. What changes in the specification
@@ -149,7 +149,7 @@ Decided in writing it, for the operator's review:
 ## 7. The node
 
 - **Never delete a TrueNAS app** (operator, 2026-10-05). An app cannot be
-  renamed. **Operator, 2026-10-08: keep the `louise-rage` app name for now**;
+  renamed. **Operator, 2026-10-08: keep the app's old name for now** (it became `louise-vega` on 2026-10-18);
   it hosts VeGa, slimmed to the receipts service.
 - The LocalAI app gains the `vega-` backends and one host-path mount (the
   receipts socket), and the model YAMLs and weight mounts of the models
@@ -177,7 +177,7 @@ Not deployed; nothing on the node. Wired into `app/embeddings.py` on
 | `app/vega/service.py`, `__main__.py` | the receipts service: intake on a unix socket, read-only HTTP |
 | `app/vega/client.py` | Louise's side: `tag_batch`, `verify_response` → vectors and run ids, or `Refusal` / `Deferral` |
 | `deploy/vega/` | the wrapper (`vega_wrapper.py`), `run.sh`, `vega.example.json`, `requirements.txt` |
-| `app/rage/runs.py` (the model pool's, deleted 2026-10-18) | `driver_string(runtime_lines=…)`: the wrapper reads the runtime from dpkg's status file |
+| the model pool's `runs.py` (deleted 2026-10-18) | `driver_string(runtime_lines=…)`: the wrapper reads the runtime from dpkg's status file |
 | `tools/vega_f32_json.go` | the float32-through-JSON check, exhaustive and golden |
 | `tests/vega/` | 94 tests; the 15 gRPC ones need grpcio, protobuf and grpcio-tools |
 
@@ -309,7 +309,7 @@ says why. `hold embedder calibrate` takes `api = "vega"`. Tests:
   install beside LocalAI's backends; `metadata.json`'s `digest` as the
   gallery writes it, read on the node (§6). Built by hand for the proof
   and the digest read: §10.
-- Mounting `service.router` and an `Intake` in the louise-rage app.
+- Mounting `service.router` and an `Intake` in the VeGa app (`louise-vega`).
 - An asymmetric space under `vega`: the query side takes its model from
   `query_url`'s `/upstream/<model>` (`embeddings._side`), which LocalAI's
   URL does not carry; naming it needs a key (`query_model`?) — a schema
@@ -353,7 +353,7 @@ python:3.12-slim). The real backend's `metadata.json`, verbatim:
 |---|---|---|
 | 1, base64 | LocalAI v4.11.0 honours `encoding_format: "base64"`: 4,096 bytes = 1,024 f32 | yes |
 | 1, f32 through LocalAI | 2,048 texts × (base64, JSON) = 4,096 vectors: 4,096 vector digests match, 0 mismatch, 0 receipt missing; `client.verify` 128/128 batches; no `-0` in the JSON bodies | passed |
-| 3, wrapper vs direct, one engine (`vega-bge-m3` vs `vega-bge-m3-direct`: same LocalAI, backend, options, weights) | 1,975/2,048 bit-identical, cosine min 0.99999, max abs diff 7.5e-4. The engine against itself (the base64 pass vs the JSON pass of `vega-bge-m3`): 1,975/2,048, 6.5e-4 | passed: the wrapper changes no byte; the rest is the engine's own run-to-run drift (model-pool-over-localai §12) |
+| 3, wrapper vs direct, one engine (`vega-bge-m3` vs `vega-bge-m3-direct`: same LocalAI, backend, options, weights) | 1,975/2,048 bit-identical, cosine min 0.99999, max abs diff 7.5e-4. The engine against itself (the base64 pass vs the JSON pass of `vega-bge-m3`): 1,975/2,048, 6.5e-4 | passed: the wrapper changes no byte; the rest is the engine's own run-to-run drift (model-pool-over-localai.md@c572c3b §12) |
 | 3, vs the model pool's `bge-m3` | 1,975/2,048 bit-identical, cosine min 0.9999956, median 1.0, max abs diff 2.8e-4 | equivalent; the runs differ (below) |
 | 4, throughput | direct 29.4 texts/s; behind the wrapper 28.3, with the receipts read 28.2 (−4 %); one receipts read costs 1.5 ms per batch; the model pool 27.6 texts/s = 1,100 tokens/s, `vega-bge-m3` 1,069 (base64) and 1,047 (JSON) tokens/s | passed. The absolute tokens/s is far below §12's 10,700: short texts, one gRPC call each |
 | 2, eviction | as configured, LocalAI evicts nothing (below) | **not proved, open** (→ §11) |
@@ -431,8 +431,8 @@ flagged pushed-out (host > card) before anything here was loaded.
    `ZE_ENABLE_ALT_DRIVERS` at it. The backend's digest covers that copy, but
    the driver string is still wrong. A decision for the §4 amendment.
 5. **LocalAI's `/system` names the wrapper's pid** (36 MB RSS), not the child
-   that holds the card. Labelling the card by `/system` pids (rage-over-
-   localai §7) has to follow descendants, as `vega_wrapper.family` does.
+   that holds the card. Labelling the card by `/system` pids (model-pool-over-
+   localai.md@c572c3b §7) has to follow descendants, as `vega_wrapper.family` does.
 
 **Left on the node.** Running: `vega-proof` (127.0.0.1:30439 → 8090, with
 its run store inside the container), and `vega-bge-m3`, loaded (1,137 MiB on
@@ -573,7 +573,7 @@ host figures.
    harmless, but it is why the bound is X + L and not X.
 
 **Still open (§6.2).** LocalAI does not see the model pool. If the model pool grows by more than
-M, LocalAI will not react. The model pool does see LocalAI (model-pool.md §19) and gives up
+M, LocalAI will not react. The model pool does see LocalAI (model-pool.md@c572c3b §19) and gives up
 its own idle models. And there is no check before a load: a single model
 bigger than the headroom overcommits the card whatever the settings. Two
 models in this LocalAI are that big: `swift-qwen3.8-27b` (18.0 GB of
@@ -640,7 +640,7 @@ transformers 5.15.1 from the HF cache. The check pairs were this staging's
 added six read-only host
 paths without ACLs (uid 568 already reads them through their inherited
 NFSv4 entry `user:apps`). They are the model pool's own: `bge-m3-models`,
-`louise-rage/models/chat`, `granite-models`, `llama-embed`, `madlad-models`
+the model pool's `models/chat`, `granite-models`, `llama-embed`, `madlad-models`
 and `medcpt-models`, mounted at `/models/weights/{bge-m3,chat,granite,
 llama-embed,madlad,medcpt}`. So a model path is the model pool's, byte for byte.
 
@@ -811,17 +811,17 @@ next load tells its tree.
 
 Done by hand, step by step, after the operator's "Proceed with 1".
 
-- **Receipts service, permanent.** A `vega` service in the `louise-rage`
-  app (the app keeps its name until after the migration, operator):
+- **Receipts service, permanent.** A `vega` service in the VeGa app
+  (`louise-vega` since 2026-10-18):
   image `vega:bb9bf61` (the Louise image of that commit, tagged), socket
   `/mnt/tank/apps/localai/backends/vega-llama-cpp/run`, state
-  `/mnt/ssd5/apps/louise-rage/state/vega`, port 30439. `vega-proof` removed.
+  `/mnt/ssd5/apps/louise-vega/state/vega`, port 30439. `vega-proof` removed.
 - **Louise env:** `VEGA_URL=http://192.168.178.10:30439`;
   `CHAT_URL`/`TRANSLATE_URL` = LocalAI with `CHAT_MODEL=louise-chat-qwen3-8b`,
-  `TRANSLATE_MODEL=louise-translate-madlad` (new key, 36ae15e); `RAGE_URL`
-  removed. `[deposit]` in platform.toml: LocalAI, `api = "vega"`,
+  `TRANSLATE_MODEL=louise-translate-madlad` (new key, 36ae15e); the model pool's
+  address removed. `[deposit]` in platform.toml: LocalAI, `api = "vega"`,
   `vega-granite` (3c27212); `platform.toml.pre-vega` kept.
-- **Collections** (`deploy/vega/switch/switch_collection.py`; previous files
+- **Collections** (`deploy/vega/switch/switch_collection.py@c572c3b`; previous files
   in `config/collections.pre-vega/`): deposit-granite and the two granite
   minis → `vega-granite`; gutenberg-mini-certified, gutenberg-744ba8430fed,
   gutenberg → `vega-qwen3-embedding-4b`; wikipedia → `vega-bge-m3`; pubmed →
@@ -836,8 +836,8 @@ Done by hand, step by step, after the operator's "Proceed with 1".
   an older problem, open); chat "Rome", translation correct.
 - **Second peer** (dev PC): new code, its four files migrated and switched,
   env to LocalAI/VeGa; a search answers with vector hits (238 ms dense).
-- **The model pool retired:** the `rage` service removed from `louise-rage`
-  (definition kept in `/mnt/ssd5/apps/louise-rage/rage-service-retired-2026-10-09.json`,
+- **The model pool retired:** the model pool's service removed from the VeGa app
+  (its definition kept beside the app's state,
   mode 600); nothing points at :30437.
 - **Reclaimer:** with the model pool gone LocalAI holds everything on the card (9,521
   MiB used = vega-qwen3 9,363 + vega-granite 134). C = 32,656, margin 2,048,
@@ -855,7 +855,7 @@ Done by hand, step by step, after the operator's "Proceed with 1".
    & retry".
 2. The script read a `[[sources]]` table after `[encoder]` as part of it
    (louise-stop's source url rewritten); fixed in it and in
-   align_model_names.py (3078c83).
+   align_model_names.py@c572c3b (3078c83).
 3. The backend gate's 30-minute pass was keyed on the collection name, so
    the model pool's pass covered VeGa's vectors until it expired; keyed on the
    endpoint now (89b8ebf).

@@ -18,8 +18,8 @@ from . import config
 from .plugins import deposit, embedded, gutenberg, normattiva, pubmed, wikidata, wikipedia
 from .plugins.base import CorpusSource
 
-# `genome` and `packed` are boxed in attic/ (operator, 2026-09-14): kept for
-# reference until converted to the final format or dropped.
+# `genome` and `packed` were boxed on 2026-09-14 and removed on 2026-11-01
+# (operator: retired code survives only in git; attic/ at c572c3b).
 PLUGIN_REGISTRY: dict[str, CorpusSource] = {
     "deposit": deposit.SOURCE,
     "embedded": embedded.SOURCE,

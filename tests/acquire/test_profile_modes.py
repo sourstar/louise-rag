@@ -38,7 +38,7 @@ def test_unknown_part_is_refused_by_name():
 def test_non_additive_sources_never_combine():
     """An EXCLUSIVE source (one part per collection: a second would mint the
     same ids) must not accept two, however they are spelled. Its worked case,
-    genome, is boxed in attic/; the rule is the platform's."""
+    genome, was retired (attic/, removed 2026-11-01); the rule is the platform's."""
     from app.acquire.spec import (AcquisitionSpec, ChecksumSource, DeltaSpec,
                                    Endpoint, Transport)
     from app.plugins.base import LicenseClass

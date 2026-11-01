@@ -779,7 +779,7 @@ real `/data/state` (model-pins.json) during the node's suite: being found.
   node key moved by rename to `secrets/private/node.key` (worker only,
   read-only; same key text and signature before and after), the admin
   token to `secrets/admin/admin-token` (`ADMIN_TOKEN_FILE`), no token value
-  in either container's env (deploy/16f/move_secrets.py). The key's backup
+  in either container's env (deploy/16f/move_secrets.py@c572c3b). The key's backup
   `/mnt/tank/homes/alanari/louise-node.key` is on the same machine: an
   off-machine copy is the operator's to keep.
 - **Open defects:** the reranker's HTTP 500s under load (cause not found);
@@ -819,7 +819,12 @@ it left open is below.
   1. jina-style encoders on llama.cpp, implemented and tested at f16 (operator, 2026-10-31; below).
   2. **ON HOLD (operator, 2026-11-01): RAGE settings exchanged between peers** — the `rage-settings` member in the digest and its fetch (09 §9.16, §9.9, §9.19). Until then a node reads only the files in its own SHARD.
 
-- **RAGE, the RAG Engine (operator, 2026-11-01)** — the name of Louise's own engine, which every collection's embedding goes through ([rage.md](rage.md)). The name was the model pool's until then; every file now calls that "the model pool" ([model-pool.md](model-pool.md)). Code: `app/rage/` (`dispatch`, `card_record`, `settings`).
+- **Retired code removed (operator, 2026-11-01: "remove any retired code, it will survive only in the github past commits")** — read it at `@c572c3b`:
+  - **Gone:** `attic/`; `app/coordinator/` and `app/contribute.py` (architecture-v2's work leases; 04 §4.5 hands work out by rendezvous) with their tests and the two-node compose flow; the model pool's four notes; `PACK_MOUNTS_DIR`; the per-model and DNA app files, `dnabert2*`, `bakeoff-st` + `tools/bakeoff_local.py`, `localai-wsl`; 23 dated one-shots in `deploy/16f/`, `deploy/vega/switch/` and `deploy/scheduled/`; the one-shot tools `clean_titles`, `backfill_pubmed_authors`, `wikipedia_drop_namespace_pages`, `vector_sweep`, `endpoint_vectors`. Every old name of the model pool is out of the tree, guarded by `tests/test_rage_name.py`.
+  - **Kept, live or in doubt** (each says why): what the deploy runbook runs or checks (`deploy-louise-madlad-t5.sh`, `set_mem_limits`, `set_platform_image`, `flatten_mounts`, `rename_mounts`, `wikipedia_drop_twins`, `encoder_bakeoff`, …); `create-normattiva-archive.sh` (not created yet); `vega/switch/{backend_files,backends-20261017,rollout-p2}.sh` (the pattern for the next rollout); `pack build/verify` (invariant 11's test builds through them); `jina-embeddings-v3/` (the jina gate before production); `vector_compliance`, `build_space_artifact` (still named by measuring.md and the importer); `wikipedia-keep-night.sh`, `madlad-translate/to_bf16.py`, `vega/stage/{convert_article.sh,article_reference.py}`, `power_steps`, `gutenberg_plates_recon`, `medcpt_text_compare`, `pubmed_other_abstract_rows`, `localagi_check/`, `measure/one_language_*` — each waits on a record that it is done.
+  - **Node:** the dataset `ssd5/apps/louise-rage` becomes `louise-vega` (only VeGa's `state/vega`, 9.9 MB, is live in it; München, after the night's BEFORE rows). ≈218 MB of the model pool's leftovers in it wait for the operator's yes.
+
+- **RAGE, the RAG Engine (operator, 2026-11-01)** — the name of Louise's own engine, which every collection's embedding goes through ([rage.md](rage.md)). The name was the model pool's until then; every file now calls that "the model pool" (`model-pool.md`@c572c3b). Code: `app/rage/` (`dispatch`, `card_record`, `settings`).
 
 - **Recommended RAGE settings, part of a collection (operator, 2026-11-01: "A recommended, non binding, setting shall be part of a collection"; choice B)** (09 §9.19).
   - **Built:** the signed file `rage-settings/<key hex>.json` in the SHARD, one entry per card type (`app/hold/rage_settings.py`); a node takes the entry for its own card type in the `[encoder]` keys its file leaves unset, through `collections.recipe_for`, so the gate measures it first (`app/rage/settings.py`); `hold rage-settings show|record`. No file, no change.
@@ -1384,7 +1389,7 @@ parts get no new vectors meanwhile (the node's gutenberg is on-demand).
 1. *(Done: Perugia's copy in use, 2026-10-24.)* Perugia (on 274d461, gutenberg p2p, adoption NOT run) deploys 0a2c6ef —
    PASSED 4,898 and live on the node since 22:41:58 CEST — or a later
    PASSED tip, then adopts the node's twin d913cceb
-   (deploy/16f/adopt-gutenberg-twin.sh, seed-only across the run, no
+   (deploy/16f/adopt-gutenberg-twin.sh@c572c3b, seed-only across the run, no
    scheduled check in progress); `quarantine_in_use_before` only if its own
    checks have not run.
 2. *(Done: run 4, 902ceb4; run 5 kept `score`.)* The reranker regression on titles (MRR 0.738 before it, 0.579 after):
@@ -1757,14 +1762,14 @@ sha256:92f4c9e0…) into the recipe
 ([`normattiva-recipe.toml`](normattiva-recipe.toml)); the articles' token
 lengths were measured for `ctx` (8192, the engine's window; review §7);
 pooling is what the backend does, mean. The runbook for 4493c15 is
-`deploy/16f/deploy-louise-normattiva.sh`: its non-live phases ran — the
+`deploy/16f/deploy-louise-normattiva.sh@c572c3b`: its non-live phases ran — the
 tree staged beside the live one, `louise-rag:staged` built, the live
 config loads every collection under it, and tests/test_validity,
 test_normattiva, test_refs_normattiva, tests/acquire and tests/hold pass in
 it (87, 255, 949). The swap (phases 4–6: promote, build louise-rag:local,
 stop, LOUISE_PLATFORM_IMAGE, start) is refused to the agent as a
 production deploy, as before; the operator runs the script, then
-`deploy/16f/create-normattiva.sh` — the recipe copied into
+`deploy/16f/create-normattiva.sh@c572c3b` — the recipe copied into
 /config/recipes, `hold collection create` in the web container (the
 stated run held to the recipe's engine and weights; slices = "all", so the
 worker acquires the full profile itself), the licence terms printed and
@@ -1872,7 +1877,7 @@ the Codex pins the parser that produced the records (02 §2.3), so the
 collection is RE-CREATED: remove the collection file and the collection's
 directory under data/collections (manifest, index, lance, state; nothing
 was built, the corpus on /corpora stays and is adopted by its directories),
-then `create-normattiva.sh` again. The node's action, as every creation
+then `create-normattiva.sh@c572c3b` again. The node's action, as every creation
 is.
 
 **The pilot's harness and the template (2026-10-13).** `tools/legal_pilot.py`
@@ -2026,7 +2031,7 @@ date and number (an undated one still needs its form; tests). RULE 1 for
 the collection: a new Codex (the Codex pins the parser, and the old
 versions would enter published, closed parts, which the build refuses —
 02 §2.3), made by A1c as gutenberg's parser 9 was:
-deploy/16f/recreate-normattiva-parser8.sh pauses `normattiva` FIRST (with
+deploy/16f/recreate-normattiva-parser8.sh@c572c3b pauses `normattiva` FIRST (with
 parser 8 live it would discover the old versions itself), creates
 `normattiva-1861` from the same recipe, points its origin at the same
 zips (no fetch; discovery reads the new path as a relocation), carries
@@ -2147,7 +2152,7 @@ single job, and tell the operator the numbers before the first pass).
 ### 2026-10-05: the side branches merged into main
 
 Three branches existed beside `main`. `ccr-b147bbfc-9ktipo` was already
-in main (step 15c). `claude/rage-backends-louise-mnih8a` (2026-09-27/29)
+in main (step 15c). a side branch (2026-09-27/29)
 and `ccr-d5be5f2c-fdn6fl` (2026-09-29/30, a superset of it) were merged
 on 2026-10-05, taking main's later decisions wherever the two sides had
 decided the same question:
@@ -2155,13 +2160,13 @@ decided the same question:
   `load` field, Codex 4 "exactly when" an engine carries it, statement 3
   likewise). Main decided it again on 2026-10-03 as `options` (09 §9.3,
   step 15a) and deployed it on 2026-10-05, so the branch's code, spec
-  rows and tests went; `model-pool.md` §13 records it as superseded.
-- **Kept as history**: `model-pool.md` §22–§23 (LocalAI's rerankers backend
+  rows and tests went; `model-pool.md`@c572c3b §13 records it as superseded.
+- **Kept as history**: `model-pool.md`@c572c3b §22–§23 (LocalAI's rerankers backend
   checked; the model pool spawning LocalAI's backend binaries) — superseded by
-  [`model-pool-over-localai.md`](model-pool-over-localai.md), kept with a preface.
+  `model-pool-over-localai.md`@c572c3b, kept with a preface.
 - **Carried**: a validation counts only when THIS node signed it and is
   re-checked once per process (`app/hold/runs.py`, `app/run_check.py`;
-  `model-pool.md` §13); the web process holds no private key — a public key
+  `model-pool.md`@c572c3b §13); the web process holds no private key — a public key
   file, signing work queued for the worker (`app/identity.py`,
   `app/jobs.py`; `deploy/truenas-app.yaml` mounts the node key read-only
   in its own dataset, NOT yet applied on the node);
@@ -2195,7 +2200,7 @@ because the node lost its internet egress during the image build (DNS and
 HTTPS by IP both fail; the gateway answers at 0.03 ms). Both wait for the
 operator: the deploy runbook, then the deposit runbook (step 16f).
 
-**2026-10-06, ~09:45Z: 3edbabb DEPLOYED** by `deploy/16f/deploy-louise-3edbabb.sh`,
+**2026-10-06, ~09:45Z: 3edbabb DEPLOYED** by `deploy/16f/deploy-louise-3edbabb.sh@c572c3b`,
 run from the agent's session after the operator's "try again": staged, the
 live config loaded all three collections (the proof had to borrow the web
 container's mounts — the drag is on tank), tests/deposit 100 and tests/hold
@@ -2206,7 +2211,7 @@ node's egress had returned after the operator had the TrueNAS Container
 `claude-code` (libvirt-lxc, its own LAN address) force-stopped, deleted,
 and the node rebooted — it was the cause, not the router. Still waiting:
 the granite weights on the node (the agent's scp is refused), then
-`deploy/16f/deposit-16f.sh`.
+`deploy/16f/deposit-16f.sh@c572c3b`.
 
 **2026-10-06, ~10:05Z: the deposit runbook ran** (the weights copy went
 through on the operator's order). Granite is served by the model pool beside the
@@ -2226,7 +2231,7 @@ and now accepts). Deployed next.
 **2026-10-06, ~10:40Z: 28dfff7 DEPLOYED** (the copy-state fix; suite 3516 on
 the workstation, tests/deposit 102 and tests/hold 704 in the staged image).
 `deposit-granite` is **in use**, `origin_check: not-planned`. Then
-`deploy/16f/localagi-smoke.sh` ran LocalAGI's own request sequence against
+`deploy/16f/localagi-smoke.sh@c572c3b` ran LocalAGI's own request sequence against
 the node with the deposit token: no token 401; create 201; list; store
 (multipart, the client's temp path, the key its base name); entries; read;
 search found the memory; the open `/api/search` never named the
@@ -2259,7 +2264,7 @@ it (200); the agent was deleted, the collection reset, its held file
 removed. The operator's 16f stop can now run from LocalAGI's UI.
 
 **2026-10-06, ~11:05Z: 16f's STOP RUN** (operator: "do it"), by
-[`deploy/16f/localagi-stop.sh`](../../deploy/16f/localagi-stop.sh) through
+[`deploy/16f/localagi-stop.sh@c572c3b`](../../deploy/16f/localagi-stop.sh) through
 LocalAGI alone (:30050), which proxies its collection routes to Louise:
 - memory STORED: the agent `louise-stop` (kb, long-term memory, daily
   compaction with summary; `qwen3.8-2b-q4` on the `localai` app) took one
@@ -2373,7 +2378,7 @@ operator: the legacy bundle inbox's own trusted-key list has no command;
 **2026-10-08, ~07:20Z (UTC): the genome collections DELETED; step 13f
 found done.** At the operator's yes on the named list: genome-hg38, dm6 and
 sacCer3's data (2.2 GB, 190 MB, 19 MB) and origins (860 MB, 40 MB, 3.4 MB)
-deleted, after `deploy/16f/drop_mounts.py` took their three bind mounts out
+deleted, after `deploy/16f/drop_mounts.py@c572c3b` took their three bind mounts out
 of the app (a missing bind source stops a container starting): app stopped,
 compose updated, started; nine collections in use after. Their files are
 kept as the record in `config/collections-future/` with a README. No app of
@@ -2944,7 +2949,7 @@ overwritten). The node runs 865ccbe; main is the same code plus notes.
 
 ### 2026-10-03: LocalAI takes the lifecycle; the model pool keeps the run identity
 
-The operator accepted [`model-pool-over-localai.md`](model-pool-over-localai.md):
+The operator accepted `model-pool-over-localai.md`@c572c3b:
 LocalAI will launch, load, preload, cache and evict the models, and the model pool
 will state the run of every answer. That is migration step 15. Done the
 same day:
@@ -2968,13 +2973,13 @@ are written at version 4. Every existing Codex, engine id, run and
 statement stays as it is. Whole suite 3439 passed.
 
 **15d, the same day**: the model pool's front over LocalAI, beside today's
-(`RAGE_RUNNER=localai`). Runs are read from LocalAI's `/system` and the
+(the pool's runner set to LocalAI). Runs are read from LocalAI's `/system` and the
 kernel: options, argv, environment, the card from the process's DRM
 clients, and weights hashed per process. Also built: the admin door, the
 panel, the restart, and `PUT`/`DELETE` of LocalAI's YAML. 37 tests against
 a fake LocalAI. Not run against a real one: that is 15c on the node.
 
-**15e in part, the same day**: `deploy/rage/Dockerfile.localai` builds the
+**15e in part, the same day**: the model pool's LocalAI image build builds the
 patched LocalAI (version `58830f7+patches.17b54353635e`) with its SYCL
 backend pinned by digest. It ships the six llama.cpp models' YAML and an
 app file. Its `smoke` target ran the whole chain on a CPU with a real
@@ -2998,7 +3003,7 @@ answer, the same run after a restart. It found `run.sh` giving relative
 cannot reach: they first run on the node.
 
 **The image, 2026-10-04**: built on the node and published,
-`ghcr.io/sourstar/rage@sha256:b203a361a09bd515f0ca1e9293cf30a7a516384fd3785ceecc1941d7bc1a092d`
+the model pool's image `sha256:b203a361a09bd515f0ca1e9293cf30a7a516384fd3785ceecc1941d7bc1a092d`
 (`localai-58830f7-1`). Every backend's libraries imported at build; nothing
 run on the card yet. Next: 15c, the operator's go/no-go.
 
@@ -3008,12 +3013,12 @@ engine. The MedCPT reranker on the card matches today's to 3e-8. It found
 LocalAI bug B9: an intermittent NaN fails the whole request. Louise now
 retries it as she retries llama-server's null vectors. Not run: the spill
 test, DAR-legal-it and MADLAD on the card, because each needs room the live
-models hold. The go is the operator's (model-pool-over-localai §12).
+models hold. The go is the operator's (model-pool-over-localai.md@c572c3b §12).
 
 **15f ready, not run (2026-10-04)**: the operator gave the go ("suspend
 dar-legal for now, go on with the rest"; DAR-legal-it serves no
 collection). Merged to main, rebuilt and published
-(`ghcr.io/sourstar/rage@sha256:e64893cf…4e26`). Every model was tried under
+(the model pool's image `sha256:e64893cf…4e26`). Every model was tried under
 LocalAI beside the live one, which found and fixed chat's template. The
 swap itself was refused to the agent as a production deploy, so it is two
 scripts on the node for the operator, with a backout (migration-plan 15f).
@@ -3024,13 +3029,13 @@ calibration answers match the old engine's (lowest cosine 0.999833).
 Louise runs the merged main with `TRANSLATE_API=completion`, and 1609aa9
 since 06:12 UTC: LocalAI's "exceeds the available context size" shrinks
 the cut. The operator deployed it, and web and worker run one image. The
-old engine's backups stay in `/mnt/ssd5/apps/louise-rage-15c/cutover/backup`
+old engine's backups stay in `the cut-over backup dataset`
 until 15g.
 
 **15g, the same day: the llama-swap the model pool retired from the repository**
 (legacy-to-delete §8; suite 3378 on the node). It is commit 8390155, which
 went in under the previous commit's message by mistake. Its description is
-in the commit after it. The node keeps `rage:pre-15f`, `louise-rag:pre-15f`
+in the commit after it. The node keeps the model pool's pre-15f image, `louise-rag:pre-15f`
 and the backups until the operator removes them.
 - **Louise deployed at 736fc52** (06:47 UTC). The translator now speaks only
   the completion shape: 499 languages, a sentence translated, a null for an
@@ -3048,7 +3053,7 @@ and the backups until the operator removes them.
     first LocalAI build;
   - the rollback tags `louise-rag:pre-15f` and `pre-736fc52`, and the old
     MADLAD app images;
-  - `/mnt/ssd5/apps/louise-rage-15c/` (backups, `backout.sh`, the before and
+  - the cut-over backup dataset (backups, `backout.sh`, the before and
     after vectors), `src.old`, and the scratch trees in `/tmp`;
   - the llama-swap-era copies in the model pool's `config/` and `state/`;
   - dangling images and the build cache, about 85 GB;
@@ -3310,7 +3315,7 @@ unasked.
 
 ### 2026-09-22: a reboot renumbered the cards and the model pool would not start
 
-The operator, after a reboot: `louise-rage` start fails with
+The operator, after a reboot: the model pool's app fails to start with
 
     error while creating mount source path
     '/sys/class/drm/card0/device/tile0/gt0/freq0':
@@ -3323,18 +3328,18 @@ CREATE the missing source under `/sys` and the container never started.
 Not degraded — dead: a bind that cannot be made stops the app, and the
 clock is otherwise optional.
 
-[`model-pool.md`](model-pool.md) §18 had already said this of render nodes, when the
+`model-pool.md`@c572c3b §18 had already said this of render nodes, when the
 driver in a run identity moved to the PCI address for the same reason:
 *a number is not a name, an address moves only with the hardware.* The
 clock bind was the last piece still holding a number.
 
 The address cannot go in the bind either: TrueNAS parses `source:target:
-mode` and an address has colons — the rule `tests/rage/test_deploy_files.py`
+mode` and an address has colons — the rule the model pool's deploy-file test
 already carried. So the bind names a colon-free symlink on the pool, made
 once, and the test now refuses a card-numbered source as well (f1b9dfc):
 
     ln -sfn /sys/bus/pci/devices/0000:03:00.0/tile0/gt0/freq0 \
-            /mnt/ssd5/apps/louise-rage/gpufreq
+            <the model pool's dataset>/gpufreq
 
 Checked in a throwaway container before the app config was touched: Docker
 resolves the symlink and the container both reads and WRITES through it
@@ -3414,7 +3419,7 @@ Committed on `louise`, not deployed; the other session tests them together.
 - **The model pool b10630-8 is live.** When a model does not fit on the card, the model pool
   frees space by evicting lower-priority models first (93ccefa), and it
   reads a request's body before waiting for its model to load (9f77a99).
-  See [`model-pool.md`](model-pool.md) (amended 2026-09-21).
+  See `model-pool.md`@c572c3b (amended 2026-09-21).
 
 ### v1.0 roots — the development collections are not the product (2026-09-12)
 
@@ -5160,10 +5165,10 @@ Deployed 2026-09-14 14:01 UTC (74173fc, image `fa25111…`): node suite
 pins `sha256:7de4793a…`; the placeholder Codex's files are kept beside
 the drag in the staging directory, not deleted.
 
-**`genome`, `packed` and `pack adopt` boxed in `attic/`** (operator,
+**`genome`, `packed` and `pack adopt` boxed in `attic/` (removed 2026-11-01)** (operator,
 2026-09-14: "remove them from the active code keeping them in a box for
 reference until they are either converted to the final format or
-permanently dropped"). [`attic/README.md`](../../attic/README.md) lists
+permanently dropped"). [`attic/README.md` (removed 2026-11-01)](../../attic/README.md) lists
 what moved and why. No registry, spec, CLI verb, create-dialog path or
 help text reaches them now, and the image does not carry them. Tests
 that used them as the worked example now use a live plugin or an inline
@@ -6231,7 +6236,7 @@ completed.**
 - New manifests are created without the table. An old manifest's is
   dropped once at the worker's startup (`db.drop_catalog_fts`, replacing
   the rowid realignment it no longer needs).
-- `tools/clean_titles.py` now writes the index. The index has one writer,
+- `tools/clean_titles.py@c572c3b` now writes the index. The index has one writer,
   the worker's, so the tool asks for the worker to be stopped and changes
   nothing while it runs. `tools/migrate_manifest.py` drops a pre-refactor
   catalog instead of converting it.
@@ -6335,7 +6340,7 @@ teardown (test-only; fixed in 1f25e6b, ten repeats clean).
 
 **What happened, in order.**
 1. The first proposal for the model pool (b0f5dad) was reviewed before any code
-   ([`model-pool-review.md`](model-pool-review.md)) and did not survive as written:
+   (`model-pool-review.md`@c572c3b) and did not survive as written:
    llama-swap has no load endpoint and evicts by default; the run
    identity could not be computed as specified (a process cannot see its
    image's digest; the raw argv and environment would have made every
@@ -6347,17 +6352,17 @@ teardown (test-only; fixed in 1f25e6b, ten repeats clean).
    cannot be checked waits for the operator's recorded decision.
 3. The amendments are on `main`: **8bbc66a** (the run identity made
    computable, a weights digest for directories, `Louise-Level`, the
-   model's URL, `RAGE_URL`) and **98ee4dc** (quarantine).
-4. [`model-pool.md`](model-pool.md) rewritten to the accepted design;
+   model's URL, the pool's address variable) and **98ee4dc** (quarantine).
+4. `model-pool.md`@c572c3b rewritten to the accepted design;
    `migration-plan.md` (deleted 2026-10-08) gained **step 13** (the model pool,
    parts a–f) and **step 14** (quarantine). Step 12 stays last.
 5. The code as it stood before the model pool is tagged **v0.1.0** (`louise`
    01a4d00; the first tag of the repository).
 6. **Steps 13b and 13c are built**: `app/rage/` (the model pool's, deleted 2026-10-18), the launcher of our
    three servers, and 13d's files (image, example config, TrueNAS app).
-   [`model-pool.md`](model-pool.md) §17 lists each piece and what proves it.
+   `model-pool.md`@c572c3b §17 lists each piece and what proves it.
 
-**Numbers.** `tests/rage/`: 96 tests in 7 s, against a directory that
+**Numbers.** the model pool's tests: 96 tests in 7 s, against a directory that
 stands in for `/proc` and a fake llama-swap. The whole suite: 3,050
 passed, none failed, 7 min 34 s. No number from the node exists yet: no
 image has been built.
@@ -6370,7 +6375,7 @@ image has been built.
   Found by reading the example before writing the generator, not after.
 - *Three pre-existing guards said no, and each was right.* Nothing
   imports the GPU probe (so a card's name and capacity are declared in
-  `rage.toml`, which is also the only way to get the driver's own words
+  the pool's config file, which is also the only way to get the driver's own words
   09 §9.3 asks for). No GPU stack under `app/`. Every image of ours
   answers SIGTERM as PID 1 — the front's boot had no handler before
   uvicorn is up; it has one now, and that guard asks for a handler, not
@@ -6397,11 +6402,11 @@ gutenberg's space meets another engine; and Louise's admin token is an
 environment VALUE today (`ADMIN_TOKEN_FILE` unset).
 
 **The operator's values (2026-09-19):** folder
-`/mnt/ssd5/apps/louise-rage`; port 30437; the chat model is the file
+the model pool's dataset; port 30437; the chat model is the file
 Ollama serves as `qwen3:8b`, whose blob name is its weights digest and
 which carries its own chat template; the per-model apps are shut off
 before the model pool loads, which makes 13f a cut-over and not a gradual switch
-([`model-pool.md`](model-pool.md) §16). Still to give: the registry.
+(`model-pool.md`@c572c3b §16). Still to give: the registry.
 
 **The same day, after the front:**
 - **A live bug fixed (8bec7fc):** every streamed answer on the Ask page
@@ -6412,7 +6417,7 @@ before the model pool loads, which makes 13f a cut-over and not a gradual switch
   copy and `reset` in the last, which `contextvars` refuses. The gate
   and the claim were released correctly; only the message was wrong.
   NOT DEPLOYED — it needs the web container rebuilt.
-- **`tools/endpoint_vectors.py` (3275ccb):** records what each encoder
+- **`tools/endpoint_vectors.py@c572c3b` (3275ccb):** records what each encoder
   answers today — the sixteen fingerprint texts and a spread of the
   calibration set, one text a request, unnormalised — and compares
   the model pool's answers with it afterwards. The cut-over needs it FIRST: once
@@ -6423,7 +6428,7 @@ before the model pool loads, which makes 13f a cut-over and not a gradual switch
 - **13e, first part (3dd4194):** every model request carries
   `Louise-Level`; `CHAT_API = ollama | openai` so the chat model can
   leave Ollama for the model pool by switching one variable, and come back;
-  `RAGE_URL`. Nothing changes on today's node: the header is ignored by
+  the pool's address variable. Nothing changes on today's node: the header is ignored by
   today's servers and the protocol defaults to Ollama's.
 - **13a, Codex v3:** the engine in the Codex and out of the space, and
   every artefact that named an image moved one version while still
@@ -6518,10 +6523,10 @@ back is kept: `src.old/` and the image tag `louise-rag:v0.1.0-live`.
   That fetch and the scheduled run are one piece of work.
 
 **The model pool's IMAGE IS BUILT ON THE NODE AND PUBLISHED (2026-09-19, 13d's
-first half).** `ghcr.io/sourstar/rage@sha256:8ee29dfab3d7f8720cb48cb6b5367c1b17679475472cd615a69a77ce48e40489`
+first half).** the model pool's image `sha256:8ee29dfab3d7f8720cb48cb6b5367c1b17679475472cd615a69a77ce48e40489`
 (tag `b10630-1`, 18.2 GB; the base's layers were mounted from
 ggml-org/llama.cpp, not uploaded). The login is a Docker config kept by
-path, `/mnt/ssd5/apps/louise-rage/secrets/docker` — root's own config
+path, `secrets/docker` in the model pool's dataset — root's own config
 was not touched. **The package is PUBLIC** (operator, 2026-09-19; GitHub
 offers no API for it): an anonymous pull by digest answers 200, the
 manifest's bytes hash to the digest, and a layer downloads — 32 blobs,
@@ -6532,13 +6537,13 @@ may freeze it.
   (32656 MiB)`; torch 2.14.0+xpu, under the environment a torch model
   declares, reads `xpu available: True` and names the card; OpenVINO lists
   `['CPU', 'GPU']`. These were the unknowns the trial build left.
-- **The model pool's folder is ready for the cut-over**: `config/rage.toml` (eight
+- **The model pool's folder is ready for the cut-over**: the model pool's config file (eight
   models, five preloaded; every weights path checked present on the
-  node), `config/truenas-rage.yaml` with the digest filled in,
+  node), its TrueNAS app file with the digest filled in,
   `secrets/admin.token` generated there and never shown, `state/` empty.
 - **DNA is frozen and inactive** (operator, 2026-09-19: "not ferried to
   the new architecture … until further development"). DNABERT-2 is no
-  longer served: commented out of `rage.example.toml`, its bind out of
+  longer served: commented out of the pool's example config, its bind out of
   the app file, a test holds both. Its weights on the node sit in a
   Hugging Face cache layout whose symbolic links the weights digest
   refuses; placing them as a real directory is part of bringing it back.
@@ -6552,7 +6557,7 @@ may freeze it.
 half, one evening as planned).** The operator paused the node, stopped
 the five apps (`embed-gpu-qwen3-4b`, `embed-gpu-bge-m3`,
 `embed-gpu-medcpt`, `translate-gpu-madlad`, `louise-gpu-governor`) and
-installed `louise-rage` from the app file, in that order; the rest was
+installed the model pool's app from the app file, in that order; the rest was
 driven from here. The model pool serves every model Louise uses except chat, on
 port 30437; chat followed later the same night (below).
 
@@ -6590,10 +6595,10 @@ container's cgroup against its 28 GiB limit, 17.7 GiB of the card's
   running, rest 400 MHz, max 2,800, not pinned).
 - **What was switched**: the `[encoder]` and `[reranker]` URLs of the
   three collection files, to `…:30437/upstream/<model>`; `TRANSLATE_URL`
-  and a new `RAGE_URL` on web and worker, through the TrueNAS client
+  and a new the pool's address variable on web and worker, through the TrueNAS client
   library so the app's configuration — which carries the admin token —
   never reached a command line. **The way back**:
-  `config/backup-pre-rage-2026-09-19/` holds the three files and the
+  the pre-pool backup folder (2026-09-19) holds the three files and the
   app's configuration (mode 600); the five apps are stopped, not deleted.
 - **Differs from the app file's own note**: the model pool's `secrets/admin.token`
   is a token generated on the node, not Louise's. The model pool reads it once at
@@ -6631,11 +6636,11 @@ to wait for it (1,083 s on wikivec).
   `louise-rag:v0.1.0-live`.
 - **The System tab's clock panel** read "GPU governor not running" after
   the cut-over, because it reads the retired app's heartbeat; with
-  `RAGE_URL` set it asks the model pool (f8a6266). `GPU_PROBE_URL` is still what
+  the pool's address variable set it asks the model pool (f8a6266). `GPU_PROBE_URL` is still what
   feeds the panel's per-process rows — it shows the model pool's seven processes —
   so it was left alone; the operator's remark that it "is not used
   anymore" is OPEN: if it means the probe should go, its rows need
-  another source first (model-pool.md §12 has the model pool's pids joined to the
+  another source first (model-pool.md@c572c3b §12 has the model pool's pids joined to the
   probe's).
 
 **2026-09-20, night — ONE ORIGIN CHECK READS AT MOST 256 MiB OF THE ORIGIN.**
@@ -6675,9 +6680,9 @@ Operator: "10.5 GiB are too much, limit the test to some hundred MB."
   the node still paused as the operator left it. Way back:
   `config/platform.toml.pre-quarantine-enforce`.
 - **The model pool reads the card's real memory, gives up idle models when a
-  stranger squeezes it, and tells Louise** ([`model-pool.md`](model-pool.md) §19;
+  stranger squeezes it, and tells Louise** (`model-pool.md`@c572c3b §19;
   louise 789bd0e, 028897a). Fifth image,
-  `ghcr.io/sourstar/rage@sha256:c6e8c32be177248e4827aa0c4c9dab934b47b4eb4d6c20f9080e0c3a4b7c3ab9`
+  the model pool's image `sha256:c6e8c32be177248e4827aa0c4c9dab934b47b4eb4d6c20f9080e0c3a4b7c3ab9`
   (tag `b10630-5`; `b10630-3` and `-4` were published on the way and are
   superseded — nothing published is deleted). The app gained `cap_add:
   PERFMON`: `xe` tells what is USED only to that capability. On the node:
@@ -6686,7 +6691,7 @@ Operator: "10.5 GiB are too much, limit the test to some hundred MB."
   §9.12) — and no collection here is owed a gate (all Codex v2). Way
   back: `config/app-config.pre-memory-feature.json` (mode 600).
 - **Proved live, not only in tests**: a 7 GiB stranger of my own, twice
-  (model-pool.md §19). The first run showed the rule was not "wise" — 9,937 MiB
+  (model-pool.md@c572c3b §19). The first run showed the rule was not "wise" — 9,937 MiB
   given up for a 1,435 MiB deficit — and the second, after the fix, gave
   up 1,596.
 - **Correction**: a model pushed off the card DOES move back when it is
@@ -6773,11 +6778,11 @@ stays `pending`, and the Library says "tests open — in use by decision".
 
 **2026-09-20, midday — THE DRIVER A RUN STATES IS THE CARD'S, AND THE NODE
 RUNS THE IMAGE THAT READS IT SO.** Operator: "driver fix: yes"
-([`model-pool.md`](model-pool.md) §18, item 1; louise bfe5377). Second image,
-`ghcr.io/sourstar/rage@sha256:d7686483861ae7dc5f9730b1efefc72f2d6d1e323654d560b4016702fcd37aa4`
+(`model-pool.md`@c572c3b §18, item 1; louise bfe5377). Second image,
+the model pool's image `sha256:d7686483861ae7dc5f9730b1efefc72f2d6d1e323654d560b4016702fcd37aa4`
 (tag `b10630-2`, same base and same llama-swap: only the front changed;
 public, anonymous pull checked, the manifest's bytes hash to the digest).
-The node's `rage.toml` declares `pci = { xpu = "0000:03:00.0" }` — REQUIRED
+The node's the pool's config file declares `pci = { xpu = "0000:03:00.0" }` — REQUIRED
 here: `xe` and `amdgpu` are both loaded, and without an address the new
 front states no run and says what to declare (checked in a throwaway
 container before the switch, with and without the address, and against
@@ -6797,20 +6802,20 @@ the AMD graphics' address, which reads `amdgpu`).
   streamed Ask gave its first token in 6.8 s and finished in 12.9 s, the
   clock reads. No error in the model pool's, the web's or the worker's log. The
   node was left PAUSED, as the operator set it.
-- The way back: `config/rage.toml.pre-driver-fix`,
-  `config/truenas-rage.yaml.pre-driver-fix`,
+- The way back: the pool config's pre-driver-fix copy,
+  its app file's pre-driver-fix copy,
   `config/app-config.pre-driver-fix.json` (mode 600). The first image
   stays in the registry — nothing published is deleted — and
-  `deploy/bakeoff-st/Dockerfile.xpu` (the bake-off's, not the model pool's) still
+  `deploy/bakeoff-st/Dockerfile.xpu@c572c3b` (the bake-off's, not the model pool's) still
   builds on it, which is right: it wants the runtime, not the front.
 
 **2026-09-20, morning — the model pool NO LONGER READS ANYTHING OF OLLAMA'S.**
-Operator: "If the chat model runs now in RAGE [the model pool] why do we need Ollama?" —
+Operator: "If the chat model runs now in [the model pool] why do we need Ollama?" —
 we did not, except for ONE FILE: the chat model was read from Ollama's
 blob store. It now has a copy of the model pool's own,
-`/mnt/ssd5/apps/louise-rage/models/chat/qwen3-8b.gguf`, checked against
+`models/chat/qwen3-8b.gguf` in the model pool's dataset, checked against
 the digest in the name it came from (`a3de86cd…686f`); the app's bind and
-`rage.toml` point at it, and a test forbids a bind or a weights path that
+the pool's config file point at it, and a test forbids a bind or a weights path that
 names another app's folder. **The path is not part of a run**: chat's run
 id is `sha256:ce6d7fb39087…` before and after, and the six other resident
 models came back from the restart with the run ids they had — the first
@@ -6820,7 +6825,7 @@ chat 11.3, bge-m3 9.3, bge-reranker 7.3, MedCPT query 5.3, cross-encoder
 3.3). A streamed Ask answered in 8.2 s. The GPU panel's last cryptic row
 reads `qwen3-8b`. Ollama has served nothing since chat moved (its only
 requests were the comparison's two chats and the unload). The way back
-for the move: `config/rage.toml.pre-chat-move`,
+for the move: the pool config's pre-chat-move copy,
 `config/app-config.pre-chat-move.json` (mode 600).
 - **THE OPERATOR DELETED THE OLD APPS** (seen 2026-09-20: none of
   `embed-gpu-*`, `embed-cpu-*`, `translate-gpu-madlad`,
@@ -6830,7 +6835,7 @@ for the move: `config/rage.toml.pre-chat-move`,
   the model pool reads them. `ollama` still exists and runs, idle: stopping and
   deleting it, and the 89 GB of its store, is the operator's.
 - **The node was rebooted at 10:34** (kernel: a software reset), and came
-  back by itself: `louise-rag`, `louise-rage`, the probe, the mode it was
+  back by itself: `louise-rag`, the model pool's app, the probe, the mode it was
   in. The model pool preloaded on its own. The operator then PAUSED the node from
   the Library (10:38, from 192.168.178.76) and it was left paused — the
   two documents in flight were deferred at their next slice, as the mode
@@ -6838,8 +6843,8 @@ for the move: `config/rage.toml.pre-chat-move`,
 
 **LATER THE SAME NIGHT (2026-09-19/20), unattended.**
 - **Chat runs in the model pool** (operator: "the same model in Ollama, just run in
-  RAGE [the model pool]"). `CHAT_API=openai`, `CHAT_URL=…:30437/upstream/chat`, the way
-  back in `config/backup-pre-rage-2026-09-19/app-config.pre-chat.json`
+  [the model pool]"). `CHAT_API=openai`, `CHAT_URL=…:30437/upstream/chat`, the way
+  back in the pre-pool backup's app config (2026-09-19)
   (mode 600). Loaded in 15 s, 7,250 MiB of the card, no `<think>` in an
   answer. Same prompt, the worker embedding beside both: the model pool 12.2–13.8
   tokens/s generated, Ollama 8.3–8.9. A streamed Ask over gutenberg took
@@ -6887,7 +6892,7 @@ for the move: `config/rage.toml.pre-chat-move`,
   `models/` read-only and point `weights` at `…/blobs/sha256-…` (the
   run identity does not move: the template keeps `${WEIGHTS}` and the
   digest is of the bytes) — a restart of the model pool; or the design's own join of
-  the probe's pids with the model pool's (model-pool.md §12), which needs the model pool to say
+  the probe's pids with the model pool's (model-pool.md@c572c3b §12), which needs the model pool to say
   which container it is, so a new image.
 - **What re-fetching the origin would cost, measured** (the open design
   question of step 14): pubmed's plan samples 0.05 of its shards — 68 of
@@ -6913,7 +6918,7 @@ measure on the node first; invariant 5), so it was not guessed at here.
 Until it exists quarantine stays on `report`. `node show` (07 §7.8) is
 not built; `louise health` carries the state meanwhile. What the local
 trial build of the image found and fixed before any of this reached the
-node is in [`model-pool.md`](model-pool.md) §17.
+node is in `model-pool.md`@c572c3b §17.
 
 ### What is waiting on the operator
 
@@ -8338,7 +8343,7 @@ Corpus cost: bge-m3 18m16s, qwen3-embedding-4b 59m29s, DAR-legal-it ~4m.
 
 DAR-legal-it was run on the card through a **side-car** — `FROM` the
 deployed rage digest plus one venv, run once and discarded
-(`deploy/bakeoff-st/Dockerfile.xpu`). The model pool itself, its `rage.toml` and the
+(`deploy/bakeoff-st/Dockerfile.xpu@c572c3b`). The model pool itself, its the pool's config file and the
 pushed image were not touched. **Its recalls land within 0.0014 of the
 authors' published figures**, which validates our metric code against the
 real `InformationRetrievalEvaluator` and makes every row here comparable
