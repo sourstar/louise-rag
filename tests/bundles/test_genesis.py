@@ -634,6 +634,64 @@ def test_reimporting_a_shard_never_duplicates_vectors(collection, monkeypatch):
     assert tbl.count_rows() == 10, "one vector per chunk after a re-import"
 
 
+def test_a_reimport_of_identical_vectors_writes_nothing(collection):
+    """RULE 1 (München, 2026-11-01: wikipedia's re-import after the re-cut
+    deleted and re-added the same bytes, 441 commits a minute, net ±0): a
+    document whose stored rows ARE the archive's rows is marked done and its
+    rows are left as they are; one whose stored rows differ is rewritten."""
+    con = db.connect(collection)
+    cache = {}
+    _write_medcpt_shard(cache, "0", range(1, 11))
+    archive = _archive(["0"])
+    genesis.import_shard(con, collection, archive, "0",
+                         embed_fn=_same_function_embed, fetch=_fake_fetch(cache))
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    before_version, before = tbl.version, tbl.to_arrow().sort_by("id").to_pylist()
+    con.execute("UPDATE documents SET embed_done=0")      # the re-cut's reset
+    con.execute("DELETE FROM genesis_imports")
+    con.commit()
+    genesis.import_shard(con, collection, archive, "0",
+                         embed_fn=_same_function_embed, fetch=_fake_fetch(cache))
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    assert tbl.version == before_version, "no delete, no add: the same bytes are kept"
+    assert tbl.to_arrow().sort_by("id").to_pylist() == before
+    assert con.execute("SELECT COUNT(*) FROM documents WHERE embed_done=1").fetchone()[0] == 10
+    # one document's stored vector changed (a different run's): it is rewritten
+    first = before[0]
+    tbl.delete(f"id = '{first['id']}'")
+    tbl.add([dict(first, vector=[0.0] * len(first["vector"]))])
+    con.execute("UPDATE documents SET embed_done=0")
+    con.execute("DELETE FROM genesis_imports")
+    con.commit()
+    genesis.import_shard(con, collection, archive, "0",
+                         embed_fn=_same_function_embed, fetch=_fake_fetch(cache))
+    tbl = embeddings._conn(collection).open_table(embeddings.TABLE)
+    assert tbl.to_arrow().sort_by("id").to_pylist() == before, "the archive's bytes, back"
+
+
+def test_unchanged_books_compares_every_stored_row():
+    import numpy as np
+    from types import SimpleNamespace
+    import pyarrow as pa
+    v = np.ones(4, dtype=np.float16)
+    stored = pa.table({"id": ["a:1:0:1", "a:1:1:1", "a:2:0:1"], "book_id": [1, 1, 2],
+                       "lang": ["en"] * 3, "seq": [0, 1, 0], "chapter": [""] * 3,
+                       "text": ["x", "y", "z"],
+                       "vector": pa.FixedSizeListArray.from_arrays(pa.array(np.tile(v, 3)), 4)})
+
+    class Q:
+        def where(self, *a, **k): return self
+        def select(self, *a): return self
+        def limit(self, *a): return self
+        def to_arrow(self): return stored
+    table = SimpleNamespace(search=lambda: Q())
+    row = lambda i, b, s, t: {"id": i, "book_id": b, "lang": "en", "seq": s, "chapter": "", "text": t, "vector": v}  # noqa: E731
+    rows = [row("a:1:0:1", 1, 0, "x"), row("a:1:1:1", 1, 1, "y"), row("a:2:0:1", 2, 0, "Z")]
+    assert genesis.unchanged_books(table, rows, [1, 2]) == {1}, "book 2's text changed"
+    assert genesis.unchanged_books(table, rows[:1] + rows[2:], [1, 2]) == set(), \
+        "book 1 stores a row the batch would delete"
+
+
 # --- the same-function proof is a quorum; a stale sample is skipped ----------
 
 def _stale_embed(stale_ids):
