@@ -84,7 +84,7 @@ München produces the table for every collection on the node, and step 1 starts 
   - A card is as busy as its busiest engine class. Impossible readings (a counter that went back, a share above 1.02) are dropped and counted, never averaged in (the two lessons in STATUS.md).
   - Pros: no run changes; per process with the panel's labels; read-only. Cons: a LocalAI backend's command line names no model, so per model is per process, and which model a process serves is read from the gates (I2), not from the card.
   - **AMENDED (2026-11-01, after the first deploy read 0 % of a 34–37 % card):** reading another process's fdinfo is a ptrace-read check, and the probe (CAP_PERFMON, the host's PID namespace) was refused every model server's. CAP_SYS_PTRACE was not taken: with the host's PIDs it reads and writes every process's memory, the node key included (invariant 8). The card's figure now comes from its DRIVER (`app/gpu_pmu.py`): xe's perf PMU (`engine-active-ticks` / `engine-total-ticks` per engine instance, what intel_gpu_top reads; the node's B70: `xe_0000_03_00.0`, ccs0 its only compute engine), allowed by the CAP_PERFMON the probe already holds; amdgpu's `gpu_busy_percent`. fdinfo stays for WHO, and gives a card's figure only when no process was unreadable. A card with neither reports `busy: null` with `blind: <why>`, never 0.
-  - **SETTLED (München, 2026-11-01 18:2x): the PMU is the truth; fdinfo's client cycles are HALVED on this card and kernel** (B70, 6.18.52). The test: ccs0 kept full by 4 loops of one ~8 k-token text on bge-m3, everything else paused. perf ccs0 read 91.8 % and 92.1 %, the probe's /busy averaged 90.4 % over 131 samples, and fdinfo (`gpu_busy.py`) read 45 % and 46 %. Idle: 0 on both. So every fdinfo figure on this card is ×2, the afternoon's included: wikidata alone at batch 16 was ~75–90 % busy, not 37–45 %, and both collections together ~50–70 %. Step 1's ≥ 90 % is measured on the PMU, and with chunks/s beside it, because busy that does not raise throughput is not counted.
+  - **SETTLED (München, 2026-11-01 18:2x): the PMU is the truth; fdinfo's client cycles are HALVED on this card and kernel** (B70, 6.18.52). The test: ccs0 kept full by 4 loops of one ~8 k-token text on bge-m3, everything else paused. perf ccs0 read 91.8 % and 92.1 %, the probe's /busy averaged 90.4 % over 131 samples, and fdinfo (`gpu_busy.py`) read 45 % and 46 %. Idle: 0 on both. So every fdinfo figure on this card is ×2, the afternoon's included: wikidata alone at batch 16 was ~75–90 % busy, not 37–45 %, and both collections together ~50–70 %. Step 1's target (≥ 80 %, operator 2026-11-01) is measured on the PMU, and with chunks/s beside it, because busy that does not raise throughput is not counted.
   - **The card's figure is its busiest COMPUTE engine** (`gpu_busy.COMPUTE_ENGINES`: ccs, rcs, gfx, compute). perf confirmed the copy engine reads as busy as ccs under load: 78.4 against 78.3, 92.7 against 91.9, and 0 at idle (München, 18:29–18:47). The Level Zero runtime keeps a copy context resident while compute runs, and the driver counts it as active.
 - **I2 — who used the card. BUILT.** Each gate's snapshot gives, per collection, its requests running and waiting and the seconds it really held the server (`held_s`, running requests included). The existing `_served` could not serve: it is the fair-share account, raised when a collection joins.
 - **I3 — idle gaps. BUILT.** The embed feeders say whether their collection has work it could send now (`stats.Recorder.set_backlog`): yes while candidates remain, including between two streams at the 120 s boundary; no when the selection runs dry, the encoder defers or the node pauses. The worker's card recorder (`app/card_record.py`) joins I1–I3 one line a second into `<root>/state/card/<date>.jsonl` (3 days kept). A GAP is a second the card was idle (under 5 %) while work waited and no query held the claim; LOST is Σ (1 − busy) over the seconds work waited. `louise dev schedule-report --gpu --minutes 15` prints them per minute with each collection's request-seconds held.
@@ -93,7 +93,7 @@ München produces the table for every collection on the node, and step 1 starts 
 
 ## Step 1 — each collection alone, card close to 100 %
 
-**Target:** sustained card busy ≥ 90 % (I1) with the collection alone. "Close to 100 %": the last few percent are the request boundaries. Throughput must rise with it; busy that does not raise chunks/s is not counted.
+**Target (operator, 2026-11-01: "A GPU at 80+% is acceptable, a GPU at 20% is not"):** sustained card busy ≥ 80 % on the PMU's compute engine (I1), with the collection alone. Throughput must rise with it: busy that does not raise chunks/s is not counted. The work goes first to the collections far below the target. A collection already at ≥ 80 % keeps a lever only when it raises chunks/s.
 
 **The engine's levers, in order of cost** (each measured BEFORE/AFTER, one deploy each):
 0. **wikidata's BEFORE row (2026-11-01 18:28–18:43, alone, batch 16 / concurrency 4, the PMU):** ccs 77–84 % a minute (82.1 % over 15 min); **gaps 1 s in 885 s** (0.1 s/min); lost 10.8 s/min; **78.8 chunks/s** (71,316 chunks / 68,322 documents); worker 0.76 cores. Two consequences:
@@ -110,13 +110,13 @@ München produces the table for every collection on the node, and step 1 starts 
 - the gate's verdict;
 - a byte or bound check on 2,000 written rows.
 
-**Done for a collection:** ≥ 90 % busy sustained over 15 min, or the measured reason it cannot. For example, a model whose server cannot take a batch: then step 2 decides whether a server capability is needed.
+**Done for a collection:** ≥ 80 % busy sustained over 15 min, or the measured reason it cannot (the model's ceiling). For example, a model whose server cannot take a batch: then step 2 decides whether a server capability is needed.
 
 ## Step 3 — several collections at once, the card shared without idle gaps
 
 1. **Fix the gate defect first.** One gate per (URL, model) with its own capacity. Above the gates, one CARD resource: the in-flight budget the card can keep busy, measured in step 1, shared by DRR across the collections with work (`app/sched.py`, the existing wheel). It is work-conserving: a collection with no work leaves its share to the others.
 2. **Measure** with 2, 3, then every collection embedding:
-   - card busy (I1) at least the best standalone figure;
+   - card busy (I1) ≥ 80 %, and at least the best standalone figure;
    - idle gaps (I3) under ~1 s a minute;
    - each collection's served share (I2) within ±10 % of the DRR rule;
    - no collection starved over any 5 min.
