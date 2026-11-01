@@ -32,6 +32,13 @@ from .codex import CodexError
 KIND = "louise-cpu-reference"
 VERSION = 1
 
+#: THE BOUND ON ONE REQUEST TO THE CPU TWIN, per 1,024 tokens of the space's
+#: window. The node's 300 s flat bound is a card's: wikidata's bge-m3 space
+#: (ctx 8,191) timed out three times on its CPU twin (München, 2026-11-01),
+#: where wikipedia's (ctx 1,024) finished in 18 min. Generous, never
+#: unbounded: a twin that hangs still defers the pass.
+CPU_S_PER_KTOKENS = 300.0
+
 
 @dataclass(frozen=True)
 class CpuReference:
@@ -41,6 +48,15 @@ class CpuReference:
     role: str
     vectors: list[list[float]]
     path: Path
+
+
+def request_timeout(ctx: int | None, in_flight: int) -> float:
+    """How long one request to the CPU twin may take: one text of up to the
+    space's window (`ctx` tokens; 1,024 when the space names none), behind at
+    most `in_flight` - 1 others at its one-sequence server
+    (EMBED_CONCURRENCY), each bounded at CPU_S_PER_KTOKENS a 1,024 tokens."""
+    windows = max(1, -(-int(ctx or 1024) // 1024))
+    return CPU_S_PER_KTOKENS * windows * max(1, int(in_flight))
 
 
 def directory(root: Path, name: str, role: str) -> Path:

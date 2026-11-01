@@ -81,7 +81,8 @@ def _stopping(stop: Callable[[], bool] | None, name: str) -> None:
 
 def answers(recipe, *, query: bool = False, how: str = "normalised",
             stop: Callable[[], bool] | None = None, name: str = "",
-            collection: Any = None, asked: bool = True) -> runs_mod.Answers:
+            collection: Any = None, asked: bool = True,
+            timeout: float = 300) -> runs_mod.Answers:
     """The node's embedding client as an `Answers`.
 
     `how`: "normalised" — what a write stores; "one" — each text alone, as
@@ -104,7 +105,11 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
     receives them — the gate and the re-check prefix the space's instruction
     themselves, as calibration did — so the client does not prefix it again
     (2026-10-21: it did, and every query run was gated on the instruction
-    twice). A caller handing raw queries passes `asked=False`."""
+    twice). A caller handing raw queries passes `asked=False`.
+
+    `timeout` bounds each request (a card's 300 s by default); the CPU
+    reference passes its own, scaled to the space's window
+    (`cpu_reference.request_timeout`)."""
     def normalised(texts: list[str], seen: set) -> list[list[float]]:
         out: list[list[float]] = []
         for i in range(0, len(texts), SLICE):
@@ -114,7 +119,7 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
                 out += embeddings.embed_chunks(collection, part, recipe=recipe, runs=seen)
             else:
                 out += embeddings.embed_calibration(recipe, part, query=query, runs=seen,
-                                                    asked=asked)
+                                                    asked=asked, timeout=timeout)
         return out
 
     def one(texts: list[str], seen: set) -> list[list[float]]:
@@ -122,7 +127,8 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
         for text in texts:
             _stopping(stop, name)
             out += embeddings.embed_calibration(recipe, [text], query=query, runs=seen,
-                                                one_at_a_time=True, asked=asked)
+                                                one_at_a_time=True, asked=asked,
+                                                timeout=timeout)
         return out
 
     def contribute(texts: list[str], seen: set) -> list[list[float]]:
@@ -130,14 +136,15 @@ def answers(recipe, *, query: bool = False, how: str = "normalised",
         lanes = max(1, min(int(getattr(recipe, "concurrency", 1) or 1), len(texts)))
         if lanes == 1:
             return embeddings.embed_calibration(recipe, texts, query=query,
-                                                raw=True, runs=seen, asked=asked)
+                                                raw=True, runs=seen, asked=asked,
+                                                timeout=timeout)
         # as the worker does it: `lanes` documents in flight, each its own call
         groups = [list(range(k, len(texts), lanes)) for k in range(lanes)]
         with ThreadPoolExecutor(max_workers=lanes) as ex:
             parts = list(ex.map(
                 lambda idx: embeddings.embed_calibration(recipe, [texts[i] for i in idx],
                                                          query=query, raw=True, runs=seen,
-                                                         asked=asked),
+                                                         asked=asked, timeout=timeout),
                 groups))
         out: list[Any] = [None] * len(texts)
         for idx, vectors in zip(groups, parts):

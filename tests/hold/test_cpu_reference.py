@@ -128,3 +128,57 @@ def test_a_run_that_does_not_give_back_its_own_bytes_is_not_admitted():
     body = emb.read_statement(emb.statement(run, codex, a_key(), now="2026-10-31T00:00:00Z"))
     assert int(body["passed"]) >= codex.space.calibration.min_pass
     assert not hold_runs.passing(body, codex), "the statement now carries the verdict"
+
+
+# ---- the bound on a CPU twin's request (München, 2026-11-01) --------------------
+# wikidata's bge-m3 space (ctx 8,191) timed out three times at the card's flat
+# 300 s: 16 texts a request (its `[encoder] batch`) of up to 8,191 tokens.
+
+def test_a_request_to_the_cpu_twin_is_bounded_by_the_spaces_window():
+    from app.hold import cpu_reference as cpu_ref
+    assert cpu_ref.request_timeout(1024, 1) == 300.0
+    assert cpu_ref.request_timeout(None, 1) == 300.0, "no window named: one 1,024"
+    assert cpu_ref.request_timeout(8191, 1) == 2400.0
+    assert cpu_ref.request_timeout(8191, 2) == 4800.0, "one queued behind another"
+
+
+def test_the_reference_asks_one_text_a_request_under_that_bound(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from app import config, encoder_use, louise, run_check
+    from app import collections as collections_mod
+    from app.hold import collection as col, cpu_reference as cpu_ref, embedder as emb
+    from app.hold import fingerprint
+    recipe = collections_mod.EmbedRecipe(url="http://localai:8080", api="vega",
+                                         model="vega-bge-m3-cpu", dtype="f16", ctx=8191,
+                                         batch=16)
+    codex = SimpleNamespace(space=SimpleNamespace(query=SimpleNamespace(encoder=None),
+                                                  calibration=SimpleNamespace(set="s")))
+    monkeypatch.setattr(col, "resolve", lambda root, name: ("wikidata", codex))
+    monkeypatch.setattr(louise, "_recipe_for", lambda c, n: recipe)
+    monkeypatch.setattr(louise, "_as_candidate", lambda r, a: r)
+    monkeypatch.setattr(run_check, "calibration_items", lambda *a: ["x"] * 3)
+    monkeypatch.setattr(run_check, "probe_for", lambda *a: "louise")
+    stated = SimpleNamespace(driver="cpu", run_id="sha256:" + "c" * 64, engine={}, weights="w")
+    monkeypatch.setattr(run_check, "stated_run", lambda *a, **k: stated)
+    monkeypatch.setattr(emb, "gate_texts", lambda c, role, items: list(items))
+    monkeypatch.setattr(emb, "reproduces", lambda a, b: True)
+    monkeypatch.setattr(fingerprint, "indices", lambda texts: [0])
+    monkeypatch.setattr(config, "EMBED_CONCURRENCY", 2)
+    asked = []
+
+    def answers(r, **kw):
+        asked.append((r.batch, kw.get("timeout")))
+        fn = lambda texts: [[1.0, 0.0] for _ in texts]
+        fn.runs = {stated.run_id}
+        return fn
+    monkeypatch.setattr(run_check, "answers", answers)
+    monkeypatch.setattr(cpu_ref, "write", lambda *a, **k: tmp_path / "ref.json")
+
+    class Held:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(encoder_use, "held", lambda *a, **k: Held())
+    a = SimpleNamespace(root=tmp_path, collection="wikidata", model="vega-bge-m3-cpu",
+                        query_model=None)
+    assert louise.cmd_embedder_cpu_reference(a) == 0
+    assert asked == [(1, 4800.0), (1, 4800.0)], "one text a request, the window's bound"
