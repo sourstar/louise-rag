@@ -9,6 +9,16 @@
 
 The steps run in the operator's order: precondition, then 1, then 3, then 4. Step 2 is a rule that applies to all of them. Every change follows scheduling.md §6 and measuring.md §6: BEFORE numbers, one deploy, AFTER numbers, a row in scheduling-log.md.
 
+## A TESTBENCH FOR EVERY COLLECTION AND MODEL TO COME (operator, 2026-11-01)
+
+> "The model is not going to be changed, it is a matter of understanding what can be optimized in the collections engine. This is a testbench for all the collections and models to come."
+
+What follows from it:
+- **No model or model-server change is a lever.** Where the server is the bound (its per-request cost, its one sequence at a time), that is MEASURED and recorded as that model's ceiling. The engine's job is to reach the ceiling, never to move it.
+- **The levers are general.** None is written for wikidata or wikipedia. Requests filled across documents, the number in flight, a request's size, the stream's continuity and the producer's preparation are each one mechanism that every collection and model goes through.
+- **The engine chooses each one by measurement**, among settings the gate has validated, and records what it chose (RULE 2). A collection or model added later is tuned the same way, with nobody editing its file.
+- **The bench is a procedure the node runs for any collection**: its standalone window (the others paused, 15 min, the PMU busy, gaps and lost per minute, chunks/s, the worker's CPU, the model's ceiling), then each lever alone with its AFTER row, then several collections, then queries under load. What München runs by hand tonight becomes one command, so that a new collection or model is measured the same way and its rows compare.
+
 ## The base rule (step 2): where the optimizations live
 
 **Louise's engine** is the model-work layer that every collection uses:
