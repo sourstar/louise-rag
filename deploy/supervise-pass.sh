@@ -18,6 +18,12 @@
 #                              is SIGKILL, 137, and still comes back
 #   a hold file present        stopped on purpose: `touch $HOLD` before a
 #                              deliberate stop (deploy, measurement)
+#   exit 2                     REFUSED (07 §7.7: "a rule stood in the way
+#                              before anything was done"): not restarted, since
+#                              nothing changes by itself. München, 2026-11-02:
+#                              pubmed's CPU reference was refused (VeGa states
+#                              no run for an unmeasured tree) and came back
+#                              every minute, holding the night's chain
 #   exit 137 or 141            again in 60 s with PARSE_PROCESSES halved
 #                              (12 -> 6 -> 3 -> 2): an OOM loop backs off.
 #                              141 is SIGPIPE: until 2026-10-30 a pool child the
@@ -61,6 +67,10 @@ while :; do
     echo "== $(date -u +%FT%TZ) $NAME: exit $code"
     [ "$code" -eq 0 ] && exit 0
     [ -e "$HOLD" ] && { echo "== $NAME: held ($HOLD), not restarted"; exit "$code"; }
+    if [ "$code" -eq 2 ]; then
+        echo "== $NAME: refused (exit 2), not restarted: a rule stood in the way; fix it and run it again"
+        exit 2
+    fi
     if [ "$code" -eq 130 ] || [ "$code" -eq 143 ]; then
         echo "== $NAME: stopped on purpose (SIGTERM, exit $code), not restarted; run it again to resume"
         exit "$code"
