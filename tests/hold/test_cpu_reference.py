@@ -184,56 +184,93 @@ def test_the_reference_asks_one_text_a_request_under_that_bound(monkeypatch, tmp
     assert asked == [(1, 4800.0), (1, 4800.0)], "one text a request, the window's bound"
 
 
-# ---- 4-bit weights hold their own review line (operator, 2026-11-01: A) -------
-# gutenberg's Qwen3-Embedding-4B Q4_K_M against its CPU twin: worst 0.989292 on
-# a 39-token text, median 0.998358, exact over 3 loads; the CPU's activations
-# are quantised where SYCL's are not (München, m6). bge-m3 F16: worst 0.999930.
+# ---- a review line per quantization level, measured (operator, 2026-11-01) ----
+# "Calculate a reasonable threshold per quantization level, do not just assume
+# it is the same as the full precision." The CPU rounds activations to 8 bits for
+# every quantised weight type, so each level is measured card against its CPU
+# twin and its line computed by one rule; an unmeasured level has none.
+
+@pytest.mark.parametrize("model,level", [
+    ("Qwen3-Embedding-4B-Q4_K_M.gguf", "Q4_K_M"),
+    ("/models/x-IQ4_XS.gguf", "IQ4_XS"),
+    ("model-q8_0.gguf", "Q8_0"),
+    ("bge-m3-Q6_K.gguf", "Q6_K"),
+    ("bge-m3-FP16.gguf", "FP16"),
+    ("MedCPT-Query-Encoder-f16.gguf", "F16"),
+    ("Q40.gguf", None),
+    (None, None),
+])
+def test_the_level_is_the_type_tag_of_the_weights_localai_loaded(model, level):
+    engine = {"options": {"Model": model}} if model is not None else {"name": "x"}
+    assert emb.quant_level(engine) == level
+
+
+def test_the_rule_gives_headroom_over_the_worst_measured_and_never_tightens_full_precision():
+    assert emb.cpu_line_from(0.989292) == 0.983, "gutenberg's Q4_K_M: 1 - 1.5 x 0.010708"
+    assert emb.cpu_line_from(0.99) == 0.985
+    assert emb.cpu_line_from(0.99993) == 0.995, "never stricter than the operator's 0.995"
+    assert emb.cpu_line_from(0.95) == 0.925
+
 
 @pytest.mark.parametrize("model,line", [
-    ("Qwen3-Embedding-4B-Q4_K_M.gguf", 0.985),
-    ("/models/x-IQ4_XS.gguf", 0.985),
-    ("model-q4_0.gguf", 0.985),
-    ("gpt-oss-MXFP4.gguf", 0.985),
+    ("Qwen3-Embedding-4B-Q4_K_M.gguf", 0.983),     # measured: worst 0.989292
     ("bge-m3-FP16.gguf", 0.995),
     ("MedCPT-Query-Encoder-f16.gguf", 0.995),
-    ("m-Q8_0.gguf", 0.995),
-    ("Q40.gguf", 0.995),
-    (None, 0.995),
+    ("dar-legal-it", 0.995),                       # no tag: a full-precision backend
+    ("bge-m3-Q8_0.gguf", None),                    # quantised, not measured: no line
+    ("x-IQ4_XS.gguf", None),
 ])
-def test_the_review_line_follows_the_weights_localai_loaded(model, line):
-    engine = {"options": {"Model": model}} if model is not None else {"name": "x"}
-    assert emb.cpu_review_line(engine) == line
+def test_each_level_has_its_own_line_or_none_until_measured(model, line):
+    assert emb.cpu_review_line({"options": {"Model": model}}) == line
 
 
-def _q4_engine(codex):
+def _engine(model):
     from tests.hold.test_backend_engine import BACKEND
     from dataclasses import replace
-    return replace(BACKEND, options={"Model": "Qwen3-Embedding-4B-Q4_K_M.gguf",
-                                     "ModelFile": "${WEIGHTS}"})
+    return replace(BACKEND, options={"Model": model, "ModelFile": "${WEIGHTS}"})
 
 
-def test_a_4bit_run_at_gutenbergs_figures_passes_and_a_full_precision_one_does_not():
-    from tests.hold.test_backend_engine import BACKEND, _vega_run
+def _gated(codex, engine, cpu):
+    from tests.hold.test_backend_engine import _vega_run
+    ref = reference()
+    return emb.run_gate(codex, reference=ref, embed=lambda texts: ref, seed=b"\x09" * 32,
+                        stated=_vega_run(codex, engine), embed_one=fake_embed,
+                        contribute=fake_embed, cpu_reference=("sha256:" + "44" * 32, cpu))
+
+
+def test_a_level_is_held_to_its_own_measured_line():
     codex = codex_768()
     ref = reference()
-    cpu = perturbed(ref, indices=(235,), to=0.989292)
-    for engine, ok in ((_q4_engine(codex), True), (BACKEND, False)):
-        run = emb.run_gate(codex, reference=ref, embed=lambda texts: ref, seed=b"\x09" * 32,
-                           stated=_vega_run(codex, engine), embed_one=fake_embed,
-                           contribute=fake_embed, cpu_reference=("sha256:" + "44" * 32, cpu))
-        assert run.ok is ok, run.why()
-    assert "below the review line 0.995" in run.why()
-    broken = perturbed(ref, indices=(7,), to=0.126)
-    run = emb.run_gate(codex, reference=ref, embed=lambda texts: ref, seed=b"\x09" * 32,
-                       stated=_vega_run(codex, _q4_engine(codex)), embed_one=fake_embed,
-                       contribute=fake_embed, cpu_reference=("sha256:" + "44" * 32, broken))
-    assert not run.ok and "below the review line 0.985" in run.why(), \
-        "a broken engine still fails a 4-bit run"
+    gutenberg = perturbed(ref, indices=(235,), to=0.989292)
+    assert _gated(codex, _engine("Qwen3-Embedding-4B-Q4_K_M.gguf"), gutenberg).ok
+    full = _gated(codex, _engine("bge-m3-FP16.gguf"), gutenberg)
+    assert not full.ok and "below the review line 0.995" in full.why()
+    broken = _gated(codex, _engine("Qwen3-Embedding-4B-Q4_K_M.gguf"),
+                    perturbed(ref, indices=(7,), to=0.126))
+    assert not broken.ok and "below the review line 0.983" in broken.why(), \
+        "a broken engine still fails"
 
 
-def test_a_4bit_statement_is_admitted_at_its_own_line():
-    q4 = {"options": {"Model": "Qwen3-Embedding-4B-Q4_K_M.gguf"}}
+def test_an_unmeasured_level_is_never_judged_on_another_levels_line():
+    codex = codex_768()
+    ref = reference()
+    run = _gated(codex, _engine("bge-m3-Q8_0.gguf"), perturbed(ref, indices=(3,), to=0.9999))
+    assert run.cpu_line is None and run.quant == "Q8_0"
+    assert not run.ok and "not measured yet" in run.why() and "cross_vendor_check" in run.why()
+    from tests.hold.test_backend_engine import _vega_run
+    no_reference = emb.run_gate(codex, reference=ref, embed=lambda texts: ref, seed=b"\x09" * 32,
+                                stated=_vega_run(codex, _engine("bge-m3-Q8_0.gguf")),
+                                embed_one=fake_embed, contribute=fake_embed)
+    assert no_reference.ok, "without a CPU reference there is nothing to judge: exact passes"
+
+
+def test_a_statement_is_admitted_at_its_levels_line():
     gutenberg = {"run": "r", "worst": "0.989292", "median": "0.998358"}
+    q4 = {"options": {"Model": "Qwen3-Embedding-4B-Q4_K_M.gguf"}}
     assert _v5(engine=q4, cpu_reference=gutenberg)
-    assert not _v5(cpu_reference=gutenberg), "full-precision weights keep 0.995"
-    assert not _v5(engine=q4, cpu_reference={"run": "r", "worst": "0.984", "median": "0.99"})
+    assert not _v5(cpu_reference=gutenberg), "full precision keeps 0.995"
+    assert not _v5(engine=q4, cpu_reference={"run": "r", "worst": "0.982", "median": "0.99"})
+    q8 = {"options": {"Model": "bge-m3-Q8_0.gguf"}}
+    assert not _v5(engine=q8, cpu_reference={"run": "r", "worst": "0.9999", "median": "1"}), \
+        "an unmeasured level is not admitted against a CPU reference"
+    assert _v5(engine=q8), "and nothing to judge without one"

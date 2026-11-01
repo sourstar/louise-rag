@@ -60,7 +60,7 @@ For each collection with an encoder, all three must hold:
 | collection | encoder | known blocker |
 |---|---|---|
 | wikidata, wikipedia | bge-m3 | the CPU twin must run on our engine (patch 0002, token ids); München is on it |
-| gutenberg | qwen3-embedding-4b | **closed by the operator's choice A (2026-11-01):** its 4-bit weights stand at ~0.998 against the CPU by path, so their review line is 0.985; the reference is made on our CPU engine, then the gate runs again |
+| gutenberg | qwen3-embedding-4b | **closed (operator, 2026-11-01):** a CPU review line per quantization level, measured. Q4_K_M's, computed from gutenberg's own 0.989292, is 0.983 (near-exact-runs.md §2). The reference is made on our CPU engine, then the gate runs again |
 | pubmed | MedCPT article + query | the CPU twins' 503s; rerun on the #157 image |
 | normattiva | DAR-legal-it | to check |
 | deposit collections | as declared | to check |

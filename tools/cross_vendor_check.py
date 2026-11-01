@@ -9,15 +9,20 @@ GPU, a card before its first peer.
     python -m tools.cross_vendor_check measure /tmp/gutenberg-space \\
         --url http://localhost:30286 --api vega \\
         --model vega-qwen3-embedding-4b [--query-model …] \\
-        [--twin vega-qwen3-embedding-4b-cpu] [--twin-texts 64] [--twin-limit-s 1800] \\
-        [--out result.json]
+        [--twin vega-qwen3-embedding-4b-cpu] [--twin-texts 64] [--twin-shortest 32] \\
+        [--twin-limit-s 1800] [--out result.json]
 
 What it prints is the table's row, per role: the whole calibration set (all
 512 texts) against the space's reference, worst, median and how many below the
 0.995 review line; and, with `--twin`, the card against the same model on its
-own CPU for the first `--twin-texts` texts spread over the set, within
-`--twin-limit-s` (a CPU embeds a 4B model at ~13 s a text: what it has at the
-limit is reported, and how many).
+own CPU for `--twin-texts` texts spread over the set and the `--twin-shortest`
+shortest (where a quantised model's card stands furthest from its CPU: 36–39
+tokens for gutenberg's Q4_K_M, München 2026-11-01), within `--twin-limit-s` (a
+CPU embeds a 4B model at ~13 s a text: what it has at the limit is reported,
+and how many). With `--twin`, it also prints the weights' quantization level
+and the CPU review line the gate's rule computes from this worst
+(`embedder.cpu_line_from`): THE MEASUREMENT A LEVEL'S LINE IS MADE FROM
+(docs/notes/near-exact-runs.md §2).
 
 NOTHING HERE IS A COPY OF THE GATE. The card's vectors come from the gate
 itself (`hold.embedder.run_gate`, through `run_check.answers`, the node's
@@ -80,8 +85,20 @@ def reference(codex, member: Path, role: str) -> list[list[float]]:
 
 
 def stats(cosines: list[float]) -> dict[str, Any]:
-    return {"n": len(cosines), "worst": min(cosines), "median": statistics.median(cosines),
+    ordered = sorted(cosines)
+    return {"n": len(cosines), "worst": ordered[0], "p1": ordered[(len(ordered) - 1) // 100],
+            "median": statistics.median(cosines),
             "below": sum(1 for c in cosines if c < REVIEW_LINE)}
+
+
+def twin_picks(texts: list, spread_n: int, shortest_n: int) -> list[int]:
+    """The texts the twin is asked: `spread_n` spread over the set, and the
+    `shortest_n` shortest (by characters; a pair by both halves), each once,
+    in set order."""
+    def size(t) -> int:
+        return len(t) if isinstance(t, str) else sum(len(x) for x in t)
+    short = sorted(range(len(texts)), key=lambda i: (size(texts[i]), i))[:max(0, shortest_n)]
+    return sorted(set(spread(spread_n, len(texts))) | set(short))
 
 
 def spread(n: int, total: int) -> list[int]:
@@ -93,6 +110,7 @@ def spread(n: int, total: int) -> list[int]:
 
 def measure(space_dir: Path, *, url: str, api: str, model: str, query_model: str | None = None,
             twin: str | None = None, twin_texts: int = 64, twin_limit_s: float = 1800.0,
+            twin_shortest: int = 0,
             say: Callable[[str], None] = print) -> dict[str, Any]:
     codex, member = load(space_dir)
     roles = ["document"] + (["query"] if codex.space.query.encoder is not None else [])
@@ -126,7 +144,7 @@ def measure(space_dir: Path, *, url: str, api: str, model: str, query_model: str
         if twin:
             # the twin answers on the side asked, under its own model name
             twin_embed = run_check.answers(replace(recipe, model=twin, query_model=twin), query=query)
-            picked = spread(twin_texts, len(sent))
+            picked = twin_picks(sent, twin_texts, twin_shortest)
             deadline = time.monotonic() + twin_limit_s
             pairs: list[float] = []
             for start in range(0, len(picked), 8):
@@ -137,14 +155,27 @@ def measure(space_dir: Path, *, url: str, api: str, model: str, query_model: str
                 vectors = twin_embed([sent[i] for i in chunk])
                 pairs += [emb.cosine(got[i], v) for i, v in zip(chunk, vectors)]
             twin_stats = stats(pairs) if pairs else {"n": 0}
+            level = emb.quant_level(_stated_engine(run))
             entry["twin"] = {"model": twin, "runs": sorted(str(r) for r in twin_embed.runs),
-                             **twin_stats, "cosines": pairs}
+                             **twin_stats, "cosines": pairs, "texts": picked[:len(pairs)],
+                             "lengths": [len(sent[i]) if isinstance(sent[i], str) else None
+                                         for i in picked[:len(pairs)]],
+                             "level": level}
             if pairs:
+                entry["twin"]["line"] = emb.cpu_line_from(twin_stats["worst"])
                 say(f"{role}: card vs its CPU twin {twin}: worst {twin_stats['worst']:.6f}, "
-                    f"median {twin_stats['median']:.6f}, below {REVIEW_LINE}: "
-                    f"{twin_stats['below']} of {twin_stats['n']}")
+                    f"p1 {twin_stats['p1']:.6f}, median {twin_stats['median']:.6f}, "
+                    f"below {REVIEW_LINE}: {twin_stats['below']} of {twin_stats['n']}")
+                say(f"{role}: level {level or 'unnamed'}: the rule's line from this worst "
+                    f"is {entry['twin']['line']:.3f} (embedder.cpu_line_from)")
         out["roles"][role] = entry
     return out
+
+
+def _stated_engine(run) -> dict | None:
+    """The engine the card's run stated (its load options name the weights)."""
+    stated = getattr(run, "stated", None)
+    return getattr(stated, "engine", None) if stated is not None else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -163,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--twin")
     m.add_argument("--twin-texts", type=int, default=64)
     m.add_argument("--twin-limit-s", type=float, default=1800.0)
+    m.add_argument("--twin-shortest", type=int, default=0,
+                   help="also ask the twin the N shortest texts (a quantised level's worst)")
     m.add_argument("--out", type=Path)
     a = p.parse_args(argv)
     if a.cmd == "export":
@@ -171,7 +204,8 @@ def main(argv: list[str] | None = None) -> int:
             print(path)
         return 0
     result = measure(a.space, url=a.url, api=a.api, model=a.model, query_model=a.query_model,
-                     twin=a.twin, twin_texts=a.twin_texts, twin_limit_s=a.twin_limit_s)
+                     twin=a.twin, twin_texts=a.twin_texts, twin_limit_s=a.twin_limit_s,
+                     twin_shortest=a.twin_shortest)
     if a.out:
         a.out.write_text(json.dumps(result, indent=1), encoding="utf-8")
         print(a.out)
