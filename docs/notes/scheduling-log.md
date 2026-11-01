@@ -1810,3 +1810,33 @@ over 5 s (BEFORE #149: 45–57 %). The parent's threads together busy 175 % of 2
 the parent's pipes are the shared bound again, now from both sides (feeding parts, taking
 results). A slice boundary shows the parent alone (55 %) and every child at 0 % for seconds.
 Not changed tonight. 946 of 4,009 parts staged at 23:57 (24 %); at this pace the build ends ~04:15.
+
+### 2026-11-01 — wikipedia's vector table rewritten onto stable row ids (#146), indexed, swapped — MEASURED
+
+**Scenario.** `dev rewrite-vectors wikipedia` under supervise-pass (6 cores), 146,398,044 rows, ssd4.
+Then the after-swap chain without an agent (worker and web restarted, stable row ids verified,
+latency measured, the old table dropped, the `lang` bitmap index built, latency again).
+
+| step | measured |
+|---|---|
+| copy, alone on ssd4 (after 02:34) | 325 fragments, ~11 GiB/min; finished 02:39, 2,000 sampled rows verified byte for byte |
+| `book_id` / `lang` scalar indexes | 23 s / 42 s |
+| vector index | 02:40 → 09:10:51, **6 h 31 min** |
+| old table dropped | 355.6 GiB; ssd4 avail 278 G at once, 97.6 G still held by the hourly snapshots until they age out |
+
+| search latency, 36 runs | before the rewrite | swapped, no `lang` index | with the `lang` index |
+|---|---|---|---|
+| unfiltered, median / p90 | 86 ms / — | 144.1 / 223.0 ms | **57.3 / 91.0 ms** |
+| `lang = en`, median / p90 | 2.1 s / — | 198.9 / 270.1 ms | **202.0 / 254.5 ms** |
+
+**Reading.** The rewrite itself is what cut the English-filtered search 10×. The bitmap index
+on `lang` moved the unfiltered median (144 → 57 ms; the first run follows a restart, so part
+of that is warm-up), and not the filtered one.
+
+**What cost time.**
+- **Two waiters fired on the same "built" line.** They started the copy and wikipedia's re-cut
+  together. The re-cut fell from 1,500 to 350 records/s beside the copy, through ssd4 read
+  latency on its manifest UPDATEs. The re-cut was held behind the swap. One trigger starts one
+  I/O-heavy pass; the next waits for it.
+- **wikidata-bge's first snapshot OOMed 18 times at 8 GiB.** `_first_delta` holds every uid as
+  a str (75.9 M, ~11 GB) and serialises ~1.5 GB of canonical JSON. It passed at 20 GiB.
