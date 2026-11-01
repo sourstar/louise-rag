@@ -37,9 +37,10 @@ def attested(root, codex, snapshot, *, check, key, time_text="2026-10-06T00:00:0
 
 @pytest.fixture
 def ready(isolated_config, tmp_path, corpus_dir, monkeypatch):
-    """A built collection this peer may contribute to: its own roots and
-    chunks passed, another key's records-vs-origin exists, the calibration
-    statement is there, and the calibration member is this encoder's."""
+    """A built collection this peer may contribute to once its own roots and
+    chunks pass (no records-vs-origin attestation is required since 04 §4.5
+    was amended 2026-11-01), the calibration statement is there, and the
+    calibration member is this encoder's."""
     monkeypatch.delenv("EMBED_URL", raising=False)
     # build_shard's three commands, with this encoder's calibration member
     # written BEFORE the snapshot lists it — so the member the sharer serves
@@ -75,14 +76,14 @@ def test_the_preconditions_refuse_before_any_gpu_is_spent(ready):
     with pytest.raises(contribute.ContributeRefused) as e:
         contribute.once(root, "gutenberg", codex, live=[], **kw)
     text = str(e.value)
-    assert "own roots" in text and "own chunks" in text and "records-vs-origin" in text
+    assert "own roots" in text and "own chunks" in text
+    assert "records-vs-origin" not in text, \
+        "04 §4.5 / 03 §3.6 amended 2026-11-01 (operator): the origin check is shown, never waited for"
     assert e.value.exit_code == 2
     for check in ("roots", "chunks"):
         attested(root, codex, snapshot, check=check, key=OURS)
-    with pytest.raises(contribute.ContributeRefused, match="records-vs-origin"):
-        contribute.once(root, "gutenberg", codex, live=[], **kw)
-    attested(root, codex, snapshot, check="records-vs-origin", key=PEER)
-    assert contribute.preconditions(root, "gutenberg", codex, snapshot, own_key=OUR_KEY) == []
+    assert contribute.preconditions(root, "gutenberg", codex, snapshot, own_key=OUR_KEY) == [], \
+        "roots and chunks passed here, and no records-vs-origin attestation is required"
     (root / "gutenberg" / "state" / "calibration.json").unlink()
     from app.hold import runs
     reasons = contribute.preconditions(root, "gutenberg", codex, snapshot, own_key=OUR_KEY)

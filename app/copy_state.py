@@ -508,9 +508,9 @@ def _origin(root: Path, name: str, codex: Codex, bodies, key: str | None) -> tup
         shards = ", ".join(latest.get("shards") or []) or "a shard"
         return (Test("origin", FAILED,
                      f"this peer's own records-vs-origin FAILED on {shards} "
-                     f"({latest.get('time')}): a copy that does not reproduce its origin "
-                     f"is not used here until a person decides (03 §3.6)",
-                     f"a later pass of {clears}, or `louise hold collection forget {name}`"),
+                     f"({latest.get('time')}): shown and published; it withholds nothing "
+                     f"(03 §3.6, amended 2026-11-01)",
+                     f"a later pass of {clears}"),
                 ORIGIN_FAILED)
     if latest is not None:
         return Test("origin", PASSED, f"this peer's own records-vs-origin passed "
@@ -523,7 +523,8 @@ def _origin(root: Path, name: str, codex: Codex, bodies, key: str | None) -> tup
                 ORIGIN_ACKED)
     # 03 §3.6: the fifth test CANNOT RUN when "this peer's platform image is
     # neither the Codex's nor equivalent (§3.4), so that its failure would
-    # say nothing about the collection" — and then the operator decides.
+    # say nothing about the collection" — shown, and waited for by nothing
+    # (amended 2026-11-01).
     from app.hold import equivalence
     ran = equivalence.running_image()
     if key is not None and ran is not None \
@@ -534,19 +535,16 @@ def _origin(root: Path, name: str, codex: Codex, bodies, key: str | None) -> tup
         return (Test("origin", CANNOT_RUN,
                      f"this peer runs {ran[:19]}…, neither the Codex's image nor one "
                      f"equivalent to it, so its records-vs-origin would say nothing "
-                     f"about the collection (03 §3.4){failed_here} — awaiting your "
-                     f"decision",
-                     f"{clears} run in the Codex's own image; or decide: `louise hold "
-                     f"collection ack {name} --origin-unchecked`, or `louise hold "
-                     f"collection forget {name}`"), ORIGIN_PENDING)
+                     f"about the collection (03 §3.4){failed_here}; nothing waits for "
+                     f"it (03 §3.6, amended 2026-11-01)",
+                     f"{clears} run in the Codex's own image"), ORIGIN_PENDING)
     tried = origin_attempt(root, name)
     if tried is not None:
         return (Test("origin", CANNOT_RUN,
                      f"records-vs-origin could not run (last tried {tried.get('time')}: "
-                     f"{tried.get('why')}) — awaiting your decision",
-                     f"{clears} when the origin answers; or decide: `louise hold "
-                     f"collection ack {name} --origin-unchecked`, or `louise hold "
-                     f"collection forget {name}`"), ORIGIN_PENDING)
+                     f"{tried.get('why')}); nothing waits for it (03 §3.6, amended "
+                     f"2026-11-01)",
+                     f"{clears} when the origin answers"), ORIGIN_PENDING)
     if elsewhere is not None:
         image = str(elsewhere.get("platform_image") or "?")
         return (Test("origin", OPEN,
