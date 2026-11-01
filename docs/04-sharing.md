@@ -467,10 +467,11 @@ signed by the key that produced them, naming its collection, space,
 snapshot and chunk range (03 §3.5, 09 §9.7).
 
 **Before contributing.** A peer contributes vectors to a collection
-only when its own `roots` and `chunks` pass on the parts it holds, at
-least one `records-vs-origin` attestation exists for the snapshot — its
-own or another key's — and its encoder has passed the calibration gate
-for the space (03 §3.3). Records are checked before GPU is spent; there
+only when its own `roots` and `chunks` pass on the parts it holds and
+its encoder has passed the calibration gate for the space (03 §3.3). A
+`records-vs-origin` attestation is no longer a precondition (*amended
+2026-11-01*, operator: the check against the source is optional, the
+gating of the vectors is not; 03 §3.6). Records are checked before GPU is spent; there
 is no vector precondition, which would be circular. During the window
 of §4.6 no daughter of the lineage is embedded at all.
 

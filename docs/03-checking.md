@@ -359,10 +359,13 @@ them: a peer is eligible for a part when three times the part's
 collection's work period, `work.per` (02 §2.4).
 
 **Before spending GPU.** A peer contributes vectors to a collection
-only after its own `roots` and `chunks` pass on the parts it holds and
-at least one `records-vs-origin` attestation — its own or another
-key's — exists for the snapshot (04 §4.5). Records are checked before
-GPU is spent; there is no vector precondition, which would be circular.
+only after its own `roots` and `chunks` pass on the parts it holds (04
+§4.5). Records are checked before GPU is spent; there is no vector
+precondition, which would be circular. A `records-vs-origin`
+attestation is not one (*amended 2026-11-01*, operator: "The check
+against the source is optional, the gating of the vectore is not"):
+the corpus must be verifiable — every record carries its `origin_hash`,
+refused at build without it (06 §6.4) — and the vectors must be gated.
 
 ## 3.4 Equivalence: another toolchain, the same collection
 
@@ -937,7 +940,7 @@ and written nowhere:
 | state | meaning | cleared by |
 |---|---|---|
 | **refused** | the copy cannot be right: the Codex's inner hash is not the id its file names, the vector table is not the Codex's space or width, the state database is another platform's (07 §7.8) | a person, and nothing else |
-| **quarantine** | the copy is not yet tested on this peer | the five tests below, by themselves; or the two acknowledgements; or, for a copy in use before the peer enforced, its operator's listing (below) |
+| **quarantine** | the copy is not yet tested on this peer | the four tests below, by themselves; or the licence acknowledgement; or, for a copy in use before the peer enforced, its operator's listing (below) |
 | **in use** | searched, extended and shared as its file says | — |
 
 A copy leaves quarantine when, on this peer:
@@ -950,9 +953,19 @@ A copy leaves quarantine when, on this peer:
    use (§3.3). What keeps a copy in quarantine is a run not yet tested;
 4. the licence acknowledgement exists where the class requires one
    (04 §4.4);
-5. this peer's own `records-vs-origin` passes over the plan's sample
-   (§3.2) — the size the creator fixed, fetched within the peer's
-   budget (04 §4.3).
+5. this peer's own `records-vs-origin` over the plan's sample (§3.2) —
+   SHOWN, NEVER WAITED FOR (*amended 2026-11-01*, operator: "The check
+   against the source is optional, the gating of the vectore is not.
+   You can verify the compliancy of the corpus but you must verify that
+   vectors are somehow reliable"). Whether it passed, is open, cannot
+   run or failed, its result is in `origin_check` (09 §9.3) and in `hold
+   collection show`, and its attestation is published as any other; it
+   keeps no copy in quarantine and returns none to it. The corpus is
+   VERIFIABLE by construction (CLAUDE.md invariant 11: `origin_hash` on
+   every record, refused at build without it); what must be GATED is
+   the vectors (tests 2 and 3). Until this amendment quarantine also
+   held back embedding, so the origin check gated vectors it says
+   nothing about.
 
 All five are the peer's own work, against the Codex and the origin,
 needing nobody's word. **The first runs by itself** (*amended
@@ -969,29 +982,25 @@ run on for a never-share collection (02 §2.9): a deposit collection
 holds no part, and its origin is the client that wrote it, so it waits
 for the gate and the licence alone and its `origin_check` reads
 `not-planned` (09 §9.3; operator, 2026-10-06). Every other collection
-is judged by all five, whatever samples its plan sets.
+is judged by the first four, whatever samples its plan sets, and shows
+the fifth.
 
 When the fifth CANNOT RUN — the origin is unreachable or past its
 bounded wait, or this peer's platform image is neither the Codex's nor
-equivalent (§3.4), so that its failure would say nothing about the
-collection — and the other four hold, the check is deferred and
-retried, and the peer asks its operator, showing what passed, what
-could not run and when it was last tried. `hold collection ack
-<collection> --origin-unchecked` records an informed decision, with its
-time and the peer's key, beside the licence acknowledgement, and the
-copy is then in use like any other, with no mark and no warning; `hold
-collection forget` rejects it. There is no timeout and no default, as
-there is none for a licence. The check still runs when it can, as it
-does on every copy in use, and the attestation the peer could not
-publish before is published then.
+equivalent (§3.4) — it is retried when it can, and `hold collection
+show` says what could not run and when it was last tried. Nothing
+waits for it. `hold collection ack <collection> --origin-unchecked`,
+which until 2026-11-01 let such a copy out of quarantine, is no longer
+needed; an acknowledgement already recorded is still read and shown.
 
 **Copies in use before a peer enforced quarantine** (operator,
 2026-09-20). A peer that already used copies the day it began to enforce
 cannot test them all at once: they were made before the tests existed.
 Its operator lists them in the node's desired state, by collection id
 and never by name (`platform.toml`, `[node] quarantine_in_use_before`).
-For a listed copy that decision stands in for tests 1 and 5 while they
-HAVE NOT RUN or CANNOT RUN, and for nothing else: not the gate, which the
+For a listed copy that decision stands in for test 1 while it HAS NOT
+RUN or CANNOT RUN (test 5 waits for nothing, above), and for nothing
+else: not the gate, which the
 peer runs by itself; not the licence (04 §4.4); not a test that failed,
 which quarantines a listed copy like any other. Nothing is pretended:
 the copy is in use, `hold collection show` prints the decision beside
@@ -1005,20 +1014,18 @@ While in quarantine a copy enters no search, in either leg, and the
 response names it as withheld with the reason (05 §5.3). It is not
 announced and not served; nothing is embedded for it, contributed to
 it, imported into it or certified. What goes on is what makes it
-testable: the fetch its operator asked for, the five tests, the gate.
+testable: the fetch its operator asked for, the tests, the gate.
 
-A copy RETURNS to quarantine in two cases. When its encoder states a
-run this peer has not tested — a model relaunched with another flag, a
-new image, a new driver — until the gate has run, which it does at
-once; every collection of that space on the peer goes with it. And
-when this peer's own `records-vs-origin`, under the Codex's image or an
-equivalent one, FAILS on a part whose root matches the signed
-snapshot: the flag is published as above, and the copy is not used
-here until a person decides, because a copy that does not reproduce
-its origin is not one to search. A `roots` or `chunks` failure stays
-what this section already makes it, one part's local fault. An
-encoder or an origin that cannot be reached is a deferral: it returns
-nothing to quarantine.
+A copy RETURNS to quarantine in one case: when its encoder states a run
+this peer has not tested — a model relaunched with another flag, a new
+image, a new driver — until the gate has run, which it does at once;
+every collection of that space on the peer goes with it. A failing
+`records-vs-origin` returns nothing to quarantine (*amended
+2026-11-01*): its flag is published as above and shown, and trust
+levels read it (§3.6). A `roots` or `chunks` failure stays what this
+section already makes it, one part's local fault. An encoder or an
+origin that cannot be reached is a deferral: it returns nothing to
+quarantine.
 
 `hold collection show` prints the state, every reason, and the test or
 the command that clears each (07 §7.8). Quarantine applies to a copy

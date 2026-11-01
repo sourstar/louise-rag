@@ -30,14 +30,21 @@ A copy leaves quarantine when, on this peer (03 §3.6):
      encoder's in an asymmetric space. A run that FAILED has been tested: it
      withholds the VECTOR LEG and quarantines nothing (02 §2.4: "a peer that
      fails may still search with what it holds");
-  4. the licence acknowledgement exists where the class requires one;
-  5. this peer's own `records-vs-origin` passed — or could not run, and the
-     operator recorded the decision (`hold collection ack --origin-unchecked`).
+  4. the licence acknowledgement exists where the class requires one.
 
-It RETURNS when its encoder states a run not yet tested, and when this peer's
-own `records-vs-origin` FAILS — the latest of its own attestations decides,
-so a later pass clears it and nothing else does. A `roots` or `chunks`
-failure after a pass is one shard's local fault (03 §3.6), never this.
+THE ORIGIN CHECK IS SHOWN, NEVER WAITED FOR (03 §3.6 amended, operator
+2026-11-01: "The check against the source is optional, the gating of the
+vectore is not"). Test 5, this peer's own `records-vs-origin`, is computed
+and shown — passed, open, cannot run, failed — and its result stays in
+`origin_check` and `hold collection show`; it holds nothing in quarantine
+and returns nothing to it. CLAUDE.md asks the corpus to be VERIFIABLE
+(invariant 11: `origin_hash`, refused at build) and the vectors to be GATED
+(invariants 1, 12); a quarantine that withheld embedding behind the origin
+check made it a vector gate. An `--origin-unchecked` acknowledgement already
+recorded is still read and shown.
+
+It RETURNS when its encoder states a run not yet tested. A `roots` or
+`chunks` failure after a pass is one shard's local fault (03 §3.6), never this.
 
 CODEX COLLECTIONS ONLY. A legacy collection carries nothing the tests need,
 so it could never leave: it is always in use.
@@ -83,6 +90,8 @@ REFUSED, QUARANTINE, IN_USE = "refused", "quarantine", "in-use"
 PASSED, OPEN, FAILED = "passed", "open", "failed"
 CANNOT_RUN, ACKNOWLEDGED, NOT_REQUIRED = "cannot-run", "acknowledged", "not-required"
 IN_USE_BEFORE = "in-use-before"      # the operator's decision stands in (see the header)
+#: tests shown and never waited for: the origin check (03 §3.6, amended 2026-11-01)
+SHOWN_ONLY = ("origin",)
 
 # 09 §9.3's `origin_check`
 ORIGIN_PASSED, ORIGIN_PENDING = "passed", "pending"
@@ -632,13 +641,16 @@ def evaluate(root: Path, name: str, codex: Codex | None, *, licence: str,
     tests = (roots, _bundles(), gate, _licence(licence, name), origin)
     if before:
         tests = tuple(_decided(t) for t in tests)
-    waiting = [t for t in tests if t.status in (OPEN, FAILED, CANNOT_RUN)]
+    # the origin test is shown and never waited for (header; 03 §3.6 amended
+    # 2026-11-01): only the other four hold a copy in quarantine
+    gating = [t for t in tests if t.name not in SHOWN_ONLY]
+    waiting = [t for t in gating if t.status in (OPEN, FAILED, CANNOT_RUN)]
     reasons = tuple(f"{t.detail} — cleared by {t.clears}" if t.clears else t.detail
                     for t in waiting)
     if not waiting:
         # in use BY A DECISION is said, never passed over: the tests it stands in
         # for are still open, and `show` names them and what clears each
-        reasons = tuple(f"{t.detail} — cleared by {t.clears}" for t in tests
+        reasons = tuple(f"{t.detail} — cleared by {t.clears}" for t in gating
                         if t.status == IN_USE_BEFORE)
     return CopyState(QUARANTINE if waiting else IN_USE, reasons, origin_check,
                      leg, tests, why)

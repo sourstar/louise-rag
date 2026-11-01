@@ -18,10 +18,11 @@ kept beside its catalogue.
   carry them and from `pull attestations`"): the attestations a neighbour
   holds for a collection, asked for and kept the same way. Events are
   forwarded once and kept seven days, so a peer that joined after a check
-  never received its attestation and could not contribute — `share
-  contribute` wants a `records-vs-origin` for the snapshot (04 §4.5) — until
-  the node's operator republished it by hand (2026-10-19,
-  p2p-review-open-issues.md §3). The pull is the recovery path: `share
+  never received its attestation — `share contribute` wanted a
+  `records-vs-origin` for the snapshot until 2026-11-01 (04 §4.5), and the
+  trust levels still read them — until the node's operator republished it
+  by hand (2026-10-19, p2p-review-open-issues.md §3). The pull is the
+  recovery path: `share
   fetch` runs it from the peer it held the collection from, and the
   worker's beat runs it once an interval, per collection, from the
   neighbours whose digest lists the collection.
