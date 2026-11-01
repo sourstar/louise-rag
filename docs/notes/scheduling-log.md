@@ -1921,3 +1921,45 @@ under M1's 76 ms at one in flight, so part of that 76 ms was itself latency, not
 - 4,967 requests in 11:51–11:56 UTC, **16.6 chunks/s**.
 - **Bytes:** the last 1,500 vectors written at 4 (documents updated 12:53:27–12:57:05) were
   re-embedded one text at a time, as M4 did: **0 differ** at the stored f16.
+
+### 2026-11-01 — wikidata at batch 16, and wikipedia's GPU share (the operator's question) — MEASURED
+
+**Scenario.** bge-m3, one SYCL F16 llama.cpp process serving both collections, `parallel:1`. The
+card's busy share is that process's (`/root/measure/gpu_busy.py`: DRM fdinfo cycles). Rates come
+from the worker log's batch totals (`embed_rate.py`), the worker's CPU from its cgroup
+(`/sys/fs/cgroup/docker/<id>/cpu.stat` on TrueNAS, not `system.slice`). Day profile (8 cores).
+
+| window | card busy / min | wikidata chunks/s | wikipedia chunks/s | worker CPU |
+|---|---|---|---|---|
+| wikidata at batch 16 alone, first 15 min after its gate (vector-count slope) | — | 42.0 | paused | — |
+| A: wikipedia alone (14:22–14:32) | 8–21 % | paused | 32.0 / 18.7 | — |
+| B: both (14:34–14:44) | 25–36 % | 32.9 / 19.9 | 11.9 / 7.0 | — |
+| C: wikidata alone at batch 16 (14:46–14:51) | 36–40 % | **57.0** | paused | 0.96 cores |
+
+**What changed.**
+- wikidata's `[encoder] batch = 16`, under `concurrency = 4`. Its gate re-ran (16/16, median
+  1.000000, batch-invariant True).
+- **Bytes:** the last 2,000 rows written at 16 were re-embedded one text at a time: **0 differ**.
+- **The day's path:** 4.0 → 8.3 (c1) → 16.6 (c4) → 57.0 chunks/s (c4 + batch 16).
+
+**Window A's producer, py-spy 60 s at 100 Hz, `--idle`** (`spy_split2.py`, `spy_acquire.py`,
+`spy_upsert.py`):
+- **The producer thread:** waiting on in-flight results 62.6 %, chunk preparation 16.6 %,
+  bookkeeping 9.6 %, vector write 5.5 %.
+- **Its pool:** `_worker` idle 23.0 %, the SUBMITTED slot semaphore 22.1 % (`worker.py:1582`:
+  the prepared document waiting for a slot, by design), HTTP 19.2 %, `upsert_book` 16.6 %.
+  Of `upsert_book`: `_rows_for > check_write > statements_for_space` 87.6 %, which re-lists and
+  re-reads the run statements from disk per document; `check` 10.4 %; Lance `add` 0.2 %.
+- **Lance's version history:** 4,409 commits in 10 min. 2,224 added ~503 rows each and 2,165
+  removed ~503: +1.106 M / −1.092 M rows. The pipeline thread's genesis re-import after the re-cut
+  did it: 22 upstash parts, 1,089,033 vectors, 188,644 documents in the window, 0 mismatches.
+
+**Reading.**
+- Neither the card (≤40 %) nor the CPU (<1 core) bounds wikidata at batch 16: the bound is
+  latency per request.
+- wikipedia's write path is not a lock. It is the per-document statement re-read, and the
+  genesis churn shares the table's writes.
+- Levers, all handed to the architecture session:
+  - cache the statements on their directory's mtime;
+  - skip a genesis rewrite of identical bytes (RULE 1);
+  - then concurrency or batch steps, gated.
