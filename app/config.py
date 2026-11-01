@@ -230,10 +230,7 @@ WORKER_ROUND_BUDGET_S = float(os.getenv("WORKER_ROUND_BUDGET_S", "10"))
 # How long one parallel-embed call keeps REFILLING its worker window before
 # draining and returning to the round loop. Long enough that the window is
 # full almost all the time (a document is minutes), short enough that stop
-# / state changes are honored within a reasonable delay. An embed PRODUCER's
-# stream is renewed at this point without draining while nothing a new
-# stream re-reads has changed (worker._producer_step): the period then bounds
-# how late a changed file, a switch-off or a maintenance window is noticed.
+# / state changes are honored within a reasonable delay.
 EMBED_STREAM_S = float(os.getenv("EMBED_STREAM_S", "120"))
 # The parallel embed stage reads what the next EMBED_BATCH_DOCS candidates
 # already hold in ONE read, and commits the ones it embeds in ONE Lance
