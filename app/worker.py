@@ -4852,7 +4852,12 @@ SETTLE_BEAT_S = 60.0
 
 def holds_vectors(collection) -> bool:
     lance = getattr(collection, "lance_dir", None)
-    return bool(lance) and (Path(lance) / "chunks.lance").is_dir()
+    if not lance:
+        return False
+    if (Path(lance) / "chunks.lance").is_dir():
+        return True
+    from . import vector_parts         # a split store: any part with a table
+    return bool(vector_parts.is_split(collection) and vector_parts.values(collection))
 
 
 def _node_line(stage: str):

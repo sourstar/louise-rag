@@ -689,7 +689,9 @@ def test_genesis_writes_through_the_writer_registration():
     import inspect
     from app.bundles import genesis
     src = inspect.getsource(genesis.import_shard)
-    assert "embeddings._write_lock(con, collection)" in src
+    # every part the batch touches (the single table is its one target,
+    # app/vector_parts.py), registered before the manifest lock
+    assert "embeddings._write_lock(con, parts=" in src
     assert "vector_write_lock(con)" not in src
 
 

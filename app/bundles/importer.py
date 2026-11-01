@@ -145,8 +145,8 @@ def _check_space(con, collection, header, embed_fn=None) -> bool:
 
     pinned = con.execute("SELECT dim FROM space WHERE id=1").fetchone()
     pinned_dim = pinned["dim"] if pinned else None
-    observed = spaces.known_lance_dim(collection.lance_dir)
-    for label, value in (("pinned", pinned_dim), ("local vector table", observed)):
+    observed = spaces.known_lance_dims(collection.lance_dir)
+    for label, value in (("pinned", pinned_dim),) + tuple(("local vector table", d) for d in sorted(observed)):
         if value is not None and int(value) != header.dim:
             raise BundleSpaceMismatch(
                 f"bundle dim {header.dim} != {label} dim {value}")
@@ -306,7 +306,15 @@ def _write_rows(collection, native_id: int, lance_rows: list[dict], header) -> N
     embeddings.upsert_book's so both writers produce identical tables; width
     and value type come from the header, which the space check has already
     reconciled against the pinned dim.
+
+    A split collection (app/vector_parts.py): the document's part, created
+    with this schema when the bundle brings its first rows.
     """
+    from .. import vector_parts
+    if vector_parts.ensure_split(collection):
+        part = embeddings._part_for_write(collection, native_id)
+        embeddings._check_part_rows(collection, part.vector_part, lance_rows)
+        collection = part
     conn = embeddings._conn(collection)
     if embeddings.TABLE in conn.table_names():
         table = conn.open_table(embeddings.TABLE)

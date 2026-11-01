@@ -134,9 +134,12 @@ def record_live(urls: list[str], collection_name: str, out_dir: Path) -> dict:
         "SELECT uid FROM documents WHERE embed_done=1 LIMIT 64").fetchall()
     if not rows:
         raise SystemExit("no embedded documents to sample chunk text from")
-    conn = embeddings._conn(collection)
-    table = conn.open_table(embeddings.TABLE)
-    texts = table.search().limit(SAMPLE_TEXTS).to_arrow().column("text").to_pylist()
+    from app import vector_parts
+    texts: list = []
+    for part in vector_parts.views(collection):      # a split collection's parts in turn
+        table = embeddings._committed_table(embeddings._conn(part))
+        if table is not None and len(texts) < SAMPLE_TEXTS:
+            texts += table.search().limit(SAMPLE_TEXTS - len(texts)).to_arrow().column("text").to_pylist()
 
     backends: dict[str, np.ndarray] = {}
     for url in urls:

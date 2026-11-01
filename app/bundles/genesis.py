@@ -1263,6 +1263,34 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
     producer = f"genesis:{archive.archive_id}"
     pseudo_bundle = f"genesis:{archive.archive_id}/{shard}"
 
+    def _write_batch(target, rows, natives) -> None:
+        conn = embeddings._conn(target)
+        import pyarrow as pa
+        if embeddings.TABLE in conn.table_names():
+            table = conn.open_table(embeddings.TABLE)
+            # ONE delete per batch, not one per document: a Lance delete
+            # scans the table for its filter, so a million per-document
+            # deletes over a table growing to a million rows was the
+            # quadratic trap in a new coat (pubmed's first shard pass:
+            # ~150 documents/s). Idempotence (invariant 2: delete-then-
+            # insert keyed on the document) is unchanged — the ids are
+            # forced through int() exactly as _book_filter does.
+            ids = ",".join(str(int(n)) for n in natives)
+            if ids:
+                table.delete(f"book_id IN ({ids})")
+            if rows:
+                table.add(rows)
+        elif rows:
+            value_type = pa.float16() if recipe.dtype == "f16" else pa.float32()
+            schema = pa.schema([
+                pa.field("id", pa.string()), pa.field("book_id", pa.int64()),
+                pa.field("lang", pa.string()), pa.field("seq", pa.int64()),
+                pa.field("chapter", pa.string()), pa.field("text", pa.string()),
+                pa.field("vector", pa.list_(value_type, header_dim)),
+            ])
+            conn.create_table(embeddings.TABLE, data=rows, schema=schema,
+                              storage_options=embeddings.NEW_TABLE_STORAGE)
+
     def flush():
         nonlocal batch_rows, batch_native, batch_uids, batch_chunk_ids
         if not batch_rows:
@@ -1275,31 +1303,22 @@ def import_shard(con, collection, archive: GenesisArchive, shard: str, *,
         # concurrent transaction Delete", München 2026-10-30) — normattiva's
         # lesson of 10-23 on the genesis path. Refused, it is a retryable
         # commit conflict: the pass defers (`vector_store_contended`, below)
-        with embeddings._write_lock(con, collection):
-            conn = embeddings._conn(collection)
-            import pyarrow as pa
-            if embeddings.TABLE in conn.table_names():
-                table = conn.open_table(embeddings.TABLE)
-                # ONE delete per batch, not one per document: a Lance delete
-                # scans the table for its filter, so a million per-document
-                # deletes over a table growing to a million rows was the
-                # quadratic trap in a new coat (pubmed's first shard pass:
-                # ~150 documents/s). Idempotence (invariant 2: delete-then-
-                # insert keyed on the document) is unchanged — the ids are
-                # forced through int() exactly as _book_filter does.
-                ids = ",".join(str(int(n)) for n in batch_native)
-                table.delete(f"book_id IN ({ids})")
-                table.add(batch_rows)
-            else:
-                value_type = pa.float16() if recipe.dtype == "f16" else pa.float32()
-                schema = pa.schema([
-                    pa.field("id", pa.string()), pa.field("book_id", pa.int64()),
-                    pa.field("lang", pa.string()), pa.field("seq", pa.int64()),
-                    pa.field("chapter", pa.string()), pa.field("text", pa.string()),
-                    pa.field("vector", pa.list_(value_type, header_dim)),
-                ])
-                conn.create_table(embeddings.TABLE, data=batch_rows, schema=schema,
-                                  storage_options=embeddings.NEW_TABLE_STORAGE)
+        # A split collection (app/vector_parts.py): each document to its
+        # part, every part the batch touches registered before the lock
+        from .. import vector_parts
+        targets = [(collection, batch_rows, batch_native)]
+        if vector_parts.ensure_split(collection):
+            by_book: dict[int, list] = {}
+            for r in batch_rows:
+                by_book.setdefault(int(r["book_id"]), []).append(r)
+            targets = []
+            for v, books in vector_parts.route(collection, batch_native).items():
+                rows_v = [r for b in books for r in by_book.get(int(b), [])]
+                embeddings._check_part_rows(collection, v, rows_v)
+                targets.append((vector_parts.view(collection, v), rows_v, books))
+        with embeddings._write_lock(con, parts=[t[0] for t in targets]):
+            for target, rows_t, natives_t in targets:
+                _write_batch(target, rows_t, natives_t)
         now = int(time.time())
         # ONE transaction per flush (invariant 2: marks land after the
         # durable Lance write, together): on the autocommit connection

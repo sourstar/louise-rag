@@ -1056,7 +1056,17 @@ record on a text-holding peer has the title and the abstract in
 
 A peer's vectors rest in its own LanceDB table, one per space: assembled
 from accepted bundles (§9.7), never a member's bytes, never fetched as
-such — vectors travel only as bundles (04 §4.3). *Amended 2026-10-12*
+such — vectors travel only as bundles (04 §4.3). *Amended 2026-11-01*
+(operator: "Different tables, make it a standard practice when separated
+searches might be done"): where the collection's plugin declares a TABLE
+KEY — one of its slice keys a search narrows by (`slicing.TABLE_KEYS`) —
+the space rests in one table per value of the key:
+`<lance>/layout.json` (`{"format": 1, "table_key": "<key>"}`) and
+`<lance>/<key>=<value>/chunks.lance`, the value percent-encoded, each
+table of the one schema. A document's table is its slice's value for the
+key. This is the rest form only: nothing hashed, signed or moved changes,
+and a peer holding one table and a peer holding several exchange the same
+bundles (docs/notes/vector-tables-split.md). *Amended 2026-10-12*
 (operator): a per-part file `vectors/<space>/<slice>/<NNNNN>.safetensors`
 was specified here and never built; nothing reads or exchanges it, so it
 is removed. The files below are under `vectors/<space>/`, `<space>` the

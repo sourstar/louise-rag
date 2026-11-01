@@ -1196,7 +1196,9 @@ def keep_producer_scan(root, to_ref: str, producer: str, *, run: int = SORT_RUN,
     shutil.rmtree(workdir, ignore_errors=True)
     workdir.mkdir(parents=True)
     try:
-        tbl = embeddings._conn(coll).open_table(embeddings.TABLE)
+        from app import vector_parts
+        split = vector_parts.is_split(coll)
+        tbl = None if split else embeddings._conn(coll).open_table(embeddings.TABLE)
         states = ",".join("?" * len(KEPT_STATES))
         marks = _sorted_runs((r[0] for r in con.execute(
             f"SELECT chunk_id FROM chunk_verification NOT INDEXED WHERE producer=? "
@@ -1265,6 +1267,13 @@ def keep_producer_scan(root, to_ref: str, producer: str, *, run: int = SORT_RUN,
             con.execute("COMMIT")
         # step 2: the rows, under the vector write lock, in few predicates
         with embeddings._write_lock(con):
+            if split:
+                # each document's rows in its part (app/vector_parts.py)
+                embeddings.delete_books(whole, coll)
+                embeddings.delete_chunks([c for b in partial for c in drop_ids[b]], coll)
+                log(f"[carry] {name}: dropped the rows of {len(whole)} whole document(s) and "
+                    f"{sum(len(drop_ids[b]) for b in partial)} chunk(s), by part")
+                whole, partial = [], []
             frags = embeddings.fragment_count(coll)
             batch = _delete_batch(frags)
             log(f"[carry] {name}: {batch} value(s) a delete ({frags} fragments, "

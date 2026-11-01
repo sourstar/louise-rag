@@ -139,6 +139,11 @@ def one(col, recipe_rr, q):
     with dispatch.interactive(dispatch.Level.QUERY):
         vec = embeddings.embed_query(col, q["query"], recipe=recipe)
     embed_ms = round((time.time() - t0) * 1000, 1)
+    from app import vector_parts
+    if vector_parts.is_split(col):
+        raise SystemExit(f"{col.name}: its vectors are split by {vector_parts.key_of(col)} — this "
+                         f"measurement reads one table; tools/measure/one_language_live_search.py "
+                         f"times the search itself")
     tbl = embeddings._conn(col).open_table(embeddings.TABLE)
     qvec = np.asarray(vec, dtype=embeddings._np_dtype_of_table(tbl))
     vec_ms, dense = {}, []

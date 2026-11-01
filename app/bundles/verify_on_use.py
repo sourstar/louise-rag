@@ -91,7 +91,20 @@ def _verify_floor(con) -> tuple[float, str]:
 
 
 def _texts_and_vectors(collection, chunk_ids: list[str]) -> dict[str, tuple]:
-    """Pull the stored text and vector for the given chunks out of Lance."""
+    """Pull the stored text and vector for the given chunks out of Lance —
+    of a split collection, each from its document's part."""
+    from .. import vector_parts
+    if vector_parts.is_split(collection):
+        by_book: dict[int, list[str]] = {}
+        for cid in chunk_ids:
+            b = vector_parts.book_of_chunk(cid)
+            if b is not None:
+                by_book.setdefault(b, []).append(cid)
+        out: dict[str, tuple] = {}
+        for v, books in vector_parts.route(collection, by_book, probe=embeddings._holds).items():
+            out.update(_texts_and_vectors(vector_parts.view(collection, v),
+                                          [c for b in books for c in by_book[b]]))
+        return out
     conn = embeddings._conn(collection)
     if embeddings.TABLE not in conn.table_names():
         return {}

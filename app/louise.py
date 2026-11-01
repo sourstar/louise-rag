@@ -4336,7 +4336,9 @@ def cmd_index_show(a) -> int:
         if validity.declared(local) is not None:
             # the first check of a versioned collection's table (2026-10-13:
             # a table written without them is withheld from every as-of search)
-            names = embeddings._conn(local).open_table(embeddings.TABLE).schema.names
+            from app import vector_parts
+            first = vector_parts.views(local)[:1] or [local]
+            names = embeddings._conn(first[0]).open_table(embeddings.TABLE).schema.names
             out["validity_columns"] = set(embeddings.VALIDITY_COLUMNS) <= set(names)
     _print(out)
     return 0

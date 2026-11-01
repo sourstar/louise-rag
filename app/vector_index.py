@@ -36,6 +36,7 @@ which orders exactly like cosine — the same metric the flat scan used.
 import math
 import threading
 import time
+from pathlib import Path
 from datetime import timedelta
 
 from . import config, db, embeddings
@@ -233,6 +234,23 @@ def refresh_due(st: dict | None) -> bool:
     return unindexed >= need
 
 
+def _parts(collection):
+    """A split collection's parts (app/vector_parts.py), each a collection
+    of its own; None for a single table, or for a part itself."""
+    from . import vector_parts
+    if vector_parts.is_split(collection):
+        return vector_parts.views(collection)
+    return None
+
+
+def _lang_part(collection) -> bool:
+    """A part of a collection split by `lang`: every row has the part's
+    language, so its `lang` BITMAP would answer nothing (no search filters
+    the column there)."""
+    return (getattr(collection, "vector_part", None) is not None
+            and Path(collection.lance_dir).name.startswith("lang="))
+
+
 def _table(collection):
     conn = embeddings._conn(collection)
     if embeddings.TABLE not in conn.table_names():
@@ -272,6 +290,9 @@ def purge_deleted(collection, lock_con=None) -> dict:
     table would pay this per document."""
     import datetime
 
+    parts = _parts(collection)
+    if parts is not None:
+        return {"purged": True, "parts": {p.vector_part: purge_deleted(p, lock_con) for p in parts}}
     tbl = _table(collection)
     if tbl is None:
         return {"purged": False, "reason": "no vector table"}
@@ -345,6 +366,10 @@ def build_lang_table(tbl, *, log=None) -> dict:
 
 
 def build_lang(collection, *, log=None) -> dict:
+    parts = _parts(collection)
+    if parts is not None:
+        return {"built": True, "parts": {p.vector_part: build_lang(p, log=log) for p in parts
+                                         if not _lang_part(p)}}
     tbl = _table(collection)
     if tbl is None:
         return {"built": False, "reason": "no vector table"}
@@ -361,6 +386,9 @@ def build_scalar(collection, *, log=None) -> dict:
     a fifth of an archive pass, paid again by every local embed and by
     every reader lookup. Minutes to build, then those predicates are index
     probes."""
+    parts = _parts(collection)
+    if parts is not None:
+        return {"built": True, "parts": {p.vector_part: build_scalar(p, log=log) for p in parts}}
     tbl = _table(collection)
     if tbl is None:
         return {"built": False, "reason": "no vector table"}
@@ -381,7 +409,12 @@ def build_scalar_table(tbl, *, log=None) -> dict:
 
 
 def has_index(collection) -> bool:
-    """Cached per Lance dir for a minute: the query path asks per query."""
+    """Cached per Lance dir for a minute: the query path asks per query.
+    A split collection: whether any of its parts has one (each part's
+    query asks its own)."""
+    parts = _parts(collection)
+    if parts is not None:
+        return any(has_index(p) for p in parts)
     key = str(collection.lance_dir)
     now = time.monotonic()
     with _state_lock:
@@ -408,7 +441,13 @@ def partitions_for(rows: int) -> int:
 def build(collection, *, index_type: str | None = None, partitions: int | None = None,
           log=None) -> dict:
     """Train and build the index now (CLI, or ensure()). Replaces an
-    existing one. Returns what was built."""
+    existing one. Returns what was built. A split collection: each part,
+    its partitions by its own rows (`partitions_for`)."""
+    parts = _parts(collection)
+    if parts is not None:
+        return {"built": True, "parts": {p.vector_part: build(p, index_type=index_type,
+                                                              partitions=partitions, log=log)
+                                         for p in parts}}
     tbl = _table(collection)
     if tbl is None:
         return {"built": False, "reason": "no vector table"}
@@ -448,13 +487,16 @@ def build_table(tbl, *, index_type: str | None = None, partitions: int | None = 
 
 
 def stats(collection) -> dict | None:
+    parts = _parts(collection)
+    if parts is not None:
+        return _stats_of_parts({p.vector_part: stats(p) for p in parts})
     tbl = _table(collection)
     if tbl is None:
         return None
     rows = tbl.count_rows()
     indices = _vector_indices(tbl)
     book_id_indexed = bool(_scalar_indices(tbl))
-    lang = lang_indexed(tbl)
+    lang = None if _lang_part(collection) else lang_indexed(tbl)
     # fragments decide whether a COMPACTION is worth its cost (compact_due)
     fragments = small_fragments = None
     try:
@@ -480,6 +522,30 @@ def stats(collection) -> dict | None:
             "unindexed_rows": unindexed, "indices": n_indices,
             "book_id_indexed": book_id_indexed, "lang_indexed": lang,
             "fragments": fragments, "small_fragments": small_fragments}
+
+
+def _stats_of_parts(per: dict) -> dict | None:
+    """A split collection's stats: the parts' summed, each part's under
+    `parts`. Unindexed rows count a part with no index whole."""
+    have = {v: s for v, s in per.items() if s}
+    if not have:
+        return None
+
+    def total(field):
+        vals = [s.get(field) for s in have.values()]
+        return None if any(v is None for v in vals) else sum(vals)
+    unindexed = [s.get("unindexed_rows") if s.get("indexed") else s.get("rows") for s in have.values()]
+    langs = [s.get("lang_indexed") for s in have.values() if s.get("lang_indexed") is not None]
+    first = next((s for s in have.values() if s.get("indexed")), {})
+    return {"rows": sum(s["rows"] for s in have.values()),
+            "indexed": all(s.get("indexed") for s in have.values()),
+            "name": first.get("name"), "type": first.get("type"),
+            "unindexed_rows": None if any(u is None for u in unindexed) else sum(unindexed),
+            "indices": max((s.get("indices") or 0 for s in have.values()), default=0) or None,
+            "book_id_indexed": all(s.get("book_id_indexed") for s in have.values()),
+            "lang_indexed": all(langs) if langs else None,
+            "fragments": total("fragments"), "small_fragments": total("small_fragments"),
+            "parts": have}
 
 
 def prune(collection, con=None, *, log=None) -> dict:
@@ -525,6 +591,9 @@ def prune(collection, con=None, *, log=None) -> dict:
     trigger. Without the Lance package this falls back to the welded call,
     and only that path needs headroom.
     """
+    parts = _parts(collection)
+    if parts is not None:
+        return {"parts": {p.vector_part: prune(p, con, log=log) for p in parts}}
     tbl = _table(collection)
     if tbl is None:
         return {"pruned": False, "reason": "no table"}
@@ -718,6 +787,11 @@ def light(collection, con=None, *, log=None) -> dict | None:
     too. Once a pass, it let wikipedia's table drift from 206 small fragments
     to 2,101 in half an hour and held_chunks of 128 from 0.43 s to 2.45 s
     (München, #107's AFTER)."""
+    parts = _parts(collection)
+    if parts is not None:
+        did = {p.vector_part: out for p in parts if (out := light(p, con, log=log))}
+        return ({"compacted": any(o.get("compacted") for o in did.values()), "parts": did}
+                if did else None)
     if busy(collection) or rewriting(collection):
         return None
     if not light_compact_due({"small_fragments": small_fragments(collection)}):
@@ -848,6 +922,17 @@ def ensure(collection, con=None, *, log=None, may_continue=None) -> dict | None:
     index work. Each is a Lance call of minutes that cannot be interrupted
     once started, so a pause is honoured BETWEEN them; the worker passes
     its `_maintenance_allowed`. Absent, every step runs (the CLI)."""
+    parts = _parts(collection)
+    if parts is not None:
+        # each part on its own, the pause asked between them as between steps
+        did = {}
+        for p in parts:
+            if may_continue is not None and not may_continue():
+                break
+            out = ensure(p, con, log=log, may_continue=may_continue)
+            if out:
+                did[p.vector_part] = out
+        return {"parts": did} if did else None
     go = may_continue or (lambda: True)
     if not go():
         return None

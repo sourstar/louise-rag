@@ -76,8 +76,7 @@ class Sweeper:
         self.log = log
         self.recipe = c_mod.recipe_for(collection)
         self.con = db.connect(collection)
-        self.store = embeddings._conn(collection)
-        self.tbl = self.store.open_table(embeddings.TABLE)
+        self.collection = collection
         self.checked = 0          # chunks embedded, the real cost
         self.verdicts: dict[int, dict] = {}
 
@@ -121,9 +120,11 @@ class Sweeper:
             chunks = worker._load_chunks(row, self.c)
         except Exception as e:      # noqa: BLE001 — a corpus fact, not our business
             return {"book": book_id, "verdict": "unreadable", "detail": str(e)[:80]}
-        stored = {r["id"]: list(r["vector"]) for r in
-                  self.tbl.search().where(embeddings._book_filter(book_id))
-                      .select(["id", "vector"]).limit(200_000).to_list()}
+        tbl = embeddings.table_of_book(self.collection, book_id)
+        stored = {} if tbl is None else {
+            r["id"]: list(r["vector"]) for r in
+            tbl.search().where(embeddings._book_filter(book_id))
+               .select(["id", "vector"]).limit(200_000).to_list()}
         if not stored:
             return {"book": book_id, "verdict": "no-vectors"}
 
@@ -161,11 +162,12 @@ class Sweeper:
 
     def drop(self, book_id: int) -> int:
         """Remove a bad book's vectors and let it be embedded again."""
-        n = len(self.tbl.search().where(embeddings._book_filter(book_id))
-                    .select(["id"]).limit(200_000).to_list())
+        tbl = embeddings.table_of_book(self.collection, book_id)
+        n = 0 if tbl is None else len(tbl.search().where(embeddings._book_filter(book_id))
+                                      .select(["id"]).limit(200_000).to_list())
         if not self.delete:
             return n
-        self.tbl.delete(embeddings._book_filter(book_id))
+        embeddings.delete_book(book_id, self.collection)
         self.con.execute("UPDATE documents SET embed_done=0, updated_at=? "
                          "WHERE in_scope=1 AND CAST(native_id AS INTEGER)=?",
                          (int(time.time()), book_id))
