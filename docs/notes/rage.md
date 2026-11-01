@@ -63,7 +63,7 @@ rewrite — each still sits beside the code it calls).
 | feed | the documents, the lanes, the window of documents in flight | `app/worker.py` `_embed_producer`, `_embed_parallel` |
 | fill | requests filled across documents | `app/embeddings.py` `Coalescer`, `coalescing`, `batch_size` |
 | admission | the gate, and the run check before each write | `app/run_check.py`, `app/hold/runs.py` |
-| bench | searches under corpus load; the card per minute | `tools/measure/query_under_load.py`, `louise dev schedule-report --gpu` |
+| bench | one collection's row for a window (busy, chunks/s, lost, gaps, alone); searches under corpus load; the card per minute | `app/rage/bench.py` (`louise dev schedule-report --bench`), `tools/measure/query_under_load.py`, `louise dev schedule-report --gpu` |
 
 The standards it uses instead of its own inventions: dynamic batching as
 Triton Inference Server's dynamic batcher and TEI do it (fill), the Linux perf

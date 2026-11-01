@@ -12,7 +12,8 @@ Its parts, as `app.rage` names them:
 - `dispatch` — the gate per encoder URL, the levels, the interactive claim;
 - `settings` — the settings in effect for a collection on this node: its
   file's, then the recommendation for this card (app/hold/rage_settings.py);
-- `card_record` — the per-second record of the card and the gates.
+- `card_record` — the per-second record of the card, the gates and the work done;
+- `bench` — a collection's row for a window of that record.
 
 Named here and living beside the code they call until it next changes
 (wrap, do not rewrite): the feed (`worker._embed_producer`,

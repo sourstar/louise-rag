@@ -251,7 +251,9 @@ louise node
   health [<collection>] [--errors]                                     every stage's state per collection; exit 1 when a stage has work it cannot start (added 2026-10-08)
 
 louise dev                                                             operator instruments; read-only unless the line says otherwise
-  schedule-report      what the worker spent its rounds on; --gpu [--minutes N]: the card's busy, gaps and who held it, per minute
+  schedule-report      what the worker spent its rounds on; --gpu [--minutes N]: the card's busy, gaps and who held it, per minute;
+                       --bench <collection> [--since T] [--until T] [--json]: one collection's row for a window — busy, chunks/s,
+                       lost and gaps per minute, alone or not — and the `hold rage-settings record` command when it ran alone ≥ 10 min
   embedder-profile     the concurrency an endpoint sustains
   migrate schema [<collection>] [--no-backup]                          apply pending schema changes to a state database; a .bak copy first unless --no-backup; writes; never runs on its own
   refs-sync            reference tables from their origins; writes

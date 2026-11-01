@@ -10,6 +10,8 @@ measurement, and each one missed what the next had to fix:
     python -m app.louise dev schedule-report --pool                 parse pool health
     python -m app.louise dev schedule-report --shares               fair-share accounting
     python -m app.louise dev schedule-report --gpu --minutes 15     card busy, gaps, who held it
+    python -m app.louise dev schedule-report --bench wikipedia --since 22:32 --until 22:47
+                                                                    one collection's BEFORE/AFTER row
     python -m app.louise dev schedule-report --all                  all of the above
 
 Run it INSIDE the worker container (it needs the manifests and the app):
@@ -22,7 +24,7 @@ import time
 from pathlib import Path
 
 from app import collections as c_mod, config, db, parallel, worker
-from app.rage import card_record
+from app.rage import bench as rage_bench, card_record
 from app.bundles import genesis
 
 BAD_PLAN = ("SCAN documents", "TEMP B-TREE", "LIST SUBQUERY", "CORRELATED")
@@ -281,6 +283,51 @@ def gpu(minutes: int, card: str | None = None) -> None:
           f"(target: gaps under 1 s/min; busy ≥ 90 % for a collection alone)")
 
 
+def parse_when(text: str, *, now: float | None = None) -> float:
+    """A window's edge: seconds since the epoch, an ISO 8601 time (with its
+    zone, else local), or HH:MM[:SS] today in the node's local time — the
+    time the scheduling log writes."""
+    import datetime as dt
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    if len(text) <= 8 and text.count(":") in (1, 2):
+        parts = [int(x) for x in text.split(":")]
+        base = dt.datetime.fromtimestamp(time.time() if now is None else now)
+        t = base.replace(hour=parts[0], minute=parts[1],
+                         second=parts[2] if len(parts) == 3 else 0, microsecond=0)
+        return t.timestamp()
+    return dt.datetime.fromisoformat(text).timestamp()
+
+
+def bench(collection: str, since: float, until: float, *, card: str | None = None,
+          as_json: bool = False) -> None:
+    """One collection's row for a window (app/rage/bench.py), and the RAGE
+    settings command a row measured alone can be recorded with."""
+    import json
+    from app import embeddings
+    r = rage_bench.row(collection, since, until, card=card)
+    col = c_mod.by_name(collection)
+    settings = None
+    if col is not None:
+        try:
+            recipe = c_mod.recipe_for(col)
+            settings = {"batch": embeddings.batch_size(recipe),
+                        "concurrency": int(recipe.concurrency or 1)}
+        except Exception:   # noqa: BLE001 — a row stands without its settings
+            settings = None
+    if as_json:
+        print(json.dumps({**r.to_dict(), "settings_now": settings}))
+        return
+    print(rage_bench.text(r))
+    if settings is not None:
+        print(f"  RAGE settings now: batch {settings['batch']}, concurrency "
+              f"{settings['concurrency']} (what the window ran with if nothing changed since)")
+        cmd = rage_bench.record_command(r, **settings)
+        print(f"  record it: {cmd}" if cmd else f"  not a setting's measurement: {rage_bench.why_not_recorded(r)}")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -297,10 +344,15 @@ def main(argv=None) -> int:
     ap.add_argument("--all", action="store_true",
                     help="queries + shares + rates + pool + gpu")
     ap.add_argument("--seconds", type=int, default=120, help="rates sampling window")
+    ap.add_argument("--bench", metavar="COLLECTION",
+                    help="one collection's row for a window: busy, chunks/s, lost, gaps, alone")
+    ap.add_argument("--since", help="the --bench window's start: HH:MM[:SS] local, ISO, or epoch")
+    ap.add_argument("--until", help="its end (default: now)")
+    ap.add_argument("--json", action="store_true", help="--bench as one JSON line")
     ap.add_argument("collections", nargs="*")
     args = ap.parse_args(argv)
     if not any((args.queries, args.phases, args.rates, args.pool, args.shares,
-                args.gpu, args.all)):
+                args.gpu, args.all, args.bench)):
         ap.print_help()
         return 2
     ok = True
@@ -316,6 +368,10 @@ def main(argv=None) -> int:
         pool_health()
     if args.gpu or args.all:
         gpu(args.minutes, args.card)
+    if args.bench:
+        until = parse_when(args.until) if args.until else time.time()
+        since = parse_when(args.since) if args.since else until - args.minutes * 60
+        bench(args.bench, since, until, card=args.card, as_json=args.json)
     return 0 if ok else 1
 
 
