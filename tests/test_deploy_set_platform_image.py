@@ -66,3 +66,83 @@ def test_the_output_names_the_variable_and_never_another_value(monkeypatch, caps
     out = capsys.readouterr()
     assert "s3cret" not in out.out + out.err and "/k" not in out.out + out.err
     assert calls == ["app.config", "app.update", "app.config"] and out.out.strip().endswith("set")
+
+
+def test_the_worker_takes_the_webs_probe_address_in_the_same_update():
+    """#164: the worker's card recorder asks the GPU probe the web's panel
+    asks; the node's config gave the address to the web alone."""
+    cfg = a_config()
+    cfg["services"]["web"]["environment"]["GPU_PROBE_URL"] = "http://gpu-probe:8080"
+    spi.apply(cfg, NEW)
+    assert spi.carry(cfg) == ["GPU_PROBE_URL None -> http://gpu-probe:8080"]
+    assert cfg["services"]["worker"]["environment"]["GPU_PROBE_URL"] == "http://gpu-probe:8080"
+    assert spi.carry(cfg) == [], "already there: nothing to change"
+    cfg["services"]["worker"]["environment"]["GPU_PROBE_URL"] = "http://old:1"
+    assert spi.carry(cfg) == ["GPU_PROBE_URL http://old:1 -> http://gpu-probe:8080"], \
+        "the web's is the configured truth"
+    assert "ADMIN_TOKEN" not in spi.CARRIED, "addresses only, never secrets"
+
+
+def test_a_web_without_a_probe_leaves_the_worker_as_it_is():
+    cfg = a_config()
+    spi.apply(cfg, NEW)
+    assert spi.carry(cfg) == []
+    assert "GPU_PROBE_URL" not in cfg["services"]["worker"]["environment"]
+
+
+def test_an_image_already_set_still_updates_to_carry_the_probe(monkeypatch, capsys):
+    import sys
+    import types
+    calls = []
+
+    def configured():
+        cfg = a_config()
+        for s in spi.SERVICES:
+            cfg["services"][s]["environment"][spi.KEY] = NEW
+        cfg["services"]["web"]["environment"]["GPU_PROBE_URL"] = "http://gpu-probe:8080"
+        return cfg
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def call(self, method, *args, **kw):
+            calls.append(method)
+            if method == "app.update":
+                state["cfg"] = args[1]["custom_compose_config"]
+                return None
+            return state["cfg"]
+    state = {"cfg": configured()}
+    monkeypatch.setitem(sys.modules, "truenas_api_client", types.SimpleNamespace(Client=Client))
+    assert spi.main(["x", NEW]) == 0
+    out = capsys.readouterr().out
+    assert "worker  GPU_PROBE_URL None -> http://gpu-probe:8080" in out
+    assert calls[:2] == ["app.config", "app.update"]
+
+
+def test_an_update_the_worker_did_not_take_is_said(monkeypatch, capsys):
+    import sys
+    import types
+
+    def configured():
+        cfg = a_config()
+        for s in spi.SERVICES:
+            cfg["services"][s]["environment"][spi.KEY] = NEW
+        cfg["services"]["web"]["environment"]["GPU_PROBE_URL"] = "http://gpu-probe:8080"
+        return cfg
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def call(self, method, *args, **kw):
+            return configured() if method == "app.config" else None     # the update is lost
+    monkeypatch.setitem(sys.modules, "truenas_api_client", types.SimpleNamespace(Client=Client))
+    assert spi.main(["x", NEW]) == 1
+    assert "did not take ['GPU_PROBE_URL']" in capsys.readouterr().err
