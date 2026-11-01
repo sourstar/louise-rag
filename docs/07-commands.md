@@ -170,6 +170,11 @@ louise hold
               cpu-reference <collection> --model M [--query-model Q]   the calibration set as the encoder's CPU twin embeds it, kept for every later gate to compare
                                                                        its run with (near-exact-runs.md §2); refused unless the twin states a CPU run and gives
                                                                        back its own bytes; writes (added 2026-10-31)
+  engine-settings show <collection> [--card D:V:P]                     every signer's recommended engine settings in the SHARD (09 §9.19), the entry this node's
+                                                                       card type takes, and what the collection file states (its keys win); exit 1 when a file was set aside
+              record <collection> [--batch N] [--concurrency M] [--busy F] [--chunks-per-s F] [--window-s S] [--card D:V:P]
+                                                                       sign this node's measured settings for its card type into `<SHARD>/engine-settings/`,
+                                                                       replacing its own entry for that card; only under a run validated here; writes (added 2026-11-01)
               calibrate --encoder-weights D --engine FILE --against FILE … --ctx N [--set SHA256 | --pairs FILE]
                                                                        the tolerance a space can bear, measured between the reference engine and each --against
                                                                        encoder (a file of `weights` and `[engine]`, 09 §9.3's form)
@@ -1491,6 +1496,10 @@ batch = 16                                     # optional: chunks a request carr
                                                # writes batched answers only once the gate measured it at this batching
                                                # (it runs again by itself when the batching changes). Not in the space
                                                # (added 2026-10-31: wikipedia's embedding was bound by one chunk a request)
+concurrency = 4                                # optional: requests in flight; absent, 1. ABSENT, `batch` and `concurrency`
+                                               # each take the setting recommended for this node's card type in the SHARD
+                                               # (09 §9.19), when one is; written here, the file's value wins — the
+                                               # recommendation is never binding (amended 2026-11-01)
 
 [reranker]                                     # optional (05 §5.6): this node's reranker for this collection
 url = "http://nas:30447/v1/rerank"             # the full endpoint, path included — unlike [encoder]'s url

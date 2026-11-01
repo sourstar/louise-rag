@@ -172,7 +172,7 @@ over
 message = <domain> ‖ 0x00 ‖ SHA-256(canonical JSON of the body)
 ```
 
-where `<domain>` is the ASCII bytes of one of six strings and the hash
+where `<domain>` is the ASCII bytes of one of seven strings and the hash
 is the 32 raw bytes of the body's canonical-JSON digest:
 
 | domain | signs |
@@ -183,6 +183,7 @@ is the 32 raw bytes of the body's canonical-JSON digest:
 | `louise/event/v1` | an event body, and a pull request (§9.9) |
 | `louise/pointer/v1` | a certifier's pointer (§9.11) |
 | `louise/calibration/v1` | the calibration member's statement (§9.12) |
+| `louise/engine-settings/v1` | a signer's recommended engine settings (§9.19; *added 2026-11-01*) |
 
 The bundle is signed over its own framed payload under the domain
 `louise-rag/bundle-sig/v1` (§9.7). A signature made under one domain
@@ -680,7 +681,7 @@ the chain, and never ahead of the period open now.
 | `shards` | list of part | yes | every record part the snapshot consists of, sorted by (`slice` bytes, `n`); the key keeps the old word |
 | `relations` | list of relation part | yes | the relations parts (§9.14), same order; `[]` when the collection has none |
 | `figures` | list of figures part | yes | the figures containers (§9.5), same order; `[]` when the collection carries no plates — which is every collection whose Codex has `record_line` 1 |
-| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`, and `"slicing/<sha256 hex>.json": {root, bytes}` where the Codex's slicing block names a family map (§9.3; required then, absent otherwise — *amended 2026-10-24*). A SHARD file that is neither here nor a part that a `shards`, `relations` or `figures` entry names is not a member and is not served (07 §7.8). An annotations collection (02 §2.10) has no space, so its `files` carries no calibration entries: `validation.json`, `LICENSE-TERMS` and the seals file, the last two null when it is green and open (*amended 2026-10-09*) |
+| `files` | object | yes | every whole-collection member with its transport root: `{"validation.json": {root, bytes}, "LICENSE-TERMS": {root, bytes} or null, "calibration/<set>.safetensors": {root, bytes}, "calibration/<set>.sig.json": {root, bytes}, "seals/<snapshot_id>.json": {root, bytes} or null}`, and `"slicing/<sha256 hex>.json": {root, bytes}` where the Codex's slicing block names a family map (§9.3; required then, absent otherwise — *amended 2026-10-24*). A SHARD file that is neither here, nor a part that a `shards`, `relations` or `figures` entry names, nor a file of the `engine-settings` member (§9.19) is not a member and is not served (07 §7.8). An annotations collection (02 §2.10) has no space, so its `files` carries no calibration entries: `validation.json`, `LICENSE-TERMS` and the seals file, the last two null when it is green and open (*amended 2026-10-09*) |
 | `delta` | object | yes | `{added: [uid…], changed: [uid…], tombstoned: [{uid, reason}…]}`, each list sorted by uid bytes; `reason` is `"retracted"` (the origin says the record should not have existed) or `"withdrawn"` (the origin no longer supplies it) |
 
 A part entry:
@@ -2180,6 +2181,7 @@ that `file_hash`: `{"file_hash":"4e1a…","format":"cades","signer":
 | `slicing` | `slicing/<sha256 hex>.json`: the family map a slicing block names (§9.3; *amended 2026-10-24*) | in the snapshot's `files` |
 | `seals-<snapshot_id>` | `seals/<snapshot_id>.json`, and `seals/lists/<sha256>.xml` for each trusted list its entries name (*amended 2026-10-08*) | in the snapshot's `files` |
 | `origin-<slice>` | the sealed origin files of a certified collection, optional | per file, in the digest |
+| `engine-settings` | `engine-settings/<key hex>.json`, one per signer: recommended engine settings (§9.19), optional | per file, in the digest's `files` (*added 2026-11-01*) |
 
 No two kinds share a shape (the text index's `index-<slice>`, which shared
 `index-<space>`'s, left the table on 2026-10-08), and a slice name of 16
@@ -2385,6 +2387,7 @@ names one schema, the one its section fixes:
 | `louise-calibration-run` | 4 | §9.12 (4 since 2026-10-08: a backend engine's run; every other run is stated at 3) |
 | `louise-ack`, `louise-trust` | 1 | §9.13, §9.2 |
 | `louise-seals` | 1 | §9.15 |
+| `louise-engine-settings` | 1 | §9.19 |
 | VeGa tag (`\x1eVEGA/1\x1e`), receipt, receipts route | 1 | §9.12 (the version is in the tag's marker; neither the receipt nor the routes carry `kind` or `version`) |
 
 Two rows above were one row each until the figures amendment, and the
@@ -2441,3 +2444,69 @@ never a silent extension. The platform image that introduces version
 canonical form of §9.1, the two hash functions and the signature scheme
 of §9.2 are not versioned by a field: they are what every version is
 written in, and changing them is a new protocol, not a new version.
+
+## 9.19 Recommended engine settings
+
+*(Added 2026-11-01, operator: "A recommended, non binding, setting shall be
+part of a collection"; choice B — a separate signed file in the SHARD, one
+entry per card type, updatable without touching the collection.)*
+
+How fast a collection embeds on a card depends on settings that are not
+the space's: texts a request (`batch`) and requests in flight
+(`concurrency`). They change no vector beyond the space's tolerance — the
+gate measures them before a batched answer is written (03 §3.3) — so they
+are never inside `collection_id` or `space_id`. What one peer measured on
+a card is what the next peer with the same card wants to start from, so it
+travels with the collection, signed by whoever measured it.
+
+**The file.** `engine-settings/<key hex>.json` at the SHARD's root, where
+`<key hex>` is the signer's public key as 64 lowercase hexadecimal digits
+(the textual form of §9.2 without `ed25519:`). One file per signer, so two
+peers never write the same file and a signer re-measuring replaces only
+its own entry. An envelope (§9.2) under `louise/engine-settings/v1`, whose
+body is exactly:
+
+| key | type | meaning |
+|---|---|---|
+| `kind` | `"louise-engine-settings"` | |
+| `version` | `1` | |
+| `key`, `time` | §9.2 | the signer, and when it signed |
+| `collection_id`, `space_id` | ids | the collection and space the settings were measured for; a file naming others is set aside |
+| `entries` | non-empty list | one per card type, ordered by `driver:vendor_id:device_id` |
+
+and each entry is exactly:
+
+| key | type | meaning |
+|---|---|---|
+| `card` | `{driver, vendor_id, device_id}` | the card TYPE: the kernel driver it binds (`xe`, `amdgpu`, `nvidia`) and its PCI vendor and device ids, four lowercase hexadecimal digits each, no `0x` |
+| `engine_id` | id | the engine (§9.3) of the validated run the settings were measured under. For a reader: it selects nothing, since any engine whose run passes the gate may contribute |
+| `settings` | object | one or both of `batch` (1–1024) and `concurrency` (1–64), whole numbers |
+| `measured` | object | `time` (required), and any of `busy` (the card's compute engine busy share, a decimal string), `chunks_per_s` (a decimal string), `window_s` (whole seconds) |
+
+No two entries of one file name the same card type. A file whose name is
+not its body's signer, whose signature does not verify, or with any
+unknown key (§9.18) is set aside, and `hold engine-settings show` says why.
+
+**Never binding.** A node takes an entry only:
+
+1. for a key its collection file's `[encoder]` leaves unset (07 §7.8) — a
+   `batch` or `concurrency` written there is the operator's and wins;
+2. for one of its own card types, as its GPU probe reports them — another
+   card's numbers are not this card's;
+3. this node's own entry first; else the most recently measured; ties by
+   signer, so every node reading the same files takes the same entry.
+
+What it takes enters the collection's recipe where the worker and the gate
+both read it (`collections.recipe_for`), so a changed batching is measured
+by the gate before one batched vector is written, exactly as an edited
+file is: a recommendation a node cannot reproduce stops nothing but
+itself. Without a probe, or without an entry for its card, a node runs
+the file's settings and its own defaults.
+
+**The member.** All signers' files are one member, `engine-settings`
+(§9.16): not in the snapshot — so a re-measurement needs no new snapshot —
+but in the digest's `members` with its `files` (§9.9), each file its own
+torrent, the member root over them. A fetcher keeps a file only when it
+verifies, and replaces its copy of a signer's file only with one signed
+later.
+

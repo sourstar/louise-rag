@@ -52,3 +52,38 @@ def test_writer_round_trips_concurrency(isolated_config, data_dir, config_dir, t
     loaded = collections_mod.by_name("c")
     # the query instruction is the Codex's, never the file's
     assert dataclasses.replace(loaded.embed, query_instruction=None) == recipe
+
+
+def test_a_rewrite_keeps_the_engine_settings_the_file_names(
+        isolated_config, data_dir, config_dir, tmp_path):
+    """`batch` and `exactness` were dropped by every rewrite until 2026-11-01:
+    a share toggle in the Library sent wikidata back from 16 texts a request
+    to EMBED_BATCH. And a key the file names stays named, even at its
+    default — naming it is what keeps a recommendation out (09 §9.19)."""
+    from app import collection_file
+    codex_collection("c", louise_root=data_dir, config_dir=config_dir)
+    path = config_dir / "collections" / "c.toml"
+    path.write_text(path.read_text(encoding="utf-8")
+                    + '[encoder]\nurl = "http://e:1"\nembed_model = "m"\nquery_model = "m"\n'
+                      'batch = 16\nconcurrency = 1\nexactness = "exact"\n', encoding="utf-8")
+    before = collections_mod.by_name("c").embed
+    assert (before.batch, before.concurrency, before.exactness) == (16, 1, "exact")
+    assert before.stated == frozenset({"batch", "concurrency"})
+    collection_file.rewrite(collections_mod.by_name("c"), share=True)
+    after = collections_mod.by_name("c")
+    assert after.share is True
+    assert after.embed == before and after.embed.stated == before.stated
+
+
+def test_a_rewrite_does_not_name_a_key_the_file_left_unset(
+        isolated_config, data_dir, config_dir, tmp_path):
+    from app import collection_file
+    codex_collection("c", louise_root=data_dir, config_dir=config_dir)
+    path = config_dir / "collections" / "c.toml"
+    path.write_text(path.read_text(encoding="utf-8")
+                    + '[encoder]\nurl = "http://e:1"\nembed_model = "m"\nquery_model = "m"\n',
+                    encoding="utf-8")
+    collection_file.rewrite(collections_mod.by_name("c"), share=True)
+    assert collections_mod.by_name("c").embed.stated == frozenset()
+    text = path.read_text(encoding="utf-8")
+    assert "batch" not in text and "concurrency" not in text and "exactness" not in text

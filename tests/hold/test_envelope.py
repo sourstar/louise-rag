@@ -61,10 +61,11 @@ def test_a_domain_invented_at_the_call_site_is_refused():
         env.message("louise/whatever/v1", a_body(a_key()))
 
 
-def test_all_six_domains_of_the_table_are_present():
+def test_all_seven_domains_of_the_table_are_present():
     assert set(env.DOMAINS) == {
         "louise/snapshot/v1", "louise/attestation/v1", "louise/digest/v1",
-        "louise/event/v1", "louise/pointer/v1", "louise/calibration/v1"}
+        "louise/event/v1", "louise/pointer/v1", "louise/calibration/v1",
+        "louise/engine-settings/v1"}
 
 
 def test_the_bundle_domain_is_deliberately_absent():

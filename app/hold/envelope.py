@@ -39,8 +39,9 @@ DIGEST = "louise/digest/v1"
 EVENT = "louise/event/v1"
 POINTER = "louise/pointer/v1"
 CALIBRATION = "louise/calibration/v1"
+ENGINE_SETTINGS = "louise/engine-settings/v1"
 
-DOMAINS = (SNAPSHOT, ATTESTATION, DIGEST, EVENT, POINTER, CALIBRATION)
+DOMAINS = (SNAPSHOT, ATTESTATION, DIGEST, EVENT, POINTER, CALIBRATION, ENGINE_SETTINGS)
 
 #: 09 §9.2: the textual form of a public key.
 KEY_PREFIX = "ed25519:"

@@ -4162,6 +4162,131 @@ def _recipe_for(codex, name):
                    dim=int(codex.space.dim))
 
 
+def _card_types(a):
+    """This node's card types (the GPU probe's /gpu), or the one `--card`
+    names as `driver:vendor:device`."""
+    from app import recommended_settings as rec
+    from app.hold import engine_settings as es
+    if getattr(a, "card", None):
+        parts = a.card.split(":")
+        if len(parts) != 3:
+            raise ValueError("--card is driver:vendor:device, e.g. xe:8086:e223")
+        return (es.Card(*[x.strip().lower().removeprefix("0x") for x in parts]),)
+    return rec.node_cards()
+
+
+def cmd_engine_settings_show(a) -> int:
+    """`hold engine-settings show <collection>` (09 §9.19): every signer's
+    recommended settings in the collection's SHARD, which one this node
+    takes for its card, and what its collection file states — the file's
+    own keys win. Exit 0; 1 when a file was set aside."""
+    from app import collections as collections_mod, recommended_settings as rec
+    from app.hold import engine_settings as es
+    name, codex = col.resolve(a.root, a.collection)
+    shard = col.shard_dir_of(a.root, name)
+    bodies, refused = es.read_all(shard, collection_id=codex.collection_id,
+                                  space_id=codex.space_id)
+    for body in bodies:
+        print(f"signed by {body['key']} at {body['time']}")
+        for e in body["entries"]:
+            c = e["card"]
+            print(f"  {c['driver']} {c['vendor_id']}:{c['device_id']}  "
+                  + ", ".join(f"{k} {v}" for k, v in sorted(e["settings"].items()))
+                  + f"  measured {e['measured']}  engine {e['engine_id'][:23]}…")
+    for why in refused:
+        print(f"set aside: {why}")
+    if not bodies and not refused:
+        print(f"{name}: no recommended engine settings in {shard / es.DIR}")
+    try:
+        cards = _card_types(a)
+    except ValueError as e:
+        print(f"louise: {e}", file=sys.stderr)
+        return 2
+    if not cards:
+        print("this node's card type is not known (GPU_PROBE_URL unset or silent; "
+              "--card names one): no recommendation applies")
+        return 1 if refused else 0
+    from app import run_check
+    chosen = es.recommend(bodies, cards, own=run_check.signer())
+    collection = collections_mod.by_name(name)
+    embed = getattr(collection, "embed", None)
+    stated = sorted(getattr(embed, "stated", ())) if embed is not None else []
+    print("this node's card: " + ", ".join(f"{c.driver} {c.vendor_id}:{c.device_id}"
+                                           for c in cards))
+    if chosen is None:
+        print("no entry for it: the collection file's settings apply")
+    else:
+        print(f"recommended for it by {chosen.signer}: batch {chosen.batch}, "
+              f"concurrency {chosen.concurrency}")
+    if embed is not None:
+        print(f"the collection file states: {', '.join(stated) or 'neither'} "
+              f"(batch {embed.batch}, concurrency {embed.concurrency}); what it leaves "
+              f"unset takes the recommendation")
+        if not getattr(a, "card", None):
+            used = rec.applied(collection, embed)
+            print(f"in effect here: batch {used.batch}, concurrency {used.concurrency}")
+    return 1 if refused else 0
+
+
+def cmd_engine_settings_record(a) -> int:
+    """`hold engine-settings record <collection> --batch N --concurrency M
+    [--busy F --chunks-per-s F --window-s S] [--card driver:vendor:device]`
+    (09 §9.19): sign this node's measured settings for its card type into
+    the collection's SHARD, replacing its own earlier entry for that card.
+    The engine is the run that answers now, and it must be one this node
+    has validated for the space: a setting is recorded only from a gated
+    run. Exit 0 recorded; 2 a usage error or no validated run; 3 the
+    encoder or the probe could not be asked."""
+    from app import run_check
+    from app.bundles import keys as node_keys
+    from app.hold import embedder as emb, engine_settings as es, runs as runs_mod
+    name, codex = col.resolve(a.root, a.collection)
+    if a.batch is None and a.concurrency is None:
+        print("louise: name --batch, --concurrency or both: what is recommended",
+              file=sys.stderr)
+        return 2
+    try:
+        cards = _card_types(a)
+    except ValueError as e:
+        print(f"louise: {e}", file=sys.stderr)
+        return 2
+    if len(cards) != 1:
+        print("louise: " + ("this node's card type is not known (GPU_PROBE_URL unset or "
+                            "silent)" if not cards else "this node has several card types")
+              + ": --card driver:vendor:device names the one measured", file=sys.stderr)
+        return 3 if not cards else 2
+    try:
+        recipe = _recipe_for(codex, name)
+        stated = run_check.stated_run(recipe, probe_item=run_check.probe_for(codex))
+    except emb.GateDeferred as e:
+        print(f"louise: deferred: {e}", file=sys.stderr)
+        return 3
+    except Exception as e:   # noqa: BLE001 — the encoder away: nothing recorded
+        print(f"louise: the encoder could not be asked: {type(e).__name__}: {e}",
+              file=sys.stderr)
+        return 3
+    kept = runs_mod.statements(a.root, name, codex, "document", signer=run_check.signer())
+    if stated.run_id not in kept:
+        print(f"louise: {name}: run {stated.run_id[:23]}… is not validated on this node "
+              f"(`hold embedder check {name}`): settings are recorded from a gated run",
+              file=sys.stderr)
+        return 2
+    try:
+        now = _utc_now()
+        entry = es.entry(cards[0], engine_id=es.engine_id_of(stated.engine),
+                         batch=a.batch, concurrency=a.concurrency, busy=a.busy,
+                         chunks_per_s=a.chunks_per_s, window_s=a.window_s, time=now)
+        key = node_keys.load_signing_key()
+        path = es.record(col.shard_dir_of(a.root, name), key,
+                         collection_id=codex.collection_id, space_id=codex.space_id,
+                         new=entry, time=now)
+    except (CodexError, node_keys.NodeKeyError) as e:
+        print(f"louise: {e}", file=sys.stderr)
+        return 2
+    print(f"{name}: recorded in {path}")
+    return 0
+
+
 def cmd_embedder_rebaseline(a) -> int:
     """`hold embedder rebaseline <collection> [--yes]` (07 §7.3): for a
     Codex version 1 or 2 collection, re-record the backend gate's probe
@@ -5038,6 +5163,27 @@ def build_parser() -> argparse.ArgumentParser:
     p = iverbs.add_parser("show", help="rows, the vector index and what it has not folded in, "
                                        "the book_id index")
     args_collection(p); p.set_defaults(fn=cmd_index_show)
+
+    # ---- hold engine-settings ------------------------------------------
+    esn = nouns.add_parser("engine-settings",
+                           help="the engine settings recommended per card type, signed in "
+                                "the SHARD (09 §9.19; never binding)")
+    esverbs = esn.add_subparsers(dest="verb", required=True)
+    p = esverbs.add_parser("show", help="every signer's entries, and what applies here")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--card", metavar="DRIVER:VENDOR:DEVICE",
+                   help="a card type instead of this node's (e.g. xe:8086:e223)")
+    p.set_defaults(fn=cmd_engine_settings_show)
+    p = esverbs.add_parser("record", help="sign this node's measured settings for its card")
+    root_arg(p); p.add_argument("collection")
+    p.add_argument("--batch", type=int, help="texts a request")
+    p.add_argument("--concurrency", type=int, help="requests in flight")
+    p.add_argument("--busy", help="the card's compute engine busy share, a decimal (0.82)")
+    p.add_argument("--chunks-per-s", dest="chunks_per_s", help="chunks a second, a decimal")
+    p.add_argument("--window-s", dest="window_s", type=int, help="the window measured, seconds")
+    p.add_argument("--card", metavar="DRIVER:VENDOR:DEVICE",
+                   help="the card type measured, where the node has several")
+    p.set_defaults(fn=cmd_engine_settings_record)
 
     # ---- hold embedder --------------------------------------------------
     embd = nouns.add_parser("embedder", help="is this peer's encoder the space's?")
