@@ -10,7 +10,7 @@ required config or volume mount.
 import math
 import os
 import tomllib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +96,13 @@ class EmbedRecipe:
     # (`hold.runs`, `run_check.contributing`). Not part of the space, like
     # `concurrency`.
     batch: int = 0
+    # Which of `batch` and `concurrency` the collection FILE names. Those are
+    # the operator's and stay; a key it leaves unset may take the setting
+    # recommended for this node's card type in the collection's SHARD
+    # (app/hold/engine_settings.py, 09 §9.19; operator 2026-11-01: "A
+    # recommended, non binding, setting shall be part of a collection").
+    # Provenance, not a setting: two recipes that send the same are equal.
+    stated: frozenset[str] = field(default=frozenset(), compare=False)
     # HOW EXACT A RUN OF THIS ENCODER MUST BE (docs/notes/near-exact-runs.md).
     # "near", THE DEFAULT since the operator's choice B (2026-11-01: "it makes
     # not much sense to enforce local bit exactness" — peers already accept
@@ -227,6 +234,7 @@ def parse_recipe(raw: Any, *, where: str) -> EmbedRecipe | None:
         query_model=query_model,
         concurrency=max(1, int(raw.get("concurrency", 1))),
         batch=_batch(raw, where),
+        stated=frozenset(k for k in ("batch", "concurrency") if k in raw),
         exactness=_exactness(raw, where),
         device=(str(raw["device"]).lower()
                 if raw.get("device") in ("gpu", "cpu", "GPU", "CPU")
@@ -361,7 +369,12 @@ def recipe_for(collection) -> EmbedRecipe:
     embed = getattr(collection, "embed", None)
     if embed is None:
         raise NoEncoder(f"{getattr(collection, 'name', 'this collection')}: {NO_ENCODER}")
-    return embed
+    # what the file leaves unset of `batch` and `concurrency`, the setting
+    # recommended in the collection's SHARD for this node's card type, when
+    # one is (09 §9.19). Here, so the worker sends and the gate measures the
+    # same (`run_check.contributing`).
+    from . import recommended_settings
+    return recommended_settings.applied(collection, embed)
 
 
 # What the worker may SPEND on a collection's local encoder (never what

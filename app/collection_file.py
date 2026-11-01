@@ -186,8 +186,19 @@ def _codex_toml_text(path: Path, *, codex: str, profile: str | None,
         # model of each side, and one model doing both is named twice
         lines += [f"embed_model = {_toml_scalar(encoder.model)}",
                   f"query_model = {_toml_scalar(_query_model_of(encoder))}"]
-        if getattr(encoder, "concurrency", 1) > 1:
+        # The engine's settings, carried through every rewrite: a key the
+        # file named stays named — even at its default, since naming it is
+        # what keeps a recommendation out of it (09 §9.19) — and a value
+        # off its default is written. `batch` and `exactness` were dropped
+        # by every rewrite until 2026-11-01 (a share toggle in the Library
+        # sent wikidata back from 16 texts a request to EMBED_BATCH).
+        stated = getattr(encoder, "stated", frozenset())
+        if "batch" in stated or getattr(encoder, "batch", 0):
+            lines.append(f"batch = {int(getattr(encoder, 'batch', 0) or 0)}")
+        if "concurrency" in stated or getattr(encoder, "concurrency", 1) > 1:
             lines.append(f"concurrency = {encoder.concurrency}")
+        if getattr(encoder, "exactness", "near") != "near":
+            lines.append(f"exactness = {_toml_scalar(encoder.exactness)}")
         if getattr(encoder, "device", None):
             lines.append(f"device = {_toml_scalar(encoder.device)}")
     lines += _reranker_lines(reranker)

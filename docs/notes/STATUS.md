@@ -815,6 +815,10 @@ it left open is below.
 
 ## Open after the migration
 
+- **Recommended engine settings, part of a collection (operator, 2026-11-01: "A recommended, non binding, setting shall be part of a collection"; choice B)** (09 §9.19).
+  - **Built:** the signed file `engine-settings/<key hex>.json` in the SHARD, one entry per card type (`app/hold/engine_settings.py`); a node takes the entry for its own card type in the `[encoder]` keys its file leaves unset, through `collections.recipe_for`, so the gate measures it first (`app/recommended_settings.py`); `hold engine-settings show|record`. No file, no change.
+  - **Open:** the `engine-settings` member in the digest and its fetch from peers (09 §9.16, §9.9). Until then a node reads only the files in its own SHARD.
+
 - **BEFORE PRODUCTION (operator, 2026-10-31): jina-style encoders on llama.cpp, implemented and tested at f16.** The design is kept for the future (docs/notes/jina-llamacpp-parity.md §3). It is built and passes §4's tests on the node before production. Measured so far, by the f16 merged GGUF against torch: median cosine 0.999987, the same MRR@10, 5× faster, bit-exact to itself.
 
 - **DEFECT (invariant 11), wikipedia's archive-layer records lack their QIDs** (München, 2026-10-31). The 10-28 records build cut archive-layer rows from locators discovered before parser 5. Those locators had no page_props segment, so the records hold no `extra.wikidata` and no `extra.page_props`, which today's origin unit gives.
